@@ -542,6 +542,11 @@ export function buildUpstreamEndpointRequest(input: {
     }) as T
   );
 
+  let headers: Record<string, string> = commonHeaders;
+  let body: Record<string, unknown> = openaiBody;
+  let endpointClaudeHeaders: Record<string, string> | undefined;
+  let endpointResponsesWebsocketTransport: boolean | undefined;
+
   if (isInternalGeminiUpstream) {
     const instructions = (
       input.downstreamFormat === 'responses'
@@ -554,26 +559,8 @@ export function buildUpstreamEndpointRequest(input: {
       modelName: input.modelName,
       instructions,
     });
-    const configuredGeminiRequest = applyConfiguredPayloadRules(geminiRequest);
-    if (!providerProfile) {
-      throw new Error(`missing provider profile for platform: ${sitePlatform}`);
-    }
-    return providerProfile.prepareRequest({
-      endpoint: input.endpoint,
-      modelName: input.modelName,
-      stream: input.stream,
-      tokenValue: input.tokenValue,
-      oauthProvider: input.oauthProvider,
-      oauthProjectId: input.oauthProjectId,
-      sitePlatform,
-      baseHeaders: commonHeaders,
-      providerHeaders: input.providerHeaders,
-      body: configuredGeminiRequest,
-      action: input.stream ? 'streamGenerateContent' : 'generateContent',
-    });
-  }
-
-  if (input.endpoint === 'messages') {
+    body = applyConfiguredPayloadRules(geminiRequest);
+  } else if (input.endpoint === 'messages') {
     const claudeHeaders = input.downstreamFormat === 'claude'
       ? extractClaudePassthroughHeaders(input.downstreamHeaders)
       : {};
@@ -608,24 +595,10 @@ export function buildUpstreamEndpointRequest(input: {
       ?? sanitizeAnthropicMessagesBody(
         convertOpenAiBodyToAnthropicMessagesBody(openaiBody, input.modelName, input.stream),
       );
-    const configuredClaudeBody = applyConfiguredPayloadRules(sanitizedBody);
+    body = applyConfiguredPayloadRules(sanitizedBody);
+    endpointClaudeHeaders = claudeHeaders;
 
-    if (providerProfile?.id === 'claude') {
-      return providerProfile.prepareRequest({
-        endpoint: 'messages',
-        modelName: input.modelName,
-        stream: input.stream,
-        tokenValue: input.tokenValue,
-        oauthProvider: input.oauthProvider,
-        oauthProjectId: input.oauthProjectId,
-        sitePlatform,
-        baseHeaders: commonHeaders,
-        claudeHeaders,
-        body: configuredClaudeBody,
-      });
-    }
-
-    const headers = buildClaudeRuntimeHeaders({
+    headers = buildClaudeRuntimeHeaders({
       baseHeaders: commonHeaders,
       claudeHeaders,
       anthropicVersion,
@@ -633,16 +606,7 @@ export function buildUpstreamEndpointRequest(input: {
       isClaudeOauthUpstream,
       tokenValue: input.tokenValue,
     });
-
-    return {
-      path: resolveEndpointPath('messages'),
-      headers,
-      body: configuredClaudeBody,
-      runtime,
-    };
-  }
-
-  if (input.endpoint === 'responses') {
+  } else if (input.endpoint === 'responses') {
     const responsesWebsocketTransport = getInputHeader(
       input.downstreamHeaders,
       'x-metapi-responses-websocket-transport',
@@ -665,72 +629,67 @@ export function buildUpstreamEndpointRequest(input: {
     if (preserveWebsocketIncrementalMode && rawBody.generate === false) {
       sanitizedResponsesBody.generate = false;
     }
-    const body = normalizeCodexResponsesBodyForProxy(
+    const tempBody = normalizeCodexResponsesBodyForProxy(
       sanitizedResponsesBody,
       sitePlatform,
     );
-    const configuredResponsesBody = normalizeCodexResponsesBodyForProxy(
+    body = normalizeCodexResponsesBodyForProxy(
       normalizeSub2ApiResponsesBodyForProxy(
-        applyConfiguredPayloadRules(body),
+        applyConfiguredPayloadRules(tempBody),
         sitePlatform,
       ),
       sitePlatform,
     );
+    endpointResponsesWebsocketTransport = responsesWebsocketTransport;
 
-    if (sitePlatform === 'codex') {
-      if (providerProfile?.id !== 'codex') {
-        throw new Error(`missing codex provider profile for platform: ${sitePlatform}`);
-      }
-      return providerProfile.prepareRequest({
-        endpoint: 'responses',
-        modelName: input.modelName,
-        stream: input.stream,
-        tokenValue: input.tokenValue,
-        oauthProvider: input.oauthProvider,
-        oauthProjectId: input.oauthProjectId,
-        sitePlatform,
-        baseHeaders: {
-          ...commonHeaders,
-          ...responsesHeaders,
-        },
-        providerHeaders: input.providerHeaders,
-        codexSessionCacheKey: input.codexSessionCacheKey,
-        codexExplicitSessionId: input.codexExplicitSessionId,
-        responsesWebsocketTransport,
-        body: configuredResponsesBody,
-      });
-    }
-
-    const headers = ensureResponsesAcceptHeader({
+    headers = ensureResponsesAcceptHeader({
       ...commonHeaders,
       ...responsesHeaders,
     }, {
       stream: input.stream,
       sitePlatform,
     });
-    return {
-      path: resolveEndpointPath('responses'),
-      headers,
-      body: configuredResponsesBody,
-      runtime,
+  } else {
+    headers = ensureStreamAcceptHeader(commonHeaders, input.stream);
+    const chatBody = {
+      ...openaiBody,
+      model: input.modelName,
+      stream: input.stream,
     };
+    body = applyConfiguredPayloadRules(
+      input.downstreamFormat === 'responses'
+        ? sanitizeResponsesFallbackChatBody(chatBody)
+        : chatBody,
+    );
   }
 
-  const headers = ensureStreamAcceptHeader(commonHeaders, input.stream);
-  const chatBody = {
-    ...openaiBody,
-    model: input.modelName,
-    stream: input.stream,
-  };
-  const configuredChatBody = applyConfiguredPayloadRules(
-    input.downstreamFormat === 'responses'
-      ? sanitizeResponsesFallbackChatBody(chatBody)
-      : chatBody,
-  );
+  if (providerProfile) {
+    return providerProfile.prepareRequest({
+      endpoint: input.endpoint,
+      modelName: input.modelName,
+      stream: input.stream,
+      tokenValue: input.tokenValue,
+      oauthProvider: input.oauthProvider,
+      oauthProjectId: input.oauthProjectId,
+      sitePlatform,
+      baseHeaders: headers,
+      providerHeaders: input.providerHeaders,
+      claudeHeaders: endpointClaudeHeaders,
+      codexSessionCacheKey: input.codexSessionCacheKey,
+      codexExplicitSessionId: input.codexExplicitSessionId,
+      responsesWebsocketTransport: endpointResponsesWebsocketTransport,
+      body,
+      action: isInternalGeminiUpstream
+        ? (input.stream ? 'streamGenerateContent' : 'generateContent')
+        : undefined,
+      siteUrl: input.siteUrl,
+    });
+  }
+
   return {
-    path: resolveEndpointPath('chat'),
+    path: resolveEndpointPath(input.endpoint === 'responses' ? 'responses' : input.endpoint === 'messages' ? 'messages' : 'chat'),
     headers,
-    body: configuredChatBody,
+    body,
     runtime,
   };
 }
@@ -778,7 +737,7 @@ export function buildClaudeCountTokensUpstreamRequest(input: {
       : {}),
   };
 
-  if (providerProfile?.id === 'claude') {
+  if (providerProfile?.id === 'claude' || providerProfile?.id === 'anthropic') {
     const prepared = providerProfile.prepareRequest({
       endpoint: 'messages',
       modelName: input.modelName,

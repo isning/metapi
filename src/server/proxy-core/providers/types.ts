@@ -2,7 +2,10 @@ export type ProviderProfileId =
   | 'codex'
   | 'claude'
   | 'gemini-cli'
-  | 'antigravity';
+  | 'antigravity'
+  | 'openai'
+  | 'gemini'
+  | 'anthropic';
 
 export type ProviderEndpoint =
   | 'chat'
@@ -45,6 +48,7 @@ export type PrepareProviderRequestInput = {
   responsesWebsocketTransport?: boolean;
   body: Record<string, unknown>;
   action?: ProviderAction;
+  siteUrl?: string | null;
 };
 
 export type ProviderProfile = {
