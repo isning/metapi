@@ -64,4 +64,10 @@ describe('proxyRetryPolicy', () => {
       shouldAbortSameSiteEndpointFallback(429, '{"error":{"message":"too many requests"}}'),
     ).toBe(true);
   });
+
+  it('aborts same-site endpoint fallback on network transport failures', () => {
+    expect(shouldAbortSameSiteEndpointFallback(502, 'fetch failed')).toBe(true);
+    expect(shouldAbortSameSiteEndpointFallback(502, 'socket hang up')).toBe(true);
+    expect(shouldAbortSameSiteEndpointFallback(502, 'network failure')).toBe(true);
+  });
 });
