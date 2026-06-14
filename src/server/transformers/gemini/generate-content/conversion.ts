@@ -231,7 +231,8 @@ export function convertOpenAiBodyToGeminiGenerateContentRequest(input: {
     }
     if (role === 'tool') {
       const toolCallId = asTrimmedString(message.tool_call_id);
-      const name = toolNameById.get(toolCallId) || 'unknown';
+      const name = toolNameById.get(toolCallId);
+      if (!name) continue;
       const result = normalizeFunctionResponseResult(message.content);
       request.contents = [
         ...(Array.isArray(request.contents) ? request.contents : []),

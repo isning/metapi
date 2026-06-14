@@ -347,4 +347,83 @@ describe('gemini generate-content request bridge', () => {
       },
     ]);
   });
+
+  it('drops Gemini functionResponse parts when tool call ids are missing from history', () => {
+    const body = buildCanonicalRequestToGeminiGenerateContentBody({
+      operation: 'generate',
+      surface: 'gemini-generate-content',
+      cliProfile: 'generic',
+      requestedModel: 'gemini-2.5-pro',
+      stream: false,
+      messages: [
+        {
+          role: 'tool',
+          parts: [{
+            type: 'tool_result',
+            toolCallId: 'missing_call',
+            resultJson: { temperature: '22C' },
+          }],
+        },
+      ],
+    });
+
+    expect(body.contents).toEqual([]);
+  });
+
+  it('drops OpenAI tool result messages that cannot be matched to a Gemini functionCall name', () => {
+    const result = buildGeminiGenerateContentRequestFromOpenAi({
+      modelName: 'gemini-2.5-pro',
+      body: {
+        model: 'gemini-2.5-pro',
+        messages: [
+          { role: 'tool', tool_call_id: 'missing_call', content: '{"ok":true}' },
+        ],
+      },
+    }) as Record<string, unknown>;
+
+    expect(result.contents).toEqual([]);
+  });
+
+  it('does not synthesize OpenAI tool calls from Gemini functionCall parts without ids', () => {
+    const result = parseGeminiGenerateContentRequestToCanonical({
+      model: 'gemini-2.5-pro',
+      contents: [
+        {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                name: 'lookup_weather',
+                args: { city: 'Paris' },
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.value?.messages).toEqual([]);
+  });
+
+  it('does not synthesize OpenAI tool result ids from Gemini functionResponse names', () => {
+    const result = parseGeminiGenerateContentRequestToCanonical({
+      model: 'gemini-2.5-pro',
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                response: { result: { ok: true } },
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.value?.messages).toEqual([]);
+  });
 });
