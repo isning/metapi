@@ -2075,6 +2075,29 @@ describe('convertResponsesBodyToOpenAiBody', () => {
     expect(result.input).toEqual([]);
   });
 
+  it('does not fabricate Responses function calls from idless OpenAI-compatible tool calls', () => {
+    const result = convertOpenAiBodyToResponsesBody(
+      {
+        model: 'deepseek-reasoner',
+        messages: [{
+          role: 'assistant',
+          content: '',
+          tool_calls: [{
+            type: 'function',
+            function: {
+              name: 'Glob',
+              arguments: '{"pattern":"README*"}',
+            },
+          }],
+        }],
+      },
+      'deepseek-reasoner',
+      false,
+    );
+
+    expect(result.input).toEqual([]);
+  });
+
   it('preserves chat-native modalities and audio settings when converting to Responses bodies', () => {
     const result = convertOpenAiBodyToResponsesBody(
       {

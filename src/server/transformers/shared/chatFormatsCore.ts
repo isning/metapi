@@ -577,11 +577,8 @@ function collectToolCallsFromOpenAiChoice(choice: any): Array<{ id: string; name
     const rawToolCall = rawToolCalls[index];
     if (!isRecord(rawToolCall)) continue;
     const fn = isRecord(rawToolCall.function) ? rawToolCall.function : {};
-    const id = (
-      typeof rawToolCall.id === 'string' && rawToolCall.id.trim().length > 0
-        ? rawToolCall.id.trim()
-        : `call_${index}`
-    );
+    const id = typeof rawToolCall.id === 'string' ? rawToolCall.id.trim() : '';
+    if (!id) continue;
     const name = (
       typeof fn.name === 'string' && fn.name.trim().length > 0
         ? fn.name.trim()
@@ -612,11 +609,8 @@ function collectToolCallsFromClaudeContent(content: unknown): Array<{ id: string
     if (!isRecord(block)) continue;
     if (block.type !== 'tool_use') continue;
 
-    const id = (
-      typeof block.id === 'string' && block.id.trim().length > 0
-        ? block.id.trim()
-        : `toolu_${index}`
-    );
+    const id = typeof block.id === 'string' ? block.id.trim() : '';
+    if (!id) continue;
     const name = typeof block.name === 'string' ? block.name.trim() : '';
     if (!name) continue;
     const argumentsText = stringifyUnknownValue(block.input);
@@ -642,8 +636,9 @@ function collectToolCallsFromResponsesPayload(payload: Record<string, unknown>):
     const id = (
       typeof item.call_id === 'string' && item.call_id.trim().length > 0
         ? item.call_id.trim()
-        : (typeof item.id === 'string' && item.id.trim().length > 0 ? item.id.trim() : `call_${index}`)
+        : (typeof item.id === 'string' && item.id.trim().length > 0 ? item.id.trim() : '')
     );
+    if (!id) continue;
     const name = typeof item.name === 'string' ? item.name.trim() : '';
     if (!name) continue;
     const argumentsText = (
@@ -677,8 +672,9 @@ function collectIndexedToolCallsFromResponsesPayload(
     const id = (
       typeof item.call_id === 'string' && item.call_id.trim().length > 0
         ? item.call_id.trim()
-        : (typeof item.id === 'string' && item.id.trim().length > 0 ? item.id.trim() : `call_${index}`)
+        : (typeof item.id === 'string' && item.id.trim().length > 0 ? item.id.trim() : '')
     );
+    if (!id) continue;
     const name = typeof item.name === 'string' ? item.name.trim() : '';
     if (!name) continue;
     const argumentsText = (

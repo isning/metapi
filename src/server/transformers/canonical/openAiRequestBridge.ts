@@ -311,10 +311,10 @@ export function canonicalRequestFromOpenAiBody(
       const argumentsJson = typeof fn.arguments === 'string'
         ? fn.arguments
         : safeJsonStringify(fn.arguments ?? toolCall.arguments ?? {});
-      if (!name) continue;
+      if (!id || !name) continue;
       parts.push({
         type: 'tool_call',
-        id: id || `tool_${parts.length}`,
+        id,
         name,
         argumentsJson,
       });

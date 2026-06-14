@@ -273,6 +273,38 @@ describe('canonical request helpers', () => {
     }]);
   });
 
+  it('drops idless assistant tool calls before rebuilding OpenAI-compatible upstream bodies', () => {
+    const request = canonicalRequestFromOpenAiBody({
+      body: {
+        model: 'deepseek-reasoner',
+        messages: [{
+          role: 'assistant',
+          content: '',
+          tool_calls: [{
+            type: 'function',
+            function: {
+              name: 'Glob',
+              arguments: '{"pattern":"README*"}',
+            },
+          }],
+        }],
+        tools: [{
+          type: 'function',
+          function: {
+            name: 'Glob',
+            parameters: { type: 'object' },
+          },
+        }],
+      },
+      surface: 'openai-chat',
+    });
+
+    const body = canonicalRequestToOpenAiChatBody(request);
+
+    expect(JSON.stringify(body.messages)).not.toContain('Glob');
+    expect(JSON.stringify(body.messages)).not.toContain('tool_0');
+  });
+
   it('builds metadata back into OpenAI chat requests', () => {
     const body = canonicalRequestToOpenAiChatBody({
       operation: 'generate',

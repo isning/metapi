@@ -648,12 +648,12 @@ export function convertOpenAiBodyToResponsesBody(
           inputItems.push(mcpItem);
           continue;
         }
-        const callId = asTrimmedString(toolCall.id) || `call_${Date.now()}_${index}`;
+        const callId = asTrimmedString(toolCall.id);
         const name = (
           asTrimmedString(functionPart.name)
           || asTrimmedString(toolCall.name)
         );
-        if (!name) continue;
+        if (!callId || !name) continue;
         const argumentsValue = normalizeOpenAiToolArguments(
           functionPart.arguments ?? toolCall.arguments,
         );

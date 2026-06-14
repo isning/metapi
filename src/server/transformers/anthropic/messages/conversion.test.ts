@@ -437,6 +437,31 @@ describe('convertOpenAiBodyToAnthropicMessagesBody', () => {
     ]);
   });
 
+  it('does not fabricate Claude tool_use blocks from idless OpenAI-compatible tool calls', () => {
+    const body = convertOpenAiBodyToAnthropicMessagesBody(
+      {
+        model: 'gpt-5',
+        messages: [
+          {
+            role: 'assistant',
+            content: '',
+            tool_calls: [{
+              type: 'function',
+              function: {
+                name: 'Glob',
+                arguments: '{"pattern":"README*"}',
+              },
+            }],
+          },
+        ],
+      },
+      'claude-opus-4-6',
+      false,
+    );
+
+    expect(body.messages).toEqual([]);
+  });
+
   it('strips cache_control from thinking blocks and empty text blocks', () => {
     const body = convertOpenAiBodyToAnthropicMessagesBody(
       {

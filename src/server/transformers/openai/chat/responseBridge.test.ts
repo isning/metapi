@@ -233,6 +233,31 @@ describe('openai chat response bridge', () => {
     expect((normalized as any).choices[0].toolCalls).toEqual([]);
   });
 
+  it('drops idless upstream chat tool calls instead of preserving invalid tool history', () => {
+    const normalized = normalizeOpenAiChatFinalToNormalized({
+      id: 'chatcmpl-idless-tool',
+      model: 'deepseek-reasoner',
+      choices: [{
+        index: 0,
+        finish_reason: 'tool_calls',
+        message: {
+          role: 'assistant',
+          content: '',
+          tool_calls: [{
+            type: 'function',
+            function: {
+              name: 'Glob',
+              arguments: '{"pattern":"README*"}',
+            },
+          }],
+        },
+      }],
+    }, 'deepseek-reasoner');
+
+    expect(normalized.toolCalls).toEqual([]);
+    expect((normalized as any).choices[0].toolCalls).toEqual([]);
+  });
+
   it('builds synthetic chunks for multi-choice finals even when some choices omit toolCalls', () => {
     const chunks = buildNormalizedFinalToOpenAiChatChunks({
       id: 'chatcmpl-multi-1',

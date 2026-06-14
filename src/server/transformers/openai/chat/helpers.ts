@@ -174,6 +174,7 @@ function collectToolCalls(value: unknown): OpenAiChatToolCall[] {
     const name = typeof functionPart.name === 'string' ? functionPart.name : '';
     const id = typeof item.id === 'string' ? item.id : '';
     const args = typeof functionPart.arguments === 'string' ? functionPart.arguments : '';
+    if (!id) continue;
     if (name.trim().length <= 0) continue;
     toolCalls.push({
       id,
