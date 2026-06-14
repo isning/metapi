@@ -598,4 +598,62 @@ describe('/v1/models route', () => {
     expect(ids).not.toContain('__search');
     expect(ids).not.toContain('__tavily_search');
   });
+
+  it('retrieves a single model through /v1/models/:model', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'single-model-site',
+      url: 'https://single-model.example.com',
+      platform: 'openai',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      accessToken: 'single-model-access-token',
+      status: 'active',
+    }).returning().get();
+
+    const token = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'default',
+      token: 'single-model-api-token',
+      enabled: true,
+      isDefault: true,
+    }).returning().get();
+
+    await db.insert(schema.modelAvailability).values({
+      accountId: account.id,
+      modelName: 'gpt-4.1',
+      available: true,
+    }).run();
+
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-4.1',
+      enabled: true,
+    }).returning().get();
+
+    await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: account.id,
+      tokenId: token.id,
+      sourceModel: 'gpt-4.1',
+      enabled: true,
+    }).run();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/models/gpt-4.1',
+      headers: {
+        authorization: 'Bearer sk-global-proxy-token',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      id: 'gpt-4.1',
+      object: 'model',
+      owned_by: 'metapi',
+    });
+  });
+
 });
