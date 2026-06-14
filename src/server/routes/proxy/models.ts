@@ -36,4 +36,14 @@ export async function modelsProxyRoute(app: FastifyInstance) {
     return reply.code(result.statusCode).send(result.payload);
   });
 
+  app.get('/v1beta/openai/models', async (request) => {
+    const downstreamPolicy = getDownstreamRoutingPolicy(request);
+    return listModelsSurface({
+      downstreamPolicy,
+      responseFormat: 'openai',
+      tokenRouter,
+      refreshModelsAndRebuildRoutes: routeRefreshWorkflow.refreshModelsAndRebuildRoutes,
+      isModelAllowed: isModelAllowedByPolicyOrAllowedRoutes,
+    });
+  });
 }

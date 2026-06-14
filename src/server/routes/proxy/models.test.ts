@@ -656,4 +656,66 @@ describe('/v1/models route', () => {
     });
   });
 
+  it('exposes /v1beta/openai/models as an OpenAI model list alias', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'gemini-openai-models-site',
+      url: 'https://gemini-openai-models.example.com',
+      platform: 'openai',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      accessToken: 'gemini-openai-models-access-token',
+      status: 'active',
+    }).returning().get();
+
+    const token = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'default',
+      token: 'gemini-openai-models-api-token',
+      enabled: true,
+      isDefault: true,
+    }).returning().get();
+
+    await db.insert(schema.modelAvailability).values({
+      accountId: account.id,
+      modelName: 'gpt-4.1',
+      available: true,
+    }).run();
+
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'gpt-4.1',
+      enabled: true,
+    }).returning().get();
+
+    await db.insert(schema.routeChannels).values({
+      routeId: route.id,
+      accountId: account.id,
+      tokenId: token.id,
+      sourceModel: 'gpt-4.1',
+      enabled: true,
+    }).run();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1beta/openai/models',
+      headers: {
+        authorization: 'Bearer sk-global-proxy-token',
+        'x-api-key': 'anthropic-style-header-must-not-change-format',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      object: 'list',
+      data: [
+        {
+          id: 'gpt-4.1',
+          object: 'model',
+          owned_by: 'metapi',
+        },
+      ],
+    });
+  });
 });
