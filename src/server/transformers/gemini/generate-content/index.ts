@@ -28,9 +28,13 @@ export function parseGeminiProxyRequestPath(input: {
   requestedModel: string;
   isStreamAction: boolean;
 } {
-  const apiVersion = resolveGeminiProxyApiVersion(input.params);
   const rawUrl = asTrimmedString(input.rawUrl);
   const withoutQuery = rawUrl.split('?')[0] || rawUrl;
+  const explicitApiVersion = typeof input.params?.geminiApiVersion === 'string'
+    ? input.params.geminiApiVersion.trim()
+    : '';
+  const rawVersion = withoutQuery.match(/^\/(v1beta|v1)\//)?.[1] || '';
+  const apiVersion = explicitApiVersion || rawVersion || resolveGeminiProxyApiVersion(input.params);
   const normalizedVersion = apiVersion.replace(/^\/+/, '');
   const geminiPrefix = `/gemini/${normalizedVersion}/`;
   const aliasPrefix = `/${normalizedVersion}/`;

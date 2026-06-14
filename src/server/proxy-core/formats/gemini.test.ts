@@ -532,6 +532,54 @@ describe('gemini native proxy routes', () => {
     });
   });
 
+  it('accepts Gemini v1 native model action routes without the /gemini prefix', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      candidates: [
+        {
+          content: {
+            parts: [{ text: 'hello from v1 gemini' }],
+            role: 'model',
+          },
+          finishReason: 'STOP',
+        },
+      ],
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/models/gemini-2.5-flash:generateContent?alt=json',
+      headers: {
+        'x-goog-api-key': 'sk-managed-gemini',
+      },
+      payload: {
+        contents: [
+          {
+            role: 'user',
+            parts: [{ text: 'hello' }],
+          },
+        ],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const [targetUrl, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(targetUrl).toContain('/v1/models/gemini-2.5-flash:generateContent');
+    expect(targetUrl).toContain('alt=json');
+    expect(targetUrl).toContain('key=gemini-key');
+    expect(JSON.parse(String(requestInit.body))).toEqual({
+      contents: [
+        {
+          role: 'user',
+          parts: [{ text: 'hello' }],
+        },
+      ],
+    });
+    expect(response.json().candidates?.[0]?.content?.parts?.[0]?.text).toBe('hello from v1 gemini');
+  });
+
   it('wraps gemini-cli native generateContent requests and unwraps the response payload', async () => {
     selectChannelMock.mockReturnValue({
       channel: { id: 31, routeId: 22 },

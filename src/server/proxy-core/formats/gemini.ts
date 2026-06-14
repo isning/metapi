@@ -155,6 +155,7 @@ export const geminiProtocolAdapter: DownstreamProtocolAdapter = {
   ],
   modelListModelProbes: GEMINI_MODEL_PROBES,
   routes: [
+    '/v1/models/*',
     '/v1beta/models/*',
     '/gemini/:geminiApiVersion/models/*',
     '/v1internal::generateContent',
