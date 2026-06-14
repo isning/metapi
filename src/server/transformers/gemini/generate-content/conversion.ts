@@ -155,6 +155,25 @@ function buildGeminiToolConfig(toolChoice: unknown): Record<string, unknown> | u
     }
     return { functionCallingConfig: { mode: 'AUTO' } };
   }
+  if (isRecord(toolChoice) && toolChoice.type === 'tool' && typeof toolChoice.name === 'string' && toolChoice.name.trim()) {
+    return {
+      functionCallingConfig: {
+        mode: 'ANY',
+        allowedFunctionNames: [toolChoice.name.trim()],
+      },
+    };
+  }
+  if (isRecord(toolChoice) && toolChoice.type === 'function' && isRecord(toolChoice.function)) {
+    const name = asTrimmedString(toolChoice.function.name);
+    if (name) {
+      return {
+        functionCallingConfig: {
+          mode: 'ANY',
+          allowedFunctionNames: [name],
+        },
+      };
+    }
+  }
   return undefined;
 }
 

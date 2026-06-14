@@ -118,6 +118,38 @@ describe('gemini generate-content request bridge', () => {
     expect(functionCallParts[0].thoughtSignature).toBe('real_sig_abc');
   });
 
+  it('maps named OpenAI tool_choice objects to Gemini allowed function names', () => {
+    const result = buildGeminiGenerateContentRequestFromOpenAi({
+      modelName: 'gemini-2.5-pro',
+      body: {
+        model: 'gemini-2.5-pro',
+        messages: [{ role: 'user', content: 'lookup weather' }],
+        tools: [
+          {
+            type: 'function',
+            function: {
+              name: 'lookup_weather',
+              parameters: { type: 'object', properties: {} },
+            },
+          },
+        ],
+        tool_choice: {
+          type: 'function',
+          function: {
+            name: 'lookup_weather',
+          },
+        },
+      },
+    }) as Record<string, unknown>;
+
+    expect(result.toolConfig).toEqual({
+      functionCallingConfig: {
+        mode: 'ANY',
+        allowedFunctionNames: ['lookup_weather'],
+      },
+    });
+  });
+
   it('splits text and signed functionCall parts into separate model messages', () => {
     const result = buildGeminiGenerateContentRequestFromOpenAi({
       modelName: 'gemini-3-flash-preview',
