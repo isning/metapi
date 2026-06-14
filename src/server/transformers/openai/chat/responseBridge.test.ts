@@ -155,6 +155,84 @@ describe('openai chat response bridge', () => {
     });
   });
 
+  it('preserves reasoning whitespace and tool calls from upstream chat finals', () => {
+    const normalized = normalizeOpenAiChatFinalToNormalized({
+      id: 'chatcmpl-deepseek',
+      model: 'deepseek-reasoner',
+      choices: [{
+        index: 0,
+        finish_reason: 'tool_calls',
+        message: {
+          role: 'assistant',
+          content: '',
+          reasoning_content: ' first token\n next token ',
+          tool_calls: [{
+            id: 'call_1',
+            type: 'function',
+            function: {
+              name: 'Glob',
+              arguments: '{"pattern":"README*"}',
+            },
+          }],
+        },
+      }],
+    }, 'deepseek-reasoner');
+
+    expect(normalized.reasoningContent).toBe(' first token\n next token ');
+    expect((normalized as any).choices[0].reasoningContent).toBe(' first token\n next token ');
+    expect(normalized.toolCalls).toEqual([{
+      id: 'call_1',
+      name: 'Glob',
+      arguments: '{"pattern":"README*"}',
+    }]);
+    expect(normalized.finishReason).toBe('tool_calls');
+  });
+
+  it('preserves reasoning whitespace from structured chat content fallback paths', () => {
+    const normalized = normalizeOpenAiChatFinalToNormalized({
+      id: 'chatcmpl-structured-reasoning',
+      model: 'deepseek-reasoner',
+      choices: [{
+        index: 0,
+        finish_reason: 'stop',
+        message: {
+          role: 'assistant',
+          content: {
+            reasoning_content: ' first structured token ',
+          },
+        },
+      }],
+    }, 'deepseek-reasoner');
+
+    expect(normalized.reasoningContent).toBe(' first structured token ');
+    expect((normalized as any).choices[0].reasoningContent).toBe(' first structured token ');
+  });
+
+  it('drops nameless upstream chat tool calls instead of preserving invalid tool history', () => {
+    const normalized = normalizeOpenAiChatFinalToNormalized({
+      id: 'chatcmpl-invalid-tool',
+      model: 'deepseek-reasoner',
+      choices: [{
+        index: 0,
+        finish_reason: 'tool_calls',
+        message: {
+          role: 'assistant',
+          content: '',
+          tool_calls: [{
+            id: 'call_missing_name',
+            type: 'function',
+            function: {
+              arguments: '{"pattern":"README*"}',
+            },
+          }],
+        },
+      }],
+    }, 'deepseek-reasoner');
+
+    expect(normalized.toolCalls).toEqual([]);
+    expect((normalized as any).choices[0].toolCalls).toEqual([]);
+  });
+
   it('builds synthetic chunks for multi-choice finals even when some choices omit toolCalls', () => {
     const chunks = buildNormalizedFinalToOpenAiChatChunks({
       id: 'chatcmpl-multi-1',

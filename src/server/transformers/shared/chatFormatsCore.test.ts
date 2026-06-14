@@ -31,6 +31,25 @@ function parseClaudeSsePayloads(lines: string[]): Array<{ event: string; payload
 }
 
 describe('chatFormatsCore inline think parsing', () => {
+  it('preserves leading and trailing whitespace in non-stream reasoning content', () => {
+    const normalized = normalizeUpstreamFinalResponse({
+      id: 'chatcmpl-reasoning-space',
+      model: 'deepseek-reasoner',
+      choices: [{
+        index: 0,
+        finish_reason: 'stop',
+        message: {
+          role: 'assistant',
+          content: {
+            reasoning_content: ' first token ',
+          },
+        },
+      }],
+    }, 'deepseek-reasoner');
+
+    expect(normalized.reasoningContent).toBe(' first token ');
+  });
+
   it('tracks split think tags across stream chunks', () => {
     const context = createStreamTransformContext('gpt-test');
 

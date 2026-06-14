@@ -108,7 +108,7 @@ function ensureIntegerTimestamp(value: unknown, fallback: number): number {
 }
 
 function joinNonEmpty(parts: string[]): string {
-  return parts.map((item) => item.trim()).filter((item) => item.length > 0).join('\n\n');
+  return parts.filter((item) => item.trim().length > 0).join('\n\n');
 }
 
 function joinIndexedResponsesText(partsByIndex: Record<number, string>): string {
@@ -587,6 +587,7 @@ function collectToolCallsFromOpenAiChoice(choice: any): Array<{ id: string; name
         ? fn.name.trim()
         : (typeof rawToolCall.name === 'string' ? rawToolCall.name.trim() : '')
     );
+    if (!name) continue;
     const argumentsText = (
       typeof fn.arguments === 'string'
         ? fn.arguments
@@ -617,6 +618,7 @@ function collectToolCallsFromClaudeContent(content: unknown): Array<{ id: string
         : `toolu_${index}`
     );
     const name = typeof block.name === 'string' ? block.name.trim() : '';
+    if (!name) continue;
     const argumentsText = stringifyUnknownValue(block.input);
     toolCalls.push({
       id,
@@ -643,6 +645,7 @@ function collectToolCallsFromResponsesPayload(payload: Record<string, unknown>):
         : (typeof item.id === 'string' && item.id.trim().length > 0 ? item.id.trim() : `call_${index}`)
     );
     const name = typeof item.name === 'string' ? item.name.trim() : '';
+    if (!name) continue;
     const argumentsText = (
       typeof item.arguments === 'string'
         ? item.arguments
@@ -677,6 +680,7 @@ function collectIndexedToolCallsFromResponsesPayload(
         : (typeof item.id === 'string' && item.id.trim().length > 0 ? item.id.trim() : `call_${index}`)
     );
     const name = typeof item.name === 'string' ? item.name.trim() : '';
+    if (!name) continue;
     const argumentsText = (
       typeof item.arguments === 'string'
         ? item.arguments

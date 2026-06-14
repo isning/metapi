@@ -2013,6 +2013,68 @@ describe('convertResponsesBodyToOpenAiBody', () => {
     ]);
   });
 
+  it('preserves reasoning whitespace when converting DeepSeek-style reasoning and tool calls to Responses input', () => {
+    const result = convertOpenAiBodyToResponsesBody(
+      {
+        model: 'deepseek-reasoner',
+        messages: [{
+          role: 'assistant',
+          content: '',
+          reasoning_content: ' step 1: inspect files\n step 2: call tool ',
+          tool_calls: [{
+            id: 'call_1',
+            type: 'function',
+            function: {
+              name: 'Glob',
+              arguments: '{"pattern":"README*"}',
+            },
+          }],
+        }],
+      },
+      'deepseek-reasoner',
+      false,
+    );
+
+    expect(result.input).toEqual([
+      {
+        type: 'reasoning',
+        summary: [{
+          type: 'summary_text',
+          text: ' step 1: inspect files\n step 2: call tool ',
+        }],
+      },
+      {
+        type: 'function_call',
+        call_id: 'call_1',
+        name: 'Glob',
+        arguments: '{"pattern":"README*"}',
+      },
+    ]);
+  });
+
+  it('does not fabricate Responses function calls from nameless OpenAI-compatible tool calls', () => {
+    const result = convertOpenAiBodyToResponsesBody(
+      {
+        model: 'deepseek-reasoner',
+        messages: [{
+          role: 'assistant',
+          content: '',
+          tool_calls: [{
+            id: 'call_missing_name',
+            type: 'function',
+            function: {
+              arguments: '{"pattern":"README*"}',
+            },
+          }],
+        }],
+      },
+      'deepseek-reasoner',
+      false,
+    );
+
+    expect(result.input).toEqual([]);
+  });
+
   it('preserves chat-native modalities and audio settings when converting to Responses bodies', () => {
     const result = convertOpenAiBodyToResponsesBody(
       {

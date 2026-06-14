@@ -234,16 +234,16 @@ export function extractTextContent(value: unknown): string {
   }
   if (!isRecord(value)) return '';
 
-  const direct = asTrimmedString(
+  const direct = (
     value.text
     ?? value.content
     ?? value.input_text
     ?? value.output_text
     ?? value.reasoning
     ?? value.reasoning_content
-    ?? value.thinking,
+    ?? value.thinking
   );
-  if (direct) return direct;
+  if (typeof direct === 'string' && direct.trim().length > 0) return direct;
 
   if (Array.isArray(value.parts)) return extractTextContent(value.parts);
   if (Array.isArray(value.content)) return extractTextContent(value.content);
@@ -608,13 +608,13 @@ export function convertOpenAiBodyToResponsesBody(
         item.reasoning_content
         ?? item.reasoning
         ?? item.thinking,
-      ).trim();
+      );
       const reasoningSignature = asTrimmedString(item.reasoning_signature);
-      if (reasoningContent || reasoningSignature) {
+      if (reasoningContent.trim().length > 0 || reasoningSignature) {
         const reasoningItem: Record<string, unknown> = {
           type: 'reasoning',
         };
-        if (reasoningContent) {
+        if (reasoningContent.trim().length > 0) {
           reasoningItem.summary = [{
             type: 'summary_text',
             text: reasoningContent,
@@ -652,8 +652,8 @@ export function convertOpenAiBodyToResponsesBody(
         const name = (
           asTrimmedString(functionPart.name)
           || asTrimmedString(toolCall.name)
-          || `tool_${index}`
         );
+        if (!name) continue;
         const argumentsValue = normalizeOpenAiToolArguments(
           functionPart.arguments ?? toolCall.arguments,
         );
