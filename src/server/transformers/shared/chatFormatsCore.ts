@@ -2328,10 +2328,11 @@ export function serializeFinalResponse(
     }
     for (let index = 0; index < toolCalls.length; index += 1) {
       const toolCall = toolCalls[index];
+      if (!asTrimmedString(toolCall.id) || !asTrimmedString(toolCall.name)) continue;
       contentBlocks.push({
         type: 'tool_use',
-        id: toolCall.id || `toolu_${index}`,
-        name: toolCall.name || `tool_${index}`,
+        id: toolCall.id,
+        name: toolCall.name,
         input: parseJsonLike(toolCall.arguments || ''),
       });
     }

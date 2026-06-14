@@ -282,11 +282,23 @@ export function canonicalRequestFromOpenAiBody(
       const resultText = typeof rawContent === 'string'
         ? rawContent
         : (!Array.isArray(rawContent) && !isRecord(rawContent) ? safeJsonStringify(rawContent ?? '') : '');
+      if (!toolCallId) {
+        if (resultText) {
+          messages.push({
+            role: 'user',
+            parts: [{
+              type: 'text',
+              text: `[tool_output_missing_call_id] ${resultText}`,
+            }],
+          });
+        }
+        continue;
+      }
       messages.push({
         role: 'tool',
         parts: [{
           type: 'tool_result',
-          toolCallId: toolCallId || 'tool',
+          toolCallId,
           ...(resultText ? { resultText } : {}),
           ...(Array.isArray(rawContent)
             ? { resultContent: cloneJsonValue(rawContent) as Array<string | Record<string, unknown>> }

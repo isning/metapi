@@ -97,10 +97,11 @@ function buildAnthropicContent(normalized: NormalizedFinalResponse): Array<Recor
   const toolCalls = Array.isArray(normalized.toolCalls) ? normalized.toolCalls : [];
   for (let index = 0; index < toolCalls.length; index += 1) {
     const toolCall = toolCalls[index];
+    if (!asTrimmedString(toolCall.id) || !asTrimmedString(toolCall.name)) continue;
     contentBlocks.push({
       type: 'tool_use',
-      id: toolCall.id || `toolu_${index}`,
-      name: toolCall.name || `tool_${index}`,
+      id: toolCall.id,
+      name: toolCall.name,
       input: parseJsonLike(toolCall.arguments || ''),
     });
   }
@@ -161,11 +162,13 @@ function extractAnthropicContentFromResponsesPayload(payload: unknown): Anthropi
     }
 
     if (itemType === 'function_call') {
-      const toolUseId = asTrimmedString(outputItem.call_id) || asTrimmedString(outputItem.id) || `toolu_${contentBlocks.length}`;
+      const toolUseId = asTrimmedString(outputItem.call_id) || asTrimmedString(outputItem.id);
+      const toolName = asTrimmedString(outputItem.name);
+      if (!toolUseId || !toolName) continue;
       contentBlocks.push({
         type: 'tool_use',
         id: toolUseId,
-        name: asTrimmedString(outputItem.name) || 'tool',
+        name: toolName,
         input: parseJsonLike(typeof outputItem.arguments === 'string' ? outputItem.arguments : ''),
       });
       continue;

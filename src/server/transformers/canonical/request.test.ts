@@ -305,6 +305,37 @@ describe('canonical request helpers', () => {
     expect(JSON.stringify(body.messages)).not.toContain('tool_0');
   });
 
+  it('downgrades tool result messages without tool_call_id before rebuilding upstream bodies', () => {
+    const request = canonicalRequestFromOpenAiBody({
+      body: {
+        model: 'deepseek-reasoner',
+        messages: [{
+          role: 'tool',
+          content: '{"ok":true}',
+        }],
+      },
+      surface: 'openai-chat',
+    });
+
+    const body = canonicalRequestToOpenAiChatBody(request);
+
+    expect(request.messages).toEqual([
+      {
+        role: 'user',
+        parts: [{
+          type: 'text',
+          text: '[tool_output_missing_call_id] {"ok":true}',
+        }],
+      },
+    ]);
+    expect(body.messages).toEqual([
+      {
+        role: 'user',
+        content: '[tool_output_missing_call_id] {"ok":true}',
+      },
+    ]);
+  });
+
   it('builds metadata back into OpenAI chat requests', () => {
     const body = canonicalRequestToOpenAiChatBody({
       operation: 'generate',
