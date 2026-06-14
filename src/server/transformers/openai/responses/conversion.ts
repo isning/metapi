@@ -799,14 +799,13 @@ type OpenAiToolCall = {
   };
 };
 
-function toOpenAiToolCall(item: Record<string, unknown>, fallbackIndex: number): OpenAiToolCall | null {
+function toOpenAiToolCall(item: Record<string, unknown>): OpenAiToolCall | null {
   const callId = (
     asTrimmedString(item.call_id)
     || asTrimmedString(item.id)
-    || `call_${Date.now()}_${fallbackIndex}`
   );
   const name = asTrimmedString(item.name);
-  if (!name) return null;
+  if (!callId || !name) return null;
 
   return {
     id: callId,
@@ -1006,7 +1005,7 @@ export function convertResponsesBodyToOpenAiBody(
 
     const itemType = asTrimmedString(item.type).toLowerCase();
     if (itemType.startsWith('mcp_') && isResponsesMcpItem(item)) {
-      const toolCall = toResponsesMcpCompatToolCall(item, `call_${Date.now()}_${functionCallIndex}`);
+      const toolCall = toResponsesMcpCompatToolCall(item);
       if (toolCall) {
         pendingToolCalls.push(toolCall as OpenAiToolCall);
         functionCallIndex += 1;
@@ -1015,7 +1014,7 @@ export function convertResponsesBodyToOpenAiBody(
     }
 
     if (itemType === 'function_call' || itemType === 'custom_tool_call') {
-      const toolCall = toOpenAiToolCall(item, functionCallIndex);
+      const toolCall = toOpenAiToolCall(item);
       functionCallIndex += 1;
       if (toolCall) pendingToolCalls.push(toolCall);
       return;

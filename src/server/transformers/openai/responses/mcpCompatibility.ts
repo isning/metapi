@@ -51,7 +51,6 @@ export function toResponsesMcpCompatToolName(itemType: string): string {
 
 export function toResponsesMcpCompatToolCall(
   item: Record<string, unknown>,
-  fallbackId: string,
 ): Record<string, unknown> | null {
   const envelope = createResponsesMcpCompatEnvelope(item);
   if (!envelope) return null;
@@ -60,8 +59,8 @@ export function toResponsesMcpCompatToolCall(
     asTrimmedString(item.call_id)
     || asTrimmedString(item.id)
     || asTrimmedString(item.approval_request_id)
-    || fallbackId
   );
+  if (!id) return null;
 
   return {
     id,
