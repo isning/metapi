@@ -17,6 +17,19 @@ function parseOpenAiSsePayload(lines: string[]): Record<string, unknown> {
   return JSON.parse(dataLine.slice(6)) as Record<string, unknown>;
 }
 
+function parseClaudeSsePayloads(lines: string[]): Array<{ event: string; payload: Record<string, unknown> }> {
+  return lines
+    .map((line) => {
+      const eventMatch = /^event: ([^\n]+)\ndata: (.*)\n\n$/s.exec(line);
+      if (!eventMatch) return null;
+      return {
+        event: eventMatch[1],
+        payload: JSON.parse(eventMatch[2]) as Record<string, unknown>,
+      };
+    })
+    .filter((item): item is { event: string; payload: Record<string, unknown> } => !!item);
+}
+
 describe('chatFormatsCore inline think parsing', () => {
   it('tracks split think tags across stream chunks', () => {
     const context = createStreamTransformContext('gpt-test');
@@ -646,6 +659,68 @@ describe('chatFormatsCore inline think parsing', () => {
       output: [],
     }, 'gpt-test')).toMatchObject({
       finishReason: 'stop',
+    });
+  });
+});
+
+describe('chatFormatsCore Claude stream serialization', () => {
+  it('serializes OpenAI-compatible reasoning_content as Claude thinking deltas before text', () => {
+    const context = createStreamTransformContext('deepseek-reasoner');
+    const claudeContext = createClaudeDownstreamContext();
+
+    const reasoningEvent = normalizeUpstreamStreamEvent({
+      id: 'chatcmpl-deepseek-thinking',
+      model: 'deepseek-reasoner',
+      choices: [{
+        index: 0,
+        delta: {
+          role: 'assistant',
+          reasoning_content: 'first think',
+        },
+        finish_reason: null,
+      }],
+    }, context, 'deepseek-reasoner');
+
+    const textEvent = normalizeUpstreamStreamEvent({
+      id: 'chatcmpl-deepseek-thinking',
+      model: 'deepseek-reasoner',
+      choices: [{
+        index: 0,
+        delta: {
+          content: 'final answer',
+        },
+        finish_reason: null,
+      }],
+    }, context, 'deepseek-reasoner');
+
+    const payloads = parseClaudeSsePayloads([
+      ...serializeNormalizedStreamEvent('claude', reasoningEvent, context, claudeContext),
+      ...serializeNormalizedStreamEvent('claude', textEvent, context, claudeContext),
+    ]);
+
+    expect(payloads.map((item) => item.event)).toEqual([
+      'message_start',
+      'content_block_start',
+      'content_block_delta',
+      'content_block_stop',
+      'content_block_start',
+      'content_block_delta',
+    ]);
+    expect(payloads[1].payload).toMatchObject({
+      type: 'content_block_start',
+      content_block: { type: 'thinking', thinking: '' },
+    });
+    expect(payloads[2].payload).toMatchObject({
+      type: 'content_block_delta',
+      delta: { type: 'thinking_delta', thinking: 'first think' },
+    });
+    expect(payloads[4].payload).toMatchObject({
+      type: 'content_block_start',
+      content_block: { type: 'text', text: '' },
+    });
+    expect(payloads[5].payload).toMatchObject({
+      type: 'content_block_delta',
+      delta: { type: 'text_delta', text: 'final answer' },
     });
   });
 });

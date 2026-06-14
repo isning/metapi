@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { handleOpenAiResponsesSurfaceRequest } from '../../proxy-core/surfaces/openAiResponsesSurface.js';
-import { ensureResponsesWebsocketTransport } from './responsesWebsocket.js';
+import { handleGenericSurfaceRequest } from '../../proxy-core/orchestration/genericProxyOrchestrator.js';
+import { responsesProtocolAdapter } from '../../proxy-core/formats/responses.js';
+import { ensureResponsesWebsocketTransport } from '../responsesWebsocket.js';
 
 function resolveAliasedResponsesDownstreamPath(
   request: FastifyRequest,
@@ -26,7 +27,7 @@ export async function responsesProxyRoute(app: FastifyInstance) {
   ensureResponsesWebsocketTransport(app);
 
   app.post('/v1/responses', async (request: FastifyRequest, reply: FastifyReply) =>
-    handleOpenAiResponsesSurfaceRequest(request, reply, '/v1/responses'));
+    handleGenericSurfaceRequest(request, reply, responsesProtocolAdapter, '/v1/responses'));
   app.get('/v1/responses', async (_request: FastifyRequest, reply: FastifyReply) =>
     reply.code(426).send({
       error: {
@@ -35,16 +36,16 @@ export async function responsesProxyRoute(app: FastifyInstance) {
       },
     }));
   app.post('/v1/responses/compact', async (request: FastifyRequest, reply: FastifyReply) =>
-    handleOpenAiResponsesSurfaceRequest(request, reply, '/v1/responses/compact'));
+    handleGenericSurfaceRequest(request, reply, responsesProtocolAdapter, '/v1/responses/compact'));
 
   app.post('/responses', async (request: FastifyRequest, reply: FastifyReply) =>
-    handleOpenAiResponsesSurfaceRequest(request, reply, '/v1/responses'));
+    handleGenericSurfaceRequest(request, reply, responsesProtocolAdapter, '/v1/responses'));
   app.post('/responses/*', async (request: FastifyRequest, reply: FastifyReply) => {
     const downstreamPath = resolveAliasedResponsesDownstreamPath(request);
     if (!downstreamPath) {
       return replyUnsupportedAliasedResponsesPath(reply);
     }
-    return handleOpenAiResponsesSurfaceRequest(request, reply, downstreamPath);
+    return handleGenericSurfaceRequest(request, reply, responsesProtocolAdapter, downstreamPath);
   });
   app.get('/responses', async (_request: FastifyRequest, reply: FastifyReply) =>
     reply.code(426).send({

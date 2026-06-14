@@ -8,9 +8,9 @@ import {
   applyUpstreamEndpointRuntimePreference,
   buildEndpointCapabilityProfile,
 } from './upstreamEndpointRuntimeMemory.js';
-import type { DownstreamFormat } from '../transformers/shared/normalized.js';
+import type { DownstreamFormat } from '../proxy-core/formats/protocolTypes.js';
 
-export type EndpointPreference = DownstreamFormat | 'responses';
+export type EndpointPreference = DownstreamFormat | 'responses' | string;
 export type EndpointDerivationHints = {
   oauthProvider?: string | null;
   requestKind?: 'default' | 'responses-compact' | 'claude-count-tokens';
@@ -150,6 +150,19 @@ export async function resolveUpstreamEndpointCandidates(
   },
   hints?: EndpointDerivationHints,
 ): Promise<UpstreamEndpoint[]> {
+  if (downstreamFormat === 'openai/embeddings') {
+    return ['embeddings' as any];
+  }
+  if (downstreamFormat === 'openai/completions') {
+    return ['completions' as any];
+  }
+  if (downstreamFormat.startsWith('openai/images/')) {
+    return [downstreamFormat.slice('openai/'.length) as any];
+  }
+  if (downstreamFormat.startsWith('openai/videos/')) {
+    return [downstreamFormat.slice('openai/'.length) as any];
+  }
+
   const sitePlatform = normalizePlatformName(context.site.platform);
   if (hints?.requestKind === 'responses-compact') {
     return ['responses'];

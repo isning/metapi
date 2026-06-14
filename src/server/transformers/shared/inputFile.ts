@@ -1,3 +1,5 @@
+import { ensureBase64DataUrl } from '../../shared/inputFileDataUrl.js';
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object';
 }
@@ -29,15 +31,7 @@ function normalizeFileSourceSelection(
   return { fileData: '', fileUrl: '', fileId };
 }
 
-export function ensureBase64DataUrl(fileData: string, mimeType?: string | null): string {
-  const trimmedData = asTrimmedString(fileData);
-  if (!trimmedData) return trimmedData;
-  if (splitBase64DataUrl(trimmedData)) return trimmedData;
-
-  const normalizedMimeType = asTrimmedString(mimeType).toLowerCase();
-  if (!normalizedMimeType) return trimmedData;
-  return `data:${normalizedMimeType};base64,${trimmedData}`;
-}
+export { ensureBase64DataUrl };
 
 export type NormalizedInputFile = {
   sourceType?: 'file' | 'input_file';

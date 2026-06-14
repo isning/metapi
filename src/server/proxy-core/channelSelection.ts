@@ -154,5 +154,12 @@ export async function selectProxyChannelForAttempt(input: {
     selected = await tokenRouter.selectChannel(input.requestedModel, input.downstreamPolicy);
   }
 
+  console.log('SELECT_PROXY_CHANNEL RESULT:', {
+    requestedModel: input.requestedModel,
+    retryCount: input.retryCount,
+    stickySessionKey: input.stickySessionKey,
+    selectedId: selected?.channel?.id,
+  });
+
   return selected;
 }

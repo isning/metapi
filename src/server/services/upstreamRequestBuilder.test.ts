@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest';
-
 import {
   buildClaudeCountTokensUpstreamRequest,
   buildUpstreamEndpointRequest,
 } from './upstreamRequestBuilder.js';
+import {
+  extractSafePassthroughHeaders,
+  extractResponsesPassthroughHeaders,
+} from '../proxy-core/formats/headerPassthrough.js';
 
 describe('upstreamRequestBuilder', () => {
   it('normalizes single-message OpenAI requests to structured responses input', () => {
+    const downstreamHeaders = {};
     const request = buildUpstreamEndpointRequest({
       endpoint: 'responses',
       modelName: 'upstream-gpt',
@@ -19,6 +23,8 @@ describe('upstreamRequestBuilder', () => {
         messages: [{ role: 'user', content: 'hello' }],
       },
       downstreamFormat: 'openai',
+      downstreamHeaders,
+      passthroughHeaders: extractSafePassthroughHeaders(downstreamHeaders),
     });
 
     expect(request.path).toBe('/v1/responses');
@@ -34,6 +40,7 @@ describe('upstreamRequestBuilder', () => {
   });
 
   it('forces store=false for sub2api native responses passthrough bodies', () => {
+    const downstreamHeaders = {};
     const request = buildUpstreamEndpointRequest({
       endpoint: 'responses',
       modelName: 'upstream-gpt',
@@ -48,6 +55,8 @@ describe('upstreamRequestBuilder', () => {
         input: 'hello',
         store: true,
       },
+      downstreamHeaders,
+      passthroughHeaders: extractResponsesPassthroughHeaders(downstreamHeaders),
     });
 
     expect(request.path).toBe('/v1/responses');
@@ -64,6 +73,9 @@ describe('upstreamRequestBuilder', () => {
   });
 
   it('overrides downstream Accept so responses transport mode wins', () => {
+    const downstreamHeaders = {
+      accept: 'application/json',
+    };
     const request = buildUpstreamEndpointRequest({
       endpoint: 'responses',
       modelName: 'upstream-gpt',
@@ -76,15 +88,30 @@ describe('upstreamRequestBuilder', () => {
         messages: [{ role: 'user', content: 'hello' }],
       },
       downstreamFormat: 'openai',
-      downstreamHeaders: {
-        accept: 'application/json',
-      },
+      downstreamHeaders,
+      passthroughHeaders: extractSafePassthroughHeaders(downstreamHeaders),
     });
 
     expect(request.headers.accept).toBe('text/event-stream');
   });
 
   it('applies a sub2api-style allowlist to generic passthrough headers', () => {
+    const downstreamHeaders = {
+      accept: 'application/json',
+      'accept-language': 'zh-CN',
+      'user-agent': 'client-ua/1.0',
+      originator: 'codex_cli_rs',
+      session_id: 'session-123',
+      conversation_id: 'conversation-123',
+      'x-codex-turn-state': 'turn-state',
+      'x-codex-turn-metadata': 'turn-metadata',
+      origin: 'https://client.example',
+      referer: 'https://client.example/chat',
+      'x-forwarded-for': '203.0.113.1',
+      'x-real-ip': '203.0.113.2',
+      version: '0.202.0',
+      'x-test-header': 'drop-me',
+    };
     const request = buildUpstreamEndpointRequest({
       endpoint: 'chat',
       modelName: 'upstream-gpt',
@@ -97,22 +124,8 @@ describe('upstreamRequestBuilder', () => {
         messages: [{ role: 'user', content: 'hello' }],
       },
       downstreamFormat: 'openai',
-      downstreamHeaders: {
-        accept: 'application/json',
-        'accept-language': 'zh-CN',
-        'user-agent': 'client-ua/1.0',
-        originator: 'codex_cli_rs',
-        session_id: 'session-123',
-        conversation_id: 'conversation-123',
-        'x-codex-turn-state': 'turn-state',
-        'x-codex-turn-metadata': 'turn-metadata',
-        origin: 'https://client.example',
-        referer: 'https://client.example/chat',
-        'x-forwarded-for': '203.0.113.1',
-        'x-real-ip': '203.0.113.2',
-        version: '0.202.0',
-        'x-test-header': 'drop-me',
-      },
+      downstreamHeaders,
+      passthroughHeaders: extractSafePassthroughHeaders(downstreamHeaders),
     });
 
     expect(request.headers.accept).toBe('application/json');

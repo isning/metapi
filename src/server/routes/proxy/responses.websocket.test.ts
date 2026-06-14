@@ -1011,7 +1011,10 @@ describe('responses websocket transport', () => {
 
     const socket = createClientSocket(baseUrl);
     await waitForSocketOpen(socket);
-    const messagesPromise = waitForSocketMessages(socket, 2);
+    const messagePromise = waitForSocketMessageMatching(
+      socket,
+      (message) => message?.type === 'response.incomplete',
+    );
 
     socket.send(JSON.stringify({
       type: 'response.create',
@@ -1019,17 +1022,20 @@ describe('responses websocket transport', () => {
       input: [],
     }));
 
-    const messages = await messagesPromise;
+    const message = await messagePromise;
+    await expect(
+      waitForSocketMessageMatching(
+        socket,
+        (nextMessage) => nextMessage?.type === 'error',
+        150,
+      ),
+    ).rejects.toThrow('Timed out waiting for matching websocket message');
     socket.close();
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(messages.map((message) => message?.type)).toEqual([
-      'response.created',
-      'response.incomplete',
-    ]);
-    expect(messages.some((message) => message?.type === 'error')).toBe(false);
-    const terminalMessage = messages[1];
-    expect(terminalMessage?.response?.incomplete_details?.reason).toBe('max_output_tokens');
+    expect(message?.type).toBe('response.incomplete');
+    expect(message?.response?.id).toBe('resp_http_incomplete');
+    expect(message?.response?.incomplete_details?.reason).toBe('max_output_tokens');
   });
 
   it('falls back to the HTTP responses executor when the upstream codex websocket upgrade returns 401', async () => {

@@ -151,7 +151,7 @@ export async function probeRuntimeModel(input: {
       };
     }
 
-    const providerHeaders = buildOauthProviderHeaders({
+    const platformHeaders = buildOauthProviderHeaders({
       account: input.account,
       downstreamHeaders: {},
     });
@@ -180,7 +180,7 @@ export async function probeRuntimeModel(input: {
         openaiBody,
         downstreamFormat: 'openai',
         downstreamHeaders: {},
-        providerHeaders,
+        platformHeaders,
       });
       return {
         endpoint,

@@ -17,7 +17,7 @@ function expectImportsRouteRefreshWorkflow(source: string): void {
 }
 
 function expectCallsSelectProxyChannelForAttempt(source: string): void {
-  expect(source).toMatch(/\bselectProxyChannelForAttempt\s*\(/);
+  expect(source).toMatch(/\bselect(?:Proxy|Surface)ChannelForAttempt\s*\(/);
 }
 
 function expectCallsRebuildRoutesOnly(source: string): void {
@@ -40,16 +40,18 @@ describe('route refresh workflow architecture boundaries', () => {
   });
 
   it('keeps proxy fallback refreshes and scheduler hooks on the route refresh workflow', () => {
-    const completionsSource = readSource('../proxy/completions.ts');
-    const embeddingsSource = readSource('../proxy/embeddings.ts');
+    const completionsSource = readSource('../../proxy-core/formats/completions.ts');
+    const embeddingsSource = readSource('../../proxy-core/formats/embeddings.ts');
     const imagesSource = readSource('../proxy/images.ts');
     const modelsRouteSource = readSource('../proxy/models.ts');
     const searchSource = readSource('../proxy/search.ts');
     const videosSource = readSource('../proxy/videos.ts');
     const schedulerSource = readSource('../../services/checkinScheduler.ts');
     const oauthServiceSource = readSource('../../services/oauth/service.ts');
-    const sharedSurfaceSource = readSource('../../proxy-core/surfaces/sharedSurface.ts');
-    const geminiSurfaceSource = readSource('../../proxy-core/surfaces/geminiSurface.ts');
+    const sharedOrchestrationSource = readSource('../../proxy-core/orchestration/sharedProxyOrchestration.ts');
+    const genericOrchestratorSource = readSource('../../proxy-core/orchestration/genericProxyOrchestrator.ts');
+    const modelListOrchestratorSource = readSource('../../proxy-core/orchestration/modelListOrchestrator.ts');
+    const geminiAdapterSource = readSource('../../proxy-core/formats/gemini.ts');
     const channelSelectionSource = readSource('../../proxy-core/channelSelection.ts');
 
     for (const source of [schedulerSource, oauthServiceSource, channelSelectionSource]) {
@@ -64,24 +66,24 @@ describe('route refresh workflow architecture boundaries', () => {
       modelsRouteSource,
       searchSource,
       videosSource,
-      sharedSurfaceSource,
-      geminiSurfaceSource,
+      sharedOrchestrationSource,
+      modelListOrchestratorSource,
     ]) {
       expectNoDirectModelServiceRouteRefresh(source);
     }
 
     for (const source of [
-      completionsSource,
-      embeddingsSource,
       imagesSource,
       searchSource,
       videosSource,
-      sharedSurfaceSource,
+      sharedOrchestrationSource,
+      genericOrchestratorSource,
     ]) {
       expectCallsSelectProxyChannelForAttempt(source);
     }
 
-    expect(geminiSurfaceSource).toMatch(/\bselectGeminiChannel\s*\(/);
-    expect(geminiSurfaceSource).toMatch(/\bselectNextGeminiProbeChannel\s*\(/);
+    expectImportsRouteRefreshWorkflow(modelListOrchestratorSource);
+    expect(modelListOrchestratorSource).toMatch(/\bselectModelListChannel\s*\(/);
+    expect(geminiAdapterSource).toContain('modelListModelProbes: GEMINI_MODEL_PROBES');
   });
 });

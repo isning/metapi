@@ -36,6 +36,7 @@ export type ClaudeDownstreamContext = {
   contentBlockStarted: boolean;
   doneSent: boolean;
   textBlockIndex: number | null;
+  thinkingBlockIndex: number | null;
   nextContentBlockIndex: number;
   toolBlocks: Record<number, {
     contentIndex: number;
@@ -294,6 +295,7 @@ export function createClaudeDownstreamContext(): ClaudeDownstreamContext {
     contentBlockStarted: false,
     doneSent: false,
     textBlockIndex: null,
+    thinkingBlockIndex: null,
     nextContentBlockIndex: 0,
     toolBlocks: {},
   };
@@ -2051,6 +2053,39 @@ function closeClaudeTextBlock(
   })];
 }
 
+function ensureClaudeThinkingBlockStart(
+  claudeContext: ClaudeDownstreamContext,
+): string[] {
+  if (claudeContext.contentBlockStarted && claudeContext.thinkingBlockIndex !== null) return [];
+  const contentIndex = claudeContext.nextContentBlockIndex;
+  claudeContext.nextContentBlockIndex += 1;
+  claudeContext.contentBlockStarted = true;
+  claudeContext.thinkingBlockIndex = contentIndex;
+
+  return [serializeSse('content_block_start', {
+    type: 'content_block_start',
+    index: contentIndex,
+    content_block: {
+      type: 'thinking',
+      thinking: '',
+    },
+  })];
+}
+
+function closeClaudeThinkingBlock(
+  claudeContext: ClaudeDownstreamContext,
+): string[] {
+  if (!claudeContext.contentBlockStarted || claudeContext.thinkingBlockIndex === null) return [];
+
+  const contentIndex = claudeContext.thinkingBlockIndex;
+  claudeContext.contentBlockStarted = false;
+  claudeContext.thinkingBlockIndex = null;
+  return [serializeSse('content_block_stop', {
+    type: 'content_block_stop',
+    index: contentIndex,
+  })];
+}
+
 function normalizeToolContentIndex(raw: unknown): number {
   if (typeof raw === 'number' && Number.isFinite(raw)) {
     return Math.max(0, Math.trunc(raw));
@@ -2135,6 +2170,7 @@ function buildClaudeDoneEvents(
   events.push(...ensureClaudeStartEvents(context, claudeContext));
 
   events.push(...closeClaudeTextBlock(claudeContext));
+  events.push(...closeClaudeThinkingBlock(claudeContext));
   events.push(...closeClaudeToolBlocks(claudeContext));
 
   events.push(serializeSse('message_delta', {
@@ -2169,13 +2205,23 @@ export function serializeNormalizedStreamEvent(
     events.push(...ensureClaudeStartEvents(context, claudeContext));
   }
 
-  const mergedText = joinNonEmpty([
-    event.reasoningDelta || '',
-    event.contentDelta || '',
-  ]);
+  if (event.reasoningDelta) {
+    events.push(...closeClaudeToolBlocks(claudeContext));
+    events.push(...closeClaudeTextBlock(claudeContext));
+    events.push(...ensureClaudeThinkingBlockStart(claudeContext));
+    events.push(serializeSse('content_block_delta', {
+      type: 'content_block_delta',
+      index: claudeContext.thinkingBlockIndex ?? 0,
+      delta: {
+        type: 'thinking_delta',
+        thinking: event.reasoningDelta,
+      },
+    }));
+  }
 
   if (Array.isArray(event.toolCallDeltas) && event.toolCallDeltas.length > 0) {
     events.push(...closeClaudeTextBlock(claudeContext));
+    events.push(...closeClaudeThinkingBlock(claudeContext));
     for (const toolDelta of event.toolCallDeltas) {
       const toolBlock = ensureClaudeToolBlockStart(claudeContext, toolDelta);
       events.push(...toolBlock.events);
@@ -2193,15 +2239,16 @@ export function serializeNormalizedStreamEvent(
     }
   }
 
-  if (mergedText) {
+  if (event.contentDelta) {
     events.push(...closeClaudeToolBlocks(claudeContext));
+    events.push(...closeClaudeThinkingBlock(claudeContext));
     events.push(...ensureClaudeTextBlockStart(claudeContext));
     events.push(serializeSse('content_block_delta', {
       type: 'content_block_delta',
       index: claudeContext.textBlockIndex ?? 0,
       delta: {
         type: 'text_delta',
-        text: mergedText,
+        text: event.contentDelta,
       },
     }));
   }
