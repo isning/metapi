@@ -300,4 +300,23 @@ describe('anthropic messages stream bridge', () => {
     expect(serialized.indexOf('"type":"web_search_tool_result"')).toBeGreaterThan(serialized.indexOf('"type":"server_tool_use"'));
     expect(serialized).toContain('"text":"It is sunny."');
   });
+
+  it('drops normalized tool-call deltas without stable ids or names instead of emitting placeholder tool_use blocks', () => {
+    const streamContext = anthropicMessagesStream.createContext('claude-test');
+    const downstreamContext = anthropicMessagesStream.createDownstreamContext();
+
+    const lines = anthropicMessagesStream.serializeEvent(
+      {
+        toolCallDeltas: [{
+          index: 0,
+          argumentsDelta: '{"city":"Paris"}',
+        }],
+      },
+      streamContext,
+      downstreamContext,
+    );
+
+    expect(lines.some((line) => line.includes('"type":"tool_use"'))).toBe(false);
+    expect(lines.some((line) => line.includes('"name":'))).toBe(false);
+  });
 });

@@ -141,10 +141,13 @@ function buildAnthropicFinalContentBlocks(
   if (Array.isArray(normalizedFinal.toolCalls)) {
     for (let index = 0; index < normalizedFinal.toolCalls.length; index += 1) {
       const toolCall = normalizedFinal.toolCalls[index];
+      const id = asTrimmedString(toolCall.id);
+      const name = asTrimmedString(toolCall.name);
+      if (!id || !name) continue;
       contentBlocks.push({
         type: 'tool_use',
-        id: toolCall.id || `toolu_${index}`,
-        name: toolCall.name || `tool_${index}`,
+        id,
+        name,
         input: (() => {
           const rawArguments = toolCall.arguments || '';
           try {
@@ -536,10 +539,13 @@ function ensureToolBlockStart(
   const toolSlot = Number.isFinite(toolDelta.index) ? Math.max(0, Math.trunc(toolDelta.index)) : 0;
   let state = context.toolBlocks[toolSlot];
   if (!state) {
+    if (!toolDelta.id || !toolDelta.name) {
+      return { events: [], contentIndex: -1 };
+    }
     state = {
       contentIndex: allocateContentIndex(context),
-      id: toolDelta.id || `toolu_${toolSlot}`,
-      name: toolDelta.name || `tool_${toolSlot}`,
+      id: toolDelta.id,
+      name: toolDelta.name,
       open: false,
       sourceIndex: toolSlot,
     };
@@ -1118,6 +1124,7 @@ export const anthropicMessagesStream = {
           Number.isFinite(toolDelta.index) ? Math.max(0, Math.trunc(toolDelta.index)) : 0,
         ));
         const toolBlock = ensureToolBlockStart(context, toolDelta);
+        if (toolBlock.contentIndex < 0) continue;
         events.push(...toolBlock.events);
         if (toolDelta.argumentsDelta) {
           events.push(serializeSse('content_block_delta', {

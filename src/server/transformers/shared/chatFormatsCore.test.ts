@@ -742,6 +742,25 @@ describe('chatFormatsCore Claude stream serialization', () => {
       delta: { type: 'text_delta', text: 'final answer' },
     });
   });
+
+  it('drops incomplete tool-call stream deltas instead of emitting Claude placeholder tool_use blocks', () => {
+    const context = createStreamTransformContext('gpt-test');
+    const claudeContext = createClaudeDownstreamContext();
+
+    const lines = serializeNormalizedStreamEvent(
+      'claude',
+      {
+        toolCallDeltas: [{
+          index: 0,
+          argumentsDelta: '{"city":"Paris"}',
+        }],
+      },
+      context,
+      claudeContext,
+    );
+
+    expect(lines).toEqual([]);
+  });
 });
 
 describe('convertClaudeRequestToOpenAiBody', () => {
@@ -788,5 +807,30 @@ describe('convertClaudeRequestToOpenAiBody', () => {
     expect(toolMessage).toBeTruthy();
     expect(Array.isArray(toolMessage?.content)).toBe(true);
     expect(toolMessage?.content.some((part: any) => part?.type === 'image_url')).toBe(true);
+  });
+
+  it('drops Claude tool_use blocks without stable ids or names instead of synthesizing OpenAI tool calls', () => {
+    const { messages } = convertClaudeRequestToOpenAiBody({
+      model: 'gpt-test',
+      messages: [
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool_use',
+              name: 'lookup_weather',
+              input: { city: 'Paris' },
+            },
+            {
+              type: 'tool_use',
+              id: 'call_missing_name',
+              input: { city: 'Paris' },
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(messages).toEqual([]);
   });
 });

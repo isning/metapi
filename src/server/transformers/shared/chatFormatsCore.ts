@@ -1176,8 +1176,9 @@ export function convertClaudeRequestToOpenAiBody(body: Record<string, unknown>):
       if (mappedRole === 'assistant' && blockType === 'tool_use') {
         const id = typeof block.id === 'string' && block.id.trim().length > 0
           ? block.id.trim()
-          : `call_${toolCalls.length}`;
+          : '';
         const name = typeof block.name === 'string' ? block.name.trim() : '';
+        if (!id || !name) continue;
         const rawInput = block.input;
         const args = (
           typeof rawInput === 'string'
@@ -1185,13 +1186,13 @@ export function convertClaudeRequestToOpenAiBody(body: Record<string, unknown>):
             : stringifyUnknownValue(rawInput) || '{}'
         );
 
-        const fn: Record<string, unknown> = { arguments: args };
-        if (name) fn.name = name;
-
         toolCalls.push({
           id,
           type: 'function',
-          function: fn,
+          function: {
+            name,
+            arguments: args,
+          },
         });
         continue;
       }
@@ -2100,12 +2101,13 @@ function ensureClaudeToolBlockStart(
   const toolSlot = normalizeToolContentIndex(toolDelta.index);
   let state = claudeContext.toolBlocks[toolSlot];
   if (!state) {
-    const fallbackId = `toolu_meta_${toolSlot}`;
-    const fallbackName = `tool_${toolSlot}`;
+    if (!toolDelta.id || !toolDelta.name) {
+      return { events: [], contentIndex: -1 };
+    }
     state = {
       contentIndex: claudeContext.nextContentBlockIndex,
-      id: toolDelta.id || fallbackId,
-      name: toolDelta.name || fallbackName,
+      id: toolDelta.id,
+      name: toolDelta.name,
       open: false,
     };
     claudeContext.nextContentBlockIndex += 1;
@@ -2224,6 +2226,7 @@ export function serializeNormalizedStreamEvent(
     events.push(...closeClaudeThinkingBlock(claudeContext));
     for (const toolDelta of event.toolCallDeltas) {
       const toolBlock = ensureClaudeToolBlockStart(claudeContext, toolDelta);
+      if (toolBlock.contentIndex < 0) continue;
       events.push(...toolBlock.events);
 
       if (toolDelta.argumentsDelta !== undefined && toolDelta.argumentsDelta.length > 0) {
@@ -2278,15 +2281,17 @@ export function serializeStreamDone(
 function toOpenAiToolCalls(
   toolCalls: Array<{ id: string; name: string; arguments: string }>,
 ): Array<Record<string, unknown>> {
-  return toolCalls.map((toolCall, index) => ({
-    index,
-    id: toolCall.id || `call_${index}`,
-    type: 'function',
-    function: {
-      name: toolCall.name || '',
-      arguments: toolCall.arguments || '',
-    },
-  }));
+  return toolCalls
+    .filter((toolCall) => toolCall.id.trim().length > 0 && toolCall.name.trim().length > 0)
+    .map((toolCall, index) => ({
+      index,
+      id: toolCall.id,
+      type: 'function',
+      function: {
+        name: toolCall.name,
+        arguments: toolCall.arguments || '',
+      },
+    }));
 }
 
 export function serializeFinalResponse(
