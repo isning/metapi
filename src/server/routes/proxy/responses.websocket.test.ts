@@ -320,9 +320,10 @@ describe('responses websocket transport', () => {
   let rejectedUpgradeBody: string;
 
   beforeAll(async () => {
-    const { responsesProxyRoute } = await import('./responses.js');
+    const { registerDownstreamProtocolSurface } = await import('../../proxy-core/surfaces/downstreamProtocolSurface.js');
+    const { responsesProtocolAdapter } = await import('../../proxy-core/formats/responses.js');
     app = Fastify();
-    await app.register(responsesProxyRoute);
+    await registerDownstreamProtocolSurface(app, responsesProtocolAdapter);
     await app.listen({ port: 0, host: '127.0.0.1' });
     const address = app.server.address() as AddressInfo;
     baseUrl = `ws://127.0.0.1:${address.port}`;

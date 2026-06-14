@@ -3,6 +3,7 @@ import { proxyAuthMiddleware } from '../../middleware/auth.js';
 import { getAllDownstreamProtocolAdapters } from '../../proxy-core/formats/registry.js';
 import { registerDownstreamProtocolSurface } from '../../proxy-core/surfaces/downstreamProtocolSurface.js';
 import { modelsProxyRoute } from './models.js';
+import { responsesProxyRoute } from './responses.js';
 import { imagesProxyRoute } from './images.js';
 import { searchProxyRoute } from './search.js';
 import { videosProxyRoute } from './videos.js';
@@ -21,6 +22,7 @@ export async function proxyRoutes(app: FastifyInstance) {
 
   // Register remaining standalone proxy endpoints
   await app.register(modelsProxyRoute);
+  await app.register(responsesProxyRoute);
   await app.register(searchProxyRoute);
   await app.register(filesProxyRoute);
   await app.register(imagesProxyRoute);

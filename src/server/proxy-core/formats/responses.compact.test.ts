@@ -5,9 +5,10 @@ describe('responses proxy compact route', () => {
   let app: FastifyInstance;
 
   beforeAll(async () => {
-    const { responsesProxyRoute } = await import('../../routes/proxy/responses.js');
+    const { registerDownstreamProtocolSurface } = await import('../surfaces/downstreamProtocolSurface.js');
+    const { responsesProtocolAdapter } = await import('./responses.js');
     app = Fastify();
-    await app.register(responsesProxyRoute);
+    await registerDownstreamProtocolSurface(app, responsesProtocolAdapter);
   });
 
   afterAll(async () => {

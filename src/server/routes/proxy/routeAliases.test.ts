@@ -25,7 +25,9 @@ describe('proxy route aliases', () => {
     const { registerDownstreamProtocolSurface } = await import('../../proxy-core/surfaces/downstreamProtocolSurface.js');
     const { responsesProxyRoute } = await import('./responses.js');
     const { openaiChatProtocolAdapter } = await import('../../proxy-core/formats/openaiChat.js');
+    const { responsesProtocolAdapter } = await import('../../proxy-core/formats/responses.js');
     app = Fastify();
+    await registerDownstreamProtocolSurface(app, responsesProtocolAdapter);
     await app.register(responsesProxyRoute);
     await registerDownstreamProtocolSurface(app, openaiChatProtocolAdapter);
   });
@@ -43,6 +45,22 @@ describe('proxy route aliases', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/responses',
+      payload: { model: 'gpt-5.2', input: 'hello' },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(handleGenericSurfaceRequestMock).toHaveBeenCalledTimes(1);
+    expect(response.json()).toEqual({
+      ok: true,
+      downstreamPath: '/v1/responses',
+      downstreamFormat: 'responses',
+    });
+  });
+
+  it('registers /v1/responses through the main proxy router without duplicating route-layer logic', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
       payload: { model: 'gpt-5.2', input: 'hello' },
     });
 
