@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { asc, eq } from 'drizzle-orm';
 import { tokenRouteFixture } from '../test/routeGraphFixtures.js';
+import { compileRouteGraphSource } from '../../shared/routeGraph.js';
 
 type DbModule = typeof import('../db/index.js');
 type BackupServiceModule = typeof import('./backupService.js');
@@ -14,6 +15,7 @@ describe('backupService', () => {
   let schema: DbModule['schema'];
   let backupService: BackupServiceModule;
   let loadRouteGraphLegacyProjections: RouteGraphServiceModule['loadRouteGraphLegacyProjections'];
+  let publishRouteGraphSource: RouteGraphServiceModule['publishRouteGraphSource'];
   let dataDir = '';
 
   beforeAll(async () => {
@@ -29,6 +31,7 @@ describe('backupService', () => {
     schema = dbModule.schema;
     backupService = serviceModule;
     loadRouteGraphLegacyProjections = routeGraphServiceModule.loadRouteGraphLegacyProjections;
+    publishRouteGraphSource = routeGraphServiceModule.publishRouteGraphSource;
   });
 
   beforeEach(async () => {
@@ -55,7 +58,7 @@ describe('backupService', () => {
     delete process.env.DATA_DIR;
   });
 
-  it('exports backup-owned config in v2.1 backups and still roundtrips core connection fields', async () => {
+  it('exports backup-owned config in v2.2 backups and still roundtrips core connection fields', async () => {
     const now = new Date().toISOString();
     const site = await db.insert(schema.sites).values({
       name: 'roundtrip-site',
@@ -66,6 +69,13 @@ describe('backupService', () => {
       useSystemProxy: true,
       customHeaders: JSON.stringify({
         'cf-access-client-id': 'roundtrip-client',
+      }),
+      compatibilityPolicy: JSON.stringify({
+        reasoningHistory: {
+          transport: {
+            mode: 'content_think_tag',
+          },
+        },
       }),
       status: 'active',
       isPinned: true,
@@ -102,6 +112,13 @@ describe('backupService', () => {
       name: 'default',
       token: 'sk-roundtrip-token',
       source: 'manual',
+      compatibilityPolicy: JSON.stringify({
+        reasoningHistory: {
+          transport: {
+            mode: 'native',
+          },
+        },
+      }),
       enabled: true,
       isDefault: true,
       createdAt: now,
@@ -140,6 +157,71 @@ describe('backupService', () => {
       groupRouteId: route.id,
       sourceRouteId: sourceRoute.id,
     }).run();
+
+    const graphSource = {
+      version: 1,
+      nodes: [
+        {
+          id: 'entry:manual:roundtrip',
+          type: 'entry',
+          name: 'Manual graph entry',
+          enabled: true,
+          visibility: 'public',
+          ownership: 'manual',
+          match: {
+            kind: 'model',
+            requestedModelPattern: 'gpt-graph',
+            displayName: 'gpt-graph',
+          },
+          selectionStrategy: 'weighted',
+        },
+        {
+          id: 'endpoint:manual:roundtrip',
+          type: 'model_endpoint',
+          name: 'Manual endpoint',
+          enabled: true,
+          visibility: 'internal',
+          ownership: 'manual',
+          compatibilityPolicy: {
+            reasoningHistory: {
+              transport: {
+                mode: 'drop',
+              },
+            },
+          },
+          config: {
+            targets: [{
+              channelId: 'manual-channel',
+              model: 'gpt-graph-upstream',
+              compatibilityPolicy: {
+                reasoningHistory: {
+                  transport: {
+                    mode: 'native',
+                  },
+                },
+              },
+            }],
+            targetSelection: {
+              strategy: 'weighted',
+            },
+          },
+        },
+      ],
+      edges: [
+        {
+          id: 'entry-to-endpoint',
+          sourceNodeId: 'entry:manual:roundtrip',
+          sourcePortId: 'bidirect.out',
+          targetNodeId: 'endpoint:manual:roundtrip',
+          targetPortId: 'bidirect.in',
+          kind: 'bidirect_flow',
+          ownership: 'manual',
+        },
+      ],
+      macros: [],
+    };
+    const published = await publishRouteGraphSource({ sourceGraph: graphSource, createdBy: 'test' });
+    expect(published.ok).toBe(true);
 
     await db.insert(schema.routeChannels).values({
       routeId: route.id,
@@ -222,7 +304,16 @@ describe('backupService', () => {
     }).run();
 
     const exported = await backupService.exportBackup('all') as any;
-    expect(exported.version).toBe('2.1');
+    expect(exported.version).toBe('2.2');
+    expect(exported.accounts.routeGraph.versions).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        sourceGraphJson: expect.stringContaining('entry:manual:roundtrip'),
+        compiledGraphJson: expect.stringContaining('gpt-graph'),
+      }),
+    ]));
+    expect(exported.accounts.routeGraph.activeVersion).toEqual(expect.objectContaining({
+      versionId: expect.any(Number),
+    }));
     expect(exported.accounts.siteDisabledModels).toEqual([
       { siteId: site.id, modelName: 'gpt-hidden' },
     ]);
@@ -261,6 +352,8 @@ describe('backupService', () => {
     expect(exported.accounts.accounts[0]).not.toHaveProperty('lastBalanceRefresh');
     expect(exported.accounts.routeChannels[0]).not.toHaveProperty('successCount');
     expect(exported.accounts.routeChannels[0]).not.toHaveProperty('lastUsedAt');
+    expect(exported.accounts.sites[0].compatibilityPolicy).toContain('content_think_tag');
+    expect(exported.accounts.accountTokens[0].compatibilityPolicy).toContain('"native"');
     expect(exported.accounts.downstreamApiKeys[0]).not.toHaveProperty('usedCost');
     expect(exported.accounts.downstreamApiKeys[0]).not.toHaveProperty('usedRequests');
     expect(exported.accounts.downstreamApiKeys[0]).not.toHaveProperty('lastUsedAt');
@@ -284,6 +377,13 @@ describe('backupService', () => {
     expect(restoredSite?.externalCheckinUrl).toBe('https://checkin.roundtrip.example.com');
     expect(restoredSite?.useSystemProxy).toBe(true);
     expect(restoredSite?.customHeaders).toBe('{"cf-access-client-id":"roundtrip-client"}');
+    expect(JSON.parse(restoredSite?.compatibilityPolicy || '{}')).toMatchObject({
+      reasoningHistory: {
+        transport: {
+          mode: 'content_think_tag',
+        },
+      },
+    });
     expect(restoredSite?.isPinned).toBe(true);
     expect(restoredSite?.sortOrder).toBe(9);
 
@@ -300,6 +400,14 @@ describe('backupService', () => {
     expect(restoredRoute?.decisionSnapshot).toBe('{"channelIds":[1,2]}');
     expect(restoredRoute?.decisionRefreshedAt).toBe(now);
     expect(restoredRoute?.routingStrategy).toBe('round_robin');
+    const restoredToken = await db.select().from(schema.accountTokens).where(eq(schema.accountTokens.id, accountToken.id)).get();
+    expect(JSON.parse(restoredToken?.compatibilityPolicy || '{}')).toMatchObject({
+      reasoningHistory: {
+        transport: {
+          mode: 'native',
+        },
+      },
+    });
     const restoredGroupSource = await db.select().from(schema.routeGroupSources).where(eq(schema.routeGroupSources.groupRouteId, route.id)).get();
     expect(restoredGroupSource?.sourceRouteId).toBe(sourceRoute.id);
 
@@ -329,6 +437,14 @@ describe('backupService', () => {
         lastUsedAt: now,
       }),
     ]);
+
+    const restoredGraphVersion = await db.select().from(schema.routeGraphVersions).where(eq(schema.routeGraphVersions.status, 'active')).get();
+    expect(restoredGraphVersion?.sourceGraphJson).toContain('entry:manual:roundtrip');
+    expect(compileRouteGraphSource(JSON.parse(restoredGraphVersion?.sourceGraphJson || '{}')).compiled.publicModels).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        model: 'gpt-graph',
+      }),
+    ]));
   });
 
   it('does not export runtime database config in preferences backups', async () => {
@@ -343,6 +459,16 @@ describe('backupService', () => {
     const exportedSettingKeys = exported.preferences.settings.map((row: { key: string }) => row.key);
 
     expect(exportedSettingKeys).toContain('routing_fallback_unit_cost');
+    expect(exported.preferences.settings).toEqual(expect.arrayContaining([
+      { key: 'metapi_config_version', value: '2.2' },
+      {
+        key: 'pricing_reference_config_v1',
+        value: expect.objectContaining({
+          schemaVersion: 1,
+          defaultReferenceMode: 'auto',
+        }),
+      },
+    ]));
     expect(exportedSettingKeys).not.toContain('db_type');
     expect(exportedSettingKeys).not.toContain('db_url');
     expect(exportedSettingKeys).not.toContain('db_ssl');
@@ -350,7 +476,7 @@ describe('backupService', () => {
 
   it('ignores imported runtime database config settings', async () => {
     const result = await backupService.importBackup({
-      version: '2.1',
+      version: '2.2',
       timestamp: Date.now(),
       type: 'preferences',
       preferences: {
@@ -364,17 +490,96 @@ describe('backupService', () => {
     });
 
     expect(result.sections.preferences).toBe(true);
-    expect(result.appliedSettings).toEqual([
+    expect(result.appliedSettings).toEqual(expect.arrayContaining([
       { key: 'routing_fallback_unit_cost', value: 0.25 },
-    ]);
+      { key: 'metapi_config_version', value: '2.2' },
+      {
+        key: 'pricing_reference_config_v1',
+        value: expect.objectContaining({
+          schemaVersion: 1,
+          defaultReferenceMode: 'auto',
+          fallbackProfile: 'system_default',
+        }),
+      },
+    ]));
 
     const settingsRows = await db.select().from(schema.settings).all();
     const savedKeys = settingsRows.map((row) => row.key);
 
     expect(savedKeys).toContain('routing_fallback_unit_cost');
+    expect(savedKeys).toContain('metapi_config_version');
+    expect(savedKeys).toContain('pricing_reference_config_v1');
     expect(savedKeys).not.toContain('db_type');
     expect(savedKeys).not.toContain('db_url');
     expect(savedKeys).not.toContain('db_ssl');
+  });
+
+  it('migrates older preference backups to the current config version without overwriting pricing choices', async () => {
+    const result = await backupService.importBackup({
+      version: '2.1',
+      timestamp: Date.now(),
+      type: 'preferences',
+      preferences: {
+        settings: [
+          { key: 'metapi_config_version', value: '2.1' },
+          {
+            key: 'pricing_reference_config_v1',
+            value: {
+              schemaVersion: 1,
+              defaultReferenceMode: 'manual',
+              fallbackProfile: 'free',
+              catalog: {
+                builtInCatalogEnabled: false,
+              },
+              driftCheck: {
+                enabled: true,
+                windowHours: 72,
+                minSampleSize: 99,
+                relativeTolerance: 0.25,
+                absoluteToleranceUsd: 0.0002,
+                notifyOnWarning: false,
+              },
+            },
+          },
+        ],
+      },
+    });
+
+    expect(result.sections.preferences).toBe(true);
+    expect(result.appliedSettings).toEqual(expect.arrayContaining([
+      { key: 'metapi_config_version', value: '2.2' },
+      {
+        key: 'pricing_reference_config_v1',
+        value: expect.objectContaining({
+          defaultReferenceMode: 'manual',
+          fallbackProfile: 'free',
+          catalog: expect.objectContaining({
+            builtInCatalogEnabled: false,
+            providerCatalogSuggestionsEnabled: true,
+          }),
+          driftCheck: expect.objectContaining({
+            enabled: true,
+            windowHours: 72,
+            minSampleSize: 99,
+            relativeTolerance: 0.25,
+            absoluteToleranceUsd: 0.0002,
+            notifyOnWarning: false,
+          }),
+        }),
+      },
+    ]));
+
+    const pricingConfigRow = await db.select().from(schema.settings)
+      .where(eq(schema.settings.key, 'pricing_reference_config_v1'))
+      .get();
+    expect(JSON.parse(pricingConfigRow?.value || '{}')).toMatchObject({
+      defaultReferenceMode: 'manual',
+      fallbackProfile: 'free',
+      catalog: {
+        builtInCatalogEnabled: false,
+        providerCatalogSuggestionsEnabled: true,
+      },
+    });
   });
 
   it('preserves local logs and runtime stats when importing account backups', async () => {
@@ -721,7 +926,7 @@ describe('backupService', () => {
     }).returning().get();
 
     const exported = await backupService.exportBackup('accounts') as any;
-    expect(exported.version).toBe('2.1');
+    expect(exported.version).toBe('2.2');
 
     await db.insert(schema.events).values({
       type: 'status',
@@ -1046,7 +1251,52 @@ describe('backupService', () => {
     expect(restoredProxyFiles).toHaveLength(1);
   });
 
-  it('keeps importing native v2.0 backups without the new v2.1 config arrays', async () => {
+  it('keeps importing native v2.0 backups without the new v2.1/v2.2 config arrays', async () => {
+    const localSite = await db.insert(schema.sites).values({
+      id: 1,
+      name: 'Legacy native site',
+      url: 'https://legacy-native.example.com',
+      platform: 'new-api',
+      status: 'active',
+      createdAt: '2026-03-19T00:00:00.000Z',
+      updatedAt: '2026-03-19T00:00:00.000Z',
+    }).returning().get();
+    const localAccount = await db.insert(schema.accounts).values({
+      id: 1,
+      siteId: localSite.id,
+      username: 'legacy-user',
+      accessToken: 'legacy-session-token',
+      apiToken: 'legacy-api-token',
+      status: 'active',
+      createdAt: '2026-03-19T00:00:00.000Z',
+      updatedAt: '2026-03-19T00:00:00.000Z',
+    }).returning().get();
+    const localOauthUnit = await db.insert(schema.oauthRouteUnits).values({
+      id: 1,
+      siteId: localSite.id,
+      provider: 'codex',
+      name: 'local-oauth-unit',
+      strategy: 'round_robin',
+      enabled: true,
+      createdAt: '2026-03-19T00:00:00.000Z',
+      updatedAt: '2026-03-19T00:00:00.000Z',
+    }).returning().get();
+    await db.insert(schema.oauthRouteUnitMembers).values({
+      id: 1,
+      unitId: localOauthUnit.id,
+      accountId: localAccount.id,
+      sortOrder: 3,
+      successCount: 12,
+      failCount: 2,
+      totalLatencyMs: 500,
+      totalCost: 1.25,
+      lastUsedAt: '2026-03-21T09:00:00.000Z',
+      lastSelectedAt: '2026-03-21T09:00:00.000Z',
+      consecutiveFailCount: 1,
+      cooldownLevel: 2,
+      createdAt: '2026-03-19T00:00:00.000Z',
+      updatedAt: '2026-03-19T00:00:00.000Z',
+    }).run();
     const localDownstreamKey = await db.insert(schema.downstreamApiKeys).values({
       name: 'Local downstream',
       key: 'local-downstream-key',
@@ -1115,6 +1365,8 @@ describe('backupService', () => {
     const restoredSites = await db.select().from(schema.sites).all();
     const restoredAccounts = await db.select().from(schema.accounts).all();
     const restoredDownstreamKeys = await db.select().from(schema.downstreamApiKeys).all();
+    const restoredOauthUnits = await db.select().from(schema.oauthRouteUnits).all();
+    const restoredOauthMembers = await db.select().from(schema.oauthRouteUnitMembers).all();
 
     expect(restoredSites).toHaveLength(1);
     expect(restoredAccounts).toHaveLength(1);
@@ -1122,6 +1374,163 @@ describe('backupService', () => {
     expect(restoredDownstreamKeys).toHaveLength(1);
     expect(restoredDownstreamKeys[0]?.id).toBe(localDownstreamKey.id);
     expect(restoredDownstreamKeys[0]?.key).toBe('local-downstream-key');
+    expect(restoredOauthUnits).toEqual([
+      expect.objectContaining({
+        id: localOauthUnit.id,
+        siteId: 1,
+        provider: 'codex',
+        name: 'local-oauth-unit',
+      }),
+    ]);
+    expect(restoredOauthMembers).toEqual([
+      expect.objectContaining({
+        unitId: localOauthUnit.id,
+        accountId: 1,
+        sortOrder: 3,
+        successCount: 12,
+        failCount: 2,
+        totalLatencyMs: 500,
+        totalCost: 1.25,
+      }),
+    ]);
+  });
+
+  it('normalizes pre-route-graph token route rows during account import', async () => {
+    const payload = {
+      version: '2.0',
+      timestamp: Date.now(),
+      type: 'accounts',
+      accounts: {
+        sites: [
+          {
+            id: 1,
+            name: 'Legacy route site',
+            url: 'https://legacy-route.example.com',
+            platform: 'new-api',
+            customHeaders: '',
+            compatibilityPolicy: '',
+            status: 'active',
+            createdAt: '2026-03-20T00:00:00.000Z',
+            updatedAt: '2026-03-20T00:00:00.000Z',
+          },
+        ],
+        accounts: [
+          {
+            id: 1,
+            siteId: 1,
+            username: 'legacy-route-user',
+            accessToken: 'legacy-route-session',
+            apiToken: 'legacy-route-api-token',
+            balance: 10,
+            quota: 20,
+            unitCost: null,
+            valueScore: 0,
+            status: 'active',
+            checkinEnabled: true,
+            extraConfig: '',
+            createdAt: '2026-03-20T00:00:00.000Z',
+            updatedAt: '2026-03-20T00:00:00.000Z',
+          },
+        ],
+        accountTokens: [
+          {
+            id: 1,
+            accountId: 1,
+            name: 'default',
+            token: 'legacy-route-api-token',
+            tokenGroup: 'default',
+            source: 'legacy',
+            enabled: true,
+            isDefault: true,
+            createdAt: '2026-03-20T00:00:00.000Z',
+            updatedAt: '2026-03-20T00:00:00.000Z',
+          },
+        ],
+        tokenRoutes: [
+          {
+            id: 127,
+            modelPattern: 'gpt-legacy-*',
+            modelMapping: '',
+            decisionSnapshot: '',
+            routingStrategy: 'weighted',
+            enabled: true,
+            createdAt: '2026-03-20T00:00:00.000Z',
+            updatedAt: '2026-03-20T00:00:00.000Z',
+          },
+          {
+            id: 128,
+            model_pattern: 'claude-legacy-*',
+            display_name: '',
+            display_icon: '',
+            model_mapping: '',
+            decision_snapshot: '',
+            routing_strategy: 'round_robin',
+            enabled: true,
+            created_at: '2026-03-20T00:00:00.000Z',
+            updated_at: '2026-03-20T00:00:00.000Z',
+          },
+        ],
+        routeChannels: [
+          {
+            id: 1,
+            routeId: 127,
+            accountId: 1,
+            tokenId: 1,
+            sourceModel: 'gpt-upstream',
+            priority: 0,
+            weight: 10,
+            enabled: true,
+            manualOverride: false,
+          },
+          {
+            id: 2,
+            routeId: 128,
+            accountId: 1,
+            tokenId: 1,
+            sourceModel: 'claude-upstream',
+            priority: 1,
+            weight: 5,
+            enabled: true,
+            manualOverride: false,
+          },
+        ],
+        routeGroupSources: [],
+      },
+    } as Record<string, unknown>;
+
+    const result = await backupService.importBackup(payload);
+
+    expect(result.allImported).toBe(true);
+    expect(result.sections.accounts).toBe(true);
+
+    const routes = await db.select().from(schema.tokenRoutes).orderBy(asc(schema.tokenRoutes.id)).all();
+    const site = await db.select().from(schema.sites).where(eq(schema.sites.id, 1)).get();
+    const account = await db.select().from(schema.accounts).where(eq(schema.accounts.id, 1)).get();
+    expect(site?.customHeaders).toBeNull();
+    expect(site?.compatibilityPolicy).toBeNull();
+    expect(account?.extraConfig).toBeNull();
+    expect(routes).toEqual([
+      expect.objectContaining({
+        id: 127,
+        displayName: null,
+        displayIcon: null,
+        modelMapping: null,
+        decisionSnapshot: null,
+        routingStrategy: 'weighted',
+      }),
+      expect.objectContaining({
+        id: 128,
+        displayName: null,
+        displayIcon: null,
+        modelMapping: null,
+        decisionSnapshot: null,
+        routingStrategy: 'round_robin',
+      }),
+    ]);
+
+    const projections = await loadRouteGraphLegacyProjections();
+    expect(projections.get(127)?.modelPattern).toBe('gpt-legacy-*');
+    expect(projections.get(128)?.modelPattern).toBe('claude-legacy-*');
   });
 
   it('imports ALL-API-Hub style payload with accounts and preferences', async () => {

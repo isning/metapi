@@ -32,6 +32,7 @@ import { buildStartupSummaryLines } from './services/startupInfo.js';
 import { repairStoredCreatedAtValues } from './services/storedTimestampRepairService.js';
 import { migrateSiteApiKeysToAccounts } from './services/siteApiKeyMigrationService.js';
 import { ensureDefaultSitesSeeded } from './services/defaultSiteSeedService.js';
+import { ensureCurrentConfigVersion } from './services/configMigrationService.js';
 import { ensureOauthIdentityBackfill } from './services/oauth/oauthIdentityBackfill.js';
 import { ensureOauthProviderSitesExist } from './services/oauth/oauthSiteRegistry.js';
 import { startOAuthLoopbackCallbackServers, stopOAuthLoopbackCallbackServers } from './services/oauth/localCallbackServer.js';
@@ -188,6 +189,7 @@ try {
   }
   await ensureProxyLogBillingDetailsColumn();
   await repairStoredCreatedAtValues();
+  await ensureCurrentConfigVersion();
   await migrateSiteApiKeysToAccounts();
   await ensureDefaultSitesSeeded();
   await ensureOauthIdentityBackfill();

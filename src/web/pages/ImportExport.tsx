@@ -506,7 +506,7 @@ export default function ImportExport() {
           <p className="mt-1 text-sm text-muted-foreground">支持配置型备份、分区备份与手动恢复。</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <ToneBadge tone="-muted">Schema v2.1</ToneBadge>
+          <ToneBadge tone="-muted">Schema v2.2</ToneBadge>
           <ToneBadge tone="-warning">敏感数据请离线保管</ToneBadge>
         </div>
       </div>

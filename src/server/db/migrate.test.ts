@@ -495,6 +495,134 @@ describe('sqlite migrate bootstrap', () => {
     verified.close();
   });
 
+  it('repairs token_routes schemas left with obsolete graph columns', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'metapi-migrate-token-routes-repair-'));
+    const dbPath = join(dataDir, 'hub.db');
+    const sqlite = new Database(dbPath);
+    const journalEntries = readMigrationJournalEntries();
+
+    sqlite.exec(`
+      CREATE TABLE "token_routes" (
+        "id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+        "match_spec" TEXT NOT NULL,
+        "backend_spec" TEXT NOT NULL,
+        "display_name" TEXT,
+        "display_icon" TEXT,
+        "model_mapping" TEXT,
+        "decision_snapshot" TEXT,
+        "decision_refreshed_at" TEXT,
+        "routing_strategy" TEXT DEFAULT 'weighted',
+        "enabled" INTEGER DEFAULT true,
+        "created_at" TEXT DEFAULT (datetime('now')),
+        "updated_at" TEXT DEFAULT (datetime('now')),
+        "route_mode" TEXT DEFAULT 'pattern'
+      );
+
+      INSERT INTO token_routes (
+        id,
+        match_spec,
+        backend_spec,
+        display_name,
+        routing_strategy,
+        enabled,
+        created_at,
+        updated_at
+      )
+      VALUES (
+        127,
+        '{"kind":"model","requestedModelPattern":"gpt-legacy-*","displayName":null}',
+        '{"kind":"channels"}',
+        NULL,
+        'weighted',
+        1,
+        '2026-03-20T00:00:00.000Z',
+        '2026-03-20T00:00:00.000Z'
+      );
+
+      CREATE TABLE route_graph_versions (
+        id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+        version integer NOT NULL,
+        source_graph_json text NOT NULL,
+        compiled_graph_json text NOT NULL,
+        status text DEFAULT 'archived' NOT NULL,
+        created_by text DEFAULT 'system',
+        created_at text DEFAULT (datetime('now')),
+        activated_at text
+      );
+      CREATE TABLE route_graph_drafts (
+        id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+        base_version integer,
+        working_graph_json text NOT NULL,
+        status text DEFAULT 'active' NOT NULL,
+        diagnostics_json text,
+        updated_at text DEFAULT (datetime('now'))
+      );
+      CREATE TABLE route_graph_active_version (
+        id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+        version_id integer NOT NULL,
+        updated_at text DEFAULT (datetime('now'))
+      );
+      CREATE TABLE route_channels (
+        id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+        route_id integer NOT NULL,
+        route_node_id text,
+        account_id integer NOT NULL,
+        priority integer DEFAULT 0,
+        weight integer DEFAULT 10,
+        enabled integer DEFAULT true,
+        manual_override integer DEFAULT false
+      );
+    `);
+    recordAppliedMigrations(sqlite, journalEntries);
+    sqlite.close();
+
+    process.env.DATA_DIR = dataDir;
+    vi.resetModules();
+
+    await expect(import('./migrate.js')).resolves.toMatchObject({
+      runSqliteMigrations: expect.any(Function),
+    });
+
+    const verified = new Database(dbPath);
+    const tokenRouteColumns = verified
+      .prepare('PRAGMA table_info("token_routes")')
+      .all() as Array<{ name: string; notnull: number }>;
+    const columnNames = tokenRouteColumns.map((column) => column.name);
+
+    expect(columnNames).toContain('display_name');
+    expect(columnNames).not.toContain('match_spec');
+    expect(columnNames).not.toContain('backend_spec');
+    expect(columnNames).not.toContain('route_mode');
+
+    expect(() => {
+      verified.prepare(`
+        INSERT INTO "token_routes" (
+          "id",
+          "display_name",
+          "display_icon",
+          "model_mapping",
+          "decision_snapshot",
+          "decision_refreshed_at",
+          "routing_strategy",
+          "enabled",
+          "created_at",
+          "updated_at"
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(128, null, null, null, null, null, 'weighted', 1, '2026-03-20T00:00:00.000Z', '2026-03-20T00:00:00.000Z');
+    }).not.toThrow();
+
+    const rows = verified
+      .prepare('SELECT id, display_name, routing_strategy FROM token_routes ORDER BY id ASC')
+      .all();
+    expect(rows).toEqual([
+      { id: 127, display_name: null, routing_strategy: 'weighted' },
+      { id: 128, display_name: null, routing_strategy: 'weighted' },
+    ]);
+
+    verified.close();
+  });
+
   it('deduplicates legacy duplicate sites before applying the oauth site unique index', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'metapi-migrate-duplicate-sites-'));
     const dbPath = join(dataDir, 'hub.db');

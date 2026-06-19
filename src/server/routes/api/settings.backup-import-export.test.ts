@@ -71,11 +71,19 @@ describe('settings backup import/export api', () => {
       preferences: { settings: Array<{ key: string; value: unknown }> };
     };
     expect(body).toMatchObject({
-      version: '2.1',
+      version: '2.2',
       type: 'preferences',
     });
     expect(body.preferences.settings).toEqual(expect.arrayContaining([
       { key: 'routing_fallback_unit_cost', value: 0.42 },
+      { key: 'metapi_config_version', value: '2.2' },
+      {
+        key: 'pricing_reference_config_v1',
+        value: expect.objectContaining({
+          schemaVersion: 1,
+          defaultReferenceMode: 'auto',
+        }),
+      },
     ]));
     expect(body.preferences.settings.map((item) => item.key)).not.toEqual(expect.arrayContaining([
       'db_type',
@@ -127,6 +135,15 @@ describe('settings backup import/export api', () => {
       appliedSettings: expect.arrayContaining([
         { key: 'routing_fallback_unit_cost', value: 0.73 },
         { key: 'proxy_debug_trace_enabled', value: true },
+        { key: 'metapi_config_version', value: '2.2' },
+        {
+          key: 'pricing_reference_config_v1',
+          value: expect.objectContaining({
+            schemaVersion: 1,
+            defaultReferenceMode: 'auto',
+            fallbackProfile: 'system_default',
+          }),
+        },
       ]),
     });
 
@@ -139,9 +156,20 @@ describe('settings backup import/export api', () => {
     const dbUrl = await db.select().from(schema.settings)
       .where(eq(schema.settings.key, 'db_url'))
       .get();
+    const configVersion = await db.select().from(schema.settings)
+      .where(eq(schema.settings.key, 'metapi_config_version'))
+      .get();
+    const pricingReference = await db.select().from(schema.settings)
+      .where(eq(schema.settings.key, 'pricing_reference_config_v1'))
+      .get();
 
     expect(fallbackCost?.value).toBe('0.73');
     expect(debugEnabled?.value).toBe('true');
+    expect(JSON.parse(configVersion?.value || 'null')).toBe('2.2');
+    expect(JSON.parse(pricingReference?.value || '{}')).toMatchObject({
+      defaultReferenceMode: 'auto',
+      fallbackProfile: 'system_default',
+    });
     expect(dbUrl).toBeUndefined();
   });
 

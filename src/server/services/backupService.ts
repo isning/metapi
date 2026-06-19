@@ -7,9 +7,18 @@ import { mergeAccountExtraConfig } from './accountExtraConfig.js';
 import { getOauthInfoFromAccount } from './oauth/oauthAccount.js';
 import { PLATFORM_ALIASES, detectPlatformByUrlHint } from '../../shared/platformIdentity.js';
 import { publishRouteGraphSource } from './routeGraphService.js';
-import { buildRouteGraphSourceFromLegacyRoutes } from '../../shared/routeGraph.js';
+import {
+  buildRouteGraphSpecsFromLegacyRoute,
+  buildRouteGraphSourceFromLegacyRoutes,
+  type RouteGraphBackendSpec,
+  type RouteGraphMatchSpec,
+} from '../../shared/routeGraph.js';
+import {
+  CURRENT_CONFIG_VERSION,
+  migratePreferenceSettingsToCurrentConfigVersion,
+} from './configMigrationService.js';
 
-const BACKUP_VERSION = '2.1';
+const BACKUP_VERSION = CURRENT_CONFIG_VERSION;
 
 export type BackupExportType = 'all' | 'accounts' | 'preferences';
 
@@ -46,6 +55,11 @@ type AccountTokenRow = typeof schema.accountTokens.$inferSelect;
 type TokenRouteRow = typeof schema.tokenRoutes.$inferSelect;
 type RouteChannelRow = typeof schema.routeChannels.$inferSelect;
 type RouteGroupSourceRow = typeof schema.routeGroupSources.$inferSelect;
+type RouteGraphVersionRow = typeof schema.routeGraphVersions.$inferSelect;
+type RouteGraphDraftRow = typeof schema.routeGraphDrafts.$inferSelect;
+type RouteGraphActiveVersionRow = typeof schema.routeGraphActiveVersion.$inferSelect;
+type OauthRouteUnitRow = typeof schema.oauthRouteUnits.$inferSelect;
+type OauthRouteUnitMemberRow = typeof schema.oauthRouteUnitMembers.$inferSelect;
 type SiteDisabledModelRow = typeof schema.siteDisabledModels.$inferSelect;
 type ModelAvailabilityRow = typeof schema.modelAvailability.$inferSelect;
 type TokenModelAvailabilityRow = typeof schema.tokenModelAvailability.$inferSelect;
@@ -83,7 +97,48 @@ type BackupRouteChannelRow = Omit<RouteChannelRow,
 type BackupTokenRouteRow = TokenRouteRow & {
   modelPattern?: string | null;
   routeMode?: string | null;
+  match?: RouteGraphMatchSpec | null;
+  backend?: RouteGraphBackendSpec | null;
+  display_name?: string | null;
+  display_icon?: string | null;
+  model_mapping?: string | null;
+  decision_snapshot?: string | null;
+  decision_refreshed_at?: string | null;
+  routing_strategy?: string | null;
+  model_pattern?: string | null;
+  route_mode?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
 };
+type BackupOauthRouteUnitMemberRow = Omit<OauthRouteUnitMemberRow,
+  'successCount'
+  | 'failCount'
+  | 'totalLatencyMs'
+  | 'totalCost'
+  | 'lastUsedAt'
+  | 'lastSelectedAt'
+  | 'lastFailAt'
+  | 'consecutiveFailCount'
+  | 'cooldownLevel'
+  | 'cooldownUntil'
+> & Partial<Pick<OauthRouteUnitMemberRow,
+  'successCount'
+  | 'failCount'
+  | 'totalLatencyMs'
+  | 'totalCost'
+  | 'lastUsedAt'
+  | 'lastSelectedAt'
+  | 'lastFailAt'
+  | 'consecutiveFailCount'
+  | 'cooldownLevel'
+  | 'cooldownUntil'
+>>;
+
+interface BackupRouteGraphSection {
+  versions: RouteGraphVersionRow[];
+  activeVersion: RouteGraphActiveVersionRow | null;
+  drafts: RouteGraphDraftRow[];
+}
 
 type BackupSiteDisabledModelRow = Pick<SiteDisabledModelRow, 'siteId' | 'modelName'>;
 type BackupManualModelRow = {
@@ -115,6 +170,9 @@ interface AccountsBackupSection {
   tokenRoutes: BackupTokenRouteRow[];
   routeChannels: BackupRouteChannelRow[];
   routeGroupSources: RouteGroupSourceRow[];
+  routeGraph?: BackupRouteGraphSection;
+  oauthRouteUnits?: OauthRouteUnitRow[];
+  oauthRouteUnitMembers?: BackupOauthRouteUnitMemberRow[];
   siteDisabledModels?: BackupSiteDisabledModelRow[];
   manualModels?: BackupManualModelRow[];
   downstreamApiKeys?: BackupDownstreamApiKeyRow[];
@@ -168,6 +226,19 @@ type RouteChannelRuntimeSnapshot = Pick<RouteChannelRow,
   | 'cooldownUntil'
 >;
 
+type OauthRouteUnitMemberRuntimeSnapshot = Pick<OauthRouteUnitMemberRow,
+  'successCount'
+  | 'failCount'
+  | 'totalLatencyMs'
+  | 'totalCost'
+  | 'lastUsedAt'
+  | 'lastSelectedAt'
+  | 'lastFailAt'
+  | 'consecutiveFailCount'
+  | 'cooldownLevel'
+  | 'cooldownUntil'
+>;
+
 type ProxyLogSnapshot = ProxyLogRow & {
   accountKey: string | null;
   routeKey: string | null;
@@ -193,6 +264,16 @@ type TokenModelAvailabilitySnapshot = TokenModelAvailabilityRow & {
 
 type DownstreamApiKeyRuntimeSnapshot = Pick<DownstreamApiKeyRow, 'usedCost' | 'usedRequests' | 'lastUsedAt'>;
 
+type OauthRouteUnitSnapshot = OauthRouteUnitRow & {
+  siteKey: string | null;
+  unitKey: string | null;
+};
+
+type OauthRouteUnitMemberSnapshot = OauthRouteUnitMemberRow & {
+  unitKey: string | null;
+  accountKey: string | null;
+};
+
 interface RuntimeIdentityIndexes {
   siteKeyById: Map<number, string>;
   siteIdByKey: Map<string, number>;
@@ -210,6 +291,9 @@ interface RuntimeStateSnapshot {
   accountRuntimeByKey: Map<string, AccountRuntimeSnapshot>;
   routeChannelRuntimeById: Map<number, RouteChannelRuntimeSnapshot>;
   routeChannelRuntimeByKey: Map<string, RouteChannelRuntimeSnapshot>;
+  oauthRouteUnitMemberRuntimeByKey: Map<string, OauthRouteUnitMemberRuntimeSnapshot>;
+  oauthRouteUnits: OauthRouteUnitSnapshot[];
+  oauthRouteUnitMembers: OauthRouteUnitMemberSnapshot[];
   siteAnnouncements: SiteAnnouncementSnapshot[];
   nonManualAvailability: ModelAvailabilitySnapshot[];
   tokenAvailability: TokenModelAvailabilitySnapshot[];
@@ -268,6 +352,34 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function asString(value: unknown): string {
   if (typeof value !== 'string') return '';
   return value.trim();
+}
+
+function asNullableString(value: unknown): string | null {
+  const trimmed = asString(value);
+  return trimmed || null;
+}
+
+function asNullableJsonText(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    try {
+      JSON.parse(trimmed);
+      return trimmed;
+    } catch {
+      return null;
+    }
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return null;
+  }
+}
+
+function asRequiredJsonText(value: unknown, fallback: unknown): string {
+  return asNullableJsonText(value) ?? JSON.stringify(fallback);
 }
 
 function asBoolean(value: unknown, fallback = false): boolean {
@@ -362,12 +474,53 @@ function buildTokenIdentityKey(row: Pick<AccountTokenRow, 'name' | 'token' | 'to
   ].join('::');
 }
 
-function buildRouteIdentityKey(row: Partial<Pick<BackupTokenRouteRow, 'displayName' | 'displayIcon' | 'modelMapping'>>): string {
+function buildRouteIdentityKey(row: Partial<BackupTokenRouteRow>): string {
+  const match: Record<string, unknown> = isRecord(row.match) ? row.match : {};
+  const backend: Record<string, unknown> = isRecord(row.backend) ? row.backend : {};
   return [
     asString(row.displayName),
+    asString(row.modelPattern) || asString(row.model_pattern) || asString(match.requestedModelPattern),
+    asString(backend.kind),
     asString(row.displayIcon),
     asString(row.modelMapping),
   ].join('::');
+}
+
+function normalizeBackupTokenRouteRow(row: BackupTokenRouteRow): BackupTokenRouteRow {
+  const legacyModelPattern = asString(row.modelPattern) || asString(row.model_pattern);
+  const rawRouteMode = asString(row.routeMode) || asString(row.route_mode);
+  const legacyRouteMode = rawRouteMode === 'explicit_group' ? 'explicit_group' : 'pattern';
+  const displayName = asString(row.displayName)
+    || asString(row.display_name)
+    || (legacyRouteMode === 'explicit_group' ? legacyModelPattern : '')
+    || null;
+  const specs = buildRouteGraphSpecsFromLegacyRoute({
+    modelPattern: legacyModelPattern || displayName || '',
+    routeMode: legacyRouteMode,
+    displayName,
+  });
+
+  return {
+    ...row,
+    displayName,
+    displayIcon: asNullableString(row.displayIcon ?? row.display_icon),
+    modelMapping: asNullableJsonText(row.modelMapping ?? row.model_mapping),
+    decisionSnapshot: asNullableJsonText(row.decisionSnapshot ?? row.decision_snapshot),
+    decisionRefreshedAt: asNullableString(row.decisionRefreshedAt ?? row.decision_refreshed_at),
+    routingStrategy: row.routingStrategy ?? row.routing_strategy ?? 'weighted',
+    enabled: row.enabled ?? true,
+    createdAt: row.createdAt ?? row.created_at ?? new Date().toISOString(),
+    updatedAt: row.updatedAt ?? row.updated_at ?? new Date().toISOString(),
+    match: isRecord(row.match) ? row.match as RouteGraphMatchSpec : specs.matchSpec,
+    backend: isRecord(row.backend) ? row.backend as RouteGraphBackendSpec : specs.backendSpec,
+  };
+}
+
+function normalizeAccountsBackupSection(section: AccountsBackupSection): AccountsBackupSection {
+  return {
+    ...section,
+    tokenRoutes: section.tokenRoutes.map(normalizeBackupTokenRouteRow),
+  };
 }
 
 function buildModelAvailabilityIdentityKey(accountKey: string, modelName: string): string {
@@ -384,6 +537,16 @@ function buildRouteChannelIdentityKey(
 
   const tokenKey = row.tokenId ? (indexes.tokenKeyById.get(row.tokenId) || '') : '';
   return [routeKey, accountKey, tokenKey, asString(row.sourceModel)].join('::');
+}
+
+function buildOauthRouteUnitIdentityKey(row: Pick<OauthRouteUnitRow, 'siteId' | 'provider' | 'name'>, indexes: Pick<RuntimeIdentityIndexes, 'siteKeyById'>): string | null {
+  const siteKey = indexes.siteKeyById.get(row.siteId);
+  if (!siteKey) return null;
+  return [siteKey, asString(row.provider), asString(row.name)].join('::');
+}
+
+function buildOauthRouteUnitMemberIdentityKey(unitKey: string, accountKey: string): string {
+  return [unitKey, accountKey].join('::');
 }
 
 function buildRuntimeIdentityIndexesFromSection(section: AccountsBackupSection): RuntimeIdentityIndexes {
@@ -473,6 +636,8 @@ async function collectCurrentRuntimeStateSnapshot(): Promise<RuntimeStateSnapsho
     modelAvailability,
     tokenModelAvailability,
     downstreamApiKeys,
+    oauthRouteUnits,
+    oauthRouteUnitMembers,
   ] = await Promise.all([
     db.select().from(schema.sites).all(),
     db.select().from(schema.accounts).all(),
@@ -485,6 +650,8 @@ async function collectCurrentRuntimeStateSnapshot(): Promise<RuntimeStateSnapsho
     db.select().from(schema.modelAvailability).all(),
     db.select().from(schema.tokenModelAvailability).all(),
     db.select().from(schema.downstreamApiKeys).all(),
+    db.select().from(schema.oauthRouteUnits).all(),
+    db.select().from(schema.oauthRouteUnitMembers).all(),
   ]);
 
   const siteKeyById = new Map<number, string>();
@@ -554,6 +721,31 @@ async function collectCurrentRuntimeStateSnapshot(): Promise<RuntimeStateSnapsho
     routeChannelRuntimeByKey.set(channelKey, runtimeSnapshot);
   }
 
+  const oauthRouteUnitKeyById = new Map<number, string>();
+  for (const row of oauthRouteUnits) {
+    const unitKey = buildOauthRouteUnitIdentityKey(row, { siteKeyById });
+    if (unitKey) oauthRouteUnitKeyById.set(row.id, unitKey);
+  }
+
+  const oauthRouteUnitMemberRuntimeByKey = new Map<string, OauthRouteUnitMemberRuntimeSnapshot>();
+  for (const row of oauthRouteUnitMembers) {
+    const unitKey = oauthRouteUnitKeyById.get(row.unitId);
+    const accountKey = accountKeyById.get(row.accountId);
+    if (!unitKey || !accountKey) continue;
+    oauthRouteUnitMemberRuntimeByKey.set(buildOauthRouteUnitMemberIdentityKey(unitKey, accountKey), {
+      successCount: row.successCount,
+      failCount: row.failCount,
+      totalLatencyMs: row.totalLatencyMs,
+      totalCost: row.totalCost,
+      lastUsedAt: row.lastUsedAt ?? null,
+      lastSelectedAt: row.lastSelectedAt ?? null,
+      lastFailAt: row.lastFailAt ?? null,
+      consecutiveFailCount: row.consecutiveFailCount ?? 0,
+      cooldownLevel: row.cooldownLevel ?? 0,
+      cooldownUntil: row.cooldownUntil ?? null,
+    });
+  }
+
   const downstreamApiKeyKeyById = new Map<number, string>();
   const downstreamApiKeyIdByKey = new Map<string, number>();
   const downstreamApiKeyRuntimeByKey = new Map<string, DownstreamApiKeyRuntimeSnapshot>();
@@ -573,6 +765,20 @@ async function collectCurrentRuntimeStateSnapshot(): Promise<RuntimeStateSnapsho
     accountRuntimeByKey,
     routeChannelRuntimeById,
     routeChannelRuntimeByKey,
+    oauthRouteUnitMemberRuntimeByKey,
+    oauthRouteUnits: oauthRouteUnits.map((row) => {
+      const unitKey = oauthRouteUnitKeyById.get(row.id) || null;
+      return {
+        ...row,
+        siteKey: siteKeyById.get(row.siteId) || null,
+        unitKey,
+      };
+    }),
+    oauthRouteUnitMembers: oauthRouteUnitMembers.map((row) => ({
+      ...row,
+      unitKey: oauthRouteUnitKeyById.get(row.unitId) || null,
+      accountKey: accountKeyById.get(row.accountId) || null,
+    })),
     siteAnnouncements: siteAnnouncements.map((row) => ({
       ...row,
       siteKey: siteKeyById.get(row.siteId) || null,
@@ -1316,6 +1522,11 @@ async function exportAccountsSection(): Promise<AccountsBackupSection> {
     tokenRoutes,
     routeChannels,
     routeGroupSources,
+    routeGraphVersions,
+    routeGraphActiveVersions,
+    routeGraphDrafts,
+    oauthRouteUnits,
+    oauthRouteUnitMembers,
     siteDisabledModels,
     manualModels,
     downstreamApiKeys,
@@ -1333,6 +1544,11 @@ async function exportAccountsSection(): Promise<AccountsBackupSection> {
     db.select().from(schema.tokenRoutes).orderBy(asc(schema.tokenRoutes.id)).all(),
     db.select().from(schema.routeChannels).orderBy(asc(schema.routeChannels.id)).all(),
     db.select().from(schema.routeGroupSources).orderBy(asc(schema.routeGroupSources.id)).all(),
+    db.select().from(schema.routeGraphVersions).orderBy(asc(schema.routeGraphVersions.id)).all(),
+    db.select().from(schema.routeGraphActiveVersion).orderBy(asc(schema.routeGraphActiveVersion.id)).all(),
+    db.select().from(schema.routeGraphDrafts).orderBy(asc(schema.routeGraphDrafts.id)).all(),
+    db.select().from(schema.oauthRouteUnits).orderBy(asc(schema.oauthRouteUnits.id)).all(),
+    db.select().from(schema.oauthRouteUnitMembers).orderBy(asc(schema.oauthRouteUnitMembers.id)).all(),
     db.select().from(schema.siteDisabledModels)
       .orderBy(asc(schema.siteDisabledModels.siteId), asc(schema.siteDisabledModels.modelName))
       .all(),
@@ -1363,6 +1579,25 @@ async function exportAccountsSection(): Promise<AccountsBackupSection> {
       ...row
     }) => row),
     routeGroupSources,
+    routeGraph: {
+      versions: routeGraphVersions,
+      activeVersion: routeGraphActiveVersions[0] ?? null,
+      drafts: routeGraphDrafts,
+    },
+    oauthRouteUnits,
+    oauthRouteUnitMembers: oauthRouteUnitMembers.map(({
+      successCount: _successCount,
+      failCount: _failCount,
+      totalLatencyMs: _totalLatencyMs,
+      totalCost: _totalCost,
+      lastUsedAt: _lastUsedAt,
+      lastSelectedAt: _lastSelectedAt,
+      lastFailAt: _lastFailAt,
+      consecutiveFailCount: _consecutiveFailCount,
+      cooldownLevel: _cooldownLevel,
+      cooldownUntil: _cooldownUntil,
+      ...row
+    }) => row),
     siteDisabledModels: siteDisabledModels.map((row) => ({
       siteId: row.siteId,
       modelName: row.modelName,
@@ -1391,7 +1626,9 @@ async function exportPreferencesSection(): Promise<PreferencesBackupSection> {
       value: parseSettingValue(row.value),
     }));
 
-  return { settings };
+  return {
+    settings: migratePreferenceSettingsToCurrentConfigVersion(settings).settings,
+  };
 }
 
 export async function exportBackup(type: BackupExportType): Promise<BackupV2> {
@@ -1436,6 +1673,25 @@ function coerceAccountsSection(input: unknown): AccountsBackupSection | null {
   const routeGroupSources = Array.isArray(input.routeGroupSources)
     ? input.routeGroupSources as RouteGroupSourceRow[]
     : [];
+  const routeGraph = isRecord(input.routeGraph)
+    ? {
+      versions: Array.isArray(input.routeGraph.versions)
+        ? input.routeGraph.versions as RouteGraphVersionRow[]
+        : [],
+      activeVersion: isRecord(input.routeGraph.activeVersion)
+        ? input.routeGraph.activeVersion as RouteGraphActiveVersionRow
+        : null,
+      drafts: Array.isArray(input.routeGraph.drafts)
+        ? input.routeGraph.drafts as RouteGraphDraftRow[]
+        : [],
+    }
+    : undefined;
+  const oauthRouteUnits = Array.isArray(input.oauthRouteUnits)
+    ? input.oauthRouteUnits as OauthRouteUnitRow[]
+    : undefined;
+  const oauthRouteUnitMembers = Array.isArray(input.oauthRouteUnitMembers)
+    ? input.oauthRouteUnitMembers as BackupOauthRouteUnitMemberRow[]
+    : undefined;
   const siteDisabledModels = Array.isArray(input.siteDisabledModels)
     ? input.siteDisabledModels as BackupSiteDisabledModelRow[]
     : undefined;
@@ -1453,9 +1709,12 @@ function coerceAccountsSection(input: unknown): AccountsBackupSection | null {
     siteApiEndpoints,
     accounts,
     accountTokens,
-    tokenRoutes,
+    tokenRoutes: tokenRoutes.map(normalizeBackupTokenRouteRow),
     routeChannels,
     routeGroupSources,
+    routeGraph,
+    oauthRouteUnits,
+    oauthRouteUnitMembers,
     siteDisabledModels,
     manualModels,
     downstreamApiKeys,
@@ -1476,7 +1735,9 @@ function coercePreferencesSection(input: unknown): PreferencesBackupSection | nu
     })
     .filter((row): row is { key: string; value: unknown } => !!row);
 
-  return { settings };
+  return {
+    settings: migratePreferenceSettingsToCurrentConfigVersion(settings).settings,
+  };
 }
 
 function detectAccountsSection(data: RawBackupData): AccountsBackupSection | null {
@@ -1517,7 +1778,11 @@ function detectPreferencesSection(data: RawBackupData): PreferencesBackupSection
   }
 
   const refFormat = buildPreferencesSectionFromRefBackup(data);
-  if (refFormat) return refFormat;
+  if (refFormat) {
+    return {
+      settings: migratePreferenceSettingsToCurrentConfigVersion(refFormat.settings).settings,
+    };
+  }
 
   return null;
 }
@@ -1535,11 +1800,19 @@ function detectImportMetadata(data: RawBackupData): {
 }
 
 async function importAccountsSection(section: AccountsBackupSection): Promise<void> {
+  const normalizedSection = normalizeAccountsBackupSection(section);
   const runtimeState = await collectCurrentRuntimeStateSnapshot();
-  const importedIndexes = buildRuntimeIdentityIndexesFromSection(section);
-  const shouldReplaceSiteDisabledModels = Array.isArray(section.siteDisabledModels);
-  const shouldReplaceManualModels = Array.isArray(section.manualModels);
-  const shouldReplaceDownstreamApiKeys = Array.isArray(section.downstreamApiKeys);
+  const importedIndexes = buildRuntimeIdentityIndexesFromSection(normalizedSection);
+  const routeGraphActiveVersionId = normalizedSection.routeGraph?.activeVersion?.versionId;
+  const shouldRestoreRouteGraph = !!normalizedSection.routeGraph
+    && Array.isArray(normalizedSection.routeGraph.versions)
+    && normalizedSection.routeGraph.versions.length > 0
+    && typeof routeGraphActiveVersionId === 'number'
+    && normalizedSection.routeGraph.versions.some((row) => row.id === routeGraphActiveVersionId);
+  const shouldReplaceOauthRouteUnits = Array.isArray(normalizedSection.oauthRouteUnits);
+  const shouldReplaceSiteDisabledModels = Array.isArray(normalizedSection.siteDisabledModels);
+  const shouldReplaceManualModels = Array.isArray(normalizedSection.manualModels);
+  const shouldReplaceDownstreamApiKeys = Array.isArray(normalizedSection.downstreamApiKeys);
 
   await db.transaction(async (tx) => {
     if (shouldReplaceDownstreamApiKeys) {
@@ -1551,6 +1824,8 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
     await tx.delete(schema.proxyLogs).run();
     await tx.delete(schema.routeChannels).run();
     await tx.delete(schema.routeGroupSources).run();
+    await tx.delete(schema.oauthRouteUnitMembers).run();
+    await tx.delete(schema.oauthRouteUnits).run();
     await tx.delete(schema.tokenRoutes).run();
     await tx.delete(schema.tokenModelAvailability).run();
     await tx.delete(schema.modelAvailability).run();
@@ -1558,7 +1833,7 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
     await tx.delete(schema.accounts).run();
     await tx.delete(schema.sites).run();
 
-    for (const row of section.sites) {
+    for (const row of normalizedSection.sites) {
       await tx.insert(schema.sites).values({
         id: row.id,
         name: row.name,
@@ -1567,7 +1842,8 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
         platform: row.platform,
         proxyUrl: row.proxyUrl ?? null,
         useSystemProxy: row.useSystemProxy ?? false,
-        customHeaders: row.customHeaders ?? null,
+        customHeaders: asNullableJsonText(row.customHeaders),
+        compatibilityPolicy: asNullableJsonText(row.compatibilityPolicy),
         status: row.status || 'active',
         isPinned: row.isPinned ?? false,
         sortOrder: row.sortOrder ?? 0,
@@ -1582,7 +1858,7 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
       }).run();
     }
 
-    for (const row of section.siteApiEndpoints || []) {
+    for (const row of normalizedSection.siteApiEndpoints || []) {
       await tx.insert(schema.siteApiEndpoints).values({
         id: row.id,
         siteId: row.siteId,
@@ -1598,7 +1874,7 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
       }).run();
     }
 
-    for (const row of section.accounts) {
+    for (const row of normalizedSection.accounts) {
       const oauthColumns = resolveImportedOauthColumns(row);
       const accountKey = importedIndexes.accountKeyById.get(row.id);
       const runtimeAccount = accountKey ? runtimeState.accountRuntimeByKey.get(accountKey) : undefined;
@@ -1622,19 +1898,20 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
         checkinEnabled: row.checkinEnabled,
         lastCheckinAt: runtimeAccount?.lastCheckinAt ?? row.lastCheckinAt,
         lastBalanceRefresh: runtimeAccount?.lastBalanceRefresh ?? row.lastBalanceRefresh,
-        extraConfig: row.extraConfig,
+        extraConfig: asNullableJsonText(row.extraConfig),
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
       }).run();
     }
 
-    for (const row of section.accountTokens) {
+    for (const row of normalizedSection.accountTokens) {
       await tx.insert(schema.accountTokens).values({
         id: row.id,
         accountId: row.accountId,
         name: row.name,
         token: row.token,
         tokenGroup: row.tokenGroup ?? null,
+        compatibilityPolicy: asNullableJsonText(row.compatibilityPolicy),
         valueStatus: row.valueStatus ?? 'ready',
         source: row.source,
         enabled: row.enabled,
@@ -1644,22 +1921,22 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
       }).run();
     }
 
-    for (const row of section.tokenRoutes) {
+    for (const row of normalizedSection.tokenRoutes) {
       await tx.insert(schema.tokenRoutes).values({
         id: row.id,
         displayName: row.displayName ?? null,
         displayIcon: row.displayIcon ?? null,
-        modelMapping: row.modelMapping,
+        modelMapping: row.modelMapping ?? null,
         decisionSnapshot: row.decisionSnapshot ?? null,
         decisionRefreshedAt: row.decisionRefreshedAt ?? null,
         routingStrategy: row.routingStrategy ?? 'weighted',
-        enabled: row.enabled,
+        enabled: row.enabled ?? true,
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
       }).run();
     }
 
-    for (const row of section.routeGroupSources || []) {
+    for (const row of normalizedSection.routeGroupSources || []) {
       await tx.insert(schema.routeGroupSources).values({
         id: row.id,
         groupRouteId: row.groupRouteId,
@@ -1667,7 +1944,99 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
       }).run();
     }
 
-    for (const row of section.routeChannels) {
+    const importedOauthRouteUnitIdByRuntimeId = new Map<number, number>();
+    if (shouldReplaceOauthRouteUnits) {
+      for (const row of normalizedSection.oauthRouteUnits || []) {
+        await tx.insert(schema.oauthRouteUnits).values({
+          id: row.id,
+          siteId: row.siteId,
+          provider: row.provider,
+          name: row.name,
+          strategy: row.strategy ?? 'round_robin',
+          enabled: row.enabled ?? true,
+          createdAt: row.createdAt,
+          updatedAt: row.updatedAt,
+        }).run();
+        importedOauthRouteUnitIdByRuntimeId.set(row.id, row.id);
+      }
+
+      const unitKeyById = new Map<number, string>();
+      for (const row of normalizedSection.oauthRouteUnits || []) {
+        const unitKey = buildOauthRouteUnitIdentityKey(row, importedIndexes);
+        if (unitKey) unitKeyById.set(row.id, unitKey);
+      }
+
+      for (const row of normalizedSection.oauthRouteUnitMembers || []) {
+        const unitKey = unitKeyById.get(row.unitId);
+        const accountKey = importedIndexes.accountKeyById.get(row.accountId);
+        const runtimeMember = unitKey && accountKey
+          ? runtimeState.oauthRouteUnitMemberRuntimeByKey.get(buildOauthRouteUnitMemberIdentityKey(unitKey, accountKey))
+          : undefined;
+        await tx.insert(schema.oauthRouteUnitMembers).values({
+          id: row.id,
+          unitId: row.unitId,
+          accountId: row.accountId,
+          sortOrder: row.sortOrder ?? 0,
+          successCount: runtimeMember?.successCount ?? row.successCount,
+          failCount: runtimeMember?.failCount ?? row.failCount,
+          totalLatencyMs: runtimeMember?.totalLatencyMs ?? row.totalLatencyMs,
+          totalCost: runtimeMember?.totalCost ?? row.totalCost,
+          lastUsedAt: runtimeMember?.lastUsedAt ?? row.lastUsedAt,
+          lastSelectedAt: runtimeMember?.lastSelectedAt ?? row.lastSelectedAt,
+          lastFailAt: runtimeMember?.lastFailAt ?? row.lastFailAt,
+          consecutiveFailCount: runtimeMember?.consecutiveFailCount ?? row.consecutiveFailCount ?? 0,
+          cooldownLevel: runtimeMember?.cooldownLevel ?? row.cooldownLevel ?? 0,
+          cooldownUntil: runtimeMember?.cooldownUntil ?? row.cooldownUntil,
+          createdAt: row.createdAt,
+          updatedAt: row.updatedAt,
+        }).run();
+      }
+    } else {
+      for (const row of runtimeState.oauthRouteUnits) {
+        if (!row.siteKey || !row.unitKey) continue;
+        const siteId = importedIndexes.siteIdByKey.get(row.siteKey);
+        if (!siteId) continue;
+        await tx.insert(schema.oauthRouteUnits).values({
+          id: row.id,
+          siteId,
+          provider: row.provider,
+          name: row.name,
+          strategy: row.strategy ?? 'round_robin',
+          enabled: row.enabled ?? true,
+          createdAt: row.createdAt,
+          updatedAt: row.updatedAt,
+        }).run();
+        importedOauthRouteUnitIdByRuntimeId.set(row.id, row.id);
+      }
+
+      for (const row of runtimeState.oauthRouteUnitMembers) {
+        if (!row.unitKey || !row.accountKey) continue;
+        const unit = runtimeState.oauthRouteUnits.find((candidate) => candidate.unitKey === row.unitKey);
+        const unitId = unit ? importedOauthRouteUnitIdByRuntimeId.get(unit.id) : undefined;
+        const accountId = importedIndexes.accountIdByKey.get(row.accountKey);
+        if (!unitId || !accountId) continue;
+        await tx.insert(schema.oauthRouteUnitMembers).values({
+          id: row.id,
+          unitId,
+          accountId,
+          sortOrder: row.sortOrder ?? 0,
+          successCount: row.successCount ?? 0,
+          failCount: row.failCount ?? 0,
+          totalLatencyMs: row.totalLatencyMs ?? 0,
+          totalCost: row.totalCost ?? 0,
+          lastUsedAt: row.lastUsedAt ?? null,
+          lastSelectedAt: row.lastSelectedAt ?? null,
+          lastFailAt: row.lastFailAt ?? null,
+          consecutiveFailCount: row.consecutiveFailCount ?? 0,
+          cooldownLevel: row.cooldownLevel ?? 0,
+          cooldownUntil: row.cooldownUntil ?? null,
+          createdAt: row.createdAt,
+          updatedAt: row.updatedAt,
+        }).run();
+      }
+    }
+
+    for (const row of normalizedSection.routeChannels) {
       const channelKey = importedIndexes.channelKeyById.get(row.id);
       const runtimeChannel = runtimeState.routeChannelRuntimeById.get(row.id)
         ?? (channelKey ? runtimeState.routeChannelRuntimeByKey.get(channelKey) : undefined);
@@ -1677,6 +2046,9 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
         routeNodeId: row.routeNodeId ?? `entry:legacy:${row.routeId}`,
         accountId: row.accountId,
         tokenId: row.tokenId,
+        oauthRouteUnitId: row.oauthRouteUnitId
+          ? (importedOauthRouteUnitIdByRuntimeId.get(row.oauthRouteUnitId) ?? row.oauthRouteUnitId)
+          : null,
         sourceModel: row.sourceModel ?? null,
         priority: row.priority,
         weight: row.weight,
@@ -1696,7 +2068,7 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
     }
 
     if (shouldReplaceSiteDisabledModels) {
-      for (const row of section.siteDisabledModels || []) {
+      for (const row of normalizedSection.siteDisabledModels || []) {
         await tx.insert(schema.siteDisabledModels).values({
           siteId: row.siteId,
           modelName: row.modelName,
@@ -1707,7 +2079,7 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
     const importedManualModelKeys = new Set<string>();
     if (shouldReplaceManualModels) {
       const checkedAt = new Date().toISOString();
-      for (const row of section.manualModels || []) {
+      for (const row of normalizedSection.manualModels || []) {
         const accountKey = importedIndexes.accountKeyById.get(row.accountId);
         if (accountKey) {
           importedManualModelKeys.add(buildModelAvailabilityIdentityKey(accountKey, row.modelName));
@@ -1775,7 +2147,7 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
         lastSeenAt: row.lastSeenAt ?? null,
         readAt: row.readAt ?? null,
         dismissedAt: row.dismissedAt ?? null,
-        rawPayload: row.rawPayload ?? null,
+        rawPayload: asNullableJsonText(row.rawPayload),
       }).run();
     }
 
@@ -1783,7 +2155,7 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
       ? new Map<string, number>()
       : new Map(runtimeState.downstreamApiKeyIdByKey);
     if (shouldReplaceDownstreamApiKeys) {
-      for (const row of section.downstreamApiKeys || []) {
+      for (const row of normalizedSection.downstreamApiKeys || []) {
         const normalizedKey = asString(row.key);
         if (!normalizedKey) continue;
         const runtimeDownstream = runtimeState.downstreamApiKeyRuntimeByKey.get(normalizedKey);
@@ -1792,18 +2164,18 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
           key: normalizedKey,
           description: row.description ?? null,
           groupName: row.groupName ?? null,
-          tags: row.tags ?? null,
+          tags: asNullableJsonText(row.tags),
           enabled: row.enabled ?? true,
           expiresAt: row.expiresAt ?? null,
           maxCost: row.maxCost ?? null,
           usedCost: runtimeDownstream?.usedCost ?? row.usedCost ?? 0,
           maxRequests: row.maxRequests ?? null,
           usedRequests: runtimeDownstream?.usedRequests ?? row.usedRequests ?? 0,
-          supportedModels: row.supportedModels ?? null,
-          allowedRouteIds: row.allowedRouteIds ?? null,
-          siteWeightMultipliers: row.siteWeightMultipliers ?? null,
-          excludedSiteIds: row.excludedSiteIds ?? null,
-          excludedCredentialRefs: row.excludedCredentialRefs ?? null,
+          supportedModels: asNullableJsonText(row.supportedModels),
+          allowedRouteIds: asNullableJsonText(row.allowedRouteIds),
+          siteWeightMultipliers: asNullableJsonText(row.siteWeightMultipliers),
+          excludedSiteIds: asNullableJsonText(row.excludedSiteIds),
+          excludedCredentialRefs: asNullableJsonText(row.excludedCredentialRefs),
           lastUsedAt: runtimeDownstream?.lastUsedAt ?? row.lastUsedAt ?? null,
         }).run();
         const downstreamApiKeyId = requireInsertedRowId(
@@ -1811,6 +2183,38 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
           `failed to import downstream api key: ${maskSecret(normalizedKey)}`,
         );
         downstreamApiKeyIdByKey.set(normalizedKey, downstreamApiKeyId);
+      }
+    }
+
+    if (shouldRestoreRouteGraph) {
+      for (const row of normalizedSection.routeGraph?.versions || []) {
+        await tx.insert(schema.routeGraphVersions).values({
+          id: row.id,
+          version: row.version,
+          sourceGraphJson: asRequiredJsonText(row.sourceGraphJson, { version: 1, nodes: [], edges: [], macros: [] }),
+          compiledGraphJson: asRequiredJsonText(row.compiledGraphJson, { version: 1 }),
+          status: row.status,
+          createdBy: row.createdBy ?? 'backup-import',
+          createdAt: row.createdAt,
+          activatedAt: row.activatedAt ?? null,
+        }).run();
+      }
+
+      await tx.insert(schema.routeGraphActiveVersion).values({
+        id: 1,
+        versionId: routeGraphActiveVersionId!,
+        updatedAt: normalizedSection.routeGraph?.activeVersion?.updatedAt,
+      }).run();
+
+      for (const row of normalizedSection.routeGraph?.drafts || []) {
+        await tx.insert(schema.routeGraphDrafts).values({
+          id: row.id,
+          baseVersion: row.baseVersion ?? null,
+          workingGraphJson: asRequiredJsonText(row.workingGraphJson, { version: 1, nodes: [], edges: [], macros: [] }),
+          status: row.status,
+          diagnosticsJson: asNullableJsonText(row.diagnosticsJson),
+          updatedAt: row.updatedAt,
+        }).run();
       }
     }
 
@@ -1841,7 +2245,7 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
         completionTokens: row.completionTokens ?? null,
         totalTokens: row.totalTokens ?? null,
         estimatedCost: row.estimatedCost ?? null,
-        billingDetails: row.billingDetails ?? null,
+        billingDetails: asNullableJsonText(row.billingDetails),
         clientFamily: row.clientFamily ?? null,
         clientAppId: row.clientAppId ?? null,
         clientAppName: row.clientAppName ?? null,
@@ -1867,32 +2271,36 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
     }
   });
 
-  const restoredRouteGroupSources = await db.select().from(schema.routeGroupSources).all();
-  const sourceRouteIdsByGroupRouteId = new Map<number, number[]>();
-  for (const source of restoredRouteGroupSources) {
-    const existing = sourceRouteIdsByGroupRouteId.get(source.groupRouteId) || [];
-    existing.push(source.sourceRouteId);
-    sourceRouteIdsByGroupRouteId.set(source.groupRouteId, existing);
+  if (!shouldRestoreRouteGraph) {
+    const restoredRouteGroupSources = await db.select().from(schema.routeGroupSources).all();
+    const sourceRouteIdsByGroupRouteId = new Map<number, number[]>();
+    for (const source of restoredRouteGroupSources) {
+      const existing = sourceRouteIdsByGroupRouteId.get(source.groupRouteId) || [];
+      existing.push(source.sourceRouteId);
+      sourceRouteIdsByGroupRouteId.set(source.groupRouteId, existing);
+    }
+    await publishRouteGraphSource({
+      sourceGraph: buildRouteGraphSourceFromLegacyRoutes(normalizedSection.tokenRoutes.map((route) => {
+        const sourceRouteIds = sourceRouteIdsByGroupRouteId.get(route.id) || [];
+        const isExplicitGroup = sourceRouteIds.length > 0;
+        return {
+          ...route,
+          match: isExplicitGroup
+            ? {
+              kind: 'model',
+              requestedModelPattern: '',
+              displayName: route.displayName ?? null,
+            }
+            : route.match,
+          backend: isExplicitGroup
+            ? { kind: 'routes', routeIds: sourceRouteIds }
+            : route.backend,
+        };
+      })),
+      createdBy: 'backup-import',
+      allowDiagnostics: true,
+    });
   }
-  await publishRouteGraphSource({
-    sourceGraph: buildRouteGraphSourceFromLegacyRoutes(section.tokenRoutes.map((route) => {
-      const sourceRouteIds = sourceRouteIdsByGroupRouteId.get(route.id) || [];
-      const isExplicitGroup = sourceRouteIds.length > 0;
-      return {
-        ...route,
-        match: {
-          kind: 'model',
-          requestedModelPattern: isExplicitGroup ? '' : (route.displayName ?? ''),
-          displayName: route.displayName ?? null,
-        },
-        backend: isExplicitGroup
-          ? { kind: 'routes', routeIds: sourceRouteIds }
-          : { kind: 'channels' },
-      };
-    })),
-    createdBy: 'backup-import',
-    allowDiagnostics: true,
-  });
 }
 
 async function importPreferencesSection(section: PreferencesBackupSection): Promise<Array<{ key: string; value: unknown }>> {

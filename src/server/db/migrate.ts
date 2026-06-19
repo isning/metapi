@@ -136,7 +136,10 @@ function hasGraphNativeTokenRoutesReplacement(sqlite: Database.Database): boolea
     && tableExists(sqlite, 'route_graph_active_version')
     && columnExists(sqlite, 'route_channels', 'route_node_id')
     && columnExists(sqlite, 'token_routes', 'display_name')
-    && !columnExists(sqlite, 'token_routes', 'model_pattern');
+    && !columnExists(sqlite, 'token_routes', 'model_pattern')
+    && !columnExists(sqlite, 'token_routes', 'route_mode')
+    && !columnExists(sqlite, 'token_routes', 'match_spec')
+    && !columnExists(sqlite, 'token_routes', 'backend_spec');
 }
 
 function hasVerifiedGraphNativeSchema(sqlite: Database.Database): boolean {
@@ -144,6 +147,102 @@ function hasVerifiedGraphNativeSchema(sqlite: Database.Database): boolean {
     && columnExists(sqlite, 'proxy_logs', 'is_stream')
     && columnExists(sqlite, 'proxy_logs', 'first_byte_latency_ms')
     && columnExists(sqlite, 'sites', 'post_refresh_probe_latency_threshold_ms');
+}
+
+function hasAnyRouteGraphLegacyTokenRouteColumn(sqlite: Database.Database): boolean {
+  return columnExists(sqlite, 'token_routes', 'model_pattern')
+    || columnExists(sqlite, 'token_routes', 'route_mode')
+    || columnExists(sqlite, 'token_routes', 'match_spec')
+    || columnExists(sqlite, 'token_routes', 'backend_spec');
+}
+
+function hasRouteGraphScaffolding(sqlite: Database.Database): boolean {
+  return tableExists(sqlite, 'route_graph_versions')
+    || tableExists(sqlite, 'route_graph_drafts')
+    || tableExists(sqlite, 'route_graph_active_version')
+    || columnExists(sqlite, 'route_channels', 'route_node_id');
+}
+
+function selectExistingTokenRouteColumnExpression(
+  sqlite: Database.Database,
+  columnName: string,
+  fallback: string,
+): string {
+  return columnExists(sqlite, 'token_routes', columnName)
+    ? `"token_routes"."${columnName}"`
+    : fallback;
+}
+
+function buildSqliteTokenRouteRepairStatements(sqlite: Database.Database): string[] {
+  if (!tableExists(sqlite, 'token_routes') || !hasAnyRouteGraphLegacyTokenRouteColumn(sqlite)) {
+    return [];
+  }
+
+  const routeModeExpr = columnExists(sqlite, 'token_routes', 'route_mode')
+    ? `coalesce("token_routes"."route_mode", 'pattern')`
+    : `'pattern'`;
+  const displayNameExpr = columnExists(sqlite, 'token_routes', 'display_name')
+    ? `"token_routes"."display_name"`
+    : columnExists(sqlite, 'token_routes', 'match_spec')
+      ? `json_extract("token_routes"."match_spec", '$.displayName')`
+      : columnExists(sqlite, 'token_routes', 'model_pattern')
+        ? `CASE WHEN ${routeModeExpr} = 'explicit_group' THEN "token_routes"."model_pattern" ELSE NULL END`
+        : 'NULL';
+
+  return [
+    `CREATE TABLE "__new_token_routes" (
+      "id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+      "display_name" text,
+      "display_icon" text,
+      "model_mapping" text,
+      "decision_snapshot" text,
+      "decision_refreshed_at" text,
+      "routing_strategy" text DEFAULT 'weighted',
+      "enabled" integer DEFAULT true,
+      "created_at" text DEFAULT (datetime('now')),
+      "updated_at" text DEFAULT (datetime('now'))
+    )`,
+    `INSERT INTO "__new_token_routes" (
+      "id",
+      "display_name",
+      "display_icon",
+      "model_mapping",
+      "decision_snapshot",
+      "decision_refreshed_at",
+      "routing_strategy",
+      "enabled",
+      "created_at",
+      "updated_at"
+    )
+    SELECT
+      "token_routes"."id",
+      ${displayNameExpr},
+      ${selectExistingTokenRouteColumnExpression(sqlite, 'display_icon', 'NULL')},
+      ${selectExistingTokenRouteColumnExpression(sqlite, 'model_mapping', 'NULL')},
+      ${selectExistingTokenRouteColumnExpression(sqlite, 'decision_snapshot', 'NULL')},
+      ${selectExistingTokenRouteColumnExpression(sqlite, 'decision_refreshed_at', 'NULL')},
+      coalesce(${selectExistingTokenRouteColumnExpression(sqlite, 'routing_strategy', 'NULL')}, 'weighted'),
+      coalesce(${selectExistingTokenRouteColumnExpression(sqlite, 'enabled', 'NULL')}, true),
+      coalesce(${selectExistingTokenRouteColumnExpression(sqlite, 'created_at', 'NULL')}, datetime('now')),
+      coalesce(${selectExistingTokenRouteColumnExpression(sqlite, 'updated_at', 'NULL')}, datetime('now'))
+    FROM "token_routes"`,
+    'DROP TABLE "token_routes"',
+    'ALTER TABLE "__new_token_routes" RENAME TO "token_routes"',
+    'CREATE INDEX IF NOT EXISTS "token_routes_enabled_idx" ON "token_routes" ("enabled")',
+  ];
+}
+
+function repairSqliteRouteGraphTokenRoutesSchema(sqlite: Database.Database): boolean {
+  const statements = buildSqliteTokenRouteRepairStatements(sqlite);
+  if (statements.length === 0) return false;
+
+  sqlite.transaction(() => {
+    for (const statement of statements) {
+      sqlite.exec(statement);
+    }
+  })();
+  console.warn('[db] Repaired legacy token_routes graph columns.');
+  return true;
 }
 
 function readMigrationRecordsUntilTag(migrationsFolder: string, stopTag?: string): MigrationRecord[] {
@@ -370,7 +469,7 @@ function isReplacedRouteGraphLegacyTokenRoutesStatement(
   sqlite: Database.Database,
   statement: string,
 ): boolean {
-  if (!hasGraphNativeTokenRoutesReplacement(sqlite)) {
+  if (!hasGraphNativeTokenRoutesReplacement(sqlite) && !hasRouteGraphScaffolding(sqlite)) {
     return false;
   }
 
@@ -381,6 +480,8 @@ function isReplacedRouteGraphLegacyTokenRoutesStatement(
       || normalized.includes('route_mode')
       || normalized.includes('match_spec')
       || normalized.includes('backend_spec')
+      || normalized.includes('token_routes_model_pattern_idx')
+      || normalized.includes('token_routes_match_spec_idx')
     );
 }
 
@@ -736,6 +837,9 @@ export function runSqliteMigrations(): void {
   }
 
   const sqlite = new Database(dbPath);
+  if (hasRouteGraphScaffolding(sqlite)) {
+    repairSqliteRouteGraphTokenRoutesSchema(sqlite);
+  }
   bootstrapLegacyDrizzleMigrations(sqlite, migrationsFolder);
   backfillMissingRecordedMigrations(sqlite, migrationsFolder);
 
@@ -751,6 +855,7 @@ export function runSqliteMigrations(): void {
     closeSqlite: () => sqlite.close(),
   });
 
+  repairSqliteRouteGraphTokenRoutesSchema(sqlite);
   sqlite.close();
   console.log('Migration complete.');
 }
