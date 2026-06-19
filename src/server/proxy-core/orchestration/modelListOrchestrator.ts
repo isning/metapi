@@ -3,6 +3,7 @@ import { and, eq } from 'drizzle-orm';
 import { fetch } from 'undici';
 import { db, schema } from '../../db/index.js';
 import { isModelAllowedByPolicyOrAllowedRoutes } from '../../services/downstreamApiKeyService.js';
+import { ensureActiveRouteGraphVersion } from '../../services/routeGraphService.js';
 import { tokenRouter } from '../../services/tokenRouter.js';
 import * as routeRefreshWorkflow from '../../services/routeRefreshWorkflow.js';
 import { readRuntimeResponseText } from '../executors/types.js';
@@ -68,13 +69,13 @@ async function readRouteAwareModels(request: FastifyRequest): Promise<ListedMode
       eq(schema.sites.status, 'active'),
     ))
     .all();
-  const routeAliases = await db.select({ displayName: schema.tokenRoutes.displayName })
-    .from(schema.tokenRoutes)
-    .where(eq(schema.tokenRoutes.enabled, true))
-    .all();
+  const activeGraph = await ensureActiveRouteGraphVersion();
+  const publicGraphModels = (activeGraph.compiledGraph.publicModels || [])
+    .map((item) => String(item.model || '').trim())
+    .filter(Boolean);
   const deduped = Array.from(new Set([
     ...rows.map((row) => String(row.modelName || '').trim()).filter(Boolean),
-    ...routeAliases.map((row) => String(row.displayName || '').trim()).filter(Boolean),
+    ...publicGraphModels,
   ])).sort();
 
   const allowed: ListedModel[] = [];

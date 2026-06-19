@@ -48,6 +48,14 @@ function findButtonByText(root: ReactTestInstance, text: string): ReactTestInsta
   ));
 }
 
+function findButtonsByText(root: ReactTestInstance, text: string): ReactTestInstance[] {
+  return root.findAll((node) => (
+    node.type === 'button'
+    && typeof node.props.onClick === 'function'
+    && collectText(node).includes(text)
+  ));
+}
+
 async function flushMicrotasks() {
   await act(async () => {
     await Promise.resolve();
@@ -62,14 +70,18 @@ describe('TokenRoutes refresh decision action', () => {
     getBrandMock.mockReturnValue(null);
     apiMock.getRoutesSummary.mockResolvedValue([
       {
-        id: 1, modelPattern: 'gpt-4o-mini', displayName: 'gpt-4o-mini',
-        displayIcon: null, modelMapping: null, enabled: true,
+        id: 1, modelMapping: null, enabled: true,
+        match: { kind: 'model', requestedModelPattern: 'gpt-4o-mini', displayName: 'gpt-4o-mini' },
+        backend: { kind: 'channels' },
+        presentation: { displayName: 'gpt-4o-mini', displayIcon: null },
         channelCount: 0, enabledChannelCount: 0, siteNames: [],
         decisionSnapshot: null, decisionRefreshedAt: null,
       },
       {
-        id: 2, modelPattern: 're:^claude-(opus|sonnet)-4-6$', displayName: 'claude-group',
-        displayIcon: null, modelMapping: null, enabled: true,
+        id: 2, modelMapping: null, enabled: true,
+        match: { kind: 'model', requestedModelPattern: 're:^claude-(opus|sonnet)-4-6$', displayName: 'claude-group' },
+        backend: { kind: 'channels' },
+        presentation: { displayName: 'claude-group', displayIcon: null },
         channelCount: 0, enabledChannelCount: 0, siteNames: [],
         decisionSnapshot: null, decisionRefreshedAt: null,
       },
@@ -93,28 +105,36 @@ describe('TokenRoutes refresh decision action', () => {
       apiMock.getRoutesSummary
         .mockResolvedValueOnce([
           {
-            id: 1, modelPattern: 'gpt-4o-mini', displayName: 'gpt-4o-mini',
-            displayIcon: null, modelMapping: null, enabled: true,
+            id: 1, modelMapping: null, enabled: true,
+            match: { kind: 'model', requestedModelPattern: 'gpt-4o-mini', displayName: 'gpt-4o-mini' },
+            backend: { kind: 'channels' },
+            presentation: { displayName: 'gpt-4o-mini', displayIcon: null },
             channelCount: 0, enabledChannelCount: 0, siteNames: [],
             decisionSnapshot: null, decisionRefreshedAt: null,
           },
           {
-            id: 2, modelPattern: 're:^claude-(opus|sonnet)-4-6$', displayName: 'claude-group',
-            displayIcon: null, modelMapping: null, enabled: true,
+            id: 2, modelMapping: null, enabled: true,
+            match: { kind: 'model', requestedModelPattern: 're:^claude-(opus|sonnet)-4-6$', displayName: 'claude-group' },
+            backend: { kind: 'channels' },
+            presentation: { displayName: 'claude-group', displayIcon: null },
             channelCount: 0, enabledChannelCount: 0, siteNames: [],
             decisionSnapshot: null, decisionRefreshedAt: null,
           },
         ])
         .mockResolvedValueOnce([
           {
-            id: 1, modelPattern: 'gpt-4o-mini', displayName: 'gpt-4o-mini',
-            displayIcon: null, modelMapping: null, enabled: true,
+            id: 1, modelMapping: null, enabled: true,
+            match: { kind: 'model', requestedModelPattern: 'gpt-4o-mini', displayName: 'gpt-4o-mini' },
+            backend: { kind: 'channels' },
+            presentation: { displayName: 'gpt-4o-mini', displayIcon: null },
             channelCount: 0, enabledChannelCount: 0, siteNames: [],
             decisionSnapshot: { matched: true, candidates: [] }, decisionRefreshedAt: '2026-04-01T00:00:00.000Z',
           },
           {
-            id: 2, modelPattern: 're:^claude-(opus|sonnet)-4-6$', displayName: 'claude-group',
-            displayIcon: null, modelMapping: null, enabled: true,
+            id: 2, modelMapping: null, enabled: true,
+            match: { kind: 'model', requestedModelPattern: 're:^claude-(opus|sonnet)-4-6$', displayName: 'claude-group' },
+            backend: { kind: 'channels' },
+            presentation: { displayName: 'claude-group', displayIcon: null },
             channelCount: 0, enabledChannelCount: 0, siteNames: [],
             decisionSnapshot: { matched: true, candidates: [] }, decisionRefreshedAt: '2026-04-01T00:00:00.000Z',
           },
@@ -131,7 +151,7 @@ describe('TokenRoutes refresh decision action', () => {
       });
       await flushMicrotasks();
 
-      const refreshButton = findButtonByText(root.root, '刷新选中概率');
+      const refreshButton = findButtonsByText(root.root, '刷新选中概率')[0];
       await act(async () => {
         await refreshButton.props.onClick();
       });
@@ -154,16 +174,20 @@ describe('TokenRoutes refresh decision action', () => {
       apiMock.getRoutesSummary
         .mockResolvedValueOnce([
           {
-            id: 1, modelPattern: 'gpt-4o-mini', displayName: 'gpt-4o-mini',
-            displayIcon: null, modelMapping: null, enabled: true,
+            id: 1, modelMapping: null, enabled: true,
+            match: { kind: 'model', requestedModelPattern: 'gpt-4o-mini', displayName: 'gpt-4o-mini' },
+            backend: { kind: 'channels' },
+            presentation: { displayName: 'gpt-4o-mini', displayIcon: null },
             channelCount: 0, enabledChannelCount: 0, siteNames: [],
             decisionSnapshot: null, decisionRefreshedAt: null,
           },
         ])
         .mockResolvedValueOnce([
           {
-            id: 1, modelPattern: 'gpt-4o-mini', displayName: 'gpt-4o-mini',
-            displayIcon: null, modelMapping: null, enabled: true,
+            id: 1, modelMapping: null, enabled: true,
+            match: { kind: 'model', requestedModelPattern: 'gpt-4o-mini', displayName: 'gpt-4o-mini' },
+            backend: { kind: 'channels' },
+            presentation: { displayName: 'gpt-4o-mini', displayIcon: null },
             channelCount: 0, enabledChannelCount: 0, siteNames: [],
             decisionSnapshot: { matched: true, candidates: [] }, decisionRefreshedAt: '2026-04-01T00:00:00.000Z',
           },

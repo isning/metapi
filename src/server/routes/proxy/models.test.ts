@@ -3,6 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { tokenRouteFixture } from '../../test/routeGraphFixtures.js';
 
 type DbModule = typeof import('../../db/index.js');
 type ProxyRouterModule = typeof import('./router.js');
@@ -96,8 +97,8 @@ describe('/v1/models route', () => {
       },
     ]).run();
 
-    const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'routable-model',
+    const route = await db.insert(schema.tokenRoutes).values( {
+      ...tokenRouteFixture({ modelPattern: 'routable-model' }),
       enabled: true,
     }).returning().get();
 
@@ -163,8 +164,8 @@ describe('/v1/models route', () => {
       available: true,
     }).run();
 
-    const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'global-routable-model',
+    const route = await db.insert(schema.tokenRoutes).values( {
+      ...tokenRouteFixture({ modelPattern: 'global-routable-model' }),
       enabled: true,
     }).returning().get();
 
@@ -228,12 +229,12 @@ describe('/v1/models route', () => {
       },
     ]).run();
 
-    const allowedRoute = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'allowed-model',
+    const allowedRoute = await db.insert(schema.tokenRoutes).values( {
+      ...tokenRouteFixture({ modelPattern: 'allowed-model' }),
       enabled: true,
     }).returning().get();
-    const blockedRoute = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'blocked-model',
+    const blockedRoute = await db.insert(schema.tokenRoutes).values( {
+      ...tokenRouteFixture({ modelPattern: 'blocked-model' }),
       enabled: true,
     }).returning().get();
 
@@ -314,8 +315,8 @@ describe('/v1/models route', () => {
       },
     ]).run();
 
-    const groupRoute = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 're:^claude-(opus|sonnet)-4-5$',
+    const groupRoute = await db.insert(schema.tokenRoutes).values( {
+      ...tokenRouteFixture({ modelPattern: 're:^claude-(opus|sonnet)-4-5$' }),
       displayName: 'claude-opus-4-6',
       enabled: true,
     }).returning().get();
@@ -441,12 +442,12 @@ describe('/v1/models route', () => {
       },
     ]).run();
 
-    const sourceRouteA = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'claude-opus-4-5',
+    const sourceRouteA = await db.insert(schema.tokenRoutes).values( {
+      ...tokenRouteFixture({ modelPattern: 'claude-opus-4-5' }),
       enabled: true,
     }).returning().get();
-    const sourceRouteB = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'claude-sonnet-4-5',
+    const sourceRouteB = await db.insert(schema.tokenRoutes).values( {
+      ...tokenRouteFixture({ modelPattern: 'claude-sonnet-4-5' }),
       enabled: true,
     }).returning().get();
 
@@ -546,13 +547,13 @@ describe('/v1/models route', () => {
       },
     ]).run();
 
-    const searchRoute = await db.insert(schema.tokenRoutes).values({
-      modelPattern: '__search',
+    const searchRoute = await db.insert(schema.tokenRoutes).values( {
+      ...tokenRouteFixture({ modelPattern: '__search' }),
       enabled: true,
     }).returning().get();
 
-    const llmRoute = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-4.1',
+    const llmRoute = await db.insert(schema.tokenRoutes).values( {
+      ...tokenRouteFixture({ modelPattern: 'gpt-4.1' }),
       enabled: true,
     }).returning().get();
 
@@ -627,8 +628,8 @@ describe('/v1/models route', () => {
       available: true,
     }).run();
 
-    const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-4.1',
+    const route = await db.insert(schema.tokenRoutes).values( {
+      ...tokenRouteFixture({ modelPattern: 'gpt-4.1' }),
       enabled: true,
     }).returning().get();
 
@@ -684,8 +685,8 @@ describe('/v1/models route', () => {
       available: true,
     }).run();
 
-    const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-4.1',
+    const route = await db.insert(schema.tokenRoutes).values( {
+      ...tokenRouteFixture({ modelPattern: 'gpt-4.1' }),
       enabled: true,
     }).returning().get();
 

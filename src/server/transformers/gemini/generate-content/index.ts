@@ -63,6 +63,7 @@ import { geminiGenerateContentUsage } from './usage.js';
 import { reasoningEffortToGeminiThinkingConfig, geminiThinkingConfigToReasoning } from './convert.js';
 import { buildOpenAiBodyFromGeminiRequest, serializeNormalizedFinalToGemini } from './compatibility.js';
 import {
+  applyGeminiGenerateContentReasoningHistoryTransport,
   buildCanonicalRequestToGeminiGenerateContentBody,
   parseGeminiGenerateContentRequestToCanonical,
 } from './requestBridge.js';
@@ -84,6 +85,7 @@ export const geminiGenerateContentTransformer = {
   compatibility: {
     buildOpenAiBodyFromGeminiRequest,
     serializeNormalizedFinalToGemini,
+    applyReasoningHistoryTransport: applyGeminiGenerateContentReasoningHistoryTransport,
   },
   parseProxyRequestPath: parseGeminiProxyRequestPath,
   resolveProxyApiVersion: resolveGeminiProxyApiVersion,
@@ -98,9 +100,9 @@ export const geminiGenerateContentTransformer = {
   },
   buildProtocolRequest(
     request: CanonicalRequestEnvelope,
-    _ctx?: ProtocolBuildContext,
+    ctx?: ProtocolBuildContext,
   ): Record<string, unknown> {
-    return buildCanonicalRequestToGeminiGenerateContentBody(request);
+    return buildCanonicalRequestToGeminiGenerateContentBody(request, ctx);
   },
 };
 
@@ -113,6 +115,7 @@ export {
   geminiGenerateContentUsage,
   reasoningEffortToGeminiThinkingConfig,
   geminiThinkingConfigToReasoning,
+  applyGeminiGenerateContentReasoningHistoryTransport,
   buildOpenAiBodyFromGeminiRequest,
   serializeNormalizedFinalToGemini,
 };

@@ -10,6 +10,7 @@ export const sites = sqliteTable('sites', {
   proxyUrl: text('proxy_url'),
   useSystemProxy: integer('use_system_proxy', { mode: 'boolean' }).default(false),
   customHeaders: text('custom_headers'),
+  compatibilityPolicy: text('compatibility_policy'),
   status: text('status').notNull().default('active'), // 'active' | 'disabled'
   isPinned: integer('is_pinned', { mode: 'boolean' }).default(false),
   sortOrder: integer('sort_order').default(0),
@@ -91,6 +92,7 @@ export const accountTokens = sqliteTable('account_tokens', {
   name: text('name').notNull(),
   token: text('token').notNull(),
   tokenGroup: text('token_group'),
+  compatibilityPolicy: text('compatibility_policy'),
   valueStatus: text('value_status').notNull().default('ready'),
   source: text('source').default('manual'), // 'manual' | 'sync' | 'legacy'
   enabled: integer('enabled', { mode: 'boolean' }).default(true),
@@ -146,10 +148,8 @@ export const tokenModelAvailability = sqliteTable('token_model_availability', {
 
 export const tokenRoutes = sqliteTable('token_routes', {
   id: integer('id').primaryKey({ autoIncrement: true }),
-  modelPattern: text('model_pattern').notNull(),
   displayName: text('display_name'),
   displayIcon: text('display_icon'),
-  routeMode: text('route_mode').default('pattern'),
   modelMapping: text('model_mapping'), // JSON
   decisionSnapshot: text('decision_snapshot'), // JSON
   decisionRefreshedAt: text('decision_refreshed_at'),
@@ -158,7 +158,6 @@ export const tokenRoutes = sqliteTable('token_routes', {
   createdAt: text('created_at').default(sql`(datetime('now'))`),
   updatedAt: text('updated_at').default(sql`(datetime('now'))`),
 }, (table) => ({
-  modelPatternIdx: index('token_routes_model_pattern_idx').on(table.modelPattern),
   enabledIdx: index('token_routes_enabled_idx').on(table.enabled),
 }));
 
@@ -169,6 +168,39 @@ export const routeGroupSources = sqliteTable('route_group_sources', {
 }, (table) => ({
   groupSourceUnique: uniqueIndex('route_group_sources_group_source_unique').on(table.groupRouteId, table.sourceRouteId),
   sourceRouteIdx: index('route_group_sources_source_route_id_idx').on(table.sourceRouteId),
+}));
+
+export const routeGraphVersions = sqliteTable('route_graph_versions', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  version: integer('version').notNull(),
+  sourceGraphJson: text('source_graph_json').notNull(),
+  compiledGraphJson: text('compiled_graph_json').notNull(),
+  status: text('status').notNull().default('archived'),
+  createdBy: text('created_by').default('system'),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  activatedAt: text('activated_at'),
+}, (table) => ({
+  versionUnique: uniqueIndex('route_graph_versions_version_unique').on(table.version),
+  statusIdx: index('route_graph_versions_status_idx').on(table.status),
+}));
+
+export const routeGraphDrafts = sqliteTable('route_graph_drafts', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  baseVersion: integer('base_version').references(() => routeGraphVersions.id, { onDelete: 'set null' }),
+  workingGraphJson: text('working_graph_json').notNull(),
+  status: text('status').notNull().default('active'),
+  diagnosticsJson: text('diagnostics_json'),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  statusIdx: index('route_graph_drafts_status_idx').on(table.status),
+}));
+
+export const routeGraphActiveVersion = sqliteTable('route_graph_active_version', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  versionId: integer('version_id').notNull().references(() => routeGraphVersions.id, { onDelete: 'cascade' }),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  singletonUnique: uniqueIndex('route_graph_active_version_singleton_unique').on(table.id),
 }));
 
 export const oauthRouteUnits = sqliteTable('oauth_route_units', {
@@ -212,6 +244,7 @@ export const oauthRouteUnitMembers = sqliteTable('oauth_route_unit_members', {
 export const routeChannels = sqliteTable('route_channels', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   routeId: integer('route_id').notNull().references(() => tokenRoutes.id, { onDelete: 'cascade' }),
+  routeNodeId: text('route_node_id'),
   accountId: integer('account_id').notNull().references(() => accounts.id, { onDelete: 'cascade' }),
   tokenId: integer('token_id').references(() => accountTokens.id, { onDelete: 'set null' }),
   oauthRouteUnitId: integer('oauth_route_unit_id'),
@@ -232,6 +265,7 @@ export const routeChannels = sqliteTable('route_channels', {
   cooldownUntil: text('cooldown_until'),
 }, (table) => ({
   routeIdIdx: index('route_channels_route_id_idx').on(table.routeId),
+  routeNodeIdIdx: index('route_channels_route_node_id_idx').on(table.routeNodeId),
   accountIdIdx: index('route_channels_account_id_idx').on(table.accountId),
   tokenIdIdx: index('route_channels_token_id_idx').on(table.tokenId),
   oauthRouteUnitIdx: index('route_channels_oauth_route_unit_id_idx').on(table.oauthRouteUnitId),

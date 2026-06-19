@@ -47,6 +47,7 @@ import {
 } from 'lucide-react';
 import '@xyflow/react/dist/style.css';
 import { api } from '../../api.js';
+import { getRouteGraphMacroPort, getRouteGraphMacroPorts } from '../../../shared/routeGraph.js';
 import { useToast } from '../../components/Toast.js';
 import { Badge } from '../../components/ui/badge/index.js';
 import { Button } from '../../components/ui/button/index.js';
@@ -58,6 +59,7 @@ import * as DropdownMenu from '../../components/ui/dropdown-menu/index.js';
 import { Input } from '../../components/ui/input/index.js';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '../../components/ui/resizable/index.js';
 import { ScrollArea } from '../../components/ui/scroll-area/index.js';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select/index.js';
 import { Switch } from '../../components/ui/switch/index.js';
 import * as Tabs from '../../components/ui/tabs/index.js';
 import { Textarea } from '../../components/ui/textarea/index.js';
@@ -66,11 +68,10 @@ import { NodeForm } from './NodeForm.js';
 import type {
   AddTemplate,
   RouteGraphEdge,
-  RouteGraphEdgeKind,
+  RouteGraphMacro,
   RouteGraphNode,
   RouteGraphNodeType,
   RouteGraphPort,
-  RouteGraphPortKind,
 } from './routeGraphTypes.js';
 import {
   NODE_TYPES,
@@ -101,6 +102,18 @@ import {
   getPortTypeSignature,
   getPublicEntryNodes,
 } from './routeGraphViewModel.js';
+import {
+  macroFlowNodeId,
+  validateRouteGraphConnection,
+} from './routeGraphConnections.js';
+import {
+  deleteSelectedGraphElements,
+  selectionForContextMenu,
+  selectionFromFlowNodeId as deriveSelectionFromFlowNodeId,
+  selectionFromFlowSelection,
+  toggleGraphEdgeSelection,
+  toggleGraphNodeSelection,
+} from './routeGraphEditorInteractions.js';
 
 type RouteFlowEdgeData = RouteGraphEdge & {
   __highlighted?: boolean;
@@ -110,6 +123,7 @@ type RouteGraphSource = {
   version: 1;
   nodes: RouteGraphNode[];
   edges: RouteGraphEdge[];
+  macros: RouteGraphMacro[];
   metadata?: Record<string, unknown>;
 };
 
@@ -122,13 +136,18 @@ type RouteGraphDiagnostic = {
   portId?: string;
 };
 
-type RouteFlowNode = Node<RouteGraphNode & { __compact?: boolean; __cardMetrics?: string[] }, RouteGraphNodeType>;
+type RouteFlowNodeType = RouteGraphNodeType | 'macro';
+type RouteFlowNodeData =
+  | (RouteGraphNode & { __compact?: boolean; __cardMetrics?: string[] })
+  | (RouteGraphMacro & { __isMacroNode: true; __compact?: boolean; __cardMetrics?: string[] });
+type RouteFlowNode = Node<RouteFlowNodeData, RouteFlowNodeType>;
 type RouteFlowEdge = Edge<RouteFlowEdgeData, 'routeGraphEdge'>;
 type SelectionState =
   | { kind: 'graph' }
   | { kind: 'node'; nodeId: string }
   | { kind: 'edge'; edgeId: string }
-  | { kind: 'port'; nodeId: string; portId: string };
+  | { kind: 'port'; nodeId: string; portId: string }
+  | { kind: 'macro'; macroId: string };
 type InspectorAnchor = {
   x: number;
   y: number;
@@ -175,7 +194,7 @@ function routeGraphAccentStyle(color: string): CSSProperties {
 }
 
 function defaultGraph(): RouteGraphSource {
-  return { version: 1, nodes: [], edges: [], metadata: {} };
+  return { version: 1, nodes: [], edges: [], macros: [], metadata: {} };
 }
 
 function getNodePort(node: RouteGraphNode | null, portId?: string | null): RouteGraphPort | null {
@@ -183,8 +202,22 @@ function getNodePort(node: RouteGraphNode | null, portId?: string | null): Route
   return getNodePorts(node).find((port) => port.id === portId) || null;
 }
 
-function isPortEnabled(port: RouteGraphPort | null | undefined): boolean {
-  return port?.enabled !== false;
+function getMacroPort(macro: RouteGraphMacro | null, portId?: string | null): RouteGraphPort | null {
+  if (!macro || !portId) return null;
+  return getRouteGraphMacroPort(macro, portId) as RouteGraphPort | null;
+}
+
+function getMacroPorts(macro: RouteGraphMacro | null): RouteGraphPort[] {
+  if (!macro) return [];
+  return getRouteGraphMacroPorts(macro) as RouteGraphPort[];
+}
+
+function isMacroFlowNodeData(data: RouteFlowNodeData): data is RouteGraphMacro & { __isMacroNode: true; __compact?: boolean; __cardMetrics?: string[] } {
+  return (data as { __isMacroNode?: boolean }).__isMacroNode === true;
+}
+
+function isRouteGraphMacroItem(item: RouteGraphNode | RouteGraphMacro | null): item is RouteGraphMacro {
+  return !!item && typeof item === 'object' && typeof (item as RouteGraphMacro).kind === 'string' && 'config' in item && !('type' in item);
 }
 
 function getSelectionNodeId(selection: SelectionState): string | null {
@@ -196,13 +229,12 @@ function getSelectionPortId(selection: SelectionState): string | null {
   return selection.kind === 'port' ? selection.portId : null;
 }
 
-function edgeKindForPort(kind: RouteGraphPortKind): RouteGraphEdgeKind {
-  if (kind === 'bidirect') return 'bidirect_flow';
-  if (kind === 'route') return 'route_flow';
-  if (kind === 'response') return 'response_flow';
-  if (kind === 'control') return 'control_flow';
-  if (kind === 'metrics') return 'metrics_link';
-  return 'request_flow';
+function getSelectionMacroId(selection: SelectionState): string | null {
+  return selection.kind === 'macro' ? selection.macroId : null;
+}
+
+function selectionFromFlowNodeId(nodeId: string): SelectionState {
+  return deriveSelectionFromFlowNodeId(nodeId);
 }
 
 function normalizeEdge(edge: Partial<RouteGraphEdge>): RouteGraphEdge {
@@ -239,6 +271,17 @@ function normalizeGraph(input: unknown): RouteGraphSource {
         edge.sourceNodeId && edge.targetNodeId && edge.sourcePortId && edge.targetPortId
       ))
       : [],
+    macros: Array.isArray(raw.macros)
+      ? raw.macros.map((macro: any) => ({
+        ...macro,
+        id: String(macro.id || ''),
+        kind: String(macro.kind || ''),
+        enabled: macro.enabled !== false,
+        visibility: macro.visibility === 'public' ? 'public' : 'internal',
+        ownership: ['manual', 'auto_generated', 'system'].includes(macro.ownership) ? macro.ownership : 'manual',
+        config: macro.config && typeof macro.config === 'object' ? macro.config : {},
+      })).filter((macro: RouteGraphMacro) => macro.id && macro.kind)
+      : [],
     metadata: raw.metadata && typeof raw.metadata === 'object' ? raw.metadata : {},
   };
 }
@@ -250,61 +293,21 @@ function filterGraphForView(graph: RouteGraphSource, view: ViewState): RouteGrap
       .filter((node) => view.showGenerated || node.ownership === 'manual')
       .map((node) => node.id),
   );
+  const visibleMacroIds = new Set(
+    graph.macros
+      .filter((macro) => view.showInternal || macro.visibility !== 'internal')
+      .filter((macro) => view.showGenerated || macro.ownership === 'manual')
+      .map((macro) => macroFlowNodeId(macro.id)),
+  );
   return {
     ...graph,
     nodes: graph.nodes.filter((node) => visibleNodeIds.has(node.id)),
-    edges: graph.edges.filter((edge) => visibleNodeIds.has(edge.sourceNodeId) && visibleNodeIds.has(edge.targetNodeId)),
+    macros: graph.macros.filter((macro) => visibleMacroIds.has(macroFlowNodeId(macro.id))),
+    edges: graph.edges.filter((edge) => (
+      (visibleNodeIds.has(edge.sourceNodeId) || visibleMacroIds.has(edge.sourceNodeId))
+      && (visibleNodeIds.has(edge.targetNodeId) || visibleMacroIds.has(edge.targetNodeId))
+    )),
   };
-}
-
-function hasPath(edges: RouteGraphEdge[], start: string, target: string): boolean {
-  const next = new Map<string, string[]>();
-  for (const edge of edges) {
-    if (!next.has(edge.sourceNodeId)) next.set(edge.sourceNodeId, []);
-    next.get(edge.sourceNodeId)!.push(edge.targetNodeId);
-  }
-  const stack = [start];
-  const seen = new Set<string>();
-  while (stack.length > 0) {
-    const nodeId = stack.pop()!;
-    if (nodeId === target) return true;
-    if (seen.has(nodeId)) continue;
-    seen.add(nodeId);
-    stack.push(...(next.get(nodeId) || []));
-  }
-  return false;
-}
-
-function validateConnection(graph: RouteGraphSource, connection: Connection): { ok: true; kind: RouteGraphEdgeKind } | { ok: false; message: string } {
-  if (!connection.source || !connection.target || !connection.sourceHandle || !connection.targetHandle) {
-    return { ok: false, message: '连接必须从具体接口连接到具体接口' };
-  }
-  if (connection.source === connection.target) return { ok: false, message: '不能连接到同一个节点' };
-  const sourceNode = graph.nodes.find((node) => node.id === connection.source) || null;
-  const targetNode = graph.nodes.find((node) => node.id === connection.target) || null;
-  if (!sourceNode || !targetNode) return { ok: false, message: '节点不存在' };
-  if (sourceNode.ownership !== 'manual') return { ok: false, message: '非 manual 节点不能新增出边' };
-  const sourcePort = getNodePort(sourceNode, connection.sourceHandle);
-  const targetPort = getNodePort(targetNode, connection.targetHandle);
-  if (!sourcePort || !targetPort) return { ok: false, message: '接口不存在' };
-  if (!isPortEnabled(sourcePort) || !isPortEnabled(targetPort)) return { ok: false, message: '禁用接口不能连接' };
-  if (sourcePort.direction !== 'output') return { ok: false, message: '起点必须是输出接口' };
-  if (targetPort.direction !== 'input') return { ok: false, message: '终点必须是输入接口' };
-  const accepts = targetPort.accepts || [targetPort.kind];
-  if (!accepts.includes(sourcePort.kind)) return { ok: false, message: `${sourcePort.kind} 不能连接到 ${targetPort.kind}` };
-  if (targetPort.multiple === false && graph.edges.some((edge) => edge.targetNodeId === targetNode.id && edge.targetPortId === targetPort.id)) {
-    return { ok: false, message: '该输入接口已连接' };
-  }
-  if (graph.edges.some((edge) => (
-    edge.sourceNodeId === sourceNode.id
-    && edge.sourcePortId === sourcePort.id
-    && edge.targetNodeId === targetNode.id
-    && edge.targetPortId === targetPort.id
-  ))) {
-    return { ok: false, message: '重复连接' };
-  }
-  if (hasPath(graph.edges, targetNode.id, sourceNode.id)) return { ok: false, message: '不能创建环路' };
-  return { ok: true, kind: edgeKindForPort(sourcePort.kind) };
 }
 
 function updateNode(graph: RouteGraphSource, node: RouteGraphNode): RouteGraphSource {
@@ -316,6 +319,7 @@ function flowToGraphPositions(graph: RouteGraphSource, nodes: RouteFlowNode[]): 
   return {
     ...graph,
     nodes: graph.nodes.map((node) => ({ ...node, position: positionById.get(node.id) || node.position })),
+    macros: graph.macros.map((macro) => ({ ...macro, position: positionById.get(macroFlowNodeId(macro.id)) || macro.position })),
   };
 }
 
@@ -370,17 +374,29 @@ function layoutGraph(graph: RouteGraphSource): RouteGraphSource {
   return {
     ...graph,
     nodes: graph.nodes.map((node) => ({ ...node, position: positionByNodeId.get(node.id) || node.position })),
+    macros: graph.macros.map((macro, index) => ({
+      ...macro,
+      position: macro.position || { x: 120, y: 110 + (graph.nodes.length + index) * 220 },
+    })),
   };
 }
 
 function graphToFlowNodes(graph: RouteGraphSource, view: ViewState): RouteFlowNode[] {
-  return graph.nodes.map((node, index) => ({
+  const primitiveNodes: RouteFlowNode[] = graph.nodes.map((node, index) => ({
     id: node.id,
     type: node.type,
     data: { ...node, __compact: view.compactNodes, __cardMetrics: getNodeCardMetrics(graph, node) },
     position: node.position || { x: 120 + (index % 4) * 300, y: 120 + Math.floor(index / 4) * 190 },
     draggable: node.ownership === 'manual',
   }));
+  const macroNodes: RouteFlowNode[] = graph.macros.map((macro, index) => ({
+    id: macroFlowNodeId(macro.id),
+    type: 'macro',
+    data: { ...macro, __isMacroNode: true, __compact: view.compactNodes, __cardMetrics: getMacroCardMetrics(macro) },
+    position: macro.position || { x: 120 + ((graph.nodes.length + index) % 4) * 300, y: 120 + Math.floor((graph.nodes.length + index) / 4) * 190 },
+    draggable: macro.ownership === 'manual',
+  }));
+  return [...primitiveNodes, ...macroNodes];
 }
 
 function graphToFlowEdges(graph: RouteGraphSource, highlightedEdgeIds: Set<string>): RouteFlowEdge[] {
@@ -396,8 +412,82 @@ function graphToFlowEdges(graph: RouteGraphSource, highlightedEdgeIds: Set<strin
   }));
 }
 
+function getMacroCardMetrics(macro: RouteGraphMacro): string[] {
+  const config = macro.config || {};
+  const groups = Array.isArray(config.groups) ? config.groups : [];
+  return [
+    groups.length === 1 ? '1 group' : `${groups.length} groups`,
+    String(config.policy && typeof config.policy === 'object' && 'strategy' in config.policy ? (config.policy as any).strategy : 'priority_order'),
+    macro.visibility,
+  ];
+}
+
+function MacroNodeShell({ data }: NodeProps<RouteFlowNode>) {
+  if (!isMacroFlowNodeData(data)) return null;
+  const contextMenuBridge = useContext(RouteGraphContextMenuContext);
+  const readonly = data.ownership !== 'manual';
+  const compact = data.__compact === true;
+  const nodeContent = (
+    <div
+      className={`route-blueprint-node route-blueprint-node-macro ${readonly ? 'readonly' : ''} ${compact ? 'compact' : ''} ${data.enabled === false ? 'disabled' : ''}`}
+      data-node-id={data.id}
+      data-node-type="macro"
+      data-ownership={data.ownership}
+      style={routeGraphAccentStyle(ROUTE_GRAPH_VISUAL_COLORS.macro.candidate_selector)}
+      onContextMenu={(event) => {
+        const target = event.target instanceof HTMLElement
+          ? event.target.closest<HTMLElement>('.route-blueprint-port')
+          : null;
+        const portId = target?.dataset.portId;
+        contextMenuBridge?.onContextMenu(event, portId ? { kind: 'port', nodeId: data.id, portId } : { kind: 'macro', macroId: data.id.replace(/^macro:/, '') });
+      }}
+    >
+      <div className="route-blueprint-node-head">
+        <span className="route-blueprint-node-icon" aria-hidden="true">
+          <Sparkles size={13} />
+        </span>
+        <div className="route-blueprint-node-head-main">
+          <div className="route-blueprint-node-title">{data.name || data.id}</div>
+          <div className="route-blueprint-node-subtitle">{data.kind} · macro</div>
+        </div>
+        <span className={`route-blueprint-node-state ${data.enabled ? 'online' : 'disabled'}`}>{data.enabled ? 'enabled' : 'disabled'}</span>
+      </div>
+      <div className="route-blueprint-node-ports">
+        {(() => {
+          const ports = getMacroPorts(data);
+          const inputs = ports.filter((port) => port.direction === 'input');
+          const outputs = ports.filter((port) => port.direction === 'output');
+          return (
+            <>
+              <div className="route-blueprint-port-list inputs">
+                {inputs.map((port) => <PortRow key={port.id} nodeId={data.id} port={port} />)}
+              </div>
+              <div className="route-blueprint-port-list outputs">
+                {outputs.map((port) => <PortRow key={port.id} nodeId={data.id} port={port} />)}
+              </div>
+            </>
+          );
+        })()}
+      </div>
+      {!compact && (
+        <div className="route-blueprint-node-metrics">
+          {Array.isArray(data.__cardMetrics) ? data.__cardMetrics.map((metric) => <span key={metric}>{metric}</span>) : null}
+        </div>
+      )}
+    </div>
+  );
+  if (!contextMenuBridge) return nodeContent;
+  return (
+    <ContextMenu.Root>
+      <ContextMenu.Trigger asChild>{nodeContent}</ContextMenu.Trigger>
+      {contextMenuBridge.renderMenu()}
+    </ContextMenu.Root>
+  );
+}
+
 function NodeShell({ data }: NodeProps<RouteFlowNode>) {
   const contextMenuBridge = useContext(RouteGraphContextMenuContext);
+  if (isMacroFlowNodeData(data)) return null;
   const ports = getNodePorts(data);
   const inputs = ports.filter((port) => port.direction === 'input');
   const outputs = ports.filter((port) => port.direction === 'output');
@@ -434,12 +524,12 @@ function NodeShell({ data }: NodeProps<RouteFlowNode>) {
       <div className="route-blueprint-node-ports">
         <div className="route-blueprint-port-list inputs">
           {inputs.map((port) => (
-            <PortRow key={port.id} node={data} port={port} />
+            <PortRow key={port.id} nodeId={data.id} node={data} port={port} />
           ))}
         </div>
         <div className="route-blueprint-port-list outputs">
           {outputs.map((port) => (
-            <PortRow key={port.id} node={data} port={port} />
+            <PortRow key={port.id} nodeId={data.id} node={data} port={port} />
           ))}
         </div>
       </div>
@@ -466,12 +556,12 @@ function NodeShell({ data }: NodeProps<RouteFlowNode>) {
   );
 }
 
-function PortRow({ node, port }: { node: RouteGraphNode; port: RouteGraphPort }) {
+function PortRow({ nodeId, node, port }: { nodeId: string; node?: RouteGraphNode; port: RouteGraphPort }) {
   const isInput = port.direction === 'input';
   const displayLabel = getPortDisplayLabel(port);
   const collection = getPortCollectionKind(port);
   const tooltip = getPortTypeSignature(port);
-  const modeNote = getPortModeNote(node, port);
+  const modeNote = node ? getPortModeNote(node, port) : null;
   const disabled = port.enabled === false;
   return (
     <div
@@ -496,7 +586,7 @@ function PortRow({ node, port }: { node: RouteGraphNode; port: RouteGraphPort })
       )}
       <Tooltip.Root>
         <Tooltip.Trigger asChild>
-          <span className="route-blueprint-port-label" title={`${node.id}.${port.id}`}>{displayLabel}</span>
+          <span className="route-blueprint-port-label" title={`${nodeId}.${port.id}`}>{displayLabel}</span>
         </Tooltip.Trigger>
         <Tooltip.Content>{tooltip}</Tooltip.Content>
       </Tooltip.Root>
@@ -556,6 +646,7 @@ const flowNodeTypes = {
   model_endpoint: NodeShell,
   synthetic_endpoint: NodeShell,
   auto_node: NodeShell,
+  macro: MacroNodeShell,
 };
 const flowEdgeTypes = { routeGraphEdge: RouteGraphEdgeView };
 
@@ -571,6 +662,7 @@ function RouteGraphWorkbenchInner({ mode = 'graph' }: RouteGraphWorkbenchProps) 
   const toast = useToast();
   const reactFlow = useReactFlow<RouteFlowNode, RouteFlowEdge>();
   const workbenchRef = useRef<HTMLDivElement | null>(null);
+  const canvasPanelRef = useRef<HTMLDivElement | null>(null);
   const paneContextMenuTriggerRef = useRef<HTMLSpanElement | null>(null);
   const suppressSelectionRef = useRef(false);
   const contextMenuHandledRef = useRef(false);
@@ -618,9 +710,11 @@ function RouteGraphWorkbenchInner({ mode = 'graph' }: RouteGraphWorkbenchProps) 
 
   const inspectorNodeId = getSelectionNodeId(inspectorTarget);
   const inspectorPortId = getSelectionPortId(inspectorTarget);
+  const inspectorMacroId = getSelectionMacroId(inspectorTarget);
   const selectedNode = inspectorNodeId ? graph.nodes.find((node) => node.id === inspectorNodeId) || null : null;
   const selectedPort = selectedNode && inspectorPortId ? getNodePort(selectedNode, inspectorPortId) : null;
   const selectedEdge = inspectorTarget.kind === 'edge' ? graph.edges.find((edge) => edge.id === inspectorTarget.edgeId) || null : null;
+  const selectedMacro = inspectorMacroId ? graph.macros.find((macro) => macro.id === inspectorMacroId) || null : null;
   const selectedNodeId = getSelectionNodeId(selection);
   const selectedPortId = getSelectionPortId(selection);
 
@@ -642,14 +736,15 @@ function RouteGraphWorkbenchInner({ mode = 'graph' }: RouteGraphWorkbenchProps) 
     const container = workbenchRef.current?.getBoundingClientRect();
     if (!container) return;
     const panelWidth = Math.min(440, Math.max(320, container.width - 32));
+    const bounds = canvasPanelRef.current?.getBoundingClientRect() || container;
     const gap = 12;
     const side: InspectorAnchor['side'] = window.innerWidth - rect.right >= panelWidth + gap ? 'right' : 'left';
     const preferredX = side === 'right' ? rect.right + gap : rect.left - panelWidth - gap;
     const preferredY = rect.top;
-    const minX = container.left + 12;
-    const maxX = container.right - panelWidth - 12;
-    const minY = container.top + 12;
-    const maxY = container.bottom - 180;
+    const minX = bounds.left + 12;
+    const maxX = bounds.right - panelWidth - 12;
+    const minY = bounds.top + 12;
+    const maxY = bounds.bottom - 180;
     setInspectorAnchor({
       x: Math.min(Math.max(preferredX, minX), Math.max(minX, maxX)) - container.left,
       y: Math.min(Math.max(preferredY, minY), Math.max(minY, maxY)) - container.top,
@@ -661,6 +756,18 @@ function RouteGraphWorkbenchInner({ mode = 'graph' }: RouteGraphWorkbenchProps) 
   const anchorInspectorAtFlowNode = useCallback((node: RouteGraphNode) => {
     const position = node.position || { x: 120, y: 120 };
     const width = viewState.compactNodes ? 224 : 258;
+    const screenPosition = reactFlow.flowToScreenPosition({ x: position.x + width, y: position.y });
+    anchorInspectorAtViewportRect({
+      left: screenPosition.x - width,
+      right: screenPosition.x,
+      top: screenPosition.y,
+      bottom: screenPosition.y + 96,
+    });
+  }, [anchorInspectorAtViewportRect, reactFlow, viewState.compactNodes]);
+
+  const anchorInspectorAtMacro = useCallback((macro: RouteGraphMacro) => {
+    const position = macro.position || { x: 120, y: 120 };
+    const width = viewState.compactNodes ? 180 : 196;
     const screenPosition = reactFlow.flowToScreenPosition({ x: position.x + width, y: position.y });
     anchorInspectorAtViewportRect({
       left: screenPosition.x - width,
@@ -739,6 +846,10 @@ function RouteGraphWorkbenchInner({ mode = 'graph' }: RouteGraphWorkbenchProps) 
   }, [selectedNode]);
 
   useEffect(() => {
+    if (selectedMacro) setNodeJsonText(JSON.stringify(selectedMacro, null, 2));
+  }, [selectedMacro]);
+
+  useEffect(() => {
     if (!selectedNode) return;
     const targetKey = inspectorTarget.kind === 'port'
       ? `port:${inspectorTarget.nodeId}:${inspectorTarget.portId}`
@@ -770,6 +881,43 @@ function RouteGraphWorkbenchInner({ mode = 'graph' }: RouteGraphWorkbenchProps) 
     setGraph(normalized);
     setJsonText(JSON.stringify(normalized, null, 2));
   }, []);
+
+  const updateMacro = useCallback((macro: RouteGraphMacro) => {
+    const currentGraph = graphRef.current;
+    applyGraph({
+      ...currentGraph,
+      macros: currentGraph.macros.map((item) => (item.id === macro.id ? macro : item)),
+    });
+  }, [applyGraph]);
+
+  const addMacroGroup = useCallback((macroId: string) => {
+    const currentGraph = graphRef.current;
+    const macro = currentGraph.macros.find((item) => item.id === macroId);
+    if (!macro || macro.ownership !== 'manual') return;
+    const config = getMacroConfig(macro);
+    const groups = getMacroGroups(macro);
+    const nextIndex = groups.length;
+    applyGraph({
+      ...currentGraph,
+      macros: currentGraph.macros.map((item) => item.id === macroId ? {
+        ...macro,
+        config: {
+          ...config,
+          groups: [
+            ...groups,
+            {
+              id: `source:new:${Date.now()}`,
+              label: `band ${nextIndex + 1}`,
+              enabled: true,
+              priority: nextIndex,
+              input: { kind: 'route_ids', routeIds: [] },
+              defaults: { enabled: true, weight: 10, priority: nextIndex },
+            },
+          ],
+        },
+      } : item),
+    });
+  }, [applyGraph]);
 
   const clearGraphSelection = useCallback(() => {
     suppressSelectionRef.current = true;
@@ -806,12 +954,13 @@ function RouteGraphWorkbenchInner({ mode = 'graph' }: RouteGraphWorkbenchProps) 
     const container = workbenchRef.current?.getBoundingClientRect();
     if (!container) return;
     const panelWidth = Math.min(440, Math.max(320, container.width - 32));
+    const bounds = canvasPanelRef.current?.getBoundingClientRect() || container;
     const nextX = drag.originX + (event.clientX - drag.startClientX);
     const nextY = drag.originY + (event.clientY - drag.startClientY);
-    const minX = 12;
-    const maxX = Math.max(12, container.width - panelWidth - 12);
-    const minY = 12;
-    const maxY = Math.max(12, container.height - 180);
+    const minX = bounds.left - container.left + 12;
+    const maxX = Math.max(minX, bounds.right - container.left - panelWidth - 12);
+    const minY = bounds.top - container.top + 12;
+    const maxY = Math.max(minY, bounds.bottom - container.top - 180);
     setInspectorAnchor((current) => current ? {
       ...current,
       x: Math.min(Math.max(nextX, minX), maxX),
@@ -869,8 +1018,9 @@ function RouteGraphWorkbenchInner({ mode = 'graph' }: RouteGraphWorkbenchProps) 
   }, [applyGraph, flowNodes, reactFlow]);
 
   const addNode = useCallback((type: RouteGraphNodeType, position?: { x: number; y: number }, options: { openInspector?: boolean } = {}) => {
-    const node = makeNode(type, graph.nodes.length, position);
-    applyGraph({ ...graph, nodes: [...graph.nodes, node] });
+    const currentGraph = graphRef.current;
+    const node = makeNode(type, currentGraph.nodes.length, position);
+    applyGraph({ ...currentGraph, nodes: [...currentGraph.nodes, node] });
     setSelection({ kind: 'node', nodeId: node.id });
     applyGraphSelection({ nodeIds: [node.id], edgeIds: [] });
     if (options.openInspector !== false) {
@@ -879,11 +1029,12 @@ function RouteGraphWorkbenchInner({ mode = 'graph' }: RouteGraphWorkbenchProps) 
       anchorInspectorAtRenderedNode(node.id);
       setInspectorTab('Config');
     }
-  }, [anchorInspectorAtFlowNode, anchorInspectorAtRenderedNode, applyGraph, applyGraphSelection, graph]);
+  }, [anchorInspectorAtFlowNode, anchorInspectorAtRenderedNode, applyGraph, applyGraphSelection]);
 
   const addTemplate = useCallback((template: AddTemplate, position?: { x: number; y: number }, options: { openInspector?: boolean } = {}) => {
-    const node = template.create(graph.nodes.length, position);
-    applyGraph({ ...graph, nodes: [...graph.nodes, node] });
+    const currentGraph = graphRef.current;
+    const node = template.create(currentGraph.nodes.length, position);
+    applyGraph({ ...currentGraph, nodes: [...currentGraph.nodes, node] });
     setSelection({ kind: 'node', nodeId: node.id });
     applyGraphSelection({ nodeIds: [node.id], edgeIds: [] });
     if (options.openInspector !== false) {
@@ -892,7 +1043,7 @@ function RouteGraphWorkbenchInner({ mode = 'graph' }: RouteGraphWorkbenchProps) 
       anchorInspectorAtRenderedNode(node.id);
       setInspectorTab('Config');
     }
-  }, [anchorInspectorAtFlowNode, anchorInspectorAtRenderedNode, applyGraph, applyGraphSelection, graph]);
+  }, [anchorInspectorAtFlowNode, anchorInspectorAtRenderedNode, applyGraph, applyGraphSelection]);
 
   const addTemplateById = useCallback((templateId: string, position?: { x: number; y: number }) => {
     const template = templateById.get(templateId);
@@ -906,11 +1057,19 @@ function RouteGraphWorkbenchInner({ mode = 'graph' }: RouteGraphWorkbenchProps) 
 
   const focusNode = useCallback((nodeId: string) => {
     const node = graph.nodes.find((item) => item.id === nodeId);
-    if (!node) return;
+    if (!node) {
+      const macro = graph.macros.find((item) => macroFlowNodeId(item.id) === nodeId || item.id === nodeId);
+      if (!macro) return;
+      const flowNodeId = macroFlowNodeId(macro.id);
+      setSelection({ kind: 'macro', macroId: macro.id });
+      applyGraphSelection({ nodeIds: [flowNodeId], edgeIds: [] });
+      reactFlow.setCenter((macro.position?.x || 120) + 98, (macro.position?.y || 120) + 60, { zoom: reactFlow.getZoom(), duration: 220 });
+      return;
+    }
     setSelection({ kind: 'node', nodeId });
     applyGraphSelection({ nodeIds: [nodeId], edgeIds: [] });
     reactFlow.setCenter((node.position?.x || 120) + 129, (node.position?.y || 120) + 60, { zoom: reactFlow.getZoom(), duration: 220 });
-  }, [applyGraphSelection, graph.nodes, reactFlow]);
+  }, [applyGraphSelection, graph.macros, graph.nodes, reactFlow]);
 
   const copyText = useCallback((text: string, label: string) => {
     void navigator.clipboard?.writeText(text);
@@ -924,11 +1083,12 @@ function RouteGraphWorkbenchInner({ mode = 'graph' }: RouteGraphWorkbenchProps) 
   }, [applyGraph, graph]);
 
   const duplicateNode = useCallback((nodeId: string) => {
-    const node = graph.nodes.find((item) => item.id === nodeId);
+    const currentGraph = graphRef.current;
+    const node = currentGraph.nodes.find((item) => item.id === nodeId);
     if (!node || node.ownership !== 'manual') return;
     const duplicate: RouteGraphNode = {
       ...node,
-      id: `${node.type}:${Date.now()}:${graph.nodes.length}`,
+      id: `${node.type}:${Date.now()}:${currentGraph.nodes.length}`,
       name: `${getNodeTitle(node)} copy`,
       position: {
         x: (node.position?.x || 120) + 36,
@@ -936,13 +1096,13 @@ function RouteGraphWorkbenchInner({ mode = 'graph' }: RouteGraphWorkbenchProps) 
       },
       ownership: 'manual',
     };
-    applyGraph({ ...graph, nodes: [...graph.nodes, duplicate] });
+    applyGraph({ ...currentGraph, nodes: [...currentGraph.nodes, duplicate] });
     setSelection({ kind: 'node', nodeId: duplicate.id });
     setInspectorTarget({ kind: 'node', nodeId: duplicate.id });
     applyGraphSelection({ nodeIds: [duplicate.id], edgeIds: [] });
     anchorInspectorAtFlowNode(duplicate);
     anchorInspectorAtRenderedNode(duplicate.id);
-  }, [anchorInspectorAtFlowNode, anchorInspectorAtRenderedNode, applyGraph, applyGraphSelection, graph]);
+  }, [anchorInspectorAtFlowNode, anchorInspectorAtRenderedNode, applyGraph, applyGraphSelection]);
 
   const selectConnectedPath = useCallback((nodeId: string, direction: 'upstream' | 'downstream') => {
     const edge = graph.edges.find((item) => direction === 'downstream' ? item.sourceNodeId === nodeId : item.targetNodeId === nodeId);
@@ -952,7 +1112,8 @@ function RouteGraphWorkbenchInner({ mode = 'graph' }: RouteGraphWorkbenchProps) 
 
   const disconnectPort = useCallback((nodeId: string, portId: string) => {
     const node = graph.nodes.find((item) => item.id === nodeId);
-    if (!node || node.ownership !== 'manual') return;
+    const macro = graph.macros.find((item) => macroFlowNodeId(item.id) === nodeId);
+    if (node ? node.ownership !== 'manual' : macro?.ownership !== 'manual') return;
     applyGraph({
       ...graph,
       edges: graph.edges.filter((edge) => !(
@@ -975,20 +1136,30 @@ function RouteGraphWorkbenchInner({ mode = 'graph' }: RouteGraphWorkbenchProps) 
         return;
       }
     }
+    const macroId = getSelectionMacroId(target);
+    if (macroId) {
+      const macro = graph.macros.find((item) => item.id === macroId);
+      if (macro) {
+        anchorInspectorAtMacro(macro);
+        anchorInspectorAtRenderedNode(macroFlowNodeId(macroId));
+        return;
+      }
+    }
     anchorInspectorAtViewportRect({
       left: contextMenu.x,
       right: contextMenu.x,
       top: contextMenu.y,
       bottom: contextMenu.y,
     });
-  }, [anchorInspectorAtFlowNode, anchorInspectorAtRenderedNode, anchorInspectorAtViewportRect, contextMenu.x, contextMenu.y, graph.nodes]);
+  }, [anchorInspectorAtFlowNode, anchorInspectorAtMacro, anchorInspectorAtRenderedNode, anchorInspectorAtViewportRect, contextMenu.x, contextMenu.y, graph.macros, graph.nodes]);
 
   const insertTemplateAfterSelected = useCallback((template: AddTemplate) => {
     if (selection.kind !== 'node') {
       addTemplate(template);
       return;
     }
-    const sourceNode = graph.nodes.find((node) => node.id === selection.nodeId);
+    const currentGraph = graphRef.current;
+    const sourceNode = currentGraph.nodes.find((node) => node.id === selection.nodeId);
     if (!sourceNode) {
       addTemplate(template);
       return;
@@ -997,10 +1168,10 @@ function RouteGraphWorkbenchInner({ mode = 'graph' }: RouteGraphWorkbenchProps) 
       x: (sourceNode.position?.x || 120) + 340,
       y: sourceNode.position?.y || 120,
     };
-    const nextNode = template.create(graph.nodes.length, position);
+    const nextNode = template.create(currentGraph.nodes.length, position);
     const sourcePort = getNodePorts(sourceNode).find((port) => port.direction === 'output' && !port.readonly);
     const targetPort = getNodePorts(nextNode).find((port) => port.direction === 'input' && (port.accepts || [port.kind]).includes(sourcePort?.kind || 'request'));
-    const nextGraph = { ...graph, nodes: [...graph.nodes, nextNode] };
+    const nextGraph = { ...currentGraph, nodes: [...currentGraph.nodes, nextNode] };
     if (!sourcePort || !targetPort) {
       applyGraph(nextGraph);
       setSelection({ kind: 'node', nodeId: nextNode.id });
@@ -1016,7 +1187,7 @@ function RouteGraphWorkbenchInner({ mode = 'graph' }: RouteGraphWorkbenchProps) 
       target: nextNode.id,
       targetHandle: targetPort.id,
     };
-    const validation = validateConnection(nextGraph, connection);
+    const validation = validateRouteGraphConnection(nextGraph, connection);
     const nextEdge = validation.ok ? normalizeEdge({
       id: `edge:${connection.source}:${connection.sourceHandle}:${connection.target}:${connection.targetHandle}`,
       sourceNodeId: connection.source,
@@ -1036,41 +1207,59 @@ function RouteGraphWorkbenchInner({ mode = 'graph' }: RouteGraphWorkbenchProps) 
     anchorInspectorAtFlowNode(nextNode);
     anchorInspectorAtRenderedNode(nextNode.id);
     setInspectorTab('Config');
-  }, [addTemplate, anchorInspectorAtFlowNode, anchorInspectorAtRenderedNode, applyGraph, applyGraphSelection, graph, selection]);
+  }, [addTemplate, anchorInspectorAtFlowNode, anchorInspectorAtRenderedNode, applyGraph, applyGraphSelection, selection]);
 
   const insertTemplateFromContext = useCallback((template: AddTemplate) => {
     insertTemplateAfterSelected(template);
   }, [insertTemplateAfterSelected]);
 
+  const addModelGroupMacro = useCallback(() => {
+    const currentGraph = graphRef.current;
+    const index = currentGraph.macros.length + 1;
+    const macroId = `model-group:manual:${Date.now()}:${index}`;
+    const macro: RouteGraphMacro = {
+      id: macroId,
+      kind: 'candidate_selector',
+      enabled: false,
+      visibility: 'public',
+      ownership: 'manual',
+      name: `model-group-${index}`,
+      position: contextMenu.position,
+      config: {
+        surface: {
+          entry: {
+            kind: 'external',
+            visibility: 'public',
+            match: {
+              kind: 'model',
+              requestedModelPattern: '',
+              displayName: `model-group-${index}`,
+            },
+          },
+          output: 'route',
+        },
+        policy: { strategy: 'weighted' },
+        groups: [],
+        presentation: {},
+      },
+    };
+    applyGraph({ ...currentGraph, macros: [...currentGraph.macros, macro] });
+    setSelection({ kind: 'macro', macroId });
+    setInspectorTarget({ kind: 'macro', macroId });
+    anchorInspectorAtMacro(macro);
+    anchorInspectorAtRenderedNode(macroFlowNodeId(macroId));
+    setInspectorTab('Config');
+  }, [anchorInspectorAtMacro, anchorInspectorAtRenderedNode, applyGraph, contextMenu.position]);
+
   const deleteSelected = useCallback(() => {
-    const nodeIdsToDelete = graphSelection.nodeIds.filter((nodeId) => {
-      const node = graph.nodes.find((item) => item.id === nodeId);
-      return node?.ownership === 'manual';
-    });
-    const edgeIdsToDelete = graphSelection.edgeIds.filter((edgeId) => {
-      const edge = graph.edges.find((item) => item.id === edgeId);
-      return edge?.ownership === 'manual';
-    });
-    if (nodeIdsToDelete.length === 0 && edgeIdsToDelete.length === 0 && selection.kind === 'node') {
-      const node = graph.nodes.find((item) => item.id === selection.nodeId);
-      if (node?.ownership === 'manual') nodeIdsToDelete.push(node.id);
-    }
-    if (nodeIdsToDelete.length === 0 && edgeIdsToDelete.length === 0 && selection.kind === 'edge') {
-      const edge = graph.edges.find((item) => item.id === selection.edgeId);
-      if (edge?.ownership === 'manual') edgeIdsToDelete.push(edge.id);
-    }
-    if (nodeIdsToDelete.length === 0 && edgeIdsToDelete.length === 0) return;
-    const removedNodeIds = new Set(nodeIdsToDelete);
-    applyGraph({
-      ...graph,
-      nodes: graph.nodes.filter((item) => !removedNodeIds.has(item.id)),
-      edges: graph.edges.filter((edge) => !removedNodeIds.has(edge.sourceNodeId) && !removedNodeIds.has(edge.targetNodeId) && !edgeIdsToDelete.includes(edge.id)),
-    });
+    const nextGraph = deleteSelectedGraphElements(graph, selection, graphSelection);
+    if (nextGraph === graph) return;
+    applyGraph(nextGraph);
     clearGraphSelection();
-  }, [applyGraph, clearGraphSelection, graph, graphSelection.edgeIds, graphSelection.nodeIds, selection]);
+  }, [applyGraph, clearGraphSelection, graph, graphSelection, selection]);
 
   const onConnect = useCallback((connection: Connection) => {
-    const result = validateConnection(graph, connection);
+    const result = validateRouteGraphConnection(graph, connection);
     if (!result.ok) {
       toast.error(result.message);
       return;
@@ -1096,7 +1285,7 @@ function RouteGraphWorkbenchInner({ mode = 'graph' }: RouteGraphWorkbenchProps) 
     });
   }, [anchorInspectorAtViewportRect, applyGraph, graph, toast]);
 
-  const isValidConnection = useCallback((connection: RouteFlowEdge | Connection) => validateConnection(graph, {
+  const isValidConnection = useCallback((connection: RouteFlowEdge | Connection) => validateRouteGraphConnection(graph, {
     source: connection.source || '',
     sourceHandle: connection.sourceHandle || null,
     target: connection.target || '',
@@ -1113,7 +1302,7 @@ function RouteGraphWorkbenchInner({ mode = 'graph' }: RouteGraphWorkbenchProps) 
       ...graph,
       edges: graph.edges.filter((item) => item.id !== edge.id),
     };
-    const result = validateConnection(graphWithoutOldEdge, connection);
+    const result = validateRouteGraphConnection(graphWithoutOldEdge, connection);
     if (!result.ok) {
       toast.error(result.message);
       return;
@@ -1159,11 +1348,11 @@ function RouteGraphWorkbenchInner({ mode = 'graph' }: RouteGraphWorkbenchProps) 
 
   const prepareGraphContextMenu = useCallback((event: MouseEvent | globalThis.MouseEvent, target: SelectionState = { kind: 'graph' }) => {
     const position = reactFlow.screenToFlowPosition({ x: event.clientX, y: event.clientY });
-    if (target.kind === 'node') {
-      if (!graphSelectionRef.current.nodeIds.includes(target.nodeId)) applyGraphSelection({ nodeIds: [target.nodeId], edgeIds: [] });
-    } else if (target.kind === 'edge') {
-      if (!graphSelectionRef.current.edgeIds.includes(target.edgeId)) applyGraphSelection({ nodeIds: [], edgeIds: [target.edgeId] });
-    }
+    const nextGraphSelection = selectionForContextMenu({
+      current: graphSelectionRef.current,
+      target,
+    });
+    if (nextGraphSelection !== graphSelectionRef.current) applyGraphSelection(nextGraphSelection);
     setContextMenu((current) => ({
       ...current,
       x: event.clientX,
@@ -1276,16 +1465,35 @@ function RouteGraphWorkbenchInner({ mode = 'graph' }: RouteGraphWorkbenchProps) 
   };
 
   const applyNodeJson = () => {
-    if (!selectedNode) return;
     try {
-      const parsed = JSON.parse(nodeJsonText) as RouteGraphNode;
-      if (parsed.ownership !== 'manual') {
-        toast.error('不能把节点 JSON 改成非 manual 所有权');
+      if (selectedMacro) {
+        const parsed = normalizeGraph({ ...graph, macros: [JSON.parse(nodeJsonText)] }).macros[0];
+        if (!parsed) {
+          toast.error('Macro JSON 必须包含 id/kind');
+          return;
+        }
+        if (parsed.ownership !== 'manual') {
+          toast.error('不能把 macro JSON 改成非 manual 所有权');
+          return;
+        }
+        applyGraph({
+          ...graph,
+          macros: graph.macros.map((macro) => (macro.id === selectedMacro.id ? parsed : macro)),
+        });
+        setSelection({ kind: 'macro', macroId: parsed.id });
+        setInspectorTarget({ kind: 'macro', macroId: parsed.id });
         return;
       }
-      applyGraph(updateNode(graph, parsed));
-      setSelection({ kind: 'node', nodeId: parsed.id });
-      anchorInspectorAtFlowNode(parsed);
+      if (selectedNode) {
+        const parsed = JSON.parse(nodeJsonText) as RouteGraphNode;
+        if (parsed.ownership !== 'manual') {
+          toast.error('不能把节点 JSON 改成非 manual 所有权');
+          return;
+        }
+        applyGraph(updateNode(graph, parsed));
+        setSelection({ kind: 'node', nodeId: parsed.id });
+        anchorInspectorAtFlowNode(parsed);
+      }
     } catch (error) {
       toast.error(`节点 JSON 解析失败: ${(error as Error).message}`);
     }
@@ -1301,6 +1509,7 @@ function RouteGraphWorkbenchInner({ mode = 'graph' }: RouteGraphWorkbenchProps) 
       templates={templates}
       templateById={templateById}
       onAddTemplate={addTemplateFromContext}
+      onAddMacro={addModelGroupMacro}
       onInsertTemplate={insertTemplateFromContext}
       onOpenInspector={openInspector}
       onOpenCommand={() => setCommandOpen(true)}
@@ -1353,15 +1562,9 @@ function RouteGraphWorkbenchInner({ mode = 'graph' }: RouteGraphWorkbenchProps) 
             }
             if (nodeIds.length === 0 && edgeIds.length === 0) return;
             applyGraphSelection({ nodeIds, edgeIds });
-            if (nodeIds.length === 1 && edgeIds.length === 0) {
-              setSelection((current) => getSelectionNodeId(current) === nodeIds[0] ? current : { kind: 'node', nodeId: nodeIds[0]! });
-            } else if (edgeIds.length === 1 && nodeIds.length === 0) {
-              setSelection((current) => current.kind === 'edge' && current.edgeId === edgeIds[0] ? current : { kind: 'edge', edgeId: edgeIds[0]! });
-            } else if (nodeIds.length > 1 || edgeIds.length > 1 || (nodeIds.length > 0 && edgeIds.length > 0)) {
-              const primaryNode = nodeIds[0];
-              const primaryEdge = edgeIds[0];
-              if (primaryNode) setSelection({ kind: 'node', nodeId: primaryNode });
-              else if (primaryEdge) setSelection({ kind: 'edge', edgeId: primaryEdge });
+            const nextSelection = selectionFromFlowSelection({ nodeIds, edgeIds });
+            if (nextSelection) {
+              setSelection((current) => JSON.stringify(current) === JSON.stringify(nextSelection) ? current : nextSelection);
             }
           }}
           onConnect={onConnect}
@@ -1370,39 +1573,30 @@ function RouteGraphWorkbenchInner({ mode = 'graph' }: RouteGraphWorkbenchProps) 
           onNodeDragStop={persistNodePositions}
           onNodeClick={(event, node) => {
             const multiIntent = event.shiftKey || event.ctrlKey || event.metaKey;
-            setSelection({ kind: 'node', nodeId: node.id });
+            const nextSelection = selectionFromFlowNodeId(node.id);
+            setSelection(nextSelection);
             if (multiIntent) {
               suppressSelectionRef.current = true;
               const current = graphSelectionRef.current;
-              applyGraphSelection({
-                nodeIds: current.nodeIds.includes(node.id)
-                  ? current.nodeIds.filter((nodeId) => nodeId !== node.id)
-                  : [...current.nodeIds, node.id],
-                edgeIds: current.edgeIds,
-              });
+              applyGraphSelection(toggleGraphNodeSelection(current, node.id));
               window.setTimeout(() => {
                 suppressSelectionRef.current = false;
               }, 80);
             } else {
               applyGraphSelection({ nodeIds: [node.id], edgeIds: [] });
-              setInspectorTarget({ kind: 'node', nodeId: node.id });
+              setInspectorTarget(nextSelection);
               anchorInspectorAtViewportRect((event.currentTarget as HTMLElement).getBoundingClientRect());
               setInspectorTab('Overview');
             }
           }}
-          onNodeContextMenu={(event, node) => prepareGraphContextMenu(event, { kind: 'node', nodeId: node.id })}
+          onNodeContextMenu={(event, node) => prepareGraphContextMenu(event, selectionFromFlowNodeId(node.id))}
           onEdgeClick={(event, edge) => {
             const multiIntent = event.shiftKey || event.ctrlKey || event.metaKey;
             setSelection({ kind: 'edge', edgeId: edge.id });
             if (multiIntent) {
               suppressSelectionRef.current = true;
               const current = graphSelectionRef.current;
-              applyGraphSelection({
-                nodeIds: current.nodeIds,
-                edgeIds: current.edgeIds.includes(edge.id)
-                  ? current.edgeIds.filter((edgeId) => edgeId !== edge.id)
-                  : [...current.edgeIds, edge.id],
-              });
+              applyGraphSelection(toggleGraphEdgeSelection(current, edge.id));
               window.setTimeout(() => {
                 suppressSelectionRef.current = false;
               }, 80);
@@ -1472,18 +1666,23 @@ function RouteGraphWorkbenchInner({ mode = 'graph' }: RouteGraphWorkbenchProps) 
                     <ChevronDown size={13} />
                   </Button>
                 </DropdownMenu.Trigger>
-                <DropdownMenu.Content align="end">
-                  <DropdownMenu.Label>Quick Add</DropdownMenu.Label>
-                  {quickTemplates.map((template) => (
-                    <DropdownMenu.Item key={template.id} onSelect={() => addTemplateById(template.id)}>
-                      {template.title}
-                    </DropdownMenu.Item>
-                  ))}
-                  <DropdownMenu.Separator />
-                  <DropdownMenu.Item onSelect={() => setCommandOpen(true)}>
-                    Search all nodes
-                    <DropdownMenu.Shortcut>⌘K</DropdownMenu.Shortcut>
+              <DropdownMenu.Content align="end">
+                <DropdownMenu.Label>Quick Add</DropdownMenu.Label>
+                {quickTemplates.map((template) => (
+                  <DropdownMenu.Item key={template.id} onSelect={() => addTemplateById(template.id)}>
+                    {template.title}
                   </DropdownMenu.Item>
+                ))}
+                <DropdownMenu.Separator />
+                <DropdownMenu.Item onSelect={addModelGroupMacro}>
+                  <Sparkles size={13} />
+                  Add macro
+                </DropdownMenu.Item>
+                <DropdownMenu.Separator />
+                <DropdownMenu.Item onSelect={() => setCommandOpen(true)}>
+                  Search all nodes
+                  <DropdownMenu.Shortcut>⌘K</DropdownMenu.Shortcut>
+                </DropdownMenu.Item>
                 </DropdownMenu.Content>
               </DropdownMenu.Root>
               <Button type="button" variant="outline" size="sm" onClick={autoLayout} title="Auto layout">
@@ -1515,7 +1714,7 @@ function RouteGraphWorkbenchInner({ mode = 'graph' }: RouteGraphWorkbenchProps) 
             <Button size="sm" type="button" disabled={saving || errorCount > 0} onClick={publish}>Publish</Button>
           </ButtonGroup>
         </CardHeader>
-        <Textarea className="route-graph-json-editor" value={jsonText} onChange={(event) => setJsonText(event.target.value)} />
+        <Textarea className="font-mono text-xs" value={jsonText} onChange={(event) => setJsonText(event.target.value)} />
       </Card>
     );
   }
@@ -1527,7 +1726,7 @@ function RouteGraphWorkbenchInner({ mode = 'graph' }: RouteGraphWorkbenchProps) 
         <div className="min-w-0">
           <div className="text-sm font-semibold">Route Graph</div>
           <div className="truncate text-xs text-muted-foreground">
-            active v{activeVersion?.version ?? '-'} · {graph.nodes.length} nodes · {graph.edges.length} edges · {publicEntries.length} public
+            active v{activeVersion?.version ?? '-'} · {graph.nodes.length} nodes · {graph.edges.length} edges · {graph.macros.length} macros · {publicEntries.length} public
           </div>
         </div>
         <div className="route-graph-toolbar-status flex items-center gap-1.5">
@@ -1554,6 +1753,7 @@ function RouteGraphWorkbenchInner({ mode = 'graph' }: RouteGraphWorkbenchProps) 
             templates={templates}
             publicEntries={publicEntries}
             nodes={graph.nodes}
+            macros={graph.macros}
             viewState={viewState}
             onAdd={addNode}
             onAddTemplate={addTemplate}
@@ -1562,6 +1762,13 @@ function RouteGraphWorkbenchInner({ mode = 'graph' }: RouteGraphWorkbenchProps) 
               setSelection({ kind: 'node', nodeId });
               applyGraphSelection({ nodeIds: [nodeId], edgeIds: [] });
             }}
+            onSelectMacro={(macroId) => {
+              setSelection({ kind: 'macro', macroId });
+              setInspectorTarget({ kind: 'macro', macroId });
+              setInspectorAnchor({ x: 280, y: 96, side: 'right', mode: 'manual' });
+              setInspectorTab('Config');
+            }}
+            onAddModelGroupMacro={addModelGroupMacro}
             onChangeView={setViewState}
           />
         </ResizablePanel>
@@ -1573,7 +1780,9 @@ function RouteGraphWorkbenchInner({ mode = 'graph' }: RouteGraphWorkbenchProps) 
             className="min-h-0"
           >
             <ResizablePanel id="canvas" defaultSize="70%" minSize="360px" className="min-h-0 overflow-hidden">
+              <div ref={canvasPanelRef} className="h-full min-h-0">
               {canvas}
+              </div>
             </ResizablePanel>
             <ResizableHandle orientation="vertical" withHandle />
             <ResizablePanel id="bottom" defaultSize="30%" minSize="120px" maxSize="55%" className="min-h-0 overflow-hidden">
@@ -1608,20 +1817,23 @@ function RouteGraphWorkbenchInner({ mode = 'graph' }: RouteGraphWorkbenchProps) 
         </aside>
       )}
 
-      {(selectedNode || selectedEdge) && inspectorAnchor && (
+      {(selectedNode || selectedEdge || selectedMacro) && inspectorAnchor && (
         <aside
-          className="absolute z-40 flex w-[min(440px,calc(100%-2rem))] min-w-0 flex-col overflow-hidden rounded-lg border bg-background text-foreground shadow-lg"
+          className="absolute z-[80] flex w-[min(440px,calc(100%-2rem))] min-w-0 flex-col overflow-y-auto rounded-lg border bg-background text-foreground shadow-lg"
           style={{
             left: inspectorAnchor.x,
             top: inspectorAnchor.y,
+            height: `min(560px, calc(100% - ${inspectorAnchor.y}px - 12px))`,
             maxHeight: `min(560px, calc(100% - ${inspectorAnchor.y}px - 12px))`,
           }}
           data-side={inspectorAnchor.side}
           aria-label="Route graph inspector"
         >
           <div className="route-graph-inspector-controls">
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="icon"
               className="route-graph-inspector-drag-handle"
               aria-label="Move inspector"
               onPointerDown={beginInspectorDrag}
@@ -1629,7 +1841,7 @@ function RouteGraphWorkbenchInner({ mode = 'graph' }: RouteGraphWorkbenchProps) 
               <span />
               <span />
               <span />
-            </button>
+            </Button>
             <Button
               type="button"
               variant="ghost"
@@ -1647,6 +1859,7 @@ function RouteGraphWorkbenchInner({ mode = 'graph' }: RouteGraphWorkbenchProps) 
               selectedNode={selectedNode}
               selectedPort={selectedPort}
               selectedEdge={selectedEdge}
+              selectedMacro={selectedMacro}
               inspectorTab={inspectorTab}
               setInspectorTab={setInspectorTab}
               nodeJsonText={nodeJsonText}
@@ -1654,6 +1867,8 @@ function RouteGraphWorkbenchInner({ mode = 'graph' }: RouteGraphWorkbenchProps) 
               onApplyNodeJson={applyNodeJson}
               onDelete={deleteSelected}
               onChangeNode={(node) => applyGraph(updateNode(graph, node))}
+              onChangeMacro={updateMacro}
+              onAddMacroGroup={addMacroGroup}
               onSelectNode={(nodeId) => setSelection({ kind: 'node', nodeId })}
               onCopyText={copyText}
               onDuplicateNode={duplicateNode}
@@ -1812,14 +2027,8 @@ function AddPanel({
     );
   };
   return (
-    <ScrollArea className="h-full min-h-0">
-    <div className="grid min-w-0 gap-3 p-3">
-      <div className="flex min-w-0 items-center justify-between gap-3">
-        <div className="min-w-0">
-          <strong className="block text-sm font-semibold">Build Graph</strong>
-          <small className="block text-xs text-muted-foreground">Click to add, or drag onto the canvas.</small>
-        </div>
-      </div>
+    <ScrollArea className="route-graph-sidebar-scroll h-full min-h-0">
+    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3 p-3">
       <div className="route-graph-template-search">
         <Search className="shrink-0 text-muted-foreground" size={14} />
         <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search nodes..." />
@@ -1833,27 +2042,27 @@ function AddPanel({
       </Tabs.Tabs>
 
       {coreTemplates.length > 0 && (
-        <section className="grid min-w-0 gap-2">
+        <section className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2">
           <div className="text-xs font-semibold text-muted-foreground">Core Flow</div>
-          <div className="grid min-w-0 gap-2">{coreTemplates.map(renderTemplate)}</div>
+          <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2">{coreTemplates.map(renderTemplate)}</div>
         </section>
       )}
       {transformTemplates.length > 0 && (
-        <section className="grid min-w-0 gap-2">
+        <section className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2">
           <div className="text-xs font-semibold text-muted-foreground">Request Mutations</div>
-          <div className="grid min-w-0 gap-2">{transformTemplates.map(renderTemplate)}</div>
+          <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2">{transformTemplates.map(renderTemplate)}</div>
         </section>
       )}
       {fallbackTemplates.length > 0 && (
-        <section className="grid min-w-0 gap-2">
+        <section className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2">
           <div className="text-xs font-semibold text-muted-foreground">Fallbacks</div>
-          <div className="grid min-w-0 gap-2">{fallbackTemplates.map(renderTemplate)}</div>
+          <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2">{fallbackTemplates.map(renderTemplate)}</div>
         </section>
       )}
       {primitiveNodeTypes.length > 0 && (
-        <section className="grid min-w-0 gap-2">
+        <section className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2">
           <div className="text-xs font-semibold text-muted-foreground">Primitive Nodes</div>
-          <div className="grid min-w-0 gap-2">{primitiveNodeTypes.map(renderPrimitiveNode)}</div>
+          <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2">{primitiveNodeTypes.map(renderPrimitiveNode)}</div>
         </section>
       )}
       <div className="route-graph-template-hint">
@@ -1866,7 +2075,7 @@ function AddPanel({
 
 function ModelsPanel({ nodes, onSelect }: { nodes: RouteGraphNode[]; onSelect: (nodeId: string) => void }) {
   return (
-    <ScrollArea className="h-full min-h-0">
+    <ScrollArea className="route-graph-sidebar-scroll h-full min-h-0">
     <div className="grid gap-2 p-3">
       {nodes.length === 0 ? <div className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">No public entries.</div> : nodes.map((node) => {
         const match = (node.match || {}) as any;
@@ -1886,9 +2095,79 @@ function ModelsPanel({ nodes, onSelect }: { nodes: RouteGraphNode[]; onSelect: (
   );
 }
 
+function getMacroConfig(macro: RouteGraphMacro): Record<string, any> {
+  return macro.config && typeof macro.config === 'object' ? macro.config as Record<string, any> : {};
+}
+
+function getMacroDisplayName(macro: RouteGraphMacro): string {
+  const config = getMacroConfig(macro);
+  const surface = config.surface && typeof config.surface === 'object' ? config.surface as Record<string, any> : {};
+  const entry = surface.entry && typeof surface.entry === 'object' ? surface.entry as Record<string, any> : {};
+  const match = entry.match && typeof entry.match === 'object' ? entry.match as Record<string, any> : {};
+  return String(match.displayName || macro.name || macro.id);
+}
+
+function getMacroGroups(macro: RouteGraphMacro): Array<Record<string, any>> {
+  const groups = getMacroConfig(macro).groups;
+  return Array.isArray(groups) ? groups : [];
+}
+
+function getMacroRouteIds(macro: RouteGraphMacro): number[] {
+  const routeIds: number[] = [];
+  for (const group of getMacroGroups(macro)) {
+    const input = group.input && typeof group.input === 'object' ? group.input as Record<string, any> : {};
+    if (input.kind !== 'route_ids' || !Array.isArray(input.routeIds)) continue;
+    for (const rawRouteId of input.routeIds) {
+      const routeId = Number(rawRouteId);
+      if (Number.isFinite(routeId) && routeId > 0 && !routeIds.includes(Math.trunc(routeId))) {
+        routeIds.push(Math.trunc(routeId));
+      }
+    }
+  }
+  return routeIds;
+}
+
+function getMacroStrategy(macro: RouteGraphMacro): string {
+  const policy = getMacroConfig(macro).policy;
+  return String(policy && typeof policy === 'object' && 'strategy' in policy ? (policy as any).strategy : 'priority_order');
+}
+
+function MacrosPanel({ macros, onSelect, onAdd }: { macros: RouteGraphMacro[]; onSelect: (macroId: string) => void; onAdd: () => void }) {
+  const sortedMacros = [...macros].sort((left, right) => getMacroDisplayName(left).localeCompare(getMacroDisplayName(right)));
+  return (
+    <ScrollArea className="route-graph-sidebar-scroll h-full min-h-0">
+      <div className="grid gap-2 p-3">
+        <Button type="button" variant="secondary" className="justify-start gap-2" onClick={onAdd}>
+          <Plus size={14} />
+          Add Model Group macro
+        </Button>
+        {sortedMacros.length === 0 ? (
+          <div className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">No semantic macros.</div>
+        ) : sortedMacros.map((macro) => {
+          const routeIds = getMacroRouteIds(macro);
+          return (
+            <Button key={macro.id} type="button" variant="outline" className="h-auto min-w-0 justify-start gap-2 p-3 text-left" onClick={() => onSelect(macro.id)}>
+              <Sparkles className="size-4 shrink-0 text-muted-foreground" />
+              <span className="grid min-w-0 gap-1">
+                <span className="flex min-w-0 items-center gap-2">
+                  <strong className="truncate text-sm font-medium">{getMacroDisplayName(macro)}</strong>
+                  <Badge variant={macro.enabled ? 'secondary' : 'outline'}>{macro.enabled ? 'enabled' : 'disabled'}</Badge>
+                </span>
+                <small className="truncate text-xs text-muted-foreground">
+                  {macro.kind} · {macro.visibility} · {getMacroStrategy(macro)} · {routeIds.length} routes
+                </small>
+              </span>
+            </Button>
+          );
+        })}
+      </div>
+    </ScrollArea>
+  );
+}
+
 function NodesPanel({ nodes, onSelect }: { nodes: RouteGraphNode[]; onSelect: (nodeId: string) => void }) {
   return (
-    <ScrollArea className="h-full min-h-0">
+    <ScrollArea className="route-graph-sidebar-scroll h-full min-h-0">
     <div className="grid gap-2 p-3">
       {nodes.map((node) => (
         <Button key={node.id} type="button" variant="outline" className="h-auto min-w-0 justify-start gap-2 p-3 text-left" onClick={() => onSelect(node.id)}>
@@ -1932,24 +2211,30 @@ function LeftWorkbenchPanel({
   templates,
   publicEntries,
   nodes,
+  macros,
   viewState,
   onAdd,
   onAddTemplate,
   onStartDrag,
   onSelect,
+  onSelectMacro,
+  onAddModelGroupMacro,
   onChangeView,
 }: {
   templates: AddTemplate[];
   publicEntries: RouteGraphNode[];
   nodes: RouteGraphNode[];
+  macros: RouteGraphMacro[];
   viewState: ViewState;
   onAdd: (type: RouteGraphNodeType) => void;
   onAddTemplate: (template: AddTemplate) => void;
   onStartDrag: (templateId: string | null) => void;
   onSelect: (nodeId: string) => void;
+  onSelectMacro: (macroId: string) => void;
+  onAddModelGroupMacro: () => void;
   onChangeView: (value: ViewState) => void;
 }) {
-  const [section, setSection] = useState<'library' | 'models' | 'outline' | 'view'>('library');
+  const [section, setSection] = useState<'library' | 'models' | 'macros' | 'outline' | 'view'>('library');
   return (
     <aside className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden border-r bg-card">
       <Tabs.Tabs value={section} onValueChange={(value) => setSection(value as typeof section)} className="grid h-full min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden">
@@ -1958,23 +2243,27 @@ function LeftWorkbenchPanel({
             <div className="text-sm font-semibold">Graph Tools</div>
             <div className="truncate text-xs text-muted-foreground">Library, entries, outline, and display state.</div>
           </div>
-          <Tabs.TabsList className="grid w-full grid-cols-4" aria-label="Route graph tools">
+          <Tabs.TabsList className="grid w-full grid-cols-5" aria-label="Route graph tools">
             <Tabs.TabsTrigger value="library" title="Library" className="gap-1 px-2">
-            <Plus size={15} />
-            <span className="hidden xl:inline">Library</span>
-          </Tabs.TabsTrigger>
+              <Plus size={15} />
+              <span className="hidden xl:inline">Library</span>
+            </Tabs.TabsTrigger>
             <Tabs.TabsTrigger value="models" title="Models" className="gap-1 px-2">
-            <Layers3 size={15} />
-            <span className="hidden xl:inline">Models</span>
-          </Tabs.TabsTrigger>
+              <Layers3 size={15} />
+              <span className="hidden xl:inline">Models</span>
+            </Tabs.TabsTrigger>
+            <Tabs.TabsTrigger value="macros" title="Macros" className="gap-1 px-2">
+              <Sparkles size={15} />
+              <span className="hidden xl:inline">Macros</span>
+            </Tabs.TabsTrigger>
             <Tabs.TabsTrigger value="outline" title="Outline" className="gap-1 px-2">
-            <ListTree size={15} />
-            <span className="hidden xl:inline">Outline</span>
-          </Tabs.TabsTrigger>
+              <ListTree size={15} />
+              <span className="hidden xl:inline">Outline</span>
+            </Tabs.TabsTrigger>
             <Tabs.TabsTrigger value="view" title="View" className="gap-1 px-2">
-            <Eye size={15} />
-            <span className="hidden xl:inline">View</span>
-          </Tabs.TabsTrigger>
+              <Eye size={15} />
+              <span className="hidden xl:inline">View</span>
+            </Tabs.TabsTrigger>
           </Tabs.TabsList>
         </div>
         <div className="h-full min-h-0 min-w-0 overflow-hidden">
@@ -1987,6 +2276,7 @@ function LeftWorkbenchPanel({
             />
           </Tabs.TabsContent>
           <Tabs.TabsContent value="models" className="h-full min-h-0 overflow-hidden"><ModelsPanel nodes={publicEntries} onSelect={onSelect} /></Tabs.TabsContent>
+          <Tabs.TabsContent value="macros" className="h-full min-h-0 overflow-hidden"><MacrosPanel macros={macros} onSelect={onSelectMacro} onAdd={onAddModelGroupMacro} /></Tabs.TabsContent>
           <Tabs.TabsContent value="outline" className="h-full min-h-0 overflow-hidden"><NodesPanel nodes={nodes} onSelect={onSelect} /></Tabs.TabsContent>
           <Tabs.TabsContent value="view" className="h-full min-h-0 overflow-hidden"><ViewsPanel value={viewState} onChange={onChangeView} /></Tabs.TabsContent>
         </div>
@@ -2005,6 +2295,7 @@ function RouteGraphContextMenu({
   templates,
   templateById,
   onAddTemplate,
+  onAddMacro,
   onInsertTemplate,
   onOpenInspector,
   onOpenCommand,
@@ -2026,6 +2317,7 @@ function RouteGraphContextMenu({
   templates: AddTemplate[];
   templateById: Map<string, AddTemplate>;
   onAddTemplate: (template: AddTemplate) => void;
+  onAddMacro: () => void;
   onInsertTemplate: (template: AddTemplate) => void;
   onOpenInspector: (target: SelectionState, tab?: typeof INSPECTOR_TABS[number]) => void;
   onOpenCommand: () => void;
@@ -2045,9 +2337,10 @@ function RouteGraphContextMenu({
   const nodeId = getSelectionNodeId(target);
   const portId = getSelectionPortId(target);
   const node = nodeId ? graph.nodes.find((item) => item.id === nodeId) || null : null;
+  const macro = target.kind === 'macro' ? graph.macros.find((item) => item.id === target.macroId) || null : nodeId?.startsWith('macro:') ? graph.macros.find((item) => macroFlowNodeId(item.id) === nodeId) || null : null;
   const edge = target.kind === 'edge' ? graph.edges.find((item) => item.id === target.edgeId) || null : null;
-  const port = node && portId ? getNodePort(node, portId) : null;
-  const readonlyNode = !node || node.ownership !== 'manual';
+  const port = node && portId ? getNodePort(node, portId) : macro && portId ? getMacroPort(macro, portId) : null;
+  const readonlyNode = (!node && !macro) || (node ? node.ownership !== 'manual' : macro?.ownership !== 'manual');
   const readonlyEdge = !edge || edge.ownership !== 'manual';
   const coreTemplates = templates.filter((template) => template.category === 'Core');
   const transformTemplates = templates.filter((template) => template.category === 'Transform');
@@ -2060,7 +2353,7 @@ function RouteGraphContextMenu({
           <ContextMenu.Label>Canvas</ContextMenu.Label>
           <ContextMenu.Sub>
             <ContextMenu.SubTrigger><Plus size={14} />Add node</ContextMenu.SubTrigger>
-            <ContextMenu.SubContent className="min-w-56">
+          <ContextMenu.SubContent className="min-w-56">
               {(templateById.get('entry') || coreTemplates[0]) && <ContextMenu.Item onSelect={() => onAddTemplate(templateById.get('entry') || coreTemplates[0]!)}>Entry</ContextMenu.Item>}
               {(templateById.get('dispatcher-route') || coreTemplates[1]) && <ContextMenu.Item onSelect={() => onAddTemplate(templateById.get('dispatcher-route') || coreTemplates[1]!)}>Dispatcher</ContextMenu.Item>}
               {coreTemplates.map((template) => (
@@ -2068,6 +2361,7 @@ function RouteGraphContextMenu({
               ))}
             </ContextMenu.SubContent>
           </ContextMenu.Sub>
+          <ContextMenu.Item onSelect={onAddMacro}><Sparkles size={14} />Add macro</ContextMenu.Item>
           <ContextMenu.Sub>
             <ContextMenu.SubTrigger><Sparkles size={14} />Add transform</ContextMenu.SubTrigger>
             <ContextMenu.SubContent className="min-w-56">
@@ -2100,7 +2394,7 @@ function RouteGraphContextMenu({
         </>
       )}
 
-      {target.kind === 'node' && node && (
+      {(target.kind === 'node' && node && !nodeId?.startsWith('macro:')) && (
         <>
           <ContextMenu.Label>{getNodeTitle(node)}</ContextMenu.Label>
           <ContextMenu.Item onSelect={() => onOpenInspector(target, 'Overview')}><MousePointer2 size={14} />Inspect overview</ContextMenu.Item>
@@ -2134,6 +2428,18 @@ function RouteGraphContextMenu({
         </>
       )}
 
+      {(target.kind === 'macro' || nodeId?.startsWith('macro:')) && macro && (
+        <>
+          <ContextMenu.Label>{getMacroDisplayName(macro)}</ContextMenu.Label>
+          <ContextMenu.Item onSelect={() => onOpenInspector({ kind: 'macro', macroId: macro.id }, 'Overview')}><MousePointer2 size={14} />Inspect macro</ContextMenu.Item>
+          <ContextMenu.Item onSelect={() => onOpenInspector({ kind: 'macro', macroId: macro.id }, 'Config')}><Settings2 size={14} />Edit macro</ContextMenu.Item>
+          <ContextMenu.Item onSelect={() => onCopyText(macro.id, 'Macro ID')}>Copy macro ID</ContextMenu.Item>
+          <ContextMenu.Item onSelect={() => onCopyText(JSON.stringify(macro, null, 2), 'Macro JSON')}>Copy macro JSON</ContextMenu.Item>
+          <ContextMenu.Separator />
+          <ContextMenu.Item variant="destructive" disabled={readonlyNode} onSelect={onDelete}><Trash2 size={14} />Delete macro</ContextMenu.Item>
+        </>
+      )}
+
       {target.kind === 'edge' && edge && (
         <>
           <ContextMenu.Label>{edge.kind}</ContextMenu.Label>
@@ -2153,15 +2459,15 @@ function RouteGraphContextMenu({
         </>
       )}
 
-      {target.kind === 'port' && node && port && (
+      {target.kind === 'port' && port && (
         <>
           <ContextMenu.Label>{port.label}</ContextMenu.Label>
-          <ContextMenu.Item onSelect={() => onOpenInspector(target, 'Ports')}><MousePointer2 size={14} />Inspect port</ContextMenu.Item>
-          <ContextMenu.Item onSelect={() => onOpenInspector({ kind: 'node', nodeId: node.id }, 'Config')}><Settings2 size={14} />Edit node config</ContextMenu.Item>
+          <ContextMenu.Item onSelect={() => onOpenInspector(node ? target : { kind: 'macro', macroId: macro!.id }, node ? 'Ports' : 'Config')}><MousePointer2 size={14} />Inspect port</ContextMenu.Item>
+          <ContextMenu.Item onSelect={() => onOpenInspector(node ? { kind: 'node', nodeId: node.id } : { kind: 'macro', macroId: macro!.id }, 'Config')}><Settings2 size={14} />Edit config</ContextMenu.Item>
           <ContextMenu.Separator />
-          <ContextMenu.Item onSelect={() => onCopyText(`${node.id}.${port.id}`, 'Port ref')}>Copy port ref</ContextMenu.Item>
+          <ContextMenu.Item onSelect={() => onCopyText(`${node?.id || macroFlowNodeId(macro!.id)}.${port.id}`, 'Port ref')}>Copy port ref</ContextMenu.Item>
           <ContextMenu.Item onSelect={() => onCopyText(getPortTypeSignature(port), 'Port signature')}>Copy signature</ContextMenu.Item>
-          <ContextMenu.Item disabled={readonlyNode} onSelect={() => onDisconnectPort(node.id, port.id)}>Disconnect all</ContextMenu.Item>
+          <ContextMenu.Item disabled={readonlyNode} onSelect={() => onDisconnectPort(node?.id || macroFlowNodeId(macro!.id), port.id)}>Disconnect all</ContextMenu.Item>
         </>
       )}
     </ContextMenu.Content>
@@ -2173,6 +2479,7 @@ function Inspector({
   selectedNode,
   selectedPort,
   selectedEdge,
+  selectedMacro,
   inspectorTab,
   setInspectorTab,
   nodeJsonText,
@@ -2180,6 +2487,8 @@ function Inspector({
   onApplyNodeJson,
   onDelete,
   onChangeNode,
+  onChangeMacro,
+  onAddMacroGroup,
   onSelectNode,
   onCopyText,
   onDuplicateNode,
@@ -2191,6 +2500,7 @@ function Inspector({
   selectedNode: RouteGraphNode | null;
   selectedPort: RouteGraphPort | null;
   selectedEdge: RouteGraphEdge | null;
+  selectedMacro: RouteGraphMacro | null;
   inspectorTab: typeof INSPECTOR_TABS[number];
   setInspectorTab: (tab: typeof INSPECTOR_TABS[number]) => void;
   nodeJsonText: string;
@@ -2198,6 +2508,8 @@ function Inspector({
   onApplyNodeJson: () => void;
   onDelete: () => void;
   onChangeNode: (node: RouteGraphNode) => void;
+  onChangeMacro: (macro: RouteGraphMacro) => void;
+  onAddMacroGroup: (macroId: string) => void;
   onSelectNode: (nodeId: string) => void;
   onCopyText: (text: string, label: string) => void;
   onDuplicateNode: (nodeId: string) => void;
@@ -2205,6 +2517,64 @@ function Inspector({
   onSelectConnectedPath: (nodeId: string, direction: 'upstream' | 'downstream') => void;
   onToggleNodeEnabled: (nodeId: string) => void;
 }) {
+  if (selectedMacro) {
+    const readonly = selectedMacro.ownership !== 'manual';
+    const routeIds = getMacroRouteIds(selectedMacro);
+    return (
+      <div className="route-graph-inspector-content">
+        <InspectorHeader
+          icon={<Sparkles size={15} />}
+          kicker="Macro"
+          title={getMacroDisplayName(selectedMacro)}
+          subtitle={`${selectedMacro.kind} · ${selectedMacro.visibility} · ${selectedMacro.ownership}`}
+          action={(
+            <ButtonGroup>
+              <Button type="button" variant="outline" size="sm" onClick={() => onCopyText(selectedMacro.id, 'Macro ID')}>Copy ID</Button>
+              <Button type="button" variant="outline" size="sm" onClick={() => onCopyText(JSON.stringify(selectedMacro, null, 2), 'Macro JSON')}>Copy JSON</Button>
+              <Button type="button" variant="destructive" size="sm" disabled={readonly} onClick={onDelete}>Delete</Button>
+            </ButtonGroup>
+          )}
+        />
+        <Tabs.Tabs value={inspectorTab} onValueChange={(value) => setInspectorTab(value as typeof inspectorTab)} className="route-graph-inspector-tabs">
+          <Tabs.TabsList className="route-graph-inspector-tablist">
+            <Tabs.TabsTrigger value="Overview">Overview</Tabs.TabsTrigger>
+            <Tabs.TabsTrigger value="Config">Config</Tabs.TabsTrigger>
+            <Tabs.TabsTrigger value="JSON">JSON</Tabs.TabsTrigger>
+          </Tabs.TabsList>
+          <Tabs.TabsContent value="Overview">
+            <div className="route-graph-inspector-summary">
+              <span>Kind<b>{selectedMacro.kind}</b></span>
+              <span>Strategy<b>{getMacroStrategy(selectedMacro)}</b></span>
+              <span>Groups<b>{getMacroGroups(selectedMacro).length}</b></span>
+              <span>Routes<b>{routeIds.length}</b></span>
+            </div>
+            <div className="route-graph-panel-stack">
+              <div className="text-sm font-medium">Priority Bands</div>
+              {getMacroGroups(selectedMacro).map((group, index) => (
+                <div key={String(group.id || index)} className="route-graph-port-inspector-row">
+                  <strong>{String(group.label || group.id || `group:${index}`)}</strong>
+                  <small>priority {Number.isFinite(Number(group.priority)) ? Math.trunc(Number(group.priority)) : index}</small>
+                  <small>{Array.isArray(group.input?.routeIds) ? group.input.routeIds.join(', ') : String(group.input?.kind || 'unknown')}</small>
+                </div>
+              ))}
+            </div>
+          </Tabs.TabsContent>
+          <Tabs.TabsContent value="Config">
+            <MacroForm macro={selectedMacro} readonly={readonly} onChange={onChangeMacro} onAddGroup={() => onAddMacroGroup(selectedMacro.id)} />
+          </Tabs.TabsContent>
+          <Tabs.TabsContent value="JSON">
+            <Textarea className="font-mono text-xs" value={nodeJsonText} onChange={(event) => setNodeJsonText(event.target.value)} />
+            <ButtonGroup>
+              <Button type="button" disabled={readonly} onClick={onApplyNodeJson}>Apply Macro JSON</Button>
+              <Button type="button" variant="outline" onClick={() => setNodeJsonText(JSON.stringify(selectedMacro, null, 2))}>Format</Button>
+              <Button type="button" variant="outline" onClick={() => onCopyText(nodeJsonText, 'Macro JSON')}>Copy</Button>
+            </ButtonGroup>
+          </Tabs.TabsContent>
+        </Tabs.Tabs>
+      </div>
+    );
+  }
+
   if (selectedEdge) {
     return (
       <div className="route-graph-inspector-content">
@@ -2231,7 +2601,7 @@ function Inspector({
           <span>Target<b>{selectedEdge.targetNodeId}.{selectedEdge.targetPortId}</b></span>
         </div>
         <div className="route-graph-inspector-section">
-          <div className="route-graph-panel-section-title">Actions</div>
+          <div className="text-sm font-medium">Actions</div>
           <ButtonGroup>
             <Button type="button" variant="outline" size="sm" onClick={() => onCopyText(`${selectedEdge.sourceNodeId}.${selectedEdge.sourcePortId}`, 'Source ref')}>Copy source</Button>
             <Button type="button" variant="outline" size="sm" onClick={() => onCopyText(`${selectedEdge.targetNodeId}.${selectedEdge.targetPortId}`, 'Target ref')}>Copy target</Button>
@@ -2305,7 +2675,7 @@ function Inspector({
             ))}
           </div>
           <div className="route-graph-inspector-section">
-            <div className="route-graph-panel-section-title">Local Ports</div>
+            <div className="text-sm font-medium">Local Ports</div>
             {getNodePortsPreview(selectedNode).map((port) => (
               <div key={port.id} className="route-graph-port-inspector-row compact">
                 <strong>{port.label}</strong>
@@ -2320,7 +2690,7 @@ function Inspector({
         </Tabs.TabsContent>
         <Tabs.TabsContent value="Ports">
           <div className="route-graph-panel-stack">
-            <div className="route-graph-panel-section-title">Connected Ports</div>
+            <div className="text-sm font-medium">Connected Ports</div>
             {getNodePorts(selectedNode).map((port) => (
               <div key={port.id} className="route-graph-port-inspector-row">
                 <strong>{port.id}</strong>
@@ -2333,7 +2703,7 @@ function Inspector({
         </Tabs.TabsContent>
         <Tabs.TabsContent value="Connections">
           <div className="route-graph-panel-stack">
-            <div className="route-graph-panel-section-title">Inbound / Outbound</div>
+            <div className="text-sm font-medium">Inbound / Outbound</div>
             {getNodeConnections(graph, selectedNode.id).map(({ edge, direction, peerNodeId }) => (
               <div key={edge.id} className="route-graph-port-inspector-row">
                 <strong>{direction === 'inbound' ? 'Inbound' : 'Outbound'}</strong>
@@ -2345,7 +2715,7 @@ function Inspector({
           </div>
         </Tabs.TabsContent>
         <Tabs.TabsContent value="JSON">
-          <Textarea className="route-graph-json-editor node" value={nodeJsonText} onChange={(event) => setNodeJsonText(event.target.value)} />
+          <Textarea className="font-mono text-xs" value={nodeJsonText} onChange={(event) => setNodeJsonText(event.target.value)} />
           <ButtonGroup>
             <Button type="button" disabled={readonly} onClick={onApplyNodeJson}>Apply Node JSON</Button>
             <Button type="button" variant="outline" onClick={() => setNodeJsonText(JSON.stringify(selectedNode, null, 2))}>Format</Button>
@@ -2383,6 +2753,215 @@ function InspectorHeader({
   );
 }
 
+function MacroForm({ macro, readonly, onChange, onAddGroup }: {
+  macro: RouteGraphMacro;
+  readonly: boolean;
+  onChange: (macro: RouteGraphMacro) => void;
+  onAddGroup: () => void;
+}) {
+  const config = getMacroConfig(macro);
+  const surface = config.surface && typeof config.surface === 'object' ? config.surface as Record<string, any> : {};
+  const entry = surface.entry && typeof surface.entry === 'object' ? surface.entry as Record<string, any> : {};
+  const match = entry.match && typeof entry.match === 'object' ? entry.match as Record<string, any> : {};
+  const policy = config.policy && typeof config.policy === 'object' ? config.policy as Record<string, any> : {};
+  const presentation = config.presentation && typeof config.presentation === 'object' ? config.presentation as Record<string, any> : {};
+  const groups = getMacroGroups(macro);
+
+  const updateConfig = (patch: Record<string, unknown>) => onChange({
+    ...macro,
+    config: {
+      ...config,
+      ...patch,
+    },
+  });
+  const updateEntryMatch = (patch: Record<string, unknown>) => updateConfig({
+    surface: {
+      ...surface,
+      entry: {
+        ...entry,
+        kind: 'external',
+        match: {
+          ...match,
+          kind: 'model',
+          ...patch,
+        },
+      },
+      output: surface.output || 'route',
+    },
+  });
+  const updateGroup = (index: number, patch: Record<string, unknown>) => {
+    updateConfig({
+      groups: groups.map((group, groupIndex) => (groupIndex === index ? { ...group, ...patch } : group)),
+    });
+  };
+  const removeGroup = (index: number) => {
+    const currentGroups = getMacroGroups(macro);
+    onChange({
+      ...macro,
+      config: {
+        ...getMacroConfig(macro),
+        groups: currentGroups.filter((_, groupIndex) => groupIndex !== index),
+      },
+    });
+  };
+  const priorityBandEditor = (
+    <div className="route-graph-panel-stack">
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-sm font-medium">Route Priority Bands</div>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={readonly}
+          onPointerDown={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onAddGroup();
+          }}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          }}
+        >
+          <Plus size={13} />
+          Add priority band
+        </Button>
+      </div>
+      {groups.length === 0 && (
+        <div className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
+          No priority bands. Add a band, then enter route IDs.
+        </div>
+      )}
+      {groups.map((group, index) => {
+        const input = group.input && typeof group.input === 'object' ? group.input as Record<string, any> : {};
+        const routeIdsText = Array.isArray(input.routeIds) ? input.routeIds.join(', ') : '';
+        return (
+          <Card key={String(group.id || index)} className="p-3">
+            <div className="grid gap-2">
+              <div className="flex items-center justify-between gap-2">
+                <Badge variant="outline">Band {index + 1}</Badge>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={readonly}
+                  onClick={() => removeGroup(index)}
+                >
+                  Remove
+                </Button>
+              </div>
+              <label>
+                Label
+                <Input disabled={readonly} value={String(group.label || group.id || '')} onChange={(event) => updateGroup(index, { label: event.target.value })} />
+              </label>
+              <label>
+                Route IDs
+                <Input
+                  disabled={readonly}
+                  value={routeIdsText}
+                  onChange={(event) => {
+                    const routeIds = event.target.value
+                      .split(',')
+                      .map((item) => Number(item.trim()))
+                      .filter((value) => Number.isFinite(value) && value > 0)
+                      .map((value) => Math.trunc(value));
+                    updateGroup(index, { input: { kind: 'route_ids', routeIds: Array.from(new Set(routeIds)) } });
+                  }}
+                />
+              </label>
+              <label>
+                Priority
+                <Input disabled={readonly} type="number" value={String(Number.isFinite(Number(group.priority)) ? group.priority : index)} onChange={(event) => updateGroup(index, { priority: Number(event.target.value) || 0 })} />
+              </label>
+            </div>
+          </Card>
+        );
+      })}
+    </div>
+  );
+  return (
+    <div className="grid gap-3">
+      {priorityBandEditor}
+      <label>
+        Public model name
+        <Input
+          disabled={readonly}
+          value={String(match.displayName || macro.name || '')}
+          onChange={(event) => {
+            const displayName = event.target.value;
+            onChange({
+              ...macro,
+              name: displayName || null,
+              config: {
+                ...config,
+                surface: {
+                  ...surface,
+                  entry: {
+                    ...entry,
+                    kind: 'external',
+                    match: {
+                      ...match,
+                      kind: 'model',
+                      displayName,
+                    },
+                  },
+                  output: surface.output || 'route',
+                },
+              },
+            });
+          }}
+        />
+      </label>
+      <label>
+        Visibility
+        <Select disabled={readonly} value={macro.visibility} onValueChange={(visibility: string) => onChange({
+          ...macro,
+          visibility: visibility as 'public' | 'internal',
+          config: {
+            ...config,
+            surface: {
+              ...surface,
+              entry: { ...entry, visibility },
+            },
+          },
+        })}>
+          <SelectTrigger><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="public">public</SelectItem>
+            <SelectItem value="internal">internal</SelectItem>
+          </SelectContent>
+        </Select>
+      </label>
+      <div className="flex items-center justify-between gap-3">
+        <span>Enabled</span>
+        <Switch disabled={readonly} checked={macro.enabled} onCheckedChange={(enabled) => onChange({ ...macro, enabled })} aria-label="Macro enabled" />
+      </div>
+      <label>
+        Strategy
+        <Select disabled={readonly} value={String(policy.strategy || 'weighted')} onValueChange={(strategy: string) => updateConfig({ policy: { ...policy, strategy } })}>
+          <SelectTrigger><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="priority_order">priority_order</SelectItem>
+            <SelectItem value="weighted">weighted</SelectItem>
+            <SelectItem value="round_robin">round_robin</SelectItem>
+            <SelectItem value="stable_first">stable_first</SelectItem>
+            <SelectItem value="cel_select">cel_select</SelectItem>
+            <SelectItem value="cel_score">cel_score</SelectItem>
+          </SelectContent>
+        </Select>
+      </label>
+      <label>
+        Display icon
+        <Input
+          disabled={readonly}
+          value={String(presentation.displayIcon || '')}
+          onChange={(event) => updateConfig({ presentation: { ...presentation, displayIcon: event.target.value || null } })}
+        />
+      </label>
+    </div>
+  );
+}
+
 
 function BottomPanel({ tab, graph, diagnostics, onSelectNode }: {
   tab: typeof BOTTOM_TABS[number];
@@ -2414,9 +2993,10 @@ function BottomPanel({ tab, graph, diagnostics, onSelectNode }: {
             {ordered.slice(0, 50).map((item, index) => {
               const target = item.nodeId ? `Node ${item.nodeId}` : item.edgeId ? `Edge ${item.edgeId}` : item.portId ? `Port ${item.portId}` : 'Graph';
               return (
-                <button
+                <Button
                   key={`${item.code}-${index}`}
                   type="button"
+                  variant="ghost"
                   className={`route-graph-diagnostic-row ${item.severity}`}
                   onClick={() => item.nodeId && onSelectNode(item.nodeId)}
                 >
@@ -2424,7 +3004,7 @@ function BottomPanel({ tab, graph, diagnostics, onSelectNode }: {
                   <span className="route-graph-diagnostic-code">{item.code}</span>
                   <span className="route-graph-diagnostic-message">{item.message}</span>
                   <span className="route-graph-diagnostic-target">{target}</span>
-                </button>
+                </Button>
               );
             })}
           </div>

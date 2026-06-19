@@ -54,6 +54,8 @@ import {
   trySurfaceOauthRefreshRecovery,
 } from './sharedProxyOrchestration.js';
 import { runWithSiteApiEndpointPool, SiteApiEndpointRequestError } from '../../services/siteApiEndpointService.js';
+import { evaluateActiveRouteGraphForModel } from '../../services/routeGraphRuntimeService.js';
+import { resolveDispatchUpstreamCompatibilityPolicy } from '../../services/upstreamCompatibilityPolicyResolver.js';
 import { buildOauthProviderHeaders } from '../../services/oauth/service.js';
 import {
   buildSurfaceProxyDebugResponseHeaders,
@@ -118,6 +120,19 @@ function finalizeRetryAsExecutionFailure(message: string) {
 function formatLoggedUpstreamPath(adapter: DownstreamProtocolAdapter, upstreamPath: string | null | undefined): string | null | undefined {
   if (!upstreamPath || adapter.format !== 'gemini') return upstreamPath;
   return upstreamPath.split('?')[0] || upstreamPath;
+}
+
+function prioritizeEndpointCandidates<T extends string>(
+  candidates: T[],
+  preferredEndpoint?: string | null,
+): T[] {
+  if (!preferredEndpoint) return candidates;
+  const preferredIndex = candidates.findIndex((endpoint) => endpoint === preferredEndpoint);
+  if (preferredIndex <= 0) return candidates;
+  const next = [...candidates];
+  const [preferred] = next.splice(preferredIndex, 1);
+  next.unshift(preferred);
+  return next;
 }
 
 export async function handleGenericSurfaceRequest(
@@ -224,6 +239,31 @@ export async function handleGenericSurfaceRequest(
       requestBody: request.body,
     });
 
+    const initialGraphSelection = await evaluateActiveRouteGraphForModel(requestedModel);
+    if (initialGraphSelection?.terminalKind === 'synthetic_endpoint') {
+      const statusCode = initialGraphSelection.syntheticResponse?.statusCode || 503;
+      const payload = {
+        error: {
+          message: initialGraphSelection.syntheticResponse?.message || 'No route is available.',
+          type: statusCode === 429 ? 'rate_limit_error' as const : 'server_error' as const,
+        },
+      };
+      await safeFinalizeSurfaceProxyDebugTrace(debugTrace, {
+        finalStatus: 'failure',
+        finalHttpStatus: statusCode,
+        finalResponseHeaders: {},
+        finalResponseBody: {
+          ...payload,
+          routeGraph: {
+            terminalNodeId: initialGraphSelection.terminalNodeId,
+            terminalKind: initialGraphSelection.terminalKind,
+            trace: initialGraphSelection.trace,
+          },
+        },
+      });
+      return reply.code(statusCode).send(payload);
+    }
+
     let retryCount = 0;
     const excludeChannelIds: number[] = [];
 
@@ -282,8 +322,17 @@ export async function handleGenericSurfaceRequest(
       });
 
       const modelName = selected.actualModel || requestedModel;
-      const oauth = getOauthInfoFromAccount(selected.account);
+      const routeGraphFilters = selected.routeGraph?.postBuildFilters ?? null;
       const platformProfile = resolvePlatformProfile(selected.site.platform);
+      const compatibilityPolicy = resolveDispatchUpstreamCompatibilityPolicy({
+        defaultCompatibilityPolicy: platformProfile?.defaultCompatibilityPolicy,
+        site: selected.site,
+        account: selected.account,
+        token: selected.token,
+        modelEndpointCompatibilityPolicy: selected.routeGraph?.modelEndpointCompatibilityPolicy,
+        selectedEndpointTarget: selected.routeGraph?.selectedEndpointTarget,
+      });
+      const oauth = getOauthInfoFromAccount(selected.account);
 
       const codexSessionStoreKey = (
         isCodexSite &&
@@ -406,6 +455,8 @@ export async function handleGenericSurfaceRequest(
               passthroughHeaders,
               platformHeaders,
               transformed,
+              routeGraphFilters,
+              compatibilityPolicy,
             });
           }
 
@@ -471,6 +522,8 @@ export async function handleGenericSurfaceRequest(
             passthroughHeaders,
             platformHeaders,
             codexExplicitSessionId: codexSessionId || null,
+            routeGraphFilters,
+            compatibilityPolicy,
           });
           const upstreamPath = (
             isCompactRequest && endpoint === 'responses'
@@ -532,7 +585,7 @@ export async function handleGenericSurfaceRequest(
         const prefersNativeResponsesReasoning = requestCapabilities.wantsNativeResponsesReasoning === true;
         const requiresNativeResponsesFileUrl = requestCapabilities.requiresNativeResponsesFileUrl === true;
 
-        const candidates = fixedEndpointCandidates || (transformed.requestKind
+        const rawCandidates = fixedEndpointCandidates || (transformed.requestKind
           ? await resolveUpstreamEndpointCandidates(
               { site: selected.site, account: selected.account },
               modelName,
@@ -578,6 +631,10 @@ export async function handleGenericSurfaceRequest(
                 requiresNativeResponsesFileUrl,
               },
             ));
+        const candidates = prioritizeEndpointCandidates(
+          rawCandidates,
+          routeGraphFilters?.endpointPreference,
+        );
 
         const endpointRuntimeContext = {
           siteId: selected.site.id,

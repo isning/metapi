@@ -3,6 +3,7 @@ import { describe, expect, it, beforeAll, beforeEach, afterAll } from 'vitest';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { mkdtempSync } from 'node:fs';
+import { tokenRouteFixture } from '../../test/routeGraphFixtures.js';
 
 type DbModule = typeof import('../../db/index.js');
 type TokenRouterModule = typeof import('../../services/tokenRouter.js');
@@ -36,8 +37,8 @@ describe('POST /api/routes/decision/batch', () => {
       status: 'active',
     }).returning().get();
 
-    const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-4o-mini',
+    const route = await db.insert(schema.tokenRoutes).values( {
+      ...tokenRouteFixture({ modelPattern: 'gpt-4o-mini' }),
       enabled: true,
     }).returning().get();
 
@@ -121,8 +122,8 @@ describe('POST /api/routes/decision/batch', () => {
       status: 'active',
     }).returning().get();
 
-    const exactRoute = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'claude-opus-4-6',
+    const exactRoute = await db.insert(schema.tokenRoutes).values( {
+      ...tokenRouteFixture({ modelPattern: 'claude-opus-4-6' }),
       enabled: true,
     }).returning().get();
 
@@ -136,8 +137,8 @@ describe('POST /api/routes/decision/batch', () => {
       enabled: true,
     }).run();
 
-    const wildcardRoute = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 're:^claude-(opus|sonnet)-4-6$',
+    const wildcardRoute = await db.insert(schema.tokenRoutes).values( {
+      ...tokenRouteFixture({ modelPattern: 're:^claude-(opus|sonnet)-4-6$' }),
       enabled: true,
     }).returning().get();
 
@@ -187,8 +188,8 @@ describe('POST /api/routes/decision/batch', () => {
       status: 'active',
     }).returning().get();
 
-    const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 're:^claude-(opus|sonnet)-4-6$',
+    const route = await db.insert(schema.tokenRoutes).values( {
+      ...tokenRouteFixture({ modelPattern: 're:^claude-(opus|sonnet)-4-6$' }),
       enabled: true,
     }).returning().get();
 

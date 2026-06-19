@@ -18,6 +18,10 @@ import {
   supportsDirectAccountRoutingConnection,
 } from './accountExtraConfig.js';
 import { invalidateTokenRouterCache } from './tokenRouter.js';
+import {
+  ensureActiveRouteGraphVersion,
+  loadRouteGraphLegacyProjections,
+} from './routeGraphService.js';
 import { getBlockedBrandRules, isModelBlockedByBrand } from './brandMatcher.js';
 import { config } from '../config.js';
 import { setAccountRuntimeHealth } from './accountHealthService.js';
@@ -35,7 +39,6 @@ import {
   validateGeminiCliOauthConnection,
 } from './platformDiscoveryRegistry.js';
 import { probeRuntimeModel, type RuntimeModelProbeStatus } from './runtimeModelProbe.js';
-
 const API_TOKEN_DISCOVERY_TIMEOUT_MS = 8_000;
 const MODEL_DISCOVERY_TIMEOUT_MS = 12_000;
 const MODEL_REFRESH_BATCH_SIZE = 3;
@@ -48,6 +51,19 @@ const GEMINI_CLI_STATIC_MODELS = [
   'gemini-3-flash-preview',
   'gemini-3.1-flash-lite-preview',
 ];
+
+type CompiledTokenRoute = typeof schema.tokenRoutes.$inferSelect & {
+  routeMode: 'pattern' | 'explicit_group';
+  modelPattern: string;
+};
+
+function compileTokenRoute(row: typeof schema.tokenRoutes.$inferSelect, projection?: Awaited<ReturnType<typeof loadRouteGraphLegacyProjections>> extends Map<number, infer P> ? P : never): CompiledTokenRoute {
+  return {
+    ...row,
+    routeMode: projection?.routeMode ?? 'pattern',
+    modelPattern: projection?.modelPattern ?? row.displayName ?? '',
+  };
+}
 let inFlightRefreshModelsAndRebuildRoutes: Promise<{
   refresh: ModelRefreshResult[];
   rebuild: Awaited<ReturnType<typeof rebuildTokenRoutesFromAvailability>>;
@@ -1419,10 +1435,6 @@ export async function rebuildTokenRoutesFromAvailability() {
     modelCandidates.get(modelName)!.set(buildCandidateKey(candidate), candidate);
   };
 
-  for (const row of usableTokenRows) {
-    addModelCandidate(row.token_model_availability.modelName, row.accounts.id, row.account_tokens.id, row.accounts.siteId);
-  }
-
   for (const row of accountRows) {
     if (!supportsDirectAccountRoutingConnection(row.accounts)) continue;
     const routeUnit = routeUnitByAccountId.get(row.accounts.id);
@@ -1439,7 +1451,13 @@ export async function rebuildTokenRoutesFromAvailability() {
     addModelCandidate(row.model_availability.modelName, row.accounts.id, null, row.accounts.siteId);
   }
 
-  const routes = await db.select().from(schema.tokenRoutes).all();
+  for (const row of usableTokenRows) {
+    if (routeUnitByAccountId.has(row.accounts.id)) continue;
+    addModelCandidate(row.token_model_availability.modelName, row.accounts.id, row.account_tokens.id, row.accounts.siteId);
+  }
+
+  const projections = await loadRouteGraphLegacyProjections();
+  const routes = (await db.select().from(schema.tokenRoutes).all()).map((row) => compileTokenRoute(row, projections.get(row.id)));
   const channels = await db.select().from(schema.routeChannels).all();
 
   let createdRoutes = 0;
@@ -1448,15 +1466,15 @@ export async function rebuildTokenRoutesFromAvailability() {
   let removedRoutes = 0;
 
   for (const [modelName, candidateMap] of modelCandidates.entries()) {
-    let route = routes.find((r) => (r.routeMode || 'pattern') !== 'explicit_group' && r.modelPattern === modelName);
+    let route = routes.find((r) => r.routeMode !== 'explicit_group' && r.modelPattern === modelName);
     if (!route) {
       const inserted = await db.insert(schema.tokenRoutes).values({
-        modelPattern: modelName,
+        displayName: modelName,
         enabled: true,
       }).run();
       const insertedId = getInsertedRowId(inserted);
       route = insertedId != null
-        ? await db.select().from(schema.tokenRoutes).where(eq(schema.tokenRoutes.id, insertedId)).get()
+        ? ((row) => (row ? compileTokenRoute(row, undefined) : undefined))(await db.select().from(schema.tokenRoutes).where(eq(schema.tokenRoutes.id, insertedId)).get())
         : undefined;
       if (!route) continue;
       routes.push(route);
@@ -1485,11 +1503,12 @@ export async function rebuildTokenRoutesFromAvailability() {
       const created = await db.select().from(schema.routeChannels).where(eq(schema.routeChannels.id, insertedId)).get();
       if (!created) continue;
       channels.push(created);
+      routeChannels.push(created);
       createdChannels++;
       desiredKeys.add(candidateKey);
     }
 
-    for (const channel of routeChannels) {
+    for (const channel of [...routeChannels]) {
       const channelKey = buildChannelKey(channel);
       if (desiredKeys.has(channelKey)) {
         continue;
@@ -1508,6 +1527,10 @@ export async function rebuildTokenRoutesFromAvailability() {
 
       if (!channel.manualOverride) {
         await db.delete(schema.routeChannels).where(eq(schema.routeChannels.id, channel.id)).run();
+        const routeChannelIndex = routeChannels.findIndex((item) => item.id === channel.id);
+        if (routeChannelIndex >= 0) routeChannels.splice(routeChannelIndex, 1);
+        const channelIndex = channels.findIndex((item) => item.id === channel.id);
+        if (channelIndex >= 0) channels.splice(channelIndex, 1);
         removedChannels++;
       }
     }
@@ -1515,7 +1538,7 @@ export async function rebuildTokenRoutesFromAvailability() {
 
   const latestModelNames = new Set<string>(Array.from(modelCandidates.keys()));
   for (const route of routes) {
-    if ((route.routeMode || 'pattern') === 'explicit_group') {
+    if (route.routeMode === 'explicit_group') {
       continue;
     }
     const modelPattern = (route.modelPattern || '').trim();
@@ -1533,6 +1556,8 @@ export async function rebuildTokenRoutesFromAvailability() {
       removedRoutes += deleted;
     }
   }
+
+  await ensureActiveRouteGraphVersion();
 
   if (createdRoutes > 0 || createdChannels > 0 || removedChannels > 0 || removedRoutes > 0) {
     await clearAllRouteDecisionSnapshots();

@@ -73,6 +73,16 @@ vi.mock('../../services/oauth/refreshSingleflight.js', () => ({
   refreshOauthAccessTokenSingleflight: (...args: unknown[]) => refreshOauthAccessTokenSingleflightMock(...args),
 }));
 
+vi.mock('../../services/oauth/quota.js', () => ({
+  recordOauthQuotaHeadersSnapshot: async () => undefined,
+  recordOauthQuotaResetHint: async () => undefined,
+}));
+
+vi.mock('../../services/routeGraphRuntimeService.js', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../services/routeGraphRuntimeService.js')>(),
+  evaluateActiveRouteGraphForModel: async () => null,
+}));
+
 vi.mock('../../db/index.js', () => ({
   db: {
     insert: (arg: any) => dbInsertMock(arg),

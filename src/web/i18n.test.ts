@@ -44,4 +44,19 @@ describe('translateText', () => {
       expect(translated).not.toMatch(/[\u3400-\u9fff]/);
     }
   });
+
+  it('translates upstream compatibility editor copy', () => {
+    const expectations = new Map([
+      ['上游兼容性', 'Upstream compatibility'],
+      ['推理历史传输和上游回放行为。', 'Reasoning history transport and upstream replay behavior.'],
+      ['传输方式', 'Transport'],
+      ['正文 <think> 标签', 'Content <think> tags'],
+      ['工具调用消息', 'Tool-call messages'],
+      ['高级 JSON', 'Advanced JSON'],
+    ]);
+
+    for (const [source, expected] of expectations) {
+      expect(translateText(source, 'en')).toBe(expected);
+    }
+  });
 });

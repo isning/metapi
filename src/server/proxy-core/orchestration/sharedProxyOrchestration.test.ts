@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { EMPTY_DOWNSTREAM_ROUTING_POLICY } from '../../services/downstreamPolicyTypes.js';
 
 const selectChannelMock = vi.fn();
@@ -27,8 +27,8 @@ const bindStickyChannelMock = vi.fn();
 const clearStickyChannelMock = vi.fn();
 const acquireChannelLeaseMock = vi.fn();
 const buildStickySessionKeyMock = vi.fn();
-const consoleWarnMock = vi.spyOn(console, 'warn').mockImplementation(() => {});
-const consoleErrorMock = vi.spyOn(console, 'error').mockImplementation(() => {});
+let consoleWarnMock: ReturnType<typeof vi.spyOn>;
+let consoleErrorMock: ReturnType<typeof vi.spyOn>;
 
 vi.mock('../../services/tokenRouter.js', () => ({
   tokenRouter: {
@@ -107,11 +107,6 @@ vi.mock('../../services/oauth/refreshSingleflight.js', () => ({
 }));
 
 describe('selectSurfaceChannelForAttempt', () => {
-  afterAll(() => {
-    consoleWarnMock.mockRestore();
-    consoleErrorMock.mockRestore();
-  });
-
   beforeEach(() => {
     selectChannelMock.mockReset();
     selectNextChannelMock.mockReset();
@@ -139,8 +134,8 @@ describe('selectSurfaceChannelForAttempt', () => {
     clearStickyChannelMock.mockReset();
     acquireChannelLeaseMock.mockReset();
     buildStickySessionKeyMock.mockReset();
-    consoleWarnMock.mockClear();
-    consoleErrorMock.mockClear();
+    consoleWarnMock = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    consoleErrorMock = vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
   it('refreshes models and retries selectChannel on the first attempt when no channel is available', async () => {

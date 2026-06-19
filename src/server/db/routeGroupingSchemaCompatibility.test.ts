@@ -47,7 +47,6 @@ describe('ensureRouteGroupingSchemaCompatibility', () => {
         'CREATE INDEX IF NOT EXISTS route_group_sources_source_route_id_idx ON route_group_sources(source_route_id);',
         'ALTER TABLE token_routes ADD COLUMN display_name text;',
         'ALTER TABLE token_routes ADD COLUMN display_icon text;',
-        'ALTER TABLE token_routes ADD COLUMN route_mode text DEFAULT \'pattern\';',
         'ALTER TABLE token_routes ADD COLUMN decision_snapshot text;',
         'ALTER TABLE token_routes ADD COLUMN decision_refreshed_at text;',
         'ALTER TABLE token_routes ADD COLUMN routing_strategy text DEFAULT \'weighted\';',
@@ -65,7 +64,6 @@ describe('ensureRouteGroupingSchemaCompatibility', () => {
         'CREATE INDEX IF NOT EXISTS "route_group_sources_source_route_id_idx" ON "route_group_sources" ("source_route_id")',
         'ALTER TABLE "token_routes" ADD COLUMN "display_name" TEXT',
         'ALTER TABLE "token_routes" ADD COLUMN "display_icon" TEXT',
-        'ALTER TABLE "token_routes" ADD COLUMN "route_mode" TEXT DEFAULT \'pattern\'',
         'ALTER TABLE "token_routes" ADD COLUMN "decision_snapshot" TEXT',
         'ALTER TABLE "token_routes" ADD COLUMN "decision_refreshed_at" TEXT',
         'ALTER TABLE "token_routes" ADD COLUMN "routing_strategy" TEXT DEFAULT \'weighted\'',
@@ -83,7 +81,6 @@ describe('ensureRouteGroupingSchemaCompatibility', () => {
         'CREATE INDEX IF NOT EXISTS `route_group_sources_source_route_id_idx` ON `route_group_sources` (`source_route_id`)',
         'ALTER TABLE `token_routes` ADD COLUMN `display_name` TEXT NULL',
         'ALTER TABLE `token_routes` ADD COLUMN `display_icon` TEXT NULL',
-        'ALTER TABLE `token_routes` ADD COLUMN `route_mode` VARCHAR(32) NULL DEFAULT \'pattern\'',
         'ALTER TABLE `token_routes` ADD COLUMN `decision_snapshot` TEXT NULL',
         'ALTER TABLE `token_routes` ADD COLUMN `decision_refreshed_at` TEXT NULL',
         'ALTER TABLE `token_routes` ADD COLUMN `routing_strategy` VARCHAR(32) NULL DEFAULT \'weighted\'',
@@ -104,7 +101,7 @@ describe('ensureRouteGroupingSchemaCompatibility', () => {
   it('skips existing columns', async () => {
     const { inspector, executedSql } = createInspector('postgres', {
       existingColumnsByTable: {
-        token_routes: ['display_name', 'display_icon', 'route_mode', 'decision_snapshot', 'decision_refreshed_at', 'routing_strategy'],
+        token_routes: ['display_name', 'display_icon', 'decision_snapshot', 'decision_refreshed_at', 'routing_strategy'],
         route_channels: ['source_model', 'last_selected_at', 'consecutive_fail_count', 'cooldown_level'],
       },
       existingTables: ['token_routes', 'route_channels', 'route_group_sources'],

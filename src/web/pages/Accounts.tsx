@@ -11,6 +11,7 @@ import { MobileCard, MobileField } from "../components/MobileCard.js";
 import { useIsMobile } from "../components/useIsMobile.js";
 import DeleteConfirmModal from "../components/DeleteConfirmModal.js";
 import SiteBadgeLink from "../components/SiteBadgeLink.js";
+import InfoNote from "../components/InfoNote.js";
 import AccountModelsModal from "./accounts/AccountModelsModal.js";
 import {
   buildAddAccountPrereqHint,
@@ -37,6 +38,17 @@ import { shouldIgnoreRowSelectionClick } from "./helpers/rowSelection.js";
 import { SITE_DOCS_URL } from "../docsLink.js";
 import { getSiteInitializationPreset } from "../../shared/siteInitializationPresets.js";
 import { parseBatchApiKeys } from "../../shared/apiKeyBatch.js";
+import { Button } from '../components/ui/button/index.js';
+import { ButtonGroup } from '../components/ui/button-group/index.js';
+import { LoaderCircle } from 'lucide-react';
+import ToneBadge from '../components/ToneBadge.js';
+import { Alert, AlertDescription, AlertTitle } from '../components/ui/alert/index.js';
+import { Card } from '../components/ui/card/index.js';
+import EmptyStateBlock from "../components/EmptyStateBlock.js";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table/index.js';
+import { Checkbox } from '../components/ui/checkbox/index.js';
+import { Textarea } from '../components/ui/textarea/index.js';
+import { Input } from '../components/ui/input/index.js';
 
 type ConnectionsSegment = "session" | "apikey" | "tokens";
 
@@ -743,17 +755,6 @@ export default function Accounts() {
     }
   };
 
-  const inputStyle: React.CSSProperties = {
-    width: "100%",
-    padding: "10px 14px",
-    border: "1px solid var(--color-border)",
-    borderRadius: "var(--radius-sm)",
-    fontSize: 13,
-    outline: "none",
-    background: "var(--color-bg)",
-    color: "var(--color-text-primary)",
-  };
-
   const runtimeHealthMap: Record<
     string,
     {
@@ -765,31 +766,31 @@ export default function Accounts() {
   > = {
     healthy: {
       label: "健康",
-      cls: "badge-success",
+      cls: "success",
       dotClass: "status-dot-success",
       pulse: true,
     },
     unhealthy: {
       label: "异常",
-      cls: "badge-error",
+      cls: "error",
       dotClass: "status-dot-error",
       pulse: true,
     },
     degraded: {
       label: "降级",
-      cls: "badge-warning",
+      cls: "warning",
       dotClass: "status-dot-pending",
       pulse: true,
     },
     disabled: {
       label: "已禁用",
-      cls: "badge-muted",
+      cls: "muted",
       dotClass: "status-dot-muted",
       pulse: false,
     },
     unknown: {
       label: "未知",
-      cls: "badge-muted",
+      cls: "muted",
       dotClass: "status-dot-pending",
       pulse: false,
     },
@@ -1251,38 +1252,35 @@ export default function Accounts() {
 
   return (
     <div className="animate-fade-in">
-      <div className="page-header">
-        <h2 className="page-title">{tr("连接管理")}</h2>
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <h2 className="text-xl font-semibold">{tr("连接管理")}</h2>
         {activeSegment !== "tokens" && (
-          <div className="page-actions accounts-page-actions">
+          <div className="flex flex-wrap items-center gap-2">
             {isMobile ? (
               <>
-                <button
+                <Button variant="outline"
                   type="button"
                   onClick={() => setShowMobileTools(true)}
-                  className="btn btn-ghost"
-                  style={{ border: "1px solid var(--color-border)" }}
+                 
+                 
                 >
                   排序与操作
-                </button>
-                <button
+                </Button>
+                <Button variant="outline"
                   type="button"
                   data-testid="accounts-mobile-select-all"
                   onClick={() =>
                     toggleSelectAllVisibleAccounts(!allVisibleAccountsSelected)
                   }
-                  className="btn btn-ghost"
-                  style={{ border: "1px solid var(--color-border)" }}
+                 
+                 
                 >
                   {allVisibleAccountsSelected ? "取消全选" : "全选可见项"}
-                </button>
+                </Button>
               </>
             ) : (
               <>
-                <div
-                  className="accounts-sort-select"
-                  style={{ minWidth: 156, position: "relative", zIndex: 20 }}
-                >
+                <div className="relative min-w-40">
                   <ModernSelect
                     size="sm"
                     value={sortMode}
@@ -1296,7 +1294,7 @@ export default function Accounts() {
                   />
                 </div>
                 {activeSegment === "session" && (
-                  <button
+                  <Button type="button"
                     onClick={() =>
                       withLoading(
                         "checkin-all",
@@ -1305,35 +1303,35 @@ export default function Accounts() {
                       )
                     }
                     disabled={actionLoading["checkin-all"]}
-                    className="btn btn-soft-primary"
+                   
                   >
                     {actionLoading["checkin-all"] ? (
                       <>
-                        <span className="spinner spinner-sm" />
+                        <LoaderCircle className="size-4 animate-spin" />
                         {tr("签到中...")}
                       </>
                     ) : (
                       tr("全部签到")
                     )}
-                  </button>
+                  </Button>
                 )}
-                <button
+                <Button type="button"
                   onClick={handleRefreshRuntimeHealth}
                   disabled={actionLoading["health-refresh"]}
-                  className="btn btn-soft-primary"
+                 
                 >
                   {actionLoading["health-refresh"] ? (
                     <>
-                      <span className="spinner spinner-sm" />
+                      <LoaderCircle className="size-4 animate-spin" />
                       {tr("刷新状态中...")}
                     </>
                   ) : (
                     tr("刷新账户状态")
                   )}
-                </button>
+                </Button>
               </>
             )}
-            <button
+            <Button type="button"
               onClick={() => {
                 const nextOpen = !showAdd;
                 if (!nextOpen) {
@@ -1345,10 +1343,10 @@ export default function Accounts() {
                 setShowAdd(true);
                 resetAddForms(activeAddCredentialMode);
               }}
-              className="btn btn-primary"
+             
             >
               {showAdd ? tr("取消") : tr("+ 添加连接")}
-            </button>
+            </Button>
           </div>
         )}
         {activeSegment === "tokens" && embeddedTokenActions}
@@ -1360,9 +1358,9 @@ export default function Accounts() {
         onMobileClose={() => setShowMobileTools(false)}
         mobileTitle="连接排序与操作"
         mobileContent={
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              <div style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-1.5">
+              <div className="text-xs font-medium text-muted-foreground">
                 排序方式
               </div>
               <ModernSelect
@@ -1377,7 +1375,7 @@ export default function Accounts() {
               />
             </div>
             {activeSegment === "session" && (
-              <button
+              <Button type="button" variant="outline"
                 onClick={async () => {
                   setShowMobileTools(false);
                   await withLoading(
@@ -1387,84 +1385,56 @@ export default function Accounts() {
                   );
                 }}
                 disabled={actionLoading["checkin-all"]}
-                className="btn btn-ghost"
-                style={{ border: "1px solid var(--color-border)" }}
+               
+               
               >
                 {actionLoading["checkin-all"] ? (
                   <>
-                    <span className="spinner spinner-sm" />
+                    <LoaderCircle className="size-4 animate-spin" />
                     {tr("签到中...")}
                   </>
                 ) : (
                   tr("全部签到")
                 )}
-              </button>
+              </Button>
             )}
-            <button
+            <Button type="button" variant="outline"
               onClick={async () => {
                 setShowMobileTools(false);
                 await handleRefreshRuntimeHealth();
               }}
               disabled={actionLoading["health-refresh"]}
-              className="btn btn-ghost"
-              style={{ border: "1px solid var(--color-border)" }}
+             
+             
             >
               {actionLoading["health-refresh"] ? (
                 <>
-                  <span className="spinner spinner-sm" />
+                  <LoaderCircle className="size-4 animate-spin" />
                   {tr("刷新状态中...")}
                 </>
               ) : (
                 tr("刷新账户状态")
               )}
-            </button>
+            </Button>
           </div>
         }
       />
 
-      <div
-        style={{
-          display: "inline-flex",
-          gap: 4,
-          padding: 4,
-          marginBottom: 16,
-          background: "var(--color-bg-card)",
-          border: "1px solid var(--color-border-light)",
-          borderRadius: "var(--radius-md)",
-        }}
-      >
+      <ButtonGroup className="mb-4">
         {ACCOUNT_SEGMENTS.map((segment) => (
-          <button
+          <Button
             key={segment.value}
             type="button"
+            variant={activeSegment === segment.value ? "secondary" : "outline"}
             onClick={() => setSegment(segment.value)}
             data-tooltip={segment.tooltip}
             data-tooltip-side={segment.tooltipSide}
             data-tooltip-align={segment.tooltipAlign}
-            style={{
-              padding: "8px 12px",
-              borderRadius: 8,
-              border: "none",
-              cursor: "pointer",
-              fontSize: 13,
-              fontWeight: 600,
-              background:
-                activeSegment === segment.value
-                  ? "var(--color-bg)"
-                  : "transparent",
-              color:
-                activeSegment === segment.value
-                  ? "var(--color-primary)"
-                  : "var(--color-text-secondary)",
-              boxShadow:
-                activeSegment === segment.value ? "var(--shadow-sm)" : "none",
-              transition: "all 0.2s ease",
-            }}
           >
             {segment.label}
-          </button>
+          </Button>
         ))}
-      </div>
+      </ButtonGroup>
 
       <DeleteConfirmModal
         open={Boolean(deleteConfirm)}
@@ -1499,40 +1469,39 @@ export default function Accounts() {
         <ResponsiveBatchActionBar
           isMobile={isMobile}
           info={`已选 ${selectedAccountIds.length} 项`}
-          desktopStyle={{ marginBottom: 12 }}
         >
-          <button
+          <Button type="button" variant="outline"
             data-testid="accounts-batch-refresh-balance"
             onClick={() => runBatchAccountAction("refreshBalance")}
             disabled={batchActionLoading}
-            className="btn btn-ghost"
-            style={{ border: "1px solid var(--color-border)" }}
+           
+           
           >
             批量刷新余额
-          </button>
-          <button
+          </Button>
+          <Button type="button" variant="outline"
             onClick={() => runBatchAccountAction("enable")}
             disabled={batchActionLoading}
-            className="btn btn-ghost"
-            style={{ border: "1px solid var(--color-border)" }}
+           
+           
           >
             批量启用
-          </button>
-          <button
+          </Button>
+          <Button type="button" variant="outline"
             onClick={() => runBatchAccountAction("disable")}
             disabled={batchActionLoading}
-            className="btn btn-ghost"
-            style={{ border: "1px solid var(--color-border)" }}
+           
+           
           >
             批量禁用
-          </button>
-          <button
+          </Button>
+          <Button type="button" variant="destructive" size="sm"
             onClick={() => runBatchAccountAction("delete")}
             disabled={batchActionLoading}
-            className="btn btn-link btn-link-danger"
+           
           >
             批量删除
-          </button>
+          </Button>
         </ResponsiveBatchActionBar>
       )}
 
@@ -1556,140 +1525,72 @@ export default function Accounts() {
             maxWidth={860}
             bodyStyle={{ display: "flex", flexDirection: "column", gap: 12 }}
             footer={
-              <button onClick={closeAddPanel} className="btn btn-ghost">
+              <Button type="button" variant="outline" onClick={closeAddPanel}>
                 取消
-              </button>
+              </Button>
             }
           >
             {activeSegment === "session" ? (
               <>
-                <div
-                  style={{
-                    display: "flex",
-                    gap: 0,
-                    background: "var(--color-bg)",
-                    borderRadius: "var(--radius-sm)",
-                    padding: 3,
-                    marginBottom: 16,
-                  }}
-                >
-                  <button
+                <div className="mb-4 flex gap-0 rounded-md bg-muted p-1">
+                  <Button
+                    type="button"
+                    variant={addMode === "token" ? "secondary" : "outline"}
+                    className="flex-1"
                     onClick={() => {
                       setAddMode("token");
                       setVerifyResult(null);
                     }}
-                    style={{
-                      flex: 1,
-                      padding: "8px 0",
-                      borderRadius: 6,
-                      fontSize: 13,
-                      fontWeight: 500,
-                      border: "none",
-                      cursor: "pointer",
-                      transition: "all 0.2s",
-                      background:
-                        addMode === "token"
-                          ? "var(--color-bg-card)"
-                          : "transparent",
-                      color:
-                        addMode === "token"
-                          ? "var(--color-primary)"
-                          : "var(--color-text-muted)",
-                      boxShadow:
-                        addMode === "token" ? "var(--shadow-sm)" : "none",
-                    }}
                   >
                     Session Token / Cookie
-                  </button>
-                  <button
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={addMode === "login" ? "secondary" : "outline"}
+                    className="flex-1"
                     onClick={() => {
                       setAddMode("login");
                       setVerifyResult(null);
                     }}
-                    style={{
-                      flex: 1,
-                      padding: "8px 0",
-                      borderRadius: 6,
-                      fontSize: 13,
-                      fontWeight: 500,
-                      border: "none",
-                      cursor: "pointer",
-                      transition: "all 0.2s",
-                      background:
-                        addMode === "login"
-                          ? "var(--color-bg-card)"
-                          : "transparent",
-                      color:
-                        addMode === "login"
-                          ? "var(--color-primary)"
-                          : "var(--color-text-muted)",
-                      boxShadow:
-                        addMode === "login" ? "var(--shadow-sm)" : "none",
-                    }}
                   >
                     账号密码登录
-                  </button>
+                  </Button>
                 </div>
 
                 {addMode === "token" ? (
-                  <div
-                    style={{
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: 12,
-                    }}
-                  >
-                    <div className="info-tip">
+                  <div className="flex flex-col gap-3">
+                    <InfoNote>
                       <div>
-                        <div style={{ fontWeight: 600, marginBottom: 4 }}>
+                        <div className="mb-1 font-semibold">
                           当前分段仅创建 Session 连接
                         </div>
                         <div>
                           <strong>推荐</strong> 使用系统访问令牌（Access
                           Token）；浏览器 Cookie 仅用于兼容场景。
                         </div>
-                        <div style={{ marginTop: 2 }}>
+                        <div className="mt-0.5">
                           以 NewAPI 为例：控制台 → 个人设置 → 安全设置 →
                           生成「系统访问令牌」
                         </div>
-                        <div
-                          style={{
-                            opacity: 0.7,
-                            borderTop: "1px solid rgba(0,0,0,0.1)",
-                            paddingTop: 6,
-                            marginTop: 6,
-                          }}
-                        >
+                        <div className="mt-1.5 border-t pt-1.5 text-muted-foreground">
                           获取 Cookie:{" "}
-                          <kbd
-                            style={{
-                              padding: "1px 5px",
-                              background: "var(--color-bg-card)",
-                              border: "1px solid var(--color-border)",
-                              borderRadius: 3,
-                              fontSize: 11,
-                            }}
-                          >
+                          <kbd className="rounded border bg-card px-1.5 py-0.5 text-xs">
                             F12
                           </kbd>{" "}
                           → Application → Cookie
                         </div>
-                        <div style={{ marginTop: 6 }}>
+                        <div className="mt-1.5">
                           <a
                             href={SITE_DOCS_URL}
                             target="_blank"
                             rel="noopener noreferrer"
-                            style={{
-                              fontSize: 12,
-                              color: "var(--color-primary)",
-                              textDecoration: "underline",
-                            }}
+                            className="text-xs text-primary underline"
                           >
                             查看认证方式与特殊站点说明文档
                           </a>
                         </div>
                       </div>
-                    </div>
+                    </InfoNote>
                     <ModernSelect
                       value={String(tokenForm.siteId || 0)}
                       onChange={(nextValue) => {
@@ -1702,7 +1603,7 @@ export default function Accounts() {
                       searchable
                       searchPlaceholder={SITE_SELECT_SEARCH_PLACEHOLDER}
                     />
-                    <input
+                    <Input
                       placeholder="连接名称（可选）"
                       value={tokenForm.username}
                       onChange={(e) =>
@@ -1711,9 +1612,8 @@ export default function Accounts() {
                           username: e.target.value,
                         }))
                       }
-                      style={inputStyle}
                     />
-                    <textarea
+                    <Textarea
                       placeholder="粘贴 Session Access Token 或浏览器 Cookie"
                       value={tokenForm.accessToken}
                       onChange={(e) => {
@@ -1723,21 +1623,10 @@ export default function Accounts() {
                         }));
                         setVerifyResult(null);
                       }}
-                      style={{
-                        ...inputStyle,
-                        fontFamily: "var(--font-mono)",
-                        height: 72,
-                        resize: "none" as const,
-                      }}
+                      className="h-[72px] resize-none font-mono"
                     />
-                    <div
-                      style={{
-                        display: "flex",
-                        flexDirection: "column",
-                        gap: 4,
-                      }}
-                    >
-                      <input
+                    <div className="grid gap-1">
+                      <Input
                         placeholder="用户 ID（可选）"
                         value={tokenForm.platformUserId}
                         onChange={(e) => {
@@ -1747,27 +1636,15 @@ export default function Accounts() {
                           }));
                           setVerifyResult(null);
                         }}
-                        style={inputStyle}
                       />
-                      <div
-                        style={{
-                          fontSize: 12,
-                          color: "var(--color-text-muted)",
-                        }}
-                      >
+                      <div className="text-xs text-muted-foreground">
                         若站点要求 New-Api-User / User-ID，请在这里提前填写。
                       </div>
                     </div>
                     {isSub2ApiSelected && (
                       <>
-                        <div
-                          style={{
-                            display: "flex",
-                            flexDirection: "column",
-                            gap: 4,
-                          }}
-                        >
-                          <input
+                        <div className="grid gap-1">
+                          <Input
                             placeholder="Sub2API refresh_token（可选，用于托管自动续期）"
                             value={tokenForm.refreshToken}
                             onChange={(e) =>
@@ -1776,32 +1653,18 @@ export default function Accounts() {
                                 refreshToken: e.target.value.trim(),
                               }))
                             }
-                            style={{
-                              ...inputStyle,
-                              fontFamily: "var(--font-mono)",
-                            }}
+                            className="font-mono"
                           />
-                          <div
-                            style={{
-                              fontSize: 12,
-                              color: "var(--color-text-muted)",
-                            }}
-                          >
+                          <div className="text-xs text-muted-foreground">
                             可在浏览器控制台执行{" "}
-                            <code style={{ fontFamily: "var(--font-mono)" }}>
+                            <code className="font-mono">
                               localStorage.getItem('refresh_token')
                             </code>{" "}
                             获取。
                           </div>
                         </div>
-                        <div
-                          style={{
-                            display: "flex",
-                            flexDirection: "column",
-                            gap: 4,
-                          }}
-                        >
-                          <input
+                        <div className="grid gap-1">
+                          <Input
                             placeholder="token_expires_at（可选，毫秒时间戳）"
                             value={tokenForm.tokenExpiresAt}
                             onChange={(e) =>
@@ -1813,14 +1676,8 @@ export default function Accounts() {
                                 ),
                               }))
                             }
-                            style={inputStyle}
                           />
-                          <div
-                            style={{
-                              fontSize: 12,
-                              color: "var(--color-text-muted)",
-                            }}
-                          >
+                          <div className="text-xs text-muted-foreground">
                             配置 refresh_token 后，metapi 会在 JWT 临近过期或
                             401 时自动续期并回写新 token。
                           </div>
@@ -1830,15 +1687,8 @@ export default function Accounts() {
                     {verifyResult &&
                       verifyResult.success &&
                       verifyResult.tokenType === "session" && (
-                        <div className="alert alert-success animate-scale-in">
-                          <div
-                            className="alert-title"
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: 6,
-                            }}
-                          >
+                        <Alert className="animate-scale-in">
+                          <AlertTitle className="flex items-center gap-1.5">
                             <svg
                               width="14"
                               height="14"
@@ -1854,8 +1704,8 @@ export default function Accounts() {
                               />
                             </svg>
                             Session 凭证有效（Access Token / Cookie）
-                          </div>
-                          <div style={{ fontSize: 12, lineHeight: 1.8 }}>
+                          </AlertTitle>
+                          <AlertDescription className="leading-relaxed">
                             <div>
                               用户名:{" "}
                               <strong>
@@ -1875,85 +1725,69 @@ export default function Accounts() {
                             )}
                             <div>
                               API Key:{" "}
-                              <span
-                                style={{
-                                  fontWeight: 500,
-                                  color: verifyResult.apiToken
-                                    ? "var(--color-success)"
-                                    : "var(--color-text-muted)",
-                                }}
-                              >
+                              <span className={verifyResult.apiToken ? "font-medium text-foreground" : "font-medium text-muted-foreground"}>
                                 {verifyResult.apiToken
                                   ? `已找到 (${verifyResult.apiToken.substring(0, 8)}...)`
                                   : "未找到"}
                               </span>
                             </div>
-                          </div>
-                        </div>
+                          </AlertDescription>
+                        </Alert>
                       )}
                     {verifyResult &&
                       verifyResult.success &&
                       verifyResult.tokenType === "apikey" && (
-                        <div className="alert alert-warning animate-scale-in">
-                          <div className="alert-title">
+                        <Alert className="animate-scale-in">
+                          <AlertTitle>
                             当前分段仅接受 Session 凭证，请切到「API Key
                             连接」分段创建。
-                          </div>
-                        </div>
+                          </AlertTitle>
+                        </Alert>
                       )}
                     {verifyResult &&
                       !verifyResult.success &&
                       verifyResult.needsUserId && (
-                        <div className="alert alert-warning animate-scale-in">
-                          <div className="alert-title">
+                        <Alert className="animate-scale-in">
+                          <AlertTitle>
                             此站点要求用户 ID，请补充后重新验证
-                          </div>
-                        </div>
+                          </AlertTitle>
+                        </Alert>
                       )}
                     {verifyResult &&
                       !verifyResult.success &&
                       !verifyResult.needsUserId && (
-                        <div className="alert alert-error animate-scale-in">
-                          <div className="alert-title">
+                        <Alert variant="destructive" className="animate-scale-in">
+                          <AlertTitle>
                             {normalizeVerifyFailureMessage(
                               verifyResult.message,
                             ) || "Token 无效或已过期"}
-                          </div>
-                          <div
-                            style={{
-                              fontSize: 12,
-                              color: "var(--color-text-muted)",
-                              marginTop: 4,
-                            }}
-                          >
+                          </AlertTitle>
+                          <AlertDescription>
                             {verifyFailureHint || "请检查 Token 是否正确"}
-                          </div>
-                        </div>
+                          </AlertDescription>
+                        </Alert>
                       )}
-                    <div style={{ display: "flex", gap: 8 }}>
-                      <button
+                    <div className="flex gap-2">
+                      <Button type="button" variant="outline"
                         onClick={handleVerifyToken}
                         disabled={
                           verifying ||
                           !tokenForm.siteId ||
                           !tokenForm.accessToken
                         }
-                        className="btn btn-ghost"
-                        style={{
-                          border: "1px solid var(--color-border)",
-                          padding: "8px 14px",
-                        }}
+                       
+                       
                       >
                         {verifying ? (
                           <>
-                            <span className="spinner spinner-sm" />
+                            <LoaderCircle className="size-4 animate-spin" />
                             验证中...
                           </>
                         ) : (
                           "验证 Token"
                         )}
-                      </button>
-                      <button
+                      </Button>
+                      <Button type="button"
                         onClick={handleTokenAdd}
                         disabled={
                           saving ||
@@ -1961,46 +1795,29 @@ export default function Accounts() {
                           !tokenForm.accessToken ||
                           !canAddVerifiedConnection
                         }
-                        className="btn btn-success"
+                       
                       >
                         {saving ? (
                           <>
-                            <span
-                              className="spinner spinner-sm"
-                              style={{
-                                borderTopColor: "white",
-                                borderColor: "rgba(255,255,255,0.3)",
-                              }}
-                            />
+                            <LoaderCircle className="size-4 animate-spin" />
                             添加中...
                           </>
                         ) : (
                           "添加连接"
                         )}
-                      </button>
+                      </Button>
                     </div>
                     {!verifyResult?.success && (
-                      <div
-                        style={{
-                          fontSize: 12,
-                          color: "var(--color-text-muted)",
-                        }}
-                      >
+                      <div className="text-xs text-muted-foreground">
                         {addAccountPrereqHint}
                       </div>
                     )}
                   </div>
                 ) : (
-                  <div
-                    style={{
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: 12,
-                    }}
-                  >
-                    <div className="info-tip">
+                  <div className="flex flex-col gap-3">
+                    <InfoNote>
                       输入目标站点的账号密码，将自动登录并获取访问令牌和 API Key
-                    </div>
+                    </InfoNote>
                     <ModernSelect
                       value={String(loginForm.siteId || 0)}
                       onChange={(nextValue) => {
@@ -2012,18 +1829,17 @@ export default function Accounts() {
                       searchable
                       searchPlaceholder={SITE_SELECT_SEARCH_PLACEHOLDER}
                     />
-                    <input
-                      placeholder="用户名"
-                      value={loginForm.username}
+                <Input
+                  placeholder="用户名"
+                  value={loginForm.username}
                       onChange={(e) =>
                         setLoginForm((f) => ({
                           ...f,
                           username: e.target.value,
                         }))
                       }
-                      style={inputStyle}
                     />
-                    <input
+                    <Input
                       type="password"
                       placeholder="密码"
                       value={loginForm.password}
@@ -2034,9 +1850,8 @@ export default function Accounts() {
                         }))
                       }
                       onKeyDown={(e) => e.key === "Enter" && handleLoginAdd()}
-                      style={inputStyle}
                     />
-                    <button
+                    <Button type="button"
                       onClick={handleLoginAdd}
                       disabled={
                         saving ||
@@ -2044,49 +1859,34 @@ export default function Accounts() {
                         !loginForm.username ||
                         !loginForm.password
                       }
-                      className="btn btn-success"
-                      style={{ alignSelf: "flex-start" }}
+                     
+                     
                     >
                       {saving ? (
                         <>
-                          <span
-                            className="spinner spinner-sm"
-                            style={{
-                              borderTopColor: "white",
-                              borderColor: "rgba(255,255,255,0.3)",
-                            }}
-                          />
+                          <LoaderCircle className="size-4 animate-spin" />
                           登录并添加...
                         </>
                       ) : (
                         "登录并添加"
                       )}
-                    </button>
+                    </Button>
                   </div>
                 )}
               </>
             ) : (
-              <div
-                style={{ display: "flex", flexDirection: "column", gap: 12 }}
-              >
-                <div className="info-tip">
+              <div className="flex flex-col gap-3">
+                <InfoNote>
                   API Key
                   连接只用于代理转发，不会自动派生账号令牌。系统会按站点平台能力自动引导到
                   Session 或 API Key 创建流程。
-                </div>
+                </InfoNote>
                 {createIntentPreset && (
-                  <div className="alert alert-info animate-scale-in">
-                    <div className="alert-title">
+                  <Alert className="animate-scale-in">
+                    <AlertTitle>
                       {createIntentPreset.label}
-                    </div>
-                    <div
-                      style={{
-                        fontSize: 12,
-                        color: "var(--color-text-muted)",
-                        marginTop: 4,
-                        lineHeight: 1.8,
-                      }}
-                    >
+                    </AlertTitle>
+                    <AlertDescription className="leading-relaxed">
                       <div>{createIntentPreset.description}</div>
                       <div>
                         推荐模型：
@@ -2098,30 +1898,18 @@ export default function Accounts() {
                           Key，再补入推荐模型完成初始化。
                         </div>
                       )}
-                    </div>
+                    </AlertDescription>
                     {createIntentPreset.recommendedModels.length > 0 && (
-                      <label
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 8,
-                          fontSize: 12,
-                          cursor: "pointer",
-                          marginTop: 8,
-                        }}
-                      >
-                        <input
-                          type="checkbox"
+                      <label className="mt-2 flex cursor-pointer items-center gap-2 text-xs">
+                        <Checkbox
+                         
                           checked={applyCreatePresetModels}
-                          onChange={(e) =>
-                            setApplyCreatePresetModels(e.target.checked)
-                          }
-                          style={{ width: 14, height: 14 }}
+                          onCheckedChange={(checked) => setApplyCreatePresetModels(checked === true)}
                         />
                         <span>添加后自动补入推荐模型并重建路由</span>
                       </label>
                     )}
-                  </div>
+                  </Alert>
                 )}
                 <ModernSelect
                   value={String(tokenForm.siteId || 0)}
@@ -2146,7 +1934,7 @@ export default function Accounts() {
                   searchable
                   searchPlaceholder={SITE_SELECT_SEARCH_PLACEHOLDER}
                 />
-                <input
+                <Input
                   placeholder="连接名称（可选）"
                   value={tokenForm.username}
                   onChange={(e) =>
@@ -2156,9 +1944,8 @@ export default function Accounts() {
                       credentialMode: "apikey",
                     }))
                   }
-                  style={inputStyle}
                 />
-                <textarea
+                <Textarea
                   placeholder="粘贴 API Key"
                   value={tokenForm.accessToken}
                   onChange={(e) => {
@@ -2169,30 +1956,21 @@ export default function Accounts() {
                     }));
                     setVerifyResult(null);
                   }}
-                  style={{
-                    ...inputStyle,
-                    fontFamily: "var(--font-mono)",
-                    height: 72,
-                    resize: "none" as const,
-                  }}
+                  className="h-[72px] resize-none font-mono"
                 />
                 {parsedApiKeys.length > 0 && (
-                  <div
-                    style={{ fontSize: 12, color: "var(--color-text-muted)" }}
-                  >
+                  <div className="text-xs text-muted-foreground">
                     已识别 {parsedApiKeys.length} 个 API Key
                     {isBatchApiKeyInput
                       ? "，添加时会逐条创建同站点连接并参与轮询"
                       : ""}
                   </div>
                 )}
-                <div style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
+                <div className="text-xs text-muted-foreground">
                   支持换行、空格、逗号批量粘贴多个 API Key。
                 </div>
-                <div
-                  style={{ display: "flex", flexDirection: "column", gap: 4 }}
-                >
-                  <input
+                <div className="grid gap-1">
+                  <Input
                     placeholder="用户 ID（可选）"
                     value={tokenForm.platformUserId}
                     onChange={(e) => {
@@ -2203,49 +1981,27 @@ export default function Accounts() {
                       }));
                       setVerifyResult(null);
                     }}
-                    style={inputStyle}
                   />
-                  <div
-                    style={{ fontSize: 12, color: "var(--color-text-muted)" }}
-                  >
+                  <div className="text-xs text-muted-foreground">
                     若站点要求 New-Api-User / User-ID，请在这里提前填写。
                   </div>
                 </div>
-                <label
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    fontSize: 13,
-                    cursor: "pointer",
-                    alignSelf: "flex-start",
-                  }}
-                >
-                  <input
-                    type="checkbox"
+                <label className="flex cursor-pointer items-center gap-2 self-start text-sm">
+                  <Checkbox
+                   
                     checked={!!tokenForm.skipModelFetch}
-                    onChange={(e) =>
-                      setTokenForm((f) => ({
+                    onCheckedChange={(checked) => setTokenForm((f) => ({
                         ...f,
-                        skipModelFetch: e.target.checked,
-                      }))
-                    }
-                    style={{ width: 14, height: 14 }}
+                        skipModelFetch: checked === true,
+                      }))}
                   />
                   <span>跳过模型验证（直接添加 API Key）</span>
                 </label>
                 {verifyResult &&
                   verifyResult.success &&
                   verifyResult.tokenType === "apikey" && (
-                    <div className="alert alert-info animate-scale-in">
-                      <div
-                        className="alert-title"
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 6,
-                        }}
-                      >
+                    <Alert className="animate-scale-in">
+                      <AlertTitle className="flex items-center gap-1.5">
                         <svg
                           width="14"
                           height="14"
@@ -2261,60 +2017,54 @@ export default function Accounts() {
                           />
                         </svg>
                         API Key 验证成功
-                      </div>
-                      <div style={{ fontSize: 12, lineHeight: 1.8 }}>
+                      </AlertTitle>
+                      <AlertDescription className="leading-relaxed">
                         <div>
                           可用模型:{" "}
                           <strong>{verifyResult.modelCount} 个</strong>
                         </div>
                         {verifyResult.models && (
-                          <div style={{ color: "var(--color-text-muted)" }}>
+                          <div className="text-muted-foreground">
                             包含: {verifyResult.models.join(", ")}
                             {verifyResult.modelCount > 10 ? " ..." : ""}
                           </div>
                         )}
-                      </div>
-                    </div>
+                      </AlertDescription>
+                    </Alert>
                   )}
                 {verifyResult &&
                   verifyResult.success &&
                   verifyResult.tokenType === "session" && (
-                    <div className="alert alert-warning animate-scale-in">
-                      <div className="alert-title">
+                    <Alert className="animate-scale-in">
+                      <AlertTitle>
                         当前分段仅接受 API Key，请切到「Session 连接」分段创建。
-                      </div>
-                    </div>
+                      </AlertTitle>
+                    </Alert>
                   )}
                 {verifyResult &&
                   !verifyResult.success &&
                   verifyResult.needsUserId && (
-                    <div className="alert alert-warning animate-scale-in">
-                      <div className="alert-title">
+                    <Alert className="animate-scale-in">
+                      <AlertTitle>
                         此站点要求用户 ID，请补充后重新验证
-                      </div>
-                    </div>
+                      </AlertTitle>
+                    </Alert>
                   )}
                 {verifyResult &&
                   !verifyResult.success &&
                   !verifyResult.needsUserId && (
-                    <div className="alert alert-error animate-scale-in">
-                      <div className="alert-title">
+                    <Alert variant="destructive" className="animate-scale-in">
+                      <AlertTitle>
                         {normalizeVerifyFailureMessage(verifyResult.message) ||
                           "Token 无效或已过期"}
-                      </div>
-                      <div
-                        style={{
-                          fontSize: 12,
-                          color: "var(--color-text-muted)",
-                          marginTop: 4,
-                        }}
-                      >
+                      </AlertTitle>
+                      <AlertDescription>
                         {verifyFailureHint || "请检查 Token 是否正确"}
-                      </div>
-                    </div>
+                      </AlertDescription>
+                    </Alert>
                   )}
-                <div style={{ display: "flex", gap: 8 }}>
-                  <button
+                <div className="flex gap-2">
+                  <Button type="button" variant="outline"
                     onClick={handleVerifyToken}
                     disabled={
                       verifying ||
@@ -2322,15 +2072,12 @@ export default function Accounts() {
                       !tokenForm.accessToken ||
                       isBatchApiKeyInput
                     }
-                    className="btn btn-ghost"
-                    style={{
-                      border: "1px solid var(--color-border)",
-                      padding: "8px 14px",
-                    }}
+                   
+                   
                   >
                     {verifying ? (
                       <>
-                        <span className="spinner spinner-sm" />
+                        <LoaderCircle className="size-4 animate-spin" />
                         验证中...
                       </>
                     ) : isBatchApiKeyInput ? (
@@ -2338,8 +2085,8 @@ export default function Accounts() {
                     ) : (
                       "验证 API Key"
                     )}
-                  </button>
-                  <button
+                  </Button>
+                  <Button type="button"
                     onClick={handleTokenAdd}
                     disabled={
                       saving ||
@@ -2347,17 +2094,11 @@ export default function Accounts() {
                       !tokenForm.accessToken ||
                       !canSubmitApiKeyConnection
                     }
-                    className="btn btn-success"
+                   
                   >
                     {saving ? (
                       <>
-                        <span
-                          className="spinner spinner-sm"
-                          style={{
-                            borderTopColor: "white",
-                            borderColor: "rgba(255,255,255,0.3)",
-                          }}
-                        />
+                        <LoaderCircle className="size-4 animate-spin" />
                         添加中...
                       </>
                     ) : isBatchApiKeyInput ? (
@@ -2365,12 +2106,10 @@ export default function Accounts() {
                     ) : (
                       "添加连接"
                     )}
-                  </button>
+                  </Button>
                 </div>
                 {!verifyResult?.success && (
-                  <div
-                    style={{ fontSize: 12, color: "var(--color-text-muted)" }}
-                  >
+                  <div className="text-xs text-muted-foreground">
                     {isBatchApiKeyInput
                       ? "批量模式下无需先点验证，提交后会逐条校验并创建。"
                       : addAccountPrereqHint}
@@ -2388,34 +2127,21 @@ export default function Accounts() {
               maxWidth={820}
               bodyStyle={{ display: "flex", flexDirection: "column", gap: 12 }}
               footer={
-                <button onClick={closeRebindPanel} className="btn btn-ghost">
+                <Button type="button" variant="outline" onClick={closeRebindPanel}>
                   取消
-                </button>
+                </Button>
               }
             >
               {activeRebindTarget ? (
                 <>
-                  <div
-                    style={{
-                      fontSize: 12,
-                      color: "var(--color-text-muted)",
-                      marginBottom: 12,
-                    }}
-                  >
+                  <div className="mb-3 text-xs text-muted-foreground">
                     连接: {resolveAccountDisplayName(activeRebindTarget)} @{" "}
                     {activeRebindTarget.site?.name || "-"}。请粘贴新的 Session
                     Token，验证成功后再绑定。
                   </div>
 
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: "minmax(0, 1fr) 220px",
-                      gap: 10,
-                      marginBottom: 10,
-                    }}
-                  >
-                    <textarea
+                  <div className="mb-2.5 grid grid-cols-[minmax(0,1fr)_220px] gap-2.5">
+                    <Textarea
                       placeholder="粘贴新的 Session Token"
                       value={rebindForm.accessToken}
                       onChange={(e) => {
@@ -2425,14 +2151,9 @@ export default function Accounts() {
                         }));
                         setRebindVerifyResult(null);
                       }}
-                      style={{
-                        ...inputStyle,
-                        fontFamily: "var(--font-mono)",
-                        height: 74,
-                        resize: "none" as const,
-                      }}
+                      className="h-[74px] resize-none font-mono"
                     />
-                    <input
+                    <Input
                       placeholder="用户 ID（可选）"
                       value={rebindForm.platformUserId}
                       onChange={(e) => {
@@ -2442,20 +2163,12 @@ export default function Accounts() {
                         }));
                         setRebindVerifyResult(null);
                       }}
-                      style={inputStyle}
                     />
                   </div>
                   {isRebindSub2Api && (
                     <>
-                      <div
-                        style={{
-                          display: "grid",
-                          gridTemplateColumns: "minmax(0, 1fr) 220px",
-                          gap: 10,
-                          marginBottom: 4,
-                        }}
-                      >
-                        <input
+                      <div className="mb-1 grid grid-cols-[minmax(0,1fr)_220px] gap-2.5">
+                        <Input
                           placeholder="Sub2API refresh_token（可选）"
                           value={rebindForm.refreshToken}
                           onChange={(e) =>
@@ -2464,12 +2177,9 @@ export default function Accounts() {
                               refreshToken: e.target.value.trim(),
                             }))
                           }
-                          style={{
-                            ...inputStyle,
-                            fontFamily: "var(--font-mono)",
-                          }}
+                          className="font-mono"
                         />
-                        <input
+                        <Input
                           placeholder="token_expires_at（可选）"
                           value={rebindForm.tokenExpiresAt}
                           onChange={(e) =>
@@ -2478,16 +2188,9 @@ export default function Accounts() {
                               tokenExpiresAt: e.target.value.replace(/\D/g, ""),
                             }))
                           }
-                          style={inputStyle}
                         />
                       </div>
-                      <div
-                        style={{
-                          fontSize: 12,
-                          color: "var(--color-text-muted)",
-                          marginBottom: 10,
-                        }}
-                      >
+                      <div className="mb-2.5 text-xs text-muted-foreground">
                         留空将保持原有 refresh_token
                         不变。配置后可用于托管自动续期。
                       </div>
@@ -2497,53 +2200,47 @@ export default function Accounts() {
                   {rebindVerifyResult &&
                     rebindVerifyResult.success &&
                     rebindVerifyResult.tokenType === "session" && (
-                      <div
-                        className="alert alert-success animate-scale-in"
-                        style={{ marginBottom: 10 }}
-                      >
-                        <div className="alert-title">Session Token 有效</div>
-                        <div style={{ fontSize: 12, marginTop: 4 }}>
+                      <Alert className="mb-2.5 animate-scale-in">
+                        <AlertTitle>Session Token 有效</AlertTitle>
+                        <AlertDescription>
                           用户:{" "}
                           {rebindVerifyResult.userInfo?.username || "未知"}
                           {rebindVerifyResult.apiToken
                             ? `，已识别 API Key (${String(rebindVerifyResult.apiToken).slice(0, 8)}...)`
                             : ""}
-                        </div>
-                      </div>
+                        </AlertDescription>
+                      </Alert>
                     )}
                   {rebindVerifyResult &&
                     (!rebindVerifyResult.success ||
                       rebindVerifyResult.tokenType !== "session") && (
-                      <div
-                        className="alert alert-error animate-scale-in"
-                        style={{ marginBottom: 10 }}
-                      >
-                        <div className="alert-title">
+                      <Alert variant="destructive" className="mb-2.5 animate-scale-in">
+                        <AlertTitle>
                           {rebindVerifyResult.message ||
                             "Token 无效或类型不正确"}
-                        </div>
-                      </div>
+                        </AlertTitle>
+                      </Alert>
                     )}
 
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <button
+                  <div className="flex gap-2">
+                    <Button type="button" variant="outline"
                       onClick={handleVerifyRebindToken}
                       disabled={
                         rebindVerifying || !rebindForm.accessToken.trim()
                       }
-                      className="btn btn-ghost"
-                      style={{ border: "1px solid var(--color-border)" }}
+                     
+                     
                     >
                       {rebindVerifying ? (
                         <>
-                          <span className="spinner spinner-sm" />
+                          <LoaderCircle className="size-4 animate-spin" />
                           验证中...
                         </>
                       ) : (
                         "验证 Token"
                       )}
-                    </button>
-                    <button
+                    </Button>
+                    <Button type="button"
                       onClick={handleSubmitRebind}
                       disabled={
                         rebindSaving ||
@@ -2552,23 +2249,17 @@ export default function Accounts() {
                           rebindVerifyResult?.tokenType === "session"
                         )
                       }
-                      className="btn btn-success"
+                     
                     >
                       {rebindSaving ? (
                         <>
-                          <span
-                            className="spinner spinner-sm"
-                            style={{
-                              borderTopColor: "white",
-                              borderColor: "rgba(255,255,255,0.3)",
-                            }}
-                          />
+                          <LoaderCircle className="size-4 animate-spin" />
                           绑定中...
                         </>
                       ) : (
                         "确认重新绑定"
                       )}
-                    </button>
+                    </Button>
                   </div>
                 </>
               ) : null}
@@ -2583,35 +2274,29 @@ export default function Accounts() {
             bodyStyle={{ display: "flex", flexDirection: "column", gap: 12 }}
             footer={
               <>
-                <button onClick={closeEditPanel} className="btn btn-ghost">
+                <Button type="button" variant="outline" onClick={closeEditPanel}>
                   取消
-                </button>
-                <button
+                </Button>
+                <Button type="button"
                   onClick={saveEditPanel}
                   disabled={savingEdit}
-                  className="btn btn-primary"
+                 
                 >
                   {savingEdit ? (
                     <>
-                      <span
-                        className="spinner spinner-sm"
-                        style={{
-                          borderTopColor: "white",
-                          borderColor: "rgba(255,255,255,0.3)",
-                        }}
-                      />{" "}
+                      <LoaderCircle className="size-4 animate-spin" />{" "}
                       保存中...
                     </>
                   ) : (
                     "保存修改"
                   )}
-                </button>
+                </Button>
               </>
             }
           >
             {editingAccount ? (
               <ResponsiveFormGrid>
-                <input
+                <Input
                   placeholder="账号名称"
                   value={editForm.username}
                   onChange={(e) =>
@@ -2620,7 +2305,6 @@ export default function Accounts() {
                       username: e.target.value,
                     }))
                   }
-                  style={inputStyle}
                 />
                 <ModernSelect
                   value={editForm.status}
@@ -2634,7 +2318,7 @@ export default function Accounts() {
                   ]}
                   placeholder="状态"
                 />
-                <input
+                <Input
                   placeholder="单位成本（可选）"
                   value={editForm.unitCost}
                   onChange={(e) =>
@@ -2643,29 +2327,18 @@ export default function Accounts() {
                       unitCost: e.target.value,
                     }))
                   }
-                  style={inputStyle}
                 />
-                <label
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    ...inputStyle,
-                  }}
-                >
-                  <input
-                    type="checkbox"
+                <label className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm">
+                  <Checkbox
+                   
                     checked={editForm.checkinEnabled}
-                    onChange={(e) =>
-                      setEditForm((prev) => ({
+                    onCheckedChange={(checked) => setEditForm((prev) => ({
                         ...prev,
-                        checkinEnabled: e.target.checked,
-                      }))
-                    }
-                  />
+                        checkinEnabled: checked === true,
+                      }))}      />
                   启用签到
                 </label>
-                <input
+                <Input
                   placeholder="Access Token"
                   value={editForm.accessToken}
                   onChange={(e) =>
@@ -2674,9 +2347,9 @@ export default function Accounts() {
                       accessToken: e.target.value,
                     }))
                   }
-                  style={{ ...inputStyle, fontFamily: "var(--font-mono)" }}
+                  className="font-mono"
                 />
-                <input
+                <Input
                   placeholder="API Token（可选）"
                   value={editForm.apiToken}
                   onChange={(e) =>
@@ -2685,9 +2358,9 @@ export default function Accounts() {
                       apiToken: e.target.value,
                     }))
                   }
-                  style={{ ...inputStyle, fontFamily: "var(--font-mono)" }}
+                  className="font-mono"
                 />
-                <input
+                <Input
                   placeholder="代理地址（可选，如 http://127.0.0.1:7890）"
                   value={editForm.proxyUrl}
                   onChange={(e) =>
@@ -2696,22 +2369,15 @@ export default function Accounts() {
                       proxyUrl: e.target.value,
                     }))
                   }
-                  style={inputStyle}
                 />
-                <div
-                  style={{
-                    fontSize: 12,
-                    color: "var(--color-text-muted)",
-                    marginTop: -4,
-                  }}
-                >
+                <div className="-mt-1 text-xs text-muted-foreground">
                   覆盖站点和系统代理，留空则使用站点设置。支持 http/https/socks5
                   协议。
                 </div>
                 {(editingAccount?.site?.platform || "").toLowerCase() ===
                   "sub2api" && (
                   <>
-                    <input
+                    <Input
                       placeholder="Sub2API refresh_token（可选）"
                       value={editForm.refreshToken}
                       onChange={(e) =>
@@ -2720,9 +2386,9 @@ export default function Accounts() {
                           refreshToken: e.target.value,
                         }))
                       }
-                      style={{ ...inputStyle, fontFamily: "var(--font-mono)" }}
+                      className="font-mono"
                     />
-                    <input
+                    <Input
                       placeholder="token_expires_at（可选）"
                       value={editForm.tokenExpiresAt}
                       onChange={(e) =>
@@ -2731,7 +2397,6 @@ export default function Accounts() {
                           tokenExpiresAt: e.target.value.replace(/\D/g, ""),
                         }))
                       }
-                      style={inputStyle}
                     />
                   </>
                 )}
@@ -2739,10 +2404,10 @@ export default function Accounts() {
             ) : null}
           </CenteredModal>
 
-          <div className="card">
+          <Card>
             {visibleAccounts.length > 0 ? (
               isMobile ? (
-                <div className="mobile-card-list">
+                <div className="grid gap-3">
                   {visibleAccounts.map((a: any) => {
                     const capabilities = resolveAccountCapabilities(a);
                     const connectionMode = resolveAccountCredentialMode(a);
@@ -2757,102 +2422,73 @@ export default function Accounts() {
                         key={a.id}
                         title={resolveAccountDisplayName(a)}
                         headerActions={
-                          <div
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: 6,
-                            }}
-                          >
-                            <input
-                              type="checkbox"
+                          <div className="flex items-center gap-1.5">
+                            <Checkbox
+                             
                               aria-label={`选择账号 ${resolveAccountDisplayName(a)}`}
                               checked={selectedAccountIds.includes(a.id)}
-                              onChange={(event) =>
-                                toggleAccountSelection(
+                              onCheckedChange={(checked) => toggleAccountSelection(
                                   a.id,
-                                  event.target.checked,
-                                )
-                              }
-                            />
-                            <span
-                              className={`badge ${connectionMode === "apikey" ? "badge-warning" : "badge-info"}`}
-                              style={{ fontSize: 10 }}
+                                  checked === true,
+                                )}                />
+                            <ToneBadge tone={connectionMode === "apikey" ? "warning" : "info"}
+                             
+                             
                             >
                               {connectionMode === "apikey"
                                 ? "API Key"
                                 : "Session"}
-                            </span>
+                            </ToneBadge>
                             {parseAccountExtraConfig(a)?.proxyUrl && (
-                              <span
-                                className="badge badge-purple"
-                                style={{ fontSize: 10 }}
+                              <ToneBadge tone="-purple"
+                               
+                               
                               >
                                 代理
-                              </span>
+                              </ToneBadge>
                             )}
                           </div>
                         }
                         footerActions={
                           <>
-                            <button
+                            <Button variant="ghost" size="sm"
                               type="button"
                               onClick={() => toggleAccountDetails(a.id)}
-                              className="btn btn-link"
+                             
                             >
                               {isExpanded ? "收起" : "详情"}
-                            </button>
-                            <button
+                            </Button>
+                            <Button type="button" variant="ghost" size="sm"
                               onClick={() => openEditPanel(a)}
-                              className="btn btn-link btn-link-info"
+                             
                             >
                               编辑
-                            </button>
-                            <button
+                            </Button>
+                            <Button type="button" variant="ghost" size="sm"
                               onClick={() => openModelModal(a)}
                               disabled={actionLoading[`models-${a.id}`]}
-                              className="btn btn-link btn-link-info"
+                             
                             >
                               模型
-                            </button>
+                            </Button>
                           </>
                         }
                       >
                         <MobileField
                           label="运行健康状态"
                           value={
-                            <div
-                              style={{
-                                display: "flex",
-                                flexDirection: "column",
-                                gap: 4,
-                              }}
-                            >
-                              <span
-                                className={`badge ${health.cls}`}
-                                style={{
-                                  fontSize: 11,
-                                  display: "inline-flex",
-                                  alignItems: "center",
-                                  gap: 4,
-                                  width: "fit-content",
-                                }}
+                            <div className="flex flex-col gap-1">
+                              <ToneBadge tone={health.cls}
+                               
+                               
                               >
                                 <span
                                   className={`status-dot ${health.dotClass} ${health.pulse ? "animate-pulse-dot" : ""}`}
-                                  style={{ marginRight: 0 }}
                                 />
                                 {health.label}
-                              </span>
+                              </ToneBadge>
                               <span
-                                style={{
-                                  fontSize: 11,
-                                  color: "var(--color-text-muted)",
-                                  maxWidth: 240,
-                                  overflow: "hidden",
-                                  textOverflow: "ellipsis",
-                                  whiteSpace: "nowrap",
-                                }}
+                                className="max-w-60 truncate text-[11px] text-muted-foreground"
                                 data-tooltip={health.reason}
                               >
                                 {health.reason}
@@ -2864,23 +2500,11 @@ export default function Accounts() {
                           label="余额"
                           value={
                             <div>
-                              <div
-                                style={{
-                                  fontWeight: 600,
-                                  color: "var(--color-text-primary)",
-                                }}
-                              >
+                              <div className="font-semibold text-foreground">
                                 ${(a.balance || 0).toFixed(2)}
                               </div>
                               <div
-                                style={{
-                                  fontSize: 11,
-                                  color:
-                                    (a.todayReward || 0) > 0
-                                      ? "var(--color-success)"
-                                      : "var(--color-text-muted)",
-                                  fontWeight: 500,
-                                }}
+                                className={(a.todayReward || 0) > 0 ? "text-[11px] font-medium text-emerald-600" : "text-[11px] font-medium text-muted-foreground"}
                               >
                                 +{(a.todayReward || 0).toFixed(2)}
                               </div>
@@ -2893,14 +2517,7 @@ export default function Accounts() {
                             <div>
                               <div>${(a.balanceUsed || 0).toFixed(2)}</div>
                               <div
-                                style={{
-                                  fontSize: 11,
-                                  color:
-                                    (a.todaySpend || 0) > 0
-                                      ? "var(--color-danger)"
-                                      : "var(--color-text-muted)",
-                                  fontWeight: 500,
-                                }}
+                                className={(a.todaySpend || 0) > 0 ? "text-[11px] font-medium text-destructive" : "text-[11px] font-medium text-muted-foreground"}
                               >
                                 -{(a.todaySpend || 0).toFixed(2)}
                               </div>
@@ -2908,7 +2525,7 @@ export default function Accounts() {
                           }
                         />
                         {isExpanded ? (
-                          <div className="mobile-card-extra">
+                          <div className="mt-3 grid gap-2">
                             <MobileField
                               label="站点"
                               value={
@@ -2923,9 +2540,10 @@ export default function Accounts() {
                               label="签到"
                               value={
                                 capabilities.canCheckin ? (
-                                  <button
+                                  <Button
                                     type="button"
-                                    className={`checkin-toggle-badge ${a.checkinEnabled ? "is-on" : "is-off"}`}
+                                    variant={a.checkinEnabled ? "default" : "secondary"}
+                                    size="sm"
                                     onClick={() => handleToggleCheckin(a)}
                                     disabled={
                                       !!actionLoading[`checkin-toggle-${a.id}`]
@@ -2942,20 +2560,20 @@ export default function Accounts() {
                                     }
                                   >
                                     {actionLoading[`checkin-toggle-${a.id}`] ? (
-                                      <span className="spinner spinner-sm" />
+                                      <LoaderCircle className="size-4 animate-spin" />
                                     ) : a.checkinEnabled ? (
                                       "开启"
                                     ) : (
                                       "关闭"
                                     )}
-                                  </button>
+                                  </Button>
                                 ) : (
-                                  <span
-                                    className="badge badge-muted"
-                                    style={{ fontSize: 11 }}
+                                  <ToneBadge tone="-muted"
+                                   
+                                   
                                   >
                                     不支持
-                                  </span>
+                                  </ToneBadge>
                                 )
                               }
                             />
@@ -2972,48 +2590,48 @@ export default function Accounts() {
                               stacked
                               value={hintMessage}
                             />
-                            <div className="mobile-card-actions">
-                              <button
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Button type="button" variant="secondary" size="sm"
                                 onClick={() => handleTogglePin(a)}
                                 disabled={!!actionLoading[`pin-toggle-${a.id}`]}
-                                className={`btn btn-link ${a.isPinned ? "btn-link-warning" : "btn-link-primary"}`}
+                               
                               >
                                 {actionLoading[`pin-toggle-${a.id}`] ? (
-                                  <span className="spinner spinner-sm" />
+                                  <LoaderCircle className="size-4 animate-spin" />
                                 ) : a.isPinned ? (
                                   "取消置顶"
                                 ) : (
                                   "置顶"
                                 )}
-                              </button>
+                              </Button>
                               {sortMode === "custom" && (
                                 <>
-                                  <button
+                                  <Button type="button" variant="ghost" size="sm"
                                     onClick={() =>
                                       handleMoveCustomOrder(a, "up")
                                     }
                                     disabled={
                                       !!actionLoading[`reorder-${a.id}`]
                                     }
-                                    className="btn btn-link btn-link-muted"
+                                   
                                   >
                                     ↑ 上移
-                                  </button>
-                                  <button
+                                  </Button>
+                                  <Button type="button" variant="ghost" size="sm"
                                     onClick={() =>
                                       handleMoveCustomOrder(a, "down")
                                     }
                                     disabled={
                                       !!actionLoading[`reorder-${a.id}`]
                                     }
-                                    className="btn btn-link btn-link-muted"
+                                   
                                   >
                                     ↓ 下移
-                                  </button>
+                                  </Button>
                                 </>
                               )}
                               {capabilities.canRefreshBalance && (
-                                <button
+                                <Button type="button" variant="ghost" size="sm"
                                   onClick={() =>
                                     withLoading(
                                       `refresh-${a.id}`,
@@ -3022,17 +2640,17 @@ export default function Accounts() {
                                     )
                                   }
                                   disabled={actionLoading[`refresh-${a.id}`]}
-                                  className="btn btn-link btn-link-primary"
+                                 
                                 >
                                   {actionLoading[`refresh-${a.id}`] ? (
-                                    <span className="spinner spinner-sm" />
+                                    <LoaderCircle className="size-4 animate-spin" />
                                   ) : (
                                     "刷新"
                                   )}
-                                </button>
+                                </Button>
                               )}
                               {capabilities.canCheckin && (
-                                <button
+                                <Button type="button" variant="secondary" size="sm"
                                   onClick={() =>
                                     withLoading(
                                       `checkin-${a.id}`,
@@ -3041,25 +2659,25 @@ export default function Accounts() {
                                     )
                                   }
                                   disabled={actionLoading[`checkin-${a.id}`]}
-                                  className="btn btn-link btn-link-warning"
+                                 
                                 >
                                   {actionLoading[`checkin-${a.id}`] ? (
-                                    <span className="spinner spinner-sm" />
+                                    <LoaderCircle className="size-4 animate-spin" />
                                   ) : (
                                     "签到"
                                   )}
-                                </button>
+                                </Button>
                               )}
                               {a.status === "expired" &&
                                 !capabilities.proxyOnly && (
-                                  <button
+                                  <Button type="button" variant="secondary" size="sm"
                                     onClick={() => openRebindPanel(a)}
-                                    className="btn btn-link btn-link-warning"
+                                   
                                   >
                                     重新绑定
-                                  </button>
+                                  </Button>
                                 )}
-                              <button
+                              <Button type="button" variant="destructive" size="sm"
                                 onClick={() =>
                                   setDeleteConfirm({
                                     mode: "single",
@@ -3068,14 +2686,14 @@ export default function Accounts() {
                                   })
                                 }
                                 disabled={actionLoading[`delete-${a.id}`]}
-                                className="btn btn-link btn-link-danger"
+                               
                               >
                                 {actionLoading[`delete-${a.id}`] ? (
-                                  <span className="spinner spinner-sm" />
+                                  <LoaderCircle className="size-4 animate-spin" />
                                 ) : (
                                   "删除"
                                 )}
-                              </button>
+                              </Button>
                             </div>
                           </div>
                         ) : null}
@@ -3084,38 +2702,32 @@ export default function Accounts() {
                   })}
                 </div>
               ) : (
-                <table className="data-table accounts-table">
-                  <thead>
-                    <tr>
-                      <th style={{ width: 44 }}>
-                        <input
-                          type="checkbox"
+                <Table className="w-full text-sm">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-11">
+                        <Checkbox
+                         
                           checked={allVisibleAccountsSelected}
-                          onChange={(e) =>
-                            toggleSelectAllVisibleAccounts(e.target.checked)
-                          }
-                        />
-                      </th>
-                      <th>连接名称</th>
-                      <th>站点</th>
-                      <th>运行健康状态</th>
-                      <th>余额</th>
-                      <th>已用</th>
-                      <th>签到</th>
-                      <th
-                        className="accounts-actions-col"
-                        style={{ textAlign: "right" }}
-                      >
+                          onCheckedChange={(checked) => toggleSelectAllVisibleAccounts(checked === true)}            />
+                      </TableHead>
+                      <TableHead>连接名称</TableHead>
+                      <TableHead>站点</TableHead>
+                      <TableHead>运行健康状态</TableHead>
+                      <TableHead>余额</TableHead>
+                      <TableHead>已用</TableHead>
+                      <TableHead>签到</TableHead>
+                      <TableHead className="text-right">
                         操作
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
+                      </TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
                     {visibleAccounts.map((a: any, i: number) => {
                       const capabilities = resolveAccountCapabilities(a);
                       const connectionMode = resolveAccountCredentialMode(a);
                       return (
-                        <tr
+                        <TableRow
                           key={a.id}
                           data-testid={`account-row-${a.id}`}
                           ref={(node) => {
@@ -3127,84 +2739,59 @@ export default function Accounts() {
                           }
                           className={`animate-slide-up stagger-${Math.min(i + 1, 5)} row-selectable ${selectedAccountIds.includes(a.id) ? "row-selected" : ""} ${highlightAccountId === a.id ? "row-focus-highlight" : ""}`.trim()}
                         >
-                          <td>
-                            <input
+                          <TableCell>
+                            <Checkbox
                               data-testid={`account-select-${a.id}`}
-                              type="checkbox"
+                             
                               checked={selectedAccountIds.includes(a.id)}
-                              onChange={(e) =>
-                                toggleAccountSelection(a.id, e.target.checked)
-                              }
-                            />
-                          </td>
-                          <td style={{ color: "var(--color-text-primary)" }}>
-                            <div style={{ fontWeight: 600 }}>
+                              onCheckedChange={(checked) => toggleAccountSelection(a.id, checked === true)}                />
+                          </TableCell>
+                          <TableCell className="text-foreground">
+                            <div className="font-semibold">
                               {resolveAccountDisplayName(a)}
                             </div>
-                            <div
-                              style={{ display: "flex", gap: 4, marginTop: 4 }}
-                            >
-                              <span
-                                className={`badge ${connectionMode === "apikey" ? "badge-warning" : "badge-info"}`}
-                                style={{ fontSize: 10 }}
+                            <div className="mt-1 flex gap-1">
+                              <ToneBadge tone={connectionMode === "apikey" ? "warning" : "info"}
+                               
+                               
                               >
                                 {connectionMode === "apikey"
                                   ? "API Key"
                                   : "Session"}
-                              </span>
+                              </ToneBadge>
                               {parseAccountExtraConfig(a)?.proxyUrl && (
-                                <span
-                                  className="badge badge-purple"
-                                  style={{ fontSize: 10 }}
+                                <ToneBadge tone="-purple"
+                                 
+                                 
                                 >
                                   代理
-                                </span>
+                                </ToneBadge>
                               )}
                             </div>
-                          </td>
-                          <td>
+                          </TableCell>
+                          <TableCell>
                             <SiteBadgeLink
                               siteId={a.site?.id}
                               siteName={a.site?.name}
                               badgeStyle={{ fontSize: 11 }}
                             />
-                          </td>
-                          <td>
+                          </TableCell>
+                          <TableCell>
                             {(() => {
                               const health = resolveRuntimeHealth(a);
                               return (
-                                <div
-                                  style={{
-                                    display: "flex",
-                                    flexDirection: "column",
-                                    gap: 4,
-                                  }}
-                                >
-                                  <span
-                                    className={`badge ${health.cls}`}
-                                    style={{
-                                      fontSize: 11,
-                                      display: "inline-flex",
-                                      alignItems: "center",
-                                      gap: 4,
-                                      width: "fit-content",
-                                    }}
+                                <div className="flex flex-col gap-1">
+                                  <ToneBadge tone={health.cls}
+                                   
+                                   
                                   >
                                     <span
                                       className={`status-dot ${health.dotClass} ${health.pulse ? "animate-pulse-dot" : ""}`}
-                                      style={{ marginRight: 0 }}
                                     />
                                     {health.label}
-                                  </span>
+                                  </ToneBadge>
                                   <span
-                                    style={{
-                                      fontSize: 11,
-                                      color: "var(--color-text-muted)",
-                                      maxWidth: 200,
-                                      overflow: "hidden",
-                                      textOverflow: "ellipsis",
-                                      whiteSpace: "nowrap",
-                                    }}
+                                    className="max-w-[200px] truncate text-[11px] text-muted-foreground"
                                     data-tooltip={health.reason}
                                   >
                                     {health.reason}
@@ -3212,54 +2799,31 @@ export default function Accounts() {
                                 </div>
                               );
                             })()}
-                          </td>
-                          <td style={{ fontVariantNumeric: "tabular-nums" }}>
-                            <div
-                              style={{
-                                fontWeight: 600,
-                                color: "var(--color-text-primary)",
-                              }}
-                            >
+                          </TableCell>
+                          <TableCell className="tabular-nums">
+                            <div className="font-semibold text-foreground">
                               ${(a.balance || 0).toFixed(2)}
                             </div>
                             <div
-                              style={{
-                                fontSize: 11,
-                                color:
-                                  (a.todayReward || 0) > 0
-                                    ? "var(--color-success)"
-                                    : "var(--color-text-muted)",
-                                fontWeight: 500,
-                              }}
+                              className={(a.todayReward || 0) > 0 ? "text-[11px] font-medium text-emerald-600" : "text-[11px] font-medium text-muted-foreground"}
                             >
                               +{(a.todayReward || 0).toFixed(2)}
                             </div>
-                          </td>
-                          <td
-                            style={{
-                              fontVariantNumeric: "tabular-nums",
-                              fontSize: 12,
-                            }}
-                          >
+                          </TableCell>
+                          <TableCell className="text-xs tabular-nums">
                             <div>${(a.balanceUsed || 0).toFixed(2)}</div>
                             <div
-                              style={{
-                                fontSize: 11,
-                                color:
-                                  (a.todaySpend || 0) > 0
-                                    ? "var(--color-danger)"
-                                    : "var(--color-text-muted)",
-                                fontWeight: 500,
-                              }}
+                              className={(a.todaySpend || 0) > 0 ? "text-[11px] font-medium text-destructive" : "text-[11px] font-medium text-muted-foreground"}
                             >
                               -{(a.todaySpend || 0).toFixed(2)}
                             </div>
-                          </td>
-                          <td>
+                          </TableCell>
+                          <TableCell>
                             {capabilities.canCheckin ? (
-                              <button
+                              <Button
                                 type="button"
-                                className={`checkin-toggle-badge ${a.checkinEnabled ? "is-on" : "is-off"}`}
+                                variant={a.checkinEnabled ? "default" : "secondary"}
+                                size="sm"
                                 onClick={() => handleToggleCheckin(a)}
                                 disabled={
                                   !!actionLoading[`checkin-toggle-${a.id}`]
@@ -3276,68 +2840,65 @@ export default function Accounts() {
                                 }
                               >
                                 {actionLoading[`checkin-toggle-${a.id}`] ? (
-                                  <span className="spinner spinner-sm" />
+                                  <LoaderCircle className="size-4 animate-spin" />
                                 ) : a.checkinEnabled ? (
                                   "开启"
                                 ) : (
                                   "关闭"
                                 )}
-                              </button>
+                              </Button>
                             ) : (
-                              <span
-                                className="badge badge-muted"
-                                style={{ fontSize: 11 }}
+                              <ToneBadge tone="-muted"
+                               
+                               
                               >
                                 不支持
-                              </span>
+                              </ToneBadge>
                             )}
-                          </td>
-                          <td
-                            className="accounts-actions-cell"
-                            style={{ textAlign: "right" }}
-                          >
-                            <div className="accounts-row-actions">
-                              <button
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <div className="flex flex-wrap justify-end gap-2">
+                              <Button type="button" variant="secondary" size="sm"
                                 onClick={() => handleTogglePin(a)}
                                 disabled={!!actionLoading[`pin-toggle-${a.id}`]}
-                                className={`btn btn-link ${a.isPinned ? "btn-link-warning" : "btn-link-primary"}`}
+                               
                               >
                                 {actionLoading[`pin-toggle-${a.id}`] ? (
-                                  <span className="spinner spinner-sm" />
+                                  <LoaderCircle className="size-4 animate-spin" />
                                 ) : a.isPinned ? (
                                   "取消置顶"
                                 ) : (
                                   "置顶"
                                 )}
-                              </button>
+                              </Button>
                               {sortMode === "custom" && (
                                 <>
-                                  <button
+                                  <Button type="button" variant="ghost" size="sm"
                                     onClick={() =>
                                       handleMoveCustomOrder(a, "up")
                                     }
                                     disabled={
                                       !!actionLoading[`reorder-${a.id}`]
                                     }
-                                    className="btn btn-link btn-link-muted"
+                                   
                                   >
                                     ↑
-                                  </button>
-                                  <button
+                                  </Button>
+                                  <Button type="button" variant="ghost" size="sm"
                                     onClick={() =>
                                       handleMoveCustomOrder(a, "down")
                                     }
                                     disabled={
                                       !!actionLoading[`reorder-${a.id}`]
                                     }
-                                    className="btn btn-link btn-link-muted"
+                                   
                                   >
                                     ↓
-                                  </button>
+                                  </Button>
                                 </>
                               )}
                               {capabilities.canRefreshBalance && (
-                                <button
+                                <Button type="button" variant="ghost" size="sm"
                                   onClick={() =>
                                     withLoading(
                                       `refresh-${a.id}`,
@@ -3346,24 +2907,24 @@ export default function Accounts() {
                                     )
                                   }
                                   disabled={actionLoading[`refresh-${a.id}`]}
-                                  className="btn btn-link btn-link-primary"
+                                 
                                 >
                                   {actionLoading[`refresh-${a.id}`] ? (
-                                    <span className="spinner spinner-sm" />
+                                    <LoaderCircle className="size-4 animate-spin" />
                                   ) : (
                                     "刷新"
                                   )}
-                                </button>
+                                </Button>
                               )}
-                              <button
+                              <Button type="button" variant="ghost" size="sm"
                                 onClick={() => openModelModal(a)}
                                 disabled={actionLoading[`models-${a.id}`]}
-                                className="btn btn-link btn-link-info"
+                               
                               >
                                 模型
-                              </button>
+                              </Button>
                               {capabilities.canCheckin && (
-                                <button
+                                <Button type="button" variant="secondary" size="sm"
                                   onClick={() =>
                                     withLoading(
                                       `checkin-${a.id}`,
@@ -3372,31 +2933,31 @@ export default function Accounts() {
                                     )
                                   }
                                   disabled={actionLoading[`checkin-${a.id}`]}
-                                  className="btn btn-link btn-link-warning"
+                                 
                                 >
                                   {actionLoading[`checkin-${a.id}`] ? (
-                                    <span className="spinner spinner-sm" />
+                                    <LoaderCircle className="size-4 animate-spin" />
                                   ) : (
                                     "签到"
                                   )}
-                                </button>
+                                </Button>
                               )}
                               {a.status === "expired" &&
                                 !capabilities.proxyOnly && (
-                                  <button
+                                  <Button type="button" variant="secondary" size="sm"
                                     onClick={() => openRebindPanel(a)}
-                                    className="btn btn-link btn-link-warning"
+                                   
                                   >
                                     重新绑定
-                                  </button>
+                                  </Button>
                                 )}
-                              <button
+                              <Button type="button" variant="ghost" size="sm"
                                 onClick={() => openEditPanel(a)}
-                                className="btn btn-link btn-link-info"
+                               
                               >
                                 编辑
-                              </button>
-                              <button
+                              </Button>
+                              <Button type="button" variant="destructive" size="sm"
                                 onClick={() =>
                                   setDeleteConfirm({
                                     mode: "single",
@@ -3405,60 +2966,40 @@ export default function Accounts() {
                                   })
                                 }
                                 disabled={actionLoading[`delete-${a.id}`]}
-                                className="btn btn-link btn-link-danger"
+                               
                               >
                                 {actionLoading[`delete-${a.id}`] ? (
-                                  <span className="spinner spinner-sm" />
+                                  <LoaderCircle className="size-4 animate-spin" />
                                 ) : (
                                   "删除"
                                 )}
-                              </button>
+                              </Button>
                             </div>
-                          </td>
-                        </tr>
+                          </TableCell>
+                        </TableRow>
                       );
                     })}
-                  </tbody>
-                </table>
+                  </TableBody>
+                </Table>
               )
             ) : (
-              <div className="empty-state">
-                <svg
-                  className="empty-state-icon"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={1}
-                    d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"
-                  />
-                </svg>
-                <div className="empty-state-title">
-                  {activeSegment === "apikey"
-                    ? "暂无 API Key 连接"
-                    : "暂无 Session 连接"}
-                </div>
-                <div className="empty-state-desc">
-                  {activeSegment === "apikey"
-                    ? sites.length > 0
-                      ? "请为现有站点补充 API Key 连接"
-                      : "请先添加站点，然后为站点补充 API Key 连接"
-                    : sites.length > 0
-                      ? "请为现有站点添加 Session 连接"
-                      : "请先添加站点，然后添加 Session 连接"}
-                </div>
-              </div>
+              <EmptyStateBlock
+                title={activeSegment === "apikey" ? "暂无 API Key 连接" : "暂无 Session 连接"}
+                description={activeSegment === "apikey"
+                  ? sites.length > 0
+                    ? "请为现有站点补充 API Key 连接"
+                    : "请先添加站点，然后为站点补充 API Key 连接"
+                  : sites.length > 0
+                    ? "请为现有站点添加 Session 连接"
+                    : "请先添加站点，然后添加 Session 连接"}
+              />
             )}
-          </div>
+          </Card>
         </>
       )}
 
       <AccountModelsModal
         modelModal={modelModal}
-        inputStyle={inputStyle}
         onClose={closeModelModal}
         onSave={saveModelDisabled}
         onRefresh={async () => {

@@ -159,8 +159,6 @@ describe('Accounts edit panel', () => {
       const modelButtons = root.root.findAll((node) => (
         node.type === 'button'
         && typeof node.props.onClick === 'function'
-        && typeof node.props.className === 'string'
-        && node.props.className.includes('btn-link-info')
         && collectText(node).trim() === '模型'
       ));
       expect(modelButtons.length).toBeGreaterThan(0);
@@ -224,8 +222,6 @@ describe('Accounts edit panel', () => {
       const modelButtons = root.root.findAll((node) => (
         node.type === 'button'
         && typeof node.props.onClick === 'function'
-        && typeof node.props.className === 'string'
-        && node.props.className.includes('btn-link-info')
         && collectText(node).trim() === '模型'
       ));
 
@@ -288,8 +284,6 @@ describe('Accounts edit panel', () => {
       const modelButton = root.root.find((node) => (
         node.type === 'button'
         && typeof node.props.onClick === 'function'
-        && typeof node.props.className === 'string'
-        && node.props.className.includes('btn-link-info')
         && collectText(node).trim() === '模型'
       ));
 

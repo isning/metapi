@@ -114,6 +114,47 @@ describe('chatFormatsCore inline think parsing', () => {
     });
   });
 
+  it('normalizes OpenAI-compatible delta.thinking into downstream reasoning_content', () => {
+    const context = createStreamTransformContext('deepseek-reasoner');
+    const claudeContext = createClaudeDownstreamContext();
+
+    const event = normalizeUpstreamStreamEvent({
+      id: 'chatcmpl-thinking-delta',
+      model: 'deepseek-reasoner',
+      choices: [{
+        index: 0,
+        delta: {
+          role: 'assistant',
+          thinking: ' plan with spaces ',
+        },
+        finish_reason: null,
+      }],
+    }, context, 'deepseek-reasoner');
+
+    expect(event).toMatchObject({
+      role: 'assistant',
+      reasoningDelta: ' plan with spaces ',
+    });
+
+    const lines = serializeNormalizedStreamEvent(
+      'openai',
+      event,
+      context,
+      claudeContext,
+    );
+    const payload = parseOpenAiSsePayload(lines);
+
+    expect(payload).toMatchObject({
+      choices: [{
+        delta: {
+          role: 'assistant',
+          reasoning_content: ' plan with spaces ',
+        },
+      }],
+    });
+    expect(JSON.stringify(payload)).not.toContain('"thinking"');
+  });
+
   it('treats response.reasoning_summary_text.done as reasoning-only stream output', () => {
     const context = createStreamTransformContext('gpt-test');
 

@@ -39,15 +39,6 @@ export const ROUTE_GROUPING_COLUMN_COMPATIBILITY_SPECS: RouteGroupingColumnCompa
   },
   {
     table: 'token_routes',
-    column: 'route_mode',
-    addSql: {
-      sqlite: 'ALTER TABLE token_routes ADD COLUMN route_mode text DEFAULT \'pattern\';',
-      mysql: 'ALTER TABLE `token_routes` ADD COLUMN `route_mode` VARCHAR(32) NULL DEFAULT \'pattern\'',
-      postgres: 'ALTER TABLE "token_routes" ADD COLUMN "route_mode" TEXT DEFAULT \'pattern\'',
-    },
-  },
-  {
-    table: 'token_routes',
     column: 'decision_snapshot',
     addSql: {
       sqlite: 'ALTER TABLE token_routes ADD COLUMN decision_snapshot text;',

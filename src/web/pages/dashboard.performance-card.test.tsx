@@ -27,9 +27,22 @@ function collectText(node: ReactTestInstance): string {
   }).join('');
 }
 
-function isStatCard(node: ReactTestInstance): boolean {
-  return typeof node.props.className === 'string'
-    && /(^|\s)stat-card(\s|$)/.test(node.props.className);
+function isCard(node: ReactTestInstance): boolean {
+  return node.props['data-slot'] === 'card';
+}
+
+function findStatCards(root: ReactTestInstance): ReactTestInstance[] {
+  return root.findAll((node) => {
+    if (!isCard(node)) return false;
+    const text = collectText(node);
+    return [
+      '账户数据',
+      '使用统计',
+      '资源消耗',
+      '签到状态',
+      '性能指标',
+    ].some((title) => text.includes(title));
+  });
 }
 
 async function flushMicrotasks() {
@@ -91,21 +104,17 @@ describe('Dashboard performance stat card', () => {
       });
       await flushMicrotasks();
 
-      const statGrid = root!.root.find((node) => (
-        typeof node.props.className === 'string'
-        && node.props.className.includes('dashboard-stat-grid')
-      ));
-
-      const statCards = statGrid.findAll(isStatCard);
+      const statCards = findStatCards(root!.root);
+      const statGridText = statCards.map((card) => collectText(card)).join('');
 
       expect(statCards).toHaveLength(5);
-      expect(collectText(statGrid)).toContain('性能指标');
-      expect(collectText(statGrid)).toContain('RPM');
-      expect(collectText(statGrid)).toContain('17');
-      expect(collectText(statGrid)).toContain('TPM');
-      expect(collectText(statGrid)).toContain('8K');
-      expect(collectText(statGrid)).toContain('24h Tokens');
-      expect(collectText(statGrid)).toContain('606.6M');
+      expect(statGridText).toContain('性能指标');
+      expect(statGridText).toContain('RPM');
+      expect(statGridText).toContain('17');
+      expect(statGridText).toContain('TPM');
+      expect(statGridText).toContain('8K');
+      expect(statGridText).toContain('24h Tokens');
+      expect(statGridText).toContain('606.6M');
     } finally {
       root?.unmount();
     }
@@ -130,11 +139,7 @@ describe('Dashboard performance stat card', () => {
         );
       });
 
-      const statGrid = root!.root.find((node) => (
-        typeof node.props.className === 'string'
-        && node.props.className.includes('dashboard-stat-grid')
-      ));
-      const statCards = statGrid.findAll(isStatCard);
+      const statCards = root!.root.findAll(isCard);
 
       expect(statCards).toHaveLength(5);
     } finally {

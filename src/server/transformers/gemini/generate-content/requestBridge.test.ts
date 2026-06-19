@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  applyGeminiGenerateContentReasoningHistoryTransport,
   buildGeminiGenerateContentRequestFromOpenAi,
   buildCanonicalRequestToGeminiGenerateContentBody,
   parseGeminiGenerateContentRequestToCanonical,
 } from './requestBridge.js';
+import { resolveUpstreamCompatibilityPolicy } from '../../../contracts/upstreamCompatibilityPolicy.js';
 
 describe('gemini generate-content request bridge', () => {
   it('parses Gemini generateContent bodies into canonical envelopes', () => {
@@ -382,6 +384,94 @@ describe('gemini generate-content request bridge', () => {
     }) as Record<string, unknown>;
 
     expect(result.contents).toEqual([]);
+  });
+
+  it('encodes native Gemini thought history according to resolved compatibility policy', () => {
+    const body = applyGeminiGenerateContentReasoningHistoryTransport({
+      contents: [
+        {
+          role: 'model',
+          parts: [
+            { text: 'plan quietly', thought: true, thoughtSignature: 'sig-hidden' },
+            { text: 'visible answer' },
+          ],
+        },
+      ],
+    }, resolveUpstreamCompatibilityPolicy({
+      reasoningHistory: {
+        transport: {
+          mode: 'content_think_tag',
+        },
+      },
+    }));
+
+    expect(body.contents).toEqual([
+      {
+        role: 'model',
+        parts: [
+          { text: '<think>\nplan quietly\n</think>\n\n' },
+          { text: 'visible answer' },
+        ],
+      },
+    ]);
+  });
+
+  it('drops or truncates native Gemini thought history through policy limits', () => {
+    const truncated = applyGeminiGenerateContentReasoningHistoryTransport({
+      contents: [
+        {
+          role: 'model',
+          parts: [
+            { text: 'abcdef', thought: true },
+            { text: 'visible' },
+          ],
+        },
+      ],
+    }, resolveUpstreamCompatibilityPolicy({
+      reasoningHistory: {
+        transport: {
+          mode: 'native',
+          maxReasoningBytes: 3,
+        },
+      },
+    }));
+
+    expect(truncated.contents).toEqual([
+      {
+        role: 'model',
+        parts: [
+          { text: 'abc', thought: true },
+          { text: 'visible' },
+        ],
+      },
+    ]);
+
+    const dropped = applyGeminiGenerateContentReasoningHistoryTransport({
+      contents: [
+        {
+          role: 'model',
+          parts: [
+            { text: 'abcdef', thought: true },
+            { text: 'visible' },
+          ],
+        },
+      ],
+    }, resolveUpstreamCompatibilityPolicy({
+      reasoningHistory: {
+        transport: {
+          mode: 'native',
+          maxReasoningBytes: 3,
+          overflow: 'drop',
+        },
+      },
+    }));
+
+    expect(dropped.contents).toEqual([
+      {
+        role: 'model',
+        parts: [{ text: 'visible' }],
+      },
+    ]);
   });
 
   it('does not synthesize OpenAI tool calls from Gemini functionCall parts without ids', () => {

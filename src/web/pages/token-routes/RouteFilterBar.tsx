@@ -1,8 +1,11 @@
 import { useEffect, useLayoutEffect, useState, type ReactNode } from 'react';
-import { BrandGlyph, InlineBrandIcon, hashColor, type BrandInfo } from '../../components/BrandIcon.js';
+import { BrandGlyph, InlineBrandIcon, type BrandInfo } from '../../components/BrandIcon.js';
 import { tr } from '../../i18n.js';
 import type { GroupFilter, GroupRouteItem } from './types.js';
-import { resolveEndpointTypeIconModel, siteAvatarLetters } from './utils.js';
+import { resolveEndpointTypeIconModel } from './utils.js';
+import { Button } from '../../components/ui/button/index.js';
+import ToneBadge from '../../components/ToneBadge.js';
+import { Card, CardContent } from '../../components/ui/card/index.js';
 
 export type EnabledFilter = 'all' | 'enabled' | 'disabled';
 
@@ -43,23 +46,25 @@ function FilterChip({
   onClick: () => void;
 }) {
   return (
-    <button
+    <Button
       type="button"
-      className={`filter-chip ${active ? 'active' : ''}`}
+      variant={active ? 'secondary' : 'outline'}
+      size="sm"
+      className="gap-2"
       onClick={onClick}
     >
-      {icon && <span className="filter-chip-icon">{icon}</span>}
-      <span className="filter-chip-label">{label}</span>
-      {count !== undefined && <span className="filter-chip-count">{count}</span>}
-    </button>
+      {icon}
+      <span className="max-w-40 truncate">{label}</span>
+      {count !== undefined && <ToneBadge tone="-muted">{count}</ToneBadge>}
+    </Button>
   );
 }
 
 function FilterRow({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="route-filter-row">
-      <span className="route-filter-row-label">{label}</span>
-      <div className="route-filter-row-chips">{children}</div>
+    <div className="grid gap-2">
+      <span className="text-xs font-medium text-muted-foreground">{label}</span>
+      <div className="flex flex-wrap gap-2">{children}</div>
     </div>
   );
 }
@@ -80,7 +85,7 @@ function ActiveFilterSummary({
   else if (typeof activeGroupFilter === 'number') tags.push(`群组=#${activeGroupFilter}`);
   if (activeEndpointType) tags.push(`能力=${activeEndpointType}`);
 
-  if (tags.length === 0) return <span style={{ color: 'var(--color-text-muted)' }}>{tr('全部')}</span>;
+  if (tags.length === 0) return <span className="text-muted-foreground">{tr('全部')}</span>;
   return <span>{tags.join(', ')}</span>;
 }
 
@@ -132,21 +137,15 @@ export default function RouteFilterBar(props: RouteFilterBarProps) {
   }, [collapsed]);
 
   return (
-    <div className="route-filter-bar">
+    <Card>
       {/* Collapsed summary */}
-      <button
+      <Button
         type="button"
-        className="route-filter-bar-summary"
+        variant="ghost"
+        className="w-full justify-start gap-2"
         onClick={onToggle}
       >
-        <svg
-          width="12" height="12" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2"
-          style={{ transform: collapsed ? 'rotate(0deg)' : 'rotate(180deg)', transition: 'transform 0.2s ease' }}
-          aria-hidden
-        >
-          <path d="m5 7 5 6 5-6" />
-        </svg>
-        <span style={{ fontWeight: 500, fontSize: 13 }}>{tr('筛选')}:</span>
+        <span className="text-sm font-medium">{tr('筛选')}:</span>
         <ActiveFilterSummary
           activeBrand={activeBrand}
           activeSite={activeSite}
@@ -154,34 +153,34 @@ export default function RouteFilterBar(props: RouteFilterBarProps) {
           activeEndpointType={activeEndpointType}
           enabledFilter={enabledFilter}
         />
-      </button>
+      </Button>
 
       {/* Expanded panel */}
-      <div className={`anim-collapse route-filter-bar-presence ${presenceOpen ? 'is-open' : ''}`.trim()}>
+      <div className={`anim-collapse ${presenceOpen ? 'is-open' : ''}`.trim()}>
         <div className="anim-collapse-inner">
           {renderExpandedContent && (
-            <div className="route-filter-bar-expanded">
+            <CardContent className="grid gap-4 pt-0">
               {/* Status row */}
               <FilterRow label={tr('状态')}>
                 <FilterChip
                   active={enabledFilter === 'all'}
                   label={tr('全部')}
                   count={totalRouteCount}
-                  icon={<span style={{ fontSize: 10 }}>✦</span>}
+                  icon={<span className="text-xs">✦</span>}
                   onClick={() => setEnabledFilter('all')}
                 />
                 <FilterChip
                   active={enabledFilter === 'enabled'}
                   label={tr('仅启用')}
                   count={enabledCounts.enabled}
-                  icon={<span style={{ fontSize: 10, color: 'var(--color-success)' }}>●</span>}
+                  icon={<span className="text-xs">●</span>}
                   onClick={() => setEnabledFilter(enabledFilter === 'enabled' ? 'all' : 'enabled')}
                 />
                 <FilterChip
                   active={enabledFilter === 'disabled'}
                   label={tr('仅禁用')}
                   count={enabledCounts.disabled}
-                  icon={<span style={{ fontSize: 10, color: 'var(--color-text-muted)' }}>●</span>}
+                  icon={<span className="text-xs">●</span>}
                   onClick={() => setEnabledFilter(enabledFilter === 'disabled' ? 'all' : 'disabled')}
                 />
               </FilterRow>
@@ -192,7 +191,7 @@ export default function RouteFilterBar(props: RouteFilterBarProps) {
                   active={!activeBrand}
                   label={tr('全部')}
                   count={totalRouteCount}
-                  icon={<span style={{ fontSize: 10 }}>✦</span>}
+                  icon={<span className="text-xs">✦</span>}
                   onClick={() => setActiveBrand(null)}
                 />
                 {brandList.list.map(([brandName, { count, brand }]) => (
@@ -210,7 +209,7 @@ export default function RouteFilterBar(props: RouteFilterBarProps) {
                     active={activeBrand === '__other__'}
                     label={tr('其他')}
                     count={brandList.otherCount}
-                    icon={<span style={{ fontSize: 10 }}>?</span>}
+                    icon={<span className="text-xs">?</span>}
                     onClick={() => setActiveBrand(activeBrand === '__other__' ? null : '__other__')}
                   />
                 )}
@@ -223,7 +222,7 @@ export default function RouteFilterBar(props: RouteFilterBarProps) {
                     active={!activeSite}
                     label={tr('全部')}
                     count={totalRouteCount}
-                    icon={<span style={{ fontSize: 10 }}>⚡</span>}
+                    icon={<span className="text-xs">⚡</span>}
                     onClick={() => setActiveSite(null)}
                   />
                   {siteList.map(([siteName, { count }]) => (
@@ -232,20 +231,7 @@ export default function RouteFilterBar(props: RouteFilterBarProps) {
                       active={activeSite === siteName}
                       label={siteName}
                       count={count}
-                      icon={
-                        <span
-                          style={{
-                            fontSize: 8,
-                            background: hashColor(siteName),
-                            color: 'white',
-                            borderRadius: 3,
-                            padding: '1px 2px',
-                            lineHeight: 1,
-                          }}
-                        >
-                          {siteAvatarLetters(siteName)}
-                        </span>
-                      }
+                      icon={<span className="text-xs">{siteName.slice(0, 1).toUpperCase()}</span>}
                       onClick={() => setActiveSite(activeSite === siteName ? null : siteName)}
                     />
                   ))}
@@ -258,7 +244,7 @@ export default function RouteFilterBar(props: RouteFilterBarProps) {
                   active={activeGroupFilter === '__all__'}
                   label={tr('全部群组')}
                   count={groupRouteList.length}
-                  icon={<span style={{ fontSize: 10 }}>◎</span>}
+                  icon={<span className="text-xs">◎</span>}
                   onClick={() => setActiveGroupFilter(activeGroupFilter === '__all__' ? null : '__all__')}
                 />
                 {groupRouteList.map((groupRoute) => (
@@ -271,7 +257,7 @@ export default function RouteFilterBar(props: RouteFilterBarProps) {
                       groupRoute.icon.kind === 'brand' ? (
                         <BrandGlyph icon={groupRoute.icon.value} alt={groupRoute.title} size={12} fallbackText={groupRoute.title} />
                       ) : groupRoute.icon.kind === 'text' ? (
-                        <span style={{ fontSize: 10, lineHeight: 1 }}>{groupRoute.icon.value}</span>
+                        <span className="text-xs leading-none">{groupRoute.icon.value}</span>
                       ) : groupRoute.icon.kind === 'auto' && groupRoute.brand ? (
                         <BrandGlyph brand={groupRoute.brand} alt={groupRoute.title} size={12} fallbackText={groupRoute.title} />
                       ) : groupRoute.icon.kind === 'auto' ? (
@@ -289,7 +275,7 @@ export default function RouteFilterBar(props: RouteFilterBarProps) {
                   active={!activeEndpointType}
                   label={tr('全部')}
                   count={totalRouteCount}
-                  icon={<span style={{ fontSize: 10 }}>⚙</span>}
+                  icon={<span className="text-xs">⚙</span>}
                   onClick={() => setActiveEndpointType(null)}
                 />
                 {endpointTypeList.map(([endpointType, count]) => {
@@ -300,29 +286,29 @@ export default function RouteFilterBar(props: RouteFilterBarProps) {
                       active={activeEndpointType === endpointType}
                       label={endpointType}
                       count={count}
-                      icon={iconModel ? <InlineBrandIcon model={iconModel} size={12} /> : <span style={{ fontSize: 10 }}>⚙</span>}
+                      icon={iconModel ? <InlineBrandIcon model={iconModel} size={12} /> : <span className="text-xs">⚙</span>}
                       onClick={() => setActiveEndpointType(activeEndpointType === endpointType ? null : endpointType)}
                     />
                   );
                 })}
                 {endpointTypeList.length === 0 && (
-                  <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>{tr('暂无接口能力数据')}</span>
+                  <span className="text-xs text-muted-foreground">{tr('暂无接口能力数据')}</span>
                 )}
               </FilterRow>
 
-              <div style={{ display: 'flex', justifyContent: 'flex-end', paddingTop: 4 }}>
-                <button
-                  className="btn btn-ghost"
-                  style={{ fontSize: 12, padding: '4px 10px', border: '1px solid var(--color-border)' }}
+              <div className="flex justify-end pt-1">
+                <Button type="button" variant="outline"
+                 
+                 
                   onClick={onToggle}
                 >
                   {tr('收起筛选面板')}
-                </button>
+                </Button>
               </div>
-            </div>
+            </CardContent>
           )}
         </div>
       </div>
-    </div>
+    </Card>
   );
 }

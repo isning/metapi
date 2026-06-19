@@ -132,7 +132,6 @@ describe('Settings model availability probe confirmation', () => {
       const confirmButtonBeforeTyping = root.root.find((node) => (
         node.type === 'button'
         && collectText(node).trim() === '确认开启批量测活'
-        && node.props.className === 'btn btn-danger'
       ));
       expect(confirmButtonBeforeTyping.props.disabled).toBe(true);
 
@@ -147,7 +146,6 @@ describe('Settings model availability probe confirmation', () => {
       const confirmButton = root.root.find((node) => (
         node.type === 'button'
         && collectText(node).trim() === '确认开启批量测活'
-        && node.props.className === 'btn btn-danger'
       ));
       expect(confirmButton.props.disabled).toBe(false);
 

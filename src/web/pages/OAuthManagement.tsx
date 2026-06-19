@@ -8,7 +8,6 @@ import {
   type DragEvent,
   type ReactNode,
 } from 'react';
-import { createPortal } from 'react-dom';
 import { useLocation } from 'react-router-dom';
 import CenteredModal from '../components/CenteredModal.js';
 import ResponsiveBatchActionBar from '../components/ResponsiveBatchActionBar.js';
@@ -16,9 +15,27 @@ import ResponsiveFilterPanel from '../components/ResponsiveFilterPanel.js';
 import { MobileCard, MobileField } from '../components/MobileCard.js';
 import ModernSelect from '../components/ModernSelect.js';
 import { useToast } from '../components/Toast.js';
-import { useAnimatedVisibility } from '../components/useAnimatedVisibility.js';
 import { useIsMobile } from '../components/useIsMobile.js';
 import OAuthModelsModal, { type OAuthModelItem } from './oauth/OAuthModelsModal.js';
+import { Button } from '../components/ui/button/index.js';
+import * as DropdownMenu from '../components/ui/dropdown-menu/index.js';
+import { Input } from '../components/ui/input/index.js';
+import * as Sheet from '../components/ui/sheet/index.js';
+import ToneBadge from '../components/ToneBadge.js';
+import SearchInput from '../components/SearchInput.js';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card/index.js';
+import { Checkbox } from '../components/ui/checkbox/index.js';
+import { Label } from '../components/ui/label/index.js';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '../components/ui/table/index.js';
+import { Textarea } from '../components/ui/textarea/index.js';
+import EmptyStateBlock from '../components/EmptyStateBlock.js';
 import {
   api,
   type OAuthConnectionInfo,
@@ -514,19 +531,21 @@ function resolveRouteParticipationSummary(connection: OAuthConnectionInfo): stri
 
 function renderCodeBlock(value: string) {
   return (
-    <code className="oauth-code-block">{value}</code>
+    <code className="block overflow-x-auto rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">{value}</code>
   );
 }
 
 function renderGuideCard(title: string, description: string, children?: ReactNode) {
   return (
-    <div className="oauth-guide-card">
-      <div>
-        <div className="oauth-guide-title">{title}</div>
-        <div className="oauth-guide-copy">{description}</div>
-      </div>
+    <Card>
+      <CardContent className="grid gap-3 p-4">
+        <div className="grid gap-1">
+          <div className="text-sm font-semibold">{title}</div>
+          <div className="text-sm text-muted-foreground">{description}</div>
+        </div>
       {children}
-    </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -539,31 +558,14 @@ function QuotaWindowRow({
 }) {
   const percent = resolveQuotaWindowPercent(window);
   const summary = resolveQuotaWindowSummary(window);
-  const tone = percent != null && percent >= 90
-    ? 'var(--color-danger)'
-    : percent != null && percent >= 70
-      ? 'var(--color-warning)'
-      : 'var(--color-primary)';
-
   return (
-    <div className="oauth-window-row">
-      <div className="oauth-window-row-header">
-        <span className="oauth-window-pill">{label}</span>
-        <div className="oauth-window-meter">
-          <div
-            className="oauth-window-meter-fill"
-            style={{
-              width: `${percent ?? 0}%`,
-              background: percent == null ? 'var(--color-border)' : tone,
-            }}
-          />
-        </div>
-        <span className="oauth-window-value">{percent == null ? 'N/A' : `${percent}%`}</span>
-        {summary && percent == null ? <span className="oauth-window-summary">{summary}</span> : null}
+    <div className="flex flex-wrap items-center gap-2 text-xs">
+        <ToneBadge tone="muted">{label}</ToneBadge>
+        <span className="font-medium">{percent == null ? 'N/A' : `${percent}%`}</span>
+        {summary ? <span className="text-muted-foreground">{summary}</span> : null}
         {window?.resetAt ? (
-          <span className="oauth-window-reset">重置 {formatResetLabel(window.resetAt)}</span>
+          <span className="text-muted-foreground">重置 {formatResetLabel(window.resetAt)}</span>
         ) : null}
-      </div>
     </div>
   );
 }
@@ -579,48 +581,18 @@ function SideDrawer({
   title: ReactNode;
   children: ReactNode;
 }) {
-  const presence = useAnimatedVisibility(open, 220);
-
-  useEffect(() => {
-    if (!open || typeof document === 'undefined') return;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = previousOverflow;
-    };
-  }, [open]);
-
-  if (!presence.shouldRender) return null;
-
-  const panel = (
-    <div
-      className={`modal-backdrop oauth-drawer-backdrop ${presence.isVisible ? '' : 'is-closing'}`.trim()}
-      onClick={onClose}
-    >
-      <div
-        className={`modal-content oauth-drawer-content ${presence.isVisible ? '' : 'is-closing'}`.trim()}
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="modal-header oauth-drawer-header">
-          <div className="modal-title">{title}</div>
-          <button
-            type="button"
-            className="modal-close-button oauth-drawer-close"
-            onClick={onClose}
-            aria-label="关闭 OAuth 抽屉"
-          >
-            ×
-          </button>
-        </div>
-        <div className="modal-body oauth-drawer-body">
+  return (
+    <Sheet.Root open={open} onOpenChange={(nextOpen) => { if (!nextOpen) onClose(); }}>
+      <Sheet.Content side="right" className="flex h-full w-[min(92vw,560px)] max-w-none flex-col p-0" onClose={onClose}>
+        <Sheet.Header className="border-b px-4 py-4">
+          <Sheet.Title>{title}</Sheet.Title>
+        </Sheet.Header>
+        <div className="min-h-0 flex-1 overflow-y-auto p-4">
           {children}
         </div>
-      </div>
-    </div>
+      </Sheet.Content>
+    </Sheet.Root>
   );
-
-  const portalTarget = typeof document !== 'undefined' ? document.body : null;
-  return portalTarget ? createPortal(panel, portalTarget) : panel;
 }
 
 export default function OAuthManagement() {
@@ -1564,23 +1536,16 @@ export default function OAuthManagement() {
   };
 
   const filterBar = (
-    <div className="card oauth-toolbar-card">
-      <div className="toolbar oauth-toolbar">
-        <div className="oauth-toolbar-row">
-          <div className="oauth-toolbar-filters">
-            <div className="toolbar-search oauth-filter-slot-search">
-              <svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-                <path d="M13.5 13.5L17 17" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-                <circle cx="8.5" cy="8.5" r="4.75" stroke="currentColor" strokeWidth="1.6" />
-              </svg>
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(event) => setSearchQuery(event.target.value)}
-                placeholder="搜索账号 / 邮箱 / 站点 / 项目"
-              />
-            </div>
-            <div className="oauth-filter-slot">
+    <Card>
+      <CardContent className="grid gap-3 p-4">
+        <div className="flex flex-wrap items-center gap-3">
+            <SearchInput
+              className="min-w-64 flex-1"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="搜索账号 / 邮箱 / 站点 / 项目"
+            />
+            <div className="w-44">
               <ModernSelect
                 size="sm"
                 value={providerFilter}
@@ -1592,7 +1557,7 @@ export default function OAuthManagement() {
                 placeholder="全部 Provider"
               />
             </div>
-            <div className="oauth-filter-slot">
+            <div className="w-40">
               <ModernSelect
                 size="sm"
                 value={statusFilter}
@@ -1605,7 +1570,7 @@ export default function OAuthManagement() {
                 placeholder="全部状态"
               />
             </div>
-            <div className="oauth-filter-slot-wide">
+            <div className="w-56">
               <ModernSelect
                 size="sm"
                 value={siteFilter}
@@ -1617,10 +1582,7 @@ export default function OAuthManagement() {
                 placeholder="全部站点"
               />
             </div>
-          </div>
-
-          <div className="oauth-toolbar-actions">
-            <div className="oauth-filter-slot">
+            <div className="w-44">
               <ModernSelect
                 size="sm"
                 value={String(autoRefreshSeconds)}
@@ -1633,45 +1595,40 @@ export default function OAuthManagement() {
               />
             </div>
             {autoRefreshSeconds > 0 ? (
-              <div className="oauth-toolbar-meta">下次刷新 {autoRefreshCountdown}s</div>
+              <div className="text-sm text-muted-foreground">下次刷新 {autoRefreshCountdown}s</div>
             ) : null}
-            <div className="oauth-column-menu-anchor">
-              <button
-                type="button"
-                className="btn btn-ghost oauth-outline-button"
-                onClick={() => setShowColumnMenu((current) => !current)}
-              >
-                列设置
-              </button>
-              {showColumnMenu ? (
-                <div className="oauth-column-menu">
-                  {COLUMN_OPTIONS.map((column) => (
-                    <label key={column.key} className="oauth-column-item">
-                      <input
-                        type="checkbox"
-                        checked={visibleColumns[column.key]}
-                        onChange={() => toggleColumn(column.key)}
-                      />
-                      <span>{column.label}</span>
-                    </label>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          </div>
+            <DropdownMenu.Root open={showColumnMenu} onOpenChange={setShowColumnMenu}>
+              <DropdownMenu.Trigger asChild>
+                <Button variant="outline" type="button">
+                  列设置
+                </Button>
+              </DropdownMenu.Trigger>
+              <DropdownMenu.Content align="end">
+                <DropdownMenu.Label>显示列</DropdownMenu.Label>
+                <DropdownMenu.Separator />
+                {COLUMN_OPTIONS.map((column) => (
+                  <DropdownMenu.CheckboxItem
+                    key={column.key}
+                    checked={visibleColumns[column.key]}
+                    onCheckedChange={() => toggleColumn(column.key)}
+                  >
+                    {column.label}
+                  </DropdownMenu.CheckboxItem>
+                ))}
+              </DropdownMenu.Content>
+            </DropdownMenu.Root>
         </div>
-        <div className="oauth-summary-note">
+        <div className="text-sm text-muted-foreground">
           OAuth 账号以后只在这里维护。连接管理页默认只保留普通 Session / API Key / Token 连接。
         </div>
-      </div>
-    </div>
+      </CardContent>
+    </Card>
   );
 
   const mobileFilterContent = (
-    <div className="mobile-filter-panel oauth-mobile-filter-panel">
-      <input
+    <div className="grid gap-3">
+      <Input
         type="text"
-        className="oauth-input"
         value={searchQuery}
         onChange={(event) => setSearchQuery(event.target.value)}
         placeholder="搜索账号 / 邮箱 / 站点 / 项目"
@@ -1721,26 +1678,25 @@ export default function OAuthManagement() {
   );
 
   const desktopTable = (
-    <table className="data-table oauth-table">
-      <thead>
-        <tr>
-          <th className="oauth-table-checkbox-col">
-            <input
+    <Table>
+      <TableHeader>
+        <TableRow>
+          <TableHead className="w-10">
+            <Checkbox
               data-testid="oauth-select-all"
-              type="checkbox"
               checked={allVisibleSelected}
-              onChange={(event) => toggleSelectAllVisible(event.target.checked)}
+              onCheckedChange={(checked) => toggleSelectAllVisible(checked === true)}
             />
-          </th>
-          {visibleColumns.identity ? <th className="oauth-col-identity">账号</th> : null}
-          {visibleColumns.site ? <th className="oauth-col-site">站点</th> : null}
-          {visibleColumns.status ? <th className="oauth-col-status">状态</th> : null}
-          {visibleColumns.quota ? <th className="oauth-col-quota">额度</th> : null}
-          {visibleColumns.proxy ? <th className="oauth-col-proxy">计划 / 代理</th> : null}
-          <th className="oauth-table-actions-col">操作</th>
-        </tr>
-      </thead>
-      <tbody>
+          </TableHead>
+          {visibleColumns.identity ? <TableHead>账号</TableHead> : null}
+          {visibleColumns.site ? <TableHead>站点</TableHead> : null}
+          {visibleColumns.status ? <TableHead>状态</TableHead> : null}
+          {visibleColumns.quota ? <TableHead>额度</TableHead> : null}
+          {visibleColumns.proxy ? <TableHead>计划 / 代理</TableHead> : null}
+          <TableHead>操作</TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
         {filteredConnections.map((connection) => {
           const quota = connection.quota;
           const emailLabel = resolveConnectionEmailLabel(connection);
@@ -1749,166 +1705,159 @@ export default function OAuthManagement() {
           const modelSyncDetail = resolveModelSyncDetail(connection);
           const quotaSyncDetail = resolveQuotaSyncDetail(quota);
           return (
-            <tr key={connection.accountId}>
-              <td>
-                <input
-                  type="checkbox"
+            <TableRow key={connection.accountId}>
+              <TableCell>
+                <Checkbox
                   checked={selectedConnectionIds.includes(connection.accountId)}
-                  onChange={(event) => {
-                    const checked = event.target.checked;
+                  onCheckedChange={(nextChecked) => {
+                    const checked = nextChecked === true;
                     setSelectedConnectionIds((current) => checked
                       ? Array.from(new Set([...current, connection.accountId]))
                       : current.filter((id) => id !== connection.accountId));
                   }}
                 />
-              </td>
+              </TableCell>
               {visibleColumns.identity ? (
-                <td className="oauth-col-identity">
-                  <div className="oauth-cell-stack">
-                    <div className="oauth-cell-inline">
-                      <button
+                <TableCell>
+                  <div className="grid gap-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button variant="ghost" size="sm"
                         type="button"
-                        className="btn btn-link btn-link-info oauth-account-trigger oauth-identity-primary"
                         title={primaryTitle}
                         onClick={() => void openModelsModal(connection)}
                       >
                         {primaryTitle}
-                      </button>
-                      <span className={`badge oauth-badge ${connection.provider === 'codex' ? 'badge-info' : 'badge-primary'}`}>
+                      </Button>
+                      <ToneBadge tone={connection.provider === 'codex' ? 'info' : 'primary'}>
                         {connection.provider}
-                      </span>
-                      <span className={`badge oauth-badge ${connection.status === 'abnormal' ? 'badge-warning' : 'badge-success'}`}>
+                      </ToneBadge>
+                      <ToneBadge tone={connection.status === 'abnormal' ? 'warning' : 'success'}>
                         {resolveConnectionStatusLabel(connection.status)}
-                      </span>
+                      </ToneBadge>
                     </div>
                     {emailLabel && emailLabel !== primaryTitle ? (
-                      <div className="oauth-cell-secondary oauth-identity-secondary" title={emailLabel}>{emailLabel}</div>
+                      <div className="text-sm text-muted-foreground" title={emailLabel}>{emailLabel}</div>
                     ) : null}
                     {connection.accountKey ? (
-                      <div className="oauth-cell-tertiary oauth-identity-key" title={connection.accountKey}>
+                      <div className="text-xs text-muted-foreground" title={connection.accountKey}>
                         连接: {compactAccountKey(connection.accountKey)}
                       </div>
                     ) : null}
                   </div>
-                </td>
+                </TableCell>
               ) : null}
               {visibleColumns.site ? (
-                <td className="oauth-col-site">
-                  <div className="oauth-cell-stack">
-                    <div className="oauth-cell-primary oauth-site-name" title={connection.site?.name || '--'}>
+                <TableCell>
+                  <div className="grid gap-1">
+                    <div className="font-medium" title={connection.site?.name || '--'}>
                       {connection.site?.name || '--'}
                     </div>
                     {sitePlatform && sitePlatform !== connection.provider ? (
-                      <div className="oauth-cell-secondary">{sitePlatform}</div>
+                      <div className="text-sm text-muted-foreground">{sitePlatform}</div>
                     ) : null}
                   </div>
-                </td>
+                </TableCell>
               ) : null}
               {visibleColumns.status ? (
-                <td className="oauth-col-status">
-                  <div className="oauth-status-stack">
-                    <div className="oauth-status-item">
-                      <div className="oauth-status-line">
-                        <div className="oauth-status-label">模型</div>
-                        <div className="oauth-cell-secondary oauth-status-value" title={modelSyncDetail || resolveModelSyncStatusText(connection)}>
+                <TableCell>
+                  <div className="grid gap-2 text-sm">
+                    <div className="grid gap-1">
+                      <div className="flex items-center gap-2">
+                        <div className="text-xs font-medium text-muted-foreground">模型</div>
+                        <div title={modelSyncDetail || resolveModelSyncStatusText(connection)}>
                           {resolveModelSyncStatusText(connection)}
                         </div>
                       </div>
                       {modelSyncDetail ? (
-                        <div className="oauth-status-detail" title={modelSyncDetail}>{modelSyncDetail}</div>
+                        <div className="text-xs text-muted-foreground" title={modelSyncDetail}>{modelSyncDetail}</div>
                       ) : null}
                     </div>
-                    <div className="oauth-status-item">
-                      <div className="oauth-status-line">
-                        <div className="oauth-status-label">额度</div>
-                        <div className="oauth-cell-tertiary oauth-status-value" title={quotaSyncDetail || resolveQuotaSyncStatusText(quota)}>
+                    <div className="grid gap-1">
+                      <div className="flex items-center gap-2">
+                        <div className="text-xs font-medium text-muted-foreground">额度</div>
+                        <div title={quotaSyncDetail || resolveQuotaSyncStatusText(quota)}>
                           {resolveQuotaSyncStatusText(quota)}
                         </div>
                       </div>
                       {quotaSyncDetail ? (
-                        <div className="oauth-status-detail" title={quotaSyncDetail}>{quotaSyncDetail}</div>
+                        <div className="text-xs text-muted-foreground" title={quotaSyncDetail}>{quotaSyncDetail}</div>
                       ) : null}
                     </div>
                   </div>
-                </td>
+                </TableCell>
               ) : null}
               {visibleColumns.quota ? (
-                <td className="oauth-col-quota">
+                <TableCell>
                   {quota ? (
-                    <div className="oauth-quota-stack">
-                      <div className="oauth-quota-meta">
-                        <span className={`badge oauth-badge ${quota.status === 'error' ? 'badge-warning' : quota.status === 'unsupported' ? 'badge-muted' : 'badge-info'}`}>
+                    <div className="grid gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <ToneBadge tone={quota.status === 'error' ? 'warning' : quota.status === 'unsupported' ? 'muted' : 'info'}>
                           {resolveQuotaStatusLabel(quota.status)}
-                        </span>
-                        <span className="oauth-cell-tertiary">{resolveQuotaSourceLabel(quota.source)}</span>
+                        </ToneBadge>
+                        <span className="text-xs text-muted-foreground">{resolveQuotaSourceLabel(quota.source)}</span>
                       </div>
                       <QuotaWindowRow label="5h" window={quota.windows?.fiveHour} />
                       <QuotaWindowRow label="7d" window={quota.windows?.sevenDay} />
                     </div>
                   ) : (
-                    <span className="oauth-cell-secondary">--</span>
+                    <span className="text-muted-foreground">--</span>
                   )}
-                </td>
+                </TableCell>
               ) : null}
               {visibleColumns.proxy ? (
-                <td className="oauth-col-proxy">
-                  <div className="oauth-cell-stack">
-                    <div className="oauth-cell-secondary">{resolveProxyProjectSummary(connection)}</div>
-                    <div className="oauth-cell-secondary">{resolveRouteParticipationSummary(connection)}</div>
-                    <div className="oauth-cell-tertiary">{resolveProxyDisplayText(connection)}</div>
-                    <button
+                <TableCell>
+                  <div className="grid gap-1 text-sm">
+                    <div className="text-muted-foreground">{resolveProxyProjectSummary(connection)}</div>
+                    <div className="text-muted-foreground">{resolveRouteParticipationSummary(connection)}</div>
+                    <div className="text-xs text-muted-foreground">{resolveProxyDisplayText(connection)}</div>
+                    <Button variant="ghost" size="sm"
                       type="button"
-                      className="btn btn-link btn-link-info oauth-inline-trigger"
                       onClick={() => openProxySettingsDrawer(connection)}
                     >
                       {hasOauthProxySelection(connection) ? '代理设置' : '设置代理'}
-                    </button>
+                    </Button>
                   </div>
-                </td>
+                </TableCell>
               ) : null}
-              <td className="oauth-actions-cell">
-                <div className="oauth-row-actions">
-                  <button
+              <TableCell>
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="ghost" size="sm"
                     type="button"
-                    className="btn btn-link btn-link-info"
                     onClick={() => void openModelsModal(connection)}
                   >
                     {connection.modelCount} 个模型
-                  </button>
-                  <button
+                  </Button>
+                  <Button variant="ghost" size="sm"
                     type="button"
-                    className="btn btn-link btn-link-primary"
                     onClick={() => handleRefreshQuota(connection.accountId)}
                     disabled={actionLoadingKey === `quota:${connection.accountId}`}
                   >
                     {actionLoadingKey === `quota:${connection.accountId}` ? '刷新中...' : '刷新额度'}
-                  </button>
-                  <button
+                  </Button>
+                  <Button variant="ghost" size="sm"
                     type="button"
-                    className="btn btn-link btn-link-info"
                     onClick={() => openRebindDrawer(connection)}
                   >
                     重新授权
-                  </button>
-                  <button
+                  </Button>
+                  <Button variant="destructive" size="sm"
                     type="button"
-                    className="btn btn-link btn-link-danger"
                     onClick={() => handleDelete(connection.accountId)}
                     disabled={actionLoadingKey === `delete:${connection.accountId}`}
                   >
                     {actionLoadingKey === `delete:${connection.accountId}` ? '删除中...' : '删除连接'}
-                  </button>
+                  </Button>
                 </div>
-              </td>
-            </tr>
+              </TableCell>
+            </TableRow>
           );
         })}
-      </tbody>
-    </table>
+      </TableBody>
+    </Table>
   );
 
   const mobileList = (
-    <div className="mobile-card-list oauth-mobile-list">
+    <div className="grid gap-3">
       {filteredConnections.map((connection) => {
         const quota = connection.quota;
         return (
@@ -1917,11 +1866,10 @@ export default function OAuthManagement() {
             title={resolveConnectionPrimaryTitle(connection)}
             subtitle={`${connection.provider} · ${resolveConnectionStatusLabel(connection.status)}`}
             headerActions={(
-              <input
-                type="checkbox"
+              <Checkbox
                 checked={selectedConnectionIds.includes(connection.accountId)}
-                onChange={(event) => {
-                  const checked = event.target.checked;
+                onCheckedChange={(nextChecked) => {
+                  const checked = nextChecked === true;
                   setSelectedConnectionIds((current) => checked
                     ? Array.from(new Set([...current, connection.accountId]))
                     : current.filter((id) => id !== connection.accountId));
@@ -1936,15 +1884,14 @@ export default function OAuthManagement() {
             <MobileField
               label="账号代理"
               value={(
-                <div className="oauth-cell-stack">
-                  <div className="oauth-cell-tertiary">{resolveProxyDisplayText(connection)}</div>
-                  <button
+                <div className="grid gap-2">
+                  <div className="text-xs text-muted-foreground">{resolveProxyDisplayText(connection)}</div>
+                  <Button variant="ghost" size="sm"
                     type="button"
-                    className="btn btn-link btn-link-info oauth-inline-trigger"
                     onClick={() => openProxySettingsDrawer(connection)}
                   >
                     {hasOauthProxySelection(connection) ? '代理设置' : '设置代理'}
-                  </button>
+                  </Button>
                 </div>
               )}
               stacked
@@ -1952,62 +1899,62 @@ export default function OAuthManagement() {
             <MobileField
               label="运行状态"
               value={(
-                <div className="oauth-status-stack">
-                  <div className="oauth-status-item">
-                    <div className="oauth-status-line">
-                      <div className="oauth-status-label">模型</div>
-                      <div className="oauth-cell-secondary">{resolveModelSyncStatusText(connection)}</div>
+                <div className="grid gap-2 text-sm">
+                  <div className="grid gap-1">
+                    <div className="flex items-center gap-2">
+                      <div className="text-xs font-medium text-muted-foreground">模型</div>
+                      <div>{resolveModelSyncStatusText(connection)}</div>
                     </div>
                     {resolveModelSyncDetail(connection) ? (
-                      <div className="oauth-status-detail">{resolveModelSyncDetail(connection)}</div>
+                      <div className="text-xs text-muted-foreground">{resolveModelSyncDetail(connection)}</div>
                     ) : null}
                   </div>
-                  <div className="oauth-status-item">
-                    <div className="oauth-status-line">
-                      <div className="oauth-status-label">额度</div>
-                      <div className="oauth-cell-tertiary">{resolveQuotaSyncStatusText(quota)}</div>
+                  <div className="grid gap-1">
+                    <div className="flex items-center gap-2">
+                      <div className="text-xs font-medium text-muted-foreground">额度</div>
+                      <div>{resolveQuotaSyncStatusText(quota)}</div>
                     </div>
                     {resolveQuotaSyncDetail(quota) ? (
-                      <div className="oauth-status-detail">{resolveQuotaSyncDetail(quota)}</div>
+                      <div className="text-xs text-muted-foreground">{resolveQuotaSyncDetail(quota)}</div>
                     ) : null}
                   </div>
                 </div>
               )}
               stacked
             />
-            <div className="oauth-mobile-section">
-              <div className="oauth-mobile-section-label">Usage / Quota</div>
+            <div className="grid gap-2 pt-3">
+              <div className="text-xs font-medium text-muted-foreground">Usage / Quota</div>
               {quota ? (
                 <>
-                  <div className="oauth-quota-meta">
-                    <span className={`badge oauth-badge ${quota.status === 'error' ? 'badge-warning' : quota.status === 'unsupported' ? 'badge-muted' : 'badge-info'}`}>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <ToneBadge tone={quota.status === 'error' ? 'warning' : quota.status === 'unsupported' ? 'muted' : 'info'}>
                       {resolveQuotaStatusLabel(quota.status)}
-                    </span>
-                    <span className="oauth-cell-tertiary">{resolveQuotaSourceLabel(quota.source)}</span>
+                    </ToneBadge>
+                    <span className="text-xs text-muted-foreground">{resolveQuotaSourceLabel(quota.source)}</span>
                   </div>
                   <QuotaWindowRow label="5h" window={quota.windows?.fiveHour} />
                   <QuotaWindowRow label="7d" window={quota.windows?.sevenDay} />
                 </>
               ) : (
-                <div className="oauth-cell-secondary">--</div>
+                <div className="text-muted-foreground">--</div>
               )}
             </div>
-            <div className="mobile-card-actions oauth-mobile-actions">
-              <button type="button" className="btn btn-link btn-link-info" onClick={() => void openModelsModal(connection)}>
+            <div className="flex flex-wrap gap-2 pt-3">
+              <Button variant="ghost" size="sm" type="button" onClick={() => void openModelsModal(connection)}>
                 {connection.modelCount} 个模型
-              </button>
-              <button type="button" className="btn btn-link btn-link-primary" onClick={() => handleRefreshQuota(connection.accountId)}>
+              </Button>
+              <Button variant="ghost" size="sm" type="button" onClick={() => handleRefreshQuota(connection.accountId)}>
                 刷新额度
-              </button>
-              <button type="button" className="btn btn-link btn-link-info" onClick={() => openProxySettingsDrawer(connection)}>
+              </Button>
+              <Button variant="ghost" size="sm" type="button" onClick={() => openProxySettingsDrawer(connection)}>
                 代理设置
-              </button>
-              <button type="button" className="btn btn-link btn-link-info" onClick={() => openRebindDrawer(connection)}>
+              </Button>
+              <Button variant="ghost" size="sm" type="button" onClick={() => openRebindDrawer(connection)}>
                 重新授权
-              </button>
-              <button type="button" className="btn btn-link btn-link-danger" onClick={() => handleDelete(connection.accountId)}>
+              </Button>
+              <Button variant="destructive" size="sm" type="button" onClick={() => handleDelete(connection.accountId)}>
                 删除连接
-              </button>
+              </Button>
             </div>
           </MobileCard>
         );
@@ -2016,47 +1963,49 @@ export default function OAuthManagement() {
   );
 
   return (
-    <div className="page-container animate-fade-in">
-      <div className="page-header">
-        <div>
-          <h2 className="page-title">OAuth 管理</h2>
-          <div className="page-subtitle">
+    <div className="grid gap-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="grid gap-1">
+          <h2 className="text-2xl font-semibold tracking-tight">OAuth 管理</h2>
+          <div className="text-sm text-muted-foreground">
             统一管理需要浏览器授权的官方上游连接。OAuth 账号以后只在这里维护，不再和普通连接管理页重复显示。
           </div>
         </div>
         {!isMobile ? (
-          <div className="page-actions">
-            <button type="button" className="btn btn-ghost oauth-outline-button" onClick={openImportModal}>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" type="button" onClick={openImportModal}>
               导入 JSON
-            </button>
-            <button type="button" className="btn btn-primary" onClick={() => openCreateDrawer()}>
+            </Button>
+            <Button type="button" onClick={() => openCreateDrawer()}>
               新建 OAuth 连接
-            </button>
+            </Button>
           </div>
         ) : null}
       </div>
 
       {sessionFeedback ? (
-        <div className={`card oauth-page-message oauth-page-message-${sessionFeedback.tone}`.trim()}>
-          <div className="oauth-page-message-head">
-            <div className="oauth-page-message-text">{sessionFeedback.message}</div>
-            <span className={`badge ${sessionFeedback.tone === 'success' ? 'badge-success' : sessionFeedback.tone === 'error' ? 'badge-danger' : 'badge-info'}`}>
+        <Card>
+          <CardContent className="grid gap-3 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="font-medium">{sessionFeedback.message}</div>
+            <ToneBadge tone={sessionFeedback.tone === 'success' ? 'success' : sessionFeedback.tone === 'error' ? 'danger' : 'info'}>
               {sessionFeedback.tone === 'success' ? '成功' : sessionFeedback.tone === 'error' ? '失败' : '提示'}
-            </span>
+            </ToneBadge>
           </div>
           {sessionFeedback.routeUnit ? (
-            <div className="oauth-page-message-meta">
-              <span className="badge badge-info">{sessionFeedback.routeUnit.name}</span>
-              <span className="badge badge-muted">{sessionFeedback.routeUnit.memberCount} 个成员</span>
-              <span className="badge badge-muted">{resolveRouteUnitStrategyLabel(sessionFeedback.routeUnit.strategy)}</span>
-              <div className="oauth-page-message-detail">
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <ToneBadge tone="-info">{sessionFeedback.routeUnit.name}</ToneBadge>
+              <ToneBadge tone="-muted">{sessionFeedback.routeUnit.memberCount} 个成员</ToneBadge>
+              <ToneBadge tone="-muted">{resolveRouteUnitStrategyLabel(sessionFeedback.routeUnit.strategy)}</ToneBadge>
+              <div className="text-muted-foreground">
                 {sessionFeedback.routeUnit.action === 'created'
                   ? '已将选中的 OAuth 账号合并为一个路由池，后续会以单个路由单元参与路由。'
                   : '该路由池已拆分回单体账号，后续会分别参与路由。'}
               </div>
             </div>
           ) : null}
-        </div>
+          </CardContent>
+        </Card>
       ) : null}
 
       <ResponsiveFilterPanel
@@ -2068,93 +2017,77 @@ export default function OAuthManagement() {
         mobileContent={mobileFilterContent}
         desktopContent={filterBar}
         mobileTrigger={
-          <div className="mobile-filter-row oauth-mobile-trigger-row">
-            <button
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline"
               type="button"
-              className="btn btn-ghost oauth-outline-button"
               onClick={() => setShowMobileFilters(true)}
             >
               筛选与操作
-            </button>
-            <button type="button" className="btn btn-primary" onClick={() => openCreateDrawer()}>
+            </Button>
+            <Button type="button" onClick={() => openCreateDrawer()}>
               新建 OAuth 连接
-            </button>
+            </Button>
           </div>
         }
       />
 
-      <div className="card oauth-workbench-card">
-        <div className="oauth-workbench-head">
-          <div>
-            <div className="oauth-workbench-title">OAuth 连接列表</div>
-            <div className="oauth-workbench-meta">
+      <Card>
+        <CardHeader>
+            <CardTitle>OAuth 连接列表</CardTitle>
+            <CardDescription>
               已连接 {connections.length} 个 OAuth 账号，当前筛选后显示 {filteredConnections.length} 个。
-            </div>
-          </div>
-        </div>
+            </CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-3">
 
         {selectedConnectionIds.length > 0 ? (
-          <ResponsiveBatchActionBar isMobile={isMobile} info={`已选 ${selectedConnectionIds.length} 项`} desktopStyle={{ marginBottom: 12 }}>
-            <button
+          <ResponsiveBatchActionBar isMobile={isMobile} info={`已选 ${selectedConnectionIds.length} 项`}>
+            <Button variant="outline"
               type="button"
-              className="btn btn-ghost oauth-outline-button"
               onClick={handleRefreshSelected}
               disabled={actionLoadingKey === 'quota:selected'}
             >
               {actionLoadingKey === 'quota:selected' ? '刷新中...' : '批量刷新额度'}
-            </button>
+            </Button>
             {canMergeSelectedIntoRouteUnit ? (
-              <button
+              <Button variant="outline"
                 type="button"
-                className="btn btn-ghost oauth-outline-button"
                 onClick={openRouteUnitModal}
               >
                 合并参与路由
-              </button>
+              </Button>
             ) : null}
             {canSplitSelectedRouteUnit ? (
-              <button
+              <Button variant="outline"
                 type="button"
-                className="btn btn-ghost oauth-outline-button"
                 onClick={handleDeleteSelectedRouteUnit}
                 disabled={actionLoadingKey === 'route-unit:delete'}
               >
                 {actionLoadingKey === 'route-unit:delete' ? '拆分中...' : '拆回单体'}
-              </button>
+              </Button>
             ) : null}
-            <button
+            <Button variant="destructive" size="sm"
               type="button"
-              className="btn btn-link btn-link-danger"
               onClick={handleDeleteSelected}
               disabled={actionLoadingKey === 'delete:selected'}
             >
               {actionLoadingKey === 'delete:selected' ? '删除中...' : '批量删除'}
-            </button>
+            </Button>
           </ResponsiveBatchActionBar>
         ) : null}
 
         {!loaded ? (
-          <div className="empty-state oauth-empty-state">
-            <svg className="empty-state-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M12 6v6l4 2m6-2a10 10 0 11-20 0 10 10 0 0120 0z" />
-            </svg>
-            <div className="empty-state-title">加载中...</div>
-            <div className="empty-state-desc">正在加载 OAuth 连接与额度信息。</div>
-          </div>
+          <EmptyStateBlock title="加载中..." description="正在加载 OAuth 连接与额度信息。" />
         ) : filteredConnections.length === 0 ? (
-          <div className="empty-state oauth-empty-state">
-            <svg className="empty-state-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
-            </svg>
-            <div className="empty-state-title">暂无 OAuth 连接</div>
-            <div className="empty-state-desc">
-              使用右上角“新建 OAuth 连接”接入 Codex、Claude、Gemini CLI 或 Antigravity。
-            </div>
-          </div>
+          <EmptyStateBlock
+            title="暂无 OAuth 连接"
+            description="使用右上角“新建 OAuth 连接”接入 Codex、Claude、Gemini CLI 或 Antigravity。"
+          />
         ) : (
           isMobile ? mobileList : desktopTable
         )}
-      </div>
+        </CardContent>
+      </Card>
 
       <SideDrawer
         open={drawerOpen}
@@ -2165,12 +2098,12 @@ export default function OAuthManagement() {
             ? `代理设置 · ${resolveConnectionPrimaryTitle(drawerIntent.account)}`
             : `重新授权 · ${resolveConnectionPrimaryTitle(drawerIntent.account)}`}
       >
-        <div className="oauth-drawer-layout">
-          <div className="card oauth-drawer-panel">
-            <div className="oauth-drawer-section">
+        <div className="grid gap-4">
+          <Card>
+            <CardContent className="grid gap-4 p-4">
               {drawerIntent.mode === 'create' ? (
-                <div className="oauth-form-field">
-                  <div className="oauth-field-label">Provider</div>
+                <div className="grid gap-2">
+                  <Label>Provider</Label>
                   <ModernSelect
                     value={selectedProviderKey}
                     onChange={(value) => setSelectedProviderKey(String(value || ''))}
@@ -2179,12 +2112,12 @@ export default function OAuthManagement() {
                   />
                 </div>
               ) : (
-                <div className="oauth-cell-stack">
-                  <div className="oauth-field-label">当前连接</div>
-                  <div className="oauth-cell-primary">
+                <div className="grid gap-1">
+                  <Label>当前连接</Label>
+                  <div className="font-medium">
                     {resolveConnectionPrimaryTitle(drawerIntent.account)}
                   </div>
-                  <div className="oauth-cell-secondary">
+                  <div className="text-sm text-muted-foreground">
                     {drawerIntent.account.provider}
                     {drawerIntent.account.projectId ? ` · Project ${drawerIntent.account.projectId}` : ''}
                     {drawerIntent.mode === 'proxy'
@@ -2195,11 +2128,10 @@ export default function OAuthManagement() {
               )}
 
               {selectedProvider?.requiresProjectId && drawerIntent.mode === 'create' ? (
-                <div className="oauth-form-field">
-                  <div className="oauth-field-label">Google Cloud Project ID（可选）</div>
-                  <input
+                <div className="grid gap-2">
+                  <Label>Google Cloud Project ID（可选）</Label>
+                  <Input
                     type="text"
-                    className="oauth-input"
                     value={drawerProjectId}
                     onChange={(event) => setDrawerProjectId(event.target.value)}
                     placeholder="留空则交给上游自动解析"
@@ -2207,20 +2139,19 @@ export default function OAuthManagement() {
                 </div>
               ) : null}
 
-              <div className="oauth-form-note">
+              <div className="text-sm text-muted-foreground">
                 {drawerIntent.mode === 'proxy'
                   ? '这里修改的是账号级 OAuth 代理。点击“保存代理”会立即落库并刷新列表；只有“保存并重新授权”才会重新走授权流程。若两项都不勾选，则回退到站点代理配置。'
                   : '这里的设置会作用于下一次“连接”或“重新授权”。填写代理地址后，本次 OAuth 换 token 和后续生成的账号都会直接带上这份账号级代理配置；若不勾选，则回退到站点代理配置。'}
               </div>
 
-              <div className="oauth-toggle-group">
-                <label className="oauth-toggle">
-                  <input
-                    type="checkbox"
+              <div className="grid gap-3">
+                <Label className="flex items-center gap-2">
+                  <Checkbox
                     checked={oauthSystemProxyEnabled}
                     data-oauth-setting="use-system-proxy"
-                    onChange={(event) => {
-                      const checked = !!event.target.checked;
+                    onCheckedChange={(nextChecked) => {
+                      const checked = nextChecked === true;
                       setOauthSystemProxyEnabled(checked);
                       if (checked) {
                         setOauthCustomProxyEnabled(false);
@@ -2229,27 +2160,25 @@ export default function OAuthManagement() {
                     }}
                   />
                   <span>使用系统级代理</span>
-                </label>
-                <label className="oauth-toggle">
-                  <input
-                    type="checkbox"
+                </Label>
+                <Label className="flex items-center gap-2">
+                  <Checkbox
                     checked={oauthCustomProxyEnabled}
                     data-oauth-setting="use-custom-proxy"
-                    onChange={(event) => {
-                      const checked = !!event.target.checked;
+                    onCheckedChange={(nextChecked) => {
+                      const checked = nextChecked === true;
                       setOauthCustomProxyEnabled(checked);
                       if (checked) setOauthSystemProxyEnabled(false);
                     }}
                   />
                   <span>使用自定义代理</span>
-                </label>
+                </Label>
               </div>
 
-              <div className="oauth-form-field">
-                <div className="oauth-field-label">代理地址</div>
-                <input
+              <div className="grid gap-2">
+                <Label>代理地址</Label>
+                <Input
                   type="text"
-                  className="oauth-input"
                   value={oauthProxyUrl}
                   data-oauth-setting="proxy-url"
                   onChange={(event) => setOauthProxyUrl(event.target.value)}
@@ -2259,10 +2188,9 @@ export default function OAuthManagement() {
               </div>
 
               {drawerIntent.mode === 'proxy' ? (
-                <div className="oauth-inline-actions">
-                  <button
+                <div className="flex flex-wrap gap-2">
+                  <Button
                     type="button"
-                    className="btn btn-primary"
                     onClick={handleSaveProxy}
                     disabled={
                       actionLoadingKey === `save-proxy:${drawerIntent.account.accountId}`
@@ -2270,10 +2198,9 @@ export default function OAuthManagement() {
                     }
                   >
                     {actionLoadingKey === `save-proxy:${drawerIntent.account.accountId}` ? '保存中...' : '保存代理'}
-                  </button>
-                  <button
+                  </Button>
+                  <Button variant="outline"
                     type="button"
-                    className="btn btn-ghost"
                     onClick={handleStart}
                     disabled={
                       !selectedProvider
@@ -2283,12 +2210,11 @@ export default function OAuthManagement() {
                     }
                   >
                     {actionLoadingKey.startsWith('start:') ? '启动中...' : '保存并重新授权'}
-                  </button>
+                  </Button>
                 </div>
               ) : (
-                <button
+                <Button
                   type="button"
-                  className="btn btn-primary"
                   onClick={handleStart}
                   disabled={!selectedProvider || !selectedProvider.enabled || actionLoadingKey.startsWith('start:')}
                 >
@@ -2297,24 +2223,28 @@ export default function OAuthManagement() {
                     : drawerIntent.mode === 'rebind'
                       ? `重新授权 ${selectedProvider?.label || ''}`.trim()
                       : `连接 ${selectedProvider?.label || ''}`.trim()}
-                </button>
+                </Button>
               )}
-            </div>
-          </div>
+            </CardContent>
+          </Card>
 
           {activeSession ? (
-            <div className="card oauth-drawer-panel">
-              <div className="oauth-panel-title">授权指引</div>
-              <div className="oauth-guide-grid">
-                <div className="oauth-guide-highlight">
-                  <div className="oauth-guide-block-label oauth-guide-block-label-spaced">固定回调地址</div>
+            <Card>
+              <CardHeader>
+                <CardTitle>授权指引</CardTitle>
+              </CardHeader>
+              <CardContent className="grid gap-3">
+                <Card>
+                  <CardContent className="grid gap-2 p-4">
+                  <div className="text-xs font-medium text-muted-foreground">固定回调地址</div>
                   {renderCodeBlock(activeSession.instructions.redirectUri)}
-                </div>
+                  </CardContent>
+                </Card>
 
                 {renderGuideCard(
                   '本地部署',
                   'metapi 和浏览器在同一台机器时，不需要 SSH 隧道。直接点击“连接”，在弹窗里完成授权即可。',
-                  <div className="oauth-guide-copy">
+                  <div className="text-sm text-muted-foreground">
                     如果浏览器能直接访问上面的 localhost 回调地址，授权完成后会自动回到 metapi。
                   </div>,
                 )}
@@ -2323,12 +2253,12 @@ export default function OAuthManagement() {
                   ? renderGuideCard(
                     '云端部署',
                     'metapi 部署在 VPS、容器或远程主机时，浏览器访问到的是你自己电脑的 localhost。先在本地开 SSH 隧道，再继续登录。',
-                    <div className="oauth-guide-block-list">
-                      <div className="oauth-guide-block-label">常规 SSH 隧道</div>
+                    <div className="grid gap-2">
+                      <div className="text-xs font-medium text-muted-foreground">常规 SSH 隧道</div>
                       {renderCodeBlock(activeSession.instructions.sshTunnelCommand)}
                       {activeSession.instructions.sshTunnelKeyCommand ? (
                         <>
-                          <div className="oauth-guide-block-label">SSH Key 隧道</div>
+                          <div className="text-xs font-medium text-muted-foreground">SSH Key 隧道</div>
                           {renderCodeBlock(activeSession.instructions.sshTunnelKeyCommand)}
                         </>
                       ) : null}
@@ -2343,38 +2273,36 @@ export default function OAuthManagement() {
                   '手动回调',
                   `如果浏览器停在 localhost 错误页，复制浏览器地址栏里的完整 URL，等待 ${Math.max(1, Math.round(activeSession.instructions.manualCallbackDelayMs / 1000))} 秒后粘贴回来。`,
                   manualCallbackVisible ? (
-                    <div className="oauth-drawer-section">
-                      <textarea
-                        className="oauth-textarea oauth-mono"
+                    <div className="grid gap-3">
+                      <Textarea
+                        className="font-mono"
                         value={manualCallbackUrl}
                         onChange={(event) => setManualCallbackUrl(event.target.value)}
                         placeholder="粘贴完整的 callback URL，例如 http://localhost:1455/auth/callback?code=..."
                         rows={3}
                       />
-                      <div className="oauth-inline-actions">
-                        <button
+                      <div className="flex flex-wrap gap-2">
+                        <Button
                           type="button"
-                          className="btn btn-primary"
                           onClick={handleSubmitManualCallback}
                           disabled={manualCallbackSubmitting}
                         >
                           {manualCallbackSubmitting ? '提交中...' : '提交回调 URL'}
-                        </button>
-                        <button
+                        </Button>
+                        <Button variant="outline"
                           type="button"
-                          className="btn btn-ghost"
                           onClick={() => openOAuthPopup(activeSession.provider, activeSession.authorizationUrl)}
                         >
                           重新打开授权页
-                        </button>
+                        </Button>
                       </div>
                     </div>
                   ) : (
-                    <div className="oauth-form-note">手动回调入口将在几秒后可用。</div>
+                    <div className="text-sm text-muted-foreground">手动回调入口将在几秒后可用。</div>
                   ),
                 )}
-              </div>
-            </div>
+              </CardContent>
+            </Card>
           ) : null}
         </div>
       </SideDrawer>
@@ -2400,45 +2328,44 @@ export default function OAuthManagement() {
         onClose={closeImportModal}
         title="导入 OAuth 连接 JSON"
         maxWidth={760}
-        bodyStyle={{ display: 'grid', gap: 16 }}
         footer={(
           <>
-            <button type="button" className="btn btn-ghost" onClick={closeImportModal}>
+            <Button variant="outline" type="button" onClick={closeImportModal}>
               关闭
-            </button>
-            <button type="button" className="btn btn-primary" onClick={handleImport} disabled={importing || !importPreviewSummary?.canImport}>
+            </Button>
+            <Button type="button" onClick={handleImport} disabled={importing || !importPreviewSummary?.canImport}>
               {importing ? '添加中...' : '添加'}
-            </button>
+            </Button>
           </>
         )}
       >
-        <div className="oauth-import-copy">
+        <div className="text-sm text-muted-foreground">
           选择 JSON 后会先识别是否有效，再决定是否添加。每个 JSON 文件只对应一个 OAuth 连接。
         </div>
         <div
-          className={`oauth-import-picker ${importDragOver ? 'is-dragover' : ''}`.trim()}
+          className="grid cursor-pointer gap-3 rounded-md border border-dashed p-6 text-center"
           onDrop={(event) => { void handleImportDrop(event); }}
           onDragOver={handleImportDragOver}
           onDragLeave={handleImportDragLeave}
           onClick={() => importFileInputRef.current?.click()}
         >
-          <input
+          <Input
             ref={importFileInputRef}
             data-testid="oauth-import-file-input"
             type="file"
             accept=".json,application/json"
             multiple
             onChange={(event) => { void handleImportFileChange(event); }}
-            style={{ display: 'none' }}
+            className="hidden"
           />
           {importDrafts.length > 0 ? (
             <>
-              <div className="oauth-import-picker-copy">已选择 {importDrafts.length} 份 JSON，点击可重新选择</div>
-              <div className="oauth-import-picker-hint">支持多选，只会导入其中的 OAuth 账号。</div>
-              <div className="oauth-import-file-list">
+              <div className="font-medium">已选择 {importDrafts.length} 份 JSON，点击可重新选择</div>
+              <div className="text-sm text-muted-foreground">支持多选，只会导入其中的 OAuth 账号。</div>
+              <div className="grid gap-2 text-left">
                 {importDrafts.map((draft) => (
-                  <div key={draft.sourceName} className="oauth-import-file-item">
-                    <span className="oauth-import-file-name">
+                  <div key={draft.sourceName} className="rounded-md border p-2 text-sm">
+                    <span>
                       {draft.sourceName}
                       {draft.error ? ` · ${draft.error}` : ''}
                     </span>
@@ -2448,24 +2375,23 @@ export default function OAuthManagement() {
             </>
           ) : (
             <>
-              <div className="oauth-import-picker-copy" style={{ color: importDragOver ? 'var(--color-primary)' : undefined }}>
+              <div className="font-medium">
                 {importDragOver ? '松开即可导入这些 JSON 文件' : '拖拽 OAuth 连接 JSON 到此处'}
               </div>
-              <div className="oauth-import-picker-hint">或点击选择文件，支持一次多选多个 `.json` 文件</div>
+              <div className="text-sm text-muted-foreground">或点击选择文件，支持一次多选多个 `.json` 文件</div>
             </>
           )}
         </div>
-        <div className="oauth-form-note">
+        <div className="text-sm text-muted-foreground">
           导入后的账号代理可在这里一次性指定；如果当前运行时已配置系统代理，会默认预选“使用系统级代理”。
         </div>
-        <div className="oauth-toggle-group">
-          <label className="oauth-toggle">
-            <input
-              type="checkbox"
+        <div className="grid gap-3">
+          <Label className="flex items-center gap-2">
+            <Checkbox
               checked={importSystemProxyEnabled}
               data-oauth-import-setting="use-system-proxy"
-              onChange={(event) => {
-                const checked = !!event.target.checked;
+              onCheckedChange={(nextChecked) => {
+                const checked = nextChecked === true;
                 setImportSystemProxyEnabled(checked);
                 if (checked) {
                   setImportCustomProxyEnabled(false);
@@ -2474,26 +2400,24 @@ export default function OAuthManagement() {
               }}
             />
             <span>使用系统级代理</span>
-          </label>
-          <label className="oauth-toggle">
-            <input
-              type="checkbox"
+          </Label>
+          <Label className="flex items-center gap-2">
+            <Checkbox
               checked={importCustomProxyEnabled}
               data-oauth-import-setting="use-custom-proxy"
-              onChange={(event) => {
-                const checked = !!event.target.checked;
+              onCheckedChange={(nextChecked) => {
+                const checked = nextChecked === true;
                 setImportCustomProxyEnabled(checked);
                 if (checked) setImportSystemProxyEnabled(false);
               }}
             />
             <span>使用自定义代理</span>
-          </label>
+          </Label>
         </div>
-        <div className="oauth-form-field">
-          <div className="oauth-field-label">代理地址</div>
-          <input
+        <div className="grid gap-2">
+          <Label>代理地址</Label>
+          <Input
             type="text"
-            className="oauth-input"
             value={importProxyUrl}
             data-oauth-import-setting="proxy-url"
             onChange={(event) => setImportProxyUrl(event.target.value)}
@@ -2501,33 +2425,36 @@ export default function OAuthManagement() {
             disabled={!importCustomProxyEnabled}
           />
         </div>
-        <div className="oauth-import-copy">或者手动粘贴单个 JSON 内容：</div>
-        <textarea
-          className="oauth-textarea oauth-mono"
+        <div className="text-sm text-muted-foreground">或者手动粘贴单个 JSON 内容：</div>
+        <Textarea
+          className="font-mono"
           value={importJsonText}
           onChange={(event) => setImportJsonText(event.target.value)}
           placeholder='粘贴单个 OAuth 连接 JSON，例如 {"type":"codex","access_token":"...","refresh_token":"...","email":"user@example.com"}'
           rows={8}
         />
         {importPreviewSummary ? (
-          <div className={`oauth-import-preview ${importPreviewSummary.canImport ? 'is-valid' : 'is-invalid'}`.trim()}>
-            <div className="oauth-import-preview-title">识别结果</div>
-            <div className="oauth-import-preview-summary">
+          <Card>
+            <CardHeader>
+              <CardTitle>识别结果</CardTitle>
+              <CardDescription>
               {importPreviewSummary.canImport
                 ? `已识别 ${importPreviewSummary.totalCount} 份 JSON，均可添加。`
                 : `已识别 ${importPreviewSummary.totalCount} 份 JSON，其中 ${importPreviewSummary.invalidCount} 份无效。`}
-            </div>
-            <div className="oauth-import-preview-list">
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-3">
               {importPreviewSummary.items.map((item) => (
-                <div key={item.sourceName} className="oauth-import-preview-item">
-                  <div className="oauth-import-preview-item-head">
-                    <div className="oauth-import-preview-item-name">{item.sourceName}</div>
-                    <span className={`badge oauth-import-preview-badge ${item.valid ? 'badge-success' : 'badge-danger'}`}>
+                <Card key={item.sourceName}>
+                  <CardContent className="grid gap-2 p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="font-medium">{item.sourceName}</div>
+                    <ToneBadge tone={item.valid ? 'success' : 'danger'}>
                       {item.valid ? '结构有效' : '结构无效'}
-                    </span>
+                    </ToneBadge>
                   </div>
                   {item.valid ? (
-                    <div className="oauth-import-preview-meta">
+                    <div className="grid gap-1 text-sm text-muted-foreground">
                       <span>Provider：{item.providerLabel}</span>
                       {item.email ? <span>邮箱：{item.email}</span> : null}
                       {item.accountKey ? <span>账号：{item.accountKey}</span> : null}
@@ -2535,15 +2462,16 @@ export default function OAuthManagement() {
                       <span>{item.disabled ? '状态：导入后禁用' : '状态：导入后启用'}</span>
                     </div>
                   ) : (
-                    <div className="oauth-import-preview-error">{item.error || 'JSON 结构无效'}</div>
+                    <div className="text-sm text-destructive">{item.error || 'JSON 结构无效'}</div>
                   )}
-                </div>
+                  </CardContent>
+                </Card>
               ))}
-            </div>
             {!importPreviewSummary.canImport ? (
-              <div className="oauth-import-preview-note">请先修正无效 JSON，再点击“添加”。</div>
+              <div className="text-sm text-muted-foreground">请先修正无效 JSON，再点击“添加”。</div>
             ) : null}
-          </div>
+            </CardContent>
+          </Card>
         ) : null}
       </CenteredModal>
 
@@ -2552,36 +2480,33 @@ export default function OAuthManagement() {
         onClose={closeRouteUnitModal}
         title="创建路由池"
         maxWidth={520}
-        bodyStyle={{ display: 'grid', gap: 16 }}
         footer={(
           <>
-            <button type="button" className="btn btn-ghost" onClick={closeRouteUnitModal}>
+            <Button variant="outline" type="button" onClick={closeRouteUnitModal}>
               取消
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
-              className="btn btn-primary"
               onClick={handleCreateRouteUnit}
               disabled={actionLoadingKey === 'route-unit:create' || !asTrimmedString(routeUnitModal.name)}
             >
               {actionLoadingKey === 'route-unit:create' ? '创建中...' : '创建路由池'}
-            </button>
+            </Button>
           </>
         )}
       >
-        <div className="oauth-form-field">
-          <div className="oauth-field-label">路由池名称</div>
-          <input
+        <div className="grid gap-2">
+          <Label>路由池名称</Label>
+          <Input
             type="text"
-            className="oauth-input"
             data-testid="oauth-route-unit-name"
             value={routeUnitModal.name}
             onChange={(event) => setRouteUnitModal((current) => ({ ...current, name: event.target.value }))}
             placeholder="例如 Codex Pool"
           />
         </div>
-        <div className="oauth-form-field">
-          <div className="oauth-field-label">策略</div>
+        <div className="grid gap-2">
+          <Label>策略</Label>
           <ModernSelect
             value={routeUnitModal.strategy}
             onChange={(value) => setRouteUnitModal((current) => ({

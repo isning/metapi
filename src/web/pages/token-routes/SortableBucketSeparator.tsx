@@ -1,6 +1,7 @@
 import { type CSSProperties } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { Button } from '../../components/ui/button/index.js';
 
 type SortableBucketSeparatorProps = {
   id: string;
@@ -32,43 +33,26 @@ export function SortableBucketSeparator({
     transform: CSS.Transform.toString(transform),
     transition,
     opacity: isDragging ? 0.8 : 1,
-    display: 'flex',
-    alignItems: 'center',
-    gap: 10,
-    padding: '4px 2px',
-    color: 'var(--color-text-muted)',
   };
 
   return (
-    <div ref={setNodeRef} style={style}>
-      <div style={{ flex: 1, height: 1, background: 'var(--color-border)' }} />
-      <button
+    <div ref={setNodeRef} style={style} className="flex items-center gap-2.5 px-0.5 py-1 text-muted-foreground">
+      <div className="h-px flex-1 bg-border" />
+      <Button
+        variant="outline"
         type="button"
         ref={setActivatorNodeRef}
         {...attributes}
         {...listeners}
         disabled={isSavingPriority}
-        className="btn btn-ghost"
         aria-label={`拖拽调整 P${beforePriority} / P${afterPriority} 分界线`}
         data-tooltip={`拖拽调整 P${beforePriority} / P${afterPriority} 分界线`}
-        style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: 6,
-          border: '1px solid var(--color-border)',
-          borderRadius: 999,
-          background: 'var(--color-bg)',
-          padding: '2px 10px',
-          fontSize: 11,
-          color: 'var(--color-text-muted)',
-          cursor: isSavingPriority ? 'not-allowed' : 'grab',
-        }}
       >
         <span>{`P${beforePriority}`}</span>
-        <span style={{ fontSize: 10 }}>||</span>
+        <span className="text-[10px]">||</span>
         <span>{`P${afterPriority}`}</span>
-      </button>
-      <div style={{ flex: 1, height: 1, background: 'var(--color-border)' }} />
+      </Button>
+      <div className="h-px flex-1 bg-border" />
     </div>
   );
 }

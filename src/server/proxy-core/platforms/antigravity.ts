@@ -1,6 +1,7 @@
 import type { PreparedPlatformRequest, PreparePlatformRequestInput, PlatformAction, PlatformProfile } from './types.js';
 import { resolveAntigravityPlatformAction } from './antigravityRuntime.js';
 import { protocolAdapters } from '../formats/protocolAdapters.js';
+import { nativeReasoningCompatibilityPolicy } from './compatibilityPolicy.js';
 
 const ANTIGRAVITY_RUNTIME_USER_AGENT = 'antigravity/1.19.6 darwin/arm64';
 
@@ -16,6 +17,7 @@ function resolvePath(action: PlatformAction): string {
 
 export const antigravityPlatformProfile: PlatformProfile = {
   id: 'antigravity',
+  defaultCompatibilityPolicy: nativeReasoningCompatibilityPolicy,
   prepareRequest(input: PreparePlatformRequestInput): PreparedPlatformRequest {
     const action = resolveAntigravityPlatformAction(input.action, input.stream, input.modelName);
     const projectId = asTrimmedString(input.oauthProjectId);

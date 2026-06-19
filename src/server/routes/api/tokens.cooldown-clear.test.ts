@@ -4,6 +4,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
+import { tokenRouteFixture } from '../../test/routeGraphFixtures.js';
 
 type DbModule = typeof import('../../db/index.js');
 
@@ -78,8 +79,8 @@ describe('POST /api/routes/:id/cooldown/clear', () => {
 
   it('clears cooldown and failure counters for a direct route', async () => {
     const seeded = await seedAccountWithToken();
-    const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-4o-mini',
+    const route = await db.insert(schema.tokenRoutes).values( {
+      ...tokenRouteFixture({ modelPattern: 'gpt-4o-mini' }),
       enabled: true,
     }).returning().get();
 
@@ -123,13 +124,13 @@ describe('POST /api/routes/:id/cooldown/clear', () => {
 
   it('clears cooldown for source-route channels exposed by explicit groups', async () => {
     const seeded = await seedAccountWithToken();
-    const sourceRoute = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'claude-sonnet-4-5',
+    const sourceRoute = await db.insert(schema.tokenRoutes).values( {
+      ...tokenRouteFixture({ modelPattern: 'claude-sonnet-4-5' }),
       enabled: true,
     }).returning().get();
 
-    const groupRoute = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'claude-opus-4-6',
+    const groupRoute = await db.insert(schema.tokenRoutes).values( {
+      ...tokenRouteFixture({ modelPattern: 'claude-opus-4-6', routeMode: 'explicit_group', sourceRouteIds: [sourceRoute.id] }),
       displayName: 'claude-opus-4-6',
       routeMode: 'explicit_group',
       enabled: true,
@@ -181,21 +182,21 @@ describe('POST /api/routes/:id/cooldown/clear', () => {
 
   it('only clears cooldown for explicit-group source routes that are enabled exact routes', async () => {
     const seeded = await seedAccountWithToken();
-    const visibleSourceRoute = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-5.4',
+    const visibleSourceRoute = await db.insert(schema.tokenRoutes).values( {
+      ...tokenRouteFixture({ modelPattern: 'gpt-5.4' }),
       enabled: true,
     }).returning().get();
-    const disabledSourceRoute = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-4.1',
+    const disabledSourceRoute = await db.insert(schema.tokenRoutes).values( {
+      ...tokenRouteFixture({ modelPattern: 'gpt-4.1' }),
       enabled: false,
     }).returning().get();
-    const wildcardSourceRoute = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-*',
+    const wildcardSourceRoute = await db.insert(schema.tokenRoutes).values( {
+      ...tokenRouteFixture({ modelPattern: 'gpt-*' }),
       enabled: true,
     }).returning().get();
 
-    const groupRoute = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-clear-group',
+    const groupRoute = await db.insert(schema.tokenRoutes).values( {
+      ...tokenRouteFixture({ modelPattern: 'gpt-clear-group', routeMode: 'explicit_group', sourceRouteIds: [visibleSourceRoute.id, disabledSourceRoute.id, wildcardSourceRoute.id] }),
       displayName: 'gpt-clear-group',
       routeMode: 'explicit_group',
       enabled: true,

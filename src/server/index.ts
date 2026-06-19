@@ -59,6 +59,7 @@ import {
 } from './services/usageAggregationService.js';
 import { reloadBackupWebdavScheduler } from './services/backupService.js';
 import { ensureRuntimeDatabaseReady } from './runtimeDatabaseBootstrap.js';
+import { ensureActiveRouteGraphVersion } from './services/routeGraphService.js';
 import { isPublicApiRoute, registerDesktopRoutes } from './desktop.js';
 import { existsSync } from 'fs';
 import { fileURLToPath } from 'url';
@@ -191,6 +192,7 @@ try {
   await ensureDefaultSitesSeeded();
   await ensureOauthIdentityBackfill();
   await routeRefreshWorkflow.rebuildRoutesOnly();
+  await ensureActiveRouteGraphVersion();
 
   console.log('Loaded runtime settings overrides');
 } catch (error) {

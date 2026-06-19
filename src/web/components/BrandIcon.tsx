@@ -128,7 +128,7 @@ export function BrandIcon({ model, size = 44 }: { model: string; size?: number }
   }
 
   return (
-    <div className="model-card-avatar" style={{ width: size, height: size, background: hashColor(model), fontSize: size > 32 ? 16 : 10 }}>
+    <div className="inline-flex shrink-0 items-center justify-center overflow-hidden rounded-md font-semibold text-primary-foreground" style={{ width: size, height: size, background: hashColor(model), fontSize: size > 32 ? 16 : 10 }}>
       {avatarLetters(model)}
     </div>
   );

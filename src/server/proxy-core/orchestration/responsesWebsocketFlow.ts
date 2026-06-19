@@ -14,11 +14,13 @@ import {
 import { runWithSiteApiEndpointPool, SiteApiEndpointRequestError } from '../../services/siteApiEndpointService.js';
 import { tokenRouter } from '../../services/tokenRouter.js';
 import { buildOauthProviderHeaders } from '../../services/oauth/service.js';
+import { resolveDispatchUpstreamCompatibilityPolicy } from '../../services/upstreamCompatibilityPolicyResolver.js';
 import { getOauthInfoFromAccount } from '../../services/oauth/oauthAccount.js';
 import { protocolAdapters } from '../formats/protocolAdapters.js';
 import { buildUpstreamEndpointRequest } from '../formats/upstreamRequestBuilder.js';
 import { config } from '../../config.js';
 import { applyOpenAiServiceTierPolicy } from '../serviceTierPolicy.js';
+import { resolvePlatformProfile } from '../platforms/registry.js';
 
 const installedApps = new WeakSet<FastifyInstance>();
 const WS_TURN_STATE_HEADER = 'x-codex-turn-state';
@@ -480,6 +482,7 @@ async function handleResponsesWebsocketConnection(
             runtimeSessionKeys.add(websocketRuntimeSessionKey);
 
             try {
+              const platformProfile = resolvePlatformProfile(codexWebsocketChannel.site.platform);
               const runtimeResult = await runWithSiteApiEndpointPool(
                 codexWebsocketChannel.site as Parameters<typeof runWithSiteApiEndpointPool>[0],
                 async (target) => {
@@ -496,6 +499,15 @@ async function handleResponsesWebsocketConnection(
                     downstreamHeaders,
                     platformHeaders,
                     codexExplicitSessionId: deriveCodexExplicitSessionId(normalized.request, websocketSessionId),
+                    routeGraphFilters: codexWebsocketChannel.routeGraph?.postBuildFilters ?? null,
+                    compatibilityPolicy: resolveDispatchUpstreamCompatibilityPolicy({
+                      defaultCompatibilityPolicy: platformProfile?.defaultCompatibilityPolicy,
+                      site: codexWebsocketChannel.site,
+                      account: codexWebsocketChannel.account,
+                      token: codexWebsocketChannel.token,
+                      modelEndpointCompatibilityPolicy: codexWebsocketChannel.routeGraph?.modelEndpointCompatibilityPolicy,
+                      selectedEndpointTarget: codexWebsocketChannel.routeGraph?.selectedEndpointTarget,
+                    }),
                   });
                   const requestUrl = `${target.baseUrl.replace(/\/+$/, '')}${prepared.path}`;
 

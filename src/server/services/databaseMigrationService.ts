@@ -7,6 +7,10 @@ import {
   type RuntimeSchemaClient,
   type RuntimeSchemaDialect,
 } from '../db/runtimeSchemaBootstrap.js';
+import {
+  buildRouteGraphSourceFromLegacyRoutes,
+  compileRouteGraphSource,
+} from '../../shared/routeGraph.js';
 
 export type MigrationDialect = RuntimeSchemaDialect;
 
@@ -529,14 +533,12 @@ function buildStatements(
   for (const row of snapshot.accounts.tokenRoutes) {
     statements.push({
       table: 'token_routes',
-      columns: ['id', 'model_pattern', 'display_name', 'display_icon', 'model_mapping', 'route_mode', 'decision_snapshot', 'decision_refreshed_at', 'routing_strategy', 'enabled', 'created_at', 'updated_at'],
+      columns: ['id', 'display_name', 'display_icon', 'model_mapping', 'decision_snapshot', 'decision_refreshed_at', 'routing_strategy', 'enabled', 'created_at', 'updated_at'],
       values: [
         asNumber(row.id, 0),
-        asNullableString(row.modelPattern),
         asNullableString(row.displayName),
         asNullableString(row.displayIcon),
         serializeColumnValue('token_routes', 'model_mapping', row.modelMapping, contract),
-        asNullableString(row.routeMode) ?? 'pattern',
         serializeColumnValue('token_routes', 'decision_snapshot', row.decisionSnapshot, contract),
         asNullableString(row.decisionRefreshedAt),
         asNullableString(row.routingStrategy),
@@ -547,13 +549,49 @@ function buildStatements(
     });
   }
 
+  const sourceGraph = buildRouteGraphSourceFromLegacyRoutes(snapshot.accounts.tokenRoutes.map((row) => ({
+    ...row,
+    match: {
+      kind: 'model',
+      requestedModelPattern: String(row.modelPattern || ''),
+      displayName: row.displayName || row.modelPattern || null,
+      routeId: asNumber(row.id, 0),
+    },
+    backend: {
+      kind: ((snapshot.accounts.routeGroupSources || [])
+        .some((source) => asNumber(source.groupRouteId, 0) === asNumber(row.id, 0)))
+        ? 'routes'
+        : 'channels',
+      routeIds: (snapshot.accounts.routeGroupSources || [])
+        .filter((source) => asNumber(source.groupRouteId, 0) === asNumber(row.id, 0))
+        .map((source) => asNumber(source.sourceRouteId, 0))
+        .filter((routeId): routeId is number => typeof routeId === 'number' && routeId > 0),
+    },
+    sourceRouteIds: (snapshot.accounts.routeGroupSources || [])
+      .filter((source) => asNumber(source.groupRouteId, 0) === asNumber(row.id, 0))
+      .map((source) => asNumber(source.sourceRouteId, 0))
+      .filter((routeId): routeId is number => typeof routeId === 'number' && routeId > 0),
+  })));
+  const compiledGraph = compileRouteGraphSource(sourceGraph).compiled;
+  statements.push({
+    table: 'route_graph_versions',
+    columns: ['id', 'version', 'source_graph_json', 'compiled_graph_json', 'status', 'created_by', 'created_at', 'activated_at'],
+    values: [1, 1, JSON.stringify(sourceGraph), JSON.stringify(compiledGraph), 'active', 'migration', new Date(snapshot.timestamp || Date.now()).toISOString(), new Date(snapshot.timestamp || Date.now()).toISOString()],
+  });
+  statements.push({
+    table: 'route_graph_active_version',
+    columns: ['id', 'version_id', 'updated_at'],
+    values: [1, 1, new Date(snapshot.timestamp || Date.now()).toISOString()],
+  });
+
   for (const row of snapshot.accounts.routeChannels) {
     statements.push({
       table: 'route_channels',
-      columns: ['id', 'route_id', 'account_id', 'token_id', 'source_model', 'priority', 'weight', 'enabled', 'manual_override', 'success_count', 'fail_count', 'total_latency_ms', 'total_cost', 'last_used_at', 'last_selected_at', 'last_fail_at', 'consecutive_fail_count', 'cooldown_level', 'cooldown_until'],
+      columns: ['id', 'route_id', 'route_node_id', 'account_id', 'token_id', 'source_model', 'priority', 'weight', 'enabled', 'manual_override', 'success_count', 'fail_count', 'total_latency_ms', 'total_cost', 'last_used_at', 'last_selected_at', 'last_fail_at', 'consecutive_fail_count', 'cooldown_level', 'cooldown_until'],
       values: [
         asNumber(row.id, 0),
         asNumber(row.routeId, 0),
+        asNullableString(row.routeNodeId) || `entry:legacy:${asNumber(row.routeId, 0)}`,
         asNumber(row.accountId, 0),
         asNumber(row.tokenId, null),
         asNullableString(row.sourceModel),

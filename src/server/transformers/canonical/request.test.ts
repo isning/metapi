@@ -1,10 +1,18 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  resolveUpstreamCompatibilityPolicy,
+  type UpstreamCompatibilityPolicy,
+} from '../../contracts/upstreamCompatibilityPolicy.js';
+import {
   canonicalRequestFromOpenAiBody,
   canonicalRequestToOpenAiChatBody,
   createCanonicalRequestEnvelope,
 } from './request.js';
+
+function compatibilityPolicy(layer: UpstreamCompatibilityPolicy) {
+  return resolveUpstreamCompatibilityPolicy(layer);
+}
 
 describe('canonical request helpers', () => {
   it('normalizes a count_tokens request without provider-owned fields', () => {
@@ -334,6 +342,164 @@ describe('canonical request helpers', () => {
         content: '[tool_output_missing_call_id] {"ok":true}',
       },
     ]);
+  });
+
+  it('preserves DeepSeek-style assistant reasoning whitespace through canonical chat round-trips', () => {
+    const request = canonicalRequestFromOpenAiBody({
+      body: {
+        model: 'deepseek-reasoner',
+        messages: [{
+          role: 'assistant',
+          content: '',
+          reasoning_content: ' first step \n second step ',
+        }],
+      },
+      surface: 'openai-chat',
+    });
+
+    const body = canonicalRequestToOpenAiChatBody(request);
+
+    expect(body.messages).toEqual([{
+      role: 'assistant',
+      content: '',
+      reasoning_content: ' first step \n second step ',
+    }]);
+  });
+
+  it('can encode assistant reasoning history as think-tag content for compatible upstreams', () => {
+    const request = canonicalRequestFromOpenAiBody({
+      body: {
+        model: 'self-hosted-reasoner',
+        messages: [{
+          role: 'assistant',
+          reasoning_content: ' plan step 1 \n plan step 2 ',
+          content: 'visible answer',
+        }],
+      },
+      surface: 'openai-chat',
+    });
+
+    const body = canonicalRequestToOpenAiChatBody(request, {
+      compatibilityPolicy: compatibilityPolicy({
+        reasoningHistory: {
+          transport: {
+            mode: 'content_think_tag',
+          },
+        },
+      }),
+    });
+
+    expect(body.messages).toEqual([{
+      role: 'assistant',
+      content: '<think>\n plan step 1 \n plan step 2 \n</think>\n\nvisible answer',
+    }]);
+  });
+
+  it('drops assistant reasoning history when compatibility policy disables history transport', () => {
+    const request = canonicalRequestFromOpenAiBody({
+      body: {
+        model: 'stateless-upstream',
+        messages: [{
+          role: 'assistant',
+          reasoning_content: 'private reasoning',
+          reasoning_signature: 'sig-private',
+          content: 'visible answer',
+        }],
+      },
+      surface: 'openai-chat',
+    });
+
+    const body = canonicalRequestToOpenAiChatBody(request, {
+      compatibilityPolicy: compatibilityPolicy({
+        reasoningHistory: {
+          transport: {
+            mode: 'drop',
+          },
+        },
+      }),
+    });
+
+    expect(body.messages).toEqual([{
+      role: 'assistant',
+      content: 'visible answer',
+    }]);
+  });
+
+  it('can force native reasoning on assistant tool-call messages while normal history uses think tags', () => {
+    const request = canonicalRequestFromOpenAiBody({
+      body: {
+        model: 'mixed-tool-upstream',
+        messages: [{
+          role: 'assistant',
+          reasoning_content: 'tool plan',
+          content: '',
+          tool_calls: [{
+            id: 'call_1',
+            type: 'function',
+            function: {
+              name: 'Glob',
+              arguments: '{"pattern":"README*"}',
+            },
+          }],
+        }],
+      },
+      surface: 'openai-chat',
+    });
+
+    const body = canonicalRequestToOpenAiChatBody(request, {
+      compatibilityPolicy: compatibilityPolicy({
+        reasoningHistory: {
+          transport: {
+            mode: 'content_think_tag',
+            toolCallMessageBehavior: 'native',
+          },
+        },
+      }),
+    });
+
+    expect(body.messages).toEqual([{
+      role: 'assistant',
+      content: '',
+      reasoning_content: 'tool plan',
+      tool_calls: [{
+        id: 'call_1',
+        type: 'function',
+        function: {
+          name: 'Glob',
+          arguments: '{"pattern":"README*"}',
+        },
+      }],
+    }]);
+  });
+
+  it('limits assistant reasoning history before encoding it into upstream chat history', () => {
+    const request = canonicalRequestFromOpenAiBody({
+      body: {
+        model: 'limited-upstream',
+        messages: [{
+          role: 'assistant',
+          reasoning_content: 'abcdef',
+          content: 'visible answer',
+        }],
+      },
+      surface: 'openai-chat',
+    });
+
+    const body = canonicalRequestToOpenAiChatBody(request, {
+      compatibilityPolicy: compatibilityPolicy({
+        reasoningHistory: {
+          transport: {
+            mode: 'content_think_tag',
+            maxReasoningBytes: 3,
+          },
+        },
+      }),
+    });
+
+    expect(body.messages).toEqual([{
+      role: 'assistant',
+      content: '<think>\nabc\n</think>\n\nvisible answer',
+    }]);
   });
 
   it('builds metadata back into OpenAI chat requests', () => {

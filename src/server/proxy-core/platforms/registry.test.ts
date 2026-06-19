@@ -2,6 +2,19 @@ import { describe, expect, it } from 'vitest';
 import { resolvePlatformProfile } from './registry.js';
 
 describe('resolvePlatformProfile', () => {
+  it('exposes explicit upstream compatibility defaults for registered platform profiles', () => {
+    for (const platform of ['codex', 'claude', 'anthropic', 'gemini-cli', 'antigravity', 'openai', 'gemini']) {
+      const profile = resolvePlatformProfile(platform);
+      expect(profile?.defaultCompatibilityPolicy).toMatchObject({
+        reasoningHistory: {
+          transport: {
+            mode: 'native',
+          },
+        },
+      });
+    }
+  });
+
   it('builds codex provider requests with codex-specific path, headers, and runtime metadata', () => {
     const profile = resolvePlatformProfile('codex');
     expect(profile?.id).toBe('codex');

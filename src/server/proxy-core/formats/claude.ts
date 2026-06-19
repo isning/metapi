@@ -4,6 +4,7 @@ import { anthropicMessagesTransformer } from '../../transformers/anthropic/messa
 import { openAiChatTransformer } from '../../transformers/openai/chat/index.js';
 import { parseProxyUsage } from '../../services/proxyUsageParser.js';
 import { buildClaudeCountTokensUpstreamRequest } from './upstreamRequestBuilder.js';
+import { applyRouteGraphPostBuildFilters } from '../../services/routeGraphRuntimeService.js';
 
 export const claudeProtocolAdapter: DownstreamProtocolAdapter = {
   format: 'claude',
@@ -72,11 +73,16 @@ export const claudeProtocolAdapter: DownstreamProtocolAdapter = {
       claudeBody: input.transformed.claudeOriginalBody || input.transformed.openaiBody,
       downstreamHeaders: input.downstreamHeaders,
     });
+    const filtered = applyRouteGraphPostBuildFilters({
+      payload: upstreamRequest.body,
+      headers: upstreamRequest.headers,
+      filters: input.routeGraphFilters,
+    });
     return {
       endpoint: 'messages',
       path: upstreamRequest.path,
-      headers: upstreamRequest.headers,
-      body: upstreamRequest.body,
+      headers: filtered.headers,
+      body: filtered.payload,
       runtime: upstreamRequest.runtime,
     };
   },

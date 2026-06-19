@@ -7,9 +7,11 @@ import {
   getInputHeader,
 } from './headers.js';
 import { extractClaudePassthroughHeaders } from '../formats/headerPassthrough.js';
+import { nativeReasoningCompatibilityPolicy } from './compatibilityPolicy.js';
 
 export const claudePlatformProfile: PlatformProfile = {
   id: 'claude',
+  defaultCompatibilityPolicy: nativeReasoningCompatibilityPolicy,
   prepareRequest(input: PreparePlatformRequestInput): PreparedPlatformRequest {
     const isCountTokens = input.action === 'countTokens' || input.targetPath?.endsWith('/count_tokens');
     const path = input.targetPath || (isCountTokens ? '/v1/messages/count_tokens?beta=true' : '/v1/messages');

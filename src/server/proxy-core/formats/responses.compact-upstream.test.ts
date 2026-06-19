@@ -73,6 +73,14 @@ vi.mock('../../services/proxyUsageFallbackService.js', () => ({
   resolveProxyUsageWithSelfLogFallback: (arg: any) => resolveProxyUsageWithSelfLogFallbackMock(arg),
 }));
 
+vi.mock('../../services/routeGraphRuntimeService.js', async () => {
+  const actual = await vi.importActual<typeof import('../../services/routeGraphRuntimeService.js')>('../../services/routeGraphRuntimeService.js');
+  return {
+    ...actual,
+    evaluateActiveRouteGraphForModel: async () => null,
+  };
+});
+
 vi.mock('../../db/index.js', () => ({
   db: {
     insert: (arg: any) => dbInsertMock(arg),
@@ -112,9 +120,10 @@ describe('responses proxy compact upstream routing', () => {
   const originalResponsesCompactFallbackToResponsesEnabled = config.responsesCompactFallbackToResponsesEnabled;
 
   beforeAll(async () => {
-    const { responsesProxyRoute } = await import('../../routes/proxy/responses.js');
+    const { registerDownstreamProtocolSurface } = await import('../surfaces/downstreamProtocolSurface.js');
+    const { responsesProtocolAdapter } = await import('./responses.js');
     app = Fastify();
-    await app.register(responsesProxyRoute);
+    await registerDownstreamProtocolSurface(app, responsesProtocolAdapter);
   });
 
   beforeEach(() => {

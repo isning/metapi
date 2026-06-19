@@ -86,6 +86,31 @@ vi.mock('../../services/downstreamApiKeyService.js', () => ({
   isModelAllowedByPolicyOrAllowedRoutes: (...args: unknown[]) => isModelAllowedByPolicyOrAllowedRoutesMock(...args),
 }));
 
+vi.mock('../../services/routeGraphRuntimeService.js', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../services/routeGraphRuntimeService.js')>(),
+  evaluateActiveRouteGraphForModel: async () => null,
+}));
+
+vi.mock('../../services/routeGraphService.js', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../services/routeGraphService.js')>(),
+  ensureActiveRouteGraphVersion: async () => ({
+    id: 1,
+    version: 1,
+    sourceGraph: { version: 1, nodes: [], edges: [], macros: [] },
+    compiledGraph: {
+      nodesById: {},
+      edgesByFromPort: {},
+      edgesByToPort: {},
+      publicModels: [{ model: 'gemini-2.5-flash' }],
+      entrypointsByModel: {},
+      diagnostics: [],
+    },
+    status: 'active',
+    createdAt: '2026-06-18 00:00:00',
+    activatedAt: '2026-06-18 00:00:00',
+  }),
+}));
+
 vi.mock('../../db/index.js', () => ({
   db: {
     select: (..._args: unknown[]) => createDbSelectChain(),
@@ -527,6 +552,76 @@ describe('gemini native proxy routes', () => {
             role: 'model',
           },
           finishReason: 'STOP',
+        },
+      ],
+    });
+  });
+
+  it('applies compatibility policy to direct Gemini native request history before upstream forwarding', async () => {
+    selectChannelMock.mockReturnValue({
+      channel: { id: 11, routeId: 22 },
+      site: {
+        id: 44,
+        name: 'gemini-site',
+        url: 'https://generativelanguage.googleapis.com',
+        platform: 'gemini',
+        compatibilityPolicy: JSON.stringify({
+          reasoningHistory: {
+            transport: {
+              mode: 'content_think_tag',
+            },
+          },
+        }),
+      },
+      account: { id: 33, username: 'demo-user' },
+      tokenName: 'default',
+      tokenValue: 'gemini-key',
+      actualModel: 'gemini-2.5-flash',
+    });
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      candidates: [
+        {
+          content: {
+            parts: [{ text: 'ok' }],
+            role: 'model',
+          },
+          finishReason: 'STOP',
+        },
+      ],
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1beta/models/gemini-2.5-flash:generateContent',
+      headers: {
+        'x-goog-api-key': 'sk-managed-gemini',
+      },
+      payload: {
+        contents: [
+          {
+            role: 'model',
+            parts: [
+              { text: 'hidden plan', thought: true },
+              { text: 'visible answer' },
+            ],
+          },
+        ],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const [, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(String(requestInit.body))).toEqual({
+      contents: [
+        {
+          role: 'model',
+          parts: [
+            { text: '<think>\nhidden plan\n</think>\n\n' },
+            { text: 'visible answer' },
+          ],
         },
       ],
     });

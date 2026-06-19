@@ -1,6 +1,6 @@
 import type { MissingTokenModelsByName } from './routeMissingTokenHints.js';
 import type { RouteSummaryRow } from '../token-routes/types.js';
-import { isExactModelPattern } from '../token-routes/utils.js';
+import { getRouteRequestedModelPattern, isExactModelPattern } from '../token-routes/utils.js';
 
 function buildStableVirtualRouteId(modelName: string): number {
   const normalized = modelName.trim().toLowerCase();
@@ -18,8 +18,8 @@ export function buildZeroChannelPlaceholderRoutes(
 ): RouteSummaryRow[] {
   const exactRouteNames = new Set(
     (routes || [])
-      .filter((route) => isExactModelPattern(route.modelPattern))
-      .map((route) => (route.modelPattern || '').trim().toLowerCase())
+      .filter((route) => isExactModelPattern(getRouteRequestedModelPattern(route)))
+      .map((route) => getRouteRequestedModelPattern(route).trim().toLowerCase())
       .filter(Boolean),
   );
 
@@ -41,9 +41,21 @@ export function buildZeroChannelPlaceholderRoutes(
 
       placeholderByModel.set(routeKey, {
         id: buildStableVirtualRouteId(modelName),
-        modelPattern: modelName,
-        displayName: null,
-        displayIcon: null,
+        match: {
+          kind: 'model',
+          requestedModelPattern: modelName,
+          currentModelPattern: '',
+          displayName: null,
+          downstreamProtocol: null,
+          upstreamProtocol: null,
+          sitePlatform: null,
+          routeId: null,
+          accountId: null,
+          tokenId: null,
+          siteId: null,
+        },
+        backend: { kind: 'channels' },
+        presentation: { displayName: null, displayIcon: null },
         modelMapping: null,
         routingStrategy: null,
         enabled: false,
@@ -63,5 +75,5 @@ export function buildZeroChannelPlaceholderRoutes(
   mergeMissingHints(modelsMissingTokenGroups);
 
   return Array.from(placeholderByModel.values())
-    .sort((left, right) => left.modelPattern.localeCompare(right.modelPattern, undefined, { sensitivity: 'base' }));
+    .sort((left, right) => getRouteRequestedModelPattern(left).localeCompare(getRouteRequestedModelPattern(right), undefined, { sensitivity: 'base' }));
 }

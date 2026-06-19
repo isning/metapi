@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, create } from 'react-test-renderer';
 import { MemoryRouter } from 'react-router-dom';
+import ModernSelect from '../components/ModernSelect.js';
 import { ToastProvider } from '../components/Toast.js';
 import OAuthManagement from './OAuthManagement.js';
 
@@ -172,8 +173,18 @@ describe('OAuthManagement page', () => {
         await flushMicrotasks();
         const text = collectText(root!.root);
         expect(text).toContain('OAuth 管理');
-        expect(text).toContain('Codex');
-        expect(text).toContain('Gemini CLI');
+        expect(root!.root.findAllByType(ModernSelect)).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              props: expect.objectContaining({
+                options: expect.arrayContaining([
+                  expect.objectContaining({ value: 'codex', label: 'Codex' }),
+                  expect.objectContaining({ value: 'gemini-cli', label: 'Gemini CLI' }),
+                ]),
+              }),
+            }),
+          ]),
+        );
         expect(text).toContain('codex-user@example.com');
         expect(text).toContain('plus');
         expect(text).toContain('3 个模型');

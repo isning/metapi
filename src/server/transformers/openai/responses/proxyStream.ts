@@ -279,6 +279,16 @@ export function createResponsesProxyStreamSession(input: ResponsesProxyStreamSes
         pullEvents: (buffer) => openAiResponsesStream.pullSseEvents(buffer),
         handleEvent: handleEventBlock,
         onEof: closeOut,
+        maxBufferBytes: config.proxyStreamMaxSseBufferBytes,
+        onLimitExceeded: (message) => {
+          fail({
+            type: 'response.failed',
+            error: {
+              message,
+              type: 'upstream_response_too_large',
+            },
+          }, message);
+        },
       });
       await lifecycle.run();
       return terminalResult;

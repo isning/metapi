@@ -238,6 +238,21 @@ function buildCompatibleRuntimeBaseline(
   return baseline;
 }
 
+function isGraphNativeRouteGraphReplacement(
+  currentContract: SchemaContract,
+  liveContract: SchemaContract,
+): boolean {
+  const currentTokenRoutes = currentContract.tables.token_routes;
+  const liveTokenRoutes = liveContract.tables.token_routes;
+  return !!currentTokenRoutes
+    && !!liveTokenRoutes?.columns.model_pattern
+    && !currentTokenRoutes.columns.model_pattern
+    && !!currentContract.tables.route_graph_versions
+    && !!currentContract.tables.route_graph_drafts
+    && !!currentContract.tables.route_graph_active_version
+    && !!currentContract.tables.route_channels?.columns.route_node_id;
+}
+
 function collectIndexedColumns(contract: SchemaContract): Map<string, Set<string>> {
   const indexedColumns = new Map<string, Set<string>>();
 
@@ -436,8 +451,11 @@ function buildExternalUpgradeStatements(
   liveContract: SchemaContract,
   mysqlIndexPrefixRequirements?: MysqlIndexPrefixRequirementMap,
 ): string[] {
-  const compatibleBaseline = buildCompatibleRuntimeBaseline(currentContract, liveContract);
-  return splitSqlStatements(generateUpgradeSql(dialect, currentContract, compatibleBaseline, {
+  const previousContract = isGraphNativeRouteGraphReplacement(currentContract, liveContract)
+    ? liveContract
+    : buildCompatibleRuntimeBaseline(currentContract, liveContract);
+
+  return splitSqlStatements(generateUpgradeSql(dialect, currentContract, previousContract, {
     mysqlIndexPrefixRequirements,
   }));
 }

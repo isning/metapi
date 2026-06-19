@@ -47,9 +47,9 @@ export const openAiChatTransformer = {
   },
   buildProtocolRequest(
     request: CanonicalRequestEnvelope,
-    _ctx?: ProtocolBuildContext,
+    ctx?: ProtocolBuildContext,
   ): Record<string, unknown> {
-    return buildCanonicalRequestToOpenAiChatBody(request);
+    return buildCanonicalRequestToOpenAiChatBody(request, ctx);
   },
   transformRequest(body: unknown): ReturnType<typeof openAiChatInbound.parse> {
     return openAiChatInbound.parse(body);

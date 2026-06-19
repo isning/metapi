@@ -148,7 +148,6 @@ describe('Settings factory reset', () => {
       const lockedConfirmButton = root.root.find((node) => (
         node.type === 'button'
         && collectText(node).includes('确认重新初始化系统')
-        && node.props.className === 'btn btn-danger'
       ));
       expect(lockedConfirmButton.props.disabled).toBe(true);
       expect(collectText(lockedConfirmButton)).toContain('3s');
@@ -161,7 +160,6 @@ describe('Settings factory reset', () => {
       const confirmButton = root.root.find((node) => (
         node.type === 'button'
         && collectText(node).trim() === '确认重新初始化系统'
-        && node.props.className === 'btn btn-danger'
       ));
       expect(confirmButton.props.disabled).toBe(false);
 

@@ -7,6 +7,8 @@ import {
   extractSafePassthroughHeaders,
   extractResponsesPassthroughHeaders,
 } from '../proxy-core/formats/headerPassthrough.js';
+import type { RouteGraphPostBuildFilters } from './routeGraphRuntimeService.js';
+import { resolveUpstreamCompatibilityPolicy } from '../contracts/upstreamCompatibilityPolicy.js';
 
 describe('upstreamRequestBuilder', () => {
   it('normalizes single-message OpenAI requests to structured responses input', () => {
@@ -186,5 +188,85 @@ describe('upstreamRequestBuilder', () => {
 
     expect(request.headers['anthropic-beta']).toContain('header-beta');
     expect(request.headers['anthropic-beta']).toContain('beta-from-body');
+  });
+
+  it('applies route graph payload and header filters exactly once after request preparation', () => {
+    const routeGraphFilters: RouteGraphPostBuildFilters = {
+      payload: [
+        {
+          type: 'set_payload',
+          path: 'reasoning_effort',
+          value: 'high',
+          mode: 'override',
+        },
+        {
+          type: 'set_payload',
+          path: 'metadata.trace_id',
+          value: 'trace-123',
+          mode: 'override',
+        },
+      ],
+      headers: [
+        {
+          type: 'set_header',
+          name: 'x-route-graph',
+          value: 'enabled',
+          mode: 'override',
+        },
+      ],
+    };
+
+    const request = buildUpstreamEndpointRequest({
+      endpoint: 'chat',
+      modelName: 'upstream-gpt',
+      stream: false,
+      tokenValue: 'sk-test',
+      sitePlatform: 'openai',
+      siteUrl: 'https://example.com',
+      openaiBody: {
+        model: 'gpt-5.2',
+        messages: [{ role: 'user', content: 'hello' }],
+      },
+      downstreamFormat: 'openai',
+      downstreamHeaders: {},
+      passthroughHeaders: {},
+      routeGraphFilters,
+    });
+
+    expect(request.body.reasoning_effort).toBe('high');
+    expect(request.body.metadata).toEqual({ trace_id: 'trace-123' });
+    expect(request.headers['x-route-graph']).toBe('enabled');
+  });
+
+  it('applies non-native reasoning transport before Responses upstream conversion', () => {
+    const request = buildUpstreamEndpointRequest({
+      endpoint: 'responses',
+      modelName: 'upstream-gpt',
+      stream: false,
+      tokenValue: 'sk-test',
+      sitePlatform: 'openai',
+      siteUrl: 'https://example.com',
+      openaiBody: {
+        model: 'gpt-5',
+        messages: [{
+          role: 'assistant',
+          content: '',
+          reasoning_content: 'plan quietly',
+        }],
+      },
+      downstreamFormat: 'openai',
+      downstreamHeaders: {},
+      passthroughHeaders: {},
+      compatibilityPolicy: resolveUpstreamCompatibilityPolicy({
+        reasoningHistory: {
+          transport: {
+            mode: 'content_think_tag',
+          },
+        },
+      }),
+    });
+
+    expect(JSON.stringify(request.body.input)).toContain('<think>\\nplan quietly\\n</think>');
+    expect(JSON.stringify(request.body.input)).not.toContain('reasoning_content');
   });
 });

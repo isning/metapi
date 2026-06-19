@@ -1,10 +1,29 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
+import {
+  CheckCircle2,
+  Code2,
+  FileText,
+  Globe2,
+  KeyRound,
+  Loader2,
+  UserRound,
+} from 'lucide-react';
 import { api } from '../api.js';
 import { formatDateLocal, formatDateTimeMinuteLocal } from '../pages/helpers/checkinLogTime.js';
 import { buildAccountFocusPath, buildSiteFocusPath, buildTokenFocusPath } from '../pages/helpers/navigationFocus.js';
 import { useI18n } from '../i18n.js';
-import { useAnimatedVisibility } from './useAnimatedVisibility.js';
+import { Badge } from './ui/badge/index.js';
+import {
+  Command,
+  CommandDialog,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+  CommandShortcut,
+} from './ui/command/index.js';
 
 interface SiteResult {
   id: number;
@@ -67,7 +86,6 @@ interface SearchResult {
 
 export default function SearchModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { t } = useI18n();
-  const presence = useAnimatedVisibility(open, 180);
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<SearchResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -126,8 +144,6 @@ export default function SearchModal({ open, onClose }: { open: boolean; onClose:
     return () => document.removeEventListener('keydown', handler);
   }, [open, onClose]);
 
-  if (!presence.shouldRender) return null;
-
   const hasResults = results && (
     results.models.length
     || results.accounts.length
@@ -138,168 +154,144 @@ export default function SearchModal({ open, onClose }: { open: boolean; onClose:
   );
 
   return (
-    <div className={`modal-backdrop ${presence.isVisible ? '' : 'is-closing'}`.trim()} onClick={onClose}>
-      <div className={`modal-content ${presence.isVisible ? '' : 'is-closing'}`.trim()} style={{ maxWidth: 560, padding: 0 }} onClick={e => e.stopPropagation()}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px', borderBottom: '1px solid var(--color-border-light)' }}>
-          <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="var(--color-text-muted)">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-          </svg>
-          <input
-            ref={inputRef}
-            value={query}
-            onChange={e => handleInput(e.target.value)}
-            placeholder={t('搜索站点、账号、模型、日志...')}
-            style={{ flex: 1, border: 'none', outline: 'none', fontSize: 14, background: 'transparent', color: 'var(--color-text-primary)' }}
-          />
-          {loading && <span className="spinner spinner-sm" />}
-          <kbd style={{ fontSize: 11, padding: '2px 6px', background: 'var(--color-bg)', border: '1px solid var(--color-border)', borderRadius: 4, color: 'var(--color-text-muted)' }}>ESC</kbd>
-        </div>
-
-        <div style={{ maxHeight: 400, overflow: 'auto', padding: '8px 0' }}>
-          {query && !loading && !hasResults && (
-            <div style={{ padding: '24px 16px', textAlign: 'center', color: 'var(--color-text-muted)', fontSize: 13 }}>
-              {t('没有找到匹配结果')}
-            </div>
-          )}
+    <CommandDialog open={open} onOpenChange={(nextOpen) => { if (!nextOpen) onClose(); }}>
+      <Command shouldFilter={false}>
+        <CommandInput
+          ref={inputRef}
+          value={query}
+          onValueChange={handleInput}
+          placeholder={t('搜索站点、账号、模型、日志...')}
+        />
+        {loading ? (
+          <div className="flex items-center gap-2 border-b px-3 py-2 text-xs text-muted-foreground">
+            <Loader2 className="size-3.5 animate-spin" />
+            {t('搜索中...')}
+          </div>
+        ) : null}
+        <CommandList>
+          {query && !loading && !hasResults ? <CommandEmpty>{t('没有找到匹配结果')}</CommandEmpty> : null}
 
           {results?.models.length ? (
-            <div>
-              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-text-muted)', padding: '8px 16px 4px', textTransform: 'uppercase' }}>{t('模型广场')}</div>
+            <CommandGroup heading={t('模型广场')}>
               {results.models.map((m) => (
-                <button key={m.name} className="search-result-item" onClick={() => goTo(`/models?q=${encodeURIComponent(m.name)}`)}>
-                  <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L4 12l5.75-5M14.25 7L20 12l-5.75 5M14 4l-4 16" />
-                  </svg>
-                  <div>
-                    <div style={{ fontWeight: 500 }}>{m.name}</div>
-                    <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+                <CommandItem key={m.name} value={`model-${m.name}`} onSelect={() => goTo(`/models?q=${encodeURIComponent(m.name)}`)}>
+                  <Code2 className="size-4" />
+                  <div className="min-w-0">
+                    <div className="font-medium">{m.name}</div>
+                    <div className="text-xs text-muted-foreground">
                       {m.accountCount} {t('个账号')} · {m.tokenCount} {t('个令牌')} · {m.siteCount} {t('个站点')}
                     </div>
                   </div>
-                </button>
+                </CommandItem>
               ))}
-            </div>
+            </CommandGroup>
           ) : null}
 
           {results?.sites.length ? (
-            <div>
-              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-text-muted)', padding: '8px 16px 4px', textTransform: 'uppercase' }}>{t('站点')}</div>
+            <CommandGroup heading={t('站点')}>
               {results.sites.map((s) => (
-                <button key={s.id} className="search-result-item" onClick={() => goTo(buildSiteFocusPath(s.id))}>
-                  <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9" />
-                  </svg>
-                  <div>
-                    <div style={{ fontWeight: 500 }}>{s.name}</div>
-                    <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>{s.url}</div>
+                <CommandItem key={s.id} value={`site-${s.id}`} onSelect={() => goTo(buildSiteFocusPath(s.id))}>
+                  <Globe2 className="size-4" />
+                  <div className="min-w-0">
+                    <div className="font-medium">{s.name}</div>
+                    <div className="truncate text-xs text-muted-foreground">{s.url}</div>
                   </div>
-                </button>
+                </CommandItem>
               ))}
-            </div>
+            </CommandGroup>
           ) : null}
 
           {results?.accounts.length ? (
-            <div>
-              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-text-muted)', padding: '8px 16px 4px', textTransform: 'uppercase' }}>{t('账号')}</div>
+            <CommandGroup heading={t('账号')}>
               {results.accounts.map((a) => (
-                <button
+                <CommandItem
                   key={a.id}
-                  className="search-result-item"
-                  onClick={() => goTo(buildAccountFocusPath(a.id, {
+                  value={`account-${a.id}`}
+                  onSelect={() => goTo(buildAccountFocusPath(a.id, {
                     openRebind: a.status === 'expired',
                     segment: a.segment,
                   }))}
                 >
-                  <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                  </svg>
-                  <div>
-                    <div style={{ fontWeight: 500 }}>
+                  <UserRound className="size-4" />
+                  <div className="min-w-0">
+                    <div className="font-medium">
                       {a.username?.trim() || (a.segment === 'apikey' ? t('API Key 连接') : `ID:${a.id}`)}
                     </div>
-                    <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+                    <div className="text-xs text-muted-foreground">
                       {a.site?.name || t('未关联站点')}
                       {a.segment === 'apikey' ? ` · ${t('API Key 连接')}` : ''}
                       {' · '}
                       {t('余额')} ${(a.balance || 0).toFixed(2)}
                     </div>
                   </div>
-                </button>
+                </CommandItem>
               ))}
-            </div>
+            </CommandGroup>
           ) : null}
 
           {results?.accountTokens.length ? (
-            <div>
-              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-text-muted)', padding: '8px 16px 4px', textTransform: 'uppercase' }}>{t('账号令牌')}</div>
+            <CommandGroup heading={t('账号令牌')}>
               {results.accountTokens.map((token) => (
-                <button
+                <CommandItem
                   key={token.id}
-                  className="search-result-item"
-                  onClick={() => goTo(buildTokenFocusPath(token.id))}
+                  value={`token-${token.id}`}
+                  onSelect={() => goTo(buildTokenFocusPath(token.id))}
                 >
-                  <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
-                  </svg>
-                  <div>
-                    <div style={{ fontWeight: 500 }}>{token.name}</div>
-                    <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+                  <KeyRound className="size-4" />
+                  <div className="min-w-0">
+                    <div className="font-medium">{token.name}</div>
+                    <div className="text-xs text-muted-foreground">
                       {(token.account?.username?.trim() || (token.account?.segment === 'apikey' ? t('API Key 连接') : t('未命名')))}
                       {' · '}
                       {token.site?.name || t('未关联站点')}
                       {token.tokenGroup ? ` · ${token.tokenGroup}` : ''}
                     </div>
                   </div>
-                </button>
+                </CommandItem>
               ))}
-            </div>
+            </CommandGroup>
           ) : null}
 
           {results?.checkinLogs.length ? (
-            <div>
-              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-text-muted)', padding: '8px 16px 4px', textTransform: 'uppercase' }}>{t('签到记录')}</div>
+            <CommandGroup heading={t('签到记录')}>
               {results.checkinLogs.map((l) => (
-                <button key={l.id} className="search-result-item" onClick={() => goTo('/checkin')}>
-                  <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                  <div>
-                    <div style={{ fontWeight: 500 }}>{l.account?.username || `ID:${l.accountId}`}</div>
-                    <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+                <CommandItem key={l.id} value={`checkin-${l.id}`} onSelect={() => goTo('/checkin')}>
+                  <CheckCircle2 className="size-4" />
+                  <div className="min-w-0">
+                    <div className="font-medium">{l.account?.username || `ID:${l.accountId}`}</div>
+                    <div className="text-xs text-muted-foreground">
                       {l.message || '-'} · {formatDateLocal(l.createdAt)}
                     </div>
                   </div>
-                </button>
+                </CommandItem>
               ))}
-            </div>
+            </CommandGroup>
           ) : null}
 
           {results?.proxyLogs.length ? (
-            <div>
-              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-text-muted)', padding: '8px 16px 4px', textTransform: 'uppercase' }}>{t('使用日志')}</div>
+            <CommandGroup heading={t('使用日志')}>
               {results.proxyLogs.map((l) => (
-                <button key={l.id} className="search-result-item" onClick={() => goTo('/logs')}>
-                  <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2" />
-                  </svg>
-                  <div>
-                    <div style={{ fontWeight: 500 }}>{l.modelRequested || '-'}</div>
-                    <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+                <CommandItem key={l.id} value={`proxy-${l.id}`} onSelect={() => goTo('/logs')}>
+                  <FileText className="size-4" />
+                  <div className="min-w-0">
+                    <div className="font-medium">{l.modelRequested || '-'}</div>
+                    <div className="text-xs text-muted-foreground">
                       {l.status || '-'} · {l.latencyMs || 0}ms · {formatDateTimeMinuteLocal(l.createdAt)}
                     </div>
                   </div>
-                </button>
+                </CommandItem>
               ))}
-            </div>
+            </CommandGroup>
           ) : null}
+        </CommandList>
+        <div className="flex items-center gap-2 border-t px-3 py-2 text-xs text-muted-foreground">
+          <Badge variant="outline">↑↓</Badge>
+          {t('导航')}
+          <Badge variant="outline">Enter</Badge>
+          {t('打开')}
+          <CommandShortcut>Esc</CommandShortcut>
         </div>
-
-        <div style={{ padding: '8px 16px', borderTop: '1px solid var(--color-border-light)', fontSize: 11, color: 'var(--color-text-muted)', display: 'flex', gap: 12 }}>
-          <span><kbd style={{ padding: '1px 4px', background: 'var(--color-bg)', border: '1px solid var(--color-border)', borderRadius: 3 }}>↑↓</kbd> {t('导航')}</span>
-          <span><kbd style={{ padding: '1px 4px', background: 'var(--color-bg)', border: '1px solid var(--color-border)', borderRadius: 3 }}>Enter</kbd> {t('打开')}</span>
-          <span><kbd style={{ padding: '1px 4px', background: 'var(--color-bg)', border: '1px solid var(--color-border)', borderRadius: 3 }}>Esc</kbd> {t('关闭')}</span>
-        </div>
-      </div>
-    </div>
+      </Command>
+    </CommandDialog>
   );
 }

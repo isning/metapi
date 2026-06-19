@@ -1,5 +1,5 @@
 import React from 'react';
-import MobileDrawer from './MobileDrawer.js';
+import * as Sheet from './ui/sheet/index.js';
 
 type MobileFilterSheetProps = {
   open: boolean;
@@ -14,11 +14,27 @@ export default function MobileFilterSheet({
   title = '筛选',
   children,
 }: MobileFilterSheetProps) {
+  const closeNotifiedRef = React.useRef(false);
+  React.useEffect(() => {
+    if (open) closeNotifiedRef.current = false;
+  }, [open]);
+  const requestClose = React.useCallback(() => {
+    if (closeNotifiedRef.current) return;
+    closeNotifiedRef.current = true;
+    onClose();
+  }, [onClose]);
+
   return (
-    <MobileDrawer open={open} onClose={onClose} title={title} closeLabel="关闭筛选">
-      <div className="mobile-filter-panel">
+    <Sheet.Root open={open} onOpenChange={(nextOpen) => { if (!nextOpen) requestClose(); }}>
+      <Sheet.Content side="left" className="w-[min(88vw,360px)]" onClose={requestClose}>
+        <Sheet.Header>
+          <Sheet.Title>{title}</Sheet.Title>
+          <Sheet.Description className="sr-only">移动端筛选条件面板</Sheet.Description>
+        </Sheet.Header>
+        <div className="mt-3 grid gap-3">
         {children}
-      </div>
-    </MobileDrawer>
+        </div>
+      </Sheet.Content>
+    </Sheet.Root>
   );
 }

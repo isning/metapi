@@ -94,8 +94,6 @@ describe('Accounts refresh action', () => {
       const refreshButtons = root.root.findAll((node) => (
         node.type === 'button'
         && typeof node.props.onClick === 'function'
-        && typeof node.props.className === 'string'
-        && node.props.className.includes('btn-link-primary')
         && collectText(node).trim() === '刷新'
       ));
       expect(refreshButtons.length).toBeGreaterThan(0);

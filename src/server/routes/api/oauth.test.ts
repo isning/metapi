@@ -25,6 +25,7 @@ vi.mock('undici', () => ({
 
 type DbModule = typeof import('../../db/index.js');
 type RouteRefreshWorkflowModule = typeof import('../../services/routeRefreshWorkflow.js');
+type RouteGraphServiceModule = typeof import('../../services/routeGraphService.js');
 
 function buildJwt(payload: Record<string, unknown>) {
   const encode = (value: unknown) => Buffer.from(JSON.stringify(value))
@@ -64,6 +65,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
   let db: DbModule['db'];
   let schema: DbModule['schema'];
   let rebuildRoutesOnly: RouteRefreshWorkflowModule['rebuildRoutesOnly'];
+  let routeGraphService: RouteGraphServiceModule;
   let config: typeof import('../../config.js').config;
   let dataDir = '';
 
@@ -76,6 +78,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     const dbModule = await import('../../db/index.js');
     const routesModule = await import('./oauth.js');
     const routeRefreshWorkflow = await import('../../services/routeRefreshWorkflow.js');
+    routeGraphService = await import('../../services/routeGraphService.js');
     const configModule = await import('../../config.js');
     db = dbModule.db;
     schema = dbModule.schema;
@@ -3653,10 +3656,9 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     ]));
 
     const routeRows = await db.select().from(schema.tokenRoutes).all();
-    expect(routeRows).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        modelPattern: 'gpt-5.4',
-      }),
+    const routeProjections = await routeGraphService.loadRouteGraphLegacyProjections();
+    expect(routeRows.map((row) => routeProjections.get(row.id)?.modelPattern)).toEqual(expect.arrayContaining([
+      'gpt-5.4',
     ]));
     const routeChannels = await db.select().from(schema.routeChannels).all();
     expect(routeChannels).toHaveLength(1);
@@ -3733,7 +3735,8 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     ]));
 
     const routeRows = await db.select().from(schema.tokenRoutes).all();
-    expect(routeRows.map((row) => row.modelPattern).sort()).toEqual(['gpt-5.4', 'gpt-5.4-mini']);
+    const routeProjections = await routeGraphService.loadRouteGraphLegacyProjections();
+    expect(routeRows.map((row) => routeProjections.get(row.id)?.modelPattern).sort()).toEqual(['gpt-5.4', 'gpt-5.4-mini']);
     const routeChannels = await db.select().from(schema.routeChannels).all();
     expect(routeChannels).toHaveLength(2);
   });

@@ -9,6 +9,11 @@ import {
   readOpenAiCompatibleContinuation,
 } from './continuationBridge.js';
 import { normalizeCanonicalReasoningRequest } from './reasoning.js';
+import {
+  DEFAULT_RESOLVED_UPSTREAM_COMPATIBILITY_POLICY,
+  type ResolvedUpstreamCompatibilityPolicy,
+} from '../../contracts/upstreamCompatibilityPolicy.js';
+import { applyOpenAiChatReasoningHistoryTransport } from './openAiChatReasoningHistoryTransport.js';
 import type { CanonicalTool, CanonicalToolChoice } from './tools.js';
 import type {
   CanonicalContentPart,
@@ -32,8 +37,16 @@ type CanonicalRequestFromOpenAiBodyInput = {
   continuation?: CanonicalContinuation;
 };
 
+type CanonicalRequestToOpenAiChatBodyOptions = {
+  compatibilityPolicy?: ResolvedUpstreamCompatibilityPolicy;
+};
+
 function asTrimmedString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function asString(value: unknown): string {
+  return typeof value === 'string' ? value : '';
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -62,8 +75,7 @@ function safeJsonStringify(value: unknown): string {
 
 function joinNonEmpty(parts: string[]): string {
   return parts
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0)
+    .filter((part) => part.trim().length > 0)
     .join('\n\n');
 }
 
@@ -140,8 +152,8 @@ function appendAssistantReasoningPart(
   rawMessage: Record<string, unknown>,
 ): void {
   const directReasoning = joinNonEmpty([
-    asTrimmedString(rawMessage.reasoning_content),
-    asTrimmedString(rawMessage.reasoning),
+    asString(rawMessage.reasoning_content),
+    asString(rawMessage.reasoning),
   ]);
   if (!directReasoning) return;
 
@@ -476,6 +488,7 @@ function canonicalToolChoiceToOpenAi(toolChoice: CanonicalToolChoice | undefined
 
 export function canonicalRequestToOpenAiChatBody(
   request: CanonicalRequestEnvelope,
+  options: CanonicalRequestToOpenAiChatBodyOptions = {},
 ): Record<string, unknown> {
   const messages: Array<Record<string, unknown>> = [];
 
@@ -572,5 +585,8 @@ export function canonicalRequestToOpenAiChatBody(
     }
   }
 
-  return body;
+  return applyOpenAiChatReasoningHistoryTransport(
+    body,
+    options.compatibilityPolicy ?? DEFAULT_RESOLVED_UPSTREAM_COMPATIBILITY_POLICY,
+  );
 }

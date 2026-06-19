@@ -58,10 +58,22 @@ import {
 } from './helpers/conversationFileCapabilities.js';
 import ConversationComposer from './model-tester/ConversationComposer.js';
 import DebugPanel from './model-tester/DebugPanel.js';
+import ModelRouteFlow, { type ModelRouteFlowData } from '../components/ModelRouteFlow.js';
 import ModernSelect from '../components/ModernSelect.js';
 import { useAnimatedVisibility } from '../components/useAnimatedVisibility.js';
 import { useIsMobile } from '../components/useIsMobile.js';
 import { tr } from '../i18n.js';
+import { Button } from '../components/ui/button/index.js';
+import { LoaderCircle } from 'lucide-react';
+import { Skeleton } from '../components/ui/skeleton/index.js';
+import { Alert, AlertDescription } from '../components/ui/alert/index.js';
+import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card/index.js';
+import { ScrollArea } from '../components/ui/scroll-area/index.js';
+import EmptyStateBlock from '../components/EmptyStateBlock.js';
+import { Textarea } from '../components/ui/textarea/index.js';
+import { Input } from '../components/ui/input/index.js';
+import { Checkbox } from '../components/ui/checkbox/index.js';
+import { Slider } from '../components/ui/slider/index.js';
 
 type ChatJobResponse = {
   jobId: string;
@@ -612,18 +624,6 @@ const PROTOCOL_OPTIONS: Array<{ value: PlaygroundProtocol; label: string }> = [
   { value: 'gemini', label: 'Gemini Native (/gemini/v1beta/models/*)' },
 ];
 
-const inputBaseStyle: React.CSSProperties = {
-  width: '100%',
-  padding: '10px 14px',
-  border: '1px solid var(--color-border)',
-  borderRadius: 'var(--radius-sm)',
-  fontSize: 13,
-  outline: 'none',
-  background: 'var(--color-bg)',
-  color: 'var(--color-text-primary)',
-  transition: 'border-color 0.2s',
-};
-
 function ParameterRow(props: {
   title: string;
   valueText?: string;
@@ -641,14 +641,14 @@ function ParameterRow(props: {
     children,
   } = props;
   return (
-    <div style={{ marginBottom: 12, opacity: enabled ? 1 : 0.55 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-        <div style={{ fontSize: 13, fontWeight: 600 }}>
+    <div className={`mb-3 ${enabled ? '' : 'opacity-60'}`.trim()}>
+      <div className="mb-1.5 flex items-center justify-between gap-3">
+        <div className="text-sm font-medium">
           {title}
-          {valueText && <span style={{ marginLeft: 6, color: 'var(--color-primary)' }}>{valueText}</span>}
+          {valueText && <span className="ml-1.5 text-primary">{valueText}</span>}
         </div>
-        <label style={{ fontSize: 12 }}>
-          <input type="checkbox" checked={enabled} onChange={onToggle} disabled={disabled} /> 启用
+        <label className="inline-flex items-center gap-2 text-xs text-muted-foreground">
+          <Checkbox checked={enabled} onCheckedChange={() => onToggle()} disabled={disabled} /> 启用
         </label>
       </div>
       {children}
@@ -670,6 +670,9 @@ export default function ModelTester() {
   const [loadingForcedChannels, setLoadingForcedChannels] = useState(false);
   const [forcedChannelHint, setForcedChannelHint] = useState('');
   const [forcedChannelHydrationReady, setForcedChannelHydrationReady] = useState(false);
+  const [routeFlow, setRouteFlow] = useState<ModelRouteFlowData | null>(null);
+  const [routeFlowLoading, setRouteFlowLoading] = useState(false);
+  const [routeFlowError, setRouteFlowError] = useState('');
 
   const [sending, setSending] = useState(false);
   const [loadingModels, setLoadingModels] = useState(true);
@@ -902,6 +905,36 @@ export default function ModelTester() {
       cancelled = true;
     };
   }, [customRequestMode, forcedChannelHydrationReady, inputs.mode, inputs.model]);
+
+  useEffect(() => {
+    if (!forcedChannelHydrationReady || !inputs.model || customRequestMode) {
+      setRouteFlow(null);
+      setRouteFlowError('');
+      setRouteFlowLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setRouteFlowLoading(true);
+    setRouteFlowError('');
+    void api.getModelRouteFlow(inputs.model)
+      .then((result) => {
+        if (cancelled) return;
+        setRouteFlow((result as { flow?: ModelRouteFlowData }).flow || null);
+      })
+      .catch((loadError) => {
+        if (cancelled) return;
+        setRouteFlow(null);
+        setRouteFlowError(extractErrorMessage(loadError) || '加载路由流程失败。');
+      })
+      .finally(() => {
+        if (!cancelled) setRouteFlowLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [customRequestMode, forcedChannelHydrationReady, inputs.model]);
 
   useEffect(() => {
     if (!inputs.model) return;
@@ -2295,73 +2328,80 @@ export default function ModelTester() {
   if (loadingModels) {
     return (
       <div className="animate-fade-in">
-        <div className="skeleton" style={{ width: 200, height: 28, marginBottom: 20 }} />
-        <div className="skeleton" style={{ height: 120, marginBottom: 12, borderRadius: 'var(--radius-md)' }} />
-        <div className="skeleton" style={{ height: 520, borderRadius: 'var(--radius-md)' }} />
+        <Skeleton className="mb-2 h-7 w-[200px]" />
+        <Skeleton className="mb-3 h-28 w-full" />
+        <Skeleton className="h-[520px] w-full" />
       </div>
     );
   }
 
   return (
     <div className="animate-fade-in">
-      <div className="page-header">
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h2 className="page-title">{tr('模型测试')}</h2>
-          <p style={{ fontSize: 13, color: 'var(--color-text-muted)', margin: '4px 0 0' }}>
+          <h2 className="text-xl font-semibold">{tr('模型测试')}</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
             支持流式输出、任务模式、自定义请求体和调试面板。
           </p>
         </div>
-        <div className="page-actions">
-          <button
+        <div className="flex flex-wrap items-center gap-2">
+          <Button type="button" variant="outline"
             onClick={() => setShowDebugPanel((prev) => !prev)}
-            className="btn btn-ghost"
-            style={{ border: '1px solid var(--color-border)', padding: '8px 14px' }}
+           
+           
           >
             {showDebugPanel ? '隐藏调试' : '显示调试'}
-          </button>
-          <button
+          </Button>
+          <Button type="button" variant="outline"
             onClick={() => { void retryPending(); }}
-            className="btn btn-ghost"
-            style={{ border: '1px solid var(--color-border)', padding: '8px 14px' }}
+           
+           
             disabled={sending || !!pendingJobId || !pendingPayload}
           >
             重试
-          </button>
-          <button
+          </Button>
+          <Button type="button" variant="outline"
             onClick={() => { void stopGenerating(); }}
-            className="btn btn-ghost"
-            style={{ border: '1px solid var(--color-border)', padding: '8px 14px' }}
+           
+           
             disabled={!pendingJobId && !streamAbortRef.current}
           >
             停止
-          </button>
-          <button
+          </Button>
+          <Button type="button" variant="outline"
             onClick={clearChat}
-            className="btn btn-ghost"
-            style={{ border: '1px solid var(--color-border)', padding: '8px 14px' }}
+           
+           
             disabled={messages.length === 0 && !pendingPayload && !pendingJobId}
           >
             清除
-          </button>
+          </Button>
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, minmax(0, 1fr))' : 'repeat(4, 1fr)', gap: 12, marginBottom: 16 }} className="animate-slide-up stagger-1">
-        <div className="stat-summary-card stat-summary-purple">
-          <div className="stat-summary-card-label">模型数量</div>
-          <div className="stat-summary-card-value">{models.length}</div>
-        </div>
-        <div className="stat-summary-card stat-summary-blue">
-          <div className="stat-summary-card-label">当前模型</div>
-          <div className="stat-summary-card-value" style={{ fontSize: 14, wordBreak: 'break-all' }}>{inputs.model || '未选择'}</div>
-        </div>
-        <div className="stat-summary-card stat-summary-green">
-          <div className="stat-summary-card-label">对话轮数</div>
-          <div className="stat-summary-card-value">{turnCount}</div>
-        </div>
-        <div className="stat-summary-card stat-summary-orange">
-          <div className="stat-summary-card-label">模式</div>
-          <div className="stat-summary-card-value" style={{ fontSize: 14 }}>
+      <div className={`mb-4 grid gap-3 animate-slide-up stagger-1 ${isMobile ? 'grid-cols-2' : 'grid-cols-4'}`}>
+        <Card>
+          <CardContent className="pt-3">
+            <div className="text-xs text-muted-foreground">模型数量</div>
+            <div className="mt-1 text-2xl font-semibold">{models.length}</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-3">
+            <div className="text-xs text-muted-foreground">当前模型</div>
+            <div className="mt-1 break-all text-sm font-semibold">{inputs.model || '未选择'}</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-3">
+            <div className="text-xs text-muted-foreground">对话轮数</div>
+            <div className="mt-1 text-2xl font-semibold">{turnCount}</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-3">
+            <div className="text-xs text-muted-foreground">模式</div>
+            <div className="mt-1 text-sm font-semibold">
             {inputs.mode === 'conversation'
               ? (customRequestMode ? '自定义请求' : (inputs.stream ? '流式' : '任务模式'))
               : inputs.mode}
@@ -2373,8 +2413,9 @@ export default function ModelTester() {
                 : inputs.protocol === 'gemini'
                   ? 'Gemini'
                   : 'OpenAI'}
-          </div>
-        </div>
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
       <div
@@ -2386,11 +2427,11 @@ export default function ModelTester() {
           alignItems: 'stretch',
         }}
       >
-        <div className="card" style={{ padding: 16, minHeight: isMobile ? 'auto' : 680, maxHeight: isMobile ? 'none' : 740, overflowY: isMobile ? 'visible' : 'auto', order: isMobile ? 2 : 0 }}>
-          <h3 style={{ margin: '0 0 12px', fontSize: 15 }}>设置</h3>
+        <Card className={`p-4 ${isMobile ? 'order-2' : 'max-h-[740px] min-h-[680px] overflow-y-auto'}`}>
+          <h3 className="mb-3 text-sm font-semibold">设置</h3>
 
-          <div style={{ marginBottom: 14 }}>
-            <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6, fontWeight: 600 }}>
+          <div className="mb-3.5">
+            <div className="mb-1.5 text-xs font-medium text-muted-foreground">
               测试模式
             </div>
             <ModernSelect
@@ -2404,31 +2445,27 @@ export default function ModelTester() {
             />
           </div>
 
-          <div style={{ marginBottom: 14 }}>
-            <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6, fontWeight: 600 }}>模型</div>
-            <div style={{ display: 'flex', gap: 8, marginBottom: 6, flexDirection: isMobile ? 'column' : 'row' }}>
-              <input
+          <div className="mb-3.5">
+            <div className="mb-1.5 text-xs font-medium text-muted-foreground">模型</div>
+            <div className={`mb-1.5 flex gap-2 ${isMobile ? 'flex-col' : 'flex-row'}`}>
+              <Input
                 value={modelSearch}
                 onChange={(event) => setModelSearch(event.target.value)}
                 placeholder="搜索模型（支持名称片段）"
-                style={{
-                  ...inputBaseStyle,
-                  flex: 1,
-                  marginBottom: 0,
-                }}
+                className="flex-1"
                 disabled={models.length === 0}
               />
-              <button
+              <Button variant="outline"
                 type="button"
-                className="btn btn-ghost"
-                style={{ border: '1px solid var(--color-border)', whiteSpace: 'nowrap' }}
+               
+               
                 onClick={() => setModelSearch('')}
                 disabled={!modelSearch}
               >
                 清空
-              </button>
+              </Button>
             </div>
-            <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginBottom: 6 }}>
+            <div className="mb-1.5 text-xs text-muted-foreground">
               {modelCountText}
             </div>
             <ModernSelect
@@ -2450,19 +2487,19 @@ export default function ModelTester() {
               menuMaxHeight={300}
             />
             {!currentModelVisible && !!inputs.model && (
-              <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 4 }}>
+              <div className="mt-1 text-xs text-muted-foreground">
                 当前模型已被筛选：{inputs.model}
               </div>
             )}
             {customRequestMode && (
-              <div style={{ fontSize: 11, color: 'var(--color-warning)', marginTop: 4 }}>
+              <div className="mt-1 text-xs text-muted-foreground">
                 自定义请求模式下模型选择将被忽略。
               </div>
             )}
           </div>
 
-          <div style={{ marginBottom: 14 }}>
-            <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6, fontWeight: 600 }}>
+          <div className="mb-3.5">
+            <div className="mb-1.5 text-xs font-medium text-muted-foreground">
               协议 / 输出格式
             </div>
             <ModernSelect
@@ -2474,13 +2511,13 @@ export default function ModelTester() {
               options={PROTOCOL_OPTIONS}
               placeholder="请选择协议"
             />
-            <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 4 }}>
+            <div className="mt-1 text-xs text-muted-foreground">
               对话模式下可模拟 OpenAI / Responses / Claude / Gemini Native。
             </div>
           </div>
 
-          <div style={{ marginBottom: 14 }}>
-            <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6, fontWeight: 600 }}>
+          <div className="mb-3.5">
+            <div className="mb-1.5 text-xs font-medium text-muted-foreground">
               固定通道
             </div>
             <ModernSelect
@@ -2499,7 +2536,7 @@ export default function ModelTester() {
               emptyLabel="当前模型暂无可固定通道"
               menuMaxHeight={300}
             />
-            <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 4 }}>
+            <div className="mt-1 text-xs text-muted-foreground">
               {forcedChannelHint
                 || (typeof forcedChannelId === 'number'
                   ? `已固定到通道 #${forcedChannelId}，失败不会自动切换。`
@@ -2507,33 +2544,39 @@ export default function ModelTester() {
             </div>
           </div>
 
+          <div className="mb-3.5">
+            <div className="mb-1.5 text-xs font-medium text-muted-foreground">
+              路由流程
+            </div>
+            <ModelRouteFlow
+              flow={routeFlow}
+              loading={routeFlowLoading}
+              error={routeFlowError}
+            />
+          </div>
+
           {inputs.mode === 'conversation' && (
-            <div style={{ marginBottom: 14 }}>
-              <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6, fontWeight: 600 }}>
+            <div className="mb-3.5">
+              <div className="mb-1.5 text-xs font-medium text-muted-foreground">
                 System Prompt
               </div>
-              <textarea
+              <Textarea
                 value={inputs.systemPrompt}
                 onChange={(event) => updateInput('systemPrompt', event.target.value)}
                 rows={4}
                 placeholder="可选的系统提示词，会在发送时独立注入请求。"
-                style={{
-                  ...inputBaseStyle,
-                  resize: 'vertical',
-                  fontFamily: 'inherit',
-                  lineHeight: 1.5,
-                }}
+                className="resize-y leading-relaxed"
               />
             </div>
           )}
 
-          <div style={{ marginBottom: 14, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <div style={{ fontSize: 13, fontWeight: 600 }}>流式输出</div>
-            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--color-text-secondary)' }}>
-              <input
-                type="checkbox"
+          <div className="mb-3.5 flex items-center justify-between gap-3">
+            <div className="text-sm font-medium">流式输出</div>
+            <label className="inline-flex items-center gap-2 text-xs text-muted-foreground">
+              <Checkbox
+               
                 checked={inputs.stream}
-                onChange={(event) => updateInput('stream', event.target.checked)}
+                onCheckedChange={(checked) => updateInput('stream', checked === true)}
                 disabled={customRequestMode || inputs.mode !== 'conversation'}
               />
               启用
@@ -2541,56 +2584,51 @@ export default function ModelTester() {
           </div>
 
           {inputs.mode !== 'conversation' && (
-            <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginBottom: 14 }}>
+            <div className="mb-3.5 text-xs text-muted-foreground">
               当前模式默认走同步请求；Search / Embeddings / Images / Videos 会通过通用 proxy tester 直达对应接口。
             </div>
           )}
 
-          <div style={{ marginBottom: 14, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <div style={{ fontSize: 13, fontWeight: 600 }}>自定义请求体</div>
-            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--color-text-secondary)' }}>
-              <input
-                type="checkbox"
+          <div className="mb-3.5 flex items-center justify-between gap-3">
+            <div className="text-sm font-medium">自定义请求体</div>
+            <label className="inline-flex items-center gap-2 text-xs text-muted-foreground">
+              <Checkbox
+               
                 checked={customRequestMode}
-                onChange={(event) => setCustomRequestMode(event.target.checked)}
+                onCheckedChange={(checked) => setCustomRequestMode(checked === true)}
               />
               启用
             </label>
           </div>
 
-          <div className={`anim-collapse ${customRequestMode ? 'is-open' : ''}`.trim()} style={{ marginBottom: 14 }}>
+          <div className={`anim-collapse mb-3.5 ${customRequestMode ? 'is-open' : ''}`.trim()}>
             <div className="anim-collapse-inner">
-              <textarea
+              <Textarea
                 value={customRequestBody}
                 onChange={(event) => setCustomRequestBody(event.target.value)}
                 rows={11}
                 placeholder='{"model":"gpt-4o-mini","targetFormat":"claude","messages":[{"role":"user","content":"hello"}],"stream":true}'
-                style={{
-                  ...inputBaseStyle,
-                  resize: 'vertical',
-                  fontFamily: 'var(--font-mono)',
-                  lineHeight: 1.5,
-                }}
+                className="resize-y font-mono leading-relaxed"
               />
-              <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <button className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={formatCustomBody}>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <Button type="button" variant="outline" onClick={formatCustomBody}>
                   格式化 JSON
-                </button>
+                </Button>
                 {inputs.mode === 'conversation' && (
                   <>
-                    <button className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={syncMessageToBody}>
+                    <Button type="button" variant="outline" onClick={syncMessageToBody}>
                       消息 -&gt; 请求体
-                    </button>
-                    <button className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={syncBodyToMessage}>
+                    </Button>
+                    <Button type="button" variant="outline" onClick={syncBodyToMessage}>
                       请求体 -&gt; 消息
-                    </button>
+                    </Button>
                   </>
                 )}
               </div>
             </div>
           </div>
 
-            <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 8, fontWeight: 600 }}>
+            <div className="mb-2 text-xs font-medium text-muted-foreground">
               采样参数
             </div>
 
@@ -2601,14 +2639,12 @@ export default function ModelTester() {
             onToggle={() => toggleParameter('temperature')}
             disabled={customRequestMode}
           >
-            <input
-              type="range"
+            <Slider
               min={0}
               max={2}
               step={0.1}
-              value={inputs.temperature}
-              onChange={(event) => updateInput('temperature', toNumber(event.target.value, inputs.temperature))}
-              style={{ width: '100%', accentColor: 'var(--color-primary)' }}
+              value={[inputs.temperature]}
+              onValueChange={([value]) => updateInput('temperature', toNumber(String(value), inputs.temperature))}
               disabled={!parameterEnabled.temperature || customRequestMode}
             />
           </ParameterRow>
@@ -2620,14 +2656,12 @@ export default function ModelTester() {
             onToggle={() => toggleParameter('top_p')}
             disabled={customRequestMode}
           >
-            <input
-              type="range"
+            <Slider
               min={0}
               max={1}
               step={0.05}
-              value={inputs.top_p}
-              onChange={(event) => updateInput('top_p', toNumber(event.target.value, inputs.top_p))}
-              style={{ width: '100%', accentColor: 'var(--color-primary)' }}
+              value={[inputs.top_p]}
+              onValueChange={([value]) => updateInput('top_p', toNumber(String(value), inputs.top_p))}
               disabled={!parameterEnabled.top_p || customRequestMode}
             />
           </ParameterRow>
@@ -2639,14 +2673,12 @@ export default function ModelTester() {
             onToggle={() => toggleParameter('frequency_penalty')}
             disabled={customRequestMode}
           >
-            <input
-              type="range"
+            <Slider
               min={-2}
               max={2}
               step={0.1}
-              value={inputs.frequency_penalty}
-              onChange={(event) => updateInput('frequency_penalty', toNumber(event.target.value, inputs.frequency_penalty))}
-              style={{ width: '100%', accentColor: 'var(--color-primary)' }}
+              value={[inputs.frequency_penalty]}
+              onValueChange={([value]) => updateInput('frequency_penalty', toNumber(String(value), inputs.frequency_penalty))}
               disabled={!parameterEnabled.frequency_penalty || customRequestMode}
             />
           </ParameterRow>
@@ -2658,14 +2690,12 @@ export default function ModelTester() {
             onToggle={() => toggleParameter('presence_penalty')}
             disabled={customRequestMode}
           >
-            <input
-              type="range"
+            <Slider
               min={-2}
               max={2}
               step={0.1}
-              value={inputs.presence_penalty}
-              onChange={(event) => updateInput('presence_penalty', toNumber(event.target.value, inputs.presence_penalty))}
-              style={{ width: '100%', accentColor: 'var(--color-primary)' }}
+              value={[inputs.presence_penalty]}
+              onValueChange={([value]) => updateInput('presence_penalty', toNumber(String(value), inputs.presence_penalty))}
               disabled={!parameterEnabled.presence_penalty || customRequestMode}
             />
           </ParameterRow>
@@ -2676,13 +2706,12 @@ export default function ModelTester() {
             onToggle={() => toggleParameter('max_tokens')}
             disabled={customRequestMode}
           >
-            <input
+            <Input
               type="number"
               value={inputs.max_tokens}
               min={1}
               step={1}
               onChange={(event) => updateInput('max_tokens', toNumber(event.target.value, inputs.max_tokens))}
-              style={inputBaseStyle}
               disabled={!parameterEnabled.max_tokens || customRequestMode}
             />
           </ParameterRow>
@@ -2694,7 +2723,7 @@ export default function ModelTester() {
             onToggle={() => toggleParameter('seed')}
             disabled={customRequestMode}
           >
-            <input
+            <Input
               type="number"
               value={inputs.seed ?? ''}
               min={0}
@@ -2704,93 +2733,60 @@ export default function ModelTester() {
                 const raw = event.target.value.trim();
                 updateInput('seed', raw.length === 0 ? null : toNumber(raw, 0));
               }}
-              style={inputBaseStyle}
               disabled={!parameterEnabled.seed || customRequestMode}
             />
           </ParameterRow>
-        </div>
+        </Card>
 
-        <div className="card" style={{ padding: 0, overflow: 'hidden', minHeight: isMobile ? 'auto' : 680, maxHeight: isMobile ? 'none' : 740, display: 'flex', flexDirection: 'column', order: isMobile ? 1 : 0 }}>
-          <div style={{
-            padding: '14px 16px',
-            borderBottom: '1px solid var(--color-border-light)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            background: 'var(--color-bg-card)',
-          }}>
-            <div style={{ fontSize: 14, fontWeight: 700 }}>对话</div>
-            <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+        <Card className={`flex overflow-hidden ${isMobile ? 'order-1' : 'max-h-[740px] min-h-[680px]'} flex-col`}>
+          <CardHeader className="flex-row items-center justify-between gap-3 border-b space-y-0">
+            <CardTitle>对话</CardTitle>
+            <div className="text-xs text-muted-foreground">
               {sending ? '生成中...' : '就绪'}
             </div>
-          </div>
+          </CardHeader>
 
-          <div style={{ flex: 1, minHeight: 280, overflowY: 'auto', padding: 18, background: 'var(--color-bg)' }}>
+          <ScrollArea className="min-h-72 flex-1 p-4">
             {inputs.mode !== 'conversation' ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                <div style={{
-                  padding: 14,
-                  border: '1px solid var(--color-border-light)',
-                  borderRadius: 'var(--radius-md)',
-                  background: 'var(--color-bg-card)',
-                }}>
-                  <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>
+              <div className="grid gap-3">
+                <Card>
+                  <CardContent className="pt-3">
+                  <div className="mb-1.5 text-sm font-semibold">
                     {inputs.mode === 'embeddings' ? 'Embeddings 结果'
                       : inputs.mode === 'search' ? 'Search 结果'
                         : inputs.mode.startsWith('images') ? '图片结果'
                           : '视频任务结果'}
                   </div>
-                  <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+                  <div className="text-xs text-muted-foreground">
                     新模式走通用 proxy tester；结果同时会写入右侧调试面板。
                   </div>
-                </div>
+                  </CardContent>
+                </Card>
 
                 {Array.isArray((nonConversationResult as any)?.data) && (nonConversationResult as any).data.some((item: any) => item?.url || item?.b64_json) && (
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
+                  <div className="grid grid-cols-[repeat(auto-fit,minmax(220px,1fr))] gap-3">
                     {(nonConversationResult as any).data.map((item: any, index: number) => {
                       const imageSrc = typeof item?.url === 'string'
                         ? item.url
                         : (typeof item?.b64_json === 'string' ? `data:image/png;base64,${item.b64_json}` : '');
                       if (!imageSrc) return null;
                       return (
-                        <div key={`image-${index}`} style={{
-                          border: '1px solid var(--color-border-light)',
-                          borderRadius: 'var(--radius-md)',
-                          overflow: 'hidden',
-                          background: 'var(--color-bg-card)',
-                        }}>
-                          <img src={imageSrc} alt={`generated-${index}`} style={{ width: '100%', display: 'block' }} />
+                        <div key={`image-${index}`} className="overflow-hidden rounded-md border bg-card">
+                          <img src={imageSrc} alt={`generated-${index}`} className="block w-full" />
                         </div>
                       );
                     })}
                   </div>
                 )}
 
-                <pre style={{
-                  margin: 0,
-                  padding: 14,
-                  borderRadius: 'var(--radius-md)',
-                  border: '1px solid var(--color-border-light)',
-                  background: 'var(--color-bg-card)',
-                  fontSize: 12,
-                  lineHeight: 1.6,
-                  whiteSpace: 'pre-wrap',
-                  wordBreak: 'break-word',
-                  fontFamily: 'var(--font-mono)',
-                }}>
+                <pre className="m-0 whitespace-pre-wrap break-words rounded-md border bg-card p-3 font-mono text-xs leading-relaxed">
                   {nonConversationResult ? formatJson(nonConversationResult) : '// 暂无结果'}
                 </pre>
               </div>
             ) : messages.length === 0 ? (
-              <div className="empty-state" style={{ padding: '40px 0' }}>
-                <svg className="empty-state-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M8 10h.01M12 14h.01M16 10h.01M9 16h6M12 3C7.03 3 3 6.582 3 11c0 2.2 1.003 4.193 2.63 5.64V21l3.376-1.847A10.76 10.76 0 0012 19c4.97 0 9-3.582 9-8s-4.03-8-9-8z" />
-                </svg>
-                <div className="empty-state-title">开始对话测试</div>
-                <div className="empty-state-desc">支持流式模式、自定义请求体模式和可恢复的任务。</div>
-              </div>
+              <EmptyStateBlock title="开始对话测试" description="支持流式模式、自定义请求体模式和可恢复的任务。" />
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div className="grid gap-3">
                 {messages.map((message) => {
                   const isUser = message.role === 'user';
                   const isSystem = message.role === 'system';
@@ -2805,72 +2801,27 @@ export default function ModelTester() {
                   return (
                     <div
                       key={message.id}
-                      className="animate-fade-in"
-                      style={{
-                        display: 'flex',
-                        gap: 10,
-                        flexDirection: isUser ? 'row-reverse' : 'row',
-                      }}
+                      className={`flex gap-2.5 animate-fade-in ${isUser ? 'flex-row-reverse' : ''}`.trim()}
                     >
-                      <div style={{
-                        width: 30,
-                        height: 30,
-                        borderRadius: 8,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        fontSize: 12,
-                        fontWeight: 700,
-                        flexShrink: 0,
-                        background: isUser
-                          ? 'linear-gradient(135deg, var(--color-primary), color-mix(in srgb, var(--color-primary) 58%, white))'
-                          : (isSystem
-                            ? 'linear-gradient(135deg, color-mix(in srgb, var(--color-text-secondary) 88%, black), color-mix(in srgb, var(--color-text-muted) 70%, white))'
-                            : (isError
-                              ? 'linear-gradient(135deg, var(--color-danger), color-mix(in srgb, var(--color-danger) 68%, white))'
-                              : 'linear-gradient(135deg, var(--color-success), color-mix(in srgb, var(--color-success) 62%, white))')),
-                        color: 'white',
-                      }}>
+                      <div className={`flex size-8 shrink-0 items-center justify-center rounded-md text-xs font-semibold ${isUser ? 'bg-primary text-primary-foreground' : isError ? 'bg-destructive text-destructive-foreground' : 'bg-muted text-muted-foreground'}`}>
                         {isUser ? 'U' : (isSystem ? 'SYS' : 'AI')}
                       </div>
 
-                      <div style={{ maxWidth: isMobile ? '100%' : '78%', display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0, flex: isMobile ? 1 : 'initial' }}>
+                      <div className={`flex min-w-0 flex-col gap-1.5 ${isMobile ? 'flex-1 max-w-full' : 'max-w-[78%]'}`}>
                         {showReasoning && (
-                          <div style={{
-                            border: '1px solid color-mix(in srgb, var(--color-primary) 28%, transparent)',
-                            background: 'color-mix(in srgb, var(--color-primary) 9%, var(--color-bg-card))',
-                            borderRadius: '10px',
-                            overflow: 'hidden',
-                          }}>
-                            <button
+                          <div className="overflow-hidden rounded-md border bg-muted/40">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              className="w-full justify-between"
                               onClick={() => toggleReasoning(message.id)}
-                              style={{
-                                width: '100%',
-                                display: 'flex',
-                                justifyContent: 'space-between',
-                                alignItems: 'center',
-                                border: 'none',
-                                background: 'transparent',
-                                cursor: 'pointer',
-                                padding: '8px 10px',
-                                fontSize: 12,
-                                fontWeight: 600,
-                                color: 'var(--color-primary)',
-                              }}
                             >
                               <span>{isLoading ? '思考中...' : '推理过程'}</span>
                               <span>{message.isReasoningExpanded ? '▼' : '▶'}</span>
-                            </button>
+                            </Button>
                             <div className={`anim-collapse ${message.isReasoningExpanded ? 'is-open' : ''}`.trim()}>
                               <div className="anim-collapse-inner">
-                                <div style={{
-                                  padding: '8px 10px',
-                                  borderTop: '1px solid color-mix(in srgb, var(--color-primary) 20%, transparent)',
-                                  fontSize: 12,
-                                  lineHeight: 1.7,
-                                  whiteSpace: 'pre-wrap',
-                                  color: 'var(--color-text-secondary)',
-                                }}>
+                                <div className="whitespace-pre-wrap border-t px-2.5 py-2 text-xs leading-relaxed text-muted-foreground">
                                   {message.reasoningContent}
                                 </div>
                               </div>
@@ -2878,66 +2829,43 @@ export default function ModelTester() {
                           </div>
                         )}
 
-                        <div style={{
-                          padding: '10px 12px',
-                          borderRadius: isUser ? '12px 12px 3px 12px' : '12px 12px 12px 3px',
-                          background: isUser ? 'var(--color-primary)' : (isError ? 'var(--color-danger-soft)' : 'var(--color-bg-card)'),
-                          color: isUser ? 'white' : 'var(--color-text-primary)',
-                          border: isUser ? 'none' : (isError ? '1px solid color-mix(in srgb, var(--color-danger) 32%, transparent)' : '1px solid var(--color-border-light)'),
-                          fontSize: 13,
-                          lineHeight: 1.65,
-                          whiteSpace: 'pre-wrap',
-                          wordBreak: 'break-word',
-                          boxShadow: 'var(--shadow-sm)',
-                          minHeight: 24,
-                        }}>
+                        <div className={`min-h-6 whitespace-pre-wrap break-words rounded-md px-3 py-2 text-sm leading-relaxed ${isUser ? 'bg-primary text-primary-foreground' : isError ? 'border border-destructive/50 text-destructive' : 'border bg-card text-card-foreground shadow-sm'}`}>
                           {isEditing ? (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                              <textarea
+                            <div className="grid gap-2">
+                              <Textarea
                                 value={editValue}
                                 onChange={(event) => setEditValue(event.target.value)}
                                 rows={3}
-                                style={{ ...inputBaseStyle, resize: 'vertical', background: 'var(--color-bg-card)', color: 'var(--color-text-primary)' }}
+                                className="resize-y"
                               />
-                              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                              <div className="flex justify-end gap-2">
                                 {message.role === 'user' && (
-                                  <button className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={() => saveEditMessage(true)}>
+                                  <Button type="button" variant="outline" onClick={() => saveEditMessage(true)}>
                                     保存并重试
-                                  </button>
+                                  </Button>
                                 )}
-                                <button className="btn btn-primary" onClick={() => saveEditMessage(false)}>保存</button>
-                                <button className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={cancelEditMessage}>取消</button>
+                                <Button type="button" onClick={() => saveEditMessage(false)}>保存</Button>
+                                <Button type="button" variant="outline" onClick={cancelEditMessage}>取消</Button>
                               </div>
                             </div>
                           ) : (
                             <>
-                              {isLoading && <span className="spinner spinner-sm" style={{ marginRight: 6, verticalAlign: 'middle' }} />}
+                              {isLoading && <LoaderCircle className="size-4 animate-spin" />}
                               {message.content || (isLoading ? '思考中...' : '')}
                             </>
                           )}
                         </div>
 
                         {!isEditing && fileParts.length > 0 && (
-                          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
+                          <div className="mt-2 flex flex-wrap gap-1.5">
                             {fileParts.map((part, index) => (
                               <span
                                 key={`${message.id}-file-${part.fileId || part.filename || index}`}
-                                style={{
-                                  display: 'inline-flex',
-                                  alignItems: 'center',
-                                  gap: 6,
-                                  padding: '4px 8px',
-                                  borderRadius: 999,
-                                  border: '1px solid var(--color-border-light)',
-                                  background: 'var(--color-bg-subtle)',
-                                  color: 'var(--color-text-secondary)',
-                                  fontSize: 11,
-                                  maxWidth: '100%',
-                                }}
+                                className="inline-flex max-w-full items-center gap-1.5 rounded-full border bg-muted/40 px-2 py-1 text-xs text-muted-foreground"
                                 title={part.fileId || part.filename || '附件'}
                               >
                                 <span>📎</span>
-                                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                <span className="truncate">
                                   {part.filename || part.fileId || '附件'}
                                 </span>
                               </span>
@@ -2946,29 +2874,29 @@ export default function ModelTester() {
                         )}
 
                         {!isEditing && (
-                          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                          <div className="flex flex-wrap gap-1.5">
                             {!isLoading && (
-                              <button className="btn btn-ghost" style={{ border: '1px solid var(--color-border)', padding: '4px 8px', fontSize: 11 }} onClick={() => resetFromMessage(message)} disabled={sending || Boolean(pendingJobId)}>
+                              <Button type="button" variant="outline" onClick={() => resetFromMessage(message)} disabled={sending || Boolean(pendingJobId)}>
                                 重试
-                              </button>
+                              </Button>
                             )}
-                            <button className="btn btn-ghost" style={{ border: '1px solid var(--color-border)', padding: '4px 8px', fontSize: 11 }} onClick={() => { void copyMessage(message); }}>
+                            <Button type="button" variant="outline" onClick={() => { void copyMessage(message); }}>
                               复制
-                            </button>
+                            </Button>
                             {!isLoading && (
-                              <button className="btn btn-ghost" style={{ border: '1px solid var(--color-border)', padding: '4px 8px', fontSize: 11 }} onClick={() => startEditMessage(message)} disabled={sending}>
+                              <Button type="button" variant="outline" onClick={() => startEditMessage(message)} disabled={sending}>
                                 编辑
-                              </button>
+                              </Button>
                             )}
                             {!isLoading && (
-                              <button className="btn btn-ghost" style={{ border: '1px solid var(--color-border)', padding: '4px 8px', fontSize: 11 }} onClick={() => deleteMessage(message)} disabled={sending}>
+                              <Button type="button" variant="outline" onClick={() => deleteMessage(message)} disabled={sending}>
                                 删除
-                              </button>
+                              </Button>
                             )}
                             {(message.role === 'assistant' || message.role === 'system') && !isLoading && (
-                              <button className="btn btn-ghost" style={{ border: '1px solid var(--color-border)', padding: '4px 8px', fontSize: 11 }} onClick={() => toggleAssistantRole(message)} disabled={sending}>
+                              <Button type="button" variant="outline" onClick={() => toggleAssistantRole(message)} disabled={sending}>
                                 {message.role === 'assistant' ? '转为系统' : '转为助手'}
-                              </button>
+                              </Button>
                             )}
                           </div>
                         )}
@@ -2979,13 +2907,13 @@ export default function ModelTester() {
                 <div ref={chatEndRef} />
               </div>
             )}
-          </div>
+          </ScrollArea>
 
-          <div style={{ borderTop: '1px solid var(--color-border-light)', padding: 14, background: 'var(--color-bg-card)' }}>
+          <div className="border-t bg-card p-3.5">
             {error && (
-              <div className="alert alert-error animate-scale-in" style={{ marginBottom: 10 }}>
-                {error}
-              </div>
+              <Alert variant="destructive" className="mb-2.5 animate-scale-in">
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
             )}
 
             {inputs.mode === 'conversation' ? (
@@ -3001,7 +2929,6 @@ export default function ModelTester() {
                 conversationFileInputRef={conversationFileInputRef}
                 input={input}
                 canSend={canSend}
-                inputBaseStyle={inputBaseStyle}
                 onInputChange={setInput}
                 onFilesChange={handleConversationFilesChange}
                 onRemoveConversationFile={removeConversationFile}
@@ -3009,51 +2936,51 @@ export default function ModelTester() {
                 onStop={stopGenerating}
               />
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div className="flex flex-col gap-2.5">
                 {inputs.mode === 'embeddings' && (
-                  <textarea
+                  <Textarea
                     value={embeddingInputText}
                     onChange={(event) => setEmbeddingInputText(event.target.value)}
                     rows={4}
                     placeholder="输入 embeddings 测试文本，支持单条或多行。"
-                    style={{ ...inputBaseStyle, resize: 'vertical' }}
+                    className="resize-y"
                   />
                 )}
                 {inputs.mode === 'search' && (
                   <>
-                    <textarea
+                    <Textarea
                       value={searchQueryValue}
                       onChange={(event) => setSearchQueryValue(event.target.value)}
                       rows={3}
                       placeholder="输入搜索查询"
-                      style={{ ...inputBaseStyle, resize: 'vertical' }}
+                      className="resize-y"
                     />
-                    <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr 120px', gap: 10 }}>
-                      <input value={searchAllowedDomains} onChange={(event) => setSearchAllowedDomains(event.target.value)} placeholder="allowed_domains (逗号分隔)" style={inputBaseStyle} />
-                      <input value={searchBlockedDomains} onChange={(event) => setSearchBlockedDomains(event.target.value)} placeholder="blocked_domains (逗号分隔)" style={inputBaseStyle} />
-                      <input value={searchMaxResults} onChange={(event) => setSearchMaxResults(toNumber(event.target.value, 10))} type="number" min={1} max={20} style={inputBaseStyle} />
+                    <div className={`grid gap-2.5 ${isMobile ? 'grid-cols-1' : 'grid-cols-[1fr_1fr_120px]'}`}>
+                      <Input value={searchAllowedDomains} onChange={(event) => setSearchAllowedDomains(event.target.value)} placeholder="allowed_domains (逗号分隔)" />
+                      <Input value={searchBlockedDomains} onChange={(event) => setSearchBlockedDomains(event.target.value)} placeholder="blocked_domains (逗号分隔)" />
+                      <Input value={searchMaxResults} onChange={(event) => setSearchMaxResults(toNumber(event.target.value, 10))} type="number" min={1} max={20} />
                     </div>
                   </>
                 )}
                 {(inputs.mode === 'images.generate' || inputs.mode === 'images.edit' || inputs.mode === 'videos.create') && (
                   <>
-                    <textarea
+                    <Textarea
                       value={assetPrompt}
                       onChange={(event) => setAssetPrompt(event.target.value)}
                       rows={3}
                       placeholder={inputs.mode === 'videos.create' ? '输入视频生成提示词' : '输入图片提示词'}
-                      style={{ ...inputBaseStyle, resize: 'vertical' }}
+                      className="resize-y"
                     />
                     {(inputs.mode === 'images.edit' || inputs.mode === 'videos.create') && (
-                      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : (inputs.mode === 'images.edit' ? '1fr 1fr' : '1fr'), gap: 10 }}>
-                        <label style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>
-                          <div style={{ marginBottom: 6 }}>{inputs.mode === 'images.edit' ? '原图' : '参考图'}</div>
-                          <input type="file" accept="image/*" onChange={(event) => { void handleUploadChange(event.target.files, setImageSourceFile); }} />
+                      <div className={`grid gap-2.5 ${isMobile || inputs.mode !== 'images.edit' ? 'grid-cols-1' : 'grid-cols-2'}`}>
+                        <label className="text-xs text-muted-foreground">
+                          <div className="mb-1.5">{inputs.mode === 'images.edit' ? '原图' : '参考图'}</div>
+                          <Input type="file" accept="image/*" onChange={(event) => { void handleUploadChange(event.target.files, setImageSourceFile); }} />
                         </label>
                         {inputs.mode === 'images.edit' && (
-                          <label style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>
-                            <div style={{ marginBottom: 6 }}>Mask</div>
-                            <input type="file" accept="image/*" onChange={(event) => { void handleUploadChange(event.target.files, setImageMaskFile); }} />
+                          <label className="text-xs text-muted-foreground">
+                            <div className="mb-1.5">Mask</div>
+                            <Input type="file" accept="image/*" onChange={(event) => { void handleUploadChange(event.target.files, setImageMaskFile); }} />
                           </label>
                         )}
                       </div>
@@ -3061,12 +2988,11 @@ export default function ModelTester() {
                   </>
                 )}
                 {inputs.mode === 'videos.inspect' && (
-                  <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 160px', gap: 10 }}>
-                    <input
+                  <div className={`grid gap-2.5 ${isMobile ? 'grid-cols-1' : 'grid-cols-[1fr_160px]'}`}>
+                    <Input
                       value={videoInspectId}
                       onChange={(event) => setVideoInspectId(event.target.value)}
                       placeholder="输入 public video id"
-                      style={inputBaseStyle}
                     />
                     <ModernSelect
                       value={videoInspectAction}
@@ -3082,20 +3008,20 @@ export default function ModelTester() {
                   </div>
                 )}
 
-                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                  <button
+                <div className="flex justify-end">
+                  <Button type="button"
                     onClick={() => { void send(); }}
                     disabled={!canSend}
-                    className="btn btn-primary"
-                    style={{ minWidth: 120, height: 42 }}
+                   
+                   
                   >
                     发送请求
-                  </button>
+                  </Button>
                 </div>
               </div>
             )}
           </div>
-        </div>
+        </Card>
 
         <DebugPanel
           presence={debugPanelPresence}

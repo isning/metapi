@@ -18,6 +18,8 @@ import ResponsiveFormGrid from '../components/ResponsiveFormGrid.js';
 import { useIsMobile } from '../components/useIsMobile.js';
 import DeleteConfirmModal from '../components/DeleteConfirmModal.js';
 import SiteCreatedModal from '../components/SiteCreatedModal.js';
+import { UpstreamCompatibilityPolicyEditor } from '../components/UpstreamCompatibilityPolicyEditor.js';
+import { ConfigSection, ConfigSectionItem } from '../components/ConfigSection.js';
 import { formatDateTimeLocal } from './helpers/checkinLogTime.js';
 import { clearFocusParams, readFocusSiteId } from './helpers/navigationFocus.js';
 import { tr } from '../i18n.js';
@@ -42,6 +44,22 @@ import {
   listSiteInitializationPresets,
 } from '../../shared/siteInitializationPresets.js';
 import { analyzePrimarySiteUrl } from '../../shared/sitePrimaryUrl.js';
+import { Button } from '../components/ui/button/index.js';
+import { LoaderCircle } from 'lucide-react';
+import ToneBadge from '../components/ToneBadge.js';
+import InfoNote from '../components/InfoNote.js';
+import EmptyStateBlock from '../components/EmptyStateBlock.js';
+import { Alert, AlertDescription, AlertTitle } from '../components/ui/alert/index.js';
+import { Card } from '../components/ui/card/index.js';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table/index.js';
+import { Checkbox } from '../components/ui/checkbox/index.js';
+import { Input } from '../components/ui/input/index.js';
+import { RadioGroup, RadioGroupItem } from '../components/ui/radio-group/index.js';
+import {
+  emptyUpstreamCompatibilityPolicyForm,
+  policyFormFromStoredValue,
+  serializeCompatibilityPolicyForm,
+} from '../lib/upstreamCompatibilityPolicyEditor.js';
 
 type SiteSubscriptionSummary = {
   activeCount: number;
@@ -63,6 +81,7 @@ type SiteRow = {
   proxyUrl?: string | null;
   useSystemProxy?: boolean;
   customHeaders?: string | null;
+  compatibilityPolicy?: unknown;
   globalWeight?: number;
   isPinned?: boolean;
   sortOrder?: number;
@@ -223,18 +242,18 @@ function SiteBalanceDisplay(props: {
 }
 
 const platformColors: Record<string, string> = {
-  'new-api': 'badge-info',
-  'one-api': 'badge-success',
-  anyrouter: 'badge-warning',
-  veloera: 'badge-warning',
-  'one-hub': 'badge-muted',
-  'done-hub': 'badge-muted',
-  sub2api: 'badge-muted',
-  openai: 'badge-success',
-  codex: 'badge-success',
-  claude: 'badge-warning',
-  gemini: 'badge-info',
-  cliproxyapi: 'badge-info',
+  'new-api': 'info',
+  'one-api': 'success',
+  anyrouter: 'warning',
+  veloera: 'warning',
+  'one-hub': 'muted',
+  'done-hub': 'muted',
+  sub2api: 'muted',
+  openai: 'success',
+  codex: 'success',
+  claude: 'warning',
+  gemini: 'info',
+  cliproxyapi: 'info',
 };
 
 const SITE_PLATFORM_OPTIONS = [
@@ -282,6 +301,7 @@ export default function Sites() {
   };
   const createEmptySiteForm = (): SiteForm => hydrateSiteForm(emptySiteForm());
   const [form, setForm] = useState<SiteForm>(() => createEmptySiteForm());
+  const [compatibilityPolicyForm, setCompatibilityPolicyForm] = useState(() => emptyUpstreamCompatibilityPolicyForm());
   const [detecting, setDetecting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState<number | null>(null);
@@ -392,16 +412,6 @@ export default function Sites() {
   const activeEditor = editor || lastEditorRef.current;
   const isEditing = activeEditor?.mode === 'edit';
   const isAdding = editor?.mode === 'add';
-  const formInputStyle = {
-    width: '100%',
-    padding: '10px 14px',
-    border: '1px solid var(--color-border)',
-    borderRadius: 'var(--radius-sm)',
-    fontSize: 13,
-    outline: 'none',
-    background: 'var(--color-bg)',
-    color: 'var(--color-text-primary)',
-  } as const;
 
   const load = async () => {
     try {
@@ -482,6 +492,7 @@ export default function Sites() {
   const closeEditor = () => {
     setEditor(null);
     setForm(createEmptySiteForm());
+    setCompatibilityPolicyForm(emptyUpstreamCompatibilityPolicyForm());
     setSelectedInitializationPresetId(null);
   };
 
@@ -499,6 +510,7 @@ export default function Sites() {
     }
     setEditor({ mode: 'add' });
     setForm(createEmptySiteForm());
+    setCompatibilityPolicyForm(emptyUpstreamCompatibilityPolicyForm());
     setSelectedInitializationPresetId(null);
     scrollToEditorTop();
   };
@@ -506,6 +518,7 @@ export default function Sites() {
   const openEdit = (site: SiteRow) => {
     setEditor({ mode: 'edit', editingSiteId: site.id });
     setForm(hydrateSiteForm(siteFormFromSite(site)));
+    setCompatibilityPolicyForm(policyFormFromStoredValue(site.compatibilityPolicy));
     setSelectedInitializationPresetId(detectSiteInitializationPreset(site.url, site.platform)?.id || null);
     scrollToEditorTop();
     // Load disabled models and discovered models independently so a best-effort
@@ -756,6 +769,11 @@ export default function Sites() {
       toast.error(serializedApiEndpoints.error || 'API 请求地址格式不正确');
       return;
     }
+    const serializedCompatibilityPolicy = serializeCompatibilityPolicyForm(compatibilityPolicyForm);
+    if (!serializedCompatibilityPolicy.ok) {
+      toast.error(serializedCompatibilityPolicy.error);
+      return;
+    }
 
     const payload = {
       name: form.name.trim(),
@@ -767,6 +785,7 @@ export default function Sites() {
       useSystemProxy: !!form.useSystemProxy,
       apiEndpoints: serializedApiEndpoints.apiEndpoints,
       customHeaders: serializedCustomHeaders.customHeaders,
+      compatibilityPolicy: serializedCompatibilityPolicy.policy,
       globalWeight: Number(parsedGlobalWeight.toFixed(3)),
       postRefreshProbeEnabled: probeEnabled,
       postRefreshProbeModel: probeModel.trim(),
@@ -1144,31 +1163,31 @@ export default function Sites() {
 
   return (
     <div className="animate-fade-in">
-      <div className="page-header">
-        <h2 className="page-title">{tr('站点管理')}</h2>
-        <div className="page-actions sites-page-actions">
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <h2 className="text-xl font-semibold">{tr('站点管理')}</h2>
+        <div className="flex flex-wrap items-center gap-2">
           {isMobile ? (
             <>
-              <button
+              <Button variant="outline"
                 type="button"
                 onClick={() => setShowMobileTools(true)}
-                className="btn btn-ghost"
-                style={{ border: '1px solid var(--color-border)' }}
+               
+               
               >
                 排序与操作
-              </button>
-              <button
+              </Button>
+              <Button variant="outline"
                 type="button"
                 data-testid="sites-mobile-select-all"
                 onClick={() => toggleSelectAllVisible(!allVisibleSitesSelected)}
-                className="btn btn-ghost"
-                style={{ border: '1px solid var(--color-border)' }}
+               
+               
               >
                 {allVisibleSitesSelected ? '取消全选' : '全选可见项'}
-              </button>
+              </Button>
             </>
           ) : (
-            <div className="sites-sort-select" style={{ minWidth: 156, position: 'relative', zIndex: 20 }}>
+            <div className="min-w-40">
               <ModernSelect
                 size="sm"
                 value={sortMode}
@@ -1182,9 +1201,9 @@ export default function Sites() {
               />
             </div>
           )}
-          <button onClick={openAdd} className="btn btn-primary">
+          <Button type="button" data-testid="sites-add-site-button" onClick={openAdd}>
             {isAdding ? '取消' : '+ 添加站点'}
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -1194,9 +1213,9 @@ export default function Sites() {
         onMobileClose={() => setShowMobileTools(false)}
         mobileTitle="站点排序与操作"
         mobileContent={(
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>排序方式</div>
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-1.5">
+              <div className="text-xs text-muted-foreground">排序方式</div>
               <ModernSelect
                 value={sortMode}
                 onChange={(nextValue) => setSortMode(nextValue as SortMode)}
@@ -1208,17 +1227,17 @@ export default function Sites() {
                 placeholder="自定义排序"
               />
             </div>
-            <button
+            <Button variant="outline"
               type="button"
               onClick={() => {
                 toggleSelectAllVisible(!allVisibleSitesSelected);
                 setShowMobileTools(false);
               }}
-              className="btn btn-ghost"
-              style={{ border: '1px solid var(--color-border)' }}
+             
+             
             >
               {allVisibleSitesSelected ? '取消全选可见项' : '全选可见项'}
-            </button>
+            </Button>
           </div>
         )}
       />
@@ -1227,40 +1246,39 @@ export default function Sites() {
         <ResponsiveBatchActionBar
           isMobile={isMobile}
           info={`已选 ${selectedSiteIds.length} 项`}
-          desktopStyle={{ marginBottom: 12 }}
         >
-          <button
+          <Button type="button" variant="outline"
             data-testid="sites-batch-enable-system-proxy"
             onClick={() => runBatchAction('enableSystemProxy')}
             disabled={batchActionLoading}
-            className="btn btn-ghost"
-            style={{ border: '1px solid var(--color-border)' }}
+           
+           
           >
             批量开启系统代理
-          </button>
-          <button
+          </Button>
+          <Button type="button" variant="outline"
             onClick={() => runBatchAction('disableSystemProxy')}
             disabled={batchActionLoading}
-            className="btn btn-ghost"
-            style={{ border: '1px solid var(--color-border)' }}
+           
+           
           >
             批量关闭系统代理
-          </button>
-          <button onClick={() => runBatchAction('enable')} disabled={batchActionLoading} className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }}>
+          </Button>
+          <Button type="button" variant="outline" onClick={() => runBatchAction('enable')} disabled={batchActionLoading}>
             批量启用
-          </button>
-          <button onClick={() => runBatchAction('disable')} disabled={batchActionLoading} className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }}>
+          </Button>
+          <Button type="button" variant="outline" onClick={() => runBatchAction('disable')} disabled={batchActionLoading}>
             批量禁用
-          </button>
-          <button onClick={() => runBatchAction('delete')} disabled={batchActionLoading} className="btn btn-link btn-link-danger">
+          </Button>
+          <Button type="button" variant="destructive" size="sm" onClick={() => runBatchAction('delete')} disabled={batchActionLoading}>
             批量删除
-          </button>
+          </Button>
         </ResponsiveBatchActionBar>
       )}
 
-      <div className="info-tip" style={{ marginBottom: 12 }}>
+      <InfoNote className="mb-3">
         站点权重说明：最终站点倍率 = 站点全局权重 × 设置页中下游 API Key 的站点倍率。它会与路由策略因子（基础权重、价值分、成本、余额、使用频次）共同作用。数值越大，该站点在同优先级下越容易被选中。建议范围 0.5-3，默认 1；长期不建议超过 5。
-      </div>
+      </InfoNote>
 
       <DeleteConfirmModal
         open={Boolean(deleteConfirm)}
@@ -1297,7 +1315,7 @@ export default function Sites() {
           open={Boolean(editor)}
           onClose={closeEditor}
           title={(
-            <div style={{ fontSize: 14, fontWeight: 600 }}>
+            <div className="text-sm font-semibold">
               {isEditing ? '编辑站点' : '添加站点'}
             </div>
           )}
@@ -1311,28 +1329,27 @@ export default function Sites() {
           }}
           footer={(
             <>
-              <button onClick={closeEditor} className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }}>
+              <Button type="button" variant="outline" onClick={closeEditor}>
                 取消
-              </button>
-              <button
+              </Button>
+              <Button type="button"
                 onClick={handleSave}
                 disabled={saving || !form.name.trim() || !form.url.trim()}
-                className="btn btn-primary"
+               
               >
-                {saving ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 保存中...</> : (isEditing ? '保存修改' : '保存站点')}
-              </button>
+                {saving ? <><LoaderCircle className="size-4 animate-spin" /> 保存中...</> : (isEditing ? '保存修改' : '保存站点')}
+              </Button>
             </>
           )}
         >
           <ResponsiveFormGrid>
-            <input
+            <Input
               placeholder="站点名称"
               value={form.name}
               onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
-              style={formInputStyle}
             />
-            <div style={{ display: 'flex', gap: 8, flexDirection: isMobile ? 'column' : 'row' }}>
-              <input
+            <div className={`flex gap-2 ${isMobile ? 'flex-col' : 'flex-row'}`}>
+              <Input
                 data-testid="site-primary-url-input"
                 placeholder="准确主站点 URL（面板/登录/签到地址，如 https://nih.cc）"
                 value={form.url}
@@ -1342,25 +1359,19 @@ export default function Sites() {
                     handleDetect();
                   }
                 }}
-                style={{ ...formInputStyle, flex: 1 }}
+                className="flex-1"
               />
-              <button
+              <Button type="button" variant="outline"
                 onClick={handleDetect}
                 disabled={detecting || !form.url.trim()}
-                className="btn btn-ghost"
-                style={{ padding: '10px 14px', minWidth: 96, border: '1px solid var(--color-border)' }}
+               
+               
               >
-                {detecting ? <><span className="spinner spinner-sm" /> 检测中</> : '自动检测'}
-              </button>
+                {detecting ? <><LoaderCircle className="size-4 animate-spin" /> 检测中</> : '自动检测'}
+              </Button>
             </div>
             <div
-              style={{
-                border: `1px solid ${form.platform.trim() ? 'color-mix(in srgb, var(--color-primary) 28%, var(--color-border))' : 'var(--color-border)'}`,
-                borderRadius: 'var(--radius-sm)',
-                background: 'var(--color-bg)',
-                boxShadow: form.platform.trim() ? '0 0 0 2px color-mix(in srgb, var(--color-primary) 10%, transparent)' : 'none',
-                transition: 'border-color 0.2s ease, box-shadow 0.2s ease',
-              }}
+              className="rounded-md"
             >
               <ModernSelect
                 data-testid="site-platform-select"
@@ -1389,234 +1400,193 @@ export default function Sites() {
                 placeholder="平台类型（可自动检测）"
               />
             </div>
-            <input
+            <Input
               placeholder="外部签到/福利站点 URL（可选）"
               value={form.externalCheckinUrl}
               onChange={(e) => setForm((prev) => ({ ...prev, externalCheckinUrl: e.target.value }))}
-              style={formInputStyle}
             />
           </ResponsiveFormGrid>
           {activeInitializationPreset && (
-            <div className="alert alert-info animate-scale-in">
-              <div className="alert-title">已应用官方预设 · {activeInitializationPreset.label}</div>
-              <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.7 }}>
+            <Alert className="animate-scale-in">
+              <AlertTitle>已应用官方预设 · {activeInitializationPreset.label}</AlertTitle>
+              <AlertDescription className="leading-relaxed">
                 <div>{activeInitializationPreset.description}</div>
                 {form.url.trim() === activeInitializationPreset.defaultUrl && (
                   <div>当前已自动填入官方地址；如需走自建网关，也可以直接改 URL。</div>
                 )}
                 <div>推荐模型：{activeInitializationPreset.recommendedModels.join(' / ')}</div>
-              </div>
-            </div>
+              </AlertDescription>
+            </Alert>
           )}
-          <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.6 }}>
+          <div className="text-xs leading-relaxed text-muted-foreground">
             请填写准确的主站点 URL。这里填写主站点/面板/登录地址，用于登录、签到、面板接口和系统访问令牌管理；不要把 OpenAI/Gemini 请求路径直接填到主站点 URL；如果 API 请求地址和主站点不同，请在下面的 API 请求地址池里填写。
           </div>
           {primarySiteUrlAnalysis.action === 'auto_strip_known_api_suffix' && primarySiteUrlAnalysis.persistedUrl ? (
-            <div className="alert alert-info animate-scale-in">
-              <div className="alert-title">检测到常见 API 路径后缀</div>
-              <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.7 }}>
+            <Alert className="animate-scale-in">
+              <AlertTitle>检测到常见 API 路径后缀</AlertTitle>
+              <AlertDescription className="leading-relaxed">
                 保存或自动检测时会将主站点 URL 规范化为 {primarySiteUrlAnalysis.persistedUrl}。
-              </div>
-            </div>
+              </AlertDescription>
+            </Alert>
           ) : null}
           {primarySiteUrlAnalysis.action === 'preserve_api_path' && primarySiteUrlAnalysis.persistedUrl ? (
-            <div className="alert alert-warning animate-scale-in">
-              <div className="alert-title">请确认主站点 URL</div>
-              <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.7 }}>
+            <Alert className="animate-scale-in">
+              <AlertTitle>请确认主站点 URL</AlertTitle>
+              <AlertDescription className="leading-relaxed">
                 当前 URL 含 /api 路径，将原样保留。请确认这就是准确的主站点 URL；如果这是 API 请求地址，请填到下方的 API 请求地址池。
-              </div>
-            </div>
+              </AlertDescription>
+            </Alert>
           ) : null}
           {primarySiteUrlAnalysis.action === 'preserve_unknown_path' && primarySiteUrlAnalysis.persistedUrl ? (
-            <div className="alert alert-warning animate-scale-in">
-              <div className="alert-title">请确认主站点 URL</div>
-              <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.7 }}>
+            <Alert className="animate-scale-in">
+              <AlertTitle>请确认主站点 URL</AlertTitle>
+              <AlertDescription className="leading-relaxed">
                 当前 URL 含额外路径，将原样保留。请确认这就是准确的主站点 URL；如果这是 API 请求地址，请填到下方的 API 请求地址池。
-              </div>
-            </div>
+              </AlertDescription>
+            </Alert>
           ) : null}
-          <div
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 10,
-              padding: 12,
-              border: '1px solid var(--color-border)',
-              borderRadius: 'var(--radius-sm)',
-              background: 'color-mix(in srgb, var(--color-surface) 82%, transparent)',
-            }}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-              <div style={{ fontSize: 13, fontWeight: 600 }}>
-                API 请求地址池
-              </div>
-              <button
+          <UpstreamCompatibilityPolicyEditor
+            value={compatibilityPolicyForm}
+            disabled={saving}
+            onChange={setCompatibilityPolicyForm}
+          />
+          <ConfigSection
+            title="API 请求地址池"
+            description="这里只用于 `/v1/*`、模型发现和 API Key 验证。不填时默认跟随主站点 URL；多条地址会按列表顺序参与轮询，禁用的地址不会参与调度。"
+            actions={(
+              <Button
+                variant="outline"
                 type="button"
                 onClick={addApiEndpointRow}
-                className="btn btn-ghost"
-                style={{ border: '1px solid var(--color-border)' }}
               >
                 + 添加 API 地址
-              </button>
-            </div>
-            <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.7 }}>
-              这里只用于 `/v1/*`、模型发现和 API Key 验证。不填时默认跟随主站点 URL；多条地址会按列表顺序参与轮询，禁用的地址不会参与调度。
-            </div>
+              </Button>
+            )}
+          >
             {form.apiEndpoints.map((endpoint, index) => (
-              <div
+              <ConfigSectionItem
                 key={endpoint.draftId || `site-api-endpoint-draft-${index}`}
-                style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 8,
-                  padding: 10,
-                  border: '1px solid var(--color-border-light)',
-                  borderRadius: 'var(--radius-sm)',
-                  background: 'var(--color-bg)',
-                }}
+                className="flex flex-col gap-2"
               >
-                <div style={{ display: 'flex', gap: 8, flexDirection: isMobile ? 'column' : 'row', alignItems: isMobile ? 'stretch' : 'center' }}>
-                  <input
+                <div className={isMobile ? 'flex flex-col items-stretch gap-2' : 'flex flex-row items-center gap-2'}>
+                  <Input
                     placeholder="API 请求地址（如 https://api.nih.cc）"
                     value={endpoint.url}
                     onChange={(e) => updateApiEndpointRow(index, { url: e.target.value })}
-                    style={{ ...formInputStyle, flex: 1, fontFamily: 'var(--font-mono)' }}
+                    className="flex-1 font-mono"
                   />
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--color-text-secondary)' }}>
-                    <input
-                      type="checkbox"
+                  <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <Checkbox
                       checked={endpoint.enabled !== false}
-                      onChange={(e) => updateApiEndpointRow(index, { enabled: e.target.checked })}
-                    />
+                      onCheckedChange={(checked) => updateApiEndpointRow(index, { enabled: checked === true })}        />
                     启用
                   </label>
                 </div>
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', fontSize: 11, color: 'var(--color-text-muted)' }}>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
                     <span>顺序 #{index + 1}</span>
                     {endpoint.cooldownUntil ? <span>冷却至 {formatDateTimeLocal(endpoint.cooldownUntil)}</span> : null}
                     {endpoint.lastFailureReason ? <span>最近失败: {endpoint.lastFailureReason}</span> : null}
                   </div>
-                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                    <button
+                  <div className="flex flex-wrap gap-2">
+                    <Button variant="ghost" size="sm"
                       type="button"
                       onClick={() => moveApiEndpointRow(index, 'up')}
                       disabled={index === 0}
-                      className="btn btn-link btn-link-muted"
+                     
                     >
                       上移
-                    </button>
-                    <button
+                    </Button>
+                    <Button variant="ghost" size="sm"
                       type="button"
                       onClick={() => moveApiEndpointRow(index, 'down')}
-                      disabled={index >= form.apiEndpoints.length - 1}
-                      className="btn btn-link btn-link-muted"
+                      disabled={index>= form.apiEndpoints.length - 1}
+                     
                     >
                       下移
-                    </button>
-                    <button
+                    </Button>
+                    <Button variant="destructive" size="sm"
                       type="button"
                       onClick={() => removeApiEndpointRow(index)}
-                      className="btn btn-link btn-link-danger"
+                     
                     >
                       删除
-                    </button>
+                    </Button>
                   </div>
                 </div>
-              </div>
+              </ConfigSectionItem>
             ))}
-          </div>
-          <div
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 10,
-              padding: 12,
-              border: '1px solid var(--color-border)',
-              borderRadius: 'var(--radius-sm)',
-              background: 'color-mix(in srgb, var(--color-surface) 82%, transparent)',
-            }}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-              <div style={{ fontSize: 13, fontWeight: 600 }}>
-                站点自定义请求头
-              </div>
-              <button
+          </ConfigSection>
+          <ConfigSection
+            title="站点自定义请求头"
+            actions={(
+              <Button
+                variant="outline"
                 type="button"
                 onClick={addCustomHeaderRow}
-                className="btn btn-ghost"
-                style={{ border: '1px solid var(--color-border)' }}
               >
                 + 添加请求头
-              </button>
-            </div>
+              </Button>
+            )}
+          >
             {form.customHeaders.map((header, index) => (
-              <div
+              <ConfigSectionItem
                 key={`custom-header-${index}`}
-                style={{
-                  display: 'flex',
-                  gap: 8,
-                  flexDirection: isMobile ? 'column' : 'row',
-                  alignItems: isMobile ? 'stretch' : 'center',
-                }}
+                className={isMobile ? 'flex flex-col items-stretch gap-2' : 'flex flex-row items-center gap-2'}
               >
-                <input
+                <Input
                   placeholder="Header 名称"
                   value={header.key}
                   onChange={(e) => updateCustomHeaderRow(index, 'key', e.target.value)}
-                  style={{ ...formInputStyle, flex: 1, fontFamily: 'var(--font-mono)' }}
+                  className="flex-1 font-mono"
                 />
-                <input
+                <Input
                   placeholder="Header 值"
                   value={header.value}
                   onChange={(e) => updateCustomHeaderRow(index, 'value', e.target.value)}
-                  style={{ ...formInputStyle, flex: 1, fontFamily: 'var(--font-mono)' }}
+                  className="flex-1 font-mono"
                 />
-                <button
+                <Button variant="destructive" size="sm"
                   type="button"
                   onClick={() => removeCustomHeaderRow(index)}
-                  className="btn btn-link btn-link-danger"
-                  style={isMobile ? { alignSelf: 'flex-end' } : undefined}
+                 
+                 
                 >
                   删除
-                </button>
-              </div>
+                </Button>
+              </ConfigSectionItem>
             ))}
-            <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.6 }}>
+            <div className="text-xs leading-relaxed text-muted-foreground">
               按 key/value 逐条填写。整行留空会自动忽略；同名请求头不允许重复；请求本身显式传入的请求头优先级更高。
             </div>
-            {isEditing && (
-              <div style={{ marginTop: 16, padding: '14px', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', background: 'var(--color-bg)' }}>
-                <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>禁用模型管理</div>
-                <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 10 }}>
-                  在此站点禁用指定模型后，路由重建时将不为该站点的这些模型创建通道。勾选表示禁用该模型。
-                </div>
+          </ConfigSection>
+          {isEditing && (
+            <ConfigSection
+              title="禁用模型管理"
+              description="在此站点禁用指定模型后，路由重建时将不为该站点的这些模型创建通道。勾选表示禁用该模型。"
+            >
                 {disabledModelsLoading ? (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--color-text-muted)' }}>
-                    <span className="spinner spinner-sm" /> 加载中...
+                  <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <LoaderCircle className="size-4 animate-spin" /> 加载中...
                   </div>
                 ) : (
                   <>
                     {/* Search and brand group controls */}
                     {brandGroups.length > 0 ? (
-                      <div style={{ marginBottom: 10 }}>
-                        <input
+                      <div className="mb-2.5">
+                        <Input
                           placeholder="搜索模型名称..."
                           value={disabledModelSearch}
                           onChange={(e) => setDisabledModelSearch(e.target.value)}
-                          style={{
-                            width: '100%', padding: '6px 10px', border: '1px solid var(--color-border)',
-                            borderRadius: 'var(--radius-sm)', fontSize: 12, outline: 'none',
-                            background: 'var(--color-bg)', color: 'var(--color-text-primary)', marginBottom: 8,
-                          }}
+                          className="mb-2"
                         />
                         {/* Brand group quick actions */}
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 8 }}>
-                          <span style={{ fontSize: 11, color: 'var(--color-text-muted)', lineHeight: '24px' }}>按品牌全选：</span>
+                        <div className="mb-2 flex flex-wrap gap-1">
+                          <span className="text-xs leading-6 text-muted-foreground">按品牌全选：</span>
                           {brandGroups.map(([brandName, models]) => {
                             const allDisabled = models.every((m) => disabledModelSet.has(m));
                             return (
-                              <button
+                              <Button
                                 key={brandName}
                                 type="button"
                                 onClick={() => {
@@ -1627,22 +1597,22 @@ export default function Sites() {
                                     setDisabledModels((prev) => Array.from(new Set([...prev, ...models])));
                                   }
                                 }}
-                                className={`badge ${allDisabled ? 'badge-warning' : 'badge-muted'}`}
-                                style={{ fontSize: 10, cursor: 'pointer', border: 'none', padding: '3px 8px' }}
+                                variant={allDisabled ? 'secondary' : 'outline'}
+                                size="sm"
                                 data-tooltip={allDisabled ? `取消禁用全部 ${brandName} 模型 (${models.length})` : `禁用全部 ${brandName} 模型 (${models.length})`}
                               >
                                 {brandName} ({models.length})
-                              </button>
+                              </Button>
                             );
                           })}
                         </div>
                         {/* Checkbox list */}
-                        <div style={{ maxHeight: 280, overflowY: 'auto', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', padding: '4px 0' }}>
+                        <div className="max-h-70 overflow-y-auto rounded-lg border py-1">
                           {filteredBrandGroups.length === 0 ? (
-                            <div style={{ padding: '8px 12px', fontSize: 12, color: 'var(--color-text-muted)' }}>无匹配模型</div>
+                            <div className="px-3 py-2 text-xs text-muted-foreground">无匹配模型</div>
                           ) : filteredBrandGroups.map(([brandName, models]) => (
                             <div key={brandName}>
-                              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-text-secondary)', padding: '4px 12px', background: 'var(--color-bg)', borderBottom: '1px solid var(--color-border-light)' }}>
+                              <div className="border-b bg-muted px-3 py-1 text-xs font-semibold text-muted-foreground">
                                 {brandName} ({models.length})
                               </div>
                               {models.map((model) => {
@@ -1650,24 +1620,18 @@ export default function Sites() {
                                 return (
                                   <label
                                     key={model}
-                                    style={{
-                                      display: 'flex', alignItems: 'center', gap: 8, padding: '3px 12px',
-                                      fontSize: 12, cursor: 'pointer', lineHeight: 1.6,
-                                      background: isDisabled ? 'color-mix(in srgb, var(--color-warning) 8%, transparent)' : 'transparent',
-                                    }}
+                                    className={`flex cursor-pointer items-center gap-2 px-3 py-1 text-xs leading-relaxed ${isDisabled ? 'bg-muted' : ''}`}
                                   >
-                                    <input
-                                      type="checkbox"
+                                    <Checkbox
                                       checked={isDisabled}
-                                      onChange={(e) => {
-                                        if (e.target.checked) {
+                                      onCheckedChange={(checked) => {
+                                        if (checked === true) {
                                           setDisabledModels((prev) => Array.from(new Set([...prev, model])));
                                         } else {
                                           setDisabledModels((prev) => prev.filter((m) => m !== model));
                                         }
-                                      }}
-                                    />
-                                    <span style={{ color: isDisabled ? 'var(--color-warning)' : 'var(--color-text-primary)' }}>
+                                      }}                        />
+                                    <span className={isDisabled ? 'text-muted-foreground' : 'text-foreground'}>
                                       {model}
                                     </span>
                                   </label>
@@ -1678,13 +1642,13 @@ export default function Sites() {
                         </div>
                       </div>
                     ) : (
-                      <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 10 }}>
+                      <div className="mb-2.5 text-xs text-muted-foreground">
                         暂无已发现模型，仍可手动添加需要屏蔽的模型名。
                       </div>
                     )}
 
-                    <div style={{ display: 'flex', gap: 8, marginTop: 10, marginBottom: 10 }}>
-                      <input
+                    <div className="mb-2.5 mt-2.5 flex gap-2">
+                      <Input
                         placeholder="输入模型名称，如 gpt-4o"
                         value={disabledModelInput}
                         onChange={(e) => setDisabledModelInput(e.target.value)}
@@ -1694,155 +1658,120 @@ export default function Sites() {
                             handleAddDisabledModel();
                           }
                         }}
-                        style={{
-                          flex: 1, padding: '8px 12px', border: '1px solid var(--color-border)',
-                          borderRadius: 'var(--radius-sm)', fontSize: 12, outline: 'none',
-                          background: 'var(--color-bg)', color: 'var(--color-text-primary)',
-                        }}
+                        className="flex-1"
                       />
-                      <button
+                      <Button type="button" variant="outline"
                         onClick={handleAddDisabledModel}
-                        className="btn btn-ghost"
-                        style={{ padding: '8px 14px', fontSize: 12, border: '1px solid var(--color-border)' }}
+                       
+                       
                       >
                         添加模型
-                      </button>
+                      </Button>
                     </div>
 
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 10 }}>
-                      <button
+                    <div className="mt-2.5 flex items-center gap-2.5">
+                      <Button type="button"
                         onClick={handleSaveDisabledModels}
                         disabled={disabledModelsSaving}
-                        className="btn btn-primary"
-                        style={{ fontSize: 12, padding: '6px 16px' }}
+                       
+                       
                       >
-                        {disabledModelsSaving ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 保存中...</> : '保存禁用列表'}
-                      </button>
-                      <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
+                        {disabledModelsSaving ? <><LoaderCircle className="size-4 animate-spin" /> 保存中...</> : '保存禁用列表'}
+                      </Button>
+                      <span className="text-xs text-muted-foreground">
                         已禁用 {disabledModels.length} 个模型
                       </span>
                     </div>
                   </>
                 )}
-              </div>
-            )}
-          </div>
+            </ConfigSection>
+          )}
 
           {isEditing && (
-            <div style={{ marginTop: 16, padding: '14px', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', background: 'var(--color-bg)' }}>
-              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>刷新后自动测试请求</div>
-              <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 10 }}>
-                开启后，每次自动获取模型列表成功后，会对指定模型发送一次真实测试请求。若判定不可用，自动加入站点禁用列表并重建路由。
-              </div>
-              <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 10, cursor: 'pointer' }}>
-                <input
-                  type="checkbox"
+            <ConfigSection
+              title="刷新后自动测试请求"
+              description="开启后，每次自动获取模型列表成功后，会对指定模型发送一次真实测试请求。若判定不可用，自动加入站点禁用列表并重建路由。"
+            >
+              <label className="mb-2.5 flex cursor-pointer items-start gap-2.5">
+                <Checkbox
                   checked={probeEnabled}
-                  onChange={(e) => setProbeEnabled(e.target.checked)}
-                  style={{ width: 15, height: 15, marginTop: 2, flexShrink: 0 }}
+                  onCheckedChange={(checked) => setProbeEnabled(checked === true)}
+                  className="mt-0.5 shrink-0"
                 />
-                <span style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>开启刷新后自动探测</span>
+                <span className="text-sm text-muted-foreground">开启刷新后自动探测</span>
               </label>
-              <div style={{ display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap', opacity: probeEnabled ? 1 : 0.5 }}>
+              <RadioGroup value={probeScope} onValueChange={(nextValue) => setProbeScope(nextValue as typeof probeScope)} className="mb-3 flex flex-wrap gap-2" disabled={!probeEnabled}>
                 {([['single', '指定模型'] , ['all', '全部模型']] as const).map(([val, label]) => (
                   <label
                     key={val}
-                    style={{
-                      display: 'flex', alignItems: 'center', gap: 6,
-                      cursor: probeEnabled ? 'pointer' : 'default',
-                      padding: '5px 12px', borderRadius: 'var(--radius-sm)', fontSize: 12,
-                      border: `1px solid ${probeScope === val ? 'var(--color-primary)' : 'var(--color-border-light)'}`,
-                      background: probeScope === val ? 'color-mix(in srgb, var(--color-primary) 8%, transparent)' : 'transparent',
-                      userSelect: 'none',
-                    }}
+                    className="flex items-center gap-2 text-sm"
                   >
-                    <input
-                      type="radio"
-                      name="siteProbeScope"
+                    <RadioGroupItem
                       value={val}
-                      checked={probeScope === val}
-                      onChange={() => setProbeScope(val)}
                       disabled={!probeEnabled}
-                      style={{ accentColor: 'var(--color-primary)', width: 13, height: 13 }}
                     />
                     {label}
                   </label>
                 ))}
-              </div>
+              </RadioGroup>
               {probeScope === 'single' && (
-                <input
+                <Input
                   type="text"
                   placeholder="探测模型名（留空则自动取第一个发现的模型）"
                   value={probeModel}
                   onChange={(e) => setProbeModel(e.target.value)}
                   disabled={!probeEnabled}
-                  style={{
-                    width: '100%', padding: '6px 10px', border: '1px solid var(--color-border)',
-                    borderRadius: 'var(--radius-sm)', fontSize: 12, outline: 'none',
-                    background: 'var(--color-bg)', color: 'var(--color-text-primary)',
-                    marginBottom: 10, opacity: probeEnabled ? 1 : 0.5,
-                    fontFamily: 'var(--font-mono)',
-                  }}
+                  className="mb-2.5 font-mono"
                 />
               )}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-                <span style={{ fontSize: 12, color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}>延迟阈值</span>
-                <input
+              <div className="mb-2.5 flex items-center gap-2">
+                <span className="whitespace-nowrap text-xs text-muted-foreground">延迟阈值</span>
+                <Input
                   type="number"
                   min="0"
                   step="500"
                   placeholder="0"
                   value={probeLatencyThreshold}
                   onChange={(e) => setProbeLatencyThreshold(e.target.value)}
-                  style={{
-                    width: 90, padding: '5px 8px', border: '1px solid var(--color-border)',
-                    borderRadius: 'var(--radius-sm)', fontSize: 12, outline: 'none',
-                    background: 'var(--color-bg)', color: 'var(--color-text-primary)',
-                  }}
+                  className="w-24"
                 />
-                <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>ms（响应超过该时间则自动禁用，0=不限）</span>
+                <span className="text-xs text-muted-foreground">ms（响应超过该时间则自动禁用，0=不限）</span>
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                <button
+              <div className="flex flex-wrap items-center gap-2.5">
+                <Button type="button" variant="outline"
                   onClick={() => void handleSaveProbeSettings()}
                   disabled={probeSaving || probing}
-                  className="btn btn-ghost"
-                  style={{ fontSize: 12, padding: '6px 16px', border: '1px solid var(--color-border)' }}
+                 
+                 
                 >
-                  {probeSaving ? <><span className="spinner spinner-sm" /> 保存中...</> : '保存探测设置'}
-                </button>
-                <button
+                  {probeSaving ? <><LoaderCircle className="size-4 animate-spin" /> 保存中...</> : '保存探测设置'}
+                </Button>
+                <Button type="button"
                   onClick={() => void handleProbeNow()}
                   disabled={probing || probeSaving}
-                  className="btn btn-primary"
-                  style={{ fontSize: 12, padding: '6px 16px' }}
+                 
+                 
                 >
-                  {probing ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 探测中...</> : '立即探测'}
-                </button>
+                  {probing ? <><LoaderCircle className="size-4 animate-spin" /> 探测中...</> : '立即探测'}
+                </Button>
                 {probing && (
-                  <button
+                  <Button type="button" variant="outline"
                     onClick={() => { probeAbortRef.current?.abort(); }}
-                    className="btn btn-ghost"
-                    style={{ fontSize: 12, padding: '6px 16px', border: '1px solid var(--color-error, #ef4444)', color: 'var(--color-error, #ef4444)' }}
+                   
+                   
                   >
                     停止
-                  </button>
+                  </Button>
                 )}
-                <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
+                <span className="text-xs text-muted-foreground">
                   {probeEnabled ? '实际探测超时复用「批量测活超时」设置' : '当前已关闭'}
                 </span>
               </div>
               {probeLog.length > 0 && (
-                <div style={{
-                  marginTop: 10, padding: '8px 10px',
-                  background: 'var(--color-bg)', border: '1px solid var(--color-border-light)',
-                  borderRadius: 'var(--radius-sm)', fontSize: 11,
-                  fontFamily: 'var(--font-mono)', maxHeight: 200, overflowY: 'auto',
-                  lineHeight: 1.8,
-                }}>
+                <div className="mt-2.5 max-h-50 overflow-y-auto rounded-lg border bg-card px-2.5 py-2 font-mono text-xs leading-relaxed">
                   {probeLog.map((entry, i) => (
-                    <div key={i} style={{ color: entry.color || 'var(--color-text-secondary)' }}>
-                      <span style={{ color: 'var(--color-text-muted)', marginRight: 8 }}>{entry.time}</span>
+                    <div key={i} className={entry.color ? 'text-foreground' : 'text-muted-foreground'}>
+                      <span className="mr-2 text-muted-foreground">{entry.time}</span>
                       {entry.text}
                     </div>
                   ))}
@@ -1850,34 +1779,26 @@ export default function Sites() {
                 </div>
               )}
               {probeCompleted && brandGroups.length > 0 && (
-                <div style={{ marginTop: 10 }}>
-                  <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6, color: 'var(--color-text-secondary)' }}>
+                <div className="mt-2.5">
+                  <div className="mb-1.5 text-xs font-semibold text-muted-foreground">
                     探测后模型状态
-                    <span style={{ fontWeight: 400, marginLeft: 6, color: 'var(--color-text-muted)' }}>
+                    <span className="ml-1.5 font-normal text-muted-foreground">
                       — 可用 {availableModels.filter((m) => !disabledModelSet.has(m)).length} 个，已禁用 {disabledModels.length} 个
                     </span>
                   </div>
-                  <div style={{ maxHeight: 200, overflowY: 'auto', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', padding: '4px 0' }}>
+                  <div className="max-h-50 overflow-y-auto rounded-lg border py-1">
                     {brandGroups.map(([brandName, models]) => (
                       <div key={brandName}>
-                        <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-text-secondary)', padding: '4px 12px', background: 'var(--color-bg)', borderBottom: '1px solid var(--color-border-light)' }}>
+                        <div className="border-b bg-muted px-3 py-1 text-xs font-semibold text-muted-foreground">
                           {brandName} ({models.length})
                         </div>
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, padding: '6px 12px' }}>
+                        <div className="flex flex-wrap gap-1 px-3 py-1.5">
                           {models.map((model) => {
                             const isDisabled = disabledModelSet.has(model);
                             return (
                               <span
                                 key={model}
-                                style={{
-                                  fontSize: 11, padding: '2px 7px', borderRadius: 10,
-                                  fontFamily: 'var(--font-mono)',
-                                  background: isDisabled
-                                    ? 'color-mix(in srgb, var(--color-error, #ef4444) 12%, transparent)'
-                                    : 'color-mix(in srgb, var(--color-success, #22c55e) 12%, transparent)',
-                                  color: isDisabled ? 'var(--color-error, #ef4444)' : 'var(--color-success, #22c55e)',
-                                  border: `1px solid ${isDisabled ? 'color-mix(in srgb, var(--color-error, #ef4444) 30%, transparent)' : 'color-mix(in srgb, var(--color-success, #22c55e) 30%, transparent)'}`,
-                                }}
+                                className={`rounded-full border px-2 py-0.5 font-mono text-xs ${isDisabled ? 'text-destructive' : 'text-foreground'}`}
                               >
                                 {model}
                               </span>
@@ -1889,47 +1810,33 @@ export default function Sites() {
                   </div>
                 </div>
               )}
-            </div>
+            </ConfigSection>
           )}
 
           <ResponsiveFormGrid>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <input
+            <div className="flex flex-col gap-1.5">
+              <Input
                 placeholder="站点代理（可选，如 http://127.0.0.1:7890 或 socks5://127.0.0.1:1080）"
                 value={form.proxyUrl}
                 onChange={(e) => setForm((prev) => ({ ...prev, proxyUrl: e.target.value }))}
-                style={formInputStyle}
               />
-              <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+              <div className="text-xs text-muted-foreground">
                 这里只是 HTTP/SOCKS 代理地址，不是上游 API 请求地址。填写后优先使用站点代理；留空则使用系统代理或直连(取决于设置开关状态)。
               </div>
             </div>
-            <label style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 10,
-              padding: '10px 14px',
-              border: '1px solid var(--color-border)',
-              borderRadius: 'var(--radius-sm)',
-              fontSize: 13,
-              background: 'var(--color-bg)',
-              color: 'var(--color-text-primary)',
-            }}>
-              <input
-                type="checkbox"
+            <label className="flex items-center gap-2.5 rounded-md border bg-muted px-3.5 py-2.5 text-sm text-foreground">
+              <Checkbox
                 checked={form.useSystemProxy}
-                onChange={(e) => setForm((prev) => ({ ...prev, useSystemProxy: e.target.checked }))}
-              />
+                onCheckedChange={(checked) => setForm((prev) => ({ ...prev, useSystemProxy: checked === true }))}  />
               使用系统代理
             </label>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <input
+            <div className="flex flex-col gap-1.5">
+              <Input
                 placeholder="站点全局权重（默认 1）"
                 value={form.globalWeight}
                 onChange={(e) => setForm((prev) => ({ ...prev, globalWeight: e.target.value }))}
-                style={formInputStyle}
               />
-              <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+              <div className="text-xs text-muted-foreground">
                 越大越容易被路由选中。建议 0.5-3，默认 1。
               </div>
             </div>
@@ -1937,31 +1844,24 @@ export default function Sites() {
         </CenteredModal>
       )}
 
-      <div className="card" style={{ overflowX: 'auto' }}>
+      <Card className="overflow-x-auto">
         {sites.length > 0 ? (
           isMobile ? (
-            <div className="mobile-card-list">
+            <div className="grid gap-3">
               {sortedSites.map((site) => {
                 const isExpanded = expandedSiteIds.includes(site.id);
                 return (
                   <MobileCard
                     key={site.id}
                     title={(
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      <div className="flex flex-col gap-1">
                         <span>{site.name || '-'}</span>
                         {site.url ? (
                           <a
                             href={site.url}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="sites-url-link"
-                            style={{
-                              fontSize: 12,
-                              fontFamily: 'var(--font-mono)',
-                              color: 'var(--color-primary)',
-                              textDecoration: 'underline',
-                              wordBreak: 'break-all',
-                            }}
+                            className="break-all font-mono text-xs underline"
                           >
                             {site.url}
                           </a>
@@ -1969,58 +1869,57 @@ export default function Sites() {
                       </div>
                     )}
                     headerActions={(
-                      <input
-                        type="checkbox"
+                      <Checkbox
+                       
                         aria-label={`选择站点 ${site.name || site.id}`}
                         checked={selectedSiteIds.includes(site.id)}
-                        onChange={(event) => toggleSiteSelection(site.id, event.target.checked)}
-                      />
+                        onCheckedChange={(checked) => toggleSiteSelection(site.id, checked === true)}          />
                     )}
                     footerActions={(
                       <>
-                        <button
+                        <Button variant="ghost" size="sm"
                           type="button"
                           onClick={() => toggleSiteDetails(site.id)}
-                          className="btn btn-link"
+                         
                         >
                           {isExpanded ? '收起' : '详情'}
-                        </button>
-                        <button
+                        </Button>
+                        <Button type="button" variant="ghost" size="sm"
                           onClick={() => handleOpenSiteApiKey(site)}
-                          className="btn btn-link btn-link-primary"
+                         
                         >
                           添加 Key
-                        </button>
-                        <button
+                        </Button>
+                        <Button type="button" variant="ghost" size="sm"
                           onClick={() => openEdit(site)}
-                          className="btn btn-link btn-link-primary"
+                         
                         >
                           编辑
-                        </button>
-                        <button
+                        </Button>
+                        <Button type="button" variant="secondary" size="sm"
                           onClick={() => handleToggleStatus(site)}
                           disabled={togglingSiteId === site.id}
-                          className={`btn btn-link ${site.status === 'disabled' ? 'btn-link-primary' : 'btn-link-warning'}`}
+                         
                         >
-                          {togglingSiteId === site.id ? <span className="spinner spinner-sm" /> : (site.status === 'disabled' ? '启用' : '禁用')}
-                        </button>
+                          {togglingSiteId === site.id ? <LoaderCircle className="size-4 animate-spin" /> : (site.status === 'disabled' ? '启用' : '禁用')}
+                        </Button>
                       </>
                     )}
                   >
                     <MobileField
                       label="状态"
                       value={(
-                        <span className={`badge ${site.status === 'disabled' ? 'badge-muted' : 'badge-success'}`} style={{ fontSize: 11 }}>
+                        <ToneBadge tone={site.status === 'disabled' ? 'muted' : 'success'}>
                           {site.status === 'disabled' ? '禁用' : '启用'}
-                        </span>
+                        </ToneBadge>
                       )}
                     />
                     <MobileField
                       label="平台"
                       value={(
-                        <span className={`badge ${platformColors[site.platform || ''] || 'badge-muted'}`} style={{ fontSize: 11 }}>
+                        <ToneBadge tone={platformColors[site.platform || ''] || 'muted'}>
                           {site.platform || '-'}
-                        </span>
+                        </ToneBadge>
                       )}
                     />
                     <MobileField
@@ -2035,7 +1934,7 @@ export default function Sites() {
                     />
                     <MobileField label="权重" value={(site.globalWeight || 1).toFixed(2)} />
                     {isExpanded ? (
-                      <div className="mobile-card-extra">
+                      <div className="mt-3 grid gap-2">
                         <MobileField
                           label="主站点 URL"
                           stacked
@@ -2044,14 +1943,7 @@ export default function Sites() {
                               href={site.url}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="sites-url-link"
-                              style={{
-                                fontSize: 12,
-                                fontFamily: 'var(--font-mono)',
-                                color: 'var(--color-primary)',
-                                textDecoration: 'underline',
-                                wordBreak: 'break-all',
-                              }}
+                              className="break-all font-mono text-xs underline"
                             >
                               {site.url}
                             </a>
@@ -2061,17 +1953,12 @@ export default function Sites() {
                           label="API 请求地址"
                           stacked
                           value={(
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                            <div className="flex flex-col gap-1">
                               <span>{buildSiteApiEndpointSummary(site)}</span>
                               {getConfiguredSiteApiEndpoints(site).map((endpoint, endpointIndex) => (
                                 <span
                                   key={`mobile-site-endpoint-${site.id}-${endpoint.id ?? endpointIndex}`}
-                                  style={{
-                                    fontSize: 11,
-                                    fontFamily: 'var(--font-mono)',
-                                    color: endpoint.enabled === false ? 'var(--color-text-muted)' : 'var(--color-text-secondary)',
-                                    wordBreak: 'break-all',
-                                  }}
+                                  className="break-all font-mono text-xs text-muted-foreground"
                                 >
                                   {endpoint.url}
                                   {endpoint.enabled === false ? '（已禁用）' : ''}
@@ -2083,9 +1970,9 @@ export default function Sites() {
                         <MobileField
                           label="系统代理"
                           value={(
-                            <span className={`badge ${site.useSystemProxy ? 'badge-info' : 'badge-muted'}`} style={{ fontSize: 11 }}>
+                            <ToneBadge tone={site.useSystemProxy ? 'info' : 'muted'}>
                               {site.useSystemProxy ? '已开启' : '未开启'}
-                            </span>
+                            </ToneBadge>
                           )}
                         />
                         <MobileField
@@ -2095,14 +1982,7 @@ export default function Sites() {
                               href={site.externalCheckinUrl}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="sites-url-link"
-                              style={{
-                                fontSize: 12,
-                                fontFamily: 'var(--font-mono)',
-                                color: 'var(--color-primary)',
-                                textDecoration: 'underline',
-                                wordBreak: 'break-all',
-                              }}
+                              className="break-all font-mono text-xs underline"
                             >
                               {site.externalCheckinUrl}
                             </a>
@@ -2116,40 +1996,40 @@ export default function Sites() {
                           label="创建时间"
                           value={formatDateTimeLocal(site.createdAt)}
                         />
-                        <div className="mobile-card-actions">
-                          <button
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Button type="button" variant="secondary" size="sm"
                             onClick={() => handleTogglePin(site)}
                             disabled={pinningSiteId === site.id}
-                            className={`btn btn-link ${site.isPinned ? 'btn-link-warning' : 'btn-link-primary'}`}
+                           
                           >
-                            {pinningSiteId === site.id ? <span className="spinner spinner-sm" /> : (site.isPinned ? '取消置顶' : '置顶')}
-                          </button>
+                            {pinningSiteId === site.id ? <LoaderCircle className="size-4 animate-spin" /> : (site.isPinned ? '取消置顶' : '置顶')}
+                          </Button>
                           {sortMode === 'custom' && (
                             <>
-                              <button
+                              <Button type="button" variant="ghost" size="sm"
                                 onClick={() => handleMoveCustomOrder(site, 'up')}
                                 disabled={orderingSiteId === site.id}
-                                className="btn btn-link btn-link-muted"
+                               
                               >
                                 ↑ 上移
-                              </button>
-                              <button
+                              </Button>
+                              <Button type="button" variant="ghost" size="sm"
                                 onClick={() => handleMoveCustomOrder(site, 'down')}
                                 disabled={orderingSiteId === site.id}
-                                className="btn btn-link btn-link-muted"
+                               
                               >
                                 ↓ 下移
-                              </button>
+                              </Button>
                             </>
                           )}
-                          <button
+                          <Button type="button" variant="destructive" size="sm"
                             onClick={() => handleDelete(site)}
                             disabled={deleting === site.id}
-                            className="btn btn-link btn-link-danger"
+                           
                           >
-                            {deleting === site.id ? <span className="spinner spinner-sm" /> : null}
+                            {deleting === site.id ? <LoaderCircle className="size-4 animate-spin" /> : null}
                             删除
-                          </button>
+                          </Button>
                         </div>
                       </div>
                     ) : null}
@@ -2158,30 +2038,29 @@ export default function Sites() {
               })}
             </div>
           ) : (
-            <table className="data-table sites-table">
-              <thead>
-                <tr>
-                  <th style={{ width: 44 }}>
-                    <input
-                      type="checkbox"
+            <Table className="w-full text-sm">
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-11">
+                    <Checkbox
+                     
                       checked={allVisibleSitesSelected}
-                      onChange={(e) => toggleSelectAllVisible(e.target.checked)}
-                    />
-                  </th>
-                  <th>名称</th>
-                  <th>外部签到站URL</th>
-                  <th>总余额</th>
-                  <th>状态</th>
-                  <th>系统代理</th>
-                  <th>权重</th>
-                  <th>平台</th>
-                  <th>创建时间</th>
-                  <th className="sites-actions-col" style={{ textAlign: 'right' }}>操作</th>
-                </tr>
-              </thead>
-              <tbody>
+                      onCheckedChange={(checked) => toggleSelectAllVisible(checked === true)}        />
+                  </TableHead>
+                  <TableHead>名称</TableHead>
+                  <TableHead>外部签到站URL</TableHead>
+                  <TableHead>总余额</TableHead>
+                  <TableHead>状态</TableHead>
+                  <TableHead>系统代理</TableHead>
+                  <TableHead>权重</TableHead>
+                  <TableHead>平台</TableHead>
+                  <TableHead>创建时间</TableHead>
+                  <TableHead className="sites-actions-col text-right">操作</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {sortedSites.map((site, i) => (
-                  <tr
+                  <TableRow
                     key={site.id}
                     data-testid={`site-row-${site.id}`}
                     ref={(node) => {
@@ -2191,173 +2070,151 @@ export default function Sites() {
                     onClick={(event) => handleSiteRowClick(site.id, event)}
                     className={`animate-slide-up stagger-${Math.min(i + 1, 5)} row-selectable ${selectedSiteIds.includes(site.id) ? 'row-selected' : ''} ${highlightSiteId === site.id ? 'row-focus-highlight' : ''}`.trim()}
                   >
-                    <td>
-                      <input
+                    <TableCell>
+                      <Checkbox
                         data-testid={`site-select-${site.id}`}
-                        type="checkbox"
+                       
                         checked={selectedSiteIds.includes(site.id)}
-                        onChange={(e) => toggleSiteSelection(site.id, e.target.checked)}
-                      />
-                    </td>
-                    <td style={{ fontWeight: 600 }}>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-start' }}>
+                        onCheckedChange={(checked) => toggleSiteSelection(site.id, checked === true)}          />
+                    </TableCell>
+                    <TableCell className="font-semibold">
+                      <div className="flex flex-col items-start gap-1.5">
                         <a
                           href={site.url}
                           target="_blank"
                           rel="noopener noreferrer"
-                          style={{
-                            color: 'var(--color-text-primary)',
-                            textDecoration: 'underline',
-                          }}
+                          className="text-foreground underline"
                         >
                           {site.name}
                         </a>
                         {hasConfiguredCustomHeaders(site.customHeaders) ? (
-                          <span className="badge badge-info" style={{ fontSize: 11 }}>
+                          <ToneBadge tone="-info">
                             自定义头
-                          </span>
+                          </ToneBadge>
                         ) : null}
-                        <span className={`badge ${getConfiguredSiteApiEndpoints(site).length > 0 ? 'badge-warning' : 'badge-muted'}`} style={{ fontSize: 11 }}>
+                        <ToneBadge tone={getConfiguredSiteApiEndpoints(site).length> 0 ? 'warning' : 'muted'}>
                           API 地址: {buildSiteApiEndpointSummary(site)}
-                        </span>
+                        </ToneBadge>
                       </div>
-                    </td>
-                    <td className="sites-url-cell" style={{ maxWidth: 300 }}>
+                    </TableCell>
+                    <TableCell className="sites-url-cell max-w-75">
                       {site.externalCheckinUrl ? (
                         <a
                           href={site.externalCheckinUrl}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="sites-url-link"
-                          style={{
-                            fontSize: 12,
-                            fontFamily: 'var(--font-mono)',
-                            color: 'var(--color-primary)',
-                            textDecoration: 'underline',
-                            wordBreak: 'break-all',
-                          }}
+                          className="break-all font-mono text-xs underline"
                         >
                           {site.externalCheckinUrl}
                         </a>
                       ) : null}
-                    </td>
-                    <td className="site-balance-cell">
+                    </TableCell>
+                    <TableCell className="site-balance-cell">
                       <SiteBalanceDisplay
                         balance={site.totalBalance}
                         summary={site.subscriptionSummary}
                       />
-                    </td>
-                    <td>
-                      <span className={`badge ${site.status === 'disabled' ? 'badge-muted' : 'badge-success'}`} style={{ fontSize: 11 }}>
+                    </TableCell>
+                    <TableCell>
+                      <ToneBadge tone={site.status === 'disabled' ? 'muted' : 'success'}>
                         {site.status === 'disabled' ? '禁用' : '启用'}
-                      </span>
-                    </td>
-                    <td>
-                      <span className={`badge ${site.useSystemProxy ? 'badge-info' : 'badge-muted'}`} style={{ fontSize: 11 }}>
+                      </ToneBadge>
+                    </TableCell>
+                    <TableCell>
+                      <ToneBadge tone={site.useSystemProxy ? 'info' : 'muted'}>
                         {site.useSystemProxy ? '已开启' : '未开启'}
-                      </span>
-                    </td>
-                    <td style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>
+                      </ToneBadge>
+                    </TableCell>
+                    <TableCell className="font-semibold tabular-nums">
                       {(site.globalWeight || 1).toFixed(2)}
-                    </td>
-                    <td>
+                    </TableCell>
+                    <TableCell>
                       <a
                         href={site.url}
                         target="_blank"
                         rel="noopener noreferrer"
-                        style={{ textDecoration: 'none' }}
+                        className="no-underline"
                       >
-                        <span className={`badge ${platformColors[site.platform || ''] || 'badge-muted'}`}>
+                        <ToneBadge tone={platformColors[site.platform || ''] || 'muted'}>
                           {site.platform || '-'}
-                        </span>
+                        </ToneBadge>
                       </a>
-                    </td>
-                    <td style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+                    </TableCell>
+                    <TableCell className="text-xs text-muted-foreground">
                       <a
                         href={site.url}
                         target="_blank"
                         rel="noopener noreferrer"
-                        style={{ color: 'var(--color-text-muted)', textDecoration: 'underline' }}
+                        className="text-muted-foreground underline"
                       >
                         {formatDateTimeLocal(site.createdAt)}
                       </a>
-                    </td>
-                    <td className="sites-actions-cell" style={{ textAlign: 'right' }}>
+                    </TableCell>
+                    <TableCell className="sites-actions-cell text-right">
                       <div className="sites-row-actions">
-                        <button
+                        <Button type="button" variant="secondary" size="sm"
                           onClick={() => handleTogglePin(site)}
                           disabled={pinningSiteId === site.id}
-                          className={`btn btn-link ${site.isPinned ? 'btn-link-warning' : 'btn-link-primary'}`}
+                         
                         >
-                          {pinningSiteId === site.id ? <span className="spinner spinner-sm" /> : (site.isPinned ? '取消置顶' : '置顶')}
-                        </button>
+                          {pinningSiteId === site.id ? <LoaderCircle className="size-4 animate-spin" /> : (site.isPinned ? '取消置顶' : '置顶')}
+                        </Button>
                         {sortMode === 'custom' && (
                           <>
-                            <button
+                            <Button type="button" variant="ghost" size="sm"
                               onClick={() => handleMoveCustomOrder(site, 'up')}
                               disabled={orderingSiteId === site.id}
-                              className="btn btn-link btn-link-muted"
+                             
                             >
                               ↑
-                            </button>
-                            <button
+                            </Button>
+                            <Button type="button" variant="ghost" size="sm"
                               onClick={() => handleMoveCustomOrder(site, 'down')}
                               disabled={orderingSiteId === site.id}
-                              className="btn btn-link btn-link-muted"
+                             
                             >
                               ↓
-                            </button>
+                            </Button>
                           </>
                         )}
-                        <button
+                        <Button type="button" variant="ghost" size="sm"
                           onClick={() => handleOpenSiteApiKey(site)}
-                          className="btn btn-link btn-link-primary"
+                         
                         >
                           添加 Key
-                        </button>
-                        <button
+                        </Button>
+                        <Button type="button" variant="ghost" size="sm"
                           onClick={() => openEdit(site)}
-                          className="btn btn-link btn-link-primary"
+                         
                         >
                           编辑
-                        </button>
-                        <button
+                        </Button>
+                        <Button type="button" variant="secondary" size="sm"
                           onClick={() => handleToggleStatus(site)}
                           disabled={togglingSiteId === site.id}
-                          className={`btn btn-link ${site.status === 'disabled' ? 'btn-link-primary' : 'btn-link-warning'}`}
+                         
                         >
-                          {togglingSiteId === site.id ? <span className="spinner spinner-sm" /> : (site.status === 'disabled' ? '启用' : '禁用')}
-                        </button>
-                        <button
+                          {togglingSiteId === site.id ? <LoaderCircle className="size-4 animate-spin" /> : (site.status === 'disabled' ? '启用' : '禁用')}
+                        </Button>
+                        <Button type="button" variant="destructive" size="sm"
                           onClick={() => handleDelete(site)}
                           disabled={deleting === site.id}
-                          className="btn btn-link btn-link-danger"
+                         
                         >
-                          {deleting === site.id ? <span className="spinner spinner-sm" /> : null}
+                          {deleting === site.id ? <LoaderCircle className="size-4 animate-spin" /> : null}
                           删除
-                        </button>
+                        </Button>
                       </div>
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           )
         ) : (
-          <div className="empty-state">
-            <svg className="empty-state-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={1}
-                d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9"
-              />
-            </svg>
-            <div className="empty-state-title">暂无站点</div>
-            <div className="empty-state-desc">点击“+ 添加站点”开始使用。</div>
-          </div>
+          <EmptyStateBlock title="暂无站点" description="点击“+ 添加站点”开始使用。" />
         )}
-      </div>
+      </Card>
     </div>
   );
 }

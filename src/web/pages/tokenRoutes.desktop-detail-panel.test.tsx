@@ -94,10 +94,10 @@ describe('TokenRoutes desktop detail panel', () => {
     apiMock.getRoutesSummary.mockResolvedValue([
       {
         id: 1,
-        modelPattern: 'gpt-4o-mini',
-        displayName: 'gpt-4o-mini',
-        displayIcon: null,
         modelMapping: null,
+        match: { kind: 'model', requestedModelPattern: 'gpt-4o-mini', displayName: 'gpt-4o-mini' },
+        backend: { kind: 'channels' },
+        presentation: { displayName: 'gpt-4o-mini', displayIcon: null },
         routingStrategy: 'weighted',
         enabled: true,
         channelCount: 1,
@@ -108,10 +108,10 @@ describe('TokenRoutes desktop detail panel', () => {
       },
       {
         id: 2,
-        modelPattern: 'claude-3.7-sonnet',
-        displayName: 'claude-3.7-sonnet',
-        displayIcon: null,
         modelMapping: null,
+        match: { kind: 'model', requestedModelPattern: 'claude-3.7-sonnet', displayName: 'claude-3.7-sonnet' },
+        backend: { kind: 'channels' },
+        presentation: { displayName: 'claude-3.7-sonnet', displayIcon: null },
         routingStrategy: 'weighted',
         enabled: true,
         channelCount: 1,
@@ -196,7 +196,7 @@ describe('TokenRoutes desktop detail panel', () => {
 
       const detailPanels = root.root.findAll((node) => (
         node.type === 'div'
-        && String(node.props.className || '').includes('route-card-detail-panel')
+        && String(node.props.className || '').includes('route--detail-panel')
       ));
       expect(detailPanels).toHaveLength(1);
       const detailPanelText = collectText(detailPanels[0]!);
@@ -254,7 +254,7 @@ describe('TokenRoutes desktop detail panel', () => {
       expect(String(detailPanelPresence[0]!.props.className || '')).toContain('is-closing');
       const detailPanelsWhileClosing = root.root.findAll((node) => (
         node.type === 'div'
-        && String(node.props.className || '').includes('route-card-detail-panel')
+        && String(node.props.className || '').includes('route--detail-panel')
       ));
       expect(detailPanelsWhileClosing).toHaveLength(1);
       const summaryCardWhileClosing = root.root.find((node) => (

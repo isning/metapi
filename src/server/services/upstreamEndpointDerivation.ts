@@ -156,8 +156,14 @@ export async function resolveUpstreamEndpointCandidates(
   if (downstreamFormat === 'openai/completions') {
     return ['completions' as any];
   }
+  if (downstreamFormat === 'openai/images') {
+    return ['images/generations' as any];
+  }
   if (downstreamFormat.startsWith('openai/images/')) {
     return [downstreamFormat.slice('openai/'.length) as any];
+  }
+  if (downstreamFormat === 'openai/videos') {
+    return ['videos/generations' as any];
   }
   if (downstreamFormat.startsWith('openai/videos/')) {
     return [downstreamFormat.slice('openai/'.length) as any];

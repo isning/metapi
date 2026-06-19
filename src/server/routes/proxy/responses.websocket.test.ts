@@ -95,6 +95,14 @@ vi.mock('../../services/proxyUsageFallbackService.js', () => ({
   resolveProxyUsageWithSelfLogFallback: (arg: any) => resolveProxyUsageWithSelfLogFallbackMock(arg),
 }));
 
+vi.mock('../../services/routeGraphRuntimeService.js', async () => {
+  const actual = await vi.importActual<typeof import('../../services/routeGraphRuntimeService.js')>('../../services/routeGraphRuntimeService.js');
+  return {
+    ...actual,
+    evaluateActiveRouteGraphForModel: async () => null,
+  };
+});
+
 vi.mock('../../services/oauth/quota.js', () => ({
   recordOauthQuotaHeadersSnapshot: async () => undefined,
   recordOauthQuotaResetHint: async () => undefined,

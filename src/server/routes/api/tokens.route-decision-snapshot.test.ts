@@ -3,6 +3,11 @@ import { describe, expect, it, beforeAll, beforeEach, afterAll } from 'vitest';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { mkdtempSync } from 'node:fs';
+import {
+  createGraphNativeTokenRouteFixture,
+  publishCurrentGraphNativeTokenRouteFixtures,
+  resetGraphNativeTokenRouteFixtures,
+} from '../../test/graphNativeRouteFixtures.js';
 
 type DbModule = typeof import('../../db/index.js');
 type TokenRouterModule = typeof import('../../services/tokenRouter.js');
@@ -33,10 +38,14 @@ describe('route decision snapshots', () => {
   beforeEach(async () => {
     await db.delete(schema.routeChannels).run();
     await db.delete(schema.tokenRoutes).run();
+    await db.delete(schema.routeGraphActiveVersion).run();
+    await db.delete(schema.routeGraphDrafts).run();
+    await db.delete(schema.routeGraphVersions).run();
     await db.delete(schema.accountTokens).run();
     await db.delete(schema.accounts).run();
     await db.delete(schema.sites).run();
     await db.delete(schema.settings).run();
+    resetGraphNativeTokenRouteFixtures();
     invalidateTokenRouterCache();
   });
 
@@ -62,10 +71,10 @@ describe('route decision snapshots', () => {
       status: 'active',
     }).returning().get();
 
-    const route = await db.insert(schema.tokenRoutes).values({
+    const route = await createGraphNativeTokenRouteFixture({
       modelPattern: 'gpt-4o-mini',
       enabled: true,
-    }).returning().get();
+    });
 
     await db.insert(schema.routeChannels).values({
       routeId: route.id,
@@ -75,6 +84,8 @@ describe('route decision snapshots', () => {
       weight: 10,
       enabled: true,
     }).run();
+    await publishCurrentGraphNativeTokenRouteFixtures();
+    invalidateTokenRouterCache();
 
     const refreshResponse = await app.inject({
       method: 'POST',
@@ -122,10 +133,10 @@ describe('route decision snapshots', () => {
       status: 'active',
     }).returning().get();
 
-    const route = await db.insert(schema.tokenRoutes).values({
+    const route = await createGraphNativeTokenRouteFixture({
       modelPattern: 're:^claude-(opus|sonnet)-4-6$',
       enabled: true,
-    }).returning().get();
+    });
 
     await db.insert(schema.routeChannels).values([
       {
@@ -147,6 +158,8 @@ describe('route decision snapshots', () => {
         enabled: true,
       },
     ]).run();
+    await publishCurrentGraphNativeTokenRouteFixtures();
+    invalidateTokenRouterCache();
 
     const refreshResponse = await app.inject({
       method: 'POST',

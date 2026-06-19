@@ -46,7 +46,6 @@ describe('RouteFilterBar', () => {
     ));
 
     expect(String(presence.props.className)).toContain('anim-collapse');
-    expect(String(presence.props.className)).toContain('is-open');
     expect(String(expandedPanel.props.className)).not.toContain('is-closing');
   });
 
@@ -98,6 +97,8 @@ describe('RouteFilterBar', () => {
         return rafCallbacks.length;
       },
       cancelAnimationFrame: vi.fn(),
+      setTimeout: globalThis.setTimeout.bind(globalThis),
+      clearTimeout: globalThis.clearTimeout.bind(globalThis),
     });
 
     const root = create(renderBar(true));

@@ -4,6 +4,7 @@ import { extractSafePassthroughHeaders } from './headerPassthrough.js';
 import { buildUpstreamEndpointRequest } from './upstreamRequestBuilder.js';
 import { geminiGenerateContentTransformer, normalizeUpstreamFinalResponse } from './geminiProtocolFacade.js';
 import { parseProxyUsage } from '../../services/proxyUsageParser.js';
+import { applyRouteGraphPostBuildFilters } from '../../services/routeGraphRuntimeService.js';
 import { resolveAntigravityPlatformAction } from '../platforms/antigravityRuntime.js';
 import type { PlatformAction } from '../platforms/types.js';
 
@@ -130,6 +131,22 @@ function buildInternalGeminiPath(action: 'generateContent' | 'streamGenerateCont
   return '/v1internal:generateContent';
 }
 
+function applyRouteGraphFiltersToBuiltGeminiRequest<T extends {
+  headers: Record<string, string>;
+  body: Record<string, unknown>;
+}>(request: T, filters: BuildUpstreamRequestInput['routeGraphFilters']): T {
+  const filtered = applyRouteGraphPostBuildFilters({
+    payload: request.body,
+    headers: request.headers,
+    filters,
+  });
+  return {
+    ...request,
+    headers: filtered.headers,
+    body: filtered.payload,
+  };
+}
+
 const GEMINI_MODEL_PROBES = [
   'gemini-2.5-flash',
   'gemini-2.0-flash',
@@ -240,6 +257,10 @@ export const geminiProtocolAdapter: DownstreamProtocolAdapter = {
     }
 
     if (isDirectGeminiFamilyPlatform(platform)) {
+      const normalizedBody = geminiGenerateContentTransformer.compatibility.applyReasoningHistoryTransport(
+        extra.normalizedBody as Record<string, unknown>,
+        input.compatibilityPolicy,
+      );
       if (isInternalGeminiPlatform(platform)) {
         if (platform === 'gemini-cli' && !input.oauth?.projectId) {
           const error = new Error('Gemini CLI OAuth project is missing') as Error & { status?: number; payload?: unknown };
@@ -252,7 +273,7 @@ export const geminiProtocolAdapter: DownstreamProtocolAdapter = {
           };
           throw error;
         }
-        return {
+        return applyRouteGraphFiltersToBuiltGeminiRequest({
           endpoint: input.endpoint,
           path: buildInternalGeminiPath(action),
           headers: {
@@ -262,11 +283,11 @@ export const geminiProtocolAdapter: DownstreamProtocolAdapter = {
             ...(action === 'streamGenerateContent' ? { Accept: 'text/event-stream' } : {}),
           },
           body: action === 'countTokens'
-            ? { request: extra.normalizedBody as Record<string, unknown> }
+            ? { request: normalizedBody }
             : {
               project: input.oauth?.projectId || '',
               model: input.modelName,
-              request: extra.normalizedBody as Record<string, unknown>,
+              request: normalizedBody,
             },
           runtime: {
             executor: platform === 'gemini-cli' ? 'gemini-cli' : 'antigravity',
@@ -275,10 +296,10 @@ export const geminiProtocolAdapter: DownstreamProtocolAdapter = {
             oauthProjectId: input.oauth?.projectId || null,
             action,
           },
-        };
+        }, input.routeGraphFilters);
       }
 
-      return {
+      return applyRouteGraphFiltersToBuiltGeminiRequest({
         endpoint: input.endpoint,
         path: buildGeminiNativePath({
           apiVersion: asTrimmedString(extra.apiVersion) || 'v1beta',
@@ -290,14 +311,14 @@ export const geminiProtocolAdapter: DownstreamProtocolAdapter = {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: extra.normalizedBody as Record<string, unknown>,
+        body: normalizedBody,
         runtime: {
           executor: 'default',
           modelName: input.modelName,
           stream: action === 'streamGenerateContent',
           action,
         },
-      };
+      }, input.routeGraphFilters);
     }
 
     const upstreamRequest = buildUpstreamEndpointRequest({
@@ -314,6 +335,8 @@ export const geminiProtocolAdapter: DownstreamProtocolAdapter = {
       downstreamHeaders: input.downstreamHeaders,
       passthroughHeaders: input.passthroughHeaders,
       platformHeaders: input.platformHeaders,
+      routeGraphFilters: input.routeGraphFilters,
+      compatibilityPolicy: input.compatibilityPolicy,
     });
     return {
       endpoint: input.endpoint,

@@ -104,34 +104,27 @@ describe('Dashboard site observability panel', () => {
       });
       await flushMicrotasks();
 
-      const panel = root!.root.find((node) => (
-        typeof node.props.className === 'string'
-        && node.props.className.includes('site-observability-panel')
-      ));
+      const panel = root!.root.find((node) => collectText(node).includes('站点可用性观测'));
 
       const cells = panel.findAll((node) => (
         node.type === 'a'
-        && typeof node.props.className === 'string'
-        && node.props.className.includes('site-availability-cell')
+        && typeof node.props['aria-label'] === 'string'
+        && node.props['aria-label'].includes('Demo Site')
       ));
 
       const logLink = panel.find((node) => (
         node.type === 'a'
-        && typeof node.props.className === 'string'
-        && node.props.className.includes('site-observability-log-link')
+        && collectText(node).includes('查看日志')
       ));
 
       expect(collectText(panel)).toContain('站点可用性观测');
       expect(collectText(panel)).toContain('Demo Site');
       expect(collectText(panel)).toContain('75%');
       expect(collectText(panel)).toContain('320ms');
-      expect(logLink.props.title).toBe('查看日志');
       expect(cells).toHaveLength(24);
       expect(String(cells[0]?.props.title || '')).toContain('可用性 100%');
       expect(String(cells[7]?.props.title || '')).toContain('可用性 0%');
-      expect(String(cells[0]?.props['data-tooltip'] || '')).toContain('时间：');
-      expect(String(cells[0]?.props['data-tooltip'] || '')).toContain('可用性：100%');
-      expect(String(cells[0]?.props['data-tooltip'] || '')).toContain('成功/失败：1/0');
+      expect(String(cells[0]?.props.title || '')).toContain('1 成功 / 0 失败');
       expect(String(logLink.props.href || logLink.props.to || '')).toContain('/logs?siteId=1');
     } finally {
       root?.unmount();

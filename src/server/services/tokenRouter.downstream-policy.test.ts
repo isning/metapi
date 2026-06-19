@@ -57,12 +57,12 @@ describe('TokenRouter downstream policy', () => {
     }).returning().get();
 
     const routeAllowed = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'claude-opus-4-6',
+      displayName: 'claude-opus-4-6',
       enabled: true,
     }).returning().get();
 
     const routeBlocked = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-4o-mini',
+      displayName: 'gpt-4o-mini',
       enabled: true,
     }).returning().get();
 
@@ -119,7 +119,7 @@ describe('TokenRouter downstream policy', () => {
     }).returning().get();
 
     const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-4o-mini',
+      displayName: 'gpt-4o-mini',
       enabled: true,
     }).returning().get();
 
@@ -179,7 +179,7 @@ describe('TokenRouter downstream policy', () => {
     }).returning().get();
 
     const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'claude-sonnet-4-6',
+      displayName: 'claude-sonnet-4-6',
       enabled: true,
     }).returning().get();
 
@@ -262,7 +262,7 @@ describe('TokenRouter downstream policy', () => {
     }).returning().get();
 
     const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-5-mini',
+      displayName: 'gpt-5-mini',
       enabled: true,
     }).returning().get();
 
@@ -325,12 +325,12 @@ describe('TokenRouter downstream policy', () => {
     }).returning().get();
 
     const claudeGroupRoute = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 're:^claude-(opus|sonnet)-4-6$',
+      displayName: 're:^claude-(opus|sonnet)-4-6$',
       enabled: true,
     }).returning().get();
 
     const gptExactRoute = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-4o-mini',
+      displayName: 'gpt-4o-mini',
       enabled: true,
     }).returning().get();
 
@@ -383,7 +383,7 @@ describe('TokenRouter downstream policy', () => {
     }).returning().get();
 
     const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-4o-mini',
+      displayName: 'gpt-4o-mini',
       enabled: true,
     }).returning().get();
 
@@ -455,7 +455,7 @@ describe('TokenRouter downstream policy', () => {
     }).returning().get();
 
     const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'claude-sonnet-4-6',
+      displayName: 'claude-sonnet-4-6',
       enabled: true,
     }).returning().get();
 
@@ -522,7 +522,7 @@ describe('TokenRouter downstream policy', () => {
     }).returning().get();
 
     const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-5-mini',
+      displayName: 'gpt-5-mini',
       enabled: true,
     }).returning().get();
 

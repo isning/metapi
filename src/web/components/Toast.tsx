@@ -1,4 +1,6 @@
 import React, { createContext, useContext, useState, useCallback, useMemo, useRef } from 'react';
+import { cn } from '../lib/utils.js';
+import { Card } from './ui/card/index.js';
 
 type ToastType = 'success' | 'error' | 'info';
 
@@ -28,6 +30,12 @@ const icons: Record<ToastType, React.ReactNode> = {
   success: <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" /></svg>,
   error: <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" /></svg>,
   info: <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>,
+};
+
+const toastToneClass: Record<ToastType, string> = {
+  success: 'text-foreground',
+  error: 'text-destructive',
+  info: 'text-foreground',
 };
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {
@@ -63,18 +71,20 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   return (
     <ToastContext.Provider value={value}>
       {children}
-      <div className="toast-container">
+      <div className="pointer-events-none fixed right-4 top-4 z-50 flex flex-col gap-2">
         {toasts.map(t => (
-          <div
+          <Card
             key={t.id}
-            className={`toast toast-${t.type} ${t.exiting ? 'toast-exit' : ''}`}
+            className={cn(
+              'pointer-events-auto relative flex min-w-[280px] max-w-[400px] cursor-pointer items-start gap-2.5 overflow-hidden p-3 shadow-lg animate-in fade-in-0 slide-in-from-top-2',
+              t.exiting ? 'animate-out fade-out-0 slide-out-to-top-2' : '',
+              toastToneClass[t.type],
+            )}
             onClick={() => removeToast(t.id)}
-            style={{ cursor: 'pointer' }}
           >
-            <span style={{ flexShrink: 0, marginTop: 1 }}>{icons[t.type]}</span>
-            <span style={{ fontSize: 13, lineHeight: 1.5 }}>{t.message}</span>
-            <div className="toast-progress" />
-          </div>
+            <span className="mt-px shrink-0">{icons[t.type]}</span>
+            <span className="text-[13px] leading-normal">{t.message}</span>
+          </Card>
         ))}
       </div>
     </ToastContext.Provider>

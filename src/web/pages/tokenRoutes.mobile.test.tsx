@@ -83,11 +83,10 @@ describe('TokenRoutes mobile actions', () => {
     apiMock.getRoutesSummary.mockResolvedValue([
       {
         id: 1,
-        modelPattern: 'gpt-4o-mini',
-        displayName: 'gpt-4o-mini',
-        displayIcon: null,
         modelMapping: null,
-        routeMode: 'pattern',
+        match: { kind: 'model', requestedModelPattern: 'gpt-4o-mini', displayName: 'gpt-4o-mini' },
+        backend: { kind: 'channels' },
+        presentation: { displayName: 'gpt-4o-mini', displayIcon: null },
         routingStrategy: 'weighted',
         enabled: true,
         channelCount: 1,
@@ -120,10 +119,15 @@ describe('TokenRoutes mobile actions', () => {
     apiMock.batchUpdateRoutes.mockResolvedValue({ success: true, updatedCount: 1 });
     apiMock.updateRoute.mockResolvedValue({});
     apiMock.addRoute.mockResolvedValue({});
-    (globalThis as { window?: { confirm?: (message?: string) => boolean } }).window = {
+    const nextWindow = {
       ...(originalWindow || {}),
       confirm: vi.fn(() => true),
-    };
+    } as unknown as typeof window & { confirm: (message?: string) => boolean };
+    nextWindow.clearTimeout = nextWindow.clearTimeout || globalThis.clearTimeout.bind(globalThis);
+    nextWindow.setTimeout = nextWindow.setTimeout || globalThis.setTimeout.bind(globalThis);
+    nextWindow.cancelAnimationFrame = nextWindow.cancelAnimationFrame || ((id: number) => globalThis.clearTimeout(id));
+    nextWindow.requestAnimationFrame = nextWindow.requestAnimationFrame || ((callback: FrameRequestCallback) => globalThis.setTimeout(() => callback(Date.now()), 0) as unknown as number);
+    (globalThis as { window?: typeof window }).window = nextWindow;
   });
 
   afterEach(() => {
@@ -132,7 +136,7 @@ describe('TokenRoutes mobile actions', () => {
     if (originalWindow) {
       (globalThis as { window?: { confirm?: (message?: string) => boolean } }).window = originalWindow;
     } else {
-      delete (globalThis as { window?: { confirm?: (message?: string) => boolean } }).window;
+      delete (globalThis as { window?: typeof window }).window;
     }
   });
 
@@ -201,13 +205,13 @@ describe('TokenRoutes mobile actions', () => {
       await flushMicrotasks();
 
       const routeCheckbox = root!.root.find((node) => (
-        node.type === 'input'
-        && node.props.type === 'checkbox'
+        node.type === 'button'
+        && node.props.role === 'checkbox'
         && node.props['data-testid'] === 'route-select-1'
       ));
 
       await act(async () => {
-        routeCheckbox.props.onChange({ target: { checked: true } });
+        routeCheckbox.props.onClick({ stopPropagation: vi.fn() });
       });
       await flushMicrotasks();
 

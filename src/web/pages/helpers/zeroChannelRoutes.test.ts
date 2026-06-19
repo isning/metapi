@@ -8,9 +8,9 @@ describe('buildZeroChannelPlaceholderRoutes', () => {
     const routes: RouteSummaryRow[] = [
       {
         id: 1,
-        modelPattern: 'gpt-4o-mini',
-        displayName: 'gpt-4o-mini',
-        displayIcon: null,
+        match: { kind: 'model', requestedModelPattern: 'gpt-4o-mini', displayName: 'gpt-4o-mini' },
+        backend: { kind: 'channels' },
+        presentation: { displayName: 'gpt-4o-mini', displayIcon: null },
         modelMapping: null,
         routingStrategy: 'weighted',
         enabled: true,
@@ -51,7 +51,9 @@ describe('buildZeroChannelPlaceholderRoutes', () => {
 
     expect(placeholders).toHaveLength(1);
     expect(placeholders[0]).toMatchObject({
-      modelPattern: 'gpt-5.2-codex',
+      match: { kind: 'model', requestedModelPattern: 'gpt-5.2-codex', displayName: null },
+      backend: { kind: 'channels' },
+      presentation: { displayName: null, displayIcon: null },
       channelCount: 0,
       enabledChannelCount: 0,
       enabled: false,

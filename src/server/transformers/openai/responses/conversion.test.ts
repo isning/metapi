@@ -2073,6 +2073,31 @@ describe('convertResponsesBodyToOpenAiBody', () => {
     ]);
   });
 
+  it('converts Responses reasoning input into OpenAI-compatible reasoning_content history', () => {
+    const result = convertResponsesBodyToOpenAiBody(
+      {
+        model: 'gpt-5',
+        input: [{
+          type: 'reasoning',
+          summary: [{
+            type: 'summary_text',
+            text: 'plan quietly',
+          }],
+          encrypted_content: 'sig_1',
+        }],
+      },
+      'gpt-5',
+      false,
+    );
+
+    expect(result.messages).toEqual([{
+      role: 'assistant',
+      content: '',
+      reasoning_content: 'plan quietly',
+      reasoning_signature: 'sig_1',
+    }]);
+  });
+
   it('preserves reasoning whitespace when converting DeepSeek-style reasoning and tool calls to Responses input', () => {
     const result = convertOpenAiBodyToResponsesBody(
       {

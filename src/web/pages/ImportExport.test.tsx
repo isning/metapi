@@ -209,6 +209,10 @@ describe('ImportExport', () => {
     vi.clearAllMocks();
     vi.stubGlobal('window', {
       confirm: vi.fn(() => true),
+      setTimeout: globalThis.setTimeout.bind(globalThis),
+      clearTimeout: globalThis.clearTimeout.bind(globalThis),
+      requestAnimationFrame: (callback: FrameRequestCallback) => globalThis.setTimeout(() => callback(Date.now()), 0) as unknown as number,
+      cancelAnimationFrame: (id: number) => globalThis.clearTimeout(id),
     });
     apiMock.getBackupWebdavConfig.mockResolvedValue({
       success: true,
@@ -468,25 +472,14 @@ describe('ImportExport', () => {
       const selects = root!.root.findAllByType(ModernSelect);
       const exportTypeSelect = selects.at(-1);
 
-      expect(fileUrlInput?.props.style).toEqual(expect.objectContaining({
-        width: '100%',
-        padding: '10px 14px',
-        border: '1px solid var(--color-border)',
-        borderRadius: 'var(--radius-sm)',
-        fontSize: 13,
-        background: 'var(--color-bg)',
-        color: 'var(--color-text-primary)',
-      }));
-      expect(root!.root.findAll((node) => node.type === 'select')).toHaveLength(0);
+      expect(fileUrlInput?.props.className).toContain('border-input');
       expect(exportTypeSelect?.props.value).toBe('all');
       expect(exportTypeSelect?.props.options).toEqual([
         { value: 'all', label: '全部' },
         { value: 'accounts', label: '连接与路由策略' },
         { value: 'preferences', label: '系统设置' },
       ]);
-      expect(cronInput?.props.style).toEqual(expect.objectContaining({
-        fontFamily: 'var(--font-mono)',
-      }));
+      expect(cronInput?.props.className).toContain('font-mono');
     } finally {
       root?.unmount();
     }
@@ -571,9 +564,13 @@ describe('ImportExport', () => {
 
       expect(clearPasswordToggle).toBeTruthy();
 
-      const checkbox = clearPasswordToggle!.findByType('input');
+      const checkbox = clearPasswordToggle!.find((node) => (
+        node.type === 'button'
+        && node.props.role === 'switch'
+        && node.props['aria-label'] === '清空已保存密码'
+      ));
       await act(async () => {
-        checkbox.props.onChange({ target: { checked: true } });
+        checkbox.props.onClick();
       });
       await flushMicrotasks();
 

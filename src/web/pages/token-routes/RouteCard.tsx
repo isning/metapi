@@ -43,6 +43,9 @@ import {
 import {
   isRouteExactModel,
   isExplicitGroupRoute,
+  getRouteBackendRouteIds,
+  getRouteDisplayName,
+  getRouteRequestedModelPattern,
   resolveRouteTitle,
   resolveRouteIcon,
 } from './utils.js';
@@ -56,6 +59,11 @@ import {
   isPriorityRailNewLayerId,
 } from './priorityRail.js';
 import { translateOnlyRectSortingStrategy } from './sortingStrategies.js';
+import { Button } from '../../components/ui/button/index.js';
+import { LoaderCircle } from 'lucide-react';
+import ToneBadge from '../../components/ToneBadge.js';
+import { Card } from '../../components/ui/card/index.js';
+import { cn } from '../../lib/utils.js';
 
 type RouteCardProps = {
   route: RouteSummaryRow;
@@ -119,6 +127,22 @@ function collectRouteUnits(channels: RouteChannel[] | undefined): RouteChannelRo
   return Array.from(unitsById.values());
 }
 
+function RouteSuccessFailStat({
+  successCount,
+  failCount,
+}: {
+  successCount?: number | null;
+  failCount?: number | null;
+}) {
+  return (
+    <div className="whitespace-nowrap text-xs text-muted-foreground">
+      成功/失败 <span className="font-semibold text-foreground">{successCount || 0}</span>
+      <span className="mx-0.5 text-muted-foreground">/</span>
+      <span className="font-semibold text-destructive">{failCount || 0}</span>
+    </div>
+  );
+}
+
 function PriorityRailNewLayerRow({
   id,
   highlighted,
@@ -136,49 +160,18 @@ function PriorityRailNewLayerRow({
       <div
         ref={setNodeRef}
         data-testid="route-priority-new-layer-target"
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          minHeight: 34,
-          padding: '0 2px',
-        }}
+        className="flex min-h-8 items-center gap-2 px-0.5"
       >
+        <div className={cn('flex-1 border-t border-dashed transition-opacity', active ? 'opacity-100' : 'opacity-70')} />
         <div
-          style={{
-            flex: 1,
-            borderTop: `1px dashed ${active ? 'var(--color-primary)' : 'var(--color-border)'}`,
-            opacity: active ? 1 : 0.7,
-            transition: 'border-color 0.16s ease, opacity 0.16s ease',
-          }}
-        />
-        <div
-          style={{
-            minWidth: 84,
-            padding: '5px 10px',
-            borderRadius: 999,
-            border: `1px dashed ${active ? 'var(--color-primary)' : 'var(--color-border)'}`,
-            background: active
-              ? 'color-mix(in srgb, var(--color-primary) 10%, var(--color-bg-card))'
-              : 'color-mix(in srgb, var(--color-bg-card) 96%, white 4%)',
-            color: active ? 'var(--color-primary)' : 'var(--color-text-muted)',
-            fontSize: 11,
-            fontWeight: 600,
-            textAlign: 'center',
-            lineHeight: 1.2,
-            transition: 'border-color 0.16s ease, background 0.16s ease, color 0.16s ease',
-          }}
+          className={cn(
+            'min-w-21 rounded-full border border-dashed px-2.5 py-1 text-center text-xs font-semibold leading-tight transition-colors',
+            active ? 'bg-muted text-foreground' : 'bg-card text-muted-foreground',
+          )}
         >
           {tr('放到新档位')}
         </div>
-        <div
-          style={{
-            flex: 1,
-            borderTop: `1px dashed ${active ? 'var(--color-primary)' : 'var(--color-border)'}`,
-            opacity: active ? 1 : 0.7,
-            transition: 'border-color 0.16s ease, opacity 0.16s ease',
-          }}
-        />
+        <div className={cn('flex-1 border-t border-dashed transition-opacity', active ? 'opacity-100' : 'opacity-70')} />
       </div>
     );
   }
@@ -187,40 +180,17 @@ function PriorityRailNewLayerRow({
     <div
       ref={setNodeRef}
       data-testid="route-priority-new-layer-target"
-      style={{
-        display: 'grid',
-        gridTemplateColumns: '86px minmax(0, 1fr)',
-        gap: 12,
-        alignItems: 'center',
-      }}
+      className="grid grid-cols-[86px_minmax(0,1fr)] items-center gap-3"
     >
       <div
-        style={{
-          minWidth: 72,
-          padding: '6px 10px',
-          borderRadius: 999,
-          border: `1px dashed ${active ? 'var(--color-primary)' : 'var(--color-border)'}`,
-          background: active
-            ? 'color-mix(in srgb, var(--color-primary) 10%, var(--color-bg))'
-            : 'transparent',
-          color: active ? 'var(--color-primary)' : 'var(--color-text-muted)',
-          fontSize: 11,
-          fontWeight: 600,
-          textAlign: 'center',
-          lineHeight: 1.2,
-          transition: 'border-color 0.16s ease, background 0.16s ease, color 0.16s ease',
-        }}
+        className={cn(
+          'min-w-18 rounded-full border border-dashed px-2.5 py-1.5 text-center text-xs font-semibold leading-tight transition-colors',
+          active ? 'bg-muted text-foreground' : 'text-muted-foreground',
+        )}
       >
         {tr('放到新档位')}
       </div>
-      <div
-        style={{
-          height: 0,
-          borderTop: `1px dashed ${active ? 'var(--color-primary)' : 'var(--color-border)'}`,
-          opacity: active ? 1 : 0.75,
-          transition: 'border-color 0.16s ease, opacity 0.16s ease',
-        }}
-      />
+      <div className={cn('h-0 border-t border-dashed transition-opacity', active ? 'opacity-100' : 'opacity-75')} />
     </div>
   );
 }
@@ -235,26 +205,9 @@ function PriorityBucketHeader({
   return (
     <div
       data-testid={testId}
-      className="route-priority-bucket-header"
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 6,
-        flexWrap: 'wrap',
-        padding: '0 2px',
-        fontSize: 11,
-        color: 'var(--color-text-secondary)',
-      }}
+      className="route-priority-bucket-header flex flex-wrap items-center gap-1.5 px-0.5 text-xs text-muted-foreground"
     >
-      <span
-        style={{
-          fontSize: 11,
-          fontWeight: 600,
-          color: 'var(--color-text-secondary)',
-        }}
-      >
-        {label}
-      </span>
+      <span className="font-semibold">{label}</span>
     </div>
   );
 }
@@ -274,72 +227,37 @@ function PriorityDragPreview({
   return (
     <div
       data-testid="route-channel-drag-overlay"
+      className="pointer-events-none grid h-full max-w-[calc(100vw-32px)] grid-cols-[minmax(0,1fr)_auto] items-center gap-2.5 rounded-lg border bg-muted p-3 text-foreground shadow-md"
       style={{
         width: resolvedWidth,
-        height: '100%',
-        maxWidth: 'calc(100vw - 32px)',
         boxSizing: 'border-box',
-        display: 'grid',
-        gridTemplateColumns: 'minmax(0, 1fr) auto',
-        gap: 10,
-        alignItems: 'center',
-        padding: '10px 12px',
-        borderRadius: 16,
-        border: '1px solid color-mix(in srgb, var(--color-info) 36%, var(--color-border-light))',
-        background: 'color-mix(in srgb, var(--color-bg-card) 80%, var(--color-info) 20%)',
-        boxShadow: '0 18px 34px rgba(15, 23, 42, 0.14)',
-        color: 'var(--color-text-primary)',
-        pointerEvents: 'none',
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0, flexWrap: 'wrap' }}>
-        <span
-          className="badge"
-          style={{
-            fontSize: 10,
-            fontWeight: 700,
-            letterSpacing: 0.1,
-            ...buildPriorityRailNodeStyle(displayPriority, true),
-          }}
-        >
+      <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+        <ToneBadge tone="">
           P{displayPriority}
-        </span>
-        <span style={{ fontWeight: 600, minWidth: 0 }}>
+        </ToneBadge>
+        <span className="min-w-0 font-semibold">
           {channel.account?.username || `account-${channel.accountId}`}
         </span>
-        <span className="badge badge-muted" style={{ fontSize: 10 }}>
+        <ToneBadge tone="-muted">
           {channel.site?.name || 'unknown'}
-        </span>
-        <span
-          className="badge"
-          style={{
-            fontSize: 10,
-            background: 'var(--color-info-soft)',
-            color: 'var(--color-info)',
-            maxWidth: 200,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-          }}
-        >
+        </ToneBadge>
+        <ToneBadge tone="">
           当前生效：{effectiveTokenName}
-        </span>
+        </ToneBadge>
         {channel.sourceModel ? (
-          <span className="badge badge-info" style={{ fontSize: 10 }}>
+          <ToneBadge tone="-info">
             {channel.sourceModel}
-          </span>
+          </ToneBadge>
         ) : null}
         {channel.manualOverride ? (
-          <span className="badge badge-warning" style={{ fontSize: 10 }}>
+          <ToneBadge tone="-warning">
             手动配置
-          </span>
+          </ToneBadge>
         ) : null}
       </div>
-      <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', whiteSpace: 'nowrap' }}>
-        成功/失败 <span style={{ color: 'var(--color-success)', fontWeight: 600 }}>{channel.successCount || 0}</span>
-        <span style={{ color: 'var(--color-text-muted)', margin: '0 2px' }}>/</span>
-        <span style={{ color: 'var(--color-danger)', fontWeight: 600 }}>{channel.failCount || 0}</span>
-      </div>
+      <RouteSuccessFailStat successCount={channel.successCount} failCount={channel.failCount} />
     </div>
   );
 }
@@ -572,7 +490,9 @@ function RouteCardInner({
   const routeIcon = resolveRouteIcon(route);
   const exactRoute = isRouteExactModel(route);
   const explicitGroupRoute = isExplicitGroupRoute(route);
-  const explicitGroupSourceCount = Array.isArray(route.sourceRouteIds) ? route.sourceRouteIds.length : 0;
+  const explicitGroupSourceCount = getRouteBackendRouteIds(route.backend).length;
+  const routePattern = getRouteRequestedModelPattern(route);
+  const routeDisplayName = getRouteDisplayName(route);
   const readOnlyRoute = route.kind === 'zero_channel' || route.readOnly === true || route.isVirtual === true;
   const channelManagementDisabled = explicitGroupRoute;
   const title = resolveRouteTitle(route);
@@ -643,9 +563,9 @@ function RouteCardInner({
   const renderClearCooldownButton = () => {
     if (readOnlyRoute) return null;
     return (
-      <button onClick={() => onClearCooldown(route.id)} className="btn btn-link btn-link-info" disabled={clearingCooldown}>
+      <Button type="button" variant="ghost" size="sm" onClick={() => onClearCooldown(route.id)} disabled={clearingCooldown}>
         {clearingCooldown ? tr('清除中...') : tr('清除冷却')}
-      </button>
+      </Button>
     );
   };
   const renderAddChannelButton = ({
@@ -655,30 +575,20 @@ function RouteCardInner({
     fullWidth?: boolean;
     alignRight?: boolean;
   } = {}) => (
-    <button
+    <Button type="button" variant="outline"
       onClick={() => onAddChannel(route.id)}
-      className="btn btn-ghost"
-      style={{
-        fontSize: 11.5,
-        padding: '5px 10px',
-        color: 'var(--color-text-secondary)',
-        background: 'color-mix(in srgb, var(--color-bg-card) 96%, white 4%)',
-        border: '1px dashed color-mix(in srgb, var(--color-border) 88%, transparent)',
-        borderRadius: 12,
-        whiteSpace: fullWidth ? 'normal' : 'nowrap',
-        width: fullWidth ? '100%' : 'auto',
-        marginLeft: alignRight ? 'auto' : undefined,
-      }}
+     
+     
     >
       + {tr('添加通道')}
-    </button>
+    </Button>
   );
 
   // Collapsed card
   if (!expanded) {
     return (
-      <div
-        className={`card route-card-collapsed ${summaryExpanded ? 'is-active' : ''}`.trim()}
+      <Card
+        className={`route-card-collapsed route--collapsed ${summaryExpanded ? 'is-active' : ''}`.trim()}
         onClick={() => onToggleExpand(route.id)}
         role="button"
         tabIndex={0}
@@ -689,295 +599,271 @@ function RouteCardInner({
             onToggleExpand(route.id);
           }
         }}
-        style={{ cursor: 'pointer' }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-          <span style={{ display: 'inline-flex', alignItems: 'center', flexShrink: 0, width: 20, height: 20 }}>
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="inline-flex size-5 shrink-0 items-center">
             {routeIcon.kind === 'brand' ? (
               <BrandGlyph icon={routeIcon.value} alt={title} size={18} fallbackText={title} />
             ) : routeIcon.kind === 'text' ? (
-              <span style={{ fontSize: 14, lineHeight: 1 }}>{routeIcon.value}</span>
+              <span className="text-sm leading-none">{routeIcon.value}</span>
             ) : routeIcon.kind === 'auto' && brand ? (
               <BrandGlyph brand={brand} alt={title} size={18} fallbackText={title} />
             ) : routeIcon.kind === 'auto' ? (
-              <InlineBrandIcon model={route.modelPattern} size={18} />
+              <InlineBrandIcon model={routePattern} size={18} />
             ) : null}
           </span>
 
           <div
             data-testid="collapsed-route-title-row"
-            style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, flex: '1 1 180px' }}
+            className="flex min-w-0 flex-[1_1_180px] items-center gap-1.5"
           >
             <code
-              style={{
-                fontWeight: 600,
-                fontSize: 13,
-                color: 'var(--color-text-primary)',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-                minWidth: 0,
-                flex: '1 1 180px',
-              }}
+              className="min-w-0 flex-[1_1_180px] truncate text-[13px] font-semibold text-foreground"
             >
               {title}
             </code>
 
-            {route.displayName && route.displayName.trim() !== route.modelPattern ? (
-              <span
-                className="badge badge-muted"
-                title={route.modelPattern}
-                style={{
-                  fontSize: 10,
-                  flex: '0 1 116px',
-                  minWidth: 0,
-                  maxWidth: 116,
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                }}
+            {routeDisplayName && routeDisplayName.trim() !== routePattern ? (
+              <ToneBadge tone="-muted"
+               
+                title={routePattern}
+                className="min-w-0 max-w-[116px] flex-[0_1_116px] truncate"
+               
               >
-                {route.modelPattern}
-              </span>
+                {routePattern}
+              </ToneBadge>
             ) : null}
           </div>
 
           {readOnlyRoute ? (
-            <span className="badge badge-muted" style={{ fontSize: 10, flexShrink: 0 }}>
+            <ToneBadge tone="-muted">
               {tr('未生成')}
-            </span>
+            </ToneBadge>
           ) : (
-            <button
-              className={`badge route-enable-toggle ${route.enabled ? 'is-enabled' : 'is-disabled'}`}
-              style={{ fontSize: 11, cursor: 'pointer', border: 'none', flexShrink: 0, minWidth: 36, textAlign: 'center' }}
+            <Button
+              type="button"
+              variant={route.enabled ? 'secondary' : 'outline'}
+              size="sm"
               onClick={(e) => { e.stopPropagation(); onToggleEnabled(route); }}
               data-tooltip={route.enabled ? '点击禁用此路由' : '点击启用此路由'}
             >
               {route.enabled ? tr('启用') : tr('禁用')}
-            </button>
+            </Button>
           )}
 
           {explicitGroupRoute && explicitGroupSourceCount > 0 ? (
             <>
-              <span className="badge badge-info" style={{ fontSize: 10, flexShrink: 0 }}>
+              <ToneBadge tone="-info">
                 {explicitGroupSourceCount} {tr('来源模型')}
-              </span>
-              <span className="badge badge-muted" style={{ fontSize: 10, flexShrink: 0 }}>
+              </ToneBadge>
+              <ToneBadge tone="-muted">
                 {route.channelCount} {tr('通道')}
-              </span>
+              </ToneBadge>
             </>
           ) : (
-            <span className="badge badge-info" style={{ fontSize: 10, flexShrink: 0 }}>
+            <ToneBadge tone="-info">
               {route.channelCount} {tr('通道')}
-            </span>
+            </ToneBadge>
           )}
           {hasCachedDecisionSnapshot ? (
-            <span
-              className="badge badge-success"
+            <ToneBadge tone="-success"
+             
               data-tooltip={cachedDecisionTooltip}
-              style={{ fontSize: 10, flexShrink: 0 }}
+             
             >
               {tr('已缓存')}
-            </span>
+            </ToneBadge>
           ) : null}
 
           {readOnlyRoute ? (
-            <span className="badge badge-warning" style={{ fontSize: 10, flexShrink: 0 }}>
+            <ToneBadge tone="-warning">
               {tr('0 通道')}
-            </span>
+            </ToneBadge>
           ) : (
-            <span
-              className="badge badge-muted"
-              style={{ fontSize: 10, flexShrink: 0 }}
+            <ToneBadge tone="-muted"
+             
+             
               data-tooltip={`${getRouteRoutingStrategyLabel(routingStrategy)}：${routingStrategyDescription}`}
             >
               {getRouteRoutingStrategyLabel(routingStrategy)}
-            </span>
+            </ToneBadge>
           )}
 
           <svg
-            width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2"
-            style={{
-              flexShrink: 0,
-              color: 'var(--color-text-muted)',
-              transform: summaryExpanded ? 'rotate(180deg)' : 'none',
-              transition: 'transform 0.18s ease',
-            }}
+            width="14"
+            height="14"
+            viewBox="0 0 20 20"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            className={cn('shrink-0 text-muted-foreground transition-transform', summaryExpanded && 'rotate-180')}
             aria-hidden
           >
             <path d="m5 7 5 6 5-6" />
           </svg>
         </div>
-      </div>
+      </Card>
     );
   }
 
   // Expanded card
   return (
-    <div
-      className={`card route-card-expanded ${compact ? 'route-card-expanded-compact' : ''} ${detailPanel ? 'route-card-detail-panel' : ''}`.trim()}
-      style={{ padding: compact ? 10 : 14 }}
+    <Card
+      className={cn(
+        'route--expanded',
+        compact ? 'route--expanded-compact p-2.5' : 'p-3.5',
+        detailPanel && 'route--detail-panel',
+      )}
     >
       {!compact ? (
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, gap: 8, flexWrap: 'wrap' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            <code style={{ fontWeight: 600, fontSize: 13, background: 'var(--color-bg)', padding: '4px 10px', borderRadius: 6, color: 'var(--color-text-primary)', display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <code className="inline-flex items-center gap-1.5 rounded-md bg-muted px-2.5 py-1 text-sm font-semibold text-foreground">
               {routeIcon.kind === 'brand' ? (
                 <BrandGlyph icon={routeIcon.value} alt={title} size={20} fallbackText={title} />
               ) : routeIcon.kind === 'text' ? (
-                <span style={{ width: 20, height: 20, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', borderRadius: 8, background: 'var(--color-bg-card)', fontSize: 14, lineHeight: 1 }}>
+                <span className="inline-flex size-5 items-center justify-center rounded-md bg-card text-sm leading-none">
                   {routeIcon.value}
                 </span>
               ) : routeIcon.kind === 'auto' && brand ? (
                 <BrandGlyph brand={brand} alt={title} size={20} fallbackText={title} />
               ) : routeIcon.kind === 'auto' ? (
-                <InlineBrandIcon model={route.modelPattern} size={20} />
+                <InlineBrandIcon model={routePattern} size={20} />
               ) : null}
               {title}
             </code>
-            {route.displayName && route.displayName.trim() !== route.modelPattern ? (
-              <span className="badge badge-muted" style={{ fontSize: 10 }}>{route.modelPattern}</span>
+            {routeDisplayName && routeDisplayName.trim() !== routePattern ? (
+              <ToneBadge tone="-muted">{routePattern}</ToneBadge>
             ) : null}
             {readOnlyRoute ? (
-              <span className="badge badge-muted" style={{ fontSize: 10 }}>
+              <ToneBadge tone="-muted">
                 {tr('未生成')}
-              </span>
+              </ToneBadge>
             ) : (
-              <button
-                className={`badge route-enable-toggle ${route.enabled ? 'is-enabled' : 'is-disabled'}`}
-                style={{ fontSize: 11, cursor: 'pointer', border: 'none' }}
+              <Button
+                type="button"
+                variant={route.enabled ? 'secondary' : 'outline'}
+                size="sm"
                 onClick={(e) => { e.stopPropagation(); onToggleEnabled(route); }}
                 data-tooltip={route.enabled ? '点击禁用此路由' : '点击启用此路由'}
               >
                 {route.enabled ? tr('启用') : tr('禁用')}
-              </button>
+              </Button>
             )}
             {explicitGroupRoute && explicitGroupSourceCount > 0 ? (
               <>
-                <span className="badge badge-info" style={{ fontSize: 10 }}>
+                <ToneBadge tone="-info">
                   {explicitGroupSourceCount} {tr('来源模型')}
-                </span>
-                <span className="badge badge-muted" style={{ fontSize: 10 }}>
+                </ToneBadge>
+                <ToneBadge tone="-muted">
                   {route.channelCount} {tr('通道')}
-                </span>
+                </ToneBadge>
               </>
             ) : (
-              <span className="badge badge-info" style={{ fontSize: 10 }}>
+              <ToneBadge tone="-info">
                 {route.channelCount} {tr('通道')}
-              </span>
+              </ToneBadge>
             )}
             {hasCachedDecisionSnapshot ? (
-              <span
-                className="badge badge-success"
+              <ToneBadge tone="-success"
+               
                 data-tooltip={cachedDecisionTooltip}
-                style={{ fontSize: 10 }}
+               
               >
                 {tr('已缓存')}
-              </span>
+              </ToneBadge>
             ) : null}
             {readOnlyRoute && (
-              <span className="badge badge-warning" style={{ fontSize: 10 }}>
+              <ToneBadge tone="-warning">
                 {tr('0 通道')}
-              </span>
+              </ToneBadge>
             )}
             {savingPriority && (
-              <span className="badge badge-warning" style={{ fontSize: 10 }}>{tr('排序保存中')}</span>
+              <ToneBadge tone="-warning">{tr('排序保存中')}</ToneBadge>
             )}
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div className="flex items-center gap-2.5">
             {renderClearCooldownButton()}
             {!readOnlyRoute && (explicitGroupRoute || !exactRoute) && (
-              <button onClick={() => onEdit(route)} className="btn btn-link">{tr('编辑群组')}</button>
+              <Button type="button" variant="ghost" size="sm" onClick={() => onEdit(route)}>{tr('编辑群组')}</Button>
             )}
-            {!readOnlyRoute && <button onClick={() => onDelete(route.id)} className="btn btn-link btn-link-danger">{tr('删除路由')}</button>}
-            <button
+            {!readOnlyRoute && <Button type="button" variant="destructive" size="sm" onClick={() => onDelete(route.id)}>{tr('删除路由')}</Button>}
+            <Button
+              type="button"
+              variant="outline"
               onClick={() => onToggleExpand(route.id)}
-              className="btn btn-ghost"
-              style={{ padding: '4px 8px', border: '1px solid var(--color-border)' }}
               data-tooltip={tr('收起')}
             >
               <svg
-                width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2"
-                style={{ transform: 'rotate(180deg)' }}
+                width="14"
+                height="14"
+                viewBox="0 0 20 20"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                className="rotate-180"
                 aria-hidden
               >
                 <path d="m5 7 5 6 5-6" />
               </svg>
-            </button>
+            </Button>
           </div>
         </div>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8 }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+        <div className="mb-2 flex flex-col gap-1.5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <div
               data-testid="compact-route-header-main"
-              style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 5, flexWrap: 'wrap', minWidth: 0, flex: 1 }}
+              className="flex min-w-0 flex-1 flex-row flex-wrap items-center gap-1.5"
             >
-              <code
-                style={{
-                  fontWeight: 600,
-                  fontSize: 12.5,
-                  background: 'var(--color-bg)',
-                  padding: '3px 8px',
-                  borderRadius: 6,
-                  color: 'var(--color-text-primary)',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 5,
-                  minWidth: 0,
-                  maxWidth: '100%',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                }}
-              >
+              <code className="inline-flex max-w-full min-w-0 truncate rounded-md bg-muted px-2 py-0.5 text-sm font-semibold text-foreground">
                 {title}
               </code>
-              {route.displayName && route.displayName.trim() !== route.modelPattern ? (
-                <span className="badge badge-muted" style={{ fontSize: 10 }}>{route.modelPattern}</span>
+              {routeDisplayName && routeDisplayName.trim() !== routePattern ? (
+                <ToneBadge tone="-muted">{routePattern}</ToneBadge>
               ) : null}
               {readOnlyRoute ? (
-                <span className="badge badge-muted" style={{ fontSize: 10 }}>{tr('未生成')}</span>
+                <ToneBadge tone="-muted">{tr('未生成')}</ToneBadge>
               ) : (
-                <span className={`badge ${route.enabled ? 'badge-success' : 'badge-muted'}`} style={{ fontSize: 10 }}>
+                <ToneBadge tone={route.enabled ? 'success' : 'muted'}>
                   {route.enabled ? tr('启用') : tr('禁用')}
-                </span>
+                </ToneBadge>
               )}
-              <span className="badge badge-info" style={{ fontSize: 10 }}>
+              <ToneBadge tone="-info">
                 {route.channelCount} {tr('通道')}
-              </span>
+              </ToneBadge>
               {hasCachedDecisionSnapshot ? (
-                <span
-                  className="badge badge-success"
+                <ToneBadge tone="-success"
+                 
                   data-tooltip={cachedDecisionTooltip}
-                  style={{ fontSize: 10 }}
+                 
                 >
                   {tr('已缓存')}
-                </span>
+                </ToneBadge>
               ) : null}
               {explicitGroupRoute && explicitGroupSourceCount > 0 ? (
-                <span className="badge badge-muted" style={{ fontSize: 10 }}>
+                <ToneBadge tone="-muted">
                   {explicitGroupSourceCount} {tr('来源模型')}
-                </span>
+                </ToneBadge>
               ) : null}
-              {savingPriority ? <span className="badge badge-warning" style={{ fontSize: 10 }}>{tr('排序保存中')}</span> : null}
+              {savingPriority ? <ToneBadge tone="-warning">{tr('排序保存中')}</ToneBadge> : null}
             </div>
             {!readOnlyRoute && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              <div className="flex flex-wrap items-center justify-end gap-2">
                 {renderClearCooldownButton()}
                 {(explicitGroupRoute || !exactRoute) && (
-                  <button onClick={() => onEdit(route)} className="btn btn-link">{tr('编辑群组')}</button>
+                  <Button type="button" variant="ghost" size="sm" onClick={() => onEdit(route)}>{tr('编辑群组')}</Button>
                 )}
-                <button onClick={() => onDelete(route.id)} className="btn btn-link btn-link-danger">{tr('删除路由')}</button>
+                <Button type="button" variant="destructive" size="sm" onClick={() => onDelete(route.id)}>{tr('删除路由')}</Button>
                 {detailPanel && (
-                  <button
+                  <Button
+                    type="button"
+                    variant="outline"
                     onClick={() => onToggleExpand(route.id)}
-                    className="btn btn-ghost"
-                    style={{ padding: '3px 8px', border: '1px solid var(--color-border)' }}
                   >
                     {tr('收起详情')}
-                  </button>
+                  </Button>
                 )}
               </div>
             )}
@@ -986,36 +872,29 @@ function RouteCardInner({
       )}
 
       {!compact && explicitGroupRoute ? (
-        <div style={{ fontSize: 11, lineHeight: 1.45, color: 'var(--color-text-muted)', marginBottom: 6 }}>
+        <div className="mb-1.5 text-xs leading-snug text-muted-foreground">
           {tr('该群组会将多个来源模型聚合为一个对外模型名；这里调整优先级桶时会直接回写来源通道。若某个来源模型被其他群组复用，保存前会提示影响范围。')}
         </div>
       ) : !compact && !exactRoute ? (
-        <div style={{ fontSize: 11, lineHeight: 1.45, color: 'var(--color-text-muted)', marginBottom: 6 }}>
+        <div className="mb-1.5 text-xs leading-snug text-muted-foreground">
           {tr('通配符路由按请求实时决策；下方优先级桶在整条路由内全局生效，来源模型只作为通道标签展示。')}
         </div>
       ) : null}
 
       {routeUnits.length > 0 ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8 }}>
-          <div style={{ fontSize: 11.5, color: 'var(--color-text-secondary)' }}>
+        <div className="mb-2 flex flex-col gap-1.5">
+          <div className="text-xs text-muted-foreground">
             OAuth 路由池
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+          <div className="flex flex-wrap items-center gap-1.5">
             {routeUnits.map((routeUnit) => (
-              <span
+              <ToneBadge
+                tone="-info"
                 key={`route-unit-${String(routeUnit.id)}`}
-                className="badge badge-info"
-                style={{
-                  fontSize: 10.5,
-                  maxWidth: '100%',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                }}
                 title={`${routeUnit.name?.trim() || 'OAuth 路由池'} · ${routeUnit.memberCount} 个成员 · ${getRouteUnitStrategyLabel(routeUnit.strategy)}`}
               >
                 {(routeUnit.name?.trim() || 'OAuth 路由池')} · {routeUnit.memberCount} 个成员 · {getRouteUnitStrategyLabel(routeUnit.strategy)}
-              </span>
+              </ToneBadge>
             ))}
           </div>
         </div>
@@ -1024,25 +903,18 @@ function RouteCardInner({
       {!readOnlyRoute && (
         <div
           data-testid={compact ? 'compact-route-action-row' : undefined}
-          style={{
-            display: 'flex',
-            alignItems: compact ? 'center' : 'center',
-            flexDirection: compact ? 'row' : 'row',
-            justifyContent: compact ? 'flex-start' : 'space-between',
-            gap: compact ? 6 : 8,
-            marginBottom: 8,
-            flexWrap: 'wrap',
-          }}
+          className={cn(
+            'mb-2 flex flex-wrap items-center gap-2',
+            compact ? 'justify-start' : 'justify-between',
+          )}
         >
           {compact ? (
             <>
               <div
-                style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}
+                className="flex min-w-0 items-center gap-1.5"
                 data-tooltip={`${routingStrategyDescription} ${routingStrategyHint}`}
               >
-                <div
-                  style={{ fontSize: 11.5, color: 'var(--color-text-secondary)', flexShrink: 0 }}
-                >
+                <div className="shrink-0 text-xs text-muted-foreground">
                   {tr('路由策略')}
                 </div>
                 <div
@@ -1068,10 +940,7 @@ function RouteCardInner({
             </>
           ) : (
             <>
-              <div
-                style={{ fontSize: 11.5, color: 'var(--color-text-secondary)', minWidth: undefined }}
-                data-tooltip={undefined}
-              >
+              <div className="text-xs text-muted-foreground" data-tooltip={undefined}>
                 {tr('路由策略')}
               </div>
               <div
@@ -1090,11 +959,11 @@ function RouteCardInner({
                   placeholder={tr('选择路由策略')}
                   emptyLabel={tr('暂无可选策略')}
                 />
-                <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <div style={{ fontSize: 11.5, lineHeight: 1.45, color: 'var(--color-text-secondary)' }}>
+                <div className="mt-1.5 flex flex-col gap-0.5">
+                  <div className="text-xs leading-snug text-muted-foreground">
                     {routingStrategyDescription}
                   </div>
-                  <div style={{ fontSize: 10.5, lineHeight: 1.4, color: 'var(--color-text-muted)' }}>
+                  <div className="text-xs leading-snug text-muted-foreground">
                     {routingStrategyHint}
                   </div>
                 </div>
@@ -1105,40 +974,40 @@ function RouteCardInner({
       )}
 
       {/* Missing token hints + Add channel button */}
-      <div style={{ display: 'flex', alignItems: compact ? 'stretch' : 'flex-start', flexDirection: compact ? 'column' : 'row', justifyContent: 'space-between', gap: 6, marginBottom: 8, flexWrap: 'wrap' }}>
+      <div className={cn('mb-2 flex flex-wrap justify-between gap-1.5', compact ? 'flex-col items-stretch' : 'flex-row items-start')}>
         {showMissingTokenHints ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1 }}>
+          <div className="flex flex-1 flex-col gap-1">
             {missingTokenSiteItems.length > 0 && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
-                <span style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>{tr('待注册站点')}:</span>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-xs text-muted-foreground">{tr('待注册站点')}:</span>
                 {missingTokenSiteItems.map((item) => (
-                  <button
+                  <Button
                     key={`missing-${route.id}-${item.key}`}
                     type="button"
-                    onClick={() => onCreateTokenForMissing(item.accountId, route.modelPattern)}
-                    className="badge badge-info missing-token-site-tag"
+                    onClick={() => onCreateTokenForMissing(item.accountId, routePattern)}
+                    variant="secondary"
+                    size="sm"
                     data-tooltip={`点击跳转到令牌创建（预选 ${item.siteName}/${item.accountLabel}）`}
-                    style={{ fontSize: 10.5, cursor: 'pointer' }}
                   >
                     {item.siteName}
-                  </button>
+                  </Button>
                 ))}
               </div>
             )}
             {missingTokenGroupItems.length > 0 && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
-                <span style={{ fontSize: 11, color: 'var(--color-text-secondary)' }}>{tr('缺少分组')}:</span>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-xs text-muted-foreground">{tr('缺少分组')}:</span>
                 {missingTokenGroupItems.map((item) => (
-                  <button
+                  <Button
                     key={`missing-group-${route.id}-${item.key}`}
                     type="button"
-                    onClick={() => onCreateTokenForMissing(item.accountId, route.modelPattern)}
-                    className="badge badge-warning missing-token-group-tag"
+                    onClick={() => onCreateTokenForMissing(item.accountId, routePattern)}
+                    variant="secondary"
+                    size="sm"
                     data-tooltip={`缺少分组：${item.missingGroups.join('、') || '未知'}${item.availableGroups.length > 0 ? `；已覆盖：${item.availableGroups.join('、')}` : ''}${item.groupCoverageUncertain ? '；当前分组覆盖存在不确定性' : ''}`}
-                    style={{ fontSize: 10.5, cursor: 'pointer' }}
                   >
                     {item.siteName}
-                  </button>
+                  </Button>
                 ))}
               </div>
             )}
@@ -1149,12 +1018,12 @@ function RouteCardInner({
 
       {/* Channel list */}
       {loadingChannels ? (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0' }}>
-          <span className="spinner spinner-sm" />
-          <span style={{ fontSize: 13, color: 'var(--color-text-muted)' }}>{tr('加载通道中...')}</span>
+        <div className="flex items-center gap-2 py-2">
+          <LoaderCircle className="size-4 animate-spin" />
+          <span className="text-sm text-muted-foreground">{tr('加载通道中...')}</span>
         </div>
       ) : channels && channels.length > 0 ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <div className="flex flex-col gap-1">
           <DndContext
             sensors={sensors}
             collisionDetection={closestCenter}
@@ -1165,7 +1034,7 @@ function RouteCardInner({
             <SortableContext items={(channels || []).map((channel) => channel.id)} strategy={translateOnlyRectSortingStrategy}>
               <div
                 data-testid="route-channel-sortable-list"
-                style={{ display: 'flex', flexDirection: 'column', gap: compact ? 8 : 4 }}
+                className={compact ? 'flex flex-col gap-2' : 'flex flex-col gap-1'}
               >
                 {priorityBuckets.map((bucket, bucketIndex) => {
                   const railSection = priorityRailSections[bucketIndex];
@@ -1247,11 +1116,11 @@ function RouteCardInner({
           </DndContext>
         </div>
       ) : (
-        <div style={{ fontSize: 13, color: 'var(--color-text-muted)', paddingLeft: 4 }}>
+        <div className="pl-1 text-sm text-muted-foreground">
           {readOnlyRoute ? tr('暂无通道，先补齐连接配置后再重建路由。') : tr('暂无通道')}
         </div>
       )}
-    </div>
+    </Card>
   );
 }
 

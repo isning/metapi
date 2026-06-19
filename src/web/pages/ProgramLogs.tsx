@@ -7,6 +7,21 @@ import { useIsMobile } from '../components/useIsMobile.js';
 import { formatDateTimeLocal } from './helpers/checkinLogTime.js';
 import ModernSelect from '../components/ModernSelect.js';
 import { tr } from '../i18n.js';
+import { Button } from '../components/ui/button/index.js';
+import { LoaderCircle } from 'lucide-react';
+import { Skeleton } from '../components/ui/skeleton/index.js';
+import ToneBadge from '../components/ToneBadge.js';
+import EmptyStateBlock from '../components/EmptyStateBlock.js';
+import { Card, CardContent } from '../components/ui/card/index.js';
+import { Switch } from '../components/ui/switch/index.js';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '../components/ui/table/index.js';
 
 type ProgramEvent = {
   id: number;
@@ -33,9 +48,9 @@ const TYPE_OPTIONS = [
 ];
 
 function levelLabel(level: string) {
-  if (level === 'error') return { label: '错误', cls: 'badge-error' };
-  if (level === 'warning') return { label: '警告', cls: 'badge-warning' };
-  return { label: '信息', cls: 'badge-info' };
+  if (level === 'error') return { label: '错误', cls: 'error' };
+  if (level === 'warning') return { label: '警告', cls: 'warning' };
+  return { label: '信息', cls: 'info' };
 }
 
 function eventStatusLabel(row: ProgramEvent) {
@@ -56,33 +71,33 @@ function eventStatusLabel(row: ProgramEvent) {
 
   if (summary.failed !== undefined || summary.success !== undefined || summary.skipped !== undefined) {
     if ((summary.failed ?? 0) > 0) {
-      return { label: '失败', cls: 'badge-error' };
+      return { label: '失败', cls: 'error' };
     }
     if ((summary.success ?? 0) > 0) {
-      return { label: '成功', cls: 'badge-success' };
+      return { label: '成功', cls: 'success' };
     }
     if ((summary.skipped ?? 0) > 0) {
-      return { label: '跳过', cls: 'badge-warning' };
+      return { label: '跳过', cls: 'warning' };
     }
-    return { label: '成功', cls: 'badge-success' };
+    return { label: '成功', cls: 'success' };
   }
 
   if (text.includes('失败') || text.includes('failed') || text.includes('error')) {
-    return { label: '失败', cls: 'badge-error' };
+    return { label: '失败', cls: 'error' };
   }
   if (text.includes('跳过') || text.includes('skipped')) {
-    return { label: '跳过', cls: 'badge-warning' };
+    return { label: '跳过', cls: 'warning' };
   }
   if (text.includes('进行中') || text.includes('已开始') || text.includes('running') || text.includes('pending')) {
-    return { label: '进行中', cls: 'badge-info' };
+    return { label: '进行中', cls: 'info' };
   }
   if (text.includes('成功') || text.includes('已完成') || text.includes('completed') || text.includes('finished')) {
-    return { label: '成功', cls: 'badge-success' };
+    return { label: '成功', cls: 'success' };
   }
 
-  if (row.level === 'error') return { label: '异常', cls: 'badge-error' };
-  if (row.level === 'warning') return { label: '警告', cls: 'badge-warning' };
-  return { label: '信息', cls: 'badge-info' };
+  if (row.level === 'error') return { label: '异常', cls: 'error' };
+  if (row.level === 'warning') return { label: '警告', cls: 'warning' };
+  return { label: '信息', cls: 'info' };
 }
 
 export default function ProgramLogs() {
@@ -183,33 +198,33 @@ export default function ProgramLogs() {
   };
 
   return (
-    <div className="animate-fade-in">
-      <div className="page-header">
-        <h2 className="page-title">{tr('程序日志')}</h2>
-        <div className="page-actions">
-          <button
+    <div className="grid gap-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <h2 className="text-2xl font-semibold tracking-tight">{tr('程序日志')}</h2>
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" variant="outline"
             onClick={() => load(true)}
             disabled={refreshing}
-            className="btn btn-ghost"
-            style={{ border: '1px solid var(--color-border)', padding: '8px 14px' }}
+           
+           
           >
-            {refreshing ? <><span className="spinner spinner-sm" /> 刷新中...</> : '刷新'}
-          </button>
-          <button
+            {refreshing ? <><LoaderCircle className="size-4 animate-spin" /> 刷新中...</> : '刷新'}
+          </Button>
+          <Button type="button" variant="outline"
             onClick={markAllRead}
             disabled={markingAll}
-            className="btn btn-ghost"
-            style={{ border: '1px solid var(--color-border)', padding: '8px 14px' }}
+           
+           
           >
-            {markingAll ? <><span className="spinner spinner-sm" /> 标记中...</> : '全部已读'}
-          </button>
-          <button
+            {markingAll ? <><LoaderCircle className="size-4 animate-spin" /> 标记中...</> : '全部已读'}
+          </Button>
+          <Button type="button" variant="destructive" size="sm"
             onClick={clearAll}
             disabled={clearing}
-            className="btn btn-link btn-link-danger"
+           
           >
-            {clearing ? <><span className="spinner spinner-sm" /> 清空中...</> : '清空日志'}
-          </button>
+            {clearing ? <><LoaderCircle className="size-4 animate-spin" /> 清空中...</> : '清空日志'}
+          </Button>
         </div>
       </div>
 
@@ -220,7 +235,7 @@ export default function ProgramLogs() {
         onMobileClose={() => setShowFilters(false)}
         mobileTitle="筛选程序日志"
         mobileContent={(
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div className="grid gap-3">
             <ModernSelect
               size="sm"
               value={filterType}
@@ -231,26 +246,27 @@ export default function ProgramLogs() {
               }))}
               placeholder="全部类型"
             />
-            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--color-text-secondary)' }}>
-              <input
-                type="checkbox"
+            <label className="flex items-center gap-2 text-sm">
+              <Switch
+                aria-label="仅看未读"
                 checked={onlyUnread}
-                onChange={(e) => {
+                onCheckedChange={(checked) => {
                   setOffset(0);
                   setHasMore(true);
-                  setOnlyUnread(e.target.checked);
+                  setOnlyUnread(checked);
                 }}
               />
               仅看未读
             </label>
-            <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+            <div className="text-xs text-muted-foreground">
               共 {visibleRows.length} 条
             </div>
           </div>
         )}
         desktopContent={(
-          <div className="card" style={{ padding: 14, marginBottom: 12, display: 'flex', gap: 10, alignItems: 'center' }}>
-            <div style={{ minWidth: 170 }}>
+          <Card className="mb-3">
+            <CardContent className="flex flex-wrap items-center gap-3 p-3">
+            <div className="min-w-44">
               <ModernSelect
                 size="sm"
                 value={filterType}
@@ -263,35 +279,36 @@ export default function ProgramLogs() {
               />
             </div>
 
-            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--color-text-secondary)' }}>
-              <input
-                type="checkbox"
+            <label className="flex items-center gap-2 text-sm">
+              <Switch
+                aria-label="仅看未读"
                 checked={onlyUnread}
-                onChange={(e) => {
+                onCheckedChange={(checked) => {
                   setOffset(0);
                   setHasMore(true);
-                  setOnlyUnread(e.target.checked);
+                  setOnlyUnread(checked);
                 }}
               />
               仅看未读
             </label>
 
-            <div style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--color-text-muted)' }}>
+            <div className="ml-auto text-xs text-muted-foreground">
               共 {visibleRows.length} 条
             </div>
-          </div>
+            </CardContent>
+          </Card>
         )}
       />
 
-      <div className="card" style={{ overflowX: 'auto' }}>
+      <Card className="overflow-hidden">
         {loading ? (
-          <div style={{ padding: 20 }}>
-            <div className="skeleton" style={{ width: '100%', height: 34, marginBottom: 8 }} />
-            <div className="skeleton" style={{ width: '100%', height: 34, marginBottom: 8 }} />
-            <div className="skeleton" style={{ width: '100%', height: 34 }} />
-          </div>
+          <CardContent className="grid gap-2 p-5">
+            <Skeleton className="h-9 w-full" />
+            <Skeleton className="h-9 w-full" />
+            <Skeleton className="h-9 w-full" />
+          </CardContent>
         ) : isMobile ? (
-          <div className="mobile-card-list">
+          <div className="grid gap-3">
             {visibleRows.length > 0 ? visibleRows.map((row) => {
               const level = levelLabel(row.level || 'info');
               const eventStatus = eventStatusLabel(row);
@@ -300,138 +317,117 @@ export default function ProgramLogs() {
                   key={row.id}
                   title={row.title || '-'}
                   headerActions={(
-                    <span className={`badge ${eventStatus.cls}`} style={{ fontSize: 10 }}>
+                    <ToneBadge tone={eventStatus.cls}>
                       {eventStatus.label}
-                    </span>
+                    </ToneBadge>
                   )}
                   footerActions={(
                     row.read ? (
-                      <span className="badge badge-muted" style={{ fontSize: 11 }}>已读</span>
+                      <ToneBadge tone="-muted">已读</ToneBadge>
                     ) : (
-                      <button
+                      <Button variant="ghost" size="sm"
                         type="button"
                         onClick={() => markOneRead(row.id)}
                         disabled={!!rowLoading[row.id]}
-                        className="btn btn-link btn-link-primary"
+                       
                       >
-                        {rowLoading[row.id] ? <span className="spinner spinner-sm" /> : '标记已读'}
-                      </button>
+                        {rowLoading[row.id] ? <LoaderCircle className="size-4 animate-spin" /> : '标记已读'}
+                      </Button>
                     )
                   )}
                 >
                   <MobileField label="时间" value={formatDateTimeLocal(row.createdAt)} />
-                  <MobileField label="类型" value={<span className="badge badge-muted" style={{ fontSize: 11 }}>{row.type || '-'}</span>} />
-                  <MobileField label="级别" value={<span className={`badge ${level.cls}`} style={{ fontSize: 11 }}>{level.label}</span>} />
-                  <MobileField label="状态" value={<span className={`badge ${eventStatus.cls}`} style={{ fontSize: 11 }}>{eventStatus.label}</span>} />
+                  <MobileField label="类型" value={<ToneBadge tone="-muted">{row.type || '-'}</ToneBadge>} />
+                  <MobileField label="级别" value={<ToneBadge tone={level.cls}>{level.label}</ToneBadge>} />
+                  <MobileField label="状态" value={<ToneBadge tone={eventStatus.cls}>{eventStatus.label}</ToneBadge>} />
                   <MobileField label="内容" value={row.message || '-'} stacked />
                 </MobileCard>
               );
             }) : (
-              <div className="empty-state">
-                <svg className="empty-state-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-                <div className="empty-state-title">暂无日志</div>
-                <div className="empty-state-desc">当前筛选条件下没有程序日志。</div>
-              </div>
+              <EmptyStateBlock title="暂无日志" description="当前筛选条件下没有程序日志。" />
             )}
           </div>
         ) : visibleRows.length > 0 ? (
-          <table className="data-table program-logs-table">
-            <colgroup>
-              <col style={{ width: 170 }} />
-              <col style={{ width: 90 }} />
-              <col style={{ width: 90 }} />
-              <col style={{ width: 260 }} />
-              <col />
-              <col style={{ width: 110 }} />
-              <col style={{ width: 140 }} />
-            </colgroup>
-            <thead>
-              <tr>
-                <th>时间</th>
-                <th>类型</th>
-                <th>级别</th>
-                <th>标题</th>
-                <th>内容</th>
-                <th>状态</th>
-                <th style={{ textAlign: 'right' }}>操作</th>
-              </tr>
-            </thead>
-            <tbody>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-44">时间</TableHead>
+                <TableHead className="w-24">类型</TableHead>
+                <TableHead className="w-24">级别</TableHead>
+                <TableHead className="w-64">标题</TableHead>
+                <TableHead>内容</TableHead>
+                <TableHead className="w-28">状态</TableHead>
+                <TableHead className="w-36 text-right">操作</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {visibleRows.map((row, idx) => {
                 const level = levelLabel(row.level || 'info');
                 const eventStatus = eventStatusLabel(row);
                 return (
-                  <tr key={row.id} className={`animate-slide-up stagger-${Math.min(idx + 1, 5)}`}>
-                    <td style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+                  <TableRow key={row.id} className={`animate-slide-up stagger-${Math.min(idx + 1, 5)}`}>
+                    <TableCell className="text-xs text-muted-foreground">
                       {formatDateTimeLocal(row.createdAt)}
-                    </td>
-                    <td>
-                      <span className="badge badge-muted" style={{ fontSize: 11 }}>
+                    </TableCell>
+                    <TableCell>
+                      <ToneBadge tone="-muted">
                         {row.type || '-'}
-                      </span>
-                    </td>
-                    <td>
-                      <span className={`badge ${level.cls}`} style={{ fontSize: 11 }}>
+                      </ToneBadge>
+                    </TableCell>
+                    <TableCell>
+                      <ToneBadge tone={level.cls}>
                         {level.label}
-                      </span>
-                    </td>
-                    <td className="program-logs-title-cell">
+                      </ToneBadge>
+                    </TableCell>
+                    <TableCell className="font-medium">
                       {row.title || '-'}
-                    </td>
-                    <td className="program-logs-content-cell">
+                    </TableCell>
+                    <TableCell className="max-w-md truncate text-muted-foreground">
                       {row.message || '-'}
-                    </td>
-                    <td>
-                      <span className={`badge ${eventStatus.cls}`} style={{ fontSize: 11 }}>
+                    </TableCell>
+                    <TableCell>
+                      <ToneBadge tone={eventStatus.cls}>
                         {eventStatus.label}
-                      </span>
-                    </td>
-                    <td style={{ textAlign: 'right' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8 }}>
+                      </ToneBadge>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex items-center justify-end gap-2">
                         {row.read ? (
-                          <span className="badge badge-muted" style={{ fontSize: 11 }}>已读</span>
+                          <ToneBadge tone="-muted">已读</ToneBadge>
                         ) : (
-                          <span className="badge badge-warning" style={{ fontSize: 11 }}>未读</span>
+                          <ToneBadge tone="-warning">未读</ToneBadge>
                         )}
                         {!row.read && (
-                          <button
+                          <Button type="button" variant="ghost" size="sm"
                             onClick={() => markOneRead(row.id)}
                             disabled={!!rowLoading[row.id]}
-                            className="btn btn-link btn-link-primary"
+                           
                           >
-                            {rowLoading[row.id] ? <span className="spinner spinner-sm" /> : '标记已读'}
-                          </button>
+                            {rowLoading[row.id] ? <LoaderCircle className="size-4 animate-spin" /> : '标记已读'}
+                          </Button>
                         )}
                       </div>
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 );
               })}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         ) : (
-          <div className="empty-state">
-            <svg className="empty-state-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-            </svg>
-            <div className="empty-state-title">暂无日志</div>
-            <div className="empty-state-desc">当前筛选条件下没有程序日志。</div>
-          </div>
+          <EmptyStateBlock title="暂无日志" description="当前筛选条件下没有程序日志。" />
         )}
-      </div>
+      </Card>
 
       {!loading && visibleRows.length > 0 && hasMore && (
-        <div style={{ marginTop: 12, display: 'flex', justifyContent: 'center' }}>
-          <button
-            className="btn btn-ghost"
+        <div className="flex justify-center">
+          <Button type="button" variant="outline"
+           
             onClick={() => load(false, true)}
             disabled={loadingMore}
-            style={{ border: '1px solid var(--color-border)', padding: '8px 16px' }}
+           
           >
-            {loadingMore ? <><span className="spinner spinner-sm" /> 加载中...</> : '加载更多'}
-          </button>
+            {loadingMore ? <><LoaderCircle className="size-4 animate-spin" /> 加载中...</> : '加载更多'}
+          </Button>
         </div>
       )}
     </div>

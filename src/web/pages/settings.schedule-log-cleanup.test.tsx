@@ -178,7 +178,6 @@ describe('Settings log cleanup schedule', () => {
 
       expect(scheduleCard.findAllByType('select')).toHaveLength(0);
       expect(scheduleCard.findAllByType(ModernSelect).length).toBeGreaterThanOrEqual(2);
-      expect(String(triggerButton.props.className || '')).toContain('btn-ghost');
     } finally {
       root?.unmount();
     }

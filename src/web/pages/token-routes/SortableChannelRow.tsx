@@ -7,7 +7,11 @@ import {
   describeTokenBinding,
   resolveTokenBindingConnectionMode,
 } from './tokenBindingPresentation.js';
-import { getChannelDecisionState, getPriorityTagStyle, getProbabilityColor } from './utils.js';
+import { getChannelDecisionState } from './utils.js';
+import { Button } from '../../components/ui/button/index.js';
+import { LoaderCircle } from 'lucide-react';
+import ToneBadge from '../../components/ToneBadge.js';
+import { cn } from '../../lib/utils.js';
 
 function getRouteUnitStrategyLabel(strategy: string | null | undefined): string {
   return strategy === 'stick_until_unavailable' ? '单个用到不可用再切' : '轮询';
@@ -17,6 +21,53 @@ function formatRouteUnitMemberLabel(member: { accountId: number; username: strin
   const accountLabel = member.username?.trim() || `account-${member.accountId}`;
   const siteLabel = member.siteName?.trim();
   return siteLabel ? `${accountLabel} @ ${siteLabel}` : accountLabel;
+}
+
+function SuccessFailStat({
+  successCount,
+  failCount,
+  className,
+}: {
+  successCount?: number | null;
+  failCount?: number | null;
+  className?: string;
+}) {
+  return (
+    <span className={cn('whitespace-nowrap text-xs text-muted-foreground', className)}>
+      成功/失败 <span className="font-semibold text-foreground">{successCount || 0}</span>
+      <span className="mx-0.5 text-muted-foreground">/</span>
+      <span className="font-semibold text-destructive">{failCount || 0}</span>
+    </span>
+  );
+}
+
+function ProbabilityIndicator({
+  probability,
+  tooltip,
+}: {
+  probability: number;
+  tooltip?: string;
+}) {
+  const clamped = Math.max(0, Math.min(100, probability));
+  return (
+    <div className="inline-flex min-w-24 items-center gap-1.5">
+      <div
+        data-tooltip={tooltip}
+        className="h-1 w-15 overflow-hidden rounded-full bg-muted"
+      >
+        <div
+          className={cn('h-full rounded-full transition-all', clamped > 0 ? 'bg-primary' : 'bg-border')}
+          style={{ width: `${clamped}%` }}
+        />
+      </div>
+      <span
+        data-tooltip={tooltip}
+        className="whitespace-nowrap text-xs tabular-nums text-muted-foreground"
+      >
+        {probability.toFixed(1)}%
+      </span>
+    </div>
+  );
 }
 
 export function SortableChannelRow({
@@ -46,46 +97,16 @@ export function SortableChannelRow({
   const resolvedPriority = displayPriority ?? channel.priority ?? 0;
   const managementLocked = readOnly || channelManagementDisabled;
   const suppressTooltips = dragInProgress || dragging;
-  const rowTransition = [
-    'box-shadow 180ms ease',
-    'background-color 180ms ease',
-    'border-color 180ms ease',
-    'opacity 180ms ease',
-  ].filter(Boolean).join(', ');
-  const dragHandleStyle: CSSProperties = {
-    width: 22,
-    minWidth: 22,
-    height: 22,
-    padding: 0,
-    border: `1px solid ${dragging ? 'color-mix(in srgb, var(--color-info) 34%, var(--color-border-light))' : 'var(--color-border-light)'}`,
-    borderRadius: 10,
-    backgroundColor: dragging
-      ? 'color-mix(in srgb, var(--color-bg-card) 80%, var(--color-info) 20%)'
-      : 'color-mix(in srgb, var(--color-bg-card) 90%, white 10%)',
-    boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.62)',
-    color: dragging ? 'var(--color-text-primary)' : 'var(--color-text-muted)',
-    cursor: isSavingPriority || managementLocked ? 'not-allowed' : 'grab',
-    opacity: managementLocked ? 0.65 : 1,
-    transition: 'background-color 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease, color 0.16s ease',
-  };
-
-  const rowStyle: CSSProperties = {
-    transition: rowTransition || undefined,
-    opacity: dragging ? 0.92 : channel.enabled === false ? 0.56 : 1,
-    display: 'grid',
-    gridTemplateColumns: managementLocked || mobile ? 'minmax(0, 1fr)' : 'minmax(0, 1fr) auto auto auto',
-    alignItems: mobile ? 'stretch' : 'center',
-    gap: mobile ? 8 : 6,
-    padding: mobile ? '8px 9px' : '5px 8px',
-    border: `1px solid ${dragging ? 'color-mix(in srgb, var(--color-info) 38%, var(--color-border-light))' : 'color-mix(in srgb, var(--color-border-light) 92%, transparent)'}`,
-    borderRadius: 14,
-    backgroundColor: dragging
-      ? 'color-mix(in srgb, var(--color-bg-card) 82%, var(--color-info) 18%)'
-      : 'color-mix(in srgb, var(--color-bg-card) 96%, white 4%)',
-    boxShadow: dragging
-      ? '0 18px 34px rgba(15, 23, 42, 0.12)'
-      : '0 10px 22px rgba(15, 23, 42, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.7)',
-  };
+  const rowClassName = cn(
+    'rounded-lg border bg-card shadow-sm transition-colors',
+    dragging && 'bg-muted opacity-90 shadow-md',
+    channel.enabled === false && 'opacity-60',
+  );
+  const dragHandleClassName = cn(
+    'cursor-grab text-muted-foreground',
+    dragging && 'bg-muted text-foreground',
+    (isSavingPriority || managementLocked) && 'cursor-not-allowed',
+  );
 
   const decisionState = getChannelDecisionState(decisionCandidate, channel, isExactRoute, loadingDecision);
   const tokenBinding = describeTokenBinding(
@@ -109,18 +130,16 @@ export function SortableChannelRow({
 
   if (mobile) {
     return (
-      <div data-layer-root style={{ ...rowStyle, display: 'block' }}>
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
-          <button
+      <div data-layer-root className={cn(rowClassName, 'p-2')}>
+        <div className="flex items-start gap-2">
+          <Button
+            variant="outline"
+            size="icon"
+            className={dragHandleClassName}
             type="button"
             ref={dragHandleRef}
             {...dragHandleProps}
             disabled={isSavingPriority || managementLocked}
-            className="btn btn-ghost"
-            style={{
-              marginTop: 2,
-              ...dragHandleStyle,
-            }}
             data-tooltip={suppressTooltips ? undefined : (managementLocked ? '该路由当前不可编辑优先级' : '拖拽调整优先级桶')}
             aria-label="拖拽调整优先级桶"
           >
@@ -132,165 +151,106 @@ export function SortableChannelRow({
               <circle cx="3" cy="10" r="1" />
               <circle cx="9" cy="10" r="1" />
             </svg>
-          </button>
+          </Button>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0, flex: 1 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
+          <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+            <div className="flex flex-wrap items-center gap-1.5">
               {showPriorityBadge ? (
-                <span
-                  className="badge"
-                  style={{
-                    fontSize: 10,
-                    fontWeight: 700,
-                    letterSpacing: 0.1,
-                    ...getPriorityTagStyle(resolvedPriority),
-                  }}
-                >
+                <ToneBadge tone="">
                   P{resolvedPriority}
-                </span>
+                </ToneBadge>
               ) : null}
 
-              <span style={{ fontWeight: 600, color: 'var(--color-text-primary)', fontSize: 14, minWidth: 0 }}>
+              <span className="min-w-0 text-sm font-semibold text-foreground">
                 {channel.account?.username || `account-${channel.accountId}`}
               </span>
 
-              <span className="badge badge-muted" style={{ fontSize: 10 }}>
+              <ToneBadge tone="-muted">
                 {channel.site?.name || 'unknown'}
-              </span>
+              </ToneBadge>
 
-              <span style={{ fontSize: 11, color: 'var(--color-text-muted)', marginLeft: 'auto' }}>
-                成功/失败 <span style={{ color: 'var(--color-success)', fontWeight: 600 }}>{channel.successCount || 0}</span>
-                <span style={{ color: 'var(--color-text-muted)', margin: '0 2px' }}>/</span>
-                <span style={{ color: 'var(--color-danger)', fontWeight: 600 }}>{channel.failCount || 0}</span>
-              </span>
+              <SuccessFailStat className="ml-auto" successCount={channel.successCount} failCount={channel.failCount} />
             </div>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
-              <span
-                className="badge"
-                style={{
-                  fontSize: 10,
-                  background: tokenBinding.badgeTone === 'info'
-                    ? 'color-mix(in srgb, var(--color-info) 15%, transparent)'
-                    : 'color-mix(in srgb, var(--color-warning) 15%, transparent)',
-                  color: tokenBinding.badgeTone === 'info' ? 'var(--color-info)' : 'var(--color-warning)',
-                }}
-              >
+            <div className="flex flex-wrap items-center gap-1.5">
+              <ToneBadge tone="">
                 {tokenBinding.bindingModeLabel}
-              </span>
+              </ToneBadge>
 
-              <span
-                className="badge"
-                style={{
-                  fontSize: 10,
-                  background: 'var(--color-info-soft)',
-                  color: 'var(--color-info)',
-                  maxWidth: 220,
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                }}
+              <ToneBadge
+                tone=""
                 data-tooltip={suppressTooltips ? undefined : `当前生效：${tokenBinding.effectiveTokenName}`}
               >
                 当前生效：{tokenBinding.effectiveTokenName}
-              </span>
+              </ToneBadge>
 
               {channel.sourceModel ? (
-                <span className="badge badge-info" style={{ fontSize: 10 }}>
+                <ToneBadge tone="-info">
                   {channel.sourceModel}
-                </span>
+                </ToneBadge>
               ) : null}
 
               {channel.manualOverride ? (
-                <span
-                  className="badge badge-warning"
-                  style={{ fontSize: 10 }}
+                <ToneBadge tone="-warning"
+                 
+                 
                   data-tooltip={suppressTooltips ? undefined : '该通道由用户手动添加，而非系统自动生成'}
                 >
                   手动配置
-                </span>
+                </ToneBadge>
               ) : null}
 
               {routeUnit ? (
                 <>
-                  <span className="badge badge-muted" style={{ fontSize: 10 }}>
+                  <ToneBadge tone="-muted">
                     OAuth 路由池
-                  </span>
-                  <span className="badge badge-info" style={{ fontSize: 10 }}>
+                  </ToneBadge>
+                  <ToneBadge tone="-info">
                     {routeUnitName}
-                  </span>
-                  <span className="badge badge-muted" style={{ fontSize: 10 }}>
+                  </ToneBadge>
+                  <ToneBadge tone="-muted">
                     {routeUnit.memberCount} 成员
-                  </span>
-                  <span className="badge badge-muted" style={{ fontSize: 10 }}>
+                  </ToneBadge>
+                  <ToneBadge tone="-muted">
                     {routeUnitStrategyLabel}
-                  </span>
+                  </ToneBadge>
                 </>
               ) : null}
             </div>
 
             {routeUnitMemberSummaryText ? (
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, flexWrap: 'wrap' }}>
-                <span style={{ fontSize: 11, color: 'var(--color-text-muted)', whiteSpace: 'nowrap' }}>
+              <div className="flex flex-wrap items-start gap-1.5">
+                <span className="whitespace-nowrap text-xs text-muted-foreground">
                   成员摘要（{routeUnit?.memberCount || 0} 个成员 · {routeUnitStrategyLabel}）
                 </span>
-                <span style={{ fontSize: 11, color: 'var(--color-text-secondary)', lineHeight: 1.45 }}>
+                <span className="text-xs leading-snug text-muted-foreground">
                   {routeUnitMemberSummaryText}
                 </span>
               </div>
             ) : null}
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-              <span style={{ fontSize: 11, color: 'var(--color-text-muted)', whiteSpace: 'nowrap' }}>选中概率</span>
-              <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5, minWidth: 96 }}>
-                <div
-                  data-tooltip={suppressTooltips ? undefined : (decisionState.probability <= 0 ? decisionState.reasonText : undefined)}
-                  style={{
-                    width: 60,
-                    height: 4,
-                    background: 'color-mix(in srgb, var(--color-border) 88%, white 12%)',
-                    borderRadius: 999,
-                    overflow: 'hidden',
-                  }}
-                >
-                  <div
-                    style={{
-                      width: `${Math.max(0, Math.min(100, decisionState.probability))}%`,
-                      height: '100%',
-                      background: getProbabilityColor(decisionState.probability),
-                      borderRadius: 999,
-                      transition: 'width 0.24s ease, background-color 0.18s ease',
-                    }}
-                  />
-                </div>
-                <span
-                  data-tooltip={suppressTooltips ? undefined : (decisionState.probability <= 0 ? decisionState.reasonText : undefined)}
-                  style={{
-                    fontSize: 11,
-                    color: decisionState.probability > 0 ? 'var(--color-text-secondary)' : decisionState.reasonColor,
-                    fontVariantNumeric: 'tabular-nums',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  {decisionState.probability.toFixed(1)}%
-                </span>
-              </div>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="whitespace-nowrap text-xs text-muted-foreground">选中概率</span>
+              <ProbabilityIndicator
+                probability={decisionState.probability}
+                tooltip={suppressTooltips ? undefined : (decisionState.probability <= 0 ? decisionState.reasonText : undefined)}
+              />
 
               {!managementLocked && (
-                <button
+                <Button
+                  variant="ghost"
+                  size="sm"
                   type="button"
-                  className="btn btn-link"
                   onClick={() => setMobileDetailsOpen((current) => !current)}
-                  style={{ marginLeft: 'auto' }}
                 >
                   {mobileDetailsOpen ? '收起配置' : '配置通道'}
-                </button>
+                </Button>
               )}
             </div>
 
             {!managementLocked && mobileDetailsOpen && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingTop: 6, borderTop: '1px solid var(--color-border-light)' }}>
-                <div style={{ width: '100%' }}>
+              <div className="flex flex-col gap-2 border-t pt-1.5">
+                <div className="w-full">
                   <ModernSelect
                     size="sm"
                     value={String(activeTokenId || 0)}
@@ -310,42 +270,50 @@ export function SortableChannelRow({
                     ]}
                     placeholder="选择令牌绑定方式"
                   />
-                  <div style={{ marginTop: 3, fontSize: 10.5, color: 'var(--color-text-muted)', lineHeight: 1.35 }}>
+                  <div className="mt-1 text-xs leading-snug text-muted-foreground">
                     {tokenBinding.helperText}
                   </div>
                 </div>
 
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10, flexWrap: 'wrap' }}>
-                  <button
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
                     onClick={onSaveToken}
                     disabled={isUpdatingToken}
-                    className="btn btn-link btn-link-info"
                   >
-                    {isUpdatingToken ? <span className="spinner spinner-sm" /> : '保存'}
-                  </button>
+                    {isUpdatingToken ? <LoaderCircle className="size-4 animate-spin" /> : '保存'}
+                  </Button>
 
-                  <button
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
                     onClick={() => onToggleEnabled(channel.enabled === false)}
-                    className={`btn btn-link ${channel.enabled === false ? 'btn-link-info' : 'btn-link-warning'}`}
                   >
                     {channel.enabled === false ? '启用' : '禁用'}
-                  </button>
+                  </Button>
 
                   {onSiteBlockModel && channel.site?.id ? (
-                    <button
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
                       onClick={onSiteBlockModel}
-                      className="btn btn-link btn-link-warning"
                     >
                       站点屏蔽
-                    </button>
+                    </Button>
                   ) : null}
 
-                  <button
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    size="sm"
                     onClick={onDeleteChannel}
-                    className="btn btn-link btn-link-danger"
                   >
                     移除
-                  </button>
+                  </Button>
                 </div>
               </div>
             )}
@@ -356,15 +324,23 @@ export function SortableChannelRow({
   }
 
   return (
-    <div data-layer-root style={rowStyle}>
-      <div style={{ display: 'flex', alignItems: mobile ? 'stretch' : 'center', flexDirection: mobile ? 'column' : 'row', gap: 6, fontSize: 12, flexWrap: 'wrap', minWidth: 0 }}>
-        <button
+    <div
+      data-layer-root
+      className={cn(
+        rowClassName,
+        'grid items-center gap-1.5 px-2 py-1.5',
+        managementLocked ? 'grid-cols-[minmax(0,1fr)]' : 'grid-cols-[minmax(0,1fr)_auto_auto_auto]',
+      )}
+    >
+      <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs">
+        <Button
+          variant="outline"
+          size="icon"
+          className={dragHandleClassName}
           type="button"
           ref={dragHandleRef}
           {...dragHandleProps}
           disabled={isSavingPriority || managementLocked}
-          className="btn btn-ghost"
-          style={dragHandleStyle}
           data-tooltip={suppressTooltips ? undefined : (managementLocked ? '该路由当前不可编辑优先级' : '拖拽调整优先级桶')}
           aria-label="拖拽调整优先级桶"
         >
@@ -376,156 +352,94 @@ export function SortableChannelRow({
             <circle cx="3" cy="10" r="1" />
             <circle cx="9" cy="10" r="1" />
           </svg>
-        </button>
+        </Button>
 
         {showPriorityBadge ? (
-          <span
-            className="badge"
-            style={{
-              fontSize: 10,
-              fontWeight: 700,
-              letterSpacing: 0.1,
-              ...getPriorityTagStyle(resolvedPriority),
-            }}
-          >
+          <ToneBadge tone="">
             P{resolvedPriority}
-          </span>
+          </ToneBadge>
         ) : null}
 
-        <span style={{ fontWeight: 600, color: 'var(--color-text-primary)' }}>
+        <span className="font-semibold text-foreground">
           {channel.account?.username || `account-${channel.accountId}`}
         </span>
 
-        <span className="badge badge-muted" style={{ fontSize: 10 }}>
+        <ToneBadge tone="-muted">
           {channel.site?.name || 'unknown'}
-        </span>
+        </ToneBadge>
 
-        <span
-          className="badge"
-          style={{
-            fontSize: 10,
-            background: tokenBinding.badgeTone === 'info'
-              ? 'color-mix(in srgb, var(--color-info) 15%, transparent)'
-              : 'color-mix(in srgb, var(--color-warning) 15%, transparent)',
-            color: tokenBinding.badgeTone === 'info' ? 'var(--color-info)' : 'var(--color-warning)',
-          }}
-        >
+        <ToneBadge tone="">
           {tokenBinding.bindingModeLabel}
-        </span>
+        </ToneBadge>
 
-        <span
-          className="badge"
-          style={{
-            fontSize: 10,
-            background: 'var(--color-info-soft)',
-            color: 'var(--color-info)',
-            maxWidth: 220,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-          }}
+        <ToneBadge
+          tone=""
           data-tooltip={suppressTooltips ? undefined : `当前生效：${tokenBinding.effectiveTokenName}`}
         >
           当前生效：{tokenBinding.effectiveTokenName}
-        </span>
+        </ToneBadge>
 
         {channel.sourceModel ? (
-          <span className="badge badge-info" style={{ fontSize: 10 }}>
+          <ToneBadge tone="-info">
             {channel.sourceModel}
-          </span>
+          </ToneBadge>
         ) : null}
 
         {channel.manualOverride ? (
-          <span
-            className="badge badge-warning"
-            style={{ fontSize: 10 }}
+          <ToneBadge
+            tone="-warning"
             data-tooltip={suppressTooltips ? undefined : '该通道由用户手动添加，而非系统自动生成'}
           >
             手动配置
-          </span>
+          </ToneBadge>
         ) : null}
 
         {channel.enabled === false ? (
-          <span className="badge badge-muted" style={{ fontSize: 10 }}>已禁用</span>
+          <ToneBadge tone="-muted">已禁用</ToneBadge>
         ) : null}
 
         {routeUnit ? (
           <>
-            <span className="badge badge-muted" style={{ fontSize: 10 }}>
+            <ToneBadge tone="-muted">
               OAuth 路由池
-            </span>
-            <span className="badge badge-info" style={{ fontSize: 10 }}>
+            </ToneBadge>
+            <ToneBadge tone="-info">
               {routeUnitName}
-            </span>
-            <span className="badge badge-muted" style={{ fontSize: 10 }}>
+            </ToneBadge>
+            <ToneBadge tone="-muted">
               {routeUnit.memberCount} 成员
-            </span>
-            <span className="badge badge-muted" style={{ fontSize: 10 }}>
+            </ToneBadge>
+            <ToneBadge tone="-muted">
               {routeUnitStrategyLabel}
-            </span>
+            </ToneBadge>
           </>
         ) : null}
 
         {routeUnitMemberSummaryText ? (
-          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, width: '100%', flexWrap: 'wrap' }}>
-            <span style={{ fontSize: 11, color: 'var(--color-text-muted)', whiteSpace: 'nowrap' }}>
+          <div className="flex w-full flex-wrap items-start gap-1.5">
+            <span className="whitespace-nowrap text-xs text-muted-foreground">
               成员摘要（{routeUnit?.memberCount || 0} 个成员 · {routeUnitStrategyLabel}）
             </span>
-            <span style={{ fontSize: 11, color: 'var(--color-text-secondary)', lineHeight: 1.45 }}>
+            <span className="text-xs leading-snug text-muted-foreground">
               {routeUnitMemberSummaryText}
             </span>
           </div>
         ) : null}
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', marginTop: mobile ? 0 : 1, flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 11, color: 'var(--color-text-muted)', whiteSpace: 'nowrap' }}>选中概率</span>
-          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5, minWidth: 96 }}>
-            <div
-              data-tooltip={suppressTooltips ? undefined : (decisionState.probability <= 0 ? decisionState.reasonText : undefined)}
-              style={{
-                width: 60,
-                height: 4,
-                background: 'color-mix(in srgb, var(--color-border) 88%, white 12%)',
-                borderRadius: 999,
-                overflow: 'hidden',
-              }}
-            >
-              <div
-                style={{
-                  width: `${Math.max(0, Math.min(100, decisionState.probability))}%`,
-                  height: '100%',
-                  background: getProbabilityColor(decisionState.probability),
-                  borderRadius: 999,
-                  transition: 'width 0.24s ease, background-color 0.18s ease',
-                }}
-              />
-            </div>
-            <span
-              data-tooltip={suppressTooltips ? undefined : (decisionState.probability <= 0 ? decisionState.reasonText : undefined)}
-              style={{
-                fontSize: 11,
-                color: decisionState.probability > 0 ? 'var(--color-text-secondary)' : decisionState.reasonColor,
-                fontVariantNumeric: 'tabular-nums',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {decisionState.probability.toFixed(1)}%
-            </span>
-          </div>
-
-          <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>成功/失败</span>
-          <span style={{ fontSize: 11 }}>
-            <span style={{ color: 'var(--color-success)', fontWeight: 600 }}>{channel.successCount || 0}</span>
-            <span style={{ color: 'var(--color-text-muted)', margin: '0 2px' }}>/</span>
-            <span style={{ color: 'var(--color-danger)', fontWeight: 600 }}>{channel.failCount || 0}</span>
-          </span>
+        <div className="flex w-full flex-wrap items-center gap-1.5">
+          <span className="whitespace-nowrap text-xs text-muted-foreground">选中概率</span>
+          <ProbabilityIndicator
+            probability={decisionState.probability}
+            tooltip={suppressTooltips ? undefined : (decisionState.probability <= 0 ? decisionState.reasonText : undefined)}
+          />
+          <SuccessFailStat successCount={channel.successCount} failCount={channel.failCount} />
         </div>
       </div>
 
       {!managementLocked ? (
         <>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <div style={{ minWidth: 220, flex: 1 }}>
+          <div className="flex items-center gap-1.5">
+            <div className="min-w-55 flex-1">
               <ModernSelect
                 size="sm"
                 value={String(activeTokenId || 0)}
@@ -545,44 +459,52 @@ export function SortableChannelRow({
                 ]}
                 placeholder="选择令牌绑定方式"
               />
-              <div style={{ marginTop: 3, fontSize: 10.5, color: 'var(--color-text-muted)', lineHeight: 1.35 }}>
+              <div className="mt-1 text-xs leading-snug text-muted-foreground">
                 {tokenBinding.helperText}
               </div>
             </div>
-            <button
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
               onClick={onSaveToken}
               disabled={isUpdatingToken}
-              className="btn btn-link btn-link-info"
             >
-              {isUpdatingToken ? <span className="spinner spinner-sm" /> : '保存'}
-            </button>
+              {isUpdatingToken ? <LoaderCircle className="size-4 animate-spin" /> : '保存'}
+            </Button>
           </div>
 
-          <button
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
             onClick={() => onToggleEnabled(channel.enabled === false)}
-            className={`btn btn-link ${channel.enabled === false ? 'btn-link-info' : 'btn-link-warning'}`}
             data-tooltip={suppressTooltips ? undefined : (channel.enabled === false ? '启用此通道' : '禁用此通道')}
           >
             {channel.enabled === false ? '启用' : '禁用'}
-          </button>
+          </Button>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+          <div className="flex items-center gap-1">
             {onSiteBlockModel && channel.site?.id ? (
-              <button
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
                 onClick={onSiteBlockModel}
-                className="btn btn-link btn-link-warning"
                 data-tooltip={suppressTooltips ? undefined : `将此模型加入站点「${channel.site?.name || '未知'}」的禁用列表，rebuild 后该站点的此模型通道将不再生成`}
               >
                 站点屏蔽
-              </button>
+              </Button>
             ) : null}
 
-            <button
+            <Button
+              type="button"
+              variant="destructive"
+              size="sm"
               onClick={onDeleteChannel}
-              className="btn btn-link btn-link-danger"
             >
               移除
-            </button>
+            </Button>
           </div>
         </>
       ) : null}

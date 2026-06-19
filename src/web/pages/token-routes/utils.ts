@@ -1,7 +1,8 @@
 import type { CSSProperties } from 'react';
 import { getBrand, normalizeBrandIconKey, type BrandInfo } from '../../components/BrandIcon.js';
-import { normalizeTokenRouteMode, type RouteDecisionCandidate, type RouteMode } from '../../../shared/tokenRouteContract.js';
+import type { RouteDecisionCandidate, RouteMode } from '../../../shared/tokenRouteContract.js';
 import type { RouteRow, RouteChannel, ChannelDecisionState, RouteSummaryRow } from './types.js';
+import type { RouteGraphBackendSpec, RouteGraphMatchSpec } from '../../../shared/routeGraph.js';
 import {
   isExactTokenRouteModelPattern,
   isTokenRouteRegexPattern,
@@ -53,16 +54,32 @@ export function isExactModelPattern(modelPattern: string): boolean {
   return isExactTokenRouteModelPattern(modelPattern);
 }
 
-export function normalizeRouteMode(routeMode: RouteMode | string | null | undefined): RouteMode {
-  return normalizeTokenRouteMode(routeMode);
+export function isRouteBackendReferences(backend: RouteGraphBackendSpec | null | undefined): boolean {
+  return backend?.kind === 'routes';
 }
 
-export function isExplicitGroupRoute(route: Pick<RouteRow | RouteSummaryRow, 'routeMode'>): boolean {
-  return normalizeRouteMode(route.routeMode) === 'explicit_group';
+export function getRouteBackendRouteIds(backend: RouteGraphBackendSpec | null | undefined): number[] {
+  return backend?.kind === 'routes' ? backend.routeIds : [];
 }
 
-export function isRouteExactModel(route: Pick<RouteRow | RouteSummaryRow, 'modelPattern' | 'routeMode'>): boolean {
-  return !isExplicitGroupRoute(route) && isExactModelPattern(route.modelPattern);
+export function getRouteRequestedModelPattern(route: Pick<RouteRow | RouteSummaryRow, 'match'>): string {
+  return route.match.requestedModelPattern || '';
+}
+
+export function getRouteDisplayName(route: Pick<RouteRow | RouteSummaryRow, 'presentation' | 'match'>): string | null {
+  return route.presentation.displayName || route.match.displayName || null;
+}
+
+export function getRouteDisplayIcon(route: Pick<RouteRow | RouteSummaryRow, 'presentation'>): string | null {
+  return route.presentation.displayIcon || null;
+}
+
+export function isExplicitGroupRoute(route: Pick<RouteRow | RouteSummaryRow, 'backend'>): boolean {
+  return isRouteBackendReferences(route.backend);
+}
+
+export function isRouteExactModel(route: Pick<RouteRow | RouteSummaryRow, 'match' | 'backend'>): boolean {
+  return !isRouteBackendReferences(route.backend) && isExactModelPattern(getRouteRequestedModelPattern(route));
 }
 
 export function parseRegexModelPattern(modelPattern: string): { regex: { test(value: string): boolean } | null; error: string | null } {
@@ -82,18 +99,18 @@ export function getModelPatternError(modelPattern: string): string | null {
   return `模型匹配正则错误：${parsed.error}`;
 }
 
-export function resolveRouteTitle(route: Pick<RouteRow | RouteSummaryRow, 'displayName' | 'modelPattern'>): string {
-  const title = (route.displayName || '').trim();
-  return title || route.modelPattern;
+export function resolveRouteTitle(route: Pick<RouteRow | RouteSummaryRow, 'presentation' | 'match'>): string {
+  const title = (getRouteDisplayName(route) || '').trim();
+  return title || getRouteRequestedModelPattern(route);
 }
 
-export function resolveRouteBrand(route: Pick<RouteRow | RouteSummaryRow, 'displayName' | 'modelPattern'>): BrandInfo | null {
-  const displayName = (route.displayName || '').trim();
+export function resolveRouteBrand(route: Pick<RouteRow | RouteSummaryRow, 'presentation' | 'match'>): BrandInfo | null {
+  const displayName = (getRouteDisplayName(route) || '').trim();
   if (displayName) {
     const byDisplayName = getBrand(displayName);
     if (byDisplayName) return byDisplayName;
   }
-  return getBrand(route.modelPattern);
+  return getBrand(getRouteRequestedModelPattern(route));
 }
 
 export function toBrandIconValue(icon: string): string {
@@ -152,8 +169,8 @@ export function siteAvatarLetters(siteName: string): string {
   return compact.slice(0, 2).toUpperCase();
 }
 
-export function resolveRouteIcon(route: Pick<RouteRow | RouteSummaryRow, 'displayIcon'>): { kind: 'auto' } | { kind: 'none' } | { kind: 'text'; value: string } | { kind: 'brand'; value: string } {
-  const icon = (route.displayIcon || '').trim();
+export function resolveRouteIcon(route: Pick<RouteRow | RouteSummaryRow, 'presentation'>): { kind: 'auto' } | { kind: 'none' } | { kind: 'text'; value: string } | { kind: 'brand'; value: string } {
+  const icon = (route.presentation.displayIcon || '').trim();
   if (isRouteIconNoneValue(icon)) return { kind: 'none' };
   if (!icon) return { kind: 'auto' };
   const brandIcon = parseBrandIconValue(icon);

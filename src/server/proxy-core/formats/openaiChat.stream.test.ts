@@ -72,6 +72,11 @@ vi.mock('../../services/proxyUsageFallbackService.js', () => ({
   resolveProxyUsageWithSelfLogFallback: (arg: any) => resolveProxyUsageWithSelfLogFallbackMock(arg),
 }));
 
+vi.mock('../../services/routeGraphRuntimeService.js', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../services/routeGraphRuntimeService.js')>(),
+  evaluateActiveRouteGraphForModel: async () => null,
+}));
+
 vi.mock('../../db/index.js', () => ({
   db: {
     insert: (arg: any) => dbInsertMock(arg),
@@ -113,11 +118,13 @@ describe('chat proxy stream behavior', () => {
     const { registerDownstreamProtocolSurface } = await import('../surfaces/downstreamProtocolSurface.js');
     const { openaiChatProtocolAdapter } = await import('./openaiChat.js');
     const { claudeProtocolAdapter } = await import('./claude.js');
+    const { responsesProtocolAdapter } = await import('./responses.js');
     const { responsesProxyRoute } = await import('../../routes/proxy/responses.js');
     const { searchProxyRoute } = await import('../../routes/proxy/search.js');
     app = Fastify();
     await registerDownstreamProtocolSurface(app, openaiChatProtocolAdapter);
     await registerDownstreamProtocolSurface(app, claudeProtocolAdapter);
+    await registerDownstreamProtocolSurface(app, responsesProtocolAdapter);
     await app.register(responsesProxyRoute);
     await app.register(searchProxyRoute);
   });

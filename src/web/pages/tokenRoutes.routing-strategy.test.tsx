@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, create, type ReactTestInstance } from 'react-test-renderer';
 import { MemoryRouter } from 'react-router-dom';
 import { ToastProvider } from '../components/Toast.js';
+import ModernSelect from '../components/ModernSelect.js';
 import TokenRoutes from './TokenRoutes.js';
 
 const { apiMock, getBrandMock } = vi.hoisted(() => ({
@@ -53,10 +54,10 @@ describe('TokenRoutes routing strategy updates', () => {
       .mockResolvedValue([
         {
           id: 1,
-          modelPattern: 'gpt-4o-mini',
-          displayName: 'gpt-4o-mini',
-          displayIcon: null,
           modelMapping: null,
+          match: { kind: 'model', requestedModelPattern: 'gpt-4o-mini', displayName: 'gpt-4o-mini' },
+          backend: { kind: 'channels' },
+          presentation: { displayName: 'gpt-4o-mini', displayIcon: null },
           routingStrategy: 'weighted',
           enabled: true,
           channelCount: 0,
@@ -78,7 +79,7 @@ describe('TokenRoutes routing strategy updates', () => {
   });
 
   it('keeps the optimistic routing strategy when refresh fails after a successful save', async () => {
-    let root!: WebTestRenderer;
+    let root!: ReturnType<typeof create>;
     try {
       await act(async () => {
         root = create(
@@ -102,35 +103,31 @@ describe('TokenRoutes routing strategy updates', () => {
 
       apiMock.getRoutesSummary.mockRejectedValueOnce(new Error('refresh failed'));
 
-      const roundRobinOption = root.root.find((node) => (
-        node.type === 'button'
-        && typeof node.props.className === 'string'
-        && node.props.className.includes('modern-select-option')
-        && collectText(node).startsWith('轮询')
+      const strategySelect = root.root.findAllByType(ModernSelect).find((node) => (
+        node.props.value === 'weighted'
+        && node.props.options?.some((option: { value: string }) => option.value === 'round_robin')
       ));
 
       await act(async () => {
-        roundRobinOption.props.onClick();
+        strategySelect?.props.onChange('round_robin');
       });
       await flushMicrotasks();
 
       expect(apiMock.updateRoute).toHaveBeenCalledWith(1, { routingStrategy: 'round_robin' });
       expect(apiMock.getRoutesSummary).toHaveBeenCalledTimes(2);
 
-      const strategyTrigger = root.root.find((node) => (
-        node.type === 'button'
-        && typeof node.props.className === 'string'
-        && node.props.className.includes('modern-select-trigger')
-        && collectText(node).includes('轮询')
+      const updatedStrategySelect = root.root.findAllByType(ModernSelect).find((node) => (
+        node.props.value === 'round_robin'
+        && node.props.options?.some((option: { value: string }) => option.value === 'stable_first')
       ));
-      expect(collectText(strategyTrigger)).toContain('轮询');
+      expect(updatedStrategySelect?.props.value).toBe('round_robin');
     } finally {
       root?.unmount();
     }
   });
 
   it('supports switching to stable_first and keeps the optimistic label when refresh fails', async () => {
-    let root!: WebTestRenderer;
+    let root!: ReturnType<typeof create>;
     try {
       await act(async () => {
         root = create(
@@ -154,27 +151,23 @@ describe('TokenRoutes routing strategy updates', () => {
 
       apiMock.getRoutesSummary.mockRejectedValueOnce(new Error('refresh failed'));
 
-      const stableFirstOption = root.root.find((node) => (
-        node.type === 'button'
-        && typeof node.props.className === 'string'
-        && node.props.className.includes('modern-select-option')
-        && collectText(node).startsWith('稳定优先')
+      const strategySelect = root.root.findAllByType(ModernSelect).find((node) => (
+        node.props.value === 'weighted'
+        && node.props.options?.some((option: { value: string }) => option.value === 'stable_first')
       ));
 
       await act(async () => {
-        stableFirstOption.props.onClick();
+        strategySelect?.props.onChange('stable_first');
       });
       await flushMicrotasks();
 
       expect(apiMock.updateRoute).toHaveBeenCalledWith(1, { routingStrategy: 'stable_first' });
 
-      const strategyTrigger = root.root.find((node) => (
-        node.type === 'button'
-        && typeof node.props.className === 'string'
-        && node.props.className.includes('modern-select-trigger')
-        && collectText(node).startsWith('稳定优先')
+      const updatedStrategySelect = root.root.findAllByType(ModernSelect).find((node) => (
+        node.props.value === 'stable_first'
+        && node.props.options?.some((option: { value: string }) => option.value === 'round_robin')
       ));
-      expect(collectText(strategyTrigger)).toContain('稳定优先');
+      expect(updatedStrategySelect?.props.value).toBe('stable_first');
     } finally {
       root?.unmount();
     }

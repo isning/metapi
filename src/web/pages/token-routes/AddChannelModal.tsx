@@ -1,11 +1,20 @@
 import { useState, useMemo } from 'react';
 import CenteredModal from '../../components/CenteredModal.js';
 import ModernSelect from '../../components/ModernSelect.js';
+import SearchInput from '../../components/SearchInput.js';
 import { api } from '../../api.js';
 import { useToast } from '../../components/Toast.js';
 import { tr } from '../../i18n.js';
 import type { RouteCandidateView, RouteAccountOption, RouteTokenOption } from '../helpers/routeModelCandidatesIndex.js';
 import type { RouteMissingTokenHint } from '../helpers/routeMissingTokenHints.js';
+import { Button } from '../../components/ui/button/index.js';
+import { LoaderCircle } from 'lucide-react';
+import ToneBadge from '../../components/ToneBadge.js';
+import { Checkbox } from '../../components/ui/checkbox/index.js';
+import { Card, CardContent } from '../../components/ui/card/index.js';
+import { ScrollArea } from '../../components/ui/scroll-area/index.js';
+import EmptyStateBlock from '../../components/EmptyStateBlock.js';
+import { cn } from '../../lib/utils.js';
 import {
   buildFixedTokenOptionDescription,
   buildFixedTokenOptionLabel,
@@ -144,48 +153,45 @@ export default function AddChannelModal({
       title={`${tr('添加通道')} - ${routeTitle}`}
       maxWidth={560}
       footer={
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
-          <span style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+        <div className="flex w-full items-center justify-between gap-3">
+          <span className="text-xs text-muted-foreground">
             {tr('已选')} {selectedCount} {tr('个通道')}
           </span>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button className="btn btn-ghost" onClick={handleClose} disabled={submitting}>
+          <div className="flex gap-2">
+            <Button type="button" variant="outline" onClick={handleClose} disabled={submitting}>
               {tr('取消')}
-            </button>
-            <button
-              className="btn btn-primary"
+            </Button>
+            <Button
+              type="button"
               onClick={handleSubmit}
               disabled={submitting || selectedCount === 0}
             >
               {submitting ? (
-                <><span className="spinner spinner-sm" /> {tr('添加中...')}</>
+                <><LoaderCircle className="size-4 animate-spin" /> {tr('添加中...')}</>
               ) : (
                 `${tr('批量添加')} (${selectedCount})`
               )}
-            </button>
+            </Button>
           </div>
         </div>
       }
     >
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <div className="toolbar-search" style={{ width: '100%' }}>
-          <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-          </svg>
-          <input
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder={tr('搜索账号...')}
-          />
-        </div>
+      <div className="flex flex-col gap-3">
+        <SearchInput
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder={tr('搜索账号...')}
+        />
 
-        <div style={{ maxHeight: 360, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <ScrollArea className="max-h-[360px]">
+          <div className="flex flex-col gap-2 pr-1">
           {filteredAccounts.length === 0 && filteredMissingAccounts.length === 0 ? (
-            <div style={{ fontSize: 13, color: 'var(--color-text-muted)', padding: '12px 0', textAlign: 'center' }}>
-              {candidateView.accountOptions.length === 0 && missingAccounts.length === 0
+            <EmptyStateBlock
+              title={candidateView.accountOptions.length === 0 && missingAccounts.length === 0
                 ? tr('当前没有可用的账号，请确认已有账号的令牌支持调用此模型')
                 : tr('没有匹配的账号')}
-            </div>
+              className="py-3"
+            />
           ) : (
             <>
               {filteredAccounts.map((account) => {
@@ -196,106 +202,97 @@ export default function AddChannelModal({
                 const tokenBinding = describeTokenBinding(tokens, selection?.tokenId || 0);
 
                 return (
-                  <div
+                  <Card
                     key={account.id}
                     onClick={() => toggleAccount(account)}
-                    style={{
-                      padding: '8px 10px',
-                      borderRadius: 'var(--radius-sm)',
-                      border: `1px solid ${isSelected ? 'var(--color-primary)' : 'var(--color-border)'}`,
-                      background: isSelected ? 'color-mix(in srgb, var(--color-primary) 6%, transparent)' : 'transparent',
-                      cursor: 'pointer',
-                    }}
+                    className={cn('cursor-pointer', isSelected && 'bg-muted')}
                   >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <input
-                        type="checkbox"
-                        checked={isSelected}
-                        readOnly
-                        style={{ cursor: 'pointer', pointerEvents: 'none' }}
-                      />
-                      <span style={{ fontSize: 13, fontWeight: 500 }}>{account.label}</span>
-                      {isExisting && (
-                        <span className="badge badge-muted" style={{ fontSize: 10 }}>{tr('已添加')}</span>
-                      )}
-                    </div>
-
-                    {isSelected && tokens.length > 0 && (
-                      <div style={{ marginTop: 6, paddingLeft: 24 }} onClick={(e) => e.stopPropagation()}>
-                        <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginBottom: 4 }}>{tr('令牌绑定')}:</div>
-                        <ModernSelect
-                          size="sm"
-                          value={(() => {
-                            if (!selection?.tokenId) return '0';
-                            return `${selection.tokenId}::${selection.sourceModel || ''}`;
-                          })()}
-                          onChange={(nextValue) => {
-                            if (nextValue === '0') {
-                              updateTokenForAccount(account.id, 0, '');
-                              return;
-                            }
-                            const [tokenRaw, ...sourceParts] = nextValue.split('::');
-                            updateTokenForAccount(account.id, Number.parseInt(tokenRaw, 10) || 0, sourceParts.join('::'));
-                          }}
-                          options={[
-                            {
-                              value: '0',
-                              label: tr('跟随账号默认'),
-                              description: tokenBinding.followOptionDescription,
-                            },
-                            ...tokens.map((token: RouteTokenOption) => ({
-                              value: `${token.id}::${token.sourceModel || ''}`,
-                              label: buildFixedTokenOptionLabel(token, {
-                                includeDefaultTag: true,
-                                includeSourceModel: true,
-                              }),
-                              description: buildFixedTokenOptionDescription(token),
-                            })),
-                          ]}
-                          placeholder={tr('选择绑定方式')}
+                    <CardContent className="grid gap-2 p-2.5">
+                      <div className="flex items-center gap-2">
+                        <Checkbox
+                          checked={isSelected}
+                          aria-readonly="true"
+                          className="pointer-events-none"
                         />
-                        <div style={{ marginTop: 4, fontSize: 11, color: 'var(--color-text-muted)', lineHeight: 1.4 }}>
-                          {tokenBinding.helperText}
-                        </div>
+                        <span className="text-sm font-medium">{account.label}</span>
+                        {isExisting && (
+                          <ToneBadge tone="-muted">{tr('已添加')}</ToneBadge>
+                        )}
                       </div>
-                    )}
-                  </div>
+
+                      {isSelected && tokens.length > 0 && (
+                        <div className="ml-6 grid gap-1" onClick={(e) => e.stopPropagation()}>
+                          <div className="text-xs text-muted-foreground">{tr('令牌绑定')}:</div>
+                          <ModernSelect
+                            size="sm"
+                            value={(() => {
+                              if (!selection?.tokenId) return '0';
+                              return `${selection.tokenId}::${selection.sourceModel || ''}`;
+                            })()}
+                            onChange={(nextValue) => {
+                              if (nextValue === '0') {
+                                updateTokenForAccount(account.id, 0, '');
+                                return;
+                              }
+                              const [tokenRaw, ...sourceParts] = nextValue.split('::');
+                              updateTokenForAccount(account.id, Number.parseInt(tokenRaw, 10) || 0, sourceParts.join('::'));
+                            }}
+                            options={[
+                              {
+                                value: '0',
+                                label: tr('跟随账号默认'),
+                                description: tokenBinding.followOptionDescription,
+                              },
+                              ...tokens.map((token: RouteTokenOption) => ({
+                                value: `${token.id}::${token.sourceModel || ''}`,
+                                label: buildFixedTokenOptionLabel(token, {
+                                  includeDefaultTag: true,
+                                  includeSourceModel: true,
+                                }),
+                                description: buildFixedTokenOptionDescription(token),
+                              })),
+                            ]}
+                            placeholder={tr('选择绑定方式')}
+                          />
+                          <div className="text-xs leading-snug text-muted-foreground">
+                            {tokenBinding.helperText}
+                          </div>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
                 );
               })}
 
               {/* Missing token hints */}
               {filteredMissingAccounts.length > 0 && (
-                <div style={{ borderTop: '1px dashed var(--color-border)', paddingTop: 8, marginTop: 4, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                  <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginBottom: 2 }}>
+                <div className="mt-1 flex flex-col gap-2 border-t border-dashed border-border pt-2">
+                  <div className="text-xs text-muted-foreground">
                     {tr('以下账号可用此模型但缺少令牌')}:
                   </div>
                   {filteredMissingAccounts.map((item) => (
-                    <div
-                      key={item.accountId}
-                      style={{
-                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                        padding: '6px 10px', borderRadius: 'var(--radius-sm)',
-                        border: '1px dashed var(--color-border)', background: 'var(--color-bg)',
-                      }}
-                    >
-                      <span style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>{item.label}</span>
+                    <Card key={item.accountId} className="border-dashed">
+                      <CardContent className="flex items-center justify-between gap-2 p-2.5">
+                        <span className="text-xs text-muted-foreground">{item.label}</span>
                       {onCreateTokenForMissing && (
-                        <button
+                        <Button
+                          variant="ghost"
+                          size="sm"
                           type="button"
-                          className="btn btn-link"
-                          style={{ fontSize: 11, padding: '2px 6px' }}
                           onClick={() => onCreateTokenForMissing(item.accountId, item.modelName)}
                         >
                           {tr('创建令牌')}
-                        </button>
+                        </Button>
                       )}
-                    </div>
+                      </CardContent>
+                    </Card>
                   ))}
                 </div>
               )}
             </>
           )}
-        </div>
+          </div>
+        </ScrollArea>
       </div>
     </CenteredModal>
   );

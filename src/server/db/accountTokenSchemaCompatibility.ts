@@ -32,6 +32,15 @@ export const ACCOUNT_TOKEN_COLUMN_COMPATIBILITY_SPECS: AccountTokenColumnCompati
       postgres: "ALTER TABLE \"account_tokens\" ADD COLUMN \"value_status\" TEXT NOT NULL DEFAULT 'ready'",
     },
   },
+  {
+    table: 'account_tokens',
+    column: 'compatibility_policy',
+    addSql: {
+      sqlite: 'ALTER TABLE account_tokens ADD COLUMN compatibility_policy text;',
+      mysql: 'ALTER TABLE `account_tokens` ADD COLUMN `compatibility_policy` TEXT NULL',
+      postgres: 'ALTER TABLE "account_tokens" ADD COLUMN "compatibility_policy" TEXT',
+    },
+  },
 ];
 
 function normalizeSchemaErrorMessage(error: unknown): string {

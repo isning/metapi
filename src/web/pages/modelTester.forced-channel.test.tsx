@@ -15,11 +15,16 @@ const { apiMock } = vi.hoisted(() => ({
     getModelsMarketplace: vi.fn(),
     getRoutes: vi.fn(),
     getRouteDecision: vi.fn(),
+    getModelRouteFlow: vi.fn(),
   },
 }));
 
 vi.mock('../api.js', () => ({
   api: apiMock,
+}));
+
+vi.mock('../components/ModelRouteFlow.js', () => ({
+  default: () => null,
 }));
 
 vi.mock('../authSession.js', () => ({
@@ -90,6 +95,7 @@ describe('ModelTester fixed channel behavior', () => {
         ],
       },
     });
+    apiMock.getModelRouteFlow.mockResolvedValue({ flow: null });
 
     const session = serializeModelTesterSession({
       input: '',

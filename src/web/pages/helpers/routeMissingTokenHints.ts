@@ -1,3 +1,6 @@
+import type { RouteSummaryRow } from '../token-routes/types.js';
+import { getRouteRequestedModelPattern, isRouteBackendReferences } from '../token-routes/utils.js';
+
 export type MissingTokenModelAccount = {
   accountId: number;
   username: string | null;
@@ -16,10 +19,7 @@ export type RouteMissingTokenHint = {
   accounts: MissingTokenModelAccount[];
 };
 
-type RoutePatternLike = {
-  id: number;
-  modelPattern: string;
-};
+export type RouteMissingTokenRoute = Pick<RouteSummaryRow, 'id' | 'match' | 'backend'>;
 
 export function normalizeMissingTokenModels(
   withoutTokenByModel: MissingTokenModelsByName,
@@ -58,14 +58,18 @@ export function normalizeMissingTokenModels(
 }
 
 export function buildRouteMissingTokenIndex(
-  routes: RoutePatternLike[],
+  routes: RouteMissingTokenRoute[],
   missingByModel: MissingTokenModelsByName,
   matchesModelPattern: (model: string, pattern: string) => boolean,
 ): Record<number, RouteMissingTokenHint[]> {
   const index: Record<number, RouteMissingTokenHint[]> = {};
 
   for (const route of routes || []) {
-    const modelPattern = (route.modelPattern || '').trim();
+    if (isRouteBackendReferences(route.backend)) {
+      index[route.id] = [];
+      continue;
+    }
+    const modelPattern = getRouteRequestedModelPattern(route).trim();
     if (!modelPattern) {
       index[route.id] = [];
       continue;

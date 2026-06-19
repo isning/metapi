@@ -36,7 +36,7 @@ describe('sites proxy settings', () => {
     delete process.env.DATA_DIR;
   });
 
-  it('stores proxy settings, external checkin url, and custom headers when creating a site', async () => {
+  it('stores proxy settings, external checkin url, custom headers, and compatibility policy when creating a site', async () => {
     const response = await app.inject({
       method: 'POST',
       url: '/api/sites',
@@ -50,6 +50,13 @@ describe('sites proxy settings', () => {
           'cf-access-client-id': 'site-client-id',
           'x-site-scope': 'internal',
         }),
+        compatibilityPolicy: {
+          reasoningHistory: {
+            transport: {
+              mode: 'content_think_tag',
+            },
+          },
+        },
         externalCheckinUrl: 'https://checkin.example.com/welfare',
         globalWeight: 1.5,
       },
@@ -60,12 +67,20 @@ describe('sites proxy settings', () => {
       proxyUrl?: string | null;
       useSystemProxy?: boolean;
       customHeaders?: string | null;
+      compatibilityPolicy?: string | null;
       externalCheckinUrl?: string | null;
       globalWeight?: number;
     };
     expect(payload.proxyUrl).toBe('socks5://127.0.0.1:1080');
     expect(payload.useSystemProxy).toBe(true);
     expect(payload.customHeaders).toBe('{"cf-access-client-id":"site-client-id","x-site-scope":"internal"}');
+    expect(JSON.parse(payload.compatibilityPolicy || '{}')).toEqual({
+      reasoningHistory: {
+        transport: {
+          mode: 'content_think_tag',
+        },
+      },
+    });
     expect(payload.externalCheckinUrl).toBe('https://checkin.example.com/welfare');
     expect(payload.globalWeight).toBe(1.5);
   });

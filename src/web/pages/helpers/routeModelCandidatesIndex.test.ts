@@ -3,7 +3,16 @@ import {
   buildRouteModelCandidatesIndex,
   type IndexedRouteModelCandidate,
   type RouteModelCandidatesByModelName,
+  type RouteModelCandidateRoute,
 } from './routeModelCandidatesIndex.js';
+
+function buildRoute(id: number, requestedModelPattern: string, backend: RouteModelCandidateRoute['backend'] = { kind: 'channels' }): RouteModelCandidateRoute {
+  return {
+    id,
+    match: { kind: 'model', requestedModelPattern, displayName: null },
+    backend,
+  };
+}
 
 function matchesModelPattern(model: string, pattern: string): boolean {
   if (!pattern) return false;
@@ -15,8 +24,8 @@ function matchesModelPattern(model: string, pattern: string): boolean {
 describe('buildRouteModelCandidatesIndex', () => {
   it('precomputes route candidates, account options and token options by account', () => {
     const routes = [
-      { id: 1, modelPattern: 'claude-*' },
-      { id: 2, modelPattern: 'gpt-4o-mini' },
+      buildRoute(1, 'claude-*'),
+      buildRoute(2, 'gpt-4o-mini'),
     ];
 
     const modelCandidates: RouteModelCandidatesByModelName = {
@@ -94,7 +103,7 @@ describe('buildRouteModelCandidatesIndex', () => {
   });
 
   it('returns empty structures when route model pattern is blank', () => {
-    const routes = [{ id: 1, modelPattern: '   ' }];
+    const routes = [buildRoute(1, '   ')];
     const modelCandidates: RouteModelCandidatesByModelName = {
       'gpt-4o-mini': [{
         modelName: 'ignored',

@@ -171,6 +171,65 @@ describe('openAiChatTransformer.inbound', () => {
     });
   });
 
+  it('drops invalid OpenAI function tools before building upstream chat requests', () => {
+    const result = openAiChatTransformer.transformRequest({
+      model: 'gpt-5',
+      messages: [{ role: 'user', content: 'hello' }],
+      tool_choice: { type: 'function', function: { name: 'search_docs' } },
+      tools: [
+        {
+          type: 'function',
+          function: {
+            name: ' search_docs ',
+            description: 'Search docs',
+            parameters: { type: 'object' },
+          },
+        },
+        {
+          type: 'function',
+          function: {
+            name: '',
+            parameters: { type: 'object' },
+          },
+        },
+        {
+          type: 'function',
+        },
+      ],
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.value?.parsed.upstreamBody.tools).toEqual([
+      {
+        type: 'function',
+        function: {
+          name: 'search_docs',
+          description: 'Search docs',
+          parameters: { type: 'object' },
+        },
+      },
+    ]);
+    expect(result.value?.parsed.upstreamBody.tool_choice).toEqual({
+      type: 'function',
+      function: { name: 'search_docs' },
+    });
+  });
+
+  it('removes tool_choice when all OpenAI function tools are invalid', () => {
+    const result = openAiChatTransformer.transformRequest({
+      model: 'gpt-5',
+      messages: [{ role: 'user', content: 'hello' }],
+      tool_choice: 'auto',
+      tools: [
+        { type: 'function', function: { name: '' } },
+      ],
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.value?.parsed.upstreamBody).not.toHaveProperty('tools');
+    expect(result.value?.parsed.upstreamBody).not.toHaveProperty('tool_choice');
+  });
+
   it('normalizes typed inbound metadata without mutating upstream body', () => {
     const result = openAiChatTransformer.transformRequest({
       model: 'gpt-5',

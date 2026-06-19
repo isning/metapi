@@ -7,6 +7,7 @@ import Models from './Models.js';
 const { apiMock } = vi.hoisted(() => ({
   apiMock: {
     getModelsMarketplace: vi.fn(),
+    getModelRouteFlow: vi.fn(),
   },
 }));
 
@@ -36,6 +37,7 @@ describe('Models mobile layout', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    apiMock.getModelRouteFlow.mockResolvedValue({ flow: null });
     globalThis.document = {
       documentElement: {
         getAttribute: () => 'light',

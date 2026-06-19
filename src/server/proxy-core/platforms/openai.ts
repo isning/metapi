@@ -1,7 +1,9 @@
 import type { PreparedPlatformRequest, PreparePlatformRequestInput, PlatformProfile } from './types.js';
+import { nativeReasoningCompatibilityPolicy } from './compatibilityPolicy.js';
 
 export const openaiPlatformProfile: PlatformProfile = {
   id: 'openai',
+  defaultCompatibilityPolicy: nativeReasoningCompatibilityPolicy,
   prepareRequest(input: PreparePlatformRequestInput): PreparedPlatformRequest {
     const path = input.targetPath || '/v1/chat/completions';
 

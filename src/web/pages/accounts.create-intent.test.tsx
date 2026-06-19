@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, create } from 'react-test-renderer';
+import { act, create, type ReactTestInstance } from 'react-test-renderer';
 import { MemoryRouter } from 'react-router-dom';
 import ModernSelect from '../components/ModernSelect.js';
 import { ToastProvider } from '../components/Toast.js';
@@ -24,6 +24,13 @@ async function flushMicrotasks() {
     await Promise.resolve();
     await Promise.resolve();
   });
+}
+
+function collectText(node: ReactTestInstance): string {
+  return (node.children || []).map((child) => {
+    if (typeof child === 'string') return child;
+    return collectText(child);
+  }).join('');
 }
 
 async function renderAccounts(
@@ -96,8 +103,7 @@ describe('Accounts create intent handling', () => {
       const addButton = root.root.find((node) => (
         node.type === 'button'
         && typeof node.props.onClick === 'function'
-        && typeof node.props.className === 'string'
-        && node.props.className.includes('btn btn-primary')
+        && collectText(node).includes('添加连接')
       ));
 
       await act(async () => {

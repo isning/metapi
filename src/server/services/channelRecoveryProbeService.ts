@@ -3,6 +3,7 @@ import { db, schema } from '../db/index.js';
 import { isUsableAccountToken } from './accountTokenService.js';
 import { getOauthInfoFromAccount } from './oauth/oauthAccount.js';
 import { proxyChannelCoordinator } from './proxyChannelCoordinator.js';
+import { loadRouteGraphLegacyProjections, type RouteGraphLegacyProjection } from './routeGraphService.js';
 import { probeRuntimeModel } from './runtimeModelProbe.js';
 import { tokenRouter } from './tokenRouter.js';
 import { isExactTokenRouteModelPattern } from '../../shared/tokenRoutePatterns.js';
@@ -49,11 +50,10 @@ function resolveRecoveryProbeWindowMs(source: RecoveryProbeSource): number {
 
 function resolveProbeModelName(row: {
   route_channels: typeof schema.routeChannels.$inferSelect;
-  token_routes: typeof schema.tokenRoutes.$inferSelect;
-}): string {
+}, projections: Map<number, RouteGraphLegacyProjection>): string {
   const sourceModel = String(row.route_channels.sourceModel || '').trim();
   if (sourceModel) return sourceModel;
-  const routeModelPattern = String(row.token_routes.modelPattern || '').trim();
+  const routeModelPattern = (projections.get(row.route_channels.routeId)?.modelPattern || '').trim();
   return isExactTokenRouteModelPattern(routeModelPattern) ? routeModelPattern : '';
 }
 
@@ -121,9 +121,10 @@ async function loadCoolingProbeCandidates(nowIso: string): Promise<RecoveryProbe
     ))
     .all();
 
+  const projections = await loadRouteGraphLegacyProjections();
   return rows.flatMap((row) => {
     if (isProviderDirectedCooldown(row)) return [];
-    const modelName = resolveProbeModelName(row);
+    const modelName = resolveProbeModelName(row, projections);
     const tokenValue = resolveProbeTokenValue(row);
     if (!modelName || !tokenValue) return [];
     return [{
@@ -154,8 +155,9 @@ async function loadActiveProbeCandidates(activeChannelIds: number[]): Promise<Re
     ))
     .all();
 
+  const projections = await loadRouteGraphLegacyProjections();
   return rows.flatMap((row) => {
-    const modelName = resolveProbeModelName(row);
+    const modelName = resolveProbeModelName(row, projections);
     const tokenValue = resolveProbeTokenValue(row);
     if (!modelName || !tokenValue) return [];
     return [{

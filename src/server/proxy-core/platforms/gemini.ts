@@ -1,7 +1,9 @@
 import type { PreparedPlatformRequest, PreparePlatformRequestInput, PlatformProfile } from './types.js';
+import { nativeReasoningCompatibilityPolicy } from './compatibilityPolicy.js';
 
 export const geminiPlatformProfile: PlatformProfile = {
   id: 'gemini',
+  defaultCompatibilityPolicy: nativeReasoningCompatibilityPolicy,
   prepareRequest(input: PreparePlatformRequestInput): PreparedPlatformRequest {
     const siteUrl = typeof input.siteUrl === 'string' ? input.siteUrl.trim().toLowerCase() : '';
     const openAiCompatBase = /\/openai(?:\/|$)/.test(siteUrl);

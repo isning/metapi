@@ -3,6 +3,11 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
+import {
+  createGraphNativeTokenRouteFixture,
+  publishCurrentGraphNativeTokenRouteFixtures,
+  resetGraphNativeTokenRouteFixtures,
+} from '../test/graphNativeRouteFixtures.js';
 
 const probeRuntimeModelMock = vi.fn();
 
@@ -69,10 +74,14 @@ describe('channelRecoveryProbeService', () => {
 
     await db.delete(schema.routeChannels).run();
     await db.delete(schema.tokenRoutes).run();
+    await db.delete(schema.routeGraphActiveVersion).run();
+    await db.delete(schema.routeGraphDrafts).run();
+    await db.delete(schema.routeGraphVersions).run();
     await db.delete(schema.settings).run();
     await db.delete(schema.accountTokens).run();
     await db.delete(schema.accounts).run();
     await db.delete(schema.sites).run();
+    resetGraphNativeTokenRouteFixtures();
   });
 
   afterAll(() => {
@@ -113,10 +122,10 @@ describe('channelRecoveryProbeService', () => {
       isDefault: true,
     }).returning().get();
 
-    const route = await db.insert(schema.tokenRoutes).values({
+    const route = await createGraphNativeTokenRouteFixture({
       modelPattern: 'gpt-5.4',
       enabled: true,
-    }).returning().get();
+    });
 
     const channel = await db.insert(schema.routeChannels).values({
       routeId: route.id,
@@ -128,6 +137,8 @@ describe('channelRecoveryProbeService', () => {
       consecutiveFailCount: 2,
       cooldownLevel: 1,
     }).returning().get();
+    await publishCurrentGraphNativeTokenRouteFixtures();
+    invalidateTokenRouterCache();
 
     await runChannelRecoveryProbeSweep();
 
@@ -173,10 +184,10 @@ describe('channelRecoveryProbeService', () => {
       isDefault: true,
     }).returning().get();
 
-    const route = await db.insert(schema.tokenRoutes).values({
+    const route = await createGraphNativeTokenRouteFixture({
       modelPattern: 'gpt-5.2',
       enabled: true,
-    }).returning().get();
+    });
 
     const channel = await db.insert(schema.routeChannels).values({
       routeId: route.id,
@@ -184,6 +195,8 @@ describe('channelRecoveryProbeService', () => {
       tokenId: token.id,
       enabled: true,
     }).returning().get();
+    await publishCurrentGraphNativeTokenRouteFixtures();
+    invalidateTokenRouterCache();
 
     const lease = await proxyChannelCoordinator.acquireChannelLease({
       channelId: channel.id,
@@ -235,10 +248,10 @@ describe('channelRecoveryProbeService', () => {
       isDefault: false,
     }).returning().get();
 
-    const route = await db.insert(schema.tokenRoutes).values({
+    const route = await createGraphNativeTokenRouteFixture({
       modelPattern: 'gpt-5.4',
       enabled: true,
-    }).returning().get();
+    });
 
     await db.insert(schema.routeChannels).values([
       {
@@ -264,6 +277,8 @@ describe('channelRecoveryProbeService', () => {
         cooldownLevel: 0,
       },
     ]).run();
+    await publishCurrentGraphNativeTokenRouteFixtures();
+    invalidateTokenRouterCache();
 
     await runChannelRecoveryProbeSweep();
 
@@ -304,10 +319,10 @@ describe('channelRecoveryProbeService', () => {
           isDefault: true,
         }).returning().get();
 
-        const route = await db.insert(schema.tokenRoutes).values({
+        const route = await createGraphNativeTokenRouteFixture({
           modelPattern: `gpt-5.4-${index}`,
           enabled: true,
-        }).returning().get();
+        });
 
         const channel = await db.insert(schema.routeChannels).values({
           routeId: route.id,
@@ -325,6 +340,8 @@ describe('channelRecoveryProbeService', () => {
           leases.push(lease.lease);
         }
       }
+      await publishCurrentGraphNativeTokenRouteFixtures();
+      invalidateTokenRouterCache();
 
       const startedAt = Date.UTC(2026, 3, 1, 0, 0, 0);
       await runChannelRecoveryProbeSweep(startedAt);

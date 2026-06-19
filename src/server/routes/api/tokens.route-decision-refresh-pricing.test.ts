@@ -3,6 +3,11 @@ import { describe, expect, it, beforeAll, beforeEach, afterAll, vi } from 'vites
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { mkdtempSync } from 'node:fs';
+import {
+  createGraphNativeTokenRouteFixture,
+  publishCurrentGraphNativeTokenRouteFixtures,
+  resetGraphNativeTokenRouteFixtures,
+} from '../../test/graphNativeRouteFixtures.js';
 
 type DbModule = typeof import('../../db/index.js');
 type TokenRouterModule = typeof import('../../services/tokenRouter.js');
@@ -98,9 +103,13 @@ describe('POST /api/routes/decision/batch refreshPricingCatalog', () => {
 
     await db.delete(schema.routeChannels).run();
     await db.delete(schema.tokenRoutes).run();
+    await db.delete(schema.routeGraphActiveVersion).run();
+    await db.delete(schema.routeGraphDrafts).run();
+    await db.delete(schema.routeGraphVersions).run();
     await db.delete(schema.accountTokens).run();
     await db.delete(schema.accounts).run();
     await db.delete(schema.sites).run();
+    resetGraphNativeTokenRouteFixtures();
     invalidateTokenRouterCache();
 
     config.routingWeights = {
@@ -122,10 +131,10 @@ describe('POST /api/routes/decision/batch refreshPricingCatalog', () => {
   });
 
   it('forces pricing catalog refresh before recomputing exact-route probabilities', async () => {
-    const route = await db.insert(schema.tokenRoutes).values({
+    const route = await createGraphNativeTokenRouteFixture({
       modelPattern: 'gpt-4o-mini',
       enabled: true,
-    }).returning().get();
+    });
 
     const siteA = await db.insert(schema.sites).values({
       name: 'site-a',
@@ -175,6 +184,8 @@ describe('POST /api/routes/decision/batch refreshPricingCatalog', () => {
         enabled: true,
       },
     ]).run();
+    await publishCurrentGraphNativeTokenRouteFixtures();
+    invalidateTokenRouterCache();
 
     await fetchModelPricingCatalog({
       site: {

@@ -14,7 +14,7 @@ describe('updateCenterPresentation', () => {
       dockerHubTag: null,
     })).toEqual({
       label: '无法检查更新',
-      badgeClassName: 'badge badge-muted',
+      badgeTone: 'muted',
       detail: '暂未获取到可比较的版本信息。',
       highlight: false,
     });
@@ -96,7 +96,7 @@ describe('updateCenterPresentation', () => {
       dockerHubTag: null,
     })).toEqual({
       label: '已是最新',
-      badgeClassName: 'badge badge-muted',
+      badgeTone: 'muted',
       detail: '当前运行版本与已发现的部署目标没有明显差异。',
       highlight: false,
     });

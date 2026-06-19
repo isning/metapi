@@ -202,4 +202,5 @@ describe('/api/test proxy tester routes', () => {
     });
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
 });

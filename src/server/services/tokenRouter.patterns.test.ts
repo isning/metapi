@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { tokenRouteFixture } from '../test/routeGraphFixtures.js';
 
 type DbModule = typeof import('../db/index.js');
 type TokenRouterModule = typeof import('./tokenRouter.js');
@@ -12,13 +13,60 @@ describe('TokenRouter patterns and model mapping', () => {
   let TokenRouter: TokenRouterModule['TokenRouter'];
   let invalidateTokenRouterCache: TokenRouterModule['invalidateTokenRouterCache'];
   let tokenRouterTestUtils: TokenRouterModule['__tokenRouterTestUtils'];
+  let publishRouteGraphSource: typeof import('./routeGraphService.js')['publishRouteGraphSource'];
+  let buildRouteGraphSourceFromLegacyRoutes: typeof import('../../shared/routeGraph.js')['buildRouteGraphSourceFromLegacyRoutes'];
   let dataDir = '';
   let idSeed = 0;
+  const seededModelPatternByRouteId = new Map<number, string>();
 
   const nextId = () => {
     idSeed += 1;
     return idSeed;
   };
+
+  async function buildLegacyRouteGraphRows() {
+    const [routes, channels] = await Promise.all([
+      db.select().from(schema.tokenRoutes).all(),
+      db.select().from(schema.routeChannels).all(),
+    ]);
+    const targetsByRouteId = new Map<number, Array<Record<string, unknown>>>();
+    for (const channel of channels) {
+      const sourceModel = (channel.sourceModel || '').trim();
+      const existing = targetsByRouteId.get(channel.routeId) || [];
+      existing.push({
+        channelId: String(channel.id),
+        model: sourceModel,
+        modelSource: sourceModel ? 'fixed' : 'request',
+        accountId: channel.accountId,
+        tokenId: channel.tokenId,
+        weight: channel.weight,
+        priority: channel.priority,
+      });
+      targetsByRouteId.set(channel.routeId, existing);
+    }
+    return routes.map((row) => {
+      const targets = (targetsByRouteId.get(row.id) || []).map((target) => {
+        if (target.model || target.modelSource !== 'request') return target;
+        const exactRouteModel = typeof row.modelPattern === 'string'
+          && row.modelPattern.trim()
+          && !row.modelPattern.includes('*')
+          && !row.modelPattern.includes('?')
+          && !row.modelPattern.startsWith('re:')
+          ? row.modelPattern.trim()
+          : (seededModelPatternByRouteId.get(row.id) || '');
+        if (!exactRouteModel || exactRouteModel.includes('*') || exactRouteModel.includes('?') || exactRouteModel.startsWith('re:')) {
+          return target;
+        }
+        return exactRouteModel
+          ? { ...target, model: exactRouteModel, modelSource: 'fixed' }
+          : target;
+      });
+      return {
+        ...row,
+        targets,
+      };
+    });
+  }
 
   beforeAll(async () => {
     dataDir = mkdtempSync(join(tmpdir(), 'metapi-token-router-patterns-'));
@@ -27,21 +75,29 @@ describe('TokenRouter patterns and model mapping', () => {
     await import('../db/migrate.js');
     const dbModule = await import('../db/index.js');
     const tokenRouterModule = await import('./tokenRouter.js');
+    const routeGraphModule = await import('./routeGraphService.js');
+    const sharedRouteGraphModule = await import('../../shared/routeGraph.js');
     db = dbModule.db;
     schema = dbModule.schema;
     TokenRouter = tokenRouterModule.TokenRouter;
     invalidateTokenRouterCache = tokenRouterModule.invalidateTokenRouterCache;
     tokenRouterTestUtils = tokenRouterModule.__tokenRouterTestUtils;
+    publishRouteGraphSource = routeGraphModule.publishRouteGraphSource;
+    buildRouteGraphSourceFromLegacyRoutes = sharedRouteGraphModule.buildRouteGraphSourceFromLegacyRoutes;
   });
 
   beforeEach(async () => {
     idSeed = 0;
+    await db.delete(schema.routeGraphActiveVersion).run();
+    await db.delete(schema.routeGraphDrafts).run();
+    await db.delete(schema.routeGraphVersions).run();
     await db.delete(schema.routeChannels).run();
     await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.accountTokens).run();
     await db.delete(schema.accounts).run();
     await db.delete(schema.sites).run();
     invalidateTokenRouterCache();
+    seededModelPatternByRouteId.clear();
   });
 
   afterAll(() => {
@@ -73,12 +129,12 @@ describe('TokenRouter patterns and model mapping', () => {
   async function createRouteWithSingleChannel(
     modelPattern: string,
     modelMapping?: string,
-    options?: { displayName?: string; sourceModel?: string | null },
+    options?: { displayName?: string; sourceModel?: string | null; skipPublish?: boolean },
   ) {
     const site = await createSite('pattern-site');
     const account = await createAccount(site.id, 'pattern-user');
     const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern,
+      ...tokenRouteFixture({ modelPattern, displayName: options?.displayName }),
       displayName: options?.displayName,
       modelMapping,
       enabled: true,
@@ -92,6 +148,36 @@ describe('TokenRouter patterns and model mapping', () => {
       weight: 10,
       enabled: true,
     }).returning().get();
+    const sourceModel = options?.sourceModel ?? '';
+    seededModelPatternByRouteId.set(route.id, modelPattern);
+    if (options?.skipPublish) {
+      invalidateTokenRouterCache();
+      return { route, channel };
+    }
+    const published = await publishRouteGraphSource({
+      sourceGraph: buildRouteGraphSourceFromLegacyRoutes([{
+        ...route,
+        match: {
+          kind: 'model',
+          requestedModelPattern: modelPattern,
+          displayName: options?.displayName ?? null,
+          routeId: route.id,
+        },
+        backend: { kind: 'channels' },
+        targets: [{
+          channelId: String(channel.id),
+          model: sourceModel,
+          modelSource: sourceModel ? 'fixed' : 'request',
+          accountId: account.id,
+          tokenId: null,
+          weight: 10,
+          priority: 0,
+        }],
+      }]),
+      createdBy: 'test',
+    });
+    expect(published.ok, JSON.stringify(published.diagnostics, null, 2)).toBe(true);
+    invalidateTokenRouterCache();
     return { route, channel };
   }
 
@@ -100,9 +186,13 @@ describe('TokenRouter patterns and model mapping', () => {
     sourceRouteIds: number[],
   ) {
     const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: displayName,
+      ...tokenRouteFixture({
+        modelPattern: displayName,
+        routeMode: 'explicit_group',
+        sourceRouteIds,
+        displayName,
+      }),
       displayName,
-      routeMode: 'explicit_group',
       enabled: true,
     }).returning().get();
 
@@ -112,6 +202,30 @@ describe('TokenRouter patterns and model mapping', () => {
         sourceRouteId,
       })),
     ).run();
+    const routes = await buildLegacyRouteGraphRows();
+    const groupRows = await db.select().from(schema.routeGroupSources).all();
+    const sourceRouteIdsByGroupId = new Map<number, number[]>();
+    for (const row of groupRows) {
+      const existing = sourceRouteIdsByGroupId.get(row.groupRouteId) || [];
+      existing.push(row.sourceRouteId);
+      sourceRouteIdsByGroupId.set(row.groupRouteId, existing);
+    }
+    const published = await publishRouteGraphSource({
+      sourceGraph: buildRouteGraphSourceFromLegacyRoutes(routes.map((row) => {
+        const groupSourceRouteIds = sourceRouteIdsByGroupId.get(row.id) || [];
+        const isGroup = groupSourceRouteIds.length > 0 || row.id === route.id;
+        return {
+          ...row,
+          match: isGroup
+            ? { kind: 'model', requestedModelPattern: '', displayName: row.displayName, routeId: row.id }
+            : { kind: 'model', requestedModelPattern: seededModelPatternByRouteId.get(row.id) || row.displayName || '', displayName: null, routeId: row.id },
+          backend: isGroup ? { kind: 'routes', routeIds: groupSourceRouteIds } : { kind: 'channels' },
+        };
+      })),
+      createdBy: 'test',
+    });
+    expect(published.ok, JSON.stringify(published.diagnostics, null, 2)).toBe(true);
+    invalidateTokenRouterCache();
 
     return route;
   }
@@ -129,7 +243,7 @@ describe('TokenRouter patterns and model mapping', () => {
   });
 
   it('ignores invalid re: patterns and falls back to next matched route', async () => {
-    const invalid = await createRouteWithSingleChannel('re:([a-z');
+    const invalid = await createRouteWithSingleChannel('re:([a-z', undefined, { skipPublish: true });
     const glob = await createRouteWithSingleChannel('claude-*');
     const router = new TokenRouter();
 

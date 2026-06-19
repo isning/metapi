@@ -7,6 +7,11 @@ import {
   TOKEN_ROUTER_FAILURE_COOLDOWN_MAX_SEC_CEILING,
 } from '../config.js';
 import { getCachedModelRoutingReferenceCost, refreshModelPricingCatalog } from './modelPricingService.js';
+import { loadRouteGraphLegacyProjections } from './routeGraphService.js';
+import {
+  evaluateActiveRouteGraphForModel,
+  type RouteGraphRuntimeSelection,
+} from './routeGraphRuntimeService.js';
 import { proxyChannelCoordinator, type ProxyChannelLoadSnapshot } from './proxyChannelCoordinator.js';
 import { RETRYABLE_TIMEOUT_PATTERNS } from './proxyRetryPolicy.js';
 import {
@@ -30,14 +35,27 @@ import {
   parseTokenRouteRegexPattern,
 } from '../../shared/tokenRoutePatterns.js';
 import {
-  normalizeTokenRouteMode,
   type RouteDecision,
   type RouteDecisionCandidate,
   type RouteMode,
 } from '../../shared/tokenRouteContract.js';
+import {
+  deriveLegacyModelPatternFromSpecs,
+  deriveLegacyRouteModeFromBackendSpec,
+  deriveLegacySourceRouteIdsFromBackendSpec,
+  getRouteGraphExposedModelName,
+  isRouteGraphExactModelMatch,
+  normalizeRouteGraphBackendSpec,
+  parseRouteGraphBackendSpec,
+  parseRouteGraphMatchSpec,
+  routeGraphMatchesRequestedModel,
+  type RouteGraphBackendSpec,
+  type RouteGraphMatchSpec,
+} from '../../shared/routeGraph.js';
 
 interface RouteMatch {
   route: RouteRow;
+  routeGraph?: RouteGraphRuntimeSelection | null;
   channels: Array<{
     channel: typeof schema.routeChannels.$inferSelect;
     account: typeof schema.accounts.$inferSelect;
@@ -63,6 +81,7 @@ interface SelectedChannel {
   tokenValue: string;
   tokenName: string;
   actualModel: string;
+  routeGraph?: RouteGraphRuntimeSelection | null;
 }
 
 type FailureAwareChannel = {
@@ -1072,6 +1091,9 @@ function filterSiteRuntimeBrokenCandidatesByModel(
 
 type RouteRow = typeof schema.tokenRoutes.$inferSelect & {
   routeMode: RouteMode;
+  modelPattern: string;
+  match: RouteGraphMatchSpec;
+  backend: RouteGraphBackendSpec;
   sourceRouteIds: number[];
 };
 type ChannelRow = typeof schema.routeChannels.$inferSelect;
@@ -1110,26 +1132,32 @@ async function loadEnabledRoutes(nowMs = Date.now()): Promise<RouteRow[]> {
   const rawRoutes = await db.select().from(schema.tokenRoutes)
     .where(eq(schema.tokenRoutes.enabled, true))
     .all();
-  const explicitGroupRouteIds = rawRoutes
-    .filter((route) => normalizeRouteMode(route.routeMode) === 'explicit_group')
-    .map((route) => route.id);
-  const sourceRows = explicitGroupRouteIds.length > 0
-    ? await db.select().from(schema.routeGroupSources)
-      .where(inArray(schema.routeGroupSources.groupRouteId, explicitGroupRouteIds))
-      .all()
-    : [];
-  const sourceIdsByRouteId = new Map<number, number[]>();
-  for (const row of sourceRows) {
-    if (!sourceIdsByRouteId.has(row.groupRouteId)) {
-      sourceIdsByRouteId.set(row.groupRouteId, []);
-    }
-    sourceIdsByRouteId.get(row.groupRouteId)!.push(row.sourceRouteId);
-  }
-  const routes = rawRoutes.map((route) => ({
-    ...route,
-    routeMode: normalizeRouteMode(route.routeMode),
-    sourceRouteIds: Array.from(new Set(sourceIdsByRouteId.get(route.id) ?? [])),
-  }));
+  const projections = await loadRouteGraphLegacyProjections();
+  const routes = rawRoutes.map((route) => {
+    const projection = projections.get(route.id);
+    const match = projection?.match ?? {
+      kind: 'model' as const,
+      requestedModelPattern: route.displayName || '',
+      currentModelPattern: '',
+      displayName: route.displayName || null,
+      downstreamProtocol: null,
+      upstreamProtocol: null,
+      sitePlatform: null,
+      routeId: route.id,
+      accountId: null,
+      tokenId: null,
+      siteId: null,
+    };
+    const backend = projection?.backend ?? { kind: 'channels' as const };
+    return {
+      ...route,
+      match,
+      backend,
+      routeMode: projection?.routeMode ?? deriveLegacyRouteModeFromBackendSpec(backend),
+      modelPattern: projection?.modelPattern ?? deriveLegacyModelPatternFromSpecs(match, backend),
+      sourceRouteIds: projection?.sourceRouteIds ?? deriveLegacySourceRouteIdsFromBackendSpec(backend),
+    };
+  });
   routeCacheSnapshot = {
     loadedAt: nowMs,
     routes,
@@ -1137,9 +1165,9 @@ async function loadEnabledRoutes(nowMs = Date.now()): Promise<RouteRow[]> {
   return routes;
 }
 
-async function loadRouteMatch(route: RouteRow, nowMs = Date.now()): Promise<RouteMatch> {
+async function loadRouteMatch(route: RouteRow, nowMs = Date.now(), routeGraph?: RouteGraphRuntimeSelection | null): Promise<RouteMatch> {
   const cached = routeMatchCache.get(route.id);
-  if (cached && isCacheFresh(cached.loadedAt, nowMs)) {
+  if (!routeGraph && cached && isCacheFresh(cached.loadedAt, nowMs)) {
     return cached.match;
   }
 
@@ -1154,13 +1182,13 @@ async function loadRouteMatch(route: RouteRow, nowMs = Date.now()): Promise<Rout
     ? enabledRoutes.filter((item) => (
       routeIds.includes(item.id)
       && !isExplicitGroupRoute(item)
-      && isExactRouteModelPattern(item.modelPattern)
+      && isRouteGraphExactModelMatch(item.match, item.backend)
     ))
     : enabledRoutes.filter((item) => routeIds.includes(item.id));
   const enabledSourceRouteIds = enabledSourceRoutes.map((item) => item.id);
   const fallbackSourceModelByRouteId = new Map<number, string>(
     enabledSourceRoutes
-      .filter((item) => isExactRouteModelPattern(item.modelPattern))
+      .filter((item) => isRouteGraphExactModelMatch(item.match, item.backend))
       .map((item) => [item.id, (item.modelPattern || '').trim()]),
   );
   const channels = enabledSourceRouteIds.length > 0
@@ -1206,12 +1234,18 @@ async function loadRouteMatch(route: RouteRow, nowMs = Date.now()): Promise<Rout
       }))
       : [],
   }));
+  const graphTargetChannelId = Number(routeGraph?.selectedEndpointTarget?.channelId);
+  const graphScoped = Number.isFinite(graphTargetChannelId) && graphTargetChannelId > 0
+    ? mapped.filter((candidate) => candidate.channel.id === graphTargetChannelId)
+    : mapped;
 
-  const match = { route, channels: mapped };
-  routeMatchCache.set(route.id, {
-    loadedAt: nowMs,
-    match,
-  });
+  const match = { route, routeGraph: routeGraph || null, channels: graphScoped };
+  if (!routeGraph) {
+    routeMatchCache.set(route.id, {
+      loadedAt: nowMs,
+      match,
+    });
+  }
   return match;
 }
 
@@ -1343,12 +1377,27 @@ function isExactRouteModelPattern(pattern: string): boolean {
   return isExactTokenRouteModelPattern(pattern);
 }
 
-function normalizeRouteMode(routeMode: string | null | undefined): RouteMode {
-  return normalizeTokenRouteMode(routeMode);
+function isExplicitGroupRoute(route: Pick<RouteRow, 'backend'> | Pick<RouteRow, 'routeMode'>): boolean {
+  if ('backend' in route) {
+    return normalizeRouteGraphBackendSpec(route.backend).kind === 'routes';
+  }
+  return route.routeMode === 'explicit_group';
 }
 
-function isExplicitGroupRoute(route: Pick<RouteRow, 'routeMode'> | Pick<typeof schema.tokenRoutes.$inferSelect, 'routeMode'>): boolean {
-  return normalizeRouteMode(route.routeMode) === 'explicit_group';
+function routeIdFromLegacyEntryNodeId(nodeId?: string | null): number | null {
+  const match = /^entry:legacy:(\d+)$/.exec(String(nodeId || ''));
+  if (!match) return null;
+  const routeId = Number(match[1]);
+  return Number.isFinite(routeId) && routeId > 0 ? routeId : null;
+}
+
+function explainRouteIdForMatch(match: RouteMatch): number {
+  return routeIdFromLegacyEntryNodeId(match.routeGraph?.matchedEntryNodeId) || match.route.id;
+}
+
+function graphMatchedAliasForMatch(match: RouteMatch, requestedModel: string): string {
+  if (!match.routeGraph || match.routeGraph.matchedEntryNodeId === match.routeGraph.selectedEntryNodeId) return '';
+  return requestedModel.trim();
 }
 
 function normalizeRouteDisplayName(displayName: string | null | undefined): string {
@@ -1360,27 +1409,28 @@ function isRouteDisplayNameMatch(model: string, displayName: string | null | und
   return !!alias && alias === model;
 }
 
+function isRouteExposedNameMatch(model: string, route: RouteRow): boolean {
+  return isRouteDisplayNameMatch(model, getExposedModelNameForRoute(route));
+}
+
 function matchesRouteRequestModel(model: string, route: RouteRow): boolean {
-  if (isExplicitGroupRoute(route)) {
-    return isRouteDisplayNameMatch(model, route.displayName);
-  }
-  return matchesModelPattern(model, route.modelPattern) || isRouteDisplayNameMatch(model, route.displayName);
+  return routeGraphMatchesRequestedModel(model, route.match, route.backend);
 }
 
 function getExposedModelNameForRoute(route: RouteRow): string {
-  return normalizeRouteDisplayName(route.displayName) || route.modelPattern;
+  return getRouteGraphExposedModelName(route.match, route.backend);
 }
 
-function hasCustomDisplayName(route: Pick<RouteRow, 'modelPattern' | 'displayName'>): boolean {
+function hasCustomDisplayName(route: RouteRow): boolean {
   const displayName = normalizeRouteDisplayName(route.displayName);
-  const modelPattern = (route.modelPattern || '').trim();
-  return !!displayName && displayName !== modelPattern;
+  const requestedPattern = route.match.requestedModelPattern.trim();
+  return !!displayName && displayName !== requestedPattern;
 }
 
 function buildVisibleEnabledRoutes(routes: RouteRow[]): RouteRow[] {
   const exactModelNames = new Set(
     routes
-      .filter((route) => !isExplicitGroupRoute(route) && isExactRouteModelPattern(route.modelPattern))
+      .filter((route) => !isExplicitGroupRoute(route) && isRouteGraphExactModelMatch(route.match, route.backend))
       .map((route) => (route.modelPattern || '').trim())
       .filter(Boolean),
   );
@@ -1388,7 +1438,7 @@ function buildVisibleEnabledRoutes(routes: RouteRow[]): RouteRow[] {
     route.enabled
     && (
       (isExplicitGroupRoute(route) && normalizeRouteDisplayName(route.displayName).length > 0 && route.sourceRouteIds.length > 0)
-      || (!isExplicitGroupRoute(route) && !isExactRouteModelPattern(route.modelPattern) && hasCustomDisplayName(route))
+      || (!isExplicitGroupRoute(route) && !isRouteGraphExactModelMatch(route.match, route.backend) && hasCustomDisplayName(route))
     )
   ));
 
@@ -1398,7 +1448,7 @@ function buildVisibleEnabledRoutes(routes: RouteRow[]): RouteRow[] {
     if (isExplicitGroupRoute(route)) {
       return normalizeRouteDisplayName(route.displayName).length > 0;
     }
-    if (!isExactRouteModelPattern(route.modelPattern)) return true;
+    if (!isRouteGraphExactModelMatch(route.match, route.backend)) return true;
     if (hasCustomDisplayName(route)) return true;
 
     const exactModel = (route.modelPattern || '').trim();
@@ -1411,7 +1461,7 @@ function buildVisibleEnabledRoutes(routes: RouteRow[]): RouteRow[] {
       if (isExplicitGroupRoute(groupRoute)) {
         return groupRoute.sourceRouteIds.includes(route.id);
       }
-      return matchesModelPattern(exactModel, groupRoute.modelPattern);
+      return routeGraphMatchesRequestedModel(exactModel, groupRoute.match, groupRoute.backend);
     });
   });
 }
@@ -1488,6 +1538,15 @@ function resolveMappedModel(requestedModel: string, modelMapping?: string | Reco
   return requestedModel;
 }
 
+function resolveRouteMatchUpstreamModel(match: RouteMatch, requestedModel: string): string {
+  const selectedTarget = match.routeGraph?.selectedEndpointTarget;
+  if (selectedTarget?.modelSource !== 'request' && selectedTarget?.model) {
+    return selectedTarget.model;
+  }
+  const graphModel = match.routeGraph?.upstreamModel || match.routeGraph?.currentModel || requestedModel;
+  return resolveMappedModel(graphModel, match.route.modelMapping);
+}
+
 function normalizeChannelSourceModel(channelSourceModel: string | null | undefined): string {
   return (channelSourceModel || '').trim();
 }
@@ -1497,7 +1556,12 @@ function resolveActualModelForSelectedChannel(
   route: RouteRow,
   mappedModel: string,
   channelSourceModel: string | null | undefined,
+  routeGraph?: RouteGraphRuntimeSelection | null,
 ): string {
+  const selectedTarget = routeGraph?.selectedEndpointTarget;
+  if (selectedTarget?.modelSource !== 'request' && selectedTarget?.model) {
+    return selectedTarget.model;
+  }
   const sourceModel = normalizeChannelSourceModel(channelSourceModel);
   if (isRouteDisplayNameMatch(requestedModel, route.displayName) && sourceModel) {
     return sourceModel;
@@ -1981,10 +2045,12 @@ export class TokenRouter {
       };
     }
 
-    const requestedByDisplayName = isRouteDisplayNameMatch(requestedModel, match.route.displayName);
-    const bypassSourceModelCheck = (options.bypassSourceModelCheck ?? false) || requestedByDisplayName;
+    const graphAlias = graphMatchedAliasForMatch(match, requestedModel);
+    const requestedByDisplayName = isRouteDisplayNameMatch(requestedModel, match.route.displayName) || !!graphAlias;
+    const bypassSourceModelCheck = (options.bypassSourceModelCheck ?? false) || requestedByDisplayName || !!match.routeGraph;
     const useChannelSourceModelForCost = (options.useChannelSourceModelForCost ?? false) || requestedByDisplayName;
-    const mappedModel = resolveMappedModel(requestedModel, match.route.modelMapping);
+    const mappedModel = resolveRouteMatchUpstreamModel(match, requestedModel);
+    const eligibilityModel = match.routeGraph?.currentModel || requestedModel;
     const routeStrategy = resolveRouteStrategy(match.route);
     const runtimeModelResolver = requestedByDisplayName
       ? ((candidate: RouteChannelCandidate) => normalizeChannelSourceModel(candidate.channel.sourceModel) || mappedModel)
@@ -1999,7 +2065,7 @@ export class TokenRouter {
         : (routeStrategy === 'stable_first' ? '路由策略：稳定优先' : '路由策略：按权重随机'),
     ];
     if (requestedByDisplayName) {
-      summary.push(`按显示名命中：${normalizeRouteDisplayName(match.route.displayName)}`);
+      summary.push(`按显示名命中：${graphAlias || normalizeRouteDisplayName(match.route.displayName)}`);
       summary.push('显示名仅用于聚合展示，实际转发模型按选中通道来源模型决定');
     }
     const available: RouteChannelCandidate[] = [];
@@ -2008,7 +2074,7 @@ export class TokenRouter {
 
     for (const row of match.channels) {
       const reasonParts = this.getCandidateEligibilityReasons(row, {
-        requestedModel,
+        requestedModel: eligibilityModel,
         bypassSourceModelCheck,
         excludeChannelIds,
         nowIso,
@@ -2047,7 +2113,7 @@ export class TokenRouter {
         requestedModel,
         actualModel: mappedModel,
         matched: true,
-        routeId: match.route.id,
+        routeId: explainRouteIdForMatch(match),
         modelPattern: match.route.modelPattern,
         summary,
         candidates,
@@ -2089,7 +2155,7 @@ export class TokenRouter {
           requestedModel,
           actualModel: mappedModel,
           matched: true,
-          routeId: match.route.id,
+          routeId: explainRouteIdForMatch(match),
           modelPattern: match.route.modelPattern,
           summary,
           candidates,
@@ -2105,10 +2171,11 @@ export class TokenRouter {
         match.route,
         mappedModel,
         selected.channel.sourceModel,
+        match.routeGraph,
       );
       summary.push(`全局轮询：可用 ${ordered.length}，忽略优先级`);
       summary.push(`最终选择：${selectedLabel}`);
-      if (actualModel !== mappedModel) {
+      if (actualModel !== requestedModel) {
         summary.push(`实际转发模型：${actualModel}`);
       }
 
@@ -2116,7 +2183,7 @@ export class TokenRouter {
         requestedModel,
         actualModel,
         matched: true,
-        routeId: match.route.id,
+        routeId: explainRouteIdForMatch(match),
         modelPattern: match.route.modelPattern,
         selectedChannelId: selected.channel.id,
         selectedAccountId: selected.account.id,
@@ -2229,7 +2296,7 @@ export class TokenRouter {
           requestedModel,
           actualModel: mappedModel,
           matched: true,
-          routeId: match.route.id,
+          routeId: explainRouteIdForMatch(match),
           modelPattern: match.route.modelPattern,
           summary,
           candidates,
@@ -2275,9 +2342,10 @@ export class TokenRouter {
         match.route,
         mappedModel,
         weighted.selected.channel.sourceModel,
+        match.routeGraph,
       );
       summary.push(`最终选择：${selectedLabel}（P${weighted.selected.channel.priority ?? 0}）`);
-      if (actualModel !== mappedModel) {
+      if (actualModel !== requestedModel) {
         summary.push(`实际转发模型：${actualModel}`);
       }
 
@@ -2285,7 +2353,7 @@ export class TokenRouter {
         requestedModel,
         actualModel,
         matched: true,
-        routeId: match.route.id,
+        routeId: explainRouteIdForMatch(match),
         modelPattern: match.route.modelPattern,
         selectedChannelId: weighted.selected.channel.id,
         selectedAccountId: weighted.selected.account.id,
@@ -2369,7 +2437,7 @@ export class TokenRouter {
         requestedModel,
         actualModel: mappedModel,
         matched: true,
-        routeId: match.route.id,
+        routeId: explainRouteIdForMatch(match),
         modelPattern: match.route.modelPattern,
         summary,
         candidates,
@@ -2385,9 +2453,10 @@ export class TokenRouter {
       match.route,
       mappedModel,
       selected.channel.sourceModel,
+      match.routeGraph,
     );
     summary.push(`最终选择：${selectedLabel}（P${selectedPriority}）`);
-    if (actualModel !== mappedModel) {
+    if (actualModel !== requestedModel) {
       summary.push(`实际转发模型：${actualModel}`);
     }
 
@@ -2395,7 +2464,7 @@ export class TokenRouter {
       requestedModel,
       actualModel,
       matched: true,
-      routeId: match.route.id,
+      routeId: explainRouteIdForMatch(match),
       modelPattern: match.route.modelPattern,
       selectedChannelId: selected.channel.id,
       selectedAccountId: selected.account.id,
@@ -2414,7 +2483,7 @@ export class TokenRouter {
 
     const requestedByDisplayName = isRouteDisplayNameMatch(requestedModel, match.route.displayName);
     const useChannelSourceModelForCost = (options.useChannelSourceModelForCost ?? false) || requestedByDisplayName;
-    const mappedModel = resolveMappedModel(requestedModel, match.route.modelMapping);
+    const mappedModel = resolveRouteMatchUpstreamModel(match, requestedModel);
     const refreshedKeys = options.refreshedKeys ?? new Set<string>();
 
     await Promise.allSettled(match.channels.map(async (candidate) => {
@@ -2668,8 +2737,8 @@ export class TokenRouter {
     await ensureSiteRuntimeHealthStateLoaded();
     const runtimeHealthRows = await db.select({
       siteId: schema.accounts.siteId,
+      routeId: schema.routeChannels.routeId,
       sourceModel: schema.routeChannels.sourceModel,
-      routeModelPattern: schema.tokenRoutes.modelPattern,
     }).from(schema.routeChannels)
       .innerJoin(schema.accounts, eq(schema.routeChannels.accountId, schema.accounts.id))
       .innerJoin(schema.tokenRoutes, eq(schema.routeChannels.routeId, schema.tokenRoutes.id))
@@ -2684,7 +2753,14 @@ export class TokenRouter {
       cooldownUntil: null,
     }).where(inArray(schema.routeChannels.id, normalizedChannelIds)).run();
 
-    if (clearRuntimeHealthStatesForChannels(runtimeHealthRows)) {
+    const projections = await loadRouteGraphLegacyProjections();
+    if (clearRuntimeHealthStatesForChannels(runtimeHealthRows.map((row) => {
+      return {
+        siteId: row.siteId,
+        sourceModel: row.sourceModel,
+        routeModelPattern: projections.get(row.routeId)?.modelPattern || '',
+      };
+    }))) {
       await persistSiteRuntimeHealthState();
     }
 
@@ -2846,9 +2922,11 @@ export class TokenRouter {
     excludeChannelIds: number[] = [],
     recordSelection = true,
   ): Promise<SelectedChannel | null> {
-    const mappedModel = resolveMappedModel(requestedModel, match.route.modelMapping);
-    const requestedByDisplayName = isRouteDisplayNameMatch(requestedModel, match.route.displayName);
-    const bypassSourceModelCheck = requestedByDisplayName;
+    const mappedModel = resolveRouteMatchUpstreamModel(match, requestedModel);
+    const requestedByDisplayName = isRouteDisplayNameMatch(requestedModel, match.route.displayName)
+      || !!graphMatchedAliasForMatch(match, requestedModel);
+    const bypassSourceModelCheck = requestedByDisplayName || !!match.routeGraph;
+    const eligibilityModel = match.routeGraph?.currentModel || requestedModel;
     const routeStrategy = resolveRouteStrategy(match.route);
     const runtimeModelResolver = requestedByDisplayName
       ? ((candidate: RouteChannelCandidate) => normalizeChannelSourceModel(candidate.channel.sourceModel) || mappedModel)
@@ -2858,7 +2936,7 @@ export class TokenRouter {
     const nowMs = Date.now();
     const available = match.channels.filter((candidate) => (
       this.getCandidateEligibilityReasons(candidate, {
-        requestedModel,
+        requestedModel: eligibilityModel,
         bypassSourceModelCheck,
         excludeChannelIds,
         nowIso,
@@ -2981,9 +3059,11 @@ export class TokenRouter {
     excludeChannelIds: number[] = [],
     recordSelection = true,
   ): Promise<SelectedChannel | null> {
-    const mappedModel = resolveMappedModel(requestedModel, match.route.modelMapping);
-    const requestedByDisplayName = isRouteDisplayNameMatch(requestedModel, match.route.displayName);
-    const bypassSourceModelCheck = requestedByDisplayName;
+    const mappedModel = resolveRouteMatchUpstreamModel(match, requestedModel);
+    const requestedByDisplayName = isRouteDisplayNameMatch(requestedModel, match.route.displayName)
+      || !!graphMatchedAliasForMatch(match, requestedModel);
+    const bypassSourceModelCheck = requestedByDisplayName || !!match.routeGraph;
+    const eligibilityModel = match.routeGraph?.currentModel || requestedModel;
     const routeStrategy = resolveRouteStrategy(match.route);
     const runtimeModelResolver = requestedByDisplayName
       ? ((candidate: RouteChannelCandidate) => normalizeChannelSourceModel(candidate.channel.sourceModel) || mappedModel)
@@ -2993,7 +3073,7 @@ export class TokenRouter {
     const nowMs = Date.now();
     const available = match.channels.filter((candidate) => (
       this.getCandidateEligibilityReasons(candidate, {
-        requestedModel,
+        requestedModel: eligibilityModel,
         bypassSourceModelCheck,
         excludeChannelIds,
         nowIso,
@@ -3041,14 +3121,23 @@ export class TokenRouter {
       routes = routes.filter((route) => allowSet.has(route.id));
     }
 
-    const matchedRoute = routes.find((route) => isExplicitGroupRoute(route) && isRouteDisplayNameMatch(model, route.displayName))
+    const graphSelection = await evaluateActiveRouteGraphForModel(model);
+    const selectedGraphRouteId = graphSelection?.matchedRouteId ?? graphSelection?.selectedRouteId ?? null;
+    if (graphSelection?.terminalKind === 'model_endpoint' && selectedGraphRouteId) {
+      const graphRoute = routes.find((route) => route.id === selectedGraphRouteId);
+      if (graphRoute) {
+        return await loadRouteMatch(graphRoute, Date.now(), graphSelection);
+      }
+    }
+
+    const matchedRoute = routes.find((route) => isExplicitGroupRoute(route) && isRouteExposedNameMatch(model, route))
       || routes.find((route) => (
         !isExplicitGroupRoute(route)
-        && isExactRouteModelPattern(route.modelPattern)
+        && isRouteGraphExactModelMatch(route.match, route.backend)
         && (route.modelPattern || '').trim() === model
       ))
-      || routes.find((route) => !isExplicitGroupRoute(route) && isRouteDisplayNameMatch(model, route.displayName))
-      || routes.find((route) => !isExplicitGroupRoute(route) && matchesModelPattern(model, route.modelPattern));
+      || routes.find((route) => !isExplicitGroupRoute(route) && isRouteExposedNameMatch(model, route))
+      || routes.find((route) => !isExplicitGroupRoute(route) && routeGraphMatchesRequestedModel(model, route.match, route.backend));
 
     if (!matchedRoute) return null;
 
@@ -3498,6 +3587,7 @@ export class TokenRouter {
       match.route,
       mappedModel,
       selected.channel.sourceModel,
+      match.routeGraph,
     );
 
     return {

@@ -1,6 +1,7 @@
 import type { ButtonHTMLAttributes, ReactNode, RefCallback } from 'react';
 import type { BrandInfo } from '../../components/BrandIcon.js';
 import type { RouteDecision, RouteDecisionCandidate, RouteMode } from '../../../shared/tokenRouteContract.js';
+import type { RouteGraphBackendSpec, RouteGraphMatchSpec } from '../../../shared/routeGraph.js';
 export type { RouteDecision, RouteDecisionCandidate, RouteMode } from '../../../shared/tokenRouteContract.js';
 
 export type RouteSortBy = 'modelPattern' | 'channelCount';
@@ -66,11 +67,12 @@ export type RouteChannel = {
 
 export type RouteRow = {
   id: number;
-  modelPattern: string;
-  displayName?: string | null;
-  displayIcon?: string | null;
-  routeMode?: RouteMode | null;
-  sourceRouteIds?: number[];
+  match: RouteGraphMatchSpec;
+  backend: RouteGraphBackendSpec;
+  presentation: {
+    displayName: string | null;
+    displayIcon: string | null;
+  };
   modelMapping?: string | null;
   routingStrategy?: RouteRoutingStrategy | null;
   decisionSnapshot?: RouteDecision | null;
@@ -81,11 +83,12 @@ export type RouteRow = {
 
 export type RouteSummaryRow = {
   id: number;
-  modelPattern: string;
-  displayName: string | null;
-  displayIcon: string | null;
-  routeMode?: RouteMode | null;
-  sourceRouteIds?: number[];
+  match: RouteGraphMatchSpec;
+  backend: RouteGraphBackendSpec;
+  presentation: {
+    displayName: string | null;
+    displayIcon: string | null;
+  };
   modelMapping: string | null;
   routingStrategy?: RouteRoutingStrategy | null;
   enabled: boolean;

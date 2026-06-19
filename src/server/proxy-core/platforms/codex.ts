@@ -2,6 +2,7 @@ import type { PreparedPlatformRequest, PreparePlatformRequestInput, PlatformProf
 import { config } from '../../config.js';
 import { buildCodexRuntimeHeaders, getInputHeader, getCodexSessionHeaderValue } from './headers.js';
 import { runCodexHttpSessionTask } from '../runtime/codexHttpSessionQueue.js';
+import { nativeReasoningCompatibilityPolicy } from './compatibilityPolicy.js';
 
 function asTrimmedString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
@@ -9,6 +10,7 @@ function asTrimmedString(value: unknown): string {
 
 export const codexPlatformProfile: PlatformProfile = {
   id: 'codex',
+  defaultCompatibilityPolicy: nativeReasoningCompatibilityPolicy,
   prepareRequest(input: PreparePlatformRequestInput): PreparedPlatformRequest {
     const isCodexOauth = asTrimmedString(input.oauthProvider).toLowerCase() === 'codex';
     const websocketTransport = input.responsesWebsocketTransport === true;

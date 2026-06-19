@@ -1039,8 +1039,13 @@ export function convertResponsesBodyToOpenAiBody(
 
       const message: Record<string, unknown> = {
         role: 'assistant',
-        content: reasoningContent,
       };
+      if (hasReasoningContent) {
+        message.content = '';
+        message.reasoning_content = reasoningContent;
+      } else {
+        message.content = '';
+      }
       if (reasoningSignature) {
         message.reasoning_signature = reasoningSignature;
       }

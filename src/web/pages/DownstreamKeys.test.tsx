@@ -3,7 +3,7 @@ import { act, create, type ReactTestInstance } from 'react-test-renderer';
 import { MemoryRouter } from 'react-router-dom';
 import { ToastProvider } from '../components/Toast.js';
 import DownstreamKeys from './DownstreamKeys.js';
-import { installAccountsSnapshotCompat } from './testApiCompat.js';
+import { installAccountsSnapshotCompat, routeSummaryFixture } from './testApiCompat.js';
 
 const { apiMock } = vi.hoisted(() => ({
   apiMock: {
@@ -61,6 +61,10 @@ function collectText(node: ReactTestInstance): string {
     if (typeof child === 'string') return child;
     return collectText(child);
   }).join('');
+}
+
+function routeSummaryRows(rows: any[]): any[] {
+  return rows.map((row) => routeSummaryFixture(row as any));
 }
 
 async function flushMicrotasks() {
@@ -136,10 +140,16 @@ beforeEach(() => {
   };
   apiMock.getDownstreamApiKeysSummary.mockResolvedValue({ success: true, items: [buildSummaryItem()] });
   apiMock.getDownstreamApiKeys.mockResolvedValue({ success: true, items: [buildRawItem()] });
-  apiMock.getRoutesLite.mockResolvedValue([
-    { id: 11, modelPattern: 'claude-*', displayName: '默认群组', enabled: true },
-    { id: 12, modelPattern: 'gpt-4.1-mini', displayName: 'GPT 4.1 Mini', enabled: true },
-  ]);
+  apiMock.getRoutesLite.mockResolvedValue(routeSummaryRows([
+    { id: 11, enabled: true ,
+        match: { kind: 'model', requestedModelPattern: 'claude-*', displayName: '默认群组' },
+        backend: { kind: 'channels' },
+        presentation: { displayName: '默认群组', displayIcon: null }},
+    { id: 12, enabled: true ,
+        match: { kind: 'model', requestedModelPattern: 'gpt-4.1-mini', displayName: 'GPT 4.1 Mini' },
+        backend: { kind: 'channels' },
+        presentation: { displayName: 'GPT 4.1 Mini', displayIcon: null }},
+  ]));
   apiMock.getAccounts.mockResolvedValue([
     {
       id: 101,
@@ -401,7 +411,7 @@ describe('DownstreamKeys page', () => {
 
       const toastMessages = root!.root.findAll((node) => {
         if (typeof node.props.className !== 'string') return false;
-        return node.props.className.includes('toast-error') && collectText(node).includes('function date_trunc(unknown, text) does not exist');
+        return collectText(node).includes('function date_trunc(unknown, text) does not exist');
       });
       expect(toastMessages).toHaveLength(1);
     } finally {
@@ -545,12 +555,24 @@ describe('DownstreamKeys page', () => {
   });
 
   it('lets operators explicitly select all exact models and all group routes before saving', async () => {
-    apiMock.getRoutesLite.mockResolvedValue([
-      { id: 11, modelPattern: 'claude-*', displayName: '默认群组', enabled: true },
-      { id: 12, modelPattern: 'gpt-4.1-mini', displayName: 'GPT 4.1 Mini', enabled: true },
-      { id: 13, modelPattern: 're:^gemini-2\\..*$', displayName: 'Gemini 全家桶', enabled: true },
-      { id: 14, modelPattern: 'claude-opus-4-6', displayName: 'Claude Opus 4.6', enabled: true },
-    ]);
+    apiMock.getRoutesLite.mockResolvedValue(routeSummaryRows([
+      { id: 11, enabled: true ,
+        match: { kind: 'model', requestedModelPattern: 'claude-*', displayName: '默认群组' },
+        backend: { kind: 'channels' },
+        presentation: { displayName: '默认群组', displayIcon: null }},
+      { id: 12, enabled: true ,
+        match: { kind: 'model', requestedModelPattern: 'gpt-4.1-mini', displayName: 'GPT 4.1 Mini' },
+        backend: { kind: 'channels' },
+        presentation: { displayName: 'GPT 4.1 Mini', displayIcon: null }},
+      { id: 13, enabled: true ,
+        match: { kind: 'model', requestedModelPattern: 're:^gemini-2\\..*$', displayName: 'Gemini 全家桶' },
+        backend: { kind: 'channels' },
+        presentation: { displayName: 'Gemini 全家桶', displayIcon: null }},
+      { id: 14, enabled: true ,
+        match: { kind: 'model', requestedModelPattern: 'claude-opus-4-6', displayName: 'Claude Opus 4.6' },
+        backend: { kind: 'channels' },
+        presentation: { displayName: 'Claude Opus 4.6', displayIcon: null }},
+    ]));
 
     let root!: WebTestRenderer;
     try {
@@ -619,12 +641,24 @@ describe('DownstreamKeys page', () => {
   });
 
   it('defaults new keys to all exact models and all group routes before saving', async () => {
-    apiMock.getRoutesLite.mockResolvedValue([
-      { id: 11, modelPattern: 'claude-*', displayName: '默认群组', enabled: true },
-      { id: 12, modelPattern: 'gpt-4.1-mini', displayName: 'GPT 4.1 Mini', enabled: true },
-      { id: 13, modelPattern: 're:^gemini-2\\..*$', displayName: 'Gemini 全家桶', enabled: true },
-      { id: 14, modelPattern: 'claude-opus-4-6', displayName: 'Claude Opus 4.6', enabled: true },
-    ]);
+    apiMock.getRoutesLite.mockResolvedValue(routeSummaryRows([
+      { id: 11, enabled: true ,
+        match: { kind: 'model', requestedModelPattern: 'claude-*', displayName: '默认群组' },
+        backend: { kind: 'channels' },
+        presentation: { displayName: '默认群组', displayIcon: null }},
+      { id: 12, enabled: true ,
+        match: { kind: 'model', requestedModelPattern: 'gpt-4.1-mini', displayName: 'GPT 4.1 Mini' },
+        backend: { kind: 'channels' },
+        presentation: { displayName: 'GPT 4.1 Mini', displayIcon: null }},
+      { id: 13, enabled: true ,
+        match: { kind: 'model', requestedModelPattern: 're:^gemini-2\\..*$', displayName: 'Gemini 全家桶' },
+        backend: { kind: 'channels' },
+        presentation: { displayName: 'Gemini 全家桶', displayIcon: null }},
+      { id: 14, enabled: true ,
+        match: { kind: 'model', requestedModelPattern: 'claude-opus-4-6', displayName: 'Claude Opus 4.6' },
+        backend: { kind: 'channels' },
+        presentation: { displayName: 'Claude Opus 4.6', displayIcon: null }},
+    ]));
 
     let root!: WebTestRenderer;
     try {

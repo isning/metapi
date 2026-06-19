@@ -9,6 +9,23 @@ import {
   parseServerUtcDateTime,
 } from "./helpers/checkinLogTime.js";
 import { tr } from "../i18n.js";
+import { Button } from '../components/ui/button/index.js';
+import { LoaderCircle } from 'lucide-react';
+import { Skeleton } from '../components/ui/skeleton/index.js';
+import ToneBadge from '../components/ToneBadge.js';
+import EmptyStateBlock from '../components/EmptyStateBlock.js';
+import { Alert, AlertDescription } from '../components/ui/alert/index.js';
+import { Card, CardContent } from '../components/ui/card/index.js';
+import { Input } from '../components/ui/input/index.js';
+import { Tabs, TabsList, TabsTrigger } from '../components/ui/tabs/index.js';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '../components/ui/table/index.js';
 
 type LogFilter = "all" | "success" | "failed" | "skipped";
 
@@ -178,9 +195,9 @@ export default function CheckinLog() {
   };
 
   const statusClass = (status: "success" | "failed" | "skipped") => {
-    if (status === "success") return "badge-success";
-    if (status === "skipped") return "badge-muted";
-    return "badge-error";
+    if (status === "success") return "success";
+    if (status === "skipped") return "muted";
+    return "error";
   };
 
   const getFailureReason = (log: any): FailureReason | null => {
@@ -190,82 +207,77 @@ export default function CheckinLog() {
   };
 
   const timeRangeControls = (
-    <div
-      style={{
-        display: "flex",
-        flexWrap: "wrap",
-        gap: 10,
-        alignItems: "center",
-      }}
-    >
-      <label className="proxy-logs-time-field">
-        <span>开始</span>
-        <input
+    <div className="flex flex-wrap items-end gap-3">
+      <label className="grid gap-1">
+        <span className="text-xs font-medium text-muted-foreground">开始</span>
+        <Input
           type="datetime-local"
           value={fromInput}
           max={toInput || undefined}
           onChange={(e) => setFromInput(e.target.value)}
         />
       </label>
-      <label className="proxy-logs-time-field">
-        <span>结束</span>
-        <input
+      <label className="grid gap-1">
+        <span className="text-xs font-medium text-muted-foreground">结束</span>
+        <Input
           type="datetime-local"
           value={toInput}
           min={fromInput || undefined}
           onChange={(e) => setToInput(e.target.value)}
         />
       </label>
-      <button
+      <Button variant="outline"
         type="button"
-        className="btn btn-ghost proxy-logs-filter-reset"
+       
         onClick={clearTimeRange}
       >
         清空筛选
-      </button>
+      </Button>
     </div>
   );
 
   const filterTabs = (
-    <div className="pill-tabs">
+    <Tabs value={filter} onValueChange={(value) => setFilter(value as LogFilter)}>
+      <TabsList className="flex h-auto flex-wrap">
       {[
         { key: "all" as const, label: "全部", count: timeFilteredLogs.length },
         { key: "success" as const, label: "成功", count: countBy("success") },
         { key: "failed" as const, label: "失败", count: countBy("failed") },
         { key: "skipped" as const, label: "跳过", count: countBy("skipped") },
       ].map((tab) => (
-        <button
+        <TabsTrigger
           key={tab.key}
-          className={`pill-tab ${filter === tab.key ? "active" : ""}`}
-          onClick={() => setFilter(tab.key)}
+          value={tab.key}
+          className="gap-1"
         >
           {tab.label}{" "}
-          <span style={{ fontVariantNumeric: "tabular-nums", opacity: 0.7 }}>
+          <span className="tabular-nums opacity-70">
             {tab.count}
           </span>
-        </button>
+        </TabsTrigger>
       ))}
-    </div>
+      </TabsList>
+    </Tabs>
   );
 
   return (
-    <div className="animate-fade-in">
-      <div className="page-header">
-        <h2 className="page-title">{tr("签到记录")}</h2>
-        <button
+    <div className="grid gap-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <h2 className="text-2xl font-semibold tracking-tight">{tr("签到记录")}</h2>
+        <Button type="button"
           onClick={handleTriggerAll}
           disabled={triggering}
-          className="btn btn-soft-primary"
+         
         >
           {triggering ? (
             <>
-              <span className="spinner spinner-sm" />
+              <LoaderCircle className="size-4 animate-spin" />
               触发中...
             </>
           ) : (
             "运行所有签到"
           )}
-        </button>
+        </Button>
       </div>
 
       <ResponsiveFilterPanel
@@ -275,68 +287,49 @@ export default function CheckinLog() {
         onMobileClose={() => setShowFilters(false)}
         mobileTitle="筛选签到记录"
         mobileContent={(
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div className="grid gap-3">
             {timeRangeControls}
             {hasInvalidTimeRange && (
-              <div className="alert alert-error">
-                结束时间必须晚于开始时间
-              </div>
+              <Alert variant="destructive">
+                <AlertDescription>结束时间必须晚于开始时间</AlertDescription>
+              </Alert>
             )}
             {filterTabs}
           </div>
         )}
         desktopContent={(
-          <div className="toolbar" style={{ marginBottom: "12px" }}>
-            <div style={{ minWidth: 280 }}>{filterTabs}</div>
-            <div
-              style={{
-                flex: "0 0 auto",
-                display: "flex",
-                alignItems: "center",
-                gap: 10,
-              }}
-            >
+          <Card className="mb-3">
+            <CardContent className="flex flex-wrap items-center gap-3 p-3">
+            <div className="min-w-72">{filterTabs}</div>
+            <div className="flex flex-wrap items-center gap-3">
               {timeRangeControls}
             </div>
             {hasInvalidTimeRange && (
-              <div className="alert alert-error" style={{ width: "100%" }}>
+              <div className="w-full rounded-md border border-destructive/40 p-3 text-sm text-destructive">
                 结束时间必须晚于开始时间
               </div>
             )}
-          </div>
+            </CardContent>
+          </Card>
         )}
       />
 
-      <div
-        className="card"
-        style={{
-          overflowX: "auto",
-          borderTopLeftRadius: 0,
-          borderTopRightRadius: 0,
-        }}
-      >
+      <Card className="overflow-hidden">
         {loading ? (
-          <div
-            style={{
-              padding: 24,
-              display: "flex",
-              flexDirection: "column",
-              gap: 10,
-            }}
-          >
+          <CardContent className="grid gap-3 p-6">
             {[...Array(5)].map((_, i) => (
-              <div key={i} style={{ display: "flex", gap: 16 }}>
-                <div className="skeleton" style={{ width: 120, height: 16 }} />
-                <div className="skeleton" style={{ width: 80, height: 16 }} />
-                <div className="skeleton" style={{ width: 120, height: 16 }} />
-                <div className="skeleton" style={{ width: 70, height: 16 }} />
-                <div className="skeleton" style={{ flex: 1, height: 16 }} />
-                <div className="skeleton" style={{ width: 60, height: 16 }} />
+              <div key={i} className="flex gap-4">
+                <Skeleton className="h-4 w-28" />
+                <Skeleton className="h-4 w-20" />
+                <Skeleton className="h-4 w-28" />
+                <Skeleton className="h-4 w-16" />
+                <Skeleton className="h-4 flex-1" />
+                <Skeleton className="h-4 w-14" />
               </div>
             ))}
-          </div>
+          </CardContent>
         ) : isMobile ? (
-          <div className="mobile-card-list">
+          <div className="grid gap-3">
             {filtered.map((log: any) => {
               const status = getStatus(log);
               const reason = getFailureReason(log);
@@ -348,23 +341,23 @@ export default function CheckinLog() {
                   key={logId}
                   title={log.accounts?.username || "未知"}
                   headerActions={
-                    <span
-                      className={`badge ${statusClass(status)}`}
-                      style={{ fontSize: 10 }}
+                    <ToneBadge tone={statusClass(status)}
+                     
+                     
                     >
                       {statusLabel(status)}
-                    </span>
+                    </ToneBadge>
                   }
                   footerActions={
-                    <button
+                    <Button variant="ghost" size="sm"
                       type="button"
-                      className="btn btn-link"
+                     
                       onClick={() =>
                         setExpandedLogId(isExpanded ? null : logId)
                       }
                     >
                       {isExpanded ? "收起" : "详情"}
-                    </button>
+                    </Button>
                   }
                 >
                   <MobileField
@@ -381,22 +374,22 @@ export default function CheckinLog() {
                           href={log.sites.url}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="badge-link"
+                          className="inline-flex"
                         >
-                          <span
-                            className="badge badge-muted"
-                            style={{ fontSize: 11 }}
+                          <ToneBadge tone="-muted"
+                           
+                           
                           >
                             {log.sites?.name || "-"}
-                          </span>
+                          </ToneBadge>
                         </a>
                       ) : (
-                        <span
-                          className="badge badge-muted"
-                          style={{ fontSize: 11 }}
+                        <ToneBadge tone="-muted"
+                         
+                         
                         >
                           {log.sites?.name || "-"}
-                        </span>
+                        </ToneBadge>
                       )
                     }
                   />
@@ -404,14 +397,14 @@ export default function CheckinLog() {
                     label="分类"
                     value={
                       reason ? (
-                        <span
-                          className="badge badge-info"
+                        <ToneBadge tone="-info"
+                         
                           data-tooltip={reason.detailHint}
                         >
                           {reason.title}
-                        </span>
+                        </ToneBadge>
                       ) : (
-                        <span className="badge badge-muted">-</span>
+                        <ToneBadge tone="-muted">-</ToneBadge>
                       )
                     }
                   />
@@ -420,7 +413,7 @@ export default function CheckinLog() {
                     value={log.checkin_logs?.reward || "-"}
                   />
                   {isExpanded ? (
-                    <div className="mobile-card-extra">
+                    <div className="mt-3 grid gap-2">
                       <MobileField
                         label="信息"
                         stacked
@@ -438,134 +431,95 @@ export default function CheckinLog() {
             })}
           </div>
         ) : (
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>时间</th>
-                <th>账号</th>
-                <th>站点</th>
-                <th>状态</th>
-                <th>分类</th>
-                <th>信息</th>
-                <th>建议</th>
-                <th>奖励</th>
-              </tr>
-            </thead>
-            <tbody>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>时间</TableHead>
+                <TableHead>账号</TableHead>
+                <TableHead>站点</TableHead>
+                <TableHead>状态</TableHead>
+                <TableHead>分类</TableHead>
+                <TableHead>信息</TableHead>
+                <TableHead>建议</TableHead>
+                <TableHead>奖励</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {filtered.map((log: any) => {
                 const status = getStatus(log);
                 const reason = getFailureReason(log);
                 return (
-                  <tr key={log.checkin_logs?.id || log.id}>
-                    <td style={{ fontSize: 12, whiteSpace: "nowrap" }}>
+                  <TableRow key={log.checkin_logs?.id || log.id}>
+                    <TableCell className="whitespace-nowrap text-xs">
                       {formatCheckinLogTime(
                         log.checkin_logs?.createdAt || log.createdAt,
                       )}
-                    </td>
-                    <td
-                      style={{
-                        fontWeight: 600,
-                        color: "var(--color-text-primary)",
-                      }}
-                    >
+                    </TableCell>
+                    <TableCell className="font-semibold">
                       {log.accounts?.username || "未知"}
-                    </td>
-                    <td>
+                    </TableCell>
+                    <TableCell>
                       {log.sites?.url ? (
                         <a
                           href={log.sites.url}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="badge-link"
+                          className="inline-flex"
                         >
-                          <span
-                            className="badge badge-muted"
-                            style={{ fontSize: 11 }}
+                          <ToneBadge tone="-muted"
+                           
+                           
                           >
                             {log.sites?.name || "-"}
-                          </span>
+                          </ToneBadge>
                         </a>
                       ) : (
-                        <span
-                          className="badge badge-muted"
-                          style={{ fontSize: 11 }}
+                        <ToneBadge tone="-muted"
+                         
+                         
                         >
                           {log.sites?.name || "-"}
-                        </span>
+                        </ToneBadge>
                       )}
-                    </td>
-                    <td>
-                      <span className={`badge ${statusClass(status)}`}>
+                    </TableCell>
+                    <TableCell>
+                      <ToneBadge tone={statusClass(status)}>
                         {statusLabel(status)}
-                      </span>
-                    </td>
-                    <td>
+                      </ToneBadge>
+                    </TableCell>
+                    <TableCell>
                       {reason ? (
-                        <span
-                          className="badge badge-info"
+                        <ToneBadge tone="-info"
+                         
                           data-tooltip={reason.detailHint}
                         >
                           {reason.title}
-                        </span>
+                        </ToneBadge>
                       ) : (
-                        <span className="badge badge-muted">-</span>
+                        <ToneBadge tone="-muted">-</ToneBadge>
                       )}
-                    </td>
-                    <td style={{ maxWidth: 360 }}>
-                      <span
-                        style={{
-                          display: "block",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
+                    </TableCell>
+                    <TableCell className="max-w-sm truncate">
                         {log.checkin_logs?.message || log.message}
-                      </span>
-                    </td>
-                    <td style={{ maxWidth: 220 }}>
+                    </TableCell>
+                    <TableCell className="max-w-56 truncate text-xs text-muted-foreground" data-tooltip={reason?.detailHint || ""}>
                       <span
-                        style={{
-                          display: "block",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                          color: "var(--color-text-secondary)",
-                          fontSize: 12,
-                        }}
-                        data-tooltip={reason?.detailHint || ""}
                       >
                         {reason?.actionHint || "-"}
                       </span>
-                    </td>
-                    <td>{log.checkin_logs?.reward || "-"}</td>
-                  </tr>
+                    </TableCell>
+                    <TableCell>{log.checkin_logs?.reward || "-"}</TableCell>
+                  </TableRow>
                 );
               })}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         )}
 
         {!loading && filtered.length === 0 && (
-          <div className="empty-state">
-            <svg
-              className="empty-state-icon"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={1}
-                d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
-              />
-            </svg>
-            <div className="empty-state-title">暂无签到记录</div>
-            <div className="empty-state-desc">点击“运行所有签到”开始执行</div>
-          </div>
+          <EmptyStateBlock title="暂无签到记录" description="点击“运行所有签到”开始执行" />
         )}
-      </div>
+      </Card>
     </div>
   );
 }

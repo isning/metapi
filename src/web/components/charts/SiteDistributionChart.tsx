@@ -1,6 +1,9 @@
 import { useState, useMemo } from 'react';
 import { VChart } from '@visactor/react-vchart';
 import { useThemeLabelColor } from '../useThemeLabelColor.js';
+import { Skeleton } from '../ui/skeleton/index.js';
+import EmptyStateBlock from '../EmptyStateBlock.js';
+import { ChartFrame, ChartLegendSwatch, ChartMetricToggle, ChartShell } from './ChartShell.js';
 
 interface SiteDistributionData {
   siteName: string;
@@ -28,27 +31,13 @@ function safeNumber(value: unknown): number {
 
 function SkeletonCircle() {
   return (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: '40px 0',
-      }}
-    >
-      <div
-        className="skeleton"
-        style={{
-          width: 200,
-          height: 200,
-          borderRadius: '50%',
-        }}
-      />
-      <div style={{ marginLeft: 32, display: 'flex', flexDirection: 'column', gap: 12 }}>
+    <div className="flex items-center justify-center py-10">
+      <Skeleton className="h-[200px] w-[200px] rounded-full" />
+      <div className="ml-8 flex flex-col gap-3">
         {[...Array(4)].map((_, i) => (
-          <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <div className="skeleton" style={{ width: 12, height: 12, borderRadius: 3 }} />
-            <div className="skeleton" style={{ width: 80 + i * 10, height: 12 }} />
+          <div key={i} className="flex items-center gap-2">
+            <Skeleton className="h-3 w-3" />
+            <Skeleton className={i === 0 ? 'h-3 w-20' : i === 1 ? 'h-3 w-[90px]' : i === 2 ? 'h-3 w-[100px]' : 'h-3 w-[110px]'} />
           </div>
         ))}
       </div>
@@ -58,14 +47,14 @@ function SkeletonCircle() {
 
 function EmptyState() {
   return (
-    <div className="empty-state" style={{ padding: 40 }}>
-      <div style={{ margin: '0 auto 16px', width: 64, height: 64, opacity: 0.35 }}>
+    <EmptyStateBlock
+      icon={(
         <svg
           width="64"
           height="64"
           fill="none"
           viewBox="0 0 24 24"
-          stroke="var(--color-text-muted)"
+          stroke="currentColor"
         >
           <path
             strokeLinecap="round"
@@ -80,12 +69,10 @@ function EmptyState() {
             d="M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z"
           />
         </svg>
-      </div>
-      <div className="empty-state-title" style={{ marginBottom: 4 }}>
-        暂无站点数据
-      </div>
-      <div className="empty-state-desc">添加站点后将自动展示分布图表</div>
-    </div>
+      )}
+      title="暂无站点数据"
+      description="添加站点后将自动展示分布图表"
+    />
   );
 }
 
@@ -165,30 +152,11 @@ export default function SiteDistributionChart({ data, loading }: SiteDistributio
   };
 
   return (
-    <div
-      className="chart-container animate-fade-in"
-      style={{ padding: 20 }}
-    >
-      {/* Header */}
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          marginBottom: 16,
-        }}
-      >
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 6,
-            fontSize: 14,
-            fontWeight: 600,
-            color: 'var(--color-text-primary)',
-          }}
-        >
+    <ChartShell
+      title="站点分布"
+      icon={(
           <svg
+            className="h-4 w-4"
             width="16"
             height="16"
             fill="none"
@@ -208,73 +176,31 @@ export default function SiteDistributionChart({ data, loading }: SiteDistributio
               d="M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z"
             />
           </svg>
-          站点分布
-        </div>
-
-        {/* Toggle buttons */}
-        <div
-          style={{
-            display: 'flex',
-            gap: 0,
-            background: 'var(--color-bg)',
-            borderRadius: 'var(--radius-sm)',
-            padding: 3,
-            border: '1px solid var(--color-border-light)',
-          }}
-        >
-          <button
-            onClick={() => setViewMode('balance')}
-            style={{
-              padding: '5px 14px',
-              fontSize: 12,
-              fontWeight: 500,
-              border: 'none',
-              borderRadius: 'calc(var(--radius-sm) - 2px)',
-              cursor: 'pointer',
-              transition: 'all 0.2s ease',
-              background: viewMode === 'balance' ? 'var(--color-primary)' : 'transparent',
-              color: viewMode === 'balance' ? '#ffffff' : 'var(--color-text-secondary)',
-              boxShadow: viewMode === 'balance' ? 'var(--shadow-sm)' : 'none',
-            }}
-          >
-            余额分布
-          </button>
-          <button
-            onClick={() => setViewMode('spend')}
-            style={{
-              padding: '5px 14px',
-              fontSize: 12,
-              fontWeight: 500,
-              border: 'none',
-              borderRadius: 'calc(var(--radius-sm) - 2px)',
-              cursor: 'pointer',
-              transition: 'all 0.2s ease',
-              background: viewMode === 'spend' ? 'var(--color-primary)' : 'transparent',
-              color: viewMode === 'spend' ? '#ffffff' : 'var(--color-text-secondary)',
-              boxShadow: viewMode === 'spend' ? 'var(--shadow-sm)' : 'none',
-            }}
-          >
-            消耗分布
-          </button>
-        </div>
-      </div>
-
-      {/* Content */}
+      )}
+      actions={(
+        <ChartMetricToggle
+          value={viewMode}
+          options={[
+            { key: 'balance', label: '余额分布' },
+            { key: 'spend', label: '消耗分布' },
+          ]}
+          onChange={setViewMode}
+        />
+      )}
+    >
       {loading ? (
         <SkeletonCircle />
       ) : !hasData ? (
         <EmptyState />
       ) : (
         <div>
-          <div style={{ width: '100%', height: 300 }}>
-            {spec && <VChart spec={spec} style={{ width: '100%', height: '100%' }} />}
-          </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 14px', marginTop: 10, padding: '0 4px' }}>
+          {spec && <ChartFrame spec={spec} height={300} />}
+          <div className="mt-2.5 flex flex-wrap gap-x-3.5 gap-y-1.5 px-1">
             {chartData.map((d, idx) => (
-              <span key={d.siteName} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'var(--color-text-secondary)' }}>
-                <span style={{ width: 8, height: 8, borderRadius: 2, background: PIE_COLORS[idx % PIE_COLORS.length], flexShrink: 0 }} />
-                <span style={{ maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.siteName}</span>
-                <span style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600, color: 'var(--color-text-primary)' }}>
+              <span key={d.siteName} className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                <ChartLegendSwatch color={PIE_COLORS[idx % PIE_COLORS.length]} />
+                <span className="max-w-[120px] truncate">{d.siteName}</span>
+                <span className="font-semibold tabular-nums text-foreground">
                   {formatValue(d.value)}
                 </span>
               </span>
@@ -282,6 +208,6 @@ export default function SiteDistributionChart({ data, loading }: SiteDistributio
           </div>
         </div>
       )}
-    </div>
+    </ChartShell>
   );
 }

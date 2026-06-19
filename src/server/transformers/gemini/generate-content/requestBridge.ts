@@ -1,7 +1,12 @@
 import { canonicalRequestFromOpenAiBody } from '../../canonical/openAiRequestBridge.js';
+import {
+  DEFAULT_RESOLVED_UPSTREAM_COMPATIBILITY_POLICY,
+  type ResolvedUpstreamCompatibilityPolicy,
+} from '../../../contracts/upstreamCompatibilityPolicy.js';
 import { isCanonicalFunctionTool, isCanonicalNamedToolChoice } from '../../canonical/tools.js';
 import type { CanonicalContentPart, CanonicalRequestEnvelope } from '../../canonical/types.js';
-import type { ProtocolParseContext } from '../../contracts.js';
+import type { ProtocolBuildContext, ProtocolParseContext } from '../../contracts.js';
+import { limitReasoningHistoryText } from '../../shared/reasoningHistoryPolicy.js';
 import { geminiGenerateContentInbound } from './inbound.js';
 import { buildOpenAiBodyFromGeminiRequest } from './compatibility.js';
 import {
@@ -119,6 +124,15 @@ function convertOpenAiContentToGeminiParts(content: unknown): Array<Record<strin
     }
   }
   return parts;
+}
+
+function convertOpenAiAssistantReasoningToGeminiParts(message: Record<string, unknown>): Array<Record<string, unknown>> {
+  const reasoning = asTrimmedString(
+    message.reasoning_content
+    ?? message.reasoning
+    ?? message.thinking,
+  );
+  return reasoning ? [{ text: reasoning, thought: true }] : [];
 }
 
 function buildGeminiToolsFromOpenAi(tools: unknown): Array<Record<string, unknown>> | undefined {
@@ -251,7 +265,10 @@ export function buildGeminiGenerateContentRequestFromOpenAi(input: {
       continue;
     }
 
-    const textParts = convertOpenAiContentToGeminiParts(message.content);
+    const textParts = [
+      ...(role === 'assistant' ? convertOpenAiAssistantReasoningToGeminiParts(message) : []),
+      ...convertOpenAiContentToGeminiParts(message.content),
+    ];
     const fcParts: Array<Record<string, unknown>> = [];
     const toolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
     for (const toolCall of toolCalls) {
@@ -430,8 +447,163 @@ function canonicalPartToGeminiPart(
   return null;
 }
 
+function resolveGeminiAssistantReasoningMode(input: {
+  parts: CanonicalContentPart[];
+  ctx?: ProtocolBuildContext;
+}): 'native' | 'content_think_tag' | 'drop' {
+  const policy = input.ctx?.compatibilityPolicy ?? DEFAULT_RESOLVED_UPSTREAM_COMPATIBILITY_POLICY;
+  const transport = policy.reasoningHistory.transport;
+  const hasToolCalls = input.parts.some((part) => part.type === 'tool_call');
+  if (hasToolCalls) {
+    if (!transport.applyTo.assistantToolCalls) return 'drop';
+    if (transport.toolCallMessageBehavior !== 'same_as_assistant') {
+      return transport.toolCallMessageBehavior;
+    }
+  } else if (!transport.applyTo.assistantHistory) {
+    return 'drop';
+  }
+  return transport.mode;
+}
+
+function normalizeGeminiAssistantPartsForPolicy(
+  parts: CanonicalContentPart[],
+  ctx?: ProtocolBuildContext,
+): CanonicalContentPart[] {
+  const rawReasoningText = parts
+    .flatMap((part) => (part.type === 'text' && part.thought === true ? [part.text] : []))
+    .join('');
+  if (!rawReasoningText) return parts;
+
+  const mode = resolveGeminiAssistantReasoningMode({ parts, ctx });
+  const policy = ctx?.compatibilityPolicy ?? DEFAULT_RESOLVED_UPSTREAM_COMPATIBILITY_POLICY;
+  const limitedReasoning = limitReasoningHistoryText(rawReasoningText, policy);
+
+  const visibleParts = parts.filter((part) => !(part.type === 'text' && part.thought === true));
+  if (mode === 'native') {
+    if (limitedReasoning.dropped) return visibleParts;
+    if (!limitedReasoning.overflowed) return parts;
+    return [
+      {
+        type: 'text',
+        text: limitedReasoning.text,
+        thought: true,
+      },
+      ...visibleParts,
+    ];
+  }
+  if (mode === 'drop' || limitedReasoning.dropped) return visibleParts;
+
+  const { openTag, closeTag, separator } = policy.reasoningHistory.transport.thinkTag;
+  return [
+    {
+      type: 'text',
+      text: `${openTag}\n${limitedReasoning.text}\n${closeTag}${separator}`,
+    },
+    ...visibleParts,
+  ];
+}
+
+function cloneJsonValue<T>(value: T): T {
+  if (Array.isArray(value)) return value.map((item) => cloneJsonValue(item)) as T;
+  if (isRecord(value)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, cloneJsonValue(item)]),
+    ) as T;
+  }
+  return value;
+}
+
+function resolveGeminiNativeRoleTransportMode(input: {
+  parts: Array<Record<string, unknown>>;
+  policy: ResolvedUpstreamCompatibilityPolicy;
+}): 'native' | 'content_think_tag' | 'drop' {
+  const transport = input.policy.reasoningHistory.transport;
+  const hasToolCalls = input.parts.some((part) => isRecord(part.functionCall));
+  if (hasToolCalls) {
+    if (!transport.applyTo.assistantToolCalls) return 'drop';
+    if (transport.toolCallMessageBehavior !== 'same_as_assistant') {
+      return transport.toolCallMessageBehavior;
+    }
+  } else if (!transport.applyTo.assistantHistory) {
+    return 'drop';
+  }
+  return transport.mode;
+}
+
+function extractGeminiThoughtText(parts: Array<Record<string, unknown>>): string {
+  return parts
+    .flatMap((part) => (part.thought === true && typeof part.text === 'string' ? [part.text] : []))
+    .join('');
+}
+
+function prependThinkTagToGeminiParts(input: {
+  parts: Array<Record<string, unknown>>;
+  reasoning: string;
+  policy: ResolvedUpstreamCompatibilityPolicy;
+}): Array<Record<string, unknown>> {
+  const { openTag, closeTag, separator } = input.policy.reasoningHistory.transport.thinkTag;
+  return [
+    { text: `${openTag}\n${input.reasoning}\n${closeTag}${separator}` },
+    ...input.parts,
+  ];
+}
+
+export function applyGeminiGenerateContentReasoningHistoryTransport(
+  body: Record<string, unknown>,
+  policy: ResolvedUpstreamCompatibilityPolicy = DEFAULT_RESOLVED_UPSTREAM_COMPATIBILITY_POLICY,
+): Record<string, unknown> {
+  const next = cloneJsonValue(body);
+  if (!Array.isArray(next.contents)) return next;
+
+  next.contents = next.contents.map((rawContent) => {
+    if (!isRecord(rawContent) || !Array.isArray(rawContent.parts)) return rawContent;
+    const role = asTrimmedString(rawContent.role).toLowerCase();
+    if (role !== 'model') return rawContent;
+
+    const parts = rawContent.parts
+      .filter((part): part is Record<string, unknown> => isRecord(part))
+      .map((part) => cloneJsonValue(part));
+    const rawReasoning = extractGeminiThoughtText(parts);
+    if (!rawReasoning) return rawContent;
+
+    const visibleParts = parts.filter((part) => part.thought !== true);
+    const mode = resolveGeminiNativeRoleTransportMode({ parts, policy });
+    const limitedReasoning = limitReasoningHistoryText(rawReasoning, policy);
+    if (mode === 'drop' || limitedReasoning.dropped) {
+      return {
+        ...rawContent,
+        parts: visibleParts,
+      };
+    }
+    if (mode === 'content_think_tag') {
+      return {
+        ...rawContent,
+        parts: prependThinkTagToGeminiParts({
+          parts: visibleParts,
+          reasoning: limitedReasoning.text,
+          policy,
+        }),
+      };
+    }
+    if (!limitedReasoning.overflowed) return rawContent;
+    return {
+      ...rawContent,
+      parts: [
+        {
+          text: limitedReasoning.text,
+          thought: true,
+        },
+        ...visibleParts,
+      ],
+    };
+  });
+
+  return next;
+}
+
 export function buildCanonicalRequestToGeminiGenerateContentBody(
   request: CanonicalRequestEnvelope,
+  ctx?: ProtocolBuildContext,
 ): Record<string, unknown> {
   const contents: Array<Record<string, unknown>> = [];
   const systemParts: Array<Record<string, unknown>> = [];
@@ -453,7 +625,10 @@ export function buildCanonicalRequestToGeminiGenerateContentBody(
       }
     }
 
-    const parts = message.parts
+    const messageParts = message.role === 'assistant'
+      ? normalizeGeminiAssistantPartsForPolicy(message.parts, ctx)
+      : message.parts;
+    const parts = messageParts
       .map((part) => canonicalPartToGeminiPart(part, toolNameById))
       .filter((part): part is Record<string, unknown> => !!part);
 

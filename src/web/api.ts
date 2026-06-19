@@ -918,6 +918,29 @@ export const api = {
     }),
 
   // Routes
+  getRouteGraphActive: () => request("/api/route-graph/active"),
+  getRouteGraphDraft: () => request("/api/route-graph/draft"),
+  validateRouteGraph: (graph: any) =>
+    request("/api/route-graph/validate", {
+      method: "POST",
+      body: JSON.stringify(graph),
+    }),
+  saveRouteGraphDraft: (graph: any) =>
+    request("/api/route-graph/draft", {
+      method: "PUT",
+      body: JSON.stringify(graph),
+    }),
+  publishRouteGraphDraft: () =>
+    request("/api/route-graph/draft/publish", { method: "POST" }),
+  rebaseRouteGraphDraft: () =>
+    request("/api/route-graph/draft/rebase", { method: "POST" }),
+  discardRouteGraphDraft: () =>
+    request("/api/route-graph/draft", { method: "DELETE" }),
+  compileRouteGraph: (graph: any) =>
+    request("/api/route-graph/compile", {
+      method: "POST",
+      body: JSON.stringify(graph),
+    }),
   getRoutes: () => request("/api/routes"),
   getRoutesLite: () => request("/api/routes/lite"),
   getRoutesSummary: () => request("/api/routes/summary"),
@@ -1428,6 +1451,8 @@ export const api = {
       timeoutMs: options?.refresh ? 45_000 : 15_000,
     });
   },
+  getModelRouteFlow: (model: string) =>
+    request(`/api/models/route-flow?model=${encodeURIComponent(model)}`),
   getModelTokenCandidates: () => request("/api/models/token-candidates"),
 
   // Simple chat test from admin panel

@@ -78,10 +78,10 @@ describe('TokenRoutes mobile layout', () => {
     apiMock.getRoutesSummary.mockResolvedValue([
       {
         id: 1,
-        modelPattern: 'gpt-4o-mini',
-        displayName: 'gpt-4o-mini',
-        displayIcon: null,
         modelMapping: null,
+        match: { kind: 'model', requestedModelPattern: 'gpt-4o-mini', displayName: 'gpt-4o-mini' },
+        backend: { kind: 'channels' },
+        presentation: { displayName: 'gpt-4o-mini', displayIcon: null },
         routingStrategy: 'weighted',
         enabled: true,
         channelCount: 1,

@@ -1,9 +1,18 @@
 import React, { Suspense, lazy, useEffect, useMemo, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { api, type DownstreamApiKeyTrendResponse } from '../../api.js';
 import { useToast } from '../../components/Toast.js';
-import { useAnimatedVisibility } from '../../components/useAnimatedVisibility.js';
 import { readClientTimeZone } from '../helpers/siteAnnouncementPresentation.js';
+import { Badge } from '../../components/ui/badge/index.js';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '../../components/ui/card/index.js';
+import { ScrollArea } from '../../components/ui/scroll-area/index.js';
+import * as Sheet from '../../components/ui/sheet/index.js';
+import { Skeleton } from '../../components/ui/skeleton/index.js';
 import {
   formatCompactTokens,
   formatIso,
@@ -35,7 +44,6 @@ export default function DownstreamKeyDrawer({
   initialRange,
 }: DownstreamKeyDrawerProps) {
   const toast = useToast();
-  const presence = useAnimatedVisibility(open, 220);
   const [overview, setOverview] = useState<OverviewResponse | null>(null);
   const [overviewLoading, setOverviewLoading] = useState(false);
   const [trendRange, setTrendRange] = useState<Range>(initialRange);
@@ -103,152 +111,120 @@ export default function DownstreamKeyDrawer({
     };
   }, [open, item?.id, trendRange, toast, viewerTimeZone]);
 
-  if (!presence.shouldRender) return null;
-
   const currentRangeUsage = resolveOverviewUsageByRange(overview, trendRange) || item?.rangeUsage || null;
 
-  const panel = (
-    <div
-      className={`modal-backdrop ${presence.isVisible ? '' : 'is-closing'}`.trim()}
-      onClick={onClose}
-      style={{ justifyContent: 'flex-end', alignItems: 'stretch', padding: 0 }}
-    >
-      <div
-        className={`modal-content ${presence.isVisible ? '' : 'is-closing'}`.trim()}
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          width: 'min(92vw, 560px)',
-          maxWidth: 560,
-          height: '100vh',
-          maxHeight: '100vh',
-          borderRadius: 0,
-          animation: presence.isVisible ? 'drawer-slide-in 0.3s cubic-bezier(0.22, 1, 0.36, 1) both' : 'drawer-slide-out 0.22s cubic-bezier(0.4, 0, 1, 1) both',
-        }}
-      >
-        <div className="modal-header" style={{ paddingTop: 18, paddingBottom: 12, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <span>{item?.name || '--'}</span>
-              <StatusBadge enabled={!!item?.enabled} />
-            </div>
-            <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
-              {item?.keyMasked || '****'}
-            </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 6 }}>
-              <span className={`badge ${item?.groupName ? 'badge-info' : 'badge-muted'}`} style={{ fontSize: 11 }}>
-                {item?.groupName ? `主分组 · ${item.groupName}` : '未分组'}
-              </span>
-              <TagChips tags={item?.tags || []} accent maxVisible={4} />
-            </div>
-          </div>
-          <button className="btn btn-ghost" onClick={onClose} style={{ border: '1px solid var(--color-border)' }}>
-            关闭
-          </button>
-        </div>
-
-        <div className="modal-body" style={{ paddingTop: 0 }}>
-          <div className="card" style={{ padding: 16, marginBottom: 16 }}>
-            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>使用趋势</div>
-                <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 4 }}>按选定时间窗口查看请求、Tokens 与成本变化。</div>
+  return (
+    <Sheet.Root open={open} onOpenChange={(nextOpen) => { if (!nextOpen) onClose(); }}>
+      <Sheet.Content side="right" className="flex h-full w-[min(92vw,560px)] max-w-none flex-col p-0" onClose={onClose}>
+        <Sheet.Header className="border-b px-4 py-4">
+          <div className="flex flex-wrap items-start gap-3 pr-8">
+            <div className="min-w-0 flex-1 space-y-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <Sheet.Title className="truncate">{item?.name || '--'}</Sheet.Title>
+                <StatusBadge enabled={!!item?.enabled} />
               </div>
-              <RangeToggle range={trendRange} onChange={setTrendRange} />
-            </div>
-
-            <Suspense fallback={<TrendChartFallback height={260} />}>
-              <DownstreamKeyTrendChart buckets={buckets} bucketSeconds={trendBucketSeconds} loading={trendLoading} height={260} />
-            </Suspense>
-          </div>
-
-          <div className="card" style={{ padding: 16, marginBottom: 16 }}>
-            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)', marginBottom: 10 }}>
-              基础信息
-            </div>
-            {overviewLoading ? (
-              <div className="skeleton" style={{ width: '100%', height: 72, borderRadius: 'var(--radius-sm)' }} />
-            ) : (
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, fontSize: 12 }}>
-                <div>
-                  <div style={{ color: 'var(--color-text-muted)', marginBottom: 4 }}>最近使用</div>
-                  <div style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>{formatIso(item?.lastUsedAt)}</div>
-                </div>
-                <div>
-                  <div style={{ color: 'var(--color-text-muted)', marginBottom: 4 }}>累计请求</div>
-                  <div style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>{(item?.usedRequests || 0).toLocaleString()}</div>
-                </div>
-                <div>
-                  <div style={{ color: 'var(--color-text-muted)', marginBottom: 4 }}>累计成本</div>
-                  <div style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>{formatMoney(Number(item?.usedCost || 0))}</div>
-                </div>
-                <div>
-                  <div style={{ color: 'var(--color-text-muted)', marginBottom: 4 }}>到期时间</div>
-                  <div style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>{formatIso(item?.expiresAt)}</div>
-                </div>
-                <div>
-                  <div style={{ color: 'var(--color-text-muted)', marginBottom: 4 }}>主分组</div>
-                  <div style={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>{item?.groupName || '未分组'}</div>
-                </div>
-                <div style={{ gridColumn: '1 / -1' }}>
-                  <div style={{ color: 'var(--color-text-muted)', marginBottom: 6 }}>标签</div>
-                  <TagChips tags={item?.tags || []} accent maxVisible={6} />
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div className="card" style={{ padding: 16 }}>
-            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)', marginBottom: 10 }}>
-              当前范围汇总
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, fontSize: 12 }}>
-              <div>
-                <div style={{ color: 'var(--color-text-muted)', marginBottom: 4 }}>Tokens</div>
-                <div style={{ color: 'var(--color-text-primary)', fontWeight: 700 }}>{formatCompactTokens(currentRangeUsage?.totalTokens || 0)}</div>
-              </div>
-              <div>
-                <div style={{ color: 'var(--color-text-muted)', marginBottom: 4 }}>请求数</div>
-                <div style={{ color: 'var(--color-text-primary)', fontWeight: 700 }}>{(currentRangeUsage?.totalRequests || 0).toLocaleString()}</div>
-              </div>
-              <div>
-                <div style={{ color: 'var(--color-text-muted)', marginBottom: 4 }}>成功率</div>
-                <div style={{ color: 'var(--color-text-primary)', fontWeight: 700 }}>{currentRangeUsage?.successRate == null ? '--' : `${currentRangeUsage.successRate}%`}</div>
-              </div>
-              <div>
-                <div style={{ color: 'var(--color-text-muted)', marginBottom: 4 }}>成本</div>
-                <div style={{ color: 'var(--color-text-primary)', fontWeight: 700 }}>{formatMoney(Number(currentRangeUsage?.totalCost || 0))}</div>
+              <Sheet.Description>{item?.keyMasked || '****'}</Sheet.Description>
+              <div className="flex flex-wrap gap-2 pt-1">
+                <Badge variant={item?.groupName ? 'default' : 'secondary'}>
+                  {item?.groupName ? `主分组 · ${item.groupName}` : '未分组'}
+                </Badge>
+                <TagChips tags={item?.tags || []} accent maxVisible={4} />
               </div>
             </div>
           </div>
+        </Sheet.Header>
 
-          {overview?.usage ? (
-            <div className="card" style={{ padding: 16, marginTop: 16 }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)', marginBottom: 10 }}>
-                固定窗口对比
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, fontSize: 12 }}>
-                {[
-                  { label: '24h', data: overview.usage.last24h },
-                  { label: '7d', data: overview.usage.last7d },
-                  { label: '全部', data: overview.usage.all },
-                ].map((section) => (
-                  <div key={section.label} style={{ border: '1px solid var(--color-border-light)', borderRadius: 'var(--radius-sm)', padding: 12 }}>
-                    <div style={{ color: 'var(--color-text-primary)', fontWeight: 700, marginBottom: 8 }}>{section.label}</div>
-                    <div style={{ color: 'var(--color-text-muted)', marginBottom: 4 }}>Tokens</div>
-                    <div style={{ color: 'var(--color-text-primary)', fontWeight: 700, marginBottom: 8 }}>{formatCompactTokens(section.data?.totalTokens || 0)}</div>
-                    <div style={{ color: 'var(--color-text-muted)', marginBottom: 4 }}>请求数</div>
-                    <div style={{ color: 'var(--color-text-primary)', fontWeight: 700, marginBottom: 8 }}>{(section.data?.totalRequests || 0).toLocaleString()}</div>
-                    <div style={{ color: 'var(--color-text-muted)', marginBottom: 4 }}>成功率</div>
-                    <div style={{ color: 'var(--color-text-primary)', fontWeight: 700 }}>{section.data?.successRate == null ? '--' : `${section.data.successRate}%`}</div>
+        <ScrollArea className="min-h-0 flex-1">
+          <div className="space-y-4 p-4">
+            <Card>
+              <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div className="space-y-1">
+                  <CardTitle>使用趋势</CardTitle>
+                  <CardDescription>按选定时间窗口查看请求、Tokens 与成本变化。</CardDescription>
+                </div>
+                <RangeToggle range={trendRange} onChange={setTrendRange} />
+              </CardHeader>
+              <CardContent>
+                <Suspense fallback={<TrendChartFallback height={260} />}>
+                  <DownstreamKeyTrendChart buckets={buckets} bucketSeconds={trendBucketSeconds} loading={trendLoading} height={260} />
+                </Suspense>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>基础信息</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {overviewLoading ? (
+                  <Skeleton className="h-20 w-full" />
+                ) : (
+                  <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
+                    <InfoCell label="最近使用" value={formatIso(item?.lastUsedAt)} />
+                    <InfoCell label="累计请求" value={(item?.usedRequests || 0).toLocaleString()} />
+                    <InfoCell label="累计成本" value={formatMoney(Number(item?.usedCost || 0))} />
+                    <InfoCell label="到期时间" value={formatIso(item?.expiresAt)} />
+                    <InfoCell label="主分组" value={item?.groupName || '未分组'} />
+                    <div className="space-y-1 sm:col-span-2">
+                      <div className="text-xs text-muted-foreground">标签</div>
+                      <TagChips tags={item?.tags || []} accent maxVisible={6} />
+                    </div>
                   </div>
-                ))}
-              </div>
-            </div>
-          ) : null}
-        </div>
-      </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>当前范围汇总</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  <InfoCell label="Tokens" value={formatCompactTokens(currentRangeUsage?.totalTokens || 0)} strong />
+                  <InfoCell label="请求数" value={(currentRangeUsage?.totalRequests || 0).toLocaleString()} strong />
+                  <InfoCell label="成功率" value={currentRangeUsage?.successRate == null ? '--' : `${currentRangeUsage.successRate}%`} strong />
+                  <InfoCell label="成本" value={formatMoney(Number(currentRangeUsage?.totalCost || 0))} strong />
+                </div>
+              </CardContent>
+            </Card>
+
+            {overview?.usage ? (
+              <Card>
+                <CardHeader>
+                  <CardTitle>固定窗口对比</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                    {[
+                      { label: '24h', data: overview.usage.last24h },
+                      { label: '7d', data: overview.usage.last7d },
+                      { label: '全部', data: overview.usage.all },
+                    ].map((section) => (
+                      <Card key={section.label}>
+                        <CardContent className="space-y-2 pt-3 text-sm">
+                          <div className="font-semibold">{section.label}</div>
+                          <InfoCell label="Tokens" value={formatCompactTokens(section.data?.totalTokens || 0)} strong />
+                          <InfoCell label="请求数" value={(section.data?.totalRequests || 0).toLocaleString()} strong />
+                          <InfoCell label="成功率" value={section.data?.successRate == null ? '--' : `${section.data.successRate}%`} strong />
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            ) : null}
+          </div>
+        </ScrollArea>
+      </Sheet.Content>
+    </Sheet.Root>
+  );
+}
+
+function InfoCell({ label, value, strong = false }: { label: string; value: React.ReactNode; strong?: boolean }) {
+  return (
+    <div className="space-y-1">
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className={strong ? 'font-semibold' : 'font-medium'}>{value}</div>
     </div>
   );
-
-  return createPortal(panel, document.body);
 }

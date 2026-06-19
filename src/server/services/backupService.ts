@@ -6,6 +6,8 @@ import { upsertSetting } from '../db/upsertSetting.js';
 import { mergeAccountExtraConfig } from './accountExtraConfig.js';
 import { getOauthInfoFromAccount } from './oauth/oauthAccount.js';
 import { PLATFORM_ALIASES, detectPlatformByUrlHint } from '../../shared/platformIdentity.js';
+import { publishRouteGraphSource } from './routeGraphService.js';
+import { buildRouteGraphSourceFromLegacyRoutes } from '../../shared/routeGraph.js';
 
 const BACKUP_VERSION = '2.1';
 
@@ -78,6 +80,10 @@ type BackupRouteChannelRow = Omit<RouteChannelRow,
   | 'cooldownLevel'
   | 'cooldownUntil'
 >>;
+type BackupTokenRouteRow = TokenRouteRow & {
+  modelPattern?: string | null;
+  routeMode?: string | null;
+};
 
 type BackupSiteDisabledModelRow = Pick<SiteDisabledModelRow, 'siteId' | 'modelName'>;
 type BackupManualModelRow = {
@@ -106,7 +112,7 @@ interface AccountsBackupSection {
   siteApiEndpoints?: SiteApiEndpointRow[];
   accounts: BackupAccountRow[];
   accountTokens: AccountTokenRow[];
-  tokenRoutes: TokenRouteRow[];
+  tokenRoutes: BackupTokenRouteRow[];
   routeChannels: BackupRouteChannelRow[];
   routeGroupSources: RouteGroupSourceRow[];
   siteDisabledModels?: BackupSiteDisabledModelRow[];
@@ -202,6 +208,7 @@ interface RuntimeIdentityIndexes {
 
 interface RuntimeStateSnapshot {
   accountRuntimeByKey: Map<string, AccountRuntimeSnapshot>;
+  routeChannelRuntimeById: Map<number, RouteChannelRuntimeSnapshot>;
   routeChannelRuntimeByKey: Map<string, RouteChannelRuntimeSnapshot>;
   siteAnnouncements: SiteAnnouncementSnapshot[];
   nonManualAvailability: ModelAvailabilitySnapshot[];
@@ -355,10 +362,11 @@ function buildTokenIdentityKey(row: Pick<AccountTokenRow, 'name' | 'token' | 'to
   ].join('::');
 }
 
-function buildRouteIdentityKey(row: Pick<TokenRouteRow, 'modelPattern' | 'routeMode'>): string {
+function buildRouteIdentityKey(row: Partial<Pick<BackupTokenRouteRow, 'displayName' | 'displayIcon' | 'modelMapping'>>): string {
   return [
-    asString(row.modelPattern),
-    asString(row.routeMode),
+    asString(row.displayName),
+    asString(row.displayIcon),
+    asString(row.modelMapping),
   ].join('::');
 }
 
@@ -520,6 +528,7 @@ async function collectCurrentRuntimeStateSnapshot(): Promise<RuntimeStateSnapsho
   }
 
   const channelKeyById = new Map<number, string>();
+  const routeChannelRuntimeById = new Map<number, RouteChannelRuntimeSnapshot>();
   const routeChannelRuntimeByKey = new Map<string, RouteChannelRuntimeSnapshot>();
   for (const row of routeChannels) {
     const channelKey = buildRouteChannelIdentityKey(row, {
@@ -529,7 +538,7 @@ async function collectCurrentRuntimeStateSnapshot(): Promise<RuntimeStateSnapsho
     });
     if (!channelKey) continue;
     channelKeyById.set(row.id, channelKey);
-    routeChannelRuntimeByKey.set(channelKey, {
+    const runtimeSnapshot = {
       successCount: row.successCount,
       failCount: row.failCount,
       totalLatencyMs: row.totalLatencyMs,
@@ -540,7 +549,9 @@ async function collectCurrentRuntimeStateSnapshot(): Promise<RuntimeStateSnapsho
       consecutiveFailCount: row.consecutiveFailCount ?? 0,
       cooldownLevel: row.cooldownLevel ?? 0,
       cooldownUntil: row.cooldownUntil ?? null,
-    });
+    };
+    routeChannelRuntimeById.set(row.id, runtimeSnapshot);
+    routeChannelRuntimeByKey.set(channelKey, runtimeSnapshot);
   }
 
   const downstreamApiKeyKeyById = new Map<number, string>();
@@ -560,6 +571,7 @@ async function collectCurrentRuntimeStateSnapshot(): Promise<RuntimeStateSnapsho
 
   return {
     accountRuntimeByKey,
+    routeChannelRuntimeById,
     routeChannelRuntimeByKey,
     siteAnnouncements: siteAnnouncements.map((row) => ({
       ...row,
@@ -666,6 +678,7 @@ function pushDefaultImportedToken(
     name: 'default',
     token,
     tokenGroup: 'default',
+    compatibilityPolicy: null,
     valueStatus: 'ready',
     source: 'legacy',
     enabled: true,
@@ -753,6 +766,7 @@ function buildAllApiHubV2AccountsSection(data: RawBackupData): {
       proxyUrl: null,
       useSystemProxy: false,
       customHeaders: null,
+      compatibilityPolicy: null,
       status: 'active',
       isPinned: false,
       sortOrder: section.sites.length,
@@ -1000,6 +1014,7 @@ function buildAccountsSectionFromRefBackup(data: RawBackupData): AccountsBackupS
         proxyUrl: null,
         useSystemProxy: false,
         customHeaders: null,
+        compatibilityPolicy: null,
         status: 'active',
         isPinned: false,
         sortOrder: sites.length,
@@ -1080,6 +1095,7 @@ function buildAccountsSectionFromRefBackup(data: RawBackupData): AccountsBackupS
         name: 'default',
         token: apiToken,
         tokenGroup: 'default',
+        compatibilityPolicy: null,
         valueStatus: 'ready',
         source: 'legacy',
         enabled: true,
@@ -1415,7 +1431,7 @@ function coerceAccountsSection(input: unknown): AccountsBackupSection | null {
     : undefined;
   const accounts = Array.isArray(input.accounts) ? input.accounts as BackupAccountRow[] : null;
   const accountTokens = Array.isArray(input.accountTokens) ? input.accountTokens as AccountTokenRow[] : null;
-  const tokenRoutes = Array.isArray(input.tokenRoutes) ? input.tokenRoutes as TokenRouteRow[] : null;
+  const tokenRoutes = Array.isArray(input.tokenRoutes) ? input.tokenRoutes as BackupTokenRouteRow[] : null;
   const routeChannels = Array.isArray(input.routeChannels) ? input.routeChannels as BackupRouteChannelRow[] : null;
   const routeGroupSources = Array.isArray(input.routeGroupSources)
     ? input.routeGroupSources as RouteGroupSourceRow[]
@@ -1529,6 +1545,9 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
     if (shouldReplaceDownstreamApiKeys) {
       await tx.delete(schema.downstreamApiKeys).run();
     }
+    await tx.delete(schema.routeGraphActiveVersion).run();
+    await tx.delete(schema.routeGraphDrafts).run();
+    await tx.delete(schema.routeGraphVersions).run();
     await tx.delete(schema.proxyLogs).run();
     await tx.delete(schema.routeChannels).run();
     await tx.delete(schema.routeGroupSources).run();
@@ -1628,11 +1647,9 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
     for (const row of section.tokenRoutes) {
       await tx.insert(schema.tokenRoutes).values({
         id: row.id,
-        modelPattern: row.modelPattern,
         displayName: row.displayName ?? null,
         displayIcon: row.displayIcon ?? null,
         modelMapping: row.modelMapping,
-        routeMode: row.routeMode ?? 'pattern',
         decisionSnapshot: row.decisionSnapshot ?? null,
         decisionRefreshedAt: row.decisionRefreshedAt ?? null,
         routingStrategy: row.routingStrategy ?? 'weighted',
@@ -1652,10 +1669,12 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
 
     for (const row of section.routeChannels) {
       const channelKey = importedIndexes.channelKeyById.get(row.id);
-      const runtimeChannel = channelKey ? runtimeState.routeChannelRuntimeByKey.get(channelKey) : undefined;
+      const runtimeChannel = runtimeState.routeChannelRuntimeById.get(row.id)
+        ?? (channelKey ? runtimeState.routeChannelRuntimeByKey.get(channelKey) : undefined);
       await tx.insert(schema.routeChannels).values({
         id: row.id,
         routeId: row.routeId,
+        routeNodeId: row.routeNodeId ?? `entry:legacy:${row.routeId}`,
         accountId: row.accountId,
         tokenId: row.tokenId,
         sourceModel: row.sourceModel ?? null,
@@ -1797,8 +1816,12 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
 
     for (const row of runtimeState.proxyLogs) {
       const accountId = row.accountKey ? (importedIndexes.accountIdByKey.get(row.accountKey) ?? null) : null;
-      const routeId = row.routeKey ? (importedIndexes.routeIdByKey.get(row.routeKey) ?? null) : null;
-      const channelId = row.channelKey ? (importedIndexes.channelIdByKey.get(row.channelKey) ?? null) : null;
+      const routeId = row.routeKey
+        ? (importedIndexes.routeIdByKey.get(row.routeKey) ?? row.routeId ?? null)
+        : (row.routeId ?? null);
+      const channelId = row.channelKey
+        ? (importedIndexes.channelIdByKey.get(row.channelKey) ?? row.channelId ?? null)
+        : (row.channelId ?? null);
       const downstreamApiKeyId = row.downstreamApiKeyKey
         ? (downstreamApiKeyIdByKey.get(row.downstreamApiKeyKey) ?? null)
         : null;
@@ -1842,6 +1865,33 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
         createdAt: row.createdAt,
       }).run();
     }
+  });
+
+  const restoredRouteGroupSources = await db.select().from(schema.routeGroupSources).all();
+  const sourceRouteIdsByGroupRouteId = new Map<number, number[]>();
+  for (const source of restoredRouteGroupSources) {
+    const existing = sourceRouteIdsByGroupRouteId.get(source.groupRouteId) || [];
+    existing.push(source.sourceRouteId);
+    sourceRouteIdsByGroupRouteId.set(source.groupRouteId, existing);
+  }
+  await publishRouteGraphSource({
+    sourceGraph: buildRouteGraphSourceFromLegacyRoutes(section.tokenRoutes.map((route) => {
+      const sourceRouteIds = sourceRouteIdsByGroupRouteId.get(route.id) || [];
+      const isExplicitGroup = sourceRouteIds.length > 0;
+      return {
+        ...route,
+        match: {
+          kind: 'model',
+          requestedModelPattern: isExplicitGroup ? '' : (route.displayName ?? ''),
+          displayName: route.displayName ?? null,
+        },
+        backend: isExplicitGroup
+          ? { kind: 'routes', routeIds: sourceRouteIds }
+          : { kind: 'channels' },
+      };
+    })),
+    createdBy: 'backup-import',
+    allowDiagnostics: true,
   });
 }
 

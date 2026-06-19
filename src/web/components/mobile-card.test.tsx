@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { create } from 'react-test-renderer';
 import { MobileCard, MobileField } from './MobileCard.js';
+import { Button } from './ui/button/index.js';
 
 describe('MobileCard', () => {
   it('renders separate header and footer action slots plus stacked fields', () => {
@@ -10,7 +11,7 @@ describe('MobileCard', () => {
         subtitle="CardSubtitle"
         compact
         headerActions={<span>Meta</span>}
-        footerActions={<button type="button">Action</button>}
+        footerActions={<Button type="button">Action</Button>}
       >
         <MobileField label="Status" value="OK" />
         <MobileField label="URL" value="https://example.com/very/long/path" stacked />
@@ -29,14 +30,14 @@ describe('MobileCard', () => {
     expect(text).toContain('OK');
     expect(text).toContain('Action');
 
-    const headerActions = root.root.find((node) => node.props?.className === 'mobile-card-header-actions');
-    const footerActions = root.root.find((node) => node.props?.className === 'mobile-card-footer-actions');
-    const stackedField = root.root.find((node) => node.props?.className === 'mobile-field is-stacked');
-    const compactCard = root.root.find((node) => node.props?.className === 'mobile-card is-compact');
+    const card = root.root.find((node) => node.props?.['data-slot'] === 'card');
+    const header = root.root.find((node) => node.props?.['data-slot'] === 'card-header');
+    const content = root.root.find((node) => node.props?.['data-slot'] === 'card-content');
+    const footer = root.root.find((node) => node.props?.['data-slot'] === 'card-footer');
 
-    expect(headerActions).toBeTruthy();
-    expect(footerActions).toBeTruthy();
-    expect(stackedField).toBeTruthy();
-    expect(compactCard).toBeTruthy();
+    expect(card).toBeTruthy();
+    expect(header).toBeTruthy();
+    expect(content).toBeTruthy();
+    expect(footer).toBeTruthy();
   });
 });

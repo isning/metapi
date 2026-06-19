@@ -1,5 +1,7 @@
 import React from 'react';
-import { createPortal } from 'react-dom';
+import CenteredModal from '../../components/CenteredModal.js';
+import { Button } from '../../components/ui/button/index.js';
+import { Input } from '../../components/ui/input/index.js';
 
 type ModalPresence = {
   shouldRender: boolean;
@@ -22,7 +24,6 @@ type DownstreamApiKeyModalProps = {
   editingDownstreamId: number | null;
   downstreamCreate: DownstreamCreateForm;
   downstreamSaving: boolean;
-  inputStyle: React.CSSProperties;
   onChange: (updater: (prev: DownstreamCreateForm) => DownstreamCreateForm) => void;
   onOpenSelector: () => Promise<void> | void;
   onClose: () => void;
@@ -34,107 +35,90 @@ export default function DownstreamApiKeyModal({
   editingDownstreamId,
   downstreamCreate,
   downstreamSaving,
-  inputStyle,
   onChange,
   onOpenSelector,
   onClose,
   onSave,
 }: DownstreamApiKeyModalProps) {
-  if (!presence.shouldRender) {
-    return null;
-  }
+  if (!presence.shouldRender) return null;
 
-  const modal = (
-    <div className={`modal-backdrop ${presence.isVisible ? '' : 'is-closing'}`.trim()} onClick={onClose}>
-      <div
-        className={`modal-content ${presence.isVisible ? '' : 'is-closing'}`.trim()}
-        style={{ maxWidth: 860 }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="modal-header">
-          {editingDownstreamId ? '编辑下游 API Key' : '新增下游 API Key'}
-        </div>
-        <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 10 }}>
-            <input
-              value={downstreamCreate.name}
-              onChange={(e) => onChange((prev) => ({ ...prev, name: e.target.value }))}
-              placeholder="Name (e.g. cc-project)"
-              style={inputStyle}
-            />
-            <input
-              value={downstreamCreate.key}
-              onChange={(e) => onChange((prev) => ({ ...prev, key: e.target.value.trim() }))}
-              placeholder="sk-xxxx"
-              style={{ ...inputStyle, fontFamily: 'var(--font-mono)' }}
-            />
-            <input
-              value={downstreamCreate.maxCost}
-              onChange={(e) => onChange((prev) => ({ ...prev, maxCost: e.target.value }))}
-              placeholder="最大费用（可选）"
-              type="number"
-              min={0}
-              step={0.000001}
-              style={inputStyle}
-            />
-            <input
-              value={downstreamCreate.maxRequests}
-              onChange={(e) => onChange((prev) => ({ ...prev, maxRequests: e.target.value }))}
-              placeholder="最大请求数（可选）"
-              type="number"
-              min={0}
-              step={1}
-              style={inputStyle}
-            />
-            <input
-              value={downstreamCreate.expiresAt}
-              onChange={(e) => onChange((prev) => ({ ...prev, expiresAt: e.target.value }))}
-              type="datetime-local"
-              placeholder="过期时间（可选）"
-              style={inputStyle}
-            />
-            <input
-              value={downstreamCreate.description}
-              onChange={(e) => onChange((prev) => ({ ...prev, description: e.target.value }))}
-              placeholder="备注（可选）"
-              style={inputStyle}
-            />
-          </div>
+  return (
+    <CenteredModal
+      open={presence.shouldRender}
+      onClose={onClose}
+      title={editingDownstreamId ? '编辑下游 API Key' : '新增下游 API Key'}
+      maxWidth={860}
+      closeOnBackdrop
+      footer={(
+        <>
+          <Button type="button" variant="outline" onClick={onClose}>取消</Button>
+          <Button type="button" onClick={() => void onSave()} disabled={downstreamSaving}>
+            {downstreamSaving ? '保存中...' : (editingDownstreamId ? '更新 API Key' : '新增 API Key')}
+          </Button>
+        </>
+      )}
+    >
+      <div className="grid gap-2 sm:grid-cols-2">
+        <Input
+          value={downstreamCreate.name}
+          onChange={(e) => onChange((prev) => ({ ...prev, name: e.target.value }))}
+          placeholder="Name (e.g. cc-project)"
+        />
+        <Input
+          value={downstreamCreate.key}
+          onChange={(e) => onChange((prev) => ({ ...prev, key: e.target.value.trim() }))}
+          placeholder="sk-xxxx"
+          className="font-mono"
+        />
+        <Input
+          value={downstreamCreate.maxCost}
+          onChange={(e) => onChange((prev) => ({ ...prev, maxCost: e.target.value }))}
+          placeholder="最大费用（可选）"
+          type="number"
+          min={0}
+          step={0.000001}
+        />
+        <Input
+          value={downstreamCreate.maxRequests}
+          onChange={(e) => onChange((prev) => ({ ...prev, maxRequests: e.target.value }))}
+          placeholder="最大请求数（可选）"
+          type="number"
+          min={0}
+          step={1}
+        />
+        <Input
+          value={downstreamCreate.expiresAt}
+          onChange={(e) => onChange((prev) => ({ ...prev, expiresAt: e.target.value }))}
+          type="datetime-local"
+          placeholder="过期时间（可选）"
+        />
+        <Input
+          value={downstreamCreate.description}
+          onChange={(e) => onChange((prev) => ({ ...prev, description: e.target.value }))}
+          placeholder="备注（可选）"
+        />
+      </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
-              已选模型 {downstreamCreate.selectedModels.length} 个，已选群组 {downstreamCreate.selectedGroupRouteIds.length} 个
-            </div>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              <button
-                onClick={() => void onOpenSelector()}
-                className="btn btn-ghost"
-                style={{ border: '1px solid var(--color-border)' }}
-              >
-                勾选模型和群组
-              </button>
-              {(downstreamCreate.selectedModels.length > 0 || downstreamCreate.selectedGroupRouteIds.length > 0) ? (
-                <button
-                  onClick={() => onChange((prev) => ({ ...prev, selectedModels: [], selectedGroupRouteIds: [] }))}
-                  className="btn btn-link btn-link-warning"
-                >
-                  清空选择
-                </button>
-              ) : null}
-            </div>
-          </div>
+      <div className="grid gap-2">
+        <div className="text-xs text-muted-foreground">
+          已选模型 {downstreamCreate.selectedModels.length} 个，已选群组 {downstreamCreate.selectedGroupRouteIds.length} 个
         </div>
-        <div className="modal-footer">
-          <button onClick={onClose} className="btn btn-ghost">取消</button>
-          <button onClick={() => void onSave()} disabled={downstreamSaving} className="btn btn-primary">
-            {downstreamSaving
-              ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 保存中...</>
-              : (editingDownstreamId ? '更新 API Key' : '新增 API Key')}
-          </button>
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" variant="outline" onClick={() => void onOpenSelector()}>
+            勾选模型和群组
+          </Button>
+          {(downstreamCreate.selectedModels.length > 0 || downstreamCreate.selectedGroupRouteIds.length > 0) ? (
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => onChange((prev) => ({ ...prev, selectedModels: [], selectedGroupRouteIds: [] }))}
+            >
+              清空选择
+            </Button>
+          ) : null}
         </div>
       </div>
-    </div>
+    </CenteredModal>
   );
-
-  return typeof document !== 'undefined' ? createPortal(modal, document.body) : modal;
 }

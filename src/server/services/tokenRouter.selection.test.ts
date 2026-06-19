@@ -3,6 +3,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
+import { tokenRouteFixture } from '../test/routeGraphFixtures.js';
 
 type DbModule = typeof import('../db/index.js');
 type TokenRouterModule = typeof import('./tokenRouter.js');
@@ -77,6 +78,9 @@ describe('TokenRouter selection scoring', () => {
     mockedCatalogRoutingCost.mockReturnValue(null);
     config.proxySessionChannelConcurrencyLimit = originalProxySessionChannelConcurrencyLimit;
     config.proxySessionChannelQueueWaitMs = originalProxySessionChannelQueueWaitMs;
+    await db.delete(schema.routeGraphActiveVersion).run();
+    await db.delete(schema.routeGraphDrafts).run();
+    await db.delete(schema.routeGraphVersions).run();
     await db.delete(schema.routeChannels).run();
     await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.settings).run();
@@ -101,7 +105,7 @@ describe('TokenRouter selection scoring', () => {
 
   async function createRoute(modelPattern: string) {
     return await db.insert(schema.tokenRoutes).values({
-      modelPattern,
+      ...tokenRouteFixture({ modelPattern }),
       enabled: true,
     }).returning().get();
   }
@@ -148,7 +152,7 @@ describe('TokenRouter selection scoring', () => {
     };
 
     const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-5.2',
+      ...tokenRouteFixture({ modelPattern: 'gpt-5.2', routingStrategy: 'stable_first' }),
       routingStrategy: 'stable_first',
       enabled: true,
     }).returning().get();
@@ -1021,7 +1025,7 @@ describe('TokenRouter selection scoring', () => {
     };
 
     const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-5.4',
+      ...tokenRouteFixture({ modelPattern: 'gpt-5.4', routingStrategy: 'stable_first' }),
       routingStrategy: 'stable_first',
       enabled: true,
     }).returning().get();
@@ -1147,7 +1151,7 @@ describe('TokenRouter selection scoring', () => {
     };
 
     const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-5.3',
+      ...tokenRouteFixture({ modelPattern: 'gpt-5.3', routingStrategy: 'stable_first' }),
       routingStrategy: 'stable_first',
       enabled: true,
     }).returning().get();
@@ -1382,7 +1386,7 @@ describe('TokenRouter selection scoring', () => {
     };
 
     const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-5.1',
+      ...tokenRouteFixture({ modelPattern: 'gpt-5.1', routingStrategy: 'stable_first' }),
       routingStrategy: 'stable_first',
       enabled: true,
     }).returning().get();
@@ -1442,7 +1446,7 @@ describe('TokenRouter selection scoring', () => {
     };
 
     const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-5.4',
+      ...tokenRouteFixture({ modelPattern: 'gpt-5.4', routingStrategy: 'stable_first' }),
       routingStrategy: 'stable_first',
       enabled: true,
     }).returning().get();
@@ -1493,7 +1497,7 @@ describe('TokenRouter selection scoring', () => {
     };
 
     const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-4.1',
+      ...tokenRouteFixture({ modelPattern: 'gpt-4.1', routingStrategy: 'stable_first' }),
       routingStrategy: 'stable_first',
       enabled: true,
     }).returning().get();
@@ -1558,7 +1562,7 @@ describe('TokenRouter selection scoring', () => {
     };
 
     const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-5.4-probe-free',
+      ...tokenRouteFixture({ modelPattern: 'gpt-5.4-probe-free', routingStrategy: 'stable_first' }),
       routingStrategy: 'stable_first',
       enabled: true,
     }).returning().get();
@@ -1643,7 +1647,7 @@ describe('TokenRouter selection scoring', () => {
     config.proxySessionChannelQueueWaitMs = 5_000;
 
     const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-5.2',
+      ...tokenRouteFixture({ modelPattern: 'gpt-5.2', routingStrategy: 'stable_first' }),
       routingStrategy: 'stable_first',
       enabled: true,
     }).returning().get();

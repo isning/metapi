@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { tokenRouteFixture } from '../test/routeGraphFixtures.js';
 
 type DbModule = typeof import('../db/index.js');
 type ServiceModule = typeof import('./downstreamApiKeyService.js');
@@ -31,6 +32,9 @@ describe('downstreamApiKeyService', () => {
 
   beforeEach(async () => {
     await db.delete(schema.downstreamApiKeys).run();
+    await db.delete(schema.routeGraphDrafts).run();
+    await db.delete(schema.routeGraphActiveVersion).run();
+    await db.delete(schema.routeGraphVersions).run();
     await db.delete(schema.tokenRoutes).run();
     config.proxyToken = 'sk-global-proxy-token';
   });
@@ -124,7 +128,10 @@ describe('downstreamApiKeyService', () => {
 
   it('treats selected groups as additional allowed exposed route scope (union semantics)', async () => {
     const claudeGroup = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 're:^claude-(opus|sonnet)-4-6$',
+      ...tokenRouteFixture({
+        modelPattern: 're:^claude-(opus|sonnet)-4-6$',
+        displayName: 'claude-4-6-group',
+      }),
       displayName: 'claude-4-6-group',
       enabled: true,
     }).returning().get();
@@ -156,7 +163,7 @@ describe('downstreamApiKeyService', () => {
 
   it('authorizes by selected group model pattern only, not arbitrary internal models', async () => {
     const virtualModelGroup = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'claude-opus-4-6',
+      ...tokenRouteFixture({ modelPattern: 'claude-opus-4-6' }),
       enabled: true,
     }).returning().get();
 
@@ -172,7 +179,10 @@ describe('downstreamApiKeyService', () => {
 
   it('only authorizes selected route display name alias, not models covered by group pattern', async () => {
     const aliasRoute = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 're:^claude-(opus|sonnet)-4-5$',
+      ...tokenRouteFixture({
+        modelPattern: 're:^claude-(opus|sonnet)-4-5$',
+        displayName: 'claude-opus-4-6',
+      }),
       displayName: 'claude-opus-4-6',
       enabled: true,
     }).returning().get();

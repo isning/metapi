@@ -1,6 +1,7 @@
 import type { PreparedPlatformRequest, PreparePlatformRequestInput, PlatformAction, PlatformProfile } from './types.js';
 import { buildGeminiCliRuntimeHeaders } from './headers.js';
 import { protocolAdapters } from '../formats/protocolAdapters.js';
+import { nativeReasoningCompatibilityPolicy } from './compatibilityPolicy.js';
 
 function asTrimmedString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
@@ -19,6 +20,7 @@ function resolvePath(action: PlatformAction): string {
 
 export const geminiCliPlatformProfile: PlatformProfile = {
   id: 'gemini-cli',
+  defaultCompatibilityPolicy: nativeReasoningCompatibilityPolicy,
   prepareRequest(input: PreparePlatformRequestInput): PreparedPlatformRequest {
     const projectId = asTrimmedString(input.oauthProjectId);
     if (!projectId) {

@@ -1,25 +1,32 @@
-import { normalizeTokenRouteMode } from '../../../shared/tokenRouteContract.js';
+import type { RouteGraphBackendSpec, RouteGraphMatchSpec } from '../../../shared/routeGraph.js';
 
 export type RouteListVisibilityItem = {
   id: number;
-  modelPattern: string;
-  displayName?: string | null;
-  routeMode?: string | null;
-  sourceRouteIds?: number[];
+  match: RouteGraphMatchSpec;
+  backend: RouteGraphBackendSpec;
+  presentation: { displayName: string | null };
   enabled: boolean;
 };
 
-function normalizeRouteMode(routeMode: string | null | undefined): 'pattern' | 'explicit_group' {
-  return normalizeTokenRouteMode(routeMode);
+function isRouteBackendReferences(route: Pick<RouteListVisibilityItem, 'backend'>): boolean {
+  return route.backend.kind === 'routes';
 }
 
-function isExplicitGroupRoute(route: Pick<RouteListVisibilityItem, 'routeMode'>): boolean {
-  return normalizeRouteMode(route.routeMode) === 'explicit_group';
+function getRouteBackendRouteIds(route: Pick<RouteListVisibilityItem, 'backend'>): number[] {
+  return route.backend.kind === 'routes' ? route.backend.routeIds : [];
 }
 
-function hasCustomDisplayName(route: Pick<RouteListVisibilityItem, 'modelPattern' | 'displayName'>): boolean {
-  const displayName = (route.displayName || '').trim();
-  const modelPattern = (route.modelPattern || '').trim();
+function getRoutePattern(route: Pick<RouteListVisibilityItem, 'match'>): string {
+  return route.match.requestedModelPattern || '';
+}
+
+function getRouteDisplayName(route: Pick<RouteListVisibilityItem, 'presentation' | 'match'>): string {
+  return (route.presentation.displayName || route.match.displayName || '').trim();
+}
+
+function hasCustomDisplayName(route: Pick<RouteListVisibilityItem, 'match' | 'presentation'>): boolean {
+  const displayName = getRouteDisplayName(route);
+  const modelPattern = getRoutePattern(route).trim();
   return !!displayName && displayName !== modelPattern;
 }
 
@@ -30,34 +37,34 @@ export function buildVisibleRouteList<T extends RouteListVisibilityItem>(
 ): T[] {
   const exactModelNames = new Set(
     routes
-      .filter((route) => !isExplicitGroupRoute(route) && isExactModelPattern(route.modelPattern))
-      .map((route) => (route.modelPattern || '').trim())
+      .filter((route) => !isRouteBackendReferences(route) && isExactModelPattern(getRoutePattern(route)))
+      .map((route) => getRoutePattern(route).trim())
       .filter(Boolean),
   );
   const coveringGroups = routes.filter((route) => (
     route.enabled
     && (
-      (isExplicitGroupRoute(route) && ((route.displayName || '').trim().length > 0) && (route.sourceRouteIds || []).length > 0)
-      || (!isExplicitGroupRoute(route) && !isExactModelPattern(route.modelPattern) && hasCustomDisplayName(route))
+      (isRouteBackendReferences(route) && getRouteDisplayName(route).length > 0 && getRouteBackendRouteIds(route).length > 0)
+      || (!isRouteBackendReferences(route) && !isExactModelPattern(getRoutePattern(route)) && hasCustomDisplayName(route))
     )
   ));
 
   if (coveringGroups.length === 0) return routes;
 
   return routes.filter((route) => {
-    if (isExplicitGroupRoute(route)) return true;
-    if (!isExactModelPattern(route.modelPattern)) return true;
+    if (isRouteBackendReferences(route)) return true;
+    if (!isExactModelPattern(getRoutePattern(route))) return true;
     if (hasCustomDisplayName(route)) return true;
 
-    const exactModel = (route.modelPattern || '').trim();
+    const exactModel = getRoutePattern(route).trim();
     if (!exactModel) return true;
 
     return !coveringGroups.some((groupRoute) => (
       groupRoute.id !== route.id
-      && !exactModelNames.has((groupRoute.displayName || '').trim())
+      && !exactModelNames.has(getRouteDisplayName(groupRoute))
       && (
-        (isExplicitGroupRoute(groupRoute) && (groupRoute.sourceRouteIds || []).includes(route.id))
-        || (!isExplicitGroupRoute(groupRoute) && matchesModelPattern(exactModel, groupRoute.modelPattern))
+        (isRouteBackendReferences(groupRoute) && getRouteBackendRouteIds(groupRoute).includes(route.id))
+        || (!isRouteBackendReferences(groupRoute) && matchesModelPattern(exactModel, getRoutePattern(groupRoute)))
       )
     ));
   });

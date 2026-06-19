@@ -73,8 +73,8 @@ describe('ProgramLogs status label', () => {
     const tds = targetRow!.findAll((node) => node.type === 'td');
     const statusCell = tds[5];
     expect(collectText(statusCell).trim()).toBe('成功');
-    const statusBadge = statusCell.find((node) => node.type === 'span');
-    expect(String(statusBadge.props.className || '')).toContain('badge-success');
+    const statusBadge = statusCell.find((node) => node.props['data-tone'] === 'success');
+    expect(statusBadge).toBeTruthy();
   });
 
   it('treats parenthesized counts with failed=0 as success', async () => {
@@ -109,7 +109,7 @@ describe('ProgramLogs status label', () => {
     const tds = targetRow!.findAll((node) => node.type === 'td');
     const statusCell = tds[5];
     expect(collectText(statusCell).trim()).toBe('成功');
-    const statusBadge = statusCell.find((node) => node.type === 'span');
-    expect(String(statusBadge.props.className || '')).toContain('badge-success');
+    const statusBadge = statusCell.find((node) => node.props['data-tone'] === 'success');
+    expect(statusBadge).toBeTruthy();
   });
 });

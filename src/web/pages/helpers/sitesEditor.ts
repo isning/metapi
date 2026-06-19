@@ -21,6 +21,7 @@ export type SiteForm = {
   apiEndpoints: SiteApiEndpointField[];
   customHeaders: SiteCustomHeaderField[];
   globalWeight: string;
+  compatibilityPolicy: unknown;
 };
 
 export type SiteEditorState =
@@ -42,6 +43,7 @@ export type SiteSavePayload = {
   }>;
   customHeaders: string;
   globalWeight: number;
+  compatibilityPolicy?: unknown;
   postRefreshProbeEnabled?: boolean;
   postRefreshProbeModel?: string;
   postRefreshProbeScope?: 'single' | 'all';
@@ -80,6 +82,7 @@ export function emptySiteForm(): SiteForm {
     apiEndpoints: [emptySiteApiEndpoint()],
     customHeaders: [emptySiteCustomHeader()],
     globalWeight: '1',
+    compatibilityPolicy: null,
   };
 }
 
@@ -143,6 +146,7 @@ export function siteFormFromSite(site: Partial<Omit<SiteForm, 'apiEndpoints' | '
   }> | null;
   customHeaders?: string | null;
   globalWeight?: number | string | null;
+  compatibilityPolicy?: unknown;
 }): SiteForm {
   const globalWeightRaw = Number(site.globalWeight);
   const globalWeight = Number.isFinite(globalWeightRaw) && globalWeightRaw > 0 ? String(globalWeightRaw) : '1';
@@ -156,6 +160,7 @@ export function siteFormFromSite(site: Partial<Omit<SiteForm, 'apiEndpoints' | '
     apiEndpoints: parseApiEndpointsForEditor(site.apiEndpoints),
     customHeaders: parseCustomHeadersForEditor(site.customHeaders),
     globalWeight,
+    compatibilityPolicy: site.compatibilityPolicy ?? null,
   };
 }
 

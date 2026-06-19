@@ -27,6 +27,25 @@ import {
   type Range,
   type SummaryItem,
 } from './downstream-keys/shared.js';
+import type { RouteSummaryRow } from './token-routes/types.js';
+import { Button } from '../components/ui/button/index.js';
+import { ButtonGroup } from '../components/ui/button-group/index.js';
+import { LoaderCircle } from 'lucide-react';
+import { Skeleton } from '../components/ui/skeleton/index.js';
+import ToneBadge from '../components/ToneBadge.js';
+import InfoNote from '../components/InfoNote.js';
+import SearchInput from '../components/SearchInput.js';
+import { Card } from '../components/ui/card/index.js';
+import EmptyStateBlock from '../components/EmptyStateBlock.js';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table/index.js';
+import { Checkbox } from '../components/ui/checkbox/index.js';
+import { Input } from '../components/ui/input/index.js';
+import {
+  getRouteRequestedModelPattern,
+  isExactModelPattern,
+  isRouteBackendReferences,
+  resolveRouteTitle,
+} from './token-routes/utils.js';
 
 type Status = 'all' | 'enabled' | 'disabled';
 
@@ -56,12 +75,7 @@ type ManagedItem = SummaryItem & {
   key?: string;
 };
 
-type RouteSelectorItem = {
-  id: number;
-  modelPattern: string;
-  displayName?: string | null;
-  enabled: boolean;
-};
+type RouteSelectorItem = Pick<RouteSummaryRow, 'id' | 'match' | 'backend' | 'presentation' | 'enabled'>;
 
 type DeleteConfirmState =
   | null
@@ -91,20 +105,12 @@ function toDateTimeLocal(isoString: string | null | undefined): string {
   return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
 }
 
-function isExactModelPattern(modelPattern: string): boolean {
-  const normalized = modelPattern.trim();
-  if (!normalized) return false;
-  if (normalized.toLowerCase().startsWith('re:')) return false;
-  return !/[\*\?]/.test(normalized);
-}
-
 function routeTitle(route: RouteSelectorItem): string {
-  const displayName = (route.displayName || '').trim();
-  return displayName || route.modelPattern;
+  return resolveRouteTitle(route);
 }
 
 function isGroupRouteOption(route: RouteSelectorItem): boolean {
-  return !isExactModelPattern(route.modelPattern);
+  return isRouteBackendReferences(route.backend) || !isExactModelPattern(getRouteRequestedModelPattern(route));
 }
 
 function uniqStrings(values: string[]): string[] {
@@ -170,8 +176,8 @@ function buildDefaultRouteSelections(routeOptions: RouteSelectorItem[]): Default
   return {
     selectedModels: uniqStrings(
       routeOptions
-        .filter((item) => isExactModelPattern(item.modelPattern))
-        .map((item) => item.modelPattern),
+        .filter((item) => !isRouteBackendReferences(item.backend) && isExactModelPattern(getRouteRequestedModelPattern(item)))
+        .map((item) => getRouteRequestedModelPattern(item)),
     ).sort((a, b) => a.localeCompare(b)),
     selectedGroupRouteIds: uniqIds(
       routeOptions
@@ -267,28 +273,12 @@ function DownstreamKeyCopyIconButton({ fullKey }: { fullKey: string | undefined 
   const release = () => setPressed(false);
 
   return (
-    <button
+    <Button
       type="button"
+      variant="ghost"
+      size="icon"
       title="复制完整密钥"
       aria-label="复制完整密钥"
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: 2,
-        lineHeight: 0,
-        flexShrink: 0,
-        border: 'none',
-        background: 'transparent',
-        color: disabled
-          ? 'var(--color-text-muted)'
-          : pressed
-            ? 'var(--color-text-primary)'
-            : 'var(--color-text-muted)',
-        cursor: disabled ? 'not-allowed' : 'pointer',
-        opacity: disabled ? 0.4 : 1,
-        borderRadius: 'var(--radius-sm)',
-      }}
       disabled={disabled}
       onMouseDown={() => {
         if (!disabled) setPressed(true);
@@ -318,7 +308,7 @@ function DownstreamKeyCopyIconButton({ fullKey }: { fullKey: string | undefined 
       <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} aria-hidden>
         <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
       </svg>
-    </button>
+    </Button>
   );
 }
 
@@ -393,9 +383,9 @@ function SummaryMetric({
   value: string;
 }) {
   return (
-    <div style={{ minWidth: 112, display: 'grid', gap: 4 }}>
-      <span style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>{label}</span>
-      <strong style={{ fontSize: 14, color: 'var(--color-text-primary)', fontWeight: 700 }}>{value}</strong>
+    <div className="grid min-w-28 gap-1">
+      <span className="text-xs text-muted-foreground">{label}</span>
+      <strong className="text-sm font-bold text-foreground">{value}</strong>
     </div>
   );
 }
@@ -412,44 +402,20 @@ function InlineToggle({
     { value: 'all', label: '匹配全部标签' },
   ];
 
-  const base: React.CSSProperties = {
-    padding: '6px 12px',
-    fontSize: 12,
-    fontWeight: 600,
-    border: '1px solid var(--color-border)',
-    background: 'var(--color-bg-card)',
-    color: 'var(--color-text-muted)',
-    cursor: 'pointer',
-  };
-
-  const active: React.CSSProperties = {
-    background: 'var(--color-primary)',
-    color: '#fff',
-    borderColor: 'var(--color-primary)',
-  };
-
   return (
-    <div style={{ display: 'inline-flex', borderRadius: 'var(--radius-sm)', overflow: 'hidden' }}>
-      {options.map((option, index) => (
-        <button
+    <ButtonGroup>
+      {options.map((option) => (
+        <Button
           key={option.value}
           type="button"
+          variant={value === option.value ? 'secondary' : 'outline'}
+          size="sm"
           onClick={() => onChange(option.value)}
-          style={{
-            ...base,
-            ...(value === option.value ? active : {}),
-            ...(index === 0
-              ? { borderRight: 'none' }
-              : { borderTopRightRadius: 'var(--radius-sm)', borderBottomRightRadius: 'var(--radius-sm)' }),
-            ...(index === 0
-              ? { borderTopLeftRadius: 'var(--radius-sm)', borderBottomLeftRadius: 'var(--radius-sm)' }
-              : {}),
-          }}
         >
           {option.label}
-        </button>
+        </Button>
       ))}
-    </div>
+    </ButtonGroup>
   );
 }
 
@@ -501,12 +467,7 @@ export default function DownstreamKeys() {
       ]);
       setSummaryItems(Array.isArray(summaryRes?.items) ? summaryRes.items : []);
       setRawItems(Array.isArray(rawRes?.items) ? rawRes.items : []);
-      setRouteOptions((Array.isArray(routesRes) ? routesRes : []).map((row: any) => ({
-        id: Number(row.id),
-        modelPattern: String(row.modelPattern || ''),
-        displayName: row.displayName,
-        enabled: !!row.enabled,
-      })));
+      setRouteOptions((Array.isArray(routesRes) ? routesRes : []) as RouteSelectorItem[]);
     } catch (err: any) {
       toast.error(err?.message || '加载下游密钥列表失败');
     } finally {
@@ -679,7 +640,10 @@ export default function DownstreamKeys() {
       item.groupName || '',
       ...(item.tags || []),
       ...(item.supportedModels || []),
-      ...((item.allowedRouteIds || []).map((id) => routeTitle(routeMap.get(id) || { id, modelPattern: String(id), enabled: true } as RouteSelectorItem))),
+      ...((item.allowedRouteIds || []).map((id) => {
+        const route = routeMap.get(id);
+        return route ? routeTitle(route) : String(id);
+      })),
     ].join(' ');
     return searchMatcher(haystack);
   }).sort((a, b) => {
@@ -971,41 +935,37 @@ export default function DownstreamKeys() {
   };
 
   const filterControls = (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-      <div className="toolbar" style={{ marginBottom: 0, alignItems: 'center' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: '1 1 420px', minWidth: 280, flexWrap: 'wrap' }}>
-          <div className="toolbar-search" style={{ maxWidth: 'unset', flex: '1 1 320px' }}>
-            <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
-            <input
-              value={searchInput}
-              onChange={(e) => setSearchInput(e.target.value)}
-              placeholder="搜索名称、备注、模型、主分组或标签"
-            />
-          </div>
+    <div className="flex flex-col gap-2.5">
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex min-w-[280px] flex-[1_1_420px] flex-wrap items-center gap-2">
+          <SearchInput
+            className="flex-[1_1_320px]"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            placeholder="搜索名称、备注、模型、主分组或标签"
+          />
           <InlineToggle value={tagMatchMode} onChange={setTagMatchMode} />
         </div>
-        <div style={{ minWidth: 170 }}>
+        <div className="min-w-[170px]">
           <ModernSelect value={status} onChange={(value) => setStatus((value as Status) || 'all')} options={statusOptions} />
         </div>
-        <div style={{ minWidth: 170 }}>
+        <div className="min-w-[170px]">
           <ModernSelect value={groupFilter} onChange={(value) => setGroupFilter(String(value || '__all__'))} options={groupFilterOptions} />
         </div>
-        <button className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={() => { setSearchInput(''); setStatus('all'); setGroupFilter('__all__'); setSelectedTags([]); setTagMatchMode('any'); }}>
+        <Button type="button" variant="outline" onClick={() => { setSearchInput(''); setStatus('all'); setGroupFilter('__all__'); setSelectedTags([]); setTagMatchMode('any'); }}>
           重置筛选
-        </button>
+        </Button>
       </div>
 
       {(activeTagFilters.length > 0 || tagSuggestions.length > 0) ? (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+        <div className="flex flex-wrap gap-1.5">
           {activeTagFilters.map((tag) => {
             const fromPinnedTags = selectedTags.some((item) => item.toLowerCase() === tag.toLowerCase());
             return (
-              <button
+              <Button type="button" variant="outline"
                 key={tag}
-                className="btn btn-ghost"
-                style={{ ...tagChipStyle('accent'), cursor: 'pointer', opacity: fromPinnedTags ? 1 : 0.82 }}
+               
+               
                 onClick={() => {
                   if (fromPinnedTags) {
                     setSelectedTags((current) => current.filter((item) => item.toLowerCase() !== tag.toLowerCase()));
@@ -1020,13 +980,13 @@ export default function DownstreamKeys() {
                 }}
               >
                 {tag} ×
-              </button>
+              </Button>
             );
           })}
           {tagSuggestions.filter((tag) => !activeTagFilters.some((current) => current.toLowerCase() === tag.toLowerCase())).slice(0, 8).map((tag) => (
-            <button key={tag} className="btn btn-ghost" style={tagChipStyle()} onClick={() => addTagFilter(tag)}>
+            <Button type="button" variant="outline" key={tag} onClick={() => addTagFilter(tag)}>
               {tag}
-            </button>
+            </Button>
           ))}
         </div>
       ) : null}
@@ -1036,30 +996,30 @@ export default function DownstreamKeys() {
   const empty = !loading && visibleItems.length === 0;
 
   return (
-    <div className="animate-fade-in" style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <div className="page-header" style={{ marginBottom: 0 }}>
+    <div className="flex animate-fade-in flex-col gap-3 p-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h2 className="page-title">下游密钥</h2>
-          <div className="page-subtitle">统一管理分发给下游项目的密钥、主分组、标签、额度、模型白名单、群组范围与历史用量。</div>
+          <h2 className="text-xl font-semibold">下游密钥</h2>
+          <div className="mt-1 text-sm text-muted-foreground">统一管理分发给下游项目的密钥、主分组、标签、额度、模型白名单、群组范围与历史用量。</div>
         </div>
-        <div className="page-actions">
+        <div className="flex flex-wrap items-center gap-2">
           <RangeToggle range={range} onChange={setRange} />
-          <button className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={() => void load()} disabled={loading}>
-            {loading ? <><span className="spinner spinner-sm" /> 刷新中...</> : '刷新'}
-          </button>
-          <button className="btn btn-primary" onClick={openCreate}>+ 新增下游密钥</button>
+          <Button type="button" variant="outline" onClick={() => void load()} disabled={loading}>
+            {loading ? <><LoaderCircle className="size-4 animate-spin" /> 刷新中...</> : '刷新'}
+          </Button>
+          <Button type="button" onClick={openCreate}>+ 新增下游密钥</Button>
         </div>
       </div>
 
-      <div className="card" style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+      <Card className="flex flex-col gap-3 p-3.5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>范围概览</div>
-            <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 4 }}>
+            <div className="text-sm font-semibold text-foreground">范围概览</div>
+            <div className="mt-1 text-xs text-muted-foreground">
               基于当前筛选范围查看密钥规模、使用量和成本概况。
             </div>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <div className="flex flex-wrap items-center gap-2">
             <span className="kpi-chip">当前范围</span>
             <span className="kpi-chip kpi-chip-success">
               {range === '24h' ? '最近 24 小时' : range === '7d' ? '最近 7 天' : '全部历史'}
@@ -1069,7 +1029,7 @@ export default function DownstreamKeys() {
             </span>
           </div>
         </div>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px 18px', alignItems: 'center' }}>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
           <SummaryMetric label="可见密钥" value={String(visibleItems.length)} />
           <SummaryMetric label="启用中" value={String(totals.enabled)} />
           <SummaryMetric label="已选中" value={String(selectedIds.length)} />
@@ -1077,41 +1037,40 @@ export default function DownstreamKeys() {
           <SummaryMetric label="累计成本" value={formatMoney(totals.cost)} />
           <SummaryMetric label="筛选状态" value={statusOptions.find((item) => item.value === status)?.label || '全部状态'} />
         </div>
-      </div>
+      </Card>
 
       {selectedIds.length > 0 ? (
         <ResponsiveBatchActionBar
           isMobile={isMobile}
           info={`已选 ${selectedIds.length} 个密钥`}
-          infoStyle={{ color: 'var(--color-text-primary)' }}
         >
-          <button className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={openBatchMetadata} disabled={batchActionLoading}>{isMobile ? '归类/标签' : '批量归类/标签'}</button>
-          <button className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={() => void batchRun('批量启用', selectedIds)} disabled={batchActionLoading}>{isMobile ? '启用' : '批量启用'}</button>
-          <button className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={() => void batchRun('批量禁用', selectedIds)} disabled={batchActionLoading}>{isMobile ? '禁用' : '批量禁用'}</button>
-          <button className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={() => void batchRun('批量清零用量', selectedIds)} disabled={batchActionLoading}>{isMobile ? '清零' : '批量清零用量'}</button>
-          <button className="btn btn-link btn-link-danger" onClick={() => setDeleteConfirm({ mode: 'batch', ids: [...selectedIds] })} disabled={batchActionLoading}>{isMobile ? '删除' : '批量删除'}</button>
+          <Button type="button" variant="outline" onClick={openBatchMetadata} disabled={batchActionLoading}>{isMobile ? '归类/标签' : '批量归类/标签'}</Button>
+          <Button type="button" variant="outline" onClick={() => void batchRun('批量启用', selectedIds)} disabled={batchActionLoading}>{isMobile ? '启用' : '批量启用'}</Button>
+          <Button type="button" variant="outline" onClick={() => void batchRun('批量禁用', selectedIds)} disabled={batchActionLoading}>{isMobile ? '禁用' : '批量禁用'}</Button>
+          <Button type="button" variant="outline" onClick={() => void batchRun('批量清零用量', selectedIds)} disabled={batchActionLoading}>{isMobile ? '清零' : '批量清零用量'}</Button>
+          <Button type="button" variant="destructive" size="sm" onClick={() => setDeleteConfirm({ mode: 'batch', ids: [...selectedIds] })} disabled={batchActionLoading}>{isMobile ? '删除' : '批量删除'}</Button>
         </ResponsiveBatchActionBar>
       ) : null}
 
-      <div className="card" style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+      <Card className="flex flex-col gap-3 p-3">
+        <div className="flex flex-col gap-2.5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>筛选与列表</div>
-              <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 4 }}>按名称、状态、主分组和标签快速定位下游密钥。</div>
+              <div className="text-sm font-semibold text-foreground">筛选与列表</div>
+              <div className="mt-1 text-xs text-muted-foreground">按名称、状态、主分组和标签快速定位下游密钥。</div>
             </div>
             {isMobile && (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
-                <button className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={() => setShowFilters(true)}>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button type="button" variant="outline" onClick={() => setShowFilters(true)}>
                   筛选
-                </button>
-                <button
-                  className="btn btn-ghost"
-                  style={{ border: '1px solid var(--color-border)' }}
+                </Button>
+                <Button type="button" variant="outline"
+                 
+                 
                   onClick={() => toggleSelectAllVisible(!allVisibleSelected)}
                 >
                   {allVisibleSelected ? '取消全选' : '全选可见'}
-                </button>
+                </Button>
               </div>
             )}
           </div>
@@ -1126,14 +1085,11 @@ export default function DownstreamKeys() {
         </div>
 
         {loading ? (
-          <div className="skeleton" style={{ width: '100%', height: 280, borderRadius: 'var(--radius-sm)' }} />
+          <Skeleton className="h-[280px] w-full" />
         ) : empty ? (
-          <div className="empty-state" style={{ padding: 40 }}>
-            <div className="empty-state-title">暂无下游密钥</div>
-            <div className="empty-state-desc">可以先新增一条密钥，或调整筛选条件查看已有数据。</div>
-          </div>
+          <EmptyStateBlock title="暂无下游密钥" description="可以先新增一条密钥，或调整筛选条件查看已有数据。" />
         ) : isMobile ? (
-          <div className="mobile-card-list">
+          <div className="grid gap-3">
             {visibleItems.map((row) => {
               const loadingToggle = !!rowLoading[`toggle-${row.id}`];
               const loadingReset = !!rowLoading[`reset-${row.id}`];
@@ -1144,31 +1100,30 @@ export default function DownstreamKeys() {
                   key={row.id}
                   title={row.name}
                   headerActions={(
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <div className="flex items-center gap-2">
                       <StatusBadge enabled={row.enabled} />
-                      <input
-                        type="checkbox"
+                      <Checkbox
+                       
                         aria-label={`选择 ${row.name}`}
                         checked={checked}
-                        onChange={(e) => toggleSelection(row.id, e.target.checked)}
-                      />
+                        onCheckedChange={(checked) => toggleSelection(row.id, checked === true)}          />
                     </div>
                   )}
                   footerActions={(
                     <>
-                      <button className="btn btn-link" onClick={() => { setSelectedId(row.id); setDrawerOpen(true); }}>查看</button>
-                      <button className="btn btn-link" onClick={() => openEdit(row)}>编辑</button>
-                      <button className="btn btn-link" onClick={() => void toggleEnabled(row)} disabled={loadingToggle}>{loadingToggle ? '处理中...' : (row.enabled ? '禁用' : '启用')}</button>
-                      <button className="btn btn-link" onClick={() => void resetUsage(row)} disabled={loadingReset}>{loadingReset ? '处理中...' : '清零用量'}</button>
-                      <button className="btn btn-link btn-link-danger" onClick={() => setDeleteConfirm({ mode: 'single', item: row })} disabled={loadingDelete}>{loadingDelete ? '处理中...' : '删除'}</button>
+                      <Button type="button" variant="ghost" size="sm" onClick={() => { setSelectedId(row.id); setDrawerOpen(true); }}>查看</Button>
+                      <Button type="button" variant="ghost" size="sm" onClick={() => openEdit(row)}>编辑</Button>
+                      <Button type="button" variant="ghost" size="sm" onClick={() => void toggleEnabled(row)} disabled={loadingToggle}>{loadingToggle ? '处理中...' : (row.enabled ? '禁用' : '启用')}</Button>
+                      <Button type="button" variant="ghost" size="sm" onClick={() => void resetUsage(row)} disabled={loadingReset}>{loadingReset ? '处理中...' : '清零用量'}</Button>
+                      <Button type="button" variant="destructive" size="sm" onClick={() => setDeleteConfirm({ mode: 'single', item: row })} disabled={loadingDelete}>{loadingDelete ? '处理中...' : '删除'}</Button>
                     </>
                   )}
                 >
                   <MobileField
                     label="密钥"
                     value={(
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--color-text-muted)' }}>{row.keyMasked}</span>
+                      <span className="inline-flex flex-wrap items-center gap-1.5">
+                        <span className="font-mono text-xs text-muted-foreground">{row.keyMasked}</span>
                         <DownstreamKeyCopyIconButton fullKey={row.key} />
                       </span>
                     )}
@@ -1188,85 +1143,85 @@ export default function DownstreamKeys() {
             })}
           </div>
         ) : (
-          <div style={{ overflowX: 'auto' }}>
-            <table className="data-table" style={{ width: '100%' }}>
-              <thead>
-                <tr>
-                  <th style={{ width: 42 }}>
-                    <input type="checkbox" checked={allVisibleSelected} onChange={(e) => toggleSelectAllVisible(e.target.checked)} />
-                  </th>
-                  <th>密钥信息</th>
-                  <th>授权范围</th>
-                  <th style={{ textAlign: 'right' }}>额度</th>
-                  <th style={{ textAlign: 'right' }}>用量</th>
-                  <th>最近使用</th>
-                  <th style={{ textAlign: 'right' }}>操作</th>
-                </tr>
-              </thead>
-              <tbody>
+          <div className="overflow-x-auto">
+            <Table className="w-full text-sm">
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-[42px]">
+                    <Checkbox checked={allVisibleSelected} onCheckedChange={(checked) => toggleSelectAllVisible(checked === true)} />
+                  </TableHead>
+                  <TableHead>密钥信息</TableHead>
+                  <TableHead>授权范围</TableHead>
+                  <TableHead className="text-right">额度</TableHead>
+                  <TableHead className="text-right">用量</TableHead>
+                  <TableHead>最近使用</TableHead>
+                  <TableHead className="text-right">操作</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {visibleItems.map((row) => {
                   const loadingToggle = !!rowLoading[`toggle-${row.id}`];
                   const loadingReset = !!rowLoading[`reset-${row.id}`];
                   const loadingDelete = !!rowLoading[`delete-${row.id}`];
                   const checked = selectedIds.includes(row.id);
                   return (
-                    <tr key={row.id} className={`row-selectable ${checked ? 'row-selected' : ''}`.trim()} onClick={() => { setSelectedId(row.id); setDrawerOpen(true); }}>
-                      <td onClick={(e) => e.stopPropagation()}>
-                        <input type="checkbox" checked={checked} onChange={(e) => toggleSelection(row.id, e.target.checked)} />
-                      </td>
-                      <td>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                          <strong style={{ color: 'var(--color-text-primary)' }}>{row.name}</strong>
+                    <TableRow key={row.id} className={`row-selectable ${checked ? 'row-selected' : ''}`.trim()} onClick={() => { setSelectedId(row.id); setDrawerOpen(true); }}>
+                      <TableCell onClick={(e) => e.stopPropagation()}>
+                        <Checkbox checked={checked} onCheckedChange={(checked) => toggleSelection(row.id, checked === true)} />
+                      </TableCell>
+                      <TableCell>
+                        <div className="mb-1.5 flex items-center gap-2">
+                          <strong className="text-foreground">{row.name}</strong>
                           <StatusBadge enabled={row.enabled} />
                         </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 4 }}>
-                          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--color-text-muted)' }}>{row.keyMasked}</span>
+                        <div className="mb-1 flex flex-wrap items-center gap-1.5">
+                          <span className="font-mono text-xs text-muted-foreground">{row.keyMasked}</span>
                           <DownstreamKeyCopyIconButton fullKey={row.key} />
                         </div>
-                        {row.description ? <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', maxWidth: 320 }}>{row.description}</div> : null}
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
-                          <span className={`badge ${row.groupName ? 'badge-info' : 'badge-muted'}`} style={{ fontSize: 11 }}>
+                        {row.description ? <div className="max-w-80 text-xs text-muted-foreground">{row.description}</div> : null}
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          <ToneBadge tone={row.groupName ? 'info' : 'muted'}>
                             {row.groupName ? `主分组 · ${row.groupName}` : '未分组'}
-                          </span>
+                          </ToneBadge>
                           <TagChips tags={row.tags || []} maxVisible={3} />
                         </div>
-                      </td>
-                      <td>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                          <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>模型：<span style={{ color: 'var(--color-text-primary)' }}>{summarizeModelLimit(row.supportedModels || [])}</span></div>
-                          <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>群组：<span style={{ color: 'var(--color-text-primary)' }}>{summarizeRouteLimit(row.allowedRouteIds || [], routeMap)}</span></div>
-                          <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>标签：<span style={{ color: 'var(--color-text-primary)' }}>{summarizeTags(row.tags || [])}</span></div>
-                          <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>倍率：<span style={{ color: 'var(--color-text-primary)' }}>{summarizeSiteWeightMultipliers(row.siteWeightMultipliers || {})}</span></div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-col gap-1.5">
+                          <div className="text-xs text-muted-foreground">模型：<span className="text-foreground">{summarizeModelLimit(row.supportedModels || [])}</span></div>
+                          <div className="text-xs text-muted-foreground">群组：<span className="text-foreground">{summarizeRouteLimit(row.allowedRouteIds || [], routeMap)}</span></div>
+                          <div className="text-xs text-muted-foreground">标签：<span className="text-foreground">{summarizeTags(row.tags || [])}</span></div>
+                          <div className="text-xs text-muted-foreground">倍率：<span className="text-foreground">{summarizeSiteWeightMultipliers(row.siteWeightMultipliers || {})}</span></div>
                         </div>
-                      </td>
-                      <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                        <div style={{ color: 'var(--color-text-primary)', fontWeight: 700 }}>{row.maxRequests == null ? '不限' : row.maxRequests.toLocaleString()}</div>
-                        <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 4 }}>{row.maxCost == null ? '成本不限' : `成本 ${formatMoney(row.maxCost)}`}</div>
-                        <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 4 }}>{row.expiresAt ? `到期 ${formatIso(row.expiresAt)}` : '永久有效'}</div>
-                      </td>
-                      <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                        <div style={{ color: 'var(--color-text-primary)', fontWeight: 700 }}>{formatCompactTokens(row.rangeUsage?.totalTokens || 0)}</div>
-                        <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 4 }}>{(row.rangeUsage?.totalRequests || 0).toLocaleString()} 请求</div>
-                        <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 4 }}>{row.rangeUsage?.successRate == null ? '--' : `成功率 ${row.rangeUsage.successRate}%`}</div>
-                      </td>
-                      <td style={{ color: 'var(--color-text-muted)' }}>{formatIso(row.lastUsedAt)}</td>
-                      <td onClick={(e) => e.stopPropagation()}>
-                        <div className="accounts-row-actions" style={{ justifyContent: 'flex-end' }}>
-                          <button className="btn btn-link" onClick={() => { setSelectedId(row.id); setDrawerOpen(true); }}>查看</button>
-                          <button className="btn btn-link" onClick={() => openEdit(row)}>编辑</button>
-                          <button className="btn btn-link" onClick={() => void toggleEnabled(row)} disabled={loadingToggle}>{loadingToggle ? '处理中...' : (row.enabled ? '禁用' : '启用')}</button>
-                          <button className="btn btn-link" onClick={() => void resetUsage(row)} disabled={loadingReset}>{loadingReset ? '处理中...' : '清零用量'}</button>
-                          <button className="btn btn-link btn-link-danger" onClick={() => setDeleteConfirm({ mode: 'single', item: row })} disabled={loadingDelete}>{loadingDelete ? '处理中...' : '删除'}</button>
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        <div className="font-bold text-foreground">{row.maxRequests == null ? '不限' : row.maxRequests.toLocaleString()}</div>
+                        <div className="mt-1 text-xs text-muted-foreground">{row.maxCost == null ? '成本不限' : `成本 ${formatMoney(row.maxCost)}`}</div>
+                        <div className="mt-1 text-xs text-muted-foreground">{row.expiresAt ? `到期 ${formatIso(row.expiresAt)}` : '永久有效'}</div>
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        <div className="font-bold text-foreground">{formatCompactTokens(row.rangeUsage?.totalTokens || 0)}</div>
+                        <div className="mt-1 text-xs text-muted-foreground">{(row.rangeUsage?.totalRequests || 0).toLocaleString()} 请求</div>
+                        <div className="mt-1 text-xs text-muted-foreground">{row.rangeUsage?.successRate == null ? '--' : `成功率 ${row.rangeUsage.successRate}%`}</div>
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">{formatIso(row.lastUsedAt)}</TableCell>
+                      <TableCell onClick={(e) => e.stopPropagation()}>
+                        <div className="flex flex-wrap justify-end gap-2">
+                          <Button type="button" variant="ghost" size="sm" onClick={() => { setSelectedId(row.id); setDrawerOpen(true); }}>查看</Button>
+                          <Button type="button" variant="ghost" size="sm" onClick={() => openEdit(row)}>编辑</Button>
+                          <Button type="button" variant="ghost" size="sm" onClick={() => void toggleEnabled(row)} disabled={loadingToggle}>{loadingToggle ? '处理中...' : (row.enabled ? '禁用' : '启用')}</Button>
+                          <Button type="button" variant="ghost" size="sm" onClick={() => void resetUsage(row)} disabled={loadingReset}>{loadingReset ? '处理中...' : '清零用量'}</Button>
+                          <Button type="button" variant="destructive" size="sm" onClick={() => setDeleteConfirm({ mode: 'single', item: row })} disabled={loadingDelete}>{loadingDelete ? '处理中...' : '删除'}</Button>
                         </div>
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   );
                 })}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
         )}
-      </div>
+      </Card>
 
       <DownstreamKeyEditorModal
         open={editorOpen}
@@ -1292,19 +1247,19 @@ export default function DownstreamKeys() {
         bodyStyle={{ display: 'flex', flexDirection: 'column', gap: 12 }}
         footer={(
           <>
-            <button className="btn btn-ghost" onClick={() => { setBatchMetadataOpen(false); resetBatchMetadataForm(); }} disabled={batchActionLoading}>取消</button>
-            <button className="btn btn-primary" onClick={() => void runBatchMetadata()} disabled={batchActionLoading}>
-              {batchActionLoading ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 保存中...</> : '应用到所选密钥'}
-            </button>
+            <Button type="button" variant="outline" onClick={() => { setBatchMetadataOpen(false); resetBatchMetadataForm(); }} disabled={batchActionLoading}>取消</Button>
+            <Button type="button" onClick={() => void runBatchMetadata()} disabled={batchActionLoading}>
+              {batchActionLoading ? <><LoaderCircle className="size-4 animate-spin" /> 保存中...</> : '应用到所选密钥'}
+            </Button>
           </>
         )}
       >
-        <div className="info-tip" style={{ marginBottom: 0 }}>
+        <InfoNote>
           本次会对已选中的 {selectedIds.length} 个密钥批量设置主分组，并追加标签。不会改动模型白名单、群组范围、额度和倍率。
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>主分组操作</div>
+        </InfoNote>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="flex flex-col gap-2">
+            <div className="text-xs text-muted-foreground">主分组操作</div>
             <ModernSelect
               value={batchMetadataForm.groupOperation}
               onChange={(value) => setBatchMetadataForm((prev) => ({ ...prev, groupOperation: String(value) as BatchMetadataForm['groupOperation'] }))}
@@ -1314,17 +1269,16 @@ export default function DownstreamKeys() {
                 { value: 'clear', label: '清空主分组' },
               ]}
             />
-            <input
+            <Input
               value={batchMetadataForm.groupName}
               onChange={(e) => setBatchMetadataForm((prev) => ({ ...prev, groupName: e.target.value }))}
               disabled={batchMetadataForm.groupOperation !== 'set'}
               placeholder="例如：VIP / 内部项目"
               list="downstream-group-suggestions"
-              style={{ width: '100%', padding: '10px 12px', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', background: 'var(--color-bg)', color: 'var(--color-text-primary)' }}
             />
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>标签操作</div>
+          <div className="flex flex-col gap-2">
+            <div className="text-xs text-muted-foreground">标签操作</div>
             <ModernSelect
               value={batchMetadataForm.tagOperation}
               onChange={(value) => setBatchMetadataForm((prev) => ({ ...prev, tagOperation: String(value) as BatchMetadataForm['tagOperation'] }))}
@@ -1333,7 +1287,7 @@ export default function DownstreamKeys() {
                 { value: 'append', label: '追加标签' },
               ]}
             />
-            <div style={{ opacity: batchMetadataForm.tagOperation === 'append' ? 1 : 0.6, pointerEvents: batchMetadataForm.tagOperation === 'append' ? 'auto' : 'none' }}>
+            <div className={batchMetadataForm.tagOperation === 'append' ? '' : 'pointer-events-none opacity-60'}>
               <TagInput
                 tags={batchMetadataForm.tags}
                 onChange={(tags) => setBatchMetadataForm((prev) => ({ ...prev, tags }))}

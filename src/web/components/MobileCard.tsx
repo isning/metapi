@@ -1,4 +1,6 @@
 import React from 'react';
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from './ui/card/index.js';
+import { cn } from '../lib/utils.js';
 
 type MobileCardProps = {
   title: React.ReactNode;
@@ -30,28 +32,26 @@ export function MobileCard({
   children,
 }: MobileCardProps) {
   const resolvedHeaderActions = headerActions ?? actions;
-  const cardClassName = ['mobile-card', compact ? 'is-compact' : '', className].filter(Boolean).join(' ');
-  const cardBodyClassName = ['mobile-card-body', bodyClassName].filter(Boolean).join(' ');
   return (
-    <div className={cardClassName}>
-      <div className="mobile-card-header">
-        <div className="mobile-card-title-block">
-          <div className="mobile-card-title">{title}</div>
-          {subtitle ? <div className="mobile-card-subtitle">{subtitle}</div> : null}
+    <Card data-mobile-list-item="true" className={cn(compact ? 'p-0' : undefined, className)}>
+      <CardHeader className={cn('flex-row items-start justify-between gap-3', compact && 'p-2')}>
+        <div className="min-w-0 flex-1">
+          <CardTitle className="break-words">{title}</CardTitle>
+          {subtitle ? <CardDescription className="mt-1 break-words">{subtitle}</CardDescription> : null}
         </div>
-        {resolvedHeaderActions ? <div className="mobile-card-header-actions">{resolvedHeaderActions}</div> : null}
-      </div>
-      <div className={cardBodyClassName}>{children}</div>
-      {footerActions ? <div className="mobile-card-footer-actions">{footerActions}</div> : null}
-    </div>
+        {resolvedHeaderActions ? <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">{resolvedHeaderActions}</div> : null}
+      </CardHeader>
+      <CardContent className={cn('grid gap-2', compact && 'p-2 pt-0', bodyClassName)}>{children}</CardContent>
+      {footerActions ? <CardFooter className={cn('flex-wrap justify-end', compact && 'p-2')}>{footerActions}</CardFooter> : null}
+    </Card>
   );
 }
 
 export function MobileField({ label, value, stacked = false }: MobileFieldProps) {
   return (
-    <div className={`mobile-field${stacked ? ' is-stacked' : ''}`}>
-      <div className="mobile-field-label">{label}</div>
-      <div className="mobile-field-value">{value}</div>
+    <div className={cn('grid gap-1 text-sm', !stacked && 'grid-cols-[minmax(5rem,auto)_1fr] items-start gap-x-3')}>
+      <div className="text-xs font-medium text-muted-foreground">{label}</div>
+      <div className={cn('min-w-0 break-words text-foreground', !stacked && 'text-right')}>{value}</div>
     </div>
   );
 }

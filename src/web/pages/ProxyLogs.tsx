@@ -30,9 +30,42 @@ import { MobileCard, MobileField } from "../components/MobileCard.js";
 import ResponsiveFilterPanel from "../components/ResponsiveFilterPanel.js";
 import { useIsMobile } from "../components/useIsMobile.js";
 import { formatDateTimeLocal } from "./helpers/checkinLogTime.js";
-import ModernSelect from "../components/ModernSelect.js";
 import { parseProxyLogPathMeta } from "./helpers/proxyLogPathMeta.js";
 import { tr } from "../i18n.js";
+import { Button } from '../components/ui/button/index.js';
+import { ButtonGroup } from '../components/ui/button-group/index.js';
+import { Skeleton } from '../components/ui/skeleton/index.js';
+import ToneBadge from '../components/ToneBadge.js';
+import InfoNote from '../components/InfoNote.js';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '../components/ui/card/index.js';
+import SearchInput from '../components/SearchInput.js';
+import EmptyStateBlock from '../components/EmptyStateBlock.js';
+import { Checkbox } from '../components/ui/checkbox/index.js';
+import { Input } from '../components/ui/input/index.js';
+import { Label } from '../components/ui/label/index.js';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '../components/ui/select/index.js';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '../components/ui/table/index.js';
+import { Alert, AlertDescription } from '../components/ui/alert/index.js';
+import { ChevronLeft, ChevronRight, Filter } from 'lucide-react';
 
 type ProxyLogRenderItem = ProxyLogListItem & {
   billingDetails?: ProxyLogBillingDetails;
@@ -84,6 +117,8 @@ const PAGE_SIZES = [20, 50, 100];
 const DEFAULT_PAGE_SIZE = 50;
 const TRACE_TABLE_LIMIT = 20;
 const DEBUG_TRACE_PAGE_SIZE = 5;
+const ALL_CLIENTS_SELECT_VALUE = "__all_clients__";
+const ALL_SITES_SELECT_VALUE = "__all_sites__";
 const PROXY_LOGS_DEBUG_TRACE_PANEL_STORAGE_KEY =
   "metapi.proxyLogs.debugTracePanelExpanded";
 const PROXY_LOG_CLIENT_FAMILY_LABELS: Record<string, string> = {
@@ -111,102 +146,6 @@ const DEFAULT_PROXY_DEBUG_SETTINGS: ProxyDebugSettingsState = {
   proxyDebugMaxBodyBytes: 262144,
 };
 const DEBUG_REFRESH_INTERVAL_MS = 2000;
-const formInputStyle: React.CSSProperties = {
-  width: "100%",
-  padding: "10px 14px",
-  border: "1px solid var(--color-border)",
-  borderRadius: "var(--radius-sm)",
-  fontSize: 13,
-  outline: "none",
-  background: "var(--color-bg)",
-  color: "var(--color-text-primary)",
-};
-const formSectionStyle: React.CSSProperties = {
-  display: "flex",
-  flexDirection: "column",
-  gap: 12,
-  padding: 14,
-  border: "1px solid var(--color-border-light)",
-  borderRadius: "var(--radius-md)",
-  background: "var(--color-bg-card)",
-};
-const formSectionLabelStyle: React.CSSProperties = {
-  fontSize: 12,
-  fontWeight: 600,
-  color: "var(--color-text-secondary)",
-  letterSpacing: "0.02em",
-};
-const debugCheckboxRowStyle: React.CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  gap: 8,
-  color: "var(--color-text-primary)",
-};
-const compactSummaryMetricStyle: React.CSSProperties = {
-  display: "grid",
-  gap: 4,
-  minWidth: 112,
-};
-const debugCodeBlockStyle: React.CSSProperties = {
-  whiteSpace: "pre-wrap",
-  wordBreak: "break-word",
-  margin: 0,
-  padding: 12,
-  borderRadius: "var(--radius-sm)",
-  border: "1px solid var(--color-border-light)",
-  background: "var(--color-bg)",
-  fontFamily: "var(--font-mono)",
-  fontSize: 12,
-  lineHeight: 1.5,
-  overflowX: "auto",
-};
-const detailInfoGridStyle: React.CSSProperties = {
-  display: "grid",
-  gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-  gap: 12,
-};
-const detailInfoItemStyle: React.CSSProperties = {
-  display: "grid",
-  gap: 4,
-  minWidth: 0,
-};
-const detailInfoLabelStyle: React.CSSProperties = {
-  fontSize: 12,
-  color: "var(--color-text-muted)",
-};
-const detailInfoValueStyle: React.CSSProperties = {
-  fontSize: 13,
-  color: "var(--color-text-primary)",
-  fontWeight: 600,
-  minWidth: 0,
-  wordBreak: "break-word",
-};
-const detailSectionTitleStyle: React.CSSProperties = {
-  fontSize: 13,
-  fontWeight: 600,
-  color: "var(--color-text-primary)",
-};
-const detailExpandableCardStyle: React.CSSProperties = {
-  border: "1px solid var(--color-border-light)",
-  borderRadius: "var(--radius-sm)",
-  background: "var(--color-bg-card)",
-  overflow: "hidden",
-};
-const detailExpandableSummaryStyle: React.CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "space-between",
-  gap: 10,
-  width: "100%",
-  padding: "10px 12px",
-  fontSize: 13,
-  fontWeight: 600,
-  color: "var(--color-text-primary)",
-  borderBottom: "1px solid var(--color-border-light)",
-  background:
-    "color-mix(in srgb, var(--color-bg-card) 86%, var(--color-bg) 14%)",
-};
-
 type DetailDisclosureCardProps = {
   title: string;
   defaultOpen?: boolean;
@@ -221,30 +160,42 @@ function DetailDisclosureCard({
   const [open, setOpen] = useState(defaultOpen);
 
   return (
-    <div style={detailExpandableCardStyle}>
-      <button
+    <Card>
+      <CardHeader className="flex-row items-center justify-between gap-3 space-y-0 p-3">
+        <CardTitle>{title}</CardTitle>
+        <Button
         type="button"
+          variant="ghost"
+          size="sm"
         aria-label={`${open ? "收起" : "展开"}${title}`}
-        style={{
-          ...detailExpandableSummaryStyle,
-          border: "none",
-          cursor: "pointer",
-        }}
         onClick={() => setOpen((current) => !current)}
       >
-        <span>{title}</span>
-        <span
-          style={{
-            fontSize: 12,
-            color: "var(--color-text-muted)",
-            flexShrink: 0,
-          }}
-        >
           {open ? "收起" : "展开"}
-        </span>
-      </button>
-      {open ? children : null}
+        </Button>
+      </CardHeader>
+      {open ? <CardContent className="pt-0">{children}</CardContent> : null}
+    </Card>
+  );
+}
+
+function DetailField({ label, children }: { label: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <div className="grid min-w-0 gap-1">
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className="min-w-0 break-words text-sm font-medium">{children}</div>
     </div>
+  );
+}
+
+function DetailGrid({ children }: { children: React.ReactNode }) {
+  return <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">{children}</div>;
+}
+
+function CodeBlock({ children }: { children: React.ReactNode }) {
+  return (
+    <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-md border p-3 font-mono text-xs leading-relaxed">
+      {children}
+    </pre>
   );
 }
 
@@ -273,38 +224,18 @@ function formatLatency(ms: number) {
   return `${ms}ms`;
 }
 
-function latencyColor(ms: number) {
-  if (ms >= 3000) return "var(--color-danger)";
-  if (ms >= 2000)
-    return "color-mix(in srgb, var(--color-warning) 30%, var(--color-danger))";
-  if (ms >= 1500)
-    return "color-mix(in srgb, var(--color-warning) 60%, var(--color-danger))";
-  if (ms >= 1000) return "var(--color-warning)";
-  if (ms > 500)
-    return "color-mix(in srgb, var(--color-success) 60%, var(--color-warning))";
-  return "var(--color-success)";
+function latencyTone(ms: number | null | undefined) {
+  if (!Number.isFinite(ms) || typeof ms !== "number") return "-muted";
+  if (ms >= 3000) return "-error";
+  if (ms >= 1000) return "-warning";
+  return "-success";
 }
 
-function latencyBgColor(ms: number) {
-  if (ms >= 3000)
-    return "color-mix(in srgb, var(--color-danger) 12%, transparent)";
-  if (ms >= 1000)
-    return "color-mix(in srgb, var(--color-warning) 12%, transparent)";
-  return "color-mix(in srgb, var(--color-success) 12%, transparent)";
-}
-
-function firstByteColor(ms: number) {
-  if (ms >= 3000) return "var(--color-danger)";
-  if (ms >= 1000) return "var(--color-warning)";
-  return "var(--color-primary)";
-}
-
-function firstByteBgColor(ms: number) {
-  if (ms >= 3000)
-    return "color-mix(in srgb, var(--color-danger) 12%, transparent)";
-  if (ms >= 1000)
-    return "color-mix(in srgb, var(--color-warning) 12%, transparent)";
-  return "color-mix(in srgb, var(--color-primary) 12%, transparent)";
+function firstByteTone(ms: number | null | undefined) {
+  if (!Number.isFinite(ms) || typeof ms !== "number") return "-muted";
+  if (ms >= 3000) return "-error";
+  if (ms >= 1000) return "-warning";
+  return "-info";
 }
 
 function formatStreamModeLabel(isStream: boolean | null | undefined) {
@@ -535,35 +466,24 @@ function renderProxyLogClientCell(
 ) {
   const display = resolveProxyLogClientDisplay(log, options);
   if (!display.primary) {
-    return <span style={{ color: "var(--color-text-muted)" }}>-</span>;
+    return <span className="text-muted-foreground">-</span>;
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 6,
-          flexWrap: "wrap",
-        }}
-      >
+    <div className="grid gap-1">
+      <div className="flex flex-wrap items-center gap-1.5">
         <span>{display.primary}</span>
         {display.heuristic ? (
-          <span
-            className="badge"
-            style={{
-              fontSize: 10,
-              color: "var(--color-text-muted)",
-              borderColor: "var(--color-border)",
-            }}
+          <ToneBadge tone=""
+           
+           
           >
             推测
-          </span>
+          </ToneBadge>
         ) : null}
       </div>
       {display.secondary ? (
-        <span style={{ fontSize: 11, color: "var(--color-text-muted)" }}>
+        <span className="text-xs text-muted-foreground">
           {display.secondary}
         </span>
       ) : null}
@@ -713,19 +633,9 @@ function CompactSummaryMetric({
   value: string;
 }) {
   return (
-    <div style={compactSummaryMetricStyle}>
-      <span style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
-        {label}
-      </span>
-      <strong
-        style={{
-          fontSize: 14,
-          color: "var(--color-text-primary)",
-          fontWeight: 700,
-        }}
-      >
-        {value}
-      </strong>
+    <div className="grid min-w-28 gap-1">
+      <span className="text-xs text-muted-foreground">{label}</span>
+      <strong className="text-sm font-semibold">{value}</strong>
     </div>
   );
 }
@@ -1404,12 +1314,12 @@ export default function ProxyLogs() {
   function renderTraceStatusBadge(trace: ProxyDebugTraceListItem) {
     const failed = trace.finalStatus === "failed";
     return (
-      <span
-        className={`badge ${failed ? "badge-error" : "badge-success"}`}
-        style={{ fontSize: 11 }}
+      <ToneBadge tone={failed ? "error" : "success"}
+       
+       
       >
         {failed ? "失败" : "成功"}
-      </span>
+      </ToneBadge>
     );
   }
 
@@ -1445,45 +1355,39 @@ export default function ProxyLogs() {
         key={attempt.id}
         title={`#${attempt.attemptIndex + 1} · ${attempt.endpoint} · ${attempt.responseStatus ?? "-"} · ${attempt.requestPath}`}
       >
-        <div style={{ padding: 12, display: "grid", gap: 12 }}>
-          <div style={detailInfoGridStyle}>
-            <div style={detailInfoItemStyle}>
-              <div style={detailInfoLabelStyle}>目标地址</div>
-              <div
-                style={{
-                  ...detailInfoValueStyle,
-                  fontFamily: "var(--font-mono)",
-                  fontSize: 12,
-                }}
-              >
+        <div className="grid gap-3">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <div className="grid min-w-0 gap-1">
+              <div className="text-xs text-muted-foreground">目标地址</div>
+              <div className="min-w-0 break-words font-mono text-xs font-medium">
                 {attempt.targetUrl || "-"}
               </div>
             </div>
-            <div style={detailInfoItemStyle}>
-              <div style={detailInfoLabelStyle}>执行器</div>
-              <div style={detailInfoValueStyle}>
+            <div className="grid min-w-0 gap-1">
+              <div className="text-xs text-muted-foreground">执行器</div>
+              <div className="min-w-0 break-words text-sm font-medium">
                 {attempt.runtimeExecutor || "-"}
               </div>
             </div>
-            <div style={detailInfoItemStyle}>
-              <div style={detailInfoLabelStyle}>恢复逻辑</div>
-              <div style={detailInfoValueStyle}>
+            <div className="grid min-w-0 gap-1">
+              <div className="text-xs text-muted-foreground">恢复逻辑</div>
+              <div className="min-w-0 break-words text-sm font-medium">
                 {attempt.recoverApplied ? "已应用" : "未应用"}
               </div>
             </div>
-            <div style={detailInfoItemStyle}>
-              <div style={detailInfoLabelStyle}>降级决策</div>
-              <div style={detailInfoValueStyle}>
+            <div className="grid min-w-0 gap-1">
+              <div className="text-xs text-muted-foreground">降级决策</div>
+              <div className="min-w-0 break-words text-sm font-medium">
                 {attempt.downgradeDecision ? "已触发" : "未触发"}
               </div>
             </div>
           </div>
           {attempt.downgradeReason ? (
-            <div style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
+            <div className="text-xs text-muted-foreground">
               降级原因：{attempt.downgradeReason}
             </div>
           ) : null}
-          <pre style={debugCodeBlockStyle}>{serializedAttempt}</pre>
+          <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-md border p-3 font-mono text-xs leading-relaxed">{serializedAttempt}</pre>
         </div>
       </DetailDisclosureCard>
     );
@@ -1499,15 +1403,12 @@ export default function ProxyLogs() {
 
     return (
       <DetailDisclosureCard title={title} defaultOpen={options?.defaultOpen}>
-        <div style={{ padding: 12, display: "grid", gap: 10 }}>
-          <div style={{ display: "flex", justifyContent: "flex-end" }}>
-            <button
+        <div className="grid gap-2.5 p-3">
+          <div className="flex justify-end">
+            <Button variant="outline"
               type="button"
-              className="btn btn-ghost"
-              style={{
-                border: "1px solid var(--color-border)",
-                padding: "6px 12px",
-              }}
+             
+             
               aria-label={`复制${copyLabel}`}
               onClick={(event) => {
                 event.preventDefault();
@@ -1516,14 +1417,14 @@ export default function ProxyLogs() {
               }}
             >
               复制当前保存内容
-            </button>
+            </Button>
           </div>
           {normalized.note ? (
-            <div style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
+            <div className="text-xs text-muted-foreground">
               {normalized.note}
             </div>
           ) : null}
-          <pre style={debugCodeBlockStyle}>{normalized.displayText}</pre>
+          <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-md border p-3 font-mono text-xs leading-relaxed">{normalized.displayText}</pre>
         </div>
       </DetailDisclosureCard>
     );
@@ -1532,7 +1433,7 @@ export default function ProxyLogs() {
   function renderDebugTraceDetailContent() {
     if (!selectedDebugTraceId) {
       return (
-        <div style={{ color: "var(--color-text-muted)", fontSize: 13 }}>
+        <div className="text-sm text-muted-foreground">
           暂无追踪详情。请选择一条最近追踪后再查看。
         </div>
       );
@@ -1540,7 +1441,7 @@ export default function ProxyLogs() {
 
     if (selectedDebugTraceDetail?.loading) {
       return (
-        <div style={{ color: "var(--color-text-muted)", fontSize: 13 }}>
+        <div className="text-sm text-muted-foreground">
           加载追踪详情中...
         </div>
       );
@@ -1548,7 +1449,7 @@ export default function ProxyLogs() {
 
     if (selectedDebugTraceDetail?.error) {
       return (
-        <div style={{ color: "var(--color-danger)", fontSize: 13 }}>
+        <div className="text-sm text-destructive">
           {selectedDebugTraceDetail.error}
         </div>
       );
@@ -1556,7 +1457,7 @@ export default function ProxyLogs() {
 
     if (!selectedDebugTraceDetail?.data) {
       return (
-        <div style={{ color: "var(--color-text-muted)", fontSize: 13 }}>
+        <div className="text-sm text-muted-foreground">
           暂无追踪详情。
         </div>
       );
@@ -1565,38 +1466,42 @@ export default function ProxyLogs() {
     const traceDetail = selectedDebugTraceDetail.data.trace;
 
     return (
-      <div style={{ display: "grid", gap: 12 }}>
-        <div style={{ ...formSectionStyle, gap: 10 }}>
-          <div style={detailSectionTitleStyle}>基础信息</div>
-          <div style={detailInfoGridStyle}>
-            <div style={detailInfoItemStyle}>
-              <div style={detailInfoLabelStyle}>下游路径</div>
-              <div style={detailInfoValueStyle}>
+      <div className="grid gap-3">
+        <Card>
+          <CardHeader className="p-3 pb-2">
+            <CardTitle>基础信息</CardTitle>
+          </CardHeader>
+          <CardContent className="p-3 pt-0">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <div className="grid min-w-0 gap-1">
+              <div className="text-xs text-muted-foreground">下游路径</div>
+              <div className="min-w-0 break-words text-sm font-medium">
                 {traceDetail.downstreamPath || "-"}
               </div>
             </div>
-            <div style={detailInfoItemStyle}>
-              <div style={detailInfoLabelStyle}>Session</div>
-              <div style={detailInfoValueStyle}>
+            <div className="grid min-w-0 gap-1">
+              <div className="text-xs text-muted-foreground">Session</div>
+              <div className="min-w-0 break-words text-sm font-medium">
                 {traceDetail.sessionId || "-"}
               </div>
             </div>
-            <div style={detailInfoItemStyle}>
-              <div style={detailInfoLabelStyle}>模型</div>
-              <div style={detailInfoValueStyle}>
+            <div className="grid min-w-0 gap-1">
+              <div className="text-xs text-muted-foreground">模型</div>
+              <div className="min-w-0 break-words text-sm font-medium">
                 {traceDetail.requestedModel || "-"}
               </div>
             </div>
-            <div style={detailInfoItemStyle}>
-              <div style={detailInfoLabelStyle}>最终上游路径</div>
-              <div style={detailInfoValueStyle}>
+            <div className="grid min-w-0 gap-1">
+              <div className="text-xs text-muted-foreground">最终上游路径</div>
+              <div className="min-w-0 break-words text-sm font-medium">
                 {traceDetail.finalUpstreamPath || "-"}
               </div>
             </div>
           </div>
-        </div>
+          </CardContent>
+        </Card>
 
-        <div style={{ display: "grid", gap: 10 }}>
+        <div className="grid gap-2.5">
           {renderStoredDebugDetails(
             "候选 endpoint",
             traceDetail.endpointCandidatesJson,
@@ -1630,9 +1535,9 @@ export default function ProxyLogs() {
         <DetailDisclosureCard
           title={`Attempt 记录 (${selectedDebugTraceDetail.data.attempts.length})`}
         >
-          <div style={{ padding: 12, display: "grid", gap: 8 }}>
+          <div className="grid gap-2 p-3">
             {selectedDebugTraceDetail.data.attempts.length === 0 ? (
-              <div style={{ color: "var(--color-text-muted)", fontSize: 13 }}>
+              <div className="text-sm text-muted-foreground">
                 暂无 attempt 记录
               </div>
             ) : (
@@ -1645,8 +1550,8 @@ export default function ProxyLogs() {
   }
 
   const filterControls = (
-    <>
-      <div className="pill-tabs">
+    <div className="flex flex-wrap items-end gap-2">
+      <ButtonGroup>
         {[
           {
             key: "all" as ProxyLogStatusFilter,
@@ -1664,48 +1569,59 @@ export default function ProxyLogs() {
             count: summary.failedCount,
           },
         ].map((tab) => (
-          <button
+          <Button
+            type="button"
             key={tab.key}
-            className={`pill-tab ${statusFilter === tab.key ? "active" : ""}`}
+            variant={statusFilter === tab.key ? "secondary" : "outline"}
             onClick={() => {
               setStatusFilter(tab.key);
               setPage(1);
             }}
           >
             {tab.label}{" "}
-            <span style={{ fontVariantNumeric: "tabular-nums", opacity: 0.7 }}>
-              {tab.count}
-            </span>
-          </button>
+            <ToneBadge tone="-muted">{tab.count}</ToneBadge>
+          </Button>
         ))}
-      </div>
-      <div className="proxy-logs-filter-select">
-        <ModernSelect
-          size="sm"
-          value={clientFilter}
-          onChange={(nextValue) => {
-            setClientFilter(nextValue);
+      </ButtonGroup>
+      <div className="w-44">
+        <Select
+          value={clientFilter || ALL_CLIENTS_SELECT_VALUE}
+          onValueChange={(nextValue) => {
+            setClientFilter(nextValue === ALL_CLIENTS_SELECT_VALUE ? "" : nextValue);
             setPage(1);
           }}
-          options={resolvedClientOptions}
-          placeholder="全部客户端"
-        />
+        >
+          <SelectTrigger>
+            <SelectValue placeholder="全部客户端" />
+          </SelectTrigger>
+          <SelectContent>
+            {resolvedClientOptions.map((option) => (
+              <SelectItem key={option.value || ALL_CLIENTS_SELECT_VALUE} value={option.value || ALL_CLIENTS_SELECT_VALUE}>{option.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
-      <div className="proxy-logs-filter-select">
-        <ModernSelect
-          size="sm"
-          value={siteFilter ? String(siteFilter) : ""}
-          onChange={(nextValue) => {
-            setSiteFilter(nextValue ? Number(nextValue) : null);
+      <div className="w-44">
+        <Select
+          value={siteFilter ? String(siteFilter) : ALL_SITES_SELECT_VALUE}
+          onValueChange={(nextValue) => {
+            setSiteFilter(nextValue === ALL_SITES_SELECT_VALUE ? null : Number(nextValue));
             setPage(1);
           }}
-          options={siteOptions}
-          placeholder="全部站点"
-        />
+        >
+          <SelectTrigger>
+            <SelectValue placeholder="全部站点" />
+          </SelectTrigger>
+          <SelectContent>
+            {siteOptions.map((option) => (
+              <SelectItem key={option.value || ALL_SITES_SELECT_VALUE} value={option.value || ALL_SITES_SELECT_VALUE}>{option.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
-      <label className="proxy-logs-time-field">
+      <Label className="grid gap-1 text-xs text-muted-foreground">
         <span>开始</span>
-        <input
+        <Input
           type="datetime-local"
           value={fromInput}
           max={toInput || undefined}
@@ -1714,10 +1630,10 @@ export default function ProxyLogs() {
             setPage(1);
           }}
         />
-      </label>
-      <label className="proxy-logs-time-field">
+      </Label>
+      <Label className="grid gap-1 text-xs text-muted-foreground">
         <span>结束</span>
-        <input
+        <Input
           type="datetime-local"
           value={toInput}
           min={fromInput || undefined}
@@ -1726,34 +1642,19 @@ export default function ProxyLogs() {
             setPage(1);
           }}
         />
-      </label>
-      <div className="toolbar-search" style={{ maxWidth: 280 }}>
-        <svg
-          width="14"
-          height="14"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-          />
-        </svg>
-        <input
-          value={searchInput}
-          onChange={(e) => {
-            setSearchInput(e.target.value);
-            setPage(1);
-          }}
-          placeholder="搜索模型、下游 Key、主分组、标签..."
-        />
-      </div>
-      <button
+      </Label>
+      <SearchInput
+        className="w-72 max-w-full"
+        value={searchInput}
+        onChange={(e) => {
+          setSearchInput(e.target.value);
+          setPage(1);
+        }}
+        placeholder="搜索模型、下游 Key、主分组、标签..."
+      />
+      <Button variant="outline"
         type="button"
-        className="btn btn-ghost proxy-logs-filter-reset"
+       
         onClick={() => {
           setStatusFilter("all");
           setClientFilter("");
@@ -1765,158 +1666,85 @@ export default function ProxyLogs() {
         }}
       >
         清空筛选
-      </button>
-    </>
+      </Button>
+    </div>
   );
 
   const latestDebugTrace = debugTraces[0] || null;
   const debugSettingsFooter = (
-    <div
-      style={{
-        display: "flex",
-        gap: 8,
-        flexWrap: "wrap",
-        justifyContent: "flex-end",
-      }}
-    >
-      <button
+    <div className="flex flex-wrap justify-end gap-2">
+      <Button variant="outline"
         type="button"
-        className="btn btn-ghost"
+       
         onClick={() => setDebugDraftSettings(DEFAULT_PROXY_DEBUG_SETTINGS)}
       >
         重置为默认值
-      </button>
-      <button
+      </Button>
+      <Button
         type="button"
-        className="btn btn-primary"
+       
         onClick={() => void handleSaveDebugSettings()}
         disabled={debugPanelSaving}
       >
         {debugPanelSaving ? "保存中..." : "保存调试设置"}
-      </button>
+      </Button>
     </div>
   );
+  const renderDebugCheckbox = (
+    key: keyof Pick<
+      ProxyDebugSettingsState,
+      "proxyDebugTraceEnabled" | "proxyDebugCaptureHeaders" | "proxyDebugCaptureBodies" | "proxyDebugCaptureStreamChunks"
+    >,
+    label: string,
+    description: string,
+    testId: string,
+  ) => (
+    <div className="grid gap-1">
+      <Label className="flex items-center gap-2">
+        <Checkbox
+          checked={debugDraftSettings[key]}
+          data-debug-setting={testId}
+          onCheckedChange={(checked) =>
+            setDebugDraftSettings((current) => ({
+              ...current,
+              [key]: checked === true,
+            }))
+          }
+        />
+        {label}
+      </Label>
+      <div className="pl-6 text-xs text-muted-foreground">{description}</div>
+    </div>
+  );
+
   const debugSettingsForm = (
-    <div style={{ display: "grid", gap: 12 }}>
-      <div className="info-tip" style={{ marginBottom: 0 }}>
+    <div className="grid gap-3">
+      <InfoNote>
         只记录开启后的新请求。需要更精确定位时，再按
         Session、客户端或模型定向过滤。
-      </div>
+      </InfoNote>
 
-      <div style={formSectionStyle}>
-        <div style={formSectionLabelStyle}>记录内容</div>
-        <div style={{ display: "grid", gap: 10 }}>
-          <div style={{ display: "grid", gap: 4 }}>
-            <label style={debugCheckboxRowStyle}>
-              <input
-                type="checkbox"
-                checked={debugDraftSettings.proxyDebugTraceEnabled}
-                data-debug-setting="trace-enabled"
-                onChange={(e) =>
-                  setDebugDraftSettings((current) => ({
-                    ...current,
-                    proxyDebugTraceEnabled: !!e.target.checked,
-                  }))
-                }
-              />
-              开启调试追踪
-            </label>
-            <div
-              style={{
-                fontSize: 12,
-                color: "var(--color-text-muted)",
-                marginLeft: 24,
-              }}
-            >
-              后续新请求会写入调试追踪，不会回补旧请求。
-            </div>
-          </div>
-          <div style={{ display: "grid", gap: 4 }}>
-            <label style={debugCheckboxRowStyle}>
-              <input
-                type="checkbox"
-                checked={debugDraftSettings.proxyDebugCaptureHeaders}
-                data-debug-setting="capture-headers"
-                onChange={(e) =>
-                  setDebugDraftSettings((current) => ({
-                    ...current,
-                    proxyDebugCaptureHeaders: !!e.target.checked,
-                  }))
-                }
-              />
-              采集原始请求/响应头
-            </label>
-            <div
-              style={{
-                fontSize: 12,
-                color: "var(--color-text-muted)",
-                marginLeft: 24,
-              }}
-            >
-              保留下游原始头和上游响应头，方便直接对照。
-            </div>
-          </div>
-          <div style={{ display: "grid", gap: 4 }}>
-            <label style={debugCheckboxRowStyle}>
-              <input
-                type="checkbox"
-                checked={debugDraftSettings.proxyDebugCaptureBodies}
-                data-debug-setting="capture-bodies"
-                onChange={(e) =>
-                  setDebugDraftSettings((current) => ({
-                    ...current,
-                    proxyDebugCaptureBodies: !!e.target.checked,
-                  }))
-                }
-              />
-              采集请求体和响应体
-            </label>
-            <div
-              style={{
-                fontSize: 12,
-                color: "var(--color-text-muted)",
-                marginLeft: 24,
-              }}
-            >
-              默认不抓 body，只有显式开启后才记录。
-            </div>
-          </div>
-          <div style={{ display: "grid", gap: 4 }}>
-            <label style={debugCheckboxRowStyle}>
-              <input
-                type="checkbox"
-                checked={debugDraftSettings.proxyDebugCaptureStreamChunks}
-                data-debug-setting="capture-stream-chunks"
-                onChange={(e) =>
-                  setDebugDraftSettings((current) => ({
-                    ...current,
-                    proxyDebugCaptureStreamChunks: !!e.target.checked,
-                  }))
-                }
-              />
-              采集流式原始分片
-            </label>
-            <div
-              style={{
-                fontSize: 12,
-                color: "var(--color-text-muted)",
-                marginLeft: 24,
-              }}
-            >
-              适合定位 SSE / streaming 过程中的兼容问题。
-            </div>
-          </div>
-        </div>
-      </div>
+      <Card>
+        <CardHeader>
+          <CardTitle>记录内容</CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-3">
+          {renderDebugCheckbox("proxyDebugTraceEnabled", "开启调试追踪", "后续新请求会写入调试追踪，不会回补旧请求。", "trace-enabled")}
+          {renderDebugCheckbox("proxyDebugCaptureHeaders", "采集原始请求/响应头", "保留下游原始头和上游响应头，方便直接对照。", "capture-headers")}
+          {renderDebugCheckbox("proxyDebugCaptureBodies", "采集请求体和响应体", "默认不抓 body，只有显式开启后才记录。", "capture-bodies")}
+          {renderDebugCheckbox("proxyDebugCaptureStreamChunks", "采集流式原始分片", "适合定位 SSE / streaming 过程中的兼容问题。", "capture-stream-chunks")}
+        </CardContent>
+      </Card>
 
       <ResponsiveFormGrid columns={2}>
-        <div style={formSectionStyle}>
-          <div style={formSectionLabelStyle}>定向过滤</div>
-          <label style={{ display: "grid", gap: 6 }}>
-            <span style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
-              目标 Session ID
-            </span>
-            <input
+        <Card>
+          <CardHeader>
+            <CardTitle>定向过滤</CardTitle>
+          </CardHeader>
+          <CardContent className="grid gap-3">
+          <Label className="grid gap-2">
+            <span>目标 Session ID</span>
+            <Input
               type="text"
               value={debugDraftSettings.proxyDebugTargetSessionId}
               data-debug-setting="target-session-id"
@@ -1927,14 +1755,11 @@ export default function ProxyLogs() {
                 }))
               }
               placeholder="留空表示不过滤"
-              style={formInputStyle}
             />
-          </label>
-          <label style={{ display: "grid", gap: 6 }}>
-            <span style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
-              目标客户端
-            </span>
-            <input
+          </Label>
+          <Label className="grid gap-2">
+            <span>目标客户端</span>
+            <Input
               type="text"
               value={debugDraftSettings.proxyDebugTargetClientKind}
               data-debug-setting="target-client-kind"
@@ -1945,14 +1770,11 @@ export default function ProxyLogs() {
                 }))
               }
               placeholder="如 codex / claude_code"
-              style={formInputStyle}
             />
-          </label>
-          <label style={{ display: "grid", gap: 6 }}>
-            <span style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
-              目标模型
-            </span>
-            <input
+          </Label>
+          <Label className="grid gap-2">
+            <span>目标模型</span>
+            <Input
               type="text"
               value={debugDraftSettings.proxyDebugTargetModel}
               data-debug-setting="target-model"
@@ -1963,18 +1785,19 @@ export default function ProxyLogs() {
                 }))
               }
               placeholder="如 gpt-4o"
-              style={formInputStyle}
             />
-          </label>
-        </div>
+          </Label>
+          </CardContent>
+        </Card>
 
-        <div style={formSectionStyle}>
-          <div style={formSectionLabelStyle}>保留策略</div>
-          <label style={{ display: "grid", gap: 6 }}>
-            <span style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
-              保留时长（小时）
-            </span>
-            <input
+        <Card>
+          <CardHeader>
+            <CardTitle>保留策略</CardTitle>
+          </CardHeader>
+          <CardContent className="grid gap-3">
+          <Label className="grid gap-2">
+            <span>保留时长（小时）</span>
+            <Input
               type="number"
               min={1}
               value={debugDraftSettings.proxyDebugRetentionHours}
@@ -1985,14 +1808,11 @@ export default function ProxyLogs() {
                   proxyDebugRetentionHours: Number(e.target.value || 1),
                 }))
               }
-              style={formInputStyle}
             />
-          </label>
-          <label style={{ display: "grid", gap: 6 }}>
-            <span style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
-              抓取体积上限（字节）
-            </span>
-            <input
+          </Label>
+          <Label className="grid gap-2">
+            <span>抓取体积上限（字节）</span>
+            <Input
               type="number"
               min={1024}
               value={debugDraftSettings.proxyDebugMaxBodyBytes}
@@ -2003,10 +1823,10 @@ export default function ProxyLogs() {
                   proxyDebugMaxBodyBytes: Number(e.target.value || 1024),
                 }))
               }
-              style={formInputStyle}
             />
-          </label>
-        </div>
+          </Label>
+          </CardContent>
+        </Card>
       </ResponsiveFormGrid>
 
       {isMobile ? debugSettingsFooter : null}
@@ -2015,89 +1835,36 @@ export default function ProxyLogs() {
 
   return (
     <div className="animate-fade-in">
-      <div className="page-header" style={{ marginBottom: 16 }}>
+      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h2 className="page-title">{tr("使用日志")}</h2>
-          <div className="page-subtitle">
+          <h2 className="text-xl font-semibold">{tr("使用日志")}</h2>
+          <div className="mt-1 text-sm text-muted-foreground">
             按站点、客户端和时间筛选代理请求，并在需要时查看最近调试追踪。
           </div>
         </div>
-        <div
-          className="page-actions"
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            flexWrap: "wrap",
-            justifyContent: "flex-end",
-          }}
-        >
-          <span className="kpi-chip">{activeSiteLabel}</span>
-          <span className="kpi-chip kpi-chip-success">
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <ToneBadge tone="-muted">{activeSiteLabel}</ToneBadge>
+          <ToneBadge tone="-success">
             消耗总额 ${summary.totalCost.toFixed(4)}
-          </span>
-          <span className="kpi-chip kpi-chip-warning">
+          </ToneBadge>
+          <ToneBadge tone="-warning">
             {summary.totalTokensAll.toLocaleString()} tokens
-          </span>
-          <button
+          </ToneBadge>
+          <Button type="button" variant="outline"
             onClick={() => setAutoRefresh((v) => !v)}
-            className={`btn btn-ghost${autoRefresh ? " btn-ghost-active" : ""}`}
-            style={{
-              border: "1px solid var(--color-border)",
-              padding: "6px 14px",
-            }}
             title={autoRefresh ? "关闭自动刷新" : "开启自动刷新（每2秒）"}
           >
-            <svg
-              width="14"
-              height="14"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              style={{
-                animation: autoRefresh ? "spin 1s linear infinite" : "none",
-              }}
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-              />
-            </svg>
             {autoRefresh ? "自动刷新中" : "自动刷新"}
-          </button>
-          <button
+          </Button>
+          <Button type="button" variant="outline"
             onClick={() => {
               void load();
               void loadMeta(true);
             }}
             disabled={loading}
-            className="btn btn-ghost"
-            style={{
-              border: "1px solid var(--color-border)",
-              padding: "6px 14px",
-            }}
           >
-            <svg
-              width="14"
-              height="14"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              style={{
-                animation: loading ? "spin 1s linear infinite" : "none",
-              }}
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-              />
-            </svg>
             {loading ? "加载中..." : "刷新"}
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -2109,126 +1876,65 @@ export default function ProxyLogs() {
         mobileTitle={tr("筛选日志")}
         mobileContent={filterControls}
         desktopContent={
-          <div className="toolbar" style={{ marginBottom: 12 }}>
+          <div className="mb-3">
             {filterControls}
           </div>
         }
       />
 
-      <div
-        className="card"
-        style={{
-          marginBottom: 12,
-          padding: 14,
-          display: "flex",
-          flexDirection: "column",
-          gap: 12,
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "flex-start",
-            gap: 12,
-            flexWrap: "wrap",
-          }}
-        >
+      <Card className="mb-3">
+        <CardHeader className="flex-row items-start justify-between gap-3 space-y-0">
           <div>
-            <div
-              style={{
-                fontSize: 13,
-                fontWeight: 600,
-                color: "var(--color-text-primary)",
-              }}
-            >
-              代理调试追踪
-            </div>
-            <div
-              style={{
-                fontSize: 12,
-                color: "var(--color-text-muted)",
-                marginTop: 4,
-              }}
-            >
+            <CardTitle>代理调试追踪</CardTitle>
+            <CardDescription>
               未开启时不记录新追踪；追踪详情通过弹窗按需查看。
-            </div>
+            </CardDescription>
           </div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <button
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline"
               type="button"
-              className="btn btn-ghost"
-              style={{ border: "1px solid var(--color-border)" }}
+             
+             
               aria-expanded={debugTracePanelExpanded}
               data-debug-trace-panel-toggle
               onClick={() => setDebugTracePanelExpanded((current) => !current)}
             >
-              <svg
-                width="14"
-                height="14"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                style={{
-                  transform: debugTracePanelExpanded
-                    ? "rotate(180deg)"
-                    : "rotate(0deg)",
-                  transition: "transform 0.2s ease",
-                }}
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M19 9l-7 7-7-7"
-                />
-              </svg>
               {debugTracePanelExpanded ? "收起追踪面板" : "展开追踪面板"}
-            </button>
-            <button
+            </Button>
+            <Button variant="outline"
               type="button"
-              className={
-                debugSettings.proxyDebugTraceEnabled
-                  ? "btn btn-ghost btn-ghost-active"
-                  : "btn btn-ghost"
-              }
-              style={{ border: "1px solid var(--color-border)" }}
+             
+             
               onClick={() => void handleQuickToggleDebugTrace()}
               disabled={debugPanelSaving}
             >
               {debugSettings.proxyDebugTraceEnabled ? "关闭调试" : "开启调试"}
-            </button>
-            <button
+            </Button>
+            <Button variant="outline"
               type="button"
-              className="btn btn-ghost"
-              style={{ border: "1px solid var(--color-border)" }}
+             
+             
               onClick={() => {
                 setDebugDraftSettings(debugSettings);
                 setShowDebugSettingsModal(true);
               }}
             >
               调试设置
-            </button>
-            <button
+            </Button>
+            <Button variant="outline"
               type="button"
-              className="btn btn-ghost"
-              style={{ border: "1px solid var(--color-border)" }}
+             
+             
               onClick={() => void loadDebugState()}
               disabled={debugPanelLoading}
             >
               {debugPanelLoading ? "刷新中..." : "刷新追踪"}
-            </button>
+            </Button>
           </div>
-        </div>
+        </CardHeader>
 
-        <div
-          style={{
-            display: "flex",
-            flexWrap: "wrap",
-            gap: "12px 18px",
-            alignItems: "center",
-          }}
-        >
+        <CardContent className="grid gap-3">
+        <div className="flex flex-wrap items-center gap-4">
           <CompactSummaryMetric
             label="状态"
             value={debugSettings.proxyDebugTraceEnabled ? "已开启" : "未开启"}
@@ -2242,94 +1948,58 @@ export default function ProxyLogs() {
             value={
               latestDebugTrace
                 ? formatDateTimeLocal(latestDebugTrace.createdAt)
-                : "暂无"
+              : "暂无"
             }
           />
         </div>
 
-        <div style={{ display: "grid", gap: 4 }}>
-          <div style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
+        <div className="grid gap-1 text-xs text-muted-foreground">
+          <div>
             记录内容：{formatProxyDebugCaptureSummary(debugSettings)}
           </div>
-          <div style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
+          <div>
             过滤范围：{formatProxyDebugTargetSummary(debugSettings)}
           </div>
         </div>
-      </div>
+        </CardContent>
+      </Card>
 
       <div
-        className={`anim-collapse ${debugTracePanelExpanded ? "is-open" : ""}`.trim()}
+        className={`anim-collapse ${debugTracePanelExpanded ? "is-open mb-3" : ""}`.trim()}
         data-debug-trace-panel-body
-        style={{ marginBottom: debugTracePanelExpanded ? 12 : 0 }}
       >
         <div className="anim-collapse-inner">
-          <div className="card" style={{ padding: 12, overflowX: "auto" }}>
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                gap: 12,
-                flexWrap: "wrap",
-                marginBottom: 12,
-              }}
-            >
+          <Card>
+            <CardHeader className="flex-row items-center justify-between gap-3 space-y-0">
               <div>
-                <div
-                  style={{
-                    fontSize: 13,
-                    fontWeight: 600,
-                    color: "var(--color-text-primary)",
-                  }}
-                >
-                  最近调试追踪
-                </div>
-                <div
-                  style={{
-                    fontSize: 12,
-                    color: "var(--color-text-muted)",
-                    marginTop: 4,
-                  }}
-                >
+                <CardTitle>最近调试追踪</CardTitle>
+                <CardDescription>
                   最多抓最近 20 条，列表分页每页 5
                   条；打开详情后各段内容可按需展开和收起。
-                </div>
+                </CardDescription>
               </div>
-              <div style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
+              <div className="text-xs text-muted-foreground">
                 {debugSettings.proxyDebugTraceEnabled
                   ? "开启中，结果会自动刷新"
                   : "尚未开启"}
               </div>
-            </div>
+            </CardHeader>
+            <CardContent>
 
             {debugPanelLoading && debugTraces.length === 0 ? (
-              <div
-                style={{
-                  color: "var(--color-text-muted)",
-                  fontSize: 13,
-                  paddingBottom: 12,
-                }}
-              >
+              <div className="pb-3 text-sm text-muted-foreground">
                 加载调试追踪中...
               </div>
             ) : debugTraces.length === 0 ? (
-              <div
-                style={{
-                  padding: 14,
-                  borderRadius: "var(--radius-sm)",
-                  border: "1px solid var(--color-border-light)",
-                  background: "var(--color-bg)",
-                  color: "var(--color-text-muted)",
-                  fontSize: 12,
-                  lineHeight: 1.6,
-                }}
-              >
+              <Alert>
+                <AlertDescription>
                 {debugSettings.proxyDebugTraceEnabled
                   ? "暂时还没有新追踪。这里只显示开启后产生的新请求，等下一次代理请求进入就会出现在这里。"
                   : "调试追踪尚未开启。点击上方“开启调试”或“调试设置”后，新的代理请求会出现在这里。"}
-              </div>
+                </AlertDescription>
+              </Alert>
             ) : isMobile ? (
-              <div className="mobile-card-list">
+              <div className="grid gap-3">
                 {visibleDebugTraces.map((trace) => (
                   <MobileCard
                     key={trace.id}
@@ -2338,13 +2008,13 @@ export default function ProxyLogs() {
                     compact
                     headerActions={renderTraceStatusBadge(trace)}
                     footerActions={
-                      <button
+                      <Button variant="ghost" size="sm"
                         type="button"
-                        className="btn btn-link"
+                       
                         onClick={() => openDebugTraceDetailModal(trace.id)}
                       >
                         查看详情
-                      </button>
+                      </Button>
                     }
                   >
                     <MobileField
@@ -2367,146 +2037,93 @@ export default function ProxyLogs() {
                 ))}
               </div>
             ) : (
-              <table className="data-table" style={{ width: "100%" }}>
-                <thead>
-                  <tr>
-                    <th>时间</th>
-                    <th>Session</th>
-                    <th>模型</th>
-                    <th>下游路径</th>
-                    <th>上游路径</th>
-                    <th>客户端</th>
-                    <th>{tr("状态")}</th>
-                    <th style={{ textAlign: "right" }}>操作</th>
-                  </tr>
-                </thead>
-                <tbody>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>时间</TableHead>
+                    <TableHead>Session</TableHead>
+                    <TableHead>模型</TableHead>
+                    <TableHead>下游路径</TableHead>
+                    <TableHead>上游路径</TableHead>
+                    <TableHead>客户端</TableHead>
+                    <TableHead>{tr("状态")}</TableHead>
+                    <TableHead className="text-right">操作</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
                   {visibleDebugTraces.map((trace) => (
-                    <tr key={trace.id}>
-                      <td
-                        style={{
-                          fontSize: 12,
-                          whiteSpace: "nowrap",
-                          fontVariantNumeric: "tabular-nums",
-                          color: "var(--color-text-secondary)",
-                        }}
-                      >
+                    <TableRow key={trace.id}>
+                      <TableCell className="whitespace-nowrap font-mono text-xs text-muted-foreground">
                         {formatDateTimeLocal(trace.createdAt)}
-                      </td>
-                      <td style={{ fontSize: 12, fontWeight: 600 }}>
+                      </TableCell>
+                      <TableCell className="text-xs font-semibold">
                         {trace.sessionId || `trace-${trace.id}`}
-                      </td>
-                      <td style={{ fontSize: 12 }}>
+                      </TableCell>
+                      <TableCell className="text-xs">
                         {trace.requestedModel || "-"}
-                      </td>
-                      <td
-                        style={{
-                          fontSize: 12,
-                          color: "var(--color-text-secondary)",
-                        }}
-                      >
+                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground">
                         {trace.downstreamPath || "-"}
-                      </td>
-                      <td
-                        style={{
-                          fontSize: 12,
-                          color: "var(--color-text-secondary)",
-                        }}
-                      >
+                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground">
                         {trace.finalUpstreamPath || "-"}
-                      </td>
-                      <td
-                        style={{
-                          fontSize: 12,
-                          color: "var(--color-text-secondary)",
-                        }}
-                      >
+                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground">
                         {trace.clientKind || "-"}
-                      </td>
-                      <td>{renderTraceStatusBadge(trace)}</td>
-                      <td style={{ textAlign: "right" }}>
-                        <button
+                      </TableCell>
+                      <TableCell>{renderTraceStatusBadge(trace)}</TableCell>
+                      <TableCell className="text-right">
+                        <Button variant="ghost" size="sm"
                           type="button"
-                          className="btn btn-link"
+                         
                           onClick={() => openDebugTraceDetailModal(trace.id)}
                         >
                           查看详情
-                        </button>
-                      </td>
-                    </tr>
+                        </Button>
+                      </TableCell>
+                    </TableRow>
                   ))}
-                </tbody>
-              </table>
+                </TableBody>
+              </Table>
             )}
             {debugTraces.length > 0 ? (
-              <div className="pagination" style={{ marginTop: 12 }}>
-                <div
-                  style={{
-                    fontSize: 12,
-                    color: "var(--color-text-muted)",
-                    marginRight: "auto",
-                  }}
-                >
+              <div className="mt-3 flex flex-wrap items-center gap-3">
+                <div className="mr-auto text-xs text-muted-foreground">
                   显示第 {debugTraceDisplayedStart} - {debugTraceDisplayedEnd}{" "}
                   条，共 {debugTraces.length} 条
                 </div>
-                <button
-                  className="pagination-btn"
+                <ButtonGroup>
+                <Button type="button" variant="outline" size="icon"
                   aria-label="调试追踪上一页"
                   disabled={safeDebugTracePage <= 1}
                   onClick={() => setDebugTracePage((current) => current - 1)}
                 >
-                  <svg
-                    width="14"
-                    height="14"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M15 19l-7-7 7-7"
-                    />
-                  </svg>
-                </button>
+                  <ChevronLeft className="size-4" />
+                </Button>
                 {Array.from(
                   { length: debugTraceTotalPages },
                   (_, index) => index + 1,
                 ).map((num) => (
-                  <button
+                  <Button type="button" variant="outline"
                     key={`debug-trace-page-${num}`}
-                    className={`pagination-btn ${safeDebugTracePage === num ? "active" : ""}`}
+                   
                     onClick={() => setDebugTracePage(num)}
                   >
                     {num}
-                  </button>
+                  </Button>
                 ))}
-                <button
-                  className="pagination-btn"
+                <Button type="button" variant="outline" size="icon"
                   aria-label="调试追踪下一页"
                   disabled={safeDebugTracePage >= debugTraceTotalPages}
                   onClick={() => setDebugTracePage((current) => current + 1)}
                 >
-                  <svg
-                    width="14"
-                    height="14"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M9 5l7 7-7 7"
-                    />
-                  </svg>
-                </button>
+                  <ChevronRight className="size-4" />
+                </Button>
+                </ButtonGroup>
               </div>
             ) : null}
-          </div>
+            </CardContent>
+          </Card>
         </div>
       </div>
 
@@ -2521,7 +2138,7 @@ export default function ProxyLogs() {
           closeLabel="关闭调试设置"
           side="right"
         >
-          <div style={{ padding: 16, display: "grid", gap: 16 }}>
+          <div className="grid gap-4 p-4">
             {debugSettingsForm}
           </div>
         </MobileDrawer>
@@ -2550,7 +2167,7 @@ export default function ProxyLogs() {
           closeLabel="关闭追踪详情"
           side="right"
         >
-          <div style={{ padding: 16, display: "grid", gap: 16 }}>
+          <div className="grid gap-4 p-4">
             {renderDebugTraceDetailContent()}
           </div>
         </MobileDrawer>
@@ -2568,34 +2185,27 @@ export default function ProxyLogs() {
       )}
 
       {hasInvalidTimeRange && (
-        <div className="alert alert-error" style={{ marginBottom: 12 }}>
-          结束时间必须晚于开始时间
-        </div>
+        <Alert variant="destructive" className="mb-3">
+          <AlertDescription>结束时间必须晚于开始时间</AlertDescription>
+        </Alert>
       )}
 
-      <div className="card" style={{ overflowX: "auto" }}>
+      <Card>
         {loading ? (
-          <div
-            style={{
-              padding: 24,
-              display: "flex",
-              flexDirection: "column",
-              gap: 10,
-            }}
-          >
+          <CardContent className="grid gap-3 p-6">
             {[...Array(8)].map((_, i) => (
-              <div key={i} style={{ display: "flex", gap: 16 }}>
-                <div className="skeleton" style={{ width: 140, height: 16 }} />
-                <div className="skeleton" style={{ width: 200, height: 16 }} />
-                <div className="skeleton" style={{ width: 50, height: 16 }} />
-                <div className="skeleton" style={{ width: 50, height: 16 }} />
-                <div className="skeleton" style={{ width: 50, height: 16 }} />
-                <div className="skeleton" style={{ width: 70, height: 16 }} />
+              <div key={i} className="flex gap-4">
+                <Skeleton className="h-4 w-36" />
+                <Skeleton className="h-4 w-48" />
+                <Skeleton className="h-4 w-14" />
+                <Skeleton className="h-4 w-14" />
+                <Skeleton className="h-4 w-14" />
+                <Skeleton className="h-4 w-20" />
               </div>
             ))}
-          </div>
+          </CardContent>
         ) : isMobile ? (
-          <div className="mobile-card-list">
+          <div className="grid gap-3">
             {logs.map((log) => {
               const detailState = detailById[log.id];
               const detail = detailState?.data;
@@ -2627,21 +2237,21 @@ export default function ProxyLogs() {
                   subtitle={formatDateTimeLocal(log.createdAt)}
                   compact
                   headerActions={
-                    <span
-                      className={`badge ${log.status === "success" ? "badge-success" : "badge-error"}`}
-                      style={{ fontSize: 10 }}
+                    <ToneBadge tone={log.status === "success" ? "success" : "error"}
+                     
+                     
                     >
                       {log.status === "success" ? "成功" : "失败"}
-                    </span>
+                    </ToneBadge>
                   }
                   footerActions={
-                    <button
+                    <Button variant="ghost" size="sm"
                       type="button"
-                      className="btn btn-link"
+                     
                       onClick={() => handleToggleExpand(log.id)}
                     >
                       {isExpanded ? "收起详情" : "详情"}
-                    </button>
+                    </Button>
                   }
                 >
                   <div className="mobile-inline-meta-row">
@@ -2653,45 +2263,36 @@ export default function ProxyLogs() {
                       badgeStyle={{ fontSize: 11 }}
                     />
                     {clientDisplay.primary ? (
-                      <span
-                        className="badge badge-muted"
-                        style={{ fontSize: 10 }}
+                      <ToneBadge tone="-muted"
+                       
+                       
                       >
                         {clientDisplay.primary}
-                      </span>
+                      </ToneBadge>
                     ) : null}
                     {clientDisplay.secondary ? (
-                      <span
-                        className="badge badge-muted"
-                        style={{ fontSize: 10 }}
+                      <ToneBadge tone="-muted"
+                       
+                       
                       >
                         {clientDisplay.secondary}
-                      </span>
+                      </ToneBadge>
                     ) : null}
                     {streamModeLabel ? (
-                      <span
-                        className="badge badge-muted"
-                        style={{ fontSize: 10 }}
+                      <ToneBadge tone="-muted"
+                       
+                       
                       >
                         {streamModeLabel}
-                      </span>
+                      </ToneBadge>
                     ) : null}
                     {firstByteLabel ? (
-                      <span
-                        className="badge"
-                        style={{
-                          fontSize: 10,
-                          color: firstByteColor(
-                            detailLog.firstByteLatencyMs ?? 0,
-                          ),
-                          background: firstByteBgColor(
-                            detailLog.firstByteLatencyMs ?? 0,
-                          ),
-                          borderColor: "transparent",
-                        }}
+                      <ToneBadge tone=""
+                       
+                       
                       >
                         {firstByteLabel}
-                      </span>
+                      </ToneBadge>
                     ) : null}
                   </div>
                   <div className="mobile-summary-grid">
@@ -2723,7 +2324,7 @@ export default function ProxyLogs() {
                     </div>
                   </div>
                   {isExpanded ? (
-                    <div className="mobile-card-extra">
+                    <div className="mt-3 grid gap-2">
                       <MobileField
                         label="时间"
                         value={formatDateTimeLocal(log.createdAt)}
@@ -2762,17 +2363,17 @@ export default function ProxyLogs() {
                         }
                       />
                       {detailState?.loading && (
-                        <div style={{ color: "var(--color-text-muted)" }}>
+                        <div className="text-muted-foreground">
                           加载详情中...
                         </div>
                       )}
                       {detailState?.error && (
-                        <div style={{ color: "var(--color-danger)" }}>
+                        <div className="text-destructive">
                           {detailState.error}
                         </div>
                       )}
                       {billingDetailSummary && (
-                        <div style={{ color: "var(--color-text-muted)" }}>
+                        <div className="text-muted-foreground">
                           {billingDetailSummary}
                         </div>
                       )}
@@ -2783,18 +2384,12 @@ export default function ProxyLogs() {
                         })}
                       />
                       {downstreamKeySummary && (
-                        <div style={{ color: "var(--color-text-muted)" }}>
+                        <div className="text-muted-foreground">
                           {downstreamKeySummary}
                         </div>
                       )}
                       {billingProcessLines.length > 0 && (
-                        <div
-                          style={{
-                            display: "flex",
-                            flexDirection: "column",
-                            gap: 4,
-                          }}
-                        >
+                        <div className="flex flex-col gap-1">
                           {billingProcessLines.map((line, index) => (
                             <span key={`${log.id}-billing-mobile-${index}`}>
                               {line}
@@ -2803,7 +2398,7 @@ export default function ProxyLogs() {
                         </div>
                       )}
                       {detail && pathMeta.errorMessage.trim().length > 0 && (
-                        <div style={{ color: "var(--color-danger)" }}>
+                        <div className="text-destructive">
                           {pathMeta.errorMessage}
                         </div>
                       )}
@@ -2814,23 +2409,23 @@ export default function ProxyLogs() {
             })}
           </div>
         ) : (
-          <table className="data-table" style={{ width: "100%" }}>
-            <thead>
-              <tr>
-                <th style={{ width: 28 }} />
-                <th>时间</th>
-                <th>模型</th>
-                <th>站点</th>
-                <th>客户端</th>
-                <th>{tr("状态")}</th>
-                <th style={{ textAlign: "center" }}>用时</th>
-                <th style={{ textAlign: "right" }}>输入</th>
-                <th style={{ textAlign: "right" }}>输出</th>
-                <th style={{ textAlign: "right" }}>花费</th>
-                <th style={{ textAlign: "center" }}>重试</th>
-              </tr>
-            </thead>
-            <tbody>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="w-8" />
+                <TableHead>时间</TableHead>
+                <TableHead>模型</TableHead>
+                <TableHead>站点</TableHead>
+                <TableHead>客户端</TableHead>
+                <TableHead>{tr("状态")}</TableHead>
+                <TableHead className="text-center">用时</TableHead>
+                <TableHead className="text-right">输入</TableHead>
+                <TableHead className="text-right">输出</TableHead>
+                <TableHead className="text-right">花费</TableHead>
+                <TableHead className="text-center">重试</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {logs.map((log) => {
                 const detailState = detailById[log.id];
                 const detail = detailState?.data;
@@ -2857,254 +2452,110 @@ export default function ProxyLogs() {
 
                 return (
                   <React.Fragment key={log.id}>
-                    <tr
+                    <TableRow
                       data-testid={`proxy-log-row-${log.id}`}
                       onClick={() => handleToggleExpand(log.id)}
-                      style={{
-                        cursor: "pointer",
-                        background:
-                          expanded === log.id
-                            ? "var(--color-primary-light)"
-                            : undefined,
-                        transition: "background 0.15s",
-                      }}
+                      className="cursor-pointer"
+                      data-state={expanded === log.id ? "selected" : undefined}
                     >
-                      <td style={{ padding: "8px 4px 8px 12px" }}>
-                        <svg
-                          width="10"
-                          height="10"
-                          fill="none"
-                          viewBox="0 0 24 24"
-                          stroke="currentColor"
-                          style={{
-                            transform:
-                              expanded === log.id ? "rotate(90deg)" : "none",
-                            transition: "transform 0.2s",
-                            color: "var(--color-text-muted)",
-                          }}
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={2.5}
-                            d="M9 5l7 7-7 7"
-                          />
-                        </svg>
-                      </td>
-                      <td
-                        style={{
-                          fontSize: 12,
-                          whiteSpace: "nowrap",
-                          fontVariantNumeric: "tabular-nums",
-                          color: "var(--color-text-secondary)",
-                        }}
-                      >
+                      <TableCell className="text-muted-foreground">
+                        <ChevronRight className={`size-4 transition-transform ${expanded === log.id ? "rotate-90" : ""}`} />
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap font-mono text-xs text-muted-foreground">
                         {formatDateTimeLocal(log.createdAt)}
-                      </td>
-                      <td>
-                        <div
-                          style={{
-                            display: "flex",
-                            flexDirection: "column",
-                            gap: 4,
-                          }}
-                        >
-                          <ModelBadge
-                            model={log.modelRequested}
-                            style={{ alignSelf: "flex-start" }}
-                          />
+                      </TableCell>
+                      <TableCell>
+                        <div className="grid gap-1">
+                          <ModelBadge model={log.modelRequested} />
                           {downstreamKeySummary ? (
-                            <div
-                              style={{
-                                fontSize: 11,
-                                lineHeight: 1.45,
-                                color: "var(--color-text-muted)",
-                              }}
-                            >
+                            <div className="text-xs leading-relaxed text-muted-foreground">
                               {downstreamKeySummary}
                             </div>
                           ) : null}
                           {streamModeLabel || firstByteLabel ? (
-                            <div
-                              style={{
-                                display: "flex",
-                                gap: 6,
-                                flexWrap: "wrap",
-                              }}
-                            >
+                            <div className="flex flex-wrap gap-1.5">
                               {streamModeLabel ? (
-                                <span
-                                  className="badge badge-muted"
-                                  style={{ fontSize: 10 }}
+                                <ToneBadge tone="-muted"
+                                 
+                                 
                                 >
                                   {streamModeLabel}
-                                </span>
+                                </ToneBadge>
                               ) : null}
                               {firstByteLabel ? (
-                                <span
-                                  className="badge"
-                                  style={{
-                                    fontSize: 10,
-                                    color: firstByteColor(
-                                      detailLog.firstByteLatencyMs ?? 0,
-                                    ),
-                                    background: firstByteBgColor(
-                                      detailLog.firstByteLatencyMs ?? 0,
-                                    ),
-                                    borderColor: "transparent",
-                                  }}
+                                <ToneBadge tone=""
+                                 
+                                 
                                 >
                                   {firstByteLabel}
-                                </span>
+                                </ToneBadge>
                               ) : null}
                             </div>
                           ) : null}
                         </div>
-                      </td>
-                      <td
-                        style={{
-                          fontSize: 12,
-                          color: "var(--color-text-secondary)",
-                        }}
-                      >
+                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground">
                         <SiteBadgeLink
                           siteId={siteIdByName.get(
                             String(log.siteName || "").trim(),
                           )}
                           siteName={log.siteName}
-                          badgeStyle={{ fontSize: 11 }}
                         />
-                      </td>
-                      <td
-                        style={{
-                          fontSize: 12,
-                          color: "var(--color-text-secondary)",
-                        }}
-                      >
+                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground">
                         {renderProxyLogClientCell(detailLog)}
-                      </td>
-                      <td>
-                        <span
-                          className={`badge ${log.status === "success" ? "badge-success" : "badge-error"}`}
-                          style={{ fontSize: 11, fontWeight: 600 }}
+                      </TableCell>
+                      <TableCell>
+                        <ToneBadge tone={log.status === "success" ? "success" : "error"}
+                         
+                         
                         >
-                          <span
-                            style={{
-                              width: 6,
-                              height: 6,
-                              borderRadius: "50%",
-                              background:
-                                log.status === "success"
-                                  ? "var(--color-success)"
-                                  : "var(--color-danger)",
-                            }}
-                          />
                           {log.status === "success" ? "成功" : "失败"}
-                        </span>
-                      </td>
-                      <td style={{ textAlign: "center" }}>
-                        <span
-                          style={{
-                            fontVariantNumeric: "tabular-nums",
-                            fontSize: 12,
-                            fontWeight: 600,
-                            color: latencyColor(log.latencyMs),
-                            background: latencyBgColor(log.latencyMs),
-                            padding: "2px 8px",
-                            borderRadius: 4,
-                          }}
-                        >
+                        </ToneBadge>
+                      </TableCell>
+                      <TableCell className="text-center">
+                        <ToneBadge tone={latencyTone(log.latencyMs)}>
                           {formatLatency(log.latencyMs)}
-                        </span>
-                      </td>
-                      <td
-                        style={{
-                          textAlign: "right",
-                          fontSize: 12,
-                          fontVariantNumeric: "tabular-nums",
-                          color: "var(--color-text-secondary)",
-                        }}
-                      >
+                        </ToneBadge>
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-xs text-muted-foreground">
                         {formatProxyLogTokenValue(log.promptTokens)}
-                      </td>
-                      <td
-                        style={{
-                          textAlign: "right",
-                          fontSize: 12,
-                          fontVariantNumeric: "tabular-nums",
-                          color: "var(--color-text-secondary)",
-                        }}
-                      >
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-xs text-muted-foreground">
                         {formatProxyLogTokenValue(log.completionTokens)}
-                      </td>
-                      <td
-                        style={{
-                          textAlign: "right",
-                          fontSize: 12,
-                          fontVariantNumeric: "tabular-nums",
-                          fontWeight: 500,
-                        }}
-                      >
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-xs font-medium">
                         {typeof log.estimatedCost === "number"
                           ? `$${log.estimatedCost.toFixed(6)}`
                           : "-"}
-                      </td>
-                      <td style={{ textAlign: "center" }}>
+                      </TableCell>
+                      <TableCell className="text-center">
                         {log.retryCount > 0 ? (
-                          <span
-                            className="badge badge-warning"
-                            style={{ fontSize: 11 }}
+                          <ToneBadge tone="-warning"
+                           
+                           
                           >
                             {log.retryCount}
-                          </span>
+                          </ToneBadge>
                         ) : (
-                          <span
-                            style={{
-                              color: "var(--color-text-muted)",
-                              fontSize: 12,
-                            }}
-                          >
-                            0
-                          </span>
+                          <span className="text-xs text-muted-foreground">0</span>
                         )}
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                     {expanded === log.id && (
-                      <tr style={{ background: "var(--color-bg)" }}>
-                        <td colSpan={11} style={{ padding: 0 }}>
+                      <TableRow>
+                        <TableCell colSpan={11}>
                           <div className="anim-collapse is-open">
                             <div className="anim-collapse-inner">
-                              <div
-                                className="animate-fade-in"
-                                style={{
-                                  padding: "14px 20px 14px 40px",
-                                  borderTop:
-                                    "1px solid var(--color-border-light)",
-                                  borderBottom:
-                                    "1px solid var(--color-border-light)",
-                                  fontSize: 12,
-                                  lineHeight: 1.9,
-                                  color: "var(--color-text-secondary)",
-                                }}
-                              >
-                                <div style={{ display: "flex", gap: 6 }}>
-                                  <span
-                                    style={{
-                                      fontWeight: 600,
-                                      color: "var(--color-warning)",
-                                      flexShrink: 0,
-                                    }}
-                                  >
+                              <div className="animate-fade-in border-y px-5 py-3.5 pl-10 text-xs leading-loose text-muted-foreground">
+                                <div className="flex gap-1.5">
+                                  <span className="shrink-0 font-semibold text-amber-600">
                                     日志详情
                                   </span>
                                   <div>
                                     <div>
                                       请求模型:{" "}
-                                      <strong
-                                        style={{
-                                          color: "var(--color-text-primary)",
-                                        }}
-                                      >
+                                      <strong className="text-foreground">
                                         {detailLog.modelRequested}
                                       </strong>
                                       {detailLog.modelActual &&
@@ -3112,25 +2563,13 @@ export default function ProxyLogs() {
                                           detailLog.modelRequested && (
                                           <>
                                             {" -> "}实际模型:{" "}
-                                            <strong
-                                              style={{
-                                                color:
-                                                  "var(--color-text-primary)",
-                                              }}
-                                            >
+                                            <strong className="text-foreground">
                                               {detailLog.modelActual}
                                             </strong>
                                           </>
                                         )}
                                       ，状态:{" "}
-                                      <strong
-                                        style={{
-                                          color:
-                                            detailLog.status === "success"
-                                              ? "var(--color-success)"
-                                              : "var(--color-danger)",
-                                        }}
-                                      >
+                                      <strong className={detailLog.status === "success" ? "text-emerald-600" : "text-destructive"}>
                                         {detailLog.status === "success"
                                           ? "成功"
                                           : "失败"}
@@ -3138,12 +2577,7 @@ export default function ProxyLogs() {
                                       {streamModeLabel && (
                                         <>
                                           ，模式:{" "}
-                                          <strong
-                                            style={{
-                                              color:
-                                                "var(--color-text-primary)",
-                                            }}
-                                          >
+                                          <strong className="text-foreground">
                                             {streamModeLabel}
                                           </strong>
                                         </>
@@ -3151,116 +2585,64 @@ export default function ProxyLogs() {
                                       {firstByteLabel && (
                                         <>
                                           ，首字:{" "}
-                                          <strong
-                                            style={{
-                                              color: firstByteColor(
-                                                detailLog.firstByteLatencyMs ??
-                                                  0,
-                                              ),
-                                            }}
-                                          >
+                                          <ToneBadge tone={firstByteTone(detailLog.firstByteLatencyMs)}>
                                             {formatLatency(
                                               detailLog.firstByteLatencyMs ?? 0,
                                             )}
-                                          </strong>
+                                          </ToneBadge>
                                         </>
                                       )}
                                       ，用时:{" "}
-                                      <strong
-                                        style={{
-                                          color: latencyColor(
-                                            detailLog.latencyMs,
-                                          ),
-                                        }}
-                                      >
+                                      <ToneBadge tone={latencyTone(detailLog.latencyMs)}>
                                         {formatLatency(detailLog.latencyMs)}
-                                      </strong>
+                                      </ToneBadge>
                                       {detail && (
                                         <>
                                           ，站点:{" "}
-                                          <strong
-                                            style={{
-                                              color:
-                                                "var(--color-text-primary)",
-                                            }}
-                                          >
+                                          <strong className="text-foreground">
                                             {detailLog.siteName || "未知站点"}
                                           </strong>
                                           ，账号:{" "}
-                                          <strong
-                                            style={{
-                                              color:
-                                                "var(--color-text-primary)",
-                                            }}
-                                          >
+                                          <strong className="text-foreground">
                                             {detailLog.username || "未知账号"}
                                           </strong>
                                         </>
                                       )}
                                     </div>
                                     {detailState?.loading && (
-                                      <div
-                                        style={{
-                                          color: "var(--color-text-muted)",
-                                        }}
-                                      >
+                                      <div className="text-muted-foreground">
                                         加载详情中...
                                       </div>
                                     )}
                                     {detailState?.error && (
-                                      <div
-                                        style={{ color: "var(--color-danger)" }}
-                                      >
+                                      <div className="text-destructive">
                                         {detailState.error}
                                       </div>
                                     )}
                                     {billingDetailSummary && (
-                                      <div
-                                        style={{
-                                          color: "var(--color-text-muted)",
-                                        }}
-                                      >
+                                      <div className="text-muted-foreground">
                                         {billingDetailSummary}
                                       </div>
                                     )}
-                                    <div
-                                      style={{
-                                        color: "var(--color-text-muted)",
-                                      }}
-                                    >
+                                    <div className="text-muted-foreground">
                                       用量来源：
                                       {formatProxyLogUsageSource(
                                         detailLog.usageSource ??
                                           pathMeta.usageSource,
                                       ) || "未知"}
                                     </div>
-                                    <div
-                                      style={{
-                                        display: "flex",
-                                        gap: 6,
-                                        alignItems: "flex-start",
-                                      }}
-                                    >
-                                      <span
-                                        style={{
-                                          color: "var(--color-text-muted)",
-                                          flexShrink: 0,
-                                        }}
-                                      >
+                                    <div className="flex items-start gap-1.5">
+                                      <span className="shrink-0 text-muted-foreground">
                                         客户端
                                       </span>
-                                      <div style={{ minWidth: 0 }}>
+                                      <div className="min-w-0">
                                         {renderProxyLogClientCell(detailLog, {
                                           includeGeneric: true,
                                         })}
                                       </div>
                                     </div>
                                     {downstreamKeySummary && (
-                                      <div
-                                        style={{
-                                          color: "var(--color-text-muted)",
-                                        }}
-                                      >
+                                      <div className="text-muted-foreground">
                                         {downstreamKeySummary}
                                       </div>
                                     )}
@@ -3270,14 +2652,8 @@ export default function ProxyLogs() {
                                 {detailLog.billingDetails &&
                                   detailLog.billingDetails.usage
                                     .cacheReadTokens > 0 && (
-                                    <div style={{ display: "flex", gap: 6 }}>
-                                      <span
-                                        style={{
-                                          fontWeight: 600,
-                                          color: "var(--color-warning)",
-                                          flexShrink: 0,
-                                        }}
-                                      >
+                                    <div className="flex gap-1.5">
+                                      <span className="shrink-0 font-semibold text-amber-600">
                                         缓存 Tokens
                                       </span>
                                       <span>
@@ -3289,14 +2665,8 @@ export default function ProxyLogs() {
                                 {detailLog.billingDetails &&
                                   detailLog.billingDetails.usage
                                     .cacheCreationTokens > 0 && (
-                                    <div style={{ display: "flex", gap: 6 }}>
-                                      <span
-                                        style={{
-                                          fontWeight: 600,
-                                          color: "var(--color-warning)",
-                                          flexShrink: 0,
-                                        }}
-                                      >
+                                    <div className="flex gap-1.5">
+                                      <span className="shrink-0 font-semibold text-amber-600">
                                         缓存创建 Tokens
                                       </span>
                                       <span>
@@ -3305,24 +2675,12 @@ export default function ProxyLogs() {
                                     </div>
                                   )}
 
-                                <div style={{ display: "flex", gap: 6 }}>
-                                  <span
-                                    style={{
-                                      fontWeight: 600,
-                                      color: "var(--color-info)",
-                                      flexShrink: 0,
-                                    }}
-                                  >
+                                <div className="flex gap-1.5">
+                                  <span className="shrink-0 font-semibold text-blue-600">
                                     计费过程
                                   </span>
                                   {billingProcessLines.length > 0 ? (
-                                    <div
-                                      style={{
-                                        display: "flex",
-                                        flexDirection: "column",
-                                        gap: 2,
-                                      }}
-                                    >
+                                    <div className="flex flex-col gap-0.5">
                                       {billingProcessLines.map(
                                         (line, index) => (
                                           <span
@@ -3332,11 +2690,7 @@ export default function ProxyLogs() {
                                           </span>
                                         ),
                                       )}
-                                      <span
-                                        style={{
-                                          color: "var(--color-text-muted)",
-                                        }}
-                                      >
+                                      <span className="text-muted-foreground">
                                         仅供参考，以实际扣费为准
                                       </span>
                                     </div>
@@ -3361,12 +2715,7 @@ export default function ProxyLogs() {
                                         "number" && (
                                         <>
                                           ，预估费用{" "}
-                                          <strong
-                                            style={{
-                                              color:
-                                                "var(--color-text-primary)",
-                                            }}
-                                          >
+                                          <strong className="text-foreground">
                                             $
                                             {detailLog.estimatedCost.toFixed(6)}
                                           </strong>
@@ -3376,83 +2725,31 @@ export default function ProxyLogs() {
                                   )}
                                 </div>
 
-                                <div
-                                  style={{
-                                    display: "flex",
-                                    gap: 6,
-                                    alignItems: "center",
-                                  }}
-                                >
-                                  <span
-                                    style={{
-                                      fontWeight: 600,
-                                      color: "var(--color-primary)",
-                                      flexShrink: 0,
-                                    }}
-                                  >
+                                <div className="flex items-center gap-1.5">
+                                  <span className="shrink-0 font-semibold text-primary">
                                     下游请求路径
                                   </span>
                                   {detail && pathMeta.downstreamPath ? (
-                                    <code
-                                      style={{
-                                        fontFamily: "var(--font-mono)",
-                                        fontSize: 12,
-                                        background: "var(--color-bg-card)",
-                                        padding: "1px 8px",
-                                        borderRadius: 4,
-                                        border:
-                                          "1px solid var(--color-border-light)",
-                                      }}
-                                    >
+                                    <code className="rounded border bg-card px-2 py-px font-mono text-xs">
                                       {pathMeta.downstreamPath}
                                     </code>
                                   ) : (
-                                    <span
-                                      style={{
-                                        color: "var(--color-text-muted)",
-                                      }}
-                                    >
+                                    <span className="text-muted-foreground">
                                       未记录
                                     </span>
                                   )}
                                 </div>
 
-                                <div
-                                  style={{
-                                    display: "flex",
-                                    gap: 6,
-                                    alignItems: "center",
-                                  }}
-                                >
-                                  <span
-                                    style={{
-                                      fontWeight: 600,
-                                      color: "var(--color-primary)",
-                                      flexShrink: 0,
-                                    }}
-                                  >
+                                <div className="flex items-center gap-1.5">
+                                  <span className="shrink-0 font-semibold text-primary">
                                     上游请求路径
                                   </span>
                                   {detail && pathMeta.upstreamPath ? (
-                                    <code
-                                      style={{
-                                        fontFamily: "var(--font-mono)",
-                                        fontSize: 12,
-                                        background: "var(--color-bg-card)",
-                                        padding: "1px 8px",
-                                        borderRadius: 4,
-                                        border:
-                                          "1px solid var(--color-border-light)",
-                                      }}
-                                    >
+                                    <code className="rounded border bg-card px-2 py-px font-mono text-xs">
                                       {pathMeta.upstreamPath}
                                     </code>
                                   ) : (
-                                    <span
-                                      style={{
-                                        color: "var(--color-text-muted)",
-                                      }}
-                                    >
+                                    <span className="text-muted-foreground">
                                       未记录
                                     </span>
                                   )}
@@ -3460,22 +2757,11 @@ export default function ProxyLogs() {
 
                                 {detail &&
                                   pathMeta.errorMessage.trim().length > 0 && (
-                                    <div style={{ display: "flex", gap: 6 }}>
-                                      <span
-                                        style={{
-                                          fontWeight: 600,
-                                          color: "var(--color-danger)",
-                                          flexShrink: 0,
-                                        }}
-                                      >
+                                    <div className="flex gap-1.5">
+                                      <span className="shrink-0 font-semibold text-destructive">
                                         错误信息
                                       </span>
-                                      <span
-                                        style={{
-                                          color: "var(--color-danger)",
-                                          whiteSpace: "pre-wrap",
-                                        }}
-                                      >
+                                      <span className="whitespace-pre-wrap text-destructive">
                                         {pathMeta.errorMessage}
                                       </span>
                                     </div>
@@ -3483,115 +2769,67 @@ export default function ProxyLogs() {
                               </div>
                             </div>
                           </div>
-                        </td>
-                      </tr>
+                        </TableCell>
+                      </TableRow>
                     )}
                   </React.Fragment>
                 );
               })}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         )}
         {!loading && logs.length === 0 && (
-          <div className="empty-state">
-            <svg
-              className="empty-state-icon"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={1}
-                d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
-              />
-            </svg>
-            <div className="empty-state-title">{tr("暂无使用日志")}</div>
-            <div className="empty-state-desc">
-              当请求通过代理时，日志将显示在这里
-            </div>
-          </div>
+          <EmptyStateBlock title={tr("暂无使用日志")} description="当请求通过代理时，日志将显示在这里" />
         )}
-      </div>
+      </Card>
 
       {total > 0 && (
-        <div className="pagination">
-          <div
-            style={{
-              fontSize: 12,
-              color: "var(--color-text-muted)",
-              marginRight: "auto",
-            }}
-          >
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <div className="mr-auto text-xs text-muted-foreground">
             显示第 {displayedStart} - {displayedEnd} 条，共 {total} 条
           </div>
-          <button
-            className="pagination-btn"
+          <ButtonGroup>
+          <Button type="button" variant="outline" size="icon"
             disabled={safePage <= 1}
             onClick={() => setPage((current) => current - 1)}
+            aria-label="上一页"
           >
-            <svg
-              width="14"
-              height="14"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M15 19l-7-7 7-7"
-              />
-            </svg>
-          </button>
+            <ChevronLeft className="size-4" />
+          </Button>
           {pageNumbers.map((num) => (
-            <button
+            <Button type="button" variant={num === safePage ? "secondary" : "outline"}
               key={num}
-              className={`pagination-btn ${safePage === num ? "active" : ""}`}
               onClick={() => setPage(num)}
             >
               {num}
-            </button>
+            </Button>
           ))}
-          <button
-            className="pagination-btn"
+          <Button type="button" variant="outline" size="icon"
             disabled={safePage >= totalPages}
             onClick={() => setPage((current) => current + 1)}
+            aria-label="下一页"
           >
-            <svg
-              width="14"
-              height="14"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M9 5l7 7-7 7"
-              />
-            </svg>
-          </button>
-          <div className="pagination-size">
-            每页条数:
-            <div style={{ minWidth: 86 }}>
-              <ModernSelect
-                size="sm"
+            <ChevronRight className="size-4" />
+          </Button>
+          </ButtonGroup>
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <span>每页条数</span>
+              <Select
                 value={String(pageSize)}
-                onChange={(nextValue) => {
+                onValueChange={(nextValue) => {
                   setPageSize(Number(nextValue));
                   setPage(1);
                 }}
-                options={PAGE_SIZES.map((s) => ({
-                  value: String(s),
-                  label: String(s),
-                }))}
-                placeholder={String(pageSize)}
-              />
-            </div>
+              >
+                <SelectTrigger className="w-24">
+                  <SelectValue placeholder={String(pageSize)} />
+                </SelectTrigger>
+                <SelectContent>
+                  {PAGE_SIZES.map((size) => (
+                    <SelectItem key={size} value={String(size)}>{size}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
           </div>
         </div>
       )}

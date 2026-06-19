@@ -3,6 +3,11 @@ import type { FastifyServerOptions } from 'fastify';
 import { normalizePayloadRulesConfig } from './services/payloadRules.js';
 
 const DEFAULT_REQUEST_BODY_LIMIT = 20 * 1024 * 1024;
+const DEFAULT_PROXY_STREAM_MAX_SSE_BUFFER_BYTES = 16 * 1024 * 1024;
+const DEFAULT_PROXY_STREAM_MAX_REASONING_BYTES = 128 * 1024 * 1024;
+const DEFAULT_PROXY_STREAM_MAX_CONTENT_BYTES = 128 * 1024 * 1024;
+const DEFAULT_PROXY_STREAM_MAX_TOOL_ARGUMENT_BYTES = 128 * 1024 * 1024;
+const DEFAULT_PROXY_STREAM_MAX_AGGREGATE_BYTES = 256 * 1024 * 1024;
 const DEFAULT_CODEX_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
 const DEFAULT_CLAUDE_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
 const DEFAULT_GEMINI_CLI_CLIENT_ID = '681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com';
@@ -20,6 +25,12 @@ function parseNumber(value: string | undefined, fallback: number): number {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;
   return parsed;
+}
+
+function parsePositiveInteger(value: string | undefined, fallback: number): number {
+  const parsed = parseNumber(value, fallback);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.max(1, Math.trunc(parsed));
 }
 
 function parseCsvList(value: string | undefined): string[] {
@@ -142,6 +153,11 @@ export function buildConfig(env: NodeJS.ProcessEnv) {
     proxyDebugTargetModel: (env.PROXY_DEBUG_TARGET_MODEL || '').trim(),
     proxyDebugRetentionHours: Math.max(1, Math.trunc(parseNumber(env.PROXY_DEBUG_RETENTION_HOURS, 24))),
     proxyDebugMaxBodyBytes: Math.max(1024, Math.trunc(parseNumber(env.PROXY_DEBUG_MAX_BODY_BYTES, 262_144))),
+    proxyStreamMaxSseBufferBytes: parsePositiveInteger(env.PROXY_STREAM_MAX_SSE_BUFFER_BYTES, DEFAULT_PROXY_STREAM_MAX_SSE_BUFFER_BYTES),
+    proxyStreamMaxReasoningBytes: parsePositiveInteger(env.PROXY_STREAM_MAX_REASONING_BYTES, DEFAULT_PROXY_STREAM_MAX_REASONING_BYTES),
+    proxyStreamMaxContentBytes: parsePositiveInteger(env.PROXY_STREAM_MAX_CONTENT_BYTES, DEFAULT_PROXY_STREAM_MAX_CONTENT_BYTES),
+    proxyStreamMaxToolArgumentBytes: parsePositiveInteger(env.PROXY_STREAM_MAX_TOOL_ARGUMENT_BYTES, DEFAULT_PROXY_STREAM_MAX_TOOL_ARGUMENT_BYTES),
+    proxyStreamMaxAggregateBytes: parsePositiveInteger(env.PROXY_STREAM_MAX_AGGREGATE_BYTES, DEFAULT_PROXY_STREAM_MAX_AGGREGATE_BYTES),
     openAiServiceTierRules: parseJsonValue(env.OPENAI_SERVICE_TIER_RULES_JSON || env.OPENAI_SERVICE_TIER_RULES),
     modelAvailabilityProbeEnabled: parseBoolean(env.MODEL_AVAILABILITY_PROBE_ENABLED, false),
     modelAvailabilityProbeIntervalMs: Math.max(60_000, Math.trunc(parseNumber(env.MODEL_AVAILABILITY_PROBE_INTERVAL_MS, 30 * 60 * 1000))),

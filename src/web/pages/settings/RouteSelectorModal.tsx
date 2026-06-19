@@ -1,19 +1,22 @@
 import React from 'react';
-import { createPortal } from 'react-dom';
 import { BrandGlyph, InlineBrandIcon, getBrand } from '../../components/BrandIcon.js';
 import {
+  getRouteRequestedModelPattern,
   resolveRouteBrand,
   resolveRouteIcon,
   resolveRouteTitle,
 } from '../token-routes/utils.js';
+import type { RouteSummaryRow } from '../token-routes/types.js';
+import { Button } from '../../components/ui/button/index.js';
+import { Badge } from '../../components/ui/badge/index.js';
+import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card/index.js';
+import { Checkbox } from '../../components/ui/checkbox/index.js';
+import * as Dialog from '../../components/ui/dialog/index.js';
+import { Input } from '../../components/ui/input/index.js';
+import { ScrollArea } from '../../components/ui/scroll-area/index.js';
+import { Skeleton } from '../../components/ui/skeleton/index.js';
 
-type RouteSelectorItem = {
-  id: number;
-  modelPattern: string;
-  displayName?: string | null;
-  displayIcon?: string | null;
-  enabled: boolean;
-};
+type RouteSelectorItem = Pick<RouteSummaryRow, 'id' | 'match' | 'presentation' | 'backend' | 'enabled'>;
 
 type ModalPresence = {
   shouldRender: boolean;
@@ -40,7 +43,6 @@ type RouteSelectorModalProps = {
   onToggleModelSelection: (modelName: string) => void;
   onToggleGroupRouteSelection: (routeId: number) => void;
   onClose: () => void;
-  inputStyle: React.CSSProperties;
 };
 
 export default function RouteSelectorModal({
@@ -58,250 +60,172 @@ export default function RouteSelectorModal({
   onToggleModelSelection,
   onToggleGroupRouteSelection,
   onClose,
-  inputStyle,
 }: RouteSelectorModalProps) {
-  if (!presence.shouldRender) {
-    return null;
-  }
-
-  const modal = (
-    <div className={`modal-backdrop ${presence.isVisible ? '' : 'is-closing'}`.trim()} onClick={onClose}>
-      <div
-        className={`modal-content ${presence.isVisible ? '' : 'is-closing'}`.trim()}
-        style={{ maxWidth: 860 }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="modal-header">勾选模型和群组</div>
-        <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+  return (
+    <Dialog.Root open={presence.shouldRender} onOpenChange={(nextOpen) => { if (!nextOpen) onClose(); }}>
+      <Dialog.Content className="max-h-[min(88vh,760px)] max-w-[min(92vw,860px)] overflow-hidden p-0">
+        <Dialog.Header className="border-b p-4">
+          <Dialog.Title>勾选模型和群组</Dialog.Title>
+          <Dialog.Description>
             选择结果会保存到当前下游 API Key：精确模型用于模型白名单，群组用于路由范围限制。
-          </div>
+          </Dialog.Description>
+        </Dialog.Header>
+        <div className="p-4">
           {loading ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--color-text-muted)' }}>
-              <span className="spinner spinner-sm" />
-              加载路由中...
+            <div className="space-y-3">
+              <Skeleton className="h-9 w-full" />
+              <Skeleton className="h-48 w-full" />
             </div>
           ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12 }}>
-              <div style={{ border: '1px solid var(--color-border-light)', borderRadius: 'var(--radius-sm)', padding: 10 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
-                  精确模型 ({selectorModelSearch.trim()
-                    ? `${filteredExactModelOptions.length}/${exactModelOptions.length}`
-                    : exactModelOptions.length})
-                </div>
-                <input
-                  value={selectorModelSearch}
-                  onChange={(e) => onSelectorModelSearchChange(e.target.value)}
-                  placeholder="搜索精确模型（支持模糊匹配）"
-                  style={{ ...inputStyle, padding: '8px 10px', fontSize: 12, marginBottom: 8 }}
-                />
-                <div style={{ maxHeight: 280, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {exactModelOptions.length === 0 ? (
-                    <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>暂无可选精确模型</div>
-                  ) : filteredExactModelOptions.length === 0 ? (
-                    <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>没有匹配的精确模型</div>
-                  ) : filteredExactModelOptions.map((modelName) => {
-                    const checked = selection.selectedModels.includes(modelName);
-                    const brand = getBrand(modelName);
-                    return (
-                      <label
-                        key={modelName}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 10,
-                          cursor: 'pointer',
-                          border: `1px solid ${checked ? 'color-mix(in srgb, var(--color-primary) 45%, transparent)' : 'var(--color-border-light)'}`,
-                          borderRadius: 10,
-                          padding: '8px 10px',
-                          background: checked
-                            ? 'color-mix(in srgb, var(--color-primary) 9%, var(--color-bg-card))'
-                            : 'var(--color-bg-card)',
-                          transition: 'all 0.15s ease',
-                        }}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={() => onToggleModelSelection(modelName)}
-                          style={{ width: 18, height: 18, accentColor: 'var(--color-primary)', flexShrink: 0 }}
-                        />
-                        <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                          <code
-                            style={{
-                              fontWeight: 600,
-                              fontSize: 12,
-                              background: 'var(--color-bg)',
-                              padding: '4px 10px',
-                              borderRadius: 8,
-                              color: 'var(--color-text-primary)',
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: 6,
-                              maxWidth: '100%',
-                            }}
-                          >
-                            {brand ? (
-                              <InlineBrandIcon model={modelName} size={18} />
-                            ) : (
-                              <span
-                                style={{
-                                  width: 18,
-                                  height: 18,
-                                  borderRadius: 6,
-                                  background: 'var(--color-bg-card)',
-                                  display: 'inline-flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                  fontSize: 10,
-                                  color: 'var(--color-text-muted)',
-                                  flexShrink: 0,
-                                }}
-                              >
-                                {modelName.slice(0, 1).toUpperCase()}
-                              </span>
-                            )}
-                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                              {modelName}
-                            </span>
-                          </code>
-                          {brand ? (
-                            <div style={{ fontSize: 11, color: 'var(--color-text-muted)', paddingLeft: 6 }}>
-                              {brand.name}
-                            </div>
-                          ) : null}
-                        </div>
-                      </label>
-                    );
-                  })}
-                </div>
-              </div>
+            <div className="grid gap-3 md:grid-cols-2">
+              <SelectorColumn
+                title={`精确模型 (${selectorModelSearch.trim()
+                  ? `${filteredExactModelOptions.length}/${exactModelOptions.length}`
+                  : exactModelOptions.length})`}
+                searchValue={selectorModelSearch}
+                searchPlaceholder="搜索精确模型（支持模糊匹配）"
+                onSearchChange={onSelectorModelSearchChange}
+                empty={exactModelOptions.length === 0 ? '暂无可选精确模型' : '没有匹配的精确模型'}
+              >
+                {exactModelOptions.length === 0 || filteredExactModelOptions.length === 0 ? null : filteredExactModelOptions.map((modelName) => (
+                  <ModelOption
+                    key={modelName}
+                    modelName={modelName}
+                    checked={selection.selectedModels.includes(modelName)}
+                    onToggle={() => onToggleModelSelection(modelName)}
+                  />
+                ))}
+              </SelectorColumn>
 
-              <div style={{ border: '1px solid var(--color-border-light)', borderRadius: 'var(--radius-sm)', padding: 10 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
-                  群组 ({selectorGroupSearch.trim()
-                    ? `${filteredGroupRouteOptions.length}/${groupRouteOptions.length}`
-                    : groupRouteOptions.length})
-                </div>
-                <input
-                  value={selectorGroupSearch}
-                  onChange={(e) => onSelectorGroupSearchChange(e.target.value)}
-                  placeholder="Search groups (name / pattern)"
-                  style={{ ...inputStyle, padding: '8px 10px', fontSize: 12, marginBottom: 8 }}
-                />
-                <div style={{ maxHeight: 280, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {groupRouteOptions.length === 0 ? (
-                    <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>暂无可选群组</div>
-                  ) : filteredGroupRouteOptions.length === 0 ? (
-                    <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>没有匹配的群组</div>
-                  ) : filteredGroupRouteOptions.map((route) => {
-                    const checked = selection.selectedGroupRouteIds.includes(route.id);
-                    const routeTitle = resolveRouteTitle(route);
-                    const routeIcon = resolveRouteIcon(route);
-                    const routeBrand = resolveRouteBrand(route);
-                    return (
-                      <label
-                        key={route.id}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'flex-start',
-                          gap: 10,
-                          cursor: 'pointer',
-                          border: `1px solid ${checked ? 'color-mix(in srgb, var(--color-primary) 45%, transparent)' : 'var(--color-border-light)'}`,
-                          borderRadius: 10,
-                          padding: '8px 10px',
-                          background: checked
-                            ? 'color-mix(in srgb, var(--color-primary) 9%, var(--color-bg-card))'
-                            : 'var(--color-bg-card)',
-                          transition: 'all 0.15s ease',
-                        }}
-                      >
-                        <input
-                          type="checkbox"
-                          style={{ marginTop: 4, width: 18, height: 18, accentColor: 'var(--color-primary)', flexShrink: 0 }}
-                          checked={checked}
-                          onChange={() => onToggleGroupRouteSelection(route.id)}
-                        />
-                        <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                          <code
-                            style={{
-                              fontWeight: 600,
-                              fontSize: 12,
-                              background: 'var(--color-bg)',
-                              padding: '4px 10px',
-                              borderRadius: 8,
-                              color: 'var(--color-text-primary)',
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: 6,
-                              maxWidth: '100%',
-                            }}
-                          >
-                            <span
-                              style={{
-                                width: 18,
-                                height: 18,
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                borderRadius: 6,
-                                background: 'var(--color-bg-card)',
-                                flexShrink: 0,
-                                overflow: 'hidden',
-                                fontSize: 12,
-                                lineHeight: 1,
-                              }}
-                            >
-                              {routeIcon.kind === 'brand' ? (
-                                <BrandGlyph
-                                  icon={routeIcon.value}
-                                  alt={routeTitle}
-                                  size={18}
-                                  fallbackText={routeTitle}
-                                />
-                              ) : routeIcon.kind === 'text' ? (
-                                routeIcon.value
-                              ) : routeIcon.kind === 'auto' && routeBrand ? (
-                                <BrandGlyph brand={routeBrand} alt={routeTitle} size={18} fallbackText={routeTitle} />
-                              ) : routeIcon.kind === 'auto' ? (
-                                <InlineBrandIcon model={route.modelPattern} size={18} />
-                              ) : routeIcon.kind === 'none' ? null : null}
-                            </span>
-                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                              {routeTitle}
-                            </span>
-                            {!route.enabled ? (
-                              <span
-                                style={{
-                                  fontSize: 10,
-                                  padding: '1px 6px',
-                                  borderRadius: 999,
-                                  background: 'var(--color-danger-bg)',
-                                  color: 'var(--color-danger)',
-                                }}
-                              >
-                                已禁用
-                              </span>
-                            ) : null}
-                          </code>
-                          <code style={{ fontSize: 11, color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)', paddingLeft: 6 }}>
-                            {route.modelPattern}
-                          </code>
-                        </div>
-                      </label>
-                    );
-                  })}
-                </div>
-              </div>
+              <SelectorColumn
+                title={`群组 (${selectorGroupSearch.trim()
+                  ? `${filteredGroupRouteOptions.length}/${groupRouteOptions.length}`
+                  : groupRouteOptions.length})`}
+                searchValue={selectorGroupSearch}
+                searchPlaceholder="Search groups (name / pattern)"
+                onSearchChange={onSelectorGroupSearchChange}
+                empty={groupRouteOptions.length === 0 ? '暂无可选群组' : '没有匹配的群组'}
+              >
+                {groupRouteOptions.length === 0 || filteredGroupRouteOptions.length === 0 ? null : filteredGroupRouteOptions.map((route) => (
+                  <GroupRouteOption
+                    key={route.id}
+                    route={route}
+                    checked={selection.selectedGroupRouteIds.includes(route.id)}
+                    onToggle={() => onToggleGroupRouteSelection(route.id)}
+                  />
+                ))}
+              </SelectorColumn>
             </div>
           )}
         </div>
-        <div className="modal-footer">
-          <button onClick={onClose} className="btn btn-ghost">关闭</button>
-        </div>
-      </div>
-    </div>
+        <Dialog.Footer className="border-t p-4">
+          <Button type="button" variant="outline" onClick={onClose}>关闭</Button>
+        </Dialog.Footer>
+      </Dialog.Content>
+    </Dialog.Root>
   );
+}
 
-  return typeof document !== 'undefined' ? createPortal(modal, document.body) : modal;
+function SelectorColumn({
+  title,
+  searchValue,
+  searchPlaceholder,
+  onSearchChange,
+  empty,
+  children,
+}: {
+  title: string;
+  searchValue: string;
+  searchPlaceholder: string;
+  onSearchChange: (value: string) => void;
+  empty: string;
+  children: React.ReactNode;
+}) {
+  const hasChildren = React.Children.count(children) > 0;
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{title}</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <Input
+          value={searchValue}
+          onChange={(event) => onSearchChange(event.target.value)}
+          placeholder={searchPlaceholder}
+        />
+        <ScrollArea className="h-72">
+          <div className="space-y-2 pr-3">
+            {hasChildren ? children : <div className="py-6 text-center text-sm text-muted-foreground">{empty}</div>}
+          </div>
+        </ScrollArea>
+      </CardContent>
+    </Card>
+  );
+}
+
+function ModelOption({
+  modelName,
+  checked,
+  onToggle,
+}: {
+  modelName: string;
+  checked: boolean;
+  onToggle: () => void;
+}) {
+  const brand = getBrand(modelName);
+  return (
+    <label className="flex cursor-pointer items-center gap-3 rounded-md border p-3">
+      <Checkbox checked={checked} onCheckedChange={onToggle} />
+      <div className="flex min-w-0 flex-1 flex-col gap-1">
+        <div className="flex min-w-0 items-center gap-2">
+          {brand ? (
+            <InlineBrandIcon model={modelName} size={18} />
+          ) : (
+            <span className="inline-flex size-5 shrink-0 items-center justify-center rounded-md border text-xs">
+              {modelName.slice(0, 1).toUpperCase()}
+            </span>
+          )}
+          <code className="truncate text-xs font-semibold">{modelName}</code>
+        </div>
+        {brand ? <div className="text-xs text-muted-foreground">{brand.name}</div> : null}
+      </div>
+    </label>
+  );
+}
+
+function GroupRouteOption({
+  route,
+  checked,
+  onToggle,
+}: {
+  route: RouteSelectorItem;
+  checked: boolean;
+  onToggle: () => void;
+}) {
+  const routeTitle = resolveRouteTitle(route);
+  const routeIcon = resolveRouteIcon(route);
+  const routeBrand = resolveRouteBrand(route);
+  return (
+    <label className="flex cursor-pointer items-start gap-3 rounded-md border p-3">
+      <Checkbox checked={checked} onCheckedChange={onToggle} className="mt-0.5" />
+      <div className="flex min-w-0 flex-1 flex-col gap-1">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="inline-flex size-5 shrink-0 items-center justify-center overflow-hidden rounded-md border text-xs">
+            {routeIcon.kind === 'brand' ? (
+              <BrandGlyph icon={routeIcon.value} alt={routeTitle} size={18} fallbackText={routeTitle} />
+            ) : routeIcon.kind === 'text' ? (
+              routeIcon.value
+            ) : routeIcon.kind === 'auto' && routeBrand ? (
+              <BrandGlyph brand={routeBrand} alt={routeTitle} size={18} fallbackText={routeTitle} />
+            ) : routeIcon.kind === 'auto' ? (
+              <InlineBrandIcon model={getRouteRequestedModelPattern(route)} size={18} />
+            ) : null}
+          </span>
+          <code className="truncate text-xs font-semibold">{routeTitle}</code>
+          {!route.enabled ? <Badge variant="destructive">已禁用</Badge> : null}
+        </div>
+        <code className="truncate text-xs text-muted-foreground">{getRouteRequestedModelPattern(route)}</code>
+      </div>
+    </label>
+  );
 }

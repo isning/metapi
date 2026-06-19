@@ -76,7 +76,7 @@ describe('rebuildTokenRoutesFromAvailability with site disabled models', () => {
         expect(rebuild.models).toBe(0);
 
         const routes = await db.select().from(schema.tokenRoutes)
-            .where(eq(schema.tokenRoutes.modelPattern, 'gpt-4o'))
+            .where(eq(schema.tokenRoutes.displayName, 'gpt-4o'))
             .all();
         expect(routes).toHaveLength(0);
     });
@@ -129,7 +129,7 @@ describe('rebuildTokenRoutesFromAvailability with site disabled models', () => {
         expect(rebuild.models).toBe(1);
 
         const route = await db.select().from(schema.tokenRoutes)
-            .where(eq(schema.tokenRoutes.modelPattern, 'claude-sonnet-4-5-20250929'))
+            .where(eq(schema.tokenRoutes.displayName, 'claude-sonnet-4-5-20250929'))
             .get();
         expect(route).toBeDefined();
 
@@ -170,7 +170,7 @@ describe('rebuildTokenRoutesFromAvailability with site disabled models', () => {
         expect(rebuild.models).toBe(1);
 
         const route = await db.select().from(schema.tokenRoutes)
-            .where(eq(schema.tokenRoutes.modelPattern, 'gpt-5'))
+            .where(eq(schema.tokenRoutes.displayName, 'gpt-5'))
             .get();
         expect(route).toBeDefined();
     });

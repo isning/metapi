@@ -85,12 +85,6 @@ describe('Accounts rebind modal', () => {
       });
       await flushMicrotasks();
 
-      const modal = root.root.find((node) => (
-        node.type === 'div'
-        && typeof node.props.className === 'string'
-        && node.props.className.includes('modal-content')
-      ));
-      expect(String(modal.props.className)).toContain('modal-content');
       expect(JSON.stringify(root.toJSON())).toContain('重新绑定 Session Token');
       expect(JSON.stringify(root.toJSON())).toContain('粘贴新的 Session Token');
     } finally {

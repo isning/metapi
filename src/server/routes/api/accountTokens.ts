@@ -31,6 +31,7 @@ import {
   parseAccountTokenSyncAllPayload,
   parseAccountTokenUpdatePayload,
 } from '../../contracts/accountTokensRoutePayloads.js';
+import { normalizeCompatibilityPolicyStorageInput } from '../../services/upstreamCompatibilityPolicyStorage.js';
 
 type AccountWithSiteRow = {
   accounts: typeof schema.accounts.$inferSelect;
@@ -178,6 +179,37 @@ function normalizeBatchIds(input: unknown): number[] {
   return input
     .map((item) => Number.parseInt(String(item), 10))
     .filter((id) => Number.isFinite(id) && id > 0);
+}
+
+async function listAccountTokenIds(accountId: number): Promise<Set<number>> {
+  const rows = await db.select({ id: schema.accountTokens.id })
+    .from(schema.accountTokens)
+    .where(eq(schema.accountTokens.accountId, accountId))
+    .all();
+  return new Set(rows.map((row) => row.id));
+}
+
+async function applyCompatibilityPolicyToSingleNewSyncedToken(input: {
+  accountId: number;
+  beforeIds: Set<number>;
+  compatibilityPolicy: string | null;
+}): Promise<typeof schema.accountTokens.$inferSelect | null> {
+  const rows = await db.select()
+    .from(schema.accountTokens)
+    .where(eq(schema.accountTokens.accountId, input.accountId))
+    .all();
+  const createdRows = rows.filter((row) => !input.beforeIds.has(row.id));
+  if (createdRows.length !== 1) return null;
+  const [created] = createdRows;
+  await db.update(schema.accountTokens)
+    .set({
+      compatibilityPolicy: input.compatibilityPolicy,
+      updatedAt: new Date().toISOString(),
+    })
+    .where(eq(schema.accountTokens.id, created.id))
+    .run();
+  const updated = await db.select().from(schema.accountTokens).where(eq(schema.accountTokens.id, created.id)).get();
+  return updated || null;
 }
 
 async function withTimeout<T>(fn: () => Promise<T>, timeoutMs: number, timeoutMessage: string): Promise<T> {
@@ -498,6 +530,10 @@ export async function accountTokensRoutes(app: FastifyInstance) {
 
     const tokenValue = (body.token || '').trim();
     if (tokenValue) {
+      const normalizedCompatibilityPolicy = normalizeCompatibilityPolicyStorageInput(body.compatibilityPolicy);
+      if (!normalizedCompatibilityPolicy.ok) {
+        return reply.code(400).send({ success: false, message: normalizedCompatibilityPolicy.error });
+      }
       const now = new Date().toISOString();
       const existing = await db.select().from(schema.accountTokens)
         .where(eq(schema.accountTokens.accountId, body.accountId))
@@ -520,6 +556,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
           name: (body.name || '').trim() || (existing.length === 0 ? 'default' : `token-${existing.length + 1}`),
           token: tokenValue,
           tokenGroup: (body.group || '').trim() || null,
+          compatibilityPolicy: normalizedCompatibilityPolicy.present ? normalizedCompatibilityPolicy.value : null,
           valueStatus,
           source: body.source || 'manual',
           enabled,
@@ -553,6 +590,11 @@ export async function accountTokensRoutes(app: FastifyInstance) {
 
     if (!account.accessToken?.trim()) {
       return reply.code(400).send({ success: false, message: '账号缺少访问令牌，无法创建站点令牌' });
+    }
+
+    const normalizedCompatibilityPolicy = normalizeCompatibilityPolicyStorageInput(body.compatibilityPolicy);
+    if (!normalizedCompatibilityPolicy.ok) {
+      return reply.code(400).send({ success: false, message: normalizedCompatibilityPolicy.error });
     }
 
     const adapter = getAdapter(site.platform);
@@ -592,6 +634,9 @@ export async function accountTokensRoutes(app: FastifyInstance) {
     }
 
     const platformUserId = resolvePlatformUserId(account.extraConfig, account.username);
+    const beforeTokenIds = normalizedCompatibilityPolicy.present
+      ? await listAccountTokenIds(account.id)
+      : null;
     const createdViaUpstream = await withAccountProxyOverride(
       getProxyUrlFromExtraConfig(account.extraConfig),
       () => adapter.createApiToken(
@@ -623,6 +668,13 @@ export async function accountTokensRoutes(app: FastifyInstance) {
     if (syncResult.status === 'skipped') {
       return reply.code(502).send({ success: false, message: syncResult.message || '站点未返回可用令牌' });
     }
+    const policyAppliedToken = beforeTokenIds
+      ? await applyCompatibilityPolicyToSingleNewSyncedToken({
+        accountId: account.id,
+        beforeIds: beforeTokenIds,
+        compatibilityPolicy: normalizedCompatibilityPolicy.value ?? null,
+      })
+      : null;
     const coverageRefresh = await refreshCoverageForAccounts([account.id]);
 
     const preferred = await db.select().from(schema.accountTokens)
@@ -632,13 +684,14 @@ export async function accountTokensRoutes(app: FastifyInstance) {
       .where(eq(schema.accountTokens.accountId, account.id))
       .all())
       .slice(-1)[0] || null;
+    const responseToken = policyAppliedToken || token;
 
     return {
       success: true,
       createdViaUpstream: true,
       ...syncResult,
       coverageRefresh,
-      token,
+      token: responseToken,
     };
   });
 
@@ -818,6 +871,13 @@ export async function accountTokensRoutes(app: FastifyInstance) {
       if (body.isDefault !== undefined) updates.isDefault = body.isDefault;
     }
     if (body.source !== undefined) updates.source = body.source;
+    const normalizedCompatibilityPolicy = normalizeCompatibilityPolicyStorageInput(body.compatibilityPolicy);
+    if (!normalizedCompatibilityPolicy.ok) {
+      return reply.code(400).send({ success: false, message: normalizedCompatibilityPolicy.error });
+    }
+    if (normalizedCompatibilityPolicy.present) {
+      updates.compatibilityPolicy = normalizedCompatibilityPolicy.value;
+    }
 
     await db.update(schema.accountTokens).set(updates).where(eq(schema.accountTokens.id, tokenId)).run();
 

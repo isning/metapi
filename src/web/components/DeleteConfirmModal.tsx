@@ -1,5 +1,7 @@
 import React from 'react';
-import CenteredModal from './CenteredModal.js';
+import * as AlertDialog from './ui/alert-dialog/index.js';
+import { Alert, AlertDescription, AlertTitle } from './ui/alert/index.js';
+import { Button } from './ui/button/index.js';
 
 type DeleteConfirmModalProps = {
   open: boolean;
@@ -23,27 +25,23 @@ export default function DeleteConfirmModal({
   onClose,
 }: DeleteConfirmModalProps) {
   return (
-    <CenteredModal
-      open={open}
-      onClose={onClose}
-      title={title}
-      maxWidth={560}
-      bodyStyle={{ display: 'flex', flexDirection: 'column', gap: 12 }}
-      footer={(
-        <>
-          <button onClick={onClose} className="btn btn-ghost" disabled={loading}>{cancelText}</button>
-          <button onClick={onConfirm} className="btn btn-danger" disabled={loading}>
-            {loading
-              ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 删除中...</>
-              : confirmText}
-          </button>
-        </>
-      )}
-    >
-      <div className="alert alert-error" style={{ margin: 0 }}>
-        <div className="alert-title">此操作不可撤销</div>
-        <div style={{ marginTop: 6, fontSize: 13 }}>{description}</div>
-      </div>
-    </CenteredModal>
+    <AlertDialog.Root open={open} onOpenChange={(nextOpen) => { if (!nextOpen) onClose(); }}>
+      <AlertDialog.Content>
+        <AlertDialog.Header>
+          <AlertDialog.Title>{title}</AlertDialog.Title>
+          <AlertDialog.Description>请确认该操作是否符合预期。</AlertDialog.Description>
+        </AlertDialog.Header>
+        <Alert variant="destructive">
+          <AlertTitle>此操作不可撤销</AlertTitle>
+          <AlertDescription>{description}</AlertDescription>
+        </Alert>
+        <AlertDialog.Footer>
+          <AlertDialog.CancelButton disabled={loading}>{cancelText}</AlertDialog.CancelButton>
+          <Button type="button" variant="destructive" disabled={loading} onClick={onConfirm}>
+            {loading ? '删除中...' : confirmText}
+          </Button>
+        </AlertDialog.Footer>
+      </AlertDialog.Content>
+    </AlertDialog.Root>
   );
 }

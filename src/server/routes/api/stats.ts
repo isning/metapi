@@ -8,6 +8,7 @@ import { buildModelAnalysis } from "../../services/modelAnalysisService.js";
 import {
   fetchModelPricingCatalog,
 } from "../../services/modelPricingService.js";
+import { compileModelRouteFlow } from "../../services/routeFlowService.js";
 import {
   buildModelAvailabilityProbeTaskDedupeKey,
   queueModelAvailabilityProbeTask,
@@ -121,6 +122,10 @@ function writeModelsMarketplaceCache(
     expiresAt: Date.now() + ttl,
     models,
   });
+}
+
+export function __resetModelsMarketplaceCacheForTests(): void {
+  modelsMarketplaceCache.clear();
 }
 
 function proxyCostSqlExpression() {
@@ -1440,6 +1445,19 @@ export async function statsRoutes(app: FastifyInstance) {
           includePricing,
         },
       };
+    },
+  );
+
+  app.get<{ Querystring: { model?: string } }>(
+    "/api/models/route-flow",
+    async (request, reply) => {
+      const model = (request.query.model || "").trim();
+      if (!model) {
+        return reply.code(400).send({ success: false, message: "model 不能为空" });
+      }
+
+      const flow = await compileModelRouteFlow(model);
+      return { success: true, flow };
     },
   );
 

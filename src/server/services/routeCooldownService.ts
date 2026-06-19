@@ -4,23 +4,29 @@ import {
   clearRouteDecisionSnapshot,
   clearRouteDecisionSnapshots,
 } from './routeDecisionSnapshotStore.js';
+import { loadActiveRouteGraphRouteBindings } from './routeGraphService.js';
 import { tokenRouter } from './tokenRouter.js';
-import { normalizeTokenRouteMode, type RouteMode } from '../../shared/tokenRouteContract.js';
+import type { RouteMode } from '../../shared/tokenRouteContract.js';
+import {
+  isRouteGraphExactModelMatch,
+  normalizeRouteGraphBackendSpec,
+  type RouteGraphBackendSpec,
+  type RouteGraphMatchSpec,
+} from '../../shared/routeGraph.js';
 
 type RouteRow = typeof schema.tokenRoutes.$inferSelect & {
   routeMode: RouteMode;
+  modelPattern: string;
+  match: RouteGraphMatchSpec;
+  backend: RouteGraphBackendSpec;
   sourceRouteIds: number[];
 };
 
-function isExactModelPattern(modelPattern: string): boolean {
-  const normalized = modelPattern.trim();
-  if (!normalized) return false;
-  if (normalized.toLowerCase().startsWith('re:')) return false;
-  return !/[\*\?]/.test(normalized);
-}
-
-function isExplicitGroupRoute(route: Pick<RouteRow, 'routeMode'> | Pick<typeof schema.tokenRoutes.$inferSelect, 'routeMode'>): boolean {
-  return normalizeTokenRouteMode(route.routeMode) === 'explicit_group';
+function isExplicitGroupRoute(route: Pick<RouteRow, 'backend'> | Pick<RouteRow, 'routeMode'>): boolean {
+  if ('backend' in route) {
+    return normalizeRouteGraphBackendSpec(route.backend).kind === 'routes';
+  }
+  return route.routeMode === 'explicit_group';
 }
 
 function normalizeSourceRouteIds(sourceRouteIds: number[]): number[] {
@@ -51,22 +57,41 @@ async function loadRouteSourceIdsMap(routeIds: number[]): Promise<Map<number, nu
   return sourceRouteIdsByRouteId;
 }
 
-function decorateRoutesWithSources(
+async function decorateRoutesWithSources(
   routes: Array<typeof schema.tokenRoutes.$inferSelect>,
   sourceRouteIdsByRouteId: Map<number, number[]>,
-): RouteRow[] {
-  return routes.map((route) => ({
-    ...route,
-    routeMode: normalizeTokenRouteMode(route.routeMode),
-    sourceRouteIds: sourceRouteIdsByRouteId.get(route.id) ?? [],
-  }));
+): Promise<RouteRow[]> {
+  const routeBindings = await loadActiveRouteGraphRouteBindings();
+  return routes.map((route) => {
+    const binding = routeBindings.get(route.id);
+    return {
+      ...route,
+      match: binding?.match ?? {
+        kind: 'model',
+        requestedModelPattern: route.displayName || '',
+        currentModelPattern: '',
+        displayName: route.displayName || null,
+        downstreamProtocol: null,
+        upstreamProtocol: null,
+        sitePlatform: null,
+        routeId: route.id,
+        accountId: null,
+        tokenId: null,
+        siteId: null,
+      },
+      backend: binding?.backend ?? { kind: 'channels' },
+      routeMode: binding?.routeMode ?? 'pattern',
+      modelPattern: binding?.exactModelName || binding?.exposedModelName || '',
+      sourceRouteIds: sourceRouteIdsByRouteId.get(route.id) ?? binding?.sourceRouteIds ?? [],
+    } as RouteRow;
+  });
 }
 
 async function getRouteWithSources(routeId: number): Promise<RouteRow | null> {
   const route = await db.select().from(schema.tokenRoutes).where(eq(schema.tokenRoutes.id, routeId)).get();
   if (!route) return null;
   const sourceRouteIdsByRouteId = await loadRouteSourceIdsMap([routeId]);
-  return decorateRoutesWithSources([route], sourceRouteIdsByRouteId)[0] ?? null;
+  return (await decorateRoutesWithSources([route], sourceRouteIdsByRouteId))[0] ?? null;
 }
 
 async function resolveCooldownClearRouteIds(route: RouteRow): Promise<number[]> {
@@ -77,20 +102,15 @@ async function resolveCooldownClearRouteIds(route: RouteRow): Promise<number[]> 
   const sourceRouteIds = normalizeSourceRouteIds(route.sourceRouteIds);
   if (sourceRouteIds.length === 0) return [];
 
-  const sourceRoutes = await db.select({
-    id: schema.tokenRoutes.id,
-    modelPattern: schema.tokenRoutes.modelPattern,
-    routeMode: schema.tokenRoutes.routeMode,
-    enabled: schema.tokenRoutes.enabled,
-  }).from(schema.tokenRoutes)
+  const sourceRoutes = await decorateRoutesWithSources(await db.select().from(schema.tokenRoutes)
     .where(inArray(schema.tokenRoutes.id, sourceRouteIds))
-    .all();
+    .all(), new Map());
 
   return sourceRoutes
     .filter((sourceRoute) => (
       sourceRoute.enabled
-      && normalizeTokenRouteMode(sourceRoute.routeMode) !== 'explicit_group'
-      && isExactModelPattern(sourceRoute.modelPattern)
+      && !isExplicitGroupRoute(sourceRoute)
+      && isRouteGraphExactModelMatch(sourceRoute.match, sourceRoute.backend)
     ))
     .map((sourceRoute) => sourceRoute.id);
 }

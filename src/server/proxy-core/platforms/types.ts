@@ -1,3 +1,5 @@
+import type { UpstreamCompatibilityPolicy } from '../../contracts/upstreamCompatibilityPolicy.js';
+
 export type PlatformProfileId =
   | 'codex'
   | 'claude'
@@ -96,6 +98,7 @@ export type PreparePlatformRequestInput = {
 
 export type PlatformProfile = {
   id: PlatformProfileId;
+  defaultCompatibilityPolicy?: UpstreamCompatibilityPolicy;
   prepareRequest(input: PreparePlatformRequestInput): PreparedPlatformRequest;
   runSessionTask?<T>(
     context: {

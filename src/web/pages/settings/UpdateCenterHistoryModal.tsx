@@ -1,5 +1,7 @@
 import CenteredModal from '../../components/CenteredModal.js';
 import UpdateCenterHistoryEntryCard, { type UpdateCenterHistoryEntry } from './UpdateCenterHistoryEntryCard.js';
+import { Button } from '../../components/ui/button/index.js';
+import { ScrollArea } from '../../components/ui/scroll-area/index.js';
 
 type UpdateCenterHistoryModalProps = {
   open: boolean;
@@ -33,16 +35,17 @@ export default function UpdateCenterHistoryModal({
       closeOnBackdrop
       closeOnEscape
       footer={(
-        <button type="button" className="btn btn-ghost" onClick={onClose}>
+        <Button variant="outline" type="button" onClick={onClose}>
           关闭
-        </button>
+        </Button>
       )}
     >
-      <div style={{ display: 'grid', gap: 10 }}>
-        <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.6 }}>
+      <div className="grid gap-3">
+        <div className="text-xs leading-relaxed text-muted-foreground">
           这里保留 helper 读到的全部 Helm revision。默认列表只显示最近几条，弹窗里再展开全部回退记录，避免设置页被历史卡片拉得过长。
         </div>
-        <div style={{ display: 'grid', gap: 10, maxHeight: 520, overflowY: 'auto', paddingRight: 4 }}>
+        <ScrollArea className="max-h-[520px] pr-1">
+          <div className="grid gap-3">
           {history.map((entry) => {
             const revision = String(entry?.revision || '').trim();
             return (
@@ -58,7 +61,8 @@ export default function UpdateCenterHistoryModal({
               />
             );
           })}
-        </div>
+          </div>
+        </ScrollArea>
       </div>
     </CenteredModal>
   );

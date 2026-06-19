@@ -1,3 +1,7 @@
+import { Button } from '../../components/ui/button/index.js';
+import ToneBadge from '../../components/ToneBadge.js';
+import { Card, CardContent } from '../../components/ui/card/index.js';
+import { cn } from '../../lib/utils.js';
 export type UpdateCenterHistoryEntry = {
   revision?: string;
   updatedAt?: string | null;
@@ -32,52 +36,42 @@ export default function UpdateCenterHistoryEntryCard({
   const isCurrentRevision = revision && revision === currentRevision;
 
   return (
-    <div
-      style={{
-        border: '1px solid var(--color-border-light)',
-        borderRadius: 'var(--radius-sm)',
-        padding: compact ? 10 : 12,
-        display: 'grid',
-        gap: compact ? 5 : 6,
-        background: isCurrentRevision
-          ? 'color-mix(in srgb, var(--color-primary) 6%, var(--color-bg-card))'
-          : 'var(--color-bg-card)',
-      }}
-    >
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
-        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>
+    <Card className={cn(isCurrentRevision && 'bg-muted')}>
+      <CardContent className={cn('grid gap-1.5', compact ? 'p-2' : 'p-3')}>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="text-sm font-semibold text-foreground">
           revision {revision || '-'}
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {entry?.status ? <ToneBadge tone="-muted">{entry.status}</ToneBadge> : null}
+            {isCurrentRevision ? <ToneBadge tone="-info">当前运行</ToneBadge> : null}
+          </div>
         </div>
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          {entry?.status ? <span className="badge badge-muted">{entry.status}</span> : null}
-          {isCurrentRevision ? <span className="badge badge-info">当前运行</span> : null}
+        <div className="font-mono text-sm font-semibold text-foreground">
+          {formatImageTarget(entry?.imageTag, entry?.imageDigest) || '未记录镜像信息'}
         </div>
-      </div>
-      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)', fontFamily: 'var(--font-mono)' }}>
-        {formatImageTarget(entry?.imageTag, entry?.imageDigest) || '未记录镜像信息'}
-      </div>
-      {entry?.description ? (
-        <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.5 }}>
-          {entry.description}
+        {entry?.description ? (
+          <div className="text-xs leading-relaxed text-muted-foreground">
+            {entry.description}
+          </div>
+        ) : null}
+        <div className="text-xs leading-relaxed text-muted-foreground">
+          更新时间：{formatTaskTime(entry?.updatedAt)}
         </div>
-      ) : null}
-      <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.5 }}>
-        更新时间：{formatTaskTime(entry?.updatedAt)}
-      </div>
-      <div>
-        <button
-          type="button"
-          onClick={() => {
-            if (isCurrentRevision) return;
-            onRollback(revision);
-          }}
-          disabled={!helperHealthy || deploying || isCurrentRevision || !revision}
-          className="btn btn-ghost"
-          style={{ border: '1px solid var(--color-border)' }}
-        >
-          回退到 revision {revision}
-        </button>
-      </div>
-    </div>
+        <div>
+          <Button
+            variant="outline"
+            type="button"
+            onClick={() => {
+              if (isCurrentRevision) return;
+              onRollback(revision);
+            }}
+            disabled={!helperHealthy || deploying || isCurrentRevision || !revision}
+          >
+            回退到 revision {revision}
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
   );
 }

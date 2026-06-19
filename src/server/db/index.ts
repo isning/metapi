@@ -509,9 +509,21 @@ function ensureRouteGroupingSchema() {
     execSqliteLegacyCompat(`ALTER TABLE token_routes ADD COLUMN display_icon text;`);
   }
 
-  if (!tableColumnExists('token_routes', 'route_mode')) {
-    execSqliteLegacyCompat(`ALTER TABLE token_routes ADD COLUMN route_mode text DEFAULT 'pattern';`);
-  }
+  execSqliteLegacyCompat(`
+    CREATE TABLE IF NOT EXISTS route_group_sources (
+      id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+      group_route_id integer NOT NULL REFERENCES token_routes(id) ON DELETE cascade,
+      source_route_id integer NOT NULL REFERENCES token_routes(id) ON DELETE cascade
+    );
+  `);
+  execSqliteLegacyCompat(`
+    CREATE UNIQUE INDEX IF NOT EXISTS route_group_sources_group_source_unique
+    ON route_group_sources(group_route_id, source_route_id);
+  `);
+  execSqliteLegacyCompat(`
+    CREATE INDEX IF NOT EXISTS route_group_sources_source_route_id_idx
+    ON route_group_sources(source_route_id);
+  `);
 
   if (!tableColumnExists('token_routes', 'decision_snapshot')) {
     execSqliteLegacyCompat(`ALTER TABLE token_routes ADD COLUMN decision_snapshot text;`);
@@ -541,21 +553,6 @@ function ensureRouteGroupingSchema() {
     execSqliteLegacyCompat(`ALTER TABLE route_channels ADD COLUMN cooldown_level integer NOT NULL DEFAULT 0;`);
   }
 
-  execSqliteLegacyCompat(`
-    CREATE TABLE IF NOT EXISTS route_group_sources (
-      id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
-      group_route_id integer NOT NULL REFERENCES token_routes(id) ON DELETE cascade,
-      source_route_id integer NOT NULL REFERENCES token_routes(id) ON DELETE cascade
-    );
-  `);
-  execSqliteLegacyCompat(`
-    CREATE UNIQUE INDEX IF NOT EXISTS route_group_sources_group_source_unique
-    ON route_group_sources(group_route_id, source_route_id);
-  `);
-  execSqliteLegacyCompat(`
-    CREATE INDEX IF NOT EXISTS route_group_sources_source_route_id_idx
-    ON route_group_sources(source_route_id);
-  `);
 }
 
 function ensureDownstreamApiKeySchema() {

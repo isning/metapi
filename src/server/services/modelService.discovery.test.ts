@@ -3,6 +3,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
+import { compileRouteGraphSource } from '../../shared/routeGraph.js';
 
 const getApiTokenMock = vi.fn();
 const getModelsMock = vi.fn();
@@ -40,6 +41,8 @@ vi.mock('./oauth/refreshSingleflight.js', () => ({
 
 type DbModule = typeof import('../db/index.js');
 type ModelServiceModule = typeof import('./modelService.js');
+type RouteGraphServiceModule = typeof import('./routeGraphService.js');
+type RouteGraphRuntimeModule = typeof import('./routeGraphRuntimeService.js');
 
 describe('refreshModelsForAccount credential discovery', () => {
   let db: DbModule['db'];
@@ -47,6 +50,8 @@ describe('refreshModelsForAccount credential discovery', () => {
   let refreshModelsForAccount: ModelServiceModule['refreshModelsForAccount'];
   let refreshModelsAndRebuildRoutes: ModelServiceModule['refreshModelsAndRebuildRoutes'];
   let rebuildTokenRoutesFromAvailability: ModelServiceModule['rebuildTokenRoutesFromAvailability'];
+  let ensureActiveRouteGraphVersion: RouteGraphServiceModule['ensureActiveRouteGraphVersion'];
+  let evaluateActiveRouteGraphForModel: RouteGraphRuntimeModule['evaluateActiveRouteGraphForModel'];
   let dataDir = '';
 
   beforeAll(async () => {
@@ -56,12 +61,16 @@ describe('refreshModelsForAccount credential discovery', () => {
     await import('../db/migrate.js');
     const dbModule = await import('../db/index.js');
     const modelService = await import('./modelService.js');
+    const routeGraphService = await import('./routeGraphService.js');
+    const routeGraphRuntimeService = await import('./routeGraphRuntimeService.js');
 
     db = dbModule.db;
     schema = dbModule.schema;
     refreshModelsForAccount = modelService.refreshModelsForAccount;
     refreshModelsAndRebuildRoutes = modelService.refreshModelsAndRebuildRoutes;
     rebuildTokenRoutesFromAvailability = modelService.rebuildTokenRoutesFromAvailability;
+    ensureActiveRouteGraphVersion = routeGraphService.ensureActiveRouteGraphVersion;
+    evaluateActiveRouteGraphForModel = routeGraphRuntimeService.evaluateActiveRouteGraphForModel;
   });
 
   beforeEach(async () => {
@@ -73,6 +82,9 @@ describe('refreshModelsForAccount credential discovery', () => {
 
     await db.delete(schema.routeChannels).run();
     await db.delete(schema.tokenRoutes).run();
+    await db.delete(schema.routeGraphDrafts).run();
+    await db.delete(schema.routeGraphActiveVersion).run();
+    await db.delete(schema.routeGraphVersions).run();
     await db.delete(schema.tokenModelAvailability).run();
     await db.delete(schema.modelAvailability).run();
     await db.delete(schema.accountTokens).run();
@@ -2227,6 +2239,36 @@ describe('refreshModelsForAccount credential discovery', () => {
     expect(channels).toHaveLength(1);
     expect(channels[0]).toMatchObject({
       oauthRouteUnitId: routeUnit.id,
+    });
+
+    const routes = await db.select().from(schema.tokenRoutes).all();
+    const generatedRoute = routes.find((route) => route.displayName === 'gpt-5.4' || route.modelPattern === 'gpt-5.4');
+    expect(generatedRoute).toBeDefined();
+
+    const activeGraph = await ensureActiveRouteGraphVersion();
+    const compiled = compileRouteGraphSource(activeGraph.sourceGraph);
+    expect(compiled.ok).toBe(true);
+    expect(activeGraph.sourceGraph.nodes).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: `entry:legacy:${generatedRoute!.id}`,
+        type: 'entry',
+        ownership: 'auto_generated',
+      }),
+      expect.objectContaining({
+        id: `pool:legacy:${generatedRoute!.id}`,
+        type: 'model_endpoint',
+        ownership: 'auto_generated',
+      }),
+    ]));
+    expect(compiled.compiled.publicModels).toEqual(expect.arrayContaining([
+      expect.objectContaining({ model: 'gpt-5.4' }),
+    ]));
+
+    const selection = await evaluateActiveRouteGraphForModel('gpt-5.4');
+    expect(selection).toMatchObject({
+      selectedRouteId: generatedRoute!.id,
+      terminalKind: 'model_endpoint',
+      selectedEndpointTarget: null,
     });
   });
 });

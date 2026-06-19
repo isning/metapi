@@ -67,6 +67,12 @@
           "notNull": true,
           "defaultValue": "'ready'",
           "primaryKey": false
+        },
+        "compatibility_policy": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
         }
       }
     },
@@ -1589,6 +1595,126 @@
           "notNull": false,
           "defaultValue": null,
           "primaryKey": false
+        },
+        "route_node_id": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        }
+      }
+    },
+    "route_graph_active_version": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "version_id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
+    "route_graph_drafts": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "base_version": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "working_graph_json": {
+          "logicalType": "json",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "status": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'active'",
+          "primaryKey": false
+        },
+        "diagnostics_json": {
+          "logicalType": "json",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
+    "route_graph_versions": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "version": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "source_graph_json": {
+          "logicalType": "json",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "compiled_graph_json": {
+          "logicalType": "json",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "status": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'archived'",
+          "primaryKey": false
+        },
+        "created_by": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": "'system'",
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "activated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
         }
       }
     },
@@ -2113,6 +2239,12 @@
           "notNull": false,
           "defaultValue": "0",
           "primaryKey": false
+        },
+        "compatibility_policy": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
         }
       }
     },
@@ -2164,36 +2296,6 @@
           "defaultValue": null,
           "primaryKey": true
         },
-        "model_pattern": {
-          "logicalType": "text",
-          "notNull": true,
-          "defaultValue": null,
-          "primaryKey": false
-        },
-        "model_mapping": {
-          "logicalType": "json",
-          "notNull": false,
-          "defaultValue": null,
-          "primaryKey": false
-        },
-        "enabled": {
-          "logicalType": "boolean",
-          "notNull": false,
-          "defaultValue": "true",
-          "primaryKey": false
-        },
-        "created_at": {
-          "logicalType": "datetime",
-          "notNull": false,
-          "defaultValue": "datetime('now')",
-          "primaryKey": false
-        },
-        "updated_at": {
-          "logicalType": "datetime",
-          "notNull": false,
-          "defaultValue": "datetime('now')",
-          "primaryKey": false
-        },
         "display_name": {
           "logicalType": "text",
           "notNull": false,
@@ -2202,6 +2304,12 @@
         },
         "display_icon": {
           "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "model_mapping": {
+          "logicalType": "json",
           "notNull": false,
           "defaultValue": null,
           "primaryKey": false
@@ -2224,10 +2332,22 @@
           "defaultValue": "'weighted'",
           "primaryKey": false
         },
-        "route_mode": {
-          "logicalType": "text",
+        "enabled": {
+          "logicalType": "boolean",
           "notNull": false,
-          "defaultValue": "'pattern'",
+          "defaultValue": "true",
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
           "primaryKey": false
         }
       }
@@ -2729,6 +2849,14 @@
       "unique": false
     },
     {
+      "name": "route_channels_route_node_id_idx",
+      "table": "route_channels",
+      "columns": [
+        "route_node_id"
+      ],
+      "unique": false
+    },
+    {
       "name": "route_channels_route_token_idx",
       "table": "route_channels",
       "columns": [
@@ -2744,6 +2872,38 @@
         "token_id"
       ],
       "unique": false
+    },
+    {
+      "name": "route_graph_active_version_singleton_unique",
+      "table": "route_graph_active_version",
+      "columns": [
+        "id"
+      ],
+      "unique": true
+    },
+    {
+      "name": "route_graph_drafts_status_idx",
+      "table": "route_graph_drafts",
+      "columns": [
+        "status"
+      ],
+      "unique": false
+    },
+    {
+      "name": "route_graph_versions_status_idx",
+      "table": "route_graph_versions",
+      "columns": [
+        "status"
+      ],
+      "unique": false
+    },
+    {
+      "name": "route_graph_versions_version_unique",
+      "table": "route_graph_versions",
+      "columns": [
+        "version"
+      ],
+      "unique": true
     },
     {
       "name": "route_group_sources_group_source_unique",
@@ -2941,14 +3101,6 @@
         "enabled"
       ],
       "unique": false
-    },
-    {
-      "name": "token_routes_model_pattern_idx",
-      "table": "token_routes",
-      "columns": [
-        "model_pattern"
-      ],
-      "unique": false
     }
   ],
   "uniques": [
@@ -3019,6 +3171,20 @@
       "table": "proxy_video_tasks",
       "columns": [
         "public_id"
+      ]
+    },
+    {
+      "name": "route_graph_active_version_singleton_unique",
+      "table": "route_graph_active_version",
+      "columns": [
+        "id"
+      ]
+    },
+    {
+      "name": "route_graph_versions_version_unique",
+      "table": "route_graph_versions",
+      "columns": [
+        "version"
       ]
     },
     {
@@ -3214,6 +3380,28 @@
         "token_id"
       ],
       "referencedTable": "account_tokens",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "SET NULL"
+    },
+    {
+      "table": "route_graph_active_version",
+      "columns": [
+        "version_id"
+      ],
+      "referencedTable": "route_graph_versions",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "route_graph_drafts",
+      "columns": [
+        "base_version"
+      ],
+      "referencedTable": "route_graph_versions",
       "referencedColumns": [
         "id"
       ],

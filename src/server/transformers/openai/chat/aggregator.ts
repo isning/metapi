@@ -29,27 +29,70 @@ type ChoiceAggregate = {
   index: number;
   role?: 'assistant';
   content: string[];
+  contentBytes: number;
   reasoning: string[];
+  reasoningBytes: number;
   toolCalls: Array<{ id: string; name: string; arguments: string }>;
+  toolArgumentBytes: number;
   finishReason: string | null;
   annotations: Array<Record<string, unknown>>;
   annotationUrls: Set<string>;
   citations: Set<string>;
 };
 
+export type OpenAiChatStreamAggregateLimits = {
+  maxReasoningBytes?: number;
+  maxContentBytes?: number;
+  maxToolArgumentBytes?: number;
+  maxAggregateBytes?: number;
+};
+
 export type OpenAiChatAggregateState = {
   choices: Map<number, ChoiceAggregate>;
   citations: Set<string>;
   usageDetails?: OpenAiChatUsageDetails;
+  limits: OpenAiChatStreamAggregateLimits;
+  totalContentBytes: number;
+  totalReasoningBytes: number;
+  totalToolArgumentBytes: number;
 };
+
+export class OpenAiChatStreamAggregateLimitError extends Error {
+  constructor(
+    public readonly limitName: keyof OpenAiChatStreamAggregateLimits,
+    public readonly limitBytes: number,
+  ) {
+    super(`upstream chat stream exceeded ${String(limitName)} limit of ${limitBytes} bytes`);
+    this.name = 'OpenAiChatStreamAggregateLimitError';
+  }
+}
+
+function byteLength(value: string): number {
+  return Buffer.byteLength(value, 'utf8');
+}
+
+function assertWithinLimit(
+  limitName: keyof OpenAiChatStreamAggregateLimits,
+  currentBytes: number,
+  additionalBytes: number,
+  limitBytes: number | undefined,
+) {
+  if (!limitBytes || limitBytes <= 0) return;
+  if (currentBytes + additionalBytes > limitBytes) {
+    throw new OpenAiChatStreamAggregateLimitError(limitName, limitBytes);
+  }
+}
 
 function createChoiceAggregate(index: number): ChoiceAggregate {
   return {
     index,
     role: undefined,
     content: [],
+    contentBytes: 0,
     reasoning: [],
+    reasoningBytes: 0,
     toolCalls: [],
+    toolArgumentBytes: 0,
     finishReason: null,
     annotations: [],
     annotationUrls: new Set<string>(),
@@ -65,10 +108,28 @@ function getChoiceAggregate(state: OpenAiChatAggregateState, index: number): Cho
   return created;
 }
 
-function applyChoiceDelta(choice: ChoiceAggregate, event: OpenAiChatChoiceDelta) {
+function applyChoiceDelta(
+  state: OpenAiChatAggregateState,
+  choice: ChoiceAggregate,
+  event: OpenAiChatChoiceDelta,
+) {
   if (event.role) choice.role = event.role;
-  if (event.contentDelta) choice.content.push(event.contentDelta);
-  if (event.reasoningDelta) choice.reasoning.push(event.reasoningDelta);
+  if (event.contentDelta) {
+    const bytes = byteLength(event.contentDelta);
+    assertWithinLimit('maxContentBytes', choice.contentBytes, bytes, state.limits.maxContentBytes);
+    assertWithinLimit('maxAggregateBytes', state.totalContentBytes + state.totalReasoningBytes + state.totalToolArgumentBytes, bytes, state.limits.maxAggregateBytes);
+    choice.content.push(event.contentDelta);
+    choice.contentBytes += bytes;
+    state.totalContentBytes += bytes;
+  }
+  if (event.reasoningDelta) {
+    const bytes = byteLength(event.reasoningDelta);
+    assertWithinLimit('maxReasoningBytes', choice.reasoningBytes, bytes, state.limits.maxReasoningBytes);
+    assertWithinLimit('maxAggregateBytes', state.totalContentBytes + state.totalReasoningBytes + state.totalToolArgumentBytes, bytes, state.limits.maxAggregateBytes);
+    choice.reasoning.push(event.reasoningDelta);
+    choice.reasoningBytes += bytes;
+    state.totalReasoningBytes += bytes;
+  }
   if (event.finishReason !== undefined) choice.finishReason = event.finishReason ?? null;
   if (Array.isArray(event.toolCallDeltas)) {
     for (const delta of event.toolCallDeltas) {
@@ -80,7 +141,14 @@ function applyChoiceDelta(choice: ChoiceAggregate, event: OpenAiChatChoiceDelta)
       const existing = choice.toolCalls[index];
       if (delta.id) existing.id = delta.id;
       if (delta.name) existing.name = delta.name;
-      if (delta.argumentsDelta) existing.arguments += delta.argumentsDelta;
+      if (delta.argumentsDelta) {
+        const bytes = byteLength(delta.argumentsDelta);
+        assertWithinLimit('maxToolArgumentBytes', choice.toolArgumentBytes, bytes, state.limits.maxToolArgumentBytes);
+        assertWithinLimit('maxAggregateBytes', state.totalContentBytes + state.totalReasoningBytes + state.totalToolArgumentBytes, bytes, state.limits.maxAggregateBytes);
+        existing.arguments += delta.argumentsDelta;
+        choice.toolArgumentBytes += bytes;
+        state.totalToolArgumentBytes += bytes;
+      }
     }
   }
   if (Array.isArray(event.annotations)) {
@@ -97,11 +165,17 @@ function applyChoiceDelta(choice: ChoiceAggregate, event: OpenAiChatChoiceDelta)
   }
 }
 
-export function createOpenAiChatAggregateState(): OpenAiChatAggregateState {
+export function createOpenAiChatAggregateState(
+  limits: OpenAiChatStreamAggregateLimits = {},
+): OpenAiChatAggregateState {
   return {
     choices: new Map<number, ChoiceAggregate>(),
     citations: new Set<string>(),
     usageDetails: undefined,
+    limits,
+    totalContentBytes: 0,
+    totalReasoningBytes: 0,
+    totalToolArgumentBytes: 0,
   };
 }
 
@@ -124,7 +198,7 @@ export function applyOpenAiChatStreamEvent(
 
   for (const choiceEvent of choiceEvents) {
     const choice = getChoiceAggregate(state, choiceEvent.index);
-    applyChoiceDelta(choice, choiceEvent);
+    applyChoiceDelta(state, choice, choiceEvent);
   }
 
   if (Array.isArray(event.citations)) {

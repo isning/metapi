@@ -6,11 +6,15 @@ import { and, eq } from 'drizzle-orm';
 
 type DbModule = typeof import('../db/index.js');
 type ModelServiceModule = typeof import('./modelService.js');
+type RouteGraphServiceModule = typeof import('./routeGraphService.js');
 
 describe('rebuildTokenRoutesFromAvailability', () => {
   let db: DbModule['db'];
   let schema: DbModule['schema'];
   let rebuildTokenRoutesFromAvailability: ModelServiceModule['rebuildTokenRoutesFromAvailability'];
+  let publishRouteGraphSource: RouteGraphServiceModule['publishRouteGraphSource'];
+  let getActiveRouteGraphVersion: RouteGraphServiceModule['getActiveRouteGraphVersion'];
+  let loadActiveRouteGraphRouteBindings: RouteGraphServiceModule['loadActiveRouteGraphRouteBindings'];
   let dataDir = '';
 
   beforeAll(async () => {
@@ -20,13 +24,20 @@ describe('rebuildTokenRoutesFromAvailability', () => {
     await import('../db/migrate.js');
     const dbModule = await import('../db/index.js');
     const modelService = await import('./modelService.js');
+    const routeGraphService = await import('./routeGraphService.js');
 
     db = dbModule.db;
     schema = dbModule.schema;
     rebuildTokenRoutesFromAvailability = modelService.rebuildTokenRoutesFromAvailability;
+    publishRouteGraphSource = routeGraphService.publishRouteGraphSource;
+    getActiveRouteGraphVersion = routeGraphService.getActiveRouteGraphVersion;
+    loadActiveRouteGraphRouteBindings = routeGraphService.loadActiveRouteGraphRouteBindings;
   });
 
   beforeEach(async () => {
+    await db.delete(schema.routeGraphDrafts).run();
+    await db.delete(schema.routeGraphActiveVersion).run();
+    await db.delete(schema.routeGraphVersions).run();
     await db.delete(schema.routeChannels).run();
     await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.tokenModelAvailability).run();
@@ -39,6 +50,15 @@ describe('rebuildTokenRoutesFromAvailability', () => {
   afterAll(() => {
     delete process.env.DATA_DIR;
   });
+
+  async function findRouteByExposedModel(model: string) {
+    const bindings = await loadActiveRouteGraphRouteBindings();
+    const binding = Array.from(bindings.values()).find((item) => item.exposedModelName === model);
+    if (!binding) return null;
+    return await db.select().from(schema.tokenRoutes)
+      .where(eq(schema.tokenRoutes.id, binding.routeId))
+      .get();
+  }
 
   it('creates an exact route with an account-direct channel for apikey model availability', async () => {
     const site = await db.insert(schema.sites).values({
@@ -68,9 +88,7 @@ describe('rebuildTokenRoutesFromAvailability', () => {
 
     expect(rebuild.models).toBe(1);
 
-    const route = await db.select().from(schema.tokenRoutes)
-      .where(eq(schema.tokenRoutes.modelPattern, 'gpt-5.2-codex'))
-      .get();
+    const route = await findRouteByExposedModel('gpt-5.2-codex');
     expect(route).toBeDefined();
 
     const channels = await db.select().from(schema.routeChannels)
@@ -130,9 +148,7 @@ describe('rebuildTokenRoutesFromAvailability', () => {
 
     expect(rebuild.models).toBe(1);
 
-    const route = await db.select().from(schema.tokenRoutes)
-      .where(eq(schema.tokenRoutes.modelPattern, 'gpt-4.1'))
-      .get();
+    const route = await findRouteByExposedModel('gpt-4.1');
     expect(route).toBeDefined();
 
     const channels = await db.select().from(schema.routeChannels)
@@ -182,9 +198,7 @@ describe('rebuildTokenRoutesFromAvailability', () => {
 
     expect(rebuild.models).toBe(1);
 
-    const route = await db.select().from(schema.tokenRoutes)
-      .where(eq(schema.tokenRoutes.modelPattern, 'gpt-5.2-codex'))
-      .get();
+    const route = await findRouteByExposedModel('gpt-5.2-codex');
     expect(route).toBeDefined();
 
     const channels = await db.select().from(schema.routeChannels)
@@ -235,9 +249,7 @@ describe('rebuildTokenRoutesFromAvailability', () => {
 
     expect(rebuild.models).toBe(1);
 
-    const route = await db.select().from(schema.tokenRoutes)
-      .where(eq(schema.tokenRoutes.modelPattern, 'gpt-5.2-codex'))
-      .get();
+    const route = await findRouteByExposedModel('gpt-5.2-codex');
     expect(route).toBeDefined();
 
     const channels = await db.select().from(schema.routeChannels)
@@ -282,7 +294,7 @@ describe('rebuildTokenRoutesFromAvailability', () => {
     }).run();
 
     const staleRoute = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'old-model',
+      displayName: 'old-model',
       enabled: true,
     }).returning().get();
 
@@ -297,7 +309,7 @@ describe('rebuildTokenRoutesFromAvailability', () => {
     }).run();
 
     const wildcardRoute = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-*',
+      displayName: 'gpt-*',
       enabled: true,
     }).returning().get();
 
@@ -322,7 +334,7 @@ describe('rebuildTokenRoutesFromAvailability', () => {
     const oldChannels = await db.select().from(schema.routeChannels).where(eq(schema.routeChannels.routeId, staleRoute.id)).all();
     expect(oldChannels).toHaveLength(0);
 
-    const latestRoute = await db.select().from(schema.tokenRoutes).where(eq(schema.tokenRoutes.modelPattern, 'latest-model')).get();
+    const latestRoute = await findRouteByExposedModel('latest-model');
     expect(latestRoute).toBeDefined();
     const latestChannels = await db.select().from(schema.routeChannels)
       .where(and(eq(schema.routeChannels.routeId, latestRoute!.id), eq(schema.routeChannels.tokenId, token.id)))
@@ -331,5 +343,73 @@ describe('rebuildTokenRoutesFromAvailability', () => {
 
     const wildcardRouteAfter = await db.select().from(schema.tokenRoutes).where(eq(schema.tokenRoutes.id, wildcardRoute.id)).get();
     expect(wildcardRouteAfter).toBeDefined();
+  });
+
+  it('rebuilds automatic projection routes without deleting manual graph nodes', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'site-graph',
+      url: 'https://site-graph.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'graph-user',
+      accessToken: 'access-token',
+      status: 'active',
+    }).returning().get();
+
+    const token = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'graph-token',
+      token: 'sk-graph',
+      source: 'manual',
+      enabled: true,
+      isDefault: true,
+    }).returning().get();
+
+    await db.insert(schema.tokenModelAvailability).values({
+      tokenId: token.id,
+      modelName: 'auto-generated-model',
+      available: true,
+    }).run();
+
+    const manualGraph = {
+      version: 1,
+      nodes: [
+        {
+          id: 'filter:manual:reasoning',
+          type: 'filter',
+          name: 'Manual reasoning policy',
+          enabled: true,
+          visibility: 'internal',
+          ownership: 'manual',
+          operations: [{ type: 'set_payload', path: 'reasoning_effort', value: 'medium' }],
+        },
+      ],
+      edges: [],
+      macros: [],
+    };
+    const published = await publishRouteGraphSource({ sourceGraph: manualGraph, createdBy: 'test', allowDiagnostics: true });
+    expect(published.ok).toBe(true);
+
+    const rebuild = await rebuildTokenRoutesFromAvailability();
+    expect(rebuild.createdRoutes).toBe(1);
+
+    const active = await getActiveRouteGraphVersion();
+    expect(active?.sourceGraph.nodes).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'filter:manual:reasoning',
+        ownership: 'manual',
+      }),
+      expect.objectContaining({
+        type: 'entry',
+        ownership: 'auto_generated',
+        match: expect.objectContaining({
+          requestedModelPattern: 'auto-generated-model',
+        }),
+      }),
+    ]));
   });
 });

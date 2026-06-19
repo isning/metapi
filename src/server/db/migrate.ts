@@ -50,6 +50,7 @@ type LegacySiteRow = {
 };
 
 const VERIFIED_BOOTSTRAP_TAG = '0012_account_token_value_status';
+const GRAPH_NATIVE_BOOTSTRAP_TAG = '0027_route_graph_replacement';
 const SQLITE_MIGRATION_RECOVERY_RETRY_BUDGET = 64;
 const VERIFIED_SCHEMA_MARKERS: SchemaMarker[] = [
   { table: 'sites' },
@@ -129,7 +130,23 @@ function hasVerifiedLegacySchema(sqlite: Database.Database): boolean {
   ));
 }
 
-function readVerifiedMigrationRecords(migrationsFolder: string): MigrationRecord[] {
+function hasGraphNativeTokenRoutesReplacement(sqlite: Database.Database): boolean {
+  return tableExists(sqlite, 'route_graph_versions')
+    && tableExists(sqlite, 'route_graph_drafts')
+    && tableExists(sqlite, 'route_graph_active_version')
+    && columnExists(sqlite, 'route_channels', 'route_node_id')
+    && columnExists(sqlite, 'token_routes', 'display_name')
+    && !columnExists(sqlite, 'token_routes', 'model_pattern');
+}
+
+function hasVerifiedGraphNativeSchema(sqlite: Database.Database): boolean {
+  return hasGraphNativeTokenRoutesReplacement(sqlite)
+    && columnExists(sqlite, 'proxy_logs', 'is_stream')
+    && columnExists(sqlite, 'proxy_logs', 'first_byte_latency_ms')
+    && columnExists(sqlite, 'sites', 'post_refresh_probe_latency_threshold_ms');
+}
+
+function readMigrationRecordsUntilTag(migrationsFolder: string, stopTag?: string): MigrationRecord[] {
   const journalPath = resolve(migrationsFolder, 'meta', '_journal.json');
   const journal = JSON.parse(readFileSync(journalPath, 'utf8')) as MigrationJournalFile;
   const records: MigrationRecord[] = [];
@@ -141,12 +158,16 @@ function readVerifiedMigrationRecords(migrationsFolder: string): MigrationRecord
       hash: createHash('sha256').update(migrationSql).digest('hex'),
     });
 
-    if (entry.tag === VERIFIED_BOOTSTRAP_TAG) {
+    if (stopTag && entry.tag === stopTag) {
       return records;
     }
   }
 
   return [];
+}
+
+function readVerifiedMigrationRecords(migrationsFolder: string): MigrationRecord[] {
+  return readMigrationRecordsUntilTag(migrationsFolder, VERIFIED_BOOTSTRAP_TAG);
 }
 
 function splitMigrationStatements(sqlText: string): string[] {
@@ -345,6 +366,24 @@ function isRecoverableSchemaConflictError(error: unknown): boolean {
     || lowered.includes('already exists');
 }
 
+function isReplacedRouteGraphLegacyTokenRoutesStatement(
+  sqlite: Database.Database,
+  statement: string,
+): boolean {
+  if (!hasGraphNativeTokenRoutesReplacement(sqlite)) {
+    return false;
+  }
+
+  const normalized = normalizeSqlForMatch(statement);
+  return normalized.includes('token_routes')
+    && (
+      normalized.includes('model_pattern')
+      || normalized.includes('route_mode')
+      || normalized.includes('match_spec')
+      || normalized.includes('backend_spec')
+    );
+}
+
 function isSitesPlatformUrlUniqueConflictError(error: unknown): boolean {
   const lowered = normalizeSchemaErrorMessage(error).toLowerCase();
   if (!lowered.includes('unique constraint failed: sites.platform, sites.url')) {
@@ -362,12 +401,15 @@ function isSitesPlatformUrlUniqueConflictError(error: unknown): boolean {
 
 function replayMigrationStatements(sqlite: Database.Database, statements: string[]): void {
   for (const statement of statements) {
-    try {
-      sqlite.exec(statement);
-    } catch (error) {
-      if (isRecoverableSchemaConflictError(error)) {
+      if (isReplacedRouteGraphLegacyTokenRoutesStatement(sqlite, statement)) {
         continue;
       }
+      try {
+        sqlite.exec(statement);
+      } catch (error) {
+        if (isRecoverableSchemaConflictError(error)) {
+          continue;
+        }
 
       if (isSitesPlatformUrlUniqueConflictError(error) && deduplicateLegacySitesForUniqueIndex(sqlite)) {
         try {
@@ -653,9 +695,17 @@ export const __migrateTestUtils = {
 
 function bootstrapLegacyDrizzleMigrations(sqlite: Database.Database, migrationsFolder: string): boolean {
   if (hasRecordedDrizzleMigrations(sqlite)) return false;
-  if (!hasVerifiedLegacySchema(sqlite)) return false;
 
-  const records = readVerifiedMigrationRecords(migrationsFolder);
+  const bootstrapTag = hasVerifiedGraphNativeSchema(sqlite)
+    ? GRAPH_NATIVE_BOOTSTRAP_TAG
+    : hasVerifiedLegacySchema(sqlite)
+      ? VERIFIED_BOOTSTRAP_TAG
+      : null;
+  if (!bootstrapTag) return false;
+
+  const records = bootstrapTag === GRAPH_NATIVE_BOOTSTRAP_TAG
+    ? readMigrationRecordsUntilTag(migrationsFolder, GRAPH_NATIVE_BOOTSTRAP_TAG)
+    : readVerifiedMigrationRecords(migrationsFolder);
   if (records.length === 0) return false;
 
   sqlite.exec(`

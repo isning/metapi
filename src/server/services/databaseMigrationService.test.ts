@@ -839,7 +839,7 @@ describe('databaseMigrationService', () => {
         }],
         routeGroupSources: [{
           id: 9,
-          groupRouteId: 12,
+          groupRouteId: 10,
           sourceRouteId: 13,
         }],
         downstreamApiKeys: [],
@@ -855,9 +855,17 @@ describe('databaseMigrationService', () => {
     expect(statements.some((statement) => statement.table === 'proxy_files')).toBe(true);
     expect(statements.some((statement) => statement.table === 'route_group_sources')).toBe(true);
     const tokenRouteStatement = statements.find((statement) => statement.table === 'token_routes');
-    const routeModeIndex = tokenRouteStatement?.columns.indexOf('route_mode') ?? -1;
-    expect(routeModeIndex).toBeGreaterThanOrEqual(0);
-    expect(tokenRouteStatement?.values[routeModeIndex]).toBe('explicit_group');
+    expect(tokenRouteStatement?.columns).not.toContain('match_spec');
+    expect(tokenRouteStatement?.columns).not.toContain('backend_spec');
+    const graphVersionStatement = statements.find((statement) => statement.table === 'route_graph_versions');
+    const graphSourceIndex = graphVersionStatement?.columns.indexOf('source_graph_json') ?? -1;
+    expect(graphSourceIndex).toBeGreaterThanOrEqual(0);
+    const graphSource = JSON.parse(String(graphVersionStatement?.values[graphSourceIndex])) as {
+      macros?: Array<{ kind?: string; config?: { groups?: Array<{ input?: { routeIds?: number[] } }> } }>;
+    };
+    const selectorMacro = graphSource.macros?.find((macro) => macro.kind === 'candidate_selector');
+    expect(selectorMacro).toBeTruthy();
+    expect(selectorMacro?.config?.groups?.map((group) => group.input?.routeIds)).toContainEqual([13]);
   });
 
   it('includes site announcements in migration statements', () => {

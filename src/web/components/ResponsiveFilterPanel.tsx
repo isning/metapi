@@ -1,5 +1,6 @@
 import React from 'react';
 import MobileFilterSheet from './MobileFilterSheet.js';
+import { Button } from './ui/button/index.js';
 
 type ResponsiveFilterPanelProps = {
   isMobile: boolean;
@@ -13,8 +14,6 @@ type ResponsiveFilterPanelProps = {
   mobileTriggerLabel?: string;
   mobileTriggerWrapperClassName?: string;
   mobileTriggerWrapperStyle?: React.CSSProperties;
-  mobileTriggerButtonClassName?: string;
-  mobileTriggerButtonStyle?: React.CSSProperties;
 };
 
 export default function ResponsiveFilterPanel({
@@ -27,10 +26,8 @@ export default function ResponsiveFilterPanel({
   desktopContent = null,
   mobileTrigger,
   mobileTriggerLabel = '筛选',
-  mobileTriggerWrapperClassName = 'mobile-filter-row',
+  mobileTriggerWrapperClassName = 'mb-3 flex justify-end',
   mobileTriggerWrapperStyle,
-  mobileTriggerButtonClassName = 'btn btn-ghost',
-  mobileTriggerButtonStyle = { border: '1px solid var(--color-border)' },
 }: ResponsiveFilterPanelProps) {
   if (!isMobile) {
     return <>{desktopContent}</>;
@@ -40,14 +37,13 @@ export default function ResponsiveFilterPanel({
     <>
       {mobileTrigger ?? (onMobileOpen ? (
         <div className={mobileTriggerWrapperClassName} style={mobileTriggerWrapperStyle}>
-          <button
+          <Button
             type="button"
-            className={mobileTriggerButtonClassName}
-            style={mobileTriggerButtonStyle}
+            variant="outline"
             onClick={onMobileOpen}
           >
             {mobileTriggerLabel}
-          </button>
+          </Button>
         </div>
       ) : null)}
       <MobileFilterSheet open={mobileOpen} onClose={onMobileClose} title={mobileTitle}>

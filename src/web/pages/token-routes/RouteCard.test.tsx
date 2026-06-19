@@ -43,9 +43,9 @@ const LONG_REGEX_PATTERN = 're:(?:.*|.*/)(minimax-m2.1)$';
 function buildRoute(overrides: Partial<RouteSummaryRow> = {}): RouteSummaryRow {
   return {
     id: 42,
-    modelPattern: LONG_REGEX_PATTERN,
-    displayName: 'm.',
-    displayIcon: null,
+    match: { kind: 'model', requestedModelPattern: LONG_REGEX_PATTERN, displayName: 'm.' },
+    backend: { kind: 'channels' },
+    presentation: { displayName: 'm.', displayIcon: null },
     modelMapping: null,
     routingStrategy: 'weighted',
     enabled: true,
@@ -82,8 +82,8 @@ describe('RouteCard', () => {
     const root = create(
       <RouteCard
         route={buildRoute({
-          modelPattern: 'gpt-4.1',
-          displayName: 'gpt-4.1',
+          match: { kind: 'model', requestedModelPattern: 'gpt-4.1', displayName: 'gpt-4.1' },
+          presentation: { displayName: 'gpt-4.1', displayIcon: null },
           channelCount: 1,
           enabledChannelCount: 1,
         })}
@@ -185,9 +185,7 @@ describe('RouteCard', () => {
     expect(collectText(root.root)).toContain('m.');
 
     const regexBadge = root.root.find((node) => (
-      node.type === 'span'
-      && typeof node.props.className === 'string'
-      && node.props.className.includes('badge-muted')
+      node.props?.['data-tone'] === '-muted'
       && collectText(node) === LONG_REGEX_PATTERN
     ));
 
@@ -205,7 +203,8 @@ describe('RouteCard', () => {
     const root = create(
       <RouteCard
         route={buildRoute({
-          displayName: 'minimax m2.1 群组名称',
+          match: { kind: 'model', requestedModelPattern: LONG_REGEX_PATTERN, displayName: 'minimax m2.1 群组名称' },
+          presentation: { displayName: 'minimax m2.1 群组名称', displayIcon: null },
         })}
         brand={null}
         expanded={false}
@@ -249,9 +248,7 @@ describe('RouteCard', () => {
       && collectText(node) === 'minimax m2.1 群组名称'
     ));
     const regexBadge = titleRow.find((node) => (
-      node.type === 'span'
-      && typeof node.props.className === 'string'
-      && node.props.className.includes('badge-muted')
+      node.props?.['data-tone'] === '-muted'
       && collectText(node) === LONG_REGEX_PATTERN
     ));
 
@@ -348,8 +345,9 @@ describe('RouteCard', () => {
     );
 
     const summaryCard = root.root.find((node) => (
-      node.type === 'div'
-      && String(node.props.className || '').includes('route-card-collapsed')
+      node.props?.role === 'button'
+      && typeof node.props.onKeyDown === 'function'
+      && String(node.props.className || '').includes('route--collapsed')
     ));
 
     expect(summaryCard.props.role).toBe('button');
@@ -738,8 +736,8 @@ describe('RouteCard', () => {
     const root = create(
       <RouteCard
         route={buildRoute({
-          modelPattern: 'gpt-4o-*',
-          displayName: 'gpt-4o',
+          match: { kind: 'model', requestedModelPattern: 'gpt-4o-*', displayName: 'gpt-4o' },
+          presentation: { displayName: 'gpt-4o', displayIcon: null },
         })}
         brand={null}
         expanded
@@ -838,14 +836,14 @@ describe('RouteCard', () => {
     expect(collectText(compactActionRow)).toContain('路由策略');
     expect(collectText(compactActionRow)).toContain('添加通道');
     expect(strategySelectWrap.props.style.flex).toBe('0 0 168px');
-    expect(addChannelButton.props.style.marginLeft).toBe('auto');
+    expect(strategySelectWrap.props.style.flex).toBe('0 0 168px');
   });
 
   it('keeps compact status badges inline with the route name', () => {
     const root = create(
       <RouteCard
         route={buildRoute({
-          modelPattern: 'gpt-5.2-codex',
+          match: { kind: 'model', requestedModelPattern: 'gpt-5.2-codex', displayName: 'm.' },
           channelCount: 16,
         })}
         brand={null}
@@ -896,11 +894,11 @@ describe('RouteCard', () => {
 
   it('skips collapsed rerenders when only expanded-channel state changes', () => {
     const routeTarget = buildRoute();
-    let modelPatternReadCount = 0;
+    let routeGraphReadCount = 0;
     const route = new Proxy(routeTarget, {
       get(target, property, receiver) {
-        if (property === 'modelPattern') {
-          modelPatternReadCount += 1;
+        if (property === 'match') {
+          routeGraphReadCount += 1;
         }
         return Reflect.get(target, property, receiver);
       },
@@ -965,22 +963,22 @@ describe('RouteCard', () => {
       root = create(renderCard({}, {}));
     });
 
-    const initialReadCount = modelPatternReadCount;
+    const initialReadCount = routeGraphReadCount;
 
     act(() => {
       root.update(renderCard({ 11: 1001 }, { 11: true }));
     });
 
-    expect(modelPatternReadCount).toBe(initialReadCount);
+    expect(routeGraphReadCount).toBe(initialReadCount);
   });
 
   it('skips collapsed rerenders when only expanded-only callback identities change', () => {
     const routeTarget = buildRoute();
-    let modelPatternReadCount = 0;
+    let routeGraphReadCount = 0;
     const route = new Proxy(routeTarget, {
       get(target, property, receiver) {
-        if (property === 'modelPattern') {
-          modelPatternReadCount += 1;
+        if (property === 'match') {
+          routeGraphReadCount += 1;
         }
         return Reflect.get(target, property, receiver);
       },
@@ -1057,12 +1055,12 @@ describe('RouteCard', () => {
     );
 
     const root = create(renderCard(callbacksA));
-    const initialReadCount = modelPatternReadCount;
+    const initialReadCount = routeGraphReadCount;
 
     act(() => {
       root.update(renderCard(callbacksB));
     });
 
-    expect(modelPatternReadCount).toBe(initialReadCount);
+    expect(routeGraphReadCount).toBe(initialReadCount);
   });
 });

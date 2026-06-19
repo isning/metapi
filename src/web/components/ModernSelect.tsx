@@ -1,4 +1,26 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Check, ChevronsUpDown } from 'lucide-react';
+import { useMemo, useState, type ReactNode } from 'react';
+import { Button } from './ui/button/index.js';
+import { Input } from './ui/input/index.js';
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from './ui/command/index.js';
+import * as Popover from './ui/popover/index.js';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from './ui/select/index.js';
+import { cn } from '../lib/utils.js';
+
+const EMPTY_VALUE_SENTINEL = '__metapi_empty_select_value__';
 
 type ModernSelectOption = {
   value: string;
@@ -39,164 +61,265 @@ export default function ModernSelect({
   searchable = false,
   searchPlaceholder = 'Search...',
 }: ModernSelectProps) {
-  const [open, setOpen] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const rootRef = useRef<HTMLDivElement>(null);
+  if (shouldRenderInlineSelectFallback()) {
+    return (
+      <FallbackSelect
+        value={value}
+        onChange={onChange}
+        options={options}
+        dataTestId={dataTestId}
+        placeholder={placeholder}
+        disabled={disabled}
+        emptyLabel={emptyLabel}
+        className={className}
+        size={size}
+        searchable={searchable}
+        searchPlaceholder={searchPlaceholder}
+      />
+    );
+  }
 
   const selected = useMemo(
     () => options.find((item) => item.value === value),
     [options, value],
   );
 
-  const visibleOptions = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase();
-    if (!searchable || !query) return options;
-
-    return options.filter((item) => {
-      const haystack = [
-        item.label,
-        item.description,
-        item.value,
-      ]
-        .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
-        .join(' ')
-        .toLowerCase();
-      return haystack.includes(query);
-    });
-  }, [options, searchQuery, searchable]);
-
-  useEffect(() => {
-    if (!open) return;
-    if (typeof document === 'undefined') return;
-
-    const handleOutsideClick = (event: MouseEvent) => {
-      if (!rootRef.current) return;
-      if (!rootRef.current.contains(event.target as Node)) {
-        setOpen(false);
-      }
-    };
-
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOpen(false);
-    };
-
-    document.addEventListener('mousedown', handleOutsideClick);
-    document.addEventListener('keydown', handleEscape);
-    return () => {
-      document.removeEventListener('mousedown', handleOutsideClick);
-      document.removeEventListener('keydown', handleEscape);
-    };
-  }, [open]);
-
-  useEffect(() => {
-    if (disabled) setOpen(false);
-  }, [disabled]);
-
-  useEffect(() => {
-    if (!open && searchQuery) {
-      setSearchQuery('');
-    }
-  }, [open, searchQuery]);
-
-  const renderOptionIcon = (item: ModernSelectOption) => {
-    if (item.iconNode) {
-      return item.iconNode;
-    }
-    if (item.iconUrl) {
-      return <img className="modern-select-option-icon" src={item.iconUrl} alt="" loading="lazy" />;
-    }
-    if (item.iconText) {
-      return <span className="modern-select-option-icon-text">{item.iconText}</span>;
-    }
-    return null;
-  };
+  if (searchable) {
+    return (
+      <SearchableSelect
+        value={value}
+        selected={selected}
+        onChange={onChange}
+        options={options}
+        dataTestId={dataTestId}
+        placeholder={placeholder}
+        disabled={disabled}
+        emptyLabel={emptyLabel}
+        menuMaxHeight={menuMaxHeight}
+        className={className}
+        size={size}
+        searchPlaceholder={searchPlaceholder}
+      />
+    );
+  }
 
   return (
-    <div
-      ref={rootRef}
-      data-testid={dataTestId}
-      className={`modern-select ${open ? 'is-open' : ''} ${disabled ? 'is-disabled' : ''} ${size === 'sm' ? 'is-sm' : ''} ${className}`.trim()}
-    >
-      <button
+    <Select value={encodeSelectValue(value)} onValueChange={(nextValue) => onChange(decodeSelectValue(nextValue))} disabled={disabled}>
+      <SelectTrigger data-testid={dataTestId} className={cn(size === 'sm' && 'h-8 text-xs', className)}>
+        <SelectValue placeholder={placeholder}>
+          {selected ? <SelectOptionContent item={selected} /> : null}
+        </SelectValue>
+      </SelectTrigger>
+      <SelectContent style={{ maxHeight: menuMaxHeight }}>
+        {options.length === 0 ? (
+          <div className="px-2 py-6 text-center text-sm text-muted-foreground">{emptyLabel}</div>
+        ) : options.map((item) => (
+          <SelectItem key={item.value} value={encodeSelectValue(item.value)} disabled={item.disabled}>
+            <SelectOptionContent item={item} />
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
+function shouldRenderInlineSelectFallback() {
+  return typeof document === 'undefined'
+    || !document.body
+    || typeof document.body.querySelector !== 'function';
+}
+
+function FallbackSelect({
+  value,
+  onChange,
+  options,
+  dataTestId,
+  placeholder,
+  disabled,
+  emptyLabel,
+  className,
+  size,
+  searchable,
+  searchPlaceholder,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  options: ModernSelectOption[];
+  dataTestId?: string;
+  placeholder: string;
+  disabled: boolean;
+  emptyLabel: string;
+  className: string;
+  size: 'md' | 'sm';
+  searchable: boolean;
+  searchPlaceholder: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const selected = useMemo(
+    () => options.find((item) => item.value === value),
+    [options, value],
+  );
+  const visibleOptions = useMemo(() => {
+    if (!searchable) return options;
+    const query = search.trim().toLowerCase();
+    if (!query) return options;
+    return options.filter((item) => (
+      `${item.label} ${item.value} ${item.description || ''}`.toLowerCase().includes(query)
+    ));
+  }, [options, search, searchable]);
+
+  return (
+    <div className={cn('grid gap-1', className)} data-testid={dataTestId}>
+      <Button
         type="button"
-        className="modern-select-trigger"
-        onClick={() => {
-          if (!disabled) setOpen((prev) => !prev);
-        }}
+        variant="outline"
+        size={size === 'sm' ? 'sm' : 'default'}
+        role="combobox"
         aria-expanded={open}
         disabled={disabled}
+        onClick={() => setOpen((current) => !current)}
+        className="w-full justify-between font-normal"
       >
-        <span className={`modern-select-value ${selected ? '' : 'is-placeholder'}`.trim()}>
-          {selected ? (
-            <span className="modern-select-value-content">
-              {renderOptionIcon(selected)}
-              <span>{selected.label}</span>
-            </span>
-          ) : (
-            placeholder
-          )}
+        <span className={cn('min-w-0 truncate', !selected && 'text-muted-foreground')}>
+          {selected ? <SelectOptionContent item={selected} /> : placeholder}
         </span>
-        <svg
-          className="modern-select-chevron"
-          width="14"
-          height="14"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-        </svg>
-      </button>
-
-      <div className="modern-select-panel" style={{ maxHeight: menuMaxHeight }}>
-        {searchable && (
-          <div className="modern-select-search-shell">
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
+        <ChevronsUpDown className="shrink-0 opacity-50" />
+      </Button>
+      {open ? (
+        <div className="rounded-md border bg-popover p-1 text-popover-foreground shadow-md">
+          {searchable ? (
+            <Input
+              className="h-8"
               placeholder={searchPlaceholder}
-              className="modern-select-search-input"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
             />
-          </div>
-        )}
-
-        {visibleOptions.length === 0 ? (
-          <div className="modern-select-empty">{emptyLabel}</div>
-        ) : (
-          visibleOptions.map((item) => {
-            const active = item.value === value;
-            return (
-              <button
-                key={item.value}
-                type="button"
-                className={`modern-select-option ${active ? 'is-active' : ''} ${item.disabled ? 'is-disabled' : ''}`.trim()}
-                onClick={() => {
-                  if (item.disabled) return;
-                  onChange(item.value);
-                  setOpen(false);
-                }}
-                disabled={item.disabled}
-              >
-                <div className="modern-select-option-main">
-                  {renderOptionIcon(item)}
-                  <div style={{ minWidth: 0 }}>
-                    <div className="modern-select-option-label">{item.label}</div>
-                    {item.description && (
-                      <div className="modern-select-option-desc">{item.description}</div>
-                    )}
-                  </div>
-                </div>
-                {active && (
-                  <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                  </svg>
-                )}
-              </button>
-            );
-          })
-        )}
-      </div>
+          ) : null}
+          {visibleOptions.length === 0 ? (
+            <div className="px-2 py-6 text-center text-sm text-muted-foreground">{emptyLabel}</div>
+          ) : visibleOptions.map((item) => (
+            <Button
+              key={item.value}
+              type="button"
+              variant="ghost"
+              role="option"
+              disabled={item.disabled}
+              className="w-full justify-start"
+              onClick={() => {
+                if (item.disabled) return;
+                onChange(item.value);
+                setOpen(false);
+              }}
+            >
+              <Check className={cn('shrink-0', item.value === value ? 'opacity-100' : 'opacity-0')} />
+              <SelectOptionContent item={item} />
+            </Button>
+          ))}
+        </div>
+      ) : null}
     </div>
+  );
+}
+
+function encodeSelectValue(value: string) {
+  return value === '' ? EMPTY_VALUE_SENTINEL : value;
+}
+
+function decodeSelectValue(value: string) {
+  return value === EMPTY_VALUE_SENTINEL ? '' : value;
+}
+
+function SearchableSelect({
+  value,
+  selected,
+  onChange,
+  options,
+  dataTestId,
+  placeholder,
+  disabled,
+  emptyLabel,
+  menuMaxHeight,
+  className,
+  size,
+  searchPlaceholder,
+}: {
+  value: string;
+  selected: ModernSelectOption | undefined;
+  onChange: (value: string) => void;
+  options: ModernSelectOption[];
+  dataTestId?: string;
+  placeholder: string;
+  disabled: boolean;
+  emptyLabel: string;
+  menuMaxHeight: number;
+  className: string;
+  size: 'md' | 'sm';
+  searchPlaceholder: string;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <Popover.Root open={open} onOpenChange={setOpen}>
+      <Popover.Trigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          role="combobox"
+          aria-expanded={open}
+          disabled={disabled}
+          data-testid={dataTestId}
+          className={cn('w-full justify-between font-normal', size === 'sm' && 'h-8 text-xs', className)}
+        >
+          <span className={cn('min-w-0 truncate', !selected && 'text-muted-foreground')}>
+            {selected ? <SelectOptionContent item={selected} /> : placeholder}
+          </span>
+          <ChevronsUpDown className="shrink-0 opacity-50" />
+        </Button>
+      </Popover.Trigger>
+      <Popover.Content className="w-[var(--radix-popover-trigger-width)] p-0" align="start" style={{ maxHeight: menuMaxHeight }}>
+        <Command>
+          <CommandInput placeholder={searchPlaceholder} />
+          <CommandList>
+            <CommandEmpty>{emptyLabel}</CommandEmpty>
+            <CommandGroup>
+              {options.map((item) => (
+                <CommandItem
+                  key={item.value}
+                  value={`${item.label} ${item.value} ${item.description || ''}`}
+                  disabled={item.disabled}
+                  onSelect={() => {
+                    if (item.disabled) return;
+                    onChange(item.value);
+                    setOpen(false);
+                  }}
+                >
+                  <Check className={cn('shrink-0', item.value === value ? 'opacity-100' : 'opacity-0')} />
+                  <SelectOptionContent item={item} />
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </Popover.Content>
+    </Popover.Root>
+  );
+}
+
+function SelectOptionContent({ item }: { item: ModernSelectOption }) {
+  return (
+    <span className="flex min-w-0 items-center gap-2">
+      {item.iconNode ? item.iconNode : null}
+      {!item.iconNode && item.iconUrl ? <img className="size-4 shrink-0 rounded-sm" src={item.iconUrl} alt="" loading="lazy" /> : null}
+      {!item.iconNode && !item.iconUrl && item.iconText ? (
+        <span className="inline-flex size-4 shrink-0 items-center justify-center rounded-sm border text-[10px]">
+          {item.iconText}
+        </span>
+      ) : null}
+      <span className="min-w-0 flex-1 truncate">
+        <span className="block truncate">{item.label}</span>
+        {item.description ? <span className="block truncate text-xs text-muted-foreground">{item.description}</span> : null}
+      </span>
+    </span>
   );
 }

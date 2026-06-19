@@ -59,6 +59,14 @@ vi.mock('../../services/proxyRetryPolicy.js', () => ({
   RETRYABLE_TIMEOUT_PATTERNS: [/(request timed out|connection timed out|read timeout|\btimed out\b)/i],
 }));
 
+vi.mock('../../services/routeGraphRuntimeService.js', async () => {
+  const actual = await vi.importActual<typeof import('../../services/routeGraphRuntimeService.js')>('../../services/routeGraphRuntimeService.js');
+  return {
+    ...actual,
+    evaluateActiveRouteGraphForModel: async () => null,
+  };
+});
+
 vi.mock('../../db/index.js', () => ({
   db: {
     insert: (arg: any) => dbInsertMock(arg),

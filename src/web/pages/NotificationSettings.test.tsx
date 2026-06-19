@@ -152,20 +152,16 @@ describe('NotificationSettings', () => {
       });
       await flushMicrotasks();
 
-      const allCheckboxes = root.root.findAll((node) => (
-        node.type === 'input' && node.props.type === 'checkbox'
-      ));
-      const proxyCheckbox = allCheckboxes.find((node) => {
-        const parent = node.parent;
-        if (!parent) return false;
-        const text = collectText(parent);
-        return text.includes('使用系统代理');
-      });
-      expect(proxyCheckbox).toBeTruthy();
-      expect(proxyCheckbox!.props.checked).toBe(false);
+      const proxySwitch = root.root.findAll((node) => (
+        node.type === 'button'
+        && node.props.role === 'switch'
+        && node.props['aria-label'] === '使用系统代理'
+      )).at(0);
+      expect(proxySwitch).toBeTruthy();
+      expect(proxySwitch!.props['aria-checked']).toBe(false);
 
       await act(async () => {
-        proxyCheckbox!.props.onChange({ target: { checked: true } });
+        proxySwitch!.props.onClick();
       });
 
       const saveButton = root.root.find((node) => (

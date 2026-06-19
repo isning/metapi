@@ -94,6 +94,11 @@ vi.mock('../../services/oauth/quota.js', () => ({
   recordOauthQuotaResetHint: async (input: unknown) => recordOauthQuotaResetHintMock(input),
 }));
 
+vi.mock('../../services/routeGraphRuntimeService.js', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../services/routeGraphRuntimeService.js')>(),
+  evaluateActiveRouteGraphForModel: async () => null,
+}));
+
 vi.mock('../../db/index.js', () => ({
   db: {
     insert: (arg: any) => dbInsertMock(arg),
@@ -178,8 +183,11 @@ describe('responses proxy codex oauth refresh', () => {
   );
 
   beforeAll(async () => {
+    const { registerDownstreamProtocolSurface } = await import('../surfaces/downstreamProtocolSurface.js');
+    const { responsesProtocolAdapter } = await import('./responses.js');
     const { responsesProxyRoute } = await import('../../routes/proxy/responses.js');
     app = Fastify();
+    await registerDownstreamProtocolSurface(app, responsesProtocolAdapter);
     await app.register(responsesProxyRoute);
   });
 

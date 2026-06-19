@@ -27,4 +27,14 @@ describe('Sites centered modal adoption', () => {
     expect(source).not.toContain('label="AI 请求地址"');
     expect(source).not.toContain('AI 地址: {buildSiteApiEndpointSummary(site)}');
   });
+
+  it('uses the shared configuration section wrapper for site editor settings', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/web/pages/Sites.tsx'), 'utf8');
+
+    expect(source).toContain("import { ConfigSection, ConfigSectionItem } from '../components/ConfigSection.js'");
+    for (const title of ['API 请求地址池', '站点自定义请求头', '禁用模型管理', '刷新后自动测试请求']) {
+      expect(source).toContain(`title="${title}"`);
+    }
+    expect(source).not.toContain('flex flex-col gap-2.5 rounded-lg border bg-muted p-3');
+  });
 });

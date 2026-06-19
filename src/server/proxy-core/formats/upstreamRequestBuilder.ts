@@ -2,6 +2,10 @@ import type { UpstreamEndpoint } from '../orchestration/upstreamRequest.js';
 import { resolvePlatformProfile } from '../platforms/registry.js';
 import { config } from '../../config.js';
 import { applyPayloadRules } from '../../services/payloadRules.js';
+import {
+  applyRouteGraphPostBuildFilters,
+  type RouteGraphPostBuildFilters,
+} from '../../services/routeGraphRuntimeService.js';
 import type { DownstreamFormat } from './protocolTypes.js';
 import {
   convertOpenAiBodyToResponsesBody as convertOpenAiBodyToResponsesBodyViaTransformer,
@@ -15,6 +19,11 @@ import {
 import {
   buildGeminiGenerateContentRequestFromOpenAi,
 } from '../../transformers/gemini/generate-content/requestBridge.js';
+import { applyOpenAiChatReasoningHistoryTransport } from '../../transformers/canonical/openAiChatReasoningHistoryTransport.js';
+import {
+  DEFAULT_RESOLVED_UPSTREAM_COMPATIBILITY_POLICY,
+  type ResolvedUpstreamCompatibilityPolicy,
+} from '../../contracts/upstreamCompatibilityPolicy.js';
 import {
   buildClaudeRuntimeHeaders,
   getInputHeader,
@@ -136,6 +145,18 @@ function normalizeResponsesFallbackChatFunctionTool(rawTool: unknown): Record<st
     type: 'function',
     function: fn,
   };
+}
+
+function isNativeReasoningHistoryTransport(
+  policy?: ResolvedUpstreamCompatibilityPolicy,
+): boolean {
+  if (!policy) return true;
+  const transport = policy.reasoningHistory.transport;
+  const defaultTransport = DEFAULT_RESOLVED_UPSTREAM_COMPATIBILITY_POLICY.reasoningHistory.transport;
+  return transport.mode === 'native'
+    && transport.applyTo.assistantHistory === defaultTransport.applyTo.assistantHistory
+    && transport.applyTo.assistantToolCalls === defaultTransport.applyTo.assistantToolCalls
+    && transport.toolCallMessageBehavior === defaultTransport.toolCallMessageBehavior;
 }
 
 function normalizeResponsesFallbackChatToolChoice(
@@ -266,6 +287,8 @@ export function buildUpstreamEndpointRequest(input: {
   platformHeaders?: Record<string, string>;
   codexSessionCacheKey?: string | null;
   codexExplicitSessionId?: string | null;
+  routeGraphFilters?: RouteGraphPostBuildFilters | null;
+  compatibilityPolicy?: ResolvedUpstreamCompatibilityPolicy;
 }): {
   path: string;
   headers: Record<string, string>;
@@ -312,18 +335,21 @@ export function buildUpstreamEndpointRequest(input: {
     return next;
   };
 
-  const cleanOpenaiBody = stripGeminiUnsupportedFields(input.openaiBody);
+  const policyOpenAiBody = input.compatibilityPolicy
+    ? applyOpenAiChatReasoningHistoryTransport(input.openaiBody, input.compatibilityPolicy)
+    : input.openaiBody;
+  const cleanOpenaiBody = stripGeminiUnsupportedFields(policyOpenAiBody);
   const requestedModelForPayloadRules = resolveRequestedModelForPayloadRules(input);
 
-  const applyConfiguredPayloadRules = <T extends Record<string, unknown>>(bodyContent: T): T => (
-    applyPayloadRules({
+  const applyConfiguredPayloadRules = <T extends Record<string, unknown>>(bodyContent: T): T => {
+    return applyPayloadRules({
       rules: config.payloadRules,
       payload: bodyContent,
       modelName: input.modelName,
       requestedModel: requestedModelForPayloadRules,
       protocol: sitePlatform,
-    }) as T
-  );
+    }) as T;
+  };
 
   let targetPath = '';
   if (input.endpoint === 'messages') {
@@ -379,6 +405,7 @@ export function buildUpstreamEndpointRequest(input: {
       input.downstreamFormat === 'claude'
       && input.claudeOriginalBody
       && input.forceNormalizeClaudeBody !== true
+      && isNativeReasoningHistoryTransport(input.compatibilityPolicy)
     )
       ? {
         ...stripClaudeMessagesContinuationFields(input.claudeOriginalBody),
@@ -411,7 +438,9 @@ export function buildUpstreamEndpointRequest(input: {
     const websocketMode = Object.entries(input.downstreamHeaders || {}).find(([rawKey]) => rawKey.trim().toLowerCase() === 'x-metapi-responses-websocket-mode');
     const preserveWebsocketIncrementalMode = asTrimmedString(websocketMode?.[1]).toLowerCase() === 'incremental';
     const rawBody = (
-      input.downstreamFormat === 'responses' && input.responsesOriginalBody
+      input.downstreamFormat === 'responses'
+      && input.responsesOriginalBody
+      && isNativeReasoningHistoryTransport(input.compatibilityPolicy)
         ? {
           ...stripGeminiUnsupportedFields(input.responsesOriginalBody),
           model: input.modelName,
@@ -464,7 +493,7 @@ export function buildUpstreamEndpointRequest(input: {
   }
 
   if (platformProfile) {
-    return platformProfile.prepareRequest({
+    const prepared = platformProfile.prepareRequest({
       targetPath,
       modelName: input.modelName,
       stream: input.stream,
@@ -487,12 +516,27 @@ export function buildUpstreamEndpointRequest(input: {
         : undefined,
       siteUrl: input.siteUrl,
     });
+    const withRouteHeaders = applyRouteGraphPostBuildFilters({
+      payload: prepared.body,
+      headers: prepared.headers,
+      filters: input.routeGraphFilters,
+    });
+    return {
+      ...prepared,
+      headers: withRouteHeaders.headers,
+      body: withRouteHeaders.payload,
+    };
   }
 
+  const withRouteHeaders = applyRouteGraphPostBuildFilters({
+    payload: resolvedBody,
+    headers,
+    filters: input.routeGraphFilters,
+  });
   return {
     path: targetPath,
-    headers,
-    body: resolvedBody,
+    headers: withRouteHeaders.headers,
+    body: withRouteHeaders.payload,
     runtime: {
       executor: (
         sitePlatform === 'codex'

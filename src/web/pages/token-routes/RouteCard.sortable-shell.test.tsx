@@ -30,9 +30,9 @@ function collectText(node: ReactTestInstance): string {
 function buildRoute(overrides: Partial<RouteSummaryRow> = {}): RouteSummaryRow {
   return {
     id: 42,
-    modelPattern: 'gpt-5.4',
-    displayName: 'gpt-5.4',
-    displayIcon: null,
+    match: { kind: 'model', requestedModelPattern: 'gpt-5.4', displayName: 'gpt-5.4' },
+    backend: { kind: 'channels' },
+    presentation: { displayName: 'gpt-5.4', displayIcon: null },
     modelMapping: null,
     routingStrategy: 'weighted',
     enabled: true,

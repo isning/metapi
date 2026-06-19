@@ -1,4 +1,6 @@
 import type { DownstreamRoutingPolicy } from '../../services/downstreamPolicyTypes.js';
+import type { RouteGraphPostBuildFilters } from '../../services/routeGraphRuntimeService.js';
+import type { ResolvedUpstreamCompatibilityPolicy } from '../../contracts/upstreamCompatibilityPolicy.js';
 import type { UpstreamEndpoint } from '../orchestration/upstreamRequest.js';
 
 export interface HeaderPassthroughRule {
@@ -70,6 +72,8 @@ export interface BuildUpstreamRequestInput {
   passthroughHeaders: Record<string, string>;
   platformHeaders: Record<string, string>;
   transformed: TransformedDownstreamRequest;
+  routeGraphFilters?: RouteGraphPostBuildFilters | null;
+  compatibilityPolicy?: ResolvedUpstreamCompatibilityPolicy;
 }
 
 export interface BuiltUpstreamRequest {

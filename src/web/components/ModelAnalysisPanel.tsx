@@ -1,8 +1,21 @@
 import { useMemo, useState } from 'react';
-import { VChart } from '@visactor/react-vchart';
 import { InlineBrandIcon } from './BrandIcon.js';
 import { formatCompactTokenMetric } from '../numberFormat.js';
 import { useThemeLabelColor } from './useThemeLabelColor.js';
+import EmptyStateBlock from './EmptyStateBlock.js';
+import ToneBadge from './ToneBadge.js';
+import { Button } from './ui/button/index.js';
+import { ButtonGroup } from './ui/button-group/index.js';
+import { Card, CardContent } from './ui/card/index.js';
+import { ChartFrame, ChartLegendSwatch } from './charts/ChartShell.js';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from './ui/table/index.js';
 
 type TabKey = 'spend' | 'trend' | 'calls' | 'rank';
 
@@ -30,6 +43,8 @@ const tabs: Array<{ key: TabKey; label: string; icon: string }> = [
   { key: 'rank', label: '排行榜', icon: '🏆' },
 ];
 
+const PIE_COLORS = ['#4f46e5', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6'];
+
 function toSafeNumber(value: unknown): number {
   if (typeof value !== 'number' || Number.isNaN(value) || !Number.isFinite(value)) return 0;
   return value;
@@ -48,10 +63,10 @@ function formatPercent(value: number): string {
 
 function EmptyBlock() {
   return (
-    <div className="empty-state" style={{ padding: 28 }}>
-      <div className="empty-state-title">暂无模型调用数据</div>
-      <div className="empty-state-desc">等待代理流量进入后会自动生成统计图表</div>
-    </div>
+    <EmptyStateBlock
+      title="暂无模型调用数据"
+      description="等待代理流量进入后会自动生成统计图表"
+    />
   );
 }
 
@@ -105,7 +120,7 @@ export default function ModelAnalysisPanel({ data }: ModelAnalysisPanelProps) {
     label: { visible: true, position: 'outside', formatter: '{_percent_}%', style: { fill: labelColor } },
     legends: { visible: false },
     animation: true,
-    color: ['#4f46e5', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6'],
+    color: PIE_COLORS,
     background: 'transparent',
   }), [callsDistribution, labelColor]);
 
@@ -114,48 +129,53 @@ export default function ModelAnalysisPanel({ data }: ModelAnalysisPanelProps) {
   return (
     <div>
       {/* Summary Cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 20 }}>
-        <div className="stat-summary-card stat-summary-purple">
-          <div className="stat-summary-card-label">总消耗</div>
-          <div className="stat-summary-card-value">{formatCurrency(totals.spend)}</div>
-        </div>
-        <div className="stat-summary-card stat-summary-blue">
-          <div className="stat-summary-card-label">总调用</div>
-          <div className="stat-summary-card-value">{Math.round(totals.calls).toLocaleString()}</div>
-        </div>
-        <div className="stat-summary-card stat-summary-green">
-          <div className="stat-summary-card-label">总 Tokens</div>
-          <div className="stat-summary-card-value">{formatCompactTokenMetric(totals.tokens)}</div>
-        </div>
+      <div className="mb-5 grid grid-cols-3 gap-3">
+        <Card>
+          <CardContent className="pt-3">
+            <div className="text-xs text-muted-foreground">总消耗</div>
+            <div className="mt-1 text-2xl font-semibold">{formatCurrency(totals.spend)}</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-3">
+            <div className="text-xs text-muted-foreground">总调用</div>
+            <div className="mt-1 text-2xl font-semibold">{Math.round(totals.calls).toLocaleString()}</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-3">
+            <div className="text-xs text-muted-foreground">总 Tokens</div>
+            <div className="mt-1 text-2xl font-semibold">{formatCompactTokenMetric(totals.tokens)}</div>
+          </CardContent>
+        </Card>
       </div>
 
       {/* Pill Tabs */}
-      <div style={{ marginBottom: 16 }}>
-        <div className="pill-tabs">
+      <div className="mb-4">
+        <ButtonGroup>
           {tabs.map(tab => (
-            <button
+            <Button
+              type="button"
               key={tab.key}
-              className={`pill-tab ${activeTab === tab.key ? 'active' : ''}`}
+              variant={activeTab === tab.key ? 'secondary' : 'outline'}
               onClick={() => setActiveTab(tab.key)}
             >
               {tab.icon} {tab.label}
-            </button>
+            </Button>
           ))}
-        </div>
+        </ButtonGroup>
       </div>
 
       {/* Chart Content */}
       {activeTab === 'spend' && (
         <div>
-          <div style={{ height: 300 }}>
-            <VChart spec={spendBarSpec} />
-          </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 14px', marginTop: 10, padding: '0 4px' }}>
+          <ChartFrame spec={spendBarSpec} />
+          <div className="mt-2.5 flex flex-wrap gap-x-3.5 gap-y-1.5 px-1">
             {spendDistribution.map(d => (
-              <span key={d.model} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'var(--color-text-secondary)' }}>
+              <span key={d.model} className="inline-flex items-center gap-1 text-xs text-muted-foreground">
                 <InlineBrandIcon model={d.model} size={13} />
-                <span style={{ maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.model}</span>
-                <span style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600, color: 'var(--color-text-primary)' }}>{formatCurrency(d.spend)}</span>
+                <span className="max-w-[150px] truncate">{d.model}</span>
+                <span className="font-semibold tabular-nums text-foreground">{formatCurrency(d.spend)}</span>
               </span>
             ))}
           </div>
@@ -163,25 +183,20 @@ export default function ModelAnalysisPanel({ data }: ModelAnalysisPanelProps) {
       )}
 
       {activeTab === 'trend' && (
-        <div style={{ height: 300 }}>
-          <VChart spec={trendSpec} />
-        </div>
+        <ChartFrame spec={trendSpec} />
       )}
 
       {activeTab === 'calls' && (
         <div>
-          <div style={{ height: 300 }}>
-            <VChart spec={callsPieSpec} />
-          </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 14px', marginTop: 10, padding: '0 4px' }}>
+          <ChartFrame spec={callsPieSpec} />
+          <div className="mt-2.5 flex flex-wrap gap-x-3.5 gap-y-1.5 px-1">
             {callsDistribution.map((d, idx) => {
-              const pieColors = ['#4f46e5', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6'];
               return (
-                <span key={d.model} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'var(--color-text-secondary)' }}>
-                  <span style={{ width: 8, height: 8, borderRadius: 2, background: pieColors[idx % pieColors.length], flexShrink: 0 }} />
+                <span key={d.model} className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                  <ChartLegendSwatch color={PIE_COLORS[idx % PIE_COLORS.length]} />
                   <InlineBrandIcon model={d.model} size={13} />
-                  <span style={{ maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.model}</span>
-                  <span style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600, color: 'var(--color-text-primary)' }}>{d.calls}</span>
+                  <span className="max-w-[150px] truncate">{d.model}</span>
+                  <span className="font-semibold tabular-nums text-foreground">{d.calls}</span>
                 </span>
               );
             })}
@@ -190,98 +205,43 @@ export default function ModelAnalysisPanel({ data }: ModelAnalysisPanelProps) {
       )}
 
       {activeTab === 'rank' && (
-        <div style={{ overflow: 'hidden', border: '1px solid var(--color-border-light)', borderRadius: 'var(--radius-md)' }}>
-          <table className="data-table" style={{ width: '100%' }}>
-            <thead>
-              <tr>
-                <th style={{ width: 36, textAlign: 'center' }}>#</th>
-                <th>模型</th>
-                <th style={{ textAlign: 'center' }}>调用</th>
-                <th style={{ textAlign: 'center' }}>成功率</th>
-                <th style={{ textAlign: 'center' }}>平均延迟</th>
-                <th style={{ textAlign: 'right' }}>消耗</th>
-              </tr>
-            </thead>
-            <tbody>
-              {callRanking.map((item, index) => {
-                const latMs = item.avgLatencyMs;
-                const latSec = latMs / 1000;
-                // ≤15s green, 15-60s gradient green→yellow→red, >60s or failed → red
-                let latColor: string;
-                let latBg: string;
-                if (latSec <= 15) {
-                  // green gradient: 0s=#22c55e → 15s=blend towards yellow
-                  const t = Math.min(latSec / 15, 1);
-                  const r = Math.round(34 + t * (245 - 34));
-                  const g = Math.round(197 + t * (158 - 197));
-                  const b = Math.round(94 + t * (11 - 94));
-                  latColor = `rgb(${r},${g},${b})`;
-                  latBg = `rgba(${r},${g},${b},0.08)`;
-                } else if (latSec <= 60) {
-                  // yellow→red gradient: 15s=#f59e0b → 60s=#ef4444
-                  const t = Math.min((latSec - 15) / 45, 1);
-                  const r = Math.round(245 + t * (239 - 245));
-                  const g = Math.round(158 + t * (68 - 158));
-                  const b = Math.round(11 + t * (68 - 11));
-                  latColor = `rgb(${r},${g},${b})`;
-                  latBg = `rgba(${r},${g},${b},0.08)`;
-                } else {
-                  latColor = '#ef4444';
-                  latBg = 'rgba(239,68,68,0.08)';
-                }
-                const latText = latMs >= 1000 ? `${(latMs / 1000).toFixed(latSec >= 60 ? 0 : 1)}s` : `${latMs}ms`;
-                const rateColor = item.successRate >= 90 ? '#16a34a' : item.successRate >= 60 ? '#d97706' : '#dc2626';
-                const rateBg = item.successRate >= 90 ? 'rgba(34,197,94,0.1)' : item.successRate >= 60 ? 'rgba(245,158,11,0.1)' : 'rgba(239,68,68,0.1)';
-
-                return (
-                  <tr key={item.model}>
-                    <td style={{ textAlign: 'center', padding: '8px 4px' }}>
-                      <span style={{
-                        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                        width: 22, height: 22, borderRadius: 6, fontSize: 11, fontWeight: 700,
-                        background: index < 3
-                          ? ['linear-gradient(135deg,#fbbf24,#f59e0b)', 'linear-gradient(135deg,#94a3b8,#cbd5e1)', 'linear-gradient(135deg,#d97706,#fbbf24)'][index]
-                          : 'var(--color-bg)',
-                        color: index < 3 ? '#fff' : 'var(--color-text-muted)',
-                      }}>
-                        {index + 1}
-                      </span>
-                    </td>
-                    <td>
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-                        <InlineBrandIcon model={item.model} size={14} />
-                        <code style={{ fontSize: 12, fontWeight: 500 }}>{item.model}</code>
-                      </span>
-                    </td>
-                    <td style={{ textAlign: 'center', fontWeight: 600, fontVariantNumeric: 'tabular-nums', fontSize: 13 }}>
-                      {Math.round(item.calls).toLocaleString()}
-                    </td>
-                    <td style={{ textAlign: 'center' }}>
-                      <span style={{
-                        padding: '2px 8px', borderRadius: 4, fontSize: 11, fontWeight: 600,
-                        background: rateBg, color: rateColor,
-                      }}>
-                        {formatPercent(item.successRate)}
-                      </span>
-                    </td>
-                    <td style={{ textAlign: 'center' }}>
-                      <span style={{
-                        fontVariantNumeric: 'tabular-nums', fontSize: 12, fontWeight: 600,
-                        color: latColor, background: latBg,
-                        padding: '2px 8px', borderRadius: 4,
-                      }}>
-                        {latText}
-                      </span>
-                    </td>
-                    <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 500, fontSize: 13 }}>
-                      {formatCurrency(item.spend)}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="w-9 text-center">#</TableHead>
+              <TableHead>模型</TableHead>
+              <TableHead className="text-center">调用</TableHead>
+              <TableHead className="text-center">成功率</TableHead>
+              <TableHead className="text-center">平均延迟</TableHead>
+              <TableHead className="text-right">消耗</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {callRanking.map((item, index) => {
+              const latMs = item.avgLatencyMs;
+              const latText = latMs >= 1000 ? `${(latMs / 1000).toFixed(latMs >= 60000 ? 0 : 1)}s` : `${latMs}ms`;
+              return (
+                <TableRow key={item.model}>
+                  <TableCell className="text-center font-mono text-xs text-muted-foreground">{index + 1}</TableCell>
+                  <TableCell>
+                    <span className="inline-flex min-w-0 items-center gap-1.5">
+                      <InlineBrandIcon model={item.model} size={14} />
+                      <code className="truncate text-xs font-medium">{item.model}</code>
+                    </span>
+                  </TableCell>
+                  <TableCell className="text-center font-mono text-sm font-semibold">{Math.round(item.calls).toLocaleString()}</TableCell>
+                  <TableCell className="text-center">
+                    <ToneBadge tone={item.successRate >= 90 ? 'success' : item.successRate >= 60 ? 'warning' : 'error'}>
+                      {formatPercent(item.successRate)}
+                    </ToneBadge>
+                  </TableCell>
+                  <TableCell className="text-center"><ToneBadge tone="-muted">{latText}</ToneBadge></TableCell>
+                  <TableCell className="text-right font-mono text-sm font-medium">{formatCurrency(item.spend)}</TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
       )}
     </div>
   );

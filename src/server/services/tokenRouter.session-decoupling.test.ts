@@ -67,7 +67,7 @@ describe('TokenRouter session decoupling', () => {
     }).returning().get();
 
     const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-4o-mini',
+      displayName: 'gpt-4o-mini',
       enabled: true,
     }).returning().get();
 
@@ -112,7 +112,7 @@ describe('TokenRouter session decoupling', () => {
     }).returning().get();
 
     const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-4.1-mini',
+      displayName: 'gpt-4.1-mini',
       enabled: true,
     }).returning().get();
 

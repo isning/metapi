@@ -43,7 +43,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
-function cloneJsonValue<T>(value: T): T {
+export function cloneJsonValue<T>(value: T): T {
   if (Array.isArray(value)) {
     return value.map((item) => cloneJsonValue(item)) as T;
   }
@@ -69,7 +69,7 @@ function parseIndexSegment(segment: string): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function hasPath(target: unknown, path: string): boolean {
+export function hasPayloadPath(target: unknown, path: string): boolean {
   const segments = toPathSegments(path);
   if (segments.length <= 0) return false;
 
@@ -87,7 +87,7 @@ function hasPath(target: unknown, path: string): boolean {
   return true;
 }
 
-function setPath(target: Record<string, unknown>, path: string, value: unknown): void {
+export function setPayloadPath(target: Record<string, unknown>, path: string, value: unknown): void {
   const segments = toPathSegments(path);
   if (segments.length <= 0) return;
 
@@ -124,7 +124,7 @@ function setPath(target: Record<string, unknown>, path: string, value: unknown):
   }
 }
 
-function deletePath(target: Record<string, unknown>, path: string): void {
+export function deletePayloadPath(target: Record<string, unknown>, path: string): void {
   const segments = toPathSegments(path);
   if (segments.length <= 0) return;
 
@@ -432,8 +432,8 @@ export function applyPayloadRules(input: {
     if (!rulesMatch(rule.models, protocol, candidates)) continue;
     for (const [path, value] of Object.entries(rule.params)) {
       const normalizedPath = asTrimmedString(path);
-      if (!normalizedPath || hasPath(original, normalizedPath) || appliedDefaults.has(normalizedPath)) continue;
-      setPath(output, normalizedPath, value);
+      if (!normalizedPath || hasPayloadPath(original, normalizedPath) || appliedDefaults.has(normalizedPath)) continue;
+      setPayloadPath(output, normalizedPath, value);
       appliedDefaults.add(normalizedPath);
     }
   }
@@ -442,10 +442,10 @@ export function applyPayloadRules(input: {
     if (!rulesMatch(rule.models, protocol, candidates)) continue;
     for (const [path, value] of Object.entries(rule.params)) {
       const normalizedPath = asTrimmedString(path);
-      if (!normalizedPath || hasPath(original, normalizedPath) || appliedDefaults.has(normalizedPath)) continue;
+      if (!normalizedPath || hasPayloadPath(original, normalizedPath) || appliedDefaults.has(normalizedPath)) continue;
       const parsed = parseRawRuleValue(value);
       if (parsed === undefined) continue;
-      setPath(output, normalizedPath, parsed);
+      setPayloadPath(output, normalizedPath, parsed);
       appliedDefaults.add(normalizedPath);
     }
   }
@@ -455,7 +455,7 @@ export function applyPayloadRules(input: {
     for (const [path, value] of Object.entries(rule.params)) {
       const normalizedPath = asTrimmedString(path);
       if (!normalizedPath) continue;
-      setPath(output, normalizedPath, value);
+      setPayloadPath(output, normalizedPath, value);
     }
   }
 
@@ -466,7 +466,7 @@ export function applyPayloadRules(input: {
       if (!normalizedPath) continue;
       const parsed = parseRawRuleValue(value);
       if (parsed === undefined) continue;
-      setPath(output, normalizedPath, parsed);
+      setPayloadPath(output, normalizedPath, parsed);
     }
   }
 
@@ -475,7 +475,7 @@ export function applyPayloadRules(input: {
     for (const path of rule.params) {
       const normalizedPath = asTrimmedString(path);
       if (!normalizedPath) continue;
-      deletePath(output, normalizedPath);
+      deletePayloadPath(output, normalizedPath);
     }
   }
 

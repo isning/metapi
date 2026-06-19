@@ -3,14 +3,17 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { asc, eq } from 'drizzle-orm';
+import { tokenRouteFixture } from '../test/routeGraphFixtures.js';
 
 type DbModule = typeof import('../db/index.js');
 type BackupServiceModule = typeof import('./backupService.js');
+type RouteGraphServiceModule = typeof import('./routeGraphService.js');
 
 describe('backupService', () => {
   let db: DbModule['db'];
   let schema: DbModule['schema'];
   let backupService: BackupServiceModule;
+  let loadRouteGraphLegacyProjections: RouteGraphServiceModule['loadRouteGraphLegacyProjections'];
   let dataDir = '';
 
   beforeAll(async () => {
@@ -20,10 +23,12 @@ describe('backupService', () => {
     await import('../db/migrate.js');
     const dbModule = await import('../db/index.js');
     const serviceModule = await import('./backupService.js');
+    const routeGraphServiceModule = await import('./routeGraphService.js');
 
     db = dbModule.db;
     schema = dbModule.schema;
     backupService = serviceModule;
+    loadRouteGraphLegacyProjections = routeGraphServiceModule.loadRouteGraphLegacyProjections;
   });
 
   beforeEach(async () => {
@@ -104,20 +109,25 @@ describe('backupService', () => {
     }).returning().get();
 
     const sourceRoute = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-source-*',
+      ...tokenRouteFixture({ modelPattern: 'gpt-source-*', displayName: 'gpt-source' }),
       displayName: 'gpt-source',
-      routeMode: 'pattern',
       enabled: true,
       createdAt: now,
       updatedAt: now,
     }).returning().get();
 
     const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-*',
+      ...tokenRouteFixture({
+        modelPattern: 'gpt-*',
+        routeMode: 'explicit_group',
+        sourceRouteIds: [sourceRoute.id],
+        displayName: 'gpt-route',
+        modelMapping: JSON.stringify({ to: 'gpt-4o-mini' }),
+        routingStrategy: 'round_robin',
+      }),
       displayName: 'gpt-route',
       displayIcon: 'icon-gpt',
       modelMapping: JSON.stringify({ to: 'gpt-4o-mini' }),
-      routeMode: 'explicit_group',
       decisionSnapshot: JSON.stringify({ channelIds: [1, 2] }),
       decisionRefreshedAt: now,
       routingStrategy: 'round_robin',
@@ -285,7 +295,8 @@ describe('backupService', () => {
 
     expect(restoredRoute?.displayName).toBe('gpt-route');
     expect(restoredRoute?.displayIcon).toBe('icon-gpt');
-    expect(restoredRoute?.routeMode).toBe('explicit_group');
+    const projections = await loadRouteGraphLegacyProjections();
+    expect(projections.get(restoredRoute?.id ?? 0)?.backend.kind).toBe('routes');
     expect(restoredRoute?.decisionSnapshot).toBe('{"channelIds":[1,2]}');
     expect(restoredRoute?.decisionRefreshedAt).toBe(now);
     expect(restoredRoute?.routingStrategy).toBe('round_robin');
@@ -404,10 +415,14 @@ describe('backupService', () => {
     }).returning().get();
 
     const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-preserve-*',
+      ...tokenRouteFixture({
+        modelPattern: 'gpt-preserve-*',
+        displayName: 'backup-route',
+        modelMapping: JSON.stringify({ to: 'gpt-4o-mini' }),
+        routingStrategy: 'weighted',
+      }),
       displayName: 'backup-route',
       modelMapping: JSON.stringify({ to: 'gpt-4o-mini' }),
-      routeMode: 'pattern',
       routingStrategy: 'weighted',
       enabled: true,
       createdAt: exportedAt,
@@ -565,10 +580,14 @@ describe('backupService', () => {
     }).returning().get();
 
     const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-preserve-*',
+      ...tokenRouteFixture({
+        modelPattern: 'gpt-preserve-*',
+        displayName: 'backup-route',
+        modelMapping: JSON.stringify({ to: 'gpt-4o-mini' }),
+        routingStrategy: 'weighted',
+      }),
       displayName: 'backup-route',
       modelMapping: JSON.stringify({ to: 'gpt-4o-mini' }),
-      routeMode: 'pattern',
       routingStrategy: 'weighted',
       enabled: true,
       createdAt: exportedAt,
