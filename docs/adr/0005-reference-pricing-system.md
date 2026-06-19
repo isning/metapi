@@ -1,32 +1,33 @@
-# ADR-0005: Reference Pricing System
+# ADR-0005: Upstream Cost Pricing System
 
 Status: Proposed
 Date: 2026-06-20
 
 ## Context
 
-Metapi currently sees pricing from several places:
+Metapi currently sees cost evidence from several places:
 
 - upstream pricing catalogs returned by New API / One API / compatible sites;
 - account-level `unitCost`, used as a routing cost hint;
 - proxy logs and self-log recovery, which can produce measured billing
   metadata;
-- route graph public entries, which define the downstream model names users
-  actually call;
+- route graph public entries, which define downstream model names but do not own
+  upstream cost;
 - system fallback pricing for unknown models.
 
 These sources answer different questions and should not be collapsed into one
 field.
 
-Operators need a stable reference price for each public entry:
+Operators need a stable upstream cost model for each selected upstream model
+supply:
 
-- to show an expected entry price in the Model Intelligence Workspace;
-- to compare upstream-reported prices against an official or user-selected
-  reference;
-- to compare actual billed usage against both the reference and upstream
-  catalog;
-- to route by meaningful cost without depending entirely on stale or incorrect
-  upstream catalogs;
+- to calculate runtime cost when the upstream platform cannot report prices;
+- to route by meaningful cost without depending entirely on New API / One API
+  catalog support;
+- to show the effective upstream cost source in the Model Intelligence
+  Workspace;
+- to compare actual billed usage against both manual cost configuration and
+  upstream catalog observations;
 - to support advanced pricing such as cache hits, cache writes, context-window
   tiers, batch discounts, reasoning tokens, image/audio units, request fees, and
   future provider-specific billing dimensions.
@@ -36,50 +37,54 @@ The system must not assume that every model can be priced with only
 
 ## Decision
 
-Metapi will add a **Reference Pricing System**.
+Metapi will add an **Upstream Cost Pricing System**.
 
 The system has four independent layers:
 
-1. **Reference catalog**
-   A versioned database of official or curated model pricing plans.
+1. **Pricing catalog**
+   A versioned database of official, curated, or operator-created pricing
+   plans. Catalog entries are reusable templates, not bindings.
 
-2. **Entry pricing reference**
-   A route graph `entry` chooses which reference pricing plan represents the
-   public model name exposed downstream.
+2. **Upstream model cost bindings**
+   Operators bind a pricing plan or inline override to an upstream supply:
+   site/model, account/model, token/model, or token/model/group.
 
 3. **Observed pricing**
    Runtime observations from upstream catalogs and proxy billing logs.
 
 4. **Pricing drift diagnostics**
-   Scheduled comparison between reference pricing, upstream catalog pricing,
-   and measured billing.
+   Scheduled comparison between configured upstream cost, upstream catalog
+   pricing, and measured billing.
 
-Reference pricing is not the same as upstream pricing. Upstream pricing is an
+Configured upstream cost is not the same as downstream price. It represents
+Metapi's cost to call a selected upstream supply. Upstream catalog pricing is an
 observed source and may be stale, incomplete, hidden behind platform-specific
-rules, or intentionally different because of reseller markup. Measured billing
-is runtime evidence, not a source of truth.
+rules, or unavailable on non-New API platforms. Measured billing is runtime
+evidence, not a source of truth.
 
 ## Goals
 
 - Model official and user-curated pricing plans without assuming only
   input/output token prices.
-- Resolve the expected price for a public graph `entry` deterministically.
+- Resolve the cost plan for a selected upstream model supply deterministically.
 - Keep runtime billing, route cost scoring, model workspace pricing display, and
   drift diagnostics on the same pricing vocabulary.
 - Make advanced pricing explicit: context tiers, cache reads, cache writes,
   reasoning tokens, batch discounts, service tiers, request fees, modalities,
   minimum charges, and future custom meters.
-- Preserve current behavior when no reference pricing exists.
+- Preserve current behavior when no configured upstream cost exists.
 
 ## Non-Goals
 
 - The first implementation does not need to auto-sync every official provider
   price from the internet.
-- The reference catalog is not an exchange-rate system. USD is the initial
+- The pricing catalog is not an exchange-rate system. USD is the initial
   canonical currency.
 - Measured billing does not automatically rewrite catalog entries.
 - `account.unitCost` is not migrated into model pricing. It remains a routing
   fallback hint.
+- Public route graph entries, downstream API keys, and downstream billing are
+  not cost-binding scopes in this ADR.
 
 ## Module Boundaries
 
@@ -95,8 +100,8 @@ pricing-catalog
   stores catalog entries and aliases
   resolves active catalog versions
 
-pricing-reference
-  resolves entry/manual/scoped/default references
+pricing-upstream-cost
+  resolves upstream model cost bindings and fallbacks
   never performs billing itself
 
 pricing-runtime
@@ -104,7 +109,7 @@ pricing-runtime
   integrates with proxy billing and route cost scoring
 
 pricing-drift
-  compares reference, upstream, and measured observations
+  compares configured, upstream, and measured observations
   owns finding lifecycle and notification eligibility
 ```
 
@@ -113,13 +118,17 @@ own pricing evaluation or resolver rules.
 
 ## Terminology
 
-- **Reference pricing**: the official or user-selected pricing plan that Metapi
-  uses as the expected price for a public entry.
+- **Upstream model supply**: the concrete upstream target that Metapi may call:
+  a site, optional account, optional token/API key, upstream model name, and
+  optional upstream group.
+- **Configured upstream cost**: the pricing plan selected by an explicit
+  operator binding for an upstream model supply.
 - **Upstream catalog pricing**: pricing returned by an upstream site's pricing
   endpoint.
 - **Measured pricing**: pricing inferred from successful proxy logs and billing
   details.
-- **Entry price**: the effective price attached to a public route graph `entry`.
+- **Public entry price**: out of scope for this ADR. Public entries may display
+  upstream cost summaries, but they do not own cost configuration.
 - **Pricing component**: one billable part of a pricing plan, such as input
   tokens, output tokens, cache reads, image input, or request fees.
 - **Pricing tier**: a conditional price branch, usually based on context size,
@@ -134,26 +143,27 @@ own pricing evaluation or resolver rules.
 The system keeps these price sources separate:
 
 ```text
-reference catalog     expected official or curated price
-entry reference       public-entry binding to a reference plan
+pricing catalog       reusable official, curated, or operator-created plans
+upstream cost binding explicit cost configuration for an upstream supply
 upstream catalog      reported upstream price observation
 measured billing      runtime billing observation from successful requests
 effective runtime     source selected for estimation and route scoring
 account unitCost      existing fallback hint, not model pricing
 ```
 
-Only the reference catalog and explicit user overrides are authoritative
-expected prices. Upstream catalogs can be incomplete or reseller-adjusted.
-Measured billing can be delayed, sampled, or affected by discounts. Neither may
-silently rewrite reference catalog entries.
+Only explicit upstream cost bindings and selected catalog entries are
+authoritative configured costs. Upstream catalogs can be incomplete or
+reseller-adjusted. Measured billing can be delayed, sampled, or affected by
+discounts. Neither may silently rewrite catalog entries or operator bindings.
 
 When two surfaces show a price, they must name the source. A value displayed as
-`Reference` must not come from measured billing. A value displayed as
-`Measured` must carry sample count and freshness.
+`Configured` must not come from measured billing. A value displayed as
+`Measured` must carry sample count and freshness. A value displayed as
+`Effective runtime` must explain the selected resolver source.
 
 ## Pricing Model
 
-The reference catalog stores pricing plans as versioned component graphs, not as
+The pricing catalog stores pricing plans as versioned component graphs, not as
 a fixed pair of input/output fields.
 
 ```ts
@@ -390,8 +400,7 @@ neutral accumulator contract instead of reading logs directly:
 
 ```ts
 type PricingPeriodState = {
-  scope: 'entry_node' | 'model_endpoint' | 'target' | 'account' | 'site';
-  targetId: string;
+  supply: UpstreamModelSupplyRef;
   period: 'day' | 'month' | 'billing_cycle';
   periodStart: string;
   periodEnd: string;
@@ -519,8 +528,7 @@ CEL receives only a small immutable environment:
   usage,
   request,
   response,
-  entry,
-  endpoint,
+  upstreamSupply,
   metadata
 }
 ```
@@ -758,7 +766,7 @@ The evaluator returns a full breakdown, not just a total:
 ```ts
 type PricingEvaluation = {
   catalogEntryId: string | null;
-  source: 'reference' | 'user_override' | 'upstream_catalog' | 'measured' | 'default';
+  source: 'configured' | 'catalog' | 'upstream_catalog' | 'measured' | 'account_unit_cost' | 'default';
   usageHash: string;
   planFingerprint: string;
   composedFrom?: Array<{
@@ -811,10 +819,7 @@ catalog entries.
 type PricingObservation = {
   id: string;
   source: 'upstream_catalog' | 'measured_billing';
-  scope: 'site' | 'account' | 'entry_node' | 'model_endpoint' | 'target';
-  targetId: string;
-  publicModelName?: string;
-  upstreamModelName?: string;
+  supply: UpstreamModelSupplyRef;
   catalogEntryId?: string | null;
   observedAt: string;
   freshnessTtlSeconds?: number;
@@ -836,9 +841,9 @@ There are two observation classes:
 - `measured_billing` observations come from successful proxy logs. They usually
   include an evaluation over a concrete or aggregated usage shape.
 
-The drift service may compare observations with reference plans, but catalog
-updaters must require an explicit user/import action before changing reference
-catalog entries.
+The drift service may compare observations with configured upstream cost plans,
+but catalog updaters must require an explicit user/import action before
+changing catalog entries or upstream cost bindings.
 
 ## Storage
 
@@ -878,10 +883,11 @@ pricing_catalog_aliases
 pricing_observations
   id
   source                  -- upstream_catalog | measured_billing
-  scope
-  target_id
-  public_model_name
+  site_id
+  account_id
+  token_id
   upstream_model_name
+  upstream_group
   catalog_entry_id
   observed_at
   freshness_ttl_seconds
@@ -896,8 +902,11 @@ pricing_observations
 
 pricing_period_states
   id
-  scope
-  target_id
+  site_id
+  account_id
+  token_id
+  upstream_model_name
+  upstream_group
   period
   period_start
   period_end
@@ -907,23 +916,31 @@ pricing_period_states
   observed_cost_usd
   updated_at
 
-pricing_reference_bindings
+upstream_model_cost_pricings
   id
-  scope                  -- global | site | account | entry_node | macro
-  target_id
-  mode                   -- auto | manual | default | override
-  public_model_name
+  scope_kind             -- site_model | account_model | token_model | token_model_group
+  site_id
+  account_id
+  token_id
+  upstream_model_name
+  upstream_group
+  mode                   -- manual | free | disabled
   catalog_entry_id
-  override_plan_json
-  fallback_profile
+  pricing_plan_json
+  label
+  note
+  enabled
   created_at
   updated_at
 
 pricing_drift_findings
   id
-  scope
-  target_id
-  public_model_name
+  site_id
+  account_id
+  token_id
+  upstream_model_name
+  upstream_group
+  pricing_id
   catalog_entry_id
   observed_source        -- upstream_catalog | measured_billing
   component_kind
@@ -951,9 +968,9 @@ new version instead of mutating historical meaning. Historical billing details,
 observations, and drift findings record `catalog_entry_id`, `version`, and
 `plan_fingerprint` when available.
 
-`pricing_observations` can be retained with normal log retention. Reference
-catalog entries and bindings are configuration and should not be expired by log
-retention.
+`pricing_observations` can be retained with normal log retention. Catalog
+entries and upstream cost bindings are configuration and should not be expired
+by log retention.
 
 `pricing_period_states` is derived runtime state. It can be rebuilt from logs
 when the retention window still contains the necessary usage and billing
@@ -962,7 +979,7 @@ incrementally.
 
 ## Catalog Governance
 
-The reference catalog supports three entry classes:
+The pricing catalog supports three entry classes:
 
 ```text
 built-in official     shipped with Metapi, source points to provider docs
@@ -992,24 +1009,19 @@ pricing for resellers, private deployments, and provider variants.
 ## Manual Pricing Input
 
 Manual pricing is a first-class structured workflow, not only raw JSON editing.
-It is supported at three levels:
+It is supported at two levels:
 
 1. **User catalog entry**
    A reusable catalog entry manually created by an operator. It can be selected
-   by many entries, aliases, sites, accounts, or macros.
+   by many upstream model cost bindings.
 
-2. **Manual binding**
-   An entry, macro, site, account, or global scope explicitly selects an
-   existing catalog entry.
+2. **Upstream cost binding**
+   A site/model, account/model, token/model, or token/model/group scope
+   explicitly selects a catalog entry or stores an inline operator plan.
 
-3. **Entry override plan**
-   A one-off plan stored on an entry reference for exceptional cases. This is
-   still validated as a full `PricingPlan`, but it is not reusable unless the
-   user saves it into the catalog.
-
-The UI should prefer user catalog entries over one-off override plans. Override
-plans are useful for temporary experiments, private contracts, or models that
-should not appear in the shared catalog.
+The UI should prefer reusable user catalog entries when the same pricing plan
+will be used by multiple upstream supplies. Inline plans are still useful for a
+single private endpoint or temporary reseller contract.
 
 The guided manual editor supports common shapes:
 
@@ -1079,8 +1091,8 @@ Manual input validation rules:
   quantities;
 - a user catalog entry must have provider, model key, display name, source note,
   and at least one alias;
-- entry override plans must have an `overrideLabel` so diagnostics can explain
-  the source.
+- inline upstream cost plans must have a label so diagnostics can explain the
+  source.
 
 Manual entry creation should offer presets:
 
@@ -1101,41 +1113,65 @@ custom blank plan
 
 Presets are UI accelerators. They still save normal validated pricing plans.
 
-## Entry Pricing Reference
+## Upstream Cost Bindings
 
-Route graph `entry` config gains a pricing reference block:
+Cost bindings are scoped only to upstream model supplies. Route graph entries
+and downstream API keys are not valid cost-binding scopes.
 
 ```ts
-type EntryNodeConfig = {
-  match: {
-    model: string;
-    visibility: 'public' | 'internal';
-  };
-  pricingReference?: EntryPricingReference;
+type UpstreamCostScope =
+  | { kind: 'site_model'; siteId: number; modelName: string }
+  | { kind: 'account_model'; accountId: number; modelName: string }
+  | { kind: 'token_model'; tokenId: number; modelName: string }
+  | { kind: 'token_model_group'; tokenId: number; modelName: string; upstreamGroup: string };
+
+type UpstreamModelCostPricing = {
+  id: number;
+  scope: UpstreamCostScope;
+  mode: 'manual' | 'free' | 'disabled';
+  catalogEntryId?: string | null;
+  pricingPlan?: PricingPlan | null;
+  label?: string | null;
+  note?: string | null;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
 };
 
-type EntryPricingReference = {
-  mode: 'auto' | 'manual' | 'default' | 'override';
-  catalogEntryId?: string;
-  overridePlan?: PricingPlan;
-  overrideLabel?: string;
-  fallbackProfile?: 'system_default' | 'free' | 'unknown';
+type UpstreamModelSupplyRef = {
+  siteId: number;
+  accountId?: number | null;
+  tokenId?: number | null;
+  modelName: string;
+  upstreamGroup?: string | null;
+  platform?: string | null;
 };
 ```
 
-Default behavior is `mode: 'auto'`.
+`token_model_group` exists because New API / One API compatible platforms often
+price the same model differently per group. Non-group platforms simply omit the
+group.
 
-Resolver order:
+The resolver order is:
 
-1. entry-level `override`;
-2. entry-level `manual` catalog selection;
-3. macro-level binding, when the entry is macro-derived;
-4. account/site/global binding;
-5. automatic match by exact alias;
-6. automatic match by normalized alias;
-7. system default fallback profile.
+1. token + model + upstream group manual cost;
+2. token + model manual cost;
+3. account + model manual cost;
+4. site + model manual cost;
+5. upstream catalog pricing, when the platform can provide it;
+6. `account.unitCost`;
+7. system fallback default.
 
-Automatic matching uses normalized model aliases:
+Manual cost never silently applies outside its scope. A token-level model
+binding does not affect another token with the same model name. A site-level
+model binding should be used only when all credentials under that site share
+the same cost.
+
+Automatic catalog matching can still help users create bindings. It suggests a
+catalog entry for a selected upstream model supply, but the runtime source is
+not considered configured until a binding is saved.
+
+Catalog matching uses normalized model aliases:
 
 ```text
 normalize(model)
@@ -1156,58 +1192,52 @@ gpt-4o-mini   -> gpt-4o-mini, not gpt-4o
 deepseek-reasoner -> deepseek-reasoner, not deepseek-chat
 ```
 
-If multiple catalog entries match with equal confidence, the resolver returns no
-automatic catalog entry and emits an ambiguous-match diagnostic. The UI should
-ask for manual selection instead of guessing.
+If multiple catalog entries match with equal confidence, the suggestion API
+returns an ambiguous-match diagnostic instead of guessing.
 
-Macro-derived entries can inherit a macro-level binding. Entry-level manual or
-override configuration still wins. The compiled graph must carry enough macro
-origin metadata for `pricing-reference` to explain the inheritance chain.
-
-The resolver returns:
+The runtime resolver returns:
 
 ```ts
-type ResolvedEntryPricingReference = {
-  mode: EntryPricingReference['mode'];
+type ResolvedUpstreamCostPricing = {
   source:
-    | 'entry_override'
-    | 'entry_manual'
-    | 'macro_binding'
-    | 'site_binding'
-    | 'global_binding'
-    | 'auto_exact'
-    | 'auto_alias'
-    | 'auto_normalized'
-    | 'default';
-  publicModelName: string;
+    | 'manual_token_model_group'
+    | 'manual_token_model'
+    | 'manual_account_model'
+    | 'manual_site_model'
+    | 'upstream_catalog'
+    | 'account_unit_cost'
+    | 'system_fallback';
+  supply: UpstreamModelSupplyRef;
+  pricingId?: number;
   catalogEntryId: string | null;
   catalogEntry: PricingCatalogEntry | null;
-  confidence: 'exact' | 'alias' | 'normalized' | 'default' | 'manual' | 'override';
-  diagnostics: PricingReferenceDiagnostic[];
+  plan: PricingPlan | null;
+  confidence: 'manual' | 'catalog' | 'fallback';
+  diagnostics: PricingCostDiagnostic[];
 };
 ```
 
-The route graph compiler should include this resolved pricing reference in the
-compiled entry metadata. The Model Intelligence Workspace should use it for the
-`Reference` price card.
+Route graph compilation does not persist pricing references. The selected
+runtime upstream target is enough to resolve cost after dispatch. Model details
+may aggregate costs across reachable upstream supplies for display only.
 
 ## Pricing Source Priority
 
 Runtime cost estimation needs explicit priority:
 
 ```text
-1. entry pricing override
-2. entry manual reference catalog entry
-3. user scope binding (macro/site/account/global)
-4. official reference catalog auto match
+1. manual token + model + group cost
+2. manual token + model cost
+3. manual account + model cost
+4. manual site + model cost
 5. upstream catalog pricing
 6. account unitCost
 7. system fallback default
 ```
 
 Measured billing is not in this priority list because it is evidence. It may
-feed diagnostics and suggestions, but it must not silently overwrite reference
-pricing or routing costs.
+feed diagnostics and suggestions, but it must not silently overwrite configured
+cost or routing costs.
 
 `pricing-runtime` owns this priority. Route adapters and protocol format
 handlers ask for an effective runtime price; they do not reproduce priority
@@ -1222,7 +1252,7 @@ Runtime integration rules:
   `fallback` when it came from upstream catalog, `account.unitCost`, or system
   default;
 - `account.unitCost` remains a numeric channel/account hint only. It does not
-  become a `PricingCatalogEntry` and should not be shown as `Reference`;
+  become a `PricingCatalogEntry` and should not be shown as `Configured`;
 - self-log recovery and measured billing may produce `PricingObservation`
   records, but they must not change the source priority for future requests;
 - when the selected plan has missing required usage quantities, runtime billing
@@ -1240,7 +1270,7 @@ Metapi will add a scheduled `pricing-drift-check` job.
 The job compares:
 
 ```text
-reference pricing
+configured upstream cost
 vs upstream catalog pricing
 vs measured billing pricing
 ```
@@ -1267,7 +1297,7 @@ relative delta >= 5%   -> warning
 relative delta >= 20%  -> error
 sample count < 10      -> info or suppressed measured-billing warning
 no successful requests -> skip measured-billing comparison
-missing reference      -> warning on public entries, info on internal entries
+missing configured cost -> warning only when cost routing depends on it
 missing upstream price -> info unless route selection depends on upstream cost
 ```
 
@@ -1277,13 +1307,14 @@ resolved and reappears.
 
 ### Drift Algorithm
 
-For each public entry:
+For each upstream model supply with either traffic, availability, or an explicit
+cost binding:
 
-1. resolve the reference plan;
-2. collect fresh upstream catalog observations for reachable model endpoints;
+1. resolve the configured upstream cost plan;
+2. collect fresh upstream catalog observations when the platform supports them;
 3. collect recent measured billing observations with enough samples;
 4. build representative usage shapes;
-5. evaluate reference and observed plans against each usage shape;
+5. evaluate configured and observed plans against each usage shape;
 6. compare component-level normalized prices where component comparison keys
    match;
 7. compare total cost per usage shape;
@@ -1301,7 +1332,7 @@ are comparable.
 
 Representative usage shapes come from:
 
-- recent successful request aggregates for the entry;
+- recent successful request aggregates for the upstream supply;
 - standard static fixtures for no-traffic models;
 - tier boundary probes, such as `127k`, `128k`, and `129k` context tokens for
   context-tiered plans;
@@ -1321,12 +1352,12 @@ Drift checks must choose the correct expectation:
 
 - **official drift** compares observed upstream catalog pricing to the base
   official rate card;
-- **contract drift** compares measured billing to the composed plan selected by
-  the entry/site/account binding;
+- **configured-cost drift** compares measured billing to the composed plan
+  selected by the upstream cost binding;
 - **reseller markup drift** compares upstream or measured billing to the
   composed plan that includes markup overlays;
 - **tax/fee drift** is reported separately when the observed amount appears to
-  include post processors that the reference plan does not.
+  include post processors that the configured plan does not.
 
 The finding details should record both base and composed fingerprints when
 overlays are involved.
@@ -1344,8 +1375,8 @@ resolved
 The stable finding key is:
 
 ```text
-scope + targetId + publicModelName + catalogEntryId
-+ observedSource + comparisonKey + usageHash
+siteId + accountId + tokenId + upstreamModelName + upstreamGroup
++ pricingId + observedSource + comparisonKey + usageHash
 ```
 
 Severity changes update the existing finding and may create a new notification.
@@ -1364,8 +1395,8 @@ total-cost relative delta >= 20%   -> error
 absolute delta < $0.000001         -> suppress
 sample count < 10                  -> info or suppress measured drift
 sample count >= 100                -> eligible for warning/error
-missing reference on public entry  -> warning
-missing reference on internal entry -> info
+manual cost missing for unsupported catalog platform -> info
+manual cost missing while cost routing depends on it -> warning
 ```
 
 Thresholds should be configurable later, but the first version should keep
@@ -1391,42 +1422,37 @@ in raw provider metadata.
 
 ## UI
 
-### Route Graph Entry Inspector
+### Upstream Cost Editor
 
-The entry inspector shows:
+The primary editor lives on upstream credential/model surfaces:
 
-- selected reference pricing mode;
-- resolved catalog entry;
-- match confidence;
-- input/output/cache summary;
-- context tier summary;
-- `Change reference` action;
-- `Use system default` action;
-- `Override plan` advanced action.
+- API key / token details;
+- account model availability modal;
+- Model Intelligence Workspace upstream supply rows.
 
-Automatic matching must be transparent. If `gpt-4o-fast` matched `gpt-4o` by
-normalized alias, the UI must say so.
+The editor shows:
 
-`Change reference` opens a structured picker:
+- selected scope: site+model, account+model, token+model, or token+model+group;
+- current effective cost source;
+- optional catalog entry;
+- inline plan label and note;
+- input/output/cache/reasoning/request summary;
+- diagnostics for missing usage components;
+- preview costs for representative usage shapes.
 
-```text
-Auto match
-Use catalog entry
-Create manual catalog price
-Use system default
-Advanced one-off override
-```
+Scope selection must be explicit. The default action edits the narrowest
+available scope, usually token+model or token+model+group. Broader scopes
+require the user to choose them so a site-level override is not applied by
+accident.
 
-`Create manual catalog price` opens the guided manual editor and saves a user
-catalog entry before binding the entry to it. `Advanced one-off override` saves
-only on the entry and should show a warning that the plan is not reusable until
-it is saved to the catalog.
+Automatic catalog matching is only a suggestion. If `gpt-4o-fast` matched
+`gpt-4o` by normalized alias, the UI must say so before saving a binding.
 
 ### Model Intelligence Workspace
 
 The Pricing section should show four cards:
 
-1. `Reference`
+1. `Configured cost`
 2. `Upstream catalog`
 3. `Measured billing`
 4. `Effective runtime`
@@ -1443,15 +1469,15 @@ Advanced details show the full component breakdown and tiers.
 The cards answer different questions:
 
 ```text
-Reference          What should this public entry cost?
+Configured cost    What operator-defined cost applies to this upstream supply?
 Upstream catalog   What does the upstream currently report?
 Measured billing   What did recent real traffic actually cost?
 Effective runtime  What source will runtime estimation and scoring use now?
 ```
 
-When enough traffic exists, the workspace shows measured entry price and
-equivalent multiplier. When a reference plan exists, it also shows theoretical
-entry price and equivalent multiplier for the same representative usage shape.
+When enough traffic exists, the workspace shows measured upstream cost and
+equivalent multiplier. When a configured plan exists, it also shows theoretical
+cost and equivalent multiplier for the same representative usage shape.
 
 Equivalent multiplier is a display metric, not a billing primitive. It is
 calculated against a stable baseline profile:
@@ -1472,9 +1498,10 @@ Drift presentation:
 - small badge on the relevant pricing card;
 - Diagnostics tab row with source, observed value, expected value, delta,
   sample count, and freshness;
-- link from diagnostic to the graph entry or model endpoint;
+- link from diagnostic to the upstream supply row;
 - acknowledgement action for noisy but understood reseller markup;
-- explicit "missing reference price" empty state for public entries.
+- explicit "missing configured cost" empty state for unsupported catalog
+  platforms when cost routing depends on that supply.
 
 ### Settings
 
@@ -1485,6 +1512,7 @@ A new Pricing Catalog settings surface should support:
 - manually entering simple and advanced pricing plans;
 - creating aliases;
 - selecting a fallback profile;
+- managing upstream model cost bindings;
 - seeing drift findings;
 - acknowledging or resolving findings.
 
@@ -1496,7 +1524,7 @@ The catalog editor should bias toward structured editing:
 - manual presets create editable structured plans;
 - guided rows preview per-component cost for a sample usage shape;
 - advanced JSON editing is available but validates before save;
-- one-off entry overrides can be promoted into user catalog entries;
+- inline upstream cost plans can be promoted into user catalog entries;
 - CEL fields are hidden behind an advanced disclosure and validate inline;
 - import shows a dry-run summary before writing catalog entries.
 
@@ -1510,28 +1538,33 @@ POST   /api/pricing/catalog
 GET    /api/pricing/catalog/:id
 PATCH  /api/pricing/catalog/:id
 
-GET    /api/pricing/resolve?model=...&scope=...
+GET    /api/pricing/upstream-cost/resolve?siteId=...&accountId=...&tokenId=...&model=...
 POST   /api/pricing/evaluate
 
-GET    /api/pricing/bindings
-POST   /api/pricing/bindings
-PATCH  /api/pricing/bindings/:id
-DELETE /api/pricing/bindings/:id
+GET    /api/pricing/upstream-cost
+POST   /api/pricing/upstream-cost
+PATCH  /api/pricing/upstream-cost/:id
+DELETE /api/pricing/upstream-cost/:id
+POST   /api/pricing/upstream-cost/preview
 
 GET    /api/pricing/drift-findings
 POST   /api/pricing/drift-findings/:id/ack
 POST   /api/pricing/drift-check/run
 ```
 
-The route graph detail endpoint should embed resolved pricing references:
+The model details endpoint should embed upstream cost summaries:
 
 ```ts
 type ModelDetailsView = {
   pricing: {
-    reference: ResolvedEntryPricingReference;
-    upstreamCatalog: PricingEvaluation | null;
-    measuredBilling: PricingEvaluation | null;
-    effectiveRuntime: PricingEvaluation | null;
+    upstreamSupplies: Array<{
+      supply: UpstreamModelSupplyRef;
+      configuredCost: PricingEvaluation | null;
+      upstreamCatalog: PricingEvaluation | null;
+      measuredBilling: PricingEvaluation | null;
+      effectiveRuntime: PricingEvaluation | null;
+      diagnostics: PricingCostDiagnostic[];
+    }>;
     driftFindings: PricingDriftFinding[];
   };
 };
@@ -1552,9 +1585,9 @@ Migration sequence:
 
 1. Create catalog and binding tables.
 2. Seed built-in system fallback profiles.
-3. Add resolver with automatic alias matching.
-4. Add entry node `pricingReference` config as optional.
-5. Populate model details with reference pricing where available.
+3. Add upstream cost resolver and catalog suggestion matching.
+4. Populate model details with upstream cost summaries where available.
+5. Add token/model cost editor.
 6. Add drift check without notifications.
 7. Enable notifications after findings are deduplicated and UI can display
    them clearly.
@@ -1589,10 +1622,11 @@ Required coverage:
 - component roles, aggregation, rounding, minimum, maximum, discount, and credit
   behavior;
 - canonical usage append-only compatibility and usage hash stability;
-- entry resolver exact, alias, normalized, manual, override, and default modes;
-- alias conflict diagnostics and macro-derived entry inheritance;
-- route graph compiler preserves resolved entry pricing metadata;
-- proxy billing can evaluate reference plans without breaking existing upstream
+- upstream cost resolver priority for token+model+group, token+model,
+  account+model, site+model, upstream catalog, unitCost, and fallback;
+- catalog suggestion exact, alias, normalized, and ambiguous-match diagnostics;
+- route graph compiler does not need or persist pricing metadata for entries;
+- proxy billing can evaluate configured plans without breaking existing upstream
   catalog billing;
 - route cost scoring uses the effective runtime source and preserves
   `account.unitCost` fallback semantics;
