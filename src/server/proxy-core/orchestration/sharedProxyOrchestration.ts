@@ -24,9 +24,10 @@ type SelectedChannel = Awaited<ReturnType<typeof tokenRouter.selectChannel>>;
 type SurfaceWarningScope = string;
 
 type SurfaceSelectedChannel = {
-  channel: { routeId: number | null; id: number };
+  channel: { routeId: number | null; id: number; tokenId?: number | null };
   account: { id: number; username?: string | null };
   site: { name?: string | null };
+  token?: { id?: number | null; tokenGroup?: string | null } | null;
   actualModel?: string | null;
 };
 
@@ -403,6 +404,8 @@ export async function recordSurfaceSuccess(input: {
     const billing = await resolveProxyLogBilling({
       site: input.selected.site,
       account: input.selected.account,
+      tokenId: input.selected.token?.id ?? input.selected.channel.tokenId ?? null,
+      upstreamGroup: input.selected.token?.tokenGroup ?? null,
       modelName: input.modelName,
       parsedUsage: input.parsedUsage,
       resolvedUsage,

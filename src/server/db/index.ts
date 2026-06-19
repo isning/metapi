@@ -31,6 +31,7 @@ const TABLES_WITH_NUMERIC_ID = new Set([
   'model_availability',
   'token_model_availability',
   'token_routes',
+  'upstream_model_cost_pricings',
   'route_group_sources',
   'route_channels',
   'oauth_route_units',

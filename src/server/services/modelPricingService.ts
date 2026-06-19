@@ -4,6 +4,8 @@ import {
   buildNewApiCookieCandidates,
   fetchJsonWithShieldCookieRetry,
 } from './platforms/newApiShield.js';
+import { evaluateUpstreamCostPricing } from './upstreamCostPricingService.js';
+import type { PricingEvaluation } from '../pricing-core/index.js';
 
 const PRICE_CACHE_TTL_MS = 10 * 60 * 1000;
 const PRICE_CACHE_FAILURE_TTL_MS = 60 * 1000;
@@ -69,6 +71,8 @@ export interface EstimateProxyCostInput {
     accessToken?: string | null;
     apiToken?: string | null;
   };
+  tokenId?: number | null;
+  upstreamGroup?: string | null;
   modelName: string;
   promptTokens?: number;
   completionTokens?: number;
@@ -107,6 +111,12 @@ interface ModelPricingCatalog {
 }
 
 export interface ProxyBillingDetails {
+  source?: 'upstream_catalog' | 'billing_override' | 'upstream_cost_pricing';
+  upstreamCostPricingId?: number;
+  upstreamCostPricingScope?: string;
+  planFingerprint?: string;
+  estimateLevel?: string;
+  diagnostics?: unknown[];
   quotaType: number;
   usage: {
     promptTokens: number;
@@ -722,6 +732,95 @@ export function calculateModelUsageCost(
   return calculateModelUsageBreakdown(model, usage, groupRatio)?.breakdown.totalCost ?? 0;
 }
 
+async function evaluateConfiguredUpstreamCost(
+  input: EstimateProxyCostInput,
+  usage: {
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+    cacheReadTokens?: number;
+    cacheCreationTokens?: number;
+    promptTokensIncludeCache?: boolean | null;
+  },
+) {
+  return await evaluateUpstreamCostPricing({
+    siteId: input.site.id,
+    accountId: input.account.id,
+    tokenId: input.tokenId ?? null,
+    tokenGroup: input.upstreamGroup ?? null,
+    modelName: input.modelName,
+    usage: {
+      inputTokens: usage.promptTokens,
+      outputTokens: usage.completionTokens,
+      totalTokens: usage.totalTokens,
+      cacheReadTokens: usage.cacheReadTokens ?? 0,
+      cacheWriteTokens: usage.cacheCreationTokens ?? 0,
+      requestCount: 1,
+    },
+    context: {
+      provider: input.site.platform,
+      metadata: {
+        siteId: input.site.id,
+        accountId: input.account.id,
+        tokenId: input.tokenId ?? null,
+        upstreamGroup: input.upstreamGroup ?? null,
+      },
+    },
+  });
+}
+
+function pricingEvaluationToProxyBillingDetails(
+  resolved: NonNullable<Awaited<ReturnType<typeof evaluateConfiguredUpstreamCost>>>,
+  usage: {
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+    cacheReadTokens?: number;
+    cacheCreationTokens?: number;
+    promptTokensIncludeCache?: boolean | null;
+  },
+): ProxyBillingDetails {
+  const normalizedUsage = normalizeUsageBreakdownInput(usage);
+  const evaluation = resolved.evaluation as PricingEvaluation;
+  const componentCost = (kind: string) => evaluation.components
+    .filter((component) => component.kind === kind)
+    .reduce((sum, component) => sum + component.costUsd, 0);
+  const componentUnitPrice = (kind: string) => {
+    const component = evaluation.components.find((item) => item.kind === kind);
+    if (!component) return 0;
+    return roundCost(component.unitPriceUsd);
+  };
+
+  return {
+    source: 'upstream_cost_pricing',
+    upstreamCostPricingId: resolved.pricing.id,
+    upstreamCostPricingScope: resolved.matchedScope,
+    planFingerprint: evaluation.planFingerprint,
+    estimateLevel: evaluation.estimateLevel,
+    diagnostics: evaluation.diagnostics,
+    quotaType: 0,
+    usage: normalizedUsage,
+    pricing: {
+      modelRatio: 0,
+      completionRatio: 0,
+      cacheRatio: 0,
+      cacheCreationRatio: 0,
+      groupRatio: 1,
+    },
+    breakdown: {
+      inputPerMillion: componentUnitPrice('input_tokens'),
+      outputPerMillion: componentUnitPrice('output_tokens'),
+      cacheReadPerMillion: componentUnitPrice('cache_read_tokens'),
+      cacheCreationPerMillion: componentUnitPrice('cache_write_tokens'),
+      inputCost: roundCost(componentCost('input_tokens')),
+      outputCost: roundCost(componentCost('output_tokens')),
+      cacheReadCost: roundCost(componentCost('cache_read_tokens')),
+      cacheCreationCost: roundCost(componentCost('cache_write_tokens')),
+      totalCost: roundCost(evaluation.totalCostUsd),
+    },
+  };
+}
+
 function buildModelPricingCatalogFromData(pricingData: PricingData): ModelPricingCatalog {
   const groups = Array.from(new Set([DEFAULT_GROUP, ...Object.keys(pricingData.groupRatio)]));
   const defaultMultiplier = pricingData.groupRatio[DEFAULT_GROUP] || 1;
@@ -810,6 +909,11 @@ export async function estimateProxyCost(input: EstimateProxyCostInput): Promise<
       return calculateModelUsageCost(pricingOverride.model, usage, pricingOverride.groupRatio);
     }
 
+    const configured = await evaluateConfiguredUpstreamCost(input, usage);
+    if (configured) {
+      return roundCost(configured.evaluation.totalCostUsd);
+    }
+
     const pricingData = await getPricingDataCached(input);
     if (!pricingData) {
       return fallbackTokenCost(totalTokens, input.site.platform);
@@ -853,7 +957,13 @@ export async function buildProxyBillingDetails(input: EstimateProxyCostInput): P
   try {
     if (input.billingPricingOverride) {
       const pricingOverride = buildPricingOverrideModel(input.modelName, input.billingPricingOverride);
-      return calculateModelUsageBreakdown(pricingOverride.model, usage, pricingOverride.groupRatio);
+      const details = calculateModelUsageBreakdown(pricingOverride.model, usage, pricingOverride.groupRatio);
+      return details ? { ...details, source: 'billing_override' } : null;
+    }
+
+    const configured = await evaluateConfiguredUpstreamCost(input, usage);
+    if (configured) {
+      return pricingEvaluationToProxyBillingDetails(configured, usage);
     }
 
     const pricingData = await getPricingDataCached(input);
@@ -862,7 +972,8 @@ export async function buildProxyBillingDetails(input: EstimateProxyCostInput): P
     const model = resolveModel(input.modelName, pricingData);
     if (!model || model.quotaType === 1) return null;
 
-    return calculateModelUsageBreakdown(model, usage, pricingData.groupRatio);
+    const details = calculateModelUsageBreakdown(model, usage, pricingData.groupRatio);
+    return details ? { ...details, source: 'upstream_catalog' } : null;
   } catch {
     return null;
   }

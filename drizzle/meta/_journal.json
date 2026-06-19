@@ -197,6 +197,13 @@
       "when": 1781827200000,
       "tag": "0028_upstream_compatibility_policy",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "6",
+      "when": 1781910000000,
+      "tag": "0029_upstream_model_cost_pricing",
+      "breakpoints": true
     }
   ]
 }

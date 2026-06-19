@@ -423,6 +423,12 @@ export type ProxyLogClientConfidence = "exact" | "heuristic" | "unknown" | null;
 export type ProxyLogUsageSource = "upstream" | "self-log" | "unknown" | null;
 
 export type ProxyLogBillingDetails = {
+  source?: "upstream_catalog" | "billing_override" | "upstream_cost_pricing";
+  upstreamCostPricingId?: number;
+  upstreamCostPricingScope?: string;
+  planFingerprint?: string;
+  estimateLevel?: string;
+  diagnostics?: unknown[];
   quotaType: number;
   usage: {
     promptTokens: number;
@@ -452,6 +458,55 @@ export type ProxyLogBillingDetails = {
     totalCost: number;
   };
 } | null;
+
+export type UpstreamCostPricingScope =
+  | "site_model"
+  | "account_model"
+  | "token_model"
+  | "token_model_group";
+
+export type UpstreamCostPricingRecord = {
+  id: number;
+  scope: UpstreamCostPricingScope;
+  siteId: number;
+  accountId?: number | null;
+  tokenId?: number | null;
+  tokenGroup?: string | null;
+  modelName: string;
+  normalizedModelName: string;
+  displayName?: string | null;
+  enabled: boolean;
+  plan: Record<string, unknown>;
+  planFingerprint: string;
+  sourceType: "user" | "official" | "provider_catalog" | "system_default";
+  metadata: Record<string, unknown>;
+  notes?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+};
+
+export type UpstreamCostPricingPayload = {
+  scope: UpstreamCostPricingScope;
+  siteId: number;
+  accountId?: number | null;
+  tokenId?: number | null;
+  tokenGroup?: string | null;
+  modelName: string;
+  displayName?: string | null;
+  enabled?: boolean;
+  plan?: Record<string, unknown>;
+  simpleTokenPricing?: {
+    inputPerMillion?: number;
+    outputPerMillion?: number;
+    cacheReadPerMillion?: number;
+    cacheWritePerMillion?: number;
+    reasoningPerMillion?: number;
+    requestUsd?: number;
+  };
+  sourceType?: "user" | "official" | "provider_catalog" | "system_default";
+  metadata?: Record<string, unknown> | null;
+  notes?: string | null;
+};
 
 export type ProxyLogListItem = {
   id: number;
@@ -1454,6 +1509,63 @@ export const api = {
   getModelRouteFlow: (model: string) =>
     request(`/api/models/route-flow?model=${encodeURIComponent(model)}`),
   getModelTokenCandidates: () => request("/api/models/token-candidates"),
+  listUpstreamCostPricings: (params?: {
+    siteId?: number;
+    accountId?: number;
+    tokenId?: number;
+    modelName?: string;
+    enabled?: boolean;
+  }) =>
+    request<UpstreamCostPricingRecord[]>(
+      `/api/pricing/upstream-cost${buildQueryString(params)}`,
+    ),
+  createUpstreamCostPricing: (data: UpstreamCostPricingPayload) =>
+    request<UpstreamCostPricingRecord>("/api/pricing/upstream-cost", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  updateUpstreamCostPricing: (
+    id: number,
+    data: Partial<UpstreamCostPricingPayload>,
+  ) =>
+    request<UpstreamCostPricingRecord>(`/api/pricing/upstream-cost/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  deleteUpstreamCostPricing: (id: number) =>
+    request<{ success: boolean }>(`/api/pricing/upstream-cost/${id}`, {
+      method: "DELETE",
+    }),
+  resolveUpstreamCostPricing: (params: {
+    siteId: number;
+    accountId?: number;
+    tokenId?: number;
+    tokenGroup?: string;
+    modelName: string;
+  }) =>
+    request<{
+      pricing: UpstreamCostPricingRecord | null;
+      matchedScope?: UpstreamCostPricingScope;
+      priority?: number;
+    }>(`/api/pricing/upstream-cost/resolve${buildQueryString(params)}`),
+  previewUpstreamCostPricing: (data: {
+    siteId: number;
+    accountId?: number;
+    tokenId?: number;
+    tokenGroup?: string;
+    modelName: string;
+    usage?: Record<string, unknown>;
+    context?: Record<string, unknown>;
+  }) =>
+    request<{
+      pricing: UpstreamCostPricingRecord | null;
+      matchedScope?: UpstreamCostPricingScope;
+      priority?: number;
+      evaluation?: Record<string, unknown> | null;
+    }>("/api/pricing/upstream-cost/preview", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
 
   // Simple chat test from admin panel
   startTestChatJob: (data: TestChatRequestPayload) =>

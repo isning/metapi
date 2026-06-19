@@ -153,6 +153,8 @@ export async function videosProxyRoute(app: FastifyInstance) {
         const estimatedCost = await estimateProxyCost({
           site: selected.site,
           account: selected.account,
+          tokenId: selected.token?.id ?? selected.channel.tokenId ?? null,
+          upstreamGroup: selected.token?.tokenGroup ?? null,
           modelName: upstreamModel,
           promptTokens: 0,
           completionTokens: 0,

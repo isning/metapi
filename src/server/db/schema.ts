@@ -146,6 +146,33 @@ export const tokenModelAvailability = sqliteTable('token_model_availability', {
   availableIdx: index('token_model_availability_available_idx').on(table.available),
 }));
 
+export const upstreamModelCostPricings = sqliteTable('upstream_model_cost_pricings', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  scope: text('scope').notNull(), // 'site_model' | 'account_model' | 'token_model' | 'token_model_group'
+  scopeKey: text('scope_key').notNull(),
+  siteId: integer('site_id').notNull().references(() => sites.id, { onDelete: 'cascade' }),
+  accountId: integer('account_id').references(() => accounts.id, { onDelete: 'cascade' }),
+  tokenId: integer('token_id').references(() => accountTokens.id, { onDelete: 'cascade' }),
+  tokenGroup: text('token_group'),
+  modelName: text('model_name').notNull(),
+  normalizedModelName: text('normalized_model_name').notNull(),
+  displayName: text('display_name'),
+  enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+  planJson: text('plan_json').notNull(),
+  planFingerprint: text('plan_fingerprint').notNull(),
+  sourceType: text('source_type').notNull().default('user'),
+  metadataJson: text('metadata_json'),
+  notes: text('notes'),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  siteModelIdx: index('upstream_model_cost_pricings_site_model_idx').on(table.siteId, table.normalizedModelName, table.enabled),
+  accountModelIdx: index('upstream_model_cost_pricings_account_model_idx').on(table.accountId, table.normalizedModelName, table.enabled),
+  tokenModelIdx: index('upstream_model_cost_pricings_token_model_idx').on(table.tokenId, table.normalizedModelName, table.enabled),
+  tokenGroupModelIdx: index('upstream_model_cost_pricings_token_group_model_idx').on(table.tokenId, table.tokenGroup, table.normalizedModelName, table.enabled),
+  scopeKeyUnique: uniqueIndex('upstream_model_cost_pricings_scope_key_unique').on(table.scopeKey),
+}));
+
 export const tokenRoutes = sqliteTable('token_routes', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   displayName: text('display_name'),

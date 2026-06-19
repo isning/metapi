@@ -2351,6 +2351,118 @@
           "primaryKey": false
         }
       }
+    },
+    "upstream_model_cost_pricings": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "scope": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "scope_key": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "site_id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "account_id": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "token_id": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "token_group": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "model_name": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "normalized_model_name": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "display_name": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "enabled": {
+          "logicalType": "boolean",
+          "notNull": true,
+          "defaultValue": "true",
+          "primaryKey": false
+        },
+        "plan_json": {
+          "logicalType": "json",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "plan_fingerprint": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "source_type": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'user'",
+          "primaryKey": false
+        },
+        "metadata_json": {
+          "logicalType": "json",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "notes": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
     }
   },
   "indexes": [
@@ -3101,6 +3213,55 @@
         "enabled"
       ],
       "unique": false
+    },
+    {
+      "name": "upstream_model_cost_pricings_account_model_idx",
+      "table": "upstream_model_cost_pricings",
+      "columns": [
+        "account_id",
+        "normalized_model_name",
+        "enabled"
+      ],
+      "unique": false
+    },
+    {
+      "name": "upstream_model_cost_pricings_scope_key_unique",
+      "table": "upstream_model_cost_pricings",
+      "columns": [
+        "scope_key"
+      ],
+      "unique": true
+    },
+    {
+      "name": "upstream_model_cost_pricings_site_model_idx",
+      "table": "upstream_model_cost_pricings",
+      "columns": [
+        "site_id",
+        "normalized_model_name",
+        "enabled"
+      ],
+      "unique": false
+    },
+    {
+      "name": "upstream_model_cost_pricings_token_group_model_idx",
+      "table": "upstream_model_cost_pricings",
+      "columns": [
+        "token_id",
+        "token_group",
+        "normalized_model_name",
+        "enabled"
+      ],
+      "unique": false
+    },
+    {
+      "name": "upstream_model_cost_pricings_token_model_idx",
+      "table": "upstream_model_cost_pricings",
+      "columns": [
+        "token_id",
+        "normalized_model_name",
+        "enabled"
+      ],
+      "unique": false
     }
   ],
   "uniques": [
@@ -3249,6 +3410,13 @@
       "columns": [
         "token_id",
         "model_name"
+      ]
+    },
+    {
+      "name": "upstream_model_cost_pricings_scope_key_unique",
+      "table": "upstream_model_cost_pricings",
+      "columns": [
+        "scope_key"
       ]
     }
   ],
@@ -3486,6 +3654,39 @@
     },
     {
       "table": "token_model_availability",
+      "columns": [
+        "token_id"
+      ],
+      "referencedTable": "account_tokens",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "upstream_model_cost_pricings",
+      "columns": [
+        "account_id"
+      ],
+      "referencedTable": "accounts",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "upstream_model_cost_pricings",
+      "columns": [
+        "site_id"
+      ],
+      "referencedTable": "sites",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "upstream_model_cost_pricings",
       "columns": [
         "token_id"
       ],
