@@ -58,6 +58,7 @@ import {
   parseBatchApiKeys,
 } from "../../services/apiKeyBatch.js";
 import { createManualAccount } from "../../services/manualAccountCreationService.js";
+import { buildAccountModelCostSummary } from "../../services/accountModelCostSummaryService.js";
 
 type AccountWithSiteRow = {
   accounts: typeof schema.accounts.$inferSelect;
@@ -1790,8 +1791,21 @@ export async function accountsRoutes(app: FastifyInstance) {
         .all();
 
       const disabledSet = new Set(disabledRows.map((r) => r.modelName));
+      const tokenRows = await db
+        .select({
+          id: schema.accountTokens.id,
+          name: schema.accountTokens.name,
+          tokenGroup: schema.accountTokens.tokenGroup,
+          enabled: schema.accountTokens.enabled,
+          isDefault: schema.accountTokens.isDefault,
+          valueStatus: schema.accountTokens.valueStatus,
+          source: schema.accountTokens.source,
+        })
+        .from(schema.accountTokens)
+        .where(eq(schema.accountTokens.accountId, accountId))
+        .all();
 
-      const models = modelRows
+      const baseModels = modelRows
         .filter((r) => r.available)
         .map((r) => ({
           name: r.modelName,
@@ -1801,9 +1815,34 @@ export async function accountsRoutes(app: FastifyInstance) {
         }))
         .sort((a, b) => a.name.localeCompare(b.name));
 
+      const costSummaries = await Promise.all(
+        baseModels.map((model) =>
+          buildAccountModelCostSummary({
+            siteId,
+            accountId,
+            modelName: model.name,
+            tokenRows,
+          }),
+        ),
+      );
+
+      const models = baseModels.map((model, index) => ({
+        ...model,
+        costPricing: costSummaries[index],
+      }));
+
       return {
         siteId,
         siteName: account.sites.name,
+        accountTokens: tokenRows.map((token) => ({
+          id: token.id,
+          name: token.name,
+          tokenGroup: token.tokenGroup,
+          enabled: !!token.enabled,
+          isDefault: !!token.isDefault,
+          valueStatus: token.valueStatus,
+          source: token.source,
+        })),
         models,
         totalCount: models.length,
         disabledCount: models.filter((m) => m.disabled).length,

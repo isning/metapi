@@ -32,6 +32,7 @@ describe('accounts manual models endpoint', () => {
     await db.delete(schema.checkinLogs).run();
     await db.delete(schema.routeChannels).run();
     await db.delete(schema.tokenRoutes).run();
+    await db.delete(schema.upstreamModelCostPricings).run();
     await db.delete(schema.tokenModelAvailability).run();
     await db.delete(schema.modelAvailability).run();
     await db.delete(schema.accountTokens).run();
@@ -76,6 +77,102 @@ describe('accounts manual models endpoint', () => {
     expect(models.map(m => m.modelName).sort()).toEqual(['claude-3-manual', 'gpt-4-manual']);
     expect(models[0]?.isManual).toBe(true);
     expect(models[1]?.isManual).toBe(true);
+  });
+
+  it('returns account token metadata with account model list for pricing scope selection', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'Token Scope Site',
+      url: 'https://token-scope.example.com',
+      platform: 'new-api',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      accessToken: 'test-token',
+    }).returning().get();
+
+    await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'premium token',
+      token: 'sk-premium',
+      tokenGroup: 'premium',
+      enabled: true,
+      isDefault: true,
+    }).run();
+    await db.insert(schema.modelAvailability).values({
+      accountId: account.id,
+      modelName: 'priced-model',
+      available: true,
+      latencyMs: 42,
+    }).run();
+    await db.insert(schema.upstreamModelCostPricings).values({
+      scope: 'account_model',
+      scopeKey: `account_model|site:${site.id}|account:${account.id}|token:-|group:-|model:priced-model`,
+      siteId: site.id,
+      accountId: account.id,
+      modelName: 'priced-model',
+      normalizedModelName: 'priced-model',
+      planJson: JSON.stringify({
+        schemaVersion: 1,
+        planKind: 'rate_card',
+        unitPrecision: 'mixed',
+        billingMode: 'mixed',
+        aggregation: { mode: 'sum_components', period: 'request' },
+        rounding: { mode: 'total', precision: 12 },
+        components: [
+          {
+            id: 'input_tokens',
+            label: 'Input tokens',
+            role: 'charge',
+            kind: 'input_tokens',
+            meter: { unit: 'token', quantityPath: 'usage.inputTokens', scale: 1000000, missingQuantity: 'zero' },
+            price: { currency: 'USD', amount: 2, unitLabel: '1M tokens' },
+          },
+          {
+            id: 'output_tokens',
+            label: 'Output tokens',
+            role: 'charge',
+            kind: 'output_tokens',
+            meter: { unit: 'token', quantityPath: 'usage.outputTokens', scale: 1000000, missingQuantity: 'zero' },
+            price: { currency: 'USD', amount: 8, unitLabel: '1M tokens' },
+          },
+        ],
+        tiers: [],
+      }),
+      planFingerprint: 'test-fingerprint',
+      enabled: true,
+      sourceType: 'user',
+    }).run();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/api/accounts/${account.id}/models`,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      siteId: site.id,
+      accountTokens: [
+        expect.objectContaining({
+          name: 'premium token',
+          tokenGroup: 'premium',
+          enabled: true,
+          isDefault: true,
+        }),
+      ],
+      models: [
+        expect.objectContaining({
+          name: 'priced-model',
+          latencyMs: 42,
+          costPricing: expect.objectContaining({
+            configured: true,
+            matchedScope: 'account_model',
+            totalCostUsd: 10,
+          }),
+        }),
+      ],
+    });
+    expect(response.json().accountTokens[0]).not.toHaveProperty('token');
   });
 
   it('updates existing synced models to manual if provided', async () => {

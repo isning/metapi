@@ -185,6 +185,14 @@ export default function Accounts() {
       disabled: boolean;
       isManual?: boolean;
     }>;
+    accountTokens?: Array<{
+      id: number;
+      name: string;
+      tokenGroup?: string | null;
+      enabled?: boolean;
+      isDefault?: boolean;
+      valueStatus?: string | null;
+    }>;
     pendingDisabled: Set<string>;
     loading: boolean;
     saving: boolean;
@@ -195,6 +203,7 @@ export default function Accounts() {
     open: false,
     account: null,
     models: [],
+    accountTokens: [],
     pendingDisabled: new Set(),
     loading: false,
     saving: false,
@@ -623,6 +632,7 @@ export default function Accounts() {
       ...s,
       loading: false,
       models,
+      accountTokens: Array.isArray(result?.accountTokens) ? result.accountTokens : [],
       pendingDisabled: disabledSet,
       siteName: result?.siteName || account.site?.name || s.siteName,
     }));
@@ -647,6 +657,7 @@ export default function Accounts() {
       ...(options.resetBeforeLoad
         ? {
             models: [],
+            accountTokens: [],
             pendingDisabled: new Set<string>(),
             siteName: "",
             manualModelsInput: "",
@@ -3008,6 +3019,13 @@ export default function Accounts() {
             refreshUpstream: true,
             successMessage: "模型列表已刷新",
             errorMessage: "刷新失败",
+          });
+        }}
+        onReload={async () => {
+          if (!modelModal.account) return;
+          await loadModelModalModels(modelModal.account, {
+            refreshUpstream: false,
+            errorMessage: "重新加载模型列表失败",
           });
         }}
         onToggleModelDisabled={toggleModelDisabled}
