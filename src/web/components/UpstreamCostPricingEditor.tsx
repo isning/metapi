@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Separator } from './ui/separator/index.js';
 import { Switch } from './ui/switch/index.js';
 
+import { tr } from '../i18n.js';
 type UpstreamTokenOption = {
   id: number;
   name: string;
@@ -82,17 +83,17 @@ function formatMoney(value: unknown) {
 }
 
 function scopeLabel(scope: UpstreamCostPricingScope) {
-  if (scope === 'site_model') return '站点模型';
-  if (scope === 'account_model') return '账号模型';
-  if (scope === 'token_model') return 'Token 模型';
-  return 'Token 分组模型';
+  if (scope === 'site_model') return tr('upstreamCostPricing.scope.siteModel');
+  if (scope === 'account_model') return tr('upstreamCostPricing.scope.accountModel');
+  if (scope === 'token_model') return tr('upstreamCostPricing.scope.tokenModel');
+  return tr('upstreamCostPricing.scope.tokenGroupModel');
 }
 
 function scopeDescription(scope: UpstreamCostPricingScope) {
-  if (scope === 'site_model') return '同一站点下同名模型共用，优先级最低。';
-  if (scope === 'account_model') return '仅当前账号下同名模型使用。';
-  if (scope === 'token_model') return '仅当前账号的指定 Token 使用。';
-  return '仅当前账号的指定 Token 分组使用，优先级最高。';
+  if (scope === 'site_model') return tr('upstreamCostPricing.scope.siteModelDescription');
+  if (scope === 'account_model') return tr('upstreamCostPricing.scope.accountModelDescription');
+  if (scope === 'token_model') return tr('upstreamCostPricing.scope.tokenModelDescription');
+  return tr('upstreamCostPricing.scope.tokenGroupModelDescription');
 }
 
 function parseOptionalNumber(value: string): number | undefined {
@@ -245,7 +246,7 @@ export function UpstreamCostPricingEditor({
         resetToNew();
       }
     } catch (error: any) {
-      toast?.error?.(error?.message || '加载成本配置失败');
+      toast?.error?.(error?.message || tr('upstreamCostPricing.errors.loadFailed'));
     } finally {
       setLoading(false);
     }
@@ -300,7 +301,7 @@ export function UpstreamCostPricingEditor({
         });
       }
     } catch (error: any) {
-      toast?.error?.(error?.message || '预览失败');
+      toast?.error?.(error?.message || tr('upstreamCostPricing.errors.previewFailed'));
     } finally {
       setPreviewLoading(false);
     }
@@ -311,19 +312,19 @@ export function UpstreamCostPricingEditor({
     try {
       const payload = buildPayload({ form, siteId, accountId, modelName });
       if (!payload.simpleTokenPricing || Object.values(payload.simpleTokenPricing).every((value) => value === undefined)) {
-        throw new Error('至少填写一个计价项');
+        throw new Error(tr('upstreamCostPricing.errors.emptyPricing'));
       }
       const matched = records.find((record) => isSameScope(record, form, accountId));
       const saved = matched
         ? await api.updateUpstreamCostPricing(matched.id, payload)
         : await api.createUpstreamCostPricing(payload);
-      toast?.success?.('上游成本配置已保存');
+      toast?.success?.(tr('upstreamCostPricing.saved'));
       setSelectedRecordId(saved.id);
       setForm(recordToForm(saved));
       await loadRecords();
       onSaved?.();
     } catch (error: any) {
-      toast?.error?.(error?.message || '保存成本配置失败');
+      toast?.error?.(error?.message || tr('upstreamCostPricing.errors.saveFailed'));
     } finally {
       setSaving(false);
     }
@@ -334,12 +335,12 @@ export function UpstreamCostPricingEditor({
     setSaving(true);
     try {
       await api.deleteUpstreamCostPricing(selectedRecord.id);
-      toast?.success?.('上游成本配置已删除');
+      toast?.success?.(tr('upstreamCostPricing.deleted'));
       await loadRecords();
       resetToNew();
       onSaved?.();
     } catch (error: any) {
-      toast?.error?.(error?.message || '删除成本配置失败');
+      toast?.error?.(error?.message || tr('upstreamCostPricing.errors.deleteFailed'));
     } finally {
       setSaving(false);
     }
@@ -356,23 +357,23 @@ export function UpstreamCostPricingEditor({
         <div className="min-w-0">
           <div className="flex items-center gap-2 text-sm font-semibold">
             <Coins className="size-4" />
-            上游模型成本
+            {tr('upstreamCostPricing.title')}
           </div>
           <div className="mt-1 text-xs text-muted-foreground">
-            {siteName || `Site ${siteId}`} · {accountName || `Account ${accountId}`} · <span className="font-mono">{modelName}</span>
+            {siteName || `${tr('common.site')} ${siteId}`} · {accountName || `${tr('common.account')} ${accountId}`} · <span className="font-mono">{modelName}</span>
           </div>
         </div>
         <ButtonGroup>
           <Button type="button" variant="outline" size="sm" onClick={() => void loadRecords()} disabled={loading || saving}>
             {loading ? <LoaderCircle className="size-4 animate-spin" /> : <RotateCcw className="size-4" />}
-            刷新
+            {tr('common.refresh')}
           </Button>
           <Button type="button" variant="outline" size="sm" onClick={resetToNew} disabled={saving}>
             <Plus className="size-4" />
-            新建
+            {tr('common.new')}
           </Button>
           <Button type="button" variant="ghost" size="sm" onClick={() => onOpenChange(false)} disabled={saving}>
-            关闭
+            {tr('common.close')}
           </Button>
         </ButtonGroup>
       </div>
@@ -380,20 +381,21 @@ export function UpstreamCostPricingEditor({
       <div className="grid gap-3 lg:grid-cols-[minmax(200px,260px)_1fr]">
         <Card>
           <CardHeader>
-            <CardTitle>已配置</CardTitle>
-            <CardDescription>按上游供给维度匹配</CardDescription>
+            <CardTitle>{tr('upstreamCostPricing.configured')}</CardTitle>
+            <CardDescription>{tr('upstreamCostPricing.configuredDescription')}</CardDescription>
           </CardHeader>
           <CardContent className="grid gap-2">
             {loading ? (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <LoaderCircle className="size-4 animate-spin" />
-                加载中
+                {tr('common.loading')}
               </div>
             ) : records.length > 0 ? (
               records.map((record) => (
-                <button
+                <Button
                   key={record.id}
                   type="button"
+                  variant="ghost"
                   className="grid gap-1 rounded-md border bg-background p-2 text-left text-sm hover:bg-accent data-[state=selected]:bg-accent"
                   data-state={record.id === selectedRecordId ? 'selected' : undefined}
                   onClick={() => {
@@ -404,18 +406,18 @@ export function UpstreamCostPricingEditor({
                 >
                   <div className="flex items-center justify-between gap-2">
                     <span className="font-medium">{record.scope}</span>
-                    <ToneBadge tone={record.enabled ? '-success' : '-muted'}>{record.enabled ? 'enabled' : 'disabled'}</ToneBadge>
+                    <ToneBadge tone={record.enabled ? '-success' : '-muted'}>{record.enabled ? tr('common.enabled') : tr('common.disabled')}</ToneBadge>
                   </div>
                   <div className="truncate text-xs text-muted-foreground">
                     {record.tokenGroup || (record.tokenId ? `token ${record.tokenId}` : record.accountId ? `account ${record.accountId}` : `site ${record.siteId}`)}
                   </div>
-                </button>
+                </Button>
               ))
             ) : (
               <Empty className="p-4">
                 <EmptyHeader>
-                  <EmptyTitle>暂无成本配置</EmptyTitle>
-                  <EmptyDescription>保存后会按作用域匹配上游成本。</EmptyDescription>
+                  <EmptyTitle>{tr('upstreamCostPricing.emptyTitle')}</EmptyTitle>
+                  <EmptyDescription>{tr('upstreamCostPricing.emptyDescription')}</EmptyDescription>
                 </EmptyHeader>
               </Empty>
             )}
@@ -424,34 +426,34 @@ export function UpstreamCostPricingEditor({
 
         <Card>
           <CardHeader>
-            <CardTitle>计价表</CardTitle>
-            <CardDescription>价格单位为 USD；token 项按每 1M tokens 计价</CardDescription>
+            <CardTitle>{tr('upstreamCostPricing.rateCard')}</CardTitle>
+            <CardDescription>{tr('upstreamCostPricing.rateCardDescription')}</CardDescription>
           </CardHeader>
           <CardContent className="grid gap-3">
             <div className="flex items-center justify-between gap-3 rounded-md border p-3">
               <div className="grid gap-1">
-                <div className="text-sm font-medium">启用此配置</div>
+                <div className="text-sm font-medium">{tr('upstreamCostPricing.enableTitle')}</div>
                 <div className="text-xs text-muted-foreground">
-                  关闭后保留配置，但运行时成本计算不会匹配它。
+                  {tr('upstreamCostPricing.enableDescription')}
                 </div>
               </div>
               <Switch
                 checked={form.enabled}
                 onCheckedChange={(enabled) => updateForm({ enabled })}
-                aria-label="启用成本配置"
+                aria-label={tr('upstreamCostPricing.enableAria')}
               />
             </div>
 
             <div className="grid gap-2 sm:grid-cols-2">
               <Label className="grid gap-1.5 text-xs text-muted-foreground">
-                作用域
+                {tr('upstreamCostPricing.scope')}
                 <Select value={form.scope} onValueChange={(scope) => updateForm({ scope: scope as UpstreamCostPricingScope })}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="site_model">站点模型</SelectItem>
-                    <SelectItem value="account_model">账号模型</SelectItem>
-                    <SelectItem value="token_model" disabled={!canUseTokenScope}>Token 模型</SelectItem>
-                    <SelectItem value="token_model_group" disabled={!canUseTokenScope}>Token 分组模型</SelectItem>
+                    <SelectItem value="site_model">{tr('upstreamCostPricing.scope.siteModel')}</SelectItem>
+                    <SelectItem value="account_model">{tr('upstreamCostPricing.scope.accountModel')}</SelectItem>
+                    <SelectItem value="token_model" disabled={!canUseTokenScope}>{tr('upstreamCostPricing.scope.tokenModel')}</SelectItem>
+                    <SelectItem value="token_model_group" disabled={!canUseTokenScope}>{tr('upstreamCostPricing.scope.tokenGroupModel')}</SelectItem>
                   </SelectContent>
                 </Select>
                 <span>{scopeDescription(form.scope)}</span>
@@ -463,7 +465,7 @@ export function UpstreamCostPricingEditor({
                     const token = availableTokens.find((item) => String(item.id) === tokenId);
                     updateForm({ tokenId, tokenGroup: form.scope === 'token_model_group' ? token?.tokenGroup || '' : '' });
                   }}>
-                    <SelectTrigger><SelectValue placeholder="选择 token" /></SelectTrigger>
+                    <SelectTrigger><SelectValue placeholder={tr('upstreamCostPricing.selectToken')} /></SelectTrigger>
                     <SelectContent>
                       {availableTokens.map((token) => (
                         <SelectItem key={token.id} value={String(token.id)}>
@@ -476,46 +478,46 @@ export function UpstreamCostPricingEditor({
               ) : null}
               {form.scope === 'token_model_group' ? (
                 <Label className="grid gap-1.5 text-xs text-muted-foreground">
-                  Token group
+                  {tr('upstreamCostPricing.tokenGroup')}
                   <Input value={form.tokenGroup} onChange={(event) => updateForm({ tokenGroup: event.target.value })} placeholder={selectedToken?.tokenGroup || 'default'} />
                 </Label>
               ) : null}
             </div>
 
             <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-              <PriceInput label="Input / 1M" value={form.inputPerMillion} onChange={(inputPerMillion) => updateForm({ inputPerMillion })} />
-              <PriceInput label="Output / 1M" value={form.outputPerMillion} onChange={(outputPerMillion) => updateForm({ outputPerMillion })} />
-              <PriceInput label="Cache read / 1M" value={form.cacheReadPerMillion} onChange={(cacheReadPerMillion) => updateForm({ cacheReadPerMillion })} />
-              <PriceInput label="Cache write / 1M" value={form.cacheWritePerMillion} onChange={(cacheWritePerMillion) => updateForm({ cacheWritePerMillion })} />
-              <PriceInput label="Reasoning / 1M" value={form.reasoningPerMillion} onChange={(reasoningPerMillion) => updateForm({ reasoningPerMillion })} />
-              <PriceInput label="Request fee" value={form.requestUsd} onChange={(requestUsd) => updateForm({ requestUsd })} />
+              <PriceInput label={tr('upstreamCostPricing.price.input')} value={form.inputPerMillion} onChange={(inputPerMillion) => updateForm({ inputPerMillion })} />
+              <PriceInput label={tr('upstreamCostPricing.price.output')} value={form.outputPerMillion} onChange={(outputPerMillion) => updateForm({ outputPerMillion })} />
+              <PriceInput label={tr('upstreamCostPricing.price.cacheRead')} value={form.cacheReadPerMillion} onChange={(cacheReadPerMillion) => updateForm({ cacheReadPerMillion })} />
+              <PriceInput label={tr('upstreamCostPricing.price.cacheWrite')} value={form.cacheWritePerMillion} onChange={(cacheWritePerMillion) => updateForm({ cacheWritePerMillion })} />
+              <PriceInput label={tr('upstreamCostPricing.price.reasoning')} value={form.reasoningPerMillion} onChange={(reasoningPerMillion) => updateForm({ reasoningPerMillion })} />
+              <PriceInput label={tr('upstreamCostPricing.price.requestFee')} value={form.requestUsd} onChange={(requestUsd) => updateForm({ requestUsd })} />
             </div>
 
             <Label className="grid gap-1.5 text-xs text-muted-foreground">
-              备注
-              <Input value={form.notes} onChange={(event) => updateForm({ notes: event.target.value })} placeholder="例如：供应商合同价、手动录入日期" />
+              {tr('upstreamCostPricing.notes')}
+              <Input value={form.notes} onChange={(event) => updateForm({ notes: event.target.value })} placeholder={tr('upstreamCostPricing.notesPlaceholder')} />
             </Label>
 
             <Separator />
 
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                <ToneBadge tone="-muted">预览：1M 输入 + 1M 输出</ToneBadge>
+                <ToneBadge tone="-muted">{tr('upstreamCostPricing.previewSummary')}</ToneBadge>
                 <ToneBadge tone="-muted">{scopeLabel(form.scope)}</ToneBadge>
                 {preview ? <ToneBadge tone="-info">{formatMoney(preview.totalCostUsd)}</ToneBadge> : null}
               </div>
               <ButtonGroup>
                 <Button type="button" variant="outline" size="sm" onClick={() => void handlePreview()} disabled={previewLoading || saving}>
                   {previewLoading ? <LoaderCircle className="size-4 animate-spin" /> : <Calculator className="size-4" />}
-                  预览
+                  {tr('upstreamCostPricing.preview')}
                 </Button>
                 <Button type="button" variant="default" size="sm" onClick={() => void handleSave()} disabled={saving}>
                   {saving ? <LoaderCircle className="size-4 animate-spin" /> : <Save className="size-4" />}
-                  保存
+                  {tr('common.save')}
                 </Button>
                 <Button type="button" variant="ghostDestructive" size="sm" onClick={() => void handleDelete()} disabled={!selectedRecord || saving}>
                   <Trash2 className="size-4" />
-                  删除
+                  {tr('common.delete')}
                 </Button>
               </ButtonGroup>
             </div>

@@ -21,12 +21,14 @@ import { shouldIgnoreRowSelectionClick } from './helpers/rowSelection.js';
 import { tr } from '../i18n.js';
 import { UpstreamCompatibilityPolicyEditor } from '../components/UpstreamCompatibilityPolicyEditor.js';
 import { Button } from '../components/ui/button/index.js';
+import { ButtonGroup } from '../components/ui/button-group/index.js';
 import { LoaderCircle } from 'lucide-react';
 import { Skeleton } from '../components/ui/skeleton/index.js';
 import ToneBadge from '../components/ToneBadge.js';
 import InfoNote from '../components/InfoNote.js';
 import EmptyStateBlock from '../components/EmptyStateBlock.js';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card/index.js';
+import { DataTable } from '../components/ui/data-table/index.js';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table/index.js';
 import { Checkbox } from '../components/ui/checkbox/index.js';
 import { Textarea } from '../components/ui/textarea/index.js';
@@ -76,7 +78,7 @@ type SyncableAccount = {
   } | null;
 };
 
-const ACCOUNT_SELECT_SEARCH_PLACEHOLDER = '筛选账号（名称 / 站点）';
+const ACCOUNT_SELECT_SEARCH_PLACEHOLDER = tr('pages.tokens.filteraccountsNameSites');
 
 const isAccountSyncable = (account: any) =>
   resolveAccountCredentialMode(account) === 'session'
@@ -111,7 +113,7 @@ const resolveAccountLabel = (result: AccountTokenSyncResult | null | undefined) 
   if (username) return username;
   const accountId = result?.accountId ?? result?.account?.id;
   if (accountId) return `#${accountId}`;
-  return '未知账号';
+  return tr('pages.proxyLogs.unknownAccount');
 };
 
 async function copyText(text: string) {
@@ -216,7 +218,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
         accounts: latestAccounts,
       };
     } catch (e: any) {
-      toast.error(e.message || '加载令牌失败');
+      toast.error(e.message || tr('pages.tokens.failedLoadToken'));
       return {
         tokens: [] as any[],
         accounts: [] as any[],
@@ -265,7 +267,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
         if (cancelled) return;
         setGroupOptions(['default']);
         setForm((prev) => ({ ...prev, group: 'default' }));
-        toast.error(error?.message || '拉取分组失败，已回退 default');
+        toast.error(error?.message || tr('pages.tokens.failedPullGroupHasFallenBackDefault'));
       })
       .finally(() => {
         if (cancelled) return;
@@ -303,7 +305,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
       .catch((error: any) => {
         if (cancelled) return;
         setEditGroupOptions((current) => (current.includes(currentGroup) ? current : [...current, currentGroup]));
-        toast.error(error?.message || '拉取分组失败，已保留当前分组');
+        toast.error(error?.message || tr('pages.tokens.failedPullGroupGroup'));
       })
       .finally(() => {
         if (cancelled) return;
@@ -367,7 +369,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
     }));
 
     if (!preferredAccount) {
-      toast.info('指定账号不可用，已自动切换到首个可用账号');
+      toast.info(tr('pages.tokens.accountsnotAvailableAutomaticAvailableaccounts'));
     }
 
     params.delete('create');
@@ -473,7 +475,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
       setSelectedTokenIds(failedItems.map((item: any) => Number(item.id)).filter((id: number) => Number.isFinite(id) && id > 0));
       await load();
     } catch (e: any) {
-      toast.error(e.message || '批量操作失败');
+      toast.error(e.message || tr('pages.accounts.operationFailed'));
     } finally {
       setBatchActionLoading(false);
     }
@@ -487,7 +489,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
     if (target.mode === 'single' && target.tokenId) {
       await withRowLoading(`token-${target.tokenId}-delete`, async () => {
         await api.deleteAccountToken(target.tokenId!);
-        toast.success('令牌已删除');
+        toast.success(tr('pages.tokens.tokenDeleted'));
         await load();
       });
       return;
@@ -503,7 +505,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
     editingTokenIdRef.current = token.id;
     setEditingTokenPendingMessage(
       isMaskedPendingToken(token)
-        ? '请粘贴完整明文 token；当前本地仅保存了上游返回的脱敏占位值。'
+        ? tr('pages.tokens.tokenSaveUpstreamResponse')
         : '',
     );
     setEditForm({
@@ -532,7 +534,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
       })
       .catch((error: any) => {
         if (editingTokenIdRef.current !== token.id) return;
-        toast.error(error?.message || '加载令牌详情失败');
+        toast.error(error?.message || tr('pages.tokens.tokendetailsfailed'));
       })
       .finally(() => {
         if (editingTokenIdRef.current !== token.id) return;
@@ -559,7 +561,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
   const saveEditPanel = async () => {
     if (!editingToken) return;
     if (isMaskedPendingToken(editingToken) && !editForm.token.trim()) {
-      toast.error('请粘贴完整明文 token 后再保存');
+      toast.error(tr('pages.tokens.tokenSave'));
       return;
     }
     const serializedCompatibilityPolicy = serializeCompatibilityPolicyForm(editCompatibilityPolicyForm);
@@ -577,11 +579,11 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
         isDefault: editForm.isDefault,
         compatibilityPolicy: serializedCompatibilityPolicy.policy,
       });
-      toast.success('令牌已更新');
+      toast.success(tr('pages.tokens.token2'));
       closeEditPanel();
       await load();
     } catch (e: any) {
-      toast.error(e.message || '更新令牌失败');
+      toast.error(e.message || tr('pages.tokenRoutes.updateTokenFailed'));
     } finally {
       setSavingEdit(false);
     }
@@ -608,7 +610,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
         const res = await api.getAccountTokenValue(tokenId);
         const tokenValue = (res?.token || '').trim();
         if (!tokenValue) {
-          toast.error('令牌为空，无法复制');
+          toast.error(tr('pages.tokens.tokenEmptyCannotCopied'));
           return;
         }
 
@@ -616,7 +618,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
         toast.success(`已复制令牌：${tokenName || `token-${tokenId}`}`);
       });
     } catch (error: any) {
-      toast.error(error?.message || '复制令牌失败');
+      toast.error(error?.message || tr('pages.tokens.copytokenfailed'));
     }
   };
 
@@ -625,7 +627,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
     if (!form.unlimitedQuota) {
       const remainQuota = Number.parseInt(form.remainQuota, 10);
       if (!Number.isFinite(remainQuota) || remainQuota <= 0) {
-        toast.error('有限额度令牌请填写正整数额度');
+        toast.error(tr('pages.tokens.limitedTokensPleaseFillPositiveIntegerAmount'));
         return;
       }
     }
@@ -649,14 +651,14 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
         allowIps: form.allowIps,
         compatibilityPolicy: serializedCompatibilityPolicy.policy,
       });
-      toast.success('已在站点创建并同步令牌');
+      toast.success(tr('pages.tokens.tokenHasBeenCreatedSynchronizedSite'));
       setForm(initialCreateForm);
       setCreateCompatibilityPolicyForm(emptyUpstreamCompatibilityPolicyForm());
       setShowAdd(false);
       setCreateHintModelName('');
       await load();
     } catch (e: any) {
-      toast.error(e.message || '创建令牌失败');
+      toast.error(e.message || tr('pages.tokens.failedCreateToken'));
     } finally {
       setSaving(false);
     }
@@ -669,9 +671,9 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
       const res = await api.syncAccountTokens(syncingAccountId) as AccountTokenSyncResult;
       const status = resolveSyncStatus(res);
       if (status === 'failed') {
-        toast.error(`同步失败：${resolveSyncMessage(res, '请检查账号令牌或站点状态')}`);
+        toast.error(`同步失败：${resolveSyncMessage(res, tr('pages.tokens.checkaccountstokenSitesstatus'))}`);
       } else if (isMaskedPendingSyncResult(res)) {
-        toast.info(resolveSyncMessage(res, '上游返回了脱敏令牌，请补全明文 token'));
+        toast.info(resolveSyncMessage(res, tr('pages.tokens.upstreamResponseTokenToken')));
         const loaded = await load();
         const pendingIds = Array.isArray(res.pendingTokenIds)
           ? res.pendingTokenIds.map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0)
@@ -690,13 +692,13 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
         }
         return;
       } else if (status === 'skipped') {
-        toast.info(`同步已跳过：${resolveSyncMessage(res, '账号缺少可用 Session Cookie')}`);
+        toast.info(`同步已跳过：${resolveSyncMessage(res, tr('pages.tokens.noAvailableSessionCookieAccount'))}`);
       } else {
         toast.success(`同步完成：新增 ${res.created || 0}，更新 ${res.updated || 0}`);
       }
       await load();
     } catch (e: any) {
-      toast.error(e.message || '同步令牌失败');
+      toast.error(e.message || tr('pages.tokens.syncTokenFailed'));
     } finally {
       setSyncing(false);
     }
@@ -707,7 +709,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
     try {
       const res = await api.syncAllAccountTokens();
       if (res?.queued) {
-        toast.info(res.message || '已开始同步令牌，请稍后查看日志');
+        toast.info(res.message || tr('pages.tokens.tokenSynchronizationHasStartedPleaseCheckLog'));
         await load();
         return;
       }
@@ -722,11 +724,11 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
       if (syncResults.length === 0) {
         const status = resolveSyncStatus(res as AccountTokenSyncResult);
         if (status === 'failed') {
-          toast.error(`全部同步失败：${resolveSyncMessage(res, '请稍后重试')}`);
+          toast.error(`全部同步失败：${resolveSyncMessage(res, tr('pages.tokens.tryAgainLater'))}`);
         } else if (status === 'skipped') {
-          toast.info(`全部同步已跳过：${resolveSyncMessage(res, '没有可同步的账号')}`);
+          toast.info(`全部同步已跳过：${resolveSyncMessage(res, tr('pages.tokens.syncAccounts'))}`);
         } else {
-          toast.success('全部账号同步完成');
+          toast.success(tr('pages.tokens.allAccountsHaveBeenSynchronized'));
         }
       } else {
         const failedRows = syncResults.filter((item) => resolveSyncStatus(item) === 'failed');
@@ -737,13 +739,13 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
         toast.success(`全部同步完成：成功 ${successRows.length}，跳过 ${skippedRows.length}，失败 ${failedRows.length}`);
 
         failedRows.slice(0, 3).forEach((item) => {
-          toast.error(`${resolveAccountLabel(item)} 同步失败：${resolveSyncMessage(item, '请检查账号配置')}`);
+          toast.error(`${resolveAccountLabel(item)} 同步失败：${resolveSyncMessage(item, tr('pages.tokens.checkaccountsconfiguration'))}`);
         });
         maskedRows.slice(0, 3).forEach((item) => {
-          toast.info(`${resolveAccountLabel(item)} 需要补全明文 token：${resolveSyncMessage(item, '上游返回脱敏令牌')}`);
+          toast.info(`${resolveAccountLabel(item)} 需要补全明文 token：${resolveSyncMessage(item, tr('pages.tokens.upstreamResponseToken'))}`);
         });
         skippedRows.slice(0, 3).forEach((item) => {
-          toast.info(`${resolveAccountLabel(item)} 已跳过：${resolveSyncMessage(item, '不满足同步条件')}`);
+          toast.info(`${resolveAccountLabel(item)} 已跳过：${resolveSyncMessage(item, tr('pages.tokens.syncitems'))}`);
         });
 
         if (failedRows.length > 3) {
@@ -756,7 +758,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
 
       await load();
     } catch (e: any) {
-      toast.error(e.message || '全部同步失败');
+      toast.error(e.message || tr('pages.tokens.allSynchronizationFailed'));
     } finally {
       setSyncingAll(false);
     }
@@ -783,7 +785,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
            
            
           >
-            同步与筛选
+            {tr('pages.tokens.syncFilter')}
           </Button>
           <Button variant="outline"
             type="button"
@@ -792,7 +794,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
            
            
           >
-            {allVisibleTokensSelected ? '取消全选' : '全选可见项'}
+            {allVisibleTokensSelected ? tr('pages.accounts.cancelselectAll') : tr('pages.accounts.selectVisibleItems')}
           </Button>
         </>
       ) : (
@@ -803,10 +805,10 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
               value={String(syncingAccountId || 0)}
               onChange={(nextValue) => setSyncingAccountId(Number.parseInt(nextValue, 10) || 0)}
               options={[
-                { value: '0', label: '选择账号后同步站点令牌' },
+                { value: '0', label: tr('pages.tokens.selectAccountSyncSiteTokens') },
                 ...activeAccountSelectOptions,
               ]}
-              placeholder="选择账号后同步站点令牌"
+              placeholder={tr('pages.tokens.selectAccountSyncSiteTokens')}
               searchable
               searchPlaceholder={ACCOUNT_SELECT_SEARCH_PLACEHOLDER}
             />
@@ -817,7 +819,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
            
            
           >
-            {syncing ? <><LoaderCircle className="size-4 animate-spin" /> 同步中...</> : '同步站点令牌'}
+            {syncing ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.tokens.syncing')}</> : tr('pages.tokens.syncSiteTokens')}
           </Button>
           <Button type="button" variant="outline"
             onClick={handleSyncAll}
@@ -825,7 +827,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
            
            
           >
-            {syncingAll ? <><LoaderCircle className="size-4 animate-spin" /> 同步中...</> : '同步全部账号'}
+            {syncingAll ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.tokens.syncing')}</> : tr('pages.tokens.syncAllAccounts')}
           </Button>
         </>
       )}
@@ -833,7 +835,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
         onClick={handleToggleAdd}
        
       >
-        {showAdd ? '取消' : '+ 新增令牌'}
+        {showAdd ? tr('app.cancel') : tr('pages.tokens.newToken')}
       </Button>
     </div>
   ), [activeAccountSelectOptions, activeAccounts.length, allVisibleTokensSelected, embedded, handleSync, handleSyncAll, handleToggleAdd, isMobile, showAdd, syncing, syncingAccountId, syncingAll]);
@@ -850,7 +852,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
     <div className={embedded ? '' : 'animate-fade-in'}>
       {(!embedded || !onEmbeddedActionsChange) && (
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          {!embedded ? <h2 className="text-xl font-semibold">{tr('账号令牌')}</h2> : <div />}
+          {!embedded ? <h2 className="text-xl font-semibold">{tr('components.searchModal.accountstoken')}</h2> : <div />}
           {headerActions}
         </div>
       )}
@@ -859,19 +861,19 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
         isMobile={isMobile}
         mobileOpen={showMobileTools}
         onMobileClose={() => setShowMobileTools(false)}
-        mobileTitle="令牌同步与筛选"
+        mobileTitle={tr('pages.tokens.tokensyncFilter')}
         mobileContent={(
           <div className="flex flex-col gap-3">
             <div className="grid gap-1.5">
-              <div className="text-xs font-medium text-muted-foreground">同步账号</div>
+              <div className="text-xs font-medium text-muted-foreground">{tr('pages.tokens.syncaccounts')}</div>
               <ModernSelect
                 value={String(syncingAccountId || 0)}
                 onChange={(nextValue) => setSyncingAccountId(Number.parseInt(nextValue, 10) || 0)}
                 options={[
-                  { value: '0', label: '选择账号后同步站点令牌' },
+                  { value: '0', label: tr('pages.tokens.selectAccountSyncSiteTokens') },
                   ...activeAccountSelectOptions,
                 ]}
-                placeholder="选择账号后同步站点令牌"
+                placeholder={tr('pages.tokens.selectAccountSyncSiteTokens')}
                 searchable
                 searchPlaceholder={ACCOUNT_SELECT_SEARCH_PLACEHOLDER}
               />
@@ -882,7 +884,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
              
              
             >
-              {syncing ? <><LoaderCircle className="size-4 animate-spin" /> 同步中...</> : '同步站点令牌'}
+              {syncing ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.tokens.syncing')}</> : tr('pages.tokens.syncSiteTokens')}
             </Button>
             <Button type="button" variant="outline"
               onClick={handleSyncAll}
@@ -890,39 +892,39 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
              
              
             >
-              {syncingAll ? <><LoaderCircle className="size-4 animate-spin" /> 同步中...</> : '同步全部账号'}
+              {syncingAll ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.tokens.syncing')}</> : tr('pages.tokens.syncAllAccounts')}
             </Button>
           </div>
         )}
       />
 
       <InfoNote className="mb-3">
-        新增令牌会调用站点 API 创建新密钥，再自动同步到本地。支持设置分组、额度、过期时间和 IP 白名单；已存在密钥可直接用“同步站点令牌”读取。
+        {tr('pages.tokens.tokenCallssitesApiKeyAutomaticsyncSupportedsettingsgroupQuota')}
       </InfoNote>
 
       <DeleteConfirmModal
         open={Boolean(deleteConfirm)}
         onClose={() => setDeleteConfirm(null)}
         onConfirm={confirmDelete}
-        title="确认删除令牌"
-        confirmText="确认删除"
+        title={tr('pages.tokens.deletetoken2')}
+        confirmText={tr('components.deleteConfirmModal.delete')}
         loading={batchActionLoading || (deleteConfirm?.mode === 'single' && !!rowLoading[`token-${deleteConfirm?.tokenId}-delete`])}
         description={deleteConfirm?.mode === 'single'
-          ? <>确定要删除令牌 <strong>{deleteConfirm.tokenName || `#${deleteConfirm.tokenId}`}</strong> 吗？</>
-          : <>确定要删除选中的 <strong>{deleteConfirm?.count || 0}</strong> 个令牌吗？</>}
+          ? <>{tr('pages.tokens.deletetoken')} <strong>{deleteConfirm.tokenName || `#${deleteConfirm.tokenId}`}</strong> {tr('pages.accounts.textqcmnqj')}</>
+          : <>{tr('pages.accounts.deleteZh')} <strong>{deleteConfirm?.count || 0}</strong> {tr('pages.tokens.tokens')}</>}
       />
 
       <CenteredModal
         open={Boolean(editingToken)}
         onClose={closeEditPanel}
-        title="编辑令牌"
+        title={tr('pages.tokens.edittoken')}
         maxWidth={760}
         bodyStyle={{ display: 'flex', flexDirection: 'column', gap: 12 }}
         footer={(
           <>
-            <Button type="button" variant="outline" onClick={closeEditPanel}>取消</Button>
+            <Button type="button" variant="outline" onClick={closeEditPanel}>{tr('app.cancel')}</Button>
             <Button type="button" onClick={saveEditPanel} disabled={savingEdit || editingTokenValueLoading}>
-              {savingEdit ? <><LoaderCircle className="size-4 animate-spin" /> 保存中...</> : '保存修改'}
+              {savingEdit ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.accounts.saving')}</> : tr('pages.accounts.saveChanges')}
             </Button>
           </>
         )}
@@ -930,7 +932,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
         {editingToken ? (
           <>
             <div className="rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-              账号: {editingToken.account?.username || `account-${editingToken.accountId}`} @ {editingToken.site?.name || '-'}
+              {tr('pages.tokens.accounts')} {editingToken.account?.username || `account-${editingToken.accountId}`} @ {editingToken.site?.name || '-'}
             </div>
             {editingTokenPendingMessage ? (
               <div className="rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
@@ -939,20 +941,20 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
             ) : null}
             <Card>
               <CardHeader>
-                <CardTitle>基本信息</CardTitle>
+                <CardTitle>{tr('pages.tokens.info')}</CardTitle>
               </CardHeader>
               <CardContent>
               <ResponsiveFormGrid>
                 <div>
-                  <div className="mb-1.5 text-xs font-medium text-muted-foreground">令牌名称</div>
+                  <div className="mb-1.5 text-xs font-medium text-muted-foreground">{tr('pages.tokens.tokenname')}</div>
                   <Input
-                    placeholder="令牌名称"
+                    placeholder={tr('pages.tokens.tokenname')}
                     value={editForm.name}
                     onChange={(e) => setEditForm((prev) => ({ ...prev, name: e.target.value }))}
                   />
                 </div>
                 <div>
-                  <div className="mb-1.5 text-xs font-medium text-muted-foreground">分组</div>
+                  <div className="mb-1.5 text-xs font-medium text-muted-foreground">{tr('pages.tokens.group')}</div>
                   <ModernSelect
                     value={editForm.group || 'default'}
                     onChange={(nextValue) => setEditForm((prev) => ({ ...prev, group: nextValue || 'default' }))}
@@ -960,14 +962,14 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
                       value: group,
                       label: group,
                     }))}
-                    placeholder={editGroupLoading ? '分组加载中...' : '选择分组'}
+                    placeholder={editGroupLoading ? tr('pages.tokens.groupLoading') : tr('pages.tokens.selectGroup')}
                     disabled={editGroupLoading}
                   />
                 </div>
                 <div className="col-span-full">
-                  <div className="mb-1.5 text-xs font-medium text-muted-foreground">令牌值</div>
+                  <div className="mb-1.5 text-xs font-medium text-muted-foreground">{tr('pages.tokens.token3')}</div>
                   <Textarea
-                    placeholder={editingTokenValueLoading ? '令牌加载中...' : '令牌值'}
+                    placeholder={editingTokenValueLoading ? tr('pages.tokens.tokenloading') : tr('pages.tokens.token3')}
                     value={editForm.token}
                     onChange={(e) => setEditForm((prev) => ({ ...prev, token: e.target.value }))}
                     className="min-h-24 font-mono leading-relaxed"
@@ -979,7 +981,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
             </Card>
             <Card>
               <CardHeader>
-                <CardTitle>状态设置</CardTitle>
+                <CardTitle>{tr('pages.tokens.statussettings')}</CardTitle>
               </CardHeader>
               <CardContent>
               <ResponsiveFormGrid>
@@ -991,8 +993,8 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
                     className="mt-0.5"
                   />
                   <div className="grid gap-1">
-                    <span className="text-sm font-medium">启用令牌</span>
-                    <span className="text-xs text-muted-foreground">关闭后令牌不会参与分发</span>
+                    <span className="text-sm font-medium">{tr('pages.tokens.enabledtoken')}</span>
+                    <span className="text-xs text-muted-foreground">{tr('pages.tokens.closeToken')}</span>
                   </div>
                 </label>
                 <label className="flex items-start gap-3 rounded-md border p-3">
@@ -1003,8 +1005,8 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
                     className="mt-0.5"
                   />
                   <div className="grid gap-1">
-                    <span className="text-sm font-medium">设为默认令牌</span>
-                    <span className="text-xs text-muted-foreground">优先作为该账号的默认转发令牌</span>
+                    <span className="text-sm font-medium">{tr('pages.tokens.defaultToken')}</span>
+                    <span className="text-xs text-muted-foreground">{tr('pages.tokens.accountsDefaultToken')}</span>
                   </div>
                 </label>
               </ResponsiveFormGrid>
@@ -1013,6 +1015,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
             <UpstreamCompatibilityPolicyEditor
               value={editCompatibilityPolicyForm}
               disabled={savingEdit || editingTokenValueLoading}
+              inheritFrom={tr('upstreamCompatibility.inheritSource.tokenChain')}
               onChange={setEditCompatibilityPolicyForm}
             />
           </>
@@ -1025,13 +1028,13 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
           info={`已选 ${selectedTokenIds.length} 项`}
         >
           <Button type="button" variant="outline" onClick={() => runBatchTokenAction('enable')} disabled={batchActionLoading}>
-            批量启用
+            {tr('pages.accounts.enabled')}
           </Button>
           <Button type="button" variant="outline" onClick={() => runBatchTokenAction('disable')} disabled={batchActionLoading}>
-            批量禁用
+            {tr('pages.accounts.disabled')}
           </Button>
           <Button type="button" variant="destructive" size="sm" data-testid="tokens-batch-delete" onClick={() => runBatchTokenAction('delete')} disabled={batchActionLoading}>
-            批量删除
+            {tr('pages.accounts.delete2')}
           </Button>
         </ResponsiveBatchActionBar>
       )}
@@ -1039,13 +1042,13 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
       <CenteredModal
         open={showAdd}
         onClose={handleToggleAdd}
-        title="新增令牌"
+        title={tr('pages.tokens.token')}
         maxWidth={820}
         bodyStyle={{ display: 'flex', flexDirection: 'column', gap: 12 }}
       >
         <ResponsiveFormGrid>
           <div className="col-span-full">
-            <div className="mb-1.5 text-xs font-medium text-muted-foreground">所属账号</div>
+            <div className="mb-1.5 text-xs font-medium text-muted-foreground">{tr('pages.tokens.accounts2')}</div>
             <ModernSelect
               value={String(form.accountId || 0)}
               onChange={(nextValue) => {
@@ -1056,29 +1059,29 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
                 }));
               }}
               options={[
-                { value: '0', label: '选择账号' },
+                { value: '0', label: tr('pages.tokens.selectAccount') },
                 ...activeAccountSelectOptions,
               ]}
-              placeholder="选择账号"
+              placeholder={tr('pages.tokens.selectAccount')}
               searchable
               searchPlaceholder={ACCOUNT_SELECT_SEARCH_PLACEHOLDER}
             />
           </div>
           {createHintModelName ? (
             <div className="col-span-full rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
-              来自路由提醒：为模型 <code className="text-xs">{createHintModelName}</code> 补充该账号令牌后，可自动生成对应通道。
+              {tr('pages.tokens.routesModel')} <code className="text-xs">{createHintModelName}</code> {tr('pages.tokens.accountstokenAutomaticChannels')}
             </div>
           ) : null}
           <div>
-            <div className="mb-1.5 text-xs font-medium text-muted-foreground">令牌名称（可选）</div>
+            <div className="mb-1.5 text-xs font-medium text-muted-foreground">{tr('pages.tokens.tokenname2')}</div>
             <Input
               value={form.name}
               onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
-              placeholder="例如 metapi"
+              placeholder={tr('pages.tokens.exampleMetapi')}
             />
           </div>
           <div>
-            <div className="mb-1.5 text-xs font-medium text-muted-foreground">分组</div>
+            <div className="mb-1.5 text-xs font-medium text-muted-foreground">{tr('pages.tokens.group')}</div>
             <ModernSelect
               value={form.group || ''}
               onChange={(nextValue) => setForm((prev) => ({ ...prev, group: nextValue }))}
@@ -1086,7 +1089,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
                 value: group,
                 label: group,
               }))}
-              placeholder={groupLoading ? '分组加载中...' : '选择分组'}
+              placeholder={groupLoading ? tr('pages.tokens.groupLoading') : tr('pages.tokens.selectGroup')}
               disabled={!form.accountId || groupLoading}
             />
           </div>
@@ -1096,19 +1099,19 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
                
                 checked={form.unlimitedQuota}
                 onCheckedChange={(checked) => setForm((prev) => ({ ...prev, unlimitedQuota: checked === true }))}  />
-              不限额度
+              {tr('pages.tokens.unlimitedQuota')}
             </label>
             {!form.unlimitedQuota && (
               <Input
                 value={form.remainQuota}
                 onChange={(e) => setForm((prev) => ({ ...prev, remainQuota: e.target.value.replace(/[^\d]/g, '') }))}
-                placeholder="额度（正整数）"
+                placeholder={tr('pages.tokens.amountPositiveInteger')}
                 className="max-w-56"
               />
             )}
           </div>
           <div>
-            <div className="mb-1.5 text-xs font-medium text-muted-foreground">过期时间（可选）</div>
+            <div className="mb-1.5 text-xs font-medium text-muted-foreground">{tr('pages.tokens.expiredtime')}</div>
             <Input
               type="datetime-local"
               value={form.expiredTime}
@@ -1116,36 +1119,37 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
             />
           </div>
           <div>
-            <div className="mb-1.5 text-xs font-medium text-muted-foreground">IP 白名单（可选）</div>
+            <div className="mb-1.5 text-xs font-medium text-muted-foreground">{tr('pages.tokens.ip')}</div>
             <Input
               value={form.allowIps}
               onChange={(e) => setForm((prev) => ({ ...prev, allowIps: e.target.value }))}
-              placeholder="多个用英文逗号分隔"
+              placeholder={tr('pages.tokens.multipleSeparatedCommas')}
             />
           </div>
           <div className="col-span-full flex items-center text-xs text-muted-foreground">
-            将在选中账号所属站点直接创建新密钥
+            {tr('pages.tokens.zhaccountsSitesKey')}
           </div>
         </ResponsiveFormGrid>
         <UpstreamCompatibilityPolicyEditor
           value={createCompatibilityPolicyForm}
           disabled={saving}
+          inheritFrom={tr('upstreamCompatibility.inheritSource.tokenChain')}
           onChange={setCreateCompatibilityPolicyForm}
         />
 
         <div className="mt-2 flex justify-between gap-2">
-          <Button type="button" variant="outline" onClick={handleToggleAdd}>取消</Button>
+          <Button type="button" variant="outline" onClick={handleToggleAdd}>{tr('app.cancel')}</Button>
           <Button type="button"
             onClick={handleAddToken}
             disabled={saving || !form.accountId}
            
           >
-            {saving ? <><LoaderCircle className="size-4 animate-spin" /> 创建中...</> : '创建并同步令牌'}
+            {saving ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.oAuthManagement.creating')}</> : tr('pages.tokens.createSyncTokens')}
           </Button>
         </div>
       </CenteredModal>
 
-      <Card className="overflow-x-auto">
+      <>
         {loading ? (
           <div className="p-5">
             <Skeleton className="mb-2 h-[34px] w-full" />
@@ -1177,7 +1181,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
                           onClick={() => toggleTokenDetails(token.id)}
                          
                         >
-                          {isExpanded ? '收起' : '详情'}
+                          {isExpanded ? tr('pages.accounts.collapse') : tr('pages.accounts.details')}
                         </Button>
                         {!isPending ? (
                           <Button type="button" variant="ghost" size="sm"
@@ -1186,37 +1190,37 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
                            
                             data-testid={`token-copy-${token.id}`}
                           >
-                            {rowLoading[`${loadingPrefix}-copy`] ? <LoaderCircle className="size-4 animate-spin" /> : '复制'}
+                            {rowLoading[`${loadingPrefix}-copy`] ? <LoaderCircle className="size-4 animate-spin" /> : tr('pages.modelTester.copy')}
                           </Button>
                         ) : null}
                         <Button type="button" variant="ghost" size="sm"
                           onClick={() => openEditPanel(token)}
                          
                         >
-                          {isPending ? '编辑补全' : '编辑'}
+                          {isPending ? tr('pages.tokens.edit') : tr('pages.accounts.edit')}
                         </Button>
                       </>
                     )}
                   >
-                    <MobileField label="账号" value={token.account?.username || `account-${token.accountId}`} />
-                    <MobileField label="分组" value={token.tokenGroup || 'default'} />
+                    <MobileField label={tr('components.searchModal.accounts2')} value={token.account?.username || `account-${token.accountId}`} />
+                    <MobileField label={tr('pages.tokens.group')} value={token.tokenGroup || 'default'} />
                     <MobileField
-                      label="状态"
+                      label={tr('components.notificationPanel.status')}
                       value={(
                         <ToneBadge tone={isPending ? 'warning' : (token.enabled ? 'success' : 'muted')}>
-                          {isPending ? '待补全' : (token.enabled ? '启用' : '禁用')}
+                          {isPending ? tr('pages.tokens.incomplete') : (token.enabled ? tr('pages.downstreamKeys.enabled') : tr('pages.downstreamKeys.disabled'))}
                         </ToneBadge>
                       )}
                     />
                     {isExpanded ? (
                       <div className="mt-3 grid gap-2">
                         <MobileField
-                          label="令牌值"
+                          label={tr('pages.tokens.token3')}
                           stacked
                           value={<span className="break-all font-mono text-xs">{token.tokenMasked || '***'}</span>}
                         />
                         <MobileField
-                          label="来源站点"
+                          label={tr('pages.tokens.sites')}
                           value={token.site?.url ? (
                             <a
                               href={token.site.url}
@@ -1235,35 +1239,35 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
                           )}
                         />
                         <MobileField
-                          label="默认"
-                          value={token.isDefault ? <ToneBadge tone="-warning">默认</ToneBadge> : '-'}
+                          label={tr('pages.tokens.default')}
+                          value={token.isDefault ? <ToneBadge tone="-warning">{tr('pages.tokens.default')}</ToneBadge> : '-'}
                         />
-                        <MobileField label="更新时间" value={formatDateTimeLocal(token.updatedAt)} />
+                        <MobileField label={tr('pages.tokens.time')} value={formatDateTimeLocal(token.updatedAt)} />
                         <div className="flex flex-wrap items-center gap-2">
                           {!isPending && !token.isDefault && (
                             <Button type="button" variant="ghost" size="sm"
                               onClick={() => withRowLoading(`${loadingPrefix}-default`, async () => {
                                 await api.setDefaultAccountToken(token.id);
-                                toast.success('默认令牌已更新');
+                                toast.success(tr('pages.tokens.defaultTokenUpdated'));
                                 await load();
                               })}
                               disabled={!!rowLoading[`${loadingPrefix}-default`]}
                              
                             >
-                              {rowLoading[`${loadingPrefix}-default`] ? <LoaderCircle className="size-4 animate-spin" /> : '设默认'}
+                              {rowLoading[`${loadingPrefix}-default`] ? <LoaderCircle className="size-4 animate-spin" /> : tr('pages.tokens.setDefault')}
                             </Button>
                           )}
                           {!isPending ? (
                             <Button type="button" variant="secondary" size="sm"
                               onClick={() => withRowLoading(`${loadingPrefix}-toggle`, async () => {
                                 await api.updateAccountToken(token.id, { enabled: !token.enabled });
-                                toast.success(token.enabled ? '令牌已禁用' : '令牌已启用');
+                                toast.success(token.enabled ? tr('pages.tokens.tokenDisabled') : tr('pages.tokens.tokenEnabled'));
                                 await load();
                               })}
                               disabled={!!rowLoading[`${loadingPrefix}-toggle`]}
                              
                             >
-                              {rowLoading[`${loadingPrefix}-toggle`] ? <LoaderCircle className="size-4 animate-spin" /> : (token.enabled ? '禁用' : '启用')}
+                              {rowLoading[`${loadingPrefix}-toggle`] ? <LoaderCircle className="size-4 animate-spin" /> : (token.enabled ? tr('pages.downstreamKeys.disabled') : tr('pages.downstreamKeys.enabled'))}
                             </Button>
                           ) : null}
                           <Button type="button" variant="destructive" size="sm"
@@ -1271,7 +1275,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
                             disabled={!!rowLoading[`${loadingPrefix}-delete`]}
                            
                           >
-                            {rowLoading[`${loadingPrefix}-delete`] ? <LoaderCircle className="size-4 animate-spin" /> : '删除'}
+                            {rowLoading[`${loadingPrefix}-delete`] ? <LoaderCircle className="size-4 animate-spin" /> : tr('pages.accounts.delete3')}
                           </Button>
                         </div>
                       </div>
@@ -1281,7 +1285,8 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
               })}
             </div>
           ) : (
-            <Table className="w-full text-sm">
+            <DataTable minWidth={1180} density="compact">
+              <Table className="w-full text-sm">
             <TableHeader>
               <TableRow>
                 <TableHead className="w-11">
@@ -1290,15 +1295,15 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
                     checked={allVisibleTokensSelected}
                     onCheckedChange={(checked) => toggleSelectAllTokens(checked === true)}      />
                 </TableHead>
-                <TableHead>令牌名称</TableHead>
-                <TableHead>令牌值</TableHead>
-                <TableHead>来源站点</TableHead>
-                <TableHead>账号</TableHead>
-                <TableHead>分组</TableHead>
-                <TableHead>状态</TableHead>
-                <TableHead>默认</TableHead>
-                <TableHead>更新时间</TableHead>
-                <TableHead className="token-table-actions-col text-right">操作</TableHead>
+                <TableHead>{tr('pages.tokens.tokenname')}</TableHead>
+                <TableHead>{tr('pages.tokens.token3')}</TableHead>
+                <TableHead>{tr('pages.tokens.sites')}</TableHead>
+                <TableHead>{tr('components.searchModal.accounts2')}</TableHead>
+                <TableHead>{tr('pages.tokens.group')}</TableHead>
+                <TableHead>{tr('components.notificationPanel.status')}</TableHead>
+                <TableHead>{tr('pages.tokens.default')}</TableHead>
+                <TableHead>{tr('pages.tokens.time')}</TableHead>
+                <TableHead className="min-w-56 text-right">{tr('pages.accounts.actions2')}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -1349,28 +1354,28 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
                     <TableCell>{token.tokenGroup || 'default'}</TableCell>
                     <TableCell>
                       {isPending ? (
-                        <ToneBadge tone="-warning">待补全</ToneBadge>
+                        <ToneBadge tone="-warning">{tr('pages.tokens.incomplete')}</ToneBadge>
                       ) : (
                         <ToneBadge tone={token.enabled ? 'success' : 'muted'}>
-                          {token.enabled ? '启用' : '禁用'}
+                          {token.enabled ? tr('pages.downstreamKeys.enabled') : tr('pages.downstreamKeys.disabled')}
                         </ToneBadge>
                       )}
                     </TableCell>
-                    <TableCell>{token.isDefault ? <ToneBadge tone="-warning">默认</ToneBadge> : '-'}</TableCell>
+                    <TableCell>{token.isDefault ? <ToneBadge tone="-warning">{tr('pages.tokens.default')}</ToneBadge> : '-'}</TableCell>
                     <TableCell className="text-xs text-muted-foreground">{formatDateTimeLocal(token.updatedAt)}</TableCell>
-                    <TableCell className="token-actions-cell text-right">
-                      <div className="token-table-actions">
+                    <TableCell className="min-w-56 text-right">
+                      <ButtonGroup className="flex-wrap justify-end">
                         {!isPending && !token.isDefault && (
                           <Button type="button" variant="ghost" size="sm"
                             onClick={() => withRowLoading(`${loadingPrefix}-default`, async () => {
                               await api.setDefaultAccountToken(token.id);
-                              toast.success('默认令牌已更新');
+                              toast.success(tr('pages.tokens.defaultTokenUpdated'));
                               await load();
                             })}
                             disabled={!!rowLoading[`${loadingPrefix}-default`]}
                            
                           >
-                            {rowLoading[`${loadingPrefix}-default`] ? <LoaderCircle className="size-4 animate-spin" /> : '设默认'}
+                            {rowLoading[`${loadingPrefix}-default`] ? <LoaderCircle className="size-4 animate-spin" /> : tr('pages.tokens.setDefault')}
                           </Button>
                         )}
                         {!isPending ? (
@@ -1380,26 +1385,26 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
                            
                             data-testid={`token-copy-${token.id}`}
                           >
-                            {rowLoading[`${loadingPrefix}-copy`] ? <LoaderCircle className="size-4 animate-spin" /> : '复制'}
+                            {rowLoading[`${loadingPrefix}-copy`] ? <LoaderCircle className="size-4 animate-spin" /> : tr('pages.modelTester.copy')}
                           </Button>
                         ) : null}
                         <Button type="button" variant="ghost" size="sm"
                           onClick={() => openEditPanel(token)}
                          
                         >
-                          {isPending ? '编辑补全' : '编辑'}
+                          {isPending ? tr('pages.tokens.edit') : tr('pages.accounts.edit')}
                         </Button>
                         {!isPending ? (
                           <Button type="button" variant="secondary" size="sm"
                             onClick={() => withRowLoading(`${loadingPrefix}-toggle`, async () => {
                               await api.updateAccountToken(token.id, { enabled: !token.enabled });
-                              toast.success(token.enabled ? '令牌已禁用' : '令牌已启用');
+                              toast.success(token.enabled ? tr('pages.tokens.tokenDisabled') : tr('pages.tokens.tokenEnabled'));
                               await load();
                             })}
                             disabled={!!rowLoading[`${loadingPrefix}-toggle`]}
                            
                           >
-                            {rowLoading[`${loadingPrefix}-toggle`] ? <LoaderCircle className="size-4 animate-spin" /> : (token.enabled ? '禁用' : '启用')}
+                            {rowLoading[`${loadingPrefix}-toggle`] ? <LoaderCircle className="size-4 animate-spin" /> : (token.enabled ? tr('pages.downstreamKeys.disabled') : tr('pages.downstreamKeys.enabled'))}
                           </Button>
                         ) : null}
                         <Button type="button" variant="destructive" size="sm"
@@ -1407,23 +1412,24 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
                           disabled={!!rowLoading[`${loadingPrefix}-delete`]}
                          
                         >
-                          {rowLoading[`${loadingPrefix}-delete`] ? <LoaderCircle className="size-4 animate-spin" /> : '删除'}
+                          {rowLoading[`${loadingPrefix}-delete`] ? <LoaderCircle className="size-4 animate-spin" /> : tr('pages.accounts.delete3')}
                         </Button>
-                      </div>
+                      </ButtonGroup>
                     </TableCell>
                   </TableRow>
                 );
               })}
             </TableBody>
-          </Table>
+              </Table>
+            </DataTable>
           )
         ) : (
           <EmptyStateBlock
-            title="暂无令牌"
-            description="可先同步站点令牌，或直接在站点创建新令牌。"
+            title={tr('pages.tokens.nonetoken')}
+            description={tr('pages.tokens.syncSiteTokensSitesToken')}
           />
         )}
-      </Card>
+      </>
     </div>
   );
 }

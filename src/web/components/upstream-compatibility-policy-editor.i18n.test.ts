@@ -7,10 +7,17 @@ describe('UpstreamCompatibilityPolicyEditor i18n', () => {
     const source = readFileSync(resolve(process.cwd(), 'src/web/components/UpstreamCompatibilityPolicyEditor.tsx'), 'utf8');
 
     expect(source).toContain("import { tr } from '../i18n.js'");
-    expect(source).toContain("title={tr('上游兼容性')}");
-    expect(source).toContain("description={tr('推理历史传输和上游回放行为。')}");
+    expect(source).toContain("title={tr('upstreamCompatibility.title')}");
+    expect(source).toContain("description={tr('upstreamCompatibility.description')}");
+    expect(source).toContain("tr('upstreamCompatibility.inheritedTitle')");
+    expect(source).toContain("tr('upstreamCompatibility.inheritedDescription').replace('{source}'");
+    expect(source).toContain("'upstreamCompatibility.transport.native'");
+    expect(source).not.toContain("value: 'inherit', label: 'upstreamCompatibility.transport.inherit'");
+    expect(source).not.toContain('legacy.');
 
     for (const hardcoded of [
+      "tr('上游兼容性')",
+      "tr('推理历史传输和上游回放行为。')",
       'title="Upstream compatibility"',
       'Reasoning history transport and upstream replay behavior.',
       'label="Transport"',

@@ -71,6 +71,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card/
 import { ScrollArea } from '../components/ui/scroll-area/index.js';
 import EmptyStateBlock from '../components/EmptyStateBlock.js';
 import { Textarea } from '../components/ui/textarea/index.js';
+import JsonCodeEditor from '../components/JsonCodeEditor.js';
 import { Input } from '../components/ui/input/index.js';
 import { Checkbox } from '../components/ui/checkbox/index.js';
 import { Slider } from '../components/ui/slider/index.js';
@@ -127,7 +128,7 @@ const summarizeModeRequest = (
 const readFileAsDataUrl = (file: File): Promise<string> => new Promise((resolve, reject) => {
   const reader = new FileReader();
   reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '');
-  reader.onerror = () => reject(reader.error || new Error('读取文件失败'));
+  reader.onerror = () => reject(reader.error || new Error(tr('pages.importExport.failedReadFile')));
   reader.readAsDataURL(file);
 });
 
@@ -608,13 +609,13 @@ const splitCsvOrLines = (value: string): string[] =>
     .filter(Boolean);
 
 const CONVERSATION_MODE_OPTIONS: Array<{ value: PlaygroundMode; label: string }> = [
-  { value: 'conversation', label: '对话' },
+  { value: 'conversation', label: tr('pages.modelTester.chat') },
   { value: 'embeddings', label: 'Embeddings' },
   { value: 'search', label: 'Search' },
-  { value: 'images.generate', label: '图片生成' },
-  { value: 'images.edit', label: '图片编辑' },
-  { value: 'videos.create', label: '视频创建' },
-  { value: 'videos.inspect', label: '视频查询/删除' },
+  { value: 'images.generate', label: tr('pages.modelTester.imageGeneration') },
+  { value: 'images.edit', label: tr('pages.modelTester.imageedit') },
+  { value: 'videos.create', label: tr('pages.modelTester.videoCreation') },
+  { value: 'videos.inspect', label: tr('pages.modelTester.delete') },
 ];
 
 const PROTOCOL_OPTIONS: Array<{ value: PlaygroundProtocol; label: string }> = [
@@ -648,7 +649,7 @@ function ParameterRow(props: {
           {valueText && <span className="ml-1.5 text-primary">{valueText}</span>}
         </div>
         <label className="inline-flex items-center gap-2 text-xs text-muted-foreground">
-          <Checkbox checked={enabled} onCheckedChange={() => onToggle()} disabled={disabled} /> 启用
+          <Checkbox checked={enabled} onCheckedChange={() => onToggle()} disabled={disabled} /> {tr('pages.downstreamKeys.enabled')}
         </label>
       </div>
       {children}
@@ -789,11 +790,11 @@ export default function ModelTester() {
 
     if (restored.pendingJobId) {
       setSending(true);
-      setError('发现未完成的任务，正在重新连接...');
+      setError(tr('pages.modelTester.unfinishedTasksFoundReconnecting'));
       pushDebug('info', `恢复任务 ${restored.pendingJobId}。`);
     } else if (restored.pendingPayload) {
-      setError('发现未完成的请求快照，点击重试继续。');
-      pushDebug('warn', '恢复待处理的请求快照。');
+      setError(tr('pages.modelTester.unfinishedRequestSnapshotFoundClickRetryContinue'));
+      pushDebug('warn', tr('pages.modelTester.restorePendingRequestSnapshot'));
     }
   }, [pushDebug]);
 
@@ -828,8 +829,8 @@ export default function ModelTester() {
           setInputs((prev) => ({ ...prev, model: nextModel }));
         }
       } catch {
-        setError('加载模型列表失败。');
-        pushDebug('error', '获取模型列表失败。');
+        setError(tr('pages.modelTester.failedLoadModelList'));
+        pushDebug('error', tr('pages.modelTester.failedGetModelList'));
       } finally {
         setLoadingModels(false);
         setForcedChannelHydrationReady(true);
@@ -852,14 +853,14 @@ export default function ModelTester() {
 
     if (customRequestMode) {
       setForcedChannelOptions([]);
-      setForcedChannelHint('自定义请求模式下固定通道不可用。');
+      setForcedChannelHint(tr('pages.modelTester.customRequestmodeChannelsnotAvailable'));
       setForcedChannelId(null);
       return;
     }
 
     if (inputs.mode === 'videos.inspect') {
       setForcedChannelOptions([]);
-      setForcedChannelHint('视频查询/删除不会重新选路，不能固定通道。');
+      setForcedChannelHint(tr('pages.modelTester.deleteChannels'));
       setForcedChannelId(null);
       return;
     }
@@ -885,7 +886,7 @@ export default function ModelTester() {
           }));
         setForcedChannelOptions(nextOptions);
         if (nextOptions.length === 0) {
-          setForcedChannelHint('当前模型暂无可固定通道。');
+          setForcedChannelHint(tr('pages.modelTester.modelnoneChannels2'));
         }
         if (typeof forcedChannelId === 'number' && !nextOptions.some((option) => option.value === String(forcedChannelId))) {
           setForcedChannelId(null);
@@ -894,7 +895,7 @@ export default function ModelTester() {
       .catch(() => {
         if (cancelled) return;
         setForcedChannelOptions([]);
-        setForcedChannelHint('加载固定通道候选失败。');
+        setForcedChannelHint(tr('pages.modelTester.channelsFailed'));
         setForcedChannelId(null);
       })
       .finally(() => {
@@ -925,7 +926,7 @@ export default function ModelTester() {
       .catch((loadError) => {
         if (cancelled) return;
         setRouteFlow(null);
-        setRouteFlowError(extractErrorMessage(loadError) || '加载路由流程失败。');
+        setRouteFlowError(extractErrorMessage(loadError) || tr('pages.modelTester.routesFailed'));
       })
       .finally(() => {
         if (!cancelled) setRouteFlowLoading(false);
@@ -1004,7 +1005,7 @@ export default function ModelTester() {
         dataUrl,
       });
     } catch (readError: any) {
-      setError(readError?.message || '读取文件失败');
+      setError(readError?.message || tr('pages.importExport.failedReadFile'));
     }
   }, []);
 
@@ -1042,7 +1043,7 @@ export default function ModelTester() {
         pushDebug('warn', message);
       }
     } catch (readError: any) {
-      const message = readError?.message || '读取附件失败';
+      const message = readError?.message || tr('pages.modelTester.attachmentsfailed2');
       setError(message);
       pushDebug('error', message);
     }
@@ -1082,7 +1083,7 @@ export default function ModelTester() {
         })) as { id?: unknown; filename?: unknown; mime_type?: unknown };
         const fileId = typeof result?.id === 'string' ? result.id.trim() : '';
         if (!fileId) {
-          throw new Error('上传成功但未返回 file_id');
+          throw new Error(tr('pages.modelTester.successFileId'));
         }
         const filename = typeof result?.filename === 'string' && result.filename.trim()
           ? result.filename.trim()
@@ -1099,7 +1100,7 @@ export default function ModelTester() {
         uploaded.push({ fileId, filename, mimeType });
         pushDebug('info', `附件上传完成：${filename} -> ${fileId}`);
       } catch (uploadError: any) {
-        const message = uploadError?.message || '附件上传失败';
+        const message = uploadError?.message || tr('pages.modelTester.attachmentsFailed');
         setConversationFiles((prev) => prev.map((entry) => (
           entry.localId === item.localId
             ? { ...entry, status: 'error', errorMessage: message }
@@ -1275,8 +1276,8 @@ export default function ModelTester() {
   const forcedChannelSelectOptions = useMemo<ForcedChannelOption[]>(() => [
     {
       value: '__auto__',
-      label: '自动选路（默认）',
-      description: '按当前路由正常选择通道',
+      label: tr('pages.modelTester.automaticDefault'),
+      description: tr('pages.modelTester.routesnormalselectchannels'),
     },
     ...forcedChannelOptions,
   ], [forcedChannelOptions]);
@@ -1434,7 +1435,7 @@ export default function ModelTester() {
       try {
         return JSON.parse(raw);
       } catch {
-        return { _error: '自定义请求体中的 JSON 无效', raw };
+        return { _error: tr('pages.modelTester.modelError'), raw };
       }
     }
     if (inputs.protocol === 'gemini') {
@@ -1476,7 +1477,7 @@ export default function ModelTester() {
             pushDebug('info', `任务 ${pendingJobId} 已成功。`);
           } else if (status.status === 'cancelled') {
             setMessages((prev) => applyAssistantStopped(prev));
-            setError('生成已取消。');
+            setError(tr('pages.modelTester.buildWasCanceled'));
             setDebugResponse(formatJson(status.error));
             setActiveDebugTab(DEBUG_TABS.RESPONSE);
             pushDebug('warn', `任务 ${pendingJobId} 已取消。`);
@@ -1495,7 +1496,7 @@ export default function ModelTester() {
           finalizeJob(pendingJobId);
           return;
         } catch (pollError) {
-          const message = (pollError as any)?.message || '未知轮询错误';
+          const message = (pollError as any)?.message || tr('pages.modelTester.unknownPollingError');
           pushDebug('warn', `轮询 ${pendingJobId} 失败一次：${message}`);
           await wait(POLL_INTERVAL_MS);
         }
@@ -1555,7 +1556,7 @@ export default function ModelTester() {
       setSending(true);
       pushDebug('info', `已创建任务 ${created.jobId}。`);
     } catch (e: any) {
-      const message = e?.message || '请求失败';
+      const message = e?.message || tr('pages.modelTester.requestFailed');
       setMessages((prev) => applyAssistantError(prev, message));
       setError(message);
       setSending(false);
@@ -1572,7 +1573,7 @@ export default function ModelTester() {
     setSending(true);
     setPendingJobId(null);
     setPendingPayload(payload);
-    pushDebug('info', '已开始流式请求。');
+    pushDebug('info', tr('pages.modelTester.streamingRequestStarted'));
 
     const decoder = new TextDecoder('utf-8');
     let buffer = '';
@@ -1591,13 +1592,13 @@ export default function ModelTester() {
         const hadToken = Boolean(getAuthToken(localStorage));
         clearAuthSession(localStorage);
         if (hadToken) window.location.reload();
-        throw new Error('会话已过期');
+        throw new Error(tr('pages.modelTester.sessionHasExpired'));
       }
       if (!response.ok) {
         throw new Error(await parseStreamErrorText(response));
       }
       if (!response.body) {
-        throw new Error('流式响应体为空');
+        throw new Error(tr('pages.modelTester.streamingResponseBodyEmpty'));
       }
 
       setActiveDebugTab(DEBUG_TABS.RESPONSE);
@@ -1622,7 +1623,7 @@ export default function ModelTester() {
 
           if (parsed.data === '[DONE]') {
             doneReceived = true;
-            pushDebug('info', '收到流式 [DONE] 信号。');
+            pushDebug('info', tr('pages.modelTester.streamingDoneSignalReceived'));
             continue;
           }
 
@@ -1664,7 +1665,7 @@ export default function ModelTester() {
         if (emptyOutput && !(finalized.content || '').trim() && !(finalized.reasoningContent || '').trim()) {
           return replaceMessageAt(prev, idx, {
             ...finalized,
-            content: '空回复（上游未返回任何内容）',
+            content: tr('pages.modelTester.content'),
             status: MESSAGE_STATUS.ERROR,
             isThinkingComplete: true,
           });
@@ -1678,14 +1679,14 @@ export default function ModelTester() {
 
       setPendingPayload(null);
       if (emptyOutput) {
-        const message = '上游返回空内容';
+        const message = tr('pages.modelTester.upstreamResponseContent');
         setError(message);
-        pushDebug('error', '流式传输完成但内容为空。');
+        pushDebug('error', tr('pages.modelTester.streamingContent'));
       } else {
         setError('');
         pushDebug(doneReceived ? 'info' : 'warn', doneReceived
-          ? '流式传输已成功完成。'
-          : '流式传输未收到 [DONE] 信号，已在本地完成。');
+          ? tr('pages.modelTester.streamingCompletedSuccessfully')
+          : tr('pages.modelTester.streamingDidNotReceiveDoneSignalWas'));
       }
     } catch (streamError: any) {
       const abortedByUser = controller.signal.aborted && streamStopRequestedRef.current;
@@ -1696,16 +1697,16 @@ export default function ModelTester() {
 
       if (abortedByUser) {
         setMessages((prev) => applyAssistantStopped(prev));
-        setError('生成已停止。');
-        pushDebug('warn', '流式传输被用户中止。');
+        setError(tr('pages.modelTester.buildHasStopped'));
+        pushDebug('warn', tr('pages.modelTester.streamingWasAbortedUser'));
       } else if (abortedUnexpectedly) {
-        const message = '流式连接中断，请重试。';
+        const message = tr('pages.modelTester.streamingConnectionInterruptedPleaseTryAgain');
         setMessages((prev) => applyAssistantError(prev, message));
         setError(message);
         pushDebug('error', `流式传输异常中断：${streamError?.message || 'AbortError'}`);
       } else {
-        const rawMsg = streamError?.message || '流式请求失败';
-        const message = rawMsg === 'This operation was aborted' ? '操作已中止' : rawMsg;
+        const rawMsg = streamError?.message || tr('pages.modelTester.streamingRequestFailed');
+        const message = rawMsg === 'This operation was aborted' ? tr('pages.modelTester.operationAborted') : rawMsg;
         setMessages((prev) => applyAssistantError(prev, message));
         setError(message);
         pushDebug('error', `流式传输失败：${message}`);
@@ -1749,7 +1750,7 @@ export default function ModelTester() {
         throw new Error(await parseStreamErrorText(response));
       }
       if (!response.body) {
-        throw new Error('流式响应体为空');
+        throw new Error(tr('pages.modelTester.streamingResponseBodyEmpty'));
       }
 
       const reader = response.body.getReader();
@@ -1813,7 +1814,7 @@ export default function ModelTester() {
         if (emptyOutput && !(finalized.content || '').trim() && !(finalized.reasoningContent || '').trim()) {
           return replaceMessageAt(prev, idx, {
             ...finalized,
-            content: '空回复（上游未返回任何内容）',
+            content: tr('pages.modelTester.content'),
             status: MESSAGE_STATUS.ERROR,
             isThinkingComplete: true,
           });
@@ -1826,14 +1827,14 @@ export default function ModelTester() {
       });
 
       if (emptyOutput) {
-        const message = '上游返回空内容';
+        const message = tr('pages.modelTester.upstreamResponseContent');
         setError(message);
-        pushDebug('error', '代理流式传输完成但内容为空。');
+        pushDebug('error', tr('pages.modelTester.actingstreamingContent'));
       } else {
         setError('');
         pushDebug(doneReceived ? 'info' : 'warn', doneReceived
-          ? '代理流式传输已成功完成。'
-          : '代理流式传输未收到 [DONE] 信号，已在本地完成。');
+          ? tr('pages.modelTester.actingstreamingCompletedSuccessfully')
+          : tr('pages.modelTester.actingstreamingDidNotReceiveDoneSignalWas'));
       }
     } catch (streamError: any) {
       const abortedByUser = controller.signal.aborted && streamStopRequestedRef.current;
@@ -1844,12 +1845,12 @@ export default function ModelTester() {
 
       if (abortedByUser) {
         setMessages((prev) => applyAssistantStopped(prev));
-        setError('生成已停止。');
+        setError(tr('pages.modelTester.buildHasStopped'));
       } else if (abortedUnexpectedly) {
-        setMessages((prev) => applyAssistantError(prev, '流式连接中断，请重试。'));
-        setError('流式连接中断，请重试。');
+        setMessages((prev) => applyAssistantError(prev, tr('pages.modelTester.streamingConnectionInterruptedPleaseTryAgain')));
+        setError(tr('pages.modelTester.streamingConnectionInterruptedPleaseTryAgain'));
       } else {
-        const message = streamError?.message || '流式请求失败';
+        const message = streamError?.message || tr('pages.modelTester.streamingRequestFailed');
         setMessages((prev) => applyAssistantError(prev, message));
         setError(message);
       }
@@ -1913,7 +1914,7 @@ export default function ModelTester() {
       setError('');
       pushDebug('info', `代理请求成功：${effectiveEnvelope.path}`);
     } catch (requestError: any) {
-      const message = requestError?.message || '请求失败';
+      const message = requestError?.message || tr('pages.modelTester.requestFailed');
       if (nextMessages) {
         setMessages((prev) => applyAssistantError(nextMessages, message));
       }
@@ -1960,7 +1961,7 @@ export default function ModelTester() {
     try {
       resolvedFiles = await resolveConversationReplayFiles(files, inputs.protocol, loadLocalConversationFile);
     } catch (resolveError: any) {
-      const message = resolveError?.message || '读取会话附件失败';
+      const message = resolveError?.message || tr('pages.modelTester.attachmentsfailed');
       setError(message);
       pushDebug('error', message);
       return;
@@ -1980,8 +1981,8 @@ export default function ModelTester() {
     const { payload, syncedCustomBody } = buildPayloadWithMessages(nextMessages);
 
     if (!payload) {
-      setError('自定义请求体无效或不包含消息。');
-      pushDebug('error', '从自定义请求体构建请求失败。');
+      setError(tr('pages.modelTester.customRequestBodyInvalidDoesNotContain'));
+      pushDebug('error', tr('pages.modelTester.buildingRequestFromCustomRequestBodyFailed'));
       return;
     }
 
@@ -1991,7 +1992,7 @@ export default function ModelTester() {
   const sendModeRequest = useCallback(async () => {
     const envelope = buildModeProxyEnvelope();
     if (!envelope) {
-      setError('请先补全当前模式所需的输入。');
+      setError(tr('pages.modelTester.completeRequiredInputsCurrentModeFirst'));
       return;
     }
     await dispatchProxyEnvelope(envelope);
@@ -2007,14 +2008,14 @@ export default function ModelTester() {
 
     const trimmed = input.trim();
     if (conversationFiles.length > 0 && customRequestMode) {
-      const message = '自定义请求模式不会自动注入会话附件，请先关闭自定义请求模式或移除附件。';
+      const message = tr('pages.modelTester.customRequestmodeAutomaticAttachmentsClosecustomRequestmodeRemoveattachments');
       setError(message);
       pushDebug('warn', message);
       return;
     }
 
     if (conversationFiles.length > 0 && !conversationFileSupported) {
-      const message = conversationFileCapability.reason || '当前协议暂不支持会话附件。';
+      const message = conversationFileCapability.reason || tr('pages.modelTester.currentProtocolDoesNotSupportSessionAttachments');
       setError(message);
       pushDebug('warn', message);
       return;
@@ -2035,7 +2036,7 @@ export default function ModelTester() {
         setConversationFiles([]);
         await sendWithPrompt(trimmed, messages, uploadedFiles);
       } catch (uploadError: any) {
-        const message = uploadError?.message || '附件上传失败';
+        const message = uploadError?.message || tr('pages.modelTester.attachmentsFailed');
         setError(message);
         pushDebug('error', message);
         setSending(false);
@@ -2052,8 +2053,8 @@ export default function ModelTester() {
     if (!customRequestMode) return;
     const payload = parseCustomRequestBody(customRequestBody);
     if (!payload) {
-      setError('自定义请求体必须是有效的 JSON 且包含非空消息。');
-      pushDebug('error', '发送被阻止：无效的自定义请求体。');
+      setError(tr('pages.modelTester.customRequestBodyMustValidJsonContain'));
+      pushDebug('error', tr('pages.modelTester.sendingBlockedInvalidCustomRequestBody'));
       return;
     }
 
@@ -2083,7 +2084,7 @@ export default function ModelTester() {
       return copied;
     })();
 
-    pushDebug('info', '正在重试待处理的请求。');
+    pushDebug('info', tr('pages.modelTester.pendingRequestBeingRetried'));
     await dispatchPayload(nextMessages, pendingPayload);
   }, [dispatchPayload, messages, pendingJobId, pendingPayload, pushDebug, sending]);
 
@@ -2115,8 +2116,8 @@ export default function ModelTester() {
     if (!hadWork) return;
     setSending(false);
     setMessages((prev) => applyAssistantStopped(prev));
-    setError('生成已停止。');
-    pushDebug('warn', '生成已被用户停止。');
+    setError(tr('pages.modelTester.buildHasStopped'));
+    pushDebug('warn', tr('pages.modelTester.buildHasBeenStoppedUser'));
   }, [pendingJobId, pushDebug]);
 
   const clearChat = useCallback(() => {
@@ -2159,7 +2160,7 @@ export default function ModelTester() {
     setImageMaskFile(null);
     setConversationFiles([]);
     localStorage.removeItem(MODEL_TESTER_STORAGE_KEY);
-    pushDebug('info', '对话已清除。');
+    pushDebug('info', tr('pages.modelTester.conversationCleared'));
   }, [pendingJobId, pushDebug]);
 
   const toggleReasoning = useCallback((messageId: string) => {
@@ -2176,7 +2177,7 @@ export default function ModelTester() {
     ].filter(Boolean).join('\n\n').trim();
 
     if (!text) {
-      setError('没有可复制的文本内容。');
+      setError(tr('pages.modelTester.thereNoTextContentCopy'));
       return;
     }
 
@@ -2193,7 +2194,7 @@ export default function ModelTester() {
       }
       pushDebug('info', `已复制消息 ${message.id}。`);
     } catch {
-      setError('复制失败，请手动复制。');
+      setError(tr('pages.modelTester.copyFailedPleaseCopyManually'));
     }
   }, [pushDebug]);
 
@@ -2239,7 +2240,7 @@ export default function ModelTester() {
     }
 
     if (userIndex === -1) {
-      setError('未找到可重试的用户消息。');
+      setError(tr('pages.modelTester.noUserMessageFoundRetry'));
       return;
     }
 
@@ -2290,17 +2291,17 @@ export default function ModelTester() {
   const syncMessageToBody = useCallback(() => {
     const nextBody = syncMessagesToCustomRequestBody(customRequestBody, messages, inputs);
     setCustomRequestBody(nextBody);
-    pushDebug('info', '已将消息同步到自定义请求体。');
+    pushDebug('info', tr('pages.modelTester.messageHasBeenSynchronizedCustomRequestBody'));
   }, [customRequestBody, inputs, messages, pushDebug]);
 
   const syncBodyToMessage = useCallback(() => {
     const nextMessages = syncCustomRequestBodyToMessages(customRequestBody);
     if (!nextMessages) {
-      setError('自定义请求体中没有有效的消息。');
+      setError(tr('pages.modelTester.thereNoValidMessageCustomRequestBody'));
       return;
     }
     setMessages(nextMessages);
-    pushDebug('info', '已将自定义请求体同步到消息。');
+    pushDebug('info', tr('pages.modelTester.customRequestBodyHasBeenSynchronizedMessage'));
   }, [customRequestBody, pushDebug]);
 
   const formatCustomBody = useCallback(() => {
@@ -2309,7 +2310,7 @@ export default function ModelTester() {
       setCustomRequestBody(JSON.stringify(parsed, null, 2));
       setError('');
     } catch (formatError: any) {
-      setError(`JSON 解析错误：${formatError?.message || '无效的 JSON'}`);
+      setError(`JSON 解析错误：${formatError?.message || tr('pages.modelTester.invalidJson')}`);
     }
   }, [customRequestBody]);
 
@@ -2339,9 +2340,9 @@ export default function ModelTester() {
     <div className="animate-fade-in">
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h2 className="text-xl font-semibold">{tr('模型测试')}</h2>
+          <h2 className="text-xl font-semibold">{tr('pages.modelTester.modelTesting')}</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            支持流式输出、任务模式、自定义请求体和调试面板。
+            {tr('pages.modelTester.supportedstreamingoutputMissionModeCustomRequestDebug')}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -2350,7 +2351,7 @@ export default function ModelTester() {
            
            
           >
-            {showDebugPanel ? '隐藏调试' : '显示调试'}
+            {showDebugPanel ? tr('pages.modelTester.hideDebugging') : tr('pages.modelTester.showDebugging')}
           </Button>
           <Button type="button" variant="outline"
             onClick={() => { void retryPending(); }}
@@ -2358,7 +2359,7 @@ export default function ModelTester() {
            
             disabled={sending || !!pendingJobId || !pendingPayload}
           >
-            重试
+            {tr('pages.dashboard.retry')}
           </Button>
           <Button type="button" variant="outline"
             onClick={() => { void stopGenerating(); }}
@@ -2366,7 +2367,7 @@ export default function ModelTester() {
            
             disabled={!pendingJobId && !streamAbortRef.current}
           >
-            停止
+            {tr('pages.modelTester.stop')}
           </Button>
           <Button type="button" variant="outline"
             onClick={clearChat}
@@ -2374,7 +2375,7 @@ export default function ModelTester() {
            
             disabled={messages.length === 0 && !pendingPayload && !pendingJobId}
           >
-            清除
+            {tr('pages.modelTester.clear')}
           </Button>
         </div>
       </div>
@@ -2382,28 +2383,28 @@ export default function ModelTester() {
       <div className={`mb-4 grid gap-3 animate-slide-up stagger-1 ${isMobile ? 'grid-cols-2' : 'grid-cols-4'}`}>
         <Card>
           <CardContent className="pt-3">
-            <div className="text-xs text-muted-foreground">模型数量</div>
+            <div className="text-xs text-muted-foreground">{tr('pages.modelTester.model')}</div>
             <div className="mt-1 text-2xl font-semibold">{models.length}</div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-3">
-            <div className="text-xs text-muted-foreground">当前模型</div>
-            <div className="mt-1 break-all text-sm font-semibold">{inputs.model || '未选择'}</div>
+            <div className="text-xs text-muted-foreground">{tr('pages.modelTester.model2')}</div>
+            <div className="mt-1 break-all text-sm font-semibold">{inputs.model || tr('pages.modelTester.notSelected')}</div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-3">
-            <div className="text-xs text-muted-foreground">对话轮数</div>
+            <div className="text-xs text-muted-foreground">{tr('pages.modelTester.chatTurns')}</div>
             <div className="mt-1 text-2xl font-semibold">{turnCount}</div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-3">
-            <div className="text-xs text-muted-foreground">模式</div>
+            <div className="text-xs text-muted-foreground">{tr('pages.modelTester.mode')}</div>
             <div className="mt-1 text-sm font-semibold">
             {inputs.mode === 'conversation'
-              ? (customRequestMode ? '自定义请求' : (inputs.stream ? '流式' : '任务模式'))
+              ? (customRequestMode ? tr('pages.modelTester.customRequest') : (inputs.stream ? tr('pages.modelTester.streaming') : tr('pages.modelTester.missionMode')))
               : inputs.mode}
             {' / '}
             {inputs.protocol === 'claude'
@@ -2428,11 +2429,11 @@ export default function ModelTester() {
         }}
       >
         <Card className={`p-4 ${isMobile ? 'order-2' : 'max-h-[740px] min-h-[680px] overflow-y-auto'}`}>
-          <h3 className="mb-3 text-sm font-semibold">设置</h3>
+          <h3 className="mb-3 text-sm font-semibold">{tr('app.settings')}</h3>
 
           <div className="mb-3.5">
             <div className="mb-1.5 text-xs font-medium text-muted-foreground">
-              测试模式
+              {tr('pages.modelTester.testMode')}
             </div>
             <ModernSelect
               value={inputs.mode}
@@ -2441,17 +2442,17 @@ export default function ModelTester() {
                 updateInput('mode', next as PlaygroundMode);
               }}
               options={CONVERSATION_MODE_OPTIONS}
-              placeholder="请选择测试模式"
+              placeholder={tr('pages.modelTester.selectTestMode')}
             />
           </div>
 
           <div className="mb-3.5">
-            <div className="mb-1.5 text-xs font-medium text-muted-foreground">模型</div>
+            <div className="mb-1.5 text-xs font-medium text-muted-foreground">{tr('components.modelAnalysisPanel.model')}</div>
             <div className={`mb-1.5 flex gap-2 ${isMobile ? 'flex-col' : 'flex-row'}`}>
               <Input
                 value={modelSearch}
                 onChange={(event) => setModelSearch(event.target.value)}
-                placeholder="搜索模型（支持名称片段）"
+                placeholder={tr('pages.modelTester.searchModelSupportsNameFragments')}
                 className="flex-1"
                 disabled={models.length === 0}
               />
@@ -2462,7 +2463,7 @@ export default function ModelTester() {
                 onClick={() => setModelSearch('')}
                 disabled={!modelSearch}
               >
-                清空
+                {tr('components.notificationPanel.clear')}
               </Button>
             </div>
             <div className="mb-1.5 text-xs text-muted-foreground">
@@ -2479,28 +2480,28 @@ export default function ModelTester() {
                 !currentModelVisible && !!inputs.model
                   ? `当前模型已被筛选：${inputs.model}`
                   : (models.length === 0
-                    ? '暂无模型'
-                    : (filteredModels.length === 0 ? '未找到匹配模型' : '请选择模型'))
+                    ? tr('pages.modelTester.noModelYet')
+                    : (filteredModels.length === 0 ? tr('pages.modelTester.noMatchingModelFound') : tr('pages.modelTester.pleaseSelectModel')))
               }
               disabled={models.length === 0 || customRequestMode || filteredModels.length === 0}
-              emptyLabel="未找到匹配模型"
+              emptyLabel={tr('pages.modelTester.noMatchingModelFound')}
               menuMaxHeight={300}
             />
             {!currentModelVisible && !!inputs.model && (
               <div className="mt-1 text-xs text-muted-foreground">
-                当前模型已被筛选：{inputs.model}
+                {tr('pages.modelTester.modelFilter')}{inputs.model}
               </div>
             )}
             {customRequestMode && (
               <div className="mt-1 text-xs text-muted-foreground">
-                自定义请求模式下模型选择将被忽略。
+                {tr('pages.modelTester.customRequestmodeModelselect')}
               </div>
             )}
           </div>
 
           <div className="mb-3.5">
             <div className="mb-1.5 text-xs font-medium text-muted-foreground">
-              协议 / 输出格式
+              {tr('pages.modelTester.protocolOutputFormat')}
             </div>
             <ModernSelect
               value={inputs.protocol}
@@ -2509,16 +2510,16 @@ export default function ModelTester() {
                 updateProtocol(next as PlaygroundProtocol);
               }}
               options={PROTOCOL_OPTIONS}
-              placeholder="请选择协议"
+              placeholder={tr('pages.modelTester.selectProtocol')}
             />
             <div className="mt-1 text-xs text-muted-foreground">
-              对话模式下可模拟 OpenAI / Responses / Claude / Gemini Native。
+              {tr('pages.modelTester.chatmodeOpenaiResponsesClaudeGeminiNative')}
             </div>
           </div>
 
           <div className="mb-3.5">
             <div className="mb-1.5 text-xs font-medium text-muted-foreground">
-              固定通道
+              {tr('pages.modelTester.channels')}
             </div>
             <ModernSelect
               value={typeof forcedChannelId === 'number' ? String(forcedChannelId) : '__auto__'}
@@ -2531,22 +2532,22 @@ export default function ModelTester() {
                 setForcedChannelId(Number.isFinite(parsed) && parsed > 0 ? parsed : null);
               }}
               options={forcedChannelSelectOptions}
-              placeholder={loadingForcedChannels ? '加载通道中...' : '自动选路（默认）'}
+              placeholder={loadingForcedChannels ? tr('pages.modelTester.channelszh') : tr('pages.modelTester.automaticDefault')}
               disabled={customRequestMode || inputs.mode === 'videos.inspect' || loadingForcedChannels}
-              emptyLabel="当前模型暂无可固定通道"
+              emptyLabel={tr('pages.modelTester.modelnoneChannels')}
               menuMaxHeight={300}
             />
             <div className="mt-1 text-xs text-muted-foreground">
               {forcedChannelHint
                 || (typeof forcedChannelId === 'number'
                   ? `已固定到通道 #${forcedChannelId}，失败不会自动切换。`
-                  : '默认自动选路；如需单独排查，可固定到一个候选通道。')}
+                  : tr('pages.modelTester.defaultautomaticChannels'))}
             </div>
           </div>
 
           <div className="mb-3.5">
             <div className="mb-1.5 text-xs font-medium text-muted-foreground">
-              路由流程
+              {tr('pages.modelTester.routes')}
             </div>
             <ModelRouteFlow
               flow={routeFlow}
@@ -2564,14 +2565,14 @@ export default function ModelTester() {
                 value={inputs.systemPrompt}
                 onChange={(event) => updateInput('systemPrompt', event.target.value)}
                 rows={4}
-                placeholder="可选的系统提示词，会在发送时独立注入请求。"
+                placeholder={tr('pages.modelTester.systemtipSendRequest')}
                 className="resize-y leading-relaxed"
               />
             </div>
           )}
 
           <div className="mb-3.5 flex items-center justify-between gap-3">
-            <div className="text-sm font-medium">流式输出</div>
+            <div className="text-sm font-medium">{tr('pages.modelTester.streamingoutput')}</div>
             <label className="inline-flex items-center gap-2 text-xs text-muted-foreground">
               <Checkbox
                
@@ -2579,48 +2580,49 @@ export default function ModelTester() {
                 onCheckedChange={(checked) => updateInput('stream', checked === true)}
                 disabled={customRequestMode || inputs.mode !== 'conversation'}
               />
-              启用
+              {tr('pages.downstreamKeys.enabled')}
             </label>
           </div>
 
           {inputs.mode !== 'conversation' && (
             <div className="mb-3.5 text-xs text-muted-foreground">
-              当前模式默认走同步请求；Search / Embeddings / Images / Videos 会通过通用 proxy tester 直达对应接口。
+              {tr('pages.modelTester.modedefaultSyncrequestSearchEmbeddingsImagesVideosGeneral')}
             </div>
           )}
 
           <div className="mb-3.5 flex items-center justify-between gap-3">
-            <div className="text-sm font-medium">自定义请求体</div>
+            <div className="text-sm font-medium">{tr('pages.modelTester.customRequest2')}</div>
             <label className="inline-flex items-center gap-2 text-xs text-muted-foreground">
               <Checkbox
                
                 checked={customRequestMode}
                 onCheckedChange={(checked) => setCustomRequestMode(checked === true)}
               />
-              启用
+              {tr('pages.downstreamKeys.enabled')}
             </label>
           </div>
 
           <div className={`anim-collapse mb-3.5 ${customRequestMode ? 'is-open' : ''}`.trim()}>
             <div className="anim-collapse-inner">
-              <Textarea
+              <JsonCodeEditor
                 value={customRequestBody}
-                onChange={(event) => setCustomRequestBody(event.target.value)}
-                rows={11}
+                onChange={setCustomRequestBody}
                 placeholder='{"model":"gpt-4o-mini","targetFormat":"claude","messages":[{"role":"user","content":"hello"}],"stream":true}'
-                className="resize-y font-mono leading-relaxed"
+                minHeight={300}
+                maxHeight={640}
+                ariaLabel={tr('pages.modelTester.customRequest2')}
               />
               <div className="mt-2 flex flex-wrap gap-2">
                 <Button type="button" variant="outline" onClick={formatCustomBody}>
-                  格式化 JSON
+                  {tr('pages.modelTester.formatJson')}
                 </Button>
                 {inputs.mode === 'conversation' && (
                   <>
                     <Button type="button" variant="outline" onClick={syncMessageToBody}>
-                      消息 -&gt; 请求体
+                      {tr('pages.modelTester.gtRequest')}
                     </Button>
                     <Button type="button" variant="outline" onClick={syncBodyToMessage}>
-                      请求体 -&gt; 消息
+                      {tr('pages.modelTester.requestGt')}
                     </Button>
                   </>
                 )}
@@ -2629,11 +2631,11 @@ export default function ModelTester() {
           </div>
 
             <div className="mb-2 text-xs font-medium text-muted-foreground">
-              采样参数
+              {tr('pages.modelTester.samplingParameters')}
             </div>
 
           <ParameterRow
-            title="温度"
+            title={tr('pages.modelTester.temperature')}
             valueText={inputs.temperature.toFixed(2)}
             enabled={parameterEnabled.temperature}
             onToggle={() => toggleParameter('temperature')}
@@ -2667,7 +2669,7 @@ export default function ModelTester() {
           </ParameterRow>
 
           <ParameterRow
-            title="频率惩罚"
+            title={tr('pages.modelTester.frequencyPenalty')}
             valueText={inputs.frequency_penalty.toFixed(2)}
             enabled={parameterEnabled.frequency_penalty}
             onToggle={() => toggleParameter('frequency_penalty')}
@@ -2684,7 +2686,7 @@ export default function ModelTester() {
           </ParameterRow>
 
           <ParameterRow
-            title="存在惩罚"
+            title={tr('pages.modelTester.therePunishment')}
             valueText={inputs.presence_penalty.toFixed(2)}
             enabled={parameterEnabled.presence_penalty}
             onToggle={() => toggleParameter('presence_penalty')}
@@ -2701,7 +2703,7 @@ export default function ModelTester() {
           </ParameterRow>
 
           <ParameterRow
-            title="最大 Token 数"
+            title={tr('pages.modelTester.maximumNumberTokens')}
             enabled={parameterEnabled.max_tokens}
             onToggle={() => toggleParameter('max_tokens')}
             disabled={customRequestMode}
@@ -2717,8 +2719,8 @@ export default function ModelTester() {
           </ParameterRow>
 
           <ParameterRow
-            title="随机种子"
-            valueText={inputs.seed === null ? '自动' : String(inputs.seed)}
+            title={tr('pages.modelTester.randomSeed')}
+            valueText={inputs.seed === null ? tr('pages.modelTester.automatic') : String(inputs.seed)}
             enabled={parameterEnabled.seed}
             onToggle={() => toggleParameter('seed')}
             disabled={customRequestMode}
@@ -2728,7 +2730,7 @@ export default function ModelTester() {
               value={inputs.seed ?? ''}
               min={0}
               step={1}
-              placeholder="可选种子值"
+              placeholder={tr('pages.modelTester.optionalSeedValue')}
               onChange={(event) => {
                 const raw = event.target.value.trim();
                 updateInput('seed', raw.length === 0 ? null : toNumber(raw, 0));
@@ -2740,9 +2742,9 @@ export default function ModelTester() {
 
         <Card className={`flex overflow-hidden ${isMobile ? 'order-1' : 'max-h-[740px] min-h-[680px]'} flex-col`}>
           <CardHeader className="flex-row items-center justify-between gap-3 border-b space-y-0">
-            <CardTitle>对话</CardTitle>
+            <CardTitle>{tr('pages.modelTester.chat')}</CardTitle>
             <div className="text-xs text-muted-foreground">
-              {sending ? '生成中...' : '就绪'}
+              {sending ? tr('pages.modelTester.generating') : tr('pages.modelTester.ready')}
             </div>
           </CardHeader>
 
@@ -2752,13 +2754,13 @@ export default function ModelTester() {
                 <Card>
                   <CardContent className="pt-3">
                   <div className="mb-1.5 text-sm font-semibold">
-                    {inputs.mode === 'embeddings' ? 'Embeddings 结果'
-                      : inputs.mode === 'search' ? 'Search 结果'
-                        : inputs.mode.startsWith('images') ? '图片结果'
-                          : '视频任务结果'}
+                    {inputs.mode === 'embeddings' ? tr('pages.modelTester.embeddings')
+                      : inputs.mode === 'search' ? tr('pages.modelTester.search')
+                        : inputs.mode.startsWith('images') ? tr('pages.modelTester.imageResult')
+                          : tr('pages.modelTester.videoTaskResult')}
                   </div>
                   <div className="text-xs text-muted-foreground">
-                    新模式走通用 proxy tester；结果同时会写入右侧调试面板。
+                    {tr('pages.modelTester.modeGeneralProxyTesterDebug')}
                   </div>
                   </CardContent>
                 </Card>
@@ -2780,11 +2782,11 @@ export default function ModelTester() {
                 )}
 
                 <pre className="m-0 whitespace-pre-wrap break-words rounded-md border bg-card p-3 font-mono text-xs leading-relaxed">
-                  {nonConversationResult ? formatJson(nonConversationResult) : '// 暂无结果'}
+                  {nonConversationResult ? formatJson(nonConversationResult) : tr('pages.modelTester.noResults')}
                 </pre>
               </div>
             ) : messages.length === 0 ? (
-              <EmptyStateBlock title="开始对话测试" description="支持流式模式、自定义请求体模式和可恢复的任务。" />
+              <EmptyStateBlock title={tr('pages.modelTester.startChatTest')} description={tr('pages.modelTester.supportedstreamingmodeCustomRequestMode')} />
             ) : (
               <div className="grid gap-3">
                 {messages.map((message) => {
@@ -2816,7 +2818,7 @@ export default function ModelTester() {
                               className="w-full justify-between"
                               onClick={() => toggleReasoning(message.id)}
                             >
-                              <span>{isLoading ? '思考中...' : '推理过程'}</span>
+                              <span>{isLoading ? tr('pages.modelTester.thinking') : tr('pages.modelTester.reasoningProcess')}</span>
                               <span>{message.isReasoningExpanded ? '▼' : '▶'}</span>
                             </Button>
                             <div className={`anim-collapse ${message.isReasoningExpanded ? 'is-open' : ''}`.trim()}>
@@ -2841,17 +2843,17 @@ export default function ModelTester() {
                               <div className="flex justify-end gap-2">
                                 {message.role === 'user' && (
                                   <Button type="button" variant="outline" onClick={() => saveEditMessage(true)}>
-                                    保存并重试
+                                    {tr('pages.modelTester.saveRetry')}
                                   </Button>
                                 )}
-                                <Button type="button" onClick={() => saveEditMessage(false)}>保存</Button>
-                                <Button type="button" variant="outline" onClick={cancelEditMessage}>取消</Button>
+                                <Button type="button" onClick={() => saveEditMessage(false)}>{tr('app.save')}</Button>
+                                <Button type="button" variant="outline" onClick={cancelEditMessage}>{tr('app.cancel')}</Button>
                               </div>
                             </div>
                           ) : (
                             <>
                               {isLoading && <LoaderCircle className="size-4 animate-spin" />}
-                              {message.content || (isLoading ? '思考中...' : '')}
+                              {message.content || (isLoading ? tr('pages.modelTester.thinking') : '')}
                             </>
                           )}
                         </div>
@@ -2862,11 +2864,11 @@ export default function ModelTester() {
                               <span
                                 key={`${message.id}-file-${part.fileId || part.filename || index}`}
                                 className="inline-flex max-w-full items-center gap-1.5 rounded-full border bg-muted/40 px-2 py-1 text-xs text-muted-foreground"
-                                title={part.fileId || part.filename || '附件'}
+                                title={part.fileId || part.filename || tr('pages.modelTester.attachments')}
                               >
                                 <span>📎</span>
                                 <span className="truncate">
-                                  {part.filename || part.fileId || '附件'}
+                                  {part.filename || part.fileId || tr('pages.modelTester.attachments')}
                                 </span>
                               </span>
                             ))}
@@ -2877,25 +2879,25 @@ export default function ModelTester() {
                           <div className="flex flex-wrap gap-1.5">
                             {!isLoading && (
                               <Button type="button" variant="outline" onClick={() => resetFromMessage(message)} disabled={sending || Boolean(pendingJobId)}>
-                                重试
+                                {tr('pages.dashboard.retry')}
                               </Button>
                             )}
                             <Button type="button" variant="outline" onClick={() => { void copyMessage(message); }}>
-                              复制
+                              {tr('pages.modelTester.copy')}
                             </Button>
                             {!isLoading && (
                               <Button type="button" variant="outline" onClick={() => startEditMessage(message)} disabled={sending}>
-                                编辑
+                                {tr('pages.accounts.edit')}
                               </Button>
                             )}
                             {!isLoading && (
                               <Button type="button" variant="outline" onClick={() => deleteMessage(message)} disabled={sending}>
-                                删除
+                                {tr('pages.accounts.delete3')}
                               </Button>
                             )}
                             {(message.role === 'assistant' || message.role === 'system') && !isLoading && (
                               <Button type="button" variant="outline" onClick={() => toggleAssistantRole(message)} disabled={sending}>
-                                {message.role === 'assistant' ? '转为系统' : '转为助手'}
+                                {message.role === 'assistant' ? tr('pages.modelTester.convertSystem') : tr('pages.modelTester.turnIntoAssistant')}
                               </Button>
                             )}
                           </div>
@@ -2942,7 +2944,7 @@ export default function ModelTester() {
                     value={embeddingInputText}
                     onChange={(event) => setEmbeddingInputText(event.target.value)}
                     rows={4}
-                    placeholder="输入 embeddings 测试文本，支持单条或多行。"
+                    placeholder={tr('pages.modelTester.inputEmbeddingsTextSupportedItems')}
                     className="resize-y"
                   />
                 )}
@@ -2952,12 +2954,12 @@ export default function ModelTester() {
                       value={searchQueryValue}
                       onChange={(event) => setSearchQueryValue(event.target.value)}
                       rows={3}
-                      placeholder="输入搜索查询"
+                      placeholder={tr('pages.modelTester.inputsearch')}
                       className="resize-y"
                     />
                     <div className={`grid gap-2.5 ${isMobile ? 'grid-cols-1' : 'grid-cols-[1fr_1fr_120px]'}`}>
-                      <Input value={searchAllowedDomains} onChange={(event) => setSearchAllowedDomains(event.target.value)} placeholder="allowed_domains (逗号分隔)" />
-                      <Input value={searchBlockedDomains} onChange={(event) => setSearchBlockedDomains(event.target.value)} placeholder="blocked_domains (逗号分隔)" />
+                      <Input value={searchAllowedDomains} onChange={(event) => setSearchAllowedDomains(event.target.value)} placeholder={tr('pages.modelTester.allowedDomains')} />
+                      <Input value={searchBlockedDomains} onChange={(event) => setSearchBlockedDomains(event.target.value)} placeholder={tr('pages.modelTester.blockedDomains')} />
                       <Input value={searchMaxResults} onChange={(event) => setSearchMaxResults(toNumber(event.target.value, 10))} type="number" min={1} max={20} />
                     </div>
                   </>
@@ -2968,13 +2970,13 @@ export default function ModelTester() {
                       value={assetPrompt}
                       onChange={(event) => setAssetPrompt(event.target.value)}
                       rows={3}
-                      placeholder={inputs.mode === 'videos.create' ? '输入视频生成提示词' : '输入图片提示词'}
+                      placeholder={inputs.mode === 'videos.create' ? tr('pages.modelTester.enterVideoGenerationPrompt') : tr('pages.modelTester.enterImagePrompt')}
                       className="resize-y"
                     />
                     {(inputs.mode === 'images.edit' || inputs.mode === 'videos.create') && (
                       <div className={`grid gap-2.5 ${isMobile || inputs.mode !== 'images.edit' ? 'grid-cols-1' : 'grid-cols-2'}`}>
                         <label className="text-xs text-muted-foreground">
-                          <div className="mb-1.5">{inputs.mode === 'images.edit' ? '原图' : '参考图'}</div>
+                          <div className="mb-1.5">{inputs.mode === 'images.edit' ? tr('pages.modelTester.sourceImage') : tr('pages.modelTester.referenceImage')}</div>
                           <Input type="file" accept="image/*" onChange={(event) => { void handleUploadChange(event.target.files, setImageSourceFile); }} />
                         </label>
                         {inputs.mode === 'images.edit' && (
@@ -2992,7 +2994,7 @@ export default function ModelTester() {
                     <Input
                       value={videoInspectId}
                       onChange={(event) => setVideoInspectId(event.target.value)}
-                      placeholder="输入 public video id"
+                      placeholder={tr('pages.modelTester.inputPublicVideoId')}
                     />
                     <ModernSelect
                       value={videoInspectAction}
@@ -3015,7 +3017,7 @@ export default function ModelTester() {
                    
                    
                   >
-                    发送请求
+                    {tr('pages.modelTester.sendRequest')}
                   </Button>
                 </div>
               </div>

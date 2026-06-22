@@ -19,6 +19,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { BrandGlyph, InlineBrandIcon, type BrandInfo } from '../../components/BrandIcon.js';
+import EmptyStateBlock from '../../components/EmptyStateBlock.js';
 import ModernSelect from '../../components/ModernSelect.js';
 import { tr } from '../../i18n.js';
 import { formatDateTimeMinuteLocal } from '../helpers/checkinLogTime.js';
@@ -72,6 +73,7 @@ type RouteCardProps = {
   compact?: boolean;
   summaryExpanded?: boolean;
   detailPanel?: boolean;
+  showCollapseAction?: boolean;
   onToggleExpand: (routeId: number) => void;
   onEdit: (route: RouteSummaryRow) => void;
   onDelete: (routeId: number) => void;
@@ -110,7 +112,7 @@ type RouteCardProps = {
 };
 
 function getRouteUnitStrategyLabel(strategy: string | null | undefined): string {
-  return strategy === 'stick_until_unavailable' ? '单个用到不可用再切' : '轮询';
+  return strategy === 'stick_until_unavailable' ? tr('pages.oAuthManagement.notAvailable') : tr('pages.oAuthManagement.roundRobin');
 }
 
 function collectRouteUnits(channels: RouteChannel[] | undefined): RouteChannelRouteUnit[] {
@@ -136,7 +138,7 @@ function RouteSuccessFailStat({
 }) {
   return (
     <div className="whitespace-nowrap text-xs text-muted-foreground">
-      成功/失败 <span className="font-semibold text-foreground">{successCount || 0}</span>
+      {tr('pages.tokenRoutes.routeCard.successFailed')} <span className="font-semibold text-foreground">{successCount || 0}</span>
       <span className="mx-0.5 text-muted-foreground">/</span>
       <span className="font-semibold text-destructive">{failCount || 0}</span>
     </div>
@@ -169,7 +171,7 @@ function PriorityRailNewLayerRow({
             active ? 'bg-muted text-foreground' : 'bg-card text-muted-foreground',
           )}
         >
-          {tr('放到新档位')}
+          {tr('pages.tokenRoutes.routeCard.moveNewTier')}
         </div>
         <div className={cn('flex-1 border-t border-dashed transition-opacity', active ? 'opacity-100' : 'opacity-70')} />
       </div>
@@ -188,7 +190,7 @@ function PriorityRailNewLayerRow({
           active ? 'bg-muted text-foreground' : 'text-muted-foreground',
         )}
       >
-        {tr('放到新档位')}
+        {tr('pages.tokenRoutes.routeCard.moveNewTier')}
       </div>
       <div className={cn('h-0 border-t border-dashed transition-opacity', active ? 'opacity-100' : 'opacity-75')} />
     </div>
@@ -244,7 +246,7 @@ function PriorityDragPreview({
           {channel.site?.name || 'unknown'}
         </ToneBadge>
         <ToneBadge tone="">
-          当前生效：{effectiveTokenName}
+          {tr('pages.tokenRoutes.routeCard.currentlyEffective')}{effectiveTokenName}
         </ToneBadge>
         {channel.sourceModel ? (
           <ToneBadge tone="-info">
@@ -253,7 +255,7 @@ function PriorityDragPreview({
         ) : null}
         {channel.manualOverride ? (
           <ToneBadge tone="-warning">
-            手动配置
+            {tr('pages.tokenRoutes.routeCard.manualconfiguration')}
           </ToneBadge>
         ) : null}
       </div>
@@ -458,6 +460,7 @@ function RouteCardInner({
   compact = false,
   summaryExpanded = false,
   detailPanel = false,
+  showCollapseAction = true,
   onToggleExpand,
   onEdit,
   onDelete,
@@ -501,7 +504,7 @@ function RouteCardInner({
   const routingStrategyHint = getRouteRoutingStrategyHint(routingStrategy);
   const hasCachedDecisionSnapshot = !!route.decisionSnapshot;
   const cachedDecisionTooltip = route.decisionRefreshedAt
-    ? `${tr('最近刷新')}: ${formatDateTimeMinuteLocal(route.decisionRefreshedAt)}`
+    ? `${tr('pages.tokenRoutes.routeCard.lastRefreshed')}: ${formatDateTimeMinuteLocal(route.decisionRefreshedAt)}`
     : undefined;
   const showAddChannelButton = !readOnlyRoute && !channelManagementDisabled;
   const showMissingTokenHints = !channelManagementDisabled && (missingTokenSiteItems.length > 0 || missingTokenGroupItems.length > 0);
@@ -509,17 +512,17 @@ function RouteCardInner({
   const routingStrategyOptions = [
     {
       value: 'weighted',
-      label: tr('权重随机'),
+      label: tr('pages.tokenRoutes.manualRoutePanel.weightedRandom'),
       description: getRouteRoutingStrategyDescription('weighted'),
     },
     {
       value: 'round_robin',
-      label: tr('轮询'),
+      label: tr('pages.oAuthManagement.roundRobin'),
       description: getRouteRoutingStrategyDescription('round_robin'),
     },
     {
       value: 'stable_first',
-      label: tr('稳定优先'),
+      label: tr('pages.settings.stableFirst'),
       description: getRouteRoutingStrategyDescription('stable_first'),
     },
   ] as const;
@@ -564,7 +567,7 @@ function RouteCardInner({
     if (readOnlyRoute) return null;
     return (
       <Button type="button" variant="ghost" size="sm" onClick={() => onClearCooldown(route.id)} disabled={clearingCooldown}>
-        {clearingCooldown ? tr('清除中...') : tr('清除冷却')}
+        {clearingCooldown ? tr('pages.tokenRoutes.routeCard.clearzh') : tr('pages.tokenRoutes.routeCard.clearCooldown')}
       </Button>
     );
   };
@@ -580,7 +583,7 @@ function RouteCardInner({
      
      
     >
-      + {tr('添加通道')}
+      + {tr('pages.tokenRoutes.addchannels')}
     </Button>
   );
 
@@ -588,7 +591,7 @@ function RouteCardInner({
   if (!expanded) {
     return (
       <Card
-        className={`route-card-collapsed route--collapsed ${summaryExpanded ? 'is-active' : ''}`.trim()}
+        className={`route-card-collapsed route--collapsed min-w-0 max-w-full ${summaryExpanded ? 'is-active' : ''}`.trim()}
         onClick={() => onToggleExpand(route.id)}
         role="button"
         tabIndex={0}
@@ -600,7 +603,7 @@ function RouteCardInner({
           }
         }}
       >
-        <div className="flex min-w-0 items-center gap-2">
+        <div className="flex min-w-0 items-center gap-2 overflow-hidden">
           <span className="inline-flex size-5 shrink-0 items-center">
             {routeIcon.kind === 'brand' ? (
               <BrandGlyph icon={routeIcon.value} alt={title} size={18} fallbackText={title} />
@@ -637,7 +640,7 @@ function RouteCardInner({
 
           {readOnlyRoute ? (
             <ToneBadge tone="-muted">
-              {tr('未生成')}
+              {tr('pages.tokenRoutes.notGenerated')}
             </ToneBadge>
           ) : (
             <Button
@@ -645,24 +648,24 @@ function RouteCardInner({
               variant={route.enabled ? 'secondary' : 'outline'}
               size="sm"
               onClick={(e) => { e.stopPropagation(); onToggleEnabled(route); }}
-              data-tooltip={route.enabled ? '点击禁用此路由' : '点击启用此路由'}
+              data-tooltip={route.enabled ? tr('pages.tokenRoutes.routeCard.disabledRoutes') : tr('pages.tokenRoutes.routeCard.enabledRoutes')}
             >
-              {route.enabled ? tr('启用') : tr('禁用')}
+              {route.enabled ? tr('pages.downstreamKeys.enabled') : tr('pages.downstreamKeys.disabled')}
             </Button>
           )}
 
           {explicitGroupRoute && explicitGroupSourceCount > 0 ? (
             <>
               <ToneBadge tone="-info">
-                {explicitGroupSourceCount} {tr('来源模型')}
+                {explicitGroupSourceCount} {tr('pages.tokenRoutes.manualRoutePanel.model2')}
               </ToneBadge>
               <ToneBadge tone="-muted">
-                {route.channelCount} {tr('通道')}
+                {route.channelCount} {tr('pages.tokenRoutes.channels')}
               </ToneBadge>
             </>
           ) : (
             <ToneBadge tone="-info">
-              {route.channelCount} {tr('通道')}
+              {route.channelCount} {tr('pages.tokenRoutes.channels')}
             </ToneBadge>
           )}
           {hasCachedDecisionSnapshot ? (
@@ -671,36 +674,23 @@ function RouteCardInner({
               data-tooltip={cachedDecisionTooltip}
              
             >
-              {tr('已缓存')}
+              {tr('pages.tokenRoutes.routeCard.cached')}
             </ToneBadge>
           ) : null}
 
           {readOnlyRoute ? (
             <ToneBadge tone="-warning">
-              {tr('0 通道')}
+              {tr('pages.tokenRoutes.routeCard.0Channels')}
             </ToneBadge>
           ) : (
             <ToneBadge tone="-muted"
-             
+              className="min-w-0 max-w-[132px] truncate"
              
               data-tooltip={`${getRouteRoutingStrategyLabel(routingStrategy)}：${routingStrategyDescription}`}
             >
               {getRouteRoutingStrategyLabel(routingStrategy)}
             </ToneBadge>
           )}
-
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 20 20"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            className={cn('shrink-0 text-muted-foreground transition-transform', summaryExpanded && 'rotate-180')}
-            aria-hidden
-          >
-            <path d="m5 7 5 6 5-6" />
-          </svg>
         </div>
       </Card>
     );
@@ -711,6 +701,7 @@ function RouteCardInner({
     <Card
       className={cn(
         'route--expanded',
+        'min-w-0 max-w-full',
         compact ? 'route--expanded-compact p-2.5' : 'p-3.5',
         detailPanel && 'route--detail-panel',
       )}
@@ -737,7 +728,7 @@ function RouteCardInner({
             ) : null}
             {readOnlyRoute ? (
               <ToneBadge tone="-muted">
-                {tr('未生成')}
+                {tr('pages.tokenRoutes.notGenerated')}
               </ToneBadge>
             ) : (
               <Button
@@ -745,23 +736,23 @@ function RouteCardInner({
                 variant={route.enabled ? 'secondary' : 'outline'}
                 size="sm"
                 onClick={(e) => { e.stopPropagation(); onToggleEnabled(route); }}
-                data-tooltip={route.enabled ? '点击禁用此路由' : '点击启用此路由'}
+                data-tooltip={route.enabled ? tr('pages.tokenRoutes.routeCard.disabledRoutes') : tr('pages.tokenRoutes.routeCard.enabledRoutes')}
               >
-                {route.enabled ? tr('启用') : tr('禁用')}
+                {route.enabled ? tr('pages.downstreamKeys.enabled') : tr('pages.downstreamKeys.disabled')}
               </Button>
             )}
             {explicitGroupRoute && explicitGroupSourceCount > 0 ? (
               <>
                 <ToneBadge tone="-info">
-                  {explicitGroupSourceCount} {tr('来源模型')}
+                  {explicitGroupSourceCount} {tr('pages.tokenRoutes.manualRoutePanel.model2')}
                 </ToneBadge>
                 <ToneBadge tone="-muted">
-                  {route.channelCount} {tr('通道')}
+                  {route.channelCount} {tr('pages.tokenRoutes.channels')}
                 </ToneBadge>
               </>
             ) : (
               <ToneBadge tone="-info">
-                {route.channelCount} {tr('通道')}
+                {route.channelCount} {tr('pages.tokenRoutes.channels')}
               </ToneBadge>
             )}
             {hasCachedDecisionSnapshot ? (
@@ -770,44 +761,46 @@ function RouteCardInner({
                 data-tooltip={cachedDecisionTooltip}
                
               >
-                {tr('已缓存')}
+                {tr('pages.tokenRoutes.routeCard.cached')}
               </ToneBadge>
             ) : null}
             {readOnlyRoute && (
               <ToneBadge tone="-warning">
-                {tr('0 通道')}
+                {tr('pages.tokenRoutes.routeCard.0Channels')}
               </ToneBadge>
             )}
             {savingPriority && (
-              <ToneBadge tone="-warning">{tr('排序保存中')}</ToneBadge>
+              <ToneBadge tone="-warning">{tr('pages.tokenRoutes.routeCard.savingOrder')}</ToneBadge>
             )}
           </div>
 
           <div className="flex items-center gap-2.5">
             {renderClearCooldownButton()}
             {!readOnlyRoute && (explicitGroupRoute || !exactRoute) && (
-              <Button type="button" variant="ghost" size="sm" onClick={() => onEdit(route)}>{tr('编辑群组')}</Button>
+              <Button type="button" variant="ghost" size="sm" onClick={() => onEdit(route)}>{tr('pages.tokenRoutes.manualRoutePanel.editgroups')}</Button>
             )}
-            {!readOnlyRoute && <Button type="button" variant="destructive" size="sm" onClick={() => onDelete(route.id)}>{tr('删除路由')}</Button>}
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => onToggleExpand(route.id)}
-              data-tooltip={tr('收起')}
-            >
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 20 20"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                className="rotate-180"
-                aria-hidden
+            {!readOnlyRoute && <Button type="button" variant="destructive" size="sm" onClick={() => onDelete(route.id)}>{tr('pages.tokenRoutes.routeCard.deleteRoute')}</Button>}
+            {showCollapseAction ? (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => onToggleExpand(route.id)}
+                data-tooltip={tr('pages.accounts.collapse')}
               >
-                <path d="m5 7 5 6 5-6" />
-              </svg>
-            </Button>
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 20 20"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  className="rotate-180"
+                  aria-hidden
+                >
+                  <path d="m5 7 5 6 5-6" />
+                </svg>
+              </Button>
+            ) : null}
           </div>
         </div>
       ) : (
@@ -824,14 +817,14 @@ function RouteCardInner({
                 <ToneBadge tone="-muted">{routePattern}</ToneBadge>
               ) : null}
               {readOnlyRoute ? (
-                <ToneBadge tone="-muted">{tr('未生成')}</ToneBadge>
+                <ToneBadge tone="-muted">{tr('pages.tokenRoutes.notGenerated')}</ToneBadge>
               ) : (
                 <ToneBadge tone={route.enabled ? 'success' : 'muted'}>
-                  {route.enabled ? tr('启用') : tr('禁用')}
+                  {route.enabled ? tr('pages.downstreamKeys.enabled') : tr('pages.downstreamKeys.disabled')}
                 </ToneBadge>
               )}
               <ToneBadge tone="-info">
-                {route.channelCount} {tr('通道')}
+                {route.channelCount} {tr('pages.tokenRoutes.channels')}
               </ToneBadge>
               {hasCachedDecisionSnapshot ? (
                 <ToneBadge tone="-success"
@@ -839,30 +832,30 @@ function RouteCardInner({
                   data-tooltip={cachedDecisionTooltip}
                  
                 >
-                  {tr('已缓存')}
+                  {tr('pages.tokenRoutes.routeCard.cached')}
                 </ToneBadge>
               ) : null}
               {explicitGroupRoute && explicitGroupSourceCount > 0 ? (
                 <ToneBadge tone="-muted">
-                  {explicitGroupSourceCount} {tr('来源模型')}
+                  {explicitGroupSourceCount} {tr('pages.tokenRoutes.manualRoutePanel.model2')}
                 </ToneBadge>
               ) : null}
-              {savingPriority ? <ToneBadge tone="-warning">{tr('排序保存中')}</ToneBadge> : null}
+              {savingPriority ? <ToneBadge tone="-warning">{tr('pages.tokenRoutes.routeCard.savingOrder')}</ToneBadge> : null}
             </div>
             {!readOnlyRoute && (
               <div className="flex flex-wrap items-center justify-end gap-2">
                 {renderClearCooldownButton()}
                 {(explicitGroupRoute || !exactRoute) && (
-                  <Button type="button" variant="ghost" size="sm" onClick={() => onEdit(route)}>{tr('编辑群组')}</Button>
+                  <Button type="button" variant="ghost" size="sm" onClick={() => onEdit(route)}>{tr('pages.tokenRoutes.manualRoutePanel.editgroups')}</Button>
                 )}
-                <Button type="button" variant="destructive" size="sm" onClick={() => onDelete(route.id)}>{tr('删除路由')}</Button>
-                {detailPanel && (
+                <Button type="button" variant="destructive" size="sm" onClick={() => onDelete(route.id)}>{tr('pages.tokenRoutes.routeCard.deleteRoute')}</Button>
+                {detailPanel && showCollapseAction && (
                   <Button
                     type="button"
                     variant="outline"
                     onClick={() => onToggleExpand(route.id)}
                   >
-                    {tr('收起详情')}
+                    {tr('pages.proxyLogs.collapsedetails')}
                   </Button>
                 )}
               </div>
@@ -873,27 +866,30 @@ function RouteCardInner({
 
       {!compact && explicitGroupRoute ? (
         <div className="mb-1.5 text-xs leading-snug text-muted-foreground">
-          {tr('该群组会将多个来源模型聚合为一个对外模型名；这里调整优先级桶时会直接回写来源通道。若某个来源模型被其他群组复用，保存前会提示影响范围。')}
+          {tr('pages.tokenRoutes.routeCard.groupAggregatesMultipleSourceModelsIntoOne')}
         </div>
       ) : !compact && !exactRoute ? (
         <div className="mb-1.5 text-xs leading-snug text-muted-foreground">
-          {tr('通配符路由按请求实时决策；下方优先级桶在整条路由内全局生效，来源模型只作为通道标签展示。')}
+          {tr('pages.tokenRoutes.routeCard.wildcardRoutesDecidePerRequestPriorityBuckets')}
         </div>
       ) : null}
 
       {routeUnits.length > 0 ? (
         <div className="mb-2 flex flex-col gap-1.5">
           <div className="text-xs text-muted-foreground">
-            OAuth 路由池
+            {tr('pages.tokenRoutes.routeCard.oauthRoutes')}
           </div>
           <div className="flex flex-wrap items-center gap-1.5">
             {routeUnits.map((routeUnit) => (
               <ToneBadge
                 tone="-info"
                 key={`route-unit-${String(routeUnit.id)}`}
-                title={`${routeUnit.name?.trim() || 'OAuth 路由池'} · ${routeUnit.memberCount} 个成员 · ${getRouteUnitStrategyLabel(routeUnit.strategy)}`}
+                title={tr('pages.tokenRoutes.routeCard.routeUnitTitle')
+                  .replace('{name}', routeUnit.name?.trim() || tr('pages.tokenRoutes.routeCard.oauthRoutes'))
+                  .replace('{count}', String(routeUnit.memberCount))
+                  .replace('{strategy}', getRouteUnitStrategyLabel(routeUnit.strategy))}
               >
-                {(routeUnit.name?.trim() || 'OAuth 路由池')} · {routeUnit.memberCount} 个成员 · {getRouteUnitStrategyLabel(routeUnit.strategy)}
+                {(routeUnit.name?.trim() || tr('pages.tokenRoutes.routeCard.oauthRoutes'))} · {routeUnit.memberCount} {tr('pages.tokenRoutes.routeCard.members')} {getRouteUnitStrategyLabel(routeUnit.strategy)}
               </ToneBadge>
             ))}
           </div>
@@ -915,7 +911,7 @@ function RouteCardInner({
                 data-tooltip={`${routingStrategyDescription} ${routingStrategyHint}`}
               >
                 <div className="shrink-0 text-xs text-muted-foreground">
-                  {tr('路由策略')}
+                  {tr('pages.settings.routesstrategy')}
                 </div>
                 <div
                   data-testid="compact-route-strategy-select"
@@ -931,8 +927,8 @@ function RouteCardInner({
                     disabled={updatingRoutingStrategy}
                     onChange={(nextValue) => onRoutingStrategyChange(route, nextValue as RouteRoutingStrategy)}
                     options={routingStrategyOptions.map((option) => ({ value: option.value, label: option.label }))}
-                    placeholder={tr('选择路由策略')}
-                    emptyLabel={tr('暂无可选策略')}
+                    placeholder={tr('pages.tokenRoutes.manualRoutePanel.selectroutesstrategy')}
+                    emptyLabel={tr('pages.tokenRoutes.routeCard.noAvailableStrategies')}
                   />
                 </div>
               </div>
@@ -941,7 +937,7 @@ function RouteCardInner({
           ) : (
             <>
               <div className="text-xs text-muted-foreground" data-tooltip={undefined}>
-                {tr('路由策略')}
+                {tr('pages.settings.routesstrategy')}
               </div>
               <div
                 style={{
@@ -956,8 +952,8 @@ function RouteCardInner({
                   disabled={updatingRoutingStrategy}
                   onChange={(nextValue) => onRoutingStrategyChange(route, nextValue as RouteRoutingStrategy)}
                   options={routingStrategyOptions.map((option) => ({ ...option }))}
-                  placeholder={tr('选择路由策略')}
-                  emptyLabel={tr('暂无可选策略')}
+                  placeholder={tr('pages.tokenRoutes.manualRoutePanel.selectroutesstrategy')}
+                  emptyLabel={tr('pages.tokenRoutes.routeCard.noAvailableStrategies')}
                 />
                 <div className="mt-1.5 flex flex-col gap-0.5">
                   <div className="text-xs leading-snug text-muted-foreground">
@@ -979,7 +975,7 @@ function RouteCardInner({
           <div className="flex flex-1 flex-col gap-1">
             {missingTokenSiteItems.length > 0 && (
               <div className="flex flex-wrap items-center gap-1.5">
-                <span className="text-xs text-muted-foreground">{tr('待注册站点')}:</span>
+                <span className="text-xs text-muted-foreground">{tr('pages.tokenRoutes.routeCard.sites')}:</span>
                 {missingTokenSiteItems.map((item) => (
                   <Button
                     key={`missing-${route.id}-${item.key}`}
@@ -987,7 +983,9 @@ function RouteCardInner({
                     onClick={() => onCreateTokenForMissing(item.accountId, routePattern)}
                     variant="secondary"
                     size="sm"
-                    data-tooltip={`点击跳转到令牌创建（预选 ${item.siteName}/${item.accountLabel}）`}
+                    data-tooltip={tr('pages.tokenRoutes.routeCard.createTokenTooltip')
+                      .replace('{site}', item.siteName)
+                      .replace('{account}', item.accountLabel)}
                   >
                     {item.siteName}
                   </Button>
@@ -996,7 +994,7 @@ function RouteCardInner({
             )}
             {missingTokenGroupItems.length > 0 && (
               <div className="flex flex-wrap items-center gap-1.5">
-                <span className="text-xs text-muted-foreground">{tr('缺少分组')}:</span>
+                <span className="text-xs text-muted-foreground">{tr('pages.tokenRoutes.routeCard.missingGroup')}:</span>
                 {missingTokenGroupItems.map((item) => (
                   <Button
                     key={`missing-group-${route.id}-${item.key}`}
@@ -1004,7 +1002,13 @@ function RouteCardInner({
                     onClick={() => onCreateTokenForMissing(item.accountId, routePattern)}
                     variant="secondary"
                     size="sm"
-                    data-tooltip={`缺少分组：${item.missingGroups.join('、') || '未知'}${item.availableGroups.length > 0 ? `；已覆盖：${item.availableGroups.join('、')}` : ''}${item.groupCoverageUncertain ? '；当前分组覆盖存在不确定性' : ''}`}
+                    data-tooltip={[
+                      tr('pages.tokenRoutes.routeCard.missingGroupTooltip').replace('{groups}', item.missingGroups.join(tr('pages.tokenRoutes.listSeparator')) || tr('pages.accounts.unknown2')),
+                      item.availableGroups.length > 0
+                        ? tr('pages.tokenRoutes.routeCard.coveredGroupsTooltip').replace('{groups}', item.availableGroups.join(tr('pages.tokenRoutes.listSeparator')))
+                        : '',
+                      item.groupCoverageUncertain ? tr('pages.tokenRoutes.routeCard.currentGroupCoverageUncertain') : '',
+                    ].filter(Boolean).join('')}
                   >
                     {item.siteName}
                   </Button>
@@ -1020,7 +1024,7 @@ function RouteCardInner({
       {loadingChannels ? (
         <div className="flex items-center gap-2 py-2">
           <LoaderCircle className="size-4 animate-spin" />
-          <span className="text-sm text-muted-foreground">{tr('加载通道中...')}</span>
+          <span className="text-sm text-muted-foreground">{tr('pages.modelTester.channelszh')}</span>
         </div>
       ) : channels && channels.length > 0 ? (
         <div className="flex flex-col gap-1">
@@ -1039,7 +1043,7 @@ function RouteCardInner({
                 {priorityBuckets.map((bucket, bucketIndex) => {
                   const railSection = priorityRailSections[bucketIndex];
                   const railLabel = `P${bucketIndex} · ${bucket.channels.length}`;
-                  const mobileRailLabel = `${railLabel} ${tr('通道')}`;
+                  const mobileRailLabel = `${railLabel} ${tr('pages.tokenRoutes.channels')}`;
                   const railNodeStyle = buildPriorityRailNodeStyle(bucketIndex, false);
                   const showStandaloneCompactRailHeader = compact && detailPanel;
                   const showNewLayerTarget = activeDragChannelId != null
@@ -1116,9 +1120,10 @@ function RouteCardInner({
           </DndContext>
         </div>
       ) : (
-        <div className="pl-1 text-sm text-muted-foreground">
-          {readOnlyRoute ? tr('暂无通道，先补齐连接配置后再重建路由。') : tr('暂无通道')}
-        </div>
+        <EmptyStateBlock
+          className={cn('rounded-md border bg-muted/20', compact ? 'p-4' : 'p-6')}
+          title={readOnlyRoute ? tr('pages.tokenRoutes.routeCard.nonechannelsConfigurationRoutes') : tr('pages.tokenRoutes.routeCard.nonechannels')}
+        />
       )}
     </Card>
   );
@@ -1143,6 +1148,7 @@ function areRouteCardPropsEqual(prev: RouteCardProps, next: RouteCardProps): boo
     || prev.compact !== next.compact
     || prev.summaryExpanded !== next.summaryExpanded
     || prev.detailPanel !== next.detailPanel
+    || prev.showCollapseAction !== next.showCollapseAction
     || prev.onToggleExpand !== next.onToggleExpand
     || prev.onToggleEnabled !== next.onToggleEnabled
   ) {

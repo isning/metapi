@@ -235,6 +235,24 @@ describe('/api/models/marketplace', () => {
         modelActual: 'gpt-4o-mini',
         status: 'success',
         latencyMs: 120,
+        promptTokens: 100,
+        completionTokens: 50,
+        totalTokens: 150,
+        billingDetails: JSON.stringify({
+          usage: {
+            promptTokens: 100,
+            completionTokens: 50,
+            totalTokens: 150,
+            cacheReadTokens: 0,
+            cacheCreationTokens: 0,
+            billablePromptTokens: 100,
+            promptTokensIncludeCache: false,
+          },
+          breakdown: {
+            inputPerMillion: 5,
+            outputPerMillion: 15,
+          },
+        }),
         createdAt: new Date().toISOString(),
       },
       {
@@ -268,6 +286,12 @@ describe('/api/models/marketplace', () => {
           balance: number;
           tokens: Array<{ id: number; name: string; isDefault: boolean }>;
         }>;
+        measuredEntryPricing: {
+          inputPerMillion: number | null;
+          outputPerMillion: number | null;
+          sampleCount: number;
+          lastMeasuredAt: string | null;
+        } | null;
       }>;
       meta: { includePricing: boolean; cacheHit?: boolean };
     };
@@ -287,6 +311,11 @@ describe('/api/models/marketplace', () => {
       tokenCount: 1,
       avgLatency: 100,
       successRate: 50,
+      measuredEntryPricing: {
+        inputPerMillion: 5,
+        outputPerMillion: 15,
+        sampleCount: 1,
+      },
     });
     expect(routedModel?.accounts).toEqual([
       expect.objectContaining({

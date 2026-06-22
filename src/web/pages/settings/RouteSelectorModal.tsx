@@ -16,6 +16,7 @@ import { Input } from '../../components/ui/input/index.js';
 import { ScrollArea } from '../../components/ui/scroll-area/index.js';
 import { Skeleton } from '../../components/ui/skeleton/index.js';
 
+import { tr } from '../../i18n.js';
 type RouteSelectorItem = Pick<RouteSummaryRow, 'id' | 'match' | 'presentation' | 'backend' | 'enabled'>;
 
 type ModalPresence = {
@@ -65,9 +66,9 @@ export default function RouteSelectorModal({
     <Dialog.Root open={presence.shouldRender} onOpenChange={(nextOpen) => { if (!nextOpen) onClose(); }}>
       <Dialog.Content className="max-h-[min(88vh,760px)] max-w-[min(92vw,860px)] overflow-hidden p-0">
         <Dialog.Header className="border-b p-4">
-          <Dialog.Title>勾选模型和群组</Dialog.Title>
+          <Dialog.Title>{tr('pages.settings.downstreamApiKeyModal.modelGroups')}</Dialog.Title>
           <Dialog.Description>
-            选择结果会保存到当前下游 API Key：精确模型用于模型白名单，群组用于路由范围限制。
+            {tr('pages.settings.routeSelectorModal.selectSaveApiKeyModelModelGroups')}
           </Dialog.Description>
         </Dialog.Header>
         <div className="p-4">
@@ -83,9 +84,9 @@ export default function RouteSelectorModal({
                   ? `${filteredExactModelOptions.length}/${exactModelOptions.length}`
                   : exactModelOptions.length})`}
                 searchValue={selectorModelSearch}
-                searchPlaceholder="搜索精确模型（支持模糊匹配）"
+                searchPlaceholder={tr('pages.settings.routeSelectorModal.searchModelSupportedMatch')}
                 onSearchChange={onSelectorModelSearchChange}
-                empty={exactModelOptions.length === 0 ? '暂无可选精确模型' : '没有匹配的精确模型'}
+                empty={exactModelOptions.length === 0 ? tr('pages.settings.routeSelectorModal.noneModel') : tr('pages.settings.routeSelectorModal.matchModel')}
               >
                 {exactModelOptions.length === 0 || filteredExactModelOptions.length === 0 ? null : filteredExactModelOptions.map((modelName) => (
                   <ModelOption
@@ -104,7 +105,7 @@ export default function RouteSelectorModal({
                 searchValue={selectorGroupSearch}
                 searchPlaceholder="Search groups (name / pattern)"
                 onSearchChange={onSelectorGroupSearchChange}
-                empty={groupRouteOptions.length === 0 ? '暂无可选群组' : '没有匹配的群组'}
+                empty={groupRouteOptions.length === 0 ? tr('pages.settings.routeSelectorModal.noneGroups') : tr('pages.settings.routeSelectorModal.matchGroups')}
               >
                 {groupRouteOptions.length === 0 || filteredGroupRouteOptions.length === 0 ? null : filteredGroupRouteOptions.map((route) => (
                   <GroupRouteOption
@@ -119,7 +120,7 @@ export default function RouteSelectorModal({
           )}
         </div>
         <Dialog.Footer className="border-t p-4">
-          <Button type="button" variant="outline" onClick={onClose}>关闭</Button>
+          <Button type="button" variant="outline" onClick={onClose}>{tr('pages.accounts.close')}</Button>
         </Dialog.Footer>
       </Dialog.Content>
     </Dialog.Root>
@@ -222,7 +223,7 @@ function GroupRouteOption({
             ) : null}
           </span>
           <code className="truncate text-xs font-semibold">{routeTitle}</code>
-          {!route.enabled ? <Badge variant="destructive">已禁用</Badge> : null}
+          {!route.enabled ? <Badge variant="destructive">{tr('pages.accounts.disabled2')}</Badge> : null}
         </div>
         <code className="truncate text-xs text-muted-foreground">{getRouteRequestedModelPattern(route)}</code>
       </div>

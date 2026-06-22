@@ -136,7 +136,7 @@ describe('NodeForm', () => {
     });
 
     act(() => {
-      findButtonByText(root.root, 'Remove Operation').props.onClick();
+      findButtonByText(root.root, '移除操作').props.onClick();
     });
     expect(onChange).toHaveBeenLastCalledWith({
       ...node,
@@ -255,7 +255,7 @@ describe('NodeForm', () => {
     for (const button of root.root.findAllByType(Button)) {
       expect(button.props.disabled).toBe(true);
     }
-    const deleteButton = findButtonByText(root.root, 'Delete');
+    const deleteButton = findButtonByText(root.root, '删除');
     expect(deleteButton.props.disabled).toBe(true);
 
     act(() => {

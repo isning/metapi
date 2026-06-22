@@ -7,6 +7,7 @@ import type { RouteSummaryRow } from '../token-routes/types.js';
 import { Button } from '../../components/ui/button/index.js';
 import { LoaderCircle } from 'lucide-react';
 import { Textarea } from '../../components/ui/textarea/index.js';
+import JsonCodeEditor from '../../components/JsonCodeEditor.js';
 import { Input } from '../../components/ui/input/index.js';
 import { Checkbox } from '../../components/ui/checkbox/index.js';
 import { cn } from '../../lib/utils.js';
@@ -17,6 +18,7 @@ import {
   resolveRouteTitle,
 } from '../token-routes/utils.js';
 
+import { tr } from '../../i18n.js';
 const PROXY_TOKEN_PREFIX = 'sk-';
 
 export type DownstreamExcludedCredentialRef =
@@ -224,7 +226,7 @@ export function TagInput({
               onChange(tags.slice(0, -1));
             }
           }}
-          placeholder={placeholder || '输入标签后按回车或逗号'}
+          placeholder={placeholder || tr('pages.downstreamKeys.downstreamKeyEditorModal.enterTagPressEnterComma')}
         />
       </div>
       {suggestionPool.length > 0 ? (
@@ -350,31 +352,31 @@ export default function DownstreamKeyEditorModal({
     <CenteredModal
       open={open}
       onClose={onClose}
-      title={editingItem ? '编辑下游密钥' : '新增下游密钥'}
+      title={editingItem ? tr('pages.downstreamKeys.downstreamKeyEditorModal.editdownstreamKeys') : tr('pages.downstreamKeys.downstreamKeyEditorModal.newDownstreamKey')}
       maxWidth={860}
       bodyStyle={{ display: 'flex', flexDirection: 'column', gap: 12 }}
       footer={(
         <>
-          <Button type="button" variant="outline" onClick={onClose} disabled={saving}>取消</Button>
+          <Button type="button" variant="outline" onClick={onClose} disabled={saving}>{tr('app.cancel')}</Button>
           <Button type="button" onClick={onSave} disabled={saving}>
             {saving
-              ? <><LoaderCircle className="size-4 animate-spin" /> 保存中...</>
-              : (editingItem ? '保存修改' : '创建密钥')}
+              ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.accounts.saving')}</>
+              : (editingItem ? tr('pages.accounts.saveChanges') : tr('pages.downstreamKeys.downstreamKeyEditorModal.createKey'))}
           </Button>
         </>
       )}
     >
       <InfoNote>
-        支持为每个下游密钥独立配置分组、标签、额度与有效期。高级限制项可按需展开。
+        {tr('pages.downstreamKeys.downstreamKeyEditorModal.supportedDownstreamKeysConfigurationgroupTagsQuotaHigh')}
       </InfoNote>
 
       <div className="grid grid-cols-1 gap-3">
         <div className="grid gap-1.5">
-          <div className="text-xs font-medium text-muted-foreground">名称</div>
-          <Input value={form.name} onChange={(e) => onChange((prev) => ({ ...prev, name: e.target.value }))} placeholder="例如：项目 A / 移动端" />
+          <div className="text-xs font-medium text-muted-foreground">{tr('pages.models.name')}</div>
+          <Input value={form.name} onChange={(e) => onChange((prev) => ({ ...prev, name: e.target.value }))} placeholder={tr('pages.downstreamKeys.downstreamKeyEditorModal.text1j99kub')} />
         </div>
         <div className="grid gap-1.5">
-          <div className="text-xs font-medium text-muted-foreground">下游密钥</div>
+          <div className="text-xs font-medium text-muted-foreground">{tr('app.downstreamKeys')}</div>
           <div className="flex min-w-0 items-stretch gap-2">
             <Input
               value={form.key}
@@ -388,96 +390,98 @@ export default function DownstreamKeyEditorModal({
              
               onClick={() => onChange((prev) => ({ ...prev, key: generateDownstreamSkKey(PROXY_TOKEN_PREFIX) }))}
             >
-              随机
+              {tr('pages.downstreamKeys.downstreamKeyEditorModal.random')}
             </Button>
           </div>
         </div>
         <div className="grid gap-1.5">
-          <div className="text-xs font-medium text-muted-foreground">主分组</div>
+          <div className="text-xs font-medium text-muted-foreground">{tr('pages.downstreamKeys.primaryGroup')}</div>
           <Input
             value={form.groupName}
             onChange={(e) => onChange((prev) => ({ ...prev, groupName: e.target.value }))}
-            placeholder="例如：VIP / 内部项目 / A组"
+            placeholder={tr('pages.downstreamKeys.downstreamKeyEditorModal.vip')}
             list="downstream-group-suggestions"
           />
         </div>
         <div className="grid gap-1.5">
-          <div className="text-xs font-medium text-muted-foreground">请求额度</div>
-          <Input value={form.maxRequests} onChange={(e) => onChange((prev) => ({ ...prev, maxRequests: e.target.value }))} placeholder="留空表示不限" />
+          <div className="text-xs font-medium text-muted-foreground">{tr('pages.downstreamKeys.downstreamKeyEditorModal.requestQuota')}</div>
+          <Input value={form.maxRequests} onChange={(e) => onChange((prev) => ({ ...prev, maxRequests: e.target.value }))} placeholder={tr('pages.downstreamKeys.downstreamKeyEditorModal.leaveEmptyUnlimited')} />
         </div>
         <div className="grid gap-1.5">
-          <div className="text-xs font-medium text-muted-foreground">成本额度</div>
-          <Input value={form.maxCost} onChange={(e) => onChange((prev) => ({ ...prev, maxCost: e.target.value }))} placeholder="留空表示不限" />
+          <div className="text-xs font-medium text-muted-foreground">{tr('pages.downstreamKeys.downstreamKeyEditorModal.costquota')}</div>
+          <Input value={form.maxCost} onChange={(e) => onChange((prev) => ({ ...prev, maxCost: e.target.value }))} placeholder={tr('pages.downstreamKeys.downstreamKeyEditorModal.leaveEmptyUnlimited')} />
         </div>
         <div className="grid gap-1.5">
-          <div className="text-xs font-medium text-muted-foreground">过期时间</div>
+          <div className="text-xs font-medium text-muted-foreground">{tr('pages.downstreamKeys.downstreamKeyEditorModal.expiredtime')}</div>
           <Input type="datetime-local" value={form.expiresAt} onChange={(e) => onChange((prev) => ({ ...prev, expiresAt: e.target.value }))} />
         </div>
         <label className="flex items-start gap-3 rounded-md border p-3">
           <Checkbox checked={form.enabled} onCheckedChange={(checked) => onChange((prev) => ({ ...prev, enabled: checked === true }))} />
           <div>
-            <div className="text-sm font-medium">创建后立即启用</div>
-            <div className="text-xs text-muted-foreground">关闭后该密钥将无法继续分发请求</div>
+            <div className="text-sm font-medium">{tr('pages.downstreamKeys.downstreamKeyEditorModal.enabled')}</div>
+            <div className="text-xs text-muted-foreground">{tr('pages.downstreamKeys.downstreamKeyEditorModal.closeKeyNoneRequest')}</div>
           </div>
         </label>
       </div>
 
       <div className="grid gap-1.5">
-        <div className="text-xs font-medium text-muted-foreground">备注说明</div>
+        <div className="text-xs font-medium text-muted-foreground">{tr('pages.downstreamKeys.downstreamKeyEditorModal.notes')}</div>
         <Textarea
           value={form.description}
           onChange={(e) => onChange((prev) => ({ ...prev, description: e.target.value }))}
-          placeholder="填写业务场景、负责人或限制说明"
+          placeholder={tr('pages.downstreamKeys.downstreamKeyEditorModal.enterBusinessContextOwnerRestrictionNotes')}
           className="min-h-21 resize-y"
         />
       </div>
 
       <div className="grid gap-1.5">
-        <div className="text-xs font-medium text-muted-foreground">标签</div>
+        <div className="text-xs font-medium text-muted-foreground">{tr('pages.downstreamKeys.tags2')}</div>
         <TagInput
           tags={form.tags}
           onChange={(tags) => onChange((prev) => ({ ...prev, tags }))}
           suggestions={tagSuggestions}
-          placeholder="输入标签后按回车或逗号，例如：移动端、VIP、项目A"
+          placeholder={tr('pages.downstreamKeys.downstreamKeyEditorModal.enterTagPressEnterCommaVip')}
         />
-        <div className="text-xs text-muted-foreground">标签用于搜索、筛选和辅助归类，不影响路由与权限。</div>
+        <div className="text-xs text-muted-foreground">{tr('pages.downstreamKeys.downstreamKeyEditorModal.tagsSearchFilterRoutes')}</div>
       </div>
 
       <div className="grid gap-3">
         <Button type="button" variant="outline" className="w-full justify-between" onClick={() => setAdvancedOpen((value) => !value)}>
-          <span>高级配置</span>
-          <span className="text-xs text-muted-foreground">{advancedOpen ? '收起' : '展开'}</span>
+          <span>{tr('pages.downstreamKeys.downstreamKeyEditorModal.highConfiguration')}</span>
+          <span className="text-xs text-muted-foreground">{advancedOpen ? tr('pages.accounts.collapse') : tr('pages.proxyLogs.expand')}</span>
         </Button>
         {advancedOpen ? (
-          <div className="grid gap-3">
+          <div className="grid gap-3" data-testid="downstream-editor-details-grid">
             <div className="grid gap-1.5">
-              <div className="text-xs font-medium text-muted-foreground">站点倍率 JSON</div>
-              <Textarea
+              <div className="text-xs font-medium text-muted-foreground">{tr('pages.downstreamKeys.downstreamKeyEditorModal.sitesmultiplierJson')}</div>
+              <JsonCodeEditor
                 value={form.siteWeightMultipliersText}
-                onChange={(e) => onChange((prev) => ({ ...prev, siteWeightMultipliersText: e.target.value }))}
-                placeholder={'例如：{\n  "1": 1.2,\n  "7": 0.8\n}'}
-                className="min-h-24 resize-y font-mono"
+                onChange={(value) => onChange((prev) => ({ ...prev, siteWeightMultipliersText: value }))}
+                placeholder={tr('pages.downstreamKeys.downstreamKeyEditorModal.site12Backup08')}
+                minHeight={180}
+                maxHeight={360}
+                ariaLabel={tr('pages.downstreamKeys.downstreamKeyEditorModal.sitesmultiplierJson')}
               />
-              <div className="text-xs text-muted-foreground">用于对特定站点做分发倍率微调；留空或 `{}` 表示走默认倍率。</div>
+              <div className="text-xs text-muted-foreground">{tr('pages.downstreamKeys.downstreamKeyEditorModal.sitesMultiplier')}{}{tr('pages.downstreamKeys.downstreamKeyEditorModal.defaultmultiplier')}</div>
             </div>
 
             <div className="grid grid-cols-1 gap-3">
-              <div className="grid gap-3 rounded-md border p-3">
+              <div className="grid gap-3 rounded-md border p-3" data-testid="downstream-editor-model-panel">
                 <div className="flex items-center justify-between gap-2">
                   <div>
-                    <div className="text-sm font-semibold text-foreground">模型白名单</div>
-                    <div className="text-xs text-muted-foreground">只展示精确模型；未勾选时默认不允许任何精确模型，可点“全选”一次性放开。</div>
+                    <div className="text-sm font-semibold text-foreground">{tr('pages.downstreamKeys.downstreamKeyEditorModal.model')}</div>
+                    <div className="text-xs text-muted-foreground">{tr('pages.downstreamKeys.downstreamKeyEditorModal.modelDefaultModelSelectAll')}</div>
                   </div>
                   <div className="flex items-center gap-2">
-                    <Button variant="outline" type="button" onClick={() => onChange((prev) => ({ ...prev, selectedModels: exactModels }))}>全选</Button>
-                    <Button variant="outline" type="button" onClick={() => onChange((prev) => ({ ...prev, selectedModels: [] }))}>清空</Button>
+                    <Button variant="outline" type="button" onClick={() => onChange((prev) => ({ ...prev, selectedModels: exactModels }))}>{tr('pages.tokenRoutes.selectAll')}</Button>
+                    <Button variant="outline" type="button" onClick={() => onChange((prev) => ({ ...prev, selectedModels: [] }))}>{tr('components.notificationPanel.clear')}</Button>
                   </div>
                 </div>
-                <div className="text-xs text-muted-foreground">已选 {selectedModelCount} 个模型</div>
-                <SearchInput value={modelSearch} onChange={(e) => setModelSearch(e.target.value)} placeholder="搜索模型" />
+                <div className="text-xs text-muted-foreground">{tr('pages.downstreamKeys.downstreamKeyEditorModal.selected')} {selectedModelCount} {tr('pages.models.models2')}</div>
+                <SearchInput value={modelSearch} onChange={(e) => setModelSearch(e.target.value)} placeholder={tr('pages.downstreamKeys.downstreamKeyEditorModal.searchmodel')} />
                 <div className="flex max-h-70 flex-col gap-2 overflow-y-auto">
                   {filteredModels.length === 0 ? (
-                    <div className="text-xs text-muted-foreground">暂无匹配模型</div>
+                    <div className="text-xs text-muted-foreground">{tr('pages.downstreamKeys.downstreamKeyEditorModal.nonematchmodel')}</div>
                   ) : filteredModels.map((model) => {
                     const checked = form.selectedModels.includes(model);
                     return (
@@ -485,7 +489,7 @@ export default function DownstreamKeyEditorModal({
                         <SelectableRow checked={checked} className="items-center">
                         <Checkbox
                           checked={checked}
-                          onChange={() => onChange((prev) => ({
+                          onCheckedChange={() => onChange((prev) => ({
                             ...prev,
                             selectedModels: checked ? prev.selectedModels.filter((item) => item !== model) : [...prev.selectedModels, model],
                           }))}
@@ -498,22 +502,22 @@ export default function DownstreamKeyEditorModal({
                 </div>
               </div>
 
-              <div className="grid gap-3 rounded-md border p-3">
+              <div className="grid gap-3 rounded-md border p-3" data-testid="downstream-editor-group-panel">
                 <div className="flex items-center justify-between gap-2">
                   <div>
-                    <div className="text-sm font-semibold text-foreground">群组范围</div>
-                    <div className="text-xs text-muted-foreground">限制可访问的群组路由；未勾选时默认不允许任何群组，可点“全选”一次性放开。</div>
+                    <div className="text-sm font-semibold text-foreground">{tr('pages.downstreamKeys.downstreamKeyEditorModal.groups2')}</div>
+                    <div className="text-xs text-muted-foreground">{tr('pages.downstreamKeys.downstreamKeyEditorModal.accessGroupRoutesDefaultGroupsSelectAll')}</div>
                   </div>
                   <div className="flex items-center gap-2">
-                    <Button variant="outline" type="button" onClick={() => onChange((prev) => ({ ...prev, selectedGroupRouteIds: groupRouteOptions.map((route) => route.id) }))}>全选</Button>
-                    <Button variant="outline" type="button" onClick={() => onChange((prev) => ({ ...prev, selectedGroupRouteIds: [] }))}>清空</Button>
+                    <Button variant="outline" type="button" onClick={() => onChange((prev) => ({ ...prev, selectedGroupRouteIds: groupRouteOptions.map((route) => route.id) }))}>{tr('pages.tokenRoutes.selectAll')}</Button>
+                    <Button variant="outline" type="button" onClick={() => onChange((prev) => ({ ...prev, selectedGroupRouteIds: [] }))}>{tr('components.notificationPanel.clear')}</Button>
                   </div>
                 </div>
-                <div className="text-xs text-muted-foreground">已选 {selectedGroupCount} 个群组</div>
-                <SearchInput value={groupSearch} onChange={(e) => setGroupSearch(e.target.value)} placeholder="搜索群组或模型模式" />
+                <div className="text-xs text-muted-foreground">{tr('pages.downstreamKeys.downstreamKeyEditorModal.selected')} {selectedGroupCount} {tr('pages.downstreamKeys.downstreamKeyEditorModal.groups')}</div>
+                <SearchInput value={groupSearch} onChange={(e) => setGroupSearch(e.target.value)} placeholder={tr('pages.downstreamKeys.downstreamKeyEditorModal.searchgroupsModelmode')} />
                 <div className="flex max-h-70 flex-col gap-2 overflow-y-auto">
                   {filteredGroups.length === 0 ? (
-                    <div className="text-xs text-muted-foreground">暂无匹配群组</div>
+                    <div className="text-xs text-muted-foreground">{tr('pages.downstreamKeys.downstreamKeyEditorModal.nonematchgroups')}</div>
                   ) : filteredGroups.map((route) => {
                     const checked = normalizedSelectedGroupRouteIds.includes(route.id);
                     return (
@@ -532,7 +536,7 @@ export default function DownstreamKeyEditorModal({
                         <div className="min-w-0">
                           <div className="text-sm font-semibold text-foreground">
                             {routeTitle(route)}
-                            {!route.enabled ? <span className="ml-2 text-xs text-destructive">已禁用</span> : null}
+                            {!route.enabled ? <span className="ml-2 text-xs text-destructive">{tr('pages.accounts.disabled2')}</span> : null}
                           </div>
                           <code className="mt-1 block text-xs text-muted-foreground">{getRouteRequestedModelPattern(route)}</code>
                         </div>
@@ -546,18 +550,18 @@ export default function DownstreamKeyEditorModal({
               <div className="grid gap-3 rounded-md border p-3">
                 <div className="flex items-center justify-between gap-2">
                   <div>
-                    <div className="text-sm font-semibold text-foreground">排除站点</div>
-                    <div className="text-xs text-muted-foreground">命中的站点会直接跳过，不参与当前下游密钥的通道路由。</div>
+                    <div className="text-sm font-semibold text-foreground">{tr('pages.downstreamKeys.downstreamKeyEditorModal.sites')}</div>
+                    <div className="text-xs text-muted-foreground">{tr('pages.downstreamKeys.downstreamKeyEditorModal.zhSitesJumpOverDownstreamKeysChannelsroutes')}</div>
                   </div>
-                  <Button variant="outline" type="button" onClick={() => onChange((prev) => ({ ...prev, excludedSiteIds: [] }))}>清空</Button>
+                  <Button variant="outline" type="button" onClick={() => onChange((prev) => ({ ...prev, excludedSiteIds: [] }))}>{tr('components.notificationPanel.clear')}</Button>
                 </div>
-                <div className="text-xs text-muted-foreground">已排除 {form.excludedSiteIds.length} 个站点</div>
-                <SearchInput value={siteSearch} onChange={(e) => setSiteSearch(e.target.value)} placeholder="搜索站点" />
+                <div className="text-xs text-muted-foreground">{tr('pages.downstreamKeys.downstreamKeyEditorModal.excluded')} {form.excludedSiteIds.length} {tr('components.searchModal.sites')}</div>
+                <SearchInput value={siteSearch} onChange={(e) => setSiteSearch(e.target.value)} placeholder={tr('pages.downstreamKeys.downstreamKeyEditorModal.searchsites')} />
                 <div className="flex max-h-60 flex-col gap-2 overflow-y-auto">
                   {exclusionSourceLoading ? (
-                    <div className="text-xs text-muted-foreground">加载站点与令牌中...</div>
+                    <div className="text-xs text-muted-foreground">{tr('pages.downstreamKeys.downstreamKeyEditorModal.sitesTokenzh')}</div>
                   ) : filteredSites.length === 0 ? (
-                    <div className="text-xs text-muted-foreground">暂无可排除站点</div>
+                    <div className="text-xs text-muted-foreground">{tr('pages.downstreamKeys.downstreamKeyEditorModal.noneSites')}</div>
                   ) : filteredSites.map((site) => {
                     const checked = form.excludedSiteIds.includes(site.siteId);
                     return (
@@ -575,7 +579,7 @@ export default function DownstreamKeyEditorModal({
                           }))}            />
                         <div className="min-w-0">
                           <div className="text-sm font-semibold text-foreground">{site.siteName}</div>
-                          <div className="mt-1 text-xs text-muted-foreground">{site.accountCount} 个账号</div>
+                          <div className="mt-1 text-xs text-muted-foreground">{site.accountCount} {tr('components.searchModal.accounts')}</div>
                         </div>
                         </SelectableRow>
                       </label>
@@ -587,18 +591,18 @@ export default function DownstreamKeyEditorModal({
               <div className="grid gap-3 rounded-md border p-3">
                 <div className="flex items-center justify-between gap-2">
                   <div>
-                    <div className="text-sm font-semibold text-foreground">排除 API Key/令牌</div>
-                    <div className="text-xs text-muted-foreground">支持排除显式令牌，以及 `tokenId` 为空时实际使用的默认 API Key。</div>
+                    <div className="text-sm font-semibold text-foreground">{tr('pages.downstreamKeys.downstreamKeyEditorModal.apiKeyToken')}</div>
+                    <div className="text-xs text-muted-foreground">{tr('pages.downstreamKeys.downstreamKeyEditorModal.supportedTokenTokenidUsageDefaultApiKey')}</div>
                   </div>
-                  <Button variant="outline" type="button" onClick={() => onChange((prev) => ({ ...prev, excludedCredentialRefs: [] }))}>清空</Button>
+                  <Button variant="outline" type="button" onClick={() => onChange((prev) => ({ ...prev, excludedCredentialRefs: [] }))}>{tr('components.notificationPanel.clear')}</Button>
                 </div>
-                <div className="text-xs text-muted-foreground">已排除 {form.excludedCredentialRefs.length} 个凭证</div>
-                <SearchInput value={credentialSearch} onChange={(e) => setCredentialSearch(e.target.value)} placeholder="搜索站点 / 账号 / 令牌" />
+                <div className="text-xs text-muted-foreground">{tr('pages.downstreamKeys.downstreamKeyEditorModal.excluded')} {form.excludedCredentialRefs.length} {tr('pages.downstreamKeys.downstreamKeyEditorModal.credentials')}</div>
+                <SearchInput value={credentialSearch} onChange={(e) => setCredentialSearch(e.target.value)} placeholder={tr('pages.downstreamKeys.downstreamKeyEditorModal.searchsitesAccountsToken')} />
                 <div className="flex max-h-70 flex-col gap-2 overflow-y-auto">
                   {exclusionSourceLoading ? (
-                    <div className="text-xs text-muted-foreground">加载站点与令牌中...</div>
+                    <div className="text-xs text-muted-foreground">{tr('pages.downstreamKeys.downstreamKeyEditorModal.sitesTokenzh')}</div>
                   ) : filteredCredentials.length === 0 ? (
-                    <div className="text-xs text-muted-foreground">暂无可排除 API Key/令牌</div>
+                    <div className="text-xs text-muted-foreground">{tr('pages.downstreamKeys.downstreamKeyEditorModal.noneApiKeyToken')}</div>
                   ) : filteredCredentials.map((item) => {
                     const checked = form.excludedCredentialRefs.some((ref) => buildExcludedCredentialRefKey(ref) === buildExcludedCredentialRefKey(item.ref));
                     return (

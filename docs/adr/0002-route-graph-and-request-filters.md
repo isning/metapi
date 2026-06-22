@@ -1054,7 +1054,9 @@ type CandidateSelectorMacroConfig = {
     enabled: boolean;
     priority: number;
     input:
-      | { kind: 'route_ids'; routeIds: number[] }
+      // Superseded by ADR-0006/ADR-0007. New graphs use
+      // { kind: 'route_endpoints'; endpointIds: string[] }.
+      | { kind: 'route_endpoints'; endpointIds: string[] }
       | { kind: 'model_pattern'; pattern: string }
       | { kind: 'metadata_query'; cel: string }
       | { kind: 'endpoint_query'; cel: string }
@@ -1086,7 +1088,7 @@ type CandidateSelectorMacroConfig = {
 Candidate group semantics:
 
 - `groups[]` are priority bands, not merely a flat candidate list;
-- each group may resolve candidates by route IDs, patterns, CEL, endpoint
+- each group may resolve candidates by route endpoints, patterns, CEL, endpoint
   metadata, inline endpoints, or synthetic fallback definitions;
 - `priority` is band ordering and controls lowering order;
 - `defaults` are applied to resolved candidates unless overridden by the
@@ -1146,7 +1148,7 @@ token_routes row for group
   -> candidate_selector macro shell
 
 route_group_sources rows
-  -> candidate_selector.groups[].input when the source is route-id based
+  -> candidate_selector.groups[].input route endpoint references
 
 token_routes.displayName / graph match.displayName
   -> candidate_selector.surface.entry.match.displayName
@@ -1167,8 +1169,8 @@ groups = sourceRouteIds.map((routeId, index) => ({
   enabled: true,
   priority: index,
   input: {
-    kind: 'route_ids',
-    routeIds: [routeId],
+    kind: 'route_endpoints',
+    endpointIds: [`route-endpoint:product:route:${routeId}`],
   },
   defaults: {
     weight: 10,
@@ -1246,6 +1248,44 @@ model availability + accounts + tokens + presets
 Automatic builders should generate macros when the operator-facing concept is
 semantic, and primitive nodes when the concept is already primitive.
 
+### Graph-native Automatic Route Construction
+
+Automatic route construction must surface generated routes as semantic graph
+objects first. A route created from model availability is not merely a hidden
+`entry -> dispatcher -> model_endpoint` fragment; it is an operator-visible
+**Model Group** / `candidate_selector` macro whose generated primitive route
+resources are implementation detail.
+
+Default route graph view rules:
+
+- show `auto_generated` macros by default;
+- hide their generated primitive entry/dispatcher/endpoint resources by
+  default;
+- show generated primitives only in explicit compiled/debug view, or when a
+  single macro is expanded for inspection;
+- never show a macro and the same macro's generated primitive representation as
+  two independent editable concepts in the normal semantic editor.
+
+Automatic exact-model routes are represented as a read-only
+`candidate_selector` macro with:
+
+- `ownership: 'auto_generated'`;
+- `surface.entry.kind: 'external'`;
+- `surface.entry.visibility: 'public'`;
+- `surface.output: 'route'`;
+- one route-id backed group pointing at the generated executable route resource;
+- a stable id `route:<legacyRouteId>:model-group`.
+
+The generated primitive legacy route resource may still exist in the semantic
+source as an internal compatibility projection so the macro resolver and
+runtime binding exporter can reuse the same `route_channels` execution data.
+The generated endpoint resource and generated edges should be marked as
+projection/generated metadata where the node kind supports metadata, and none
+of those primitives may be presented as the primary editable route. A future
+migration may replace this compatibility resource with macro-owned inline
+endpoint materialization, but the user-facing contract remains the same:
+automatic route construction emits semantic macros.
+
 Generated primitive nodes must use the same final node vocabulary:
 
 - discovered public model -> `entry`;
@@ -1290,9 +1330,11 @@ legacy token_routes / route_group_sources / route_channels
 
 Mapping:
 
-- legacy exact or pattern route -> route-like semantic object, or directly to
-  public `entry` + route-mode `dispatcher` + `model_endpoint` when no higher
-  semantic editor is needed;
+- legacy exact or pattern route produced by automatic construction -> read-only
+  `candidate_selector` macro plus hidden generated route resource;
+- legacy manual exact or pattern route -> route-like semantic object, or
+  directly to public `entry` + route-mode `dispatcher` + `model_endpoint` when
+  no higher semantic editor is needed;
 - legacy explicit group -> `Model Group` preset backed by a
   `candidate_selector` macro with route-id based priority bands;
 - legacy route channel -> `model_endpoint.config.targets[]`;

@@ -4,6 +4,7 @@ import { Alert, AlertDescription } from '../../components/ui/alert/index.js';
 import { Button } from '../../components/ui/button/index.js';
 import { Textarea } from '../../components/ui/textarea/index.js';
 
+import { tr } from '../../i18n.js';
 type ModalPresence = {
   shouldRender: boolean;
   isVisible: boolean;
@@ -40,31 +41,31 @@ export default function ModelAvailabilityProbeConfirmModal({
     <CenteredModal
       open={presence.shouldRender}
       onClose={handleRequestClose}
-      title="确认开启批量测活"
+      title={tr('pages.settings.modelAvailabilityProbeConfirmModal.turnOnbatchHealthCheck')}
       maxWidth={760}
       closeOnBackdrop
       footer={(
         <>
-          <Button type="button" variant="outline" onClick={handleRequestClose} disabled={saving}>取消</Button>
+          <Button type="button" variant="outline" onClick={handleRequestClose} disabled={saving}>{tr('app.cancel')}</Button>
           <Button type="button" variant="destructive" onClick={onConfirm} disabled={saving || !canConfirm}>
-            {saving ? '确认开启中...' : '确认开启批量测活'}
+            {saving ? tr('pages.settings.modelAvailabilityProbeConfirmModal.turnOnzh') : tr('pages.settings.modelAvailabilityProbeConfirmModal.turnOnbatchHealthCheck')}
           </Button>
         </>
       )}
     >
       <Alert variant="destructive">
         <AlertDescription>
-          开启后，metapi 会在后台对活跃账号模型做最小化探测请求。这可能被部分中转站视为批量测活或异常行为，请务必先确认你的中转站明确允许此类探测。
+          {tr('pages.settings.modelAvailabilityProbeConfirmModal.turnMetapiAccountModelRequestZhBatch')}
         </AlertDescription>
       </Alert>
-      <div className="text-sm text-muted-foreground">请手动输入以下整句后再开启：</div>
+      <div className="text-sm text-muted-foreground">{tr('pages.settings.modelAvailabilityProbeConfirmModal.manualinputTurn')}</div>
       <div className="rounded-md border bg-background p-3 text-sm text-foreground">
         {confirmText}
       </div>
       <Textarea
         value={confirmationInput}
         onChange={(e) => onConfirmationInputChange(e.target.value)}
-        placeholder="请输入上方确认语句"
+        placeholder={tr('pages.settings.modelAvailabilityProbeConfirmModal.enterConfirmationPhraseAbove')}
         spellCheck={false}
       />
     </CenteredModal>

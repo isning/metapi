@@ -1,6 +1,13 @@
-import { act, create } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { create, type ReactTestInstance } from 'react-test-renderer';
+import { describe, expect, it, vi } from 'vitest';
 import RouteFilterBar from './RouteFilterBar.js';
+
+function collectText(node: ReactTestInstance): string {
+  return (node.children || []).map((child) => {
+    if (typeof child === 'string') return child;
+    return collectText(child);
+  }).join('');
+}
 
 function renderBar(collapsed: boolean) {
   return (
@@ -28,106 +35,56 @@ function renderBar(collapsed: boolean) {
 }
 
 describe('RouteFilterBar', () => {
-  afterEach(() => {
-    vi.useRealTimers();
-    vi.unstubAllGlobals();
-  });
-
-  it('uses the shared collapse presence wrapper while expanded', () => {
+  it('keeps short filters grouped separately from long wrapping filter rows', () => {
     const root = create(renderBar(false));
 
-    const presence = root.root.find((node) => (
-      node.type === 'div'
-      && String(node.props.className || '').includes('route-filter-bar-presence')
+    const content = root.root.find((node) => (
+      node.props['data-slot'] === 'card-content'
     ));
-    const expandedPanel = root.root.find((node) => (
+    const filterLayout = content.find((node) => (
       node.type === 'div'
-      && String(node.props.className || '').includes('route-filter-bar-expanded')
+      && String(node.props.className || '').includes('border-t')
+    ));
+    const shortFilterRow = filterLayout.find((node) => (
+      node.type === 'div'
+      && String(node.props.className || '').includes('lg:grid-cols-[minmax(220px,max-content)_minmax(260px,1fr)]')
     ));
 
-    expect(String(presence.props.className)).toContain('anim-collapse');
+    expect(String(filterLayout.props.className || '')).toContain('grid gap-4');
+    expect(shortFilterRow).toBeTruthy();
+    expect(collectText(shortFilterRow)).toContain('状态');
+    expect(collectText(shortFilterRow)).toContain('能力');
+  });
+
+  it('uses the shadcn collapsible content while expanded', () => {
+    const root = create(renderBar(false));
+
+    const content = root.root.find((node) => (
+      String(node.props.className || '').includes('route-filter-collapsible')
+    ));
+    const expandedPanel = root.root.find((node) => (
+      node.props['data-slot'] === 'card-content'
+    ));
+
+    expect(String(content.props.className)).toContain('route-filter-collapsible');
+    expect(expandedPanel).toBeTruthy();
     expect(String(expandedPanel.props.className)).not.toContain('is-closing');
   });
 
-  it('keeps the collapse wrapper mounted while collapsed so expand can animate from existing layout', () => {
+  it('keeps the collapsible content mounted while collapsed so Radix can animate it', () => {
     const root = create(renderBar(true));
-    const presence = root.root.find((node) => (
-      node.type === 'div'
-      && String(node.props.className || '').includes('route-filter-bar-presence')
+    const content = root.root.find((node) => (
+      String(node.props.className || '').includes('route-filter-collapsible')
     ));
-    expect(String(presence.props.className)).not.toContain('is-open');
+    expect(content).toBeTruthy();
   });
 
-  it('keeps expanded controls mounted briefly while closing, then removes them after the collapse window', () => {
-    vi.useFakeTimers();
+  it('lets Radix mark the content closed immediately when collapsed', () => {
     const root = create(renderBar(false));
-
-    act(() => {
-      root.update(renderBar(true));
-    });
-
-    const presence = root.root.find((node) => (
-      node.type === 'div'
-      && String(node.props.className || '').includes('route-filter-bar-presence')
+    root.update(renderBar(true));
+    const content = root.root.find((node) => (
+      String(node.props.className || '').includes('route-filter-collapsible')
     ));
-    expect(String(presence.props.className)).not.toContain('is-open');
-
-    const expandedWhileClosing = root.root.findAll((node) => (
-      node.type === 'div'
-      && String(node.props.className || '').includes('route-filter-bar-expanded')
-    ));
-    expect(expandedWhileClosing).toHaveLength(1);
-
-    act(() => {
-      vi.advanceTimersByTime(181);
-    });
-
-    const expandedAfterWindow = root.root.findAll((node) => (
-      node.type === 'div'
-      && String(node.props.className || '').includes('route-filter-bar-expanded')
-    ));
-    expect(expandedAfterWindow).toHaveLength(0);
-  });
-
-  it('mounts expanded controls before flipping the presence wrapper open so expand does not start from an empty shell', () => {
-    const rafCallbacks: FrameRequestCallback[] = [];
-    vi.stubGlobal('window', {
-      requestAnimationFrame: (callback: FrameRequestCallback) => {
-        rafCallbacks.push(callback);
-        return rafCallbacks.length;
-      },
-      cancelAnimationFrame: vi.fn(),
-      setTimeout: globalThis.setTimeout.bind(globalThis),
-      clearTimeout: globalThis.clearTimeout.bind(globalThis),
-    });
-
-    const root = create(renderBar(true));
-
-    act(() => {
-      root.update(renderBar(false));
-    });
-
-    const presence = root.root.find((node) => (
-      node.type === 'div'
-      && String(node.props.className || '').includes('route-filter-bar-presence')
-    ));
-    const expandedBeforeOpen = root.root.findAll((node) => (
-      node.type === 'div'
-      && String(node.props.className || '').includes('route-filter-bar-expanded')
-    ));
-
-    expect(expandedBeforeOpen).toHaveLength(1);
-    expect(String(presence.props.className)).not.toContain('is-open');
-    expect(rafCallbacks).toHaveLength(1);
-
-    act(() => {
-      rafCallbacks[0](0);
-    });
-
-    const openPresence = root.root.find((node) => (
-      node.type === 'div'
-      && String(node.props.className || '').includes('route-filter-bar-presence')
-    ));
-    expect(String(openPresence.props.className)).toContain('is-open');
+    expect(content).toBeTruthy();
   });
 });

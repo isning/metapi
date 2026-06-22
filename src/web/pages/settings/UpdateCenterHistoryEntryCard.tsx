@@ -2,6 +2,7 @@ import { Button } from '../../components/ui/button/index.js';
 import ToneBadge from '../../components/ToneBadge.js';
 import { Card, CardContent } from '../../components/ui/card/index.js';
 import { cn } from '../../lib/utils.js';
+import { tr } from '../../i18n.js';
 export type UpdateCenterHistoryEntry = {
   revision?: string;
   updatedAt?: string | null;
@@ -44,11 +45,11 @@ export default function UpdateCenterHistoryEntryCard({
           </div>
           <div className="flex flex-wrap gap-1.5">
             {entry?.status ? <ToneBadge tone="-muted">{entry.status}</ToneBadge> : null}
-            {isCurrentRevision ? <ToneBadge tone="-info">当前运行</ToneBadge> : null}
+            {isCurrentRevision ? <ToneBadge tone="-info">{tr('pages.helpers.updateCenterPresentation.currentlyRunning')}</ToneBadge> : null}
           </div>
         </div>
         <div className="font-mono text-sm font-semibold text-foreground">
-          {formatImageTarget(entry?.imageTag, entry?.imageDigest) || '未记录镜像信息'}
+          {formatImageTarget(entry?.imageTag, entry?.imageDigest) || tr('pages.settings.updateCenterHistoryEntryCard.notRecordedInfo')}
         </div>
         {entry?.description ? (
           <div className="text-xs leading-relaxed text-muted-foreground">
@@ -56,7 +57,7 @@ export default function UpdateCenterHistoryEntryCard({
           </div>
         ) : null}
         <div className="text-xs leading-relaxed text-muted-foreground">
-          更新时间：{formatTaskTime(entry?.updatedAt)}
+          {tr('pages.settings.updateCenterHistoryEntryCard.time')}{formatTaskTime(entry?.updatedAt)}
         </div>
         <div>
           <Button
@@ -68,7 +69,7 @@ export default function UpdateCenterHistoryEntryCard({
             }}
             disabled={!helperHealthy || deploying || isCurrentRevision || !revision}
           >
-            回退到 revision {revision}
+            {tr('pages.settings.updateCenterHistoryEntryCard.revision')} {revision}
           </Button>
         </div>
       </CardContent>

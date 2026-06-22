@@ -2,7 +2,7 @@ import * as React from 'react';
 import { cn } from '../../../lib/utils.js';
 
 const Table = React.forwardRef<HTMLTableElement, React.HTMLAttributes<HTMLTableElement>>(({ className, ...props }, ref) => (
-  <div className="relative w-full overflow-auto">
+  <div className="relative w-full overflow-auto group-data-[slot=data-table]/data-table:overflow-visible">
     <table ref={ref} className={cn('w-full caption-bottom text-sm', className)} {...props} />
   </div>
 ));

@@ -1391,7 +1391,8 @@ describe('convertResponsesBodyToOpenAiBody', () => {
     expect(result.messages).toEqual([
       {
         role: 'assistant',
-        content: [
+        content: '',
+        reasoning_content: [
           {
             type: 'text',
             text: 'Think step by step',
@@ -2093,7 +2094,10 @@ describe('convertResponsesBodyToOpenAiBody', () => {
     expect(result.messages).toEqual([{
       role: 'assistant',
       content: '',
-      reasoning_content: 'plan quietly',
+      reasoning_content: [{
+        type: 'text',
+        text: 'plan quietly',
+      }],
       reasoning_signature: 'sig_1',
     }]);
   });

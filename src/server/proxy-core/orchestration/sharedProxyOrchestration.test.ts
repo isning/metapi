@@ -965,6 +965,8 @@ describe('selectSurfaceChannelForAttempt', () => {
     expect(resolveProxyLogBillingMock).toHaveBeenCalledWith({
       site: { id: 44, url: 'https://upstream.example.com', name: 'Codex OAuth' },
       account: { id: 33, username: 'oauth-user' },
+      tokenId: null,
+      upstreamGroup: null,
       modelName: 'upstream-model',
       parsedUsage: {
         promptTokens: 10,

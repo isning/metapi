@@ -6,6 +6,7 @@ import ToneBadge from '../../components/ToneBadge.js';
 import { Card, CardContent } from '../../components/ui/card/index.js';
 import EmptyStateBlock from '../../components/EmptyStateBlock.js';
 
+import { tr } from '../../i18n.js';
 export type OAuthModelItem = {
   name: string;
   latencyMs: number | null;
@@ -49,7 +50,7 @@ export default function OAuthModelsModal({
       footer={(
         <>
           <Button variant="outline" type="button" onClick={onClose}>
-            关闭
+            {tr('pages.accounts.close')}
           </Button>
           <Button
             type="button"
@@ -57,7 +58,7 @@ export default function OAuthModelsModal({
             onClick={() => void onRefresh()}
             disabled={loading || refreshing}
           >
-            {refreshing ? <><LoaderCircle className="size-4 animate-spin" />刷新中...</> : '刷新模型'}
+            {refreshing ? <><LoaderCircle className="size-4 animate-spin" />{tr('pages.downstreamKeys.refreshzh')}</> : tr('pages.accounts.accountModelsModal.refreshModels')}
           </Button>
         </>
       )}
@@ -65,7 +66,7 @@ export default function OAuthModelsModal({
       {loading ? (
         <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
           <LoaderCircle className="size-5 animate-spin" />
-          <span>正在加载模型列表...</span>
+          <span>{tr('pages.oauth.oAuthModelsModal.loadingModelList')}</span>
         </div>
       ) : (
         <div className="grid gap-3">
@@ -75,13 +76,13 @@ export default function OAuthModelsModal({
               {siteName ? `${siteName} · 共 ${totalCount} 个模型` : `共 ${totalCount} 个模型`}
             </div>
             <div className="text-sm text-muted-foreground">
-              已启用 {enabledCount} 个，已禁用 {disabledCount} 个。点击“刷新模型”可重新拉取当前账号支持的模型列表。
+              {tr('pages.settings.enabled2')} {enabledCount} {tr('pages.sites.disabled2')} {disabledCount} {tr('pages.oauth.oAuthModelsModal.itemsRefreshModelsAccountssupportedmodels')}
             </div>
             </CardContent>
           </Card>
 
           {models.length === 0 ? (
-            <EmptyStateBlock title="暂无模型" description="当前账号还没有同步到可用模型，可点击右下角“刷新模型”重试。" />
+            <EmptyStateBlock title={tr('pages.modelTester.noModelYet')} description={tr('pages.oauth.oAuthModelsModal.accountsSyncAvailablemodelRefreshModelsRetry')} />
           ) : (
             <div className="grid max-h-[420px] gap-2 overflow-y-auto">
               {models.map((model) => (
@@ -91,8 +92,8 @@ export default function OAuthModelsModal({
                       <div className="break-all font-mono text-sm font-semibold">{model.name}</div>
                       <div className="mt-2 flex flex-wrap items-center gap-2">
                         {model.latencyMs != null ? <span className="text-xs text-muted-foreground">{model.latencyMs}ms</span> : null}
-                        {model.isManual ? <ToneBadge tone="-info">手动</ToneBadge> : null}
-                        {model.disabled ? <ToneBadge tone="-warning">禁用</ToneBadge> : null}
+                        {model.isManual ? <ToneBadge tone="-info">{tr('pages.accounts.accountModelsModal.manual')}</ToneBadge> : null}
+                        {model.disabled ? <ToneBadge tone="-warning">{tr('pages.downstreamKeys.disabled')}</ToneBadge> : null}
                       </div>
                     </div>
                   </CardContent>

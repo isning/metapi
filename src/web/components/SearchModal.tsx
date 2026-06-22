@@ -160,26 +160,26 @@ export default function SearchModal({ open, onClose }: { open: boolean; onClose:
           ref={inputRef}
           value={query}
           onValueChange={handleInput}
-          placeholder={t('搜索站点、账号、模型、日志...')}
+          placeholder={t('components.searchModal.searchSitesAccountsModelsLogs')}
         />
         {loading ? (
           <div className="flex items-center gap-2 border-b px-3 py-2 text-xs text-muted-foreground">
             <Loader2 className="size-3.5 animate-spin" />
-            {t('搜索中...')}
+            {t('components.searchModal.searchzh')}
           </div>
         ) : null}
         <CommandList>
-          {query && !loading && !hasResults ? <CommandEmpty>{t('没有找到匹配结果')}</CommandEmpty> : null}
+          {query && !loading && !hasResults ? <CommandEmpty>{t('components.searchModal.noMatchingResults')}</CommandEmpty> : null}
 
           {results?.models.length ? (
-            <CommandGroup heading={t('模型广场')}>
+            <CommandGroup heading={t('app.modelMarketplace')}>
               {results.models.map((m) => (
                 <CommandItem key={m.name} value={`model-${m.name}`} onSelect={() => goTo(`/models?q=${encodeURIComponent(m.name)}`)}>
                   <Code2 className="size-4" />
                   <div className="min-w-0">
                     <div className="font-medium">{m.name}</div>
                     <div className="text-xs text-muted-foreground">
-                      {m.accountCount} {t('个账号')} · {m.tokenCount} {t('个令牌')} · {m.siteCount} {t('个站点')}
+                      {m.accountCount} {t('components.searchModal.accounts')} · {m.tokenCount} {t('components.searchModal.tokens')} · {m.siteCount} {t('components.searchModal.sites')}
                     </div>
                   </div>
                 </CommandItem>
@@ -188,7 +188,7 @@ export default function SearchModal({ open, onClose }: { open: boolean; onClose:
           ) : null}
 
           {results?.sites.length ? (
-            <CommandGroup heading={t('站点')}>
+            <CommandGroup heading={t('components.searchModal.sites2')}>
               {results.sites.map((s) => (
                 <CommandItem key={s.id} value={`site-${s.id}`} onSelect={() => goTo(buildSiteFocusPath(s.id))}>
                   <Globe2 className="size-4" />
@@ -202,7 +202,7 @@ export default function SearchModal({ open, onClose }: { open: boolean; onClose:
           ) : null}
 
           {results?.accounts.length ? (
-            <CommandGroup heading={t('账号')}>
+            <CommandGroup heading={t('components.searchModal.accounts2')}>
               {results.accounts.map((a) => (
                 <CommandItem
                   key={a.id}
@@ -215,13 +215,13 @@ export default function SearchModal({ open, onClose }: { open: boolean; onClose:
                   <UserRound className="size-4" />
                   <div className="min-w-0">
                     <div className="font-medium">
-                      {a.username?.trim() || (a.segment === 'apikey' ? t('API Key 连接') : `ID:${a.id}`)}
+                      {a.username?.trim() || (a.segment === 'apikey' ? t('components.searchModal.apiKey') : `ID:${a.id}`)}
                     </div>
                     <div className="text-xs text-muted-foreground">
-                      {a.site?.name || t('未关联站点')}
-                      {a.segment === 'apikey' ? ` · ${t('API Key 连接')}` : ''}
+                      {a.site?.name || t('components.searchModal.unlinkedSite')}
+                      {a.segment === 'apikey' ? ` · ${t('components.searchModal.apiKey')}` : ''}
                       {' · '}
-                      {t('余额')} ${(a.balance || 0).toFixed(2)}
+                      {t('components.notificationPanel.balance')} ${(a.balance || 0).toFixed(2)}
                     </div>
                   </div>
                 </CommandItem>
@@ -230,7 +230,7 @@ export default function SearchModal({ open, onClose }: { open: boolean; onClose:
           ) : null}
 
           {results?.accountTokens.length ? (
-            <CommandGroup heading={t('账号令牌')}>
+            <CommandGroup heading={t('components.searchModal.accountstoken')}>
               {results.accountTokens.map((token) => (
                 <CommandItem
                   key={token.id}
@@ -241,9 +241,9 @@ export default function SearchModal({ open, onClose }: { open: boolean; onClose:
                   <div className="min-w-0">
                     <div className="font-medium">{token.name}</div>
                     <div className="text-xs text-muted-foreground">
-                      {(token.account?.username?.trim() || (token.account?.segment === 'apikey' ? t('API Key 连接') : t('未命名')))}
+                      {(token.account?.username?.trim() || (token.account?.segment === 'apikey' ? t('components.searchModal.apiKey') : t('components.searchModal.unnamed')))}
                       {' · '}
-                      {token.site?.name || t('未关联站点')}
+                      {token.site?.name || t('components.searchModal.unlinkedSite')}
                       {token.tokenGroup ? ` · ${token.tokenGroup}` : ''}
                     </div>
                   </div>
@@ -253,7 +253,7 @@ export default function SearchModal({ open, onClose }: { open: boolean; onClose:
           ) : null}
 
           {results?.checkinLogs.length ? (
-            <CommandGroup heading={t('签到记录')}>
+            <CommandGroup heading={t('app.checkLogs')}>
               {results.checkinLogs.map((l) => (
                 <CommandItem key={l.id} value={`checkin-${l.id}`} onSelect={() => goTo('/checkin')}>
                   <CheckCircle2 className="size-4" />
@@ -269,7 +269,7 @@ export default function SearchModal({ open, onClose }: { open: boolean; onClose:
           ) : null}
 
           {results?.proxyLogs.length ? (
-            <CommandGroup heading={t('使用日志')}>
+            <CommandGroup heading={t('app.usageLogs')}>
               {results.proxyLogs.map((l) => (
                 <CommandItem key={l.id} value={`proxy-${l.id}`} onSelect={() => goTo('/logs')}>
                   <FileText className="size-4" />
@@ -286,9 +286,9 @@ export default function SearchModal({ open, onClose }: { open: boolean; onClose:
         </CommandList>
         <div className="flex items-center gap-2 border-t px-3 py-2 text-xs text-muted-foreground">
           <Badge variant="outline">↑↓</Badge>
-          {t('导航')}
+          {t('components.searchModal.navigate')}
           <Badge variant="outline">Enter</Badge>
-          {t('打开')}
+          {t('components.searchModal.open')}
           <CommandShortcut>Esc</CommandShortcut>
         </div>
       </Command>

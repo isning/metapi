@@ -18,7 +18,13 @@ vi.mock('../api.js', () => ({
 
 vi.mock('../i18n.js', () => ({
   useI18n: () => ({
-    t: (value: string) => value,
+    t: (value: string) => value === 'components.searchModal.accountstoken'
+      ? '账号令牌'
+      : value === 'components.searchModal.apiKey'
+        ? 'API Key 连接'
+        : value === 'components.notificationPanel.balance'
+          ? '余额'
+          : value,
   }),
 }));
 

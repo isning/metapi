@@ -45,7 +45,7 @@ const Content = React.forwardRef<
 >(({ className, children, closeButton = true, onClose, ...props }, ref) => {
   const open = React.useContext(DialogOpenContext);
   const contentClassName = cn(
-    'fixed left-1/2 top-1/2 z-50 w-[min(92vw,560px)] rounded-lg border border-border bg-background p-4 text-foreground shadow-lg',
+    'fixed left-1/2 top-1/2 z-50 flex w-[min(92vw,560px)] flex-col rounded-lg border border-border bg-background p-4 text-foreground shadow-lg',
     centeredContentMotionClassName,
     className,
   );
@@ -108,7 +108,7 @@ const Header = ({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) =
 Header.displayName = 'DialogHeader';
 
 const Footer = ({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) => (
-  <div className={cn('mt-3.5 flex justify-end gap-2', className)} {...props} />
+  <div className={cn('mt-3.5 flex flex-wrap justify-end gap-2 border-t pt-3.5', className)} {...props} />
 );
 Footer.displayName = 'DialogFooter';
 

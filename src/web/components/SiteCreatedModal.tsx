@@ -3,6 +3,7 @@ import { Alert, AlertDescription, AlertTitle } from './ui/alert/index.js';
 import { Button } from './ui/button/index.js';
 import * as Dialog from './ui/dialog/index.js';
 
+import { tr } from '../i18n.js';
 type NextStepChoice = 'session' | 'apikey' | 'later';
 
 type Props = {
@@ -18,7 +19,7 @@ export default function SiteCreatedModal({
   siteName,
   initializationPresetId,
   initialSegment = 'session',
-  sessionLabel = '添加账号（用户名密码登录）',
+  sessionLabel = tr('components.siteCreatedModal.addAccountUsernamepasswordsign'),
   onChoice,
   onClose,
 }: Props) {
@@ -26,12 +27,12 @@ export default function SiteCreatedModal({
   const apiKeyFirst = initialSegment === 'apikey';
   const helperText = preset?.description
     || (apiKeyFirst
-      ? '该平台更适合直接通过 Base URL + API Key 接入，后续再补模型初始化。'
-      : '接下来您可以继续补充登录连接或 API Key。');
+      ? tr('components.siteCreatedModal.platformBaseUrlApiKeyModel')
+      : tr('components.siteCreatedModal.signApiKey'));
   const primaryAction = apiKeyFirst
     ? {
       choice: 'apikey' as const,
-      label: '添加 API Key（推荐）',
+      label: tr('components.siteCreatedModal.addApiKeyRecommended'),
     }
     : {
       choice: 'session' as const,
@@ -44,21 +45,21 @@ export default function SiteCreatedModal({
     }
     : {
       choice: 'apikey' as const,
-      label: '添加 API Key',
+      label: tr('components.siteCreatedModal.addApiKey'),
     };
 
   return (
     <Dialog.Root open onOpenChange={(nextOpen) => { if (!nextOpen) onClose(); }}>
       <Dialog.Content className="w-[min(92vw,520px)]">
         <Dialog.Header>
-          <Dialog.Title>站点创建成功</Dialog.Title>
-          <Dialog.Description>继续补充连接信息，或稍后回到站点管理配置。</Dialog.Description>
+          <Dialog.Title>{tr('components.siteCreatedModal.sitesSuccess')}</Dialog.Title>
+          <Dialog.Description>{tr('components.siteCreatedModal.infoSiteManagementconfiguration')}</Dialog.Description>
         </Dialog.Header>
         <div className="grid gap-3">
           <Alert>
-            <AlertTitle>站点已添加成功</AlertTitle>
+            <AlertTitle>{tr('components.siteCreatedModal.sitesAddsuccess')}</AlertTitle>
             <AlertDescription>
-          站点 <strong>"{siteName}"</strong> 已加入列表，您现在可以继续补充连接信息。
+          {tr('components.searchModal.sites2')} <strong>"{siteName}"</strong> {tr('components.siteCreatedModal.nowInfo')}
             </AlertDescription>
           </Alert>
 
@@ -74,12 +75,12 @@ export default function SiteCreatedModal({
           )}
 
           <p className="text-xs text-muted-foreground">
-            提示：您可以随时在“站点管理”页面补充账号或 API Key。
+            {tr('components.siteCreatedModal.tipSiteManagementAccountsApiKey')}
           </p>
         </div>
         <Dialog.Footer>
           <Button type="button" variant="ghost" onClick={() => onChoice('later')}>
-            稍后配置
+            {tr('components.siteCreatedModal.configuration')}
           </Button>
           <Button type="button" variant="outline" onClick={() => onChoice(secondaryAction.choice)}>
             {secondaryAction.label}

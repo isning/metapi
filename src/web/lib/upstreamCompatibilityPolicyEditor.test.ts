@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   emptyUpstreamCompatibilityPolicyForm,
+  isCompatibilityPolicyFormInherited,
   policyFormFromStoredValue,
   serializeCompatibilityPolicyForm,
 } from './upstreamCompatibilityPolicyEditor.js';
@@ -11,6 +12,7 @@ describe('upstream compatibility policy editor helper', () => {
       ok: true,
       policy: null,
     });
+    expect(isCompatibilityPolicyFormInherited(emptyUpstreamCompatibilityPolicyForm())).toBe(true);
   });
 
   it('serializes reasoning transport form fields into the policy contract', () => {
@@ -47,6 +49,10 @@ describe('upstream compatibility policy editor helper', () => {
         },
       },
     });
+    expect(isCompatibilityPolicyFormInherited({
+      ...emptyUpstreamCompatibilityPolicyForm(),
+      mode: 'content_think_tag',
+    })).toBe(false);
   });
 
   it('round-trips stored policy values into editable form state', () => {

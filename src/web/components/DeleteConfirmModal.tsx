@@ -3,6 +3,7 @@ import * as AlertDialog from './ui/alert-dialog/index.js';
 import { Alert, AlertDescription, AlertTitle } from './ui/alert/index.js';
 import { Button } from './ui/button/index.js';
 
+import { tr } from '../i18n.js';
 type DeleteConfirmModalProps = {
   open: boolean;
   title?: string;
@@ -16,10 +17,10 @@ type DeleteConfirmModalProps = {
 
 export default function DeleteConfirmModal({
   open,
-  title = '确认删除',
+  title = tr('components.deleteConfirmModal.delete'),
   description,
-  confirmText = '确认删除',
-  cancelText = '取消',
+  confirmText = tr('components.deleteConfirmModal.delete'),
+  cancelText = tr('app.cancel'),
   loading = false,
   onConfirm,
   onClose,
@@ -29,16 +30,16 @@ export default function DeleteConfirmModal({
       <AlertDialog.Content>
         <AlertDialog.Header>
           <AlertDialog.Title>{title}</AlertDialog.Title>
-          <AlertDialog.Description>请确认该操作是否符合预期。</AlertDialog.Description>
+          <AlertDialog.Description>{tr('components.deleteConfirmModal.actions2')}</AlertDialog.Description>
         </AlertDialog.Header>
         <Alert variant="destructive">
-          <AlertTitle>此操作不可撤销</AlertTitle>
+          <AlertTitle>{tr('components.deleteConfirmModal.actions')}</AlertTitle>
           <AlertDescription>{description}</AlertDescription>
         </Alert>
         <AlertDialog.Footer>
           <AlertDialog.CancelButton disabled={loading}>{cancelText}</AlertDialog.CancelButton>
           <Button type="button" variant="destructive" disabled={loading} onClick={onConfirm}>
-            {loading ? '删除中...' : confirmText}
+            {loading ? tr('components.deleteConfirmModal.deletezh') : confirmText}
           </Button>
         </AlertDialog.Footer>
       </AlertDialog.Content>

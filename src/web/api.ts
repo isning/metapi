@@ -1,5 +1,6 @@
 import { clearAuthSession, getAuthToken } from "./authSession.js";
 
+import { tr } from './i18n.js';
 type BufferLike = {
   from(data: ArrayBuffer): { toString(encoding: "base64"): string };
 };
@@ -188,7 +189,7 @@ async function streamSse(
     throw new Error(await extractResponseErrorMessage(response));
   }
   if (!response.body) {
-    throw new Error("响应未返回流式内容");
+    throw new Error(tr('api.responseStreamingcontent'));
   }
 
   const decoder = new TextDecoder();
@@ -1021,7 +1022,7 @@ export const api = {
     request(`/api/routes/${id}`, { method: "DELETE" }),
   clearRouteCooldown: (id: number) =>
     request(`/api/routes/${id}/cooldown/clear`, { method: "POST" }),
-  batchUpdateRoutes: (data: { ids: number[]; action: "enable" | "disable" }) =>
+  batchUpdateRoutes: (data: { ids: number[]; action: "enable" | "disable" | "set_internal" | "set_public" }) =>
     request("/api/routes/batch", {
       method: "POST",
       body: JSON.stringify(data),
@@ -1098,6 +1099,7 @@ export const api = {
         ...(options?.persistSnapshots ? { persistSnapshots: true } : {}),
       }),
     }),
+  getRouteEndpoints: () => request("/api/route-endpoints"),
 
   // Stats
   getDashboard: () => request("/api/stats/dashboard"),
@@ -1507,7 +1509,9 @@ export const api = {
     });
   },
   getModelRouteFlow: (model: string) =>
-    request(`/api/models/route-flow?model=${encodeURIComponent(model)}`),
+    request(`/api/models/route-flow?model=${encodeURIComponent(model)}`, {
+      timeoutMs: 45_000,
+    }),
   getModelTokenCandidates: () => request("/api/models/token-candidates"),
   listUpstreamCostPricings: (params?: {
     siteId?: number;

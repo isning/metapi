@@ -8,6 +8,7 @@ import * as Dialog from './ui/dialog/index.js';
 import { Input } from './ui/input/index.js';
 import { Label } from './ui/label/index.js';
 
+import { tr } from '../i18n.js';
 export default function ChangeKeyModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [oldToken, setOldToken] = useState('');
   const [newToken, setNewToken] = useState('');
@@ -19,15 +20,15 @@ export default function ChangeKeyModal({ open, onClose }: { open: boolean; onClo
   const handleSubmit = async () => {
     setError('');
     if (!oldToken || !newToken || !confirmToken) {
-      setError('请填写所有字段');
+      setError(tr('components.changeKeyModal.pleaseFillAllFields'));
       return;
     }
     if (newToken !== confirmToken) {
-      setError('两次输入的新 Token 不一致');
+      setError(tr('components.changeKeyModal.newTokenEnteredTwiceInconsistent'));
       return;
     }
     if (newToken.length < 6) {
-      setError('新 Token 至少 6 个字符');
+      setError(tr('components.changeKeyModal.newTokenMustLeast6CharactersLong'));
       return;
     }
 
@@ -35,17 +36,17 @@ export default function ChangeKeyModal({ open, onClose }: { open: boolean; onClo
     try {
       const res = await api.changeAuthToken(oldToken, newToken);
       if (res.success) {
-        toast.success('Token 已更新，请使用新 Token 重新登录');
+        toast.success(tr('components.changeKeyModal.tokenHasBeenUpdatedPleaseUseNew'));
         persistAuthSession(localStorage, newToken);
         onClose();
         setOldToken('');
         setNewToken('');
         setConfirmToken('');
       } else {
-        setError(res.message || '更新失败');
+        setError(res.message || tr('components.changeKeyModal.updateFailed'));
       }
     } catch (e: any) {
-      setError(e.message || '更新失败');
+      setError(e.message || tr('components.changeKeyModal.updateFailed'));
     } finally {
       setSaving(false);
     }
@@ -55,38 +56,38 @@ export default function ChangeKeyModal({ open, onClose }: { open: boolean; onClo
     <Dialog.Root open={open} onOpenChange={(nextOpen) => { if (!nextOpen) onClose(); }}>
       <Dialog.Content className="w-[min(92vw,420px)]">
         <Dialog.Header>
-          <Dialog.Title>修改管理员 Token</Dialog.Title>
-          <Dialog.Description>更新后当前会话会保存新 Token。</Dialog.Description>
+          <Dialog.Title>{tr('components.changeKeyModal.adminToken')}</Dialog.Title>
+          <Dialog.Description>{tr('components.changeKeyModal.saveToken')}</Dialog.Description>
         </Dialog.Header>
         <div className="grid gap-3">
           <div className="grid gap-1.5">
-            <Label htmlFor="old-admin-token">旧 Token</Label>
+            <Label htmlFor="old-admin-token">{tr('components.changeKeyModal.token')}</Label>
             <Input
               id="old-admin-token"
               type="password"
               value={oldToken}
               onChange={e => { setOldToken(e.target.value); setError(''); }}
-              placeholder="输入当前 Token"
+              placeholder={tr('components.changeKeyModal.enterCurrentToken')}
             />
           </div>
           <div className="grid gap-1.5">
-            <Label htmlFor="new-admin-token">新 Token</Label>
+            <Label htmlFor="new-admin-token">{tr('components.changeKeyModal.token3')}</Label>
             <Input
               id="new-admin-token"
               type="password"
               value={newToken}
               onChange={e => { setNewToken(e.target.value); setError(''); }}
-              placeholder="输入新 Token (至少 6 位)"
+              placeholder={tr('components.changeKeyModal.enterNewTokenLeast6Digits')}
             />
           </div>
           <div className="grid gap-1.5">
-            <Label htmlFor="confirm-admin-token">确认新 Token</Label>
+            <Label htmlFor="confirm-admin-token">{tr('components.changeKeyModal.token2')}</Label>
             <Input
               id="confirm-admin-token"
               type="password"
               value={confirmToken}
               onChange={e => { setConfirmToken(e.target.value); setError(''); }}
-              placeholder="再次输入新 Token"
+              placeholder={tr('components.changeKeyModal.enterNewTokenAgain')}
             />
           </div>
           {error ? (
@@ -96,9 +97,9 @@ export default function ChangeKeyModal({ open, onClose }: { open: boolean; onClo
           ) : null}
         </div>
         <Dialog.Footer>
-          <Button type="button" variant="outline" onClick={onClose}>取消</Button>
+          <Button type="button" variant="outline" onClick={onClose}>{tr('app.cancel')}</Button>
           <Button type="button" onClick={handleSubmit} disabled={saving}>
-            {saving ? '更新中...' : '确认修改'}
+            {saving ? tr('components.changeKeyModal.updating') : tr('components.changeKeyModal.confirmChanges')}
           </Button>
         </Dialog.Footer>
       </Dialog.Content>

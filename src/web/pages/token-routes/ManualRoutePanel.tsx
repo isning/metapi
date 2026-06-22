@@ -4,15 +4,22 @@ import CenteredModal from '../../components/CenteredModal.js';
 import ModernSelect from '../../components/ModernSelect.js';
 import SearchInput from '../../components/SearchInput.js';
 import { tr } from '../../i18n.js';
-import type { RouteIconOption, RouteSummaryRow } from './types.js';
+import type { RouteEndpointCatalogItem, RouteIconOption, RouteSummaryRow } from './types.js';
 import type { RouteRoutingStrategy } from './types.js';
 import { Button } from '../../components/ui/button/index.js';
 import { LoaderCircle } from 'lucide-react';
 import ToneBadge from '../../components/ToneBadge.js';
-import { Textarea } from '../../components/ui/textarea/index.js';
+import JsonCodeEditor from '../../components/JsonCodeEditor.js';
 import { Input } from '../../components/ui/input/index.js';
 import { Checkbox } from '../../components/ui/checkbox/index.js';
 import { Card, CardContent } from '../../components/ui/card/index.js';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '../../components/ui/select/index.js';
 import {
   routeGraphNodeToEditorForm,
   stringifyRouteGraphJson,
@@ -52,6 +59,7 @@ type ManualRoutePanelProps = {
   routeIconSelectOptions: RouteIconOption[];
   previewModelSamples: string[];
   exactSourceRouteOptions: RouteSummaryRow[];
+  routeEndpointCatalog?: RouteEndpointCatalogItem[];
   sourceEndpointTypesByRouteId: Record<number, string[]>;
   currentRouteNodeJson?: RouteGraphSnapshotNode | null;
   onSave: () => void;
@@ -135,11 +143,11 @@ function FilterRow({ label, children }: { label: string; children: ReactNode }) 
 }
 
 export const WIZARD_STEPS: Array<{ id: RouteWizardStep; label: string; detail: string }> = [
-  { id: 'type', label: '类型', detail: '选择节点' },
-  { id: 'match', label: '匹配', detail: '对外模型' },
-  { id: 'backend', label: '目标', detail: '后端连接' },
-  { id: 'options', label: '策略', detail: '展示与行为' },
-  { id: 'review', label: '检查', detail: '确认保存' },
+  { id: 'type', label: tr('pages.programLogs.type'), detail: tr('pages.tokenRoutes.manualRoutePanel.selectNode') },
+  { id: 'match', label: tr('pages.tokenRoutes.manualRoutePanel.match'), detail: tr('pages.tokenRoutes.manualRoutePanel.model') },
+  { id: 'backend', label: tr('pages.tokenRoutes.manualRoutePanel.target'), detail: tr('pages.tokenRoutes.manualRoutePanel.backendConnection') },
+  { id: 'options', label: tr('pages.oAuthManagement.strategy'), detail: tr('pages.tokenRoutes.manualRoutePanel.displayBehavior') },
+  { id: 'review', label: tr('pages.tokenRoutes.manualRoutePanel.check'), detail: tr('pages.tokenRoutes.manualRoutePanel.save') },
 ];
 
 export function getWizardStepIndex(step: RouteWizardStep): number {
@@ -156,6 +164,7 @@ export default function ManualRoutePanel({
   routeIconSelectOptions,
   previewModelSamples,
   exactSourceRouteOptions,
+  routeEndpointCatalog = [],
   sourceEndpointTypesByRouteId,
   currentRouteNodeJson,
   onSave,
@@ -218,19 +227,29 @@ export default function ManualRoutePanel({
     return previewModelSamples.filter((modelName) => matchesModelPattern(modelName, normalizedPattern));
   }, [modelPattern, modelPatternError, previewModelSamples]);
 
+  const catalogRouteIds = useMemo(
+    () => new Set(routeEndpointCatalog.map((endpoint) => endpoint.routeId).filter((routeId): routeId is number => Number.isFinite(Number(routeId)))),
+    [routeEndpointCatalog],
+  );
+
+  const selectableSourceRouteOptions = useMemo(
+    () => exactSourceRouteOptions.filter((route) => catalogRouteIds.size === 0 || catalogRouteIds.has(route.id)),
+    [catalogRouteIds, exactSourceRouteOptions],
+  );
+
   const sourceRouteBrandById = useMemo(() => {
     const next = new Map<number, BrandInfo | null>();
-    for (const route of exactSourceRouteOptions) {
+    for (const route of selectableSourceRouteOptions) {
       next.set(route.id, resolveRouteBrand(route));
     }
     return next;
-  }, [exactSourceRouteOptions]);
+  }, [selectableSourceRouteOptions]);
 
   const sourceBrandList = useMemo(() => {
     const grouped = new Map<string, { count: number; brand: BrandInfo }>();
     let otherCount = 0;
 
-    for (const route of exactSourceRouteOptions) {
+    for (const route of selectableSourceRouteOptions) {
       const brand = sourceRouteBrandById.get(route.id) || null;
       if (!brand) {
         otherCount += 1;
@@ -253,12 +272,12 @@ export default function ManualRoutePanel({
       }) as [string, { count: number; brand: BrandInfo }][],
       otherCount,
     };
-  }, [exactSourceRouteOptions, sourceRouteBrandById]);
+  }, [selectableSourceRouteOptions, sourceRouteBrandById]);
 
   const sourceSiteList = useMemo(() => {
     const grouped = new Map<string, number>();
 
-    for (const route of exactSourceRouteOptions) {
+    for (const route of selectableSourceRouteOptions) {
       const seenSites = new Set<string>();
       for (const siteName of route.siteNames || []) {
         const normalizedSite = String(siteName || '').trim();
@@ -274,12 +293,12 @@ export default function ManualRoutePanel({
       }
       return b[1] - a[1];
     }) as [string, number][];
-  }, [exactSourceRouteOptions]);
+  }, [selectableSourceRouteOptions]);
 
   const sourceEndpointTypeList = useMemo(() => {
     const grouped = new Map<string, number>();
 
-    for (const route of exactSourceRouteOptions) {
+    for (const route of selectableSourceRouteOptions) {
       const endpointTypes = sourceEndpointTypesByRouteId[route.id] || [];
       for (const endpointType of endpointTypes) {
         const normalizedType = String(endpointType || '').trim();
@@ -294,10 +313,10 @@ export default function ManualRoutePanel({
       }
       return b[1] - a[1];
     }) as [string, number][];
-  }, [exactSourceRouteOptions, sourceEndpointTypesByRouteId]);
+  }, [selectableSourceRouteOptions, sourceEndpointTypesByRouteId]);
 
   const filteredSourceRoutes = useMemo(() => {
-    let list = [...exactSourceRouteOptions];
+    let list = [...selectableSourceRouteOptions];
 
     if (activeSourceBrand) {
       if (activeSourceBrand === '__other__') {
@@ -343,18 +362,18 @@ export default function ManualRoutePanel({
     activeSourceBrand,
     activeSourceEndpointType,
     activeSourceSite,
-    exactSourceRouteOptions,
+    selectableSourceRouteOptions,
     sourceEndpointTypesByRouteId,
     sourceRouteBrandById,
     sourceSearch,
   ]);
 
   const selectedSourceRoutes = useMemo(() => {
-    const routeById = new Map(exactSourceRouteOptions.map((route) => [route.id, route]));
+    const routeById = new Map(selectableSourceRouteOptions.map((route) => [route.id, route]));
     return sourceRouteIds
       .map((routeId) => routeById.get(routeId))
       .filter((route): route is RouteSummaryRow => !!route);
-  }, [exactSourceRouteOptions, sourceRouteIds]);
+  }, [selectableSourceRouteOptions, sourceRouteIds]);
 
   const sourcePickerSelectionSet = useMemo(
     () => new Set(sourcePickerSelection),
@@ -388,7 +407,7 @@ export default function ManualRoutePanel({
       ...(currentRouteNodeJson?.id ? { id: currentRouteNodeJson.id } : {}),
       ...(currentRouteNodeJson?.stableId ? { stableId: currentRouteNodeJson.stableId } : {}),
       ownership: 'manual',
-      visibility: currentRouteNodeJson?.visibility || 'public',
+      visibility: form.visibility,
       enabled: form.enabled,
       match: {
         kind: 'model',
@@ -409,7 +428,7 @@ export default function ManualRoutePanel({
           stableId: currentRouteNodeJson?.macro?.id || currentRouteNodeJson?.stableId,
           displayName: displayName.trim(),
           displayIcon,
-          visibility: currentRouteNodeJson?.visibility || 'public',
+          visibility: form.visibility,
           enabled: form.enabled,
           routingStrategy: form.routingStrategy,
           routeIds: sourceRouteIds,
@@ -418,31 +437,37 @@ export default function ManualRoutePanel({
       routingStrategy: form.routingStrategy,
       modelMapping,
     };
-  }, [backendKind, currentRouteNodeJson, displayIcon, displayName, form.enabled, form.modelMapping, form.routingStrategy, modelPattern, sourceRouteIds]);
+  }, [backendKind, currentRouteNodeJson, displayIcon, displayName, form.enabled, form.modelMapping, form.routingStrategy, form.visibility, modelPattern, sourceRouteIds]);
 
   const validationItems = useMemo(() => {
     const items: Array<{ ok: boolean; label: string; detail: string }> = [];
     if (backendKind === 'routes') {
       items.push({
         ok: !!displayName.trim(),
-        label: 'Public model name',
-        detail: displayName.trim() || '未填写',
+        label: tr('pages.tokenRoutes.manualRoutePanel.publicModelName'),
+        detail: displayName.trim() || tr('pages.tokenRoutes.manualRoutePanel.notFilled'),
       });
       items.push({
         ok: sourceRouteIds.length > 0,
-        label: 'Source routes',
-        detail: sourceRouteIds.length > 0 ? `${sourceRouteIds.length} selected` : '未选择来源',
+        label: tr('pages.tokenRoutes.manualRoutePanel.sourceRoutes'),
+        detail: sourceRouteIds.length > 0
+          ? tr('pages.tokenRoutes.manualRoutePanel.selectedCount').replace('{count}', String(sourceRouteIds.length))
+          : tr('pages.tokenRoutes.manualRoutePanel.notSelected'),
       });
     } else {
       items.push({
         ok: !!modelPattern.trim() && !modelPatternError,
-        label: 'Match rule',
-        detail: modelPatternError || modelPattern.trim() || '未填写',
+        label: tr('pages.tokenRoutes.manualRoutePanel.matchRule'),
+        detail: modelPatternError || modelPattern.trim() || tr('pages.tokenRoutes.manualRoutePanel.notFilled'),
       });
       items.push({
         ok: previewMatchedModels.length > 0 || previewModelSamples.length === 0 || isExactModelPattern(modelPattern),
-        label: 'Preview',
-        detail: previewModelSamples.length === 0 ? '暂无样本' : `${previewMatchedModels.length}/${previewModelSamples.length} matched`,
+        label: tr('pages.tokenRoutes.manualRoutePanel.preview'),
+        detail: previewModelSamples.length === 0
+          ? tr('pages.tokenRoutes.manualRoutePanel.noSamples')
+          : tr('pages.tokenRoutes.manualRoutePanel.matchedCount')
+            .replace('{matched}', String(previewMatchedModels.length))
+            .replace('{total}', String(previewModelSamples.length)),
       });
     }
     if (form.modelMapping.trim()) {
@@ -450,21 +475,21 @@ export default function ManualRoutePanel({
         const parsed = JSON.parse(form.modelMapping);
         items.push({
           ok: !!parsed && typeof parsed === 'object' && !Array.isArray(parsed),
-          label: 'Model mapping JSON',
-          detail: '有效 JSON 对象',
+          label: tr('pages.tokenRoutes.manualRoutePanel.modelMappingJson'),
+          detail: tr('pages.tokenRoutes.manualRoutePanel.json'),
         });
       } catch {
         items.push({
           ok: false,
-          label: 'Model mapping JSON',
-          detail: 'JSON 格式错误',
+          label: tr('pages.tokenRoutes.manualRoutePanel.modelMappingJson'),
+          detail: tr('pages.tokenRoutes.manualRoutePanel.jsonMistake'),
         });
       }
     }
     items.push({
       ok: currentFormNodeJson.ownership === 'manual',
-      label: 'Ownership',
-      detail: 'manual node',
+      label: tr('pages.tokenRoutes.manualRoutePanel.ownership'),
+      detail: tr('pages.tokenRoutes.manualRoutePanel.manualNode'),
     });
     return items;
   }, [backendKind, currentFormNodeJson.ownership, displayName, form.modelMapping, modelPattern, modelPatternError, previewMatchedModels.length, previewModelSamples.length, sourceRouteIds.length]);
@@ -522,15 +547,16 @@ export default function ManualRoutePanel({
         backend: next.backend,
         presentation: next.presentation,
         routingStrategy: next.routingStrategy,
+        visibility: next.visibility,
         enabled: next.enabled,
         modelMapping: next.modelMapping,
         advancedOpen: next.advancedOpen,
         macro: next.macro,
       }));
       setNodeJsonDraft(stringifyRouteGraphJson(validation.node));
-      setNodeJsonMessage('JSON 已应用到当前草稿，保存后才会写入。');
+      setNodeJsonMessage(tr('pages.tokenRoutes.manualRoutePanel.jsonAppliedSave'));
     } catch {
-      setNodeJsonMessage('JSON 格式错误');
+      setNodeJsonMessage(tr('pages.tokenRoutes.manualRoutePanel.jsonMistake'));
     }
   };
 
@@ -550,9 +576,9 @@ export default function ManualRoutePanel({
     try {
       const parsed = JSON.parse(nodeJsonDraft) as unknown;
       setNodeJsonDraft(stringifyRouteGraphJson(parsed));
-      setNodeJsonMessage('JSON 已格式化。');
+      setNodeJsonMessage(tr('pages.tokenRoutes.manualRoutePanel.jsonFormat'));
     } catch {
-      setNodeJsonMessage('JSON 格式错误');
+      setNodeJsonMessage(tr('pages.tokenRoutes.manualRoutePanel.jsonMistake'));
     }
   };
 
@@ -560,9 +586,9 @@ export default function ManualRoutePanel({
     try {
       const parsed = JSON.parse(nodeJsonDraft) as unknown;
       const validation = validateRouteGraphNodeDraft(parsed);
-      setNodeJsonMessage(validation.ok ? '节点 JSON 有效。' : validation.message);
+      setNodeJsonMessage(validation.ok ? tr('pages.tokenRoutes.manualRoutePanel.json4') : validation.message);
     } catch {
-      setNodeJsonMessage('JSON 格式错误');
+      setNodeJsonMessage(tr('pages.tokenRoutes.manualRoutePanel.jsonMistake'));
     }
   };
 
@@ -571,43 +597,62 @@ export default function ManualRoutePanel({
       <CardContent className="flex flex-col gap-3 p-3.5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="text-sm font-semibold text-foreground">
-            {tr('高级配置')}
+            {tr('pages.downstreamKeys.downstreamKeyEditorModal.highConfiguration')}
           </div>
           <label className="inline-flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
             <Checkbox
               checked={form.enabled}
               onCheckedChange={(checked) => setForm((current) => ({ ...current, enabled: checked === true }))}
             />
-            {tr('启用路由')}
+            {tr('pages.tokenRoutes.manualRoutePanel.enabledroutes')}
           </label>
         </div>
 
         <label className="flex flex-col gap-2">
-          <span className="text-xs text-muted-foreground">{tr('路由策略')}</span>
+          <span className="text-xs text-muted-foreground">{tr('pages.tokenRoutes.manualRoutePanel.visibility')}</span>
+          <Select
+            value={form.visibility}
+            onValueChange={(nextValue) => setForm((current) => ({
+              ...current,
+              visibility: nextValue === 'internal' ? 'internal' : 'public',
+            }))}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder={tr('pages.tokenRoutes.manualRoutePanel.visibility')} />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="public">{tr('pages.tokenRoutes.routeGroupTabs.public')}</SelectItem>
+              <SelectItem value="internal">{tr('pages.tokenRoutes.routeGroupTabs.internal')}</SelectItem>
+            </SelectContent>
+          </Select>
+        </label>
+
+        <label className="flex flex-col gap-2">
+          <span className="text-xs text-muted-foreground">{tr('pages.settings.routesstrategy')}</span>
           <ModernSelect
             value={form.routingStrategy}
             onChange={(nextValue) => setForm((current) => ({ ...current, routingStrategy: nextValue as RouteRoutingStrategy }))}
             options={[
-              { value: 'weighted', label: tr('权重随机'), description: tr('按通道权重随机选择。') },
-              { value: 'round_robin', label: tr('轮询'), description: tr('在可用通道之间轮流选择。') },
-              { value: 'stable_first', label: tr('稳定优先'), description: tr('优先选择排序最靠前的可用通道。') },
+              { value: 'weighted', label: tr('pages.tokenRoutes.manualRoutePanel.weightedRandom'), description: tr('pages.tokenRoutes.manualRoutePanel.channelsweightedRandomselect') },
+              { value: 'round_robin', label: tr('pages.oAuthManagement.roundRobin'), description: tr('pages.tokenRoutes.manualRoutePanel.availablechannelsSelect') },
+              { value: 'stable_first', label: tr('pages.settings.stableFirst'), description: tr('pages.tokenRoutes.manualRoutePanel.selectAvailablechannels') },
             ]}
-            placeholder={tr('选择路由策略')}
+            placeholder={tr('pages.tokenRoutes.manualRoutePanel.selectroutesstrategy')}
           />
         </label>
 
         <label className="flex flex-col gap-2">
-          <span className="text-xs text-muted-foreground">{tr('模型映射 JSON')}</span>
-          <Textarea
+          <span className="text-xs text-muted-foreground">{tr('pages.tokenRoutes.manualRoutePanel.modelJson')}</span>
+          <JsonCodeEditor
             value={form.modelMapping}
-            onChange={(event) => setForm((current) => ({ ...current, modelMapping: event.target.value }))}
+            onChange={(value) => setForm((current) => ({ ...current, modelMapping: value }))}
             placeholder='{"public-model":"upstream-model"}'
-            spellCheck={false}
-            rows={3}
-            className="min-h-19 resize-y font-mono text-xs leading-relaxed"
+            minHeight={160}
+            maxHeight={360}
+            ariaLabel={tr('pages.tokenRoutes.manualRoutePanel.modelJson')}
           />
           <span className="text-xs leading-relaxed text-muted-foreground">
-            {tr('用于将对外模型名映射到上游模型名；留空表示不重写。')}
+            {tr('pages.tokenRoutes.manualRoutePanel.modelModel')}
           </span>
         </label>
       </CardContent>
@@ -651,7 +696,7 @@ export default function ManualRoutePanel({
        
        
       >
-        {editingRouteId ? tr('取消编辑') : tr('取消')}
+        {editingRouteId ? tr('pages.tokenRoutes.manualRoutePanel.canceledit') : tr('app.cancel')}
       </Button>
       {getWizardStepIndex(wizardStep) > 0 && (
         <Button variant="outline"
@@ -660,7 +705,7 @@ export default function ManualRoutePanel({
          
          
         >
-          {tr('上一步')}
+          {tr('pages.tokenRoutes.manualRoutePanel.previousStep')}
         </Button>
       )}
       {wizardStep !== 'review' && (
@@ -670,7 +715,7 @@ export default function ManualRoutePanel({
           disabled={!canGoNext}
          
         >
-          {tr('下一步')}
+          {tr('pages.tokenRoutes.manualRoutePanel.nextStep')}
         </Button>
       )}
       <Button
@@ -682,10 +727,10 @@ export default function ManualRoutePanel({
         {saving ? (
           <>
             <LoaderCircle className="size-4 animate-spin" />{' '}
-            {tr('保存中...')}
+            {tr('pages.accounts.saving')}
           </>
         ) : (
-          tr(editingRouteId ? '保存群组' : '创建群组')
+          editingRouteId ? tr('pages.tokenRoutes.manualRoutePanel.saveRouteGroup') : tr('pages.tokenRoutes.manualRoutePanel.createRouteGroup')
         )}
       </Button>
     </>
@@ -693,14 +738,14 @@ export default function ManualRoutePanel({
 
   const routeTypeSummary = backendKind === 'routes'
     ? {
-      title: 'Model Group / 模型分组',
-      description: '对外暴露一个模型名，转发到多个已有模型路由。',
+      title: tr('pages.tokenRoutes.manualRoutePanel.modelGroupModelgroup'),
+      description: tr('pages.tokenRoutes.manualRoutePanel.modelsModelRoutes'),
       badge: `${sourceRouteIds.length} sources`,
     }
     : {
-      title: 'Direct Channels',
-      description: '用 exact / glob / regex 规则直接维护通道池。',
-      badge: modelPattern.trim() || 'match rule',
+      title: tr('pages.tokenRoutes.manualRoutePanel.directChannels'),
+      description: tr('pages.tokenRoutes.manualRoutePanel.exactGlobRegexRulesChannels'),
+      badge: modelPattern.trim() || tr('pages.tokenRoutes.manualRoutePanel.matchRule'),
     };
 
   const typeStepContent = (
@@ -711,10 +756,10 @@ export default function ManualRoutePanel({
         className="h-auto grid justify-start gap-2 p-3 text-left"
         onClick={() => setRouteType('routes')}
       >
-        <span className="text-xs font-medium text-muted-foreground">Model Group</span>
-        <span className="text-sm font-semibold">{tr('分组聚合路由')}</span>
-        <span className="text-xs text-muted-foreground">{tr('把多个已有精确模型合并成一个对外模型名，适合别名、聚合和迁移。')}</span>
-        <span className="text-xs text-muted-foreground">{exactSourceRouteOptions.length} {tr('个可选来源')}</span>
+        <span className="text-xs font-medium text-muted-foreground">{tr('pages.tokenRoutes.manualRoutePanel.modelGroup')}</span>
+        <span className="text-sm font-semibold">{tr('pages.tokenRoutes.manualRoutePanel.groupRoutes')}</span>
+        <span className="text-xs text-muted-foreground">{tr('pages.tokenRoutes.manualRoutePanel.modelModel2')}</span>
+        <span className="text-xs text-muted-foreground">{selectableSourceRouteOptions.length} {tr('pages.tokenRoutes.manualRoutePanel.availableSources')}</span>
       </Button>
       <Button
         type="button"
@@ -722,10 +767,10 @@ export default function ManualRoutePanel({
         className="h-auto grid justify-start gap-2 p-3 text-left"
         onClick={() => setRouteType('channels')}
       >
-        <span className="text-xs font-medium text-muted-foreground">Direct Channels</span>
-        <span className="text-sm font-semibold">{tr('规则直连通道')}</span>
-        <span className="text-xs text-muted-foreground">{tr('用模型匹配规则生成并维护通道池，支持 exact、glob 和 re: 正则。')}</span>
-        <span className="text-xs text-muted-foreground">{previewModelSamples.length} {tr('个预览样本')}</span>
+        <span className="text-xs font-medium text-muted-foreground">{tr('pages.tokenRoutes.manualRoutePanel.directChannels')}</span>
+        <span className="text-sm font-semibold">{tr('pages.tokenRoutes.manualRoutePanel.rulesChannels')}</span>
+        <span className="text-xs text-muted-foreground">{tr('pages.tokenRoutes.manualRoutePanel.modelmatchrulesChannelsSupportedExactGlobRe')}</span>
+        <span className="text-xs text-muted-foreground">{previewModelSamples.length} {tr('pages.tokenRoutes.manualRoutePanel.preview2')}</span>
       </Button>
       <Button
         type="button"
@@ -733,9 +778,9 @@ export default function ManualRoutePanel({
         className="h-auto grid justify-start gap-2 p-3 text-left"
         onClick={openJsonPanel}
       >
-        <span className="text-xs font-medium text-muted-foreground">Advanced Node</span>
-        <span className="text-sm font-semibold">{tr('节点 JSON')}</span>
-        <span className="text-xs text-muted-foreground">{tr('导入、校验或直接编辑当前 manual 节点 JSON。')}</span>
+        <span className="text-xs font-medium text-muted-foreground">{tr('pages.tokenRoutes.manualRoutePanel.advancedNode')}</span>
+        <span className="text-sm font-semibold">{tr('pages.tokenRoutes.manualRoutePanel.json2')}</span>
+        <span className="text-xs text-muted-foreground">{tr('pages.tokenRoutes.manualRoutePanel.importCheckEditManualJson')}</span>
         <span className="text-xs text-muted-foreground">graph-native</span>
       </Button>
     </div>
@@ -744,9 +789,9 @@ export default function ManualRoutePanel({
   const matchStepContent = backendKind === 'routes' ? (
     <div className="grid gap-3">
       <label className="grid gap-2 text-sm font-medium">
-        <span>{tr('对外模型名')}</span>
+        <span>{tr('pages.tokenRoutes.manualRoutePanel.model3')}</span>
         <Input
-          placeholder={tr('对外模型名（例如 claude-opus-4-6）')}
+          placeholder={tr('pages.tokenRoutes.manualRoutePanel.modelClaudeOpus46')}
           value={displayName}
           onChange={(event) => setForm((current) => ({
             ...current,
@@ -756,19 +801,19 @@ export default function ManualRoutePanel({
         />
       </label>
       <div className="text-xs text-muted-foreground">
-        {tr('这个名字会作为 public model 暴露给下游请求。Model Group 的 requestedModelPattern 会保持为空。')}
+        {tr('pages.tokenRoutes.manualRoutePanel.publicModelRequestModelGroupRequestedmodelpattern')}
       </div>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <div className="text-sm font-medium">{tr('来源模型')}</div>
+          <div className="text-sm font-medium">{tr('pages.tokenRoutes.manualRoutePanel.model2')}</div>
           <div className="text-xs text-muted-foreground">
             {selectedSourceRoutes.length > 0
-              ? `已选择 ${selectedSourceRoutes.length} 个来源模型`
-              : tr('尚未选择来源模型。')}
+              ? tr('pages.tokenRoutes.manualRoutePanel.selectedSourceModels').replace('{count}', String(selectedSourceRoutes.length))
+              : tr('pages.tokenRoutes.manualRoutePanel.notSelectedModel')}
           </div>
         </div>
         <Button variant="outline" type="button" onClick={openSourcePicker}>
-          {tr('选择来源模型')}
+          {tr('pages.tokenRoutes.manualRoutePanel.selectModel')}
         </Button>
       </div>
       {selectedSourceRoutes.length > 0 && (
@@ -781,7 +826,7 @@ export default function ManualRoutePanel({
               <span>{index + 1}</span>
               <div>
                 <b>{renderRouteOptionLabel(route)}</b>
-                <small>{tr('Priority band')} {index}</small>
+                <small>{tr('pages.tokenRoutes.manualRoutePanel.priorityBand')} {index}</small>
               </div>
               <div className="flex flex-wrap gap-2">
                 <Button variant="outline"
@@ -796,7 +841,7 @@ export default function ManualRoutePanel({
                     },
                   }))}
                 >
-                  {tr('上移')}
+                  {tr('pages.sites.moveUp')}
                 </Button>
                 <Button variant="outline"
                   type="button"
@@ -810,7 +855,7 @@ export default function ManualRoutePanel({
                     },
                   }))}
                 >
-                  {tr('下移')}
+                  {tr('pages.sites.moveDown')}
                 </Button>
                 <Button variant="outline"
                   type="button"
@@ -823,7 +868,7 @@ export default function ManualRoutePanel({
                     },
                   }))}
                 >
-                  {tr('移除')}
+                  {tr('pages.settings.remove')}
                 </Button>
               </div>
             </div>
@@ -847,16 +892,16 @@ export default function ManualRoutePanel({
             }));
           }}
         />
-        <span>{tr('自动品牌图标')}</span>
+        <span>{tr('pages.tokenRoutes.automaticbrands')}</span>
       </label>
     </div>
   ) : (
     <div className="grid gap-3">
       <div className="grid gap-3 md:grid-cols-2">
         <label className="grid gap-2 text-sm font-medium">
-          <span>{tr('群组显示名')}</span>
+          <span>{tr('pages.tokenRoutes.manualRoutePanel.groups2')}</span>
           <Input
-            placeholder={tr('可选，例如 Claude 4.6')}
+            placeholder={tr('pages.tokenRoutes.manualRoutePanel.claude46')}
             value={displayName}
             onChange={(event) => setForm((current) => ({
               ...current,
@@ -866,9 +911,9 @@ export default function ManualRoutePanel({
           />
         </label>
         <label className="grid gap-2 text-sm font-medium">
-          <span>{tr('模型匹配')}</span>
+          <span>{tr('pages.settings.modelmatch')}</span>
           <Input
-            placeholder={tr('模型匹配（gpt-4o、claude-*、re:^claude-.*$）')}
+            placeholder={tr('pages.tokenRoutes.manualRoutePanel.modelmatchGpt4oClaudeReClaude')}
             value={modelPattern}
             onChange={(event) => setForm((current) => ({
               ...current,
@@ -882,8 +927,8 @@ export default function ManualRoutePanel({
       ) : (
         <div className="text-xs text-muted-foreground">
           {modelPattern.trim()
-            ? `${tr('规则预览：命中样本')} ${previewMatchedModels.length} / ${previewModelSamples.length}`
-            : tr('exact 直接填写模型名；glob 可用 *；正则请使用 re: 前缀。')}
+            ? `${tr('pages.tokenRoutes.manualRoutePanel.rulePreviewMatchedSamples')} ${previewMatchedModels.length} / ${previewModelSamples.length}`
+            : tr('pages.tokenRoutes.manualRoutePanel.exactModelGlobAvailableUsageRe')}
         </div>
       )}
       {previewMatchedModels.length > 0 && (
@@ -900,14 +945,18 @@ export default function ManualRoutePanel({
     <div className="grid gap-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <div className="text-sm font-medium">{tr('来源模型')}</div>
-          <div className="text-xs text-muted-foreground">{`已选择 ${selectedSourceRoutes.length} / ${exactSourceRouteOptions.length}`}</div>
+          <div className="text-sm font-medium">{tr('pages.tokenRoutes.manualRoutePanel.model2')}</div>
+          <div className="text-xs text-muted-foreground">
+            {tr('pages.tokenRoutes.manualRoutePanel.selectedOutOfTotal')
+              .replace('{selected}', String(selectedSourceRoutes.length))
+              .replace('{total}', String(selectableSourceRouteOptions.length))}
+          </div>
         </div>
         <Button variant="outline" type="button" onClick={openSourcePicker}>
-          {tr('选择来源模型')}
+          {tr('pages.tokenRoutes.manualRoutePanel.selectModel')}
         </Button>
       </div>
-      <SearchField value={sourceSearch} onChange={setSourceSearch} placeholder={tr('搜索来源模型')} />
+      <SearchField value={sourceSearch} onChange={setSourceSearch} placeholder={tr('pages.tokenRoutes.manualRoutePanel.searchModel')} />
       <div className="grid gap-2 md:grid-cols-2">
         {filteredSourceRoutes.slice(0, 18).map((route) => {
           const selected = selectedSourceRouteIdSet.has(route.id);
@@ -932,7 +981,7 @@ export default function ManualRoutePanel({
                 <span>{label}</span>
               </span>
               <span className="text-xs text-muted-foreground">
-                {route.channelCount} {tr('通道')} · {(route.siteNames || []).slice(0, 2).join(', ') || tr('无站点')}
+                {route.channelCount} {tr('pages.tokenRoutes.channels')} · {(route.siteNames || []).slice(0, 2).join(', ') || tr('pages.tokenRoutes.manualRoutePanel.nonesites')}
               </span>
             </Button>
           );
@@ -941,14 +990,14 @@ export default function ManualRoutePanel({
     </div>
   ) : (
     <div className="grid gap-3">
-      <div className="text-sm font-medium">{tr('自动模型端点池')}</div>
+      <div className="text-sm font-medium">{tr('pages.tokenRoutes.manualRoutePanel.automaticmodel')}</div>
       <div className="text-xs text-muted-foreground">
-        {tr('保存后会按模型可用性和站点规则维护 model_endpoint。当前步骤展示规则预览，不直接选择单个 channel。')}
+        {tr('pages.tokenRoutes.manualRoutePanel.saveModelavailableSitesrulesModelEndpointRulespreviewSelect')}
       </div>
       <div className="grid gap-2 md:grid-cols-3">
-        <span><b>{previewMatchedModels.length}</b>{tr('命中样本')}</span>
-        <span><b>{previewModelSamples.length}</b>{tr('可预览模型')}</span>
-        <span><b>{form.enabled ? tr('启用') : tr('禁用')}</b>{tr('初始状态')}</span>
+        <span><b>{previewMatchedModels.length}</b>{tr('pages.tokenRoutes.manualRoutePanel.zh')}</span>
+        <span><b>{previewModelSamples.length}</b>{tr('pages.tokenRoutes.manualRoutePanel.previewmodel')}</span>
+        <span><b>{form.enabled ? tr('pages.downstreamKeys.enabled') : tr('pages.downstreamKeys.disabled')}</b>{tr('pages.tokenRoutes.manualRoutePanel.status')}</span>
       </div>
     </div>
   );
@@ -974,12 +1023,12 @@ export default function ManualRoutePanel({
               }));
             }}
           />
-          <span>{tr('自动品牌图标')}</span>
+          <span>{tr('pages.tokenRoutes.automaticbrands')}</span>
         </label>
       )}
       {backendKind === 'channels' && (
         <label className="grid gap-2 text-sm font-medium">
-          <span>{tr('群组图标')}</span>
+          <span>{tr('pages.tokenRoutes.manualRoutePanel.groups')}</span>
           <ModernSelect
             value={routeIconSelectValue}
             onChange={(nextValue) => setForm((current) => ({
@@ -987,8 +1036,8 @@ export default function ManualRoutePanel({
               presentation: { ...current.presentation, displayIcon: nextValue },
             }))}
             options={routeIconSelectOptions}
-            placeholder={tr('图标（可选，选择品牌图标）')}
-            emptyLabel={tr('暂无可选品牌图标')}
+            placeholder={tr('pages.tokenRoutes.manualRoutePanel.selectbrands')}
+            emptyLabel={tr('pages.tokenRoutes.manualRoutePanel.noneBrands')}
           />
         </label>
       )}
@@ -998,23 +1047,23 @@ export default function ManualRoutePanel({
   const reviewStepContent = (
     <div className="grid gap-3">
       <div className="grid gap-3 lg:grid-cols-2">
-        <div>
-          <div className="text-sm font-medium">{tr('保存前检查')}</div>
+        <div className="grid gap-2">
+          <div className="text-sm font-medium">{tr('pages.tokenRoutes.manualRoutePanel.saveCheck')}</div>
           <div className="grid gap-2">
             {validationItems.map((item) => (
-              <div key={item.label} className="grid grid-cols-[auto_1fr] items-center gap-3 rounded-lg border p-3">
-                <span>{item.ok ? 'OK' : '!'}</span>
-                <div>
-                  <b>{item.label}</b>
-                  <small>{item.detail}</small>
+              <div key={item.label} className="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-3 rounded-lg border p-3">
+                <span className={item.ok ? 'text-muted-foreground' : 'text-destructive'}>{item.ok ? 'OK' : '!'}</span>
+                <div className="min-w-0">
+                  <b className="block break-words">{item.label}</b>
+                  <small className="block break-words text-muted-foreground">{item.detail}</small>
                 </div>
               </div>
             ))}
           </div>
         </div>
-        <div>
-          <div className="text-sm font-medium">Payload Preview</div>
-          <pre className="overflow-x-auto whitespace-pre-wrap rounded-md border p-3 font-mono text-xs">{stringifyRouteGraphJson(currentFormNodeJson)}</pre>
+        <div className="grid min-w-0 gap-2">
+          <div className="text-sm font-medium">{tr('pages.tokenRoutes.manualRoutePanel.payloadPreview')}</div>
+          <pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-md border p-3 font-mono text-xs">{stringifyRouteGraphJson(currentFormNodeJson)}</pre>
         </div>
       </div>
     </div>
@@ -1036,7 +1085,7 @@ export default function ManualRoutePanel({
        
        
       >
-        {tr('取消')}
+        {tr('app.cancel')}
       </Button>
       <Button variant="outline"
         type="button"
@@ -1044,14 +1093,14 @@ export default function ManualRoutePanel({
        
         disabled={sourcePickerSelection.length === 0}
       >
-        {tr('清空')}
+        {tr('components.notificationPanel.clear')}
       </Button>
       <Button
         type="button"
         onClick={confirmSourcePicker}
        
       >
-        {`确认选择 (${sourcePickerSelection.length})`}
+        {tr('pages.tokenRoutes.manualRoutePanel.confirmSelectionCount').replace('{count}', String(sourcePickerSelection.length))}
       </Button>
     </>
   );
@@ -1061,13 +1110,13 @@ export default function ManualRoutePanel({
       <CenteredModal
         open={show}
         onClose={onCancel}
-        title={editingRouteId ? tr('编辑群组') : tr('新建群组')}
+        title={editingRouteId ? tr('pages.tokenRoutes.manualRoutePanel.editgroups') : tr('pages.tokenRoutes.createGroup')}
         footer={footer}
         maxWidth={jsonPanelOpen ? 1180 : 860}
         closeOnEscape
       >
-        <div className={jsonPanelOpen ? 'grid gap-4 lg:grid-cols-[1fr_360px]' : 'grid gap-4'}>
-          <div className="grid gap-4">
+        <div className={jsonPanelOpen ? 'grid min-h-0 gap-4 lg:grid-cols-[minmax(0,1fr)_360px]' : 'grid min-h-0 gap-4'}>
+          <div className="grid min-h-0 gap-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <div className="text-base font-semibold">{routeTypeSummary.title}</div>
@@ -1075,20 +1124,35 @@ export default function ManualRoutePanel({
               </div>
               <div className="flex flex-wrap gap-2">
                 <Button variant="outline" type="button" onClick={exportNodeJson}>
-                  {tr('导出节点 JSON')}
+                  {tr('pages.tokenRoutes.manualRoutePanel.json3')}
                 </Button>
                 <Button variant="outline"
                   type="button"
                  
                   onClick={jsonPanelOpen ? () => setJsonPanelOpen(false) : openJsonPanel}
                 >
-                  {jsonPanelOpen ? tr('关闭 JSON') : tr('JSON 高级编辑')}
+                  {jsonPanelOpen ? tr('pages.tokenRoutes.manualRoutePanel.closeJson') : tr('pages.tokenRoutes.manualRoutePanel.jsonHighEdit')}
                 </Button>
               </div>
             </div>
 
-            <div className="grid gap-4 lg:grid-cols-[220px_1fr]">
-              <nav className="grid content-start gap-2" aria-label={tr('路由创建步骤')}>
+            <div className="grid grid-cols-[repeat(auto-fit,minmax(160px,1fr))] gap-2">
+              <div className="rounded-lg border p-3">
+                <div className="text-xs text-muted-foreground">{tr('pages.tokenRoutes.manualRoutePanel.type')}</div>
+                <div className="mt-1 break-words text-sm font-medium">{routeTypeSummary.badge}</div>
+              </div>
+              <div className="rounded-lg border p-3">
+                <div className="text-xs text-muted-foreground">{tr('pages.tokenRoutes.manualRoutePanel.visibility')}</div>
+                <div className="mt-1 break-words text-sm font-medium">{currentFormNodeJson.visibility}</div>
+              </div>
+              <div className="rounded-lg border p-3">
+                <div className="text-xs text-muted-foreground">{tr('backend')}</div>
+                <div className="mt-1 break-words text-sm font-medium">{currentFormNodeJson.backend.kind}</div>
+              </div>
+            </div>
+
+            <div className="grid min-h-0 gap-4 lg:grid-cols-[220px_minmax(0,1fr)]">
+              <nav className="flex gap-2 overflow-x-auto pb-1 lg:grid lg:content-start lg:overflow-visible lg:pb-0" aria-label={tr('pages.tokenRoutes.manualRoutePanel.routes')}>
                 {WIZARD_STEPS.map((step, index) => {
                   const active = step.id === wizardStep;
                   const done = getWizardStepIndex(wizardStep) > index;
@@ -1097,7 +1161,7 @@ export default function ManualRoutePanel({
                       key={step.id}
                       type="button"
                       variant={active ? 'secondary' : 'outline'}
-                      className={`h-auto justify-start p-3 text-left ${done ? 'opacity-80' : ''}`.trim()}
+                      className={`h-auto min-w-40 justify-start p-3 text-left lg:min-w-0 ${done ? 'opacity-80' : ''}`.trim()}
                       onClick={() => setWizardStep(step.id)}
                     >
                       <span className="inline-flex size-6 shrink-0 items-center justify-center rounded-full border text-xs">{index + 1}</span>
@@ -1110,12 +1174,12 @@ export default function ManualRoutePanel({
                 })}
               </nav>
 
-              <section className="grid gap-3 rounded-lg border p-3">
+              <section className="grid min-w-0 gap-3 rounded-lg border p-3">
                 {editingDirectChannelsNode ? (
                   <div className="grid gap-1 rounded-lg border p-3">
                     <div className="text-sm font-medium">{tr('Direct Channels')}</div>
                     <div className="text-xs text-muted-foreground">
-                      {tr('该节点直接维护通道；修改 Match 后会按当前可用模型重新匹配自动通道。')}
+                      {tr('pages.tokenRoutes.manualRoutePanel.channelsMatchAvailablemodelMatchautomaticchannels')}
                     </div>
                   </div>
                 ) : null}
@@ -1128,56 +1192,16 @@ export default function ManualRoutePanel({
                 {wizardContentByStep[wizardStep]}
               </section>
 
-              <aside className="grid gap-3 rounded-lg border p-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <div className="text-sm font-medium">{tr('实时预览')}</div>
-                    <div className="text-xs text-muted-foreground">{tr('保存前会应用到同一份 graph-native 草稿。')}</div>
-                  </div>
-                  <ToneBadge tone={currentFormNodeJson.enabled ? 'success' : 'warning'} className="text-[11px]">
-                    {currentFormNodeJson.enabled ? tr('已启用') : tr('已禁用')}
-                  </ToneBadge>
-                </div>
-
-                <div className="grid gap-2">
-                  <div className="text-sm font-medium">{tr('节点概要')}</div>
-                  <div className="grid gap-2 md:grid-cols-3">
-                    <span><b>{routeTypeSummary.badge}</b>{tr('当前类型')}</span>
-                    <span><b>{currentFormNodeJson.visibility}</b>{tr('可见性')}</span>
-                    <span><b>{currentFormNodeJson.backend.kind}</b>{tr('backend')}</span>
-                  </div>
-                </div>
-
-                <div className="grid gap-2">
-                  <div className="text-sm font-medium">{tr('校验状态')}</div>
-                  <div className="grid gap-2">
-                    {validationItems.map((item) => (
-                      <div key={item.label} className="grid grid-cols-[auto_1fr] items-center gap-3 rounded-lg border p-3">
-                        <span>{item.ok ? 'OK' : '!'}</span>
-                        <div>
-                          <b>{item.label}</b>
-                          <small>{item.detail}</small>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="grid gap-2">
-                  <div className="text-sm font-medium">Payload Preview</div>
-                  <pre className="overflow-x-auto whitespace-pre-wrap rounded-md border p-3 font-mono text-xs">{stringifyRouteGraphJson(currentFormNodeJson)}</pre>
-                </div>
-              </aside>
             </div>
           </div>
 
           {jsonPanelOpen && (
-            <div className="grid gap-3 rounded-lg border p-3">
+            <div className="grid min-h-0 gap-3 rounded-lg border p-3">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <div className="text-sm font-medium">{tr('节点 JSON')}</div>
+                  <div className="text-sm font-medium">{tr('pages.tokenRoutes.manualRoutePanel.json2')}</div>
                   <div className="text-xs text-muted-foreground">
-                    {tr('只允许编辑 manual 节点；应用后先进入表单草稿，点击保存才会写入。')}
+                    {tr('pages.tokenRoutes.manualRoutePanel.editManualFormSave')}
                   </div>
                 </div>
                 <ToneBadge tone="-info">
@@ -1197,25 +1221,25 @@ export default function ManualRoutePanel({
                 </ToneBadge>
               </div>
 
-              <Textarea
-                className="min-h-80 rounded-md border bg-background p-3 font-mono text-xs"
+              <JsonCodeEditor
                 value={nodeJsonDraft}
-                onChange={(event) => {
-                  setNodeJsonDraft(event.target.value);
+                onChange={(value) => {
+                  setNodeJsonDraft(value);
                   setNodeJsonMessage('');
                 }}
-                spellCheck={false}
+                minHeight={320}
+                maxHeight={640}
               />
 
               <div className="flex flex-wrap gap-2">
                 <Button variant="outline" type="button" onClick={formatNodeJsonDraft}>
-                  {tr('格式化')}
+                  {tr('pages.tokenRoutes.manualRoutePanel.format')}
                 </Button>
                 <Button variant="outline" type="button" onClick={validateNodeJsonDraft}>
-                  {tr('校验')}
+                  {tr('pages.tokenRoutes.manualRoutePanel.check2')}
                 </Button>
                 <Button type="button" onClick={applyNodeJsonDraft}>
-                  {tr('应用到草稿')}
+                  {tr('pages.tokenRoutes.manualRoutePanel.applyDraft')}
                 </Button>
               </div>
 
@@ -1232,19 +1256,21 @@ export default function ManualRoutePanel({
       <CenteredModal
         open={show && showSourcePicker}
         onClose={closeSourcePicker}
-        title={tr('选择来源模型')}
+        title={tr('pages.tokenRoutes.manualRoutePanel.selectModel')}
         footer={sourcePickerFooter}
         maxWidth={980}
         closeOnEscape
       >
-        <div className="flex flex-col gap-3">
+        <div className="flex min-h-0 flex-col gap-3">
           <div className="flex flex-wrap justify-between gap-3">
             <div className="flex flex-col gap-1">
               <div className="text-xs text-muted-foreground">
-                {`已选择 ${sourcePickerSelection.length} 个来源模型`}
+                {tr('pages.tokenRoutes.manualRoutePanel.selectedSourceModels').replace('{count}', String(sourcePickerSelection.length))}
               </div>
               <div className="text-xs text-muted-foreground">
-                {`候选 ${filteredSourceRoutes.length} / ${exactSourceRouteOptions.length}`}
+                {tr('pages.tokenRoutes.manualRoutePanel.candidatesOutOfTotal')
+                  .replace('{filtered}', String(filteredSourceRoutes.length))
+                  .replace('{total}', String(selectableSourceRouteOptions.length))}
               </div>
             </div>
           </div>
@@ -1252,16 +1278,16 @@ export default function ManualRoutePanel({
           <SearchField
             value={sourceSearch}
             onChange={setSourceSearch}
-            placeholder={tr('搜索来源模型')}
+            placeholder={tr('pages.tokenRoutes.manualRoutePanel.searchModel')}
           />
 
-          <div className="grid gap-3 rounded-lg border p-3">
+          <div className="grid shrink-0 gap-3 rounded-lg border p-3">
             <div className="grid gap-3">
-              <FilterRow label={tr('品牌')}>
+              <FilterRow label={tr('pages.models.brands')}>
                 <FilterChip
                   active={!activeSourceBrand}
-                  label={tr('全部')}
-                  count={exactSourceRouteOptions.length}
+                  label={tr('components.notificationPanel.all')}
+                  count={selectableSourceRouteOptions.length}
                   icon={<span className="text-[10px]">✦</span>}
                   onClick={() => setActiveSourceBrand(null)}
                 />
@@ -1278,7 +1304,7 @@ export default function ManualRoutePanel({
                 {sourceBrandList.otherCount > 0 ? (
                   <FilterChip
                     active={activeSourceBrand === '__other__'}
-                    label={tr('其他')}
+                    label={tr('pages.models.other')}
                     count={sourceBrandList.otherCount}
                     icon={<span className="text-[10px]">?</span>}
                     onClick={() => setActiveSourceBrand(activeSourceBrand === '__other__' ? null : '__other__')}
@@ -1287,11 +1313,11 @@ export default function ManualRoutePanel({
               </FilterRow>
 
               {sourceSiteList.length > 0 ? (
-                <FilterRow label={tr('站点')}>
+                <FilterRow label={tr('components.searchModal.sites2')}>
                   <FilterChip
                     active={!activeSourceSite}
-                    label={tr('全部')}
-                    count={exactSourceRouteOptions.length}
+                    label={tr('components.notificationPanel.all')}
+                    count={selectableSourceRouteOptions.length}
                   icon={<span className="text-[10px]">⚡</span>}
                     onClick={() => setActiveSourceSite(null)}
                   />
@@ -1321,11 +1347,11 @@ export default function ManualRoutePanel({
                 </FilterRow>
               ) : null}
 
-              <FilterRow label={tr('能力')}>
+              <FilterRow label={tr('pages.tokenRoutes.manualRoutePanel.capabilities')}>
                 <FilterChip
                   active={!activeSourceEndpointType}
-                  label={tr('全部')}
-                  count={exactSourceRouteOptions.length}
+                  label={tr('components.notificationPanel.all')}
+                  count={selectableSourceRouteOptions.length}
                   icon={<span className="text-[10px]">⚙</span>}
                   onClick={() => setActiveSourceEndpointType(null)}
                 />
@@ -1343,18 +1369,18 @@ export default function ManualRoutePanel({
                   );
                 })}
                 {sourceEndpointTypeList.length === 0 ? (
-                  <span className="text-xs text-muted-foreground">{tr('暂无接口能力数据')}</span>
+                  <span className="text-xs text-muted-foreground">{tr('pages.tokenRoutes.manualRoutePanel.noneendpointCapabilities')}</span>
                 ) : null}
               </FilterRow>
             </div>
           </div>
 
-          <div className="max-h-[520px] overflow-y-auto pr-1">
+          <div className="min-h-0 overflow-y-auto pr-1">
             {filteredSourceRoutes.length === 0 ? (
               <div className="py-3 text-center text-xs text-muted-foreground">
-                {exactSourceRouteOptions.length === 0
-                  ? tr('当前没有可选的精确模型路由。')
-                  : tr('没有匹配的来源模型。')}
+                {selectableSourceRouteOptions.length === 0
+                  ? tr('pages.tokenRoutes.manualRoutePanel.modelRoutes')
+                  : tr('pages.tokenRoutes.manualRoutePanel.matchModel')}
               </div>
             ) : (
               <div
@@ -1372,7 +1398,7 @@ export default function ManualRoutePanel({
                       key={route.id}
                       type="button"
                       onClick={() => setSourcePickerSelection((current) => toggleSourceRouteId(current, route.id))}
-                     
+                      className="h-auto w-full justify-start p-0 text-left"
                      
                     >
                       <div className="flex w-full flex-col gap-3 px-[15px] py-3.5">
@@ -1401,16 +1427,16 @@ export default function ManualRoutePanel({
                             </div>
                           </div>
                           <ToneBadge tone={selected ? 'info' : 'muted'} className="shrink-0 text-[10px]">
-                            {selected ? tr('已选中') : tr('可选择')}
+                            {selected ? tr('pages.downstreamKeys.selectedzh') : tr('pages.tokenRoutes.manualRoutePanel.selectable')}
                           </ToneBadge>
                         </div>
 
                         <div className="flex flex-wrap gap-1.5">
                           <ToneBadge tone="-info">
-                            {route.channelCount} {tr('通道')}
+                            {route.channelCount} {tr('pages.tokenRoutes.channels')}
                           </ToneBadge>
                           <ToneBadge tone="-muted">
-                            {siteNames.length} {tr('站点')}
+                            {siteNames.length} {tr('components.searchModal.sites2')}
                           </ToneBadge>
                           {endpointTypes.map((endpointType) => (
                             <ToneBadge tone="-muted" key={`${route.id}-${endpointType}`}>
@@ -1437,7 +1463,7 @@ export default function ManualRoutePanel({
                           </div>
                         ) : (
                           <div className="text-xs text-muted-foreground">
-                            {tr('当前未绑定站点信息')}
+                            {tr('pages.tokenRoutes.manualRoutePanel.sitesinfo')}
                           </div>
                         )}
                       </div>

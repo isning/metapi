@@ -12,9 +12,11 @@ import { Button } from '../../components/ui/button/index.js';
 import { LoaderCircle } from 'lucide-react';
 import ToneBadge from '../../components/ToneBadge.js';
 import { cn } from '../../lib/utils.js';
+import { DragHandleButton } from './DragHandleButton.js';
 
+import { tr } from '../../i18n.js';
 function getRouteUnitStrategyLabel(strategy: string | null | undefined): string {
-  return strategy === 'stick_until_unavailable' ? '单个用到不可用再切' : '轮询';
+  return strategy === 'stick_until_unavailable' ? tr('pages.oAuthManagement.notAvailable') : tr('pages.oAuthManagement.roundRobin');
 }
 
 function formatRouteUnitMemberLabel(member: { accountId: number; username: string | null; siteName: string | null }): string {
@@ -34,7 +36,7 @@ function SuccessFailStat({
 }) {
   return (
     <span className={cn('whitespace-nowrap text-xs text-muted-foreground', className)}>
-      成功/失败 <span className="font-semibold text-foreground">{successCount || 0}</span>
+      {tr('pages.tokenRoutes.routeCard.successFailed')} <span className="font-semibold text-foreground">{successCount || 0}</span>
       <span className="mx-0.5 text-muted-foreground">/</span>
       <span className="font-semibold text-destructive">{failCount || 0}</span>
     </span>
@@ -102,12 +104,6 @@ export function SortableChannelRow({
     dragging && 'bg-muted opacity-90 shadow-md',
     channel.enabled === false && 'opacity-60',
   );
-  const dragHandleClassName = cn(
-    'cursor-grab text-muted-foreground',
-    dragging && 'bg-muted text-foreground',
-    (isSavingPriority || managementLocked) && 'cursor-not-allowed',
-  );
-
   const decisionState = getChannelDecisionState(decisionCandidate, channel, isExactRoute, loadingDecision);
   const tokenBinding = describeTokenBinding(
     tokenOptions,
@@ -119,12 +115,14 @@ export function SortableChannelRow({
     },
   );
   const routeUnit = channel.routeUnit ?? null;
-  const routeUnitName = routeUnit?.name?.trim() || 'OAuth 路由池';
+  const routeUnitName = routeUnit?.name?.trim() || tr('pages.tokenRoutes.routeCard.oauthRoutes');
   const routeUnitStrategyLabel = routeUnit ? getRouteUnitStrategyLabel(routeUnit.strategy) : '';
   const routeUnitMemberSummary = routeUnit?.members?.length
     ? routeUnit.members.map((member) => formatRouteUnitMemberLabel(member)).join('、')
     : null;
-  const routeUnitMemberSummaryText = routeUnitMemberSummary ? `成员：${routeUnitMemberSummary}` : null;
+  const routeUnitMemberSummaryText = routeUnitMemberSummary
+    ? tr('pages.tokenRoutes.sortableChannelRow.membersSummary').replace('{members}', routeUnitMemberSummary)
+    : null;
 
   const [mobileDetailsOpen, setMobileDetailsOpen] = useState(false);
 
@@ -132,26 +130,13 @@ export function SortableChannelRow({
     return (
       <div data-layer-root className={cn(rowClassName, 'p-2')}>
         <div className="flex items-start gap-2">
-          <Button
-            variant="outline"
-            size="icon"
-            className={dragHandleClassName}
-            type="button"
+          <DragHandleButton
             ref={dragHandleRef}
             {...dragHandleProps}
             disabled={isSavingPriority || managementLocked}
-            data-tooltip={suppressTooltips ? undefined : (managementLocked ? '该路由当前不可编辑优先级' : '拖拽调整优先级桶')}
-            aria-label="拖拽调整优先级桶"
-          >
-            <svg width="12" height="12" fill="currentColor" viewBox="0 0 12 12" aria-hidden>
-              <circle cx="3" cy="2" r="1" />
-              <circle cx="9" cy="2" r="1" />
-              <circle cx="3" cy="6" r="1" />
-              <circle cx="9" cy="6" r="1" />
-              <circle cx="3" cy="10" r="1" />
-              <circle cx="9" cy="10" r="1" />
-            </svg>
-          </Button>
+            data-tooltip={suppressTooltips ? undefined : (managementLocked ? tr('pages.tokenRoutes.sortableChannelRow.routesEdit') : tr('pages.tokenRoutes.sortableChannelRow.dragDropAdjustPriorityBuckets'))}
+            aria-label={tr('pages.tokenRoutes.sortableChannelRow.dragDropAdjustPriorityBuckets')}
+          />
 
           <div className="flex min-w-0 flex-1 flex-col gap-1.5">
             <div className="flex flex-wrap items-center gap-1.5">
@@ -179,9 +164,9 @@ export function SortableChannelRow({
 
               <ToneBadge
                 tone=""
-                data-tooltip={suppressTooltips ? undefined : `当前生效：${tokenBinding.effectiveTokenName}`}
+                data-tooltip={suppressTooltips ? undefined : tr('pages.tokenRoutes.sortableChannelRow.currentlyEffectiveToken').replace('{token}', tokenBinding.effectiveTokenName)}
               >
-                当前生效：{tokenBinding.effectiveTokenName}
+                {tr('pages.tokenRoutes.routeCard.currentlyEffective')}{tokenBinding.effectiveTokenName}
               </ToneBadge>
 
               {channel.sourceModel ? (
@@ -194,22 +179,22 @@ export function SortableChannelRow({
                 <ToneBadge tone="-warning"
                  
                  
-                  data-tooltip={suppressTooltips ? undefined : '该通道由用户手动添加，而非系统自动生成'}
+                  data-tooltip={suppressTooltips ? undefined : tr('pages.tokenRoutes.sortableChannelRow.channelAddedManuallyUserNotAutomaticallyGenerated')}
                 >
-                  手动配置
+                  {tr('pages.tokenRoutes.routeCard.manualconfiguration')}
                 </ToneBadge>
               ) : null}
 
               {routeUnit ? (
                 <>
                   <ToneBadge tone="-muted">
-                    OAuth 路由池
+                    {tr('pages.tokenRoutes.routeCard.oauthRoutes')}
                   </ToneBadge>
                   <ToneBadge tone="-info">
                     {routeUnitName}
                   </ToneBadge>
                   <ToneBadge tone="-muted">
-                    {routeUnit.memberCount} 成员
+                    {routeUnit.memberCount} {tr('pages.tokenRoutes.sortableChannelRow.members')}
                   </ToneBadge>
                   <ToneBadge tone="-muted">
                     {routeUnitStrategyLabel}
@@ -221,7 +206,7 @@ export function SortableChannelRow({
             {routeUnitMemberSummaryText ? (
               <div className="flex flex-wrap items-start gap-1.5">
                 <span className="whitespace-nowrap text-xs text-muted-foreground">
-                  成员摘要（{routeUnit?.memberCount || 0} 个成员 · {routeUnitStrategyLabel}）
+                  {tr('pages.tokenRoutes.sortableChannelRow.memberSummary')}{routeUnit?.memberCount || 0} {tr('pages.tokenRoutes.routeCard.members')} {routeUnitStrategyLabel}）
                 </span>
                 <span className="text-xs leading-snug text-muted-foreground">
                   {routeUnitMemberSummaryText}
@@ -230,7 +215,7 @@ export function SortableChannelRow({
             ) : null}
 
             <div className="flex flex-wrap items-center gap-1.5">
-              <span className="whitespace-nowrap text-xs text-muted-foreground">选中概率</span>
+              <span className="whitespace-nowrap text-xs text-muted-foreground">{tr('pages.tokenRoutes.sortableChannelRow.zhprobability')}</span>
               <ProbabilityIndicator
                 probability={decisionState.probability}
                 tooltip={suppressTooltips ? undefined : (decisionState.probability <= 0 ? decisionState.reasonText : undefined)}
@@ -243,7 +228,7 @@ export function SortableChannelRow({
                   type="button"
                   onClick={() => setMobileDetailsOpen((current) => !current)}
                 >
-                  {mobileDetailsOpen ? '收起配置' : '配置通道'}
+                  {mobileDetailsOpen ? tr('pages.tokenRoutes.sortableChannelRow.collapseconfiguration') : tr('pages.tokenRoutes.sortableChannelRow.configurationchannels')}
                 </Button>
               )}
             </div>
@@ -268,7 +253,7 @@ export function SortableChannelRow({
                         description: buildFixedTokenOptionDescription(token),
                       })),
                     ]}
-                    placeholder="选择令牌绑定方式"
+                    placeholder={tr('pages.tokenRoutes.sortableChannelRow.selecttoken')}
                   />
                   <div className="mt-1 text-xs leading-snug text-muted-foreground">
                     {tokenBinding.helperText}
@@ -283,7 +268,7 @@ export function SortableChannelRow({
                     onClick={onSaveToken}
                     disabled={isUpdatingToken}
                   >
-                    {isUpdatingToken ? <LoaderCircle className="size-4 animate-spin" /> : '保存'}
+                    {isUpdatingToken ? <LoaderCircle className="size-4 animate-spin" /> : tr('app.save')}
                   </Button>
 
                   <Button
@@ -292,7 +277,7 @@ export function SortableChannelRow({
                     size="sm"
                     onClick={() => onToggleEnabled(channel.enabled === false)}
                   >
-                    {channel.enabled === false ? '启用' : '禁用'}
+                    {channel.enabled === false ? tr('pages.downstreamKeys.enabled') : tr('pages.downstreamKeys.disabled')}
                   </Button>
 
                   {onSiteBlockModel && channel.site?.id ? (
@@ -302,7 +287,7 @@ export function SortableChannelRow({
                       size="sm"
                       onClick={onSiteBlockModel}
                     >
-                      站点屏蔽
+                      {tr('pages.tokenRoutes.sortableChannelRow.sites')}
                     </Button>
                   ) : null}
 
@@ -312,7 +297,7 @@ export function SortableChannelRow({
                     size="sm"
                     onClick={onDeleteChannel}
                   >
-                    移除
+                    {tr('pages.settings.remove')}
                   </Button>
                 </div>
               </div>
@@ -333,26 +318,13 @@ export function SortableChannelRow({
       )}
     >
       <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs">
-        <Button
-          variant="outline"
-          size="icon"
-          className={dragHandleClassName}
-          type="button"
+        <DragHandleButton
           ref={dragHandleRef}
           {...dragHandleProps}
           disabled={isSavingPriority || managementLocked}
-          data-tooltip={suppressTooltips ? undefined : (managementLocked ? '该路由当前不可编辑优先级' : '拖拽调整优先级桶')}
-          aria-label="拖拽调整优先级桶"
-        >
-          <svg width="12" height="12" fill="currentColor" viewBox="0 0 12 12" aria-hidden>
-            <circle cx="3" cy="2" r="1" />
-            <circle cx="9" cy="2" r="1" />
-            <circle cx="3" cy="6" r="1" />
-            <circle cx="9" cy="6" r="1" />
-            <circle cx="3" cy="10" r="1" />
-            <circle cx="9" cy="10" r="1" />
-          </svg>
-        </Button>
+          data-tooltip={suppressTooltips ? undefined : (managementLocked ? tr('pages.tokenRoutes.sortableChannelRow.routesEdit') : tr('pages.tokenRoutes.sortableChannelRow.dragDropAdjustPriorityBuckets'))}
+          aria-label={tr('pages.tokenRoutes.sortableChannelRow.dragDropAdjustPriorityBuckets')}
+        />
 
         {showPriorityBadge ? (
           <ToneBadge tone="">
@@ -374,9 +346,9 @@ export function SortableChannelRow({
 
         <ToneBadge
           tone=""
-          data-tooltip={suppressTooltips ? undefined : `当前生效：${tokenBinding.effectiveTokenName}`}
+          data-tooltip={suppressTooltips ? undefined : tr('pages.tokenRoutes.sortableChannelRow.currentlyEffectiveToken').replace('{token}', tokenBinding.effectiveTokenName)}
         >
-          当前生效：{tokenBinding.effectiveTokenName}
+          {tr('pages.tokenRoutes.routeCard.currentlyEffective')}{tokenBinding.effectiveTokenName}
         </ToneBadge>
 
         {channel.sourceModel ? (
@@ -388,26 +360,26 @@ export function SortableChannelRow({
         {channel.manualOverride ? (
           <ToneBadge
             tone="-warning"
-            data-tooltip={suppressTooltips ? undefined : '该通道由用户手动添加，而非系统自动生成'}
+            data-tooltip={suppressTooltips ? undefined : tr('pages.tokenRoutes.sortableChannelRow.channelAddedManuallyUserNotAutomaticallyGenerated')}
           >
-            手动配置
+            {tr('pages.tokenRoutes.routeCard.manualconfiguration')}
           </ToneBadge>
         ) : null}
 
         {channel.enabled === false ? (
-          <ToneBadge tone="-muted">已禁用</ToneBadge>
+          <ToneBadge tone="-muted">{tr('pages.accounts.disabled2')}</ToneBadge>
         ) : null}
 
         {routeUnit ? (
           <>
             <ToneBadge tone="-muted">
-              OAuth 路由池
+              {tr('pages.tokenRoutes.routeCard.oauthRoutes')}
             </ToneBadge>
             <ToneBadge tone="-info">
               {routeUnitName}
             </ToneBadge>
             <ToneBadge tone="-muted">
-              {routeUnit.memberCount} 成员
+              {routeUnit.memberCount} {tr('pages.tokenRoutes.sortableChannelRow.members')}
             </ToneBadge>
             <ToneBadge tone="-muted">
               {routeUnitStrategyLabel}
@@ -418,7 +390,7 @@ export function SortableChannelRow({
         {routeUnitMemberSummaryText ? (
           <div className="flex w-full flex-wrap items-start gap-1.5">
             <span className="whitespace-nowrap text-xs text-muted-foreground">
-              成员摘要（{routeUnit?.memberCount || 0} 个成员 · {routeUnitStrategyLabel}）
+              {tr('pages.tokenRoutes.sortableChannelRow.memberSummary')}{routeUnit?.memberCount || 0} {tr('pages.tokenRoutes.routeCard.members')} {routeUnitStrategyLabel}）
             </span>
             <span className="text-xs leading-snug text-muted-foreground">
               {routeUnitMemberSummaryText}
@@ -427,7 +399,7 @@ export function SortableChannelRow({
         ) : null}
 
         <div className="flex w-full flex-wrap items-center gap-1.5">
-          <span className="whitespace-nowrap text-xs text-muted-foreground">选中概率</span>
+          <span className="whitespace-nowrap text-xs text-muted-foreground">{tr('pages.tokenRoutes.sortableChannelRow.zhprobability')}</span>
           <ProbabilityIndicator
             probability={decisionState.probability}
             tooltip={suppressTooltips ? undefined : (decisionState.probability <= 0 ? decisionState.reasonText : undefined)}
@@ -457,7 +429,7 @@ export function SortableChannelRow({
                     description: buildFixedTokenOptionDescription(token),
                   })),
                 ]}
-                placeholder="选择令牌绑定方式"
+                placeholder={tr('pages.tokenRoutes.sortableChannelRow.selecttoken')}
               />
               <div className="mt-1 text-xs leading-snug text-muted-foreground">
                 {tokenBinding.helperText}
@@ -470,7 +442,7 @@ export function SortableChannelRow({
               onClick={onSaveToken}
               disabled={isUpdatingToken}
             >
-              {isUpdatingToken ? <LoaderCircle className="size-4 animate-spin" /> : '保存'}
+              {isUpdatingToken ? <LoaderCircle className="size-4 animate-spin" /> : tr('app.save')}
             </Button>
           </div>
 
@@ -479,9 +451,9 @@ export function SortableChannelRow({
             variant="secondary"
             size="sm"
             onClick={() => onToggleEnabled(channel.enabled === false)}
-            data-tooltip={suppressTooltips ? undefined : (channel.enabled === false ? '启用此通道' : '禁用此通道')}
+            data-tooltip={suppressTooltips ? undefined : (channel.enabled === false ? tr('pages.tokenRoutes.sortableChannelRow.enabledChannels') : tr('pages.tokenRoutes.sortableChannelRow.disabledChannels'))}
           >
-            {channel.enabled === false ? '启用' : '禁用'}
+            {channel.enabled === false ? tr('pages.downstreamKeys.enabled') : tr('pages.downstreamKeys.disabled')}
           </Button>
 
           <div className="flex items-center gap-1">
@@ -491,9 +463,9 @@ export function SortableChannelRow({
                 variant="secondary"
                 size="sm"
                 onClick={onSiteBlockModel}
-                data-tooltip={suppressTooltips ? undefined : `将此模型加入站点「${channel.site?.name || '未知'}」的禁用列表，rebuild 后该站点的此模型通道将不再生成`}
+                data-tooltip={suppressTooltips ? undefined : tr('pages.tokenRoutes.sortableChannelRow.blockModelOnSiteTooltip').replace('{site}', channel.site?.name || tr('pages.accounts.unknown2'))}
               >
-                站点屏蔽
+                {tr('pages.tokenRoutes.sortableChannelRow.sites')}
               </Button>
             ) : null}
 
@@ -503,7 +475,7 @@ export function SortableChannelRow({
               size="sm"
               onClick={onDeleteChannel}
             >
-              移除
+              {tr('pages.settings.remove')}
             </Button>
           </div>
         </>

@@ -1,62 +1,158 @@
 import { describe, expect, it } from 'vitest';
+import ts from 'typescript';
+import { readFileSync } from 'node:fs';
+import { globSync } from 'node:fs';
 import { translateText } from './i18n.js';
 
+const HAS_HAN_RE = /[\u3400-\u9fff]/;
+const I18N_KEY_RE = /^[a-z][A-Za-z0-9]*(?:\.[A-Za-z0-9]+)+$/;
+const RUNTIME_TRANSLATION_CALLS = new Set(['t', 'tr', 'translateText']);
+const FORBIDDEN_I18N_PATTERNS = [
+  'legacy.',
+  'legacySemantic.',
+  'autoI18n.',
+  'i18nKey',
+  'legacyKeyToZh',
+  'zhToEn',
+  'zhToEnSupplemental',
+];
+
+const ALLOWED_RUNTIME_CHINESE_LITERALS = new Set([
+  'src/web/App.tsx:管理员',
+  'src/web/pages/Sites.tsx:其他',
+]);
+
+const RUNTIME_SOURCE_GLOB_OPTIONS = {
+  exclude: [
+    'src/web/**/*.test.*',
+    'src/web/i18n.tsx',
+    'src/web/i18n/resources/**/*.ts',
+  ],
+} as const;
+
+function runtimeSourceFiles() {
+  return globSync('src/web/**/*.{ts,tsx}', RUNTIME_SOURCE_GLOB_OPTIONS).sort();
+}
+
+function createSourceFile(file: string) {
+  return ts.createSourceFile(
+    file,
+    readFileSync(file, 'utf8'),
+    ts.ScriptTarget.Latest,
+    true,
+    file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  );
+}
+
+function collectRuntimeTranslationKeys() {
+  const values = new Map<string, Set<string>>();
+
+  for (const file of runtimeSourceFiles()) {
+    const sf = createSourceFile(file);
+    const visit = (node: ts.Node) => {
+      if (
+        ts.isCallExpression(node)
+        && ts.isIdentifier(node.expression)
+        && RUNTIME_TRANSLATION_CALLS.has(node.expression.text)
+        && node.arguments[0]
+        && ts.isStringLiteralLike(node.arguments[0])
+      ) {
+        const value = node.arguments[0].text;
+        if (I18N_KEY_RE.test(value)) {
+          if (!values.has(value)) values.set(value, new Set());
+          values.get(value)!.add(file);
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sf);
+  }
+
+  return values;
+}
+
 describe('translateText', () => {
-  it('keeps zh text unchanged in zh mode', () => {
-    expect(translateText('模型广场', 'zh')).toBe('模型广场');
+  it('translates migrated domain keys', () => {
+    expect(translateText('app.modelMarketplace', 'zh')).toBe('模型广场');
+    expect(translateText('app.modelMarketplace', 'en')).toBe('Model Marketplace');
+    expect(translateText('upstreamCompatibility.title', 'zh')).toBe('上游兼容性');
+    expect(translateText('upstreamCompatibility.title', 'en')).toBe('Upstream compatibility');
+    expect(translateText('upstreamCostPricing.title', 'zh')).toBe('上游模型成本');
+    expect(translateText('upstreamCostPricing.title', 'en')).toBe('Upstream Model Cost');
   });
 
-  it('translates exact key in en mode', () => {
-    expect(translateText('模型广场', 'en')).toBe('Model Marketplace');
+  it('returns unknown keys unchanged', () => {
+    expect(translateText('missing.key', 'zh')).toBe('missing.key');
+    expect(translateText('missing.key', 'en')).toBe('missing.key');
   });
 
-  it('supports phrase replacement for mixed text', () => {
-    expect(translateText('覆盖槽位 3', 'en')).toBe('Coverage Slots 3');
-    expect(translateText('共 12 个模型', 'en')).toBe('Total 12 models');
-  });
+  it('resolves every runtime i18next key in zh and en', () => {
+    const missing: string[] = [];
 
-  it('never returns Chinese characters in strict en mode', () => {
-    const samples = [
-      '站点已禁用',
-      '缓存清理后重建失败：unknown error',
-      '签到任务执行中，请稍后查看签到日志',
-    ];
-
-    for (const sample of samples) {
-      expect(translateText(sample, 'en')).not.toMatch(/[\u3400-\u9fff]/);
+    for (const [key, files] of collectRuntimeTranslationKeys()) {
+      const zh = translateText(key, 'zh');
+      const en = translateText(key, 'en');
+      if (zh !== key && en !== key && !HAS_HAN_RE.test(en)) continue;
+      missing.push(`${key} -> zh:${zh} en:${en} (${[...files].sort().join(', ')})`);
     }
+
+    expect(missing).toEqual([]);
   });
 
-  it('uses concrete english translations instead of fallback for common runtime text', () => {
-    expect(translateText('切换到中文', 'en')).toBe('Switch to Chinese');
-    expect(translateText('中', 'en')).toBe('ZH');
+  it('keeps explicit translation calls on named keys instead of Chinese source literals', () => {
+    const violations: string[] = [];
 
-    const samples = [
-      '站点已禁用',
-      '签到任务执行中，请稍后查看签到日志',
-      '下游访问令牌至少 6 位（含 sk-）',
-      '路由重建任务执行中，请稍后查看程序日志',
-    ];
-
-    for (const sample of samples) {
-      const translated = translateText(sample, 'en');
-      expect(translated).not.toBe('Untranslated');
-      expect(translated).not.toMatch(/[\u3400-\u9fff]/);
+    for (const file of runtimeSourceFiles()) {
+      const sf = createSourceFile(file);
+      const visit = (node: ts.Node) => {
+        if (
+          ts.isCallExpression(node)
+          && ts.isIdentifier(node.expression)
+          && RUNTIME_TRANSLATION_CALLS.has(node.expression.text)
+          && node.arguments[0]
+          && ts.isStringLiteralLike(node.arguments[0])
+          && HAS_HAN_RE.test(node.arguments[0].text)
+        ) {
+          violations.push(`${node.arguments[0].text} (${file})`);
+        }
+        ts.forEachChild(node, visit);
+      };
+      visit(sf);
     }
+
+    expect(violations).toEqual([]);
   });
 
-  it('translates upstream compatibility editor copy', () => {
-    const expectations = new Map([
-      ['上游兼容性', 'Upstream compatibility'],
-      ['推理历史传输和上游回放行为。', 'Reasoning history transport and upstream replay behavior.'],
-      ['传输方式', 'Transport'],
-      ['正文 <think> 标签', 'Content <think> tags'],
-      ['工具调用消息', 'Tool-call messages'],
-      ['高级 JSON', 'Advanced JSON'],
-    ]);
+  it('keeps remaining runtime Chinese literals limited to explicit data constants', () => {
+    const violations: string[] = [];
 
-    for (const [source, expected] of expectations) {
-      expect(translateText(source, 'en')).toBe(expected);
+    for (const file of runtimeSourceFiles()) {
+      const sf = createSourceFile(file);
+      const visit = (node: ts.Node) => {
+        if (ts.isStringLiteralLike(node) && HAS_HAN_RE.test(node.text)) {
+          const allowedKey = `${file}:${node.text}`;
+          if (!ALLOWED_RUNTIME_CHINESE_LITERALS.has(allowedKey)) {
+            violations.push(`${file}:${sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1} ${node.text}`);
+          }
+        }
+        ts.forEachChild(node, visit);
+      };
+      visit(sf);
     }
+
+    expect(violations).toEqual([]);
+  });
+
+  it('keeps production code off legacy i18n compatibility APIs', () => {
+    const violations: string[] = [];
+
+    for (const file of runtimeSourceFiles()) {
+      const source = readFileSync(file, 'utf8');
+      for (const pattern of FORBIDDEN_I18N_PATTERNS) {
+        if (source.includes(pattern)) violations.push(`${file}: ${pattern}`);
+      }
+    }
+
+    expect(violations).toEqual([]);
   });
 });

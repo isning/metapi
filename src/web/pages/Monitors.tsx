@@ -7,6 +7,8 @@ import { Button } from '../components/ui/button/index.js';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card/index.js';
 import { Input } from '../components/ui/input/index.js';
 import { Tabs, TabsList, TabsTrigger } from '../components/ui/tabs/index.js';
+import PageHeader from '../components/workspace/PageHeader.js';
+import PageShell from '../components/workspace/PageShell.js';
 
 type MonitorSite = {
   id: string;
@@ -26,13 +28,13 @@ const MONITOR_SITES: MonitorSite[] = [
     id: 'check-linux-do',
     name: 'check.linux.do',
     url: 'https://check.linux.do',
-    description: 'LinuxDo 可用性监控',
+    description: tr('pages.monitors.linuxdoAvailabilityMonitoring'),
   },
   {
     id: 'ldoh-105117',
     name: 'ldoh.105117.xyz',
     url: 'https://ldoh.105117.xyz',
-    description: 'LDOH 监控面板',
+    description: tr('pages.monitors.ldohMonitoringPanel'),
     requiresLinuxDoOAuth: true,
   },
 ];
@@ -60,7 +62,7 @@ export default function Monitors() {
         ldohCookieMasked: typeof res?.ldohCookieMasked === 'string' ? res.ldohCookieMasked : '',
       });
     } catch (err: any) {
-      toast.error(err?.message || '加载监控配置失败');
+      toast.error(err?.message || tr('pages.monitors.failedLoadMonitoringConfiguration'));
     }
   };
 
@@ -94,49 +96,47 @@ export default function Monitors() {
       await loadMonitorConfig();
       setCookieInput('');
       setReloadSeed((prev) => prev + 1);
-      toast.success('LDOH Cookie 已更新');
+      toast.success(tr('pages.monitors.ldohCookieUpdated'));
     } catch (err: any) {
-      toast.error(err?.message || '保存 Cookie 失败');
+      toast.error(err?.message || tr('pages.monitors.failedSaveCookie'));
     } finally {
       setSavingCookie(false);
     }
   };
 
   const fallbackHint = usingCookieProxy
-    ? '代理模式已启用：若仍无法加载，请检查 Cookie 是否过期后重新保存。'
-    : '当前站点可能禁止 iframe 内嵌，或 OAuth 跨站 Cookie 受限。建议先新窗口授权再回到此页刷新。';
+    ? tr('pages.monitors.proxyModeEnabledIfItStillCannot')
+    : tr('pages.monitors.currentSiteMayProhibitIframeEmbeddingOauth');
 
   return (
-    <div className="grid gap-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h2 className="text-2xl font-semibold tracking-tight">{tr('监控内嵌')}</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            在 metapi 内查看外部站点监控页面。
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
+    <PageShell>
+      <PageHeader
+        title={tr('pages.monitors.embeddedMonitor')}
+        description={tr('pages.monitors.metapiViewingSites')}
+        actions={(
+          <>
           <Button variant="outline"
             type="button"
            
            
             onClick={() => setReloadSeed((prev) => prev + 1)}
-            data-tooltip="重新加载当前站点"
-            aria-label="重新加载当前站点"
+            data-tooltip={tr('pages.monitors.reloadCurrentSite')}
+            aria-label={tr('pages.monitors.reloadCurrentSite')}
           >
-            刷新
+            {tr('pages.accounts.refresh')}
           </Button>
           <Button
             type="button"
            
             onClick={() => window.open(directSiteUrl, '_blank', 'noopener,noreferrer')}
-            data-tooltip="在新窗口直接打开目标站点"
-            aria-label="在新窗口直接打开目标站点"
+            data-tooltip={tr('pages.monitors.openTargetSiteDirectlyNewWindow')}
+            aria-label={tr('pages.monitors.openTargetSiteDirectlyNewWindow')}
           >
-            新窗口打开
+            {tr('pages.monitors.open')}
           </Button>
-        </div>
-      </div>
+          </>
+        )}
+      />
 
       <Tabs value={activeSite.id} onValueChange={setActiveSiteId}>
         <TabsList className="flex h-auto w-full flex-wrap justify-start">
@@ -152,21 +152,21 @@ export default function Monitors() {
       {oauthHintPresence.shouldRender && (
         <Card className={oauthHintPresence.isVisible ? '' : 'opacity-0'}>
           <CardHeader>
-            <CardTitle>{usingCookieProxy ? '已启用 Cookie 代理模式' : '该站点需要 LinuxDo OAuth 授权'}</CardTitle>
+            <CardTitle>{usingCookieProxy ? tr('pages.monitors.cookieProxyModeEnabled') : tr('pages.monitors.siteRequiresLinuxdoOauthAuthorization')}</CardTitle>
             <CardDescription className="leading-6">
             {!usingCookieProxy && (
               <>
-                1. 先点击“授权登录（新窗口）”完成 LinuxDo 登录。<br />
-                2. 回来后把 `ld_auth_session` 填到下方，启用 Cookie 代理内嵌。<br />
+                {tr('pages.monitors.1SignLinuxdoSign')}<br />
+                {tr('pages.monitors.2LdAuthSessionEnabledCookieActing')}<br />
               </>
             )}
             {usingCookieProxy && (
               <>
-                当前使用服务端代理访问，不依赖跨站第三方 Cookie。<br />
-                已保存 Cookie：{monitorConfig.ldohCookieMasked || '(已配置)'}<br />
+                {tr('pages.monitors.usageActingaccessCookie')}<br />
+                {tr('pages.monitors.saveCookie')}{monitorConfig.ldohCookieMasked || tr('pages.monitors.configured')}<br />
               </>
             )}
-            Cookie 过期后请重新粘贴保存。
+            {tr('pages.monitors.cookieExpiredSave')}
             </CardDescription>
           </CardHeader>
 
@@ -175,7 +175,7 @@ export default function Monitors() {
               <Input
               value={cookieInput}
               onChange={(e) => setCookieInput(e.target.value)}
-              placeholder="粘贴 ld_auth_session 或 ld_auth_session=xxx"
+              placeholder={tr('pages.monitors.pasteLdAuthSessionLdAuthSession')}
                 className="min-w-0 flex-1"
             />
             <Button
@@ -183,7 +183,7 @@ export default function Monitors() {
               onClick={handleSaveCookie}
               disabled={savingCookie}
             >
-              {savingCookie ? '保存中...' : (cookieInput.trim() ? '保存 Cookie' : '清空 Cookie')}
+              {savingCookie ? tr('pages.accounts.saving') : (cookieInput.trim() ? tr('pages.monitors.saveCookie2') : tr('pages.monitors.clearCookies'))}
             </Button>
             </div>
 
@@ -192,14 +192,14 @@ export default function Monitors() {
               type="button"
               onClick={() => window.open(ldohOauthUrl, '_blank', 'noopener,noreferrer')}
             >
-              授权登录（新窗口）
+              {tr('pages.monitors.sign')}
             </Button>
             {usingCookieProxy && (
               <Button variant="outline"
                 type="button"
                 onClick={() => window.open('/monitor-proxy/ldoh/', '_blank', 'noopener,noreferrer')}
               >
-                通过代理打开
+                {tr('pages.monitors.actingopen')}
               </Button>
             )}
             </div>
@@ -221,6 +221,6 @@ export default function Monitors() {
           onLoad={() => setLoaded(true)}
         />
       </Card>
-    </div>
+    </PageShell>
   );
 }

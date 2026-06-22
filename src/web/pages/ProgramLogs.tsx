@@ -14,6 +14,7 @@ import ToneBadge from '../components/ToneBadge.js';
 import EmptyStateBlock from '../components/EmptyStateBlock.js';
 import { Card, CardContent } from '../components/ui/card/index.js';
 import { Switch } from '../components/ui/switch/index.js';
+import { DataTable } from '../components/ui/data-table/index.js';
 import {
   Table,
   TableBody,
@@ -38,19 +39,19 @@ type ProgramEvent = {
 const PAGE_SIZE = 50;
 
 const TYPE_OPTIONS = [
-  { value: '', label: '全部类型' },
-  { value: 'checkin', label: '签到' },
-  { value: 'balance', label: '余额' },
-  { value: 'token', label: '令牌' },
-  { value: 'proxy', label: '代理' },
-  { value: 'status', label: '状态' },
-  { value: 'site_notice', label: '站点公告' },
+  { value: '', label: tr('pages.programLogs.allTypes') },
+  { value: 'checkin', label: tr('components.notificationPanel.sign') },
+  { value: 'balance', label: tr('components.notificationPanel.balance') },
+  { value: 'token', label: tr('components.notificationPanel.token') },
+  { value: 'proxy', label: tr('components.notificationPanel.acting') },
+  { value: 'status', label: tr('components.notificationPanel.status') },
+  { value: 'site_notice', label: tr('app.sites') },
 ];
 
 function levelLabel(level: string) {
-  if (level === 'error') return { label: '错误', cls: 'error' };
-  if (level === 'warning') return { label: '警告', cls: 'warning' };
-  return { label: '信息', cls: 'info' };
+  if (level === 'error') return { label: tr('pages.programLogs.mistake'), cls: 'error' };
+  if (level === 'warning') return { label: tr('pages.programLogs.warning'), cls: 'warning' };
+  return { label: tr('pages.checkinLog.info'), cls: 'info' };
 }
 
 function eventStatusLabel(row: ProgramEvent) {
@@ -71,33 +72,33 @@ function eventStatusLabel(row: ProgramEvent) {
 
   if (summary.failed !== undefined || summary.success !== undefined || summary.skipped !== undefined) {
     if ((summary.failed ?? 0) > 0) {
-      return { label: '失败', cls: 'error' };
+      return { label: tr('pages.checkinLog.failed'), cls: 'error' };
     }
     if ((summary.success ?? 0) > 0) {
-      return { label: '成功', cls: 'success' };
+      return { label: tr('pages.checkinLog.success'), cls: 'success' };
     }
     if ((summary.skipped ?? 0) > 0) {
-      return { label: '跳过', cls: 'warning' };
+      return { label: tr('pages.checkinLog.jumpOver'), cls: 'warning' };
     }
-    return { label: '成功', cls: 'success' };
+    return { label: tr('pages.checkinLog.success'), cls: 'success' };
   }
 
-  if (text.includes('失败') || text.includes('failed') || text.includes('error')) {
-    return { label: '失败', cls: 'error' };
+  if (text.includes(tr('pages.checkinLog.failed')) || text.includes('failed') || text.includes('error')) {
+    return { label: tr('pages.checkinLog.failed'), cls: 'error' };
   }
-  if (text.includes('跳过') || text.includes('skipped')) {
-    return { label: '跳过', cls: 'warning' };
+  if (text.includes(tr('pages.checkinLog.jumpOver')) || text.includes('skipped')) {
+    return { label: tr('pages.checkinLog.jumpOver'), cls: 'warning' };
   }
-  if (text.includes('进行中') || text.includes('已开始') || text.includes('running') || text.includes('pending')) {
-    return { label: '进行中', cls: 'info' };
+  if (text.includes(tr('pages.programLogs.progress')) || text.includes(tr('app.started')) || text.includes('running') || text.includes('pending')) {
+    return { label: tr('pages.programLogs.progress'), cls: 'info' };
   }
-  if (text.includes('成功') || text.includes('已完成') || text.includes('completed') || text.includes('finished')) {
-    return { label: '成功', cls: 'success' };
+  if (text.includes(tr('pages.checkinLog.success')) || text.includes(tr('pages.programLogs.completed')) || text.includes('completed') || text.includes('finished')) {
+    return { label: tr('pages.checkinLog.success'), cls: 'success' };
   }
 
-  if (row.level === 'error') return { label: '异常', cls: 'error' };
-  if (row.level === 'warning') return { label: '警告', cls: 'warning' };
-  return { label: '信息', cls: 'info' };
+  if (row.level === 'error') return { label: tr('pages.accounts.error'), cls: 'error' };
+  if (row.level === 'warning') return { label: tr('pages.programLogs.warning'), cls: 'warning' };
+  return { label: tr('pages.checkinLog.info'), cls: 'info' };
 }
 
 export default function ProgramLogs() {
@@ -135,7 +136,7 @@ export default function ProgramLogs() {
       setOffset(loaded);
       setHasMore(safeRows.length >= PAGE_SIZE);
     } catch (e: any) {
-      toast.error(e.message || '加载程序日志失败');
+      toast.error(e.message || tr('pages.programLogs.loaderLogFailed'));
     } finally {
       setLoading(false);
       setLoadingMore(false);
@@ -174,9 +175,9 @@ export default function ProgramLogs() {
       await api.markAllEventsRead();
       if (onlyUnread) setEvents([]);
       else setEvents((prev) => prev.map((item) => ({ ...item, read: true })));
-      toast.success('已标记全部为已读');
+      toast.success(tr('pages.programLogs.markedAllRead'));
     } catch (e: any) {
-      toast.error(e.message || '标记失败');
+      toast.error(e.message || tr('pages.programLogs.markingFailed'));
     } finally {
       setMarkingAll(false);
     }
@@ -189,9 +190,9 @@ export default function ProgramLogs() {
       setEvents([]);
       setOffset(0);
       setHasMore(false);
-      toast.success('日志已清空');
+      toast.success(tr('pages.programLogs.logHasBeenCleared'));
     } catch (e: any) {
-      toast.error(e.message || '清空失败');
+      toast.error(e.message || tr('pages.programLogs.clearingFailed'));
     } finally {
       setClearing(false);
     }
@@ -200,7 +201,7 @@ export default function ProgramLogs() {
   return (
     <div className="grid gap-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <h2 className="text-2xl font-semibold tracking-tight">{tr('程序日志')}</h2>
+        <h2 className="text-2xl font-semibold tracking-tight">{tr('app.systemLogs')}</h2>
         <div className="flex flex-wrap gap-2">
           <Button type="button" variant="outline"
             onClick={() => load(true)}
@@ -208,7 +209,7 @@ export default function ProgramLogs() {
            
            
           >
-            {refreshing ? <><LoaderCircle className="size-4 animate-spin" /> 刷新中...</> : '刷新'}
+            {refreshing ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.downstreamKeys.refreshzh')}</> : tr('pages.accounts.refresh')}
           </Button>
           <Button type="button" variant="outline"
             onClick={markAllRead}
@@ -216,14 +217,14 @@ export default function ProgramLogs() {
            
            
           >
-            {markingAll ? <><LoaderCircle className="size-4 animate-spin" /> 标记中...</> : '全部已读'}
+            {markingAll ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.programLogs.marking')}</> : tr('pages.programLogs.markAllRead')}
           </Button>
           <Button type="button" variant="destructive" size="sm"
             onClick={clearAll}
             disabled={clearing}
            
           >
-            {clearing ? <><LoaderCircle className="size-4 animate-spin" /> 清空中...</> : '清空日志'}
+            {clearing ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.programLogs.clearing')}</> : tr('pages.programLogs.clearLogs')}
           </Button>
         </div>
       </div>
@@ -233,7 +234,7 @@ export default function ProgramLogs() {
         mobileOpen={showFilters}
         onMobileOpen={() => setShowFilters(true)}
         onMobileClose={() => setShowFilters(false)}
-        mobileTitle="筛选程序日志"
+        mobileTitle={tr('pages.programLogs.filtersystemLogs')}
         mobileContent={(
           <div className="grid gap-3">
             <ModernSelect
@@ -244,11 +245,11 @@ export default function ProgramLogs() {
                 value: item.value,
                 label: item.label,
               }))}
-              placeholder="全部类型"
+              placeholder={tr('pages.programLogs.allTypes')}
             />
             <label className="flex items-center gap-2 text-sm">
               <Switch
-                aria-label="仅看未读"
+                aria-label={tr('pages.programLogs.unreadOnly')}
                 checked={onlyUnread}
                 onCheckedChange={(checked) => {
                   setOffset(0);
@@ -256,10 +257,10 @@ export default function ProgramLogs() {
                   setOnlyUnread(checked);
                 }}
               />
-              仅看未读
+              {tr('pages.programLogs.unreadOnly')}
             </label>
             <div className="text-xs text-muted-foreground">
-              共 {visibleRows.length} 条
+              {tr('pages.models.total')} {visibleRows.length} {tr('pages.programLogs.items')}
             </div>
           </div>
         )}
@@ -275,13 +276,13 @@ export default function ProgramLogs() {
                   value: item.value,
                   label: item.label,
                 }))}
-                placeholder="全部类型"
+                placeholder={tr('pages.programLogs.allTypes')}
               />
             </div>
 
             <label className="flex items-center gap-2 text-sm">
               <Switch
-                aria-label="仅看未读"
+                aria-label={tr('pages.programLogs.unreadOnly')}
                 checked={onlyUnread}
                 onCheckedChange={(checked) => {
                   setOffset(0);
@@ -289,25 +290,26 @@ export default function ProgramLogs() {
                   setOnlyUnread(checked);
                 }}
               />
-              仅看未读
+              {tr('pages.programLogs.unreadOnly')}
             </label>
 
             <div className="ml-auto text-xs text-muted-foreground">
-              共 {visibleRows.length} 条
+              {tr('pages.models.total')} {visibleRows.length} {tr('pages.programLogs.items')}
             </div>
             </CardContent>
           </Card>
         )}
       />
 
-      <Card className="overflow-hidden">
-        {loading ? (
+      {loading ? (
+        <Card>
           <CardContent className="grid gap-2 p-5">
             <Skeleton className="h-9 w-full" />
             <Skeleton className="h-9 w-full" />
             <Skeleton className="h-9 w-full" />
           </CardContent>
-        ) : isMobile ? (
+        </Card>
+      ) : isMobile ? (
           <div className="grid gap-3">
             {visibleRows.length > 0 ? visibleRows.map((row) => {
               const level = levelLabel(row.level || 'info');
@@ -323,7 +325,7 @@ export default function ProgramLogs() {
                   )}
                   footerActions={(
                     row.read ? (
-                      <ToneBadge tone="-muted">已读</ToneBadge>
+                      <ToneBadge tone="-muted">{tr('pages.programLogs.read')}</ToneBadge>
                     ) : (
                       <Button variant="ghost" size="sm"
                         type="button"
@@ -331,33 +333,34 @@ export default function ProgramLogs() {
                         disabled={!!rowLoading[row.id]}
                        
                       >
-                        {rowLoading[row.id] ? <LoaderCircle className="size-4 animate-spin" /> : '标记已读'}
+                        {rowLoading[row.id] ? <LoaderCircle className="size-4 animate-spin" /> : tr('pages.programLogs.markRead')}
                       </Button>
                     )
                   )}
                 >
-                  <MobileField label="时间" value={formatDateTimeLocal(row.createdAt)} />
-                  <MobileField label="类型" value={<ToneBadge tone="-muted">{row.type || '-'}</ToneBadge>} />
-                  <MobileField label="级别" value={<ToneBadge tone={level.cls}>{level.label}</ToneBadge>} />
-                  <MobileField label="状态" value={<ToneBadge tone={eventStatus.cls}>{eventStatus.label}</ToneBadge>} />
-                  <MobileField label="内容" value={row.message || '-'} stacked />
+                  <MobileField label={tr('pages.checkinLog.time')} value={formatDateTimeLocal(row.createdAt)} />
+                  <MobileField label={tr('pages.programLogs.type')} value={<ToneBadge tone="-muted">{row.type || '-'}</ToneBadge>} />
+                  <MobileField label={tr('pages.programLogs.level')} value={<ToneBadge tone={level.cls}>{level.label}</ToneBadge>} />
+                  <MobileField label={tr('components.notificationPanel.status')} value={<ToneBadge tone={eventStatus.cls}>{eventStatus.label}</ToneBadge>} />
+                  <MobileField label={tr('pages.programLogs.content')} value={row.message || '-'} stacked />
                 </MobileCard>
               );
             }) : (
-              <EmptyStateBlock title="暂无日志" description="当前筛选条件下没有程序日志。" />
+              <EmptyStateBlock title={tr('pages.programLogs.noLogs')} description={tr('pages.programLogs.filteritemsSystemLogs')} />
             )}
           </div>
         ) : visibleRows.length > 0 ? (
-          <Table>
+          <DataTable minWidth={1060} density="compact">
+            <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="w-44">时间</TableHead>
-                <TableHead className="w-24">类型</TableHead>
-                <TableHead className="w-24">级别</TableHead>
-                <TableHead className="w-64">标题</TableHead>
-                <TableHead>内容</TableHead>
-                <TableHead className="w-28">状态</TableHead>
-                <TableHead className="w-36 text-right">操作</TableHead>
+                <TableHead className="w-44">{tr('pages.checkinLog.time')}</TableHead>
+                <TableHead className="w-24">{tr('pages.programLogs.type')}</TableHead>
+                <TableHead className="w-24">{tr('pages.programLogs.level')}</TableHead>
+                <TableHead className="w-64">{tr('pages.programLogs.title')}</TableHead>
+                <TableHead>{tr('pages.programLogs.content')}</TableHead>
+                <TableHead className="w-28">{tr('components.notificationPanel.status')}</TableHead>
+                <TableHead className="w-36 text-right">{tr('pages.accounts.actions2')}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -393,9 +396,9 @@ export default function ProgramLogs() {
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-2">
                         {row.read ? (
-                          <ToneBadge tone="-muted">已读</ToneBadge>
+                          <ToneBadge tone="-muted">{tr('pages.programLogs.read')}</ToneBadge>
                         ) : (
-                          <ToneBadge tone="-warning">未读</ToneBadge>
+                          <ToneBadge tone="-warning">{tr('pages.programLogs.unread')}</ToneBadge>
                         )}
                         {!row.read && (
                           <Button type="button" variant="ghost" size="sm"
@@ -403,7 +406,7 @@ export default function ProgramLogs() {
                             disabled={!!rowLoading[row.id]}
                            
                           >
-                            {rowLoading[row.id] ? <LoaderCircle className="size-4 animate-spin" /> : '标记已读'}
+                            {rowLoading[row.id] ? <LoaderCircle className="size-4 animate-spin" /> : tr('pages.programLogs.markRead')}
                           </Button>
                         )}
                       </div>
@@ -412,11 +415,11 @@ export default function ProgramLogs() {
                 );
               })}
             </TableBody>
-          </Table>
+            </Table>
+          </DataTable>
         ) : (
-          <EmptyStateBlock title="暂无日志" description="当前筛选条件下没有程序日志。" />
+          <EmptyStateBlock title={tr('pages.programLogs.noLogs')} description={tr('pages.programLogs.filteritemsSystemLogs')} />
         )}
-      </Card>
 
       {!loading && visibleRows.length > 0 && hasMore && (
         <div className="flex justify-center">
@@ -426,7 +429,7 @@ export default function ProgramLogs() {
             disabled={loadingMore}
            
           >
-            {loadingMore ? <><LoaderCircle className="size-4 animate-spin" /> 加载中...</> : '加载更多'}
+            {loadingMore ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.oAuthManagement.loading')}</> : tr('pages.programLogs.loadMore')}
           </Button>
         </div>
       )}

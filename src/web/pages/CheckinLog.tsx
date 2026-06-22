@@ -18,6 +18,9 @@ import { Alert, AlertDescription } from '../components/ui/alert/index.js';
 import { Card, CardContent } from '../components/ui/card/index.js';
 import { Input } from '../components/ui/input/index.js';
 import { Tabs, TabsList, TabsTrigger } from '../components/ui/tabs/index.js';
+import { DataTable } from '../components/ui/data-table/index.js';
+import PageHeader from '../components/workspace/PageHeader.js';
+import PageShell from '../components/workspace/PageShell.js';
 import {
   Table,
   TableBody,
@@ -161,7 +164,7 @@ export default function CheckinLog() {
       const data = await api.getCheckinLogs("limit=100");
       setLogs(Array.isArray(data) ? data : []);
     } catch (e: any) {
-      toast.error(e.message || "加载签到记录失败");
+      toast.error(e.message || tr('pages.checkinLog.failedLoadCheckRecords'));
     } finally {
       setLoading(false);
     }
@@ -176,22 +179,22 @@ export default function CheckinLog() {
     try {
       const res = await api.triggerCheckinAll();
       if (res?.queued) {
-        toast.info(res.message || "已开始签到，请稍后查看签到记录");
+        toast.info(res.message || tr('pages.checkinLog.signHasStartedPleaseCheckSignRecord'));
       } else {
-        toast.success(res?.message || "签到已执行");
+        toast.success(res?.message || tr('pages.checkinLog.signHasBeenExecuted'));
       }
       await load();
     } catch (e: any) {
-      toast.error(e.message || "触发签到失败");
+      toast.error(e.message || tr('pages.checkinLog.failedTriggerSign'));
     } finally {
       setTriggering(false);
     }
   };
 
   const statusLabel = (status: "success" | "failed" | "skipped") => {
-    if (status === "success") return "成功";
-    if (status === "skipped") return "跳过";
-    return "失败";
+    if (status === "success") return tr('pages.checkinLog.success');
+    if (status === "skipped") return tr('pages.checkinLog.jumpOver');
+    return tr('pages.checkinLog.failed');
   };
 
   const statusClass = (status: "success" | "failed" | "skipped") => {
@@ -209,7 +212,7 @@ export default function CheckinLog() {
   const timeRangeControls = (
     <div className="flex flex-wrap items-end gap-3">
       <label className="grid gap-1">
-        <span className="text-xs font-medium text-muted-foreground">开始</span>
+        <span className="text-xs font-medium text-muted-foreground">{tr('pages.checkinLog.start')}</span>
         <Input
           type="datetime-local"
           value={fromInput}
@@ -218,7 +221,7 @@ export default function CheckinLog() {
         />
       </label>
       <label className="grid gap-1">
-        <span className="text-xs font-medium text-muted-foreground">结束</span>
+        <span className="text-xs font-medium text-muted-foreground">{tr('pages.checkinLog.end')}</span>
         <Input
           type="datetime-local"
           value={toInput}
@@ -231,7 +234,7 @@ export default function CheckinLog() {
        
         onClick={clearTimeRange}
       >
-        清空筛选
+        {tr('pages.checkinLog.clearfilter')}
       </Button>
     </div>
   );
@@ -240,10 +243,10 @@ export default function CheckinLog() {
     <Tabs value={filter} onValueChange={(value) => setFilter(value as LogFilter)}>
       <TabsList className="flex h-auto flex-wrap">
       {[
-        { key: "all" as const, label: "全部", count: timeFilteredLogs.length },
-        { key: "success" as const, label: "成功", count: countBy("success") },
-        { key: "failed" as const, label: "失败", count: countBy("failed") },
-        { key: "skipped" as const, label: "跳过", count: countBy("skipped") },
+        { key: "all" as const, label: tr('components.notificationPanel.all'), count: timeFilteredLogs.length },
+        { key: "success" as const, label: tr('pages.checkinLog.success'), count: countBy("success") },
+        { key: "failed" as const, label: tr('pages.checkinLog.failed'), count: countBy("failed") },
+        { key: "skipped" as const, label: tr('pages.checkinLog.jumpOver'), count: countBy("skipped") },
       ].map((tab) => (
         <TabsTrigger
           key={tab.key}
@@ -261,9 +264,11 @@ export default function CheckinLog() {
   );
 
   return (
-    <div className="grid gap-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <h2 className="text-2xl font-semibold tracking-tight">{tr("签到记录")}</h2>
+    <PageShell>
+      <PageHeader
+        title={tr('app.checkLogs')}
+        description={tr('pages.checkinLog.checkLogsSubtitle')}
+        actions={(
         <Button type="button"
           onClick={handleTriggerAll}
           disabled={triggering}
@@ -272,26 +277,27 @@ export default function CheckinLog() {
           {triggering ? (
             <>
               <LoaderCircle className="size-4 animate-spin" />
-              触发中...
+              {tr('pages.checkinLog.zh')}
             </>
           ) : (
-            "运行所有签到"
+            tr('pages.checkinLog.runAllCheckIns')
           )}
         </Button>
-      </div>
+        )}
+      />
 
       <ResponsiveFilterPanel
         isMobile={isMobile}
         mobileOpen={showFilters}
         onMobileOpen={() => setShowFilters(true)}
         onMobileClose={() => setShowFilters(false)}
-        mobileTitle="筛选签到记录"
+        mobileTitle={tr('pages.checkinLog.filtercheckLogs')}
         mobileContent={(
           <div className="grid gap-3">
             {timeRangeControls}
             {hasInvalidTimeRange && (
               <Alert variant="destructive">
-                <AlertDescription>结束时间必须晚于开始时间</AlertDescription>
+                <AlertDescription>{tr('pages.checkinLog.endtimeStarttime')}</AlertDescription>
               </Alert>
             )}
             {filterTabs}
@@ -306,7 +312,7 @@ export default function CheckinLog() {
             </div>
             {hasInvalidTimeRange && (
               <div className="w-full rounded-md border border-destructive/40 p-3 text-sm text-destructive">
-                结束时间必须晚于开始时间
+                {tr('pages.checkinLog.endtimeStarttime')}
               </div>
             )}
             </CardContent>
@@ -314,8 +320,8 @@ export default function CheckinLog() {
         )}
       />
 
-      <Card className="overflow-hidden">
-        {loading ? (
+      {loading ? (
+        <Card>
           <CardContent className="grid gap-3 p-6">
             {[...Array(5)].map((_, i) => (
               <div key={i} className="flex gap-4">
@@ -328,7 +334,10 @@ export default function CheckinLog() {
               </div>
             ))}
           </CardContent>
-        ) : isMobile ? (
+        </Card>
+      ) : filtered.length === 0 ? (
+        <EmptyStateBlock title={tr('pages.checkinLog.nonecheckLogs')} description={tr('pages.checkinLog.runAllCheckInsStart')} />
+      ) : isMobile ? (
           <div className="grid gap-3">
             {filtered.map((log: any) => {
               const status = getStatus(log);
@@ -339,7 +348,7 @@ export default function CheckinLog() {
               return (
                 <MobileCard
                   key={logId}
-                  title={log.accounts?.username || "未知"}
+                  title={log.accounts?.username || tr('pages.accounts.unknown2')}
                   headerActions={
                     <ToneBadge tone={statusClass(status)}
                      
@@ -356,18 +365,18 @@ export default function CheckinLog() {
                         setExpandedLogId(isExpanded ? null : logId)
                       }
                     >
-                      {isExpanded ? "收起" : "详情"}
+                      {isExpanded ? tr('pages.accounts.collapse') : tr('pages.accounts.details')}
                     </Button>
                   }
                 >
                   <MobileField
-                    label="时间"
+                    label={tr('pages.checkinLog.time')}
                     value={formatCheckinLogTime(
                       log.checkin_logs?.createdAt || log.createdAt,
                     )}
                   />
                   <MobileField
-                    label="站点"
+                    label={tr('components.searchModal.sites2')}
                     value={
                       log.sites?.url ? (
                         <a
@@ -394,7 +403,7 @@ export default function CheckinLog() {
                     }
                   />
                   <MobileField
-                    label="分类"
+                    label={tr('pages.checkinLog.category')}
                     value={
                       reason ? (
                         <ToneBadge tone="-info"
@@ -409,18 +418,18 @@ export default function CheckinLog() {
                     }
                   />
                   <MobileField
-                    label="奖励"
+                    label={tr('pages.checkinLog.reward')}
                     value={log.checkin_logs?.reward || "-"}
                   />
                   {isExpanded ? (
                     <div className="mt-3 grid gap-2">
                       <MobileField
-                        label="信息"
+                        label={tr('pages.checkinLog.info')}
                         stacked
                         value={log.checkin_logs?.message || log.message}
                       />
                       <MobileField
-                        label="建议"
+                        label={tr('pages.checkinLog.suggestion')}
                         stacked
                         value={reason?.actionHint || "-"}
                       />
@@ -431,17 +440,18 @@ export default function CheckinLog() {
             })}
           </div>
         ) : (
-          <Table>
+          <DataTable minWidth={1120} density="compact">
+            <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>时间</TableHead>
-                <TableHead>账号</TableHead>
-                <TableHead>站点</TableHead>
-                <TableHead>状态</TableHead>
-                <TableHead>分类</TableHead>
-                <TableHead>信息</TableHead>
-                <TableHead>建议</TableHead>
-                <TableHead>奖励</TableHead>
+                <TableHead>{tr('pages.checkinLog.time')}</TableHead>
+                <TableHead>{tr('components.searchModal.accounts2')}</TableHead>
+                <TableHead>{tr('components.searchModal.sites2')}</TableHead>
+                <TableHead>{tr('components.notificationPanel.status')}</TableHead>
+                <TableHead>{tr('pages.checkinLog.category')}</TableHead>
+                <TableHead>{tr('pages.checkinLog.info')}</TableHead>
+                <TableHead>{tr('pages.checkinLog.suggestion')}</TableHead>
+                <TableHead>{tr('pages.checkinLog.reward')}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -456,7 +466,7 @@ export default function CheckinLog() {
                       )}
                     </TableCell>
                     <TableCell className="font-semibold">
-                      {log.accounts?.username || "未知"}
+                      {log.accounts?.username || tr('pages.accounts.unknown2')}
                     </TableCell>
                     <TableCell>
                       {log.sites?.url ? (
@@ -513,13 +523,9 @@ export default function CheckinLog() {
                 );
               })}
             </TableBody>
-          </Table>
+            </Table>
+          </DataTable>
         )}
-
-        {!loading && filtered.length === 0 && (
-          <EmptyStateBlock title="暂无签到记录" description="点击“运行所有签到”开始执行" />
-        )}
-      </Card>
-    </div>
+    </PageShell>
   );
 }

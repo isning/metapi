@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { create, type ReactTestInstance } from 'react-test-renderer';
 import { Login } from './App.js';
 import { SITE_DOCS_URL, SITE_GITHUB_URL } from './docsLink.js';
+import { tr } from './i18n.js';
 
 function collectText(node: ReactTestInstance): string {
   return (node.children || []).map((child) => {
@@ -21,7 +22,7 @@ describe('Login surface', () => {
 
   it('renders a poster-style hero with a floating admin login panel', () => {
     const root = create(
-      <Login onLogin={vi.fn()} t={(text) => text} />,
+      <Login onLogin={vi.fn()} t={tr} />,
     );
 
     try {

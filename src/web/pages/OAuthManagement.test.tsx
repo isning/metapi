@@ -49,9 +49,14 @@ async function flushMicrotasks() {
 }
 
 function findButton(root: WebTestRenderer, label: string) {
-  return root.root.find((node) => (
+  const buttons = root.root.findAll((node) => (
     node.type === 'button'
     && typeof node.props.onClick === 'function'
+    && collectText(node).includes(label)
+  ));
+  if (buttons[0]) return buttons[0];
+  return root.root.find((node) => (
+    typeof node.props?.onSelect === 'function'
     && collectText(node).includes(label)
   ));
 }
@@ -84,7 +89,11 @@ function findHeaders(root: WebTestRenderer, label: string) {
 async function clickButton(root: WebTestRenderer, label: string) {
   const button = findButton(root, label);
   await act(async () => {
-    await button.props.onClick();
+    if (typeof button.props.onClick === 'function') {
+      await button.props.onClick();
+    } else {
+      await button.props.onSelect();
+    }
   });
   await flushMicrotasks();
   return button;
@@ -2610,14 +2619,14 @@ describe('OAuthManagement page', () => {
         expect(text).not.toContain('oauth-user:secret');
       });
 
-      const deleteButton = root!.root.find((node) => (
-        node.type === 'button'
-        && typeof node.props.onClick === 'function'
-        && collectText(node).includes('删除连接')
-      ));
+      const deleteButton = findButton(root!, '删除连接');
 
       await act(async () => {
-        await deleteButton.props.onClick();
+        if (typeof deleteButton.props.onClick === 'function') {
+          await deleteButton.props.onClick();
+        } else {
+          await deleteButton.props.onSelect();
+        }
       });
       await vi.waitFor(async () => {
         await flushMicrotasks();

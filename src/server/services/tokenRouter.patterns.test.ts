@@ -216,6 +216,7 @@ describe('TokenRouter patterns and model mapping', () => {
         const isGroup = groupSourceRouteIds.length > 0 || row.id === route.id;
         return {
           ...row,
+          ownership: 'auto_generated',
           match: isGroup
             ? { kind: 'model', requestedModelPattern: '', displayName: row.displayName, routeId: row.id }
             : { kind: 'model', requestedModelPattern: seededModelPatternByRouteId.get(row.id) || row.displayName || '', displayName: null, routeId: row.id },

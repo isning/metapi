@@ -112,14 +112,13 @@ describe('RouteCard sortable shell', () => {
     ));
     const innerRow = shell.find((node) => (
       node.type === 'div'
-      && node.props.style
-      && node.props.style.borderRadius === 14
+      && node.props['data-layer-root']
       && collectText(node).includes('user_a')
     ));
 
     expect(shell.props.style.transform).toContain('translate3d');
     expect(shell.props.style.transform).not.toContain('scale');
     expect(String(shell.props.style.transition || '')).toContain('transform');
-    expect(innerRow.props.style.transform).toBeUndefined();
+    expect(innerRow.props.style?.transform).toBeUndefined();
   });
 });

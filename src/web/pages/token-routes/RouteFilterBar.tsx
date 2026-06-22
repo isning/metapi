@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useState, type ReactNode } from 'react';
+import { type ReactNode } from 'react';
 import { BrandGlyph, InlineBrandIcon, type BrandInfo } from '../../components/BrandIcon.js';
 import { tr } from '../../i18n.js';
 import type { GroupFilter, GroupRouteItem } from './types.js';
@@ -6,10 +6,10 @@ import { resolveEndpointTypeIconModel } from './utils.js';
 import { Button } from '../../components/ui/button/index.js';
 import ToneBadge from '../../components/ToneBadge.js';
 import { Card, CardContent } from '../../components/ui/card/index.js';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../../components/ui/collapsible/index.js';
+import { CheckCircle2, ChevronDown, ChevronUp, CircleSlash2, Layers3, RotateCcw, Server, SlidersHorizontal, Tags, Workflow, X } from 'lucide-react';
 
 export type EnabledFilter = 'all' | 'enabled' | 'disabled';
-
-const FILTER_EXPANDED_CONTENT_UNMOUNT_MS = 180;
 
 type RouteFilterBarProps = {
   totalRouteCount: number;
@@ -50,7 +50,7 @@ function FilterChip({
       type="button"
       variant={active ? 'secondary' : 'outline'}
       size="sm"
-      className="gap-2"
+      className="max-w-full gap-2"
       onClick={onClick}
     >
       {icon}
@@ -60,11 +60,43 @@ function FilterChip({
   );
 }
 
-function FilterRow({ label, children }: { label: string; children: ReactNode }) {
+function SummaryChip({
+  children,
+  onClear,
+}: {
+  children: ReactNode;
+  onClear: () => void;
+}) {
   return (
-    <div className="grid gap-2">
-      <span className="text-xs font-medium text-muted-foreground">{label}</span>
-      <div className="flex flex-wrap gap-2">{children}</div>
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      className="h-auto max-w-full rounded-full px-2 py-0.5 text-xs font-normal"
+      onClick={(event) => {
+        event.stopPropagation();
+        onClear();
+      }}
+    >
+      <span className="min-w-0 truncate">{children}</span>
+      <X className="size-3 text-muted-foreground" aria-hidden="true" />
+    </Button>
+  );
+}
+
+function FilterRow({
+  label,
+  children,
+  compact = false,
+}: {
+  label: string;
+  children: ReactNode;
+  compact?: boolean;
+}) {
+  return (
+    <div className={compact ? 'grid min-w-0 content-start gap-2' : 'grid min-w-0 gap-2'}>
+      <span className="text-xs font-semibold text-muted-foreground">{label}</span>
+      <div className="flex flex-wrap gap-1.5">{children}</div>
     </div>
   );
 }
@@ -77,16 +109,108 @@ function ActiveFilterSummary({
   enabledFilter,
 }: Pick<RouteFilterBarProps, 'activeBrand' | 'activeSite' | 'activeGroupFilter' | 'activeEndpointType' | 'enabledFilter'>) {
   const tags: string[] = [];
-  if (enabledFilter === 'enabled') tags.push('状态=启用');
-  else if (enabledFilter === 'disabled') tags.push('状态=禁用');
-  if (activeBrand) tags.push(`品牌=${activeBrand === '__other__' ? '其他' : activeBrand}`);
-  if (activeSite) tags.push(`站点=${activeSite}`);
-  if (activeGroupFilter === '__all__') tags.push('群组=全部');
-  else if (typeof activeGroupFilter === 'number') tags.push(`群组=#${activeGroupFilter}`);
-  if (activeEndpointType) tags.push(`能力=${activeEndpointType}`);
+  if (enabledFilter === 'enabled') tags.push(tr('pages.tokenRoutes.routeFilterBar.statusEnabled'));
+  else if (enabledFilter === 'disabled') tags.push(tr('pages.tokenRoutes.routeFilterBar.statusDisabled'));
+  if (activeBrand) tags.push(tr('pages.tokenRoutes.routeFilterBar.brandFilter').replace('{brand}', activeBrand === '__other__' ? tr('pages.models.other') : activeBrand));
+  if (activeSite) tags.push(tr('pages.tokenRoutes.routeFilterBar.siteFilter').replace('{site}', activeSite));
+  if (activeGroupFilter === '__all__') tags.push(tr('pages.tokenRoutes.routeFilterBar.groupsAll'));
+  else if (typeof activeGroupFilter === 'number') tags.push(tr('pages.tokenRoutes.routeFilterBar.groupFilter').replace('{group}', String(activeGroupFilter)));
+  if (activeEndpointType) tags.push(tr('pages.tokenRoutes.routeFilterBar.capabilityFilter').replace('{capability}', activeEndpointType));
 
-  if (tags.length === 0) return <span className="text-muted-foreground">{tr('全部')}</span>;
+  if (tags.length === 0) return <span className="text-muted-foreground">{tr('components.notificationPanel.all')}</span>;
   return <span>{tags.join(', ')}</span>;
+}
+
+function getActiveFilterCount({
+  activeBrand,
+  activeSite,
+  activeGroupFilter,
+  activeEndpointType,
+  enabledFilter,
+}: Pick<RouteFilterBarProps, 'activeBrand' | 'activeSite' | 'activeGroupFilter' | 'activeEndpointType' | 'enabledFilter'>): number {
+  return [
+    enabledFilter !== 'all',
+    !!activeBrand,
+    !!activeSite,
+    activeGroupFilter !== null,
+    !!activeEndpointType,
+  ].filter(Boolean).length;
+}
+
+function ActiveFilterPills({
+  activeBrand,
+  setActiveBrand,
+  activeSite,
+  setActiveSite,
+  activeGroupFilter,
+  setActiveGroupFilter,
+  activeEndpointType,
+  setActiveEndpointType,
+  enabledFilter,
+  setEnabledFilter,
+}: Pick<RouteFilterBarProps,
+  | 'activeBrand'
+  | 'setActiveBrand'
+  | 'activeSite'
+  | 'setActiveSite'
+  | 'activeGroupFilter'
+  | 'setActiveGroupFilter'
+  | 'activeEndpointType'
+  | 'setActiveEndpointType'
+  | 'enabledFilter'
+  | 'setEnabledFilter'
+>) {
+  const chips: ReactNode[] = [];
+  if (enabledFilter === 'enabled') {
+    chips.push(
+      <SummaryChip key="enabled" onClear={() => setEnabledFilter('all')}>
+        {tr('pages.tokenRoutes.routeFilterBar.statusEnabled')}
+      </SummaryChip>,
+    );
+  } else if (enabledFilter === 'disabled') {
+    chips.push(
+      <SummaryChip key="disabled" onClear={() => setEnabledFilter('all')}>
+        {tr('pages.tokenRoutes.routeFilterBar.statusDisabled')}
+      </SummaryChip>,
+    );
+  }
+  if (activeBrand) {
+    chips.push(
+      <SummaryChip key="brand" onClear={() => setActiveBrand(null)}>
+        {tr('pages.tokenRoutes.routeFilterBar.brandFilter').replace('{brand}', activeBrand === '__other__' ? tr('pages.models.other') : activeBrand)}
+      </SummaryChip>,
+    );
+  }
+  if (activeSite) {
+    chips.push(
+      <SummaryChip key="site" onClear={() => setActiveSite(null)}>
+        {tr('pages.tokenRoutes.routeFilterBar.siteFilter').replace('{site}', activeSite)}
+      </SummaryChip>,
+    );
+  }
+  if (activeGroupFilter === '__all__') {
+    chips.push(
+      <SummaryChip key="group-all" onClear={() => setActiveGroupFilter(null)}>
+        {tr('pages.tokenRoutes.routeFilterBar.groupsAll')}
+      </SummaryChip>,
+    );
+  } else if (typeof activeGroupFilter === 'number') {
+    chips.push(
+      <SummaryChip key="group" onClear={() => setActiveGroupFilter(null)}>
+        {tr('pages.tokenRoutes.routeFilterBar.groupFilter').replace('{group}', String(activeGroupFilter))}
+      </SummaryChip>,
+    );
+  }
+  if (activeEndpointType) {
+    chips.push(
+      <SummaryChip key="endpoint-type" onClear={() => setActiveEndpointType(null)}>
+        {tr('pages.tokenRoutes.routeFilterBar.capabilityFilter').replace('{capability}', activeEndpointType)}
+      </SummaryChip>,
+    );
+  }
+
+  if (chips.length === 0) return null;
+  return <span className="mt-2 flex flex-wrap gap-1.5">{chips}</span>;
 }
 
 export default function RouteFilterBar(props: RouteFilterBarProps) {
@@ -110,88 +234,158 @@ export default function RouteFilterBar(props: RouteFilterBarProps) {
     collapsed,
     onToggle,
   } = props;
-  const [renderExpandedContent, setRenderExpandedContent] = useState(!collapsed);
-  const [presenceOpen, setPresenceOpen] = useState(!collapsed);
+  const open = !collapsed;
+  const activeFilterCount = getActiveFilterCount({
+    activeBrand,
+    activeSite,
+    activeGroupFilter,
+    activeEndpointType,
+    enabledFilter,
+  });
 
-  useEffect(() => {
-    if (!collapsed) return undefined;
-
-    const timerId = globalThis.setTimeout(() => setRenderExpandedContent(false), FILTER_EXPANDED_CONTENT_UNMOUNT_MS);
-    return () => globalThis.clearTimeout(timerId);
-  }, [collapsed]);
-
-  useLayoutEffect(() => {
-    if (collapsed) {
-      setPresenceOpen(false);
-      return undefined;
-    }
-
-    setRenderExpandedContent(true);
-    setPresenceOpen(false);
-    if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
-      const rafId = window.requestAnimationFrame(() => setPresenceOpen(true));
-      return () => window.cancelAnimationFrame(rafId);
-    }
-    setPresenceOpen(true);
-    return undefined;
-  }, [collapsed]);
+  const resetFilters = () => {
+    setEnabledFilter('all');
+    setActiveBrand(null);
+    setActiveSite(null);
+    setActiveGroupFilter(null);
+    setActiveEndpointType(null);
+  };
 
   return (
-    <Card>
-      {/* Collapsed summary */}
-      <Button
-        type="button"
-        variant="ghost"
-        className="w-full justify-start gap-2"
-        onClick={onToggle}
-      >
-        <span className="text-sm font-medium">{tr('筛选')}:</span>
-        <ActiveFilterSummary
-          activeBrand={activeBrand}
-          activeSite={activeSite}
-          activeGroupFilter={activeGroupFilter}
-          activeEndpointType={activeEndpointType}
-          enabledFilter={enabledFilter}
-        />
-      </Button>
+    <Collapsible
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (nextOpen !== open) onToggle();
+      }}
+      asChild
+    >
+      <Card className="overflow-hidden">
+        <div className="flex flex-col gap-3 p-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0 flex-1">
+            <Button
+              type="button"
+              variant="ghost"
+              className="h-auto w-full justify-start gap-3 p-0 text-left hover:bg-transparent"
+              onClick={onToggle}
+            >
+              <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
+                <SlidersHorizontal className="size-4" />
+              </span>
+              <span className="min-w-0">
+                <span className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-semibold text-foreground">{tr('components.mobileFilterSheet.filter')}:</span>
+                  <ToneBadge tone={activeFilterCount > 0 ? 'info' : 'muted'}>
+                    {activeFilterCount > 0
+                      ? tr('pages.tokenRoutes.routeFilterBar.activeCount').replace('{count}', String(activeFilterCount))
+                      : tr('components.notificationPanel.all')}
+                  </ToneBadge>
+                </span>
+                <span className="mt-1 block truncate text-xs text-muted-foreground">
+                  <ActiveFilterSummary
+                    activeBrand={activeBrand}
+                    activeSite={activeSite}
+                    activeGroupFilter={activeGroupFilter}
+                    activeEndpointType={activeEndpointType}
+                    enabledFilter={enabledFilter}
+                  />
+                </span>
+              </span>
+            </Button>
+            <ActiveFilterPills
+              activeBrand={activeBrand}
+              setActiveBrand={setActiveBrand}
+              activeSite={activeSite}
+              setActiveSite={setActiveSite}
+              activeGroupFilter={activeGroupFilter}
+              setActiveGroupFilter={setActiveGroupFilter}
+              activeEndpointType={activeEndpointType}
+              setActiveEndpointType={setActiveEndpointType}
+              enabledFilter={enabledFilter}
+              setEnabledFilter={setEnabledFilter}
+            />
+          </div>
+          <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+            {activeFilterCount > 0 ? (
+              <Button type="button" variant="outline" size="sm" onClick={resetFilters}>
+                <RotateCcw className="size-4" />
+                {tr('pages.tokenRoutes.routeFilterBar.reset')}
+              </Button>
+            ) : null}
+            <CollapsibleTrigger asChild>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                aria-label={collapsed ? tr('pages.tokenRoutes.routeFilterBar.expandfilter') : tr('pages.tokenRoutes.routeFilterBar.collapsefilter')}
+              >
+                {collapsed ? <ChevronDown className="size-4" /> : <ChevronUp className="size-4" />}
+                {collapsed ? tr('pages.proxyLogs.expand') : tr('pages.accounts.collapse')}
+              </Button>
+            </CollapsibleTrigger>
+          </div>
+        </div>
 
-      {/* Expanded panel */}
-      <div className={`anim-collapse ${presenceOpen ? 'is-open' : ''}`.trim()}>
-        <div className="anim-collapse-inner">
-          {renderExpandedContent && (
-            <CardContent className="grid gap-4 pt-0">
-              {/* Status row */}
-              <FilterRow label={tr('状态')}>
-                <FilterChip
-                  active={enabledFilter === 'all'}
-                  label={tr('全部')}
-                  count={totalRouteCount}
-                  icon={<span className="text-xs">✦</span>}
-                  onClick={() => setEnabledFilter('all')}
-                />
-                <FilterChip
-                  active={enabledFilter === 'enabled'}
-                  label={tr('仅启用')}
-                  count={enabledCounts.enabled}
-                  icon={<span className="text-xs">●</span>}
-                  onClick={() => setEnabledFilter(enabledFilter === 'enabled' ? 'all' : 'enabled')}
-                />
-                <FilterChip
-                  active={enabledFilter === 'disabled'}
-                  label={tr('仅禁用')}
-                  count={enabledCounts.disabled}
-                  icon={<span className="text-xs">●</span>}
-                  onClick={() => setEnabledFilter(enabledFilter === 'disabled' ? 'all' : 'disabled')}
-                />
-              </FilterRow>
+        <CollapsibleContent className="route-filter-collapsible overflow-hidden">
+          <CardContent className="pt-0">
+            <div className="grid gap-4 border-t pt-3">
+              <div className="grid gap-3 lg:grid-cols-[minmax(220px,max-content)_minmax(260px,1fr)]">
+                <FilterRow compact label={tr('components.notificationPanel.status')}>
+                  <FilterChip
+                    active={enabledFilter === 'all'}
+                    label={tr('components.notificationPanel.all')}
+                    count={totalRouteCount}
+                    icon={<SlidersHorizontal className="size-3.5" />}
+                    onClick={() => setEnabledFilter('all')}
+                  />
+                  <FilterChip
+                    active={enabledFilter === 'enabled'}
+                    label={tr('pages.downstreamKeys.enabled2')}
+                    count={enabledCounts.enabled}
+                    icon={<CheckCircle2 className="size-3.5 text-success" />}
+                    onClick={() => setEnabledFilter(enabledFilter === 'enabled' ? 'all' : 'enabled')}
+                  />
+                  <FilterChip
+                    active={enabledFilter === 'disabled'}
+                    label={tr('pages.downstreamKeys.disabled2')}
+                    count={enabledCounts.disabled}
+                    icon={<CircleSlash2 className="size-3.5 text-muted-foreground" />}
+                    onClick={() => setEnabledFilter(enabledFilter === 'disabled' ? 'all' : 'disabled')}
+                  />
+                </FilterRow>
 
-              {/* Brand row */}
-              <FilterRow label={tr('品牌')}>
+                <FilterRow compact label={tr('pages.tokenRoutes.manualRoutePanel.capabilities')}>
+                  <FilterChip
+                    active={!activeEndpointType}
+                    label={tr('components.notificationPanel.all')}
+                    count={totalRouteCount}
+                    icon={<Workflow className="size-3.5" />}
+                    onClick={() => setActiveEndpointType(null)}
+                  />
+                  {endpointTypeList.map(([endpointType, count]) => {
+                    const iconModel = resolveEndpointTypeIconModel(endpointType);
+                    return (
+                      <FilterChip
+                        key={endpointType}
+                        active={activeEndpointType === endpointType}
+                        label={endpointType}
+                        count={count}
+                        icon={iconModel ? <InlineBrandIcon model={iconModel} size={12} /> : <Workflow className="size-3.5" />}
+                        onClick={() => setActiveEndpointType(activeEndpointType === endpointType ? null : endpointType)}
+                      />
+                    );
+                  })}
+                  {endpointTypeList.length === 0 && (
+                    <span className="text-xs text-muted-foreground">{tr('pages.tokenRoutes.manualRoutePanel.noneendpointCapabilities')}</span>
+                  )}
+                </FilterRow>
+              </div>
+
+              <FilterRow label={tr('pages.models.brands')}>
                 <FilterChip
                   active={!activeBrand}
-                  label={tr('全部')}
+                  label={tr('components.notificationPanel.all')}
                   count={totalRouteCount}
-                  icon={<span className="text-xs">✦</span>}
+                  icon={<Tags className="size-3.5" />}
                   onClick={() => setActiveBrand(null)}
                 />
                 {brandList.list.map(([brandName, { count, brand }]) => (
@@ -207,7 +401,7 @@ export default function RouteFilterBar(props: RouteFilterBarProps) {
                 {brandList.otherCount > 0 && (
                   <FilterChip
                     active={activeBrand === '__other__'}
-                    label={tr('其他')}
+                    label={tr('pages.models.other')}
                     count={brandList.otherCount}
                     icon={<span className="text-xs">?</span>}
                     onClick={() => setActiveBrand(activeBrand === '__other__' ? null : '__other__')}
@@ -215,14 +409,13 @@ export default function RouteFilterBar(props: RouteFilterBarProps) {
                 )}
               </FilterRow>
 
-              {/* Site row */}
               {siteList.length > 0 && (
-                <FilterRow label={tr('站点')}>
+                <FilterRow label={tr('components.searchModal.sites2')}>
                   <FilterChip
                     active={!activeSite}
-                    label={tr('全部')}
+                    label={tr('components.notificationPanel.all')}
                     count={totalRouteCount}
-                    icon={<span className="text-xs">⚡</span>}
+                    icon={<Server className="size-3.5" />}
                     onClick={() => setActiveSite(null)}
                   />
                   {siteList.map(([siteName, { count }]) => (
@@ -238,13 +431,12 @@ export default function RouteFilterBar(props: RouteFilterBarProps) {
                 </FilterRow>
               )}
 
-              {/* Group row */}
-              <FilterRow label={tr('群组')}>
+              <FilterRow label={tr('pages.downstreamKeys.groups')}>
                 <FilterChip
                   active={activeGroupFilter === '__all__'}
-                  label={tr('全部群组')}
+                  label={tr('pages.tokenRoutes.routeFilterBar.allGroups')}
                   count={groupRouteList.length}
-                  icon={<span className="text-xs">◎</span>}
+                  icon={<Layers3 className="size-3.5" />}
                   onClick={() => setActiveGroupFilter(activeGroupFilter === '__all__' ? null : '__all__')}
                 />
                 {groupRouteList.map((groupRoute) => (
@@ -269,46 +461,18 @@ export default function RouteFilterBar(props: RouteFilterBarProps) {
                 ))}
               </FilterRow>
 
-              {/* Endpoint type row */}
-              <FilterRow label={tr('能力')}>
-                <FilterChip
-                  active={!activeEndpointType}
-                  label={tr('全部')}
-                  count={totalRouteCount}
-                  icon={<span className="text-xs">⚙</span>}
-                  onClick={() => setActiveEndpointType(null)}
-                />
-                {endpointTypeList.map(([endpointType, count]) => {
-                  const iconModel = resolveEndpointTypeIconModel(endpointType);
-                  return (
-                    <FilterChip
-                      key={endpointType}
-                      active={activeEndpointType === endpointType}
-                      label={endpointType}
-                      count={count}
-                      icon={iconModel ? <InlineBrandIcon model={iconModel} size={12} /> : <span className="text-xs">⚙</span>}
-                      onClick={() => setActiveEndpointType(activeEndpointType === endpointType ? null : endpointType)}
-                    />
-                  );
-                })}
-                {endpointTypeList.length === 0 && (
-                  <span className="text-xs text-muted-foreground">{tr('暂无接口能力数据')}</span>
-                )}
-              </FilterRow>
-
               <div className="flex justify-end pt-1">
-                <Button type="button" variant="outline"
-                 
-                 
-                  onClick={onToggle}
-                >
-                  {tr('收起筛选面板')}
-                </Button>
+                <CollapsibleTrigger asChild>
+                  <Button type="button" variant="outline">
+                    <ChevronUp className="size-4" />
+                    {tr('pages.tokenRoutes.routeFilterBar.collapsefilter')}
+                  </Button>
+                </CollapsibleTrigger>
               </div>
-            </CardContent>
-          )}
-        </div>
-      </div>
-    </Card>
+            </div>
+          </CardContent>
+        </CollapsibleContent>
+      </Card>
+    </Collapsible>
   );
 }

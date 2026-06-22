@@ -1,6 +1,7 @@
 import React from 'react';
 import * as Sheet from './ui/sheet/index.js';
 
+import { tr } from '../i18n.js';
 type MobileFilterSheetProps = {
   open: boolean;
   onClose: () => void;
@@ -11,7 +12,7 @@ type MobileFilterSheetProps = {
 export default function MobileFilterSheet({
   open,
   onClose,
-  title = '筛选',
+  title = tr('components.mobileFilterSheet.filter'),
   children,
 }: MobileFilterSheetProps) {
   const closeNotifiedRef = React.useRef(false);
@@ -29,7 +30,7 @@ export default function MobileFilterSheet({
       <Sheet.Content side="left" className="w-[min(88vw,360px)]" onClose={requestClose}>
         <Sheet.Header>
           <Sheet.Title>{title}</Sheet.Title>
-          <Sheet.Description className="sr-only">移动端筛选条件面板</Sheet.Description>
+          <Sheet.Description className="sr-only">{tr('components.mobileFilterSheet.filteritems')}</Sheet.Description>
         </Sheet.Header>
         <div className="mt-3 grid gap-3">
         {children}

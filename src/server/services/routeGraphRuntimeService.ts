@@ -1,14 +1,19 @@
 import { run as runCel } from '@bufbuild/cel';
 import {
-  findRouteGraphEntryForModel,
-  normalizeRouteGraphSource,
   type CompiledRouteGraph,
+  type CompiledEndpointTarget,
   type RouteFilter,
-  type RouteGraphEdge,
   type RouteGraphNode,
-  type RouteGraphSource,
+  type RouteProgram,
+  type RouteProgramBundleV3,
+  type RouteProgramCandidate,
+  type RouteProgramOp,
+  type RouteProgramSourceRef,
 } from '../../shared/routeGraph.js';
-import { isExactTokenRouteModelPattern } from '../../shared/tokenRoutePatterns.js';
+import {
+  matchesTokenRouteModelPattern,
+  parseTokenRouteRegexPattern,
+} from '../../shared/tokenRoutePatterns.js';
 import {
   cloneJsonValue,
   deletePayloadPath,
@@ -33,10 +38,15 @@ export type RouteGraphRuntimeTraceStep = {
   nodeId: string;
   nodeName?: string | null;
   nodeType: string;
+  programId?: string;
+  opId?: string;
   enteredPortId?: string;
   exitedPortId?: string;
   appliedFilters: string[];
   decision: 'matched_entry' | 'applied_filter' | 'dispatcher_selected_route' | 'dispatcher_selected_flow' | 'terminal' | 'synthetic_response';
+  selectedCandidateId?: string;
+  sourceRef?: RouteProgramSourceRef;
+  candidateSourceRef?: RouteProgramSourceRef;
 };
 
 export type RouteGraphRuntimeTrace = {
@@ -89,18 +99,11 @@ export type RouteGraphRuntimeSelection = {
   trace: RouteGraphRuntimeTrace;
 };
 
-type EvaluationContext = {
-  graph: CompiledRouteGraph;
-  nodesById: Record<string, RouteGraphNode>;
-  edgesByFromPort: Record<string, RouteGraphEdge[]>;
-  maxHops: number;
-};
-
 type DispatcherCandidate = {
   idx: number;
   kind: 'route' | 'bidirect' | 'target';
   nodeId?: string;
-  edge?: RouteGraphEdge;
+  edgeId?: string;
   metadata: Record<string, unknown>;
   runtime: Record<string, unknown>;
   enabled: boolean;
@@ -110,7 +113,17 @@ type DispatcherCandidate = {
   order: number;
 };
 
+export type HydratedRouteProgramBundle = {
+  bundle: RouteProgramBundleV3;
+  programsById: Map<string, RouteProgram>;
+  opsByProgramId: Map<string, Map<string, RouteProgramOp>>;
+  exact: Map<string, NonNullable<RouteProgramBundleV3['matcher']['exact'][string]>>;
+  normalizedExact: Map<string, NonNullable<RouteProgramBundleV3['matcher']['normalizedExact'][string]>>;
+  patterns: RouteProgramBundleV3['matcher']['patterns'];
+};
+
 const DEFAULT_ROUTE_GRAPH_MAX_HOPS = 8;
+const hydratedRouteProgramCache = new WeakMap<RouteProgramBundleV3, HydratedRouteProgramBundle>();
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -118,50 +131,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function asTrimmedString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
-}
-
-function legacyRouteIdFromNode(node: RouteGraphNode | null | undefined): number | null {
-  if (!node) return null;
-  if ('legacyRouteId' in node && Number.isFinite(Number(node.legacyRouteId)) && Number(node.legacyRouteId) > 0) {
-    return Math.trunc(Number(node.legacyRouteId));
-  }
-  if (node.type === 'entry' && Number.isFinite(Number(node.match?.routeId)) && Number(node.match.routeId) > 0) {
-    return Math.trunc(Number(node.match.routeId));
-  }
-  const match = /^(?:entry|pool):legacy:(\d+)$/.exec(node.id);
-  if (!match) return null;
-  const routeId = Number(match[1]);
-  return Number.isFinite(routeId) && routeId > 0 ? routeId : null;
-}
-
-function routeModelFromEntryNode(node: RouteGraphNode | null | undefined): string {
-  if (!node || node.type !== 'entry') return '';
-  const requestedModelPattern = asTrimmedString(node.match?.requestedModelPattern);
-  if (isExactTokenRouteModelPattern(requestedModelPattern)) return requestedModelPattern;
-  return '';
-}
-
-function graphSourceFromCompiled(graph: CompiledRouteGraph): RouteGraphSource {
-  return normalizeRouteGraphSource({
-    version: 1,
-    nodes: Object.values(graph.nodesById || {}),
-    edges: Object.values(graph.edgesByFromPort || {}).flat(),
-  });
-}
-
-function edgeTrace(edge: RouteGraphEdge) {
-  return {
-    edgeId: edge.id,
-    sourceNodeId: edge.sourceNodeId,
-    sourcePortId: edge.sourcePortId,
-    targetNodeId: edge.targetNodeId,
-    targetPortId: edge.targetPortId,
-    kind: edge.kind,
-  };
-}
-
-function outgoing(ctx: EvaluationContext, nodeId: string, sourcePortId: string): RouteGraphEdge[] {
-  return ctx.edgesByFromPort[`${nodeId}:${sourcePortId}`] || [];
 }
 
 function celValueToPlain(value: unknown): unknown {
@@ -196,6 +165,11 @@ function numberOrFallback(value: unknown, fallback: number): number {
   return Number.isFinite(normalized) ? normalized : fallback;
 }
 
+function positiveNumberOrFallback(value: unknown, fallback: number): number {
+  const normalized = numberOrFallback(value, fallback);
+  return normalized > 0 ? normalized : fallback;
+}
+
 function booleanOrFallback(value: unknown, fallback: boolean): boolean {
   return typeof value === 'boolean' ? value : fallback;
 }
@@ -214,7 +188,7 @@ function candidateForCel(candidate: DispatcherCandidate): Record<string, unknown
     idx: candidate.idx,
     kind: candidate.kind,
     nodeId: candidate.nodeId,
-    edgeId: candidate.edge?.id,
+    edgeId: candidate.edgeId,
     metadata: candidate.metadata,
     weight: candidate.weight,
     priority: candidate.priority,
@@ -246,21 +220,20 @@ function dispatcherPolicy(node: RouteGraphNode): Record<string, unknown> {
   return { strategy: 'weighted' };
 }
 
-function targetSelectionPolicy(node: RouteGraphNode): Record<string, unknown> {
-  const config = 'config' in node && isRecord(node.config) ? node.config as Record<string, unknown> : null;
-  if (config && isRecord(config.targetSelection)) return config.targetSelection;
-  return { strategy: 'weighted' };
-}
-
-function modelEndpointCompatibilityPolicy(node: RouteGraphNode): UpstreamCompatibilityPolicy | undefined {
-  const direct = (node as { compatibilityPolicy?: unknown }).compatibilityPolicy;
-  if (isRecord(direct)) return normalizeUpstreamCompatibilityPolicy(direct);
-
-  const config = 'config' in node && isRecord(node.config) ? node.config as Record<string, unknown> : null;
-  if (config && isRecord(config.compatibilityPolicy)) {
-    return normalizeUpstreamCompatibilityPolicy(config.compatibilityPolicy);
+function selectWeightedDispatcherCandidate(candidates: DispatcherCandidate[]): DispatcherCandidate | null {
+  if (candidates.length === 0) return null;
+  const weighted = candidates.map((candidate) => ({
+    candidate,
+    weight: positiveNumberOrFallback(candidate.weight, 1),
+  }));
+  const totalWeight = weighted.reduce((sum, item) => sum + item.weight, 0);
+  if (totalWeight <= 0) return weighted[0]?.candidate || null;
+  let cursor = Math.random() * totalWeight;
+  for (const item of weighted) {
+    cursor -= item.weight;
+    if (cursor < 0) return item.candidate;
   }
-  return undefined;
+  return weighted[weighted.length - 1]?.candidate || null;
 }
 
 function buildDispatcherCelContext(input: {
@@ -321,70 +294,6 @@ function collectPostBuildFilter(target: RouteGraphPostBuildFilters, operation: R
   if (operation.type === 'set_endpoint_preference') {
     target.endpointPreference = operation.endpoint;
   }
-}
-
-function routeCandidatesForDispatcher(
-  ctx: EvaluationContext,
-  nodeId: string,
-): DispatcherCandidate[] {
-  const incomingRouteEdges = Object.values(ctx.edgesByFromPort)
-    .flat()
-    .filter((edge) => edge.targetNodeId === nodeId && edge.targetPortId === 'route.in');
-  const candidates: DispatcherCandidate[] = incomingRouteEdges.flatMap((edge, index) => {
-    const node = ctx.nodesById[edge.sourceNodeId];
-    if (!node) return [];
-    const nodeMetadata = isRecord((node as { metadata?: unknown }).metadata)
-      ? ((node as { metadata?: Record<string, unknown> }).metadata || {})
-      : {};
-    const edgeMetadata = isRecord((edge as { metadata?: unknown }).metadata)
-      ? ((edge as { metadata?: Record<string, unknown> }).metadata || {})
-      : {};
-    const metadata = { ...edgeMetadata, ...nodeMetadata };
-    const metadataWeight = Number(metadata.weight);
-    const metadataPriority = Number(metadata.priority);
-    const targetSelection = isRecord((node as { config?: unknown }).config)
-      ? (node as { config?: { targetSelection?: Record<string, unknown> } }).config?.targetSelection
-      : null;
-    const configWeight = isRecord(targetSelection) ? Number(targetSelection.weight) : Number.NaN;
-    const configPriority = isRecord(targetSelection) ? Number(targetSelection.priority) : Number.NaN;
-    const weight = Number.isFinite(metadataWeight) ? metadataWeight : (Number.isFinite(configWeight) ? configWeight : 1);
-    const priority = Number.isFinite(metadataPriority) ? metadataPriority : (Number.isFinite(configPriority) ? configPriority : 0);
-    return [{
-      idx: index,
-      kind: 'route' as const,
-      nodeId: node.id,
-      metadata,
-      runtime: {},
-      enabled: node.enabled !== false,
-      weight,
-      priority,
-      score: weight,
-      order: index,
-    }];
-  });
-  return candidates;
-}
-
-function flowCandidatesForDispatcher(ctx: EvaluationContext, nodeId: string): DispatcherCandidate[] {
-  return outgoing(ctx, nodeId, 'bidirect[1...].out').map((edge, index) => {
-    const metadata = isRecord((edge as { metadata?: unknown }).metadata)
-      ? ((edge as { metadata?: Record<string, unknown> }).metadata || {})
-      : {};
-    const weight = numberOrFallback(metadata.weight, 1);
-    const priority = numberOrFallback(metadata.priority, 0);
-    return {
-      idx: index,
-      kind: 'bidirect',
-      edge,
-      metadata,
-      runtime: {},
-      enabled: metadata.enabled !== false,
-      weight,
-      priority,
-      score: weight,
-      order: index,
-    };
-  });
 }
 
 function applyScorePolicy(input: {
@@ -457,315 +366,367 @@ function selectDispatcherCandidate(input: {
     candidates,
     state: input.state,
   }));
-  return ranked.sort((left, right) => {
-    if (strategy === 'stable_first') return left.order - right.order;
-    if (strategy === 'priority_order') {
-      if (right.priority !== left.priority) return right.priority - left.priority;
+  if (strategy === 'stable_first') {
+    return ranked.sort((left, right) => left.order - right.order)[0] || null;
+  }
+  if (strategy === 'priority_order') {
+    const maxPriority = Math.max(...ranked.map((candidate) => candidate.priority));
+    return selectWeightedDispatcherCandidate(ranked.filter((candidate) => candidate.priority === maxPriority));
+  }
+  if (policy.score !== undefined || policy.scoreExpr !== undefined || Array.isArray(policy.score)) {
+    return ranked.sort((left, right) => {
       if (right.score !== left.score) return right.score - left.score;
       if (right.weight !== left.weight) return right.weight - left.weight;
+      if (right.priority !== left.priority) return right.priority - left.priority;
       return left.order - right.order;
-    }
-    if (right.score !== left.score) return right.score - left.score;
-    if (right.weight !== left.weight) return right.weight - left.weight;
-    if (right.priority !== left.priority) return right.priority - left.priority;
-    return left.order - right.order;
-  })[0] || null;
-}
-
-function routeIdFromEndpointNode(node: RouteGraphNode | null | undefined): number | null {
-  if (!node) return null;
-  const direct = legacyRouteIdFromNode(node);
-  if (direct) return direct;
-  const match = /^pool:legacy:(\d+)$/.exec(node.id);
-  if (!match) return null;
-  const routeId = Number(match[1]);
-  return Number.isFinite(routeId) && routeId > 0 ? routeId : null;
-}
-
-function terminalModelFromEndpointNode(ctx: EvaluationContext, node: RouteGraphNode): string {
-  const routeNodeId = 'routeNodeId' in node && typeof node.routeNodeId === 'string' ? node.routeNodeId : '';
-  if (!routeNodeId) return '';
-  const routeEntry = routeNodeId ? ctx.nodesById[routeNodeId] : null;
-  const entryModel = routeModelFromEntryNode(routeEntry);
-  if (entryModel) return entryModel;
-  const legacyRouteId = routeIdFromEndpointNode(node);
-  if (legacyRouteId) {
-    const legacyEntry = ctx.nodesById[`entry:legacy:${legacyRouteId}`];
-    const legacyModel = routeModelFromEntryNode(legacyEntry);
-    if (legacyModel) return legacyModel;
+    })[0] || null;
   }
-  return '';
+  return selectWeightedDispatcherCandidate(ranked);
 }
 
-function selectEndpointTarget(node: RouteGraphNode, state: RouteGraphRuntimeState): RouteGraphRuntimeSelection['selectedEndpointTarget'] {
-  if (!('config' in node) || !isRecord(node.config)) return null;
-  const policy = targetSelectionPolicy(node);
+function hasUsableRouteProgramBundle(value: unknown): value is RouteProgramBundleV3 {
+  if (!isRecord(value) || value.version !== 3 || !isRecord(value.matcher) || !Array.isArray(value.programs)) {
+    return false;
+  }
+  if (Array.isArray(value.diagnostics) && value.diagnostics.some((diagnostic) => (
+    isRecord(diagnostic)
+    && diagnostic.severity === 'error'
+    && asTrimmedString(diagnostic.code).startsWith('program.')
+  ))) {
+    return false;
+  }
+  return value.programs.some((program) => isRecord(program) && asTrimmedString(program.startOpId) && Array.isArray(program.ops));
+}
+
+export function hydrateRouteProgramBundle(bundle: RouteProgramBundleV3): HydratedRouteProgramBundle | null {
+  if (!hasUsableRouteProgramBundle(bundle)) return null;
+  const cached = hydratedRouteProgramCache.get(bundle);
+  if (cached) return cached;
+  const programsById = new Map<string, RouteProgram>();
+  const opsByProgramId = new Map<string, Map<string, RouteProgramOp>>();
+  for (const program of bundle.programs) {
+    const programId = asTrimmedString(program.id);
+    const startOpId = asTrimmedString(program.startOpId);
+    if (!programId || !startOpId || !Array.isArray(program.ops)) return null;
+    const opsById = new Map((program.ops || []).map((op) => [op.id, op]));
+    if (!opsById.has(startOpId)) return null;
+    programsById.set(program.id, program);
+    opsByProgramId.set(program.id, opsById);
+  }
+  const patterns = Array.isArray(bundle.matcher?.patterns) ? bundle.matcher.patterns : [];
+  for (const pattern of patterns) {
+    if (pattern.patternKind !== 'regex') continue;
+    const parsed = parseTokenRouteRegexPattern(pattern.pattern);
+    if (parsed.error) return null;
+  }
+  const hydrated: HydratedRouteProgramBundle = {
+    bundle,
+    programsById,
+    opsByProgramId,
+    exact: new Map(Object.entries(bundle.matcher?.exact || {})),
+    normalizedExact: new Map(Object.entries(bundle.matcher?.normalizedExact || {})),
+    patterns,
+  };
+  hydratedRouteProgramCache.set(bundle, hydrated);
+  return hydrated;
+}
+
+function matchRouteProgramBundle(hydrated: HydratedRouteProgramBundle, requestedModel: string): { program: RouteProgram; entryNodeId: string; routeId: number | null } | null {
+  const target = hydrated.exact.get(requestedModel)
+    || hydrated.normalizedExact.get(requestedModel.toLowerCase())
+    || hydrated.patterns.find((pattern) => matchesTokenRouteModelPattern(requestedModel, pattern.pattern));
+  if (!target?.programId) return null;
+  const program = hydrated.programsById.get(target.programId);
+  if (!program || program.enabled === false) return null;
+  const routeId = Number(target.sourceRef?.routeId ?? program.sourceRef?.routeId);
+  return {
+    program,
+    entryNodeId: target.entryNodeId || program.entryNodeId,
+    routeId: Number.isFinite(routeId) && routeId > 0 ? Math.trunc(routeId) : null,
+  };
+}
+
+function dispatcherCandidateFromProgramCandidate(candidate: RouteProgramCandidate, index: number, mode: 'route' | 'flow' | 'target'): DispatcherCandidate {
+  const metadata = isRecord(candidate.metadata) ? candidate.metadata : {};
+  return {
+    idx: index,
+    kind: mode === 'flow' ? 'bidirect' : (mode === 'target' ? 'target' : 'route'),
+    nodeId: candidate.nodeId,
+    edgeId: candidate.edgeId,
+    metadata,
+    runtime: {},
+    enabled: candidate.enabled !== false,
+    weight: numberOrFallback(candidate.weight, 1),
+    priority: numberOrFallback(candidate.priority, 0),
+    score: numberOrFallback(candidate.weight, 1),
+    order: index,
+  };
+}
+
+function targetRefToRuntimeTarget(target: CompiledEndpointTarget | null | undefined): RouteGraphRuntimeSelection['selectedEndpointTarget'] {
+  if (!target) return null;
+  return endpointTargetForSelection(target as unknown as Record<string, unknown>);
+}
+
+function selectProgramEndpointTarget(input: {
+  op: Extract<RouteProgramOp, { op: 'select_supply' }>;
+  state: RouteGraphRuntimeState;
+}): RouteGraphRuntimeSelection['selectedEndpointTarget'] {
+  const policy = isRecord(input.op.targetSelectionPolicy) ? input.op.targetSelectionPolicy : { strategy: 'weighted' };
   if (policy.strategy === 'defer_to_router') return null;
-  const targets = Array.isArray(node.config.targets) ? node.config.targets : [];
-  const candidates: DispatcherCandidate[] = targets.flatMap((target, index) => {
-    if (!isRecord(target)) return [];
-    const normalized = endpointTargetForSelection(target);
-    if (!normalized?.channelId || (!normalized.model && normalized.modelSource !== 'request')) return [];
+  const targets = Array.isArray(input.op.targets) ? input.op.targets : [];
+  const candidates: DispatcherCandidate[] = targets.map((target, index) => {
     const metadata = {
       ...(isRecord(target.metadata) ? target.metadata : {}),
-      channelId: normalized.channelId,
-      model: normalized.model,
-      modelSource: normalized.modelSource || 'fixed',
-      accountId: normalized.accountId ?? null,
-      tokenId: normalized.tokenId ?? null,
-      siteId: normalized.siteId ?? null,
+      channelId: target.channelId,
+      model: target.model,
+      modelSource: target.modelSource || 'fixed',
+      accountId: target.accountId ?? null,
+      tokenId: target.tokenId ?? null,
+      siteId: target.siteId ?? null,
     };
-    const weight = numberOrFallback(target.weight, 1);
-    const priority = numberOrFallback(target.priority, 0);
-    return [{
+    return {
       idx: index,
-      kind: 'target' as const,
+      kind: 'target',
       metadata,
       runtime: {},
       enabled: target.enabled !== false,
-      weight,
-      priority,
-      score: weight,
+      weight: numberOrFallback(target.weight, 1),
+      priority: numberOrFallback(target.priority, 0),
+      score: numberOrFallback(target.weight, 1),
       order: index,
-    }];
+    };
   });
   const selected = selectDispatcherCandidate({
     node: {
-      ...node,
+      id: input.op.nodeId,
       type: 'dispatcher',
+      enabled: true,
+      visibility: 'internal',
+      ownership: 'derived',
       mode: 'route',
       policy,
     } as RouteGraphNode,
     candidates,
-    state,
+    state: input.state,
   });
   if (!selected) return null;
-  const raw = targets[selected.idx];
-  return isRecord(raw) ? endpointTargetForSelection(raw) : null;
+  return targetRefToRuntimeTarget(targets[selected.idx]);
 }
 
-function evaluateNode(input: {
-  ctx: EvaluationContext;
-  nodeId: string;
-  enteredPortId?: string;
-  state: RouteGraphRuntimeState;
-  postBuildFilters: RouteGraphPostBuildFilters;
-  trace: RouteGraphRuntimeTrace;
-  visited: Set<string>;
-  hops: number;
+function evaluateRouteProgram(input: {
+  program: RouteProgram;
+  opsById: Map<string, RouteProgramOp>;
+  entryNodeId: string;
+  matchedRouteId: number | null;
+  requestedModel: string;
+  maxHops: number;
+  stateStore: Record<string, unknown>;
 }): RouteGraphRuntimeSelection | null {
-  const { ctx, nodeId, enteredPortId, state, postBuildFilters, trace, visited, hops } = input;
-  if (hops > ctx.maxHops) return null;
-  if (visited.has(nodeId)) return null;
-  const node = ctx.nodesById[nodeId];
-  if (!node || node.enabled === false) return null;
-  const nextVisited = new Set(visited);
-  nextVisited.add(nodeId);
-
-  if (node.type === 'filter') {
-    const appliedFilters: string[] = [];
-    for (const operation of node.operations || []) {
-      if (filterMatchesOperationPhase(operation, 'pre_selection')) {
-        const applied = applyPreSelectionFilter(state, operation);
-        if (applied) appliedFilters.push(applied);
-      } else {
-        collectPostBuildFilter(postBuildFilters, operation);
-        appliedFilters.push(operation.type);
-      }
-    }
-    trace.path.push({
-      nodeId,
-      nodeName: node.name,
-      nodeType: node.type,
-      enteredPortId,
-      exitedPortId: enteredPortId?.startsWith('bidirect') ? 'bidirect.out' : 'request.out',
-      appliedFilters,
-      decision: 'applied_filter',
-    });
-    const portId = enteredPortId?.startsWith('bidirect') ? 'bidirect.out' : 'request.out';
-    return followEdges(ctx, outgoing(ctx, nodeId, portId), state, postBuildFilters, trace, nextVisited, hops + 1);
-  }
-
-  if (node.type === 'dispatcher' && node.mode === 'route') {
-    const candidates = routeCandidatesForDispatcher(ctx, nodeId);
-    const selected = selectDispatcherCandidate({ node, candidates, state });
-    trace.path.push({
-      nodeId,
-      nodeName: node.name,
-      nodeType: node.type,
-      enteredPortId,
-      exitedPortId: selected ? 'route.in' : undefined,
-      appliedFilters: [],
-      decision: 'dispatcher_selected_route',
-    });
-    if (!selected?.nodeId) return null;
-    return evaluateNode({
-      ctx,
-      nodeId: selected.nodeId,
-      enteredPortId: 'route.selected',
-      state,
-      postBuildFilters,
-      trace,
-      visited: nextVisited,
-      hops: hops + 1,
-    });
-  }
-
-  if (node.type === 'dispatcher' && node.mode === 'flow') {
-    const candidates = flowCandidatesForDispatcher(ctx, nodeId);
-    const selected = selectDispatcherCandidate({ node, candidates, state });
-    trace.path.push({
-      nodeId,
-      nodeName: node.name,
-      nodeType: node.type,
-      enteredPortId,
-      exitedPortId: selected ? 'bidirect[1...].out' : undefined,
-      appliedFilters: [],
-      decision: 'dispatcher_selected_flow',
-    });
-    if (!selected?.edge) return null;
-    return followEdges(ctx, [selected.edge], state, postBuildFilters, trace, nextVisited, hops + 1);
-  }
-
-  if (node.type === 'synthetic_endpoint') {
-    const statusCode = node.statusCode === 429 ? 429 : 503;
-    trace.path.push({
-      nodeId,
-      nodeName: node.name,
-      nodeType: node.type,
-      enteredPortId,
-      appliedFilters: [],
-      decision: 'synthetic_response',
-    });
-    trace.terminalNodeId = nodeId;
-    return {
-      matchedEntryNodeId: '',
-      selectedEntryNodeId: nodeId,
-      matchedRouteId: null,
-      selectedRouteId: null,
-      selectedEndpointTarget: null,
-      terminalNodeId: nodeId,
-      terminalKind: 'synthetic_endpoint',
-      syntheticResponse: {
-        statusCode,
-        message: node.message || 'No route is available.',
-      },
-      requestedModel: state.requestedModel,
-      currentModel: state.currentModel,
-      upstreamModel: state.upstreamModel || undefined,
-      postBuildFilters: {
-        ...postBuildFilters,
-        endpointPreference: postBuildFilters.endpointPreference || state.endpointPreference,
-      },
-      trace,
-    };
-  }
-
-  if (node.type === 'model_endpoint' || node.type === 'auto_node') {
-    const routeId = routeIdFromEndpointNode(node);
-    const selectedEndpointTarget = selectEndpointTarget(node, state);
-    const endpointCompatibilityPolicy = modelEndpointCompatibilityPolicy(node);
-    const terminalModel = terminalModelFromEndpointNode(ctx, node);
-    const selectedTargetModel = selectedEndpointTarget?.modelSource === 'request'
-      ? (terminalModel || state.currentModel)
-      : selectedEndpointTarget?.model;
-    const currentModel = selectedTargetModel || terminalModel || state.currentModel;
-    trace.path.push({
-      nodeId,
-      nodeName: node.name,
-      nodeType: node.type,
-      enteredPortId,
-      appliedFilters: [],
-      decision: 'terminal',
-    });
-    trace.terminalNodeId = nodeId;
-    return {
-      matchedEntryNodeId: '',
-      selectedEntryNodeId: ('routeNodeId' in node && typeof node.routeNodeId === 'string' && node.routeNodeId) || (routeId ? `entry:legacy:${routeId}` : nodeId),
-      matchedRouteId: null,
-      selectedRouteId: routeId,
-      modelEndpointCompatibilityPolicy: endpointCompatibilityPolicy,
-      selectedEndpointTarget,
-      terminalNodeId: nodeId,
-      terminalKind: 'model_endpoint',
-      requestedModel: state.requestedModel,
-      currentModel,
-      upstreamModel: state.upstreamModel || selectedTargetModel || terminalModel || undefined,
-      postBuildFilters: {
-        ...postBuildFilters,
-        endpointPreference: postBuildFilters.endpointPreference || state.endpointPreference,
-      },
-      trace,
-    };
-  }
-
-  if (node.type === 'entry') {
-    trace.path.push({
-      nodeId,
-      nodeName: node.name,
-      nodeType: node.type,
-      enteredPortId,
-      exitedPortId: 'bidirect.out',
+  let opId = asTrimmedString(input.program.startOpId);
+  if (!opId) return null;
+  const state: RouteGraphRuntimeState = {
+    requestedModel: input.requestedModel,
+    currentModel: input.requestedModel,
+    headers: {},
+    stateStore: input.stateStore,
+  };
+  let postBuildFilters: RouteGraphPostBuildFilters = { payload: [], headers: [] };
+  const trace: RouteGraphRuntimeTrace = {
+    path: [{
+      nodeId: input.entryNodeId,
+      nodeType: 'entry',
+      programId: input.program.id,
+      exitedPortId: 'request.out',
       appliedFilters: [],
       decision: 'matched_entry',
-    });
-    return followEdges(ctx, outgoing(ctx, nodeId, 'bidirect.out'), state, postBuildFilters, trace, nextVisited, hops + 1);
-  }
+      sourceRef: input.program.sourceRef,
+    }],
+    edges: [],
+    terminalNodeId: null,
+  };
+  const visited = new Set<string>();
+  let hops = 0;
+  while (opId && hops <= input.maxHops) {
+    if (visited.has(opId)) return null;
+    visited.add(opId);
+    hops += 1;
+    if (hops > input.maxHops) return null;
+    const op = input.opsById.get(opId);
+    if (!op) return null;
 
+    if (op.op === 'filter') {
+      const appliedFilters: string[] = [];
+      for (const operation of op.operations || []) {
+        if (op.phase === 'pre_selection' && filterMatchesOperationPhase(operation, 'pre_selection')) {
+          const applied = applyPreSelectionFilter(state, operation);
+          if (applied) appliedFilters.push(applied);
+        } else if (op.phase === 'post_build' && filterMatchesOperationPhase(operation, 'post_build')) {
+          collectPostBuildFilter(postBuildFilters, operation);
+          appliedFilters.push(operation.type);
+        }
+      }
+      trace.path.push({
+        nodeId: op.nodeId,
+        nodeType: 'filter',
+        programId: input.program.id,
+        opId: op.id,
+        enteredPortId: op.phase === 'pre_selection' ? 'bidirect.in' : undefined,
+        exitedPortId: op.nextOpId ? 'bidirect.out' : undefined,
+        appliedFilters,
+        decision: 'applied_filter',
+        sourceRef: op.sourceRef,
+      });
+      opId = asTrimmedString(op.nextOpId);
+      continue;
+    }
+
+    if (op.op === 'dispatch') {
+      const candidates = (op.candidates || []).map((candidate, index) => dispatcherCandidateFromProgramCandidate(candidate, index, op.mode));
+      const selected = selectDispatcherCandidate({
+        node: {
+          id: op.nodeId,
+          type: 'dispatcher',
+          enabled: true,
+          visibility: 'internal',
+          ownership: 'derived',
+          mode: op.mode === 'flow' ? 'flow' : 'route',
+          policy: op.policy,
+        } as RouteGraphNode,
+        candidates,
+        state,
+      });
+      const selectedProgramCandidate = selected ? op.candidates[selected.idx] : undefined;
+      trace.path.push({
+        nodeId: op.nodeId,
+        nodeType: 'dispatcher',
+        programId: input.program.id,
+        opId: op.id,
+        exitedPortId: selected ? (op.mode === 'flow' ? 'bidirect[1...].out' : 'route.in') : undefined,
+        appliedFilters: [],
+        decision: op.mode === 'flow' ? 'dispatcher_selected_flow' : 'dispatcher_selected_route',
+        selectedCandidateId: selectedProgramCandidate?.id,
+        sourceRef: op.sourceRef,
+        candidateSourceRef: selectedProgramCandidate?.sourceRef,
+      });
+      if (!selected) return null;
+      opId = asTrimmedString(selectedProgramCandidate?.targetOpId);
+      continue;
+    }
+
+    if (op.op === 'call_product') {
+      trace.path.push({
+        nodeId: op.sourceRef.nodeId || op.endpointId,
+        nodeType: 'route_endpoint',
+        programId: input.program.id,
+        opId: op.id,
+        exitedPortId: op.nextOpId ? 'route.out' : undefined,
+        appliedFilters: [],
+        decision: 'dispatcher_selected_route',
+        sourceRef: op.sourceRef,
+      });
+      opId = asTrimmedString(op.nextOpId);
+      continue;
+    }
+
+    if (op.op === 'synthetic') {
+      const statusCode = op.statusCode === 429 ? 429 : 503;
+      trace.path.push({
+        nodeId: op.nodeId,
+        nodeType: 'synthetic_endpoint',
+        programId: input.program.id,
+        opId: op.id,
+        appliedFilters: [],
+        decision: 'synthetic_response',
+        sourceRef: op.sourceRef,
+      });
+      trace.terminalNodeId = op.nodeId;
+      return {
+        matchedEntryNodeId: input.entryNodeId,
+        selectedEntryNodeId: op.nodeId,
+        matchedRouteId: input.matchedRouteId,
+        selectedRouteId: null,
+        selectedEndpointTarget: null,
+        terminalNodeId: op.nodeId,
+        terminalKind: 'synthetic_endpoint',
+        syntheticResponse: {
+          statusCode,
+          message: op.message || 'No route is available.',
+        },
+        requestedModel: state.requestedModel,
+        currentModel: state.currentModel,
+        upstreamModel: state.upstreamModel || undefined,
+        postBuildFilters: {
+          ...postBuildFilters,
+          endpointPreference: postBuildFilters.endpointPreference || state.endpointPreference,
+        },
+        trace,
+      };
+    }
+
+    if (op.op === 'select_supply') {
+      const selectedEndpointTarget = selectProgramEndpointTarget({ op, state });
+      const terminalModel = asTrimmedString(op.terminalModel);
+      const selectedTargetModel = selectedEndpointTarget?.modelSource === 'request'
+        ? (terminalModel || state.currentModel)
+        : selectedEndpointTarget?.model;
+      const currentModel = selectedTargetModel || terminalModel || state.currentModel;
+      trace.path.push({
+        nodeId: op.nodeId,
+        nodeType: 'model_endpoint',
+        programId: input.program.id,
+        opId: op.id,
+        appliedFilters: [],
+        decision: 'terminal',
+        sourceRef: op.sourceRef,
+      });
+      trace.terminalNodeId = op.nodeId;
+      return {
+        matchedEntryNodeId: input.entryNodeId,
+        selectedEntryNodeId: asTrimmedString(op.routeNodeId) || (op.routeId ? `entry:legacy:${op.routeId}` : op.nodeId),
+        matchedRouteId: input.matchedRouteId,
+        selectedRouteId: op.routeId,
+        modelEndpointCompatibilityPolicy: isRecord(op.compatibilityPolicy)
+          ? normalizeUpstreamCompatibilityPolicy(op.compatibilityPolicy)
+          : undefined,
+        selectedEndpointTarget,
+        terminalNodeId: op.nodeId,
+        terminalKind: 'model_endpoint',
+        requestedModel: state.requestedModel,
+        currentModel,
+        upstreamModel: state.upstreamModel || selectedTargetModel || terminalModel || undefined,
+        postBuildFilters: {
+          ...postBuildFilters,
+          endpointPreference: postBuildFilters.endpointPreference || state.endpointPreference,
+        },
+        trace,
+      };
+    }
+  }
   return null;
 }
 
-function followEdges(
-  ctx: EvaluationContext,
-  edges: RouteGraphEdge[],
-  state: RouteGraphRuntimeState,
-  postBuildFilters: RouteGraphPostBuildFilters,
-  trace: RouteGraphRuntimeTrace,
-  visited: Set<string>,
-  hops: number,
-): RouteGraphRuntimeSelection | null {
-  for (const edge of edges) {
-    trace.edges.push(edgeTrace(edge));
-    const result = evaluateNode({
-      ctx,
-      nodeId: edge.targetNodeId,
-      enteredPortId: edge.targetPortId,
-      state: { ...state, headers: { ...state.headers } },
-      postBuildFilters: {
-        payload: [...postBuildFilters.payload],
-        headers: [...postBuildFilters.headers],
-        endpointPreference: postBuildFilters.endpointPreference,
-      },
-      trace: {
-        path: [...trace.path],
-        edges: [...trace.edges],
-        terminalNodeId: trace.terminalNodeId,
-      },
-      visited,
-      hops,
-    });
-    if (result) return result;
-  }
-  return null;
-}
-
-function followFirstAvailablePorts(
-  ctx: EvaluationContext,
-  nodeId: string,
-  sourcePortIds: string[],
-  state: RouteGraphRuntimeState,
-  postBuildFilters: RouteGraphPostBuildFilters,
-  trace: RouteGraphRuntimeTrace,
-  visited: Set<string>,
-  hops: number,
-): RouteGraphRuntimeSelection | null {
-  for (const sourcePortId of sourcePortIds) {
-    const edges = outgoing(ctx, nodeId, sourcePortId);
-    if (edges.length <= 0) continue;
-    const result = followEdges(ctx, edges, state, postBuildFilters, trace, visited, hops);
-    if (result) return result;
-  }
-  return null;
+export function evaluateRouteProgramBundle(input: {
+  bundle: RouteProgramBundleV3;
+  requestedModel: string;
+  maxHops?: number;
+  stateStore?: Record<string, unknown>;
+}): RouteGraphRuntimeSelection | null {
+  const hydrated = hydrateRouteProgramBundle(input.bundle);
+  if (!hydrated) return null;
+  const matched = matchRouteProgramBundle(hydrated, input.requestedModel);
+  if (!matched) return null;
+  const opsById = hydrated.opsByProgramId.get(matched.program.id);
+  if (!opsById) return null;
+  return evaluateRouteProgram({
+    program: matched.program,
+    opsById,
+    entryNodeId: matched.entryNodeId,
+    matchedRouteId: matched.routeId,
+    requestedModel: input.requestedModel,
+    maxHops: Math.max(1, Math.trunc(input.maxHops || DEFAULT_ROUTE_GRAPH_MAX_HOPS)),
+    stateStore: input.stateStore || {},
+  });
 }
 
 export function evaluateCompiledRouteGraph(input: {
@@ -774,53 +735,13 @@ export function evaluateCompiledRouteGraph(input: {
   maxHops?: number;
   stateStore?: Record<string, unknown>;
 }): RouteGraphRuntimeSelection | null {
-  const source = graphSourceFromCompiled(input.graph);
-  const normalized = normalizeRouteGraphSource(source);
-  const ctx: EvaluationContext = {
-    graph: input.graph,
-    nodesById: Object.fromEntries(normalized.nodes.map((node) => [node.id, node])),
-    edgesByFromPort: Object.fromEntries(Object.entries(input.graph.edgesByFromPort || {})),
-    maxHops: Math.max(1, Math.trunc(input.maxHops || DEFAULT_ROUTE_GRAPH_MAX_HOPS)),
-  };
-  const entry = findRouteGraphEntryForModel(input.graph, input.requestedModel);
-  if (!entry) return null;
-  const entryNode = ctx.nodesById[entry.nodeId];
-  if (!entryNode || entryNode.type !== 'entry') return null;
-  const state: RouteGraphRuntimeState = {
+  if (!hasUsableRouteProgramBundle(input.graph.programBundle)) return null;
+  return evaluateRouteProgramBundle({
+    bundle: input.graph.programBundle,
     requestedModel: input.requestedModel,
-    currentModel: input.requestedModel,
-    headers: {},
-    stateStore: input.stateStore || {},
-  };
-  const trace: RouteGraphRuntimeTrace = {
-    path: [{
-      nodeId: entryNode.id,
-      nodeName: entryNode.name,
-      nodeType: entryNode.type,
-      exitedPortId: 'request.out',
-      appliedFilters: [],
-      decision: 'matched_entry',
-    }],
-    edges: [],
-    terminalNodeId: null,
-  };
-  const result = followFirstAvailablePorts(
-    ctx,
-    entryNode.id,
-    ['bidirect.out'],
-    state,
-    { payload: [], headers: [] },
-    trace,
-    new Set([entryNode.id]),
-    1,
-  );
-  if (!result) return null;
-  return {
-    ...result,
-    matchedEntryNodeId: entryNode.id,
-    matchedRouteId: legacyRouteIdFromNode(entryNode),
-    selectedEntryNodeId: result.selectedEntryNodeId || entryNode.id,
-  };
+    maxHops: input.maxHops,
+    stateStore: input.stateStore,
+  });
 }
 
 export async function evaluateActiveRouteGraphForModel(requestedModel: string): Promise<RouteGraphRuntimeSelection | null> {

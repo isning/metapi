@@ -15,6 +15,8 @@ import { LoaderCircle } from 'lucide-react';
 import ToneBadge from '../components/ToneBadge.js';
 import { Card, CardContent } from '../components/ui/card/index.js';
 import EmptyStateBlock from '../components/EmptyStateBlock.js';
+import PageHeader from '../components/workspace/PageHeader.js';
+import PageShell from '../components/workspace/PageShell.js';
 
 type SiteAnnouncementRow = {
   id: number;
@@ -76,7 +78,7 @@ export default function SiteAnnouncements() {
         : '';
       setServerTimeZone(nextServerTimeZone || undefined);
     } catch (error: any) {
-      toast.error(error?.message || '加载站点公告失败');
+      toast.error(error?.message || tr('pages.siteAnnouncements.sitesFailed'));
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -126,9 +128,9 @@ export default function SiteAnnouncements() {
     try {
       await api.clearSiteAnnouncements();
       setRows([]);
-      toast.success('公告已清空');
+      toast.success(tr('pages.siteAnnouncements.clear'));
     } catch (error: any) {
-      toast.error(error?.message || '清空公告失败');
+      toast.error(error?.message || tr('pages.siteAnnouncements.clearFailed'));
     } finally {
       setClearing(false);
     }
@@ -142,9 +144,9 @@ export default function SiteAnnouncements() {
         ...row,
         readAt: row.readAt || new Date().toISOString(),
       })));
-      toast.success('已标记全部为已读');
+      toast.success(tr('pages.programLogs.markedAllRead'));
     } catch (error: any) {
-      toast.error(error?.message || '标记失败');
+      toast.error(error?.message || tr('pages.programLogs.markingFailed'));
     } finally {
       setMarkingAll(false);
     }
@@ -153,24 +155,26 @@ export default function SiteAnnouncements() {
   const triggerSync = async () => {
     try {
       await api.syncSiteAnnouncements();
-      toast.success('公告同步任务已启动');
+      toast.success(tr('pages.siteAnnouncements.sync'));
     } catch (error: any) {
-      toast.error(error?.message || '启动同步失败');
+      toast.error(error?.message || tr('pages.siteAnnouncements.syncFailed'));
     }
   };
 
   return (
-    <div className="grid gap-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <h2 className="text-2xl font-semibold tracking-tight">{tr('站点公告')}</h2>
-        <div className="flex flex-wrap gap-2">
+    <PageShell>
+      <PageHeader
+        title={tr('app.sites')}
+        description={tr('pages.siteAnnouncements.siteAnnouncementsSubtitle')}
+        actions={(
+          <>
           <Button type="button" variant="outline"
             onClick={() => load(true)}
             disabled={refreshing}
            
            
           >
-            {refreshing ? <><LoaderCircle className="size-4 animate-spin" /> 刷新中...</> : '刷新'}
+            {refreshing ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.downstreamKeys.refreshzh')}</> : tr('pages.accounts.refresh')}
           </Button>
           <Button type="button" variant="outline"
             onClick={markAllRead}
@@ -178,24 +182,25 @@ export default function SiteAnnouncements() {
            
            
           >
-            {markingAll ? <><LoaderCircle className="size-4 animate-spin" /> 标记中...</> : '全部已读'}
+            {markingAll ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.programLogs.marking')}</> : tr('pages.programLogs.markAllRead')}
           </Button>
           <Button type="button" variant="outline"
             onClick={triggerSync}
            
            
           >
-            手动同步
+            {tr('pages.siteAnnouncements.manualsync')}
           </Button>
           <Button type="button" variant="destructive" size="sm"
             onClick={clearAll}
             disabled={clearing}
            
           >
-            {clearing ? <><LoaderCircle className="size-4 animate-spin" /> 清空中...</> : '清空公告'}
+            {clearing ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.programLogs.clearing')}</> : tr('pages.siteAnnouncements.clear2')}
           </Button>
-        </div>
-      </div>
+          </>
+        )}
+      />
 
       <Card className="overflow-hidden">
         {loading ? (
@@ -203,7 +208,7 @@ export default function SiteAnnouncements() {
             <LoaderCircle className="size-4 animate-spin" />
           </CardContent>
         ) : rows.length === 0 ? (
-          <EmptyStateBlock title="暂无公告" description="当前没有可显示的站点公告。" />
+          <EmptyStateBlock title={tr('pages.siteAnnouncements.noAnnouncements')} description={tr('pages.siteAnnouncements.sites')} />
         ) : (
           rows.map((row, index) => (
             <div
@@ -219,7 +224,7 @@ export default function SiteAnnouncements() {
                 <div className="flex flex-wrap items-center gap-2">
                   <ToneBadge tone="-muted">{siteNameById.get(row.siteId) || `站点 #${row.siteId}`}</ToneBadge>
                   <ToneBadge tone="-info">{row.platform}</ToneBadge>
-                  <ToneBadge tone={row.readAt ? 'muted' : 'warning'}>{row.readAt ? '已读' : '未读'}</ToneBadge>
+                  <ToneBadge tone={row.readAt ? 'muted' : 'warning'}>{row.readAt ? tr('pages.programLogs.read') : tr('pages.programLogs.unread')}</ToneBadge>
                 </div>
               </div>
               <SiteAnnouncementContent content={row.content} />
@@ -227,12 +232,12 @@ export default function SiteAnnouncements() {
                 className="mt-2 text-xs text-muted-foreground"
                 title={displayTimeZone ? `本地时区：${displayTimeZone}` : undefined}
               >
-                首次发现：{formatSiteAnnouncementSeenAt(row.firstSeenAt || row.lastSeenAt || '', displayTimeZone)}
+                {tr('pages.siteAnnouncements.firstFound')}{formatSiteAnnouncementSeenAt(row.firstSeenAt || row.lastSeenAt || '', displayTimeZone)}
               </div>
             </div>
           ))
         )}
       </Card>
-    </div>
+    </PageShell>
   );
 }

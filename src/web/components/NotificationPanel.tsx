@@ -1,22 +1,32 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Bell, Loader2 } from 'lucide-react';
+import { Activity, Bell, CheckCircle2, KeyRound, Loader2, Megaphone, Server, Wallet } from 'lucide-react';
 import { api } from '../api.js';
 import { formatDateTimeMinuteLocal } from '../pages/helpers/checkinLogTime.js';
 import { buildEventNavigationPath } from '../pages/helpers/navigationFocus.js';
-import { useI18n } from '../i18n.js';
+import { useI18n, tr } from '../i18n.js';
 import { Badge } from './ui/badge/index.js';
 import { Button } from './ui/button/index.js';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card/index.js';
 import { ScrollArea } from './ui/scroll-area/index.js';
+import { Tabs, TabsList, TabsTrigger } from './ui/tabs/index.js';
 
 const typeLabels: Record<string, string> = {
-  checkin: '签到',
-  balance: '余额',
-  token: '令牌',
-  proxy: '代理',
-  status: '状态',
-  site_notice: '站点公告',
+  checkin: tr('components.notificationPanel.sign'),
+  balance: tr('components.notificationPanel.balance'),
+  token: tr('components.notificationPanel.token'),
+  proxy: tr('components.notificationPanel.acting'),
+  status: tr('components.notificationPanel.status'),
+  site_notice: tr('app.sites'),
+};
+
+const typeIcons: Record<string, React.ComponentType<{ className?: string }>> = {
+  checkin: CheckCircle2,
+  balance: Wallet,
+  token: KeyRound,
+  proxy: Server,
+  status: Activity,
+  site_notice: Megaphone,
 };
 
 export default function NotificationPanel({
@@ -86,26 +96,28 @@ export default function NotificationPanel({
       <CardHeader className="flex flex-row items-center justify-between border-b p-3">
         <CardTitle className="flex items-center gap-2 text-sm">
           <Bell className="size-4" />
-          {tr('通知')}
+          {tr('app.notifications')}
         </CardTitle>
         <Button type="button" variant="ghost" size="sm" onClick={clearAll}>
-          {tr('清空')}
+          {tr('components.notificationPanel.clear')}
         </Button>
       </CardHeader>
 
-      <div className="flex flex-wrap gap-1 border-b p-2">
-        {['', 'checkin', 'balance', 'token', 'proxy', 'status', 'site_notice'].map((filterType) => (
-          <Button
-            key={filterType}
-            type="button"
-            variant={filter === filterType ? 'secondary' : 'ghost'}
-            size="sm"
-            onClick={() => setFilter(filterType)}
-          >
-            {filterType ? tr(typeLabels[filterType] || filterType) : tr('全部')}
-          </Button>
-        ))}
-      </div>
+      <Tabs value={filter || 'all'} onValueChange={(nextValue) => setFilter(nextValue === 'all' ? '' : nextValue)}>
+        <div className="border-b p-2">
+          <TabsList className="flex h-auto w-full flex-wrap justify-start">
+            {['', 'checkin', 'balance', 'token', 'proxy', 'status', 'site_notice'].map((filterType) => (
+              <TabsTrigger key={filterType || 'all'} value={filterType || 'all'} className="text-foreground">
+                {filterType ? (() => {
+                  const Icon = typeIcons[filterType] || Bell;
+                  return <Icon className="size-3.5" />;
+                })() : <Bell className="size-3.5" />}
+                {filterType ? tr(typeLabels[filterType] || filterType) : tr('components.notificationPanel.all')}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </div>
+      </Tabs>
 
       <CardContent className="p-0">
         <ScrollArea className="h-[360px]">
@@ -116,7 +128,7 @@ export default function NotificationPanel({
         )}
         {!loading && events.length === 0 && (
           <div className="p-8 text-center text-sm text-muted-foreground">
-            {tr('暂无通知')}
+            {tr('components.notificationPanel.noNotifications')}
           </div>
         )}
         {events.map((ev: any) => {
@@ -126,11 +138,11 @@ export default function NotificationPanel({
             navigate(targetPath);
           };
           return (
+            <div key={ev.id} className="border-b">
             <Button
-              key={ev.id}
               type="button"
               variant="ghost"
-              className="h-auto w-full justify-start rounded-none border-b p-3 text-left"
+              className="h-auto w-full justify-start p-3 text-left"
               onClick={openTarget}
             >
               <div className="flex min-w-0 flex-1 items-start gap-2">
@@ -151,6 +163,7 @@ export default function NotificationPanel({
                 </div>
               </div>
             </Button>
+            </div>
           );
         })}
         </ScrollArea>

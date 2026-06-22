@@ -3,6 +3,7 @@ import CenteredModal from '../../components/CenteredModal.js';
 import { Button } from '../../components/ui/button/index.js';
 import { Input } from '../../components/ui/input/index.js';
 
+import { tr } from '../../i18n.js';
 type ModalPresence = {
   shouldRender: boolean;
   isVisible: boolean;
@@ -46,14 +47,14 @@ export default function DownstreamApiKeyModal({
     <CenteredModal
       open={presence.shouldRender}
       onClose={onClose}
-      title={editingDownstreamId ? '编辑下游 API Key' : '新增下游 API Key'}
+      title={editingDownstreamId ? tr('pages.settings.downstreamApiKeyModal.editApiKey') : tr('pages.settings.downstreamApiKeyModal.apiKey')}
       maxWidth={860}
       closeOnBackdrop
       footer={(
         <>
-          <Button type="button" variant="outline" onClick={onClose}>取消</Button>
+          <Button type="button" variant="outline" onClick={onClose}>{tr('app.cancel')}</Button>
           <Button type="button" onClick={() => void onSave()} disabled={downstreamSaving}>
-            {downstreamSaving ? '保存中...' : (editingDownstreamId ? '更新 API Key' : '新增 API Key')}
+            {downstreamSaving ? tr('pages.accounts.saving') : (editingDownstreamId ? tr('pages.settings.downstreamApiKeyModal.apiKey2') : tr('pages.settings.downstreamApiKeyModal.apiKey3'))}
           </Button>
         </>
       )}
@@ -73,7 +74,7 @@ export default function DownstreamApiKeyModal({
         <Input
           value={downstreamCreate.maxCost}
           onChange={(e) => onChange((prev) => ({ ...prev, maxCost: e.target.value }))}
-          placeholder="最大费用（可选）"
+          placeholder={tr('pages.settings.downstreamApiKeyModal.maxCostOptional')}
           type="number"
           min={0}
           step={0.000001}
@@ -81,7 +82,7 @@ export default function DownstreamApiKeyModal({
         <Input
           value={downstreamCreate.maxRequests}
           onChange={(e) => onChange((prev) => ({ ...prev, maxRequests: e.target.value }))}
-          placeholder="最大请求数（可选）"
+          placeholder={tr('pages.settings.downstreamApiKeyModal.maxRequestsOptional')}
           type="number"
           min={0}
           step={1}
@@ -90,22 +91,22 @@ export default function DownstreamApiKeyModal({
           value={downstreamCreate.expiresAt}
           onChange={(e) => onChange((prev) => ({ ...prev, expiresAt: e.target.value }))}
           type="datetime-local"
-          placeholder="过期时间（可选）"
+          placeholder={tr('pages.tokens.expiredtime')}
         />
         <Input
           value={downstreamCreate.description}
           onChange={(e) => onChange((prev) => ({ ...prev, description: e.target.value }))}
-          placeholder="备注（可选）"
+          placeholder={tr('pages.settings.downstreamApiKeyModal.notes')}
         />
       </div>
 
       <div className="grid gap-2">
         <div className="text-xs text-muted-foreground">
-          已选模型 {downstreamCreate.selectedModels.length} 个，已选群组 {downstreamCreate.selectedGroupRouteIds.length} 个
+          {tr('pages.settings.downstreamApiKeyModal.selectedmodel')} {downstreamCreate.selectedModels.length} {tr('pages.settings.downstreamApiKeyModal.selectedgroups')} {downstreamCreate.selectedGroupRouteIds.length} {tr('pages.accounts.model')}
         </div>
         <div className="flex flex-wrap gap-2">
           <Button type="button" variant="outline" onClick={() => void onOpenSelector()}>
-            勾选模型和群组
+            {tr('pages.settings.downstreamApiKeyModal.modelGroups')}
           </Button>
           {(downstreamCreate.selectedModels.length > 0 || downstreamCreate.selectedGroupRouteIds.length > 0) ? (
             <Button
@@ -114,7 +115,7 @@ export default function DownstreamApiKeyModal({
               size="sm"
               onClick={() => onChange((prev) => ({ ...prev, selectedModels: [], selectedGroupRouteIds: [] }))}
             >
-              清空选择
+              {tr('pages.settings.downstreamApiKeyModal.clearselect')}
             </Button>
           ) : null}
         </div>

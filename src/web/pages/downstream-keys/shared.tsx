@@ -5,6 +5,7 @@ import { ButtonGroup } from '../../components/ui/button-group/index.js';
 import { Card, CardContent } from '../../components/ui/card/index.js';
 import { Skeleton } from '../../components/ui/skeleton/index.js';
 
+import { tr } from '../../i18n.js';
 export type Range = '24h' | '7d' | 'all';
 
 export type SummaryItem = {
@@ -93,7 +94,7 @@ export function TagChips({
   maxVisible?: number;
 }) {
   if (!Array.isArray(tags) || tags.length === 0) {
-    return <Badge variant="secondary">无标签</Badge>;
+    return <Badge variant="secondary">{tr('pages.downstreamKeys.noTags')}</Badge>;
   }
 
   const visible = tags.slice(0, maxVisible);
@@ -141,7 +142,7 @@ export function RangeToggle({ range, onChange }: { range: Range; onChange: (r: R
         7d
       </Button>
       <Button type="button" size="sm" variant={range === 'all' ? 'default' : 'outline'} onClick={() => onChange('all')}>
-        全部
+        {tr('components.notificationPanel.all')}
       </Button>
     </ButtonGroup>
   );
@@ -150,7 +151,7 @@ export function RangeToggle({ range, onChange }: { range: Range; onChange: (r: R
 export function StatusBadge({ enabled }: { enabled: boolean }) {
   return (
     <Badge variant={enabled ? 'default' : 'secondary'}>
-      {enabled ? '启用' : '禁用'}
+      {enabled ? tr('pages.downstreamKeys.enabled') : tr('pages.downstreamKeys.disabled')}
     </Badge>
   );
 }

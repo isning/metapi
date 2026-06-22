@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   compileRouteGraphSource,
   normalizeRouteGraphSource,
@@ -6,9 +6,15 @@ import {
 import {
   applyRouteGraphPostBuildFilters,
   evaluateCompiledRouteGraph,
+  evaluateRouteProgramBundle,
+  hydrateRouteProgramBundle,
 } from './routeGraphRuntimeService.js';
 
 describe('route graph runtime evaluator', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('evaluates multi-hop model rewrite and payload filters without provider hardcoding', () => {
     const source = normalizeRouteGraphSource({
       version: 1,
@@ -261,7 +267,7 @@ describe('route graph runtime evaluator', () => {
     });
   });
 
-  it('allows an entry node to be reused as an internal bidirect flow', () => {
+  it('allows a route endpoint node to be reused as an internal route product', () => {
     const compiled = compileRouteGraphSource({
       version: 1,
       nodes: [
@@ -274,12 +280,18 @@ describe('route graph runtime evaluator', () => {
           match: { requestedModelPattern: 'public-model' },
         },
         {
-          id: 'entry.reusable',
-          type: 'entry',
+          id: 'route-endpoint.reusable',
+          type: 'route_endpoint',
           enabled: true,
           visibility: 'internal',
+          exposure: 'internal',
           ownership: 'manual',
+          routeEndpointId: 'route-endpoint.reusable',
+          endpointKind: 'route_product',
+          routeId: 77,
+          backend: { kind: 'channels' },
           match: { requestedModelPattern: '', displayName: null },
+          resolvesTo: { kind: 'model_endpoint', id: 'endpoint.reused' },
         },
         {
           id: 'endpoint.reused',
@@ -291,10 +303,19 @@ describe('route graph runtime evaluator', () => {
           routeNodeId: 'entry.public',
           config: { targets: [{ channelId: '77', model: 'public-model' }], targetSelection: { strategy: 'weighted' } },
         },
+        {
+          id: 'dispatcher.reuse',
+          type: 'dispatcher',
+          enabled: true,
+          visibility: 'internal',
+          ownership: 'manual',
+          mode: 'route',
+          policy: { strategy: 'weighted' },
+        },
       ],
       edges: [
-        { id: 'reuse-entry', sourceNodeId: 'entry.public', sourcePortId: 'bidirect.out', targetNodeId: 'entry.reusable', targetPortId: 'bidirect.in', kind: 'bidirect_flow', ownership: 'manual' },
-        { id: 'reuse-endpoint', sourceNodeId: 'entry.reusable', sourcePortId: 'bidirect.out', targetNodeId: 'endpoint.reused', targetPortId: 'bidirect.in', kind: 'bidirect_flow', ownership: 'manual' },
+        { id: 'reuse-entry', sourceNodeId: 'entry.public', sourcePortId: 'bidirect.out', targetNodeId: 'dispatcher.reuse', targetPortId: 'bidirect.in', kind: 'bidirect_flow', ownership: 'manual' },
+        { id: 'reuse-product', sourceNodeId: 'route-endpoint.reusable', sourcePortId: 'route.out', targetNodeId: 'dispatcher.reuse', targetPortId: 'route.in', kind: 'route_flow', ownership: 'manual' },
       ],
     });
 
@@ -339,7 +360,7 @@ describe('route graph runtime evaluator', () => {
     })?.terminalKind).toBe('model_endpoint');
   });
 
-  it('uses route dispatcher weighted strategy deterministically by highest weight', () => {
+  it('uses route dispatcher weighted strategy as weighted random selection', () => {
     const compiled = compileRouteGraphSource({
       version: 1,
       nodes: [
@@ -364,6 +385,13 @@ describe('route graph runtime evaluator', () => {
     });
 
     expect(compiled.ok).toBe(true);
+    vi.spyOn(Math, 'random').mockReturnValueOnce(0.01);
+    expect(evaluateCompiledRouteGraph({
+      graph: compiled.compiled,
+      requestedModel: 'a',
+    })?.selectedRouteId).toBe(1);
+
+    vi.spyOn(Math, 'random').mockReturnValueOnce(0.99);
     expect(evaluateCompiledRouteGraph({
       graph: compiled.compiled,
       requestedModel: 'a',
@@ -577,7 +605,7 @@ describe('route graph runtime evaluator', () => {
     })?.selectedRouteId).toBe(2);
   });
 
-  it('uses route dispatcher priority order before score and weight', () => {
+  it('uses route dispatcher priority buckets before weighted random selection', () => {
     const compiled = compileRouteGraphSource({
       version: 1,
       nodes: [
@@ -592,20 +620,29 @@ describe('route graph runtime evaluator', () => {
           policy: { strategy: 'priority_order' },
         },
         { id: 'endpoint.low-priority', type: 'model_endpoint', enabled: true, visibility: 'internal', ownership: 'manual', legacyRouteId: 1, metadata: { priority: 1, weight: 100 }, config: { targets: [{ channelId: '1', model: 'a-low-priority' }], targetSelection: { strategy: 'weighted' } } },
-        { id: 'endpoint.high-priority', type: 'model_endpoint', enabled: true, visibility: 'internal', ownership: 'manual', legacyRouteId: 2, metadata: { priority: 10, weight: 1 }, config: { targets: [{ channelId: '2', model: 'a-high-priority' }], targetSelection: { strategy: 'weighted' } } },
+        { id: 'endpoint.high-priority-a', type: 'model_endpoint', enabled: true, visibility: 'internal', ownership: 'manual', legacyRouteId: 2, metadata: { priority: 10, weight: 1 }, config: { targets: [{ channelId: '2', model: 'a-high-priority-a' }], targetSelection: { strategy: 'weighted' } } },
+        { id: 'endpoint.high-priority-b', type: 'model_endpoint', enabled: true, visibility: 'internal', ownership: 'manual', legacyRouteId: 3, metadata: { priority: 10, weight: 9 }, config: { targets: [{ channelId: '3', model: 'a-high-priority-b' }], targetSelection: { strategy: 'weighted' } } },
       ],
       edges: [
         { id: 'e1', sourceNodeId: 'entry.a', sourcePortId: 'bidirect.out', targetNodeId: 'dispatcher.a', targetPortId: 'bidirect.in', kind: 'bidirect_flow', ownership: 'manual' },
         { id: 'e2', sourceNodeId: 'endpoint.low-priority', sourcePortId: 'route.out', targetNodeId: 'dispatcher.a', targetPortId: 'route.in', kind: 'route_flow', ownership: 'manual' },
-        { id: 'e3', sourceNodeId: 'endpoint.high-priority', sourcePortId: 'route.out', targetNodeId: 'dispatcher.a', targetPortId: 'route.in', kind: 'route_flow', ownership: 'manual' },
+        { id: 'e3', sourceNodeId: 'endpoint.high-priority-a', sourcePortId: 'route.out', targetNodeId: 'dispatcher.a', targetPortId: 'route.in', kind: 'route_flow', ownership: 'manual' },
+        { id: 'e4', sourceNodeId: 'endpoint.high-priority-b', sourcePortId: 'route.out', targetNodeId: 'dispatcher.a', targetPortId: 'route.in', kind: 'route_flow', ownership: 'manual' },
       ],
     });
 
     expect(compiled.ok).toBe(true);
+    vi.spyOn(Math, 'random').mockReturnValueOnce(0.01);
     expect(evaluateCompiledRouteGraph({
       graph: compiled.compiled,
       requestedModel: 'a',
     })?.selectedRouteId).toBe(2);
+
+    vi.spyOn(Math, 'random').mockReturnValueOnce(0.99);
+    expect(evaluateCompiledRouteGraph({
+      graph: compiled.compiled,
+      requestedModel: 'a',
+    })?.selectedRouteId).toBe(3);
   });
 
   it('uses model endpoint targetSelection to select the concrete endpoint target', () => {
@@ -981,5 +1018,80 @@ describe('route graph runtime evaluator', () => {
       graph: compiled.compiled,
       requestedModel: 'direct',
     })?.selectedRouteId).toBe(1);
+  });
+
+  it('hydrates program bundles for direct evaluation and refuses unusable bundles at runtime', () => {
+    const compiled = compileRouteGraphSource({
+      version: 1,
+      nodes: [
+        { id: 'entry.program', type: 'entry', enabled: true, visibility: 'public', ownership: 'manual', match: { requestedModelPattern: 'program-model' } },
+        {
+          id: 'endpoint.program',
+          type: 'model_endpoint',
+          enabled: true,
+          visibility: 'internal',
+          ownership: 'manual',
+          legacyRouteId: 42,
+          config: { targets: [{ channelId: '42', model: 'program-model' }], targetSelection: { strategy: 'weighted' } },
+        },
+      ],
+      edges: [
+        { id: 'entry-endpoint', sourceNodeId: 'entry.program', sourcePortId: 'bidirect.out', targetNodeId: 'endpoint.program', targetPortId: 'bidirect.in', kind: 'bidirect_flow', ownership: 'manual' },
+      ],
+    });
+    expect(compiled.ok).toBe(true);
+
+    const firstHydrated = hydrateRouteProgramBundle(compiled.compiled.programBundle);
+    const secondHydrated = hydrateRouteProgramBundle(compiled.compiled.programBundle);
+    expect(firstHydrated).toBe(secondHydrated);
+    expect(evaluateRouteProgramBundle({
+      bundle: compiled.compiled.programBundle,
+      requestedModel: 'program-model',
+    })).toMatchObject({
+      matchedEntryNodeId: 'entry.program',
+      selectedRouteId: 42,
+      trace: {
+        path: expect.arrayContaining([
+          expect.objectContaining({
+            programId: 'program:entry.program',
+            opId: expect.stringContaining('endpoint.program:select-supply'),
+            sourceRef: expect.objectContaining({ nodeId: 'endpoint.program' }),
+          }),
+        ]),
+      },
+    });
+
+    const graphWithoutUsableProgram = {
+      ...compiled.compiled,
+      programBundle: {
+        ...compiled.compiled.programBundle,
+        programs: [],
+      },
+    };
+    expect(evaluateCompiledRouteGraph({
+      graph: graphWithoutUsableProgram,
+      requestedModel: 'program-model',
+    })).toBe(null);
+
+    expect(hydrateRouteProgramBundle({
+      ...compiled.compiled.programBundle,
+      diagnostics: [{
+        severity: 'error',
+        code: 'program.unsupported_shape',
+        message: 'unsupported',
+      }],
+    })).toBe(null);
+
+    expect(hydrateRouteProgramBundle({
+      ...compiled.compiled.programBundle,
+      matcher: {
+        ...compiled.compiled.programBundle.matcher,
+        patterns: [{
+          ...compiled.compiled.programBundle.matcher.exact['program-model'],
+          pattern: 're:(a+)+',
+          patternKind: 'regex',
+        }],
+      },
+    })).toBe(null);
   });
 });

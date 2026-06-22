@@ -14,12 +14,15 @@ describe('Sites centered modal adoption', () => {
   it('uses API request wording for dedicated site endpoint copy', () => {
     const source = readFileSync(resolve(process.cwd(), 'src/web/pages/Sites.tsx'), 'utf8');
 
-    expect(source).toContain('API 请求地址池');
-    expect(source).toContain('+ 添加 API 地址');
-    expect(source).toContain('准确主站点 URL（面板/登录/签到地址，如 https://nih.cc）');
-    expect(source).toContain('API 请求地址（如 https://api.nih.cc）');
-    expect(source).toContain('label="API 请求地址"');
-    expect(source).toContain('API 地址: {buildSiteApiEndpointSummary(site)}');
+    expect(source).toContain("tr('pages.sites.apiRequest2')");
+    expect(source).toContain("tr('pages.sites.addApi')");
+    expect(source).toContain("tr('pages.sites.sitesUrlSignSignHttpsNihCc')");
+    expect(source).toContain("tr('pages.sites.apiRequestHttpsApiNihCc')");
+    expect(source).toContain("label={tr('pages.sites.apiRequest3')}");
+    expect(source).toContain('function SiteApiEndpointSummaryBadge');
+    expect(source).toContain('<SiteApiEndpointSummaryBadge site={site} />');
+    expect(source).toContain('<span className="shrink-0">{tr(\'pages.sites.api\')}</span>');
+    expect(source).toContain('<span className="min-w-0 truncate">{summary}</span>');
     expect(source).not.toContain('站点 URL（面板/登录/签到地址，如 https://console.example.com）');
     expect(source).not.toContain('API 请求地址（如 https://api.example.com）');
     expect(source).not.toContain('AI 请求地址池');
@@ -32,8 +35,13 @@ describe('Sites centered modal adoption', () => {
     const source = readFileSync(resolve(process.cwd(), 'src/web/pages/Sites.tsx'), 'utf8');
 
     expect(source).toContain("import { ConfigSection, ConfigSectionItem } from '../components/ConfigSection.js'");
-    for (const title of ['API 请求地址池', '站点自定义请求头', '禁用模型管理', '刷新后自动测试请求']) {
-      expect(source).toContain(`title="${title}"`);
+    for (const titleKey of [
+      'pages.sites.apiRequest2',
+      'pages.sites.sitescustomRequest',
+      'pages.sites.disabledmodelManagement',
+      'pages.sites.refreshAutomaticRequest',
+    ]) {
+      expect(source).toContain(`title={tr('${titleKey}')}`);
     }
     expect(source).not.toContain('flex flex-col gap-2.5 rounded-lg border bg-muted p-3');
   });

@@ -18,29 +18,29 @@ import {
 const VERSION = '1.3.0';
 
 const FEATURES = [
-  { icon: '🌐', title: '统一代理网关', desc: '一个 Key、一个入口，兼容 OpenAI / Claude 下游格式' },
-  { icon: '🧠', title: '智能路由引擎', desc: '按成本、延迟、成功率自动选择最优通道，故障自动转移' },
-  { icon: '📡', title: '多站点聚合', desc: '集中管理 New API / One API / OneHub / DoneHub / Veloera 等' },
-  { icon: '🔍', title: '自动模型发现', desc: '上游新增模型自动出现在模型列表，零配置路由生成' },
-  { icon: '🏪', title: '模型广场', desc: '跨站模型覆盖、定价对比、延迟与成功率实测数据' },
-  { icon: '✅', title: '自动签到', desc: '定时签到 + 余额刷新，不再手动操心' },
-  { icon: '🔔', title: '多渠道告警', desc: 'Webhook / Bark / Server酱 / 邮件，余额不足及时提醒' },
-  { icon: '📦', title: '轻量部署', desc: '单 Docker 容器，内置 SQLite，无外部依赖' },
+  { icon: '🌐', title: tr('app.unifiedProxyGateway'), desc: tr('app.oneKeyOneEndpointCompatibleOpenaiClaude') },
+  { icon: '🧠', title: tr('app.smartRoutingEngine'), desc: tr('app.autoSelectsOptimalChannelCostLatencySuccess') },
+  { icon: '📡', title: tr('pages.about.multiSiteAggregation'), desc: tr('pages.about.centrallyManageNewApiOneApiOnehub') },
+  { icon: '🔍', title: tr('app.autoModelDiscovery'), desc: tr('app.newUpstreamModelsAppearAutomaticallyZeroConfig') },
+  { icon: '🏪', title: tr('app.modelMarketplace'), desc: tr('pages.about.crossSiteModelCoveragePricingComparisonLatency') },
+  { icon: '✅', title: tr('pages.about.autoCheck'), desc: tr('pages.about.scheduledCheckBalanceRefreshNeverMissOne') },
+  { icon: '🔔', title: tr('pages.about.multiChannelAlerts'), desc: tr('pages.about.webhookBarkServerchanEmailGetNotifiedWhen') },
+  { icon: '📦', title: tr('pages.about.lightweightDeployment'), desc: tr('pages.about.singleDockerContainerBuiltSqliteNoExternal') },
 ];
 
 const TECH_STACK = [
-  { name: 'Fastify', desc: '高性能 Node.js 后端框架' },
-  { name: 'React', desc: '用户界面库' },
-  { name: 'TypeScript', desc: '端到端类型安全' },
-  { name: 'Tailwind CSS v4', desc: '原子化样式框架' },
-  { name: 'Drizzle ORM', desc: '轻量 TypeScript ORM' },
-  { name: 'SQLite', desc: '零配置嵌入式数据库' },
+  { name: 'Fastify', desc: tr('pages.about.highPerformanceNodeJsBackendFramework') },
+  { name: 'React', desc: tr('pages.about.userInterfaceLibrary') },
+  { name: 'TypeScript', desc: tr('pages.about.endEndTypeSafety') },
+  { name: 'Tailwind CSS v4', desc: tr('pages.about.utilityFirstCssFramework') },
+  { name: 'Drizzle ORM', desc: tr('pages.about.lightweightTypescriptOrm') },
+  { name: 'SQLite', desc: tr('pages.about.zeroConfigEmbeddedDatabase') },
 ];
 
 const LINKS = [
   { label: 'GitHub', href: 'https://github.com/cita-777/metapi', icon: '📂' },
   { label: 'Docker Hub', href: 'https://hub.docker.com/r/1467078763/metapi', icon: '🐳' },
-  { label: '站点文档', href: SITE_DOCS_URL, icon: '📚' },
+  { label: tr('pages.about.siteDocs'), href: SITE_DOCS_URL, icon: '📚' },
 ];
 
 export default function About() {
@@ -90,7 +90,7 @@ export default function About() {
   return (
     <div className="grid max-w-4xl gap-4">
       <div className="flex items-center justify-between gap-3">
-        <h2 className="text-2xl font-semibold tracking-tight">{tr('关于 Metapi')}</h2>
+        <h2 className="text-2xl font-semibold tracking-tight">{tr('pages.about.aboutMetapi')}</h2>
       </div>
 
       <Card>
@@ -108,13 +108,13 @@ export default function About() {
           </div>
         </CardHeader>
         <CardContent className="text-sm leading-7 text-muted-foreground">
-          {tr('中转站的中转站 — 将你在各处注册的 New API / One API / OneHub 等 AI 中转站聚合为一个统一网关。一个 API Key、一个入口，自动发现模型、智能路由、成本最优。')}
+          {tr('pages.about.hubHubsAggregateAllYourNewApi')}
         </CardContent>
       </Card>
 
       <Card>
         <CardHeader>
-          <CardTitle>更新提醒</CardTitle>
+          <CardTitle>{tr('pages.about.updateReminders')}</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-3 text-sm">
           <div className="flex flex-wrap items-center gap-2">
@@ -126,12 +126,12 @@ export default function About() {
           </span>
           </div>
           <div className="grid gap-2">
-          <div>GitHub 稳定版：{latestGitHubVersion || '暂无数据'}</div>
-          <div>Docker Hub：{latestDockerHubVersion || '暂无数据'}</div>
+          <div>{tr('pages.about.githubStable')}{latestGitHubVersion || tr('pages.about.noData')}</div>
+          <div>Docker Hub：{latestDockerHubVersion || tr('pages.about.noData')}</div>
           <div>
-              <Button asChild variant="ghost" className="h-auto p-0">
+              <Button asChild variant="ghostPrimary" className="h-auto p-0">
                 <Link to="/settings">
-              前往更新中心
+              {tr('pages.about.zh')}
             </Link>
               </Button>
           </div>
@@ -141,7 +141,7 @@ export default function About() {
 
       <Card>
         <CardHeader>
-          <CardTitle>{tr('核心特色')}</CardTitle>
+          <CardTitle>{tr('pages.about.keyFeatures')}</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-3 sm:grid-cols-2">
           {FEATURES.map((f) => (
@@ -160,7 +160,7 @@ export default function About() {
 
       <Card>
         <CardHeader>
-          <CardTitle>{tr('技术栈')}</CardTitle>
+          <CardTitle>{tr('pages.about.techStack')}</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {TECH_STACK.map((t) => (
@@ -176,7 +176,7 @@ export default function About() {
 
       <Card>
         <CardHeader>
-          <CardTitle>{tr('项目链接')}</CardTitle>
+          <CardTitle>{tr('pages.about.projectLinks')}</CardTitle>
         </CardHeader>
         <CardContent className="flex flex-wrap gap-2">
           {LINKS.map((l) => (
@@ -192,10 +192,10 @@ export default function About() {
 
       <Card>
         <CardHeader>
-          <CardTitle>{tr('数据与隐私')}</CardTitle>
+          <CardTitle>{tr('pages.about.dataPrivacy')}</CardTitle>
         </CardHeader>
         <CardContent className="text-sm leading-7 text-muted-foreground">
-          {tr('Metapi 完全自托管，所有数据（账号、令牌、路由、日志）均存储在本地 SQLite 数据库中，不会向任何第三方发送数据。代理请求仅在你的服务器与上游站点之间直连传输。')}
+          {tr('pages.about.metapiFullySelfHostedAllDataAccounts')}
         </CardContent>
       </Card>
     </div>

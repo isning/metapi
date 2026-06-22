@@ -182,6 +182,12 @@ export function serializeCompatibilityPolicyForm(
   };
 }
 
+export function isCompatibilityPolicyFormInherited(form: UpstreamCompatibilityPolicyForm): boolean {
+  const serialized = serializeCompatibilityPolicyForm({ ...form, advancedEnabled: false });
+  if (!serialized.ok || serialized.policy !== null) return false;
+  return !form.advancedEnabled || !form.advancedJson.trim();
+}
+
 export function describeCompatibilityPolicy(value: unknown): string {
   const transport = readTransport(typeof value === 'string' && value.trim() ? safeParseJson(value) : value);
   const mode = asString(transport.mode) || 'inherit';

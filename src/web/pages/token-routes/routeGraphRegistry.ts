@@ -105,6 +105,26 @@ export const routeGraphNodeDefinitions = {
     ],
     createDefaultNode: (index, position) => ({ ...baseNode('dispatcher', index, position), mode: 'route', ordering: 'explicit', policy: { strategy: 'weighted' } }),
   },
+  route_endpoint: {
+    kicker: 'Endpoint',
+    title: 'Route Endpoint',
+    detail: 'Semantic route endpoint exposed by route products or upstream supply.',
+    accent: '#16a34a',
+    primitive: false,
+    defaultPorts: [
+      { id: 'route.out', label: 'route product', direction: 'output', kind: 'route' },
+      { id: 'bidirect.in', label: 'invoke route', direction: 'input', kind: 'bidirect', accepts: ['bidirect'], multiple: true },
+    ],
+    createDefaultNode: (index, position) => ({
+      ...baseNode('route_endpoint', index, position),
+      endpointKind: 'route_product',
+      exposure: 'internal',
+      resolutionStatus: 'resolved',
+      ownerKind: 'manual_route',
+      sourceKind: 'manual_group',
+      metadata: {},
+    }),
+  },
   model_endpoint: {
     kicker: 'Primitive',
     title: 'Model Endpoint',
@@ -156,6 +176,8 @@ export const routeGraphNodeDefinitions = {
 
 export const NODE_TYPES = (Object.keys(routeGraphNodeDefinitions) as RouteGraphNodeType[])
   .filter((type) => routeGraphNodeDefinitions[type].primitive);
+
+export const ROUTE_GRAPH_NODE_TYPES = Object.keys(routeGraphNodeDefinitions) as RouteGraphNodeType[];
 
 export const ROUTE_GRAPH_VISUAL_COLORS = {
   node: Object.fromEntries(

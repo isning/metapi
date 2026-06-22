@@ -2,6 +2,7 @@ import type { ButtonHTMLAttributes, ReactNode, RefCallback } from 'react';
 import type { BrandInfo } from '../../components/BrandIcon.js';
 import type { RouteDecision, RouteDecisionCandidate, RouteMode } from '../../../shared/tokenRouteContract.js';
 import type { RouteGraphBackendSpec, RouteGraphMatchSpec } from '../../../shared/routeGraph.js';
+import type { RouteGraphVisibility } from '../../../shared/routeGraph.js';
 export type { RouteDecision, RouteDecisionCandidate, RouteMode } from '../../../shared/tokenRouteContract.js';
 
 export type RouteSortBy = 'modelPattern' | 'channelCount';
@@ -75,6 +76,7 @@ export type RouteRow = {
   };
   modelMapping?: string | null;
   routingStrategy?: RouteRoutingStrategy | null;
+  visibility?: RouteGraphVisibility;
   decisionSnapshot?: RouteDecision | null;
   decisionRefreshedAt?: string | null;
   enabled: boolean;
@@ -91,6 +93,7 @@ export type RouteSummaryRow = {
   };
   modelMapping: string | null;
   routingStrategy?: RouteRoutingStrategy | null;
+  visibility?: RouteGraphVisibility;
   enabled: boolean;
   channelCount: number;
   enabledChannelCount: number;
@@ -100,6 +103,26 @@ export type RouteSummaryRow = {
   kind?: RouteRowKind;
   readOnly?: boolean;
   isVirtual?: boolean;
+};
+
+export type RouteEndpointCatalogItem = {
+  endpointId: string;
+  nodeId: string;
+  routeId: number | null;
+  label: string;
+  endpointKind: 'supply' | 'route_product';
+  exposure: 'none' | RouteGraphVisibility;
+  resolutionStatus: 'resolved' | 'degraded' | 'unresolved';
+  ownerKind: 'automatic_route' | 'manual_route' | 'macro';
+  sourceKind: 'upstream_model' | 'automatic_model_group' | 'manual_group' | 'synthetic' | 'inline';
+  enabled: boolean;
+  displayIcon: string | null;
+  modelPattern: string;
+  publicModelName: string | null;
+  upstreamModels: string[];
+  siteNames: string[];
+  tags: string[];
+  metadata: Record<string, unknown>;
 };
 
 export type ChannelDecisionState = {

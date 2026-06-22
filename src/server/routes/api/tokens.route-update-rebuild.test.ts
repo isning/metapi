@@ -260,6 +260,13 @@ describe('PUT /api/routes/:id route rebuild', () => {
       },
     ]).run();
 
+    const internalizeResponse = await app.inject({
+      method: 'PUT',
+      url: `/api/routes/${exactRouteA.id}`,
+      payload: { visibility: 'internal' },
+    });
+    expect(internalizeResponse.statusCode).toBe(200);
+
     const createResponse = await app.inject({
       method: 'POST',
       url: '/api/routes',
@@ -716,7 +723,7 @@ describe('PUT /api/routes/:id route rebuild', () => {
     expect(updated?.tokenId).toBe(seeded.token.id);
   });
 
-  it('prefers an explicit-group display name over a colliding exact route', async () => {
+  it('allows a public group alias to override a colliding exact automatic route', async () => {
     const exactCandidate = await seedAccountWithToken('claude-opus-4-6');
     const groupedCandidate = await seedAccountWithToken('claude-opus-4-5');
 
@@ -774,5 +781,101 @@ describe('PUT /api/routes/:id route rebuild', () => {
         actualModel: 'claude-opus-4-5',
       },
     });
+  });
+
+  it('updates visibility and enabled state without requiring a model pattern rewrite', async () => {
+    const exactCandidate = await seedAccountWithToken('visibility-toggle-model');
+    const exactRoute = await db.insert(schema.tokenRoutes).values({
+      ...tokenRouteFixture({ modelPattern: 'visibility-toggle-model' }),
+      enabled: true,
+    }).returning().get();
+    await db.insert(schema.routeChannels).values({
+      routeId: exactRoute.id,
+      accountId: exactCandidate.account.id,
+      tokenId: exactCandidate.token.id,
+      sourceModel: 'visibility-toggle-model',
+      priority: 0,
+      weight: 10,
+      enabled: true,
+      manualOverride: false,
+    }).run();
+
+    const internalResponse = await app.inject({
+      method: 'PUT',
+      url: `/api/routes/${exactRoute.id}`,
+      payload: { visibility: 'internal' },
+    });
+    expect(internalResponse.statusCode).toBe(200);
+    expect(internalResponse.json()).toMatchObject({
+      id: exactRoute.id,
+      visibility: 'internal',
+    });
+
+    const disabledResponse = await app.inject({
+      method: 'PUT',
+      url: `/api/routes/${exactRoute.id}`,
+      payload: { enabled: false },
+    });
+    expect(disabledResponse.statusCode).toBe(200);
+    expect(disabledResponse.json()).toMatchObject({
+      id: exactRoute.id,
+      enabled: false,
+      visibility: 'internal',
+    });
+  });
+
+  it('batch moves automatic route groups between public and internal visibility', async () => {
+    const exactCandidate = await seedAccountWithToken('batch-visibility-model');
+    const exactRoute = await db.insert(schema.tokenRoutes).values({
+      ...tokenRouteFixture({ modelPattern: 'batch-visibility-model' }),
+      enabled: true,
+    }).returning().get();
+    await db.insert(schema.routeChannels).values({
+      routeId: exactRoute.id,
+      accountId: exactCandidate.account.id,
+      tokenId: exactCandidate.token.id,
+      sourceModel: 'batch-visibility-model',
+      priority: 0,
+      weight: 10,
+      enabled: true,
+      manualOverride: false,
+    }).run();
+
+    const internalResponse = await app.inject({
+      method: 'POST',
+      url: '/api/routes/batch',
+      payload: { ids: [exactRoute.id], action: 'set_internal' },
+    });
+    expect(internalResponse.statusCode).toBe(200);
+    expect(internalResponse.json()).toMatchObject({ success: true, updatedCount: 1 });
+
+    const internalSummary = await app.inject({ method: 'GET', url: '/api/routes/summary' });
+    expect(internalSummary.statusCode).toBe(200);
+    expect(internalSummary.json()).toContainEqual(expect.objectContaining({
+      id: exactRoute.id,
+      visibility: 'internal',
+    }));
+
+    const internalGraph = await app.inject({ method: 'GET', url: '/api/route-graph/active' });
+    expect(internalGraph.statusCode).toBe(200);
+    expect(internalGraph.json().sourceGraph.macros).toContainEqual(expect.objectContaining({
+      id: 'auto-model:batch-visibility-model',
+      visibility: 'internal',
+    }));
+
+    const publicResponse = await app.inject({
+      method: 'POST',
+      url: '/api/routes/batch',
+      payload: { ids: [exactRoute.id], action: 'set_public' },
+    });
+    expect(publicResponse.statusCode).toBe(200);
+    expect(publicResponse.json()).toMatchObject({ success: true, updatedCount: 1 });
+
+    const publicSummary = await app.inject({ method: 'GET', url: '/api/routes/summary' });
+    expect(publicSummary.statusCode).toBe(200);
+    expect(publicSummary.json()).toContainEqual(expect.objectContaining({
+      id: exactRoute.id,
+      visibility: 'public',
+    }));
   });
 });

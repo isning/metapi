@@ -12,6 +12,7 @@ import * as Dialog from '../../components/ui/dialog/index.js';
 import { UpstreamCostPricingEditor } from '../../components/UpstreamCostPricingEditor.js';
 import { useToast } from '../../components/Toast.js';
 
+import { tr } from '../../i18n.js';
 type AccountModelRow = {
   name: string;
   latencyMs: number | null;
@@ -81,11 +82,11 @@ export default function AccountModelsModal({
   };
 
   const scopeLabel = (scope: string | null | undefined) => {
-    if (scope === 'site_model') return '站点';
-    if (scope === 'account_model') return '账号';
+    if (scope === 'site_model') return tr('components.searchModal.sites2');
+    if (scope === 'account_model') return tr('components.searchModal.accounts2');
     if (scope === 'token_model') return 'Token';
-    if (scope === 'token_model_group') return 'Token 组';
-    return '未配置';
+    if (scope === 'token_model_group') return tr('pages.accounts.accountModelsModal.tokenGroup');
+    return tr('pages.settings.notConfigured');
   };
 
   return (
@@ -93,16 +94,16 @@ export default function AccountModelsModal({
       <CenteredModal
         open={modelModal.open}
         onClose={onClose}
-        title={modelModal.siteName ? `模型管理 · ${modelModal.siteName}` : '模型管理'}
+        title={modelModal.siteName ? `模型管理 · ${modelModal.siteName}` : tr('pages.accounts.accountModelsModal.modelManagement')}
         maxWidth={720}
         footer={(
           <>
-            <Button type="button" variant="outline" onClick={onClose}>取消</Button>
+            <Button type="button" variant="outline" onClick={onClose}>{tr('app.cancel')}</Button>
             <Button type="button"
               onClick={onSave}
               disabled={modelModal.saving || modelModal.loading}
             >
-              {modelModal.saving ? <><LoaderCircle className="size-4 animate-spin" />保存中...</> : '保存'}
+              {modelModal.saving ? <><LoaderCircle className="size-4 animate-spin" />{tr('pages.accounts.saving')}</> : tr('app.save')}
             </Button>
           </>
         )}
@@ -110,22 +111,22 @@ export default function AccountModelsModal({
       {modelModal.loading ? (
         <div className="flex items-center justify-center gap-2 py-12">
           <LoaderCircle className="size-5 animate-spin" />
-          <span className="text-sm text-muted-foreground">加载模型列表...</span>
+          <span className="text-sm text-muted-foreground">{tr('pages.accounts.accountModelsModal.loadingModelList')}</span>
         </div>
       ) : (
         <div className="grid gap-3">
           {modelModal.models.length === 0 ? (
             <div className="grid justify-items-center gap-3 py-4">
               <EmptyStateBlock
-                title="暂无可用模型"
-                description="请先点击账号操作栏中的「刷新」或「模型」按钮获取模型。"
+                title={tr('pages.accounts.accountModelsModal.noAvailableModels')}
+                description={tr('pages.accounts.accountModelsModal.useRefreshModelAccountActionBarFetch')}
                 className="p-0"
               />
               <Button type="button"
                 onClick={() => void onRefresh()}
                
               >
-                立即获取模型
+                {tr('pages.accounts.accountModelsModal.fetchModelsNow')}
               </Button>
             </div>
           ) : (
@@ -145,7 +146,7 @@ export default function AccountModelsModal({
                     }}
                   />
                   <span className="text-sm text-muted-foreground">
-                    已启用 <strong className="text-foreground">{modelModal.models.length - modelModal.pendingDisabled.size}</strong> / {modelModal.models.length} 个模型
+                    {tr('pages.settings.enabled2')} <strong className="text-foreground">{modelModal.models.length - modelModal.pendingDisabled.size}</strong> / {modelModal.models.length} {tr('pages.models.models2')}
                   </span>
                 </label>
                 <div className="flex flex-wrap gap-2">
@@ -155,7 +156,7 @@ export default function AccountModelsModal({
                    
                    
                   >
-                    刷新模型
+                    {tr('pages.accounts.accountModelsModal.refreshModels')}
                   </Button>
                   <Button type="button" variant="outline"
                     onClick={() => {
@@ -168,21 +169,21 @@ export default function AccountModelsModal({
                    
                    
                   >
-                    反选
+                    {tr('pages.accounts.accountModelsModal.invert')}
                   </Button>
                   <Button type="button" variant="outline"
                     onClick={() => onSetPendingDisabled(new Set(modelModal.models.map((model) => model.name)))}
                    
                    
                   >
-                    全部禁用
+                    {tr('pages.accounts.accountModelsModal.disableAll')}
                   </Button>
                   <Button type="button" variant="outline"
                     onClick={() => onSetPendingDisabled(new Set())}
                    
                    
                   >
-                    全部启用
+                    {tr('pages.accounts.accountModelsModal.enableAll')}
                   </Button>
                 </div>
               </div>
@@ -201,23 +202,24 @@ export default function AccountModelsModal({
                         className="shrink-0"
                         aria-label={`切换 ${model.name}`}
                       />
-                      <button
+                      <Button
                         type="button"
+                        variant="ghost"
                         className="min-w-0 flex-1 break-all text-left font-mono text-sm"
                         onClick={() => onToggleModelDisabled(model.name)}
                       >
                         {model.name}
-                      </button>
+                      </Button>
                       {model.latencyMs != null ? (
                         <span className="shrink-0 text-xs text-muted-foreground">
                           {model.latencyMs}ms
                         </span>
                       ) : null}
                       {model.isManual ? (
-                        <ToneBadge tone="-info">手动</ToneBadge>
+                        <ToneBadge tone="-info">{tr('pages.accounts.accountModelsModal.manual')}</ToneBadge>
                       ) : null}
                       {isDisabled ? (
-                        <ToneBadge tone="-error">禁用</ToneBadge>
+                        <ToneBadge tone="-error">{tr('pages.downstreamKeys.disabled')}</ToneBadge>
                       ) : null}
                       <div className="flex shrink-0 items-center gap-1">
                         {model.costPricing?.configured ? (
@@ -230,7 +232,7 @@ export default function AccountModelsModal({
                             ) : null}
                           </>
                         ) : (
-                          <ToneBadge tone="-muted">未配置成本</ToneBadge>
+                          <ToneBadge tone="-muted">{tr('pages.accounts.accountModelsModal.noCostPricing')}</ToneBadge>
                         )}
                       </div>
                       <Button
@@ -240,29 +242,29 @@ export default function AccountModelsModal({
                         onClick={() => setCostModelName(model.name)}
                       >
                         <Coins className="size-4" />
-                        成本
+                        {tr('components.charts.downstreamKeyTrendChart.cost')}
                       </Button>
                     </div>
                   );
                 })}
               </ScrollArea>
               <div className="text-xs text-muted-foreground">
-                禁用的模型将对整个站点生效，该站点下所有连接都不会使用这些模型进行代理。
+                {tr('pages.accounts.accountModelsModal.disabledModelsApplyWholeSiteNoConnection')}
               </div>
             </>
           )}
 
           <Card>
             <CardHeader>
-              <CardTitle>手动添加可用模型</CardTitle>
+              <CardTitle>{tr('pages.accounts.accountModelsModal.addAvailableModelsManually')}</CardTitle>
               <CardDescription>
-                如果您的账号支持某些未在上方列表中显示的模型，可以在此手动添加（多个以英文逗号分隔）。
+                {tr('pages.accounts.accountModelsModal.ifAccountSupportsModelsMissingFromList')}
               </CardDescription>
             </CardHeader>
             <CardContent>
             <div className="flex gap-2">
               <Input
-                placeholder="例如: gpt-4-custom, claude-3-5-sonnet-20241022"
+                placeholder={tr('pages.accounts.accountModelsModal.exampleGpt4CustomClaude35')}
                 value={modelModal.manualModelsInput}
                 onChange={(e) => onManualInputChange(e.target.value)}
                 className="flex-1 font-mono"
@@ -278,7 +280,7 @@ export default function AccountModelsModal({
                
                
               >
-                {modelModal.addingManualModels ? <LoaderCircle className="size-4 animate-spin" /> : '添加'}
+                {modelModal.addingManualModels ? <LoaderCircle className="size-4 animate-spin" /> : tr('pages.oAuthManagement.add')}
               </Button>
             </div>
             </CardContent>
@@ -292,9 +294,9 @@ export default function AccountModelsModal({
       }}>
         <Dialog.Content className="w-[min(94vw,980px)]" onClose={() => setCostModelName(null)}>
           <Dialog.Header>
-            <Dialog.Title>上游成本配置</Dialog.Title>
+            <Dialog.Title>{tr('pages.accounts.accountModelsModal.upstreamCostPricing')}</Dialog.Title>
             <Dialog.Description>
-              为当前账号模型配置 Metapi 调用上游供应的成本。
+              {tr('pages.accounts.accountModelsModal.configureCostMetapiPaysWhenAccountModel')}
             </Dialog.Description>
           </Dialog.Header>
           {costModelName && siteId > 0 && accountId > 0 ? (

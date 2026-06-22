@@ -1,7 +1,8 @@
 import { type CSSProperties } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Button } from '../../components/ui/button/index.js';
+import { DragHandleButton } from './DragHandleButton.js';
+import { tr } from '../../i18n.js';
 
 type SortableBucketSeparatorProps = {
   id: string;
@@ -34,24 +35,25 @@ export function SortableBucketSeparator({
     transition,
     opacity: isDragging ? 0.8 : 1,
   };
+  const label = tr('pages.tokenRoutes.sortableBucketSeparator.dragBoundary')
+    .replace('{before}', String(beforePriority))
+    .replace('{after}', String(afterPriority));
 
   return (
     <div ref={setNodeRef} style={style} className="flex items-center gap-2.5 px-0.5 py-1 text-muted-foreground">
       <div className="h-px flex-1 bg-border" />
-      <Button
-        variant="outline"
-        type="button"
+      <DragHandleButton
         ref={setActivatorNodeRef}
         {...attributes}
         {...listeners}
         disabled={isSavingPriority}
-        aria-label={`拖拽调整 P${beforePriority} / P${afterPriority} 分界线`}
-        data-tooltip={`拖拽调整 P${beforePriority} / P${afterPriority} 分界线`}
+        aria-label={label}
+        data-tooltip={label}
       >
         <span>{`P${beforePriority}`}</span>
         <span className="text-[10px]">||</span>
         <span>{`P${afterPriority}`}</span>
-      </Button>
+      </DragHandleButton>
       <div className="h-px flex-1 bg-border" />
     </div>
   );

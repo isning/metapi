@@ -11,7 +11,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../co
 import { Input } from '../components/ui/input/index.js';
 import { Label } from '../components/ui/label/index.js';
 import { Switch } from '../components/ui/switch/index.js';
-import { Textarea } from '../components/ui/textarea/index.js';
+import JsonCodeEditor from '../components/JsonCodeEditor.js';
 
 type BackupType = 'all' | 'accounts' | 'preferences';
 
@@ -87,9 +87,9 @@ const DEFAULT_WEBDAV_SNAPSHOT: WebdavConfigSnapshot = {
 };
 
 const WEBDAV_EXPORT_TYPE_OPTIONS = [
-  { value: 'all', label: '全部' },
-  { value: 'accounts', label: '连接与路由策略' },
-  { value: 'preferences', label: '系统设置' },
+  { value: 'all', label: tr('components.notificationPanel.all') },
+  { value: 'accounts', label: tr('pages.importExport.routesstrategy') },
+  { value: 'preferences', label: tr('pages.importExport.systemSettings') },
 ] as const;
 
 function downloadJsonFile(data: unknown, filename: string) {
@@ -110,7 +110,7 @@ function parseImportSummary(raw: string): ParsedSummary | null {
   const invalidSummary = (): ParsedSummary => ({
     valid: false,
     version: '-',
-    timestampLabel: '未知',
+    timestampLabel: tr('pages.accounts.unknown2'),
     hasAccounts: false,
     hasPreferences: false,
     hasLegacyData: false,
@@ -197,7 +197,7 @@ function parseImportSummary(raw: string): ParsedSummary | null {
     const ts = data.timestamp !== undefined && data.timestamp !== null
       ? new Date(data.timestamp)
       : null;
-    const timestampLabel = ts && !Number.isNaN(ts.getTime()) ? ts.toLocaleString() : '未知';
+    const timestampLabel = ts && !Number.isNaN(ts.getTime()) ? ts.toLocaleString() : tr('pages.accounts.unknown2');
 
     return {
       valid: hasAccounts || hasPreferences,
@@ -227,10 +227,10 @@ function parseImportSummary(raw: string): ParsedSummary | null {
 
 function buildImportSuccessMessage(result: any): string {
   const sections: string[] = [];
-  if (result?.sections?.accounts) sections.push('连接与路由策略');
-  if (result?.sections?.preferences) sections.push('系统设置');
+  if (result?.sections?.accounts) sections.push(tr('pages.importExport.routesstrategy'));
+  if (result?.sections?.preferences) sections.push(tr('pages.importExport.systemSettings'));
 
-  const parts = [`导入完成：${sections.length ? sections.join('、') : '无有效数据'}`];
+  const parts = [`导入完成：${sections.length ? sections.join('、') : tr('pages.importExport.noValidData')}`];
   if (result?.summary) {
     const summary = result.summary;
     parts.push(
@@ -331,7 +331,7 @@ export default function ImportExport() {
       })
       .catch((err: any) => {
         if (!alive) return;
-        toast.error(err?.message || '加载 WebDAV 配置失败');
+        toast.error(err?.message || tr('pages.importExport.webdavConfigurationfailed'));
       });
     return () => {
       alive = false;
@@ -349,9 +349,9 @@ export default function ImportExport() {
         preferences: `metapi-preferences-${date}.json`,
       };
       downloadJsonFile(data, fileName[type]);
-      toast.success('导出成功');
+      toast.success(tr('pages.importExport.exportSuccessful'));
     } catch (err: any) {
-      toast.error(err?.message || '导出失败');
+      toast.error(err?.message || tr('pages.importExport.exportFailed'));
     } finally {
       setExportingType('');
     }
@@ -359,7 +359,7 @@ export default function ImportExport() {
 
   const readFile = (file: File) => {
     if (!file.name.endsWith('.json') && file.type !== 'application/json') {
-      toast.error('请选择 JSON 格式的备份文件');
+      toast.error(tr('pages.importExport.pleaseSelectBackupFileJsonFormat'));
       return;
     }
     setSelectedFileName(file.name);
@@ -367,7 +367,7 @@ export default function ImportExport() {
     reader.onload = (e) => {
       setImportData(String(e.target?.result || ''));
     };
-    reader.onerror = () => toast.error('读取文件失败');
+    reader.onerror = () => toast.error(tr('pages.importExport.failedReadFile'));
     reader.readAsText(file);
   };
 
@@ -399,16 +399,16 @@ export default function ImportExport() {
 
   const handleImport = async () => {
     if (!importData.trim()) {
-      toast.error('请先选择或粘贴 JSON 备份内容');
+      toast.error(tr('pages.importExport.pleaseSelectPasteJsonBackupContentFirst'));
       return;
     }
     if (!summary?.valid) {
-      toast.error('当前 JSON 结构无法识别');
+      toast.error(tr('pages.importExport.currentJsonStructureNotRecognized'));
       return;
     }
     const confirmed = typeof window === 'undefined' || typeof window.confirm !== 'function'
       ? true
-      : window.confirm('导入会覆盖备份中的连接/路由/策略配置或系统设置，但会保留本机日志、公告、缓存和统计，确认继续？');
+      : window.confirm(tr('pages.importExport.importZhRoutesStrategyconfigurationSystemSettings'));
     if (!confirmed) {
       return;
     }
@@ -421,7 +421,7 @@ export default function ImportExport() {
       setImportData('');
       setSelectedFileName('');
     } catch (err: any) {
-      toast.error(err?.message || '导入失败');
+      toast.error(err?.message || tr('pages.importExport.importFailed'));
     } finally {
       setImporting(false);
     }
@@ -446,9 +446,9 @@ export default function ImportExport() {
       }
       const result = await api.saveBackupWebdavConfig(payload as any);
       applyWebdavResponse(result);
-      toast.success('WebDAV 配置已保存');
+      toast.success(tr('pages.importExport.webdavConfigurationSave'));
     } catch (err: any) {
-      toast.error(err?.message || '保存 WebDAV 配置失败');
+      toast.error(err?.message || tr('pages.importExport.saveWebdavConfigurationfailed'));
     } finally {
       setWebdavSaving(false);
     }
@@ -461,7 +461,7 @@ export default function ImportExport() {
       applyWebdavResponse(result);
       toast.success(`已导出到 WebDAV：${result?.fileUrl || webdavConfig.fileUrl}`);
     } catch (err: any) {
-      toast.error(err?.message || '导出到 WebDAV 失败');
+      toast.error(err?.message || tr('pages.importExport.webdavFailed'));
     } finally {
       setWebdavAction('');
     }
@@ -470,7 +470,7 @@ export default function ImportExport() {
   const handleImportFromWebdav = async () => {
     const confirmed = typeof window === 'undefined' || typeof window.confirm !== 'function'
       ? true
-      : window.confirm('从 WebDAV 导入会覆盖备份中的连接/路由/策略配置或系统设置，但会保留本机日志、公告、缓存和统计，确认继续？');
+      : window.confirm(tr('pages.importExport.webdavImportZhRoutesStrategyconfigurationSystemSettings'));
     if (!confirmed) return;
     setWebdavAction('import');
     try {
@@ -478,7 +478,7 @@ export default function ImportExport() {
       applyWebdavResponse(result);
       toast.success(buildImportSuccessMessage(result));
     } catch (err: any) {
-      toast.error(err?.message || '从 WebDAV 导入失败');
+      toast.error(err?.message || tr('pages.importExport.webdavImportFailed'));
     } finally {
       setWebdavAction('');
     }
@@ -502,32 +502,32 @@ export default function ImportExport() {
     <div className="grid gap-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h2 className="text-2xl font-semibold tracking-tight">{tr('导入 / 导出')}</h2>
-          <p className="mt-1 text-sm text-muted-foreground">支持配置型备份、分区备份与手动恢复。</p>
+          <h2 className="text-2xl font-semibold tracking-tight">{tr('pages.importExport.importExport')}</h2>
+          <p className="mt-1 text-sm text-muted-foreground">{tr('pages.importExport.supportedconfigurationManual')}</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <ToneBadge tone="-muted">Schema v2.2</ToneBadge>
-          <ToneBadge tone="-warning">敏感数据请离线保管</ToneBadge>
+          <ToneBadge tone="-warning">{tr('pages.importExport.keepSensitiveDataOffline')}</ToneBadge>
         </div>
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle>导出数据</CardTitle>
-            <CardDescription>将连接、路由策略与设置导出为 JSON 文件进行备份</CardDescription>
+            <CardTitle>{tr('pages.importExport.exportData')}</CardTitle>
+            <CardDescription>{tr('pages.importExport.routesstrategySettingsJson')}</CardDescription>
           </CardHeader>
           <CardContent className="grid gap-2">
             <Button type="button" onClick={() => handleExport('all')} disabled={!!exportingType}>
-              <span>导出全部（连接 + 路由 + 策略 + 设置）</span>
+              <span>{tr('pages.importExport.allRoutesStrategySettings')}</span>
               {exportingType === 'all' ? <LoaderCircle className="size-4 animate-spin" /> : null}
             </Button>
             <Button type="button" variant="outline" onClick={() => handleExport('accounts')} disabled={!!exportingType}>
-              <span>仅导出连接与路由策略</span>
+              <span>{tr('pages.importExport.routesstrategy2')}</span>
               {exportingType === 'accounts' ? <LoaderCircle className="size-4 animate-spin" /> : null}
             </Button>
             <Button type="button" variant="outline" onClick={() => handleExport('preferences')} disabled={!!exportingType}>
-              <span>仅导出系统设置</span>
+              <span>{tr('pages.importExport.systemSettings2')}</span>
               {exportingType === 'preferences' ? <LoaderCircle className="size-4 animate-spin" /> : null}
             </Button>
           </CardContent>
@@ -535,8 +535,8 @@ export default function ImportExport() {
 
         <Card>
           <CardHeader>
-            <CardTitle>导入数据</CardTitle>
-            <CardDescription>从备份文件恢复数据</CardDescription>
+            <CardTitle>{tr('pages.importExport.import')}</CardTitle>
+            <CardDescription>{tr('pages.importExport.restoreDataFromBackupFile')}</CardDescription>
           </CardHeader>
           <CardContent className="grid gap-3">
             <div
@@ -556,41 +556,43 @@ export default function ImportExport() {
               {selectedFileName ? (
                 <div className="grid justify-items-center gap-2">
                   <div className="text-sm font-semibold">{selectedFileName}</div>
-                  <div className="text-xs text-muted-foreground">点击重新选择文件</div>
+                  <div className="text-xs text-muted-foreground">{tr('pages.importExport.clickChooseAnotherFile')}</div>
                 </div>
               ) : (
                 <div className="grid justify-items-center gap-2">
                   <div className="text-sm font-semibold">
-                    {dragOver ? '松开以导入文件' : '拖拽 JSON 备份文件到此处'}
+                    {dragOver ? tr('pages.importExport.releaseImportFile') : tr('pages.importExport.dragDropJsonBackupFileHere')}
                   </div>
-                  <div className="text-xs text-muted-foreground">或点击选择文件</div>
+                  <div className="text-xs text-muted-foreground">{tr('pages.importExport.clickChooseFile')}</div>
                 </div>
               )}
             </div>
 
             {field(
-              '数据预览',
-              <Textarea
+              tr('pages.importExport.preview'),
+              <JsonCodeEditor
                 value={importData}
-                onChange={(e) => setImportData(e.target.value)}
-                placeholder="粘贴 JSON 数据或通过上面的拖拽区域导入..."
-                className="min-h-28 font-mono text-xs"
+                onChange={setImportData}
+                placeholder={tr('pages.importExport.pasteJsonDataImportViaDragArea')}
+                minHeight={260}
+                maxHeight={560}
+                ariaLabel={tr('pages.importExport.preview')}
               />,
             )}
 
             {summary ? (
               <Alert variant={summary.valid ? 'default' : 'destructive'}>
-                <AlertTitle>{summary.valid ? '结构有效' : '结构不受支持'}</AlertTitle>
+                <AlertTitle>{summary.valid ? tr('pages.importExport.structureValid') : tr('pages.importExport.unsupportedStructure')}</AlertTitle>
                 <AlertDescription>
                   {summary.valid ? (
                     <div className="grid gap-1">
-                      <div>版本：{summary.version}，时间：{summary.timestampLabel}</div>
-                      <div>包含分区：{summary.hasAccounts ? '连接与路由策略' : ''}{summary.hasAccounts && summary.hasPreferences ? ' + ' : ''}{summary.hasPreferences ? '系统设置' : ''}</div>
+                      <div>{tr('pages.importExport.version')}{summary.version}{tr('pages.importExport.time')}{summary.timestampLabel}</div>
+                      <div>{tr('pages.importExport.includesSections')}{summary.hasAccounts ? tr('pages.importExport.routesstrategy') : ''}{summary.hasAccounts && summary.hasPreferences ? ' + ' : ''}{summary.hasPreferences ? tr('pages.importExport.systemSettings') : ''}</div>
                       {summary.isAllApiHubV2 ? (
                         <>
-                          <div>检测到 ALL-API-Hub V2 兼容备份：将离线迁移可用连接。</div>
-                          <div>统计：账号 {summary.accountsCount} / 书签 {summary.bookmarksCount} / 独立 API 凭据 {summary.profilesCount}</div>
-                          {summary.ignoredSections.length ? <div>不会原生导入：{summary.ignoredSections.join('、')}</div> : null}
+                          <div>{tr('pages.importExport.allApiHubV2Available')}</div>
+                          <div>{tr('pages.importExport.accounts2')} {summary.accountsCount} {tr('pages.importExport.bookmarks')} {summary.bookmarksCount} {tr('pages.importExport.api')} {summary.profilesCount}</div>
+                          {summary.ignoredSections.length ? <div>{tr('pages.importExport.import3')}{summary.ignoredSections.join('、')}</div> : null}
                         </>
                       ) : null}
                       {(summary.sitesCount
@@ -603,20 +605,20 @@ export default function ImportExport() {
                         || summary.downstreamApiKeysCount
                         || summary.settingsCount) ? (
                         <div>
-                          统计：站点 {summary.sitesCount} / 账号 {summary.accountsCount} / 令牌 {summary.tokensCount} / 路由 {summary.routesCount} / 通道 {summary.channelsCount} / 站点禁用模型 {summary.siteDisabledModelsCount} / 手工模型 {summary.manualModelsCount} / 下游 Key {summary.downstreamApiKeysCount} / 设置 {summary.settingsCount}
+                          {tr('pages.importExport.sites')} {summary.sitesCount} {tr('pages.importExport.accounts')} {summary.accountsCount} {tr('pages.importExport.token')} {summary.tokensCount} {tr('pages.importExport.routes')} {summary.routesCount} {tr('pages.importExport.channels')} {summary.channelsCount} {tr('pages.importExport.sitesdisabledmodel')} {summary.siteDisabledModelsCount} {tr('pages.importExport.model')} {summary.manualModelsCount} {tr('pages.importExport.key')} {summary.downstreamApiKeysCount} {tr('pages.importExport.settings')} {summary.settingsCount}
                         </div>
                       ) : null}
-                      {summary.hasLegacyData ? <div>检测到兼容结构：将按兼容模式导入。</div> : null}
+                      {summary.hasLegacyData ? <div>{tr('pages.importExport.modeimport')}</div> : null}
                     </div>
                   ) : (
-                    <div>JSON 可解析，但结构不受支持。</div>
+                    <div>{tr('pages.importExport.jsonUnsupportedStructure')}</div>
                   )}
                 </AlertDescription>
               </Alert>
             ) : null}
 
             <Button type="button" onClick={handleImport} disabled={importing || !summary?.valid}>
-              {importing ? <><LoaderCircle className="size-4 animate-spin" /> 导入中...</> : '导入'}
+              {importing ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.importExport.importing')}</> : tr('pages.importExport.import2')}
             </Button>
           </CardContent>
         </Card>
@@ -624,13 +626,13 @@ export default function ImportExport() {
 
       <Card>
         <CardHeader>
-          <CardTitle>WebDAV 同步</CardTitle>
-          <CardDescription>支持手动推送、手动拉取，以及定时自动导出到 WebDAV。</CardDescription>
+          <CardTitle>{tr('pages.importExport.webdavSync')}</CardTitle>
+          <CardDescription>{tr('pages.importExport.supportedmanualManualAutomaticWebdav')}</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4">
           <div className="grid gap-4 md:grid-cols-2">
             {field(
-              '文件 URL',
+              tr('pages.importExport.url'),
               <Input
                 value={webdavConfig.fileUrl}
                 onChange={(e) => setWebdavConfig((prev) => ({ ...prev, fileUrl: e.target.value }))}
@@ -639,15 +641,15 @@ export default function ImportExport() {
               'md:col-span-2',
             )}
             {field(
-              '用户名',
+              tr('app.username'),
               <Input
                 value={webdavConfig.username}
                 onChange={(e) => setWebdavConfig((prev) => ({ ...prev, username: e.target.value }))}
-                placeholder="可留空"
+                placeholder={tr('pages.importExport.canEmpty')}
               />,
             )}
             <div className="grid gap-2">
-              <Label>密码</Label>
+              <Label>{tr('pages.accounts.password')}</Label>
               <Input
                 type="password"
                 value={webdavConfig.password}
@@ -659,14 +661,14 @@ export default function ImportExport() {
                   }
                 }}
                 placeholder={clearWebdavPassword
-                  ? '保存后将清空已存密码'
-                  : (webdavConfig.hasPassword ? `已保存 ${webdavConfig.passwordMasked}，留空则保持不变` : '请输入密码')}
+                  ? tr('pages.importExport.saveClearPassword')
+                  : (webdavConfig.hasPassword ? `已保存 ${webdavConfig.passwordMasked}，留空则保持不变` : tr('pages.importExport.inputpassword'))}
                 disabled={clearWebdavPassword}
               />
               {webdavConfig.hasPassword ? (
                 <label className="flex items-center gap-2 text-xs text-muted-foreground">
                   <Switch
-                    aria-label="清空已保存密码"
+                    aria-label={tr('pages.importExport.clearSavepassword')}
                     checked={clearWebdavPassword}
                     onCheckedChange={(checked) => {
                       setClearWebdavPassword(checked);
@@ -675,12 +677,12 @@ export default function ImportExport() {
                       }
                     }}
                   />
-                  清空已保存密码
+                  {tr('pages.importExport.clearSavepassword')}
                 </label>
               ) : null}
             </div>
             {field(
-              '导出分区',
+              tr('pages.importExport.exportSections'),
               <ModernSelect
                 value={webdavConfig.exportType}
                 onChange={(value) => setWebdavConfig((prev) => ({ ...prev, exportType: value as BackupType }))}
@@ -688,7 +690,7 @@ export default function ImportExport() {
               />,
             )}
             {field(
-              '自动同步 Cron',
+              tr('pages.importExport.automaticsyncCron'),
               <Input
                 value={webdavConfig.autoSyncCron}
                 onChange={(e) => setWebdavConfig((prev) => ({ ...prev, autoSyncCron: e.target.value }))}
@@ -699,42 +701,42 @@ export default function ImportExport() {
           </div>
 
           <div className="flex flex-wrap gap-4">
-            {toggle('启用 WebDAV', webdavConfig.enabled, (checked) => setWebdavConfig((prev) => ({ ...prev, enabled: checked })))}
-            {toggle('自动同步', webdavConfig.autoSyncEnabled, (checked) => setWebdavConfig((prev) => ({ ...prev, autoSyncEnabled: checked })))}
+            {toggle(tr('pages.importExport.enabledWebdav'), webdavConfig.enabled, (checked) => setWebdavConfig((prev) => ({ ...prev, enabled: checked })))}
+            {toggle(tr('pages.importExport.automaticsync'), webdavConfig.autoSyncEnabled, (checked) => setWebdavConfig((prev) => ({ ...prev, autoSyncEnabled: checked })))}
           </div>
 
           <div className="flex flex-wrap gap-2">
             <Button type="button" onClick={handleSaveWebdavConfig} disabled={webdavSaving}>
-              {webdavSaving ? '保存中...' : '保存 WebDAV 配置'}
+              {webdavSaving ? tr('pages.accounts.saving') : tr('pages.importExport.saveWebdavConfiguration')}
             </Button>
             <Button type="button" variant="outline" onClick={handleExportToWebdav} disabled={webdavAction !== '' || webdavSaving || webdavConfigDirty}>
-              {webdavAction === 'export' ? '导出中...' : '立即导出到 WebDAV'}
+              {webdavAction === 'export' ? tr('pages.importExport.zh2') : tr('pages.importExport.webdav')}
             </Button>
             <Button type="button" variant="outline" onClick={handleImportFromWebdav} disabled={webdavAction !== '' || webdavSaving || webdavConfigDirty}>
-              {webdavAction === 'import' ? '拉取中...' : '从 WebDAV 拉取'}
+              {webdavAction === 'import' ? tr('pages.importExport.zh') : tr('pages.importExport.webdav2')}
             </Button>
           </div>
 
           {webdavConfigDirty ? (
             <p className="text-xs text-muted-foreground">
-              当前 WebDAV 配置有未保存改动，请先保存后再执行导入或导出。
+              {tr('pages.importExport.webdavConfigurationSaveSaveImport')}
             </p>
           ) : null}
 
           <div className="grid gap-1 text-xs text-muted-foreground">
-            <div>上次同步：{webdavState.lastSyncAt ? new Date(webdavState.lastSyncAt).toLocaleString() : '尚未同步'}</div>
-            <div>最近错误：{webdavState.lastError || '无'}</div>
+            <div>{tr('pages.importExport.sync2')}{webdavState.lastSyncAt ? new Date(webdavState.lastSyncAt).toLocaleString() : tr('pages.importExport.sync')}</div>
+            <div>{tr('pages.importExport.mistake')}{webdavState.lastError || tr('pages.importExport.none')}</div>
           </div>
         </CardContent>
       </Card>
 
       <Alert>
-        <AlertTitle>注意事项</AlertTitle>
+        <AlertTitle>{tr('pages.importExport.notes')}</AlertTitle>
         <AlertDescription>
-          <div>1. 导入连接分区会覆盖备份中的站点、账号、令牌、路由、禁用模型、手工模型和下游 Key 配置。</div>
-          <div>2. 覆盖备份中的连接/路由/策略配置，但会保留本机日志、公告、缓存和统计。</div>
-          <div>3. 为避免锁死管理界面，管理员登录令牌（`auth_token`）不会从备份导入。</div>
-          <div>4. 建议先导出一份"全部备份"再执行导入操作。</div>
+          <div>{tr('pages.importExport.1ImportZhSitesAccountsTokenRoutes')}</div>
+          <div>{tr('pages.importExport.2ZhRoutesStrategyconfiguration')}</div>
+          <div>{tr('pages.importExport.3AdminsignIntokenAuthTokenImport')}</div>
+          <div>{tr('pages.importExport.4SuggestionAllBackupImportactions')}</div>
         </AlertDescription>
       </Alert>
     </div>

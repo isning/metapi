@@ -13,9 +13,11 @@ export default function ToneBadge({ tone = '', children, className, ...props }: 
       ? 'warning'
       : tone.includes('success')
         ? 'success'
-        : tone.includes('info') || tone.includes('primary')
-          ? 'default'
-          : 'secondary';
+        : tone.includes('info')
+          ? 'info'
+          : tone.includes('primary')
+            ? 'default'
+            : 'secondary';
 
   return (
     <Badge variant={variant} data-tone={tone} className={className} {...props}>

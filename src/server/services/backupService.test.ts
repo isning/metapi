@@ -1533,6 +1533,133 @@ describe('backupService', () => {
     expect(projections.get(128)?.modelPattern).toBe('claude-legacy-*');
   });
 
+  it('regenerates the route graph from imported routes instead of restoring old graph snapshots', async () => {
+    const payload = {
+      version: '2.2',
+      timestamp: Date.now(),
+      type: 'accounts',
+      accounts: {
+        sites: [
+          {
+            id: 1,
+            name: 'old-graph-site',
+            url: 'https://old-graph.example.com',
+            platform: 'new-api',
+            externalCheckinUrl: '',
+            proxyUrl: '',
+            useSystemProxy: false,
+            customHeaders: '',
+            compatibilityPolicy: '',
+            status: 'active',
+            createdAt: '2026-03-20T00:00:00.000Z',
+            updatedAt: '2026-03-20T00:00:00.000Z',
+          },
+        ],
+        accounts: [
+          {
+            id: 1,
+            siteId: 1,
+            username: 'old-graph-user',
+            accessToken: '',
+            apiToken: 'old-graph-token',
+            balance: 10,
+            quota: 20,
+            unitCost: null,
+            valueScore: 0,
+            status: 'active',
+            checkinEnabled: true,
+            extraConfig: '',
+            createdAt: '2026-03-20T00:00:00.000Z',
+            updatedAt: '2026-03-20T00:00:00.000Z',
+          },
+        ],
+        accountTokens: [
+          {
+            id: 1,
+            accountId: 1,
+            name: 'default',
+            token: 'old-graph-token',
+            tokenGroup: 'default',
+            source: 'legacy',
+            enabled: true,
+            isDefault: true,
+            createdAt: '2026-03-20T00:00:00.000Z',
+            updatedAt: '2026-03-20T00:00:00.000Z',
+          },
+        ],
+        tokenRoutes: [
+          {
+            id: 127,
+            modelPattern: 'gpt-old-graph',
+            routingStrategy: 'weighted',
+            enabled: true,
+            createdAt: '2026-03-20T00:00:00.000Z',
+            updatedAt: '2026-03-20T00:00:00.000Z',
+          },
+        ],
+        routeChannels: [
+          {
+            id: 1,
+            routeId: 127,
+            accountId: 1,
+            tokenId: 1,
+            sourceModel: 'gpt-old-graph-upstream',
+            priority: 0,
+            weight: 10,
+            enabled: true,
+            manualOverride: false,
+          },
+        ],
+        routeGroupSources: [],
+        routeGraph: {
+          versions: [
+            {
+              id: 9,
+              version: 9,
+              sourceGraphJson: JSON.stringify({
+                version: 1,
+                nodes: [
+                  {
+                    id: 'entry:manual:stale',
+                    type: 'entry',
+                    name: 'stale graph',
+                    visibility: 'public',
+                    match: { requestedModelPattern: 'stale-model' },
+                  },
+                ],
+                edges: [],
+                macros: [],
+              }),
+              compiledGraphJson: JSON.stringify({ version: 1 }),
+              status: 'active',
+              createdBy: 'old-backup',
+              createdAt: '2026-03-20T00:00:00.000Z',
+              activatedAt: '2026-03-20T00:00:00.000Z',
+            },
+          ],
+          activeVersion: {
+            id: 1,
+            versionId: 9,
+            updatedAt: '2026-03-20T00:00:00.000Z',
+          },
+          drafts: [],
+        },
+      },
+    } as Record<string, unknown>;
+
+    await expect(backupService.importBackup(payload)).resolves.toMatchObject({
+      allImported: true,
+      sections: { accounts: true },
+    });
+
+    const activeGraph = await db.select().from(schema.routeGraphVersions)
+      .where(eq(schema.routeGraphVersions.status, 'active'))
+      .get();
+    expect(activeGraph?.createdBy).toBe('backup-import');
+    expect(activeGraph?.sourceGraphJson).not.toContain('stale-model');
+    expect(activeGraph?.sourceGraphJson).toContain('route-endpoint:product:route:127');
+  });
+
   it('imports ALL-API-Hub style payload with accounts and preferences', async () => {
     const payload = {
       timestamp: Date.now(),

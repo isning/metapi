@@ -66,6 +66,20 @@ async function flushMicrotasks() {
   });
 }
 
+function toggleCheckbox(node: { props: Record<string, any> }, checked = true) {
+  if (typeof node.props.onCheckedChange === 'function') {
+    node.props.onCheckedChange(checked);
+    return;
+  }
+  if (typeof node.props.onChange === 'function') {
+    node.props.onChange({ target: { checked } });
+    return;
+  }
+  if (typeof node.props.onClick === 'function') {
+    node.props.onClick({ stopPropagation: vi.fn(), target: { checked } });
+  }
+}
+
 describe('TokenRoutes mobile actions', () => {
   const originalIntersectionObserver = globalThis.IntersectionObserver;
   const originalWindow = (globalThis as { window?: { confirm?: (message?: string) => boolean } }).window;
@@ -204,14 +218,10 @@ describe('TokenRoutes mobile actions', () => {
       });
       await flushMicrotasks();
 
-      const routeCheckbox = root!.root.find((node) => (
-        node.type === 'button'
-        && node.props.role === 'checkbox'
-        && node.props['data-testid'] === 'route-select-1'
-      ));
+      const routeCheckbox = root!.root.find((node) => node.props['data-testid'] === 'route-select-1');
 
       await act(async () => {
-        routeCheckbox.props.onClick({ stopPropagation: vi.fn() });
+        toggleCheckbox(routeCheckbox);
       });
       await flushMicrotasks();
 

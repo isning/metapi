@@ -2,6 +2,7 @@ import React from 'react';
 import MobileFilterSheet from './MobileFilterSheet.js';
 import { Button } from './ui/button/index.js';
 
+import { tr } from '../i18n.js';
 type ResponsiveFilterPanelProps = {
   isMobile: boolean;
   mobileOpen: boolean;
@@ -25,7 +26,7 @@ export default function ResponsiveFilterPanel({
   mobileContent,
   desktopContent = null,
   mobileTrigger,
-  mobileTriggerLabel = '筛选',
+  mobileTriggerLabel = tr('components.mobileFilterSheet.filter'),
   mobileTriggerWrapperClassName = 'mb-3 flex justify-end',
   mobileTriggerWrapperStyle,
 }: ResponsiveFilterPanelProps) {

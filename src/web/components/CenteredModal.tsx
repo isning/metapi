@@ -36,7 +36,7 @@ export default function CenteredModal({
       }}
     >
       <Dialog.Content
-        className={maxWidthClass}
+        className={`${maxWidthClass} max-h-[calc(100dvh-2rem)] overflow-hidden`}
         closeButton={showCloseButton}
         onClose={onClose}
         onEscapeKeyDown={(event) => {
@@ -46,14 +46,17 @@ export default function CenteredModal({
           if (!closeOnBackdrop) event.preventDefault();
         }}
       >
-        <Dialog.Header>
+        <Dialog.Header className="shrink-0">
           <Dialog.Title>{title}</Dialog.Title>
           <Dialog.Description className="sr-only">Modal dialog</Dialog.Description>
         </Dialog.Header>
-        <div className={bodyStyle ? undefined : 'grid gap-3'} style={bodyStyle}>
+        <div
+          className={bodyStyle ? 'min-h-0 overflow-y-auto pb-3' : 'grid min-h-0 gap-3 overflow-y-auto pb-3'}
+          style={bodyStyle}
+        >
           {children}
         </div>
-        {footer ? <Dialog.Footer>{footer}</Dialog.Footer> : null}
+        {footer ? <Dialog.Footer className="shrink-0">{footer}</Dialog.Footer> : null}
       </Dialog.Content>
     </Dialog.Root>
   );

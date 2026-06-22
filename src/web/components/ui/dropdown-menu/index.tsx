@@ -34,7 +34,9 @@ const SubContent = React.forwardRef<
   React.ElementRef<typeof DropdownMenuPrimitive.SubContent>,
   React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.SubContent>
 >(({ className, ...props }, ref) => (
-  <DropdownMenuPrimitive.SubContent ref={ref} className={cn('z-50 min-w-32 overflow-hidden rounded-md border bg-popover p-1 text-popover-foreground shadow-lg', popoverMotionClassName, className)} {...props} />
+  <DropdownMenuPrimitive.Portal>
+    <DropdownMenuPrimitive.SubContent ref={ref} className={cn('z-50 min-w-32 overflow-hidden rounded-md border bg-popover p-1 text-popover-foreground shadow-lg', popoverMotionClassName, className)} {...props} />
+  </DropdownMenuPrimitive.Portal>
 ));
 SubContent.displayName = DropdownMenuPrimitive.SubContent.displayName;
 

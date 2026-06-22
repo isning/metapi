@@ -33,7 +33,7 @@ const bannedLegacyPatterns = [
   /\boauth-(?:toolbar|table|workbench|drawer|guide|window|form|field|input|textarea|toggle|page-message|mobile|status|quota|cell|actions)[a-z0-9-]*\b/,
   /\bsettingsModern[A-Za-z0-9_]*\b/,
   /\bpage-(?:header|title|actions|subtitle)\b/,
-  /\bdata-table\b/,
+  /className=["'](?:data-table(?:\s|["'])|[^"']*\sdata-table(?:\s|["']))/,
   /(?<!-)\btoolbar\b(?!-)/,
   /\bmodel-card[a-z0-9-]*\b/,
   /\bmodel-tag[a-z0-9-]*\b/,
@@ -214,5 +214,24 @@ describe('web UI migration guard', () => {
     }
 
     expect(violations).toEqual([]);
+  });
+
+  it('routes shared empty states through the shadcn empty primitive', () => {
+    const source = readFileSync(path.join(repoRoot, 'src/web/components/EmptyStateBlock.tsx'), 'utf8');
+
+    expect(source).toContain("./ui/empty/index.js");
+    expect(source).toContain("<Empty");
+    expect(source).toContain("<EmptyTitle");
+    expect(source).toContain("<EmptyDescription");
+    expect(source).not.toContain("flex flex-col items-center justify-center gap-2 p-8 text-center");
+  });
+
+  it('uses the shadcn collapsible primitive for proxy log disclosure cards', () => {
+    const source = readFileSync(path.join(repoRoot, 'src/web/pages/ProxyLogs.tsx'), 'utf8');
+
+    expect(source).toContain("../components/ui/collapsible/index.js");
+    expect(source).toContain("<Collapsible");
+    expect(source).toContain("<CollapsibleTrigger");
+    expect(source).toContain("<CollapsibleContent");
   });
 });

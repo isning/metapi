@@ -81,6 +81,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
+function readRecordNumber(
+  record: Record<string, unknown> | null | undefined,
+  key: string,
+): number | null {
+  if (!record) return null;
+  const value = record[key];
+  const numberValue = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(numberValue) ? numberValue : null;
+}
+
 const MODELS_MARKETPLACE_BASE_TTL_MS = 15_000;
 const MODELS_MARKETPLACE_PRICING_TTL_MS = 90_000;
 const limitModelTokenCandidatesRead = createRateLimitGuard({
@@ -92,6 +102,15 @@ const limitModelTokenCandidatesRead = createRateLimitGuard({
 type ModelsMarketplaceCacheEntry = {
   expiresAt: number;
   models: any[];
+};
+
+type MeasuredEntryPricingAggregate = {
+  inputWeightedTotal: number;
+  inputWeight: number;
+  outputWeightedTotal: number;
+  outputWeight: number;
+  sampleCount: number;
+  lastMeasuredAt: string | null;
 };
 
 const modelsMarketplaceCache = new Map<
@@ -640,6 +659,16 @@ function buildProxyLogModelAnalysisSelectFields() {
   };
 }
 
+function buildProxyLogModelPricingSelectFields() {
+  return {
+    createdAt: schema.proxyLogs.createdAt,
+    modelActual: schema.proxyLogs.modelActual,
+    modelRequested: schema.proxyLogs.modelRequested,
+    status: schema.proxyLogs.status,
+    billingDetails: schema.proxyLogs.billingDetails,
+  };
+}
+
 function buildProxyLogSiteTrendSelectFields() {
   return {
     createdAt: schema.proxyLogs.createdAt,
@@ -651,6 +680,7 @@ function buildProxyLogSiteTrendSelectFields() {
 export async function statsRoutes(app: FastifyInstance) {
   const proxyLogBaseFields = getProxyLogBaseSelectFields();
   const proxyLogModelAnalysisFields = buildProxyLogModelAnalysisSelectFields();
+  const proxyLogModelPricingFields = buildProxyLogModelPricingSelectFields();
   const proxyLogSiteTrendFields = buildProxyLogSiteTrendSelectFields();
 
   app.get<{ Querystring: { refresh?: string; view?: string } }>(
@@ -1166,6 +1196,11 @@ export async function statsRoutes(app: FastifyInstance) {
         .from(schema.proxyLogs)
         .where(gte(schema.proxyLogs.createdAt, last7d))
         .all();
+      const recentPricingLogs = await db
+        .select(proxyLogModelPricingFields)
+        .from(schema.proxyLogs)
+        .where(gte(schema.proxyLogs.createdAt, last7d))
+        .all();
 
       const modelLogStats: Record<
         string,
@@ -1178,6 +1213,52 @@ export async function statsRoutes(app: FastifyInstance) {
         modelLogStats[model].total++;
         if (log.status === "success") modelLogStats[model].success++;
         modelLogStats[model].totalLatency += log.latencyMs || 0;
+      }
+      const measuredPricingStats: Record<string, MeasuredEntryPricingAggregate> = {};
+      for (const log of recentPricingLogs) {
+        if (log.status !== "success") continue;
+        const model = String(log.modelActual || log.modelRequested || "").trim();
+        if (!model) continue;
+        const billingDetails = parseProxyLogBillingDetails(log.billingDetails);
+        const breakdown = isRecord(billingDetails?.breakdown) ? billingDetails.breakdown : null;
+        if (!breakdown) continue;
+
+        const inputPrice = readRecordNumber(breakdown, "inputPerMillion");
+        const outputPrice = readRecordNumber(breakdown, "outputPerMillion");
+        if (!Number.isFinite(inputPrice) && !Number.isFinite(outputPrice)) continue;
+
+        const usage = isRecord(billingDetails?.usage) ? billingDetails.usage : null;
+        const inputWeight = Math.max(
+          1,
+          readRecordNumber(usage, "billablePromptTokens")
+            || readRecordNumber(usage, "promptTokens")
+            || 0,
+        );
+        const outputWeight = Math.max(1, readRecordNumber(usage, "completionTokens") || 0);
+        if (!measuredPricingStats[model]) {
+          measuredPricingStats[model] = {
+            inputWeightedTotal: 0,
+            inputWeight: 0,
+            outputWeightedTotal: 0,
+            outputWeight: 0,
+            sampleCount: 0,
+            lastMeasuredAt: null,
+          };
+        }
+        const aggregate = measuredPricingStats[model];
+        aggregate.sampleCount += 1;
+        if (inputPrice != null) {
+          aggregate.inputWeightedTotal += inputPrice * inputWeight;
+          aggregate.inputWeight += inputWeight;
+        }
+        if (outputPrice != null) {
+          aggregate.outputWeightedTotal += outputPrice * outputWeight;
+          aggregate.outputWeight += outputWeight;
+        }
+        const createdAt = typeof log.createdAt === "string" ? log.createdAt : null;
+        if (createdAt && (!aggregate.lastMeasuredAt || createdAt > aggregate.lastMeasuredAt)) {
+          aggregate.lastMeasuredAt = createdAt;
+        }
       }
 
       type ModelMetadataAggregate = {
@@ -1404,6 +1485,7 @@ export async function statsRoutes(app: FastifyInstance) {
           accounts.reduce((sum, a) => sum + (a.latency || 0), 0) /
           (accounts.length || 1);
         const metadata = modelMetadataMap.get(m.name.toLowerCase());
+        const measuredPricing = measuredPricingStats[m.name];
         const fallbackDescription = metadata?.description
           ? null
           : upstreamDescriptionMap.get(m.name.toLowerCase()) || null;
@@ -1428,6 +1510,18 @@ export async function statsRoutes(app: FastifyInstance) {
               )
             : [],
           pricingSources: metadata?.pricingSources || [],
+          measuredEntryPricing: measuredPricing
+            ? {
+                inputPerMillion: measuredPricing.inputWeight > 0
+                  ? Math.round((measuredPricing.inputWeightedTotal / measuredPricing.inputWeight) * 1_000_000) / 1_000_000
+                  : null,
+                outputPerMillion: measuredPricing.outputWeight > 0
+                  ? Math.round((measuredPricing.outputWeightedTotal / measuredPricing.outputWeight) * 1_000_000) / 1_000_000
+                  : null,
+                sampleCount: measuredPricing.sampleCount,
+                lastMeasuredAt: measuredPricing.lastMeasuredAt,
+              }
+            : null,
           accounts,
         };
       });

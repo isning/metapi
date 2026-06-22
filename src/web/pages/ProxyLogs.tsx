@@ -65,7 +65,20 @@ import {
   TableRow,
 } from '../components/ui/table/index.js';
 import { Alert, AlertDescription } from '../components/ui/alert/index.js';
-import { ChevronLeft, ChevronRight, Filter } from 'lucide-react';
+import { ChevronRight, Coins, Filter, Hash, Timer } from 'lucide-react';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '../components/ui/collapsible/index.js';
+import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+  PaginationLink,
+  PaginationNext,
+  PaginationPrevious,
+} from '../components/ui/pagination/index.js';
 
 type ProxyLogRenderItem = ProxyLogListItem & {
   billingDetails?: ProxyLogBillingDetails;
@@ -125,7 +138,7 @@ const PROXY_LOG_CLIENT_FAMILY_LABELS: Record<string, string> = {
   codex: "Codex",
   claude_code: "Claude Code",
   gemini_cli: "Gemini CLI",
-  generic: "通用",
+  generic: tr('pages.proxyLogs.general'),
 };
 const EMPTY_SUMMARY: ProxyLogsSummary = {
   totalCount: 0,
@@ -160,21 +173,26 @@ function DetailDisclosureCard({
   const [open, setOpen] = useState(defaultOpen);
 
   return (
+    <Collapsible open={open} onOpenChange={setOpen} asChild>
     <Card>
       <CardHeader className="flex-row items-center justify-between gap-3 space-y-0 p-3">
         <CardTitle>{title}</CardTitle>
+        <CollapsibleTrigger asChild>
         <Button
         type="button"
           variant="ghost"
           size="sm"
-        aria-label={`${open ? "收起" : "展开"}${title}`}
-        onClick={() => setOpen((current) => !current)}
+        aria-label={`${open ? tr('pages.accounts.collapse') : tr('pages.proxyLogs.expand')}${title}`}
       >
-          {open ? "收起" : "展开"}
+          {open ? tr('pages.accounts.collapse') : tr('pages.proxyLogs.expand')}
         </Button>
+        </CollapsibleTrigger>
       </CardHeader>
-      {open ? <CardContent className="pt-0">{children}</CardContent> : null}
+      <CollapsibleContent asChild>
+        <CardContent className="pt-0">{children}</CardContent>
+      </CollapsibleContent>
     </Card>
+    </Collapsible>
   );
 }
 
@@ -240,7 +258,7 @@ function firstByteTone(ms: number | null | undefined) {
 
 function formatStreamModeLabel(isStream: boolean | null | undefined) {
   if (isStream == null) return null;
-  return isStream ? "流式" : "非流";
+  return isStream ? tr('pages.modelTester.streaming') : tr('pages.proxyLogs.nonStreaming');
 }
 
 function formatFirstByteLabel(ms: number | null | undefined) {
@@ -267,9 +285,9 @@ function formatBillingDetailSummary(log: ProxyLogRenderItem) {
 function formatProxyLogUsageSource(
   source: ProxyLogUsageSource | undefined,
 ): string | null {
-  if (source === "upstream") return "上游返回";
-  if (source === "self-log") return "站点日志回填";
-  if (source === "unknown") return "未知";
+  if (source === "upstream") return tr('pages.proxyLogs.upstreamResponse');
+  if (source === "self-log") return tr('pages.proxyLogs.sites');
+  if (source === "unknown") return tr('pages.accounts.unknown2');
   return null;
 }
 
@@ -478,7 +496,7 @@ function renderProxyLogClientCell(
            
            
           >
-            推测
+            {tr('pages.proxyLogs.inferred')}
           </ToneBadge>
         ) : null}
       </div>
@@ -536,10 +554,10 @@ function buildProxyDebugSettingsPayload(
 }
 
 function formatProxyDebugCaptureSummary(settings: ProxyDebugSettingsState) {
-  const parts = ["路由决策"];
-  if (settings.proxyDebugCaptureHeaders) parts.push("请求/响应头");
-  if (settings.proxyDebugCaptureBodies) parts.push("请求/响应体");
-  if (settings.proxyDebugCaptureStreamChunks) parts.push("流式分片");
+  const parts = [tr('pages.proxyLogs.routes')];
+  if (settings.proxyDebugCaptureHeaders) parts.push(tr('pages.proxyLogs.requestResponseHeaders'));
+  if (settings.proxyDebugCaptureBodies) parts.push(tr('pages.proxyLogs.requestResponseBody'));
+  if (settings.proxyDebugCaptureStreamChunks) parts.push(tr('pages.proxyLogs.streaming'));
   return parts.join("、");
 }
 
@@ -555,7 +573,7 @@ function formatProxyDebugTargetSummary(settings: ProxyDebugSettingsState) {
       ? `模型 ${settings.proxyDebugTargetModel}`
       : null,
   ].filter(Boolean);
-  return parts.length > 0 ? parts.join("，") : "不过滤，记录所有命中的新请求";
+  return parts.length > 0 ? parts.join("，") : tr('pages.proxyLogs.zhRequest');
 }
 
 function stringifyStoredDebugValue(value: unknown): string | null {
@@ -610,7 +628,7 @@ function parseStoredDebugPreview(value: unknown): {
         note:
           originalBytes > 0 && storedBytes > 0
             ? `内容已截断展示，原始 ${originalBytes} bytes，当前保留 ${storedBytes} bytes。复制按钮会复制当前数据库里保存的内容。`
-            : "内容已截断展示。复制按钮会复制当前数据库里保存的内容。",
+            : tr('pages.proxyLogs.contentTruncateCopyCopySaveContent'),
       };
     }
   } catch {
@@ -841,7 +859,7 @@ export default function ProxyLogs() {
         label: `站点 #${siteFilter}（已删除）`,
       });
     }
-    return [{ value: "", label: "全部站点" }, ...options];
+    return [{ value: "", label: tr('pages.oAuthManagement.allsites') }, ...options];
   }, [siteFilter, sites]);
 
   const resolvedClientOptions = useMemo(() => {
@@ -855,11 +873,11 @@ export default function ProxyLogs() {
         label: clientFilter,
       });
     }
-    return [{ value: "", label: "全部客户端" }, ...options];
+    return [{ value: "", label: tr('pages.proxyLogs.allclient') }, ...options];
   }, [clientFilter, clientOptions]);
 
   const activeSiteLabel = useMemo(() => {
-    if (!siteFilter) return "全部站点";
+    if (!siteFilter) return tr('pages.oAuthManagement.allsites');
     return (
       siteOptions.find((option) => option.value === String(siteFilter))
         ?.label || `站点 #${siteFilter}`
@@ -910,7 +928,7 @@ export default function ProxyLogs() {
         setTotal(Number(data.total || 0));
       } catch (e: any) {
         if (seq !== loadSeq.current) return;
-        if (!silent) toast.error(e.message || "加载日志失败");
+        if (!silent) toast.error(e.message || tr('pages.proxyLogs.failedLoadLog'));
       } finally {
         if (seq === loadSeq.current) setLoading(false);
       }
@@ -1042,7 +1060,7 @@ export default function ProxyLogs() {
           [id]: { loading: false, data },
         }));
       } catch (e: any) {
-        const message = e?.message || "加载日志详情失败";
+        const message = e?.message || tr('pages.proxyLogs.logDetailsfailed');
         setDetailById((current) => ({
           ...current,
           [id]: { loading: false, error: message },
@@ -1095,7 +1113,7 @@ export default function ProxyLogs() {
           [id]: { loading: false, data },
         }));
       } catch (error: any) {
-        const message = error?.message || "加载调试追踪详情失败";
+        const message = error?.message || tr('pages.proxyLogs.debugtraceDetailsfailed');
         setDebugDetailById((current) => ({
           ...current,
           [id]: { loading: false, error: message },
@@ -1154,7 +1172,7 @@ export default function ProxyLogs() {
         });
       } catch (error: any) {
         if (!options?.suppressToast) {
-          toast.error(error?.message || "加载代理调试追踪失败");
+          toast.error(error?.message || tr('pages.proxyLogs.actingdebugFailed2'));
         }
       } finally {
         if (!options?.silent) setDebugPanelLoading(false);
@@ -1179,7 +1197,7 @@ export default function ProxyLogs() {
           : [];
         await syncDebugTraceItems(items, { refreshSelectedDetail: true });
       } catch (error: any) {
-        toast.error(error?.message || "加载代理调试面板失败");
+        toast.error(error?.message || tr('pages.proxyLogs.actingdebugFailed'));
       } finally {
         if (!silent) setDebugPanelLoading(false);
       }
@@ -1240,7 +1258,7 @@ export default function ProxyLogs() {
         });
         return normalized;
       } catch (error: any) {
-        toast.error(error?.message || "保存代理调试设置失败");
+        toast.error(error?.message || tr('pages.proxyLogs.saveactingdebugsettingsfailed'));
         return null;
       } finally {
         setDebugPanelSaving(false);
@@ -1251,7 +1269,7 @@ export default function ProxyLogs() {
 
   const handleSaveDebugSettings = useCallback(async () => {
     await persistDebugSettings(debugDraftSettings, {
-      successMessage: "代理调试设置已保存",
+      successMessage: tr('pages.proxyLogs.actingdebugsettingsSave'),
       closeAfterSave: true,
     });
   }, [debugDraftSettings, persistDebugSettings]);
@@ -1264,8 +1282,8 @@ export default function ProxyLogs() {
       },
       {
         successMessage: debugSettings.proxyDebugTraceEnabled
-          ? "代理调试追踪已关闭"
-          : "代理调试追踪已开启",
+          ? tr('pages.proxyLogs.actingdebugClose')
+          : tr('pages.proxyLogs.actingdebugTurn'),
       },
     );
   }, [debugSettings, persistDebugSettings]);
@@ -1318,7 +1336,7 @@ export default function ProxyLogs() {
        
        
       >
-        {failed ? "失败" : "成功"}
+        {failed ? tr('pages.checkinLog.failed') : tr('pages.checkinLog.success')}
       </ToneBadge>
     );
   }
@@ -1358,33 +1376,33 @@ export default function ProxyLogs() {
         <div className="grid gap-3">
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
             <div className="grid min-w-0 gap-1">
-              <div className="text-xs text-muted-foreground">目标地址</div>
+              <div className="text-xs text-muted-foreground">{tr('pages.proxyLogs.targetUrl')}</div>
               <div className="min-w-0 break-words font-mono text-xs font-medium">
                 {attempt.targetUrl || "-"}
               </div>
             </div>
             <div className="grid min-w-0 gap-1">
-              <div className="text-xs text-muted-foreground">执行器</div>
+              <div className="text-xs text-muted-foreground">{tr('pages.proxyLogs.executor')}</div>
               <div className="min-w-0 break-words text-sm font-medium">
                 {attempt.runtimeExecutor || "-"}
               </div>
             </div>
             <div className="grid min-w-0 gap-1">
-              <div className="text-xs text-muted-foreground">恢复逻辑</div>
+              <div className="text-xs text-muted-foreground">{tr('pages.proxyLogs.recoveryLogic')}</div>
               <div className="min-w-0 break-words text-sm font-medium">
-                {attempt.recoverApplied ? "已应用" : "未应用"}
+                {attempt.recoverApplied ? tr('pages.proxyLogs.applied') : tr('pages.proxyLogs.notApplied')}
               </div>
             </div>
             <div className="grid min-w-0 gap-1">
-              <div className="text-xs text-muted-foreground">降级决策</div>
+              <div className="text-xs text-muted-foreground">{tr('pages.proxyLogs.downgrade')}</div>
               <div className="min-w-0 break-words text-sm font-medium">
-                {attempt.downgradeDecision ? "已触发" : "未触发"}
+                {attempt.downgradeDecision ? tr('pages.proxyLogs.triggered') : tr('pages.proxyLogs.notTriggered')}
               </div>
             </div>
           </div>
           {attempt.downgradeReason ? (
             <div className="text-xs text-muted-foreground">
-              降级原因：{attempt.downgradeReason}
+              {tr('pages.proxyLogs.downgrade2')}{attempt.downgradeReason}
             </div>
           ) : null}
           <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-md border p-3 font-mono text-xs leading-relaxed">{serializedAttempt}</pre>
@@ -1416,7 +1434,7 @@ export default function ProxyLogs() {
                 void handleCopyStoredDebugValue(copyLabel, value);
               }}
             >
-              复制当前保存内容
+              {tr('pages.proxyLogs.copySavecontent')}
             </Button>
           </div>
           {normalized.note ? (
@@ -1434,7 +1452,7 @@ export default function ProxyLogs() {
     if (!selectedDebugTraceId) {
       return (
         <div className="text-sm text-muted-foreground">
-          暂无追踪详情。请选择一条最近追踪后再查看。
+          {tr('pages.proxyLogs.noTraceDetailsSelectItemsrecentTracesViewing')}
         </div>
       );
     }
@@ -1442,7 +1460,7 @@ export default function ProxyLogs() {
     if (selectedDebugTraceDetail?.loading) {
       return (
         <div className="text-sm text-muted-foreground">
-          加载追踪详情中...
+          {tr('pages.proxyLogs.traceDetailszh')}
         </div>
       );
     }
@@ -1458,7 +1476,7 @@ export default function ProxyLogs() {
     if (!selectedDebugTraceDetail?.data) {
       return (
         <div className="text-sm text-muted-foreground">
-          暂无追踪详情。
+          {tr('pages.proxyLogs.noTraceDetails')}
         </div>
       );
     }
@@ -1469,12 +1487,12 @@ export default function ProxyLogs() {
       <div className="grid gap-3">
         <Card>
           <CardHeader className="p-3 pb-2">
-            <CardTitle>基础信息</CardTitle>
+            <CardTitle>{tr('pages.proxyLogs.basicInfo')}</CardTitle>
           </CardHeader>
           <CardContent className="p-3 pt-0">
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
             <div className="grid min-w-0 gap-1">
-              <div className="text-xs text-muted-foreground">下游路径</div>
+              <div className="text-xs text-muted-foreground">{tr('pages.proxyLogs.downstreamPath')}</div>
               <div className="min-w-0 break-words text-sm font-medium">
                 {traceDetail.downstreamPath || "-"}
               </div>
@@ -1486,13 +1504,13 @@ export default function ProxyLogs() {
               </div>
             </div>
             <div className="grid min-w-0 gap-1">
-              <div className="text-xs text-muted-foreground">模型</div>
+              <div className="text-xs text-muted-foreground">{tr('components.modelAnalysisPanel.model')}</div>
               <div className="min-w-0 break-words text-sm font-medium">
                 {traceDetail.requestedModel || "-"}
               </div>
             </div>
             <div className="grid min-w-0 gap-1">
-              <div className="text-xs text-muted-foreground">最终上游路径</div>
+              <div className="text-xs text-muted-foreground">{tr('pages.proxyLogs.finalUpstreamPath')}</div>
               <div className="min-w-0 break-words text-sm font-medium">
                 {traceDetail.finalUpstreamPath || "-"}
               </div>
@@ -1503,31 +1521,31 @@ export default function ProxyLogs() {
 
         <div className="grid gap-2.5">
           {renderStoredDebugDetails(
-            "候选 endpoint",
+            tr('pages.proxyLogs.endpoint'),
             traceDetail.endpointCandidatesJson,
             {
-              copyLabel: "候选 endpoint",
+              copyLabel: tr('pages.proxyLogs.endpoint'),
             },
           )}
           {renderStoredDebugDetails(
-            "原始下游请求头",
+            tr('pages.proxyLogs.rawDownstreamRequestHeaders'),
             traceDetail.requestHeadersJson,
             {
-              copyLabel: "原始下游请求头",
+              copyLabel: tr('pages.proxyLogs.rawDownstreamRequestHeaders'),
             },
           )}
           {renderStoredDebugDetails(
-            "原始下游请求体",
+            tr('pages.proxyLogs.rawDownstreamRequestBody'),
             traceDetail.requestBodyJson,
             {
-              copyLabel: "原始下游请求体",
+              copyLabel: tr('pages.proxyLogs.rawDownstreamRequestBody'),
             },
           )}
           {renderStoredDebugDetails(
-            "最终响应",
+            tr('pages.proxyLogs.finalResponse'),
             traceDetail.finalResponseBodyJson,
             {
-              copyLabel: "最终响应",
+              copyLabel: tr('pages.proxyLogs.finalResponse'),
             },
           )}
         </div>
@@ -1538,7 +1556,7 @@ export default function ProxyLogs() {
           <div className="grid gap-2 p-3">
             {selectedDebugTraceDetail.data.attempts.length === 0 ? (
               <div className="text-sm text-muted-foreground">
-                暂无 attempt 记录
+                {tr('pages.proxyLogs.noneAttempt')}
               </div>
             ) : (
               selectedDebugTraceDetail.data.attempts.map(renderAttemptDetail)
@@ -1555,17 +1573,17 @@ export default function ProxyLogs() {
         {[
           {
             key: "all" as ProxyLogStatusFilter,
-            label: "全部",
+            label: tr('components.notificationPanel.all'),
             count: summary.totalCount,
           },
           {
             key: "success" as ProxyLogStatusFilter,
-            label: "成功",
+            label: tr('pages.checkinLog.success'),
             count: summary.successCount,
           },
           {
             key: "failed" as ProxyLogStatusFilter,
-            label: "失败",
+            label: tr('pages.checkinLog.failed'),
             count: summary.failedCount,
           },
         ].map((tab) => (
@@ -1592,7 +1610,7 @@ export default function ProxyLogs() {
           }}
         >
           <SelectTrigger>
-            <SelectValue placeholder="全部客户端" />
+            <SelectValue placeholder={tr('pages.proxyLogs.allclient')} />
           </SelectTrigger>
           <SelectContent>
             {resolvedClientOptions.map((option) => (
@@ -1610,7 +1628,7 @@ export default function ProxyLogs() {
           }}
         >
           <SelectTrigger>
-            <SelectValue placeholder="全部站点" />
+            <SelectValue placeholder={tr('pages.oAuthManagement.allsites')} />
           </SelectTrigger>
           <SelectContent>
             {siteOptions.map((option) => (
@@ -1620,7 +1638,7 @@ export default function ProxyLogs() {
         </Select>
       </div>
       <Label className="grid gap-1 text-xs text-muted-foreground">
-        <span>开始</span>
+        <span>{tr('pages.checkinLog.start')}</span>
         <Input
           type="datetime-local"
           value={fromInput}
@@ -1632,7 +1650,7 @@ export default function ProxyLogs() {
         />
       </Label>
       <Label className="grid gap-1 text-xs text-muted-foreground">
-        <span>结束</span>
+        <span>{tr('pages.checkinLog.end')}</span>
         <Input
           type="datetime-local"
           value={toInput}
@@ -1650,7 +1668,7 @@ export default function ProxyLogs() {
           setSearchInput(e.target.value);
           setPage(1);
         }}
-        placeholder="搜索模型、下游 Key、主分组、标签..."
+        placeholder={tr('pages.proxyLogs.searchmodelKeyPrimaryGroupTags')}
       />
       <Button variant="outline"
         type="button"
@@ -1665,7 +1683,7 @@ export default function ProxyLogs() {
           setPage(1);
         }}
       >
-        清空筛选
+        {tr('pages.checkinLog.clearfilter')}
       </Button>
     </div>
   );
@@ -1678,7 +1696,7 @@ export default function ProxyLogs() {
        
         onClick={() => setDebugDraftSettings(DEFAULT_PROXY_DEBUG_SETTINGS)}
       >
-        重置为默认值
+        {tr('pages.proxyLogs.resetDefault')}
       </Button>
       <Button
         type="button"
@@ -1686,7 +1704,7 @@ export default function ProxyLogs() {
         onClick={() => void handleSaveDebugSettings()}
         disabled={debugPanelSaving}
       >
-        {debugPanelSaving ? "保存中..." : "保存调试设置"}
+        {debugPanelSaving ? tr('pages.accounts.saving') : tr('pages.proxyLogs.savedebugsettings')}
       </Button>
     </div>
   );
@@ -1720,30 +1738,29 @@ export default function ProxyLogs() {
   const debugSettingsForm = (
     <div className="grid gap-3">
       <InfoNote>
-        只记录开启后的新请求。需要更精确定位时，再按
-        Session、客户端或模型定向过滤。
+        {tr('pages.proxyLogs.turnRequestSessionClientModeltargetedFilter')}
       </InfoNote>
 
       <Card>
         <CardHeader>
-          <CardTitle>记录内容</CardTitle>
+          <CardTitle>{tr('pages.proxyLogs.content2')}</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-3">
-          {renderDebugCheckbox("proxyDebugTraceEnabled", "开启调试追踪", "后续新请求会写入调试追踪，不会回补旧请求。", "trace-enabled")}
-          {renderDebugCheckbox("proxyDebugCaptureHeaders", "采集原始请求/响应头", "保留下游原始头和上游响应头，方便直接对照。", "capture-headers")}
-          {renderDebugCheckbox("proxyDebugCaptureBodies", "采集请求体和响应体", "默认不抓 body，只有显式开启后才记录。", "capture-bodies")}
-          {renderDebugCheckbox("proxyDebugCaptureStreamChunks", "采集流式原始分片", "适合定位 SSE / streaming 过程中的兼容问题。", "capture-stream-chunks")}
+          {renderDebugCheckbox("proxyDebugTraceEnabled", tr('pages.proxyLogs.turnOndebug2'), tr('pages.proxyLogs.newRequestsWillWrittenDebugTracesOld'), "trace-enabled")}
+          {renderDebugCheckbox("proxyDebugCaptureHeaders", tr('pages.proxyLogs.captureRawRequestResponseHeaders'), tr('pages.proxyLogs.keepRawDownstreamHeadersUpstreamResponseHeaders'), "capture-headers")}
+          {renderDebugCheckbox("proxyDebugCaptureBodies", tr('pages.proxyLogs.captureRequestResponseBodies'), tr('pages.proxyLogs.defaultBodyTurn'), "capture-bodies")}
+          {renderDebugCheckbox("proxyDebugCaptureStreamChunks", tr('pages.proxyLogs.streaming2'), tr('pages.proxyLogs.sseStreamingZh'), "capture-stream-chunks")}
         </CardContent>
       </Card>
 
       <ResponsiveFormGrid columns={2}>
         <Card>
           <CardHeader>
-            <CardTitle>定向过滤</CardTitle>
+            <CardTitle>{tr('pages.proxyLogs.targetedFilter')}</CardTitle>
           </CardHeader>
           <CardContent className="grid gap-3">
           <Label className="grid gap-2">
-            <span>目标 Session ID</span>
+            <span>{tr('pages.proxyLogs.targetSessionId')}</span>
             <Input
               type="text"
               value={debugDraftSettings.proxyDebugTargetSessionId}
@@ -1754,11 +1771,11 @@ export default function ProxyLogs() {
                   proxyDebugTargetSessionId: e.target.value,
                 }))
               }
-              placeholder="留空表示不过滤"
+              placeholder={tr('pages.proxyLogs.leaveEmptyDisableFiltering')}
             />
           </Label>
           <Label className="grid gap-2">
-            <span>目标客户端</span>
+            <span>{tr('pages.proxyLogs.targetClient')}</span>
             <Input
               type="text"
               value={debugDraftSettings.proxyDebugTargetClientKind}
@@ -1769,11 +1786,11 @@ export default function ProxyLogs() {
                   proxyDebugTargetClientKind: e.target.value,
                 }))
               }
-              placeholder="如 codex / claude_code"
+              placeholder={tr('pages.proxyLogs.codexClaudeCode')}
             />
           </Label>
           <Label className="grid gap-2">
-            <span>目标模型</span>
+            <span>{tr('pages.proxyLogs.targetmodel')}</span>
             <Input
               type="text"
               value={debugDraftSettings.proxyDebugTargetModel}
@@ -1784,7 +1801,7 @@ export default function ProxyLogs() {
                   proxyDebugTargetModel: e.target.value,
                 }))
               }
-              placeholder="如 gpt-4o"
+              placeholder={tr('pages.proxyLogs.gpt4o')}
             />
           </Label>
           </CardContent>
@@ -1792,11 +1809,11 @@ export default function ProxyLogs() {
 
         <Card>
           <CardHeader>
-            <CardTitle>保留策略</CardTitle>
+            <CardTitle>{tr('pages.proxyLogs.retentionPolicy')}</CardTitle>
           </CardHeader>
           <CardContent className="grid gap-3">
           <Label className="grid gap-2">
-            <span>保留时长（小时）</span>
+            <span>{tr('pages.proxyLogs.retentionDurationHours')}</span>
             <Input
               type="number"
               min={1}
@@ -1811,7 +1828,7 @@ export default function ProxyLogs() {
             />
           </Label>
           <Label className="grid gap-2">
-            <span>抓取体积上限（字节）</span>
+            <span>{tr('pages.proxyLogs.captureSizeLimitBytes')}</span>
             <Input
               type="number"
               min={1024}
@@ -1837,24 +1854,24 @@ export default function ProxyLogs() {
     <div className="animate-fade-in">
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h2 className="text-xl font-semibold">{tr("使用日志")}</h2>
+          <h2 className="text-xl font-semibold">{tr('app.usageLogs')}</h2>
           <div className="mt-1 text-sm text-muted-foreground">
-            按站点、客户端和时间筛选代理请求，并在需要时查看最近调试追踪。
+            {tr('pages.proxyLogs.sitesClientTimefilteractingrequestViewingrecentDebugTraces')}
           </div>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
           <ToneBadge tone="-muted">{activeSiteLabel}</ToneBadge>
           <ToneBadge tone="-success">
-            消耗总额 ${summary.totalCost.toFixed(4)}
+            {tr('pages.proxyLogs.totalSpend')}{summary.totalCost.toFixed(4)}
           </ToneBadge>
           <ToneBadge tone="-warning">
             {summary.totalTokensAll.toLocaleString()} tokens
           </ToneBadge>
           <Button type="button" variant="outline"
             onClick={() => setAutoRefresh((v) => !v)}
-            title={autoRefresh ? "关闭自动刷新" : "开启自动刷新（每2秒）"}
+            title={autoRefresh ? tr('pages.proxyLogs.closeautomaticrefresh') : tr('pages.proxyLogs.turnOnautomaticrefresh2seconds')}
           >
-            {autoRefresh ? "自动刷新中" : "自动刷新"}
+            {autoRefresh ? tr('pages.proxyLogs.automaticrefreshzh') : tr('pages.oAuthManagement.automaticrefresh')}
           </Button>
           <Button type="button" variant="outline"
             onClick={() => {
@@ -1863,7 +1880,7 @@ export default function ProxyLogs() {
             }}
             disabled={loading}
           >
-            {loading ? "加载中..." : "刷新"}
+            {loading ? tr('pages.oAuthManagement.loading') : tr('pages.accounts.refresh')}
           </Button>
         </div>
       </div>
@@ -1873,7 +1890,7 @@ export default function ProxyLogs() {
         mobileOpen={showFilters}
         onMobileOpen={() => setShowFilters(true)}
         onMobileClose={() => setShowFilters(false)}
-        mobileTitle={tr("筛选日志")}
+        mobileTitle={tr('pages.proxyLogs.filter')}
         mobileContent={filterControls}
         desktopContent={
           <div className="mb-3">
@@ -1885,9 +1902,9 @@ export default function ProxyLogs() {
       <Card className="mb-3">
         <CardHeader className="flex-row items-start justify-between gap-3 space-y-0">
           <div>
-            <CardTitle>代理调试追踪</CardTitle>
+            <CardTitle>{tr('pages.proxyLogs.actingdebug')}</CardTitle>
             <CardDescription>
-              未开启时不记录新追踪；追踪详情通过弹窗按需查看。
+              {tr('pages.proxyLogs.turnTraceDetailsViewing')}
             </CardDescription>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -1899,7 +1916,7 @@ export default function ProxyLogs() {
               data-debug-trace-panel-toggle
               onClick={() => setDebugTracePanelExpanded((current) => !current)}
             >
-              {debugTracePanelExpanded ? "收起追踪面板" : "展开追踪面板"}
+              {debugTracePanelExpanded ? tr('pages.proxyLogs.collapse') : tr('pages.proxyLogs.expand2')}
             </Button>
             <Button variant="outline"
               type="button"
@@ -1908,7 +1925,7 @@ export default function ProxyLogs() {
               onClick={() => void handleQuickToggleDebugTrace()}
               disabled={debugPanelSaving}
             >
-              {debugSettings.proxyDebugTraceEnabled ? "关闭调试" : "开启调试"}
+              {debugSettings.proxyDebugTraceEnabled ? tr('pages.proxyLogs.closedebug') : tr('pages.proxyLogs.turnOndebug')}
             </Button>
             <Button variant="outline"
               type="button"
@@ -1919,7 +1936,7 @@ export default function ProxyLogs() {
                 setShowDebugSettingsModal(true);
               }}
             >
-              调试设置
+              {tr('pages.proxyLogs.debugsettings')}
             </Button>
             <Button variant="outline"
               type="button"
@@ -1928,7 +1945,7 @@ export default function ProxyLogs() {
               onClick={() => void loadDebugState()}
               disabled={debugPanelLoading}
             >
-              {debugPanelLoading ? "刷新中..." : "刷新追踪"}
+              {debugPanelLoading ? tr('pages.downstreamKeys.refreshzh') : tr('pages.proxyLogs.refresh')}
             </Button>
           </div>
         </CardHeader>
@@ -1936,29 +1953,29 @@ export default function ProxyLogs() {
         <CardContent className="grid gap-3">
         <div className="flex flex-wrap items-center gap-4">
           <CompactSummaryMetric
-            label="状态"
-            value={debugSettings.proxyDebugTraceEnabled ? "已开启" : "未开启"}
+            label={tr('components.notificationPanel.status')}
+            value={debugSettings.proxyDebugTraceEnabled ? tr('pages.proxyLogs.turn3') : tr('pages.proxyLogs.turn2')}
           />
           <CompactSummaryMetric
-            label="最近追踪"
+            label={tr('pages.proxyLogs.recentTraces')}
             value={`${debugTraces.length} 条`}
           />
           <CompactSummaryMetric
-            label="最新时间"
+            label={tr('pages.proxyLogs.time')}
             value={
               latestDebugTrace
                 ? formatDateTimeLocal(latestDebugTrace.createdAt)
-              : "暂无"
+              : tr('pages.proxyLogs.none')
             }
           />
         </div>
 
         <div className="grid gap-1 text-xs text-muted-foreground">
           <div>
-            记录内容：{formatProxyDebugCaptureSummary(debugSettings)}
+            {tr('pages.proxyLogs.content')}{formatProxyDebugCaptureSummary(debugSettings)}
           </div>
           <div>
-            过滤范围：{formatProxyDebugTargetSummary(debugSettings)}
+            {tr('pages.proxyLogs.filterRange')}{formatProxyDebugTargetSummary(debugSettings)}
           </div>
         </div>
         </CardContent>
@@ -1972,30 +1989,29 @@ export default function ProxyLogs() {
           <Card>
             <CardHeader className="flex-row items-center justify-between gap-3 space-y-0">
               <div>
-                <CardTitle>最近调试追踪</CardTitle>
+                <CardTitle>{tr('pages.proxyLogs.recentDebugTraces')}</CardTitle>
                 <CardDescription>
-                  最多抓最近 20 条，列表分页每页 5
-                  条；打开详情后各段内容可按需展开和收起。
+                  {tr('pages.proxyLogs.20Items5ItemsOpendetailsContentExpand')}
                 </CardDescription>
               </div>
               <div className="text-xs text-muted-foreground">
                 {debugSettings.proxyDebugTraceEnabled
-                  ? "开启中，结果会自动刷新"
-                  : "尚未开启"}
+                  ? tr('pages.proxyLogs.turnOnzhAutomaticrefresh')
+                  : tr('pages.proxyLogs.turn')}
               </div>
             </CardHeader>
             <CardContent>
 
             {debugPanelLoading && debugTraces.length === 0 ? (
               <div className="pb-3 text-sm text-muted-foreground">
-                加载调试追踪中...
+                {tr('pages.proxyLogs.debugZh')}
               </div>
             ) : debugTraces.length === 0 ? (
               <Alert>
                 <AlertDescription>
                 {debugSettings.proxyDebugTraceEnabled
-                  ? "暂时还没有新追踪。这里只显示开启后产生的新请求，等下一次代理请求进入就会出现在这里。"
-                  : "调试追踪尚未开启。点击上方“开启调试”或“调试设置”后，新的代理请求会出现在这里。"}
+                  ? tr('pages.proxyLogs.turnRequestActingrequestNow')
+                  : tr('pages.proxyLogs.debugTurnTurnOndebugDebugsettingsActingrequestNow')}
                 </AlertDescription>
               </Alert>
             ) : isMobile ? (
@@ -2013,24 +2029,24 @@ export default function ProxyLogs() {
                        
                         onClick={() => openDebugTraceDetailModal(trace.id)}
                       >
-                        查看详情
+                        {tr('pages.proxyLogs.viewingdetails')}
                       </Button>
                     }
                   >
                     <MobileField
-                      label="模型"
+                      label={tr('components.modelAnalysisPanel.model')}
                       value={trace.requestedModel || "-"}
                     />
                     <MobileField
-                      label="下游路径"
+                      label={tr('pages.proxyLogs.downstreamPath')}
                       value={trace.downstreamPath || "-"}
                     />
                     <MobileField
-                      label="上游路径"
+                      label={tr('pages.proxyLogs.upstreamPath')}
                       value={trace.finalUpstreamPath || "-"}
                     />
                     <MobileField
-                      label="客户端"
+                      label={tr('pages.proxyLogs.client')}
                       value={trace.clientKind || "-"}
                     />
                   </MobileCard>
@@ -2040,14 +2056,14 @@ export default function ProxyLogs() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>时间</TableHead>
+                    <TableHead>{tr('pages.checkinLog.time')}</TableHead>
                     <TableHead>Session</TableHead>
-                    <TableHead>模型</TableHead>
-                    <TableHead>下游路径</TableHead>
-                    <TableHead>上游路径</TableHead>
-                    <TableHead>客户端</TableHead>
-                    <TableHead>{tr("状态")}</TableHead>
-                    <TableHead className="text-right">操作</TableHead>
+                    <TableHead>{tr('components.modelAnalysisPanel.model')}</TableHead>
+                    <TableHead>{tr('pages.proxyLogs.downstreamPath')}</TableHead>
+                    <TableHead>{tr('pages.proxyLogs.upstreamPath')}</TableHead>
+                    <TableHead>{tr('pages.proxyLogs.client')}</TableHead>
+                    <TableHead>{tr('components.notificationPanel.status')}</TableHead>
+                    <TableHead className="text-right">{tr('pages.accounts.actions2')}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -2078,7 +2094,7 @@ export default function ProxyLogs() {
                          
                           onClick={() => openDebugTraceDetailModal(trace.id)}
                         >
-                          查看详情
+                          {tr('pages.proxyLogs.viewingdetails')}
                         </Button>
                       </TableCell>
                     </TableRow>
@@ -2089,37 +2105,43 @@ export default function ProxyLogs() {
             {debugTraces.length > 0 ? (
               <div className="mt-3 flex flex-wrap items-center gap-3">
                 <div className="mr-auto text-xs text-muted-foreground">
-                  显示第 {debugTraceDisplayedStart} - {debugTraceDisplayedEnd}{" "}
-                  条，共 {debugTraces.length} 条
+                  {tr('pages.proxyLogs.showing')} {debugTraceDisplayedStart} - {debugTraceDisplayedEnd}{" "}
+                  {tr('pages.proxyLogs.itemsTotal')} {debugTraces.length} {tr('pages.programLogs.items')}
                 </div>
-                <ButtonGroup>
-                <Button type="button" variant="outline" size="icon"
-                  aria-label="调试追踪上一页"
-                  disabled={safeDebugTracePage <= 1}
-                  onClick={() => setDebugTracePage((current) => current - 1)}
-                >
-                  <ChevronLeft className="size-4" />
-                </Button>
+                <Pagination className="mx-0 w-auto">
+                  <PaginationContent>
+                    <PaginationItem>
+                      <PaginationPrevious
+                        type="button"
+                        aria-label={tr('pages.proxyLogs.previousDebugTracePage')}
+                        disabled={safeDebugTracePage <= 1}
+                        onClick={() => setDebugTracePage((current) => current - 1)}
+                      />
+                    </PaginationItem>
                 {Array.from(
                   { length: debugTraceTotalPages },
                   (_, index) => index + 1,
                 ).map((num) => (
-                  <Button type="button" variant="outline"
-                    key={`debug-trace-page-${num}`}
-                   
-                    onClick={() => setDebugTracePage(num)}
-                  >
-                    {num}
-                  </Button>
+                  <PaginationItem key={`debug-trace-page-${num}`}>
+                    <PaginationLink
+                      type="button"
+                      isActive={num === safeDebugTracePage}
+                      onClick={() => setDebugTracePage(num)}
+                    >
+                      {num}
+                    </PaginationLink>
+                  </PaginationItem>
                 ))}
-                <Button type="button" variant="outline" size="icon"
-                  aria-label="调试追踪下一页"
-                  disabled={safeDebugTracePage >= debugTraceTotalPages}
-                  onClick={() => setDebugTracePage((current) => current + 1)}
-                >
-                  <ChevronRight className="size-4" />
-                </Button>
-                </ButtonGroup>
+                    <PaginationItem>
+                      <PaginationNext
+                        type="button"
+                        aria-label={tr('pages.proxyLogs.nextDebugTracePage')}
+                        disabled={safeDebugTracePage >= debugTraceTotalPages}
+                        onClick={() => setDebugTracePage((current) => current + 1)}
+                      />
+                    </PaginationItem>
+                  </PaginationContent>
+                </Pagination>
               </div>
             ) : null}
             </CardContent>
@@ -2134,8 +2156,8 @@ export default function ProxyLogs() {
             setShowDebugSettingsModal(false);
             setDebugDraftSettings(debugSettings);
           }}
-          title="调试设置"
-          closeLabel="关闭调试设置"
+          title={tr('pages.proxyLogs.debugsettings')}
+          closeLabel={tr('pages.proxyLogs.closedebugsettings')}
           side="right"
         >
           <div className="grid gap-4 p-4">
@@ -2149,7 +2171,7 @@ export default function ProxyLogs() {
             setShowDebugSettingsModal(false);
             setDebugDraftSettings(debugSettings);
           }}
-          title="调试设置"
+          title={tr('pages.proxyLogs.debugsettings')}
           footer={debugSettingsFooter}
           maxWidth={880}
           closeOnBackdrop
@@ -2163,8 +2185,8 @@ export default function ProxyLogs() {
         <MobileDrawer
           open={showDebugTraceDetailModal}
           onClose={closeDebugTraceDetailModal}
-          title={selectedDebugTraceListItem?.sessionId || "追踪详情"}
-          closeLabel="关闭追踪详情"
+          title={selectedDebugTraceListItem?.sessionId || tr('pages.proxyLogs.traceDetails')}
+          closeLabel={tr('pages.proxyLogs.closetraceDetails')}
           side="right"
         >
           <div className="grid gap-4 p-4">
@@ -2175,7 +2197,7 @@ export default function ProxyLogs() {
         <CenteredModal
           open={showDebugTraceDetailModal}
           onClose={closeDebugTraceDetailModal}
-          title={selectedDebugTraceListItem?.sessionId || "追踪详情"}
+          title={selectedDebugTraceListItem?.sessionId || tr('pages.proxyLogs.traceDetails')}
           maxWidth={920}
           closeOnBackdrop
           closeOnEscape
@@ -2186,7 +2208,7 @@ export default function ProxyLogs() {
 
       {hasInvalidTimeRange && (
         <Alert variant="destructive" className="mb-3">
-          <AlertDescription>结束时间必须晚于开始时间</AlertDescription>
+          <AlertDescription>{tr('pages.checkinLog.endtimeStarttime')}</AlertDescription>
         </Alert>
       )}
 
@@ -2241,7 +2263,7 @@ export default function ProxyLogs() {
                      
                      
                     >
-                      {log.status === "success" ? "成功" : "失败"}
+                      {log.status === "success" ? tr('pages.checkinLog.success') : tr('pages.checkinLog.failed')}
                     </ToneBadge>
                   }
                   footerActions={
@@ -2250,11 +2272,11 @@ export default function ProxyLogs() {
                      
                       onClick={() => handleToggleExpand(log.id)}
                     >
-                      {isExpanded ? "收起详情" : "详情"}
+                      {isExpanded ? tr('pages.proxyLogs.collapsedetails') : tr('pages.accounts.details')}
                     </Button>
                   }
                 >
-                  <div className="mobile-inline-meta-row">
+                  <div className="flex flex-wrap items-center gap-1.5">
                     <SiteBadgeLink
                       siteId={siteIdByName.get(
                         String(log.siteName || "").trim(),
@@ -2295,28 +2317,40 @@ export default function ProxyLogs() {
                       </ToneBadge>
                     ) : null}
                   </div>
-                  <div className="mobile-summary-grid">
-                    <div className="mobile-summary-metric">
-                      <div className="mobile-summary-metric-label">用时</div>
-                      <div className="mobile-summary-metric-value">
+                  <div className="grid grid-cols-2 gap-x-2.5 gap-y-2">
+                    <div className="grid min-w-0 gap-0.5 rounded-md border bg-muted/40 px-2.5 py-2">
+                      <div className="inline-flex items-center gap-1 text-[10px] leading-tight text-primary">
+                        <Timer className="size-3" />
+                        {tr('pages.proxyLogs.duration')}
+                      </div>
+                      <div className="break-words text-sm font-semibold leading-snug">
                         {formatLatency(log.latencyMs)}
                       </div>
                     </div>
-                    <div className="mobile-summary-metric">
-                      <div className="mobile-summary-metric-label">输入</div>
-                      <div className="mobile-summary-metric-value">
+                    <div className="grid min-w-0 gap-0.5 rounded-md border bg-muted/40 px-2.5 py-2">
+                      <div className="inline-flex items-center gap-1 text-[10px] leading-tight text-muted-foreground">
+                        <Hash className="size-3" />
+                        {tr('pages.proxyLogs.input')}
+                      </div>
+                      <div className="break-words text-sm font-semibold leading-snug">
                         {formatProxyLogTokenValue(log.promptTokens)}
                       </div>
                     </div>
-                    <div className="mobile-summary-metric">
-                      <div className="mobile-summary-metric-label">输出</div>
-                      <div className="mobile-summary-metric-value">
+                    <div className="grid min-w-0 gap-0.5 rounded-md border bg-muted/40 px-2.5 py-2">
+                      <div className="inline-flex items-center gap-1 text-[10px] leading-tight text-muted-foreground">
+                        <Hash className="size-3" />
+                        {tr('pages.proxyLogs.output')}
+                      </div>
+                      <div className="break-words text-sm font-semibold leading-snug">
                         {formatProxyLogTokenValue(log.completionTokens)}
                       </div>
                     </div>
-                    <div className="mobile-summary-metric">
-                      <div className="mobile-summary-metric-label">花费</div>
-                      <div className="mobile-summary-metric-value">
+                    <div className="grid min-w-0 gap-0.5 rounded-md border bg-muted/40 px-2.5 py-2">
+                      <div className="inline-flex items-center gap-1 text-[10px] leading-tight text-primary">
+                        <Coins className="size-3" />
+                        {tr('pages.proxyLogs.cost')}
+                      </div>
+                      <div className="break-words text-sm font-semibold leading-snug">
                         {typeof log.estimatedCost === "number"
                           ? `$${log.estimatedCost.toFixed(6)}`
                           : "-"}
@@ -2326,11 +2360,11 @@ export default function ProxyLogs() {
                   {isExpanded ? (
                     <div className="mt-3 grid gap-2">
                       <MobileField
-                        label="时间"
+                        label={tr('pages.checkinLog.time')}
                         value={formatDateTimeLocal(log.createdAt)}
                       />
                       <MobileField
-                        label="站点"
+                        label={tr('components.searchModal.sites2')}
                         value={
                           <SiteBadgeLink
                             siteId={siteIdByName.get(
@@ -2342,20 +2376,20 @@ export default function ProxyLogs() {
                         }
                       />
                       {streamModeLabel ? (
-                        <MobileField label="模式" value={streamModeLabel} />
+                        <MobileField label={tr('pages.modelTester.mode')} value={streamModeLabel} />
                       ) : null}
                       {firstByteLabel ? (
                         <MobileField
-                          label="首字"
+                          label={tr('pages.proxyLogs.ttft2')}
                           value={firstByteLabel.replace(/^首字\s*/, "")}
                         />
                       ) : null}
                       <MobileField
-                        label="重试"
+                        label={tr('pages.dashboard.retry')}
                         value={log.retryCount > 0 ? log.retryCount : 0}
                       />
                       <MobileField
-                        label="用量来源"
+                        label={tr('pages.proxyLogs.usageSource')}
                         value={
                           formatProxyLogUsageSource(
                             detailLog.usageSource ?? pathMeta.usageSource,
@@ -2364,7 +2398,7 @@ export default function ProxyLogs() {
                       />
                       {detailState?.loading && (
                         <div className="text-muted-foreground">
-                          加载详情中...
+                          {tr('pages.proxyLogs.detailszh')}
                         </div>
                       )}
                       {detailState?.error && (
@@ -2378,7 +2412,7 @@ export default function ProxyLogs() {
                         </div>
                       )}
                       <MobileField
-                        label="客户端详情"
+                        label={tr('pages.proxyLogs.clientDetails')}
                         value={renderProxyLogClientCell(detailLog, {
                           includeGeneric: true,
                         })}
@@ -2413,16 +2447,16 @@ export default function ProxyLogs() {
             <TableHeader>
               <TableRow>
                 <TableHead className="w-8" />
-                <TableHead>时间</TableHead>
-                <TableHead>模型</TableHead>
-                <TableHead>站点</TableHead>
-                <TableHead>客户端</TableHead>
-                <TableHead>{tr("状态")}</TableHead>
-                <TableHead className="text-center">用时</TableHead>
-                <TableHead className="text-right">输入</TableHead>
-                <TableHead className="text-right">输出</TableHead>
-                <TableHead className="text-right">花费</TableHead>
-                <TableHead className="text-center">重试</TableHead>
+                <TableHead>{tr('pages.checkinLog.time')}</TableHead>
+                <TableHead>{tr('components.modelAnalysisPanel.model')}</TableHead>
+                <TableHead>{tr('components.searchModal.sites2')}</TableHead>
+                <TableHead>{tr('pages.proxyLogs.client')}</TableHead>
+                <TableHead>{tr('components.notificationPanel.status')}</TableHead>
+                <TableHead className="text-center">{tr('pages.proxyLogs.duration')}</TableHead>
+                <TableHead className="text-right">{tr('pages.proxyLogs.input')}</TableHead>
+                <TableHead className="text-right">{tr('pages.proxyLogs.output')}</TableHead>
+                <TableHead className="text-right">{tr('pages.proxyLogs.cost')}</TableHead>
+                <TableHead className="text-center">{tr('pages.dashboard.retry')}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -2510,7 +2544,7 @@ export default function ProxyLogs() {
                          
                          
                         >
-                          {log.status === "success" ? "成功" : "失败"}
+                          {log.status === "success" ? tr('pages.checkinLog.success') : tr('pages.checkinLog.failed')}
                         </ToneBadge>
                       </TableCell>
                       <TableCell className="text-center">
@@ -2550,11 +2584,11 @@ export default function ProxyLogs() {
                               <div className="animate-fade-in border-y px-5 py-3.5 pl-10 text-xs leading-loose text-muted-foreground">
                                 <div className="flex gap-1.5">
                                   <span className="shrink-0 font-semibold text-amber-600">
-                                    日志详情
+                                    {tr('pages.proxyLogs.logDetails')}
                                   </span>
                                   <div>
                                     <div>
-                                      请求模型:{" "}
+                                      {tr('pages.proxyLogs.requestmodel')}{" "}
                                       <strong className="text-foreground">
                                         {detailLog.modelRequested}
                                       </strong>
@@ -2562,21 +2596,21 @@ export default function ProxyLogs() {
                                         detailLog.modelActual !==
                                           detailLog.modelRequested && (
                                           <>
-                                            {" -> "}实际模型:{" "}
+                                            {" -> "}{tr('pages.proxyLogs.model')}{" "}
                                             <strong className="text-foreground">
                                               {detailLog.modelActual}
                                             </strong>
                                           </>
                                         )}
-                                      ，状态:{" "}
+                                      {tr('pages.proxyLogs.status')}{" "}
                                       <strong className={detailLog.status === "success" ? "text-emerald-600" : "text-destructive"}>
                                         {detailLog.status === "success"
-                                          ? "成功"
-                                          : "失败"}
+                                          ? tr('pages.checkinLog.success')
+                                          : tr('pages.checkinLog.failed')}
                                       </strong>
                                       {streamModeLabel && (
                                         <>
-                                          ，模式:{" "}
+                                          {tr('pages.proxyLogs.mode')}{" "}
                                           <strong className="text-foreground">
                                             {streamModeLabel}
                                           </strong>
@@ -2584,7 +2618,7 @@ export default function ProxyLogs() {
                                       )}
                                       {firstByteLabel && (
                                         <>
-                                          ，首字:{" "}
+                                          {tr('pages.proxyLogs.ttft')}{" "}
                                           <ToneBadge tone={firstByteTone(detailLog.firstByteLatencyMs)}>
                                             {formatLatency(
                                               detailLog.firstByteLatencyMs ?? 0,
@@ -2592,26 +2626,26 @@ export default function ProxyLogs() {
                                           </ToneBadge>
                                         </>
                                       )}
-                                      ，用时:{" "}
+                                      {tr('pages.proxyLogs.duration2')}{" "}
                                       <ToneBadge tone={latencyTone(detailLog.latencyMs)}>
                                         {formatLatency(detailLog.latencyMs)}
                                       </ToneBadge>
                                       {detail && (
                                         <>
-                                          ，站点:{" "}
+                                          {tr('pages.proxyLogs.sites2')}{" "}
                                           <strong className="text-foreground">
-                                            {detailLog.siteName || "未知站点"}
+                                            {detailLog.siteName || tr('pages.proxyLogs.unknownSite')}
                                           </strong>
-                                          ，账号:{" "}
+                                          {tr('pages.proxyLogs.accounts')}{" "}
                                           <strong className="text-foreground">
-                                            {detailLog.username || "未知账号"}
+                                            {detailLog.username || tr('pages.proxyLogs.unknownAccount')}
                                           </strong>
                                         </>
                                       )}
                                     </div>
                                     {detailState?.loading && (
                                       <div className="text-muted-foreground">
-                                        加载详情中...
+                                        {tr('pages.proxyLogs.detailszh')}
                                       </div>
                                     )}
                                     {detailState?.error && (
@@ -2625,15 +2659,15 @@ export default function ProxyLogs() {
                                       </div>
                                     )}
                                     <div className="text-muted-foreground">
-                                      用量来源：
+                                      {tr('pages.proxyLogs.usageSource2')}
                                       {formatProxyLogUsageSource(
                                         detailLog.usageSource ??
                                           pathMeta.usageSource,
-                                      ) || "未知"}
+                                      ) || tr('pages.accounts.unknown2')}
                                     </div>
                                     <div className="flex items-start gap-1.5">
                                       <span className="shrink-0 text-muted-foreground">
-                                        客户端
+                                        {tr('pages.proxyLogs.client')}
                                       </span>
                                       <div className="min-w-0">
                                         {renderProxyLogClientCell(detailLog, {
@@ -2654,7 +2688,7 @@ export default function ProxyLogs() {
                                     .cacheReadTokens > 0 && (
                                     <div className="flex gap-1.5">
                                       <span className="shrink-0 font-semibold text-amber-600">
-                                        缓存 Tokens
+                                        {tr('pages.proxyLogs.tokens2')}
                                       </span>
                                       <span>
                                         {detailLog.billingDetails.usage.cacheReadTokens.toLocaleString()}
@@ -2667,7 +2701,7 @@ export default function ProxyLogs() {
                                     .cacheCreationTokens > 0 && (
                                     <div className="flex gap-1.5">
                                       <span className="shrink-0 font-semibold text-amber-600">
-                                        缓存创建 Tokens
+                                        {tr('pages.proxyLogs.tokens')}
                                       </span>
                                       <span>
                                         {detailLog.billingDetails.usage.cacheCreationTokens.toLocaleString()}
@@ -2677,7 +2711,7 @@ export default function ProxyLogs() {
 
                                 <div className="flex gap-1.5">
                                   <span className="shrink-0 font-semibold text-blue-600">
-                                    计费过程
+                                    {tr('pages.proxyLogs.billingProcess')}
                                   </span>
                                   {billingProcessLines.length > 0 ? (
                                     <div className="flex flex-col gap-0.5">
@@ -2691,22 +2725,22 @@ export default function ProxyLogs() {
                                         ),
                                       )}
                                       <span className="text-muted-foreground">
-                                        仅供参考，以实际扣费为准
+                                        {tr('pages.proxyLogs.referenceOnlyActualBillingPrevails')}
                                       </span>
                                     </div>
                                   ) : (
                                     <span>
-                                      输入{" "}
+                                      {tr('pages.proxyLogs.input')}{" "}
                                       {formatProxyLogTokenValue(
                                         detailLog.promptTokens,
                                       )}{" "}
                                       tokens
-                                      {" + "}输出{" "}
+                                      {" + "}{tr('pages.proxyLogs.output')}{" "}
                                       {formatProxyLogTokenValue(
                                         detailLog.completionTokens,
                                       )}{" "}
                                       tokens
-                                      {" = "}总计{" "}
+                                      {" = "}{tr('pages.proxyLogs.total')}{" "}
                                       {formatProxyLogTokenValue(
                                         detailLog.totalTokens,
                                       )}{" "}
@@ -2714,7 +2748,7 @@ export default function ProxyLogs() {
                                       {typeof detailLog.estimatedCost ===
                                         "number" && (
                                         <>
-                                          ，预估费用{" "}
+                                          {tr('pages.proxyLogs.estimatedCost')}{" "}
                                           <strong className="text-foreground">
                                             $
                                             {detailLog.estimatedCost.toFixed(6)}
@@ -2727,7 +2761,7 @@ export default function ProxyLogs() {
 
                                 <div className="flex items-center gap-1.5">
                                   <span className="shrink-0 font-semibold text-primary">
-                                    下游请求路径
+                                    {tr('pages.proxyLogs.downstreamRequestPath')}
                                   </span>
                                   {detail && pathMeta.downstreamPath ? (
                                     <code className="rounded border bg-card px-2 py-px font-mono text-xs">
@@ -2735,14 +2769,14 @@ export default function ProxyLogs() {
                                     </code>
                                   ) : (
                                     <span className="text-muted-foreground">
-                                      未记录
+                                      {tr('pages.proxyLogs.notRecorded')}
                                     </span>
                                   )}
                                 </div>
 
                                 <div className="flex items-center gap-1.5">
                                   <span className="shrink-0 font-semibold text-primary">
-                                    上游请求路径
+                                    {tr('pages.proxyLogs.upstreamRequestPath')}
                                   </span>
                                   {detail && pathMeta.upstreamPath ? (
                                     <code className="rounded border bg-card px-2 py-px font-mono text-xs">
@@ -2750,7 +2784,7 @@ export default function ProxyLogs() {
                                     </code>
                                   ) : (
                                     <span className="text-muted-foreground">
-                                      未记录
+                                      {tr('pages.proxyLogs.notRecorded')}
                                     </span>
                                   )}
                                 </div>
@@ -2759,7 +2793,7 @@ export default function ProxyLogs() {
                                   pathMeta.errorMessage.trim().length > 0 && (
                                     <div className="flex gap-1.5">
                                       <span className="shrink-0 font-semibold text-destructive">
-                                        错误信息
+                                        {tr('pages.proxyLogs.mistakeinfo')}
                                       </span>
                                       <span className="whitespace-pre-wrap text-destructive">
                                         {pathMeta.errorMessage}
@@ -2779,41 +2813,44 @@ export default function ProxyLogs() {
           </Table>
         )}
         {!loading && logs.length === 0 && (
-          <EmptyStateBlock title={tr("暂无使用日志")} description="当请求通过代理时，日志将显示在这里" />
+          <EmptyStateBlock title={tr('pages.proxyLogs.noUsageLogs')} description={tr('pages.proxyLogs.requestActing')} />
         )}
       </Card>
 
       {total > 0 && (
         <div className="mt-4 flex flex-wrap items-center gap-3">
           <div className="mr-auto text-xs text-muted-foreground">
-            显示第 {displayedStart} - {displayedEnd} 条，共 {total} 条
+            {tr('pages.proxyLogs.showing')} {displayedStart} - {displayedEnd} {tr('pages.proxyLogs.itemsTotal')} {total} {tr('pages.programLogs.items')}
           </div>
-          <ButtonGroup>
-          <Button type="button" variant="outline" size="icon"
-            disabled={safePage <= 1}
-            onClick={() => setPage((current) => current - 1)}
-            aria-label="上一页"
-          >
-            <ChevronLeft className="size-4" />
-          </Button>
+          <Pagination className="mx-0 w-auto">
+            <PaginationContent>
+              <PaginationItem>
+                <PaginationPrevious
+                  type="button"
+                  disabled={safePage <= 1}
+                  onClick={() => setPage((current) => current - 1)}
+                  aria-label={tr('pages.models.previousPage')}
+                />
+              </PaginationItem>
           {pageNumbers.map((num) => (
-            <Button type="button" variant={num === safePage ? "secondary" : "outline"}
-              key={num}
-              onClick={() => setPage(num)}
-            >
-              {num}
-            </Button>
+            <PaginationItem key={num}>
+              <PaginationLink type="button" isActive={num === safePage} onClick={() => setPage(num)}>
+                {num}
+              </PaginationLink>
+            </PaginationItem>
           ))}
-          <Button type="button" variant="outline" size="icon"
-            disabled={safePage >= totalPages}
-            onClick={() => setPage((current) => current + 1)}
-            aria-label="下一页"
-          >
-            <ChevronRight className="size-4" />
-          </Button>
-          </ButtonGroup>
+              <PaginationItem>
+                <PaginationNext
+                  type="button"
+                  disabled={safePage >= totalPages}
+                  onClick={() => setPage((current) => current + 1)}
+                  aria-label={tr('pages.models.nextPage')}
+                />
+              </PaginationItem>
+            </PaginationContent>
+          </Pagination>
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <span>每页条数</span>
+            <span>{tr('pages.proxyLogs.rowsPerPage')}</span>
               <Select
                 value={String(pageSize)}
                 onValueChange={(nextValue) => {

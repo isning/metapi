@@ -15,6 +15,7 @@ describe('shadcn overlay layering', () => {
     'src/web/components/ui/select/index.tsx',
     'src/web/components/ui/dropdown-menu/index.tsx',
     'src/web/components/ui/popover/index.tsx',
+    'src/web/components/ui/hover-card/index.tsx',
     'src/web/components/ui/context-menu/index.tsx',
     'src/web/components/ui/tooltip/index.tsx',
   ])('uses the shared popover layer in %s', (filePath) => {
@@ -44,6 +45,7 @@ describe('shadcn overlay layering', () => {
     ['src/web/components/ui/select/index.tsx', 'popoverMotionClassName'],
     ['src/web/components/ui/dropdown-menu/index.tsx', 'popoverMotionClassName'],
     ['src/web/components/ui/popover/index.tsx', 'popoverMotionClassName'],
+    ['src/web/components/ui/hover-card/index.tsx', 'popoverMotionClassName'],
     ['src/web/components/ui/context-menu/index.tsx', 'popoverMotionClassName'],
     ['src/web/components/ui/tooltip/index.tsx', 'popoverMotionClassName'],
   ])('keeps overlay motion wired in %s', (filePath, motionContract) => {
@@ -71,5 +73,20 @@ describe('shadcn overlay layering', () => {
     expect(source).toContain('centeredContentMotionClassName');
     expect(source).not.toContain('-translate-x-1/2');
     expect(source).not.toContain('-translate-y-1/2');
+  });
+
+  it.each([
+    ['src/web/components/ui/dropdown-menu/index.tsx', 'DropdownMenuPrimitive'],
+    ['src/web/components/ui/context-menu/index.tsx', 'ContextMenuPrimitive'],
+  ])('portals submenu content so nested menus are not clipped in %s', (filePath, primitiveName) => {
+    const source = readFileSync(filePath, 'utf8');
+    const subContentStart = source.indexOf('const SubContent');
+    const contentStart = source.indexOf('const Content');
+    const subContentSource = source.slice(subContentStart, contentStart);
+
+    expect(subContentStart).toBeGreaterThanOrEqual(0);
+    expect(contentStart).toBeGreaterThan(subContentStart);
+    expect(subContentSource).toContain(`<${primitiveName}.Portal>`);
+    expect(subContentSource).toContain(`<${primitiveName}.SubContent`);
   });
 });

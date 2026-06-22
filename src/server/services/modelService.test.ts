@@ -398,16 +398,54 @@ describe('rebuildTokenRoutesFromAvailability', () => {
     expect(rebuild.createdRoutes).toBe(1);
 
     const active = await getActiveRouteGraphVersion();
+    const generatedProduct = active?.sourceGraph.nodes.find((node) => (
+      node.type === 'route_endpoint'
+      && node.ownership === 'auto_generated'
+      && node.id === 'route-endpoint:product:auto-model:auto-generated-model'
+    ));
+    expect(generatedProduct).toBeDefined();
+    const generatedRouteId = generatedProduct && 'routeId' in generatedProduct ? generatedProduct.routeId : null;
+    const generatedSupply = active?.sourceGraph.nodes.find((node) => (
+      node.type === 'route_endpoint'
+      && node.endpointKind === 'supply'
+      && node.routeId === generatedRouteId
+    ));
+    expect(generatedSupply?.id).toEqual(expect.stringMatching(/^route-endpoint:supply:upstream-model:/));
     expect(active?.sourceGraph.nodes).toEqual(expect.arrayContaining([
       expect.objectContaining({
         id: 'filter:manual:reasoning',
         ownership: 'manual',
       }),
       expect.objectContaining({
-        type: 'entry',
+        id: 'route-endpoint:product:auto-model:auto-generated-model',
+        type: 'route_endpoint',
+        endpointKind: 'route_product',
         ownership: 'auto_generated',
-        match: expect.objectContaining({
-          requestedModelPattern: 'auto-generated-model',
+      }),
+      expect.objectContaining({
+        id: `pool:legacy:${generatedRouteId}`,
+        type: 'model_endpoint',
+        ownership: 'auto_generated',
+      }),
+    ]));
+    expect(active?.sourceGraph.macros).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'auto-model:auto-generated-model',
+        kind: 'candidate_selector',
+        ownership: 'auto_generated',
+        config: expect.objectContaining({
+          surface: expect.objectContaining({
+            entry: expect.objectContaining({
+              match: expect.objectContaining({
+                requestedModelPattern: 'auto-generated-model',
+              }),
+            }),
+          }),
+          groups: [
+            expect.objectContaining({
+              input: { kind: 'route_endpoints', endpointIds: [generatedSupply?.id] },
+            }),
+          ],
         }),
       }),
     ]));

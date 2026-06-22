@@ -11,6 +11,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../co
 import ToneBadge from '../components/ToneBadge.js';
 import { cn } from "../lib/utils.js";
 
+import { tr } from '../i18n.js';
 const ModelAnalysisPanel = lazy(
   () => import("../components/ModelAnalysisPanel.js"),
 );
@@ -23,11 +24,11 @@ const SiteTrendChart = lazy(
 
 function getGreeting(): string {
   const hour = new Date().getHours();
-  if (hour < 6) return "🌙 夜深了";
-  if (hour < 11) return "☀️ 早上好";
-  if (hour < 13) return "👋 中午好";
-  if (hour < 18) return "🌤️ 下午好";
-  return "🌙 晚上好";
+  if (hour < 6) return tr('pages.dashboard.itSLateNight');
+  if (hour < 11) return tr('pages.dashboard.goodMorning');
+  if (hour < 13) return tr('pages.dashboard.goodAfternoon');
+  if (hour < 18) return tr('pages.dashboard.goodAfternoon2');
+  return tr('pages.dashboard.goodEvening');
 }
 
 function safeNumber(value: unknown): number {
@@ -89,16 +90,16 @@ function StatRow({
 
 function MetricBadge({ value }: { value: number | null | undefined }) {
   if (typeof value !== "number" || Number.isNaN(value) || !Number.isFinite(value)) {
-    return <ToneBadge tone="muted">未知</ToneBadge>;
+    return <ToneBadge tone="muted">{tr('pages.accounts.unknown2')}</ToneBadge>;
   }
-  if (value >= 95) return <ToneBadge tone="success">稳定</ToneBadge>;
-  if (value >= 80) return <ToneBadge tone="warning">波动</ToneBadge>;
-  return <ToneBadge tone="danger">异常</ToneBadge>;
+  if (value >= 95) return <ToneBadge tone="success">{tr('pages.dashboard.stable')}</ToneBadge>;
+  if (value >= 80) return <ToneBadge tone="warning">{tr('pages.dashboard.fluctuating')}</ToneBadge>;
+  return <ToneBadge tone="danger">{tr('pages.accounts.error')}</ToneBadge>;
 }
 
 function LatencyBadge({ ms }: { ms: number | null | undefined }) {
   if (typeof ms !== "number" || Number.isNaN(ms) || !Number.isFinite(ms)) {
-    return <ToneBadge tone="muted">延迟 —</ToneBadge>;
+    return <ToneBadge tone="muted">{tr('pages.dashboard.latency')}</ToneBadge>;
   }
   if (ms <= 800) return <ToneBadge tone="success">{ms}ms</ToneBadge>;
   if (ms <= 1800) return <ToneBadge tone="warning">{ms}ms</ToneBadge>;
@@ -136,11 +137,11 @@ function AvailabilityCell({
         formatAvailabilityBucketLabel(bucket),
         bucket.totalRequests > 0
           ? `可用性 ${formatAvailabilityPercent(bucket.availabilityPercent)}`
-          : "无请求",
+          : tr('pages.dashboard.noRequests'),
         `${bucket.successCount} 成功 / ${bucket.failedCount} 失败`,
         bucket.averageLatencyMs != null
           ? `平均响应 ${bucket.averageLatencyMs}ms`
-          : "平均响应 —",
+          : tr('pages.dashboard.averageResponse'),
       ].join(" | ")}
       aria-label={`${siteName} ${formatAvailabilityBucketLabel(bucket)} 使用日志`}
     />
@@ -278,7 +279,7 @@ function buildAvailabilityBucketLogsRoute(
 }
 
 export default function Dashboard({
-  adminName = "\u7ba1\u7406\u5458",
+  adminName = tr('app.admin'),
 }: {
   adminName?: string;
 }) {
@@ -299,7 +300,7 @@ export default function Dashboard({
   const [trendDays, setTrendDays] = useState(7);
   const [showInactiveSites, setShowInactiveSites] = useState(false);
   const toast = useToast();
-  const normalizedAdminName = (adminName || "").trim() || "\u7ba1\u7406\u5458";
+  const normalizedAdminName = (adminName || "").trim() || tr('app.admin');
 
   const getSiteSpeedKey = (site: any, idx: number) => String(site?.id ?? idx);
 
@@ -319,7 +320,7 @@ export default function Dashboard({
         );
         setData(result);
       } catch (err: any) {
-        const message = err?.message || "加载仪表盘失败";
+        const message = err?.message || tr('pages.dashboard.failedLoadDashboard');
         setError(message);
         if (silent) toast.error(message);
       } finally {
@@ -468,10 +469,10 @@ export default function Dashboard({
         <Card>
           <CardContent className="grid justify-items-center gap-3 p-12 text-center">
             <AlertTriangle className="size-10 text-destructive" />
-            <div className="font-semibold">加载失败</div>
+            <div className="font-semibold">{tr('pages.dashboard.failed')}</div>
             <div className="text-sm text-muted-foreground">{error}</div>
             <Button type="button" onClick={() => load()}>
-              重试
+              {tr('pages.dashboard.retry')}
             </Button>
           </CardContent>
         </Card>
@@ -516,11 +517,11 @@ export default function Dashboard({
     const speedState = siteSpeedStates[siteKey];
 
     if (!speedState || speedState.status === "loading") {
-      return speedState ? "..." : "测速";
+      return speedState ? "..." : tr('pages.dashboard.speedTest');
     }
 
     if (speedState.status === "timeout") {
-      return "超时";
+      return tr('pages.dashboard.timeOut');
     }
 
     const ms = speedState.ms;
@@ -544,8 +545,8 @@ export default function Dashboard({
             }}
             disabled={refreshing}
            
-            data-tooltip="刷新"
-            aria-label="刷新"
+            data-tooltip={tr('pages.accounts.refresh')}
+            aria-label={tr('pages.accounts.refresh')}
           >
             <RefreshCw className={refreshing ? "animate-spin" : undefined} />
           </Button>
@@ -553,38 +554,38 @@ export default function Dashboard({
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-        <StatCard title="账户数据">
+        <StatCard title={tr('pages.dashboard.accountData')}>
           <StatRow
-            label="当前余额"
+            label={tr('pages.dashboard.balance')}
             value={`$${totalBalance.toFixed(2)}`}
             note={`今日 +${todayReward.toFixed(2)}`}
           />
           <StatRow
-            label="累计消耗"
+            label={tr('pages.dashboard.totalSpend')}
             value={`$${totalUsed.toFixed(2)}`}
             note={`今日 -${todaySpend.toFixed(2)}`}
           />
         </StatCard>
 
-        <StatCard title="使用统计">
-          <StatRow label="24h 请求" value={Math.round(proxy24hTotal).toLocaleString()} />
-          <StatRow label="成功请求" value={Math.round(proxy24hSuccess).toLocaleString()} />
+        <StatCard title={tr('pages.dashboard.usageStatistics')}>
+          <StatRow label={tr('pages.dashboard.24hRequest')} value={Math.round(proxy24hTotal).toLocaleString()} />
+          <StatRow label={tr('pages.dashboard.successrequest')} value={Math.round(proxy24hSuccess).toLocaleString()} />
         </StatCard>
 
-        <StatCard title="资源消耗">
-          <StatRow label="活跃账户" value={`${Math.round(activeAccounts)}/${Math.round(totalAccounts)}`} />
+        <StatCard title={tr('pages.dashboard.resourceUsage')}>
+          <StatRow label={tr('pages.dashboard.activeAccounts')} value={`${Math.round(activeAccounts)}/${Math.round(totalAccounts)}`} />
           <StatRow label="24h Tokens" value={formatCompactTokenMetric(totalTokens)} />
         </StatCard>
 
-        <StatCard title="签到状态">
-          <StatRow label="今日签到" value={`${Math.round(todaySuccess)}/${Math.round(todayTotal)}`} />
+        <StatCard title={tr('pages.dashboard.signInstatus')}>
+          <StatRow label={tr('pages.dashboard.sign')} value={`${Math.round(todaySuccess)}/${Math.round(todayTotal)}`} />
           <StatRow
-            label="成功率"
+            label={tr('components.modelAnalysisPanel.successRate')}
             value={`${todayTotal > 0 ? Math.round((todaySuccess / todayTotal) * 100) : 0}%`}
           />
         </StatCard>
 
-        <StatCard title="性能指标">
+        <StatCard title={tr('pages.dashboard.performanceMetrics')}>
           <StatRow
             label="RPM"
             value={Math.round(requestsPerMinute).toLocaleString()}
@@ -601,7 +602,7 @@ export default function Dashboard({
       <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
         <div className="flex items-center gap-2 text-sm font-semibold">
           <Building2 className="size-4" />
-          站点分析
+          {tr('pages.dashboard.sites')}
         </div>
         <div className="flex gap-1">
           {[7, 30, 90].map((d) => (
@@ -612,7 +613,7 @@ export default function Dashboard({
               variant={trendDays === d ? "default" : "outline"}
               onClick={() => setTrendDays(d)}
             >
-              {d}天
+              {d}{tr('pages.dashboard.days')}
             </Button>
           ))}
         </div>
@@ -639,20 +640,20 @@ export default function Dashboard({
           <div className="grid gap-1">
             <CardTitle className="flex items-center gap-2">
               <Activity className="size-4" />
-              站点可用性观测
+              {tr('pages.dashboard.sitesavailable')}
               <ToneBadge tone="info">
                 {activeSites.length}/{rawSiteAvailability.length}
               </ToneBadge>
             </CardTitle>
-            <CardDescription>最近 24 小时 · 每个色块表示 1 小时 · 按使用量排序</CardDescription>
+            <CardDescription>{tr('pages.dashboard.24Hours1HoursUsage')}</CardDescription>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <span>低</span>
+              <span>{tr('pages.dashboard.low')}</span>
               <span className="h-3 w-6 rounded-sm bg-destructive" />
               <span className="h-3 w-6 rounded-sm bg-secondary" />
               <span className="h-3 w-6 rounded-sm bg-primary" />
-              <span>高</span>
+              <span>{tr('pages.dashboard.high')}</span>
             </div>
             {inactiveSites.length > 0 && (
               <Button
@@ -662,7 +663,7 @@ export default function Dashboard({
                 onClick={() => setShowInactiveSites((v) => !v)}
               >
                 {showInactiveSites
-                  ? "隐藏未使用"
+                  ? tr('pages.dashboard.hideUnused')
                   : `显示未使用 (${inactiveSites.length})`}
               </Button>
             )}
@@ -701,7 +702,7 @@ export default function Dashboard({
                     </div>
                     <Button asChild variant="outline" size="sm">
                       <Link to={buildSiteLast24hLogsRoute(site.siteId)}>
-                        查看日志
+                        {tr('pages.dashboard.viewing')}
                       </Link>
                     </Button>
                   </div>
@@ -710,7 +711,7 @@ export default function Dashboard({
                       {formatAvailabilityPercent(site.availabilityPercent)}
                     </span>
                     <LatencyBadge ms={site.averageLatencyMs} />
-                    <span>{Math.round(site.totalRequests || 0)} 次</span>
+                    <span>{Math.round(site.totalRequests || 0)} {tr('pages.dashboard.request')}</span>
                   </div>
                   <div className="grid grid-cols-[repeat(24,minmax(0,1fr))] gap-1">
                   {site.buckets.map((bucket, index) => (
@@ -731,10 +732,10 @@ export default function Dashboard({
             <div className="grid justify-items-center gap-2 p-8 text-center">
               <Activity className="size-10 text-muted-foreground" />
               <div className="font-medium">
-              暂无站点观测数据
+              {tr('pages.dashboard.noSites')}
               </div>
               <div className="text-sm text-muted-foreground">
-              有代理请求后，这里会自动生成每个站点的可用性条和平均响应速度。
+              {tr('pages.dashboard.actingrequestAutomaticSitesAvailableItemsResponse')}
               </div>
             </div>
           </CardContent>
@@ -746,7 +747,7 @@ export default function Dashboard({
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Clock3 className="size-4" />
-              模型数据分析
+              {tr('pages.dashboard.model')}
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -764,7 +765,7 @@ export default function Dashboard({
           <CardHeader className="flex flex-row items-center justify-between gap-3">
             <CardTitle className="flex items-center gap-2">
               <Server className="size-4" />
-              站点信息
+              {tr('pages.dashboard.sitesinfo')}
             </CardTitle>
             {sites.length > 0 && (
               <Button
@@ -789,11 +790,11 @@ export default function Dashboard({
                       }
                     }),
                   );
-                  toast.success("全部测速完成");
+                  toast.success(tr('pages.dashboard.allSpeedTestsCompleted'));
                 }}
               >
                 <Zap className="size-3" />
-                一键测速
+                {tr('pages.dashboard.speedTestAll')}
               </Button>
             )}
           </CardHeader>
@@ -834,7 +835,7 @@ export default function Dashboard({
                       <Button asChild variant="outline" size="sm">
                         <a href={site.url} target="_blank" rel="noopener noreferrer">
                           <ExternalLink className="size-3" />
-                          跳转
+                          {tr('pages.dashboard.go')}
                         </a>
                       </Button>
                     </div>
@@ -853,20 +854,20 @@ export default function Dashboard({
               <div className="grid justify-items-center gap-2 p-6 text-center">
                 <Server className="size-10 text-muted-foreground" />
                 <div className="text-sm font-semibold">
-                  代理端点可用
+                  {tr('pages.dashboard.proxyEndpointsavailable')}
                 </div>
                 <div className="text-xs text-muted-foreground">
-                  使用{" "}
+                  {tr('pages.dashboard.usage')}{" "}
                   <code className="rounded bg-muted px-1.5 py-0.5 text-xs">
                     /v1/chat/completions
                   </code>{" "}
-                  访问
+                  {tr('pages.dashboard.access')}
                 </div>
               </div>
             )}
             <div className="border-t pt-3">
               <div className="text-xs text-muted-foreground">
-                24h 活跃调用
+                {tr('pages.dashboard.24hCalls')}
               </div>
               <div className="text-lg font-bold">
                 {proxy24hTotal > 0

@@ -1,5 +1,5 @@
-import { and, eq } from 'drizzle-orm';
-import { db, schema } from '../db/index.js';
+import { and, eq, sql } from 'drizzle-orm';
+import { db, runtimeDbDialect, schema } from '../db/index.js';
 import { getInsertedRowId } from '../db/insertHelpers.js';
 import { getAdapter } from './platforms/index.js';
 import {
@@ -230,6 +230,52 @@ function normalizeModels(models: string[]): string[] {
   }
 
   return normalizedModels;
+}
+
+type TokenModelAvailabilityInsert = Omit<typeof schema.tokenModelAvailability.$inferInsert, 'id'>;
+
+async function upsertTokenModelAvailabilityRows(rows: TokenModelAvailabilityInsert[]): Promise<void> {
+  if (rows.length === 0) return;
+
+  if (runtimeDbDialect === 'mysql') {
+    for (const row of rows) {
+      const existing = await db.select({ id: schema.tokenModelAvailability.id })
+        .from(schema.tokenModelAvailability)
+        .where(and(
+          eq(schema.tokenModelAvailability.tokenId, row.tokenId),
+          eq(schema.tokenModelAvailability.modelName, row.modelName),
+        ))
+        .get();
+
+      if (existing) {
+        await db.update(schema.tokenModelAvailability)
+          .set({
+            available: row.available,
+            latencyMs: row.latencyMs,
+            checkedAt: row.checkedAt,
+          })
+          .where(eq(schema.tokenModelAvailability.id, existing.id))
+          .run();
+      } else {
+        await db.insert(schema.tokenModelAvailability).values(row).run();
+      }
+    }
+    return;
+  }
+
+  await (db.insert(schema.tokenModelAvailability).values(rows) as any)
+    .onConflictDoUpdate({
+      target: [
+        schema.tokenModelAvailability.tokenId,
+        schema.tokenModelAvailability.modelName,
+      ],
+      set: {
+        available: sql`excluded.available`,
+        latencyMs: sql`excluded.latency_ms`,
+        checkedAt: sql`excluded.checked_at`,
+      },
+    })
+    .run();
 }
 
 async function updateOauthModelDiscoveryState(input: {
@@ -687,9 +733,9 @@ export async function refreshModelsForAccount(
       ).run();
     }
     if (previousTokenModelAvailability.length > 0) {
-      await db.insert(schema.tokenModelAvailability).values(
+      await upsertTokenModelAvailabilityRows(
         previousTokenModelAvailability.map(({ id: _id, ...row }) => row),
-      ).run();
+      );
     }
   };
 
@@ -1236,7 +1282,7 @@ export async function refreshModelsForAccount(
     const latencyMs = Date.now() - startedAt;
     const checkedAt = new Date().toISOString();
 
-    await db.insert(schema.tokenModelAvailability).values(
+    await upsertTokenModelAvailabilityRows(
       models.map((modelName) => ({
         tokenId: token.id,
         modelName,
@@ -1244,7 +1290,7 @@ export async function refreshModelsForAccount(
         latencyMs,
         checkedAt,
       })),
-    ).run();
+    );
 
     scannedTokenCount++;
     mergeDiscoveredModels(models, latencyMs);

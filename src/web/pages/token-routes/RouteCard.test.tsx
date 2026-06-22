@@ -189,14 +189,10 @@ describe('RouteCard', () => {
       && collectText(node) === LONG_REGEX_PATTERN
     ));
 
-    expect(regexBadge.props.style).toMatchObject({
-      flex: '0 1 116px',
-      maxWidth: 116,
-      minWidth: 0,
-      overflow: 'hidden',
-      textOverflow: 'ellipsis',
-      whiteSpace: 'nowrap',
-    });
+    expect(regexBadge.props.className).toContain('flex-[0_1_116px]');
+    expect(regexBadge.props.className).toContain('max-w-[116px]');
+    expect(regexBadge.props.className).toContain('min-w-0');
+    expect(regexBadge.props.className).toContain('truncate');
   });
 
   it('gives the collapsed group title more layout priority than the regex badge', () => {
@@ -252,9 +248,11 @@ describe('RouteCard', () => {
       && collectText(node) === LONG_REGEX_PATTERN
     ));
 
-    expect(titleNode.props.style.flex).toBe('1 1 180px');
-    expect(regexBadge.props.style.flex).toBe('0 1 116px');
-    expect(regexBadge.props.style.maxWidth).toBe(116);
+    expect(titleNode.props.className).toContain('flex-[1_1_180px]');
+    expect(titleNode.props.className).toContain('min-w-0');
+    expect(titleNode.props.className).toContain('truncate');
+    expect(regexBadge.props.className).toContain('flex-[0_1_116px]');
+    expect(regexBadge.props.className).toContain('max-w-[116px]');
   });
 
   it('renders a clear cooldown action on expanded cards', () => {
@@ -614,8 +612,8 @@ describe('RouteCard', () => {
       node.type === 'div'
       && node.props['data-testid'] === 'route-priority-new-layer-target'
     ));
-    expect(newLayerTarget.props.style.display).toBe('flex');
-    expect(newLayerTarget.props.style.minHeight).toBe(34);
+    expect(newLayerTarget.props.className).toContain('flex');
+    expect(newLayerTarget.props.className).toContain('min-h-8');
   });
 
   it('keeps compact desktop detail bucket headers outside draggable channel shells', () => {
@@ -831,8 +829,8 @@ describe('RouteCard', () => {
       && collectText(node).includes('添加通道')
     ));
 
-    expect(compactActionRow.props.style.flexDirection).toBe('row');
-    expect(compactActionRow.props.style.justifyContent).toBe('flex-start');
+    expect(compactActionRow.props.className).toContain('flex');
+    expect(compactActionRow.props.className).toContain('justify-start');
     expect(collectText(compactActionRow)).toContain('路由策略');
     expect(collectText(compactActionRow)).toContain('添加通道');
     expect(strategySelectWrap.props.style.flex).toBe('0 0 168px');
@@ -886,7 +884,7 @@ describe('RouteCard', () => {
       && node.props['data-testid'] === 'compact-route-header-main'
     ));
 
-    expect(compactHeaderMain.props.style.flexDirection).toBe('row');
+    expect(compactHeaderMain.props.className).toContain('flex-row');
     expect(collectText(compactHeaderMain)).toContain('gpt-5.2-codex');
     expect(collectText(compactHeaderMain)).toContain('启用');
     expect(collectText(compactHeaderMain)).toContain('16 通道');

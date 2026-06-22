@@ -1,6 +1,7 @@
 import React from 'react';
 import * as Sheet from './ui/sheet/index.js';
 
+import { tr } from '../i18n.js';
 type MobileDrawerProps = {
   open: boolean;
   onClose: () => void;
@@ -15,7 +16,7 @@ function MobileDrawer({
   onClose,
   children,
   title,
-  closeLabel = '关闭导航',
+  closeLabel = tr('app.closenavigate'),
   side = 'left',
 }: MobileDrawerProps) {
   const closeNotifiedRef = React.useRef(false);

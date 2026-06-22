@@ -9,6 +9,7 @@ import type {
   RouteGraphPortKind,
 } from './routeGraphTypes.js';
 
+import { tr } from '../../i18n.js';
 export type RouteGraphConnectionGraph = {
   nodes: RouteGraphNode[];
   edges: RouteGraphEdge[];
@@ -82,26 +83,36 @@ export function validateRouteGraphConnection(
   connection: RouteGraphConnection,
 ): { ok: true; kind: RouteGraphEdgeKind } | { ok: false; message: string } {
   if (!connection.source || !connection.target || !connection.sourceHandle || !connection.targetHandle) {
-    return { ok: false, message: '连接必须从具体接口连接到具体接口' };
+    return { ok: false, message: tr('pages.tokenRoutes.routeGraphConnections.connectionsMustGoFromSpecificPortSpecific') };
   }
-  if (connection.source === connection.target) return { ok: false, message: '不能连接到同一个节点' };
+  if (connection.source === connection.target) return { ok: false, message: tr('pages.tokenRoutes.routeGraphConnections.cannotConnectSameNode') };
   const sourceNode = getFlowNodeById(graph, connection.source);
   const targetNode = getFlowNodeById(graph, connection.target);
-  if (!sourceNode || !targetNode) return { ok: false, message: '节点不存在' };
+  if (!sourceNode || !targetNode) return { ok: false, message: tr('pages.tokenRoutes.routeGraphConnections.nodeDoesNotExist') };
   const sourcePort = isRouteGraphMacroItem(sourceNode) ? getMacroPort(sourceNode, connection.sourceHandle) : getNodePort(sourceNode, connection.sourceHandle);
   const targetPort = isRouteGraphMacroItem(targetNode) ? getMacroPort(targetNode, connection.targetHandle) : getNodePort(targetNode, connection.targetHandle);
-  if (!sourcePort || !targetPort) return { ok: false, message: '接口不存在' };
-  if (sourceNode.ownership !== 'manual' && !isRouteGraphMacroItem(sourceNode)) return { ok: false, message: '非 manual 节点不能新增出边' };
+  if (!sourcePort || !targetPort) return { ok: false, message: tr('pages.tokenRoutes.routeGraphConnections.portDoesNotExist') };
+  if (sourceNode.ownership !== 'manual' && !isRouteGraphMacroItem(sourceNode)) return { ok: false, message: tr('pages.tokenRoutes.routeGraphConnections.manual') };
   if (sourceNode.ownership !== 'manual' && isRouteGraphMacroItem(sourceNode) && sourcePort.direction !== 'output') {
-    return { ok: false, message: '非 manual macro 只允许从输出接口复用' };
+    return { ok: false, message: tr('pages.tokenRoutes.routeGraphConnections.manualMacroOutput') };
   }
-  if (!isPortEnabled(sourcePort) || !isPortEnabled(targetPort)) return { ok: false, message: '禁用接口不能连接' };
-  if (sourcePort.direction !== 'output') return { ok: false, message: '起点必须是输出接口' };
-  if (targetPort.direction !== 'input') return { ok: false, message: '终点必须是输入接口' };
+  if (targetNode.ownership !== 'manual' && isRouteGraphMacroItem(targetNode)) {
+    return { ok: false, message: tr('pages.tokenRoutes.routeGraphConnections.manualMacroOutput') };
+  }
+  if (!isPortEnabled(sourcePort) || !isPortEnabled(targetPort)) return { ok: false, message: tr('pages.tokenRoutes.routeGraphConnections.disabled') };
+  if (sourcePort.direction !== 'output') return { ok: false, message: tr('pages.tokenRoutes.routeGraphConnections.sourceMustOutputPort') };
+  if (targetPort.direction !== 'input') return { ok: false, message: tr('pages.tokenRoutes.routeGraphConnections.targetMustInputPort') };
   const accepts = targetPort.accepts || [targetPort.kind];
-  if (!accepts.includes(sourcePort.kind)) return { ok: false, message: `${sourcePort.kind} 不能连接到 ${targetPort.kind}` };
+  if (!accepts.includes(sourcePort.kind)) {
+    return {
+      ok: false,
+      message: tr('pages.tokenRoutes.routeGraphConnections.portKindCannotConnect')
+        .replace('{source}', sourcePort.kind)
+        .replace('{target}', targetPort.kind),
+    };
+  }
   if (targetPort.multiple === false && graph.edges.some((edge) => edge.targetNodeId === connection.target && edge.targetPortId === targetPort.id)) {
-    return { ok: false, message: '该输入接口已连接' };
+    return { ok: false, message: tr('pages.tokenRoutes.routeGraphConnections.inputPortAlreadyConnected') };
   }
   if (graph.edges.some((edge) => (
     edge.sourceNodeId === connection.source
@@ -109,8 +120,8 @@ export function validateRouteGraphConnection(
     && edge.targetNodeId === connection.target
     && edge.targetPortId === targetPort.id
   ))) {
-    return { ok: false, message: '重复连接' };
+    return { ok: false, message: tr('pages.tokenRoutes.routeGraphConnections.duplicateConnection') };
   }
-  if (hasPath(graph.edges, targetNode.id, sourceNode.id)) return { ok: false, message: '不能创建环路' };
+  if (hasPath(graph.edges, targetNode.id, sourceNode.id)) return { ok: false, message: tr('pages.tokenRoutes.routeGraphConnections.cannotCreateCycle') };
   return { ok: true, kind: edgeKindForPort(sourcePort.kind) };
 }

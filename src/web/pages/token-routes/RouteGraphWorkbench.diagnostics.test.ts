@@ -6,13 +6,22 @@ describe('RouteGraphWorkbench diagnostics panel', () => {
     const source = readFileSync('src/web/pages/token-routes/RouteGraphWorkbench.tsx', 'utf8');
     const diagnosticBlock = source.slice(
       source.indexOf("if (tab === 'Diagnostics')"),
-      source.indexOf("if (tab === 'Trace')"),
+      source.indexOf("if (tab === 'Diff')"),
     );
 
     expect(diagnosticBlock).toContain('Problems');
     expect(diagnosticBlock).toContain('route-graph-diagnostic-row');
     expect(diagnosticBlock).toContain('route-graph-diagnostic-message');
     expect(diagnosticBlock).not.toContain("variant={item.severity === 'error' ? 'destructive' : 'outline'}");
+  });
+
+  it('removes placeholder route graph view modes', () => {
+    const source = readFileSync('src/web/pages/token-routes/RouteGraphWorkbench.tsx', 'utf8');
+
+    expect(source).not.toContain("'Trace'");
+    expect(source).not.toContain('compactNodes');
+    expect(source).not.toContain('showInternal');
+    expect(source).not.toContain('__compact');
   });
 
   it('keeps each diagnostic on one scan-friendly row', () => {

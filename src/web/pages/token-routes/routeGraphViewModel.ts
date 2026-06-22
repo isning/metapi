@@ -20,6 +20,11 @@ export function getNodeCardSubtitle(node: RouteGraphNode): string {
     return String(match.displayName || match.requestedModelPattern || 'public model entry');
   }
   if (node.type === 'dispatcher') return `${String(node.mode || 'route')} dispatcher`;
+  if (node.type === 'route_endpoint') {
+    const kind = String(node.endpointKind || 'route_product');
+    const exposure = String(node.exposure || (kind === 'supply' ? 'none' : node.visibility));
+    return `${kind.replace('_', ' ')} · ${exposure}`;
+  }
   if (node.type === 'filter') {
     const count = Array.isArray(node.operations) ? node.operations.length : 0;
     return count === 1 ? '1 operation' : `${count} operations`;

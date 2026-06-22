@@ -19,9 +19,28 @@ vi.mock('../api.js', () => ({
   api: apiMock,
 }));
 
+const { translate } = vi.hoisted(() => {
+  const i18nLabels: Record<string, string> = {
+    'app.notifications': '通知',
+    'components.notificationPanel.clear': '清空',
+    'components.notificationPanel.all': '全部',
+    'components.notificationPanel.noNotifications': '暂无通知',
+    'components.notificationPanel.sign': '签到',
+    'components.notificationPanel.balance': '余额',
+    'components.notificationPanel.token': 'Token',
+    'components.notificationPanel.acting': '代理',
+    'components.notificationPanel.status': '状态',
+    'app.sites': '站点',
+  };
+  return {
+    translate: (value: string) => i18nLabels[value] || value,
+  };
+});
+
 vi.mock('../i18n.js', () => ({
+  tr: translate,
   useI18n: () => ({
-    t: (value: string) => value,
+    t: translate,
   }),
 }));
 

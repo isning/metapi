@@ -53,12 +53,20 @@ describe('/api/models/route-flow', () => {
     await runtimeDb?.cleanup();
   });
 
-  it('compiles the selected route, channel pool, channel health and history into a route flow', async () => {
+  it('uses graph-native route program while preserving candidate channel metrics', async () => {
     const site = await db.insert(schema.sites).values({
       name: 'flow-site',
       url: 'https://flow-site.example.com',
       platform: 'new-api',
       status: 'active',
+      compatibilityPolicy: JSON.stringify({
+        reasoningHistory: {
+          transport: {
+            mode: 'content_think_tag',
+            thinkTag: { openTag: '<reason>', closeTag: '</reason>' },
+          },
+        },
+      }),
     }).returning().get();
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
@@ -121,23 +129,67 @@ describe('/api/models/route-flow', () => {
         selectedRouteId: number | null;
         selectedChannelId: number | null;
         nodes: Array<{ id: string; kind: string; status: string; metrics: Record<string, unknown>; history: unknown[] }>;
-        edges: Array<{ source: string; target: string }>;
+        edges: Array<{ source: string; target: string; label?: string | null }>;
+        compatibilityPolicy?: {
+          resolved: {
+            reasoningHistory: {
+              transport: {
+                mode: string;
+                thinkTag: { openTag: string; closeTag: string };
+              };
+            };
+          };
+        };
       };
     };
     expect(body.success).toBe(true);
     expect(body.flow.matched).toBe(true);
     expect(body.flow.selectedRouteId).toBe(route.id);
-    expect(body.flow.selectedChannelId).toBe(channel.id);
-    expect(body.flow.nodes.some((node) => node.id === `graph:entry:legacy:${route.id}` && node.kind === 'route')).toBe(true);
-    expect(body.flow.edges.some((edge) => edge.source === 'request' && edge.target === `graph:entry:legacy:${route.id}`)).toBe(true);
-    const channelNode = body.flow.nodes.find((node) => node.id === `channel:${channel.id}`);
-    expect(channelNode).toMatchObject({
-      kind: 'channel',
+    expect(body.flow.selectedChannelId).toBeNull();
+    expect(body.flow.nodes.some((node) => node.id === 'graph:macro:auto-model:gpt-4o-mini:entry' && node.kind === 'entry')).toBe(true);
+    expect(body.flow.nodes.some((node) => node.id === 'graph:macro:auto-model:gpt-4o-mini:dispatcher' && node.kind === 'dispatcher')).toBe(true);
+    expect(body.flow.nodes.some((node) => node.kind === 'pool')).toBe(false);
+    expect(body.flow.nodes.some((node) => node.kind === 'model_endpoint' || node.kind === 'route_endpoint')).toBe(true);
+    expect(body.flow.nodes.some((node) => node.id.startsWith('target:'))).toBe(false);
+    expect(body.flow.edges.some((edge) => edge.source === 'request' && edge.target === 'graph:macro:auto-model:gpt-4o-mini:entry')).toBe(true);
+    expect(body.flow.nodes).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: `channel:${channel.id}`,
+        kind: 'channel',
+        metrics: expect.objectContaining({
+          totalCalls: 2,
+          recentSuccessCount: 1,
+          recentFailureCount: 1,
+          avgLatencyMs: 120,
+        }),
+        history: expect.arrayContaining([
+          expect.objectContaining({ status: 'success' }),
+          expect.objectContaining({ status: 'failed' }),
+        ]),
+      }),
+    ]));
+    expect(body.flow.edges.some((edge) => edge.source === 'pool:channels' && edge.target === `channel:${channel.id}`)).toBe(false);
+    expect(body.flow.edges).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        source: expect.stringMatching(/^graph:/),
+        target: `channel:${channel.id}`,
+        label: expect.stringContaining('%'),
+      }),
+    ]));
+    const targetNode = body.flow.nodes.find((node) => (
+      (node.kind === 'model_endpoint' || node.kind === 'route_endpoint')
+      && node.status === 'selected'
+    ));
+    expect(targetNode).toMatchObject({
       status: 'selected',
     });
-    expect(channelNode?.metrics.successRate).toBe(50);
-    expect(channelNode?.history).toHaveLength(2);
-    expect(body.flow.edges.some((edge) => edge.source === 'pool:channels' && edge.target === `channel:${channel.id}`)).toBe(true);
+    expect(body.flow.compatibilityPolicy?.resolved.reasoningHistory.transport).toMatchObject({
+      mode: 'content_think_tag',
+      thinkTag: {
+        openTag: '<reason>',
+        closeTag: '</reason>',
+      },
+    });
   });
 
   it('returns a terminal unmatched node for unknown models', async () => {

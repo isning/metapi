@@ -30,16 +30,21 @@ import {
 import type { RouteSummaryRow } from './token-routes/types.js';
 import { Button } from '../components/ui/button/index.js';
 import { ButtonGroup } from '../components/ui/button-group/index.js';
-import { LoaderCircle } from 'lucide-react';
+import { Ellipsis, Eye, LoaderCircle, Pencil, Power, PowerOff, RotateCcw, Tags, Trash2 } from 'lucide-react';
 import { Skeleton } from '../components/ui/skeleton/index.js';
 import ToneBadge from '../components/ToneBadge.js';
 import InfoNote from '../components/InfoNote.js';
 import SearchInput from '../components/SearchInput.js';
+import PageHeader from '../components/workspace/PageHeader.js';
+import PageShell from '../components/workspace/PageShell.js';
 import { Card } from '../components/ui/card/index.js';
+import { Badge } from '../components/ui/badge/index.js';
 import EmptyStateBlock from '../components/EmptyStateBlock.js';
+import { DataTable, DataTableToolbar } from '../components/ui/data-table/index.js';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table/index.js';
 import { Checkbox } from '../components/ui/checkbox/index.js';
 import { Input } from '../components/ui/input/index.js';
+import * as DropdownMenu from '../components/ui/dropdown-menu/index.js';
 import {
   getRouteRequestedModelPattern,
   isExactModelPattern,
@@ -277,8 +282,8 @@ function DownstreamKeyCopyIconButton({ fullKey }: { fullKey: string | undefined 
       type="button"
       variant="ghost"
       size="icon"
-      title="复制完整密钥"
-      aria-label="复制完整密钥"
+      title={tr('pages.downstreamKeys.copyKey')}
+      aria-label={tr('pages.downstreamKeys.copyKey')}
       disabled={disabled}
       onMouseDown={() => {
         if (!disabled) setPressed(true);
@@ -294,14 +299,14 @@ function DownstreamKeyCopyIconButton({ fullKey }: { fullKey: string | undefined 
         e.stopPropagation();
         const full = fullKey?.trim();
         if (!full) {
-          toast.info('完整密钥暂不可用，请刷新页面后重试');
+          toast.info(tr('pages.downstreamKeys.keyNotAvailableRefreshRetry'));
           return;
         }
         try {
           await copyToClipboard(full);
-          toast.success('已复制到剪贴板');
+          toast.success(tr('pages.downstreamKeys.copy'));
         } catch {
-          toast.error('复制失败');
+          toast.error(tr('pages.downstreamKeys.copyfailed'));
         }
       }}
     >
@@ -346,13 +351,13 @@ function buildEditorForm(
 }
 
 function summarizeModelLimit(models: string[]): string {
-  if (!Array.isArray(models) || models.length === 0) return '未授权模型';
+  if (!Array.isArray(models) || models.length === 0) return tr('pages.downstreamKeys.model2');
   if (models.length === 1) return models[0];
   return `${models[0]} +${models.length - 1}`;
 }
 
 function summarizeRouteLimit(routeIds: number[], routeMap: Map<number, RouteSelectorItem>): string {
-  if (!Array.isArray(routeIds) || routeIds.length === 0) return '未授权群组';
+  if (!Array.isArray(routeIds) || routeIds.length === 0) return tr('pages.downstreamKeys.groups2');
   const names = routeIds
     .map((id) => routeMap.get(id))
     .filter(Boolean)
@@ -364,13 +369,13 @@ function summarizeRouteLimit(routeIds: number[], routeMap: Map<number, RouteSele
 
 function summarizeSiteWeightMultipliers(weights: Record<number, number> | undefined): string {
   const entries = Object.entries(weights || {});
-  if (entries.length === 0) return '默认倍率';
+  if (entries.length === 0) return tr('pages.downstreamKeys.defaultmultiplier');
   if (entries.length === 1) return `${entries[0][0]} => ${entries[0][1]}`;
   return `${entries[0][0]} => ${entries[0][1]} +${entries.length - 1}`;
 }
 
 function summarizeTags(tags: string[]): string {
-  if (!Array.isArray(tags) || tags.length === 0) return '无标签';
+  if (!Array.isArray(tags) || tags.length === 0) return tr('pages.downstreamKeys.noTags');
   if (tags.length === 1) return tags[0];
   return `${tags[0]} +${tags.length - 1}`;
 }
@@ -398,8 +403,8 @@ function InlineToggle({
   onChange: (value: TagMatchMode) => void;
 }) {
   const options: Array<{ value: TagMatchMode; label: string }> = [
-    { value: 'any', label: '匹配任一标签' },
-    { value: 'all', label: '匹配全部标签' },
+    { value: 'any', label: tr('pages.downstreamKeys.matchAnyTag') },
+    { value: 'all', label: tr('pages.downstreamKeys.matchalltags') },
   ];
 
   return (
@@ -469,7 +474,7 @@ export default function DownstreamKeys() {
       setRawItems(Array.isArray(rawRes?.items) ? rawRes.items : []);
       setRouteOptions((Array.isArray(routesRes) ? routesRes : []) as RouteSelectorItem[]);
     } catch (err: any) {
-      toast.error(err?.message || '加载下游密钥列表失败');
+      toast.error(err?.message || tr('pages.downstreamKeys.downstreamKeysFailed'));
     } finally {
       setLoading(false);
     }
@@ -520,7 +525,7 @@ export default function DownstreamKeys() {
           ref: { kind: 'default_api_key', siteId: Math.trunc(siteId), accountId: Math.trunc(accountId) },
           siteName: String(account?.site?.name || `站点 ${siteId}`).trim() || `站点 ${siteId}`,
           accountName: String(account?.username || `账号 ${accountId}`).trim() || `账号 ${accountId}`,
-          label: '默认 API Key',
+          label: tr('pages.downstreamKeys.defaultApiKey'),
           detail: `使用账号默认 API Key (${apiToken.slice(0, 6)}...)`,
         });
       }
@@ -550,7 +555,7 @@ export default function DownstreamKeys() {
       );
       setExclusionSourceLoaded(true);
     } catch (err: any) {
-      toast.error(err?.message || '加载可排除站点与令牌失败');
+      toast.error(err?.message || tr('pages.downstreamKeys.sitesTokenfailed'));
     } finally {
       setExclusionSourceLoading(false);
     }
@@ -606,8 +611,8 @@ export default function DownstreamKeys() {
 
   const groupFilterOptions = useMemo(
     () => [
-      { value: '__all__', label: '全部主分组' },
-      { value: '__ungrouped__', label: '未分组' },
+      { value: '__all__', label: tr('pages.downstreamKeys.allprimaryGroup') },
+      { value: '__ungrouped__', label: tr('pages.downstreamKeys.ungrouped') },
       ...groupSuggestions.map((group) => ({ value: group, label: group })),
     ],
     [groupSuggestions],
@@ -674,9 +679,9 @@ export default function DownstreamKeys() {
   );
 
   const statusOptions = useMemo(() => [
-    { value: 'all', label: '全部状态' },
-    { value: 'enabled', label: '仅启用' },
-    { value: 'disabled', label: '仅禁用' },
+    { value: 'all', label: tr('pages.downstreamKeys.allstatus') },
+    { value: 'enabled', label: tr('pages.downstreamKeys.enabled2') },
+    { value: 'disabled', label: tr('pages.downstreamKeys.disabled2') },
   ], []);
 
   const totals = useMemo(() => visibleItems.reduce((acc, item) => {
@@ -753,15 +758,15 @@ export default function DownstreamKeys() {
     const name = editorForm.name.trim();
     const key = editorForm.key.trim();
     if (!name) {
-      toast.info('请填写密钥名称');
+      toast.info(tr('pages.downstreamKeys.keyname'));
       return;
     }
     if (!key) {
-      toast.info('请填写下游密钥');
+      toast.info(tr('pages.downstreamKeys.enterDownstreamKey'));
       return;
     }
     if (!key.startsWith('sk-')) {
-      toast.info('下游密钥必须以 sk- 开头');
+      toast.info(tr('pages.downstreamKeys.downstreamKeysSk'));
       return;
     }
 
@@ -771,7 +776,7 @@ export default function DownstreamKeys() {
       try {
         const parsed = JSON.parse(rawWeights);
         if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-          toast.info('站点倍率必须是 JSON 对象');
+          toast.info(tr('pages.downstreamKeys.sitesmultiplierJson'));
           return;
         }
         siteWeightMultipliers = Object.fromEntries(
@@ -780,7 +785,7 @@ export default function DownstreamKeys() {
             .filter(([siteId, value]) => Number.isFinite(siteId) && siteId > 0 && Number.isFinite(value) && value > 0),
         ) as Record<number, number>;
       } catch {
-        toast.info('站点倍率 JSON 解析失败');
+        toast.info(tr('pages.downstreamKeys.sitesmultiplierJsonFailed'));
         return;
       }
     }
@@ -805,15 +810,15 @@ export default function DownstreamKeys() {
       };
       if (editingId) {
         await api.updateDownstreamApiKey(editingId, payload);
-        toast.success('下游密钥已更新');
+        toast.success(tr('pages.downstreamKeys.downstreamKeyUpdated'));
       } else {
         await api.createDownstreamApiKey(payload);
-        toast.success('下游密钥已创建');
+        toast.success(tr('pages.downstreamKeys.downstreamKeyCreated'));
       }
       closeEditor();
       await load();
     } catch (err: any) {
-      toast.error(err?.message || '保存下游密钥失败');
+      toast.error(err?.message || tr('pages.downstreamKeys.savedownstreamKeysfailed'));
     } finally {
       setSaving(false);
     }
@@ -831,22 +836,25 @@ export default function DownstreamKeys() {
     setSelectedIds((current) => uniqIds([...current, ...visibleIds]));
   };
 
-  const batchRun = async (label: string, ids: number[]) => {
+  const batchRun = async (
+    action: 'enable' | 'disable' | 'delete' | 'resetUsage' | 'updateMetadata',
+    ids: number[],
+  ) => {
     if (ids.length === 0) return;
     setBatchActionLoading(true);
+    const actionLabel = action === 'enable'
+      ? tr('pages.accounts.enabled')
+      : action === 'disable'
+        ? tr('pages.accounts.disabled')
+        : action === 'delete'
+          ? tr('pages.accounts.delete2')
+          : action === 'resetUsage'
+            ? tr('pages.downstreamKeys.clearUsageBatch')
+            : tr('pages.downstreamKeys.batchGroup');
     try {
-      const action = label === '批量启用'
-        ? 'enable'
-        : label === '批量禁用'
-          ? 'disable'
-          : label === '批量删除'
-            ? 'delete'
-            : label === '批量清零用量'
-              ? 'resetUsage'
-              : 'updateMetadata';
       const payload = action === 'updateMetadata'
         ? {
-          ids,
+            ids,
           action,
           groupOperation: batchMetadataForm.groupOperation,
           groupName: batchMetadataForm.groupOperation === 'set' ? batchMetadataForm.groupName.trim() : undefined,
@@ -860,9 +868,9 @@ export default function DownstreamKeys() {
       const failedIds = failedItems.map((item: any) => Number(item.id)).filter((id: number) => Number.isFinite(id) && id > 0);
       const successCount = successIds.length;
       if (failedIds.length > 0) {
-        toast.info(`${label}完成：成功 ${successCount}，失败 ${failedIds.length}`);
+        toast.info(`${actionLabel}完成：成功 ${successCount}，失败 ${failedIds.length}`);
       } else {
-        toast.success(`${label}完成：成功 ${successCount}`);
+        toast.success(`${actionLabel}完成：成功 ${successCount}`);
       }
       setSelectedIds(failedIds);
       if (action === 'updateMetadata' && failedIds.length === 0) {
@@ -871,7 +879,7 @@ export default function DownstreamKeys() {
       }
       await load();
     } catch (err: any) {
-      toast.error(err?.message || `${label}失败`);
+      toast.error(err?.message || `${actionLabel}失败`);
     } finally {
       setBatchActionLoading(false);
     }
@@ -881,7 +889,7 @@ export default function DownstreamKeys() {
     await withRowLoading(`toggle-${item.id}`, async () => {
       await api.updateDownstreamApiKey(item.id, { enabled: !item.enabled });
       await load();
-      toast.success(item.enabled ? '已禁用该密钥' : '已启用该密钥');
+      toast.success(item.enabled ? tr('pages.downstreamKeys.disabledKey') : tr('pages.downstreamKeys.enabledKey'));
     });
   };
 
@@ -889,7 +897,7 @@ export default function DownstreamKeys() {
     await withRowLoading(`reset-${item.id}`, async () => {
       await api.resetDownstreamApiKeyUsage(item.id);
       await load();
-      toast.success('已清零该密钥用量');
+      toast.success(tr('pages.downstreamKeys.keyUsageCleared'));
     });
   };
 
@@ -901,13 +909,13 @@ export default function DownstreamKeys() {
     if (target.mode === 'single') {
       await withRowLoading(`delete-${target.item.id}`, async () => {
         await api.deleteDownstreamApiKey(target.item.id);
-        toast.success('下游密钥已删除');
+        toast.success(tr('pages.downstreamKeys.downstreamKeysdeleted'));
         await load();
       });
       return;
     }
 
-    await batchRun('批量删除', target.ids);
+    await batchRun('delete', target.ids);
   };
 
   const addTagFilter = (raw: string) => {
@@ -924,14 +932,14 @@ export default function DownstreamKeys() {
 
   const runBatchMetadata = async () => {
     if (batchMetadataForm.groupOperation === 'set' && !batchMetadataForm.groupName.trim()) {
-      toast.info('请填写批量主分组');
+      toast.info(tr('pages.downstreamKeys.enterBatchPrimaryGroup'));
       return;
     }
     if (batchMetadataForm.tagOperation === 'append' && normalizeTags(batchMetadataForm.tags).length === 0) {
-      toast.info('请至少填写一个批量标签');
+      toast.info(tr('pages.downstreamKeys.enterLeastOneBatchTag'));
       return;
     }
-    await batchRun('批量归类', selectedIds);
+    await batchRun('updateMetadata', selectedIds);
   };
 
   const filterControls = (
@@ -942,7 +950,7 @@ export default function DownstreamKeys() {
             className="flex-[1_1_320px]"
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
-            placeholder="搜索名称、备注、模型、主分组或标签"
+            placeholder={tr('pages.downstreamKeys.searchnameNotesModelPrimaryGroupTags')}
           />
           <InlineToggle value={tagMatchMode} onChange={setTagMatchMode} />
         </div>
@@ -953,7 +961,7 @@ export default function DownstreamKeys() {
           <ModernSelect value={groupFilter} onChange={(value) => setGroupFilter(String(value || '__all__'))} options={groupFilterOptions} />
         </div>
         <Button type="button" variant="outline" onClick={() => { setSearchInput(''); setStatus('all'); setGroupFilter('__all__'); setSelectedTags([]); setTagMatchMode('any'); }}>
-          重置筛选
+          {tr('pages.downstreamKeys.resetfilter')}
         </Button>
       </div>
 
@@ -996,59 +1004,59 @@ export default function DownstreamKeys() {
   const empty = !loading && visibleItems.length === 0;
 
   return (
-    <div className="flex animate-fade-in flex-col gap-3 p-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <h2 className="text-xl font-semibold">下游密钥</h2>
-          <div className="mt-1 text-sm text-muted-foreground">统一管理分发给下游项目的密钥、主分组、标签、额度、模型白名单、群组范围与历史用量。</div>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
+    <PageShell>
+      <PageHeader
+        title={tr('app.downstreamKeys')}
+        description={tr('pages.downstreamKeys.keyPrimaryGroupTagsQuotaModelGroups')}
+        actions={(
+          <>
           <RangeToggle range={range} onChange={setRange} />
           <Button type="button" variant="outline" onClick={() => void load()} disabled={loading}>
-            {loading ? <><LoaderCircle className="size-4 animate-spin" /> 刷新中...</> : '刷新'}
+            {loading ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.downstreamKeys.refreshzh')}</> : tr('pages.accounts.refresh')}
           </Button>
-          <Button type="button" onClick={openCreate}>+ 新增下游密钥</Button>
-        </div>
-      </div>
+          <Button type="button" onClick={openCreate}>{tr('pages.downstreamKeys.newDownstreamKey')}</Button>
+          </>
+        )}
+      />
 
       <Card className="flex flex-col gap-3 p-3.5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <div className="text-sm font-semibold text-foreground">范围概览</div>
+            <div className="text-sm font-semibold text-foreground">{tr('pages.downstreamKeys.rangeOverview')}</div>
             <div className="mt-1 text-xs text-muted-foreground">
-              基于当前筛选范围查看密钥规模、使用量和成本概况。
+              {tr('pages.downstreamKeys.filterViewingkeyUsageCost')}
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <span className="kpi-chip">当前范围</span>
-            <span className="kpi-chip kpi-chip-success">
-              {range === '24h' ? '最近 24 小时' : range === '7d' ? '最近 7 天' : '全部历史'}
-            </span>
-            <span className="kpi-chip kpi-chip-warning">
+            <Badge variant="secondary">{tr('pages.downstreamKeys.currentRange')}</Badge>
+            <Badge variant="success">
+              {range === '24h' ? tr('pages.downstreamKeys.24Hours') : range === '7d' ? tr('pages.downstreamKeys.7Days') : tr('pages.downstreamKeys.all')}
+            </Badge>
+            <Badge variant="warning">
               Tokens {formatCompactTokens(totals.tokens)}
-            </span>
+            </Badge>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
-          <SummaryMetric label="可见密钥" value={String(visibleItems.length)} />
-          <SummaryMetric label="启用中" value={String(totals.enabled)} />
-          <SummaryMetric label="已选中" value={String(selectedIds.length)} />
-          <SummaryMetric label="请求数" value={totals.requests.toLocaleString()} />
-          <SummaryMetric label="累计成本" value={formatMoney(totals.cost)} />
-          <SummaryMetric label="筛选状态" value={statusOptions.find((item) => item.value === status)?.label || '全部状态'} />
+          <SummaryMetric label={tr('pages.downstreamKeys.visibleKey')} value={String(visibleItems.length)} />
+          <SummaryMetric label={tr('pages.downstreamKeys.enabledzh')} value={String(totals.enabled)} />
+          <SummaryMetric label={tr('pages.downstreamKeys.selectedzh')} value={String(selectedIds.length)} />
+          <SummaryMetric label={tr('components.charts.downstreamKeyTrendChart.requests')} value={totals.requests.toLocaleString()} />
+          <SummaryMetric label={tr('pages.downstreamKeys.cost')} value={formatMoney(totals.cost)} />
+          <SummaryMetric label={tr('pages.downstreamKeys.filterstatus')} value={statusOptions.find((item) => item.value === status)?.label || tr('pages.downstreamKeys.allstatus')} />
         </div>
       </Card>
 
-      {selectedIds.length > 0 ? (
+      {isMobile && selectedIds.length > 0 ? (
         <ResponsiveBatchActionBar
           isMobile={isMobile}
           info={`已选 ${selectedIds.length} 个密钥`}
         >
-          <Button type="button" variant="outline" onClick={openBatchMetadata} disabled={batchActionLoading}>{isMobile ? '归类/标签' : '批量归类/标签'}</Button>
-          <Button type="button" variant="outline" onClick={() => void batchRun('批量启用', selectedIds)} disabled={batchActionLoading}>{isMobile ? '启用' : '批量启用'}</Button>
-          <Button type="button" variant="outline" onClick={() => void batchRun('批量禁用', selectedIds)} disabled={batchActionLoading}>{isMobile ? '禁用' : '批量禁用'}</Button>
-          <Button type="button" variant="outline" onClick={() => void batchRun('批量清零用量', selectedIds)} disabled={batchActionLoading}>{isMobile ? '清零' : '批量清零用量'}</Button>
-          <Button type="button" variant="destructive" size="sm" onClick={() => setDeleteConfirm({ mode: 'batch', ids: [...selectedIds] })} disabled={batchActionLoading}>{isMobile ? '删除' : '批量删除'}</Button>
+          <Button type="button" variant="outline" onClick={openBatchMetadata} disabled={batchActionLoading}>{isMobile ? tr('pages.downstreamKeys.groupTags') : tr('pages.downstreamKeys.batchGroupTags')}</Button>
+          <Button type="button" variant="outline" onClick={() => void batchRun('enable', selectedIds)} disabled={batchActionLoading}>{isMobile ? tr('pages.downstreamKeys.enabled') : tr('pages.accounts.enabled')}</Button>
+          <Button type="button" variant="outline" onClick={() => void batchRun('disable', selectedIds)} disabled={batchActionLoading}>{isMobile ? tr('pages.downstreamKeys.disabled') : tr('pages.accounts.disabled')}</Button>
+          <Button type="button" variant="outline" onClick={() => void batchRun('resetUsage', selectedIds)} disabled={batchActionLoading}>{isMobile ? tr('pages.downstreamKeys.clear') : tr('pages.downstreamKeys.clearUsageBatch')}</Button>
+          <Button type="button" variant="destructive" size="sm" onClick={() => setDeleteConfirm({ mode: 'batch', ids: [...selectedIds] })} disabled={batchActionLoading}>{isMobile ? tr('pages.accounts.delete3') : tr('pages.accounts.delete2')}</Button>
         </ResponsiveBatchActionBar>
       ) : null}
 
@@ -1056,20 +1064,20 @@ export default function DownstreamKeys() {
         <div className="flex flex-col gap-2.5">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <div className="text-sm font-semibold text-foreground">筛选与列表</div>
-              <div className="mt-1 text-xs text-muted-foreground">按名称、状态、主分组和标签快速定位下游密钥。</div>
+              <div className="text-sm font-semibold text-foreground">{tr('pages.downstreamKeys.filter')}</div>
+              <div className="mt-1 text-xs text-muted-foreground">{tr('pages.downstreamKeys.nameStatusPrimaryGroupTagsDownstreamKeys')}</div>
             </div>
             {isMobile && (
               <div className="flex flex-wrap items-center gap-2">
                 <Button type="button" variant="outline" onClick={() => setShowFilters(true)}>
-                  筛选
+                  {tr('components.mobileFilterSheet.filter')}
                 </Button>
                 <Button type="button" variant="outline"
                  
                  
                   onClick={() => toggleSelectAllVisible(!allVisibleSelected)}
                 >
-                  {allVisibleSelected ? '取消全选' : '全选可见'}
+                  {allVisibleSelected ? tr('pages.accounts.cancelselectAll') : tr('pages.downstreamKeys.selectVisible')}
                 </Button>
               </div>
             )}
@@ -1078,7 +1086,7 @@ export default function DownstreamKeys() {
             isMobile={isMobile}
             mobileOpen={showFilters}
             onMobileClose={() => setShowFilters(false)}
-            mobileTitle="筛选下游密钥"
+            mobileTitle={tr('pages.downstreamKeys.filterdownstreamKeys')}
             mobileContent={filterControls}
             desktopContent={filterControls}
           />
@@ -1087,7 +1095,7 @@ export default function DownstreamKeys() {
         {loading ? (
           <Skeleton className="h-[280px] w-full" />
         ) : empty ? (
-          <EmptyStateBlock title="暂无下游密钥" description="可以先新增一条密钥，或调整筛选条件查看已有数据。" />
+          <EmptyStateBlock title={tr('pages.downstreamKeys.noDownstreamKeys')} description={tr('pages.downstreamKeys.itemskeyFilteritemsViewing')} />
         ) : isMobile ? (
           <div className="grid gap-3">
             {visibleItems.map((row) => {
@@ -1111,16 +1119,16 @@ export default function DownstreamKeys() {
                   )}
                   footerActions={(
                     <>
-                      <Button type="button" variant="ghost" size="sm" onClick={() => { setSelectedId(row.id); setDrawerOpen(true); }}>查看</Button>
-                      <Button type="button" variant="ghost" size="sm" onClick={() => openEdit(row)}>编辑</Button>
-                      <Button type="button" variant="ghost" size="sm" onClick={() => void toggleEnabled(row)} disabled={loadingToggle}>{loadingToggle ? '处理中...' : (row.enabled ? '禁用' : '启用')}</Button>
-                      <Button type="button" variant="ghost" size="sm" onClick={() => void resetUsage(row)} disabled={loadingReset}>{loadingReset ? '处理中...' : '清零用量'}</Button>
-                      <Button type="button" variant="destructive" size="sm" onClick={() => setDeleteConfirm({ mode: 'single', item: row })} disabled={loadingDelete}>{loadingDelete ? '处理中...' : '删除'}</Button>
+                      <Button type="button" variant="ghost" size="sm" onClick={() => { setSelectedId(row.id); setDrawerOpen(true); }}>{tr('pages.downstreamKeys.viewing')}</Button>
+                      <Button type="button" variant="ghost" size="sm" onClick={() => openEdit(row)}>{tr('pages.accounts.edit')}</Button>
+                      <Button type="button" variant="ghost" size="sm" onClick={() => void toggleEnabled(row)} disabled={loadingToggle}>{loadingToggle ? tr('pages.downstreamKeys.zh') : (row.enabled ? tr('pages.downstreamKeys.disabled') : tr('pages.downstreamKeys.enabled'))}</Button>
+                      <Button type="button" variant="ghost" size="sm" onClick={() => void resetUsage(row)} disabled={loadingReset}>{loadingReset ? tr('pages.downstreamKeys.zh') : tr('pages.downstreamKeys.clearUsage')}</Button>
+                      <Button type="button" variant="destructive" size="sm" onClick={() => setDeleteConfirm({ mode: 'single', item: row })} disabled={loadingDelete}>{loadingDelete ? tr('pages.downstreamKeys.zh') : tr('pages.accounts.delete3')}</Button>
                     </>
                   )}
                 >
                   <MobileField
-                    label="密钥"
+                    label={tr('pages.downstreamKeys.key')}
                     value={(
                       <span className="inline-flex flex-wrap items-center gap-1.5">
                         <span className="font-mono text-xs text-muted-foreground">{row.keyMasked}</span>
@@ -1129,33 +1137,73 @@ export default function DownstreamKeys() {
                     )}
                     stacked
                   />
-                  {row.description ? <MobileField label="备注" value={row.description} stacked /> : null}
-                  <MobileField label="主分组" value={row.groupName || '未分组'} />
-                  <MobileField label="标签" value={summarizeTags(row.tags || [])} stacked />
-                  <MobileField label="模型" value={summarizeModelLimit(row.supportedModels || [])} stacked />
-                  <MobileField label="群组" value={summarizeRouteLimit(row.allowedRouteIds || [], routeMap)} stacked />
-                  <MobileField label="倍率" value={summarizeSiteWeightMultipliers(row.siteWeightMultipliers || {})} stacked />
-                  <MobileField label="额度" value={`${row.maxRequests == null ? '不限' : row.maxRequests.toLocaleString()} / ${row.maxCost == null ? '成本不限' : formatMoney(row.maxCost)}`} stacked />
-                  <MobileField label="用量" value={`${(row.rangeUsage?.totalRequests || 0).toLocaleString()} 请求 · ${formatCompactTokens(row.rangeUsage?.totalTokens || 0)}`} stacked />
-                  <MobileField label="最近使用" value={formatIso(row.lastUsedAt)} stacked />
+                  {row.description ? <MobileField label={tr('pages.downstreamKeys.notes')} value={row.description} stacked /> : null}
+                  <MobileField label={tr('pages.downstreamKeys.primaryGroup')} value={row.groupName || tr('pages.downstreamKeys.ungrouped')} />
+                  <MobileField label={tr('pages.downstreamKeys.tags2')} value={summarizeTags(row.tags || [])} stacked />
+                  <MobileField label={tr('components.modelAnalysisPanel.model')} value={summarizeModelLimit(row.supportedModels || [])} stacked />
+                  <MobileField label={tr('pages.downstreamKeys.groups')} value={summarizeRouteLimit(row.allowedRouteIds || [], routeMap)} stacked />
+                  <MobileField label={tr('pages.downstreamKeys.multiplier2')} value={summarizeSiteWeightMultipliers(row.siteWeightMultipliers || {})} stacked />
+                  <MobileField label={tr('pages.downstreamKeys.quota')} value={`${row.maxRequests == null ? tr('pages.downstreamKeys.unlimited') : row.maxRequests.toLocaleString()} / ${row.maxCost == null ? tr('pages.downstreamKeys.costunlimited') : formatMoney(row.maxCost)}`} stacked />
+                  <MobileField label={tr('pages.downstreamKeys.usage')} value={`${(row.rangeUsage?.totalRequests || 0).toLocaleString()} 请求 · ${formatCompactTokens(row.rangeUsage?.totalTokens || 0)}`} stacked />
+                  <MobileField label={tr('pages.downstreamKeys.recentUsage')} value={formatIso(row.lastUsedAt)} stacked />
                 </MobileCard>
               );
             })}
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <DataTable minWidth={1080}>
+            <DataTableToolbar className="border-b bg-muted/30">
+              <div className="text-sm text-muted-foreground">
+                <span className="sr-only">已选 {selectedIds.length} 个密钥</span>
+                已选 <span className="font-medium text-foreground">{selectedIds.length}</span> / {visibleItems.length} 个密钥
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {selectedIds.length > 0 ? (
+                  <>
+                    <Button type="button" variant="outline" size="sm" onClick={openBatchMetadata} disabled={batchActionLoading}>
+                      <Tags className="size-4" />
+                      <span className="sr-only">{tr('pages.downstreamKeys.batchGroupTags')}</span>
+                      {tr('pages.downstreamKeys.groupTags')}
+                    </Button>
+                    <Button type="button" variant="outline" size="sm" onClick={() => void batchRun('enable', selectedIds)} disabled={batchActionLoading}>
+                      <Power className="size-4" />
+                      {tr('pages.accounts.enabled')}
+                    </Button>
+                    <Button type="button" variant="outline" size="sm" onClick={() => void batchRun('disable', selectedIds)} disabled={batchActionLoading}>
+                      <PowerOff className="size-4" />
+                      {tr('pages.accounts.disabled')}
+                    </Button>
+                    <Button type="button" variant="outline" size="sm" onClick={() => void batchRun('resetUsage', selectedIds)} disabled={batchActionLoading}>
+                      <RotateCcw className="size-4" />
+                      {tr('pages.downstreamKeys.clearUsageBatch')}
+                    </Button>
+                    <Button type="button" variant="ghost" size="sm" onClick={() => setSelectedIds([])} disabled={batchActionLoading}>
+                      {tr('pages.accounts.cancelselectAll')}
+                    </Button>
+                    <Button type="button" variant="destructive" size="sm" onClick={() => setDeleteConfirm({ mode: 'batch', ids: [...selectedIds] })} disabled={batchActionLoading}>
+                      <Trash2 className="size-4" />
+                      {tr('pages.accounts.delete2')}
+                    </Button>
+                  </>
+                ) : (
+                  <Button type="button" variant="outline" size="sm" onClick={() => toggleSelectAllVisible(true)} disabled={visibleItems.length === 0}>
+                    {tr('pages.downstreamKeys.selectVisible')}
+                  </Button>
+                )}
+              </div>
+            </DataTableToolbar>
             <Table className="w-full text-sm">
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-[42px]">
                     <Checkbox checked={allVisibleSelected} onCheckedChange={(checked) => toggleSelectAllVisible(checked === true)} />
                   </TableHead>
-                  <TableHead>密钥信息</TableHead>
-                  <TableHead>授权范围</TableHead>
-                  <TableHead className="text-right">额度</TableHead>
-                  <TableHead className="text-right">用量</TableHead>
-                  <TableHead>最近使用</TableHead>
-                  <TableHead className="text-right">操作</TableHead>
+                  <TableHead>{tr('pages.downstreamKeys.keyinfo')}</TableHead>
+                  <TableHead>{tr('pages.downstreamKeys.authorizationScope')}</TableHead>
+                  <TableHead className="text-right">{tr('pages.downstreamKeys.quota')}</TableHead>
+                  <TableHead className="text-right">{tr('pages.downstreamKeys.usage')}</TableHead>
+                  <TableHead>{tr('pages.downstreamKeys.recentUsage')}</TableHead>
+                  <TableHead className="text-right">{tr('pages.accounts.actions2')}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -1165,7 +1213,7 @@ export default function DownstreamKeys() {
                   const loadingDelete = !!rowLoading[`delete-${row.id}`];
                   const checked = selectedIds.includes(row.id);
                   return (
-                    <TableRow key={row.id} className={`row-selectable ${checked ? 'row-selected' : ''}`.trim()} onClick={() => { setSelectedId(row.id); setDrawerOpen(true); }}>
+                    <TableRow key={row.id} className="row-selectable" data-state={checked ? 'selected' : undefined} onClick={() => { setSelectedId(row.id); setDrawerOpen(true); }}>
                       <TableCell onClick={(e) => e.stopPropagation()}>
                         <Checkbox checked={checked} onCheckedChange={(checked) => toggleSelection(row.id, checked === true)} />
                       </TableCell>
@@ -1181,37 +1229,62 @@ export default function DownstreamKeys() {
                         {row.description ? <div className="max-w-80 text-xs text-muted-foreground">{row.description}</div> : null}
                         <div className="mt-2 flex flex-wrap gap-2">
                           <ToneBadge tone={row.groupName ? 'info' : 'muted'}>
-                            {row.groupName ? `主分组 · ${row.groupName}` : '未分组'}
+                            {row.groupName ? `主分组 · ${row.groupName}` : tr('pages.downstreamKeys.ungrouped')}
                           </ToneBadge>
                           <TagChips tags={row.tags || []} maxVisible={3} />
                         </div>
                       </TableCell>
                       <TableCell>
                         <div className="flex flex-col gap-1.5">
-                          <div className="text-xs text-muted-foreground">模型：<span className="text-foreground">{summarizeModelLimit(row.supportedModels || [])}</span></div>
-                          <div className="text-xs text-muted-foreground">群组：<span className="text-foreground">{summarizeRouteLimit(row.allowedRouteIds || [], routeMap)}</span></div>
-                          <div className="text-xs text-muted-foreground">标签：<span className="text-foreground">{summarizeTags(row.tags || [])}</span></div>
-                          <div className="text-xs text-muted-foreground">倍率：<span className="text-foreground">{summarizeSiteWeightMultipliers(row.siteWeightMultipliers || {})}</span></div>
+                          <div className="text-xs text-muted-foreground">{tr('pages.downstreamKeys.model')}<span className="text-foreground">{summarizeModelLimit(row.supportedModels || [])}</span></div>
+                          <div className="text-xs text-muted-foreground">{tr('pages.downstreamKeys.groups3')}<span className="text-foreground">{summarizeRouteLimit(row.allowedRouteIds || [], routeMap)}</span></div>
+                          <div className="text-xs text-muted-foreground">{tr('pages.downstreamKeys.tags')}<span className="text-foreground">{summarizeTags(row.tags || [])}</span></div>
+                          <div className="text-xs text-muted-foreground">{tr('pages.downstreamKeys.multiplier')}<span className="text-foreground">{summarizeSiteWeightMultipliers(row.siteWeightMultipliers || {})}</span></div>
                         </div>
                       </TableCell>
                       <TableCell className="text-right tabular-nums">
-                        <div className="font-bold text-foreground">{row.maxRequests == null ? '不限' : row.maxRequests.toLocaleString()}</div>
-                        <div className="mt-1 text-xs text-muted-foreground">{row.maxCost == null ? '成本不限' : `成本 ${formatMoney(row.maxCost)}`}</div>
-                        <div className="mt-1 text-xs text-muted-foreground">{row.expiresAt ? `到期 ${formatIso(row.expiresAt)}` : '永久有效'}</div>
+                        <div className="font-bold text-foreground">{row.maxRequests == null ? tr('pages.downstreamKeys.unlimited') : row.maxRequests.toLocaleString()}</div>
+                        <div className="mt-1 text-xs text-muted-foreground">{row.maxCost == null ? tr('pages.downstreamKeys.costunlimited') : `成本 ${formatMoney(row.maxCost)}`}</div>
+                        <div className="mt-1 text-xs text-muted-foreground">{row.expiresAt ? `到期 ${formatIso(row.expiresAt)}` : tr('pages.downstreamKeys.neverExpires')}</div>
                       </TableCell>
                       <TableCell className="text-right tabular-nums">
                         <div className="font-bold text-foreground">{formatCompactTokens(row.rangeUsage?.totalTokens || 0)}</div>
-                        <div className="mt-1 text-xs text-muted-foreground">{(row.rangeUsage?.totalRequests || 0).toLocaleString()} 请求</div>
+                        <div className="mt-1 text-xs text-muted-foreground">{(row.rangeUsage?.totalRequests || 0).toLocaleString()} {tr('pages.downstreamKeys.request')}</div>
                         <div className="mt-1 text-xs text-muted-foreground">{row.rangeUsage?.successRate == null ? '--' : `成功率 ${row.rangeUsage.successRate}%`}</div>
                       </TableCell>
                       <TableCell className="text-muted-foreground">{formatIso(row.lastUsedAt)}</TableCell>
                       <TableCell onClick={(e) => e.stopPropagation()}>
-                        <div className="flex flex-wrap justify-end gap-2">
-                          <Button type="button" variant="ghost" size="sm" onClick={() => { setSelectedId(row.id); setDrawerOpen(true); }}>查看</Button>
-                          <Button type="button" variant="ghost" size="sm" onClick={() => openEdit(row)}>编辑</Button>
-                          <Button type="button" variant="ghost" size="sm" onClick={() => void toggleEnabled(row)} disabled={loadingToggle}>{loadingToggle ? '处理中...' : (row.enabled ? '禁用' : '启用')}</Button>
-                          <Button type="button" variant="ghost" size="sm" onClick={() => void resetUsage(row)} disabled={loadingReset}>{loadingReset ? '处理中...' : '清零用量'}</Button>
-                          <Button type="button" variant="destructive" size="sm" onClick={() => setDeleteConfirm({ mode: 'single', item: row })} disabled={loadingDelete}>{loadingDelete ? '处理中...' : '删除'}</Button>
+                        <div className="flex items-center justify-end gap-1">
+                          <Button type="button" variant="ghost" size="sm" onClick={() => { setSelectedId(row.id); setDrawerOpen(true); }}>
+                            <Eye className="size-4" />
+                            {tr('pages.downstreamKeys.viewing')}
+                          </Button>
+                          <Button type="button" variant="ghost" size="sm" onClick={() => openEdit(row)}>
+                            <Pencil className="size-4" />
+                            {tr('pages.accounts.edit')}
+                          </Button>
+                          <DropdownMenu.Root>
+                            <DropdownMenu.Trigger asChild>
+                              <Button type="button" variant="ghost" size="icon" aria-label={tr('pages.accounts.actions2')}>
+                                <Ellipsis className="size-4" />
+                              </Button>
+                            </DropdownMenu.Trigger>
+                            <DropdownMenu.Content align="end">
+                              <DropdownMenu.Item onSelect={() => void toggleEnabled(row)} disabled={loadingToggle}>
+                                {row.enabled ? <PowerOff className="size-4" /> : <Power className="size-4" />}
+                                {loadingToggle ? tr('pages.downstreamKeys.zh') : (row.enabled ? tr('pages.downstreamKeys.disabled') : tr('pages.downstreamKeys.enabled'))}
+                              </DropdownMenu.Item>
+                              <DropdownMenu.Item onSelect={() => void resetUsage(row)} disabled={loadingReset}>
+                                <RotateCcw className="size-4" />
+                                {loadingReset ? tr('pages.downstreamKeys.zh') : tr('pages.downstreamKeys.clearUsage')}
+                              </DropdownMenu.Item>
+                              <DropdownMenu.Separator />
+                              <DropdownMenu.Item variant="destructive" onSelect={() => setDeleteConfirm({ mode: 'single', item: row })} disabled={loadingDelete}>
+                                <Trash2 className="size-4" />
+                                {loadingDelete ? tr('pages.downstreamKeys.zh') : tr('pages.accounts.delete3')}
+                              </DropdownMenu.Item>
+                            </DropdownMenu.Content>
+                          </DropdownMenu.Root>
                         </div>
                       </TableCell>
                     </TableRow>
@@ -1219,7 +1292,7 @@ export default function DownstreamKeys() {
                 })}
               </TableBody>
             </Table>
-          </div>
+          </DataTable>
         )}
       </Card>
 
@@ -1242,49 +1315,49 @@ export default function DownstreamKeys() {
       <CenteredModal
         open={batchMetadataOpen}
         onClose={() => { setBatchMetadataOpen(false); resetBatchMetadataForm(); }}
-        title="批量归类 / 标签"
+        title={tr('pages.downstreamKeys.batchGroupTags2')}
         maxWidth={720}
         bodyStyle={{ display: 'flex', flexDirection: 'column', gap: 12 }}
         footer={(
           <>
-            <Button type="button" variant="outline" onClick={() => { setBatchMetadataOpen(false); resetBatchMetadataForm(); }} disabled={batchActionLoading}>取消</Button>
+            <Button type="button" variant="outline" onClick={() => { setBatchMetadataOpen(false); resetBatchMetadataForm(); }} disabled={batchActionLoading}>{tr('app.cancel')}</Button>
             <Button type="button" onClick={() => void runBatchMetadata()} disabled={batchActionLoading}>
-              {batchActionLoading ? <><LoaderCircle className="size-4 animate-spin" /> 保存中...</> : '应用到所选密钥'}
+              {batchActionLoading ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.accounts.saving')}</> : tr('pages.downstreamKeys.applySelectedKeys')}
             </Button>
           </>
         )}
       >
         <InfoNote>
-          本次会对已选中的 {selectedIds.length} 个密钥批量设置主分组，并追加标签。不会改动模型白名单、群组范围、额度和倍率。
+          {tr('pages.downstreamKeys.selectedzh2')} {selectedIds.length} {tr('pages.downstreamKeys.keySettingsprimaryGroupAppendTagsModelGroups')}
         </InfoNote>
         <div className="grid grid-cols-2 gap-3">
           <div className="flex flex-col gap-2">
-            <div className="text-xs text-muted-foreground">主分组操作</div>
+            <div className="text-xs text-muted-foreground">{tr('pages.downstreamKeys.primaryGroupactions')}</div>
             <ModernSelect
               value={batchMetadataForm.groupOperation}
               onChange={(value) => setBatchMetadataForm((prev) => ({ ...prev, groupOperation: String(value) as BatchMetadataForm['groupOperation'] }))}
               options={[
-                { value: 'keep', label: '不改动主分组' },
-                { value: 'set', label: '统一设为主分组' },
-                { value: 'clear', label: '清空主分组' },
+                { value: 'keep', label: tr('pages.downstreamKeys.doNotChangePrimaryGroup') },
+                { value: 'set', label: tr('pages.downstreamKeys.setAllPrimaryGroup') },
+                { value: 'clear', label: tr('pages.downstreamKeys.clearprimaryGroup') },
               ]}
             />
             <Input
               value={batchMetadataForm.groupName}
               onChange={(e) => setBatchMetadataForm((prev) => ({ ...prev, groupName: e.target.value }))}
               disabled={batchMetadataForm.groupOperation !== 'set'}
-              placeholder="例如：VIP / 内部项目"
+              placeholder={tr('pages.downstreamKeys.vip')}
               list="downstream-group-suggestions"
             />
           </div>
           <div className="flex flex-col gap-2">
-            <div className="text-xs text-muted-foreground">标签操作</div>
+            <div className="text-xs text-muted-foreground">{tr('pages.downstreamKeys.tagsactions')}</div>
             <ModernSelect
               value={batchMetadataForm.tagOperation}
               onChange={(value) => setBatchMetadataForm((prev) => ({ ...prev, tagOperation: String(value) as BatchMetadataForm['tagOperation'] }))}
               options={[
-                { value: 'keep', label: '不改动标签' },
-                { value: 'append', label: '追加标签' },
+                { value: 'keep', label: tr('pages.downstreamKeys.doNotChangeTags') },
+                { value: 'append', label: tr('pages.downstreamKeys.appendTags') },
               ]}
             />
             <div className={batchMetadataForm.tagOperation === 'append' ? '' : 'pointer-events-none opacity-60'}>
@@ -1292,7 +1365,7 @@ export default function DownstreamKeys() {
                 tags={batchMetadataForm.tags}
                 onChange={(tags) => setBatchMetadataForm((prev) => ({ ...prev, tags }))}
                 suggestions={tagSuggestions}
-                placeholder="批量追加标签"
+                placeholder={tr('pages.downstreamKeys.appendTagsBatch')}
               />
             </div>
           </div>
@@ -1303,12 +1376,12 @@ export default function DownstreamKeys() {
         open={Boolean(deleteConfirm)}
         onClose={() => setDeleteConfirm(null)}
         onConfirm={() => void confirmDelete()}
-        title="确认删除下游密钥"
-        confirmText="确认删除"
+        title={tr('pages.downstreamKeys.deletedownstreamKeys')}
+        confirmText={tr('components.deleteConfirmModal.delete')}
         loading={batchActionLoading || (deleteConfirm?.mode === 'single' && !!rowLoading[`delete-${deleteConfirm.item.id}`])}
         description={deleteConfirm?.mode === 'single'
-          ? <>确定要删除密钥 <strong>{deleteConfirm.item.name}</strong> 吗？</>
-          : <>确定要删除选中的 <strong>{deleteConfirm?.ids.length || 0}</strong> 个密钥吗？</>}
+          ? <>{tr('pages.downstreamKeys.deletekey')} <strong>{deleteConfirm.item.name}</strong> {tr('pages.accounts.textqcmnqj')}</>
+          : <>{tr('pages.accounts.deleteZh')} <strong>{deleteConfirm?.ids.length || 0}</strong> {tr('pages.downstreamKeys.keys')}</>}
       />
 
       <DownstreamKeyDrawer
@@ -1317,6 +1390,6 @@ export default function DownstreamKeys() {
         item={selectedItem}
         initialRange={range}
       />
-    </div>
+    </PageShell>
   );
 }

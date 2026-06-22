@@ -12,7 +12,7 @@ import {
   THEME_MODE_STORAGE_KEY,
   USER_PROFILE_STORAGE_KEY,
 } from './appLocalState.js';
-import { I18nProvider, useI18n } from './i18n.js';
+import { I18nProvider, tr, useI18n } from './i18n.js';
 import { resolveLoginErrorMessage } from './loginError.js';
 import { SITE_DOCS_URL, SITE_GITHUB_URL } from './docsLink.js';
 import { useAnimatedVisibility } from './components/useAnimatedVisibility.js';
@@ -121,7 +121,7 @@ function resolveStoredProfile(): UserProfile {
       ? parsed.avatarStyle.trim()
       : '';
     return {
-      name: name || '管理员',
+      name: name || tr('app.admin'),
       avatarSeed: resolvedSeed,
       avatarStyle: DICEBEAR_STYLES.includes(avatarStyle as DicebearStyle)
         ? avatarStyle
@@ -139,16 +139,16 @@ export function Login({ onLogin, t }: { onLogin: (token: string) => void; t: (te
   const [error, setError] = useState('');
   const capabilityRows = [
     {
-      title: t('统一代理网关'),
-      description: t('一个 Key、一个入口，兼容 OpenAI / Claude 下游格式'),
+      title: t('app.unifiedProxyGateway'),
+      description: t('app.oneKeyOneEndpointCompatibleOpenaiClaude'),
     },
     {
-      title: t('自动模型发现'),
-      description: t('上游新增模型自动出现在模型列表，零配置路由生成'),
+      title: t('app.autoModelDiscovery'),
+      description: t('app.newUpstreamModelsAppearAutomaticallyZeroConfig'),
     },
     {
-      title: t('智能路由引擎'),
-      description: t('按成本、延迟、成功率自动选择最优通道，故障自动转移'),
+      title: t('app.smartRoutingEngine'),
+      description: t('app.autoSelectsOptimalChannelCostLatencySuccess'),
     },
   ];
 
@@ -181,7 +181,7 @@ export function Login({ onLogin, t }: { onLogin: (token: string) => void; t: (te
         setLoading(false);
       }
     } catch {
-      setError(t('无法连接到服务器'));
+      setError(t('app.unableConnectServer'));
       setLoading(false);
     }
   };
@@ -198,15 +198,15 @@ export function Login({ onLogin, t }: { onLogin: (token: string) => void; t: (te
             </div>
             <div className="login-brand-summary">
               <div className="login-brand-name">Metapi</div>
-              <div className="login-brand-kicker">{t('中转站的中转站')}</div>
+              <div className="login-brand-kicker">{t('app.hubHubs')}</div>
             </div>
           </div>
           <div className="login-brand-copy-block">
             <p className="login-brand-copy">
-              {t('把分散的 New API / One API / OneHub 等站点聚合成统一网关，自动发现模型、智能路由、成本更优。')}
+              {t('app.turnFragmentedNewApiOneApiOnehub')}
             </p>
           </div>
-          <div className="login-compat-line">{t('兼容 New API / One API / OneHub / DoneHub / Veloera / AnyRouter / Sub2API')}</div>
+          <div className="login-compat-line">{t('app.compatibleNewApiOneApiOnehubDonehub')}</div>
           <div className="login-capability-list">
             {capabilityRows.map((feature, index) => (
               <div key={feature.title} className="login-capability-row">
@@ -240,21 +240,21 @@ export function Login({ onLogin, t }: { onLogin: (token: string) => void; t: (te
               rel="noopener noreferrer"
               className="login-doc-link"
             >
-              {t('部署文档')}
+              {t('app.deploymentDocs')}
             </a>
           </div>
         </section>
 
         <section className="login-auth-stage">
           <div className="login-auth-panel">
-            <div className="login-auth-eyebrow">{t('管理员入口')}</div>
-            <h2 className="login-auth-title">{t('登录')}</h2>
-            <p className="login-auth-copy">{t('请输入管理员令牌后继续。')}</p>
-            <label className="login-auth-label" htmlFor="admin-token-input">{t('管理员令牌')}</label>
+            <div className="login-auth-eyebrow">{t('app.adminAccess')}</div>
+            <h2 className="login-auth-title">{t('app.sign')}</h2>
+            <p className="login-auth-copy">{t('app.enterAdminTokenContinue')}</p>
+            <label className="login-auth-label" htmlFor="admin-token-input">{t('app.adminToken')}</label>
             <Input
               id="admin-token-input"
               type="password"
-              placeholder={t('管理员令牌')}
+              placeholder={t('app.adminToken')}
               value={token}
               onChange={(e) => {
                 setToken(e.target.value);
@@ -271,13 +271,13 @@ export function Login({ onLogin, t }: { onLogin: (token: string) => void; t: (te
               type="button"
               onClick={handleLogin}
               disabled={loading || !token}
-              className="login-auth-submit"
+              className="w-full py-[13px]"
             >
-              {loading ? t('验证中...') : t('登录')}
+              {loading ? t('app.verifying') : t('app.sign')}
             </Button>
-            <div className="login-auth-note">{t('仅校验本地服务访问权限，不会把令牌发送到第三方。')}</div>
+            <div className="login-auth-note">{t('app.onlyChecksLocalServiceAccessNeverSends')}</div>
             <div className="login-auth-footer">
-              <span>{t('管理员登录后继续。')}</span>
+              <span>{t('app.continueAdminSign')}</span>
             </div>
           </div>
         </section>
@@ -323,11 +323,11 @@ function UserProfileModal({
   const handleSubmit = () => {
     const normalizedName = name.trim();
     if (!normalizedName) {
-      setError(t('用户名不能为空'));
+      setError(t('app.usernameCannotEmpty'));
       return;
     }
     if (Array.from(normalizedName).length > 24) {
-      setError(t('用户名最多 24 个字符'));
+      setError(t('app.usernameCanMost24Characters'));
       return;
     }
     onSave({
@@ -343,15 +343,15 @@ function UserProfileModal({
     <CenteredModal
       open={open}
       onClose={onClose}
-      title={t('个人信息')}
+      title={t('app.profile')}
       maxWidth={440}
       closeOnBackdrop
       closeOnEscape
       bodyStyle={{ display: 'flex', flexDirection: 'column', gap: 12 }}
       footer={(
         <>
-          <Button type="button" variant="ghost" onClick={onClose}>{t('取消')}</Button>
-          <Button type="button" onClick={handleSubmit}>{t('保存')}</Button>
+          <Button type="button" variant="ghost" onClick={onClose}>{t('app.cancel')}</Button>
+          <Button type="button" onClick={handleSubmit}>{t('app.save')}</Button>
         </>
       )}
     >
@@ -363,27 +363,27 @@ function UserProfileModal({
             className="size-full rounded-full object-cover"
           />
         </div>
-        <div className="text-xs text-muted-foreground">{t('右上角头像实时预览')}</div>
+        <div className="text-xs text-muted-foreground">{t('app.topRightAvatarLivePreview')}</div>
       </div>
 
       <div>
-        <div className="mb-1.5 text-xs text-muted-foreground">{t('用户名')}</div>
+        <div className="mb-1.5 text-xs text-muted-foreground">{t('app.username')}</div>
         <Input
           value={name}
           onChange={(e) => {
             setName(e.target.value);
             setError('');
           }}
-          placeholder={t('例如：小王')}
+          placeholder={t('app.eGAlex')}
         />
       </div>
 
       <div>
         <div className="mb-1.5 text-xs text-muted-foreground">
-          {t('头像（Dicebear 随机） · 风格：')}{avatarStyle}
+          {t('app.avatarDicebearRandomStyle')}{avatarStyle}
         </div>
         <Button type="button" variant="outline" onClick={handleRandomAvatar}>
-          {t('换一个随机头像')}
+          {t('app.randomizeAvatar')}
         </Button>
       </div>
 
@@ -398,36 +398,36 @@ function UserProfileModal({
 
 export const sidebarGroups = [
   {
-    label: '控制台',
+    label: tr('app.console'),
     items: [
-      { to: '/', label: '仪表盘', icon: <svg className="size-4.5 shrink-0 opacity-75" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M4 5a1 1 0 011-1h4a1 1 0 011 1v5a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM14 5a1 1 0 011-1h4a1 1 0 011 1v2a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zM14 12a1 1 0 011-1h4a1 1 0 011 1v7a1 1 0 01-1 1h-4a1 1 0 01-1-1v-7z" /></svg> },
-      { to: '/sites', label: '站点管理', icon: <svg className="size-4.5 shrink-0 opacity-75" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" /></svg> },
-      { to: '/site-announcements', label: '站点公告', icon: <svg className="size-4.5 shrink-0 opacity-75" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M7 8h10M7 12h10M7 16h6M5 4h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z" /></svg> },
-      { to: '/accounts', label: '连接管理', icon: <svg className="size-4.5 shrink-0 opacity-75" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" /></svg> },
-      { to: '/oauth', label: 'OAuth 管理', icon: <svg className="size-4.5 shrink-0 opacity-75" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M15 7a3 3 0 106 0 3 3 0 00-6 0zM3 17a3 3 0 106 0 3 3 0 00-6 0zM15 17a3 3 0 106 0 3 3 0 00-6 0zM6 14V10m0 0a3 3 0 113-3m-3 3a3 3 0 003 3h6" /></svg> },
-      { to: '/downstream-keys', label: '下游密钥', icon: <svg className="size-4.5 shrink-0 opacity-75" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M15 7a4 4 0 11-8 0 4 4 0 018 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M7 21a6 6 0 0110.8-3.6M15.5 18.5l2-2m0 0l2 2m-2-2V21" /></svg> },
-      { to: '/checkin', label: '签到记录', icon: <svg className="size-4.5 shrink-0 opacity-75" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> },
-      { to: '/routes', label: '路由', icon: <svg className="size-4.5 shrink-0 opacity-75" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" /></svg> },
-      { to: '/logs', label: '使用日志', icon: <svg className="size-4.5 shrink-0 opacity-75" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg> },
-      { to: '/monitor', label: '可用性监控', icon: <svg className="size-4.5 shrink-0 opacity-75" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M3 5a2 2 0 012-2h14a2 2 0 012 2v11a2 2 0 01-2 2h-5l-2.5 3-2.5-3H5a2 2 0 01-2-2V5z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M7 10h3l1.5-2.5L14 13l1.5-3H17" /></svg> },
+      { to: '/', label: tr('app.dashboard'), icon: <svg className="size-4.5 shrink-0 opacity-75" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M4 5a1 1 0 011-1h4a1 1 0 011 1v5a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM14 5a1 1 0 011-1h4a1 1 0 011 1v2a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zM14 12a1 1 0 011-1h4a1 1 0 011 1v7a1 1 0 01-1 1h-4a1 1 0 01-1-1v-7z" /></svg> },
+      { to: '/sites', label: tr('app.siteManagement'), icon: <svg className="size-4.5 shrink-0 opacity-75" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" /></svg> },
+      { to: '/site-announcements', label: tr('app.sites'), icon: <svg className="size-4.5 shrink-0 opacity-75" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M7 8h10M7 12h10M7 16h6M5 4h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z" /></svg> },
+      { to: '/accounts', label: tr('app.connectionManagement'), icon: <svg className="size-4.5 shrink-0 opacity-75" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" /></svg> },
+      { to: '/oauth', label: tr('app.oauth'), icon: <svg className="size-4.5 shrink-0 opacity-75" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M15 7a3 3 0 106 0 3 3 0 00-6 0zM3 17a3 3 0 106 0 3 3 0 00-6 0zM15 17a3 3 0 106 0 3 3 0 00-6 0zM6 14V10m0 0a3 3 0 113-3m-3 3a3 3 0 003 3h6" /></svg> },
+      { to: '/downstream-keys', label: tr('app.downstreamKeys'), icon: <svg className="size-4.5 shrink-0 opacity-75" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M15 7a4 4 0 11-8 0 4 4 0 018 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M7 21a6 6 0 0110.8-3.6M15.5 18.5l2-2m0 0l2 2m-2-2V21" /></svg> },
+      { to: '/checkin', label: tr('app.checkLogs'), icon: <svg className="size-4.5 shrink-0 opacity-75" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> },
+      { to: '/routes', label: tr('app.routes'), icon: <svg className="size-4.5 shrink-0 opacity-75" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" /></svg> },
+      { to: '/logs', label: tr('app.usageLogs'), icon: <svg className="size-4.5 shrink-0 opacity-75" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg> },
+      { to: '/monitor', label: tr('app.availabilityMonitor'), icon: <svg className="size-4.5 shrink-0 opacity-75" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M3 5a2 2 0 012-2h14a2 2 0 012 2v11a2 2 0 01-2 2h-5l-2.5 3-2.5-3H5a2 2 0 01-2-2V5z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M7 10h3l1.5-2.5L14 13l1.5-3H17" /></svg> },
     ],
   },
   {
-    label: '系统',
+    label: tr('app.system'),
     items: [
-      { to: '/settings', label: '设置', icon: <svg className="size-4.5 shrink-0 opacity-75" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg> },
-      { to: '/events', label: '程序日志', icon: <svg className="size-4.5 shrink-0 opacity-75" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg> },
-      { to: '/settings/import-export', label: '导入/导出', icon: <svg className="size-4.5 shrink-0 opacity-75" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M7 7h10M7 12h6m-6 5h10M5 3h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2z" /></svg> },
-      { to: '/settings/notify', label: '通知设置', icon: <svg className="size-4.5 shrink-0 opacity-75" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" /></svg> },
+      { to: '/settings', label: tr('app.settings'), icon: <svg className="size-4.5 shrink-0 opacity-75" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg> },
+      { to: '/events', label: tr('app.systemLogs'), icon: <svg className="size-4.5 shrink-0 opacity-75" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg> },
+      { to: '/settings/import-export', label: tr('app.importExport'), icon: <svg className="size-4.5 shrink-0 opacity-75" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M7 7h10M7 12h6m-6 5h10M5 3h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2z" /></svg> },
+      { to: '/settings/notify', label: tr('app.notificationSettings'), icon: <svg className="size-4.5 shrink-0 opacity-75" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" /></svg> },
     ],
   },
 ];
 
 const topNavItems = [
-  { label: '控制台', to: '/' },
-  { label: '模型广场', to: '/models' },
-  { label: '模型操练场', to: '/playground' },
-  { label: '关于', to: '/about' },
+  { label: tr('app.console'), to: '/' },
+  { label: tr('app.modelMarketplace'), to: '/models' },
+  { label: tr('app.modelPlayground'), to: '/playground' },
+  { label: tr('app.about'), to: '/about' },
 ];
 
 function PageTransition({ children }: { children: React.ReactNode }) {
@@ -466,8 +466,8 @@ function AppShell() {
     ? (systemPrefersDark ? 'dark' : 'light')
     : themeMode;
   const rawDisplayName = (userProfile.name || '').trim();
-  const displayName = rawDisplayName ? (rawDisplayName === '管理员' ? t('管理员') : rawDisplayName) : t('管理员');
-  const resolvedThemeLabel = resolvedTheme === 'dark' ? t('深色') : t('浅色');
+  const displayName = rawDisplayName ? (rawDisplayName === '管理员' ? t('app.admin') : rawDisplayName) : t('app.admin');
+  const resolvedThemeLabel = resolvedTheme === 'dark' ? t('app.dark') : t('app.light');
   const avatarUrl = buildDicebearAvatarUrl(userProfile.avatarStyle, userProfile.avatarSeed);
 
   useEffect(() => {
@@ -538,13 +538,13 @@ function AppShell() {
           .filter((row: any) => (
             (Number(row?.id) || 0) > latestTaskEventIdRef.current
             && row?.relatedType === 'task'
-            && !String(row?.title || '').includes('已开始')
+            && !String(row?.title || '').includes(tr('app.started'))
           ))
           .sort((a: any, b: any) => (a.id || 0) - (b.id || 0))
           .slice(-3);
 
         for (const event of newTaskEvents) {
-          const message = event?.message || event?.title || t('任务状态已更新');
+          const message = event?.message || event?.title || t('app.taskStatusUpdated');
           if (event?.level === 'error') {
             toast.error(message);
           } else if (event?.level === 'warning') {
@@ -576,7 +576,7 @@ function AppShell() {
     const check = () => {
       if (hasValidAuthSession(localStorage)) return;
       setAuthed(false);
-      toast.info(t('会话已过期，请重新登录'));
+      toast.info(t('app.sessionExpiredPleaseSignAgain'));
     };
 
     check();
@@ -588,7 +588,7 @@ function AppShell() {
     if (!authed) return;
     if (localStorage.getItem(FIRST_USE_DOC_REMINDER_KEY)) return;
     localStorage.setItem(FIRST_USE_DOC_REMINDER_KEY, '1');
-    toast.info(`${t('首次使用建议先阅读站点文档：')}${SITE_DOCS_URL}`);
+    toast.info(`${t('app.firstTimeSetupReadSiteDocs')}${SITE_DOCS_URL}`);
   }, [authed, t, toast]);
 
   const handleSelectThemeMode = (nextMode: ThemeMode) => {
@@ -599,7 +599,7 @@ function AppShell() {
   const handleSaveProfile = (nextProfile: UserProfile) => {
     const normalizedSeed = nextProfile.avatarSeed.trim() || createRandomAvatarSeed();
     const normalized = {
-      name: nextProfile.name.trim() || t('管理员'),
+      name: nextProfile.name.trim() || t('app.admin'),
       avatarSeed: normalizedSeed,
       avatarStyle: DICEBEAR_STYLES.includes(nextProfile.avatarStyle as DicebearStyle)
         ? nextProfile.avatarStyle
@@ -608,7 +608,7 @@ function AppShell() {
     setUserProfile(normalized);
     localStorage.setItem(USER_PROFILE_STORAGE_KEY, JSON.stringify(normalized));
     setShowProfileModal(false);
-    toast.success(t('个人信息已保存'));
+    toast.success(t('app.profileSaved'));
   };
 
   if (!authed) {
@@ -625,7 +625,7 @@ function AppShell() {
           <Button
             variant="ghost"
             size="icon"
-            aria-label={t('打开导航')}
+            aria-label={t('app.opennavigate')}
             onClick={() => setDrawerOpen(true)}
             type="button"
           >
@@ -654,19 +654,25 @@ function AppShell() {
           <Button
             variant="ghost"
             size="icon"
-            aria-label={language === 'zh' ? 'Switch to English' : '切换到中文'}
+            aria-label={language === 'zh' ? 'Switch to English' : tr('app.switchChinese')}
             onClick={toggleLanguage}
-            className="min-w-9 text-xs font-bold"
+            className="min-w-9"
           >
-            {language === 'zh' ? 'EN' : '中'}
+            {language === 'zh' ? 'EN' : tr('app.zh')}
           </Button>
-          <Button type="button" variant="outline" className="min-w-[170px] justify-start gap-2.5 px-3 text-muted-foreground" aria-label={t('搜索 (Ctrl+K)')} onClick={() => setShowSearch(true)}>
+          <Button
+            type="button"
+            variant="outline"
+            className="min-w-[170px] justify-start gap-2.5 px-3"
+            aria-label={t('app.searchCtrlK')}
+            onClick={() => setShowSearch(true)}
+          >
             <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
-            <span className="text-sm font-semibold">{t('搜索')}</span>
+            <span className="text-sm font-semibold">{t('app.search')}</span>
             <kbd className="ml-auto rounded-md border bg-muted px-2 py-1 text-[11px] font-bold leading-none text-muted-foreground">Ctrl K</kbd>
           </Button>
           <div className="relative">
-            <Button ref={notifBtnRef} type="button" variant="ghost" size="icon" aria-label={t('通知')} onClick={() => setShowNotifications(!showNotifications)}>
+            <Button ref={notifBtnRef} type="button" variant="ghost" size="icon" aria-label={t('app.notifications')} onClick={() => setShowNotifications(!showNotifications)}>
               <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" /></svg>
               {unreadCount > 0 && (
                 <span className="absolute right-0 top-0 inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-destructive px-1 text-[11px] font-semibold text-destructive-foreground">
@@ -686,8 +692,8 @@ function AppShell() {
                 variant="ghost"
                 size="icon"
                 aria-label={themeMode === 'system'
-                  ? `${t('跟随系统')} (${resolvedThemeLabel})`
-                  : (themeMode === 'light' ? t('浅色模式') : t('深色模式'))}
+                  ? `${t('app.followSystem')} (${resolvedThemeLabel})`
+                  : (themeMode === 'light' ? t('app.lightMode') : t('app.darkMode'))}
               >
                 {themeMode === 'system' ? (
                   <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5h16v10H4V5zm6 12h4m-7 2h10" /></svg>
@@ -700,9 +706,9 @@ function AppShell() {
             </DropdownMenu.Trigger>
             <DropdownMenu.Content align="end">
               <DropdownMenu.RadioGroup value={themeMode} onValueChange={(value) => handleSelectThemeMode(value as ThemeMode)}>
-                <DropdownMenu.RadioItem value="system">{t('跟随系统')}（{resolvedThemeLabel}）</DropdownMenu.RadioItem>
-                <DropdownMenu.RadioItem value="light">{t('浅色模式')}</DropdownMenu.RadioItem>
-                <DropdownMenu.RadioItem value="dark">{t('深色模式')}</DropdownMenu.RadioItem>
+                <DropdownMenu.RadioItem value="system">{t('app.followSystem')}（{resolvedThemeLabel}）</DropdownMenu.RadioItem>
+                <DropdownMenu.RadioItem value="light">{t('app.lightMode')}</DropdownMenu.RadioItem>
+                <DropdownMenu.RadioItem value="dark">{t('app.darkMode')}</DropdownMenu.RadioItem>
               </DropdownMenu.RadioGroup>
             </DropdownMenu.Content>
           </DropdownMenu.Root>
@@ -715,7 +721,7 @@ function AppShell() {
                 type="button"
                 variant="ghost"
                 size="icon"
-                className="size-8 rounded-full p-0"
+                className="size-8 p-0"
                 aria-label={displayName}
               >
                 <img
@@ -733,7 +739,7 @@ function AppShell() {
                 }}
               >
                 <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
-                {t('个人信息')}
+                {t('app.profile')}
               </DropdownMenu.Item>
               <DropdownMenu.Item
                 variant="destructive"
@@ -743,7 +749,7 @@ function AppShell() {
                 }}
               >
                 <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
-                {t('退出登录')}
+                {t('app.signOut')}
               </DropdownMenu.Item>
             </DropdownMenu.Content>
           </DropdownMenu.Root>
@@ -755,8 +761,8 @@ function AppShell() {
           <MobileDrawer
             open={drawerOpen}
             onClose={() => setDrawerOpen(false)}
-            title={t('导航菜单')}
-            closeLabel={t('关闭导航')}
+            title={t('app.navigate')}
+            closeLabel={t('app.closenavigate')}
           >
             <div className="flex items-center gap-2">
               <img src="/logo.png" alt="Metapi" className="size-8 rounded-md" />
@@ -781,7 +787,7 @@ function AppShell() {
                 </div>
               ))}
               <div className="mb-2">
-                <div className="px-3 pb-1.5 pt-3 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">{t('更多')}</div>
+                <div className="px-3 pb-1.5 pt-3 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">{t('app.more')}</div>
                 {topNavItems.filter((n) => n.to !== '/').map((item) => (
                   <NavLink
                     key={item.to}
@@ -815,11 +821,16 @@ function AppShell() {
                 ))}
               </div>
             ))}
-            <Button type="button" variant="ghost" className="mt-auto w-full justify-start gap-2 whitespace-nowrap px-3 text-muted-foreground" onClick={() => setSidebarCollapsed(!sidebarCollapsed)}>
+            <Button
+              type="button"
+              variant="ghostMuted"
+              className="mt-auto w-full justify-start gap-2 whitespace-nowrap px-3"
+              onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+            >
               <svg className={`size-4 shrink-0 transition-transform ${sidebarCollapsed ? 'rotate-180' : ''}`} width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
               </svg>
-              {!sidebarCollapsed && <span>{t('收起侧边栏')}</span>}
+              {!sidebarCollapsed && <span>{t('app.collapseSidebar')}</span>}
             </Button>
           </aside>
         )}

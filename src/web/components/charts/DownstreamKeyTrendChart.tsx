@@ -4,12 +4,13 @@ import { Skeleton } from '../ui/skeleton/index.js';
 import EmptyStateBlock from '../EmptyStateBlock.js';
 import { ChartFrame, ChartMetricToggle, ChartShell } from './ChartShell.js';
 
+import { tr } from '../../i18n.js';
 type Metric = 'tokens' | 'requests' | 'cost';
 
 const METRIC_OPTIONS: Array<{ key: Metric; label: string }> = [
   { key: 'tokens', label: 'Tokens' },
-  { key: 'requests', label: '请求数' },
-  { key: 'cost', label: '成本' },
+  { key: 'requests', label: tr('components.charts.downstreamKeyTrendChart.requests') },
+  { key: 'cost', label: tr('components.charts.downstreamKeyTrendChart.cost') },
 ];
 
 export type DownstreamKeyTrendBucket = {
@@ -76,7 +77,7 @@ export default function DownstreamKeyTrendChart({
   if (!flatData || flatData.length === 0) {
     return (
       <ChartShell actions={<MetricToggle metric={metric} onChange={setMetric} />}>
-        <EmptyStateBlock title="暂无趋势数据" description="该 Key 在所选时间范围内没有可用的 tokens 记录" />
+        <EmptyStateBlock title={tr('components.charts.downstreamKeyTrendChart.noTrendData')} description={tr('components.charts.downstreamKeyTrendChart.keyTimeAvailableTokens')} />
       </ChartShell>
     );
   }

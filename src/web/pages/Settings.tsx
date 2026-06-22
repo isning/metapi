@@ -38,21 +38,22 @@ import { Checkbox } from '../components/ui/checkbox/index.js';
 import { Input } from '../components/ui/input/index.js';
 import { Label } from '../components/ui/label/index.js';
 import { Textarea } from '../components/ui/textarea/index.js';
+import JsonCodeEditor from '../components/JsonCodeEditor.js';
 
 const PROXY_TOKEN_PREFIX = 'sk-';
 const FACTORY_RESET_ADMIN_TOKEN = 'change-me-admin-token';
 const FACTORY_RESET_CONFIRM_SECONDS = 3;
-const MODEL_AVAILABILITY_PROBE_CONFIRM_TEXT = '我确认我使用的中转站全部允许批量测活，如因开启此功能被中转站封号，自行负责。';
+const MODEL_AVAILABILITY_PROBE_CONFIRM_TEXT = tr('pages.settings.usageZhAllBatchHealthCheckTurn');
 const SECONDS_PER_DAY = 24 * 60 * 60;
 const ROUTE_COOLDOWN_UNIT_OPTIONS = [
-  { value: 'second', label: '秒', multiplierSec: 1 },
-  { value: 'minute', label: '分钟', multiplierSec: 60 },
-  { value: 'hour', label: '小时', multiplierSec: 60 * 60 },
-  { value: 'day', label: '天', multiplierSec: SECONDS_PER_DAY },
+  { value: 'second', label: tr('pages.settings.seconds'), multiplierSec: 1 },
+  { value: 'minute', label: tr('pages.settings.minutes'), multiplierSec: 60 },
+  { value: 'hour', label: tr('pages.settings.hours'), multiplierSec: 60 * 60 },
+  { value: 'day', label: tr('pages.dashboard.days'), multiplierSec: SECONDS_PER_DAY },
 ] as const;
 const CHECKIN_SCHEDULE_MODE_OPTIONS = [
   { value: 'cron', label: 'Cron' },
-  { value: 'interval', label: '间隔签到' },
+  { value: 'interval', label: tr('pages.settings.sign4') },
 ] as const;
 const CHECKIN_INTERVAL_OPTIONS = Array.from({ length: 24 }, (_, index) => {
   const hour = index + 1;
@@ -144,7 +145,7 @@ const PAYLOAD_RULES_EDITOR_SECTIONS = [
   {
     key: 'default',
     title: 'default',
-    description: '字段缺失时才注入，适合补默认参数。',
+    description: tr('pages.settings.default2'),
     placeholder: `[
   {
     "models": [{ "name": "gpt-*", "protocol": "codex" }],
@@ -157,7 +158,7 @@ const PAYLOAD_RULES_EDITOR_SECTIONS = [
   {
     key: 'default-raw',
     title: 'default-raw',
-    description: '字段缺失时注入原始 JSON，适合 schema、复杂对象等值。',
+    description: tr('pages.settings.jsonSchema'),
     placeholder: `[
   {
     "models": [{ "name": "gpt-*", "protocol": "codex" }],
@@ -170,7 +171,7 @@ const PAYLOAD_RULES_EDITOR_SECTIONS = [
   {
     key: 'override',
     title: 'override',
-    description: '无论原请求是否已有该字段，都强制覆盖。',
+    description: tr('pages.settings.alwaysOverrideFieldEvenIfOriginalRequest'),
     placeholder: `[
   {
     "models": [{ "name": "gpt-*", "protocol": "codex" }],
@@ -183,7 +184,7 @@ const PAYLOAD_RULES_EDITOR_SECTIONS = [
   {
     key: 'override-raw',
     title: 'override-raw',
-    description: '无论原请求是否已有该字段，都强制覆盖为原始 JSON。',
+    description: tr('pages.settings.noneRequestForceOverrideJson'),
     placeholder: `[
   {
     "models": [{ "name": "gemini-*", "protocol": "gemini" }],
@@ -196,7 +197,7 @@ const PAYLOAD_RULES_EDITOR_SECTIONS = [
   {
     key: 'filter',
     title: 'filter',
-    description: '删除匹配请求中的字段。',
+    description: tr('pages.settings.deletematchrequestzh'),
     placeholder: `[
   {
     "models": [{ "name": "gpt-*", "protocol": "codex" }],
@@ -212,15 +213,15 @@ const PAYLOAD_RULES_EDITOR_SECTIONS = [
 }>;
 
 const PAYLOAD_RULE_ACTION_OPTIONS: Array<{ value: PayloadRuleAction; label: string }> = [
-  { value: 'default', label: '默认注入' },
-  { value: 'default-raw', label: '默认注入 JSON' },
-  { value: 'override', label: '强制覆盖' },
-  { value: 'override-raw', label: '强制覆盖 JSON' },
-  { value: 'filter', label: '删除字段' },
+  { value: 'default', label: tr('pages.settings.default') },
+  { value: 'default-raw', label: tr('pages.settings.defaultJson') },
+  { value: 'override', label: tr('pages.settings.forceOverride') },
+  { value: 'override-raw', label: tr('pages.settings.forceOverrideJson') },
+  { value: 'filter', label: tr('pages.settings.delete') },
 ];
 
 const PAYLOAD_RULE_VALUE_MODE_OPTIONS: Array<{ value: VisualPayloadRuleValueMode; label: string }> = [
-  { value: 'text', label: '文本' },
+  { value: 'text', label: tr('pages.settings.text') },
   { value: 'json', label: 'JSON' },
 ];
 
@@ -268,7 +269,7 @@ function parsePayloadRulesFromDrafts(
     } catch (error: any) {
       return {
         success: false,
-        message: `Payload 规则 ${section.title} 不是合法 JSON：${error?.message || '解析失败'}`,
+        message: `Payload 规则 ${section.title} 不是合法 JSON：${error?.message || tr('pages.settings.failed')}`,
       };
     }
   }
@@ -533,7 +534,7 @@ export default function Settings() {
     return () => globalThis.clearInterval(timer);
   }, [factoryResetOpen]);
 
-  const proxyTransportModeLabel = runtime.codexUpstreamWebsocketEnabled ? '上游 WebSocket 已启用' : 'HTTP 优先';
+  const proxyTransportModeLabel = runtime.codexUpstreamWebsocketEnabled ? tr('pages.settings.websocketEnabled') : tr('pages.settings.http');
   const proxyTransportQueueLabel = `会话池 ${runtime.proxySessionChannelConcurrencyLimit} 并发 / ${runtime.proxySessionChannelQueueWaitMs}ms`;
   const modelAvailabilityProbeDirty = runtime.modelAvailabilityProbeEnabled !== savedModelAvailabilityProbeEnabled;
   const modelAvailabilityProbeStatusTone: SettingsPillTone = modelAvailabilityProbeDirty
@@ -542,10 +543,10 @@ export default function Settings() {
       ? 'danger'
       : 'neutral';
   const modelAvailabilityProbeStatusLabel = modelAvailabilityProbeDirty
-    ? '待保存'
+    ? tr('pages.settings.save5')
     : savedModelAvailabilityProbeEnabled
-      ? '已启用'
-      : '已关闭';
+      ? tr('pages.settings.enabled2')
+      : tr('pages.settings.close');
 
   const syncPayloadRuleDraftsFromObject = (value: unknown) => {
     setPayloadRuleDrafts(normalizePayloadRulesForEditor(value));
@@ -664,7 +665,7 @@ export default function Settings() {
         restartRequired: !!runtimeDatabaseInfo?.restartRequired,
       });
     } catch (err: any) {
-      toast.error(err?.message || '加载设置失败');
+      toast.error(err?.message || tr('pages.settings.failedLoadSettings'));
     } finally {
       setLoading(false);
     }
@@ -712,9 +713,9 @@ export default function Settings() {
         logCleanupProgramLogsEnabled: runtime.logCleanupProgramLogsEnabled,
         logCleanupRetentionDays: runtime.logCleanupRetentionDays,
       });
-      toast.success('定时任务设置已保存');
+      toast.success(tr('pages.settings.scheduledTaskSettingsHaveBeenSaved'));
     } catch (err: any) {
-      toast.error(err?.message || '保存失败');
+      toast.error(err?.message || tr('pages.accounts.saveFailed'));
     } finally {
       setSavingSchedule(false);
     }
@@ -724,9 +725,9 @@ export default function Settings() {
     setTestingCheckin(true);
     try {
       await api.triggerCheckinAll();
-      toast.success('已开始全部签到，请稍后查看签到日志');
+      toast.success(tr('pages.settings.allSignInsHaveStartedPleaseCheck'));
     } catch (err: any) {
-      toast.error(err?.message || '触发签到失败');
+      toast.error(err?.message || tr('pages.checkinLog.failedTriggerSign'));
     } finally {
       setTestingCheckin(false);
     }
@@ -735,7 +736,7 @@ export default function Settings() {
   const saveProxyToken = async () => {
     const suffix = proxyTokenSuffix.trim();
     if (!suffix) {
-      toast.info('请输入 sk- 后的令牌内容');
+      toast.info(tr('pages.settings.enterTokenContentAfterSk'));
       return;
     }
     setSavingToken(true);
@@ -745,7 +746,7 @@ export default function Settings() {
       setProxyTokenSuffix('');
       toast.success('Proxy token updated');
     } catch (err: any) {
-      toast.error(err?.message || '保存失败');
+      toast.error(err?.message || tr('pages.accounts.saveFailed'));
     } finally {
       setSavingToken(false);
     }
@@ -763,9 +764,9 @@ export default function Settings() {
           ? res.systemProxyUrl
           : prev.systemProxyUrl,
       }));
-      toast.success('系统代理已保存');
+      toast.success(tr('pages.settings.systemactingSave'));
     } catch (err: any) {
-      toast.error(err?.message || '保存失败');
+      toast.error(err?.message || tr('pages.accounts.saveFailed'));
     } finally {
       setSavingSystemProxy(false);
     }
@@ -787,9 +788,9 @@ export default function Settings() {
       setSavedModelAvailabilityProbeEnabled(nextEnabled);
       setModelAvailabilityProbeConfirmOpen(false);
       setModelAvailabilityProbeConfirmationInput('');
-      toast.success(nextEnabled ? '批量测活已开启' : '批量测活已关闭');
+      toast.success(nextEnabled ? tr('pages.settings.batchHealthCheckTurn') : tr('pages.settings.batchHealthCheckClose'));
     } catch (err: any) {
-      toast.error(err?.message || '保存失败');
+      toast.error(err?.message || tr('pages.accounts.saveFailed'));
     } finally {
       setSavingModelAvailabilityProbe(false);
     }
@@ -797,7 +798,7 @@ export default function Settings() {
 
   const saveModelAvailabilityProbeSettings = async () => {
     if (runtime.modelAvailabilityProbeEnabled === savedModelAvailabilityProbeEnabled) {
-      toast.info('批量测活设置未变化');
+      toast.info(tr('pages.settings.batchHealthChecksettings'));
       return;
     }
     if (runtime.modelAvailabilityProbeEnabled) {
@@ -831,9 +832,9 @@ export default function Settings() {
           ? Math.trunc(Number(res.proxySessionChannelQueueWaitMs))
           : prev.proxySessionChannelQueueWaitMs,
       }));
-      toast.success('传输与会话并发设置已保存');
+      toast.success(tr('pages.settings.settingsSave'));
     } catch (err: any) {
-      toast.error(err?.message || '保存失败');
+      toast.error(err?.message || tr('pages.accounts.saveFailed'));
     } finally {
       setSavingProxyTransport(false);
     }
@@ -842,7 +843,7 @@ export default function Settings() {
   const testSystemProxy = async () => {
     const proxyUrl = runtime.systemProxyUrl.trim();
     if (!proxyUrl) {
-      const message = '请先填写系统代理地址';
+      const message = tr('pages.settings.systemacting');
       setSystemProxyTestState({ kind: 'error', text: message });
       toast.info(message);
       return;
@@ -856,7 +857,7 @@ export default function Settings() {
       setSystemProxyTestState({ kind: 'success', text: summary });
       toast.success(`系统代理测试成功（${res.latencyMs} ms）`);
     } catch (err: any) {
-      const message = err?.message || '系统代理测试失败';
+      const message = err?.message || tr('pages.settings.systemactingFailed');
       setSystemProxyTestState({ kind: 'error', text: message });
       toast.error(message);
     } finally {
@@ -883,9 +884,9 @@ export default function Settings() {
           : prev.proxyEmptyContentFailEnabled,
       }));
       setProxyErrorKeywordsText(nextKeywords.join('\n'));
-      toast.success('代理失败规则已保存');
+      toast.success(tr('pages.settings.actingfailedrulesSave'));
     } catch (err: any) {
-      toast.error(err?.message || '保存失败');
+      toast.error(err?.message || tr('pages.accounts.saveFailed'));
     } finally {
       setSavingProxyFailureRules(false);
     }
@@ -907,9 +908,9 @@ export default function Settings() {
       });
       syncPayloadRuleDraftsFromObject(res?.payloadRules);
       syncPayloadVisualRulesFromObject(res?.payloadRules);
-      toast.success('Payload 规则已保存');
+      toast.success(tr('pages.settings.payloadRulesSave'));
     } catch (err: any) {
-      toast.error(err?.message || '保存 Payload 规则失败');
+      toast.error(err?.message || tr('pages.settings.savePayloadRulesfailed'));
     } finally {
       setSavingPayloadRules(false);
     }
@@ -921,7 +922,7 @@ export default function Settings() {
       ...createCodexDefaultHighReasoningVisualPreset(),
     ]);
     setShowPayloadRulesEditor(true);
-    toast.success('已填入 Codex 默认高推理预设');
+    toast.success(tr('pages.settings.codexDefaulthigh2'));
   };
 
   const addPayloadVisualRule = () => {
@@ -962,7 +963,7 @@ export default function Settings() {
     }
     syncPayloadVisualRulesFromObject(parsedPayloadRules.value);
     setPayloadAdvancedDirty(false);
-    toast.success('已将高级 JSON 同步到可视化规则');
+    toast.success(tr('pages.settings.advancedJsonSyncRules'));
   };
 
   const saveRouting = async () => {
@@ -982,7 +983,7 @@ export default function Settings() {
       });
       toast.success('Routing weights saved');
     } catch (err: any) {
-      toast.error(err?.message || '保存失败');
+      toast.error(err?.message || tr('pages.accounts.saveFailed'));
     } finally {
       setSavingRouting(false);
     }
@@ -1002,15 +1003,15 @@ export default function Settings() {
       const resolved = Array.isArray(res?.globalBlockedBrands) ? res.globalBlockedBrands : blockedBrands;
       setRuntime((prev) => ({ ...prev, globalBlockedBrands: resolved }));
       setBlockedBrands(resolved);
-      toast.success('品牌屏蔽设置已保存');
+      toast.success(tr('pages.settings.brandsSettingsSave'));
       try {
         await api.rebuildRoutes(false);
-        toast.success('路由已重建');
+        toast.success(tr('pages.settings.routes'));
       } catch {
-        toast.error('品牌屏蔽已保存，但路由重建失败，请手动重建');
+        toast.error(tr('pages.settings.brandsSaveRoutesFailedManual'));
       }
     } catch (err: any) {
-      toast.error(err?.message || '保存品牌屏蔽设置失败');
+      toast.error(err?.message || tr('pages.settings.savebrandsSettingsfailed'));
     } finally {
       setSavingBrandFilter(false);
     }
@@ -1023,15 +1024,15 @@ export default function Settings() {
       const resolved = Array.isArray(res?.globalAllowedModels) ? res.globalAllowedModels : allowedModels;
       setRuntime((prev) => ({ ...prev, globalAllowedModels: resolved }));
       setAllowedModels(resolved);
-      toast.success('模型白名单设置已保存');
+      toast.success(tr('pages.settings.modelSettingsSave'));
       try {
         await api.rebuildRoutes(false);
-        toast.success('路由已重建');
+        toast.success(tr('pages.settings.routes'));
       } catch {
-        toast.error('模型白名单已保存，但路由重建失败，请手动重建');
+        toast.error(tr('pages.settings.modelSaveRoutesFailedManual'));
       }
     } catch (err: any) {
-      toast.error(err?.message || '保存模型白名单设置失败');
+      toast.error(err?.message || tr('pages.settings.savemodelSettingsfailed'));
     } finally {
       setSavingAllowedModels(false);
     }
@@ -1056,7 +1057,7 @@ export default function Settings() {
       }));
       toast.success('Security settings saved');
     } catch (err: any) {
-      toast.error(err?.message || '保存失败');
+      toast.error(err?.message || tr('pages.accounts.saveFailed'));
     } finally {
       setSavingSecurity(false);
     }
@@ -1064,26 +1065,26 @@ export default function Settings() {
 
 
   const handleClearCache = async () => {
-    if (!window.confirm('确认清理模型缓存并重建路由？')) return;
+    if (!window.confirm(tr('pages.settings.youSureYouWantClearModelCache'))) return;
     setClearingCache(true);
     try {
       const res = await api.clearRuntimeCache();
       toast.success(`缓存已清理（模型缓存 ${res.deletedModelAvailability || 0} 条）`);
     } catch (err: any) {
-      toast.error(err?.message || '清理缓存失败');
+      toast.error(err?.message || tr('pages.settings.failedClearCache'));
     } finally {
       setClearingCache(false);
     }
   };
 
   const handleClearUsage = async () => {
-    if (!window.confirm('确认清理占用统计与使用日志？')) return;
+    if (!window.confirm(tr('pages.settings.youSureYouWantClearUsageStatistics'))) return;
     setClearingUsage(true);
     try {
       const res = await api.clearUsageData();
       toast.success(`占用统计已清理（日志 ${res.deletedProxyLogs || 0} 条）`);
     } catch (err: any) {
-      toast.error(err?.message || '清理占用失败');
+      toast.error(err?.message || tr('pages.settings.failedClearOccupation'));
     } finally {
       setClearingUsage(false);
     }
@@ -1112,7 +1113,7 @@ export default function Settings() {
       clearAppInstallationState(localStorage);
       window.location.reload();
     } catch (err: any) {
-      toast.error(err?.message || '重新初始化系统失败');
+      toast.error(err?.message || tr('pages.settings.systemfailed'));
       setFactoryResetting(false);
     }
   };
@@ -1232,15 +1233,15 @@ export default function Settings() {
   return (
     <div className="grid gap-4">
       <div>
-        <h2 className="text-2xl font-semibold tracking-tight">系统设置</h2>
+        <h2 className="text-2xl font-semibold tracking-tight">{tr('pages.importExport.systemSettings')}</h2>
       </div>
 
       <div className="grid max-w-3xl gap-4">
-        <SettingsCard title="管理员登录令牌">
+        <SettingsCard title={tr('pages.settings.adminsignIntoken')}>
           <SettingsCode>
             {maskedToken || '****'}
           </SettingsCode>
-          <Button type="button" onClick={() => setShowChangeKey(true)}>修改登录令牌</Button>
+          <Button type="button" onClick={() => setShowChangeKey(true)}>{tr('pages.settings.signIntoken')}</Button>
           <ChangeKeyModal
             open={showChangeKey}
             onClose={() => {
@@ -1250,9 +1251,9 @@ export default function Settings() {
           />
         </SettingsCard>
 
-        <SettingsCard title="定时任务">
+        <SettingsCard title={tr('pages.settings.scheduledTasks')}>
           <div className="grid items-end gap-3 md:grid-cols-[180px_180px_auto]">
-            <SettingsField label="签到方式">
+            <SettingsField label={tr('pages.settings.sign3')}>
               <ModernSelect
                 value={runtime.checkinScheduleMode}
                 onChange={(value) => setRuntime((prev) => ({
@@ -1262,7 +1263,7 @@ export default function Settings() {
                 options={CHECKIN_SCHEDULE_MODE_OPTIONS.map((item) => ({ ...item }))}
               />
             </SettingsField>
-            <SettingsField label="签到间隔">
+            <SettingsField label={tr('pages.settings.sign')}>
               <ModernSelect
                 value={String(runtime.checkinIntervalHours)}
                 onChange={(value) => setRuntime((prev) => ({
@@ -1277,11 +1278,11 @@ export default function Settings() {
               onClick={triggerScheduleCheckin}
               disabled={testingCheckin}
             >
-              {testingCheckin ? '触发中...' : '测试一次签到'}
+              {testingCheckin ? tr('pages.checkinLog.zh') : tr('pages.settings.sign2')}
             </Button>
           </div>
           <div className="grid gap-3 md:grid-cols-2">
-            <SettingsField label="签到 Cron">
+            <SettingsField label={tr('pages.settings.signCron')}>
               <Input
                 className="font-mono"
                 value={runtime.checkinCron}
@@ -1289,7 +1290,7 @@ export default function Settings() {
                 disabled={runtime.checkinScheduleMode !== 'cron'}
               />
             </SettingsField>
-            <SettingsField label="余额刷新 Cron">
+            <SettingsField label={tr('pages.settings.balanceRefreshCron')}>
               <Input
                 className="font-mono"
                 value={runtime.balanceRefreshCron}
@@ -1298,16 +1299,16 @@ export default function Settings() {
             </SettingsField>
           </div>
           <div className="grid gap-3 border-t pt-4">
-            <div className="text-sm font-semibold">自动清理日志</div>
+            <div className="text-sm font-semibold">{tr('pages.settings.automatic')}</div>
             <div className="grid gap-3 md:grid-cols-[1fr_160px]">
-              <SettingsField label="清理 Cron">
+              <SettingsField label={tr('pages.settings.cron')}>
                 <Input
                   className="font-mono"
                   value={runtime.logCleanupCron}
                   onChange={(e) => setRuntime((prev) => ({ ...prev, logCleanupCron: e.target.value }))}
                 />
               </SettingsField>
-              <SettingsField label="保留天数">
+              <SettingsField label={tr('pages.settings.retentionDays')}>
                 <Input
                   type="number"
                   min={1}
@@ -1330,30 +1331,30 @@ export default function Settings() {
                   checked={runtime.logCleanupUsageLogsEnabled}
                   onCheckedChange={(checked) => setRuntime((prev) => ({ ...prev, logCleanupUsageLogsEnabled: checked === true }))}
                 />
-                清理使用日志
+                {tr('pages.settings.usageLogs')}
               </Label>
               <Label className="flex items-center gap-2">
                 <Checkbox
                   checked={runtime.logCleanupProgramLogsEnabled}
                   onCheckedChange={(checked) => setRuntime((prev) => ({ ...prev, logCleanupProgramLogsEnabled: checked === true }))}
                 />
-                清理程序日志
+                {tr('pages.settings.systemLogs')}
               </Label>
             </div>
             <div className="text-xs text-muted-foreground">
-              默认每天早上 6 点执行。按每次定时任务执行时间，清理早于“保留天数”的日志；两个选项都不勾选时不会实际删除日志。
+              {tr('pages.settings.defaultDays6ScheduledTasksTimeRetention')}
             </div>
           </div>
           <div>
             <Button type="button" onClick={saveSchedule} disabled={savingSchedule}>
-              {savingSchedule ? <><LoaderCircle className="size-4 animate-spin" /> 保存中...</> : '保存定时任务'}
+              {savingSchedule ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.accounts.saving')}</> : tr('pages.settings.saveScheduledTasks')}
             </Button>
           </div>
         </SettingsCard>
 
         <SettingsCard
-          title="系统代理"
-          description="配置一个全局出站代理地址，站点页可按站点决定是否启用系统代理。"
+          title={tr('pages.settings.systemacting3')}
+          description={tr('pages.settings.configurationActingSitesSitesEnabledsystemacting')}
         >
           <Input
             className="font-mono"
@@ -1362,11 +1363,11 @@ export default function Settings() {
               setRuntime((prev) => ({ ...prev, systemProxyUrl: e.target.value }));
               setSystemProxyTestState(null);
             }}
-            placeholder="系统代理 URL（可选，如 http://127.0.0.1:7890 或 socks5://127.0.0.1:1080）"
+            placeholder={tr('pages.settings.systemactingUrlHttp127001')}
           />
           <div className="flex flex-wrap items-center gap-2">
             <Button type="button" onClick={saveSystemProxy} disabled={savingSystemProxy}>
-              {savingSystemProxy ? <><LoaderCircle className="size-4 animate-spin" /> 保存中...</> : '保存系统代理'}
+              {savingSystemProxy ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.accounts.saving')}</> : tr('pages.settings.savesystemacting')}
             </Button>
             <Button type="button" variant="outline"
               onClick={testSystemProxy}
@@ -1374,7 +1375,7 @@ export default function Settings() {
              
              
             >
-              {testingSystemProxy ? <><LoaderCircle className="size-4 animate-spin" /> 测试中...</> : '测试系统代理'}
+              {testingSystemProxy ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.settings.zh')}</> : tr('pages.settings.systemacting2')}
             </Button>
           </div>
           {systemProxyTestState && (
@@ -1384,23 +1385,23 @@ export default function Settings() {
           )}
         </SettingsCard>
 
-        <SettingsCard title="代理失败判定" description="命中任一关键词或空内容时判定失败，可触发重试。">
+        <SettingsCard title={tr('pages.settings.actingfailed')} description={tr('pages.settings.zhContentFailedRetry')}>
           <Textarea
             className="min-h-24 font-mono"
             value={proxyErrorKeywordsText}
             onChange={(e) => setProxyErrorKeywordsText(e.target.value)}
-            placeholder="一行一个关键词，或逗号分隔"
+            placeholder={tr('pages.settings.oneKeywordPerLineCommaSeparated')}
           />
           <Label className="flex items-center gap-2">
             <Checkbox
               checked={runtime.proxyEmptyContentFailEnabled}
               onCheckedChange={(checked) => setRuntime((prev) => ({ ...prev, proxyEmptyContentFailEnabled: checked === true }))}
             />
-            空内容（completion=0，即使 prompt 有 token 也算）判定失败
+            {tr('pages.settings.contentCompletion0PromptTokenFailed')}
           </Label>
           <div>
             <Button type="button" onClick={saveProxyFailureRules} disabled={savingProxyFailureRules}>
-              {savingProxyFailureRules ? <><LoaderCircle className="size-4 animate-spin" /> 保存中...</> : '保存失败规则'}
+              {savingProxyFailureRules ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.accounts.saving')}</> : tr('pages.settings.saveFailedrules')}
             </Button>
           </div>
         </SettingsCard>
@@ -1408,21 +1409,21 @@ export default function Settings() {
         <Card data-settings-card="payload-rules">
           <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3">
             <div className="grid min-w-0 gap-1">
-              <CardTitle>Payload 规则</CardTitle>
+              <CardTitle>{tr('pages.settings.payloadRules')}</CardTitle>
               <CardDescription>
-                对匹配模型的上游请求做默认注入、强制覆盖或字段过滤。规则结构参考 CPA 的 payload 配置，常见场景可直接注入
+                {tr('pages.settings.matchmodelRequestDefaultForceOverrideRulesCpa')}
                 {' '}
                 <code className="font-mono">reasoning.effort</code>
                 {' '}
-                之类的参数。
+                {tr('pages.settings.similarParameters')}
               </CardDescription>
             </div>
             <div className="flex flex-wrap gap-2">
               <ToneBadge tone={configuredPayloadRuleCount > 0 ? 'primary' : 'muted'}>
-                {configuredPayloadRuleCount > 0 ? `已配置 ${configuredPayloadRuleCount} 条` : '未配置'}
+                {configuredPayloadRuleCount > 0 ? `已配置 ${configuredPayloadRuleCount} 条` : tr('pages.settings.notConfigured')}
               </ToneBadge>
               <ToneBadge tone={payloadAdvancedDirty ? 'warning' : 'muted'}>
-                {payloadAdvancedDirty ? '高级 JSON 待同步/保存' : '保存后立即生效'}
+                {payloadAdvancedDirty ? tr('pages.settings.advancedJsonSyncSave') : tr('pages.settings.save3')}
               </ToneBadge>
             </div>
           </CardHeader>
@@ -1430,29 +1431,29 @@ export default function Settings() {
           <div className="grid gap-3 rounded-md border p-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="grid min-w-0 gap-1">
-                <div className="text-xs font-semibold text-muted-foreground">常用预设</div>
+                <div className="text-xs font-semibold text-muted-foreground">{tr('pages.settings.commonPresets')}</div>
                 <div className="text-xs leading-relaxed text-muted-foreground">
-                  先用预设快速填充，再通过下面的可视化规则编辑器细调。复杂场景仍可回退到高级 JSON。
+                  {tr('pages.settings.ruleseditAdvancedJson')}
                 </div>
               </div>
               <div className="flex flex-wrap gap-2">
                 <Button variant="outline" type="button" onClick={applyCodexDefaultHighReasoningPreset}>
-                  Codex 默认高推理
+                  {tr('pages.settings.codexDefaulthigh')}
                 </Button>
                 <Button variant="outline" type="button" onClick={addPayloadVisualRule}>
-                  新增规则
+                  {tr('pages.settings.newRule')}
                 </Button>
                 <Button variant="outline" type="button" onClick={() => setShowPayloadRulesEditor((prev) => !prev)}>
-                  {showPayloadRulesEditor ? '收起高级 JSON 编辑' : '展开高级 JSON 编辑'}
+                  {showPayloadRulesEditor ? tr('pages.settings.collapseadvancedJsonEdit') : tr('pages.settings.expandadvancedJsonEdit')}
                 </Button>
               </div>
             </div>
           </div>
           {payloadVisualRules.length <= 0 ? (
             <div className="grid gap-3 rounded-md border p-4">
-              <div className="text-xs font-semibold text-muted-foreground">还没有可视化规则</div>
+              <div className="text-xs font-semibold text-muted-foreground">{tr('pages.settings.noVisualRulesYet')}</div>
               <div className="text-xs leading-relaxed text-muted-foreground">
-                可以先点上面的预设，也可以直接新增一条规则：选择动作、协议、模型匹配、字段路径和值即可。
+                {tr('pages.settings.itemsrulesSelectActionProtocolModelmatchFieldPath')}
               </div>
             </div>
           ) : (
@@ -1463,61 +1464,61 @@ export default function Settings() {
                   className="grid gap-3 rounded-md border p-4"
                 >
                   <div className="flex items-center justify-between gap-3">
-                    <div className="text-xs font-semibold text-muted-foreground">规则 {index + 1}</div>
+                    <div className="text-xs font-semibold text-muted-foreground">{tr('pages.settings.rules')} {index + 1}</div>
                     <Button variant="outline" type="button" onClick={() => removePayloadVisualRule(rule.id)}>
-                      删除
+                      {tr('pages.accounts.delete3')}
                     </Button>
                   </div>
                   <ResponsiveFormGrid columns={2}>
-                    <SettingsField label="动作">
+                    <SettingsField label={tr('pages.settings.action')}>
                       <ModernSelect
                         size="sm"
                         data-testid={`payload-rule-action-${index + 1}`}
                         value={rule.action}
                         onChange={(value) => updatePayloadVisualRule(rule.id, { action: value as PayloadRuleAction })}
                         options={PAYLOAD_RULE_ACTION_OPTIONS}
-                        placeholder="选择动作"
+                        placeholder={tr('pages.settings.selectAction')}
                       />
                     </SettingsField>
-                    <SettingsField label="协议">
+                    <SettingsField label={tr('pages.settings.protocol')}>
                       <ModernSelect
                         size="sm"
                         data-testid={`payload-rule-protocol-${index + 1}`}
                         value={rule.protocol}
                         onChange={(value) => updatePayloadVisualRule(rule.id, { protocol: String(value || '') })}
                         options={PAYLOAD_RULE_PROTOCOL_OPTIONS}
-                        placeholder="全部协议"
+                        placeholder={tr('pages.settings.allprotocol')}
                       />
                     </SettingsField>
-                    <SettingsField label="模型匹配">
+                    <SettingsField label={tr('pages.settings.modelmatch')}>
                       <Input
                         type="text"
                         aria-label={`Payload 规则可视化模型 ${index + 1}`}
                         value={rule.modelPattern}
                         onChange={(e) => updatePayloadVisualRule(rule.id, { modelPattern: e.target.value })}
-                        placeholder="例如 gpt-*"
+                        placeholder={tr('pages.settings.gpt')}
                       />
                     </SettingsField>
-                    <SettingsField label="字段路径">
+                    <SettingsField label={tr('pages.settings.fieldPath')}>
                       <Input
                         className="font-mono"
                         type="text"
                         aria-label={`Payload 规则可视化路径 ${index + 1}`}
                         value={rule.path}
                         onChange={(e) => updatePayloadVisualRule(rule.id, { path: e.target.value })}
-                        placeholder="例如 reasoning.effort"
+                        placeholder={tr('pages.settings.reasoningEffort')}
                       />
                     </SettingsField>
                   </ResponsiveFormGrid>
                   {rule.action === 'filter' ? (
                     <div className="text-xs leading-relaxed text-muted-foreground">
-                      删除字段规则不需要填写值，命中后会从请求中移除这条路径。
+                      {tr('pages.settings.deleteRulesZhRequestzhremoveItems')}
                     </div>
                   ) : (
                     <div className="grid gap-3">
                       {(rule.action === 'default' || rule.action === 'override') && (
                         <div className="w-full md:w-44">
-                          <Label>值类型</Label>
+                          <Label>{tr('pages.settings.type')}</Label>
                           <ModernSelect
                             size="sm"
                             data-testid={`payload-rule-value-mode-${index + 1}`}
@@ -1529,27 +1530,27 @@ export default function Settings() {
                                 : rule.value,
                             })}
                             options={PAYLOAD_RULE_VALUE_MODE_OPTIONS}
-                            placeholder="值类型"
+                            placeholder={tr('pages.settings.type')}
                           />
                         </div>
                       )}
                       <SettingsField
                         label={
                           rule.action === 'default-raw' || rule.action === 'override-raw'
-                            ? '原始 JSON 值'
-                            : (rule.valueMode === 'json' ? 'JSON 值' : '文本值')
+                            ? tr('pages.settings.json2')
+                            : (rule.valueMode === 'json' ? tr('pages.settings.json') : tr('pages.settings.textValue'))
                         }
                       >
                         {(rule.action === 'default-raw' || rule.action === 'override-raw' || rule.valueMode === 'json') ? (
-                          <Textarea
-                            className="min-h-24 font-mono"
+                          <JsonCodeEditor
                             aria-label={`Payload 规则可视化值 ${index + 1}`}
                             value={rule.value}
-                            onChange={(e) => updatePayloadVisualRule(rule.id, { value: e.target.value })}
+                            onChange={(value) => updatePayloadVisualRule(rule.id, { value })}
                             placeholder={rule.action === 'default-raw' || rule.action === 'override-raw'
                               ? '{"type":"json_schema"}'
                               : '{"effort":"high"}'}
-                            rows={3}
+                            minHeight={160}
+                            maxHeight={320}
                           />
                         ) : (
                           <Input
@@ -1557,7 +1558,7 @@ export default function Settings() {
                             aria-label={`Payload 规则可视化值 ${index + 1}`}
                             value={rule.value}
                             onChange={(e) => updatePayloadVisualRule(rule.id, { value: e.target.value })}
-                            placeholder="例如 high"
+                            placeholder={tr('pages.settings.high')}
                           />
                         )}
                       </SettingsField>
@@ -1572,13 +1573,13 @@ export default function Settings() {
               <div className="grid gap-3 rounded-md border p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div className="grid gap-1">
-                    <div className="text-xs font-semibold text-muted-foreground">高级 JSON 编辑</div>
+                    <div className="text-xs font-semibold text-muted-foreground">{tr('pages.settings.advancedJsonEdit')}</div>
                     <div className="text-xs leading-relaxed text-muted-foreground">
-                      适合直接粘贴 CPA 风格规则。手动改完后，可点击“同步到可视化规则”回到上面的低门槛编辑器。
+                      {tr('pages.settings.cpaRulesManualSyncRulesLowEdit')}
                     </div>
                   </div>
                   <Button variant="outline" type="button" onClick={syncVisualRulesFromAdvancedJson}>
-                    同步到可视化规则
+                    {tr('pages.settings.syncRules')}
                   </Button>
                 </div>
               </div>
@@ -1587,12 +1588,10 @@ export default function Settings() {
                   <div key={section.key} className="grid gap-3 rounded-md border p-4">
                     <div className="text-xs font-semibold text-muted-foreground">{section.title}</div>
                     <div className="text-xs leading-relaxed text-muted-foreground">{section.description}</div>
-                    <Textarea
-                      className="min-h-36 font-mono"
+                    <JsonCodeEditor
                       aria-label={`Payload 规则 ${section.key}`}
                       value={payloadRuleDrafts[section.key]}
-                      onChange={(e) => {
-                        const nextValue = e.target.value;
+                      onChange={(nextValue) => {
                         setPayloadRuleDrafts((prev) => ({
                           ...prev,
                           [section.key]: nextValue,
@@ -1600,7 +1599,8 @@ export default function Settings() {
                         setPayloadAdvancedDirty(true);
                       }}
                       placeholder={section.placeholder}
-                      rows={6}
+                      minHeight={240}
+                      maxHeight={520}
                     />
                   </div>
                 ))}
@@ -1609,7 +1609,7 @@ export default function Settings() {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Button type="button" onClick={savePayloadRules} disabled={savingPayloadRules}>
-              {savingPayloadRules ? <><LoaderCircle className="size-4 animate-spin" /> 保存中...</> : '保存 Payload 规则'}
+              {savingPayloadRules ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.accounts.saving')}</> : tr('pages.settings.savePayloadRules')}
             </Button>
           </div>
           </CardContent>
@@ -1618,9 +1618,9 @@ export default function Settings() {
         <Card data-settings-card="proxy-transport">
           <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3">
             <div className="grid min-w-0 gap-1">
-              <CardTitle>Codex 上游传输与会话并发</CardTitle>
+              <CardTitle>{tr('pages.settings.codex')}</CardTitle>
               <CardDescription>
-                默认采用 HTTP 优先。只有这里开启后，metapi 才会在 Codex 请求上尝试把上游升级为 WebSocket。下游 Codex 客户端也必须同时启用 `/v1/responses` websocket，单开这里不会生效。
+                {tr('pages.settings.defaultHttpTurnMetapiCodexRequestWebsocket')}
               </CardDescription>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -1635,9 +1635,9 @@ export default function Settings() {
           <CardContent className="grid gap-4">
           <label className="flex cursor-pointer items-start justify-between gap-3 rounded-md border p-4">
             <div className="grid min-w-0 gap-1">
-              <span className="text-sm font-semibold">允许 metapi 到 Codex 上游使用 WebSocket</span>
+              <span className="text-sm font-semibold">{tr('pages.settings.metapiCodexUsageWebsocket')}</span>
               <span className="text-xs leading-relaxed text-muted-foreground">
-                仅在下游 Codex 客户端已同步开启 `/v1/responses` websocket 时启用；否则仍按 HTTP 优先执行。
+                {tr('pages.settings.codexClientSyncturnV1ResponsesWebsocketEnabled')}
               </span>
             </div>
             <Checkbox
@@ -1647,9 +1647,9 @@ export default function Settings() {
           </label>
           <label className="flex cursor-pointer items-start justify-between gap-3 rounded-md border p-4">
             <div className="grid min-w-0 gap-1">
-              <span className="text-sm font-semibold">Compact 明确不支持时回退到普通 Responses</span>
+              <span className="text-sm font-semibold">{tr('pages.settings.compactUnsupportedResponses')}</span>
               <span className="text-xs leading-relaxed text-muted-foreground">
-                仅对 `/v1/responses/compact` 生效。当上游明确返回 compact 不支持时，允许自动回退到普通 `/responses`。
+                {tr('pages.settings.v1ResponsesCompactCompactUnsupportedAutomaticResponses')}
               </span>
             </div>
             <Checkbox
@@ -1659,8 +1659,8 @@ export default function Settings() {
           </label>
           <ResponsiveFormGrid columns={2}>
             <SettingsField
-              label="会话通道并发上限"
-              hint="只作用于能识别稳定 session_id 的会话型请求；普通请求不会进入这组 lease 池。"
+              label={tr('pages.settings.channels')}
+              hint={tr('pages.settings.stableSessionIdRequestRequestLease')}
             >
               <Input
                 type="number"
@@ -1678,8 +1678,8 @@ export default function Settings() {
               />
             </SettingsField>
             <SettingsField
-              label="排队等待时间（毫秒）"
-              hint="超过该时间仍拿不到会话通道时，本次请求会直接放弃排队，避免长期挂起。"
+              label={tr('pages.settings.timeSeconds')}
+              hint={tr('pages.settings.timeChannelsRequest')}
             >
               <Input
                 type="number"
@@ -1700,7 +1700,7 @@ export default function Settings() {
           </ResponsiveFormGrid>
           <div className="flex flex-wrap items-center gap-2">
             <Button type="button" onClick={saveProxyTransportSettings} disabled={savingProxyTransport}>
-              {savingProxyTransport ? <><LoaderCircle className="size-4 animate-spin" /> 保存中...</> : '保存传输与并发'}
+              {savingProxyTransport ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.accounts.saving')}</> : tr('pages.settings.save')}
             </Button>
           </div>
           </CardContent>
@@ -1709,9 +1709,9 @@ export default function Settings() {
         <Card data-settings-card="model-availability-probe">
           <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3">
             <div className="grid min-w-0 gap-1">
-              <CardTitle>批量测活</CardTitle>
+              <CardTitle>{tr('pages.settings.batchHealthCheck')}</CardTitle>
               <CardDescription>
-                默认关闭。开启后，metapi 会在后台定时对活跃账号模型发送最小化探测请求，用来校正“/models 能看到但实际不可用”的假阳性。
+                {tr('pages.settings.defaultcloseTurnMetapiAccountModelsendRequestModels')}
               </CardDescription>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -1719,22 +1719,22 @@ export default function Settings() {
                 {modelAvailabilityProbeStatusLabel}
               </ToneBadge>
               <ToneBadge tone="danger">
-                高风险操作
+                {tr('pages.settings.highriskactions')}
               </ToneBadge>
             </div>
           </CardHeader>
           <CardContent className="grid gap-4">
           <div className="grid gap-2 rounded-md border p-4">
-            <div className="text-xs font-semibold">风险提示</div>
+            <div className="text-xs font-semibold">{tr('pages.settings.risktip')}</div>
             <div className="text-xs leading-relaxed text-muted-foreground">
-              只有在你确认自己使用的中转站明确允许批量测活时才应该开启。若上游不允许，这类探测可能带来封号或风控风险。
+              {tr('pages.settings.usageZhBatchHealthCheckTurnRisk')}
             </div>
           </div>
           <label className="flex cursor-pointer items-start justify-between gap-3 rounded-md border p-4">
             <div className="grid min-w-0 gap-1">
-              <span className="text-sm font-semibold">允许 metapi 后台主动批量测活</span>
+              <span className="text-sm font-semibold">{tr('pages.settings.metapiBatchHealthCheck')}</span>
               <span className="text-xs leading-relaxed text-muted-foreground">
-                首次从关闭切换到开启时，需要手动输入确认语句；关闭时可直接保存。
+                {tr('pages.settings.closeTurnManualinputCloseSave')}
               </span>
             </div>
             <Checkbox
@@ -1744,7 +1744,7 @@ export default function Settings() {
           </label>
           <ResponsiveFormGrid columns={2}>
             <div className="grid gap-3 rounded-md border p-4">
-              <div className="text-xs font-semibold text-muted-foreground">当前生效状态</div>
+              <div className="text-xs font-semibold text-muted-foreground">{tr('pages.settings.status')}</div>
               <div className="flex flex-wrap gap-2">
                 <ToneBadge tone={modelAvailabilityProbeStatusTone === "danger" ? "danger" : modelAvailabilityProbeStatusTone === "warning" ? "warning" : "muted"}>
                   {modelAvailabilityProbeStatusLabel}
@@ -1752,31 +1752,31 @@ export default function Settings() {
               </div>
               <div className="text-xs leading-relaxed text-muted-foreground">
                 {savedModelAvailabilityProbeEnabled
-                  ? '后台会定时执行最小化探测请求，用于校正模型可用性。'
-                  : '后台不会主动发起模型可用性探测请求。'}
+                  ? tr('pages.settings.requestModelavailable')
+                  : tr('pages.settings.modelavailableRequest')}
               </div>
             </div>
             <div className="grid gap-3 rounded-md border p-4">
-              <div className="text-xs font-semibold text-muted-foreground">启用门槛</div>
+              <div className="text-xs font-semibold text-muted-foreground">{tr('pages.settings.enabled')}</div>
               <div className="text-xs leading-relaxed text-muted-foreground">
-                首次开启必须手动输入确认语句，避免误把高风险探测当成普通开关。
+                {tr('pages.settings.turnManualinputHighrisk')}
               </div>
             </div>
           </ResponsiveFormGrid>
           <div className="flex flex-wrap items-center gap-2">
             <Button type="button" onClick={saveModelAvailabilityProbeSettings} disabled={savingModelAvailabilityProbe}>
-              {savingModelAvailabilityProbe ? <><LoaderCircle className="size-4 animate-spin" /> 保存中...</> : '保存批量测活设置'}
+              {savingModelAvailabilityProbe ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.accounts.saving')}</> : tr('pages.settings.savebatchHealthChecksettings')}
             </Button>
           </div>
           </CardContent>
         </Card>
 
         <SettingsCard
-          title="下游访问令牌（PROXY_TOKEN）"
-          description="用于下游站点或客户端访问本服务代理接口。前缀 sk- 固定不可修改，只需填写后缀。"
+          title={tr('pages.settings.downstreamAccessTokenProxyToken')}
+          description={tr('pages.settings.usedDownstreamSitesClientsAccessServiceProxy')}
         >
           <SettingsCode>
-            当前：{runtime.proxyTokenMasked || '未设置'}
+            {tr('pages.settings.current')}{runtime.proxyTokenMasked || tr('pages.notificationSettings.notSet')}
           </SettingsCode>
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex min-w-0 flex-1 items-center rounded-md border">
@@ -1787,15 +1787,15 @@ export default function Settings() {
                 type="text"
                 value={proxyTokenSuffix}
                 onChange={(e) => setProxyTokenSuffix(normalizeProxyTokenSuffix(e.target.value))}
-                placeholder="请输入 sk- 后的令牌内容"
+                placeholder={tr('pages.settings.enterTokenContentAfterSk')}
                 className="min-w-0 flex-1 border-0 font-mono shadow-none focus-visible:ring-0"
               />
             </div>
             <Button
               type="button"
              
-              aria-label="随机生成访问令牌后缀"
-              title="生成高熵随机后缀（不会自动保存）"
+              aria-label={tr('pages.settings.generateRandomlyaccessToken')}
+              title={tr('pages.settings.highRandomAutomaticsave')}
              
               onClick={() => {
                 const full = generateDownstreamSkKey(PROXY_TOKEN_PREFIX);
@@ -1809,17 +1809,17 @@ export default function Settings() {
                   d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456zM16.894 20.567L16.5 21.75l-.394-1.183a2.25 2.25 0 00-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 001.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 001.423 1.423l1.183.394-1.183.394a2.25 2.25 0 00-1.423 1.423z"
                 />
               </svg>
-              随机生成
+              {tr('pages.settings.generateRandomly')}
             </Button>
           </div>
           <Button type="button" onClick={saveProxyToken} disabled={savingToken}>
-            {savingToken ? <><LoaderCircle className="size-4 animate-spin" /> 保存中...</> : '更新下游访问令牌'}
+            {savingToken ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.accounts.saving')}</> : tr('pages.settings.updateDownstreamAccessToken')}
           </Button>
         </SettingsCard>
 
-        <SettingsCard title="路由策略" description="先选择预设策略，只有需要精调时再展开高级参数。">
+        <SettingsCard title={tr('pages.settings.routesstrategy')} description={tr('pages.settings.selectStrategyExpandAdvancedParameters')}>
           <div className="grid max-w-sm gap-3">
-            <SettingsField label="无实测/配置/目录价时默认单价">
+            <SettingsField label={tr('pages.settings.noneactualMeasurementConfigurationTableContentsDefault')}>
             <Input
               type="number"
               min={0.000001}
@@ -1836,14 +1836,14 @@ export default function Settings() {
             </SettingsField>
           </div>
           <SettingsField
-            label="普通失败冷却上限"
-            hint="支持秒、分钟、小时、天。只封顶普通失败与轮询分级冷却；429 限额类冷却仍优先遵循上游 reset 提示，避免过早重试。"
+            label={tr('pages.settings.failedcooldown')}
+            hint={tr('pages.settings.supportedsecondsMinutesHoursDaysFailedRoundRobin')}
           >
             <div className="flex flex-wrap items-center gap-2">
               <Input
                 className="min-w-44 flex-1"
                 type="number"
-                aria-label="路由失败冷却上限数值"
+                aria-label={tr('pages.settings.routesfailedcooldown')}
                 min={1}
                 step={1}
                 value={runtime.routeFailureCooldownMaxValue}
@@ -1871,7 +1871,7 @@ export default function Settings() {
                     value: option.value,
                     label: option.label,
                   }))}
-                  placeholder="选择单位"
+                  placeholder={tr('pages.settings.selectUnit')}
                 />
               </div>
             </div>
@@ -1882,28 +1882,28 @@ export default function Settings() {
              
              
             >
-              均衡
+              {tr('pages.settings.balanced')}
             </Button>
             <Button type="button" variant="outline"
               onClick={() => applyRoutingPreset('stable')}
              
              
             >
-              稳定优先
+              {tr('pages.settings.stableFirst')}
             </Button>
             <Button type="button" variant="outline"
               onClick={() => applyRoutingPreset('cost')}
              
              
             >
-              成本优先
+              {tr('pages.settings.cost')}
             </Button>
             <Button type="button" variant="outline"
               onClick={() => setShowAdvancedRouting((prev) => !prev)}
              
              
             >
-              {showAdvancedRouting ? '收起高级参数' : '展开高级参数'}
+              {showAdvancedRouting ? tr('pages.settings.closeAdvancedParameters') : tr('pages.settings.expandAdvancedParameters')}
             </Button>
           </div>
 
@@ -1917,23 +1917,23 @@ export default function Settings() {
             />
             <span className="grid gap-1">
               <span className="text-sm font-semibold">
-                失败时不尝试其他协议
+                {tr('pages.settings.failedOtherprotocol')}
               </span>
               <span className="text-xs leading-relaxed text-muted-foreground">
-                仅影响 chat / messages / responses 之间的协议切换；不会关闭同协议兼容重试、OAuth 刷新或通道级重试。
+                {tr('pages.settings.chatMessagesResponsesProtocolCloseProtocolRetry')}
               </span>
             </span>
           </label>
 
           <SettingsField
-            label="首字超时（无首包 / 首 token）"
-            hint="0 表示关闭。只有在指定时间内完全没有任何首包 / 首 token 返回时才切换，已经开始输出的请求不会被这项超时打断。"
+            label={tr('pages.settings.ttfttimeOutNoneToken')}
+            hint={tr('pages.settings.0CloseTimeTokenStartoutputRequestTime')}
           >
             <Input
               type="number"
               min={0}
               step={1}
-              aria-label="首字超时秒数"
+              aria-label={tr('pages.settings.ttfttimeOutseconds')}
               value={runtime.proxyFirstByteTimeoutSec}
               onChange={(e) => {
                 const nextValue = Number(e.target.value);
@@ -1951,11 +1951,11 @@ export default function Settings() {
             <div className="anim-collapse-inner pt-0.5">
               <div className="grid gap-3 md:grid-cols-2">
               {([
-                ['baseWeightFactor', '基础权重因子'],
-                ['valueScoreFactor', '价值分因子'],
-                ['costWeight', '成本权重'],
-                ['balanceWeight', '余额权重'],
-                ['usageWeight', '使用频次权重'],
+                ['baseWeightFactor', tr('pages.settings.basicWeightFactor')],
+                ['valueScoreFactor', tr('pages.settings.valueFactor')],
+                ['costWeight', tr('pages.settings.costWeight')],
+                ['balanceWeight', tr('pages.settings.balanceWeight')],
+                ['usageWeight', tr('pages.settings.useFrequencyWeight')],
               ] as Array<[keyof RoutingWeights, string]>).map(([key, label]) => (
                 <SettingsField key={key} label={label}>
                   <Input
@@ -1982,13 +1982,13 @@ export default function Settings() {
 
           <div>
             <Button type="button" onClick={saveRouting} disabled={savingRouting}>
-              {savingRouting ? <><LoaderCircle className="size-4 animate-spin" /> 保存中...</> : '保存路由策略'}
+              {savingRouting ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.accounts.saving')}</> : tr('pages.settings.saveRoutingPolicy')}
             </Button>
           </div>
         </SettingsCard>
 
         {/* Global Brand Filter */}
-        <SettingsCard title="全局品牌屏蔽" description="屏蔽选定品牌后，路由重建时将自动跳过匹配该品牌的所有模型。点击品牌切换屏蔽状态，保存后自动触发路由重建。">
+        <SettingsCard title={tr('pages.settings.brands2')} description={tr('pages.settings.brandsRoutesAutomaticjumpOvermatchBrandModelsBrands')}>
           <div className="flex flex-wrap gap-2">
             {(allBrandNames || []).map((brand) => {
               const isBlocked = blockedBrands.includes(brand);
@@ -2014,29 +2014,29 @@ export default function Settings() {
               );
             })}
             {allBrandNames === null && (
-              <span className="text-sm text-muted-foreground">加载品牌列表中...</span>
+              <span className="text-sm text-muted-foreground">{tr('pages.settings.brandsZh')}</span>
             )}
             {allBrandNames !== null && allBrandNames.length === 0 && (
-              <span className="text-sm text-muted-foreground">暂无可用品牌</span>
+              <span className="text-sm text-muted-foreground">{tr('pages.settings.noneavailablebrands')}</span>
             )}
           </div>
           {blockedBrands.length > 0 && (
             <div className="text-sm text-muted-foreground">
-              已屏蔽 {blockedBrands.length} 个品牌：{blockedBrands.join('、')}
+              {tr('pages.settings.blocked')} {blockedBrands.length} {tr('pages.settings.brands')}{blockedBrands.join('、')}
             </div>
           )}
           <Button type="button" onClick={handleSaveBrandFilter} disabled={savingBrandFilter}>
-            {savingBrandFilter ? <><LoaderCircle className="size-4 animate-spin" /> 保存中...</> : '保存品牌屏蔽'}
+            {savingBrandFilter ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.accounts.saving')}</> : tr('pages.settings.savebrands')}
           </Button>
         </SettingsCard>
 
         {/* Global Allowed Models Whitelist */}
-        <SettingsCard title="全局模型白名单" description="配置白名单后，路由重建和候选生成将只针对白名单中的模型。留空表示允许所有模型（向后兼容）。保存后自动触发路由重建。">
+        <SettingsCard title={tr('pages.settings.model')} description={tr('pages.settings.configurationRoutesZhmodelsModelSaveAutomaticRoutes')}>
           <div className="grid gap-3">
             <div className="flex gap-2">
               <Input
                 type="text"
-                placeholder="输入模型名称，如：gpt-4"
+                placeholder={tr('pages.settings.inputmodelNameGpt4')}
                 value={allowedModelsInput}
                 onChange={(e) => setAllowedModelsInput(e.target.value)}
                 onKeyDown={(e) => {
@@ -2063,13 +2063,13 @@ export default function Settings() {
                
                
               >
-                添加
+                {tr('pages.oAuthManagement.add')}
               </Button>
             </div>
             {availableModels && availableModels.length > 0 && (
               <div className="grid gap-2">
                 <div className="text-xs text-muted-foreground">
-                  或从当前可用模型中选择：
+                  {tr('pages.settings.availablemodelzhselect')}
                 </div>
                 <div className="flex max-h-32 flex-wrap gap-2 overflow-y-auto rounded-md border p-2">
                   {availableModels.map((model) => {
@@ -2099,7 +2099,7 @@ export default function Settings() {
             {allowedModels.length > 0 && (
               <div className="grid gap-2">
                 <div className="text-xs text-muted-foreground">
-                  已选择 {allowedModels.length} 个模型：
+                  {tr('pages.oAuthManagement.selected')} {allowedModels.length} {tr('pages.settings.models')}
                 </div>
                 <div className="flex flex-wrap gap-2">
                   {allowedModels.map((model) => (
@@ -2110,7 +2110,7 @@ export default function Settings() {
                         onClick={() => setAllowedModels((prev) => prev.filter((m) => m !== model))}
                         variant="ghost"
                         size="icon"
-                        title="移除"
+                        title={tr('pages.settings.remove')}
                       >
                         ×
                       </Button>
@@ -2121,13 +2121,13 @@ export default function Settings() {
             )}
           </div>
           <Button type="button" onClick={handleSaveAllowedModels} disabled={savingAllowedModels}>
-            {savingAllowedModels ? <><LoaderCircle className="size-4 animate-spin" /> 保存中...</> : '保存模型白名单'}
+            {savingAllowedModels ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.accounts.saving')}</> : tr('pages.settings.savemodel')}
           </Button>
         </SettingsCard>
 
         <SettingsCard
-          title="数据库迁移（SQLite / MySQL / PostgreSQL）"
-          description="可先测试连接，再迁移数据；迁移完成后可保存为运行数据库配置（重启容器后生效）。"
+          title={tr('pages.settings.sqliteMysqlPostgresql')}
+          description={tr('pages.settings.testConnectionSaveConfiguration')}
         >
 
           <div className="grid items-center gap-3 md:grid-cols-[180px_1fr]">
@@ -2147,7 +2147,7 @@ export default function Settings() {
                  
                   onClick={() => setConnectionMode((prev) => (prev === 'shorthand' ? 'advanced' : 'shorthand'))}
                 >
-                  {connectionMode === 'shorthand' ? '高级输入连接串' : '使用半自动简写'}
+                  {connectionMode === 'shorthand' ? tr('pages.settings.advancedInputConnectionString') : tr('pages.settings.usageAutomatic')}
                 </Button>
               )}
             </div>
@@ -2195,7 +2195,7 @@ export default function Settings() {
                  
                   onClick={() => setShowShorthandOptional((prev) => !prev)}
                 >
-                  {showShorthandOptional ? '收起端口/库名' : '展开端口/库名'}
+                  {showShorthandOptional ? tr('pages.settings.collapseport') : tr('pages.settings.expandport')}
                 </Button>
               </div>
               {showShorthandOptional && (
@@ -2224,7 +2224,7 @@ export default function Settings() {
                 checked={migrationSsl}
                 onCheckedChange={(checked) => setMigrationSsl(checked === true)}
               />
-              启用 SSL/TLS 加密连接
+              {tr('pages.settings.enableSslTlsEncryptedConnection')}
             </Label>
           )}
 
@@ -2233,7 +2233,7 @@ export default function Settings() {
                 checked={migrationOverwrite}
                 onCheckedChange={(checked) => setMigrationOverwrite(checked === true)}
               />
-            允许覆盖目标数据库现有数据
+            {tr('pages.settings.allowOverwritingExistingDataTargetDatabase')}
           </Label>
 
           <div className="flex flex-wrap gap-2">
@@ -2243,14 +2243,14 @@ export default function Settings() {
              
              
             >
-              {testingMigrationConnection ? <><LoaderCircle className="size-4 animate-spin" /> 测试中...</> : '测试连接'}
+              {testingMigrationConnection ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.settings.zh')}</> : tr('pages.settings.testConnection')}
             </Button>
             <Button type="button"
               onClick={handleMigrateToExternalDatabase}
               disabled={migratingDatabase || testingMigrationConnection || savingRuntimeDatabase}
              
             >
-              {migratingDatabase ? <><LoaderCircle className="size-4 animate-spin" /> 迁移中...</> : '开始迁移'}
+              {migratingDatabase ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.settings.zh2')}</> : tr('pages.settings.startMigration')}
             </Button>
             <Button type="button" variant="outline"
               onClick={handleSaveRuntimeDatabaseConfig}
@@ -2258,80 +2258,80 @@ export default function Settings() {
              
              
             >
-              {savingRuntimeDatabase ? <><LoaderCircle className="size-4 animate-spin" /> 保存中...</> : '保存为运行数据库（重启后生效）'}
+              {savingRuntimeDatabase ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.accounts.saving')}</> : tr('pages.settings.save6')}
             </Button>
           </div>
 
           {runtimeDatabaseState && (
             <div className="grid gap-1 rounded-md border p-3 text-sm text-muted-foreground">
-              <div>当前运行：{runtimeDatabaseState.active.dialect}（{runtimeDatabaseState.active.connection || '(empty)' }）{runtimeDatabaseState.active.ssl && ' [SSL]'}</div>
+              <div>{tr('pages.settings.currentlyRunning')}{runtimeDatabaseState.active.dialect}（{runtimeDatabaseState.active.connection || '(empty)' }）{runtimeDatabaseState.active.ssl && ' [SSL]'}</div>
               <div>
-                已保存待生效：
+                {tr('pages.settings.save2')}
                 {runtimeDatabaseState.saved
                   ? ` ${runtimeDatabaseState.saved.dialect}（${runtimeDatabaseState.saved.connection}）${runtimeDatabaseState.saved.ssl ? ' [SSL]' : ''}`
-                  : ' 未保存'}
+                  : tr('pages.settings.save4')}
               </div>
               {runtimeDatabaseState.restartRequired && (
-                <div>检测到待生效数据库配置，请重启容器使其生效。</div>
+                <div>{tr('pages.settings.configuration')}</div>
               )}
             </div>
           )}
 
           {migrationSummary && (
             <div className="grid gap-1 rounded-md border p-3 text-sm text-muted-foreground">
-              <div>目标：{migrationSummary.dialect}（{migrationSummary.connection}）</div>
-              <div>版本：{migrationSummary.version}，时间：{new Date(migrationSummary.timestamp).toLocaleString()}</div>
-              <div>迁移结果：站点 {migrationSummary.rows.sites} / 账号 {migrationSummary.rows.accounts} / 令牌 {migrationSummary.rows.accountTokens} / 路由 {migrationSummary.rows.tokenRoutes} / 通道 {migrationSummary.rows.routeChannels} / 设置 {migrationSummary.rows.settings}</div>
+              <div>{tr('pages.settings.target')}{migrationSummary.dialect}（{migrationSummary.connection}）</div>
+              <div>{tr('pages.importExport.version')}{migrationSummary.version}{tr('pages.importExport.time')}{new Date(migrationSummary.timestamp).toLocaleString()}</div>
+              <div>{tr('pages.settings.sites')} {migrationSummary.rows.sites} {tr('pages.importExport.accounts')} {migrationSummary.rows.accounts} {tr('pages.importExport.token')} {migrationSummary.rows.accountTokens} {tr('pages.importExport.routes')} {migrationSummary.rows.tokenRoutes} {tr('pages.importExport.channels')} {migrationSummary.rows.routeChannels} {tr('pages.importExport.settings')} {migrationSummary.rows.settings}</div>
             </div>
           )}
         </SettingsCard>
 
         <UpdateCenterSection />
 
-        <SettingsCard title="维护工具">
+        <SettingsCard title={tr('pages.settings.maintenanceTools')}>
           <div className="flex flex-wrap gap-2">
             <Button type="button" variant="outline" onClick={handleClearCache} disabled={clearingCache}>
-              {clearingCache ? <><LoaderCircle className="size-4 animate-spin" /> 清理中...</> : '清除缓存并重建路由'}
+              {clearingCache ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.settings.zh3')}</> : tr('pages.settings.clearCacheRebuildRoutes')}
             </Button>
             <Button type="button" variant="secondary" size="sm" onClick={handleClearUsage} disabled={clearingUsage}>
-              {clearingUsage ? <><LoaderCircle className="size-4 animate-spin" /> 清理中...</> : '清除占用与使用日志'}
+              {clearingUsage ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.settings.zh3')}</> : tr('pages.settings.clearOccupancyUsageLogs')}
             </Button>
           </div>
         </SettingsCard>
 
-        <SettingsCard title="危险操作">
+        <SettingsCard title={tr('pages.settings.actions')}>
           <div className="text-sm text-muted-foreground">
-            重新初始化系统会清空当前 metapi 使用中的全部数据库内容；若当前运行在外部 MySQL/Postgres，也会先清空该外部库中的 metapi 数据，然后切回默认 SQLite。
+            {tr('pages.settings.systemClearMetapiUsagezhAllContentCurrently')}
           </div>
           <div className="text-sm text-muted-foreground">
-            完成后管理员 Token 会重置为 <code className="font-mono">{FACTORY_RESET_ADMIN_TOKEN}</code>，当前会话会立即退出并刷新页面。
+            {tr('pages.settings.adminTokenReset')} <code className="font-mono">{FACTORY_RESET_ADMIN_TOKEN}</code>{tr('pages.settings.refresh')}
           </div>
           <Button type="button" variant="destructive" onClick={() => setFactoryResetOpen(true)}>
-            重新初始化系统
+            {tr('pages.settings.system')}
           </Button>
         </SettingsCard>
 
         <SettingsCard
-          title="会话与安全"
-          description="登录会话默认 12 小时自动过期。可选配置管理端 IP 白名单，支持每行一个 IP 或 IPv4 CIDR 网段。"
+          title={tr('pages.settings.sessionSecurity')}
+          description={tr('pages.settings.signDefault12HoursautomaticexpiredConfigurationmanagementIpWhitelist')}
         >
-          <SettingsField label="当前识别到的管理端 IP（由服务端判定）">
+          <SettingsField label={tr('pages.settings.ip')}>
           <SettingsCode>
-            {runtime.currentAdminIp || '未知'}
+            {runtime.currentAdminIp || tr('pages.accounts.unknown2')}
           </SettingsCode>
           </SettingsField>
-          <SettingsField label="管理端 IP 白名单">
+          <SettingsField label={tr('pages.settings.managementIpWhitelist')}>
           <Textarea
             className="font-mono"
             value={adminIpAllowlistText}
             onChange={(e) => setAdminIpAllowlistText(e.target.value)}
-            placeholder={'例如：\n127.0.0.1\n192.168.1.10\n192.168.1.0/24'}
+            placeholder={tr('pages.settings.cidrIp1921681024')}
             rows={4}
           />
           </SettingsField>
           <div className="flex flex-wrap gap-2">
             <Button type="button" onClick={saveSecuritySettings} disabled={savingSecurity}>
-              {savingSecurity ? <><LoaderCircle className="size-4 animate-spin" /> 保存中...</> : '保存安全设置'}
+              {savingSecurity ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.accounts.saving')}</> : tr('pages.settings.saveSecuritySettings')}
             </Button>
             <Button type="button" variant="destructive"
               onClick={() => {
@@ -2340,7 +2340,7 @@ export default function Settings() {
               }}
              
             >
-              退出登录
+              {tr('app.signOut')}
             </Button>
           </div>
         </SettingsCard>

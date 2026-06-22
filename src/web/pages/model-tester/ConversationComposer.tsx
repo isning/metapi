@@ -4,6 +4,7 @@ import { Button } from '../../components/ui/button/index.js';
 import { Input } from '../../components/ui/input/index.js';
 import { Textarea } from '../../components/ui/textarea/index.js';
 
+import { tr } from '../../i18n.js';
 type ConversationCapability = {
   supported: boolean;
   reason?: string | null;
@@ -69,13 +70,13 @@ export default function ConversationComposer({
               disabled={sending || customRequestMode || !conversationFileSupported}
               onClick={() => conversationFileInputRef.current?.click()}
             >
-              添加文件
+              {tr('pages.modelTester.conversationComposer.add')}
             </Button>
             <span className="text-xs text-muted-foreground">
               {customRequestMode
-                ? '自定义请求模式不会自动上传这些附件；关闭自定义模式后可走标准 /v1/files 链路。'
+                ? tr('pages.modelTester.conversationComposer.customRequestmodeAutomaticAttachmentsCloseModeV1')
                 : !conversationFileSupported
-                  ? (conversationFileCapability.reason || '当前协议暂不支持会话附件注入。')
+                  ? (conversationFileCapability.reason || tr('pages.modelTester.conversationComposer.currentProtocolDoesNotSupportSessionAttachment'))
                   : conversationFileHint}
             </span>
           </div>
@@ -83,12 +84,12 @@ export default function ConversationComposer({
             <div className="mt-3 flex flex-wrap gap-2">
               {conversationFiles.map((file) => {
                 const statusText = file.status === 'uploading'
-                  ? '上传中'
+                  ? tr('pages.modelTester.conversationComposer.zh')
                   : file.status === 'uploaded'
-                    ? '已上传'
+                    ? tr('pages.modelTester.conversationComposer.uploaded')
                     : file.status === 'error'
-                      ? '失败'
-                      : '待上传';
+                      ? tr('pages.checkinLog.failed')
+                      : tr('pages.modelTester.conversationComposer.pendingUpload');
                 const statusClass = file.status === 'error'
                   ? 'text-destructive'
                   : file.status === 'uploaded'
@@ -112,7 +113,7 @@ export default function ConversationComposer({
                         variant="ghost"
                         size="icon"
                         onClick={() => onRemoveConversationFile(file.localId)}
-                        aria-label={`移除附件 ${file.name || file.localId || '附件'}`}
+                        aria-label={`移除附件 ${file.name || file.localId || tr('pages.modelTester.attachments')}`}
                       >
                         ×
                       </Button>
@@ -139,8 +140,8 @@ export default function ConversationComposer({
             }
           }}
           placeholder={customRequestMode
-            ? '自定义模式下输入可选。回车发送时将优先使用右侧自定义请求体。'
-            : '输入提示词，或只上传文件后直接发送…（回车发送，Shift+回车换行）'}
+            ? tr('pages.modelTester.conversationComposer.modeInputSendUsageCustomRequest')
+            : tr('pages.modelTester.conversationComposer.inputtipSendSendShift')}
           rows={3}
           className="flex-1 resize-none"
         />
@@ -160,14 +161,14 @@ export default function ConversationComposer({
         {sending ? (
           <>
             <span className="text-lg leading-none">■</span>
-            <span className="text-xs">停止</span>
+            <span className="text-xs">{tr('pages.modelTester.stop')}</span>
           </>
         ) : (
           <>
             <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
             </svg>
-            <span className="text-xs">发送</span>
+            <span className="text-xs">{tr('pages.modelTester.conversationComposer.send')}</span>
           </>
         )}
       </Button>

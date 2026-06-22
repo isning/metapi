@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, create, type ReactTestInstance } from 'react-test-renderer';
 import { MemoryRouter } from 'react-router-dom';
-import ModernSelect from '../components/ModernSelect.js';
 import { ToastProvider } from '../components/Toast.js';
 import ProxyLogs from './ProxyLogs.js';
 
@@ -322,14 +321,12 @@ describe('ProxyLogs server-driven page', () => {
       await flushMicrotasks();
 
       const traceEnabledToggle = root.root.find((node) => (
-        node.type === 'input'
-        && node.props.type === 'checkbox'
-        && node.props['data-debug-setting'] === 'trace-enabled'
+        node.props['data-debug-setting'] === 'trace-enabled'
+        && typeof node.props.onCheckedChange === 'function'
       ));
       const captureBodiesToggle = root.root.find((node) => (
-        node.type === 'input'
-        && node.props.type === 'checkbox'
-        && node.props['data-debug-setting'] === 'capture-bodies'
+        node.props['data-debug-setting'] === 'capture-bodies'
+        && typeof node.props.onCheckedChange === 'function'
       ));
       const sessionInput = root.root.find((node) => (
         node.type === 'input'
@@ -341,8 +338,8 @@ describe('ProxyLogs server-driven page', () => {
       ));
 
       await act(async () => {
-        traceEnabledToggle.props.onChange({ target: { checked: true } });
-        captureBodiesToggle.props.onChange({ target: { checked: true } });
+        traceEnabledToggle.props.onCheckedChange(true);
+        captureBodiesToggle.props.onCheckedChange(true);
         sessionInput.props.onChange({ target: { value: 'sess-debug-1' } });
         retentionInput.props.onChange({ target: { value: '12' } });
       });
@@ -760,7 +757,7 @@ describe('ProxyLogs server-driven page', () => {
       ));
 
       await act(async () => {
-        expandHeadersButton.props.onClick();
+        expandHeadersButton.props.onClick({ defaultPrevented: false });
       });
       await flushMicrotasks();
 
@@ -804,7 +801,7 @@ describe('ProxyLogs server-driven page', () => {
         && node.props.style?.display === 'inline-flex'
       ));
 
-      expect(modelBadge.props.style?.alignSelf).toBe('flex-start');
+      expect(modelBadge.props.style?.whiteSpace).toBe('nowrap');
     } finally {
       root?.unmount();
     }
@@ -891,12 +888,22 @@ describe('ProxyLogs server-driven page', () => {
       });
       await flushMicrotasks();
 
-      const selects = root!.root.findAllByType(ModernSelect);
-      const clientSelect = selects.find((node) => node.props.placeholder === '全部客户端');
-      expect(clientSelect).toBeDefined();
+      const clientSelectTrigger = root!.root.findAll((node) => (
+        node.type === 'button'
+        && node.props.role === 'combobox'
+      ))[0];
+      expect(clientSelectTrigger).toBeDefined();
 
       await act(async () => {
-        clientSelect!.props.onChange('app:cherry_studio');
+        clientSelectTrigger.props.onClick();
+      });
+      const clientOption = root!.root.find((node) => (
+        node.type === 'button'
+        && node.props.role === 'option'
+        && collectText(node).includes('应用 · Cherry Studio')
+      ));
+      await act(async () => {
+        clientOption.props.onClick();
       });
       await flushMicrotasks();
 

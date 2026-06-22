@@ -1,16 +1,18 @@
 import { Button } from './ui/button/index.js';
-import { ButtonGroup } from './ui/button-group/index.js';
+import { Badge } from './ui/badge/index.js';
 import { ConfigSection, ConfigSectionItem } from './ConfigSection.js';
 import { Input } from './ui/input/index.js';
+import { Label } from './ui/label/index.js';
+import { RadioGroup, RadioGroupItem } from './ui/radio-group/index.js';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select/index.js';
-import { Switch } from './ui/switch/index.js';
-import { Textarea } from './ui/textarea/index.js';
+import JsonCodeEditor from './JsonCodeEditor.js';
 import { tr } from '../i18n.js';
-import type { UpstreamCompatibilityPolicyForm } from '../lib/upstreamCompatibilityPolicyEditor.js';
+import { emptyUpstreamCompatibilityPolicyForm, isCompatibilityPolicyFormInherited, type UpstreamCompatibilityPolicyForm } from '../lib/upstreamCompatibilityPolicyEditor.js';
 
 type Option<T extends string> = {
   value: T;
   label: string;
+  description?: string;
 };
 
 function SelectField<T extends string>({
@@ -24,10 +26,11 @@ function SelectField<T extends string>({
   options: Array<Option<T>>;
   onChange: (value: T) => void;
 }) {
+  const selectedOption = options.find((option) => option.value === value);
   return (
     <Select disabled={disabled} value={value} onValueChange={(next) => onChange(next as T)}>
       <SelectTrigger>
-        <SelectValue />
+        <SelectValue>{selectedOption ? tr(selectedOption.label) : undefined}</SelectValue>
       </SelectTrigger>
       <SelectContent>
         {options.map((option) => (
@@ -48,23 +51,83 @@ function updateForm(
 }
 
 const booleanOptions = [
-  { value: 'inherit', label: '继承' },
-  { value: 'true', label: '启用' },
-  { value: 'false', label: '禁用' },
+  { value: 'inherit', label: 'common.inherit', description: 'upstreamCompatibility.boolean.inheritDescription' },
+  { value: 'true', label: 'common.enabled', description: 'upstreamCompatibility.boolean.enabledDescription' },
+  { value: 'false', label: 'common.disabled', description: 'upstreamCompatibility.boolean.disabledDescription' },
 ] satisfies Array<Option<UpstreamCompatibilityPolicyForm['assistantHistory']>>;
+
+const transportModeOptions = [
+  { value: 'native', label: 'upstreamCompatibility.transport.native', description: 'upstreamCompatibility.transport.nativeDescription' },
+  { value: 'content_think_tag', label: 'upstreamCompatibility.transport.contentThinkTag', description: 'upstreamCompatibility.transport.contentThinkTagDescription' },
+  { value: 'drop', label: 'upstreamCompatibility.transport.drop', description: 'upstreamCompatibility.transport.dropDescription' },
+] satisfies Array<Option<UpstreamCompatibilityPolicyForm['mode']>>;
 
 function Field({
   label,
+  description,
   children,
 }: {
   label: string;
+  description?: string;
   children: React.ReactNode;
 }) {
   return (
     <label className="grid min-w-0 gap-1.5 text-xs font-medium text-muted-foreground">
-      {tr(label)}
+      <span className="flex flex-col gap-0.5">
+        <span>{tr(label)}</span>
+        {description ? <span className="font-normal leading-relaxed text-muted-foreground/80">{tr(description)}</span> : null}
+      </span>
       {children}
     </label>
+  );
+}
+
+function PolicyModeButton({
+  active,
+  disabled,
+  label,
+  description,
+  onClick,
+}: {
+  active: boolean;
+  disabled?: boolean;
+  label: string;
+  description: string;
+  onClick: () => void;
+}) {
+  return (
+    <Button
+      type="button"
+      variant={active ? 'secondary' : 'outline'}
+      disabled={disabled}
+      onClick={onClick}
+      className="h-auto min-h-11 flex-1 justify-start px-3 py-2 text-left"
+    >
+      <span className="grid gap-0.5">
+        <span className="text-sm font-medium">{tr(label)}</span>
+        <span className="text-xs font-normal text-muted-foreground">{tr(description)}</span>
+      </span>
+    </Button>
+  );
+}
+
+function TransportModeCard({
+  option,
+  selected,
+}: {
+  option: Option<UpstreamCompatibilityPolicyForm['mode']>;
+  selected: boolean;
+}) {
+  return (
+    <Label
+      className={`flex min-h-20 items-start gap-2 rounded-md border bg-card px-3 py-2.5 text-sm font-medium text-foreground transition-colors ${selected ? 'border-primary bg-primary/5' : ''}`.trim()}
+    >
+      <RadioGroupItem value={option.value} className="mt-0.5" />
+      <span className="grid gap-1">
+        <span>{tr(option.label)}</span>
+        {option.description ? <span className="text-xs font-normal leading-relaxed text-muted-foreground">{tr(option.description)}</span> : null}
+      </span>
+    </Label>
   );
 }
 
@@ -72,105 +135,174 @@ export function UpstreamCompatibilityPolicyEditor({
   value,
   disabled,
   compact = false,
+  inheritFrom,
   onChange,
 }: {
   value: UpstreamCompatibilityPolicyForm;
   disabled?: boolean;
   compact?: boolean;
+  inheritFrom?: string;
   onChange: (value: UpstreamCompatibilityPolicyForm) => void;
 }) {
+  const inherited = isCompatibilityPolicyFormInherited(value);
+  const sourceLabel = inheritFrom || tr('upstreamCompatibility.inheritSource.defaultChain');
+  const editorMode = value.advancedEnabled ? 'json' : inherited ? 'inherit' : 'override';
   return (
     <ConfigSection
       compact={compact}
-      title={tr('上游兼容性')}
-      description={tr('推理历史传输和上游回放行为。')}
-      actions={(
-        <ButtonGroup>
-          <Button
-            type="button"
-            variant={value.advancedEnabled ? 'outline' : 'secondary'}
-            size="sm"
-            disabled={disabled}
-            onClick={() => onChange(updateForm(value, { advancedEnabled: false }))}
-          >
-            {tr('表单')}
-          </Button>
-          <Button
-            type="button"
-            variant={value.advancedEnabled ? 'secondary' : 'outline'}
-            size="sm"
-            disabled={disabled}
-            onClick={() => onChange(updateForm(value, { advancedEnabled: true }))}
-          >
-            JSON
-          </Button>
-        </ButtonGroup>
-      )}
+      title={tr('upstreamCompatibility.title')}
+      description={tr('upstreamCompatibility.description')}
     >
-
+      <div className="grid gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant={editorMode === 'inherit' ? 'secondary' : editorMode === 'json' ? 'warning' : 'info'}>
+            {editorMode === 'inherit'
+              ? tr('upstreamCompatibility.mode.inherit')
+              : editorMode === 'json'
+                ? tr('upstreamCompatibility.mode.json')
+                : tr('upstreamCompatibility.mode.override')}
+          </Badge>
+          <span className="text-xs leading-relaxed text-muted-foreground">
+            {editorMode === 'inherit'
+              ? tr('upstreamCompatibility.inheritedDescription').replace('{source}', sourceLabel)
+              : editorMode === 'json'
+                ? tr('upstreamCompatibility.jsonModeDescription')
+                : tr('upstreamCompatibility.overrideModeDescription')}
+          </span>
+        </div>
+        <div className="grid grid-cols-1 gap-2 lg:grid-cols-3">
+          <PolicyModeButton
+            active={editorMode === 'inherit'}
+            disabled={disabled}
+            label="upstreamCompatibility.mode.inherit"
+            description="upstreamCompatibility.mode.inheritHint"
+            onClick={() => onChange(emptyUpstreamCompatibilityPolicyForm())}
+          />
+          <PolicyModeButton
+            active={editorMode === 'override'}
+            disabled={disabled}
+            label="upstreamCompatibility.mode.override"
+            description="upstreamCompatibility.mode.overrideHint"
+            onClick={() => onChange(updateForm(value, { advancedEnabled: false, mode: inherited ? 'native' : value.mode }))}
+          />
+          <PolicyModeButton
+            active={editorMode === 'json'}
+            disabled={disabled}
+            label="upstreamCompatibility.mode.json"
+            description="upstreamCompatibility.mode.jsonHint"
+            onClick={() => onChange(updateForm(value, { advancedEnabled: true }))}
+          />
+        </div>
+      </div>
       {value.advancedEnabled ? (
-        <ConfigSectionItem>
-          <Field label="策略 JSON">
-            <Textarea
+        <ConfigSectionItem className="grid gap-2.5">
+          <div className="rounded-md border border-warning/20 bg-warning/10 px-3 py-2 text-xs leading-relaxed text-warning">
+            {tr('upstreamCompatibility.jsonWarning')}
+          </div>
+          <Field label="upstreamCompatibility.tabs.policyJson" description="upstreamCompatibility.policyJsonDescription">
+            <JsonCodeEditor
               disabled={disabled}
               value={value.advancedJson}
-              onChange={(event) => onChange(updateForm(value, { advancedJson: event.target.value }))}
-              className="min-h-[180px] font-mono"
+              onChange={(nextValue) => onChange(updateForm(value, { advancedJson: nextValue }))}
+              minHeight={220}
               placeholder='{"reasoningHistory":{"transport":{"mode":"content_think_tag"}}}'
             />
           </Field>
         </ConfigSectionItem>
+      ) : inherited ? (
+        <ConfigSectionItem className="grid gap-3 border-dashed bg-muted/30">
+          <div className="grid gap-1.5">
+            <div className="text-sm font-semibold text-foreground">{tr('upstreamCompatibility.inheritedTitle')}</div>
+            <div className="text-xs leading-relaxed text-muted-foreground">
+              {tr('upstreamCompatibility.inheritedLongDescription').replace('{source}', sourceLabel)}
+            </div>
+          </div>
+          <div className="grid gap-2 rounded-md border bg-background px-3 py-2 text-xs text-muted-foreground">
+            <div className="font-medium text-foreground">{tr('upstreamCompatibility.inheritOrderTitle')}</div>
+            <div>{sourceLabel}</div>
+          </div>
+        </ConfigSectionItem>
       ) : (
         <div className="grid gap-2.5">
-          <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2 xl:grid-cols-3">
-            <Field label="传输方式">
-              <SelectField
+          <ConfigSectionItem className="grid gap-2.5">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div className="grid gap-1">
+                <div className="text-sm font-semibold text-foreground">{tr('upstreamCompatibility.section.transport')}</div>
+                <div className="text-xs leading-relaxed text-muted-foreground">{tr('upstreamCompatibility.section.transportDescription')}</div>
+              </div>
+              <Button
+                type="button"
+                variant="ghostMuted"
+                size="sm"
+                disabled={disabled}
+                onClick={() => onChange(emptyUpstreamCompatibilityPolicyForm())}
+              >
+                {tr('upstreamCompatibility.restoreInheritance')}
+              </Button>
+            </div>
+            <div className="grid min-w-0 gap-1.5 text-xs font-medium text-muted-foreground">
+              <RadioGroup
                 disabled={disabled}
                 value={value.mode}
-                options={[
-                  { value: 'inherit', label: '继承' },
-                  { value: 'native', label: '原生字段' },
-                  { value: 'content_think_tag', label: '正文 <think> 标签' },
-                  { value: 'drop', label: '丢弃推理历史' },
-                ]}
-                onChange={(mode) => onChange(updateForm(value, { mode }))}
-              />
-            </Field>
-            <Field label="最大推理字节数">
+                onValueChange={(mode) => onChange(updateForm(value, { mode: mode as UpstreamCompatibilityPolicyForm['mode'] }))}
+                className="grid grid-cols-1 gap-2 sm:grid-cols-3"
+              >
+                {transportModeOptions.map((option) => (
+                  <TransportModeCard
+                    key={option.value}
+                    option={option}
+                    selected={value.mode === option.value}
+                  />
+                ))}
+              </RadioGroup>
+            </div>
+          </ConfigSectionItem>
+          <ConfigSectionItem className="grid grid-cols-1 gap-2.5 md:grid-cols-2">
+            <div className="grid gap-1 md:col-span-2">
+              <div className="text-sm font-semibold text-foreground">{tr('upstreamCompatibility.section.limits')}</div>
+              <div className="text-xs leading-relaxed text-muted-foreground">{tr('upstreamCompatibility.section.limitsDescription')}</div>
+            </div>
+            <Field label="upstreamCompatibility.maxReasoningBytes" description="upstreamCompatibility.maxReasoningBytesDescription">
               <Input
                 disabled={disabled}
                 value={value.maxReasoningBytes}
                 inputMode="numeric"
                 onChange={(event) => onChange(updateForm(value, { maxReasoningBytes: event.target.value.replace(/[^\d]/g, '') }))}
-                placeholder={tr('继承')}
+                placeholder={tr('common.inherit')}
               />
             </Field>
-            <Field label="溢出处理">
+            <Field label="upstreamCompatibility.overflow" description="upstreamCompatibility.overflowDescription">
               <SelectField
                 disabled={disabled}
                 value={value.overflow}
                 options={[
-                  { value: 'inherit', label: '继承' },
-                  { value: 'truncate', label: '截断' },
-                  { value: 'drop', label: '丢弃' },
+                  { value: 'inherit', label: 'common.inherit', description: 'upstreamCompatibility.overflow.inheritDescription' },
+                  { value: 'truncate', label: 'upstreamCompatibility.overflow.truncate', description: 'upstreamCompatibility.overflow.truncateDescription' },
+                  { value: 'drop', label: 'upstreamCompatibility.overflow.drop', description: 'upstreamCompatibility.overflow.dropDescription' },
                 ]}
                 onChange={(overflow) => onChange(updateForm(value, { overflow }))}
               />
             </Field>
-            <Field label="工具调用消息">
+            <Field label="upstreamCompatibility.toolCallMessages" description="upstreamCompatibility.toolCallMessagesDescription">
               <SelectField
                 disabled={disabled}
                 value={value.toolCallMessageBehavior}
                 options={[
-                  { value: 'inherit', label: '继承' },
-                  { value: 'same_as_assistant', label: '跟随 assistant' },
-                  { value: 'native', label: '强制原生字段' },
-                  { value: 'drop', label: '丢弃推理' },
+                  { value: 'inherit', label: 'common.inherit', description: 'upstreamCompatibility.toolCall.inheritDescription' },
+                  { value: 'same_as_assistant', label: 'upstreamCompatibility.toolCall.sameAsAssistant', description: 'upstreamCompatibility.toolCall.sameAsAssistantDescription' },
+                  { value: 'native', label: 'upstreamCompatibility.toolCall.forceNative', description: 'upstreamCompatibility.toolCall.forceNativeDescription' },
+                  { value: 'drop', label: 'upstreamCompatibility.toolCall.dropReasoning', description: 'upstreamCompatibility.toolCall.dropReasoningDescription' },
                 ]}
                 onChange={(toolCallMessageBehavior) => onChange(updateForm(value, { toolCallMessageBehavior }))}
               />
             </Field>
-            <Field label="Assistant 历史">
+          </ConfigSectionItem>
+          <ConfigSectionItem className="grid grid-cols-1 gap-2.5 sm:grid-cols-3">
+            <div className="grid gap-1 sm:col-span-3">
+              <div className="text-sm font-semibold text-foreground">{tr('upstreamCompatibility.section.applyTo')}</div>
+              <div className="text-xs leading-relaxed text-muted-foreground">{tr('upstreamCompatibility.section.applyToDescription')}</div>
+            </div>
+            <Field label="upstreamCompatibility.assistantHistory" description="upstreamCompatibility.assistantHistoryDescription">
               <SelectField
                 disabled={disabled}
                 value={value.assistantHistory}
@@ -178,7 +310,7 @@ export function UpstreamCompatibilityPolicyEditor({
                 onChange={(assistantHistory) => onChange(updateForm(value, { assistantHistory }))}
               />
             </Field>
-            <Field label="Assistant 工具调用">
+            <Field label="upstreamCompatibility.assistantToolCalls" description="upstreamCompatibility.assistantToolCallsDescription">
               <SelectField
                 disabled={disabled}
                 value={value.assistantToolCalls}
@@ -186,7 +318,7 @@ export function UpstreamCompatibilityPolicyEditor({
                 onChange={(assistantToolCalls) => onChange(updateForm(value, { assistantToolCalls }))}
               />
             </Field>
-            <Field label="响应续写">
+            <Field label="upstreamCompatibility.responseContinuation" description="upstreamCompatibility.responseContinuationDescription">
               <SelectField
                 disabled={disabled}
                 value={value.responseContinuation}
@@ -194,25 +326,20 @@ export function UpstreamCompatibilityPolicyEditor({
                 onChange={(responseContinuation) => onChange(updateForm(value, { responseContinuation }))}
               />
             </Field>
-            <label className="flex min-h-9 items-center justify-between gap-2 rounded-lg border bg-card px-2.5 text-xs text-muted-foreground">
-              <span className="font-medium">{tr('高级 JSON')}</span>
-              <Switch
-                disabled={disabled}
-                checked={value.advancedEnabled}
-                onCheckedChange={(advancedEnabled) => onChange(updateForm(value, { advancedEnabled }))}
-                aria-label={tr('高级 JSON')}
-              />
-            </label>
-          </div>
+          </ConfigSectionItem>
           {value.mode === 'content_think_tag' ? (
             <ConfigSectionItem className="grid grid-cols-1 gap-2.5 md:grid-cols-3">
-              <Field label="开始标签">
+              <div className="grid gap-1 md:col-span-3">
+                <div className="text-sm font-semibold text-foreground">{tr('upstreamCompatibility.section.thinkTag')}</div>
+                <div className="text-xs leading-relaxed text-muted-foreground">{tr('upstreamCompatibility.section.thinkTagDescription')}</div>
+              </div>
+              <Field label="upstreamCompatibility.openTag" description="upstreamCompatibility.openTagDescription">
                 <Input disabled={disabled} value={value.openTag} onChange={(event) => onChange(updateForm(value, { openTag: event.target.value }))} />
               </Field>
-              <Field label="结束标签">
+              <Field label="upstreamCompatibility.closeTag" description="upstreamCompatibility.closeTagDescription">
                 <Input disabled={disabled} value={value.closeTag} onChange={(event) => onChange(updateForm(value, { closeTag: event.target.value }))} />
               </Field>
-              <Field label="分隔符">
+              <Field label="upstreamCompatibility.separator" description="upstreamCompatibility.separatorDescription">
                 <Input disabled={disabled} value={value.separator} onChange={(event) => onChange(updateForm(value, { separator: event.target.value }))} />
               </Field>
             </ConfigSectionItem>

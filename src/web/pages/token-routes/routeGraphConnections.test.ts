@@ -102,7 +102,10 @@ describe('routeGraphConnections', () => {
       sourceHandle: 'bidirect.out',
       target: 'macro:macro:model-group',
       targetHandle: 'bidirect.in',
-    })).toMatchObject({ ok: true });
+    })).toMatchObject({
+      ok: false,
+      message: '非 manual macro 只允许从输出接口复用',
+    });
   });
 
   it('rejects disabled ports, wrong directions, and incompatible kinds', () => {

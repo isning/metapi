@@ -94,7 +94,7 @@ export default function NotificationSettings() {
                     : 300,
             });
         } catch (err: any) {
-            toast.error(err?.message || '加载通知设置失败');
+            toast.error(err?.message || tr('pages.notificationSettings.failedLoadNotificationSettings'));
         } finally {
             setLoading(false);
         }
@@ -141,9 +141,9 @@ export default function NotificationSettings() {
             setServerChanKey('');
             setTelegramBotToken('');
             setSmtpPass('');
-            toast.success('通知设置已保存');
+            toast.success(tr('pages.notificationSettings.notificationSettingsSaved'));
         } catch (err: any) {
-            toast.error(err?.message || '保存失败');
+            toast.error(err?.message || tr('pages.accounts.saveFailed'));
         } finally {
             setSavingNotify(false);
         }
@@ -153,9 +153,9 @@ export default function NotificationSettings() {
         setTestingNotify(true);
         try {
             const res = await api.testNotification();
-            toast.success(res?.message || '测试通知已发送');
+            toast.success(res?.message || tr('pages.notificationSettings.testNotificationSent'));
         } catch (err: any) {
-            toast.error(err?.message || '触发测试通知失败');
+            toast.error(err?.message || tr('pages.notificationSettings.triggerTestNotificationFailed'));
         } finally {
             setTestingNotify(false);
         }
@@ -197,26 +197,26 @@ export default function NotificationSettings() {
     return (
         <div className="grid max-w-4xl gap-4 pb-10">
             <div className="flex flex-wrap items-start justify-between gap-3">
-                <h2 className="text-2xl font-semibold tracking-tight">{tr('通知设置')}</h2>
+                <h2 className="text-2xl font-semibold tracking-tight">{tr('app.notificationSettings')}</h2>
                 <div className="flex flex-wrap gap-2">
                     <Button type="button" variant="outline" onClick={testNotify} disabled={testingNotify}>
-                        {testingNotify ? <><LoaderCircle className="size-4 animate-spin" /> 发送中...</> : '发送测试通知'}
+                        {testingNotify ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.notificationSettings.sending')}</> : tr('pages.notificationSettings.sendTestNotification')}
                     </Button>
                     <Button type="button" onClick={saveNotify} disabled={savingNotify}>
-                        {savingNotify ? <><LoaderCircle className="size-4 animate-spin" /> 保存中...</> : '保存通知设置'}
+                        {savingNotify ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.accounts.saving')}</> : tr('pages.notificationSettings.saveNotificationSettings')}
                     </Button>
                 </div>
             </div>
 
             <Card>
                 <CardHeader>
-                    <CardTitle>告警去噪与冷静期</CardTitle>
-                    <CardDescription>相同告警在冷静期内不会重复推送；冷静期结束后会自动合并重复条数。</CardDescription>
+                    <CardTitle>{tr('pages.notificationSettings.alertDeduplicationCooldown')}</CardTitle>
+                    <CardDescription>{tr('pages.notificationSettings.endAutomaticItems')}</CardDescription>
                 </CardHeader>
                 <CardContent>
                     <div className="max-w-xs">
                         {field(
-                            '冷静期（秒）',
+                            tr('pages.notificationSettings.cooldownPeriodSeconds'),
                             <Input
                                 type="number"
                                 min={0}
@@ -236,11 +236,11 @@ export default function NotificationSettings() {
                     <div className="flex flex-wrap items-start justify-between gap-3">
                         <div>
                             <CardTitle>Webhook & Bark</CardTitle>
-                            <CardDescription>通过 HTTP URL 推送消息通知（自动识别企业微信、飞书格式）</CardDescription>
+                            <CardDescription>{tr('pages.notificationSettings.httpUrlNotificationsAutomatic')}</CardDescription>
                         </div>
                         <div className="flex flex-wrap gap-4">
-                            {toggleRow('启用 Webhook', runtime.webhookEnabled, (checked) => setRuntime((prev) => ({ ...prev, webhookEnabled: checked })))}
-                            {toggleRow('启用 Bark', runtime.barkEnabled, (checked) => setRuntime((prev) => ({ ...prev, barkEnabled: checked })))}
+                            {toggleRow(tr('pages.notificationSettings.enabledWebhook'), runtime.webhookEnabled, (checked) => setRuntime((prev) => ({ ...prev, webhookEnabled: checked })))}
+                            {toggleRow(tr('pages.notificationSettings.enabledBark'), runtime.barkEnabled, (checked) => setRuntime((prev) => ({ ...prev, barkEnabled: checked })))}
                         </div>
                     </div>
                 </CardHeader>
@@ -250,7 +250,7 @@ export default function NotificationSettings() {
                         <Input
                             value={runtime.webhookUrl}
                             onChange={(e) => setRuntime((prev) => ({ ...prev, webhookUrl: e.target.value }))}
-                            placeholder="https://your-webhook-url (可选)"
+                            placeholder={tr('pages.notificationSettings.httpsYourWebhookUrlOptional')}
                             disabled={!runtime.webhookEnabled}
                         />,
                     )}
@@ -259,7 +259,7 @@ export default function NotificationSettings() {
                         <Input
                             value={runtime.barkUrl}
                             onChange={(e) => setRuntime((prev) => ({ ...prev, barkUrl: e.target.value }))}
-                            placeholder="https://api.day.app/your_key (可选)"
+                            placeholder={tr('pages.notificationSettings.httpsApiDayAppYourKeyOptional')}
                             disabled={!runtime.barkEnabled}
                         />,
                     )}
@@ -270,20 +270,20 @@ export default function NotificationSettings() {
                 <CardHeader>
                     <div className="flex flex-wrap items-start justify-between gap-3">
                         <div>
-                            <CardTitle>Server酱 (SendKey)</CardTitle>
-                            <CardDescription>微信推送消息支持。当前配置：{runtime.serverChanKeyMasked || '未设置'}</CardDescription>
+                            <CardTitle>{tr('pages.notificationSettings.serverSendkey')}</CardTitle>
+                            <CardDescription>{tr('pages.notificationSettings.supportedConfiguration')}{runtime.serverChanKeyMasked || tr('pages.notificationSettings.notSet')}</CardDescription>
                         </div>
-                        {toggleRow('启用 Server酱', runtime.serverChanEnabled, (checked) => setRuntime((prev) => ({ ...prev, serverChanEnabled: checked })))}
+                        {toggleRow(tr('pages.notificationSettings.enabledServer'), runtime.serverChanEnabled, (checked) => setRuntime((prev) => ({ ...prev, serverChanEnabled: checked })))}
                     </div>
                 </CardHeader>
                 <CardContent>
                     {field(
-                        'Server酱 Key',
+                        tr('pages.notificationSettings.serverKey'),
                         <Input
                             type="password"
                             value={serverChanKey}
                             onChange={(e) => setServerChanKey(e.target.value)}
-                            placeholder="输入新的 Server酱 Key（留空则不改）"
+                            placeholder={tr('pages.notificationSettings.enterNewServerKeyLeaveItBlank')}
                             disabled={!runtime.serverChanEnabled}
                         />,
                     )}
@@ -295,11 +295,11 @@ export default function NotificationSettings() {
                     <div className="flex flex-wrap items-start justify-between gap-3">
                         <div>
                             <CardTitle>Telegram Bot</CardTitle>
-                            <CardDescription>通过 Telegram 机器人推送消息通知</CardDescription>
+                            <CardDescription>{tr('pages.notificationSettings.telegramNotifications')}</CardDescription>
                         </div>
                         <div className="flex flex-wrap gap-4">
-                            {toggleRow('使用系统代理', runtime.telegramUseSystemProxy, (checked) => setRuntime((prev) => ({ ...prev, telegramUseSystemProxy: checked })))}
-                            {toggleRow('启用 Telegram', runtime.telegramEnabled, (checked) => setRuntime((prev) => ({ ...prev, telegramEnabled: checked })))}
+                            {toggleRow(tr('pages.notificationSettings.usagesystemacting'), runtime.telegramUseSystemProxy, (checked) => setRuntime((prev) => ({ ...prev, telegramUseSystemProxy: checked })))}
+                            {toggleRow(tr('pages.notificationSettings.enabledTelegram'), runtime.telegramEnabled, (checked) => setRuntime((prev) => ({ ...prev, telegramEnabled: checked })))}
                         </div>
                     </div>
                 </CardHeader>
@@ -310,10 +310,10 @@ export default function NotificationSettings() {
                             <Input
                                 value={runtime.telegramApiBaseUrl}
                                 onChange={(e) => setRuntime((prev) => ({ ...prev, telegramApiBaseUrl: e.target.value }))}
-                                placeholder="例如: https://your-proxy.example.com"
+                                placeholder={tr('pages.notificationSettings.httpsYourProxyExampleCom')}
                                 disabled={!runtime.telegramEnabled}
                             />,
-                            '留空或使用默认值时直连官方 Telegram API；如需国内反代，可填写反代前缀。',
+                            tr('pages.notificationSettings.usagedefaultOfficialTelegramApi'),
                         )}
                     </div>
                     {field(
@@ -321,7 +321,7 @@ export default function NotificationSettings() {
                         <Input
                             value={runtime.telegramChatId}
                             onChange={(e) => setRuntime((prev) => ({ ...prev, telegramChatId: e.target.value }))}
-                            placeholder="例如: -1001234567890 或 @your_channel"
+                            placeholder={tr('pages.notificationSettings.1001234567890YourChannel')}
                             disabled={!runtime.telegramEnabled}
                         />,
                     )}
@@ -330,17 +330,17 @@ export default function NotificationSettings() {
                         <Input
                             value={runtime.telegramMessageThreadId}
                             onChange={(e) => setRuntime((prev) => ({ ...prev, telegramMessageThreadId: e.target.value }))}
-                            placeholder="例如: 77"
+                            placeholder={tr('pages.notificationSettings.77')}
                             disabled={!runtime.telegramEnabled}
                         />,
                     )}
                     {field(
-                        `Telegram Bot Token${runtime.telegramBotTokenMasked ? '（当前已设置）' : ''}`,
+                        `Telegram Bot Token${runtime.telegramBotTokenMasked ? tr('pages.notificationSettings.settings') : ''}`,
                         <Input
                             type="password"
                             value={telegramBotToken}
                             onChange={(e) => setTelegramBotToken(e.target.value)}
-                            placeholder="输入新的 Bot Token（留空则不改）"
+                            placeholder={tr('pages.notificationSettings.inputBotToken')}
                             disabled={!runtime.telegramEnabled}
                         />,
                     )}
@@ -351,24 +351,24 @@ export default function NotificationSettings() {
                 <CardHeader>
                     <div className="flex flex-wrap items-start justify-between gap-3">
                         <div>
-                            <CardTitle>邮件服务 (SMTP)</CardTitle>
-                            <CardDescription>通过电子邮件推送提醒</CardDescription>
+                            <CardTitle>{tr('pages.notificationSettings.smtp2')}</CardTitle>
+                            <CardDescription>{tr('pages.notificationSettings.sendRemindersEmail')}</CardDescription>
                         </div>
-                        {toggleRow('启用 SMTP', runtime.smtpEnabled, (checked) => setRuntime((prev) => ({ ...prev, smtpEnabled: checked })))}
+                        {toggleRow(tr('pages.notificationSettings.enabledSmtp'), runtime.smtpEnabled, (checked) => setRuntime((prev) => ({ ...prev, smtpEnabled: checked })))}
                     </div>
                 </CardHeader>
                 <CardContent className="grid gap-4 md:grid-cols-2">
                     {field(
-                        'SMTP 服务器',
+                        tr('pages.notificationSettings.smtp'),
                         <Input
                             value={runtime.smtpHost}
                             onChange={(e) => setRuntime((prev) => ({ ...prev, smtpHost: e.target.value }))}
-                            placeholder="例如: smtp.qq.com"
+                            placeholder={tr('pages.notificationSettings.exampleSmtpQqCom')}
                             disabled={!runtime.smtpEnabled}
                         />,
                     )}
                     <div className="grid gap-2">
-                        <Label>端口</Label>
+                        <Label>{tr('pages.notificationSettings.port')}</Label>
                         <div className="flex items-center gap-4">
                             <Input
                                 type="number"
@@ -377,43 +377,43 @@ export default function NotificationSettings() {
                                 onChange={(e) => setRuntime((prev) => ({ ...prev, smtpPort: Number(e.target.value) || 0 }))}
                                 disabled={!runtime.smtpEnabled}
                             />
-                            {toggleRow('启用 TLS/SSL', runtime.smtpSecure, (checked) => setRuntime((prev) => ({ ...prev, smtpSecure: checked })), !runtime.smtpEnabled)}
+                            {toggleRow(tr('pages.notificationSettings.enabledTlsSsl'), runtime.smtpSecure, (checked) => setRuntime((prev) => ({ ...prev, smtpSecure: checked })), !runtime.smtpEnabled)}
                         </div>
                     </div>
                     {field(
-                        '账号用户',
+                        tr('pages.notificationSettings.accounts'),
                         <Input
                             value={runtime.smtpUser}
                             onChange={(e) => setRuntime((prev) => ({ ...prev, smtpUser: e.target.value }))}
-                            placeholder="SMTP 用户名"
+                            placeholder={tr('pages.notificationSettings.smtpUsername')}
                             disabled={!runtime.smtpEnabled}
                         />,
                     )}
                     {field(
-                        `账号密码${runtime.smtpPassMasked ? '（当前已设置）' : ''}`,
+                        `账号密码${runtime.smtpPassMasked ? tr('pages.notificationSettings.settings') : ''}`,
                         <Input
                             type="password"
                             value={smtpPass}
                             onChange={(e) => setSmtpPass(e.target.value)}
-                            placeholder="输入以更改密码..."
+                            placeholder={tr('pages.notificationSettings.enterChangePassword')}
                             disabled={!runtime.smtpEnabled}
                         />,
                     )}
                     {field(
-                        '发件人地址',
+                        tr('pages.notificationSettings.senderAddress'),
                         <Input
                             value={runtime.smtpFrom}
                             onChange={(e) => setRuntime((prev) => ({ ...prev, smtpFrom: e.target.value }))}
-                            placeholder="例如: admin@example.com"
+                            placeholder={tr('pages.notificationSettings.exampleAdminExampleCom')}
                             disabled={!runtime.smtpEnabled}
                         />,
                     )}
                     {field(
-                        '接收地址',
+                        tr('pages.notificationSettings.receiverUrl'),
                         <Input
                             value={runtime.smtpTo}
                             onChange={(e) => setRuntime((prev) => ({ ...prev, smtpTo: e.target.value }))}
-                            placeholder="例如: target@example.com"
+                            placeholder={tr('pages.notificationSettings.exampleTargetExampleCom')}
                             disabled={!runtime.smtpEnabled}
                         />,
                     )}

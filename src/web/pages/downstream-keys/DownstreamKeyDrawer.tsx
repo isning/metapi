@@ -27,6 +27,7 @@ import {
   type SummaryItem,
 } from './shared.js';
 
+import { tr } from '../../i18n.js';
 const DownstreamKeyTrendChart = lazy(() => import('../../components/charts/DownstreamKeyTrendChart.js'));
 type DownstreamKeyTrendBucket = import('../../components/charts/DownstreamKeyTrendChart.js').DownstreamKeyTrendBucket;
 
@@ -70,7 +71,7 @@ export default function DownstreamKeyDrawer({
       })
       .catch((err: any) => {
         if (cancelled) return;
-        toast.error(err?.message || '加载 Key 概览失败');
+        toast.error(err?.message || tr('pages.downstreamKeys.downstreamKeyDrawer.keyFailed'));
       })
       .finally(() => {
         if (cancelled) return;
@@ -100,7 +101,7 @@ export default function DownstreamKeyDrawer({
       })
       .catch((err: any) => {
         if (cancelled) return;
-        toast.error(err?.message || '加载趋势失败');
+        toast.error(err?.message || tr('pages.downstreamKeys.downstreamKeyDrawer.failed'));
       })
       .finally(() => {
         if (cancelled) return;
@@ -126,7 +127,7 @@ export default function DownstreamKeyDrawer({
               <Sheet.Description>{item?.keyMasked || '****'}</Sheet.Description>
               <div className="flex flex-wrap gap-2 pt-1">
                 <Badge variant={item?.groupName ? 'default' : 'secondary'}>
-                  {item?.groupName ? `主分组 · ${item.groupName}` : '未分组'}
+                  {item?.groupName ? `主分组 · ${item.groupName}` : tr('pages.downstreamKeys.ungrouped')}
                 </Badge>
                 <TagChips tags={item?.tags || []} accent maxVisible={4} />
               </div>
@@ -139,8 +140,8 @@ export default function DownstreamKeyDrawer({
             <Card>
               <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div className="space-y-1">
-                  <CardTitle>使用趋势</CardTitle>
-                  <CardDescription>按选定时间窗口查看请求、Tokens 与成本变化。</CardDescription>
+                  <CardTitle>{tr('pages.downstreamKeys.downstreamKeyDrawer.usageTrend')}</CardTitle>
+                  <CardDescription>{tr('pages.downstreamKeys.downstreamKeyDrawer.timeViewingrequestTokensCost')}</CardDescription>
                 </div>
                 <RangeToggle range={trendRange} onChange={setTrendRange} />
               </CardHeader>
@@ -153,20 +154,20 @@ export default function DownstreamKeyDrawer({
 
             <Card>
               <CardHeader>
-                <CardTitle>基础信息</CardTitle>
+                <CardTitle>{tr('pages.proxyLogs.basicInfo')}</CardTitle>
               </CardHeader>
               <CardContent>
                 {overviewLoading ? (
                   <Skeleton className="h-20 w-full" />
                 ) : (
                   <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
-                    <InfoCell label="最近使用" value={formatIso(item?.lastUsedAt)} />
-                    <InfoCell label="累计请求" value={(item?.usedRequests || 0).toLocaleString()} />
-                    <InfoCell label="累计成本" value={formatMoney(Number(item?.usedCost || 0))} />
-                    <InfoCell label="到期时间" value={formatIso(item?.expiresAt)} />
-                    <InfoCell label="主分组" value={item?.groupName || '未分组'} />
+                    <InfoCell label={tr('pages.downstreamKeys.recentUsage')} value={formatIso(item?.lastUsedAt)} />
+                    <InfoCell label={tr('pages.downstreamKeys.downstreamKeyDrawer.totalRequests')} value={(item?.usedRequests || 0).toLocaleString()} />
+                    <InfoCell label={tr('pages.downstreamKeys.cost')} value={formatMoney(Number(item?.usedCost || 0))} />
+                    <InfoCell label={tr('pages.downstreamKeys.downstreamKeyDrawer.time')} value={formatIso(item?.expiresAt)} />
+                    <InfoCell label={tr('pages.downstreamKeys.primaryGroup')} value={item?.groupName || tr('pages.downstreamKeys.ungrouped')} />
                     <div className="space-y-1 sm:col-span-2">
-                      <div className="text-xs text-muted-foreground">标签</div>
+                      <div className="text-xs text-muted-foreground">{tr('pages.downstreamKeys.tags2')}</div>
                       <TagChips tags={item?.tags || []} accent maxVisible={6} />
                     </div>
                   </div>
@@ -176,14 +177,14 @@ export default function DownstreamKeyDrawer({
 
             <Card>
               <CardHeader>
-                <CardTitle>当前范围汇总</CardTitle>
+                <CardTitle>{tr('pages.downstreamKeys.downstreamKeyDrawer.currentRangeSummary')}</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="grid grid-cols-2 gap-3 text-sm">
                   <InfoCell label="Tokens" value={formatCompactTokens(currentRangeUsage?.totalTokens || 0)} strong />
-                  <InfoCell label="请求数" value={(currentRangeUsage?.totalRequests || 0).toLocaleString()} strong />
-                  <InfoCell label="成功率" value={currentRangeUsage?.successRate == null ? '--' : `${currentRangeUsage.successRate}%`} strong />
-                  <InfoCell label="成本" value={formatMoney(Number(currentRangeUsage?.totalCost || 0))} strong />
+                  <InfoCell label={tr('components.charts.downstreamKeyTrendChart.requests')} value={(currentRangeUsage?.totalRequests || 0).toLocaleString()} strong />
+                  <InfoCell label={tr('components.modelAnalysisPanel.successRate')} value={currentRangeUsage?.successRate == null ? '--' : `${currentRangeUsage.successRate}%`} strong />
+                  <InfoCell label={tr('components.charts.downstreamKeyTrendChart.cost')} value={formatMoney(Number(currentRangeUsage?.totalCost || 0))} strong />
                 </div>
               </CardContent>
             </Card>
@@ -191,21 +192,21 @@ export default function DownstreamKeyDrawer({
             {overview?.usage ? (
               <Card>
                 <CardHeader>
-                  <CardTitle>固定窗口对比</CardTitle>
+                  <CardTitle>{tr('pages.downstreamKeys.downstreamKeyDrawer.fixedWindowComparison')}</CardTitle>
                 </CardHeader>
                 <CardContent>
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                     {[
                       { label: '24h', data: overview.usage.last24h },
                       { label: '7d', data: overview.usage.last7d },
-                      { label: '全部', data: overview.usage.all },
+                      { label: tr('components.notificationPanel.all'), data: overview.usage.all },
                     ].map((section) => (
                       <Card key={section.label}>
                         <CardContent className="space-y-2 pt-3 text-sm">
                           <div className="font-semibold">{section.label}</div>
                           <InfoCell label="Tokens" value={formatCompactTokens(section.data?.totalTokens || 0)} strong />
-                          <InfoCell label="请求数" value={(section.data?.totalRequests || 0).toLocaleString()} strong />
-                          <InfoCell label="成功率" value={section.data?.successRate == null ? '--' : `${section.data.successRate}%`} strong />
+                          <InfoCell label={tr('components.charts.downstreamKeyTrendChart.requests')} value={(section.data?.totalRequests || 0).toLocaleString()} strong />
+                          <InfoCell label={tr('components.modelAnalysisPanel.successRate')} value={section.data?.successRate == null ? '--' : `${section.data.successRate}%`} strong />
                         </CardContent>
                       </Card>
                     ))}

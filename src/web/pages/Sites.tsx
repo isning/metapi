@@ -3,8 +3,12 @@
  * @Project_description: Metapi 站点管理页
  * @Description: 代码是我抄的，不会也是真的
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ComponentPropsWithoutRef, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import type { DragEndEvent, DragStartEvent } from '@dnd-kit/core';
+import { DndContext, DragOverlay, PointerSensor, closestCenter, useSensor, useSensors } from '@dnd-kit/core';
+import { SortableContext, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { api } from '../api.js';
 import { getAuthToken } from '../authSession.js';
 import { getBrand } from '../components/BrandIcon.js';
@@ -18,12 +22,19 @@ import ResponsiveFormGrid from '../components/ResponsiveFormGrid.js';
 import { useIsMobile } from '../components/useIsMobile.js';
 import DeleteConfirmModal from '../components/DeleteConfirmModal.js';
 import SiteCreatedModal from '../components/SiteCreatedModal.js';
+import PageHeader from '../components/workspace/PageHeader.js';
+import PageShell from '../components/workspace/PageShell.js';
 import { UpstreamCompatibilityPolicyEditor } from '../components/UpstreamCompatibilityPolicyEditor.js';
 import { ConfigSection, ConfigSectionItem } from '../components/ConfigSection.js';
 import { formatDateTimeLocal } from './helpers/checkinLogTime.js';
 import { clearFocusParams, readFocusSiteId } from './helpers/navigationFocus.js';
 import { tr } from '../i18n.js';
-import { buildCustomReorderUpdates, sortItemsForDisplay, type SortMode } from './helpers/listSorting.js';
+import {
+  buildCustomReorderToTargetUpdates,
+  buildCustomReorderUpdates,
+  sortItemsForDisplay,
+  type SortMode,
+} from './helpers/listSorting.js';
 import { shouldIgnoreRowSelectionClick } from './helpers/rowSelection.js';
 import { resolveInitialConnectionSegment } from './helpers/defaultConnectionSegment.js';
 import {
@@ -45,16 +56,28 @@ import {
 } from '../../shared/siteInitializationPresets.js';
 import { analyzePrimarySiteUrl } from '../../shared/sitePrimaryUrl.js';
 import { Button } from '../components/ui/button/index.js';
-import { LoaderCircle } from 'lucide-react';
 import ToneBadge from '../components/ToneBadge.js';
 import InfoNote from '../components/InfoNote.js';
 import EmptyStateBlock from '../components/EmptyStateBlock.js';
 import { Alert, AlertDescription, AlertTitle } from '../components/ui/alert/index.js';
 import { Card } from '../components/ui/card/index.js';
+import { DataTable, DataTableToolbar } from '../components/ui/data-table/index.js';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table/index.js';
 import { Checkbox } from '../components/ui/checkbox/index.js';
 import { Input } from '../components/ui/input/index.js';
 import { RadioGroup, RadioGroupItem } from '../components/ui/radio-group/index.js';
+import * as DropdownMenu from '../components/ui/dropdown-menu/index.js';
+import {
+  CheckCircle2,
+  CircleSlash,
+  Ellipsis,
+  GripVertical,
+  LoaderCircle,
+  Network,
+  Pin,
+  PinOff,
+  Trash2,
+} from 'lucide-react';
 import {
   emptyUpstreamCompatibilityPolicyForm,
   policyFormFromStoredValue,
@@ -114,19 +137,121 @@ function getConfiguredSiteApiEndpoints(site?: Pick<SiteRow, 'apiEndpoints'> | nu
 
 function buildSiteApiEndpointSummary(site?: Pick<SiteRow, 'apiEndpoints'> | null): string {
   const endpoints = getConfiguredSiteApiEndpoints(site);
-  if (endpoints.length <= 0) return '跟随主站点 URL';
+  if (endpoints.length <= 0) return tr('pages.sites.sitesUrl');
   const enabledCount = endpoints.filter((item) => item.enabled !== false).length;
   return `${enabledCount}/${endpoints.length} 条启用`;
+}
+
+function SiteApiEndpointSummaryBadge({ site }: { site: Pick<SiteRow, 'apiEndpoints'> }) {
+  const summary = buildSiteApiEndpointSummary(site);
+  return (
+    <ToneBadge
+      tone={getConfiguredSiteApiEndpoints(site).length > 0 ? 'warning' : 'muted'}
+      className="max-w-full gap-1"
+      title={`${tr('pages.sites.api')} ${summary}`}
+    >
+      <span className="shrink-0">{tr('pages.sites.api')}</span>
+      <span className="min-w-0 truncate">{summary}</span>
+    </ToneBadge>
+  );
+}
+
+type SortableSiteTableRowProps = Omit<ComponentPropsWithoutRef<typeof TableRow>, 'children' | 'ref'> & {
+  site: SiteRow;
+  selected: boolean;
+  rowRef?: (node: HTMLTableRowElement | null) => void;
+  children: (dragHandle: {
+    setActivatorNodeRef: (node: HTMLElement | null) => void;
+    attributes: Record<string, any>;
+    listeners: Record<string, any> | undefined;
+    isDragging: boolean;
+  }) => ReactNode;
+};
+
+function SortableSiteTableRow({
+  site,
+  selected,
+  rowRef,
+  className,
+  children,
+  style,
+  ...props
+}: SortableSiteTableRowProps) {
+  const {
+    attributes,
+    listeners,
+    setActivatorNodeRef,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({
+    id: site.id,
+  });
+
+  return (
+    <TableRow
+      ref={(node) => {
+        setNodeRef(node);
+        rowRef?.(node);
+      }}
+      data-state={selected ? 'selected' : undefined}
+      data-dragging={isDragging ? 'true' : undefined}
+      className={`${className || ''} ${isDragging ? 'relative z-10 bg-muted shadow-sm' : ''}`.trim()}
+      style={{
+        ...style,
+        visibility: isDragging ? 'hidden' : undefined,
+        transform: CSS.Translate.toString(transform),
+        transition,
+      }}
+      {...props}
+    >
+      {children({
+        setActivatorNodeRef,
+        attributes: attributes as Record<string, any>,
+        listeners: listeners as Record<string, any> | undefined,
+        isDragging,
+      })}
+    </TableRow>
+  );
+}
+
+function SiteDragOverlayCard({ site }: { site: SiteRow }) {
+  return (
+    <div className="pointer-events-none flex min-w-[360px] max-w-[560px] items-center gap-3 rounded-md border bg-popover px-3 py-2 text-popover-foreground shadow-lg">
+      <div className="flex size-8 shrink-0 items-center justify-center rounded-md border bg-muted text-muted-foreground">
+        <GripVertical className="size-4" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-sm font-semibold">{site.name}</div>
+        <div className="mt-1 flex flex-wrap items-center gap-1.5">
+          <ToneBadge tone={platformColors[site.platform || ''] || 'muted'}>
+            {site.platform || '-'}
+          </ToneBadge>
+          <span className="text-xs tabular-nums text-muted-foreground">
+            {tr('pages.sites.weight')} {(site.globalWeight || 1).toFixed(2)}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function formatUsd(value?: number | null): string {
   return `$${(value || 0).toFixed(2)}`;
 }
 
+function formatSiteCreatedAtParts(value?: string | null): { full: string; date: string; time: string | null } {
+  const full = formatDateTimeLocal(value);
+  const match = /^(.+?)\s+(\d{2}:\d{2}(?::\d{2})?)$/.exec(full);
+  if (!match) return { full, date: full, time: null };
+  return { full, date: match[1]!, time: match[2]! };
+}
+
 function resolveSiteCreatedSessionLabel(platform?: string | null): string {
   const normalized = String(platform || '').trim().toLowerCase();
-  if (normalized === 'codex') return '添加 OAuth 连接';
-  return '添加账号（用户名密码登录）';
+  if (normalized === 'codex') return tr('pages.sites.addOauth');
+  return tr('components.siteCreatedModal.addAccountUsernamepasswordsign');
 }
 
 /**
@@ -158,7 +283,7 @@ function formatRemainingDuration(value?: string | null): string | null {
   const targetMs = Date.parse(value);
   if (!Number.isFinite(targetMs)) return null;
   const deltaMs = targetMs - Date.now();
-  if (deltaMs <= 0) return '已到期';
+  if (deltaMs <= 0) return tr('pages.sites.expired');
 
   const minuteMs = 60 * 1000;
   const hourMs = 60 * minuteMs;
@@ -257,19 +382,19 @@ const platformColors: Record<string, string> = {
 };
 
 const SITE_PLATFORM_OPTIONS = [
-  { value: '', label: '平台类型（可自动检测）' },
-  { value: 'new-api', label: 'new-api', description: '聚合面板，适合多渠道统一管理' },
-  { value: 'one-api', label: 'one-api', description: '经典聚合面板，常见于通用 OpenAI 中转' },
-  { value: 'anyrouter', label: 'anyrouter', description: 'any大善人今天还能用吗' },
-  { value: 'veloera', label: 'veloera', description: 'Veloera 兼容站点，常见于聚合代理场景' },
-  { value: 'one-hub', label: 'one-hub', description: '聚合面板，偏向多账号统一管理' },
-  { value: 'done-hub', label: 'done-hub', description: '聚合面板，适合统一转发与管理' },
-  { value: 'sub2api', label: 'sub2api', description: '订阅式中转面板，可同步套餐与余额信息' },
-  { value: 'openai', label: 'openai', description: '通用 OpenAI 兼容接口，手填 Base URL 即可' },
-  { value: 'codex', label: 'codex', description: 'Codex OAuth / Session 优先入口' },
-  { value: 'claude', label: 'claude', description: '通用 Claude / Anthropic 兼容接口' },
-  { value: 'gemini', label: 'gemini', description: '通用 Gemini / Google AI 兼容接口' },
-  { value: 'cliproxyapi', label: 'cliproxyapi', description: 'CPA接入口' },
+  { value: '', label: tr('pages.sites.platformTypeCanAutomaticallyDetected') },
+  { value: 'new-api', label: 'new-api', description: tr('pages.sites.aggregationPanelUnifiedMultiChannelManagement') },
+  { value: 'one-api', label: 'one-api', description: tr('pages.sites.generalOpenaiZh') },
+  { value: 'anyrouter', label: 'anyrouter', description: tr('pages.sites.anyDays') },
+  { value: 'veloera', label: 'veloera', description: tr('pages.sites.veloeraSitesActing') },
+  { value: 'one-hub', label: 'one-hub', description: tr('pages.sites.accounts') },
+  { value: 'done-hub', label: 'done-hub', description: tr('pages.sites.aggregationPanelUnifiedForwardingManagement') },
+  { value: 'sub2api', label: 'sub2api', description: tr('pages.sites.zhSyncBalanceinfo') },
+  { value: 'openai', label: 'openai', description: tr('pages.sites.generalOpenaiBaseUrl') },
+  { value: 'codex', label: 'codex', description: tr('pages.sites.codexOauthSession') },
+  { value: 'claude', label: 'claude', description: tr('pages.sites.generalClaudeAnthropic') },
+  { value: 'gemini', label: 'gemini', description: tr('pages.sites.generalGeminiGoogleAi') },
+  { value: 'cliproxyapi', label: 'cliproxyapi', description: tr('pages.sites.cpa') },
 ];
 
 export default function Sites() {
@@ -307,6 +432,7 @@ export default function Sites() {
   const [deleting, setDeleting] = useState<number | null>(null);
   const [togglingSiteId, setTogglingSiteId] = useState<number | null>(null);
   const [orderingSiteId, setOrderingSiteId] = useState<number | null>(null);
+  const [draggingSiteId, setDraggingSiteId] = useState<number | null>(null);
   const [pinningSiteId, setPinningSiteId] = useState<number | null>(null);
   const [selectedSiteIds, setSelectedSiteIds] = useState<number[]>([]);
   const [expandedSiteIds, setExpandedSiteIds] = useState<number[]>([]);
@@ -389,7 +515,7 @@ export default function Sites() {
     const groups = new Map<string, string[]>();
     for (const model of allModels) {
       const brand = getBrand(model);
-      const brandName = brand?.name || '其他';
+      const brandName = brand?.name || tr('pages.models.other');
       if (!groups.has(brandName)) groups.set(brandName, []);
       groups.get(brandName)!.push(model);
     }
@@ -419,7 +545,7 @@ export default function Sites() {
       setSites(rows || []);
       setSelectedSiteIds((current) => current.filter((id) => (rows || []).some((site: SiteRow) => site.id === id)));
     } catch {
-      toast.error('加载站点列表失败');
+      toast.error(tr('pages.sites.failedLoadSiteList'));
     } finally {
       setLoaded(true);
     }
@@ -433,7 +559,28 @@ export default function Sites() {
     () => sortItemsForDisplay(sites, sortMode, (site) => site.totalBalance || 0),
     [sites, sortMode],
   );
+  const draggingSite = draggingSiteId == null
+    ? null
+    : sortedSites.find((site) => site.id === draggingSiteId) || null;
+  const siteReorderSensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 6,
+      },
+    }),
+  );
   const allVisibleSitesSelected = sortedSites.length > 0 && sortedSites.every((site) => selectedSiteIds.includes(site.id));
+  const someVisibleSitesSelected =
+    !allVisibleSitesSelected &&
+    sortedSites.some((site) => selectedSiteIds.includes(site.id));
+  const selectedSiteCountText = tr('pages.sites.selectedCount').replace(
+    '{count}',
+    String(selectedSiteIds.length),
+  );
+  const visibleSiteCountText = tr('pages.sites.visibleCount').replace(
+    '{count}',
+    String(sortedSites.length),
+  );
 
   const platformOptions = useMemo(() => {
     const current = form.platform.trim();
@@ -447,8 +594,8 @@ export default function Sites() {
       value: `preset:${preset.id}`,
       label: preset.label,
       description: [
-        preset.defaultUrl ? '自动填充官方地址' : '',
-        preset.recommendedSkipModelFetch ? 'API Key 优先初始化' : '',
+        preset.defaultUrl ? tr('pages.sites.automaticOfficial') : '',
+        preset.recommendedSkipModelFetch ? tr('pages.sites.apiKey') : '',
       ].filter(Boolean).join(' · '),
     }));
     return [
@@ -586,12 +733,12 @@ export default function Sites() {
       await api.updateSiteDisabledModels(editor.editingSiteId, disabledModels);
       try {
         await api.rebuildRoutes(false, false);
-        toast.success('禁用模型列表已保存，路由已重建');
+        toast.success(tr('pages.sites.disabledmodelSaveRoutes'));
       } catch {
-        toast.error('禁用模型列表已保存，但路由重建失败，请手动刷新路由');
+        toast.error(tr('pages.sites.disabledmodelSaveRoutesFailedManualrefreshroutes'));
       }
     } catch (e: any) {
-      toast.error(e.message || '保存禁用模型失败');
+      toast.error(e.message || tr('pages.sites.savedisabledmodelfailed'));
     } finally {
       setDisabledModelsSaving(false);
     }
@@ -611,9 +758,9 @@ export default function Sites() {
         ? { ...s, postRefreshProbeEnabled: probeEnabled, postRefreshProbeModel: probeModel.trim(), postRefreshProbeScope: probeScope, postRefreshProbeLatencyThresholdMs: Math.max(0, parseInt(probeLatencyThreshold, 10) || 0) }
         : s,
       ));
-      toast.success('刷新后探测设置已保存');
+      toast.success(tr('pages.sites.refreshSettingsSave'));
     } catch (e: any) {
-      toast.error(e.message || '保存失败');
+      toast.error(e.message || tr('pages.accounts.saveFailed'));
     } finally {
       setProbeSaving(false);
     }
@@ -661,13 +808,13 @@ export default function Sites() {
         try {
           const d = JSON.parse(rawData);
           if (type === 'start') {
-            addLog(`开始探测，范围：${d.scope === 'all' ? '全部模型' : '指定模型'}，共 ${d.modelsCount} 个`);
+            addLog(`开始探测，范围：${d.scope === 'all' ? tr('pages.sites.allmodel') : tr('pages.sites.model2')}，共 ${d.modelsCount} 个`);
           } else if (type === 'model') {
-            const s = d.status === 'supported' ? '✓ 可用'
+            const s = d.status === 'supported' ? tr('pages.sites.available2')
               : d.status === 'unsupported'
-                ? (d.latencyExceeded ? `✗ 延迟超限 (${d.latencyMs}ms)` : '✗ 不可用')
-              : d.status === 'skipped' ? '— 已跳过'
-              : '✗ 不可用';
+                ? (d.latencyExceeded ? `✗ 延迟超限 (${d.latencyMs}ms)` : tr('pages.sites.notAvailable'))
+              : d.status === 'skipped' ? tr('pages.sites.jumpOver')
+              : tr('pages.sites.notAvailable');
             const lat = d.latencyMs != null && d.status !== 'skipped' ? ` (${d.latencyMs}ms)` : '';
             const c = d.status === 'supported' ? 'var(--color-success, #22c55e)'
               : d.status === 'skipped' ? 'var(--color-text-muted)'
@@ -675,13 +822,13 @@ export default function Sites() {
             const reasonText = (() => {
               if (!d.reason || d.status === 'supported' || d.status === 'skipped') return '';
               const r = d.reason;
-              if (/timeout/i.test(r)) return '超时';
-              if (/missing credential|no.*token/i.test(r)) return '无 Token';
-              if (/no compatible.*endpoint|no.*endpoint candidate/i.test(r)) return '无可用端点';
-              if (/no such model|unknown model/i.test(r)) return '模型不存在';
-              if (/not found/i.test(r)) return '未找到';
-              if (/access denied|forbidden|permission/i.test(r)) return '无权限';
-              if (/rate.?limit|too many request/i.test(r)) return '触发频率限制';
+              if (/timeout/i.test(r)) return tr('pages.dashboard.timeOut');
+              if (/missing credential|no.*token/i.test(r)) return tr('pages.sites.noneToken');
+              if (/no compatible.*endpoint|no.*endpoint candidate/i.test(r)) return tr('pages.sites.noneavailable');
+              if (/no such model|unknown model/i.test(r)) return tr('pages.sites.model');
+              if (/not found/i.test(r)) return tr('pages.accounts.notFound');
+              if (/access denied|forbidden|permission/i.test(r)) return tr('pages.sites.noPermission');
+              if (/rate.?limit|too many request/i.test(r)) return tr('pages.sites.hitRateLimit');
               if (/响应延迟/.test(r)) return r;
               return r.length > 60 ? r.slice(0, 57) + '…' : r;
             })();
@@ -708,8 +855,8 @@ export default function Sites() {
               }),
             ]).catch(() => {}).finally(() => setProbeCompleted(true));
           } else if (type === 'error') {
-            addLog(d.message || '探测失败', 'var(--color-error, #ef4444)');
-            toast.error(d.message || '探测失败');
+            addLog(d.message || tr('pages.sites.failed3'), 'var(--color-error, #ef4444)');
+            toast.error(d.message || tr('pages.sites.failed3'));
             // Refresh model state even on error
             Promise.all([
               api.getSiteAvailableModels(siteId).then((res: any) => {
@@ -741,11 +888,11 @@ export default function Sites() {
       }
     } catch (e: any) {
       if (e?.name === 'AbortError') {
-        setProbeLog((prev) => [...prev, { time: new Date().toLocaleTimeString('zh-CN', { hour12: false }), text: '已手动停止', color: 'var(--color-text-muted)' }]);
+        setProbeLog((prev) => [...prev, { time: new Date().toLocaleTimeString('zh-CN', { hour12: false }), text: tr('pages.sites.manualstop'), color: 'var(--color-text-muted)' }]);
         return;
       }
-      addLog(e?.message || '探测失败', 'var(--color-error, #ef4444)');
-      toast.error(e?.message || '探测失败');
+      addLog(e?.message || tr('pages.sites.failed3'), 'var(--color-error, #ef4444)');
+      toast.error(e?.message || tr('pages.sites.failed3'));
     } finally {
       setProbing(false);
       probeAbortRef.current = null;
@@ -756,17 +903,17 @@ export default function Sites() {
     if (!editor) return;
     const parsedGlobalWeight = Number(form.globalWeight);
     if (!Number.isFinite(parsedGlobalWeight) || parsedGlobalWeight <= 0) {
-      toast.error('全局权重必须是大于 0 的数字');
+      toast.error(tr('pages.sites.weight0'));
       return;
     }
     const serializedCustomHeaders = serializeSiteCustomHeaders(form.customHeaders);
     if (!serializedCustomHeaders.valid) {
-      toast.error(serializedCustomHeaders.error || '自定义请求头格式不正确');
+      toast.error(serializedCustomHeaders.error || tr('pages.sites.customRequest'));
       return;
     }
     const serializedApiEndpoints = serializeSiteApiEndpoints(form.apiEndpoints);
     if (!serializedApiEndpoints.valid) {
-      toast.error(serializedApiEndpoints.error || 'API 请求地址格式不正确');
+      toast.error(serializedApiEndpoints.error || tr('pages.sites.apiRequest'));
       return;
     }
     const serializedCompatibilityPolicy = serializeCompatibilityPolicyForm(compatibilityPolicyForm);
@@ -793,7 +940,7 @@ export default function Sites() {
       postRefreshProbeLatencyThresholdMs: Math.max(0, parseInt(probeLatencyThreshold, 10) || 0),
     };
     if (!payload.name || !payload.url) {
-      toast.error('请填写站点名称和 URL');
+      toast.error(tr('pages.sites.pleaseFillSiteNameUrl'));
       return;
     }
 
@@ -840,7 +987,7 @@ export default function Sites() {
       closeEditor();
       await load();
     } catch (e: any) {
-      toast.error(e.message || '保存失败');
+      toast.error(e.message || tr('pages.accounts.saveFailed'));
     } finally {
       setSaving(false);
     }
@@ -968,7 +1115,7 @@ export default function Sites() {
     const requestedPlatform = form.platform.trim();
     const requestedInitializationPresetId = selectedInitializationPresetId;
     if (!requestedUrl) {
-      toast.error('请先输入 URL');
+      toast.error(tr('pages.sites.pleaseEnterUrlFirst'));
       return;
     }
     const requestedPrimarySiteUrl = analyzePrimarySiteUrl(requestedUrl);
@@ -1012,10 +1159,10 @@ export default function Sites() {
             : `检测到平台: ${result.platform}`,
         );
       } else {
-        toast.error(result?.error || '无法识别平台类型');
+        toast.error(result?.error || tr('pages.sites.unableIdentifyPlatformType'));
       }
     } catch (e: any) {
-      toast.error(e.message || '自动检测失败');
+      toast.error(e.message || tr('pages.sites.automaticDetectionFailed'));
     } finally {
       setDetecting(false);
     }
@@ -1033,7 +1180,7 @@ export default function Sites() {
       toast.success(nextStatus === 'disabled' ? `站点 "${site.name}" 已禁用` : `站点 "${site.name}" 已启用`);
       await load();
     } catch (e: any) {
-      toast.error(e.message || '切换站点状态失败');
+      toast.error(e.message || tr('pages.sites.failedSwitchSiteStatus'));
     } finally {
       setTogglingSiteId(null);
     }
@@ -1059,7 +1206,7 @@ export default function Sites() {
       toast.success(nextPinned ? `站点 "${site.name}" 已置顶` : `站点 "${site.name}" 已取消置顶`);
       await load();
     } catch (e: any) {
-      toast.error(e.message || '切换置顶失败');
+      toast.error(e.message || tr('pages.sites.pinTopfailed'));
     } finally {
       setPinningSiteId(null);
     }
@@ -1074,7 +1221,36 @@ export default function Sites() {
       await Promise.all(updates.map((update) => api.updateSite(update.id, { sortOrder: update.sortOrder })));
       await load();
     } catch (e: any) {
-      toast.error(e.message || '更新排序失败');
+      toast.error(e.message || tr('pages.sites.failed2'));
+    } finally {
+      setOrderingSiteId(null);
+    }
+  };
+
+  const handleSiteDragStart = (event: DragStartEvent) => {
+    const activeId = Number(event.active.id);
+    setDraggingSiteId(Number.isFinite(activeId) ? activeId : null);
+  };
+
+  const clearSiteDragState = () => {
+    setDraggingSiteId(null);
+  };
+
+  const handleSiteDragEnd = async (event: DragEndEvent) => {
+    clearSiteDragState();
+    const activeId = Number(event.active.id);
+    const overId = event.over ? Number(event.over.id) : NaN;
+    if (!Number.isFinite(activeId) || !Number.isFinite(overId) || activeId === overId) return;
+
+    const updates = buildCustomReorderToTargetUpdates(sites, activeId, overId);
+    if (updates.length === 0) return;
+
+    setOrderingSiteId(activeId);
+    try {
+      await Promise.all(updates.map((update) => api.updateSite(update.id, { sortOrder: update.sortOrder })));
+      await load();
+    } catch (e: any) {
+      toast.error(e.message || tr('pages.sites.failed2'));
     } finally {
       setOrderingSiteId(null);
     }
@@ -1127,7 +1303,7 @@ export default function Sites() {
       setSelectedSiteIds(failedItems.map((item: any) => Number(item.id)).filter((id: number) => Number.isFinite(id) && id > 0));
       await load();
     } catch (e: any) {
-      toast.error(e.message || '批量操作失败');
+      toast.error(e.message || tr('pages.accounts.operationFailed'));
     } finally {
       setBatchActionLoading(false);
     }
@@ -1145,7 +1321,7 @@ export default function Sites() {
         toast.success(`站点 "${target.siteName || target.siteId}" 已删除`);
         await load();
       } catch (e: any) {
-        toast.error(e.message || '删除失败');
+        toast.error(e.message || tr('pages.sites.deleteFailed'));
       } finally {
         setDeleting(null);
       }
@@ -1162,10 +1338,12 @@ export default function Sites() {
   };
 
   return (
-    <div className="animate-fade-in">
-      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <h2 className="text-xl font-semibold">{tr('站点管理')}</h2>
-        <div className="flex flex-wrap items-center gap-2">
+    <PageShell>
+      <PageHeader
+        title={tr('app.siteManagement')}
+        description={tr('pages.sites.siteManagementSubtitle')}
+        actions={(
+          <>
           {isMobile ? (
             <>
               <Button variant="outline"
@@ -1174,7 +1352,7 @@ export default function Sites() {
                
                
               >
-                排序与操作
+                {tr('pages.accounts.actions3')}
               </Button>
               <Button variant="outline"
                 type="button"
@@ -1183,7 +1361,7 @@ export default function Sites() {
                
                
               >
-                {allVisibleSitesSelected ? '取消全选' : '全选可见项'}
+                {allVisibleSitesSelected ? tr('pages.accounts.cancelselectAll') : tr('pages.accounts.selectVisibleItems')}
               </Button>
             </>
           ) : (
@@ -1193,38 +1371,39 @@ export default function Sites() {
                 value={sortMode}
                 onChange={(nextValue) => setSortMode(nextValue as SortMode)}
                 options={[
-                  { value: 'custom', label: '自定义排序' },
-                  { value: 'balance-desc', label: '余额高到低' },
-                  { value: 'balance-asc', label: '余额低到高' },
+                  { value: 'custom', label: tr('pages.accounts.customOrder') },
+                  { value: 'balance-desc', label: tr('pages.accounts.balancehighLow') },
+                  { value: 'balance-asc', label: tr('pages.accounts.balancelowHigh') },
                 ]}
-                placeholder="自定义排序"
+                placeholder={tr('pages.accounts.customOrder')}
               />
             </div>
           )}
           <Button type="button" data-testid="sites-add-site-button" onClick={openAdd}>
-            {isAdding ? '取消' : '+ 添加站点'}
+            {isAdding ? tr('app.cancel') : tr('pages.sites.addSite')}
           </Button>
-        </div>
-      </div>
+          </>
+        )}
+      />
 
       <ResponsiveFilterPanel
         isMobile={isMobile}
         mobileOpen={showMobileTools}
         onMobileClose={() => setShowMobileTools(false)}
-        mobileTitle="站点排序与操作"
+        mobileTitle={tr('pages.sites.sitesActions')}
         mobileContent={(
           <div className="flex flex-col gap-3">
             <div className="flex flex-col gap-1.5">
-              <div className="text-xs text-muted-foreground">排序方式</div>
+              <div className="text-xs text-muted-foreground">{tr('pages.accounts.sort')}</div>
               <ModernSelect
                 value={sortMode}
                 onChange={(nextValue) => setSortMode(nextValue as SortMode)}
                 options={[
-                  { value: 'custom', label: '自定义排序' },
-                  { value: 'balance-desc', label: '余额高到低' },
-                  { value: 'balance-asc', label: '余额低到高' },
+                  { value: 'custom', label: tr('pages.accounts.customOrder') },
+                  { value: 'balance-desc', label: tr('pages.accounts.balancehighLow') },
+                  { value: 'balance-asc', label: tr('pages.accounts.balancelowHigh') },
                 ]}
-                placeholder="自定义排序"
+                placeholder={tr('pages.accounts.customOrder')}
               />
             </div>
             <Button variant="outline"
@@ -1236,16 +1415,16 @@ export default function Sites() {
              
              
             >
-              {allVisibleSitesSelected ? '取消全选可见项' : '全选可见项'}
+              {allVisibleSitesSelected ? tr('pages.sites.cancelselectVisibleItems') : tr('pages.accounts.selectVisibleItems')}
             </Button>
           </div>
         )}
       />
 
-      {selectedSiteIds.length > 0 && (
+      {isMobile && selectedSiteIds.length > 0 && (
         <ResponsiveBatchActionBar
           isMobile={isMobile}
-          info={`已选 ${selectedSiteIds.length} 项`}
+          info={selectedSiteCountText}
         >
           <Button type="button" variant="outline"
             data-testid="sites-batch-enable-system-proxy"
@@ -1254,7 +1433,7 @@ export default function Sites() {
            
            
           >
-            批量开启系统代理
+            {tr('pages.sites.turnOnsystemacting')}
           </Button>
           <Button type="button" variant="outline"
             onClick={() => runBatchAction('disableSystemProxy')}
@@ -1262,34 +1441,34 @@ export default function Sites() {
            
            
           >
-            批量关闭系统代理
+            {tr('pages.sites.closesystemacting')}
           </Button>
           <Button type="button" variant="outline" onClick={() => runBatchAction('enable')} disabled={batchActionLoading}>
-            批量启用
+            {tr('pages.accounts.enabled')}
           </Button>
           <Button type="button" variant="outline" onClick={() => runBatchAction('disable')} disabled={batchActionLoading}>
-            批量禁用
+            {tr('pages.accounts.disabled')}
           </Button>
           <Button type="button" variant="destructive" size="sm" onClick={() => runBatchAction('delete')} disabled={batchActionLoading}>
-            批量删除
+            {tr('pages.accounts.delete2')}
           </Button>
         </ResponsiveBatchActionBar>
       )}
 
       <InfoNote className="mb-3">
-        站点权重说明：最终站点倍率 = 站点全局权重 × 设置页中下游 API Key 的站点倍率。它会与路由策略因子（基础权重、价值分、成本、余额、使用频次）共同作用。数值越大，该站点在同优先级下越容易被选中。建议范围 0.5-3，默认 1；长期不建议超过 5。
+        {tr('pages.sites.sitesweightSitesmultiplierSitesWeightSettingsZhApi')}
       </InfoNote>
 
       <DeleteConfirmModal
         open={Boolean(deleteConfirm)}
         onClose={() => setDeleteConfirm(null)}
         onConfirm={confirmDelete}
-        title="确认删除站点"
-        confirmText="确认删除"
+        title={tr('pages.sites.deletesites')}
+        confirmText={tr('components.deleteConfirmModal.delete')}
         loading={batchActionLoading || (deleteConfirm?.mode === 'single' && deleting === deleteConfirm?.siteId)}
         description={deleteConfirm?.mode === 'single'
-          ? <>确定要删除站点 <strong>{deleteConfirm.siteName || `#${deleteConfirm.siteId}`}</strong> 吗？</>
-          : <>确定要删除选中的 <strong>{deleteConfirm?.count || 0}</strong> 个站点吗？</>}
+          ? <>{tr('pages.sites.deletesites2')} <strong>{deleteConfirm.siteName || `#${deleteConfirm.siteId}`}</strong> {tr('pages.accounts.textqcmnqj')}</>
+          : <>{tr('pages.accounts.deleteZh')} <strong>{deleteConfirm?.count || 0}</strong> {tr('pages.sites.sites')}</>}
       />
 
       {createdSiteForChoice && (
@@ -1316,7 +1495,7 @@ export default function Sites() {
           onClose={closeEditor}
           title={(
             <div className="text-sm font-semibold">
-              {isEditing ? '编辑站点' : '添加站点'}
+              {isEditing ? tr('pages.sites.editSite') : tr('pages.sites.addSite2')}
             </div>
           )}
           maxWidth={920}
@@ -1330,28 +1509,28 @@ export default function Sites() {
           footer={(
             <>
               <Button type="button" variant="outline" onClick={closeEditor}>
-                取消
+                {tr('app.cancel')}
               </Button>
               <Button type="button"
                 onClick={handleSave}
                 disabled={saving || !form.name.trim() || !form.url.trim()}
                
               >
-                {saving ? <><LoaderCircle className="size-4 animate-spin" /> 保存中...</> : (isEditing ? '保存修改' : '保存站点')}
+                {saving ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.accounts.saving')}</> : (isEditing ? tr('pages.accounts.saveChanges') : tr('pages.sites.saveSite'))}
               </Button>
             </>
           )}
         >
           <ResponsiveFormGrid>
             <Input
-              placeholder="站点名称"
+              placeholder={tr('pages.sites.siteName')}
               value={form.name}
               onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
             />
             <div className={`flex gap-2 ${isMobile ? 'flex-col' : 'flex-row'}`}>
               <Input
                 data-testid="site-primary-url-input"
-                placeholder="准确主站点 URL（面板/登录/签到地址，如 https://nih.cc）"
+                placeholder={tr('pages.sites.sitesUrlSignSignHttpsNihCc')}
                 value={form.url}
                 onChange={(e) => setForm((prev) => ({ ...prev, url: e.target.value }))}
                 onBlur={() => {
@@ -1367,7 +1546,7 @@ export default function Sites() {
                
                
               >
-                {detecting ? <><LoaderCircle className="size-4 animate-spin" /> 检测中</> : '自动检测'}
+                {detecting ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.sites.detecting')}</> : tr('pages.sites.autoDetect')}
               </Button>
             </div>
             <div
@@ -1397,69 +1576,70 @@ export default function Sites() {
                   setSelectedInitializationPresetId(null);
                 }}
                 options={platformOptions}
-                placeholder="平台类型（可自动检测）"
+                placeholder={tr('pages.sites.platformTypeCanAutomaticallyDetected')}
               />
             </div>
             <Input
-              placeholder="外部签到/福利站点 URL（可选）"
+              placeholder={tr('pages.sites.signSitesUrl')}
               value={form.externalCheckinUrl}
               onChange={(e) => setForm((prev) => ({ ...prev, externalCheckinUrl: e.target.value }))}
             />
           </ResponsiveFormGrid>
           {activeInitializationPreset && (
             <Alert className="animate-scale-in">
-              <AlertTitle>已应用官方预设 · {activeInitializationPreset.label}</AlertTitle>
+              <AlertTitle>{tr('pages.sites.officialPresetApplied')} {activeInitializationPreset.label}</AlertTitle>
               <AlertDescription className="leading-relaxed">
                 <div>{activeInitializationPreset.description}</div>
                 {form.url.trim() === activeInitializationPreset.defaultUrl && (
-                  <div>当前已自动填入官方地址；如需走自建网关，也可以直接改 URL。</div>
+                  <div>{tr('pages.sites.automaticOfficialUrl')}</div>
                 )}
-                <div>推荐模型：{activeInitializationPreset.recommendedModels.join(' / ')}</div>
+                <div>{tr('pages.accounts.recommendedmodel')}{activeInitializationPreset.recommendedModels.join(' / ')}</div>
               </AlertDescription>
             </Alert>
           )}
           <div className="text-xs leading-relaxed text-muted-foreground">
-            请填写准确的主站点 URL。这里填写主站点/面板/登录地址，用于登录、签到、面板接口和系统访问令牌管理；不要把 OpenAI/Gemini 请求路径直接填到主站点 URL；如果 API 请求地址和主站点不同，请在下面的 API 请求地址池里填写。
+            {tr('pages.sites.sitesUrlSitesSignSignSignSystemaccessaccount')}
           </div>
           {primarySiteUrlAnalysis.action === 'auto_strip_known_api_suffix' && primarySiteUrlAnalysis.persistedUrl ? (
             <Alert className="animate-scale-in">
-              <AlertTitle>检测到常见 API 路径后缀</AlertTitle>
+              <AlertTitle>{tr('pages.sites.api2')}</AlertTitle>
               <AlertDescription className="leading-relaxed">
-                保存或自动检测时会将主站点 URL 规范化为 {primarySiteUrlAnalysis.persistedUrl}。
+                {tr('pages.sites.saveAutoDetectSitesUrl')} {primarySiteUrlAnalysis.persistedUrl}。
               </AlertDescription>
             </Alert>
           ) : null}
           {primarySiteUrlAnalysis.action === 'preserve_api_path' && primarySiteUrlAnalysis.persistedUrl ? (
             <Alert className="animate-scale-in">
-              <AlertTitle>请确认主站点 URL</AlertTitle>
+              <AlertTitle>{tr('pages.sites.sitesUrl2')}</AlertTitle>
               <AlertDescription className="leading-relaxed">
-                当前 URL 含 /api 路径，将原样保留。请确认这就是准确的主站点 URL；如果这是 API 请求地址，请填到下方的 API 请求地址池。
+                {tr('pages.sites.urlApiSitesUrlApiRequestApi')}
               </AlertDescription>
             </Alert>
           ) : null}
           {primarySiteUrlAnalysis.action === 'preserve_unknown_path' && primarySiteUrlAnalysis.persistedUrl ? (
             <Alert className="animate-scale-in">
-              <AlertTitle>请确认主站点 URL</AlertTitle>
+              <AlertTitle>{tr('pages.sites.sitesUrl2')}</AlertTitle>
               <AlertDescription className="leading-relaxed">
-                当前 URL 含额外路径，将原样保留。请确认这就是准确的主站点 URL；如果这是 API 请求地址，请填到下方的 API 请求地址池。
+                {tr('pages.sites.urlSitesUrlApiRequestApiRequest')}
               </AlertDescription>
             </Alert>
           ) : null}
           <UpstreamCompatibilityPolicyEditor
             value={compatibilityPolicyForm}
             disabled={saving}
+            inheritFrom={tr('upstreamCompatibility.inheritSource.platformDefault')}
             onChange={setCompatibilityPolicyForm}
           />
           <ConfigSection
-            title="API 请求地址池"
-            description="这里只用于 `/v1/*`、模型发现和 API Key 验证。不填时默认跟随主站点 URL；多条地址会按列表顺序参与轮询，禁用的地址不会参与调度。"
+            title={tr('pages.sites.apiRequest2')}
+            description={tr('pages.sites.v1ModelApiKeyVerifyDefaultSites')}
             actions={(
               <Button
                 variant="outline"
                 type="button"
                 onClick={addApiEndpointRow}
               >
-                + 添加 API 地址
+                {tr('pages.sites.addApi')}
               </Button>
             )}
           >
@@ -1470,7 +1650,7 @@ export default function Sites() {
               >
                 <div className={isMobile ? 'flex flex-col items-stretch gap-2' : 'flex flex-row items-center gap-2'}>
                   <Input
-                    placeholder="API 请求地址（如 https://api.nih.cc）"
+                    placeholder={tr('pages.sites.apiRequestHttpsApiNihCc')}
                     value={endpoint.url}
                     onChange={(e) => updateApiEndpointRow(index, { url: e.target.value })}
                     className="flex-1 font-mono"
@@ -1479,38 +1659,38 @@ export default function Sites() {
                     <Checkbox
                       checked={endpoint.enabled !== false}
                       onCheckedChange={(checked) => updateApiEndpointRow(index, { enabled: checked === true })}        />
-                    启用
+                    {tr('pages.downstreamKeys.enabled')}
                   </label>
                 </div>
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-                    <span>顺序 #{index + 1}</span>
-                    {endpoint.cooldownUntil ? <span>冷却至 {formatDateTimeLocal(endpoint.cooldownUntil)}</span> : null}
-                    {endpoint.lastFailureReason ? <span>最近失败: {endpoint.lastFailureReason}</span> : null}
+                    <span>{tr('pages.sites.order')}{index + 1}</span>
+                    {endpoint.cooldownUntil ? <span>{tr('pages.sites.coolingDownUntil')} {formatDateTimeLocal(endpoint.cooldownUntil)}</span> : null}
+                    {endpoint.lastFailureReason ? <span>{tr('pages.sites.failed')} {endpoint.lastFailureReason}</span> : null}
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    <Button variant="ghost" size="sm"
+                    <Button variant="ghostMuted" size="sm"
                       type="button"
                       onClick={() => moveApiEndpointRow(index, 'up')}
                       disabled={index === 0}
                      
                     >
-                      上移
+                      {tr('pages.sites.moveUp')}
                     </Button>
-                    <Button variant="ghost" size="sm"
+                    <Button variant="ghostMuted" size="sm"
                       type="button"
                       onClick={() => moveApiEndpointRow(index, 'down')}
                       disabled={index>= form.apiEndpoints.length - 1}
                      
                     >
-                      下移
+                      {tr('pages.sites.moveDown')}
                     </Button>
-                    <Button variant="destructive" size="sm"
+                    <Button variant="ghostDestructive" size="sm"
                       type="button"
                       onClick={() => removeApiEndpointRow(index)}
                      
                     >
-                      删除
+                      {tr('pages.accounts.delete3')}
                     </Button>
                   </div>
                 </div>
@@ -1518,14 +1698,14 @@ export default function Sites() {
             ))}
           </ConfigSection>
           <ConfigSection
-            title="站点自定义请求头"
+            title={tr('pages.sites.sitescustomRequest')}
             actions={(
               <Button
                 variant="outline"
                 type="button"
                 onClick={addCustomHeaderRow}
               >
-                + 添加请求头
+                {tr('pages.sites.addrequest')}
               </Button>
             )}
           >
@@ -1535,13 +1715,13 @@ export default function Sites() {
                 className={isMobile ? 'flex flex-col items-stretch gap-2' : 'flex flex-row items-center gap-2'}
               >
                 <Input
-                  placeholder="Header 名称"
+                  placeholder={tr('pages.sites.headerName')}
                   value={header.key}
                   onChange={(e) => updateCustomHeaderRow(index, 'key', e.target.value)}
                   className="flex-1 font-mono"
                 />
                 <Input
-                  placeholder="Header 值"
+                  placeholder={tr('pages.sites.header')}
                   value={header.value}
                   onChange={(e) => updateCustomHeaderRow(index, 'value', e.target.value)}
                   className="flex-1 font-mono"
@@ -1552,22 +1732,22 @@ export default function Sites() {
                  
                  
                 >
-                  删除
+                  {tr('pages.accounts.delete3')}
                 </Button>
               </ConfigSectionItem>
             ))}
             <div className="text-xs leading-relaxed text-muted-foreground">
-              按 key/value 逐条填写。整行留空会自动忽略；同名请求头不允许重复；请求本身显式传入的请求头优先级更高。
+              {tr('pages.sites.keyValueItemsAutomaticRequestRequestRequest')}
             </div>
           </ConfigSection>
           {isEditing && (
             <ConfigSection
-              title="禁用模型管理"
-              description="在此站点禁用指定模型后，路由重建时将不为该站点的这些模型创建通道。勾选表示禁用该模型。"
+              title={tr('pages.sites.disabledmodelManagement')}
+              description={tr('pages.sites.sitesdisabledModelRoutesSitesModelChannelsDisabled')}
             >
                 {disabledModelsLoading ? (
                   <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                    <LoaderCircle className="size-4 animate-spin" /> 加载中...
+                    <LoaderCircle className="size-4 animate-spin" /> {tr('pages.oAuthManagement.loading')}
                   </div>
                 ) : (
                   <>
@@ -1575,14 +1755,14 @@ export default function Sites() {
                     {brandGroups.length > 0 ? (
                       <div className="mb-2.5">
                         <Input
-                          placeholder="搜索模型名称..."
+                          placeholder={tr('pages.sites.searchModelName')}
                           value={disabledModelSearch}
                           onChange={(e) => setDisabledModelSearch(e.target.value)}
                           className="mb-2"
                         />
                         {/* Brand group quick actions */}
                         <div className="mb-2 flex flex-wrap gap-1">
-                          <span className="text-xs leading-6 text-muted-foreground">按品牌全选：</span>
+                          <span className="text-xs leading-6 text-muted-foreground">{tr('pages.sites.brandsselectAll')}</span>
                           {brandGroups.map(([brandName, models]) => {
                             const allDisabled = models.every((m) => disabledModelSet.has(m));
                             return (
@@ -1609,7 +1789,7 @@ export default function Sites() {
                         {/* Checkbox list */}
                         <div className="max-h-70 overflow-y-auto rounded-lg border py-1">
                           {filteredBrandGroups.length === 0 ? (
-                            <div className="px-3 py-2 text-xs text-muted-foreground">无匹配模型</div>
+                            <div className="px-3 py-2 text-xs text-muted-foreground">{tr('pages.sites.nonematchmodel')}</div>
                           ) : filteredBrandGroups.map(([brandName, models]) => (
                             <div key={brandName}>
                               <div className="border-b bg-muted px-3 py-1 text-xs font-semibold text-muted-foreground">
@@ -1643,13 +1823,13 @@ export default function Sites() {
                       </div>
                     ) : (
                       <div className="mb-2.5 text-xs text-muted-foreground">
-                        暂无已发现模型，仍可手动添加需要屏蔽的模型名。
+                        {tr('pages.sites.noneModelManualaddModels')}
                       </div>
                     )}
 
                     <div className="mb-2.5 mt-2.5 flex gap-2">
                       <Input
-                        placeholder="输入模型名称，如 gpt-4o"
+                        placeholder={tr('pages.sites.inputmodelNameGpt4o')}
                         value={disabledModelInput}
                         onChange={(e) => setDisabledModelInput(e.target.value)}
                         onKeyDown={(e) => {
@@ -1665,7 +1845,7 @@ export default function Sites() {
                        
                        
                       >
-                        添加模型
+                        {tr('pages.sites.addmodel')}
                       </Button>
                     </div>
 
@@ -1676,10 +1856,10 @@ export default function Sites() {
                        
                        
                       >
-                        {disabledModelsSaving ? <><LoaderCircle className="size-4 animate-spin" /> 保存中...</> : '保存禁用列表'}
+                        {disabledModelsSaving ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.accounts.saving')}</> : tr('pages.sites.savedisabled')}
                       </Button>
                       <span className="text-xs text-muted-foreground">
-                        已禁用 {disabledModels.length} 个模型
+                        {tr('pages.accounts.disabled2')} {disabledModels.length} {tr('pages.models.models2')}
                       </span>
                     </div>
                   </>
@@ -1689,8 +1869,8 @@ export default function Sites() {
 
           {isEditing && (
             <ConfigSection
-              title="刷新后自动测试请求"
-              description="开启后，每次自动获取模型列表成功后，会对指定模型发送一次真实测试请求。若判定不可用，自动加入站点禁用列表并重建路由。"
+              title={tr('pages.sites.refreshAutomaticRequest')}
+              description={tr('pages.sites.turnAutomaticModelSuccessModelsendActualMeasurement')}
             >
               <label className="mb-2.5 flex cursor-pointer items-start gap-2.5">
                 <Checkbox
@@ -1698,10 +1878,10 @@ export default function Sites() {
                   onCheckedChange={(checked) => setProbeEnabled(checked === true)}
                   className="mt-0.5 shrink-0"
                 />
-                <span className="text-sm text-muted-foreground">开启刷新后自动探测</span>
+                <span className="text-sm text-muted-foreground">{tr('pages.sites.turnOnrefreshAutomatic')}</span>
               </label>
               <RadioGroup value={probeScope} onValueChange={(nextValue) => setProbeScope(nextValue as typeof probeScope)} className="mb-3 flex flex-wrap gap-2" disabled={!probeEnabled}>
-                {([['single', '指定模型'] , ['all', '全部模型']] as const).map(([val, label]) => (
+                {([['single', tr('pages.sites.model2')] , ['all', tr('pages.sites.allmodel')]] as const).map(([val, label]) => (
                   <label
                     key={val}
                     className="flex items-center gap-2 text-sm"
@@ -1717,7 +1897,7 @@ export default function Sites() {
               {probeScope === 'single' && (
                 <Input
                   type="text"
-                  placeholder="探测模型名（留空则自动取第一个发现的模型）"
+                  placeholder={tr('pages.sites.modelAutomaticModels')}
                   value={probeModel}
                   onChange={(e) => setProbeModel(e.target.value)}
                   disabled={!probeEnabled}
@@ -1725,7 +1905,7 @@ export default function Sites() {
                 />
               )}
               <div className="mb-2.5 flex items-center gap-2">
-                <span className="whitespace-nowrap text-xs text-muted-foreground">延迟阈值</span>
+                <span className="whitespace-nowrap text-xs text-muted-foreground">{tr('pages.sites.latency')}</span>
                 <Input
                   type="number"
                   min="0"
@@ -1735,7 +1915,7 @@ export default function Sites() {
                   onChange={(e) => setProbeLatencyThreshold(e.target.value)}
                   className="w-24"
                 />
-                <span className="text-xs text-muted-foreground">ms（响应超过该时间则自动禁用，0=不限）</span>
+                <span className="text-xs text-muted-foreground">{tr('pages.sites.msResponseTimeAutomaticdisabled0Unlimited')}</span>
               </div>
               <div className="flex flex-wrap items-center gap-2.5">
                 <Button type="button" variant="outline"
@@ -1744,7 +1924,7 @@ export default function Sites() {
                  
                  
                 >
-                  {probeSaving ? <><LoaderCircle className="size-4 animate-spin" /> 保存中...</> : '保存探测设置'}
+                  {probeSaving ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.accounts.saving')}</> : tr('pages.sites.saveSettings')}
                 </Button>
                 <Button type="button"
                   onClick={() => void handleProbeNow()}
@@ -1752,7 +1932,7 @@ export default function Sites() {
                  
                  
                 >
-                  {probing ? <><LoaderCircle className="size-4 animate-spin" /> 探测中...</> : '立即探测'}
+                  {probing ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.sites.zh')}</> : tr('pages.sites.detectNow')}
                 </Button>
                 {probing && (
                   <Button type="button" variant="outline"
@@ -1760,11 +1940,11 @@ export default function Sites() {
                    
                    
                   >
-                    停止
+                    {tr('pages.modelTester.stop')}
                   </Button>
                 )}
                 <span className="text-xs text-muted-foreground">
-                  {probeEnabled ? '实际探测超时复用「批量测活超时」设置' : '当前已关闭'}
+                  {probeEnabled ? tr('pages.sites.timeOutBatchHealthChecktimeOutSettings') : tr('pages.sites.close')}
                 </span>
               </div>
               {probeLog.length > 0 && (
@@ -1781,9 +1961,9 @@ export default function Sites() {
               {probeCompleted && brandGroups.length > 0 && (
                 <div className="mt-2.5">
                   <div className="mb-1.5 text-xs font-semibold text-muted-foreground">
-                    探测后模型状态
+                    {tr('pages.sites.modelstatus')}
                     <span className="ml-1.5 font-normal text-muted-foreground">
-                      — 可用 {availableModels.filter((m) => !disabledModelSet.has(m)).length} 个，已禁用 {disabledModels.length} 个
+                      {tr('pages.sites.available')} {availableModels.filter((m) => !disabledModelSet.has(m)).length} {tr('pages.sites.disabled2')} {disabledModels.length} {tr('pages.accounts.model')}
                     </span>
                   </div>
                   <div className="max-h-50 overflow-y-auto rounded-lg border py-1">
@@ -1816,35 +1996,35 @@ export default function Sites() {
           <ResponsiveFormGrid>
             <div className="flex flex-col gap-1.5">
               <Input
-                placeholder="站点代理（可选，如 http://127.0.0.1:7890 或 socks5://127.0.0.1:1080）"
+                placeholder={tr('pages.sites.sitesactingHttp1270017890')}
                 value={form.proxyUrl}
                 onChange={(e) => setForm((prev) => ({ ...prev, proxyUrl: e.target.value }))}
               />
               <div className="text-xs text-muted-foreground">
-                这里只是 HTTP/SOCKS 代理地址，不是上游 API 请求地址。填写后优先使用站点代理；留空则使用系统代理或直连(取决于设置开关状态)。
+                {tr('pages.sites.httpSocksActingApiRequestUsagesitesactingUsagesystemacting')}
               </div>
             </div>
             <label className="flex items-center gap-2.5 rounded-md border bg-muted px-3.5 py-2.5 text-sm text-foreground">
               <Checkbox
                 checked={form.useSystemProxy}
                 onCheckedChange={(checked) => setForm((prev) => ({ ...prev, useSystemProxy: checked === true }))}  />
-              使用系统代理
+              {tr('pages.notificationSettings.usagesystemacting')}
             </label>
             <div className="flex flex-col gap-1.5">
               <Input
-                placeholder="站点全局权重（默认 1）"
+                placeholder={tr('pages.sites.sitesWeightDefault1')}
                 value={form.globalWeight}
                 onChange={(e) => setForm((prev) => ({ ...prev, globalWeight: e.target.value }))}
               />
               <div className="text-xs text-muted-foreground">
-                越大越容易被路由选中。建议 0.5-3，默认 1。
+                {tr('pages.sites.routesZhSuggestion053Default')}
               </div>
             </div>
           </ResponsiveFormGrid>
         </CenteredModal>
       )}
 
-      <Card className="overflow-x-auto">
+      <>
         {sites.length > 0 ? (
           isMobile ? (
             <div className="grid gap-3">
@@ -1877,45 +2057,48 @@ export default function Sites() {
                     )}
                     footerActions={(
                       <>
-                        <Button variant="ghost" size="sm"
+                        <Button variant="ghostPrimary" size="sm"
                           type="button"
                           onClick={() => toggleSiteDetails(site.id)}
                          
                         >
-                          {isExpanded ? '收起' : '详情'}
+                          {isExpanded ? tr('pages.accounts.collapse') : tr('pages.accounts.details')}
                         </Button>
-                        <Button type="button" variant="ghost" size="sm"
+                        <Button type="button" variant="ghostPrimary" size="sm"
                           onClick={() => handleOpenSiteApiKey(site)}
                          
                         >
-                          添加 Key
+                          {tr('pages.sites.addKey')}
                         </Button>
-                        <Button type="button" variant="ghost" size="sm"
+                        <Button type="button" variant="ghostPrimary" size="sm"
                           onClick={() => openEdit(site)}
                          
                         >
-                          编辑
+                          {tr('pages.accounts.edit')}
                         </Button>
-                        <Button type="button" variant="secondary" size="sm"
+                        <Button
+                          type="button"
+                          variant={site.status === 'disabled' ? 'ghostPrimary' : 'ghostWarning'}
+                          size="sm"
                           onClick={() => handleToggleStatus(site)}
                           disabled={togglingSiteId === site.id}
                          
                         >
-                          {togglingSiteId === site.id ? <LoaderCircle className="size-4 animate-spin" /> : (site.status === 'disabled' ? '启用' : '禁用')}
+                          {togglingSiteId === site.id ? <LoaderCircle className="size-4 animate-spin" /> : (site.status === 'disabled' ? tr('pages.downstreamKeys.enabled') : tr('pages.downstreamKeys.disabled'))}
                         </Button>
                       </>
                     )}
                   >
                     <MobileField
-                      label="状态"
+                      label={tr('components.notificationPanel.status')}
                       value={(
                         <ToneBadge tone={site.status === 'disabled' ? 'muted' : 'success'}>
-                          {site.status === 'disabled' ? '禁用' : '启用'}
+                          {site.status === 'disabled' ? tr('pages.downstreamKeys.disabled') : tr('pages.downstreamKeys.enabled')}
                         </ToneBadge>
                       )}
                     />
                     <MobileField
-                      label="平台"
+                      label={tr('pages.sites.platform')}
                       value={(
                         <ToneBadge tone={platformColors[site.platform || ''] || 'muted'}>
                           {site.platform || '-'}
@@ -1923,7 +2106,7 @@ export default function Sites() {
                       )}
                     />
                     <MobileField
-                      label="余额"
+                      label={tr('components.notificationPanel.balance')}
                       value={(
                         <SiteBalanceDisplay
                           balance={site.totalBalance}
@@ -1932,11 +2115,11 @@ export default function Sites() {
                         />
                       )}
                     />
-                    <MobileField label="权重" value={(site.globalWeight || 1).toFixed(2)} />
+                    <MobileField label={tr('pages.sites.weight')} value={(site.globalWeight || 1).toFixed(2)} />
                     {isExpanded ? (
                       <div className="mt-3 grid gap-2">
                         <MobileField
-                          label="主站点 URL"
+                          label={tr('pages.sites.sitesUrl3')}
                           stacked
                           value={site.url ? (
                             <a
@@ -1950,7 +2133,7 @@ export default function Sites() {
                           ) : '-'}
                         />
                         <MobileField
-                          label="API 请求地址"
+                          label={tr('pages.sites.apiRequest3')}
                           stacked
                           value={(
                             <div className="flex flex-col gap-1">
@@ -1961,22 +2144,22 @@ export default function Sites() {
                                   className="break-all font-mono text-xs text-muted-foreground"
                                 >
                                   {endpoint.url}
-                                  {endpoint.enabled === false ? '（已禁用）' : ''}
+                                  {endpoint.enabled === false ? tr('pages.sites.disabled') : ''}
                                 </span>
                               ))}
                             </div>
                           )}
                         />
                         <MobileField
-                          label="系统代理"
+                          label={tr('pages.settings.systemacting3')}
                           value={(
                             <ToneBadge tone={site.useSystemProxy ? 'info' : 'muted'}>
-                              {site.useSystemProxy ? '已开启' : '未开启'}
+                              {site.useSystemProxy ? tr('pages.proxyLogs.turn3') : tr('pages.proxyLogs.turn2')}
                             </ToneBadge>
                           )}
                         />
                         <MobileField
-                          label="外部签到站URL"
+                          label={tr('pages.sites.signUrl')}
                           value={site.externalCheckinUrl ? (
                             <a
                               href={site.externalCheckinUrl}
@@ -1989,46 +2172,49 @@ export default function Sites() {
                           ) : '-'}
                         />
                         <MobileField
-                          label="自定义头"
-                          value={hasConfiguredCustomHeaders(site.customHeaders) ? '已配置' : '-'}
+                          label={tr('pages.sites.customHeaders')}
+                          value={hasConfiguredCustomHeaders(site.customHeaders) ? tr('pages.sites.configured') : '-'}
                         />
                         <MobileField
-                          label="创建时间"
+                          label={tr('pages.sites.time')}
                           value={formatDateTimeLocal(site.createdAt)}
                         />
                         <div className="flex flex-wrap items-center gap-2">
-                          <Button type="button" variant="secondary" size="sm"
+                          <Button
+                            type="button"
+                            variant={site.isPinned ? 'ghostWarning' : 'ghostPrimary'}
+                            size="sm"
                             onClick={() => handleTogglePin(site)}
                             disabled={pinningSiteId === site.id}
                            
                           >
-                            {pinningSiteId === site.id ? <LoaderCircle className="size-4 animate-spin" /> : (site.isPinned ? '取消置顶' : '置顶')}
+                            {pinningSiteId === site.id ? <LoaderCircle className="size-4 animate-spin" /> : (site.isPinned ? tr('pages.accounts.cancelpinTop') : tr('pages.accounts.pinTop'))}
                           </Button>
                           {sortMode === 'custom' && (
                             <>
-                              <Button type="button" variant="ghost" size="sm"
+                              <Button type="button" variant="ghostMuted" size="sm"
                                 onClick={() => handleMoveCustomOrder(site, 'up')}
                                 disabled={orderingSiteId === site.id}
                                
                               >
-                                ↑ 上移
+                                {tr('pages.accounts.moveUp')}
                               </Button>
-                              <Button type="button" variant="ghost" size="sm"
+                              <Button type="button" variant="ghostMuted" size="sm"
                                 onClick={() => handleMoveCustomOrder(site, 'down')}
                                 disabled={orderingSiteId === site.id}
                                
                               >
-                                ↓ 下移
+                                {tr('pages.accounts.moveDown')}
                               </Button>
                             </>
                           )}
-                          <Button type="button" variant="destructive" size="sm"
+                          <Button type="button" variant="ghostDestructive" size="sm"
                             onClick={() => handleDelete(site)}
                             disabled={deleting === site.id}
                            
                           >
                             {deleting === site.id ? <LoaderCircle className="size-4 animate-spin" /> : null}
-                            删除
+                            {tr('pages.accounts.delete3')}
                           </Button>
                         </div>
                       </div>
@@ -2038,43 +2224,158 @@ export default function Sites() {
               })}
             </div>
           ) : (
-            <Table className="w-full text-sm">
+            <DataTable minWidth={1120} density="compact">
+              <DataTableToolbar className="border-b bg-muted/30 px-4">
+                <div className="flex min-w-0 items-center gap-3">
+                  <Checkbox
+                    checked={allVisibleSitesSelected || (someVisibleSitesSelected && "indeterminate")}
+                    aria-label={tr('pages.accounts.selectVisibleItems')}
+                    onCheckedChange={(checked) => toggleSelectAllVisible(checked === true)}
+                  />
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold text-foreground">
+                      {selectedSiteIds.length > 0 ? selectedSiteCountText : visibleSiteCountText}
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      {tr('pages.sites.selectionActions')}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center justify-end gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    data-testid="sites-batch-enable-system-proxy"
+                    onClick={() => runBatchAction('enableSystemProxy')}
+                    disabled={batchActionLoading || selectedSiteIds.length === 0}
+                  >
+                    <Network className="size-4" />
+                    {tr('pages.sites.turnOnsystemacting')}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => runBatchAction('disableSystemProxy')}
+                    disabled={batchActionLoading || selectedSiteIds.length === 0}
+                  >
+                    <CircleSlash className="size-4" />
+                    {tr('pages.sites.closesystemacting')}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => runBatchAction('enable')}
+                    disabled={batchActionLoading || selectedSiteIds.length === 0}
+                  >
+                    <CheckCircle2 className="size-4" />
+                    {tr('pages.accounts.enabled')}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => runBatchAction('disable')}
+                    disabled={batchActionLoading || selectedSiteIds.length === 0}
+                  >
+                    <CircleSlash className="size-4" />
+                    {tr('pages.accounts.disabled')}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghostMuted"
+                    size="sm"
+                    onClick={() => setSelectedSiteIds([])}
+                    disabled={batchActionLoading || selectedSiteIds.length === 0}
+                  >
+                    {tr('pages.accounts.clearSelection')}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghostDestructive"
+                    size="sm"
+                    onClick={() => runBatchAction('delete')}
+                    disabled={batchActionLoading || selectedSiteIds.length === 0}
+                  >
+                    {batchActionLoading ? <LoaderCircle className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+                    {tr('pages.accounts.delete2')}
+                  </Button>
+                </div>
+              </DataTableToolbar>
+              <DndContext
+                sensors={siteReorderSensors}
+                collisionDetection={closestCenter}
+                onDragStart={handleSiteDragStart}
+                onDragCancel={clearSiteDragState}
+                onDragEnd={handleSiteDragEnd}
+              >
+                <SortableContext
+                  items={sortedSites.map((site) => site.id)}
+                  strategy={verticalListSortingStrategy}
+                >
+              <Table className="sites-table w-full text-sm">
               <TableHeader>
                 <TableRow>
-                  <TableHead className="w-11">
-                    <Checkbox
-                     
-                      checked={allVisibleSitesSelected}
-                      onCheckedChange={(checked) => toggleSelectAllVisible(checked === true)}        />
-                  </TableHead>
-                  <TableHead>名称</TableHead>
-                  <TableHead>外部签到站URL</TableHead>
-                  <TableHead>总余额</TableHead>
-                  <TableHead>状态</TableHead>
-                  <TableHead>系统代理</TableHead>
-                  <TableHead>权重</TableHead>
-                  <TableHead>平台</TableHead>
-                  <TableHead>创建时间</TableHead>
-                  <TableHead className="sites-actions-col text-right">操作</TableHead>
+                  <TableHead className="w-11" />
+                  <TableHead className="w-11" />
+                  <TableHead className="min-w-56">{tr('pages.models.name')}</TableHead>
+                  <TableHead className="min-w-64">{tr('pages.sites.signUrl')}</TableHead>
+                  <TableHead className="min-w-32 text-right">{tr('pages.sites.balance')}</TableHead>
+                  <TableHead className="sites-status-col text-center">{tr('components.notificationPanel.status')}</TableHead>
+                  <TableHead className="sites-system-proxy-col text-center">{tr('pages.settings.systemacting3')}</TableHead>
+                  <TableHead className="sites-weight-col text-right">{tr('pages.sites.weight')}</TableHead>
+                  <TableHead className="min-w-32">{tr('pages.sites.platform')}</TableHead>
+                  <TableHead className="sites-created-col">{tr('pages.sites.time')}</TableHead>
+                  <TableHead className="sites-actions-col text-right">{tr('pages.accounts.actions2')}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {sortedSites.map((site, i) => (
-                  <TableRow
-                    key={site.id}
-                    data-testid={`site-row-${site.id}`}
-                    ref={(node) => {
-                      if (node) rowRefs.current.set(site.id, node);
-                      else rowRefs.current.delete(site.id);
-                    }}
-                    onClick={(event) => handleSiteRowClick(site.id, event)}
-                    className={`animate-slide-up stagger-${Math.min(i + 1, 5)} row-selectable ${selectedSiteIds.includes(site.id) ? 'row-selected' : ''} ${highlightSiteId === site.id ? 'row-focus-highlight' : ''}`.trim()}
-                  >
+                {sortedSites.map((site, i) => {
+                  const selected = selectedSiteIds.includes(site.id);
+                  const createdAtParts = formatSiteCreatedAtParts(site.createdAt);
+                  return (
+                    <SortableSiteTableRow
+                      key={site.id}
+                      site={site}
+                      selected={selected}
+                      data-testid={`site-row-${site.id}`}
+                      rowRef={(node) => {
+                        if (node) rowRefs.current.set(site.id, node);
+                        else rowRefs.current.delete(site.id);
+                      }}
+                      onClick={(event) => handleSiteRowClick(site.id, event)}
+                      className={`animate-slide-up stagger-${Math.min(i + 1, 5)} row-selectable ${highlightSiteId === site.id ? 'row-focus-highlight' : ''}`.trim()}
+                    >
+                    {(dragHandle) => (
+                      <>
+                    <TableCell>
+                      {sortMode === 'custom' ? (
+                        <Button
+                          ref={dragHandle.setActivatorNodeRef}
+                          type="button"
+                          variant="ghostMuted"
+                          size="icon"
+                          aria-label={tr('pages.accounts.reorder')}
+                          className={dragHandle.isDragging ? 'cursor-grabbing' : 'cursor-grab'}
+                          disabled={orderingSiteId === site.id}
+                          onClick={(event) => event.stopPropagation()}
+                          {...dragHandle.attributes}
+                          {...dragHandle.listeners}
+                        >
+                          {orderingSiteId === site.id ? (
+                            <LoaderCircle className="size-4 animate-spin" />
+                          ) : (
+                            <GripVertical className="size-4" />
+                          )}
+                        </Button>
+                      ) : null}
+                    </TableCell>
                     <TableCell>
                       <Checkbox
                         data-testid={`site-select-${site.id}`}
-                       
-                        checked={selectedSiteIds.includes(site.id)}
+                        checked={selected}
                         onCheckedChange={(checked) => toggleSiteSelection(site.id, checked === true)}          />
                     </TableCell>
                     <TableCell className="font-semibold">
@@ -2089,12 +2390,10 @@ export default function Sites() {
                         </a>
                         {hasConfiguredCustomHeaders(site.customHeaders) ? (
                           <ToneBadge tone="-info">
-                            自定义头
+                            {tr('pages.sites.customHeaders')}
                           </ToneBadge>
                         ) : null}
-                        <ToneBadge tone={getConfiguredSiteApiEndpoints(site).length> 0 ? 'warning' : 'muted'}>
-                          API 地址: {buildSiteApiEndpointSummary(site)}
-                        </ToneBadge>
+                        <SiteApiEndpointSummaryBadge site={site} />
                       </div>
                     </TableCell>
                     <TableCell className="sites-url-cell max-w-75">
@@ -2109,23 +2408,24 @@ export default function Sites() {
                         </a>
                       ) : null}
                     </TableCell>
-                    <TableCell className="site-balance-cell">
+                    <TableCell className="site-balance-cell text-right">
                       <SiteBalanceDisplay
                         balance={site.totalBalance}
                         summary={site.subscriptionSummary}
+                        align="end"
                       />
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="sites-status-cell text-center">
                       <ToneBadge tone={site.status === 'disabled' ? 'muted' : 'success'}>
-                        {site.status === 'disabled' ? '禁用' : '启用'}
+                        {site.status === 'disabled' ? tr('pages.downstreamKeys.disabled') : tr('pages.downstreamKeys.enabled')}
                       </ToneBadge>
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="sites-system-proxy-cell text-center">
                       <ToneBadge tone={site.useSystemProxy ? 'info' : 'muted'}>
-                        {site.useSystemProxy ? '已开启' : '未开启'}
+                        {site.useSystemProxy ? tr('pages.proxyLogs.turn3') : tr('pages.proxyLogs.turn2')}
                       </ToneBadge>
                     </TableCell>
-                    <TableCell className="font-semibold tabular-nums">
+                    <TableCell className="sites-weight-cell text-right font-semibold tabular-nums">
                       {(site.globalWeight || 1).toFixed(2)}
                     </TableCell>
                     <TableCell>
@@ -2140,81 +2440,103 @@ export default function Sites() {
                         </ToneBadge>
                       </a>
                     </TableCell>
-                    <TableCell className="text-xs text-muted-foreground">
+                    <TableCell className="sites-created-cell text-xs text-muted-foreground">
                       <a
                         href={site.url}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-muted-foreground underline"
+                        className="sites-created-link text-muted-foreground underline"
+                        title={createdAtParts.full}
                       >
-                        {formatDateTimeLocal(site.createdAt)}
+                        <span>{createdAtParts.date}</span>
+                        {createdAtParts.time ? <span>{createdAtParts.time}</span> : null}
                       </a>
                     </TableCell>
                     <TableCell className="sites-actions-cell text-right">
-                      <div className="sites-row-actions">
-                        <Button type="button" variant="secondary" size="sm"
-                          onClick={() => handleTogglePin(site)}
-                          disabled={pinningSiteId === site.id}
-                         
-                        >
-                          {pinningSiteId === site.id ? <LoaderCircle className="size-4 animate-spin" /> : (site.isPinned ? '取消置顶' : '置顶')}
-                        </Button>
-                        {sortMode === 'custom' && (
-                          <>
-                            <Button type="button" variant="ghost" size="sm"
-                              onClick={() => handleMoveCustomOrder(site, 'up')}
-                              disabled={orderingSiteId === site.id}
-                             
-                            >
-                              ↑
-                            </Button>
-                            <Button type="button" variant="ghost" size="sm"
-                              onClick={() => handleMoveCustomOrder(site, 'down')}
-                              disabled={orderingSiteId === site.id}
-                             
-                            >
-                              ↓
-                            </Button>
-                          </>
-                        )}
-                        <Button type="button" variant="ghost" size="sm"
+                      <div className="flex items-center justify-end gap-1.5">
+                        <Button type="button" variant="ghostPrimary" size="sm"
                           onClick={() => handleOpenSiteApiKey(site)}
-                         
                         >
-                          添加 Key
+                          {tr('pages.sites.addKey')}
                         </Button>
                         <Button type="button" variant="ghost" size="sm"
                           onClick={() => openEdit(site)}
-                         
                         >
-                          编辑
+                          {tr('pages.accounts.edit')}
                         </Button>
-                        <Button type="button" variant="secondary" size="sm"
-                          onClick={() => handleToggleStatus(site)}
-                          disabled={togglingSiteId === site.id}
-                         
-                        >
-                          {togglingSiteId === site.id ? <LoaderCircle className="size-4 animate-spin" /> : (site.status === 'disabled' ? '启用' : '禁用')}
-                        </Button>
-                        <Button type="button" variant="destructive" size="sm"
-                          onClick={() => handleDelete(site)}
-                          disabled={deleting === site.id}
-                         
-                        >
-                          {deleting === site.id ? <LoaderCircle className="size-4 animate-spin" /> : null}
-                          删除
-                        </Button>
+                        <DropdownMenu.Root>
+                          <DropdownMenu.Trigger asChild>
+                            <Button
+                              type="button"
+                              variant="ghostMuted"
+                              size="icon"
+                              aria-label={tr('pages.accounts.moreActions')}
+                            >
+                              <Ellipsis className="size-4" />
+                            </Button>
+                          </DropdownMenu.Trigger>
+                          <DropdownMenu.Content align="end" className="min-w-44">
+                            <DropdownMenu.Item
+                              disabled={pinningSiteId === site.id}
+                              onSelect={() => handleTogglePin(site)}
+                            >
+                              {pinningSiteId === site.id ? (
+                                <LoaderCircle className="size-4 animate-spin" />
+                              ) : site.isPinned ? (
+                                <PinOff className="size-4" />
+                              ) : (
+                                <Pin className="size-4" />
+                              )}
+                              {site.isPinned ? tr('pages.accounts.cancelpinTop') : tr('pages.accounts.pinTop')}
+                            </DropdownMenu.Item>
+                            <DropdownMenu.Item
+                              disabled={togglingSiteId === site.id}
+                              onSelect={() => handleToggleStatus(site)}
+                            >
+                              {togglingSiteId === site.id ? (
+                                <LoaderCircle className="size-4 animate-spin" />
+                              ) : site.status === 'disabled' ? (
+                                <CheckCircle2 className="size-4" />
+                              ) : (
+                                <CircleSlash className="size-4" />
+                              )}
+                              {site.status === 'disabled' ? tr('pages.downstreamKeys.enabled') : tr('pages.downstreamKeys.disabled')}
+                            </DropdownMenu.Item>
+                            <DropdownMenu.Separator />
+                            <DropdownMenu.Item
+                              variant="destructive"
+                              disabled={deleting === site.id}
+                              onSelect={() => handleDelete(site)}
+                            >
+                              {deleting === site.id ? (
+                                <LoaderCircle className="size-4 animate-spin" />
+                              ) : (
+                                <Trash2 className="size-4" />
+                              )}
+                              {tr('pages.accounts.delete3')}
+                            </DropdownMenu.Item>
+                          </DropdownMenu.Content>
+                        </DropdownMenu.Root>
                       </div>
                     </TableCell>
-                  </TableRow>
-                ))}
+                      </>
+                    )}
+                    </SortableSiteTableRow>
+                  );
+                })}
               </TableBody>
-            </Table>
+              </Table>
+                </SortableContext>
+                <DragOverlay dropAnimation={null}>
+                  {draggingSite ? <SiteDragOverlayCard site={draggingSite} /> : null}
+                </DragOverlay>
+              </DndContext>
+            </DataTable>
           )
         ) : (
-          <EmptyStateBlock title="暂无站点" description="点击“+ 添加站点”开始使用。" />
+          <EmptyStateBlock title={tr('pages.sites.noSites')} description={tr('pages.sites.clickAddSiteStart')} />
         )}
-      </Card>
-    </div>
+      </>
+    </PageShell>
   );
 }

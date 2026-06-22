@@ -861,11 +861,11 @@ describe('databaseMigrationService', () => {
     const graphSourceIndex = graphVersionStatement?.columns.indexOf('source_graph_json') ?? -1;
     expect(graphSourceIndex).toBeGreaterThanOrEqual(0);
     const graphSource = JSON.parse(String(graphVersionStatement?.values[graphSourceIndex])) as {
-      macros?: Array<{ kind?: string; config?: { groups?: Array<{ input?: { routeIds?: number[] } }> } }>;
+      macros?: Array<{ kind?: string; config?: { groups?: Array<{ input?: { endpointIds?: string[] } }> } }>;
     };
     const selectorMacro = graphSource.macros?.find((macro) => macro.kind === 'candidate_selector');
     expect(selectorMacro).toBeTruthy();
-    expect(selectorMacro?.config?.groups?.map((group) => group.input?.routeIds)).toContainEqual([13]);
+    expect(selectorMacro?.config?.groups?.map((group) => group.input?.endpointIds)).toContainEqual(['route-endpoint:product:route:13']);
   });
 
   it('includes site announcements in migration statements', () => {

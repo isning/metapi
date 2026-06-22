@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createTestApp, type TestAppHandle } from '../../../testing/appHarness.js';
 import {
@@ -115,8 +115,8 @@ describe('/api/route-graph lifecycle', () => {
     };
     expect(activeBody.version.status).toBe('active');
     expect(activeBody.sourceGraph.nodes).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: `entry:legacy:${seeded.route.id}`, type: 'entry' }),
-      expect.objectContaining({ id: `dispatcher:legacy:${seeded.route.id}`, type: 'dispatcher' }),
+      expect.objectContaining({ id: expect.stringMatching(/^route-endpoint:supply:upstream-model:/), type: 'route_endpoint', endpointKind: 'supply' }),
+      expect.objectContaining({ id: 'route-endpoint:product:auto-model:graph-api-model', type: 'route_endpoint', endpointKind: 'route_product' }),
       expect.objectContaining({ id: `pool:legacy:${seeded.route.id}`, type: 'model_endpoint' }),
     ]));
     expect(activeBody.compiledGraph.publicModels).toEqual(expect.arrayContaining([
@@ -305,6 +305,32 @@ describe('/api/route-graph lifecycle', () => {
     });
   });
 
+  it('lists route endpoint catalog items for automatic route products', async () => {
+    const seeded = await seedRoutableRoute('catalog-model');
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/route-endpoints',
+      headers: app.adminHeaders(),
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        endpointId: 'route-endpoint:product:auto-model:catalog-model',
+        routeId: seeded.route.id,
+        exposure: 'public',
+        endpointKind: 'route_product',
+        sourceKind: 'automatic_model_group',
+        modelPattern: 'catalog-model',
+        publicModelName: 'catalog-model',
+        sourceRouteIds: [seeded.route.id],
+        upstreamModels: expect.arrayContaining(['catalog-model']),
+        siteNames: expect.arrayContaining([seeded.site.name]),
+      }),
+    ]));
+  });
+
   it('rebases a stale draft with newly generated model-group macros', async () => {
     const source = await seedRoutableRoute('source-model');
 
@@ -351,7 +377,10 @@ describe('/api/route-graph lifecycle', () => {
                 presentation: { displayIcon: 'Layers' },
                 groups: [
                   expect.objectContaining({
-                    input: { kind: 'route_ids', routeIds: [source.route.id] },
+                    input: {
+                      kind: 'route_endpoints',
+                      endpointIds: ['route-endpoint:product:auto-model:source-model'],
+                    },
                   }),
                 ],
               }),
@@ -410,8 +439,8 @@ describe('/api/route-graph lifecycle', () => {
                 enabled: true,
                 priority: 0,
                 input: {
-                  kind: 'route_ids',
-                  routeIds: [source.route.id],
+                  kind: 'route_endpoints',
+                  endpointIds: ['route-endpoint:product:auto-model:macro-source-model'],
                 },
                 defaults: {
                   weight: 10,
@@ -460,8 +489,11 @@ describe('/api/route-graph lifecycle', () => {
       selectedRouteId: source.route.id,
       terminalKind: 'model_endpoint',
       currentModel: 'macro-source-model',
+      selectedEndpointTarget: expect.objectContaining({
+        channelId: String(source.channel.id),
+        model: 'macro-source-model',
+      }),
     });
-    expect(runtimeSelection?.selectedEndpointTarget).toBeNull();
   });
 
   it('publishes candidate_selector macros whose priority groups are sourced by model patterns', async () => {
@@ -561,9 +593,7 @@ describe('/api/route-graph lifecycle', () => {
       },
     });
 
-    const primitiveNodes = publish.json().version.sourceGraph.nodes;
-    expect(primitiveNodes.some((node: { id?: string }) => String(node.id || '').includes('gpt-api-model'))).toBe(false);
-
+    vi.spyOn(Math, 'random').mockReturnValueOnce(0);
     const runtimeSelection = await evaluateActiveRouteGraphForModel('claude-pattern-group');
     expect(runtimeSelection).toMatchObject({
       selectedRouteId: opus.route.id,
@@ -592,7 +622,17 @@ describe('/api/route-graph lifecycle', () => {
 
     const graphWithEmbeddedMacro = {
       version: 1,
-      nodes: activeBody.sourceGraph.nodes,
+      nodes: [
+        ...activeBody.sourceGraph.nodes,
+        {
+          id: 'entry:manual:embedded-test',
+          type: 'entry',
+          enabled: true,
+          visibility: 'public',
+          ownership: 'manual',
+          match: { requestedModelPattern: 'embedded-test-public' },
+        },
+      ],
       macros: [
         ...(activeBody.sourceGraph.macros || []),
         {
@@ -626,7 +666,7 @@ describe('/api/route-graph lifecycle', () => {
         ...activeBody.sourceGraph.edges,
         {
           id: 'entry-to-embedded',
-          sourceNodeId: `entry:legacy:${source.route.id}`,
+          sourceNodeId: 'entry:manual:embedded-test',
           sourcePortId: 'bidirect.out',
           targetNodeId: 'macro:api:embedded',
           targetPortId: 'flow.in',

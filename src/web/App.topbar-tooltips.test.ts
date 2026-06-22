@@ -5,7 +5,7 @@ import { resolve } from 'node:path';
 describe('App topbar tooltips', () => {
   it('removes topbar hover tooltips while preserving sidebar collapsed tooltips', () => {
     const source = readFileSync(resolve(process.cwd(), 'src/web/App.tsx'), 'utf8');
-    const topbarStart = source.indexOf('<div className="topbar-right">');
+    const topbarStart = source.indexOf('<header className=');
     const topbarEnd = source.indexOf('</header>');
 
     expect(topbarStart).toBeGreaterThanOrEqual(0);

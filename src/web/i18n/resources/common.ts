@@ -1,0 +1,28 @@
+export const commonResources = {
+  zh: {
+    'common.account': '账号',
+    'common.close': '关闭',
+    'common.delete': '删除',
+    'common.disabled': '禁用',
+    'common.enabled': '启用',
+    'common.inherit': '继承',
+    'common.loading': '加载中',
+    'common.new': '新建',
+    'common.refresh': '刷新',
+    'common.save': '保存',
+    'common.site': '站点',
+  },
+  en: {
+    'common.account': 'Account',
+    'common.close': 'Close',
+    'common.delete': 'Delete',
+    'common.disabled': 'Disabled',
+    'common.enabled': 'Enabled',
+    'common.inherit': 'Inherit',
+    'common.loading': 'Loading',
+    'common.new': 'New',
+    'common.refresh': 'Refresh',
+    'common.save': 'Save',
+    'common.site': 'Site',
+  },
+} as const;

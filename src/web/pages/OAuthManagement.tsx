@@ -14,6 +14,8 @@ import ResponsiveBatchActionBar from '../components/ResponsiveBatchActionBar.js'
 import ResponsiveFilterPanel from '../components/ResponsiveFilterPanel.js';
 import { MobileCard, MobileField } from '../components/MobileCard.js';
 import ModernSelect from '../components/ModernSelect.js';
+import PageHeader from '../components/workspace/PageHeader.js';
+import PageShell from '../components/workspace/PageShell.js';
 import { useToast } from '../components/Toast.js';
 import { useIsMobile } from '../components/useIsMobile.js';
 import OAuthModelsModal, { type OAuthModelItem } from './oauth/OAuthModelsModal.js';
@@ -26,6 +28,7 @@ import SearchInput from '../components/SearchInput.js';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card/index.js';
 import { Checkbox } from '../components/ui/checkbox/index.js';
 import { Label } from '../components/ui/label/index.js';
+import { DataTable, DataTableToolbar } from '../components/ui/data-table/index.js';
 import {
   Table,
   TableBody,
@@ -35,7 +38,9 @@ import {
   TableRow,
 } from '../components/ui/table/index.js';
 import { Textarea } from '../components/ui/textarea/index.js';
+import JsonCodeEditor from '../components/JsonCodeEditor.js';
 import EmptyStateBlock from '../components/EmptyStateBlock.js';
+import { Ellipsis, Eye, GitMerge, RefreshCcw, RotateCcw, Settings2, Trash2 } from 'lucide-react';
 import {
   api,
   type OAuthConnectionInfo,
@@ -47,6 +52,7 @@ import {
   type OAuthStartInstructions,
 } from '../api.js';
 
+import { tr } from '../i18n.js';
 const POLL_INTERVAL_MS = 1500;
 const CONNECTION_PAGE_LIMIT = 200;
 const AUTO_REFRESH_OPTIONS = [0, 5, 10, 15, 30] as const;
@@ -133,11 +139,11 @@ type SessionFeedback = {
 };
 
 const COLUMN_OPTIONS: Array<{ key: ColumnKey; label: string }> = [
-  { key: 'identity', label: '账号 / Provider' },
-  { key: 'site', label: '站点' },
-  { key: 'status', label: '运行状态' },
+  { key: 'identity', label: tr('pages.oAuthManagement.accountsProvider') },
+  { key: 'site', label: tr('components.searchModal.sites2') },
+  { key: 'status', label: tr('pages.oAuthManagement.status') },
   { key: 'quota', label: 'Usage / Quota' },
-  { key: 'proxy', label: '代理 / 项目' },
+  { key: 'proxy', label: tr('pages.oAuthManagement.acting') },
 ];
 
 function openOAuthPopup(provider: string, authorizationUrl: string) {
@@ -168,12 +174,12 @@ function normalizeOauthMessage(value: string | null | undefined): string {
   if (!text) return '';
 
   return text
-    .replace(/codex usage windows inferred from rate limit response headers/ig, '额度窗口已从响应头推断')
-    .replace(/official 5h quota window is not exposed by current codex oauth artifacts/ig, '当前 Codex OAuth 未暴露官方 5h 窗口')
-    .replace(/official 7d quota window is not exposed by current codex oauth artifacts/ig, '当前 Codex OAuth 未暴露官方 7d 窗口')
-    .replace(/official 5h quota window is unavailable for this provider/ig, '当前 Provider 不提供官方 5h 窗口')
-    .replace(/official 7d quota window is unavailable for this provider/ig, '当前 Provider 不提供官方 7d 窗口')
-    .replace(/\bfetch failed\b/ig, '网络请求失败');
+    .replace(/codex usage windows inferred from rate limit response headers/ig, tr('pages.oAuthManagement.quotaWindowInferredFromResponseHeaders'))
+    .replace(/official 5h quota window is not exposed by current codex oauth artifacts/ig, tr('pages.oAuthManagement.codexOauthOfficial5h'))
+    .replace(/official 7d quota window is not exposed by current codex oauth artifacts/ig, tr('pages.oAuthManagement.codexOauthOfficial7d'))
+    .replace(/official 5h quota window is unavailable for this provider/ig, tr('pages.oAuthManagement.providerOfficial5h'))
+    .replace(/official 7d quota window is unavailable for this provider/ig, tr('pages.oAuthManagement.providerOfficial7d'))
+    .replace(/\bfetch failed\b/ig, tr('pages.oAuthManagement.requestFailed'));
 }
 
 function listImportFiles(files: ArrayLike<OAuthImportFileLike> | null | undefined): OAuthImportFileLike[] {
@@ -190,7 +196,7 @@ async function readOauthImportDrafts(
       return {
         sourceName,
         rawText: '',
-        error: '当前浏览器不支持读取该文件',
+        error: tr('pages.oAuthManagement.currentBrowserCannotReadFile'),
       };
     }
     try {
@@ -202,7 +208,7 @@ async function readOauthImportDrafts(
       return {
         sourceName,
         rawText: '',
-        error: error?.message || '读取文件失败',
+        error: error?.message || tr('pages.importExport.failedReadFile'),
       };
     }
   }));
@@ -244,7 +250,7 @@ function resolveImportPreviewExpiryLabel(value: unknown): string | undefined {
       ? Number.parseInt(value.trim(), 10)
       : Date.parse(typeof value === 'string' ? value : '');
   if (!Number.isFinite(parsed) || parsed <= 0) {
-    throw new Error('expired 时间格式无效');
+    throw new Error(tr('pages.oAuthManagement.expiredTimeInvalid'));
   }
   return new Date(parsed).toLocaleString();
 }
@@ -263,7 +269,7 @@ function parseOauthImportPreview(source: OAuthImportSource): OAuthImportPreview 
     return {
       sourceName: source.sourceName,
       valid: false,
-      error: 'JSON 内容为空',
+      error: tr('pages.oAuthManagement.jsonContent'),
     };
   }
 
@@ -274,7 +280,7 @@ function parseOauthImportPreview(source: OAuthImportSource): OAuthImportPreview 
     return {
       sourceName: source.sourceName,
       valid: false,
-      error: 'JSON 解析失败',
+      error: tr('pages.oAuthManagement.jsonFailed'),
     };
   }
 
@@ -282,7 +288,7 @@ function parseOauthImportPreview(source: OAuthImportSource): OAuthImportPreview 
     return {
       sourceName: source.sourceName,
       valid: false,
-      error: '需要单个 OAuth JSON 对象',
+      error: tr('pages.oAuthManagement.oauthJson2'),
     };
   }
 
@@ -299,7 +305,7 @@ function parseOauthImportPreview(source: OAuthImportSource): OAuthImportPreview 
     return {
       sourceName: source.sourceName,
       valid: false,
-      error: '这是旧的 sub2api 导出格式',
+      error: tr('pages.oAuthManagement.sub2api'),
     };
   }
 
@@ -308,7 +314,7 @@ function parseOauthImportPreview(source: OAuthImportSource): OAuthImportPreview 
     return {
       sourceName: source.sourceName,
       valid: false,
-      error: `不支持的 OAuth 类型：${type || '未知'}`,
+      error: `不支持的 OAuth 类型：${type || tr('pages.accounts.unknown2')}`,
     };
   }
 
@@ -316,7 +322,7 @@ function parseOauthImportPreview(source: OAuthImportSource): OAuthImportPreview 
     return {
       sourceName: source.sourceName,
       valid: false,
-      error: '缺少 access_token',
+      error: tr('pages.oAuthManagement.accessToken'),
     };
   }
 
@@ -343,7 +349,7 @@ function parseOauthImportPreview(source: OAuthImportSource): OAuthImportPreview 
     return {
       sourceName: source.sourceName,
       valid: false,
-      error: error?.message || 'JSON 结构无效',
+      error: error?.message || tr('pages.oAuthManagement.jsonInvalid'),
     };
   }
 }
@@ -353,7 +359,7 @@ function resolveConnectionPrimaryTitle(connection: OAuthConnectionInfo): string 
     || asTrimmedString(connection.email)
     || asTrimmedString(connection.accountKey)
     || asTrimmedString(connection.provider)
-    || 'OAuth 连接';
+    || tr('pages.oAuthManagement.oauth');
 }
 
 function resolveConnectionEmailLabel(connection: OAuthConnectionInfo): string {
@@ -361,34 +367,34 @@ function resolveConnectionEmailLabel(connection: OAuthConnectionInfo): string {
 }
 
 function resolveConnectionStatusLabel(status?: string): string {
-  return status === 'abnormal' ? '异常' : '正常';
+  return status === 'abnormal' ? tr('pages.accounts.error') : tr('pages.oAuthManagement.normal');
 }
 
 function resolveQuotaStatusLabel(status?: OAuthQuotaInfo['status']): string {
-  if (status === 'unsupported') return '不支持';
-  if (status === 'error') return '获取失败';
-  return '支持';
+  if (status === 'unsupported') return tr('pages.accounts.unsupported');
+  if (status === 'error') return tr('pages.oAuthManagement.failed');
+  return tr('pages.oAuthManagement.supported');
 }
 
 function resolveQuotaSourceLabel(source?: OAuthQuotaInfo['source']): string {
-  return source === 'official' ? '官方' : '响应头推断';
+  return source === 'official' ? tr('pages.oAuthManagement.official') : tr('pages.oAuthManagement.responseHeaderInference');
 }
 
 function resolveModelSyncStatusText(connection: OAuthConnectionInfo): string {
   const failureText = normalizeOauthMessage(connection.lastModelSyncError || '');
-  if (failureText) return '获取失败';
-  return connection.lastModelSyncAt ? '同步正常' : '未同步';
+  if (failureText) return tr('pages.oAuthManagement.failed');
+  return connection.lastModelSyncAt ? tr('pages.oAuthManagement.syncnormal') : tr('pages.oAuthManagement.sync');
 }
 
 function resolveQuotaSyncStatusText(quota?: OAuthQuotaInfo | null): string {
-  if (!quota) return '未刷新额度';
+  if (!quota) return tr('pages.oAuthManagement.refreshquota2');
   if (quota.status === 'error') {
-    return '获取失败';
+    return tr('pages.oAuthManagement.failed');
   }
   if (quota.status === 'unsupported') {
-    return '不支持';
+    return tr('pages.accounts.unsupported');
   }
-  return quota.lastSyncAt ? '同步正常' : '未刷新';
+  return quota.lastSyncAt ? tr('pages.oAuthManagement.syncnormal') : tr('pages.oAuthManagement.refresh');
 }
 
 function resolveModelSyncDetail(connection: OAuthConnectionInfo): string {
@@ -398,10 +404,10 @@ function resolveModelSyncDetail(connection: OAuthConnectionInfo): string {
 function resolveQuotaSyncDetail(quota?: OAuthQuotaInfo | null): string {
   if (!quota) return '';
   if (quota.status === 'error') {
-    return normalizeOauthMessage(quota.lastError || quota.providerMessage || '额度刷新失败');
+    return normalizeOauthMessage(quota.lastError || quota.providerMessage || tr('pages.oAuthManagement.quotarefreshfailed'));
   }
   if (quota.status === 'unsupported') {
-    return normalizeOauthMessage(quota.providerMessage || '当前连接暂不支持额度窗口');
+    return normalizeOauthMessage(quota.providerMessage || tr('pages.oAuthManagement.currentConnectionDoesNotSupportQuotaWindows'));
   }
   return '';
 }
@@ -436,7 +442,7 @@ function formatResetLabel(value?: string | null): string {
   const date = new Date(text);
   if (Number.isNaN(date.getTime())) return text;
   const diffMs = date.getTime() - Date.now();
-  if (diffMs <= 0) return '现在';
+  if (diffMs <= 0) return tr('pages.oAuthManagement.now');
   const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
   const diffMinutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
   if (diffHours >= 24) {
@@ -460,14 +466,10 @@ function resolveQuotaWindowPercent(window?: OAuthQuotaWindowInfo | null): number
 
 function resolveQuotaWindowSummary(window?: OAuthQuotaWindowInfo | null): string {
   if (!window || !window.supported) return '';
-  if (typeof window.used === 'number' && typeof window.limit === 'number') {
-    return `${window.used} / ${window.limit}`;
-  }
-  if (typeof window.remaining === 'number' && typeof window.limit === 'number') {
-    return `剩余 ${window.remaining} / ${window.limit}`;
-  }
-  if (typeof window.limit === 'number') return `总量 ${window.limit}`;
-  return window.message || '官方未提供';
+  if (typeof window.used === 'number' && typeof window.limit === 'number') return '';
+  if (typeof window.remaining === 'number' && typeof window.limit === 'number') return '';
+  if (typeof window.limit === 'number') return '';
+  return window.message || tr('pages.oAuthManagement.officialnotProvided');
 }
 
 function resolveProxyProjectSummary(connection: OAuthConnectionInfo): string {
@@ -479,9 +481,9 @@ function resolveProxyProjectSummary(connection: OAuthConnectionInfo): string {
 }
 
 function resolveProxyDisplayText(connection: OAuthConnectionInfo): string {
-  if (connection.useSystemProxy) return '系统级代理';
+  if (connection.useSystemProxy) return tr('pages.oAuthManagement.systemActing');
   if (connection.proxyUrl) return redactProxyUrl(connection.proxyUrl);
-  return '未设置代理';
+  return tr('pages.oAuthManagement.notSetacting');
 }
 
 function hasOauthProxySelection(connection: OAuthConnectionInfo): boolean {
@@ -489,7 +491,7 @@ function hasOauthProxySelection(connection: OAuthConnectionInfo): boolean {
 }
 
 function resolveRouteUnitStrategyLabel(strategy?: OAuthRouteUnitStrategy | null): string {
-  return strategy === 'stick_until_unavailable' ? '单个用到不可用再切' : '轮询';
+  return strategy === 'stick_until_unavailable' ? tr('pages.oAuthManagement.notAvailable') : tr('pages.oAuthManagement.roundRobin');
 }
 
 function resolveConnectionRouteParticipation(
@@ -524,7 +526,7 @@ function resolveConnectionRouteParticipation(
 function resolveRouteParticipationSummary(connection: OAuthConnectionInfo): string {
   const participation = resolveConnectionRouteParticipation(connection);
   if (participation.kind !== 'route_unit') {
-    return '单体';
+    return tr('pages.oAuthManagement.standalone');
   }
   return `路由池：${participation.name} · ${participation.memberCount} 个成员 · ${resolveRouteUnitStrategyLabel(participation.strategy)}`;
 }
@@ -564,7 +566,7 @@ function QuotaWindowRow({
         <span className="font-medium">{percent == null ? 'N/A' : `${percent}%`}</span>
         {summary ? <span className="text-muted-foreground">{summary}</span> : null}
         {window?.resetAt ? (
-          <span className="text-muted-foreground">重置 {formatResetLabel(window.resetAt)}</span>
+          <span className="text-muted-foreground">{tr('pages.models.reset')} {formatResetLabel(window.resetAt)}</span>
         ) : null}
     </div>
   );
@@ -753,7 +755,7 @@ export default function OAuthManagement() {
       setSelectedProviderKey((current) => current || nextProviders[0]?.provider || '');
     } catch (error: any) {
       console.error('failed to load oauth management data', error);
-      setSessionError(error?.message || 'OAuth 管理数据加载失败');
+      setSessionError(error?.message || tr('pages.oAuthManagement.oauthFailed'));
     } finally {
       setLoaded(true);
     }
@@ -774,7 +776,7 @@ export default function OAuthManagement() {
       setAutoRefreshCountdown((current) => {
         if (current <= 1) {
           void loadConnections().catch((error: any) => {
-            setSessionError(error?.message || 'OAuth 连接列表刷新失败');
+            setSessionError(error?.message || tr('pages.oAuthManagement.oauthRefreshfailed'));
           });
           return autoRefreshSeconds;
         }
@@ -796,7 +798,7 @@ export default function OAuthManagement() {
     setSelectedProviderKey(provider);
     setDrawerProjectId('');
     setDrawerOpen(true);
-    setSessionInfo('从建站流程跳转到 OAuth 管理，请在这里完成授权。');
+    setSessionInfo(tr('pages.oAuthManagement.goOauth'));
   }, [loaded, location.search, providers]);
 
   useEffect(() => {
@@ -811,23 +813,23 @@ export default function OAuthManagement() {
         if (cancelled) return;
 
         if (session.status === 'pending') {
-          setSessionInfo('等待授权完成');
+          setSessionInfo(tr('pages.oAuthManagement.waitingAuthorization'));
           timer = setTimeout(poll, POLL_INTERVAL_MS);
           return;
         }
 
         if (session.status === 'success') {
-          setSessionSuccess('授权成功');
+          setSessionSuccess(tr('pages.oAuthManagement.success'));
           await loadConnections();
           setActiveSession(null);
           return;
         }
 
-        setSessionError(`授权失败：${session.error || '未知错误'}`);
+        setSessionError(`授权失败：${session.error || tr('pages.oAuthManagement.unknownError')}`);
         setActiveSession(null);
       } catch (error: any) {
         if (cancelled) return;
-        setSessionError(error?.message || 'OAuth 会话状态查询失败');
+        setSessionError(error?.message || tr('pages.oAuthManagement.oauthStatusFailed'));
         setActiveSession(null);
       }
     };
@@ -862,7 +864,11 @@ export default function OAuthManagement() {
     () => providers.map((provider) => ({
       value: provider.provider,
       label: provider.label,
-      description: `${provider.platform}${provider.requiresProjectId ? ' · 可选 Project ID' : ''}${!provider.enabled ? ' · 当前环境未启用' : ''}`,
+      description: [
+        provider.platform,
+        provider.requiresProjectId ? tr('pages.oAuthManagement.projectId') : '',
+        !provider.enabled ? tr('pages.oAuthManagement.enabled') : '',
+      ].filter(Boolean).join(' · '),
     })),
     [providers],
   );
@@ -982,7 +988,7 @@ export default function OAuthManagement() {
     setOauthProxyUrl(connection.useSystemProxy ? '' : asTrimmedString(connection.proxyUrl));
     setDrawerOpen(true);
     setShowColumnMenu(false);
-    setSessionInfo('已打开 OAuth 代理设置，修改后可直接保存代理，或保存后重新授权。');
+    setSessionInfo(tr('pages.oAuthManagement.openOauthActingsettingsSaveactingSaveReauthorize'));
   };
 
   const openRouteUnitModal = () => {
@@ -1051,7 +1057,7 @@ export default function OAuthManagement() {
     if (drawerIntent.mode !== 'proxy') return;
     const customProxyUrl = asTrimmedString(oauthProxyUrl);
     if (oauthCustomProxyEnabled && !customProxyUrl) {
-      setSessionError('已开启代理，请先输入完整代理地址');
+      setSessionError(tr('pages.oAuthManagement.turnOnactingInputActing'));
       return;
     }
 
@@ -1070,9 +1076,9 @@ export default function OAuthManagement() {
       await loadConnections();
       setDrawerOpen(false);
       resetOauthProxySettings();
-      setSessionSuccess('代理已保存');
+      setSessionSuccess(tr('pages.oAuthManagement.actingSave'));
     } catch (error: any) {
-      setSessionError(error?.message || '保存代理失败');
+      setSessionError(error?.message || tr('pages.oAuthManagement.saveactingfailed'));
     } finally {
       setActionLoadingKey('');
     }
@@ -1086,7 +1092,7 @@ export default function OAuthManagement() {
       || providers[0]
       || null;
     if (!provider) {
-      setSessionError('当前没有可用的 OAuth Provider。');
+      setSessionError(tr('pages.oAuthManagement.availableOauthProvider'));
       return;
     }
     if (!provider.enabled) {
@@ -1098,7 +1104,7 @@ export default function OAuthManagement() {
     const accountId = rebindAccount?.accountId;
     const customProxyUrl = asTrimmedString(oauthProxyUrl);
     if (oauthCustomProxyEnabled && !customProxyUrl) {
-      setSessionError('已开启代理，请先输入完整代理地址');
+      setSessionError(tr('pages.oAuthManagement.turnOnactingInputActing'));
       return;
     }
 
@@ -1128,7 +1134,7 @@ export default function OAuthManagement() {
           ...proxySettings,
         });
 
-      setSessionInfo('等待授权完成');
+      setSessionInfo(tr('pages.oAuthManagement.waitingAuthorization'));
       setActiveSession({
         provider: started.provider,
         state: started.state,
@@ -1138,7 +1144,7 @@ export default function OAuthManagement() {
       resetOauthProxySettings();
       openOAuthPopup(provider.provider, started.authorizationUrl);
     } catch (error: any) {
-      setSessionError(error?.message || '无法启动 OAuth 授权');
+      setSessionError(error?.message || tr('pages.oAuthManagement.noneOauth'));
     } finally {
       setActionLoadingKey('');
     }
@@ -1148,15 +1154,15 @@ export default function OAuthManagement() {
     if (!activeSession) return;
     const callbackUrl = manualCallbackUrl.trim();
     if (!callbackUrl) {
-      setSessionError('请输入完整的回调 URL');
+      setSessionError(tr('pages.oAuthManagement.inputUrl'));
       return;
     }
     setManualCallbackSubmitting(true);
     try {
       await api.submitOAuthManualCallback(activeSession.state, callbackUrl);
-      setSessionInfo('回调已提交，等待授权完成');
+      setSessionInfo(tr('pages.oAuthManagement.callbackSubmittedWaitingAuthorization'));
     } catch (error: any) {
-      setSessionError(error?.message || '提交回调 URL 失败');
+      setSessionError(error?.message || tr('pages.oAuthManagement.urlFailed'));
     } finally {
       setManualCallbackSubmitting(false);
     }
@@ -1164,18 +1170,18 @@ export default function OAuthManagement() {
 
   const handleDelete = async (accountId: number) => {
     if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
-      const confirmed = window.confirm('确定要删除这个 OAuth 连接吗？');
+      const confirmed = window.confirm(tr('pages.oAuthManagement.deleteOauth'));
       if (!confirmed) return;
     }
     const actionKey = `delete:${accountId}`;
     setActionLoadingKey(actionKey);
     try {
       await api.deleteOAuthConnection(accountId);
-      setSessionSuccess('连接已删除');
+      setSessionSuccess(tr('pages.oAuthManagement.deleted'));
       await loadConnections();
       setSelectedConnectionIds((current) => current.filter((id) => id !== accountId));
     } catch (error: any) {
-      setSessionError(error?.message || '删除 OAuth 连接失败');
+      setSessionError(error?.message || tr('pages.oAuthManagement.deleteOauthFailed'));
     } finally {
       setActionLoadingKey('');
     }
@@ -1208,10 +1214,10 @@ export default function OAuthManagement() {
     setActionLoadingKey(actionKey);
     try {
       await api.refreshOAuthConnectionQuota(accountId);
-      setSessionSuccess('额度信息已刷新');
+      setSessionSuccess(tr('pages.oAuthManagement.quotainfoRefresh'));
       await loadConnections();
     } catch (error: any) {
-      setSessionError(error?.message || '刷新额度失败');
+      setSessionError(error?.message || tr('pages.oAuthManagement.refreshquotafailed2'));
     } finally {
       setActionLoadingKey('');
     }
@@ -1229,7 +1235,7 @@ export default function OAuthManagement() {
         setSessionSuccess(`已批量刷新 ${result.refreshed} 个 OAuth 连接`);
       }
     } catch (error: any) {
-      setSessionError(error?.message || '批量刷新额度失败');
+      setSessionError(error?.message || tr('pages.oAuthManagement.refreshquotafailed'));
     } finally {
       setActionLoadingKey('');
     }
@@ -1281,11 +1287,11 @@ export default function OAuthManagement() {
       applyLoadedModelsModal(connection, result);
       if (options.refreshUpstream) {
         await loadConnections();
-        setSessionSuccess('模型列表已刷新');
+        setSessionSuccess(tr('pages.accounts.modelRefresh'));
       }
     } catch (error: any) {
       if (modelsModalRequestSeqRef.current !== requestId) return;
-      setSessionError(error?.message || '加载模型列表失败');
+      setSessionError(error?.message || tr('pages.accounts.modelFailed3'));
       setModelsModal((current) => (
         options.closeOnError
           ? {
@@ -1352,7 +1358,7 @@ export default function OAuthManagement() {
     const manualRaw = importJsonText.trim();
     return [
       ...importDrafts,
-      ...(manualRaw ? [{ sourceName: '手动粘贴 JSON', rawText: manualRaw }] : []),
+      ...(manualRaw ? [{ sourceName: tr('pages.oAuthManagement.manualJson'), rawText: manualRaw }] : []),
     ];
   }, [importDrafts, importJsonText]);
 
@@ -1372,15 +1378,15 @@ export default function OAuthManagement() {
 
   const handleImport = async () => {
     if (importSources.length <= 0) {
-      setSessionError('请先选择 JSON 文件或粘贴 OAuth 连接 JSON 内容');
+      setSessionError(tr('pages.oAuthManagement.selectJsonOauthJsonContent'));
       return;
     }
     if (!importPreviewSummary?.canImport) {
-      setSessionError('请先修正无效的 OAuth JSON');
+      setSessionError(tr('pages.oAuthManagement.invalidOauthJson'));
       return;
     }
     if (importCustomProxyEnabled && !asTrimmedString(importProxyUrl)) {
-      setSessionError('已开启代理，请先输入完整代理地址');
+      setSessionError(tr('pages.oAuthManagement.turnOnactingInputActing'));
       return;
     }
 
@@ -1421,7 +1427,7 @@ export default function OAuthManagement() {
       }
       closeImportModal();
     } catch (error: any) {
-      const message = error?.message || '导入 OAuth JSON 失败';
+      const message = error?.message || tr('pages.oAuthManagement.importOauthJsonFailed');
       toast.error(message);
       setSessionError(message);
     } finally {
@@ -1433,7 +1439,7 @@ export default function OAuthManagement() {
     const name = asTrimmedString(routeUnitModal.name);
     if (!canMergeSelectedIntoRouteUnit || selectedConnections.length < 2) return;
     if (!name) {
-      setSessionError('请先输入路由池名称');
+      setSessionError(tr('pages.oAuthManagement.inputroutesName'));
       return;
     }
 
@@ -1459,7 +1465,7 @@ export default function OAuthManagement() {
         }
         : routeUnitDefaults;
       toast.success(`已创建路由池：${routeUnit.name}`);
-      setSessionSuccess('已创建路由池', {
+      setSessionSuccess(tr('pages.oAuthManagement.routes2'), {
         routeUnit,
       });
       setSelectedConnectionIds([]);
@@ -1467,13 +1473,13 @@ export default function OAuthManagement() {
       try {
         await loadConnections();
       } catch {
-        toast.error('OAuth 连接列表刷新失败');
-        setSessionError('已创建路由池，但连接列表刷新失败', {
+        toast.error(tr('pages.oAuthManagement.oauthRefreshfailed'));
+        setSessionError(tr('pages.oAuthManagement.routesRefreshfailed'), {
           routeUnit,
         });
       }
     } catch (error: any) {
-      const message = error?.message || '创建路由池失败';
+      const message = error?.message || tr('pages.oAuthManagement.routesFailed');
       toast.error(message);
       setSessionError(message);
     } finally {
@@ -1496,20 +1502,20 @@ export default function OAuthManagement() {
       };
       await api.deleteOAuthRouteUnit(routeUnitId);
       toast.success(`已拆回单体：${routeUnitFeedback.name}`);
-      setSessionSuccess('已拆回单体', {
+      setSessionSuccess(tr('pages.oAuthManagement.splitBackStandalone'), {
         routeUnit: routeUnitFeedback,
       });
       setSelectedConnectionIds([]);
       try {
         await loadConnections();
       } catch {
-        toast.error('OAuth 连接列表刷新失败');
-        setSessionError('已拆回单体，但连接列表刷新失败', {
+        toast.error(tr('pages.oAuthManagement.oauthRefreshfailed'));
+        setSessionError(tr('pages.oAuthManagement.splitBackStandaloneRefreshfailed'), {
           routeUnit: routeUnitFeedback,
         });
       }
     } catch (error: any) {
-      const message = error?.message || '拆回单体失败';
+      const message = error?.message || tr('pages.oAuthManagement.splitStandalonefailed');
       toast.error(message);
       setSessionError(message);
     } finally {
@@ -1543,7 +1549,7 @@ export default function OAuthManagement() {
               className="min-w-64 flex-1"
               value={searchQuery}
               onChange={(event) => setSearchQuery(event.target.value)}
-              placeholder="搜索账号 / 邮箱 / 站点 / 项目"
+              placeholder={tr('pages.oAuthManagement.searchaccountsEmailSites')}
             />
             <div className="w-44">
               <ModernSelect
@@ -1551,10 +1557,10 @@ export default function OAuthManagement() {
                 value={providerFilter}
                 onChange={(value) => setProviderFilter(String(value || ''))}
                 options={[
-                  { value: '', label: '全部 Provider' },
+                  { value: '', label: tr('pages.oAuthManagement.allProvider') },
                   ...providerOptions,
                 ]}
-                placeholder="全部 Provider"
+                placeholder={tr('pages.oAuthManagement.allProvider')}
               />
             </div>
             <div className="w-40">
@@ -1563,11 +1569,11 @@ export default function OAuthManagement() {
                 value={statusFilter}
                 onChange={(value) => setStatusFilter(String(value || ''))}
                 options={[
-                  { value: '', label: '全部状态' },
-                  { value: 'healthy', label: '正常' },
-                  { value: 'abnormal', label: '异常' },
+                  { value: '', label: tr('pages.downstreamKeys.allstatus') },
+                  { value: 'healthy', label: tr('pages.oAuthManagement.normal') },
+                  { value: 'abnormal', label: tr('pages.accounts.error') },
                 ]}
-                placeholder="全部状态"
+                placeholder={tr('pages.downstreamKeys.allstatus')}
               />
             </div>
             <div className="w-56">
@@ -1576,10 +1582,10 @@ export default function OAuthManagement() {
                 value={siteFilter}
                 onChange={(value) => setSiteFilter(String(value || ''))}
                 options={[
-                  { value: '', label: '全部站点' },
+                  { value: '', label: tr('pages.oAuthManagement.allsites') },
                   ...siteOptions,
                 ]}
-                placeholder="全部站点"
+                placeholder={tr('pages.oAuthManagement.allsites')}
               />
             </div>
             <div className="w-44">
@@ -1589,22 +1595,22 @@ export default function OAuthManagement() {
                 onChange={(value) => setAutoRefreshSeconds(Number(value || 0))}
                 options={AUTO_REFRESH_OPTIONS.map((seconds) => ({
                   value: String(seconds),
-                  label: seconds === 0 ? '自动刷新：关闭' : `自动刷新：${seconds}s`,
+                  label: seconds === 0 ? tr('pages.oAuthManagement.automaticrefreshClose') : `自动刷新：${seconds}s`,
                 }))}
-                placeholder="自动刷新"
+                placeholder={tr('pages.oAuthManagement.automaticrefresh')}
               />
             </div>
             {autoRefreshSeconds > 0 ? (
-              <div className="text-sm text-muted-foreground">下次刷新 {autoRefreshCountdown}s</div>
+              <div className="text-sm text-muted-foreground">{tr('pages.oAuthManagement.refresh2')} {autoRefreshCountdown}s</div>
             ) : null}
             <DropdownMenu.Root open={showColumnMenu} onOpenChange={setShowColumnMenu}>
               <DropdownMenu.Trigger asChild>
                 <Button variant="outline" type="button">
-                  列设置
+                  {tr('pages.oAuthManagement.settings')}
                 </Button>
               </DropdownMenu.Trigger>
               <DropdownMenu.Content align="end">
-                <DropdownMenu.Label>显示列</DropdownMenu.Label>
+                <DropdownMenu.Label>{tr('pages.oAuthManagement.visibleColumns')}</DropdownMenu.Label>
                 <DropdownMenu.Separator />
                 {COLUMN_OPTIONS.map((column) => (
                   <DropdownMenu.CheckboxItem
@@ -1619,7 +1625,7 @@ export default function OAuthManagement() {
             </DropdownMenu.Root>
         </div>
         <div className="text-sm text-muted-foreground">
-          OAuth 账号以后只在这里维护。连接管理页默认只保留普通 Session / API Key / Token 连接。
+          {tr('pages.oAuthManagement.oauthAccountsConnectionManagementDefaultSessionApi')}
         </div>
       </CardContent>
     </Card>
@@ -1631,38 +1637,38 @@ export default function OAuthManagement() {
         type="text"
         value={searchQuery}
         onChange={(event) => setSearchQuery(event.target.value)}
-        placeholder="搜索账号 / 邮箱 / 站点 / 项目"
+        placeholder={tr('pages.oAuthManagement.searchaccountsEmailSites')}
       />
       <ModernSelect
         size="sm"
         value={providerFilter}
         onChange={(value) => setProviderFilter(String(value || ''))}
         options={[
-          { value: '', label: '全部 Provider' },
+          { value: '', label: tr('pages.oAuthManagement.allProvider') },
           ...providerOptions,
         ]}
-        placeholder="全部 Provider"
+        placeholder={tr('pages.oAuthManagement.allProvider')}
       />
       <ModernSelect
         size="sm"
         value={statusFilter}
         onChange={(value) => setStatusFilter(String(value || ''))}
         options={[
-          { value: '', label: '全部状态' },
-          { value: 'healthy', label: '正常' },
-          { value: 'abnormal', label: '异常' },
+          { value: '', label: tr('pages.downstreamKeys.allstatus') },
+          { value: 'healthy', label: tr('pages.oAuthManagement.normal') },
+          { value: 'abnormal', label: tr('pages.accounts.error') },
         ]}
-        placeholder="全部状态"
+        placeholder={tr('pages.downstreamKeys.allstatus')}
       />
       <ModernSelect
         size="sm"
         value={siteFilter}
         onChange={(value) => setSiteFilter(String(value || ''))}
         options={[
-          { value: '', label: '全部站点' },
+          { value: '', label: tr('pages.oAuthManagement.allsites') },
           ...siteOptions,
         ]}
-        placeholder="全部站点"
+        placeholder={tr('pages.oAuthManagement.allsites')}
       />
       <ModernSelect
         size="sm"
@@ -1670,15 +1676,73 @@ export default function OAuthManagement() {
         onChange={(value) => setAutoRefreshSeconds(Number(value || 0))}
         options={AUTO_REFRESH_OPTIONS.map((seconds) => ({
           value: String(seconds),
-          label: seconds === 0 ? '自动刷新：关闭' : `自动刷新：${seconds}s`,
+          label: seconds === 0 ? tr('pages.oAuthManagement.automaticrefreshClose') : `自动刷新：${seconds}s`,
         }))}
-        placeholder="自动刷新"
+        placeholder={tr('pages.oAuthManagement.automaticrefresh')}
       />
     </div>
   );
 
   const desktopTable = (
-    <Table>
+    <DataTable minWidth={1180}>
+      <DataTableToolbar className="border-b bg-muted/30">
+        <div className="text-sm text-muted-foreground">
+          已选 <span className="font-medium text-foreground">{selectedConnectionIds.length}</span> / {filteredConnections.length} 个 OAuth 连接
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {selectedConnectionIds.length > 0 ? (
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                type="button"
+                onClick={handleRefreshSelected}
+                disabled={actionLoadingKey === 'quota:selected'}
+              >
+                <RefreshCcw className="size-4" />
+                <span className="sr-only">{tr('pages.oAuthManagement.refreshquota3')}</span>
+                {actionLoadingKey === 'quota:selected' ? tr('pages.downstreamKeys.refreshzh') : tr('pages.oAuthManagement.refreshquota')}
+              </Button>
+              {canMergeSelectedIntoRouteUnit ? (
+                <Button variant="outline" size="sm" type="button" onClick={openRouteUnitModal}>
+                  <GitMerge className="size-4" />
+                  {tr('pages.oAuthManagement.routes3')}
+                </Button>
+              ) : null}
+              {canSplitSelectedRouteUnit ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  type="button"
+                  onClick={handleDeleteSelectedRouteUnit}
+                  disabled={actionLoadingKey === 'route-unit:delete'}
+                >
+                  <RotateCcw className="size-4" />
+                  {actionLoadingKey === 'route-unit:delete' ? tr('pages.oAuthManagement.zh3') : tr('pages.oAuthManagement.splitStandalone')}
+                </Button>
+              ) : null}
+              <Button variant="ghost" size="sm" type="button" onClick={() => setSelectedConnectionIds([])} disabled={!!actionLoadingKey}>
+                {tr('pages.accounts.cancelselectAll')}
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                type="button"
+                onClick={handleDeleteSelected}
+                disabled={actionLoadingKey === 'delete:selected'}
+              >
+                <Trash2 className="size-4" />
+                {actionLoadingKey === 'delete:selected' ? tr('components.deleteConfirmModal.deletezh') : tr('pages.accounts.delete2')}
+              </Button>
+            </>
+          ) : (
+            <Button variant="outline" size="sm" type="button" onClick={() => toggleSelectAllVisible(true)} disabled={filteredConnections.length === 0}>
+              {tr('pages.downstreamKeys.selectVisible')}
+            </Button>
+          )}
+        </div>
+      </DataTableToolbar>
+      <Table>
       <TableHeader>
         <TableRow>
           <TableHead className="w-10">
@@ -1688,12 +1752,12 @@ export default function OAuthManagement() {
               onCheckedChange={(checked) => toggleSelectAllVisible(checked === true)}
             />
           </TableHead>
-          {visibleColumns.identity ? <TableHead>账号</TableHead> : null}
-          {visibleColumns.site ? <TableHead>站点</TableHead> : null}
-          {visibleColumns.status ? <TableHead>状态</TableHead> : null}
-          {visibleColumns.quota ? <TableHead>额度</TableHead> : null}
-          {visibleColumns.proxy ? <TableHead>计划 / 代理</TableHead> : null}
-          <TableHead>操作</TableHead>
+          {visibleColumns.identity ? <TableHead>{tr('components.searchModal.accounts2')}</TableHead> : null}
+          {visibleColumns.site ? <TableHead>{tr('components.searchModal.sites2')}</TableHead> : null}
+          {visibleColumns.status ? <TableHead>{tr('components.notificationPanel.status')}</TableHead> : null}
+          {visibleColumns.quota ? <TableHead>{tr('pages.downstreamKeys.quota')}</TableHead> : null}
+          {visibleColumns.proxy ? <TableHead>{tr('pages.oAuthManagement.acting2')}</TableHead> : null}
+          <TableHead>{tr('pages.accounts.actions2')}</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -1705,7 +1769,10 @@ export default function OAuthManagement() {
           const modelSyncDetail = resolveModelSyncDetail(connection);
           const quotaSyncDetail = resolveQuotaSyncDetail(quota);
           return (
-            <TableRow key={connection.accountId}>
+            <TableRow
+              key={connection.accountId}
+              data-state={selectedConnectionIds.includes(connection.accountId) ? 'selected' : undefined}
+            >
               <TableCell>
                 <Checkbox
                   checked={selectedConnectionIds.includes(connection.accountId)}
@@ -1726,6 +1793,7 @@ export default function OAuthManagement() {
                         title={primaryTitle}
                         onClick={() => void openModelsModal(connection)}
                       >
+                        <Eye className="size-4" />
                         {primaryTitle}
                       </Button>
                       <ToneBadge tone={connection.provider === 'codex' ? 'info' : 'primary'}>
@@ -1740,7 +1808,7 @@ export default function OAuthManagement() {
                     ) : null}
                     {connection.accountKey ? (
                       <div className="text-xs text-muted-foreground" title={connection.accountKey}>
-                        连接: {compactAccountKey(connection.accountKey)}
+                        {tr('pages.accounts.connection')} {compactAccountKey(connection.accountKey)}
                       </div>
                     ) : null}
                   </div>
@@ -1763,7 +1831,7 @@ export default function OAuthManagement() {
                   <div className="grid gap-2 text-sm">
                     <div className="grid gap-1">
                       <div className="flex items-center gap-2">
-                        <div className="text-xs font-medium text-muted-foreground">模型</div>
+                        <div className="text-xs font-medium text-muted-foreground">{tr('components.modelAnalysisPanel.model')}</div>
                         <div title={modelSyncDetail || resolveModelSyncStatusText(connection)}>
                           {resolveModelSyncStatusText(connection)}
                         </div>
@@ -1774,7 +1842,7 @@ export default function OAuthManagement() {
                     </div>
                     <div className="grid gap-1">
                       <div className="flex items-center gap-2">
-                        <div className="text-xs font-medium text-muted-foreground">额度</div>
+                        <div className="text-xs font-medium text-muted-foreground">{tr('pages.downstreamKeys.quota')}</div>
                         <div title={quotaSyncDetail || resolveQuotaSyncStatusText(quota)}>
                           {resolveQuotaSyncStatusText(quota)}
                         </div>
@@ -1814,38 +1882,56 @@ export default function OAuthManagement() {
                       type="button"
                       onClick={() => openProxySettingsDrawer(connection)}
                     >
-                      {hasOauthProxySelection(connection) ? '代理设置' : '设置代理'}
+                      <Settings2 className="size-4" />
+                      {hasOauthProxySelection(connection) ? tr('pages.oAuthManagement.actingsettings') : tr('pages.oAuthManagement.settingsacting')}
                     </Button>
                   </div>
                 </TableCell>
               ) : null}
               <TableCell>
-                <div className="flex flex-wrap gap-2">
+                <div className="flex items-center justify-end gap-1">
                   <Button variant="ghost" size="sm"
                     type="button"
                     onClick={() => void openModelsModal(connection)}
                   >
-                    {connection.modelCount} 个模型
+                    <Eye className="size-4" />
+                    {connection.modelCount} {tr('pages.models.models2')}
                   </Button>
                   <Button variant="ghost" size="sm"
                     type="button"
                     onClick={() => handleRefreshQuota(connection.accountId)}
                     disabled={actionLoadingKey === `quota:${connection.accountId}`}
                   >
-                    {actionLoadingKey === `quota:${connection.accountId}` ? '刷新中...' : '刷新额度'}
+                    <RefreshCcw className="size-4" />
+                    {actionLoadingKey === `quota:${connection.accountId}` ? tr('pages.downstreamKeys.refreshzh') : tr('pages.oAuthManagement.refreshquota')}
                   </Button>
                   <Button variant="ghost" size="sm"
                     type="button"
                     onClick={() => openRebindDrawer(connection)}
                   >
-                    重新授权
+                    <RotateCcw className="size-4" />
+                    {tr('pages.oAuthManagement.reauthorize')}
                   </Button>
-                  <Button variant="destructive" size="sm"
+                  <DropdownMenu.Root>
+                    <DropdownMenu.Trigger asChild>
+                      <Button variant="ghost" size="icon" type="button" aria-label={tr('pages.accounts.actions2')}>
+                        <Ellipsis className="size-4" />
+                      </Button>
+                    </DropdownMenu.Trigger>
+                    <DropdownMenu.Content align="end">
+                      <DropdownMenu.Item onSelect={() => openProxySettingsDrawer(connection)}>
+                        <Settings2 className="size-4" />
+                        {hasOauthProxySelection(connection) ? tr('pages.oAuthManagement.actingsettings') : tr('pages.oAuthManagement.settingsacting')}
+                      </DropdownMenu.Item>
+                    </DropdownMenu.Content>
+                  </DropdownMenu.Root>
+                  <Button variant="ghostDestructive" size="sm"
                     type="button"
                     onClick={() => handleDelete(connection.accountId)}
                     disabled={actionLoadingKey === `delete:${connection.accountId}`}
                   >
-                    {actionLoadingKey === `delete:${connection.accountId}` ? '删除中...' : '删除连接'}
+                    <Trash2 className="size-4" />
+                    {actionLoadingKey === `delete:${connection.accountId}` ? tr('components.deleteConfirmModal.deletezh') : tr('pages.oAuthManagement.delete')}
                   </Button>
                 </div>
               </TableCell>
@@ -1853,7 +1939,8 @@ export default function OAuthManagement() {
           );
         })}
       </TableBody>
-    </Table>
+      </Table>
+    </DataTable>
   );
 
   const mobileList = (
@@ -1877,12 +1964,12 @@ export default function OAuthManagement() {
               />
             )}
           >
-            <MobileField label="站点" value={connection.site?.name || '--'} />
-            <MobileField label="邮箱" value={resolveConnectionEmailLabel(connection) || '--'} />
-            <MobileField label="计划 / 项目" value={connection.projectId ? `${connection.planType || '--'} · ${connection.projectId}` : (connection.planType || '--')} />
-            <MobileField label="路由参与" value={resolveRouteParticipationSummary(connection)} />
+            <MobileField label={tr('components.searchModal.sites2')} value={connection.site?.name || '--'} />
+            <MobileField label={tr('pages.oAuthManagement.email')} value={resolveConnectionEmailLabel(connection) || '--'} />
+            <MobileField label={tr('pages.oAuthManagement.planProject')} value={connection.projectId ? `${connection.planType || '--'} · ${connection.projectId}` : (connection.planType || '--')} />
+            <MobileField label={tr('pages.oAuthManagement.routes4')} value={resolveRouteParticipationSummary(connection)} />
             <MobileField
-              label="账号代理"
+              label={tr('pages.oAuthManagement.accountsacting')}
               value={(
                 <div className="grid gap-2">
                   <div className="text-xs text-muted-foreground">{resolveProxyDisplayText(connection)}</div>
@@ -1890,19 +1977,19 @@ export default function OAuthManagement() {
                     type="button"
                     onClick={() => openProxySettingsDrawer(connection)}
                   >
-                    {hasOauthProxySelection(connection) ? '代理设置' : '设置代理'}
+                    {hasOauthProxySelection(connection) ? tr('pages.oAuthManagement.actingsettings') : tr('pages.oAuthManagement.settingsacting')}
                   </Button>
                 </div>
               )}
               stacked
             />
             <MobileField
-              label="运行状态"
+              label={tr('pages.oAuthManagement.status')}
               value={(
                 <div className="grid gap-2 text-sm">
                   <div className="grid gap-1">
                     <div className="flex items-center gap-2">
-                      <div className="text-xs font-medium text-muted-foreground">模型</div>
+                      <div className="text-xs font-medium text-muted-foreground">{tr('components.modelAnalysisPanel.model')}</div>
                       <div>{resolveModelSyncStatusText(connection)}</div>
                     </div>
                     {resolveModelSyncDetail(connection) ? (
@@ -1911,7 +1998,7 @@ export default function OAuthManagement() {
                   </div>
                   <div className="grid gap-1">
                     <div className="flex items-center gap-2">
-                      <div className="text-xs font-medium text-muted-foreground">额度</div>
+                      <div className="text-xs font-medium text-muted-foreground">{tr('pages.downstreamKeys.quota')}</div>
                       <div>{resolveQuotaSyncStatusText(quota)}</div>
                     </div>
                     {resolveQuotaSyncDetail(quota) ? (
@@ -1941,19 +2028,19 @@ export default function OAuthManagement() {
             </div>
             <div className="flex flex-wrap gap-2 pt-3">
               <Button variant="ghost" size="sm" type="button" onClick={() => void openModelsModal(connection)}>
-                {connection.modelCount} 个模型
+                {connection.modelCount} {tr('pages.models.models2')}
               </Button>
               <Button variant="ghost" size="sm" type="button" onClick={() => handleRefreshQuota(connection.accountId)}>
-                刷新额度
+                {tr('pages.oAuthManagement.refreshquota')}
               </Button>
               <Button variant="ghost" size="sm" type="button" onClick={() => openProxySettingsDrawer(connection)}>
-                代理设置
+                {tr('pages.oAuthManagement.actingsettings')}
               </Button>
               <Button variant="ghost" size="sm" type="button" onClick={() => openRebindDrawer(connection)}>
-                重新授权
+                {tr('pages.oAuthManagement.reauthorize')}
               </Button>
               <Button variant="destructive" size="sm" type="button" onClick={() => handleDelete(connection.accountId)}>
-                删除连接
+                {tr('pages.oAuthManagement.delete')}
               </Button>
             </div>
           </MobileCard>
@@ -1963,25 +2050,21 @@ export default function OAuthManagement() {
   );
 
   return (
-    <div className="grid gap-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="grid gap-1">
-          <h2 className="text-2xl font-semibold tracking-tight">OAuth 管理</h2>
-          <div className="text-sm text-muted-foreground">
-            统一管理需要浏览器授权的官方上游连接。OAuth 账号以后只在这里维护，不再和普通连接管理页重复显示。
-          </div>
-        </div>
-        {!isMobile ? (
-          <div className="flex flex-wrap gap-2">
+    <PageShell>
+      <PageHeader
+        title={tr('app.oauth')}
+        description={tr('pages.oAuthManagement.officialOauthAccountsConnectionManagement')}
+        actions={!isMobile ? (
+          <>
             <Button variant="outline" type="button" onClick={openImportModal}>
-              导入 JSON
+              {tr('pages.oAuthManagement.importJson2')}
             </Button>
             <Button type="button" onClick={() => openCreateDrawer()}>
-              新建 OAuth 连接
+              {tr('pages.oAuthManagement.newOauth')}
             </Button>
-          </div>
+          </>
         ) : null}
-      </div>
+      />
 
       {sessionFeedback ? (
         <Card>
@@ -1989,18 +2072,18 @@ export default function OAuthManagement() {
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="font-medium">{sessionFeedback.message}</div>
             <ToneBadge tone={sessionFeedback.tone === 'success' ? 'success' : sessionFeedback.tone === 'error' ? 'danger' : 'info'}>
-              {sessionFeedback.tone === 'success' ? '成功' : sessionFeedback.tone === 'error' ? '失败' : '提示'}
+              {sessionFeedback.tone === 'success' ? tr('pages.checkinLog.success') : sessionFeedback.tone === 'error' ? tr('pages.checkinLog.failed') : tr('pages.accounts.tip')}
             </ToneBadge>
           </div>
           {sessionFeedback.routeUnit ? (
             <div className="flex flex-wrap items-center gap-2 text-sm">
               <ToneBadge tone="-info">{sessionFeedback.routeUnit.name}</ToneBadge>
-              <ToneBadge tone="-muted">{sessionFeedback.routeUnit.memberCount} 个成员</ToneBadge>
+              <ToneBadge tone="-muted">{sessionFeedback.routeUnit.memberCount} {tr('pages.oAuthManagement.members')}</ToneBadge>
               <ToneBadge tone="-muted">{resolveRouteUnitStrategyLabel(sessionFeedback.routeUnit.strategy)}</ToneBadge>
               <div className="text-muted-foreground">
                 {sessionFeedback.routeUnit.action === 'created'
-                  ? '已将选中的 OAuth 账号合并为一个路由池，后续会以单个路由单元参与路由。'
-                  : '该路由池已拆分回单体账号，后续会分别参与路由。'}
+                  ? tr('pages.oAuthManagement.zhOauthAccountsRoutesRoutesRoutes')
+                  : tr('pages.oAuthManagement.routesStandaloneaccountsRoutes')}
               </div>
             </div>
           ) : null}
@@ -2013,7 +2096,7 @@ export default function OAuthManagement() {
         mobileOpen={showMobileFilters}
         onMobileOpen={() => setShowMobileFilters(true)}
         onMobileClose={() => setShowMobileFilters(false)}
-        mobileTitle="OAuth 筛选与操作"
+        mobileTitle={tr('pages.oAuthManagement.oauthFilterActions')}
         mobileContent={mobileFilterContent}
         desktopContent={filterBar}
         mobileTrigger={
@@ -2022,39 +2105,40 @@ export default function OAuthManagement() {
               type="button"
               onClick={() => setShowMobileFilters(true)}
             >
-              筛选与操作
+              {tr('pages.oAuthManagement.filterActions')}
             </Button>
             <Button type="button" onClick={() => openCreateDrawer()}>
-              新建 OAuth 连接
+              {tr('pages.oAuthManagement.newOauth')}
             </Button>
           </div>
         }
       />
 
-      <Card>
-        <CardHeader>
-            <CardTitle>OAuth 连接列表</CardTitle>
-            <CardDescription>
-              已连接 {connections.length} 个 OAuth 账号，当前筛选后显示 {filteredConnections.length} 个。
-            </CardDescription>
-        </CardHeader>
-        <CardContent className="grid gap-3">
+      <div className="grid gap-3">
+        <div className="flex flex-wrap items-end justify-between gap-2">
+          <div className="grid gap-1">
+            <div className="text-sm font-semibold text-foreground">{tr('pages.oAuthManagement.oauth2')}</div>
+            <div className="text-sm text-muted-foreground">
+              {tr('pages.oAuthManagement.connected')} {connections.length} {tr('pages.oAuthManagement.oauthAccountsFilter')} {filteredConnections.length} {tr('pages.oAuthManagement.items')}
+            </div>
+          </div>
+        </div>
 
-        {selectedConnectionIds.length > 0 ? (
+        {isMobile && selectedConnectionIds.length > 0 ? (
           <ResponsiveBatchActionBar isMobile={isMobile} info={`已选 ${selectedConnectionIds.length} 项`}>
             <Button variant="outline"
               type="button"
               onClick={handleRefreshSelected}
               disabled={actionLoadingKey === 'quota:selected'}
             >
-              {actionLoadingKey === 'quota:selected' ? '刷新中...' : '批量刷新额度'}
+              {actionLoadingKey === 'quota:selected' ? tr('pages.downstreamKeys.refreshzh') : tr('pages.oAuthManagement.refreshquota3')}
             </Button>
             {canMergeSelectedIntoRouteUnit ? (
               <Button variant="outline"
                 type="button"
                 onClick={openRouteUnitModal}
               >
-                合并参与路由
+                {tr('pages.oAuthManagement.routes3')}
               </Button>
             ) : null}
             {canSplitSelectedRouteUnit ? (
@@ -2063,7 +2147,7 @@ export default function OAuthManagement() {
                 onClick={handleDeleteSelectedRouteUnit}
                 disabled={actionLoadingKey === 'route-unit:delete'}
               >
-                {actionLoadingKey === 'route-unit:delete' ? '拆分中...' : '拆回单体'}
+                {actionLoadingKey === 'route-unit:delete' ? tr('pages.oAuthManagement.zh3') : tr('pages.oAuthManagement.splitStandalone')}
               </Button>
             ) : null}
             <Button variant="destructive" size="sm"
@@ -2071,29 +2155,28 @@ export default function OAuthManagement() {
               onClick={handleDeleteSelected}
               disabled={actionLoadingKey === 'delete:selected'}
             >
-              {actionLoadingKey === 'delete:selected' ? '删除中...' : '批量删除'}
+              {actionLoadingKey === 'delete:selected' ? tr('components.deleteConfirmModal.deletezh') : tr('pages.accounts.delete2')}
             </Button>
           </ResponsiveBatchActionBar>
         ) : null}
 
         {!loaded ? (
-          <EmptyStateBlock title="加载中..." description="正在加载 OAuth 连接与额度信息。" />
+          <EmptyStateBlock title={tr('pages.oAuthManagement.loading')} description={tr('pages.oAuthManagement.oauthQuotainfo')} />
         ) : filteredConnections.length === 0 ? (
           <EmptyStateBlock
-            title="暂无 OAuth 连接"
-            description="使用右上角“新建 OAuth 连接”接入 Codex、Claude、Gemini CLI 或 Antigravity。"
+            title={tr('pages.oAuthManagement.noneOauth2')}
+            description={tr('pages.oAuthManagement.usageNewOauthCodexClaudeGeminiCli')}
           />
         ) : (
           isMobile ? mobileList : desktopTable
         )}
-        </CardContent>
-      </Card>
+      </div>
 
       <SideDrawer
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
         title={drawerIntent.mode === 'create'
-          ? '新建 OAuth 连接'
+          ? tr('pages.oAuthManagement.newOauth')
           : drawerIntent.mode === 'proxy'
             ? `代理设置 · ${resolveConnectionPrimaryTitle(drawerIntent.account)}`
             : `重新授权 · ${resolveConnectionPrimaryTitle(drawerIntent.account)}`}
@@ -2108,12 +2191,12 @@ export default function OAuthManagement() {
                     value={selectedProviderKey}
                     onChange={(value) => setSelectedProviderKey(String(value || ''))}
                     options={providerOptions}
-                    placeholder="选择 OAuth Provider"
+                    placeholder={tr('pages.oAuthManagement.selectOauthProvider')}
                   />
                 </div>
               ) : (
                 <div className="grid gap-1">
-                  <Label>当前连接</Label>
+                  <Label>{tr('pages.oAuthManagement.currentConnection')}</Label>
                   <div className="font-medium">
                     {resolveConnectionPrimaryTitle(drawerIntent.account)}
                   </div>
@@ -2129,20 +2212,20 @@ export default function OAuthManagement() {
 
               {selectedProvider?.requiresProjectId && drawerIntent.mode === 'create' ? (
                 <div className="grid gap-2">
-                  <Label>Google Cloud Project ID（可选）</Label>
+                  <Label>{tr('pages.oAuthManagement.googleCloudProjectId')}</Label>
                   <Input
                     type="text"
                     value={drawerProjectId}
                     onChange={(event) => setDrawerProjectId(event.target.value)}
-                    placeholder="留空则交给上游自动解析"
+                    placeholder={tr('pages.oAuthManagement.automatic')}
                   />
                 </div>
               ) : null}
 
               <div className="text-sm text-muted-foreground">
                 {drawerIntent.mode === 'proxy'
-                  ? '这里修改的是账号级 OAuth 代理。点击“保存代理”会立即落库并刷新列表；只有“保存并重新授权”才会重新走授权流程。若两项都不勾选，则回退到站点代理配置。'
-                  : '这里的设置会作用于下一次“连接”或“重新授权”。填写代理地址后，本次 OAuth 换 token 和后续生成的账号都会直接带上这份账号级代理配置；若不勾选，则回退到站点代理配置。'}
+                  ? tr('pages.oAuthManagement.accountsOauthActingSaveactingRefreshSaveReauthorize')
+                  : tr('pages.oAuthManagement.settingsReauthorizeActingOauthTokenAccountsAccounts')}
               </div>
 
               <div className="grid gap-3">
@@ -2159,7 +2242,7 @@ export default function OAuthManagement() {
                       }
                     }}
                   />
-                  <span>使用系统级代理</span>
+                  <span>{tr('pages.oAuthManagement.usagesystemActing')}</span>
                 </Label>
                 <Label className="flex items-center gap-2">
                   <Checkbox
@@ -2171,18 +2254,18 @@ export default function OAuthManagement() {
                       if (checked) setOauthSystemProxyEnabled(false);
                     }}
                   />
-                  <span>使用自定义代理</span>
+                  <span>{tr('pages.oAuthManagement.usageActing')}</span>
                 </Label>
               </div>
 
               <div className="grid gap-2">
-                <Label>代理地址</Label>
+                <Label>{tr('pages.oAuthManagement.acting3')}</Label>
                 <Input
                   type="text"
                   value={oauthProxyUrl}
                   data-oauth-setting="proxy-url"
                   onChange={(event) => setOauthProxyUrl(event.target.value)}
-                  placeholder="如 http://127.0.0.1:7890 或 socks5://127.0.0.1:1080"
+                  placeholder={tr('pages.oAuthManagement.http1270017890Socks5')}
                   disabled={!oauthCustomProxyEnabled}
                 />
               </div>
@@ -2197,7 +2280,7 @@ export default function OAuthManagement() {
                       || actionLoadingKey.startsWith('start:')
                     }
                   >
-                    {actionLoadingKey === `save-proxy:${drawerIntent.account.accountId}` ? '保存中...' : '保存代理'}
+                    {actionLoadingKey === `save-proxy:${drawerIntent.account.accountId}` ? tr('pages.accounts.saving') : tr('pages.oAuthManagement.saveacting')}
                   </Button>
                   <Button variant="outline"
                     type="button"
@@ -2209,7 +2292,7 @@ export default function OAuthManagement() {
                       || actionLoadingKey === `save-proxy:${drawerIntent.account.accountId}`
                     }
                   >
-                    {actionLoadingKey.startsWith('start:') ? '启动中...' : '保存并重新授权'}
+                    {actionLoadingKey.startsWith('start:') ? tr('pages.oAuthManagement.zh') : tr('pages.oAuthManagement.saveReauthorize')}
                   </Button>
                 </div>
               ) : (
@@ -2219,7 +2302,7 @@ export default function OAuthManagement() {
                   disabled={!selectedProvider || !selectedProvider.enabled || actionLoadingKey.startsWith('start:')}
                 >
                   {actionLoadingKey.startsWith('start:')
-                    ? '启动中...'
+                    ? tr('pages.oAuthManagement.zh')
                     : drawerIntent.mode === 'rebind'
                       ? `重新授权 ${selectedProvider?.label || ''}`.trim()
                       : `连接 ${selectedProvider?.label || ''}`.trim()}
@@ -2231,46 +2314,46 @@ export default function OAuthManagement() {
           {activeSession ? (
             <Card>
               <CardHeader>
-                <CardTitle>授权指引</CardTitle>
+                <CardTitle>{tr('pages.oAuthManagement.authorizationGuide')}</CardTitle>
               </CardHeader>
               <CardContent className="grid gap-3">
                 <Card>
                   <CardContent className="grid gap-2 p-4">
-                  <div className="text-xs font-medium text-muted-foreground">固定回调地址</div>
+                  <div className="text-xs font-medium text-muted-foreground">{tr('pages.oAuthManagement.fixedCallbackUrl')}</div>
                   {renderCodeBlock(activeSession.instructions.redirectUri)}
                   </CardContent>
                 </Card>
 
                 {renderGuideCard(
-                  '本地部署',
-                  'metapi 和浏览器在同一台机器时，不需要 SSH 隧道。直接点击“连接”，在弹窗里完成授权即可。',
+                  tr('pages.oAuthManagement.localDeployment'),
+                  tr('pages.oAuthManagement.metapiSsh'),
                   <div className="text-sm text-muted-foreground">
-                    如果浏览器能直接访问上面的 localhost 回调地址，授权完成后会自动回到 metapi。
+                    {tr('pages.oAuthManagement.accessLocalhostAutomaticMetapi')}
                   </div>,
                 )}
 
                 {activeSession.instructions.sshTunnelCommand
                   ? renderGuideCard(
-                    '云端部署',
-                    'metapi 部署在 VPS、容器或远程主机时，浏览器访问到的是你自己电脑的 localhost。先在本地开 SSH 隧道，再继续登录。',
+                    tr('pages.oAuthManagement.cloudDeployment'),
+                    tr('pages.oAuthManagement.metapiDeployVpsAccessLocalhostSshSign'),
                     <div className="grid gap-2">
-                      <div className="text-xs font-medium text-muted-foreground">常规 SSH 隧道</div>
+                      <div className="text-xs font-medium text-muted-foreground">{tr('pages.oAuthManagement.ssh')}</div>
                       {renderCodeBlock(activeSession.instructions.sshTunnelCommand)}
                       {activeSession.instructions.sshTunnelKeyCommand ? (
                         <>
-                          <div className="text-xs font-medium text-muted-foreground">SSH Key 隧道</div>
+                          <div className="text-xs font-medium text-muted-foreground">{tr('pages.oAuthManagement.sshKey')}</div>
                           {renderCodeBlock(activeSession.instructions.sshTunnelKeyCommand)}
                         </>
                       ) : null}
                     </div>,
                   )
                   : renderGuideCard(
-                    '云端部署',
-                    '当前没有检测到远程主机地址。如果你实际是云端部署，请用能访问服务器 127.0.0.1 回调端口的 SSH 隧道方式完成授权。',
+                    tr('pages.oAuthManagement.cloudDeployment'),
+                    tr('pages.oAuthManagement.cloudDeploymentAccess127001'),
                   )}
 
                 {renderGuideCard(
-                  '手动回调',
+                  tr('pages.oAuthManagement.manual'),
                   `如果浏览器停在 localhost 错误页，复制浏览器地址栏里的完整 URL，等待 ${Math.max(1, Math.round(activeSession.instructions.manualCallbackDelayMs / 1000))} 秒后粘贴回来。`,
                   manualCallbackVisible ? (
                     <div className="grid gap-3">
@@ -2278,7 +2361,7 @@ export default function OAuthManagement() {
                         className="font-mono"
                         value={manualCallbackUrl}
                         onChange={(event) => setManualCallbackUrl(event.target.value)}
-                        placeholder="粘贴完整的 callback URL，例如 http://localhost:1455/auth/callback?code=..."
+                        placeholder={tr('pages.oAuthManagement.callbackUrlHttpLocalhost1455AuthCallback')}
                         rows={3}
                       />
                       <div className="flex flex-wrap gap-2">
@@ -2287,18 +2370,18 @@ export default function OAuthManagement() {
                           onClick={handleSubmitManualCallback}
                           disabled={manualCallbackSubmitting}
                         >
-                          {manualCallbackSubmitting ? '提交中...' : '提交回调 URL'}
+                          {manualCallbackSubmitting ? tr('pages.oAuthManagement.zh2') : tr('pages.oAuthManagement.url')}
                         </Button>
                         <Button variant="outline"
                           type="button"
                           onClick={() => openOAuthPopup(activeSession.provider, activeSession.authorizationUrl)}
                         >
-                          重新打开授权页
+                          {tr('pages.oAuthManagement.open')}
                         </Button>
                       </div>
                     </div>
                   ) : (
-                    <div className="text-sm text-muted-foreground">手动回调入口将在几秒后可用。</div>
+                    <div className="text-sm text-muted-foreground">{tr('pages.oAuthManagement.manualSecondsAvailable')}</div>
                   ),
                 )}
               </CardContent>
@@ -2309,7 +2392,7 @@ export default function OAuthManagement() {
 
       <OAuthModelsModal
         open={modelsModal.open}
-        title={modelsModal.connection ? `模型列表 · ${resolveConnectionPrimaryTitle(modelsModal.connection)}` : '模型列表'}
+        title={modelsModal.connection ? `模型列表 · ${resolveConnectionPrimaryTitle(modelsModal.connection)}` : tr('pages.oAuthManagement.model')}
         siteName={modelsModal.siteName}
         loading={modelsModal.loading}
         refreshing={modelsModal.refreshing}
@@ -2326,21 +2409,21 @@ export default function OAuthManagement() {
       <CenteredModal
         open={importOpen}
         onClose={closeImportModal}
-        title="导入 OAuth 连接 JSON"
+        title={tr('pages.oAuthManagement.importOauthJson')}
         maxWidth={760}
         footer={(
           <>
             <Button variant="outline" type="button" onClick={closeImportModal}>
-              关闭
+              {tr('pages.accounts.close')}
             </Button>
             <Button type="button" onClick={handleImport} disabled={importing || !importPreviewSummary?.canImport}>
-              {importing ? '添加中...' : '添加'}
+              {importing ? tr('pages.accounts.adding') : tr('pages.oAuthManagement.add')}
             </Button>
           </>
         )}
       >
         <div className="text-sm text-muted-foreground">
-          选择 JSON 后会先识别是否有效，再决定是否添加。每个 JSON 文件只对应一个 OAuth 连接。
+          {tr('pages.oAuthManagement.selectJsonAddJsonOauth')}
         </div>
         <div
           className="grid cursor-pointer gap-3 rounded-md border border-dashed p-6 text-center"
@@ -2360,8 +2443,8 @@ export default function OAuthManagement() {
           />
           {importDrafts.length > 0 ? (
             <>
-              <div className="font-medium">已选择 {importDrafts.length} 份 JSON，点击可重新选择</div>
-              <div className="text-sm text-muted-foreground">支持多选，只会导入其中的 OAuth 账号。</div>
+              <div className="font-medium">{tr('pages.oAuthManagement.selected')} {importDrafts.length} {tr('pages.oAuthManagement.jsonSelect')}</div>
+              <div className="text-sm text-muted-foreground">{tr('pages.oAuthManagement.supportedImportZhOauthAccounts')}</div>
               <div className="grid gap-2 text-left">
                 {importDrafts.map((draft) => (
                   <div key={draft.sourceName} className="rounded-md border p-2 text-sm">
@@ -2376,14 +2459,14 @@ export default function OAuthManagement() {
           ) : (
             <>
               <div className="font-medium">
-                {importDragOver ? '松开即可导入这些 JSON 文件' : '拖拽 OAuth 连接 JSON 到此处'}
+                {importDragOver ? tr('pages.oAuthManagement.importJson') : tr('pages.oAuthManagement.oauthJson')}
               </div>
-              <div className="text-sm text-muted-foreground">或点击选择文件，支持一次多选多个 `.json` 文件</div>
+              <div className="text-sm text-muted-foreground">{tr('pages.oAuthManagement.clickChooseFileSupportedJson')}</div>
             </>
           )}
         </div>
         <div className="text-sm text-muted-foreground">
-          导入后的账号代理可在这里一次性指定；如果当前运行时已配置系统代理，会默认预选“使用系统级代理”。
+          {tr('pages.oAuthManagement.importAccountsactingCurrentlyRunningConfiguredsystemactingDefaultUsagesystem')}
         </div>
         <div className="grid gap-3">
           <Label className="flex items-center gap-2">
@@ -2399,7 +2482,7 @@ export default function OAuthManagement() {
                 }
               }}
             />
-            <span>使用系统级代理</span>
+            <span>{tr('pages.oAuthManagement.usagesystemActing')}</span>
           </Label>
           <Label className="flex items-center gap-2">
             <Checkbox
@@ -2411,32 +2494,33 @@ export default function OAuthManagement() {
                 if (checked) setImportSystemProxyEnabled(false);
               }}
             />
-            <span>使用自定义代理</span>
+            <span>{tr('pages.oAuthManagement.usageActing')}</span>
           </Label>
         </div>
         <div className="grid gap-2">
-          <Label>代理地址</Label>
+          <Label>{tr('pages.oAuthManagement.acting3')}</Label>
           <Input
             type="text"
             value={importProxyUrl}
             data-oauth-import-setting="proxy-url"
             onChange={(event) => setImportProxyUrl(event.target.value)}
-            placeholder="如 http://127.0.0.1:7890 或 socks5://127.0.0.1:1080"
+            placeholder={tr('pages.oAuthManagement.http1270017890Socks5')}
             disabled={!importCustomProxyEnabled}
           />
         </div>
-        <div className="text-sm text-muted-foreground">或者手动粘贴单个 JSON 内容：</div>
-        <Textarea
-          className="font-mono"
+        <div className="text-sm text-muted-foreground">{tr('pages.oAuthManagement.manualJsonContent')}</div>
+        <JsonCodeEditor
           value={importJsonText}
-          onChange={(event) => setImportJsonText(event.target.value)}
-          placeholder='粘贴单个 OAuth 连接 JSON，例如 {"type":"codex","access_token":"...","refresh_token":"...","email":"user@example.com"}'
-          rows={8}
+          onChange={setImportJsonText}
+          placeholder={tr('pages.oAuthManagement.oauthJsonTypeCodexAccessTokenRefresh')}
+          minHeight={260}
+          maxHeight={560}
+          ariaLabel={tr('pages.oAuthManagement.manualJsonContent')}
         />
         {importPreviewSummary ? (
           <Card>
             <CardHeader>
-              <CardTitle>识别结果</CardTitle>
+              <CardTitle>{tr('pages.oAuthManagement.recognitionResult')}</CardTitle>
               <CardDescription>
               {importPreviewSummary.canImport
                 ? `已识别 ${importPreviewSummary.totalCount} 份 JSON，均可添加。`
@@ -2450,25 +2534,25 @@ export default function OAuthManagement() {
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="font-medium">{item.sourceName}</div>
                     <ToneBadge tone={item.valid ? 'success' : 'danger'}>
-                      {item.valid ? '结构有效' : '结构无效'}
+                      {item.valid ? tr('pages.importExport.structureValid') : tr('pages.oAuthManagement.invalid')}
                     </ToneBadge>
                   </div>
                   {item.valid ? (
                     <div className="grid gap-1 text-sm text-muted-foreground">
                       <span>Provider：{item.providerLabel}</span>
-                      {item.email ? <span>邮箱：{item.email}</span> : null}
-                      {item.accountKey ? <span>账号：{item.accountKey}</span> : null}
-                      {item.expiresLabel ? <span>到期：{item.expiresLabel}</span> : null}
-                      <span>{item.disabled ? '状态：导入后禁用' : '状态：导入后启用'}</span>
+                      {item.email ? <span>{tr('pages.oAuthManagement.email2')}{item.email}</span> : null}
+                      {item.accountKey ? <span>{tr('pages.oAuthManagement.accounts')}{item.accountKey}</span> : null}
+                      {item.expiresLabel ? <span>{tr('pages.oAuthManagement.expires')}{item.expiresLabel}</span> : null}
+                      <span>{item.disabled ? tr('pages.oAuthManagement.statusImportDisabled') : tr('pages.oAuthManagement.statusImportEnabled')}</span>
                     </div>
                   ) : (
-                    <div className="text-sm text-destructive">{item.error || 'JSON 结构无效'}</div>
+                    <div className="text-sm text-destructive">{item.error || tr('pages.oAuthManagement.jsonInvalid')}</div>
                   )}
                   </CardContent>
                 </Card>
               ))}
             {!importPreviewSummary.canImport ? (
-              <div className="text-sm text-muted-foreground">请先修正无效 JSON，再点击“添加”。</div>
+              <div className="text-sm text-muted-foreground">{tr('pages.oAuthManagement.invalidJsonAdd')}</div>
             ) : null}
             </CardContent>
           </Card>
@@ -2478,35 +2562,35 @@ export default function OAuthManagement() {
       <CenteredModal
         open={routeUnitModal.open}
         onClose={closeRouteUnitModal}
-        title="创建路由池"
+        title={tr('pages.oAuthManagement.routes')}
         maxWidth={520}
         footer={(
           <>
             <Button variant="outline" type="button" onClick={closeRouteUnitModal}>
-              取消
+              {tr('app.cancel')}
             </Button>
             <Button
               type="button"
               onClick={handleCreateRouteUnit}
               disabled={actionLoadingKey === 'route-unit:create' || !asTrimmedString(routeUnitModal.name)}
             >
-              {actionLoadingKey === 'route-unit:create' ? '创建中...' : '创建路由池'}
+              {actionLoadingKey === 'route-unit:create' ? tr('pages.oAuthManagement.creating') : tr('pages.oAuthManagement.routes')}
             </Button>
           </>
         )}
       >
         <div className="grid gap-2">
-          <Label>路由池名称</Label>
+          <Label>{tr('pages.oAuthManagement.routesName')}</Label>
           <Input
             type="text"
             data-testid="oauth-route-unit-name"
             value={routeUnitModal.name}
             onChange={(event) => setRouteUnitModal((current) => ({ ...current, name: event.target.value }))}
-            placeholder="例如 Codex Pool"
+            placeholder={tr('pages.oAuthManagement.codexPool')}
           />
         </div>
         <div className="grid gap-2">
-          <Label>策略</Label>
+          <Label>{tr('pages.oAuthManagement.strategy')}</Label>
           <ModernSelect
             value={routeUnitModal.strategy}
             onChange={(value) => setRouteUnitModal((current) => ({
@@ -2514,13 +2598,13 @@ export default function OAuthManagement() {
               strategy: String(value || 'round_robin') as OAuthRouteUnitStrategy,
             }))}
             options={[
-              { value: 'round_robin', label: '轮询' },
-              { value: 'stick_until_unavailable', label: '单个用到不可用再切' },
+              { value: 'round_robin', label: tr('pages.oAuthManagement.roundRobin') },
+              { value: 'stick_until_unavailable', label: tr('pages.oAuthManagement.notAvailable') },
             ]}
-            placeholder="选择路由池策略"
+            placeholder={tr('pages.oAuthManagement.selectroutesStrategy')}
           />
         </div>
       </CenteredModal>
-    </div>
+    </PageShell>
   );
 }

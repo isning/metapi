@@ -1,10 +1,11 @@
 import { useState, useMemo } from 'react';
 import { VChart } from '@visactor/react-vchart';
-import { useThemeLabelColor } from '../useThemeLabelColor.js';
+import { useThemeChartPalette, useThemeLabelColor } from '../useThemeLabelColor.js';
 import { Skeleton } from '../ui/skeleton/index.js';
 import EmptyStateBlock from '../EmptyStateBlock.js';
 import { ChartFrame, ChartLegendSwatch, ChartMetricToggle, ChartShell } from './ChartShell.js';
 
+import { tr } from '../../i18n.js';
 interface SiteDistributionData {
   siteName: string;
   platform: string;
@@ -70,8 +71,8 @@ function EmptyState() {
           />
         </svg>
       )}
-      title="暂无站点数据"
-      description="添加站点后将自动展示分布图表"
+      title={tr('components.charts.siteDistributionChart.noSites')}
+      description={tr('components.charts.siteDistributionChart.addSiteAutomatic')}
     />
   );
 }
@@ -79,6 +80,7 @@ function EmptyState() {
 export default function SiteDistributionChart({ data, loading }: SiteDistributionChartProps) {
   const [viewMode, setViewMode] = useState<ViewMode>('balance');
   const labelColor = useThemeLabelColor();
+  const chartPalette = useThemeChartPalette();
 
   const chartData = useMemo(() => {
     if (!data || data.length === 0) return [];
@@ -91,8 +93,6 @@ export default function SiteDistributionChart({ data, loading }: SiteDistributio
   }, [data, viewMode]);
 
   const hasData = chartData.length > 0 && chartData.some((d) => d.value > 0);
-
-  const PIE_COLORS = ['#4f46e5', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6'];
 
   const spec = useMemo(() => {
     if (!hasData) return null;
@@ -122,7 +122,7 @@ export default function SiteDistributionChart({ data, loading }: SiteDistributio
               },
             },
             {
-              key: '占比',
+              key: tr('components.charts.siteDistributionChart.sites'),
               value: (datum: unknown) => {
                 const item = coerceDatumRecord(datum);
                 const pct = safeNumber(item._percent_);
@@ -130,7 +130,7 @@ export default function SiteDistributionChart({ data, loading }: SiteDistributio
               },
             },
             {
-              key: '账户数',
+              key: tr('components.charts.siteDistributionChart.share'),
               value: (datum: unknown) => {
                 const item = coerceDatumRecord(datum);
                 return String(item.accountCount || 0);
@@ -139,11 +139,11 @@ export default function SiteDistributionChart({ data, loading }: SiteDistributio
           ] as any,
         },
       },
-      color: PIE_COLORS,
+      color: chartPalette,
       animation: true,
       background: 'transparent',
     };
-  }, [chartData, hasData, labelColor]);
+  }, [chartData, chartPalette, hasData, labelColor]);
 
   const formatValue = (value: number): string => {
     if (value >= 1000) return `$${value.toFixed(2)}`;
@@ -153,7 +153,7 @@ export default function SiteDistributionChart({ data, loading }: SiteDistributio
 
   return (
     <ChartShell
-      title="站点分布"
+      title={tr('components.charts.siteDistributionChart.sites2')}
       icon={(
           <svg
             className="h-4 w-4"
@@ -181,8 +181,8 @@ export default function SiteDistributionChart({ data, loading }: SiteDistributio
         <ChartMetricToggle
           value={viewMode}
           options={[
-            { key: 'balance', label: '余额分布' },
-            { key: 'spend', label: '消耗分布' },
+            { key: 'balance', label: tr('components.charts.siteDistributionChart.balance') },
+            { key: 'spend', label: tr('components.modelAnalysisPanel.consumptionDistribution') },
           ]}
           onChange={setViewMode}
         />
@@ -198,7 +198,7 @@ export default function SiteDistributionChart({ data, loading }: SiteDistributio
           <div className="mt-2.5 flex flex-wrap gap-x-3.5 gap-y-1.5 px-1">
             {chartData.map((d, idx) => (
               <span key={d.siteName} className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                <ChartLegendSwatch color={PIE_COLORS[idx % PIE_COLORS.length]} />
+                <ChartLegendSwatch color={chartPalette[idx % chartPalette.length] || chartPalette[0] || '#2563eb'} />
                 <span className="max-w-[120px] truncate">{d.siteName}</span>
                 <span className="font-semibold tabular-nums text-foreground">
                   {formatValue(d.value)}

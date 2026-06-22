@@ -1,4 +1,11 @@
 import type { ReactNode } from 'react';
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyIcon,
+  EmptyTitle,
+} from './ui/empty/index.js';
 
 type EmptyStateBlockProps = {
   icon?: ReactNode;
@@ -14,10 +21,12 @@ export default function EmptyStateBlock({
   className = '',
 }: EmptyStateBlockProps) {
   return (
-    <div className={`flex flex-col items-center justify-center gap-2 p-8 text-center ${className}`.trim()}>
-      {icon ? <div className="text-muted-foreground">{icon}</div> : null}
-      <div className="text-sm font-semibold">{title}</div>
-      {description ? <div className="text-sm text-muted-foreground">{description}</div> : null}
-    </div>
+    <Empty className={className}>
+      <EmptyHeader>
+        {icon ? <EmptyIcon>{icon}</EmptyIcon> : null}
+        <EmptyTitle>{title}</EmptyTitle>
+        {description ? <EmptyDescription>{description}</EmptyDescription> : null}
+      </EmptyHeader>
+    </Empty>
   );
 }

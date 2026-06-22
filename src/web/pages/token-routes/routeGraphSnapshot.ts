@@ -11,6 +11,7 @@ import {
 } from './utils.js';
 import { normalizeRouteRoutingStrategyValue } from './routingStrategy.js';
 
+import { tr } from '../../i18n.js';
 export type RouteGraphSnapshotNode = {
   id?: number;
   stableId?: string;
@@ -62,7 +63,7 @@ export type RouteGraphSnapshotMacro = {
       label?: string;
       enabled: boolean;
       priority: number;
-      input: { kind: 'route_ids'; routeIds: number[] };
+      input: { kind: 'route_endpoints'; endpointIds: string[] };
       defaults: {
         enabled: boolean;
         weight: number;
@@ -101,6 +102,7 @@ export type RouteGraphEditorForm = {
     displayIcon: string;
   };
   routingStrategy: RouteRoutingStrategy;
+  visibility: 'public' | 'internal';
   enabled: boolean;
   modelMapping: string;
   advancedOpen: boolean;
@@ -129,6 +131,7 @@ export function routeGraphEditorFormToRoutePayload(form: RouteGraphEditorForm): 
       displayIcon: macro?.config.presentation?.displayIcon ?? displayIcon,
     },
     routingStrategy: normalizeRouteRoutingStrategyValue(macro?.config.policy.strategy || form.routingStrategy),
+    visibility: macro?.visibility || form.visibility,
     enabled: form.enabled,
     modelMapping: form.modelMapping.trim() ? form.modelMapping.trim() : null,
   };
@@ -142,12 +145,12 @@ function parseModelMapping(raw: string | null | undefined): Record<string, strin
   if (!raw || !raw.trim()) return null;
   const parsed = JSON.parse(raw) as unknown;
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error('modelMapping 必须是对象');
+    throw new Error(tr('pages.tokenRoutes.routeGraphSnapshot.modelmapping'));
   }
   const result: Record<string, string> = {};
   for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
     if (typeof value !== 'string') {
-      throw new Error(`modelMapping.${key} 必须是字符串`);
+      throw new Error(tr('pages.tokenRoutes.routeGraphSnapshot.modelMappingValueMustBeString').replace('{key}', key));
     }
     result[key] = value;
   }
@@ -173,6 +176,23 @@ function normalizeRouteIdArray(value: unknown): number[] {
     .filter((routeId) => Number.isFinite(routeId) && routeId > 0)
     .map((routeId) => Math.trunc(routeId));
   return Array.from(new Set(routeIds));
+}
+
+function routeEndpointIdFromRouteId(routeId: number): string {
+  return `route-endpoint:product:route:${Math.trunc(routeId)}`;
+}
+
+function routeIdFromRouteEndpointId(endpointId: unknown): number | null {
+  const match = /^route-endpoint:product:route:(\d+)$/.exec(String(endpointId || ''));
+  if (!match) return null;
+  const routeId = Number(match[1]);
+  return Number.isFinite(routeId) && routeId > 0 ? Math.trunc(routeId) : null;
+}
+
+function normalizeEndpointIdArray(value: unknown): string[] {
+  return Array.from(new Set((Array.isArray(value) ? value : [])
+    .map((endpointId) => String(endpointId || '').trim())
+    .filter(Boolean)));
 }
 
 export function buildCandidateSelectorMacro(input: {
@@ -214,7 +234,7 @@ export function buildCandidateSelectorMacro(input: {
         label: `Route ${routeId}`,
         enabled: true,
         priority: index,
-        input: { kind: 'route_ids', routeIds: [routeId] },
+        input: { kind: 'route_endpoints', endpointIds: [routeEndpointIdFromRouteId(routeId)] },
         defaults: {
           enabled: true,
           weight: 10,
@@ -270,17 +290,18 @@ export function updateCandidateSelectorMacroFromEditor(input: {
         strategy: normalizeRouteRoutingStrategyValue(input.routingStrategy),
       },
       groups: routeIds.map((routeId, index) => {
-        const existingGroup = nextBase.config.groups.find((group) => group.input.routeIds.includes(routeId));
+        const endpointId = routeEndpointIdFromRouteId(routeId);
+        const existingGroup = nextBase.config.groups.find((group) => group.input.endpointIds.includes(endpointId));
         return {
           ...(existingGroup || {
             id: `source:${routeId}`,
             label: `Route ${routeId}`,
             enabled: true,
-            input: { kind: 'route_ids' as const, routeIds: [routeId] },
+            input: { kind: 'route_endpoints' as const, endpointIds: [endpointId] },
             defaults: { enabled: true, weight: 10, priority: index },
           }),
           priority: index,
-          input: { kind: 'route_ids' as const, routeIds: [routeId] },
+          input: { kind: 'route_endpoints' as const, endpointIds: [endpointId] },
           defaults: {
             ...(existingGroup?.defaults || { enabled: true, weight: 10 }),
             priority: index,
@@ -298,9 +319,10 @@ export function updateCandidateSelectorMacroFromEditor(input: {
 function getCandidateSelectorRouteIds(macro: RouteGraphSnapshotMacro): number[] {
   const pairs: Array<{ priority: number; routeId: number }> = [];
   for (const group of macro.config.groups || []) {
-    if (!group.enabled || group.input.kind !== 'route_ids') continue;
-    for (const routeId of group.input.routeIds) {
-      pairs.push({ priority: group.priority, routeId });
+    if (!group.enabled || group.input.kind !== 'route_endpoints') continue;
+    for (const endpointId of group.input.endpointIds) {
+      const routeId = routeIdFromRouteEndpointId(endpointId);
+      if (routeId) pairs.push({ priority: group.priority, routeId });
     }
   }
   return Array.from(new Set(
@@ -328,8 +350,10 @@ function normalizeCandidateSelectorMacro(input: unknown): RouteGraphSnapshotMacr
       enabled: groupRecord.enabled !== false,
       priority: Number.isFinite(Number(groupRecord.priority)) ? Math.trunc(Number(groupRecord.priority)) : index,
       input: {
-        kind: 'route_ids' as const,
-        routeIds: inputRecord.kind === 'route_ids' ? normalizeRouteIdArray(inputRecord.routeIds) : [],
+        kind: 'route_endpoints' as const,
+        endpointIds: inputRecord.kind === 'route_endpoints'
+          ? normalizeEndpointIdArray(inputRecord.endpointIds)
+          : [],
       },
       defaults: {
         enabled: isRecord(groupRecord.defaults) ? groupRecord.defaults.enabled !== false : true,
@@ -337,7 +361,7 @@ function normalizeCandidateSelectorMacro(input: unknown): RouteGraphSnapshotMacr
         priority: isRecord(groupRecord.defaults) && Number.isFinite(Number(groupRecord.defaults.priority)) ? Math.trunc(Number(groupRecord.defaults.priority)) : index,
       },
     };
-  }).filter((group) => group.input.routeIds.length > 0);
+  }).filter((group) => group.input.endpointIds.length > 0);
   if (!displayName || groups.length === 0) return null;
   const policy = isRecord(config.policy) ? config.policy : {};
   const presentation = isRecord(config.presentation) ? config.presentation : {};
@@ -374,14 +398,16 @@ function normalizeCandidateSelectorMacro(input: unknown): RouteGraphSnapshotMacr
 
 export function buildRouteGraphNodeFromRoute(route: RouteSummaryRow): RouteGraphSnapshotNode {
   const displayName = getRouteDisplayName(route);
+  const requestedModelPattern = getRouteRequestedModelPattern(route);
   const routeIds = isRouteBackendReferences(route.backend) ? getRouteBackendRouteIds(route.backend) : [];
+  const visibility = route.visibility === 'internal' ? 'internal' : 'public';
   const macro = routeIds.length > 0 && displayName
     ? buildCandidateSelectorMacro({
       id: route.id,
       stableId: `route:${route.id}:model-group`,
       displayName,
       displayIcon: getRouteDisplayIcon(route),
-      visibility: 'public',
+      visibility,
       enabled: route.enabled,
       routingStrategy: normalizeRouteRoutingStrategyValue(route.routingStrategy),
       routeIds,
@@ -392,11 +418,11 @@ export function buildRouteGraphNodeFromRoute(route: RouteSummaryRow): RouteGraph
     stableId: `route:${route.id}`,
     ...(macro ? { macro } : {}),
     ownership: route.kind === 'zero_channel' || route.readOnly || route.isVirtual ? 'derived' : 'manual',
-    visibility: 'public',
+    visibility,
     enabled: route.enabled,
     match: {
       kind: 'model',
-      requestedModelPattern: getRouteRequestedModelPattern(route),
+      requestedModelPattern,
       ...(displayName ? { displayName } : {}),
     },
     presentation: {
@@ -445,11 +471,11 @@ function normalizeStringOrNull(value: unknown): string | null {
 }
 
 export function validateRouteGraphNodeDraft(input: unknown): RouteGraphValidationResult {
-  if (!isRecord(input)) return { ok: false, message: '节点 JSON 必须是对象' };
+  if (!isRecord(input)) return { ok: false, message: tr('pages.tokenRoutes.routeGraphSnapshot.json') };
 
   const ownership = normalizeOwnership(input.ownership);
   if (ownership !== 'manual') {
-    return { ok: false, message: `只允许编辑 manual 节点，当前 ownership=${ownership}` };
+    return { ok: false, message: tr('pages.tokenRoutes.routeGraphSnapshot.manualOnlyOwnership').replace('{ownership}', ownership) };
   }
 
   const match = isRecord(input.match) ? input.match : {};
@@ -463,9 +489,9 @@ export function validateRouteGraphNodeDraft(input: unknown): RouteGraphValidatio
   if (backendKind === 'routes') {
     const macroDisplayName = macro?.config.surface.entry.match.displayName || null;
     const nextDisplayName = displayName || macroDisplayName;
-    if (!nextDisplayName) return { ok: false, message: 'Model Group 必须提供 presentation.displayName 或 macro.config.surface.entry.match.displayName' };
+    if (!nextDisplayName) return { ok: false, message: tr('pages.tokenRoutes.routeGraphSnapshot.modelGroupPresentationDisplaynameMacroConfigSurface') };
     const sourceRouteIds = macro ? getCandidateSelectorRouteIds(macro) : normalizeRouteIdArray(backendRaw.routeIds);
-    if (sourceRouteIds.length === 0) return { ok: false, message: 'Route backend 节点至少需要一个 routeId' };
+    if (sourceRouteIds.length === 0) return { ok: false, message: tr('pages.tokenRoutes.routeGraphSnapshot.routeBackendRouteid') };
     const nextMacro = macro || buildCandidateSelectorMacro({
       id: typeof input.id === 'number' && Number.isFinite(input.id) ? Math.trunc(input.id) : undefined,
       stableId: normalizeStringOrNull(input.stableId) || undefined,
@@ -497,7 +523,7 @@ export function validateRouteGraphNodeDraft(input: unknown): RouteGraphValidatio
     };
   }
 
-  if (!requestedModelPattern) return { ok: false, message: 'pattern 节点必须提供 match.requestedModelPattern' };
+  if (!requestedModelPattern) return { ok: false, message: tr('pages.tokenRoutes.routeGraphSnapshot.patternMatchRequestedmodelpattern') };
   const patternError = getModelPatternError(requestedModelPattern);
   if (patternError) return { ok: false, message: patternError };
   return {
@@ -536,9 +562,9 @@ function normalizeModelMappingObject(value: Record<string, unknown>): Record<str
 }
 
 export function validateRouteGraphSnapshot(input: unknown): { ok: true; snapshot: RouteGraphSnapshot } | { ok: false; message: string } {
-  if (!isRecord(input)) return { ok: false, message: '导入内容必须是对象' };
-  if (input.version !== 1) return { ok: false, message: '仅支持 version=1 的 RouteGraphSnapshot' };
-  if (!Array.isArray(input.nodes)) return { ok: false, message: 'RouteGraphSnapshot.nodes 必须是数组' };
+  if (!isRecord(input)) return { ok: false, message: tr('pages.tokenRoutes.routeGraphSnapshot.importcontent') };
+  if (input.version !== 1) return { ok: false, message: tr('pages.tokenRoutes.routeGraphSnapshot.supportedVersion1Routegraphsnapshot') };
+  if (!Array.isArray(input.nodes)) return { ok: false, message: tr('pages.tokenRoutes.routeGraphSnapshot.routegraphsnapshotNodes') };
 
   const nodes: RouteGraphSnapshotNode[] = [];
   for (let index = 0; index < input.nodes.length; index += 1) {
@@ -605,6 +631,7 @@ export function routeGraphNodeToEditorForm(node: RouteGraphNodeDraft): RouteGrap
       displayIcon: normalizeRouteDisplayIconValue(macro?.config.presentation?.displayIcon ?? node.presentation?.displayIcon),
     },
     routingStrategy: normalizeRouteRoutingStrategyValue(macro?.config.policy.strategy || node.routingStrategy),
+    visibility: macro?.visibility || node.visibility,
     enabled: node.enabled !== false,
     modelMapping: stringifyModelMapping(node.modelMapping) || '',
     advancedOpen: node.backend.kind === 'channels',

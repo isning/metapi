@@ -37,6 +37,68 @@ describe('routeGraph port-native source', () => {
       expect.objectContaining({ sourceNodeId: 'pool:legacy:11', sourcePortId: 'route.out', targetNodeId: 'dispatcher:legacy:11', targetPortId: 'route.in', kind: 'route_flow' }),
     ]));
     expect(compileRouteGraphSource(source).ok).toBe(true);
+    const compiled = compileRouteGraphSource(source);
+    expect(compiled.compiled.programBundle).toMatchObject({
+      version: 3,
+      matcher: {
+        exact: {
+          'gpt-4o': expect.objectContaining({
+            programId: 'program:entry:legacy:11',
+            entryNodeId: 'entry:legacy:11',
+            publicModelName: 'gpt-4o',
+            rootEndpointId: 'route-endpoint:product:route:11',
+          }),
+        },
+        normalizedExact: {
+          'gpt-4o': expect.objectContaining({
+            programId: 'program:entry:legacy:11',
+          }),
+        },
+      },
+      endpointCatalog: {
+        productToProgram: {
+          'route-endpoint:product:route:11': 'program:entry:legacy:11',
+        },
+        byId: {
+          'route-endpoint:product:route:11': expect.objectContaining({
+            endpointKind: 'route_product',
+            exposure: 'public',
+            routeId: 11,
+          }),
+        },
+      },
+    });
+    expect(compiled.compiled.programBundle.programs).toEqual([
+      expect.objectContaining({
+        id: 'program:entry:legacy:11',
+        entryNodeId: 'entry:legacy:11',
+        publicModelName: 'gpt-4o',
+        rootEndpointId: 'route-endpoint:product:route:11',
+        startOpId: 'program:entry:legacy:11:op:dispatcher:legacy:11:dispatch-route',
+        ops: expect.arrayContaining([
+          expect.objectContaining({
+            id: 'program:entry:legacy:11:op:dispatcher:legacy:11:dispatch-route',
+            op: 'dispatch',
+            mode: 'route',
+            nodeId: 'dispatcher:legacy:11',
+            candidates: [
+              expect.objectContaining({
+                nodeId: 'pool:legacy:11',
+                endpointId: 'route-endpoint:product:route:11',
+                targetOpId: 'program:entry:legacy:11:op:pool:legacy:11:select-supply',
+              }),
+            ],
+          }),
+          expect.objectContaining({
+            id: 'program:entry:legacy:11:op:pool:legacy:11:select-supply',
+            op: 'select_supply',
+            endpointId: 'route-endpoint:product:route:11',
+            nodeId: 'pool:legacy:11',
+            routeId: 11,
+          }),
+        ]),
+      }),
+    ]);
   });
 
   it('builds legacy route groups as Model Group macros without route_ref nodes', () => {
@@ -64,7 +126,11 @@ describe('routeGraph port-native source', () => {
         id: 'route:21:model-group',
         kind: 'candidate_selector',
         config: expect.objectContaining({
-          groups: [expect.objectContaining({ input: { kind: 'route_ids', routeIds: [11] } })],
+          groups: [
+            expect.objectContaining({
+              input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:product:route:11'] },
+            }),
+          ],
         }),
       }),
     ]));
@@ -72,11 +138,168 @@ describe('routeGraph port-native source', () => {
     expect(result.ok).toBe(true);
     expect(result.primitiveSource.nodes).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 'macro:route:21:model-group:dispatcher', type: 'dispatcher', mode: 'route', ownership: 'derived' }),
-      expect.objectContaining({ id: 'macro:route:21:model-group:candidate:source:11:11', type: 'model_endpoint', ownership: 'derived' }),
+      expect.objectContaining({ id: 'route-endpoint:product:route:11', type: 'route_endpoint', endpointKind: 'route_product' }),
     ]));
     expect(result.primitiveSource.edges).toEqual(expect.arrayContaining([
-      expect.objectContaining({ sourceNodeId: 'macro:route:21:model-group:candidate:source:11:11', sourcePortId: 'route.out', targetNodeId: 'macro:route:21:model-group:dispatcher', targetPortId: 'route.in', kind: 'route_flow' }),
+      expect.objectContaining({ sourceNodeId: 'route-endpoint:product:route:11', sourcePortId: 'route.out', targetNodeId: 'macro:route:21:model-group:dispatcher', targetPortId: 'route.in', kind: 'route_flow' }),
     ]));
+  });
+
+  it('groups automatic exact-model supplies behind one public route product per canonical model', () => {
+    const source = buildRouteGraphSourceFromLegacyRoutes([
+      {
+        id: 11,
+        enabled: true,
+        displayName: 'GLM-5.1',
+        match: { kind: 'model', requestedModelPattern: 'GLM-5.1', displayName: 'GLM-5.1', routeId: 11 },
+        backend: { kind: 'channels' },
+        ownership: 'auto_generated',
+        targets: [{ channelId: '11', model: 'GLM-5.1', accountId: 1, tokenId: 1, weight: 10 }],
+      },
+      {
+        id: 22,
+        enabled: true,
+        displayName: 'glm-5.1',
+        match: { kind: 'model', requestedModelPattern: 'glm-5.1', displayName: 'glm-5.1', routeId: 22 },
+        backend: { kind: 'channels' },
+        ownership: 'auto_generated',
+        targets: [{ channelId: '22', model: 'glm-5.1', accountId: 1, tokenId: 2, weight: 10 }],
+      },
+    ]);
+
+    expect(source.nodes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'route-endpoint:supply:route:11', type: 'route_endpoint', endpointKind: 'supply', exposure: 'none' }),
+      expect.objectContaining({ id: 'route-endpoint:supply:route:22', type: 'route_endpoint', endpointKind: 'supply', exposure: 'none' }),
+      expect.objectContaining({
+        id: 'route-endpoint:product:auto-model:glm-5.1',
+        type: 'route_endpoint',
+        endpointKind: 'route_product',
+        exposure: 'public',
+        backend: { kind: 'routes', routeIds: [11, 22] },
+      }),
+    ]));
+    expect(source.macros).toEqual([
+      expect.objectContaining({
+        id: 'auto-model:glm-5.1',
+        ownership: 'auto_generated',
+        config: expect.objectContaining({
+          groups: [
+            expect.objectContaining({ input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:supply:route:11'] } }),
+            expect.objectContaining({ input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:supply:route:22'] } }),
+          ],
+        }),
+      }),
+    ]);
+    expect(source.edges).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        sourceNodeId: 'route-endpoint:supply:route:11',
+        sourcePortId: 'route.out',
+        targetNodeId: 'macro:auto-model:glm-5.1',
+        targetPortId: 'candidates.in',
+        kind: 'route_flow',
+      }),
+      expect.objectContaining({
+        sourceNodeId: 'route-endpoint:supply:route:22',
+        sourcePortId: 'route.out',
+        targetNodeId: 'macro:auto-model:glm-5.1',
+        targetPortId: 'candidates.in',
+        kind: 'route_flow',
+      }),
+    ]));
+
+    const result = compileRouteGraphSource(source);
+    expect(result.ok).toBe(true);
+    expect(result.compiled.publicModels).toEqual([
+      { nodeId: 'macro:auto-model:glm-5.1:entry', model: 'GLM-5.1' },
+    ]);
+    expect(result.compiled.routeEndpoints.filter((endpoint) => endpoint.publicModelName.toLowerCase() === 'glm-5.1')).toHaveLength(1);
+    expect(result.compiled.programBundle.matcher.exact['GLM-5.1']).toEqual(expect.objectContaining({
+      programId: 'program:macro:auto-model:glm-5.1:entry',
+      rootEndpointId: 'route-endpoint:product:auto-model:glm-5.1',
+    }));
+    expect(result.compiled.programBundle.endpointCatalog.productToProgram).toMatchObject({
+      'route-endpoint:product:auto-model:glm-5.1': 'program:macro:auto-model:glm-5.1:entry',
+    });
+    expect(result.compiled.programBundle.endpointCatalog.supplyTargets['route-endpoint:supply:route:11']).toEqual([
+      expect.objectContaining({
+        endpointId: 'route-endpoint:supply:route:11',
+        nodeId: 'pool:legacy:11',
+        channelId: '11',
+        model: 'GLM-5.1',
+        routeId: 11,
+      }),
+    ]);
+    expect(result.primitiveSource.nodes.some((node) => node.id.startsWith('macro:auto-model:glm-5.1:candidate:') && node.type === 'model_endpoint')).toBe(false);
+    expect(result.primitiveSource.edges).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        sourceNodeId: 'route-endpoint:supply:route:11',
+        targetNodeId: 'macro:auto-model:glm-5.1:dispatcher',
+        targetPortId: 'route.in',
+        metadata: expect.objectContaining({
+          candidate: expect.objectContaining({ endpointKind: 'supply' }),
+        }),
+      }),
+    ]));
+    expect(result.compiled.programBundle.programs[0].ops).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'program:macro:auto-model:glm-5.1:entry:op:macro:auto-model:glm-5.1:dispatcher:dispatch-route',
+        op: 'dispatch',
+        candidates: expect.arrayContaining([
+          expect.objectContaining({
+            nodeId: 'route-endpoint:supply:route:11',
+            endpointId: 'route-endpoint:supply:route:11',
+            targetOpId: 'program:macro:auto-model:glm-5.1:entry:op:route-endpoint:supply:route:11:select-supply',
+          }),
+        ]),
+      }),
+      expect.objectContaining({
+        id: 'program:macro:auto-model:glm-5.1:entry:op:route-endpoint:supply:route:11:select-supply',
+        op: 'select_supply',
+        endpointId: 'route-endpoint:supply:route:11',
+        nodeId: 'route-endpoint:supply:route:11',
+        routeId: 11,
+        targets: expect.arrayContaining([
+          expect.objectContaining({ nodeId: 'pool:legacy:11', channelId: '11', model: 'GLM-5.1' }),
+        ]),
+      }),
+    ]));
+    expect(result.compiled.programBundle.debug.generatedByMacro['auto-model:glm-5.1'].nodeIds).toEqual(expect.arrayContaining([
+      'macro:auto-model:glm-5.1:entry',
+      'macro:auto-model:glm-5.1:dispatcher',
+    ]));
+  });
+
+  it('groups automatic exact-model supplies with colon model names without duplicate primitive ids', () => {
+    const source = buildRouteGraphSourceFromLegacyRoutes([
+      {
+        id: 3392,
+        enabled: true,
+        displayName: 'deepseek-v4-flash:free',
+        match: { kind: 'model', requestedModelPattern: 'deepseek-v4-flash:free', displayName: 'deepseek-v4-flash:free', routeId: 3392 },
+        backend: { kind: 'channels' },
+        ownership: 'auto_generated',
+        targets: [{ channelId: '3392', model: 'deepseek-v4-flash:free', accountId: 1, tokenId: 1, weight: 10 }],
+      },
+      {
+        id: 3393,
+        enabled: true,
+        displayName: 'DeepSeek-V4-Flash:Free',
+        match: { kind: 'model', requestedModelPattern: 'DeepSeek-V4-Flash:Free', displayName: 'DeepSeek-V4-Flash:Free', routeId: 3393 },
+        backend: { kind: 'channels' },
+        ownership: 'auto_generated',
+        targets: [{ channelId: '3393', model: 'DeepSeek-V4-Flash:Free', accountId: 1, tokenId: 2, weight: 10 }],
+      },
+    ]);
+
+    expect(source.nodes.filter((node) => node.id === 'route-endpoint:product:auto-model:deepseek-v4-flash:free')).toHaveLength(1);
+    expect(source.macros.filter((macro) => macro.id === 'auto-model:deepseek-v4-flash:free')).toHaveLength(1);
+
+    const result = compileRouteGraphSource(source);
+    expect(result.diagnostics.filter((diagnostic) => diagnostic.code === 'node.duplicate_id')).toEqual([]);
+    expect(result.ok).toBe(true);
+    expect(result.compiled.publicModels).toEqual([
+      { nodeId: 'macro:auto-model:deepseek-v4-flash:free:entry', model: 'deepseek-v4-flash:free' },
+    ]);
   });
 
   it('exposes clear default labels for candidate selector macro ports', () => {
@@ -102,6 +325,7 @@ describe('routeGraph port-native source', () => {
 
     expect(getRouteGraphMacroPorts(macro).map((port) => [port.id, port.label])).toEqual([
       ['bidirect.in', 'incoming flow'],
+      ['candidates.in', 'candidate inputs'],
       ['route.out', 'candidate targets'],
     ]);
   });
@@ -137,6 +361,7 @@ describe('routeGraph port-native source', () => {
     });
     expect(getRouteGraphMacroPorts(source.macros[0])).toEqual([
       expect.objectContaining({ id: 'bidirect.in', label: 'incoming flow', direction: 'input', kind: 'bidirect', multiple: true }),
+      expect.objectContaining({ id: 'candidates.in', label: 'candidate inputs', direction: 'input', kind: 'route', multiple: true, collection: { type: 'set', min: 1 } }),
       expect.objectContaining({ id: 'route.out', label: 'candidate targets', direction: 'output', kind: 'route', multiple: true, collection: { type: 'set', min: 1 } }),
     ]);
   });
@@ -204,6 +429,7 @@ describe('routeGraph port-native source', () => {
   it('exposes stable default ports for every primitive node type', () => {
     const nodes = [
       { id: 'entry:ports', type: 'entry' },
+      { id: 'route-endpoint:ports', type: 'route_endpoint' },
       { id: 'filter:ports', type: 'filter' },
       { id: 'dispatcher:ports', type: 'dispatcher', mode: 'route' },
       { id: 'endpoint:ports', type: 'model_endpoint' },
@@ -224,8 +450,11 @@ describe('routeGraph port-native source', () => {
       })),
     ]))).toEqual({
       entry: [
-        { id: 'bidirect.in', label: 'reuse input', direction: 'input', kind: 'bidirect', enabled: true, collection: undefined, required: undefined, multiple: undefined },
         { id: 'bidirect.out', label: 'matched flow', direction: 'output', kind: 'bidirect', enabled: true, collection: undefined, required: undefined, multiple: undefined },
+      ],
+      route_endpoint: [
+        { id: 'route.out', label: 'route product', direction: 'output', kind: 'route', enabled: true, collection: undefined, required: undefined, multiple: undefined },
+        { id: 'bidirect.in', label: 'invoke route', direction: 'input', kind: 'bidirect', enabled: true, collection: undefined, required: undefined, multiple: true },
       ],
       filter: [
         { id: 'request.in', label: 'before mutation', direction: 'input', kind: 'request', enabled: true, collection: undefined, required: undefined, multiple: undefined },
@@ -510,6 +739,25 @@ describe('routeGraph port-native source', () => {
 
     expect(result.ok).toBe(false);
     expect(result.diagnostics.map((item) => item.code)).toContain('public_model.duplicate');
+  });
+
+  it('allows generated macro and primitive entries for the same public route', () => {
+    const source = buildRouteGraphSourceFromLegacyRoutes([
+      {
+        id: 1,
+        enabled: true,
+        displayName: 'same-route-public',
+        match: { kind: 'model', requestedModelPattern: 'same-route-public', displayName: 'same-route-public', routeId: 1 },
+        backend: { kind: 'channels' },
+        ownership: 'auto_generated',
+        targets: [{ channelId: '1', model: 'same-route-public', accountId: 1, tokenId: 1, weight: 10 }],
+      },
+    ]);
+
+    const result = compileRouteGraphSource(source);
+
+    expect(result.ok).toBe(true);
+    expect(result.diagnostics.map((item) => item.code)).not.toContain('public_model.duplicate');
   });
 
   it('detects active graph cycles before runtime dispatch', () => {
@@ -907,7 +1155,7 @@ describe('routeGraph port-native source', () => {
                 id: 'p0',
                 enabled: true,
                 priority: 0,
-                input: { kind: 'route_ids', routeIds: [11] },
+                input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:product:route:11'] },
                 defaults: { weight: 10 },
               },
             ],
@@ -921,12 +1169,12 @@ describe('routeGraph port-native source', () => {
     expect(result.primitiveSource.nodes).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 'macro:model-group:public:entry', type: 'entry', visibility: 'public', ownership: 'derived' }),
       expect.objectContaining({ id: 'macro:model-group:public:dispatcher', type: 'dispatcher', mode: 'route', ownership: 'derived' }),
-      expect.objectContaining({ id: 'macro:model-group:public:candidate:p0:11', type: 'model_endpoint', ownership: 'derived' }),
+      expect.objectContaining({ id: 'route-endpoint:product:route:11', type: 'route_endpoint', endpointKind: 'route_product' }),
     ]));
     expect(result.primitiveSource.edges).toEqual(expect.arrayContaining([
       expect.objectContaining({ sourceNodeId: 'macro:model-group:public:entry', targetNodeId: 'macro:model-group:public:dispatcher', kind: 'bidirect_flow' }),
       expect.objectContaining({
-        sourceNodeId: 'macro:model-group:public:candidate:p0:11',
+        sourceNodeId: 'route-endpoint:product:route:11',
         targetNodeId: 'macro:model-group:public:dispatcher',
         kind: 'route_flow',
         metadata: expect.objectContaining({
@@ -985,11 +1233,7 @@ describe('routeGraph port-native source', () => {
           ownership: 'manual',
           config: {
             surface: {
-              entry: {
-                kind: 'external',
-                visibility: 'internal',
-                match: { displayName: 'embedded-reuse' },
-              },
+              entry: { kind: 'embedded', input: 'bidirect' },
               output: 'route',
               ports: [
                 { id: 'reuse.in', label: 'reuse flow', direction: 'input', kind: 'bidirect', accepts: ['bidirect'], multiple: true },
@@ -998,7 +1242,7 @@ describe('routeGraph port-native source', () => {
             },
             policy: { strategy: 'priority_order' },
             groups: [
-              { id: 'p0', enabled: true, priority: 0, input: { kind: 'route_ids', routeIds: [11] } },
+              { id: 'p0', enabled: true, priority: 0, input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:product:route:11'] } },
             ],
           },
         },
@@ -1018,7 +1262,7 @@ describe('routeGraph port-native source', () => {
       expect.objectContaining({
         id: 'macro-semantic:entry-to-macro:bidirect-in',
         sourceNodeId: 'entry:reuse',
-        targetNodeId: 'macro:model-group:reuse:entry',
+        targetNodeId: 'macro:model-group:reuse:dispatcher',
         targetPortId: 'bidirect.in',
         kind: 'bidirect_flow',
       }),
@@ -1089,11 +1333,7 @@ describe('routeGraph port-native source', () => {
           ownership: 'manual',
           config: {
             surface: {
-              entry: {
-                kind: 'external',
-                visibility: 'internal',
-                match: { displayName: 'embedded-reuse' },
-              },
+              entry: { kind: 'embedded', input: 'bidirect' },
               output: 'route',
               ports: [
                 { id: 'reuse.in', label: 'reuse flow', direction: 'input', kind: 'bidirect', accepts: ['bidirect'], multiple: true },
@@ -1102,7 +1342,7 @@ describe('routeGraph port-native source', () => {
             },
             policy: { strategy: 'priority_order' },
             groups: [
-              { id: 'p0', enabled: true, priority: 0, input: { kind: 'route_ids', routeIds: [11] } },
+              { id: 'p0', enabled: true, priority: 0, input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:product:route:11'] } },
             ],
           },
         },
@@ -1117,8 +1357,8 @@ describe('routeGraph port-native source', () => {
     }));
     expect(result.primitiveSource.edges).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        id: 'macro-semantic:macro-to-dispatcher:route-out:macro:model-group:reuse:candidate:p0:11',
-        sourceNodeId: 'macro:model-group:reuse:candidate:p0:11',
+        id: 'macro-semantic:macro-to-dispatcher:route-out:route-endpoint:product:route:11',
+        sourceNodeId: 'route-endpoint:product:route:11',
         sourcePortId: 'route.out',
         targetNodeId: 'dispatcher:reuse',
         targetPortId: 'route.in',
@@ -1127,7 +1367,194 @@ describe('routeGraph port-native source', () => {
     ]));
   });
 
-  it('lowers external internal candidate_selector entries without exposing public models', () => {
+  it('lowers route endpoint edges into candidate selector macro candidate inputs', () => {
+    const source = buildRouteGraphSourceFromLegacyRoutes([
+      {
+        id: 11,
+        enabled: true,
+        displayName: 'source-model',
+        match: { kind: 'model', requestedModelPattern: 'source-model', displayName: 'source-model', routeId: 11 },
+        backend: { kind: 'channels' },
+        ownership: 'auto_generated',
+        targets: [{ channelId: '11', model: 'source-model', accountId: 1, tokenId: 1, weight: 10 }],
+      },
+    ]);
+
+    const result = compileRouteGraphSource({
+      ...source,
+      edges: [
+        ...source.edges,
+        {
+          id: 'supply-to-macro-candidates',
+          sourceNodeId: 'route-endpoint:supply:route:11',
+          sourcePortId: 'route.out',
+          targetNodeId: 'macro:auto-model:source-model',
+          targetPortId: 'candidates.in',
+          kind: 'route_flow',
+          ownership: 'auto_generated',
+          metadata: { reason: 'auto candidate binding' },
+        },
+      ],
+    });
+
+    expect(result.ok).toBe(true);
+    expect(getRouteGraphMacroPort(result.source.macros[0], 'candidates.in')).toEqual(expect.objectContaining({
+      id: 'candidates.in',
+      kind: 'route',
+      direction: 'input',
+    }));
+    expect(result.primitiveSource.edges).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'macro-semantic:supply-to-macro-candidates:candidate-in',
+        sourceNodeId: 'route-endpoint:supply:route:11',
+        sourcePortId: 'route.out',
+        targetNodeId: 'macro:auto-model:source-model:dispatcher',
+        targetPortId: 'route.in',
+        kind: 'route_flow',
+        ownership: 'derived',
+        metadata: expect.objectContaining({
+          reason: 'auto candidate binding',
+          provenance: expect.objectContaining({
+            source: 'macro_semantic_edge',
+            semanticEdgeId: 'supply-to-macro-candidates',
+            macroId: 'auto-model:source-model',
+            role: 'candidate_edge',
+          }),
+        }),
+      }),
+    ]));
+  });
+
+  it('lowers candidate input edges when the macro id already has a macro prefix', () => {
+    const source = buildRouteGraphSourceFromLegacyRoutes([
+      {
+        id: 11,
+        enabled: true,
+        displayName: 'model-example',
+        match: { kind: 'model', requestedModelPattern: 'model-example', displayName: 'model-example', routeId: 11 },
+        backend: { kind: 'channels' },
+        ownership: 'auto_generated',
+        targets: [{ channelId: '11', model: 'model-example', accountId: 1, tokenId: 1, weight: 10 }],
+      },
+    ]);
+
+    const result = compileRouteGraphSource({
+      ...source,
+      macros: [{ ...source.macros[0], id: 'macro:auto-model:model-example' }],
+      edges: [{
+        id: 'supply-to-prefixed-macro-candidates',
+        sourceNodeId: 'route-endpoint:supply:route:11',
+        sourcePortId: 'route.out',
+        targetNodeId: 'macro:auto-model:model-example',
+        targetPortId: 'candidates.in',
+        kind: 'route_flow',
+        ownership: 'auto_generated',
+      }],
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.diagnostics.map((diagnostic) => diagnostic.message).join('\n')).not.toContain('Semantic macro target port candidates.in is not supported');
+    expect(result.primitiveSource.edges).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'macro-semantic:supply-to-prefixed-macro-candidates:candidate-in',
+        sourceNodeId: 'route-endpoint:supply:route:11',
+        sourcePortId: 'route.out',
+        targetNodeId: 'macro:macro:auto-model:model-example:dispatcher',
+        targetPortId: 'route.in',
+        kind: 'route_flow',
+      }),
+    ]));
+  });
+
+  it('applies candidate selector endpoint overrides without editing generated candidate edges', () => {
+    const source = buildRouteGraphSourceFromLegacyRoutes([
+      {
+        id: 11,
+        enabled: true,
+        displayName: 'GLM-5.1',
+        match: { kind: 'model', requestedModelPattern: 'GLM-5.1', displayName: 'GLM-5.1', routeId: 11 },
+        backend: { kind: 'channels' },
+        ownership: 'auto_generated',
+        targets: [{ channelId: '11', model: 'GLM-5.1', accountId: 1, tokenId: 1, weight: 10 }],
+      },
+      {
+        id: 22,
+        enabled: true,
+        displayName: 'glm-5.1',
+        match: { kind: 'model', requestedModelPattern: 'glm-5.1', displayName: 'glm-5.1', routeId: 22 },
+        backend: { kind: 'channels' },
+        ownership: 'auto_generated',
+        targets: [{ channelId: '22', model: 'glm-5.1', accountId: 1, tokenId: 2, weight: 10 }],
+      },
+    ]);
+    const macro = source.macros[0];
+    const result = compileRouteGraphSource({
+      ...source,
+      macros: [
+        {
+          ...macro,
+          config: {
+            ...macro.config,
+            candidateOverrides: {
+              bySupplyEndpointId: {
+                'route-endpoint:supply:route:11': { weight: 3, priority: 7, enabled: false },
+                'route-endpoint:supply:route:22': { excluded: true },
+              },
+            },
+          },
+        },
+      ],
+    });
+
+    expect(result.ok).toBe(true);
+    const dispatch = result.compiled.programBundle.programs[0].ops.find((op) => op.op === 'dispatch');
+    expect(dispatch?.candidates).toEqual([
+      expect.objectContaining({
+        nodeId: 'route-endpoint:supply:route:11',
+        endpointId: 'route-endpoint:supply:route:11',
+        enabled: false,
+        weight: 3,
+        priority: 7,
+        metadata: expect.objectContaining({
+          candidate: expect.objectContaining({
+            override: { weight: 3, priority: 7, enabled: false },
+          }),
+        }),
+      }),
+    ]);
+    expect(result.primitiveSource.edges.some((edge) => edge.sourceNodeId === 'route-endpoint:supply:route:22' && edge.targetNodeId === 'macro:auto-model:glm-5.1:dispatcher')).toBe(false);
+  });
+
+  it('ignores semantic candidate edges that target a disabled macro', () => {
+    const source = buildRouteGraphSourceFromLegacyRoutes([
+      {
+        id: 11,
+        enabled: false,
+        displayName: 'disabled-model',
+        match: { kind: 'model', requestedModelPattern: 'disabled-model', displayName: 'disabled-model', routeId: 11 },
+        backend: { kind: 'channels' },
+        ownership: 'auto_generated',
+        targets: [{ channelId: '11', model: 'disabled-model', accountId: 1, tokenId: 1, weight: 10 }],
+      },
+    ]);
+
+    const result = compileRouteGraphSource({
+      ...source,
+      edges: [{
+        id: 'supply-to-disabled-macro-candidates',
+        sourceNodeId: 'route-endpoint:supply:route:11',
+        sourcePortId: 'route.out',
+        targetNodeId: 'macro:auto-model:disabled-model',
+        targetPortId: 'candidates.in',
+        kind: 'route_flow',
+        ownership: 'auto_generated',
+      }],
+    });
+
+    expect(result.diagnostics.map((diagnostic) => diagnostic.message).join('\n')).not.toContain('Semantic macro target port candidates.in is not supported');
+  });
+
+  it('lowers embedded internal candidate_selector surfaces without exposing public models', () => {
     const source = buildRouteGraphSourceFromLegacyRoutes([
       {
         id: 11,
@@ -1150,16 +1577,12 @@ describe('routeGraph port-native source', () => {
           ownership: 'manual',
           config: {
             surface: {
-              entry: {
-                kind: 'external',
-                visibility: 'internal',
-                match: { displayName: 'internal-group' },
-              },
+              entry: { kind: 'embedded', input: 'bidirect' },
               output: 'route',
             },
             policy: { strategy: 'priority_order' },
             groups: [
-              { id: 'p0', enabled: true, priority: 0, input: { kind: 'route_ids', routeIds: [11] } },
+              { id: 'p0', enabled: true, priority: 0, input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:product:route:11'] } },
             ],
           },
         },
@@ -1167,9 +1590,7 @@ describe('routeGraph port-native source', () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(result.primitiveSource.nodes).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 'macro:model-group:internal:entry', type: 'entry', visibility: 'internal' }),
-    ]));
+    expect(result.primitiveSource.nodes.some((node) => node.id === 'macro:model-group:internal:entry')).toBe(false);
     expect(result.compiled.publicModels.some((item) => item.model === 'internal-group')).toBe(false);
   });
 
@@ -1771,11 +2192,7 @@ describe('routeGraph port-native source', () => {
           ownership: 'manual',
           config: {
             surface: {
-              entry: {
-                kind: 'external',
-                visibility: 'internal',
-                match: { displayName: 'embedded-flow' },
-              },
+              entry: { kind: 'embedded', input: 'bidirect' },
               output: 'bidirect',
               ports: [
                 { id: 'bidirect.in', label: 'incoming flow', direction: 'input', kind: 'bidirect', accepts: ['bidirect'], multiple: true },
@@ -1798,7 +2215,7 @@ describe('routeGraph port-native source', () => {
     expect(result.primitiveSource.edges).toEqual(expect.arrayContaining([
       expect.objectContaining({
         id: 'macro-semantic:entry-to-macro:bidirect-in',
-        targetNodeId: 'macro:model-group:embedded-flow:entry',
+        targetNodeId: 'macro:model-group:embedded-flow:dispatcher',
         targetPortId: 'bidirect.in',
       }),
       expect.objectContaining({
@@ -1926,6 +2343,7 @@ describe('routeGraph port-native source', () => {
     });
     expect(getRouteGraphMacroPorts(macroSource.macros[0]).map((port) => [port.id, port.kind, port.direction])).toEqual([
       ['request.in', 'request', 'input'],
+      ['candidates.in', 'route', 'input'],
       ['route.out', 'route', 'output'],
     ]);
 
@@ -1995,7 +2413,7 @@ describe('routeGraph port-native source', () => {
           id: 'input-as-source',
           sourceNodeId: 'dispatcher:direction',
           sourcePortId: 'bidirect.in',
-          targetNodeId: 'entry:direction',
+          targetNodeId: 'dispatcher:direction',
           targetPortId: 'bidirect.in',
           kind: 'bidirect_flow',
           ownership: 'manual',
@@ -2121,7 +2539,7 @@ describe('routeGraph port-native source', () => {
               {
                 id: 'limited',
                 priority: 0,
-                input: { kind: 'route_ids', routeIds: [22, 11] },
+                input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:product:route:22', 'route-endpoint:product:route:11'] },
                 materialization: { sort: 'route_id', limit: 1 },
               },
             ],
@@ -2131,13 +2549,20 @@ describe('routeGraph port-native source', () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(result.primitiveSource.nodes).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 'macro:model-group:limited:candidate:limited:11' }),
+    expect(result.primitiveSource.edges).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        sourceNodeId: 'route-endpoint:product:route:11',
+        targetNodeId: 'macro:model-group:limited:dispatcher',
+        kind: 'route_flow',
+      }),
     ]));
-    expect(result.primitiveSource.nodes.some((node) => node.id === 'macro:model-group:limited:candidate:limited:22')).toBe(false);
+    expect(result.primitiveSource.edges.some((edge) => (
+      edge.sourceNodeId === 'route-endpoint:product:route:22'
+      && edge.targetNodeId === 'macro:model-group:limited:dispatcher'
+    ))).toBe(false);
   });
 
-  it('prefers candidate_selector route-backed aliases over colliding exact routes', () => {
+  it('rejects candidate_selector route-backed aliases colliding with exact public routes', () => {
     const source = buildRouteGraphSourceFromLegacyRoutes([
       {
         id: 1,
@@ -2165,9 +2590,8 @@ describe('routeGraph port-native source', () => {
     ]);
 
     const compiled = compileRouteGraphSource(source);
-    expect(compiled.ok).toBe(true);
-    expect(findRouteGraphEntryForModel(compiled.compiled, 'colliding')?.nodeId)
-      .toBe('macro:route:2:model-group:entry');
+    expect(compiled.ok).toBe(false);
+    expect(compiled.diagnostics.map((item) => item.code)).toContain('public_model.duplicate');
   });
 
   it('resolves route entries with macro aliases before plain route aliases and exact channel entries', () => {

@@ -1,8 +1,13 @@
+// @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
 
 import {
   deleteSelectedGraphElements,
+  getRouteGraphContextMenuTarget,
+  isRouteGraphElementContextMenuTarget,
+  normalizeContextMenuTargetForGraph,
   selectionForContextMenu,
+  selectionFromFlowNode,
   selectionFromFlowNodeId,
   selectionFromFlowSelection,
   toggleGraphEdgeSelection,
@@ -55,9 +60,48 @@ function macro(id: string, ownership: RouteGraphMacro['ownership'] = 'manual'): 
 }
 
 describe('routeGraphEditorInteractions', () => {
+  it('derives context menu targets from the DOM hit target instead of selection state', () => {
+    const root = document.createElement('div');
+    root.innerHTML = `
+      <div class="react-flow__pane">
+        <div data-testid="canvas"></div>
+        <div class="react-flow__node" data-testid="flow-node-wrapper">
+          <div class="route-blueprint-node route-blueprint-node-macro" data-node-id="macro:model-group" data-node-type="macro">
+            <div class="route-blueprint-port" data-testid="port"></div>
+          </div>
+          <div class="route-blueprint-node" data-node-id="macro:model-group:dispatcher" data-node-type="dispatcher" data-testid="generated-node">
+            <div class="route-blueprint-port" data-testid="generated-port"></div>
+          </div>
+          <div class="route-blueprint-node" data-node-id="entry.public" data-node-type="entry" data-testid="node"></div>
+        </div>
+        <svg>
+          <g class="react-flow__edge" data-route-graph-edge-id="edge.a">
+            <path data-testid="edge"></path>
+          </g>
+        </svg>
+      </div>
+    `;
+    const port = root.querySelector<HTMLElement>('[data-testid="port"]')!;
+    port.dataset.portId = 'route.out';
+    const generatedPort = root.querySelector<HTMLElement>('[data-testid="generated-port"]')!;
+    generatedPort.dataset.portId = 'bidirect.in';
+
+    expect(getRouteGraphContextMenuTarget(root.querySelector('.route-blueprint-node-macro'))).toEqual({ kind: 'macro', macroId: 'model-group' });
+    expect(getRouteGraphContextMenuTarget(port)).toEqual({ kind: 'port', nodeId: 'macro:model-group', portId: 'route.out' });
+    expect(getRouteGraphContextMenuTarget(root.querySelector('[data-testid="generated-node"]'))).toEqual({ kind: 'node', nodeId: 'macro:model-group:dispatcher' });
+    expect(getRouteGraphContextMenuTarget(generatedPort)).toEqual({ kind: 'port', nodeId: 'macro:model-group:dispatcher', portId: 'bidirect.in' });
+    expect(getRouteGraphContextMenuTarget(root.querySelector('[data-testid="node"]'))).toEqual({ kind: 'node', nodeId: 'entry.public' });
+    expect(getRouteGraphContextMenuTarget(root.querySelector('[data-testid="edge"]'))).toEqual({ kind: 'edge', edgeId: 'edge.a' });
+    expect(getRouteGraphContextMenuTarget(root.querySelector('[data-testid="canvas"]'))).toEqual({ kind: 'graph' });
+    expect(isRouteGraphElementContextMenuTarget(root.querySelector('[data-testid="edge"]'))).toBe(true);
+    expect(isRouteGraphElementContextMenuTarget(root.querySelector('[data-testid="canvas"]'))).toBe(false);
+  });
+
   it('derives a stable primary selection from ReactFlow node and edge selections', () => {
     expect(selectionFromFlowNodeId('entry.public')).toEqual({ kind: 'node', nodeId: 'entry.public' });
     expect(selectionFromFlowNodeId('macro:model-group')).toEqual({ kind: 'macro', macroId: 'model-group' });
+    expect(selectionFromFlowNode({ id: 'macro:model-group:dispatcher', type: 'dispatcher' })).toEqual({ kind: 'node', nodeId: 'macro:model-group:dispatcher' });
+    expect(selectionFromFlowNode({ id: 'macro:model-group', type: 'macro' })).toEqual({ kind: 'macro', macroId: 'model-group' });
     expect(selectionFromFlowSelection({ nodeIds: [], edgeIds: [] })).toBeNull();
     expect(selectionFromFlowSelection({ nodeIds: [], edgeIds: ['edge.a'] })).toEqual({ kind: 'edge', edgeId: 'edge.a' });
     expect(selectionFromFlowSelection({ nodeIds: ['entry.a', 'filter.b'], edgeIds: ['edge.a'] })).toEqual({ kind: 'node', nodeId: 'entry.a' });
@@ -118,6 +162,28 @@ describe('routeGraphEditorInteractions', () => {
       current,
       target: { kind: 'port', nodeId: 'entry.a', portId: 'request.in' },
     })).toBe(current);
+  });
+
+  it('normalizes stale context menu targets back to the canvas menu', () => {
+    const graph = {
+      version: 1 as const,
+      nodes: [node('entry.a'), node('macro:model-group:dispatcher', 'derived')],
+      macros: [macro('model-group')],
+      edges: [edge('edge.entry.manual', 'entry.a', 'macro:model-group:dispatcher', 'derived')],
+    };
+
+    expect(normalizeContextMenuTargetForGraph(graph, { kind: 'graph' })).toEqual({ kind: 'graph' });
+    expect(normalizeContextMenuTargetForGraph(graph, { kind: 'node', nodeId: 'entry.a' })).toEqual({ kind: 'node', nodeId: 'entry.a' });
+    expect(normalizeContextMenuTargetForGraph(graph, { kind: 'node', nodeId: 'macro:model-group:dispatcher' })).toEqual({ kind: 'node', nodeId: 'macro:model-group:dispatcher' });
+    expect(normalizeContextMenuTargetForGraph(graph, { kind: 'macro', macroId: 'model-group' })).toEqual({ kind: 'macro', macroId: 'model-group' });
+    expect(normalizeContextMenuTargetForGraph(graph, { kind: 'edge', edgeId: 'edge.entry.manual' })).toEqual({ kind: 'edge', edgeId: 'edge.entry.manual' });
+    expect(normalizeContextMenuTargetForGraph(graph, { kind: 'port', nodeId: 'entry.a', portId: 'request.in' })).toEqual({ kind: 'port', nodeId: 'entry.a', portId: 'request.in' });
+    expect(normalizeContextMenuTargetForGraph(graph, { kind: 'port', nodeId: 'macro:model-group', portId: 'route.out' })).toEqual({ kind: 'port', nodeId: 'macro:model-group', portId: 'route.out' });
+
+    expect(normalizeContextMenuTargetForGraph(graph, { kind: 'node', nodeId: 'missing' })).toEqual({ kind: 'graph' });
+    expect(normalizeContextMenuTargetForGraph(graph, { kind: 'macro', macroId: 'missing' })).toEqual({ kind: 'graph' });
+    expect(normalizeContextMenuTargetForGraph(graph, { kind: 'edge', edgeId: 'missing' })).toEqual({ kind: 'graph' });
+    expect(normalizeContextMenuTargetForGraph(graph, { kind: 'port', nodeId: 'missing', portId: 'request.in' })).toEqual({ kind: 'graph' });
   });
 
   it('deletes selected manual nodes, macros, edges, and incident edges while preserving generated items', () => {

@@ -9,6 +9,8 @@ describe('CenteredModal shadcn migration contract', () => {
     expect(source).toContain("./ui/dialog/index.js");
     expect(source).toContain("<Dialog.Root");
     expect(source).toContain("<Dialog.Content");
+    expect(source).not.toContain("px-px");
+    expect(source).not.toContain("px-1");
     expect(source).not.toContain(['modal', '-backdrop'].join(''));
     expect(source).not.toContain(['modal', '-content'].join(''));
     expect(source).not.toContain("createPortal");

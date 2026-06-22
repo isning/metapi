@@ -2,7 +2,9 @@ import { useMemo, useState } from 'react';
 import EmptyStateBlock from '../EmptyStateBlock.js';
 import { Skeleton } from '../ui/skeleton/index.js';
 import { ChartFrame, ChartMetricToggle, ChartShell } from './ChartShell.js';
+import { useThemeChartPalette } from '../useThemeLabelColor.js';
 
+import { tr } from '../../i18n.js';
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
 /* ------------------------------------------------------------------ */
@@ -24,19 +26,8 @@ interface SiteTrendChartProps {
 type Metric = 'spend' | 'calls';
 
 const METRIC_OPTIONS: { key: Metric; label: string }[] = [
-  { key: 'spend', label: '消耗趋势' },
-  { key: 'calls', label: '调用趋势' },
-];
-
-const COLOR_PALETTE = [
-  '#4f46e5',
-  '#06b6d4',
-  '#10b981',
-  '#f59e0b',
-  '#ef4444',
-  '#8b5cf6',
-  '#ec4899',
-  '#14b8a6',
+  { key: 'spend', label: tr('components.modelAnalysisPanel.consumptionTrend') },
+  { key: 'calls', label: tr('components.charts.siteTrendChart.callTrend') },
 ];
 
 /* ------------------------------------------------------------------ */
@@ -45,6 +36,7 @@ const COLOR_PALETTE = [
 
 export default function SiteTrendChart({ data, loading }: SiteTrendChartProps) {
   const [metric, setMetric] = useState<Metric>('spend');
+  const chartPalette = useThemeChartPalette();
 
   /* ---------- data transform ---------- */
 
@@ -74,7 +66,7 @@ export default function SiteTrendChart({ data, loading }: SiteTrendChartProps) {
   if (!data || data.length === 0 || flatData.length === 0) {
     return (
       <ChartShell actions={<MetricToggle metric={metric} onChange={setMetric} />}>
-        <EmptyStateBlock title="暂无趋势数据" description="数据加载后将自动展示趋势图表" />
+        <EmptyStateBlock title={tr('components.charts.downstreamKeyTrendChart.noTrendData')} description={tr('components.charts.siteTrendChart.automatic')} />
       </ChartShell>
     );
   }
@@ -150,7 +142,7 @@ export default function SiteTrendChart({ data, loading }: SiteTrendChartProps) {
         domainLine: { visible: false },
       },
     ],
-    color: COLOR_PALETTE,
+    color: chartPalette,
     background: 'transparent',
     padding: { left: 8, right: 16, top: 8, bottom: 8 },
   };

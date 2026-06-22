@@ -71,8 +71,8 @@ describe('SortableChannelRow layering', () => {
       && node.props['data-layer-root']
     ));
 
-    expect(row.props.style.zIndex).toBeUndefined();
-    expect(row.props.style.borderLeft).toBeUndefined();
+    expect(row.props.style?.zIndex).toBeUndefined();
+    expect(row.props.style?.borderLeft).toBeUndefined();
   });
 
   it('disables row tooltips while a drag interaction is in progress', () => {

@@ -50,12 +50,52 @@ function findButtonByText(root: ReactTestInstance, text: string): ReactTestInsta
   ));
 }
 
-function findButtonByClassAndText(root: ReactTestInstance, className: string, text: string): ReactTestInstance {
+function findChipButtonByText(root: ReactTestInstance, text: string): ReactTestInstance {
+  const matches = root.findAll((node) => (
+    node.type === 'button'
+    && typeof node.props.onClick === 'function'
+    && collectText(node).includes(text)
+  ));
+  if (matches.length === 0) throw new Error(`No chip button found containing ${text}`);
+  return matches[0]!;
+}
+
+function findCollapsedRouteCardByText(root: ReactTestInstance, text: string): ReactTestInstance {
+  const candidates = root.findAll((node) => (
+    node.props['data-slot'] === 'card'
+    && node.props['aria-expanded'] !== undefined
+    && typeof node.props.onClick === 'function'
+    && collectText(node).includes(text)
+  ));
+  const card = candidates.find((node) => String(node.props.className || '').includes('route--collapsed'))
+    || candidates[0];
+  if (!card) throw new Error(`No collapsed route card found containing ${text}`);
+  return card;
+}
+
+function findTabByText(root: ReactTestInstance, text: string): ReactTestInstance {
+  return root.find((node) => (
+    node.type === 'button'
+    && node.props.role === 'tab'
+    && collectText(node).includes(text)
+  ));
+}
+
+async function selectRouteGroupTab(root: ReactTestInstance, text: string) {
+  const tab = findTabByText(root, text);
+  await act(async () => {
+    tab.props.onClick?.({ preventDefault: vi.fn(), stopPropagation: vi.fn() });
+    tab.props.onPointerDown?.({ preventDefault: vi.fn(), stopPropagation: vi.fn(), button: 0, ctrlKey: false });
+    tab.props.onMouseDown?.({ preventDefault: vi.fn(), stopPropagation: vi.fn(), button: 0, ctrlKey: false });
+  });
+  await flushMicrotasks();
+}
+
+function findFilterSummaryButton(root: ReactTestInstance): ReactTestInstance {
   return root.find((node) => (
     node.type === 'button'
     && typeof node.props.onClick === 'function'
-    && String(node.props.className || '').includes(className)
-    && collectText(node).includes(text)
+    && collectText(node).includes('筛选:')
   ));
 }
 
@@ -76,12 +116,26 @@ function findInputByPlaceholder(root: ReactTestInstance, placeholderText: string
 }
 
 function findCheckboxByLabelText(root: ReactTestInstance, text: string): ReactTestInstance {
-  return root.find((node) => (
-    node.type === 'input'
-    && node.props.type === 'checkbox'
-    && !!node.parent
-    && collectText(node.parent).includes(text)
-  ));
+  const labels = root.findAll((node) => node.type === 'label' && collectText(node).includes(text));
+  for (const label of labels) {
+    const checkbox = label.findAll((node) => node.type === 'input' && node.props.type === 'checkbox')[0];
+    if (checkbox) return checkbox;
+  }
+  throw new Error(`No checkbox found with label ${text}`);
+}
+
+function toggleCheckbox(node: ReactTestInstance, checked = true) {
+  if (typeof node.props.onCheckedChange === 'function') {
+    node.props.onCheckedChange(checked);
+    return;
+  }
+  if (typeof node.props.onChange === 'function') {
+    node.props.onChange({ target: { checked } });
+    return;
+  }
+  if (typeof node.props.onClick === 'function') {
+    node.props.onClick({ stopPropagation: vi.fn(), target: { checked } });
+  }
 }
 
 async function flushMicrotasks() {
@@ -206,29 +260,16 @@ describe('TokenRoutes grouped source models', () => {
       });
       await flushMicrotasks();
 
-      // Card is collapsed by default, so channel detail is not visible
+      // Desktop now keeps route summaries on the left and renders the active
+      // route in the persistent workbench on the right.
       const text = collectText(root.root);
       expect(text).toContain('claude-opus-4-6');
-      expect(text).not.toContain('user_a');
-      expect(text).not.toContain('user_b');
-
-      // Expand the card to load channels
-      const expandBtn = root.root.find((node) =>
-        node.type === 'div' && String(node.props.className || '').includes('route-card-collapsed'),
-      );
-      await act(async () => {
-        expandBtn.props.onClick();
-      });
-      await flushMicrotasks();
-
-      // After expansion, channels render in route-global buckets instead of source-model subgroups
-      const expandedText = collectText(root.root);
-      expect(expandedText).toContain('P0');
-      expect(expandedText).toContain('P1');
-      expect(expandedText).toContain('user_a');
-      expect(expandedText).toContain('user_b');
-      expect(expandedText).toContain('claude-opus-4-5');
-      expect(expandedText).toContain('claude-opus-4-6');
+      expect(text).toContain('P0');
+      expect(text).toContain('P1');
+      expect(text).toContain('user_a');
+      expect(text).toContain('user_b');
+      expect(text).toContain('claude-opus-4-5');
+      expect(text).toContain('claude-opus-4-6');
     } finally {
       root?.unmount();
     }
@@ -279,9 +320,7 @@ describe('TokenRoutes grouped source models', () => {
       });
       await flushMicrotasks();
 
-      const expandBtn = root.root.find((node) =>
-        node.type === 'div' && String(node.props.className || '').includes('route-card-collapsed'),
-      );
+      const expandBtn = findCollapsedRouteCardByText(root.root, 'gpt-4.1');
       await act(async () => {
         expandBtn.props.onClick();
       });
@@ -345,11 +384,7 @@ describe('TokenRoutes grouped source models', () => {
       });
       await flushMicrotasks();
 
-      const expandBtn = root.root.find((node) =>
-        node.type === 'div'
-        && String(node.props.className || '').includes('route-card-collapsed')
-        && collectText(node).includes('gpt-5-codex'),
-      );
+      const expandBtn = findCollapsedRouteCardByText(root.root, 'gpt-5-codex');
       await act(async () => {
         expandBtn.props.onClick();
       });
@@ -428,11 +463,9 @@ describe('TokenRoutes grouped source models', () => {
       });
       await flushMicrotasks();
 
-      const expandBtn = root.root.find((node) =>
-        node.type === 'div'
-        && String(node.props.className || '').includes('route-card-collapsed')
-        && collectText(node).includes('claude-proxy-a'),
-      );
+      await selectRouteGroupTab(root.root, '手动路由');
+
+      const expandBtn = findCollapsedRouteCardByText(root.root, 'claude-proxy-a');
       await act(async () => {
         expandBtn.props.onClick();
       });
@@ -521,11 +554,9 @@ describe('TokenRoutes grouped source models', () => {
       });
       await flushMicrotasks();
 
-      const expandBtn = root.root.find((node) =>
-        node.type === 'div'
-        && String(node.props.className || '').includes('route-card-collapsed')
-        && collectText(node).includes('claude-proxy-a'),
-      );
+      await selectRouteGroupTab(root.root, '手动路由');
+
+      const expandBtn = findCollapsedRouteCardByText(root.root, 'claude-proxy-a');
       await act(async () => {
         expandBtn.props.onClick();
       });
@@ -582,9 +613,7 @@ describe('TokenRoutes grouped source models', () => {
       await flushMicrotasks();
 
       // Expand card to see missing token hints
-      const expandBtn = root.root.find((node) =>
-        node.type === 'div' && String(node.props.className || '').includes('route-card-collapsed'),
-      );
+      const expandBtn = findCollapsedRouteCardByText(root.root, 'gpt-5.2-codex');
       await act(async () => {
         expandBtn.props.onClick();
       });
@@ -681,7 +710,7 @@ describe('TokenRoutes grouped source models', () => {
       expect(collectText(root.root)).toContain('0 通道');
 
       const expandCards = root.root.findAll((node) =>
-        node.type === 'div' && String(node.props.className || '').includes('route-card-collapsed'),
+        node.props.role === 'button' && typeof node.props.onClick === 'function',
       );
       const gptCard = expandCards.find((node) => collectText(node).includes('gpt-5.2-codex'));
       expect(gptCard).toBeTruthy();
@@ -785,9 +814,7 @@ describe('TokenRoutes grouped source models', () => {
       });
       await flushMicrotasks();
 
-      const expandBtn = root.root.find((node) =>
-        node.type === 'div' && String(node.props.className || '').includes('route-card-collapsed'),
-      );
+      const expandBtn = findCollapsedRouteCardByText(root.root, 'claude-opus-4-6');
       await act(async () => {
         expandBtn.props.onClick();
       });
@@ -833,9 +860,7 @@ describe('TokenRoutes grouped source models', () => {
       await flushMicrotasks();
 
       // Expand filter bar to see endpoint types
-      const filterSummary = root.root.find((node) =>
-        node.type === 'button' && String(node.props.className || '').includes('route-filter-bar-summary'),
-      );
+      const filterSummary = findFilterSummaryButton(root.root);
       await act(async () => {
         filterSummary.props.onClick();
       });
@@ -885,9 +910,7 @@ describe('TokenRoutes grouped source models', () => {
       await flushMicrotasks();
 
       // Expand filter bar
-      const filterSummary = root.root.find((node) =>
-        node.type === 'button' && String(node.props.className || '').includes('route-filter-bar-summary'),
-      );
+      const filterSummary = findFilterSummaryButton(root.root);
       await act(async () => {
         filterSummary.props.onClick();
       });
@@ -932,9 +955,7 @@ describe('TokenRoutes grouped source models', () => {
       await flushMicrotasks();
 
       // Expand filter bar
-      const filterSummary = root.root.find((node) =>
-        node.type === 'button' && String(node.props.className || '').includes('route-filter-bar-summary'),
-      );
+      const filterSummary = findFilterSummaryButton(root.root);
       await act(async () => {
         filterSummary.props.onClick();
       });
@@ -976,9 +997,7 @@ describe('TokenRoutes grouped source models', () => {
       await flushMicrotasks();
 
       // Expand filter bar
-      const filterSummary = root.root.find((node) =>
-        node.type === 'button' && String(node.props.className || '').includes('route-filter-bar-summary'),
-      );
+      const filterSummary = findFilterSummaryButton(root.root);
       await act(async () => {
         filterSummary.props.onClick();
       });
@@ -1240,17 +1259,16 @@ describe('TokenRoutes grouped source models', () => {
 
       const pickerGrid = root.root.find((node) => (
         node.type === 'div'
-        && String(node.props.className || '').includes('source-route-picker-grid')
+        && String(node.props.className || '').includes('grid-cols-[repeat(auto-fill,minmax(220px,1fr))]')
       ));
-      expect(String(pickerGrid.props.style?.display || '')).toBe('grid');
-      expect(String(pickerGrid.props.style?.gridTemplateColumns || '')).toContain('repeat(');
+      expect(String(pickerGrid.props.className || '')).toContain('grid');
 
-      expect(findButtonByClassAndText(root.root, 'filter-chip', 'OpenAI')).toBeTruthy();
-      expect(findButtonByClassAndText(root.root, 'filter-chip', 'Wong')).toBeTruthy();
-      expect(findButtonByClassAndText(root.root, 'filter-chip', 'gemini')).toBeTruthy();
+      expect(findChipButtonByText(root.root, 'OpenAI')).toBeTruthy();
+      expect(findChipButtonByText(root.root, 'Wong')).toBeTruthy();
+      expect(findChipButtonByText(root.root, 'gemini')).toBeTruthy();
 
       await act(async () => {
-        findButtonByClassAndText(root.root, 'filter-chip', 'Wong').props.onClick();
+        findChipButtonByText(root.root, 'Wong').props.onClick();
       });
       await flushMicrotasks();
       expect(collectText(pickerGrid)).toContain('gpt-5.4');
@@ -1258,12 +1276,12 @@ describe('TokenRoutes grouped source models', () => {
       expect(collectText(pickerGrid)).not.toContain('claude-sonnet-4-5');
 
       await act(async () => {
-        findButtonByClassAndText(root.root, 'filter-chip', 'Wong').props.onClick();
+        findChipButtonByText(root.root, 'Wong').props.onClick();
       });
       await flushMicrotasks();
 
       await act(async () => {
-        findButtonByClassAndText(root.root, 'filter-chip', 'OpenAI').props.onClick();
+        findChipButtonByText(root.root, 'OpenAI').props.onClick();
       });
       await flushMicrotasks();
       expect(collectText(pickerGrid)).toContain('OpenAI');
@@ -1272,12 +1290,12 @@ describe('TokenRoutes grouped source models', () => {
       expect(collectText(pickerGrid)).not.toContain('gemini-2.5-pro');
 
       await act(async () => {
-        findButtonByClassAndText(root.root, 'filter-chip', 'OpenAI').props.onClick();
+        findChipButtonByText(root.root, 'OpenAI').props.onClick();
       });
       await flushMicrotasks();
 
       await act(async () => {
-        findButtonByClassAndText(root.root, 'filter-chip', 'anthropic').props.onClick();
+        findChipButtonByText(root.root, 'anthropic').props.onClick();
       });
       await flushMicrotasks();
       expect(collectText(pickerGrid)).toContain('Anthropic');
@@ -1335,23 +1353,19 @@ describe('TokenRoutes grouped source models', () => {
       });
       await flushMicrotasks();
 
-      const filterSummary = root.root.find((node) =>
-        node.type === 'button' && String(node.props.className || '').includes('route-filter-bar-summary'),
-      );
+      const filterSummary = findFilterSummaryButton(root.root);
       await act(async () => {
         filterSummary.props.onClick();
       });
       await flushMicrotasks();
 
-      const groupChip = findButtonByClassAndText(root.root, 'filter-chip', 'deepseekv1');
+      const groupChip = findChipButtonByText(root.root, 'deepseekv1');
       expect(collectText(groupChip)).toContain('2');
       expect(collectText(groupChip)).not.toContain('95');
 
-      const routeCard = root.root.find((node) =>
-        node.type === 'div'
-        && String(node.props.className || '').includes('route-card-collapsed')
-        && collectText(node).includes('deepseekv1'),
-      );
+      await selectRouteGroupTab(root.root, '手动路由');
+
+      const routeCard = findCollapsedRouteCardByText(root.root, 'deepseekv1');
       expect(collectText(routeCard).replace(/\s+/g, '')).toContain('2来源模型');
     } finally {
       root?.unmount();
@@ -1420,7 +1434,7 @@ describe('TokenRoutes grouped source models', () => {
       await flushMicrotasks();
 
       await act(async () => {
-        findButtonByText(root.root, '创建群组').props.onClick();
+        findButtonByText(root.root, '创建路由组').props.onClick();
       });
       await flushMicrotasks();
 
@@ -1484,12 +1498,12 @@ describe('TokenRoutes grouped source models', () => {
       await flushMicrotasks();
 
       await act(async () => {
-        findCheckboxByLabelText(root.root, '自动品牌图标').props.onChange({ target: { checked: false } });
+        toggleCheckbox(findCheckboxByLabelText(root.root, '自动品牌图标'), false);
       });
       await flushMicrotasks();
 
       await act(async () => {
-        findButtonByText(root.root, '创建群组').props.onClick();
+        findButtonByText(root.root, '创建路由组').props.onClick();
       });
       await flushMicrotasks();
 
@@ -1533,9 +1547,7 @@ describe('TokenRoutes grouped source models', () => {
       await flushMicrotasks();
 
       // Expand the card
-      const expandBtn = root.root.find((node) =>
-        node.type === 'div' && String(node.props.className || '').includes('route-card-collapsed'),
-      );
+      const expandBtn = findCollapsedRouteCardByText(root.root, 're:^claude-.*$');
       await act(async () => {
         expandBtn.props.onClick();
       });
@@ -1618,11 +1630,9 @@ describe('TokenRoutes grouped source models', () => {
       });
       await flushMicrotasks();
 
-      const expandBtn = root.root.find((node) =>
-        node.type === 'div'
-        && String(node.props.className || '').includes('route-card-collapsed')
-        && collectText(node).includes('claude-opus-4-6'),
-      );
+      await selectRouteGroupTab(root.root, '手动路由');
+
+      const expandBtn = findCollapsedRouteCardByText(root.root, 'claude-opus-4-6');
       await act(async () => {
         expandBtn.props.onClick();
       });
@@ -1649,7 +1659,7 @@ describe('TokenRoutes grouped source models', () => {
       await flushMicrotasks();
 
       await act(async () => {
-        findButtonByText(root.root, '保存群组').props.onClick();
+        findButtonByText(root.root, '保存路由组').props.onClick();
       });
       await flushMicrotasks();
 
@@ -1713,11 +1723,9 @@ describe('TokenRoutes grouped source models', () => {
       });
       await flushMicrotasks();
 
-      const expandBtn = root.root.find((node) =>
-        node.type === 'div'
-        && String(node.props.className || '').includes('route-card-collapsed')
-        && collectText(node).includes('claude-haiku-proxy'),
-      );
+      await selectRouteGroupTab(root.root, '手动路由');
+
+      const expandBtn = findCollapsedRouteCardByText(root.root, 'claude-haiku-proxy');
       await act(async () => {
         expandBtn.props.onClick();
       });

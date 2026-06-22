@@ -290,6 +290,68 @@ describe('refreshModelsForAccount credential discovery', () => {
     expect(tokenRows.map((row) => row.modelName)).toEqual(['gpt-5-nano']);
   });
 
+  it('updates existing token model availability rows during refresh and rebuild', async () => {
+    getApiTokenMock.mockResolvedValue(null);
+    getModelsMock.mockImplementation(async (_baseUrl: string, token: string) => (
+      token === 'sk-refresh-token'
+        ? ['claude-haiku-4-5-20251001', 'claude-opus-4-6']
+        : []
+    ));
+
+    const site = await db.insert(schema.sites).values({
+      name: 'site-token-availability-upsert',
+      url: 'https://site-token-availability-upsert.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'token-availability-upsert-user',
+      accessToken: '',
+      apiToken: '',
+      status: 'active',
+      extraConfig: JSON.stringify({ credentialMode: 'session' }),
+    }).returning().get();
+
+    const token = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'default',
+      token: 'sk-refresh-token',
+      source: 'manual',
+      enabled: true,
+      isDefault: true,
+    }).returning().get();
+
+    await db.insert(schema.tokenModelAvailability).values({
+      tokenId: token.id,
+      modelName: 'claude-haiku-4-5-20251001',
+      available: false,
+      latencyMs: 9999,
+      checkedAt: '2026-01-01T00:00:00.000Z',
+    }).run();
+
+    const result = await refreshModelsAndRebuildRoutes();
+    expect(result.refresh).toHaveLength(1);
+    expect(result.refresh[0]).toMatchObject({
+      accountId: account.id,
+      status: 'success',
+      modelCount: 2,
+    });
+
+    const tokenRows = await db.select().from(schema.tokenModelAvailability)
+      .where(eq(schema.tokenModelAvailability.tokenId, token.id))
+      .all();
+    expect(tokenRows.map((row) => row.modelName).sort()).toEqual([
+      'claude-haiku-4-5-20251001',
+      'claude-opus-4-6',
+    ]);
+    expect(tokenRows.find((row) => row.modelName === 'claude-haiku-4-5-20251001')).toMatchObject({
+      available: true,
+      latencyMs: expect.any(Number),
+    });
+  });
+
   it('marks runtime health unhealthy when model discovery fails', async () => {
     getApiTokenMock.mockResolvedValue(null);
     getModelsMock.mockRejectedValue(new Error('HTTP 401: invalid token'));
@@ -2250,8 +2312,17 @@ describe('refreshModelsForAccount credential discovery', () => {
     expect(compiled.ok).toBe(true);
     expect(activeGraph.sourceGraph.nodes).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        id: `entry:legacy:${generatedRoute!.id}`,
-        type: 'entry',
+        id: 'route-endpoint:product:auto-model:gpt-5.4',
+        type: 'route_endpoint',
+        endpointKind: 'route_product',
+        exposure: 'public',
+        ownership: 'auto_generated',
+      }),
+      expect.objectContaining({
+        id: expect.stringMatching(/^route-endpoint:supply:upstream-model:codex:[a-f0-9]{8}:gpt-5\.4:[a-f0-9]{8}$/),
+        type: 'route_endpoint',
+        endpointKind: 'supply',
+        exposure: 'none',
         ownership: 'auto_generated',
       }),
       expect.objectContaining({
@@ -2260,9 +2331,23 @@ describe('refreshModelsForAccount credential discovery', () => {
         ownership: 'auto_generated',
       }),
     ]));
-    expect(compiled.compiled.publicModels).toEqual(expect.arrayContaining([
-      expect.objectContaining({ model: 'gpt-5.4' }),
+    expect(activeGraph.sourceGraph.macros).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'auto-model:gpt-5.4',
+        kind: 'candidate_selector',
+        ownership: 'auto_generated',
+      }),
     ]));
+    expect(compiled.compiled.publicModels).toEqual(expect.arrayContaining([
+      expect.objectContaining({ nodeId: 'macro:auto-model:gpt-5.4:entry', model: 'gpt-5.4' }),
+    ]));
+    expect(compiled.compiled.programBundle.endpointCatalog.byId).toMatchObject({
+      'route-endpoint:product:auto-model:gpt-5.4': expect.objectContaining({
+        endpointKind: 'route_product',
+        exposure: 'public',
+        routeId: generatedRoute!.id,
+      }),
+    });
 
     const selection = await evaluateActiveRouteGraphForModel('gpt-5.4');
     expect(selection).toMatchObject({

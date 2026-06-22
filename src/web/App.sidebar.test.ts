@@ -1,32 +1,27 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { sidebarGroups } from './App.js';
+
+const allSidebarItems = () => sidebarGroups.flatMap((group) => group.items);
 
 describe('App sidebar config', () => {
   it('uses 连接管理 for /accounts and removes standalone /tokens navigation item', () => {
-    const source = readFileSync(resolve(process.cwd(), 'src/web/App.tsx'), 'utf8');
+    const accountsItem = allSidebarItems().find((item) => item.to === '/accounts');
 
-    expect(source).toContain("{ to: '/accounts', label: '连接管理'");
-    expect(source).not.toContain("{ to: '/accounts', label: '账号'");
-    expect(source).not.toContain("{ to: '/tokens', label: '令牌管理'");
+    expect(accountsItem?.label).toBe('连接管理');
+    expect(allSidebarItems().some((item) => item.to === '/tokens')).toBe(false);
   });
 
   it('places downstream key navigation under 控制台 instead of 系统', () => {
-    const source = readFileSync(resolve(process.cwd(), 'src/web/App.tsx'), 'utf8');
-    const consoleGroupIndex = source.indexOf("label: '控制台'");
-    const downstreamIndex = source.indexOf("{ to: '/downstream-keys', label: '下游密钥'");
-    const systemGroupIndex = source.indexOf("label: '系统'");
+    const consoleGroup = sidebarGroups.find((group) => group.label === '控制台');
+    const systemGroup = sidebarGroups.find((group) => group.label === '系统');
 
-    expect(consoleGroupIndex).toBeGreaterThanOrEqual(0);
-    expect(downstreamIndex).toBeGreaterThan(consoleGroupIndex);
-    expect(systemGroupIndex).toBeGreaterThan(downstreamIndex);
+    expect(consoleGroup?.items.some((item) => item.to === '/downstream-keys')).toBe(true);
+    expect(systemGroup?.items.some((item) => item.to === '/downstream-keys')).toBe(false);
   });
 
   it('adds standalone OAuth 管理 navigation entry', () => {
-    const source = readFileSync(resolve(process.cwd(), 'src/web/App.tsx'), 'utf8');
+    const oauthItem = allSidebarItems().find((item) => item.to === '/oauth');
 
-    expect(source).toContain("{ to: '/oauth', label: 'OAuth 管理'");
-    expect(source).toContain("const OAuthManagement = lazy(() => import('./pages/OAuthManagement.js'));");
-    expect(source).toContain('<Route path="/oauth" element={<OAuthManagement />} />');
+    expect(oauthItem?.label).toBe('OAuth 管理');
   });
 });

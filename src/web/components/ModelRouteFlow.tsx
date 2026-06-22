@@ -11,8 +11,20 @@ import {
   type NodeProps,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
+import { tr } from '../i18n.js';
 
-type RouteFlowNodeKind = 'request' | 'route' | 'transform' | 'pool' | 'channel';
+type RouteFlowNodeKind =
+  | 'request'
+  | 'entry'
+  | 'dispatcher'
+  | 'filter'
+  | 'route_endpoint'
+  | 'model_endpoint'
+  | 'synthetic_endpoint'
+  | 'route'
+  | 'transform'
+  | 'pool'
+  | 'channel';
 type RouteFlowNodeStatus = 'active' | 'selected' | 'available' | 'blocked' | 'inactive';
 
 export type ModelRouteFlowData = {
@@ -66,6 +78,75 @@ export type ModelRouteFlowData = {
     level: 'info' | 'warn' | 'error';
     message: string;
   }>;
+  entryPricing?: {
+    theoretical: {
+      inputPerMillion: number | null;
+      outputPerMillion: number | null;
+      totalCostUsd: number | null;
+      inputMultiplier: number | null;
+      outputMultiplier: number | null;
+      totalMultiplier: number | null;
+      sourceCount: number;
+      estimateLevel: 'exact' | 'static_estimate' | 'incomplete';
+      strategy: string | null;
+      diagnostics: Array<{ level: 'info' | 'warn' | 'error'; message: string }>;
+      candidates: Array<{
+        targetId: string;
+        endpointId: string;
+        nodeId: string;
+        channelId: string;
+        siteId: number | null;
+        accountId: number | null;
+        tokenId: number | null;
+        modelName: string;
+        probability: number;
+        weight: number | null;
+        priority: number | null;
+        inputPerMillion: number | null;
+        outputPerMillion: number | null;
+        totalCostUsd: number | null;
+        pricingId: number | null;
+        matchedScope: string | null;
+        sourceRef: {
+          nodeId?: string;
+          edgeId?: string;
+          macroId?: string;
+          endpointId?: string;
+          routeId?: number | null;
+          generatedNodeIds?: string[];
+          generatedEdgeIds?: string[];
+        };
+      }>;
+    } | null;
+  };
+  compatibilityPolicy?: {
+    resolved: {
+      reasoningHistory: {
+        transport: {
+          mode: 'native' | 'content_think_tag' | 'drop';
+          maxReasoningBytes: number;
+          overflow: 'truncate' | 'drop';
+          thinkTag: {
+            openTag: string;
+            closeTag: string;
+            separator: string;
+          };
+          applyTo: {
+            assistantHistory: boolean;
+            assistantToolCalls: boolean;
+            responseContinuation: boolean;
+          };
+          toolCallMessageBehavior: 'same_as_assistant' | 'native' | 'drop';
+        };
+      };
+      payloadDefaults: unknown[];
+      requestTransforms: unknown[];
+    };
+    layers: Array<{
+      source: 'site' | 'account' | 'token' | 'model_endpoint' | 'target';
+      configured: boolean;
+    }>;
+  };
   compiledAt: string;
 };
 
@@ -78,19 +159,39 @@ type ModelRouteFlowProps = {
 };
 
 const statusColor: Record<RouteFlowNodeStatus, string> = {
-  active: '#2563eb',
-  selected: '#059669',
-  available: '#0f766e',
-  blocked: '#dc2626',
-  inactive: '#64748b',
+  active: 'var(--primary)',
+  selected: 'var(--success)',
+  available: 'var(--info)',
+  blocked: 'var(--destructive)',
+  inactive: 'var(--muted-foreground)',
 };
 
 const kindLabel: Record<RouteFlowNodeKind, string> = {
   request: 'Request',
+  entry: 'Entry',
+  dispatcher: 'Dispatcher',
+  filter: 'Filter',
+  route_endpoint: 'Route endpoint',
+  model_endpoint: 'Model endpoint',
+  synthetic_endpoint: 'Synthetic endpoint',
   route: 'Route',
   transform: 'Filter',
   pool: 'Pool',
   channel: 'Channel',
+};
+
+const LEVEL_GAP = 104;
+const NODE_GAP = 28;
+const DEFAULT_NODE_WIDTH = 272;
+const CHANNEL_NODE_WIDTH = 288;
+const BADGE_ROW_HEIGHT = 24;
+const TEXT_LINE_HEIGHT = 18;
+const CARD_VERTICAL_CHROME = 78;
+const HEALTH_SECTION_HEIGHT = 116;
+
+type NodeSize = {
+  width: number;
+  height: number;
 };
 
 function formatPercent(value?: number | null): string {
@@ -154,12 +255,12 @@ function RouteNodeCard({ data }: NodeProps<Node<FlowNodeData>>) {
         {showHealth && (
           <>
             <div className="mb-2 grid grid-cols-2 gap-1.5">
-              <Metric label="成功率" value={formatPercent(node.metrics.successRate)} />
-              <Metric label="概率" value={formatPercent(node.metrics.probability)} />
-              <Metric label="调用" value={String(node.metrics.totalCalls ?? 0)} />
-              <Metric label="延迟" value={node.metrics.avgLatencyMs == null ? 'n/a' : `${node.metrics.avgLatencyMs}ms`} />
-              <Metric label="连续失败" value={String(node.metrics.consecutiveFailureCount ?? 0)} />
-              <Metric label="冷却" value={node.metrics.cooldownUntil ? formatDateTime(node.metrics.cooldownUntil) : 'none'} />
+              <Metric label={tr('components.modelAnalysisPanel.successRate')} value={formatPercent(node.metrics.successRate)} />
+              <Metric label={tr('components.modelRouteFlow.probability')} value={formatPercent(node.metrics.probability)} />
+              <Metric label={tr('components.modelAnalysisPanel.calls')} value={String(node.metrics.totalCalls ?? 0)} />
+              <Metric label={tr('components.modelRouteFlow.latency')} value={node.metrics.avgLatencyMs == null ? 'n/a' : `${node.metrics.avgLatencyMs}ms`} />
+              <Metric label={tr('components.modelRouteFlow.failed')} value={String(node.metrics.consecutiveFailureCount ?? 0)} />
+              <Metric label={tr('components.modelRouteFlow.cooldown')} value={node.metrics.cooldownUntil ? formatDateTime(node.metrics.cooldownUntil) : 'none'} />
             </div>
             {history.length > 0 && (
               <div className="flex gap-1">
@@ -172,8 +273,8 @@ function RouteNodeCard({ data }: NodeProps<Node<FlowNodeData>>) {
                       height: 6,
                       borderRadius: 99,
                       background: item.status === 'success'
-                        ? '#10b981'
-                        : (item.status === 'retried' ? '#f59e0b' : '#ef4444'),
+                        ? 'var(--success)'
+                        : (item.status === 'retried' ? 'var(--warning)' : 'var(--destructive)'),
                     }}
                   />
                 ))}
@@ -198,10 +299,44 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
-function layoutNodes(flow: ModelRouteFlowData): Node<FlowNodeData>[] {
+function estimateWrappedLines(value: string | null | undefined, charsPerLine: number): number {
+  const text = (value || '').trim();
+  if (!text) return 0;
+  return Math.max(1, Math.ceil(text.length / charsPerLine));
+}
+
+function estimateNodeSize(node: FlowNodeData): NodeSize {
+  const isChannel = node.kind === 'channel';
+  const width = isChannel ? CHANNEL_NODE_WIDTH : DEFAULT_NODE_WIDTH;
+  const contentCharsPerLine = isChannel ? 34 : 32;
+  const labelLines = estimateWrappedLines(node.label, contentCharsPerLine);
+  const subtitleLines = estimateWrappedLines(node.subtitle, contentCharsPerLine);
+  const visibleBadgeCount = Math.min(node.badges.length, 8);
+  const badgeRows = visibleBadgeCount > 0 ? Math.ceil(visibleBadgeCount / 3) : 0;
+  const height = CARD_VERTICAL_CHROME
+    + (labelLines * TEXT_LINE_HEIGHT)
+    + (subtitleLines * TEXT_LINE_HEIGHT)
+    + (badgeRows * BADGE_ROW_HEIGHT)
+    + (isChannel ? HEALTH_SECTION_HEIGHT : 0);
+
+  return {
+    width,
+    height: Math.max(isChannel ? 224 : 118, height),
+  };
+}
+
+function isCandidateInputEdge(edge: ModelRouteFlowData['edges'][number], flow: ModelRouteFlowData): boolean {
+  if (edge.id.startsWith('graph-candidate-supply-')) return true;
+  const source = flow.nodes.find((node) => node.id === edge.source);
+  const target = flow.nodes.find((node) => node.id === edge.target);
+  return source?.kind === 'route_endpoint' && target?.kind === 'dispatcher' && edge.label != null && /%|selected/.test(edge.label);
+}
+
+export function layoutNodes(flow: ModelRouteFlowData): Node<FlowNodeData>[] {
   const levels = new Map<string, number>();
   const childrenBySource = new Map<string, string[]>();
   for (const edge of flow.edges) {
+    if (isCandidateInputEdge(edge, flow)) continue;
     if (!childrenBySource.has(edge.source)) childrenBySource.set(edge.source, []);
     childrenBySource.get(edge.source)!.push(edge.target);
   }
@@ -218,11 +353,42 @@ function layoutNodes(flow: ModelRouteFlowData): Node<FlowNodeData>[] {
     }
   }
 
+  for (const edge of flow.edges.filter((item) => isCandidateInputEdge(item, flow))) {
+    const dispatcherLevel = levels.get(edge.target);
+    if (dispatcherLevel == null) continue;
+    const candidateLevel = Math.max(0, dispatcherLevel - 1);
+    const current = levels.get(edge.source);
+    if (current == null || current > candidateLevel) levels.set(edge.source, candidateLevel);
+  }
+
+  for (const edge of flow.edges.filter((item) => isCandidateInputEdge(item, flow))) {
+    const sourceLevel = levels.get(edge.source);
+    if (sourceLevel == null) continue;
+    for (const child of flow.edges.filter((item) => item.source === edge.source && !isCandidateInputEdge(item, flow)).map((item) => item.target)) {
+      const current = levels.get(child);
+      const next = sourceLevel + 1;
+      if (current == null || current < next) levels.set(child, next);
+    }
+  }
+
   const byLevel = new Map<number, FlowNodeData[]>();
   for (const node of flow.nodes) {
     const level = levels.get(node.id) ?? 0;
     if (!byLevel.has(level)) byLevel.set(level, []);
     byLevel.get(level)!.push(node);
+  }
+
+  const levelWidths = new Map<number, number>();
+  for (const [level, nodes] of byLevel.entries()) {
+    levelWidths.set(level, Math.max(...nodes.map((node) => estimateNodeSize(node).width)));
+  }
+
+  const sortedLevels = [...byLevel.keys()].sort((left, right) => left - right);
+  const levelX = new Map<number, number>();
+  let nextX = 0;
+  for (const level of sortedLevels) {
+    levelX.set(level, nextX);
+    nextX += (levelWidths.get(level) ?? DEFAULT_NODE_WIDTH) + LEVEL_GAP;
   }
 
   const positions = new Map<string, { x: number; y: number }>();
@@ -232,12 +398,17 @@ function layoutNodes(flow: ModelRouteFlowData): Node<FlowNodeData>[] {
       if (right.status === 'selected' && left.status !== 'selected') return 1;
       return left.id.localeCompare(right.id);
     });
-    const startY = -((sorted.length - 1) * 130) / 2;
+    const sizes = sorted.map(estimateNodeSize);
+    const totalHeight = sizes.reduce((sum, size) => sum + size.height, 0)
+      + Math.max(0, sorted.length - 1) * NODE_GAP;
+    let y = -(totalHeight / 2);
     sorted.forEach((node, index) => {
+      const size = sizes[index];
       positions.set(node.id, {
-        x: level * 300,
-        y: startY + index * 130,
+        x: levelX.get(level) ?? 0,
+        y,
       });
+      y += size.height + NODE_GAP;
     });
   }
 
@@ -246,6 +417,8 @@ function layoutNodes(flow: ModelRouteFlowData): Node<FlowNodeData>[] {
     type: 'routeNode',
     position: positions.get(node.id) || { x: 0, y: 0 },
     data: node,
+    width: estimateNodeSize(node).width,
+    height: estimateNodeSize(node).height,
     draggable: false,
   }));
 }
@@ -260,12 +433,12 @@ export default function ModelRouteFlow({ flow, loading = false, error = '' }: Mo
     label: edge.label || undefined,
     type: 'smoothstep',
     markerEnd: { type: MarkerType.ArrowClosed },
-    style: { stroke: '#64748b', strokeWidth: 1.5 },
-    labelStyle: { fontSize: 11, fill: '#475569', fontWeight: 600 },
+    style: { stroke: 'var(--muted-foreground)', strokeWidth: 1.5 },
+    labelStyle: { fontSize: 11, fill: 'var(--muted-foreground)', fontWeight: 600 },
   })), [flow]);
 
   if (loading) {
-    return <div className="p-3.5 text-xs text-muted-foreground">正在编译路由流程...</div>;
+    return <div className="p-3.5 text-xs text-muted-foreground">{tr('components.modelRouteFlow.routes')}</div>;
   }
 
   if (error) {
@@ -273,7 +446,7 @@ export default function ModelRouteFlow({ flow, loading = false, error = '' }: Mo
   }
 
   if (!flow) {
-    return <div className="p-3.5 text-xs text-muted-foreground">选择模型后显示完整路由流程。</div>;
+    return <div className="p-3.5 text-xs text-muted-foreground">{tr('components.modelRouteFlow.selectmodelRoutes')}</div>;
   }
 
   return (
@@ -282,7 +455,7 @@ export default function ModelRouteFlow({ flow, loading = false, error = '' }: Mo
         <span>compiled {formatDateTime(flow.compiledAt)}</span>
         <span>route {flow.routePattern || 'n/a'}</span>
         <span>actual {flow.actualModel}</span>
-        <span>channel {flow.selectedChannelId ?? 'n/a'}</span>
+        {flow.selectedChannelId != null ? <span>channel {flow.selectedChannelId}</span> : null}
       </div>
       {flow.diagnostics.length > 0 && (
         <div className="grid gap-1">
@@ -305,7 +478,7 @@ export default function ModelRouteFlow({ flow, loading = false, error = '' }: Mo
           nodesConnectable={false}
           elementsSelectable={false}
         >
-          <Background color="#cbd5e1" gap={18} />
+          <Background color="var(--border)" gap={18} />
           <Controls showInteractive={false} />
         </ReactFlow>
       </div>

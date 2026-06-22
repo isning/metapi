@@ -116,6 +116,28 @@ function columnExists(sqlite: Database.Database, table: string, column: string):
   return rows.some((row) => row.name === column);
 }
 
+function ensureUpstreamModelCostPricingScopeKey(sqlite: Database.Database): boolean {
+  if (!tableExists(sqlite, 'upstream_model_cost_pricings')) return false;
+  if (columnExists(sqlite, 'upstream_model_cost_pricings', 'scope_key')) return false;
+
+  sqlite.exec('ALTER TABLE `upstream_model_cost_pricings` ADD COLUMN `scope_key` text');
+  sqlite.exec(`
+    UPDATE upstream_model_cost_pricings
+    SET scope_key = printf(
+      '%s|site:%s|account:%s|token:%s|group:%s|model:%s|row:%s',
+      COALESCE(scope, 'unknown'),
+      COALESCE(CAST(site_id AS TEXT), '-'),
+      COALESCE(CAST(account_id AS TEXT), '-'),
+      COALESCE(CAST(token_id AS TEXT), '-'),
+      COALESCE(token_group, '-'),
+      COALESCE(normalized_model_name, model_name, '-'),
+      CAST(id AS TEXT)
+    )
+    WHERE scope_key IS NULL OR scope_key = ''
+  `);
+  return true;
+}
+
 function hasRecordedDrizzleMigrations(sqlite: Database.Database): boolean {
   if (!tableExists(sqlite, '__drizzle_migrations')) return false;
   const row = sqlite.prepare('SELECT 1 FROM __drizzle_migrations LIMIT 1').get();
@@ -560,6 +582,8 @@ function recoverMigrationSequence(
 
 function backfillMissingRecordedMigrations(sqlite: Database.Database, migrationsFolder: string): number {
   if (!tableExists(sqlite, '__drizzle_migrations')) return 0;
+
+  ensureUpstreamModelCostPricingScopeKey(sqlite);
 
   let recoveredCount = 0;
   for (const migration of readRecoveryMigrations(migrationsFolder)) {

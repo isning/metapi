@@ -157,7 +157,7 @@ export function ModelBadge({ model, style }: { model: string; style?: CSSPropert
   const brandName = brand?.name || '';
   const colors = badgeColors[brandName] || {
     bg: 'var(--color-primary-light)',
-    border: 'rgba(79,70,229,0.15)',
+    border: 'color-mix(in srgb, var(--color-primary) 22%, transparent)',
     text: 'var(--color-primary)',
   };
 

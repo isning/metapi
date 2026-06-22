@@ -4,13 +4,14 @@ import { ButtonGroup } from '../../components/ui/button-group/index.js';
 import { Input } from '../../components/ui/input/index.js';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select/index.js';
 import { Switch } from '../../components/ui/switch/index.js';
-import { Textarea } from '../../components/ui/textarea/index.js';
+import JsonCodeEditor from '../../components/JsonCodeEditor.js';
 import type { RouteFilter, RouteGraphNode, RouteGraphNodeType } from './routeGraphTypes.js';
 import { UpstreamCompatibilityPolicyEditor } from '../../components/UpstreamCompatibilityPolicyEditor.js';
 import {
   policyFormFromStoredValue,
   serializeCompatibilityPolicyForm,
 } from '../../lib/upstreamCompatibilityPolicyEditor.js';
+import { tr } from '../../i18n.js';
 
 function SelectField<TValue extends string>({
   value,
@@ -50,11 +51,11 @@ export function NodeForm({ node, readonly, onChange, onDelete }: {
   return (
     <div className="grid gap-3">
       <label>
-        Name
+        {tr('pages.tokenRoutes.nodeForm.name')}
         <Input disabled={readonly} value={String(node.name || '')} onChange={(event) => update({ name: event.target.value })} />
       </label>
       <label>
-        Visibility
+        {tr('pages.tokenRoutes.nodeForm.visibility')}
         <SelectField
           disabled={readonly}
           value={node.visibility}
@@ -66,11 +67,11 @@ export function NodeForm({ node, readonly, onChange, onDelete }: {
         />
       </label>
       <div className="flex items-center justify-between gap-3">
-        <span>Enabled</span>
-        <Switch disabled={readonly} checked={node.enabled} onCheckedChange={(enabled) => update({ enabled })} aria-label="Enabled" />
+        <span>{tr('pages.tokenRoutes.nodeForm.enabled')}</span>
+        <Switch disabled={readonly} checked={node.enabled} onCheckedChange={(enabled) => update({ enabled })} aria-label={tr('pages.tokenRoutes.nodeForm.enabled')} />
       </div>
       {TypeEditor && <TypeEditor readonly={readonly} node={node} onChange={update} />}
-      <Button variant="destructive" size="sm" type="button" disabled={readonly} onClick={readonly ? undefined : onDelete}>Delete</Button>
+      <Button variant="destructive" size="sm" type="button" disabled={readonly} onClick={readonly ? undefined : onDelete}>{tr('pages.tokenRoutes.nodeForm.delete')}</Button>
     </div>
   );
 }
@@ -95,11 +96,11 @@ function EntryNodeEditor({ readonly, node, onChange }: NodeEditorProps) {
   return (
     <>
       <label>
-        Requested model pattern
+        {tr('pages.tokenRoutes.nodeForm.requestedModelPattern')}
         <Input disabled={readonly} value={String(match.requestedModelPattern || '')} onChange={(event) => onChange({ match: { ...match, kind: 'model', requestedModelPattern: event.target.value } })} />
       </label>
       <label>
-        Public display name
+        {tr('pages.tokenRoutes.nodeForm.publicDisplayName')}
         <Input disabled={readonly} value={String(match.displayName || '')} onChange={(event) => onChange({ match: { ...match, kind: 'model', displayName: event.target.value || null } })} />
       </label>
     </>
@@ -120,11 +121,11 @@ function AutoNodeEditor({ readonly, node, onChange }: NodeEditorProps) {
   return (
     <>
       <label>
-        Legacy route id
+        {tr('pages.tokenRoutes.nodeForm.legacyRouteId')}
         <Input disabled={readonly} value={String(node.legacyRouteId || '')} onChange={(event) => onChange({ legacyRouteId: Number(event.target.value) || null })} />
       </label>
       <label>
-        Route node id
+        {tr('pages.tokenRoutes.nodeForm.routeNodeId')}
         <Input disabled={readonly} value={String(node.routeNodeId || '')} onChange={(event) => onChange({ routeNodeId: event.target.value })} />
       </label>
     </>
@@ -135,7 +136,7 @@ function SyntheticEndpointEditor({ readonly, node, onChange }: NodeEditorProps) 
   return (
     <>
       <label>
-        Status
+        {tr('pages.tokenRoutes.nodeForm.status')}
         <SelectField
           disabled={readonly}
           value={String(node.statusCode || 503)}
@@ -147,7 +148,7 @@ function SyntheticEndpointEditor({ readonly, node, onChange }: NodeEditorProps) 
         />
       </label>
       <label>
-        Message
+        {tr('pages.tokenRoutes.nodeForm.message')}
         <Input disabled={readonly} value={String(node.message || '')} onChange={(event) => onChange({ message: event.target.value })} />
       </label>
     </>
@@ -182,9 +183,9 @@ function DispatcherEditor({ readonly, node, onChange }: NodeEditorProps) {
   const policy = (node.policy && typeof node.policy === 'object' ? node.policy : { strategy: 'weighted' }) as Record<string, unknown>;
   return (
     <div className="grid gap-3">
-      <div className="text-sm font-medium">Bidirect Dispatch</div>
+      <div className="text-sm font-medium">{tr('pages.tokenRoutes.nodeForm.bidirectDispatch')}</div>
       <label>
-        Mode
+        {tr('pages.tokenRoutes.nodeForm.mode')}
         <SelectField
           disabled={readonly}
           value={mode}
@@ -196,7 +197,7 @@ function DispatcherEditor({ readonly, node, onChange }: NodeEditorProps) {
         />
       </label>
       <label>
-        Ordering
+        {tr('pages.tokenRoutes.nodeForm.ordering')}
         <SelectField
           disabled={readonly}
           value={String(node.ordering || 'explicit')}
@@ -205,7 +206,7 @@ function DispatcherEditor({ readonly, node, onChange }: NodeEditorProps) {
         />
       </label>
       <label>
-        Strategy
+        {tr('pages.tokenRoutes.nodeForm.strategy')}
         <SelectField
           disabled={readonly}
           value={String(policy.strategy || 'weighted')}
@@ -220,9 +221,9 @@ function DispatcherEditor({ readonly, node, onChange }: NodeEditorProps) {
         />
       </label>
       <label>
-        Policy JSON
-        <Textarea disabled={readonly} className="font-mono text-xs" value={stringifyJsonInput(node.policy || {})} onChange={(event) => {
-          try { onChange({ policy: JSON.parse(event.target.value) }); } catch { onChange({ policy: event.target.value }); }
+        {tr('pages.tokenRoutes.nodeForm.policyJson')}
+        <JsonCodeEditor disabled={readonly} value={stringifyJsonInput(node.policy || {})} minHeight={180} onChange={(value) => {
+          try { onChange({ policy: JSON.parse(value) }); } catch { onChange({ policy: value }); }
         }} />
       </label>
     </div>
@@ -241,9 +242,9 @@ function ModelEndpointEditor({ readonly, node, onChange }: NodeEditorProps) {
   };
   return (
     <div className="grid gap-3">
-      <div className="text-sm font-medium">Model Endpoint</div>
+      <div className="text-sm font-medium">{tr('pages.tokenRoutes.nodeForm.modelEndpoint')}</div>
       <label>
-        Target Selection
+        {tr('pages.tokenRoutes.nodeForm.targetSelection')}
         <SelectField
           disabled={readonly}
           value={String(targetSelection.strategy || 'weighted')}
@@ -259,21 +260,22 @@ function ModelEndpointEditor({ readonly, node, onChange }: NodeEditorProps) {
         />
       </label>
       <label>
-        Metadata JSON
-        <Textarea disabled={readonly} className="font-mono text-xs" value={stringifyJsonInput(metadata)} onChange={(event) => {
-          try { onChange({ metadata: JSON.parse(event.target.value) }); } catch { onChange({ metadata: event.target.value }); }
+        {tr('pages.tokenRoutes.nodeForm.metadataJson')}
+        <JsonCodeEditor disabled={readonly} value={stringifyJsonInput(metadata)} minHeight={180} onChange={(value) => {
+          try { onChange({ metadata: JSON.parse(value) }); } catch { onChange({ metadata: value }); }
         }} />
       </label>
       <UpstreamCompatibilityPolicyEditor
         compact
         disabled={readonly}
         value={policyForm}
+        inheritFrom={tr('upstreamCompatibility.inheritSource.routeEndpointChain')}
         onChange={updateCompatibilityPolicy}
       />
       <label>
-        Config JSON
-        <Textarea disabled={readonly} className="font-mono text-xs" value={stringifyJsonInput(config)} onChange={(event) => {
-          try { onChange({ config: JSON.parse(event.target.value) }); } catch { onChange({ config: event.target.value }); }
+        {tr('pages.tokenRoutes.nodeForm.configJson')}
+        <JsonCodeEditor disabled={readonly} value={stringifyJsonInput(config)} minHeight={220} onChange={(value) => {
+          try { onChange({ config: JSON.parse(value) }); } catch { onChange({ config: value }); }
         }} />
       </label>
     </div>
@@ -294,11 +296,11 @@ function FilterOperationsEditor({
   };
   return (
     <div className="grid gap-3">
-      <div className="text-sm font-medium">Operations</div>
+      <div className="text-sm font-medium">{tr('pages.tokenRoutes.nodeForm.operations')}</div>
       {operations.map((operation, index) => (
         <div key={`${operation.type}-${index}`} className="grid gap-3 rounded-lg border p-3">
           <label>
-            Type
+            {tr('pages.tokenRoutes.nodeForm.type')}
             <SelectField
               disabled={readonly}
               value={operation.type}
@@ -316,7 +318,7 @@ function FilterOperationsEditor({
           {operation.type === 'rewrite_model' && (
             <>
               <label>
-                Source
+                {tr('pages.tokenRoutes.nodeForm.source')}
                 <SelectField
                   disabled={readonly}
                   value={operation.source}
@@ -328,7 +330,7 @@ function FilterOperationsEditor({
                 />
               </label>
               <label>
-                Operation
+                {tr('pages.tokenRoutes.nodeForm.operation')}
                 <SelectField
                   disabled={readonly}
                   value={operation.operation}
@@ -340,7 +342,7 @@ function FilterOperationsEditor({
                 />
               </label>
               <label>
-                Value / suffix
+                {tr('pages.tokenRoutes.nodeForm.valueOrSuffix')}
                 <Input disabled={readonly} value={operation.operation === 'set' ? String(operation.value || '') : String(operation.suffix || '')} onChange={(event) => updateOperation(index, operation.operation === 'set' ? { ...operation, value: event.target.value } : { ...operation, suffix: event.target.value })} />
               </label>
             </>
@@ -348,13 +350,13 @@ function FilterOperationsEditor({
           {(operation.type === 'set_payload' || operation.type === 'remove_payload') && (
             <>
               <label>
-                Payload path
+                {tr('pages.tokenRoutes.nodeForm.payloadPath')}
                 <Input disabled={readonly} value={operation.path} onChange={(event) => updateOperation(index, { ...operation, path: event.target.value } as RouteFilter)} />
               </label>
               {operation.type === 'set_payload' && (
                 <>
                   <label>
-                    Mode
+                    {tr('pages.tokenRoutes.nodeForm.mode')}
                     <SelectField
                       disabled={readonly}
                       value={operation.mode || 'default'}
@@ -366,7 +368,7 @@ function FilterOperationsEditor({
                     />
                   </label>
                   <label>
-                    Value JSON
+                    {tr('pages.tokenRoutes.nodeForm.valueJson')}
                     <Input disabled={readonly} value={typeof operation.value === 'string' ? operation.value : JSON.stringify(operation.value)} onChange={(event) => updateOperation(index, { ...operation, value: parseJsonField(event.target.value) })} />
                   </label>
                 </>
@@ -376,12 +378,12 @@ function FilterOperationsEditor({
           {(operation.type === 'set_header' || operation.type === 'remove_header') && (
             <>
               <label>
-                Header name
+                {tr('pages.tokenRoutes.nodeForm.headerName')}
                 <Input disabled={readonly} value={operation.name} onChange={(event) => updateOperation(index, { ...operation, name: event.target.value } as RouteFilter)} />
               </label>
               {operation.type === 'set_header' && (
                 <label>
-                  Header value
+                  {tr('pages.tokenRoutes.nodeForm.headerValue')}
                   <Input disabled={readonly} value={operation.value} onChange={(event) => updateOperation(index, { ...operation, value: event.target.value })} />
                 </label>
               )}
@@ -389,7 +391,7 @@ function FilterOperationsEditor({
           )}
           {operation.type === 'set_endpoint_preference' && (
             <label>
-              Endpoint
+              {tr('pages.tokenRoutes.nodeForm.endpoint')}
               <SelectField
                 disabled={readonly}
                 value={operation.endpoint}
@@ -402,7 +404,7 @@ function FilterOperationsEditor({
               />
             </label>
           )}
-          <Button variant="secondary" size="sm" type="button" disabled={readonly} onClick={() => onChange(operations.filter((_, itemIndex) => itemIndex !== index))}>Remove Operation</Button>
+          <Button variant="secondary" size="sm" type="button" disabled={readonly} onClick={() => onChange(operations.filter((_, itemIndex) => itemIndex !== index))}>{tr('pages.tokenRoutes.nodeForm.removeOperation')}</Button>
         </div>
       ))}
       <div className="flex flex-wrap gap-2">

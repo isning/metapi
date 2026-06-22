@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { InlineBrandIcon } from './BrandIcon.js';
 import { formatCompactTokenMetric } from '../numberFormat.js';
-import { useThemeLabelColor } from './useThemeLabelColor.js';
+import { useThemeChartPalette, useThemeLabelColor, useThemeToken } from './useThemeLabelColor.js';
 import EmptyStateBlock from './EmptyStateBlock.js';
 import ToneBadge from './ToneBadge.js';
 import { Button } from './ui/button/index.js';
@@ -17,6 +17,7 @@ import {
   TableRow,
 } from './ui/table/index.js';
 
+import { tr } from '../i18n.js';
 type TabKey = 'spend' | 'trend' | 'calls' | 'rank';
 
 interface SpendDistributionItem { model: string; spend: number; calls: number; }
@@ -37,13 +38,11 @@ interface ModelAnalysisPanelProps {
 }
 
 const tabs: Array<{ key: TabKey; label: string; icon: string }> = [
-  { key: 'spend', label: '消耗分布', icon: '💰' },
-  { key: 'trend', label: '消耗趋势', icon: '📈' },
-  { key: 'calls', label: '调用分布', icon: '🔄' },
-  { key: 'rank', label: '排行榜', icon: '🏆' },
+  { key: 'spend', label: tr('components.modelAnalysisPanel.consumptionDistribution'), icon: '💰' },
+  { key: 'trend', label: tr('components.modelAnalysisPanel.consumptionTrend'), icon: '📈' },
+  { key: 'calls', label: tr('components.modelAnalysisPanel.callDistribution'), icon: '🔄' },
+  { key: 'rank', label: tr('components.modelAnalysisPanel.rankingList'), icon: '🏆' },
 ];
-
-const PIE_COLORS = ['#4f46e5', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6'];
 
 function toSafeNumber(value: unknown): number {
   if (typeof value !== 'number' || Number.isNaN(value) || !Number.isFinite(value)) return 0;
@@ -64,8 +63,8 @@ function formatPercent(value: number): string {
 function EmptyBlock() {
   return (
     <EmptyStateBlock
-      title="暂无模型调用数据"
-      description="等待代理流量进入后会自动生成统计图表"
+      title={tr('components.modelAnalysisPanel.noModelYetcalls')}
+      description={tr('components.modelAnalysisPanel.actingAutomatic')}
     />
   );
 }
@@ -73,6 +72,9 @@ function EmptyBlock() {
 export default function ModelAnalysisPanel({ data }: ModelAnalysisPanelProps) {
   const [activeTab, setActiveTab] = useState<TabKey>('spend');
   const labelColor = useThemeLabelColor();
+  const primaryColor = useThemeToken('--primary', '#2563eb');
+  const primaryHoverColor = useThemeToken('--color-primary-hover', '#1d4ed8');
+  const chartPalette = useThemeChartPalette();
 
   const totals = {
     spend: toSafeNumber(data?.totals?.spend),
@@ -93,23 +95,23 @@ export default function ModelAnalysisPanel({ data }: ModelAnalysisPanelProps) {
     type: 'bar' as const,
     data: [{ id: 'data', values: spendDistribution.map(d => ({ model: d.model.length > 25 ? d.model.slice(0, 25) + '...' : d.model, value: toSafeNumber(d.spend) })).reverse() }],
     xField: 'value', yField: 'model', direction: 'horizontal' as const,
-    bar: { style: { cornerRadius: [0, 6, 6, 0], fill: { gradient: 'linear' as const, x0: 0, y0: 0, x1: 1, y1: 0, stops: [{ offset: 0, color: '#4f46e5' }, { offset: 1, color: '#818cf8' }] } } },
+    bar: { style: { cornerRadius: [0, 6, 6, 0], fill: { gradient: 'linear' as const, x0: 0, y0: 0, x1: 1, y1: 0, stops: [{ offset: 0, color: primaryColor }, { offset: 1, color: primaryHoverColor }] } } },
     label: { visible: true, position: 'right', formatter: '{value}', style: { fontSize: 11, fill: labelColor, stroke: 'transparent' } },
     axes: [{ orient: 'left', label: { style: { fontSize: 11, fill: labelColor } } }, { orient: 'bottom', visible: false }],
     animation: true, background: 'transparent',
-  }), [spendDistribution, labelColor]);
+  }), [labelColor, primaryColor, primaryHoverColor, spendDistribution]);
 
   const trendSpec = useMemo(() => ({
     type: 'area' as const,
     data: [{ id: 'data', values: spendTrend.map(d => ({ day: d.day, spend: toSafeNumber(d.spend) })) }],
     xField: 'day', yField: 'spend',
-    line: { style: { lineWidth: 2.5, curveType: 'monotone' as const, stroke: '#4f46e5' } },
-    area: { style: { fill: { gradient: 'linear' as const, x0: 0, y0: 0, x1: 0, y1: 1, stops: [{ offset: 0, color: 'rgba(79,70,229,0.25)' }, { offset: 1, color: 'rgba(79,70,229,0.02)' }] }, curveType: 'monotone' as const } },
-    point: { visible: true, style: { size: 7, fill: '#4f46e5', stroke: '#fff', lineWidth: 2 } },
+    line: { style: { lineWidth: 2.5, curveType: 'monotone' as const, stroke: primaryColor } },
+    area: { style: { fill: { gradient: 'linear' as const, x0: 0, y0: 0, x1: 0, y1: 1, stops: [{ offset: 0, color: primaryColor }, { offset: 1, color: 'transparent' }] }, fillOpacity: 0.22, curveType: 'monotone' as const } },
+    point: { visible: true, style: { size: 7, fill: primaryColor, stroke: '#fff', lineWidth: 2 } },
     axes: [{ orient: 'bottom' as const, label: { style: { fontSize: 11, fill: labelColor } } }, { orient: 'left' as const, label: { style: { fontSize: 11, fill: labelColor } } }],
-    tooltip: { mark: { content: [{ key: () => '消耗', value: (datum: any) => formatCurrency(datum?.spend ?? 0) }] } },
+    tooltip: { mark: { content: [{ key: () => tr('components.modelAnalysisPanel.spend'), value: (datum: any) => formatCurrency(datum?.spend ?? 0) }] } },
     animation: true, background: 'transparent',
-  }), [spendTrend, labelColor]);
+  }), [labelColor, primaryColor, spendTrend]);
 
   const callsPieSpec = useMemo(() => ({
     type: 'pie' as const,
@@ -120,9 +122,9 @@ export default function ModelAnalysisPanel({ data }: ModelAnalysisPanelProps) {
     label: { visible: true, position: 'outside', formatter: '{_percent_}%', style: { fill: labelColor } },
     legends: { visible: false },
     animation: true,
-    color: PIE_COLORS,
+    color: chartPalette,
     background: 'transparent',
-  }), [callsDistribution, labelColor]);
+  }), [callsDistribution, chartPalette, labelColor]);
 
   if (!hasData) return <EmptyBlock />;
 
@@ -132,19 +134,19 @@ export default function ModelAnalysisPanel({ data }: ModelAnalysisPanelProps) {
       <div className="mb-5 grid grid-cols-3 gap-3">
         <Card>
           <CardContent className="pt-3">
-            <div className="text-xs text-muted-foreground">总消耗</div>
+            <div className="text-xs text-muted-foreground">{tr('components.modelAnalysisPanel.totalSpend')}</div>
             <div className="mt-1 text-2xl font-semibold">{formatCurrency(totals.spend)}</div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-3">
-            <div className="text-xs text-muted-foreground">总调用</div>
+            <div className="text-xs text-muted-foreground">{tr('components.modelAnalysisPanel.totalCalls')}</div>
             <div className="mt-1 text-2xl font-semibold">{Math.round(totals.calls).toLocaleString()}</div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-3">
-            <div className="text-xs text-muted-foreground">总 Tokens</div>
+            <div className="text-xs text-muted-foreground">{tr('components.modelAnalysisPanel.tokens')}</div>
             <div className="mt-1 text-2xl font-semibold">{formatCompactTokenMetric(totals.tokens)}</div>
           </CardContent>
         </Card>
@@ -193,7 +195,7 @@ export default function ModelAnalysisPanel({ data }: ModelAnalysisPanelProps) {
             {callsDistribution.map((d, idx) => {
               return (
                 <span key={d.model} className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                  <ChartLegendSwatch color={PIE_COLORS[idx % PIE_COLORS.length]} />
+                  <ChartLegendSwatch color={chartPalette[idx % chartPalette.length] || chartPalette[0] || '#2563eb'} />
                   <InlineBrandIcon model={d.model} size={13} />
                   <span className="max-w-[150px] truncate">{d.model}</span>
                   <span className="font-semibold tabular-nums text-foreground">{d.calls}</span>
@@ -209,11 +211,11 @@ export default function ModelAnalysisPanel({ data }: ModelAnalysisPanelProps) {
           <TableHeader>
             <TableRow>
               <TableHead className="w-9 text-center">#</TableHead>
-              <TableHead>模型</TableHead>
-              <TableHead className="text-center">调用</TableHead>
-              <TableHead className="text-center">成功率</TableHead>
-              <TableHead className="text-center">平均延迟</TableHead>
-              <TableHead className="text-right">消耗</TableHead>
+              <TableHead>{tr('components.modelAnalysisPanel.model')}</TableHead>
+              <TableHead className="text-center">{tr('components.modelAnalysisPanel.calls')}</TableHead>
+              <TableHead className="text-center">{tr('components.modelAnalysisPanel.successRate')}</TableHead>
+              <TableHead className="text-center">{tr('components.modelAnalysisPanel.avgLatency')}</TableHead>
+              <TableHead className="text-right">{tr('components.modelAnalysisPanel.spend2')}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>

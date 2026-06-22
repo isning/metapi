@@ -123,16 +123,16 @@ export default function AddChannelModal({
     setSubmitting(true);
     try {
       const result = await api.batchAddChannels(routeId, channels);
-      const msg = `已添加 ${result.created} 个通道` +
-        (result.skipped > 0 ? `，跳过 ${result.skipped} 个重复` : '') +
-        (result.errors.length > 0 ? `，${result.errors.length} 个错误` : '');
+      const msg = tr('pages.tokenRoutes.addChannelModal.addedChannels').replace('{count}', String(result.created)) +
+        (result.skipped > 0 ? tr('pages.tokenRoutes.addChannelModal.skippedDuplicateChannels').replace('{count}', String(result.skipped)) : '') +
+        (result.errors.length > 0 ? tr('pages.tokenRoutes.addChannelModal.channelErrors').replace('{count}', String(result.errors.length)) : '');
       toast.success(msg);
       setSelectedAccounts({});
       setSearchQuery('');
       onSuccess();
       onClose();
     } catch (e: any) {
-      toast.error(e.message || '批量添加通道失败');
+      toast.error(e.message || tr('pages.tokenRoutes.addChannelModal.failedAddChannel'));
     } finally {
       setSubmitting(false);
     }
@@ -150,16 +150,16 @@ export default function AddChannelModal({
     <CenteredModal
       open={open}
       onClose={handleClose}
-      title={`${tr('添加通道')} - ${routeTitle}`}
+      title={`${tr('pages.tokenRoutes.addchannels')} - ${routeTitle}`}
       maxWidth={560}
       footer={
         <div className="flex w-full items-center justify-between gap-3">
           <span className="text-xs text-muted-foreground">
-            {tr('已选')} {selectedCount} {tr('个通道')}
+            {tr('pages.downstreamKeys.downstreamKeyEditorModal.selected')} {selectedCount} {tr('pages.tokenRoutes.addChannelModal.channels')}
           </span>
           <div className="flex gap-2">
             <Button type="button" variant="outline" onClick={handleClose} disabled={submitting}>
-              {tr('取消')}
+              {tr('app.cancel')}
             </Button>
             <Button
               type="button"
@@ -167,9 +167,9 @@ export default function AddChannelModal({
               disabled={submitting || selectedCount === 0}
             >
               {submitting ? (
-                <><LoaderCircle className="size-4 animate-spin" /> {tr('添加中...')}</>
+                <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.accounts.adding')}</>
               ) : (
-                `${tr('批量添加')} (${selectedCount})`
+                `${tr('pages.tokenRoutes.addChannelModal.add')} (${selectedCount})`
               )}
             </Button>
           </div>
@@ -180,7 +180,7 @@ export default function AddChannelModal({
         <SearchInput
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder={tr('搜索账号...')}
+          placeholder={tr('pages.tokenRoutes.addChannelModal.searchaccounts')}
         />
 
         <ScrollArea className="max-h-[360px]">
@@ -188,8 +188,8 @@ export default function AddChannelModal({
           {filteredAccounts.length === 0 && filteredMissingAccounts.length === 0 ? (
             <EmptyStateBlock
               title={candidateView.accountOptions.length === 0 && missingAccounts.length === 0
-                ? tr('当前没有可用的账号，请确认已有账号的令牌支持调用此模型')
-                : tr('没有匹配的账号')}
+                ? tr('pages.tokenRoutes.addChannelModal.availableAccountsAccountsTokensupportedcallsModel')
+                : tr('pages.tokenRoutes.addChannelModal.matchAccounts')}
               className="py-3"
             />
           ) : (
@@ -216,13 +216,13 @@ export default function AddChannelModal({
                         />
                         <span className="text-sm font-medium">{account.label}</span>
                         {isExisting && (
-                          <ToneBadge tone="-muted">{tr('已添加')}</ToneBadge>
+                          <ToneBadge tone="-muted">{tr('pages.tokenRoutes.addChannelModal.add2')}</ToneBadge>
                         )}
                       </div>
 
                       {isSelected && tokens.length > 0 && (
                         <div className="ml-6 grid gap-1" onClick={(e) => e.stopPropagation()}>
-                          <div className="text-xs text-muted-foreground">{tr('令牌绑定')}:</div>
+                          <div className="text-xs text-muted-foreground">{tr('pages.tokenRoutes.addChannelModal.token')}:</div>
                           <ModernSelect
                             size="sm"
                             value={(() => {
@@ -240,7 +240,7 @@ export default function AddChannelModal({
                             options={[
                               {
                                 value: '0',
-                                label: tr('跟随账号默认'),
+                                label: tr('pages.tokenRoutes.addChannelModal.accountsdefault'),
                                 description: tokenBinding.followOptionDescription,
                               },
                               ...tokens.map((token: RouteTokenOption) => ({
@@ -252,7 +252,7 @@ export default function AddChannelModal({
                                 description: buildFixedTokenOptionDescription(token),
                               })),
                             ]}
-                            placeholder={tr('选择绑定方式')}
+                            placeholder={tr('pages.tokenRoutes.addChannelModal.selectBindingMode')}
                           />
                           <div className="text-xs leading-snug text-muted-foreground">
                             {tokenBinding.helperText}
@@ -268,7 +268,7 @@ export default function AddChannelModal({
               {filteredMissingAccounts.length > 0 && (
                 <div className="mt-1 flex flex-col gap-2 border-t border-dashed border-border pt-2">
                   <div className="text-xs text-muted-foreground">
-                    {tr('以下账号可用此模型但缺少令牌')}:
+                    {tr('pages.tokenRoutes.addChannelModal.accountsavailableModelToken')}:
                   </div>
                   {filteredMissingAccounts.map((item) => (
                     <Card key={item.accountId} className="border-dashed">
@@ -281,7 +281,7 @@ export default function AddChannelModal({
                           type="button"
                           onClick={() => onCreateTokenForMissing(item.accountId, item.modelName)}
                         >
-                          {tr('创建令牌')}
+                          {tr('pages.tokenRoutes.addChannelModal.token2')}
                         </Button>
                       )}
                       </CardContent>

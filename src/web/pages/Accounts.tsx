@@ -1,5 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import type { DragEndEvent, DragStartEvent } from "@dnd-kit/core";
+import { DndContext, DragOverlay, PointerSensor, closestCenter, useSensor, useSensors } from "@dnd-kit/core";
+import { SortableContext, verticalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { api } from "../api.js";
 import CenteredModal from "../components/CenteredModal.js";
 import ResponsiveFilterPanel from "../components/ResponsiveFilterPanel.js";
@@ -12,6 +16,8 @@ import { useIsMobile } from "../components/useIsMobile.js";
 import DeleteConfirmModal from "../components/DeleteConfirmModal.js";
 import SiteBadgeLink from "../components/SiteBadgeLink.js";
 import InfoNote from "../components/InfoNote.js";
+import PageHeader from "../components/workspace/PageHeader.js";
+import PageShell from "../components/workspace/PageShell.js";
 import AccountModelsModal from "./accounts/AccountModelsModal.js";
 import {
   buildAddAccountPrereqHint,
@@ -30,6 +36,7 @@ import {
 import { TokensPanel } from "./Tokens.js";
 import { tr } from "../i18n.js";
 import {
+  buildCustomReorderToTargetUpdates,
   buildCustomReorderUpdates,
   sortItemsForDisplay,
   type SortMode,
@@ -40,15 +47,28 @@ import { getSiteInitializationPreset } from "../../shared/siteInitializationPres
 import { parseBatchApiKeys } from "../../shared/apiKeyBatch.js";
 import { Button } from '../components/ui/button/index.js';
 import { ButtonGroup } from '../components/ui/button-group/index.js';
-import { LoaderCircle } from 'lucide-react';
+import {
+  CheckCircle2,
+  CircleSlash,
+  Ellipsis,
+  GripVertical,
+  LoaderCircle,
+  Pin,
+  PinOff,
+  RefreshCw,
+  Trash2,
+  Wallet,
+} from 'lucide-react';
 import ToneBadge from '../components/ToneBadge.js';
 import { Alert, AlertDescription, AlertTitle } from '../components/ui/alert/index.js';
 import { Card } from '../components/ui/card/index.js';
 import EmptyStateBlock from "../components/EmptyStateBlock.js";
+import { DataTable, DataTableToolbar } from '../components/ui/data-table/index.js';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table/index.js';
 import { Checkbox } from '../components/ui/checkbox/index.js';
 import { Textarea } from '../components/ui/textarea/index.js';
 import { Input } from '../components/ui/input/index.js';
+import * as DropdownMenu from '../components/ui/dropdown-menu/index.js';
 
 type ConnectionsSegment = "session" | "apikey" | "tokens";
 
@@ -61,28 +81,28 @@ const ACCOUNT_SEGMENTS: Array<{
 }> = [
   {
     value: "session",
-    label: "账号管理",
-    tooltip: "用于签到、余额、状态维护",
+    label: tr('pages.accounts.connectionManagement'),
+    tooltip: tr('pages.accounts.signBalanceStatus'),
     tooltipSide: "bottom",
     tooltipAlign: "start",
   },
   {
     value: "apikey",
-    label: "API Key管理",
-    tooltip: "只有 Base URL + Key 时使用，只负责代理调用",
+    label: tr('pages.accounts.apiKey2'),
+    tooltip: tr('pages.accounts.baseUrlKeyUsageActingcalls'),
     tooltipSide: "bottom",
     tooltipAlign: "center",
   },
   {
     value: "tokens",
-    label: "账号令牌管理",
-    tooltip: "从账号同步或手动维护，供路由实际调用",
+    label: tr('pages.accounts.accountsaccountTokens'),
+    tooltip: tr('pages.accounts.accountssyncManualRoutesCalls'),
     tooltipSide: "bottom",
     tooltipAlign: "end",
   },
 ];
 
-const SITE_SELECT_SEARCH_PLACEHOLDER = "筛选站点（名称 / 平台 / URL）";
+const SITE_SELECT_SEARCH_PLACEHOLDER = tr('pages.accounts.filtersitesNamePlatformUrl');
 
 function createLoginForm() {
   return { siteId: 0, username: "", password: "" };
@@ -114,6 +134,94 @@ function resolveConnectionsSegment(search: string): ConnectionsSegment {
   const rawSegment = new URLSearchParams(search).get("segment");
   if (rawSegment === "apikey" || rawSegment === "tokens") return rawSegment;
   return "session";
+}
+
+type SortableAccountTableRowProps = Omit<React.ComponentPropsWithoutRef<typeof TableRow>, "children" | "ref"> & {
+  account: any;
+  selected: boolean;
+  rowRef?: (node: HTMLTableRowElement | null) => void;
+  children: (dragHandle: {
+    setActivatorNodeRef: (node: HTMLElement | null) => void;
+    attributes: Record<string, any>;
+    listeners: Record<string, any> | undefined;
+    isDragging: boolean;
+  }) => React.ReactNode;
+};
+
+function SortableAccountTableRow({
+  account,
+  selected,
+  rowRef,
+  className,
+  children,
+  style,
+  ...props
+}: SortableAccountTableRowProps) {
+  const {
+    attributes,
+    listeners,
+    setActivatorNodeRef,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({
+    id: account.id,
+  });
+
+  return (
+    <TableRow
+      ref={(node) => {
+        setNodeRef(node);
+        rowRef?.(node);
+      }}
+      data-state={selected ? "selected" : undefined}
+      data-dragging={isDragging ? "true" : undefined}
+      className={`${className || ""} ${isDragging ? "relative z-10 bg-muted shadow-sm" : ""}`.trim()}
+      style={{
+        ...style,
+        visibility: isDragging ? "hidden" : undefined,
+        transform: CSS.Translate.toString(transform),
+        transition,
+      }}
+      {...props}
+    >
+      {children({
+        setActivatorNodeRef,
+        attributes: attributes as Record<string, any>,
+        listeners: listeners as Record<string, any> | undefined,
+        isDragging,
+      })}
+    </TableRow>
+  );
+}
+
+function AccountDragOverlayCard({
+  account,
+  accountName,
+}: {
+  account: any;
+  accountName: string;
+}) {
+  const connectionMode = resolveAccountCredentialMode(account);
+  return (
+    <div className="pointer-events-none flex min-w-[360px] max-w-[560px] items-center gap-3 rounded-md border bg-popover px-3 py-2 text-popover-foreground shadow-lg">
+      <div className="flex size-8 shrink-0 items-center justify-center rounded-md border bg-muted text-muted-foreground">
+        <GripVertical className="size-4" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-sm font-semibold">{accountName}</div>
+        <div className="mt-1 flex flex-wrap items-center gap-1.5">
+          <ToneBadge tone={connectionMode === "apikey" ? "warning" : "info"}>
+            {connectionMode === "apikey" ? "API Key" : "Session"}
+          </ToneBadge>
+          <ToneBadge tone="-muted">
+            {account.site?.name || tr('components.searchModal.unlinkedSite')}
+          </ToneBadge>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export default function Accounts() {
@@ -215,6 +323,7 @@ export default function Accounts() {
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastRebindTargetRef = useRef<any | null>(null);
   const modelModalRequestSeqRef = useRef(0);
+  const [draggingAccountId, setDraggingAccountId] = useState<number | null>(null);
   const toast = useToast();
   if (rebindTarget) lastRebindTargetRef.current = rebindTarget;
   const activeRebindTarget = rebindTarget || lastRebindTargetRef.current;
@@ -238,7 +347,7 @@ export default function Accounts() {
         ),
       );
     } catch (error: any) {
-      toast.error(error?.message || "加载账号列表失败");
+      toast.error(error?.message || tr('pages.accounts.failedLoadAccountList'));
     } finally {
       setLoaded(true);
     }
@@ -262,7 +371,7 @@ export default function Accounts() {
     activeSegment === "apikey" && parsedApiKeys.length > 1;
   const siteSelectOptions = useMemo(
     () => [
-      { value: "0", label: "选择站点" },
+      { value: "0", label: tr('pages.accounts.selectSite') },
       ...sites.map((site: any) => ({
         value: String(site.id),
         label: `${site.name} (${site.platform})`,
@@ -303,8 +412,8 @@ export default function Accounts() {
       typeof account?.username === "string" ? account.username.trim() : "";
     if (username) return username;
     return resolveAccountCredentialMode(account) === "apikey"
-      ? "API Key 连接"
-      : "未命名";
+      ? tr('components.searchModal.apiKey')
+      : tr('components.searchModal.unnamed');
   };
 
   const sortedAccounts = useMemo(
@@ -322,9 +431,30 @@ export default function Accounts() {
       (account) => resolveAccountCredentialMode(account) === activeSegment,
     );
   }, [activeSegment, sortedAccounts]);
+  const accountReorderSensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 6,
+      },
+    }),
+  );
+  const draggingAccount = draggingAccountId == null
+    ? null
+    : sortedAccounts.find((account) => account.id === draggingAccountId) || null;
   const allVisibleAccountsSelected =
     visibleAccounts.length > 0 &&
     visibleAccounts.every((account) => selectedAccountIds.includes(account.id));
+  const someVisibleAccountsSelected =
+    !allVisibleAccountsSelected &&
+    visibleAccounts.some((account) => selectedAccountIds.includes(account.id));
+  const selectedAccountCountText = tr('pages.accounts.selectedCount').replace(
+    '{count}',
+    String(selectedAccountIds.length),
+  );
+  const visibleAccountCountText = tr('pages.accounts.visibleCount').replace(
+    '{count}',
+    String(visibleAccounts.length),
+  );
   const verifyFailureHint = buildVerifyFailureHint(verifyResult);
   const addAccountPrereqHint = buildAddAccountPrereqHint(verifyResult);
 
@@ -416,10 +546,10 @@ export default function Accounts() {
         toast.success(msg);
         load(true);
       } else {
-        toast.error(result.message || "登录失败");
+        toast.error(result.message || tr('pages.accounts.loginFailed'));
       }
     } catch (e: any) {
-      toast.error(e.message || "登录请求失败");
+      toast.error(e.message || tr('pages.accounts.loginRequestFailed'));
     } finally {
       setSaving(false);
     }
@@ -453,12 +583,12 @@ export default function Accounts() {
           );
         } else {
           toast.success(
-            `Session 验证成功: ${result.userInfo?.username || "未知用户"}`,
+            `Session 验证成功: ${result.userInfo?.username || tr('pages.accounts.unknown')}`,
           );
         }
       } else {
         toast.error(
-          normalizeVerifyFailureMessage(result.message || "Token 无效"),
+          normalizeVerifyFailureMessage(result.message || tr('pages.accounts.tokenInvalid')),
         );
       }
     } catch (e: any) {
@@ -476,7 +606,7 @@ export default function Accounts() {
       !verifyResult?.success &&
       !tokenForm.skipModelFetch
     ) {
-      toast.error("请先验证 Token 成功后再添加账号");
+      toast.error(tr('pages.accounts.verifyTokenSuccessAddAccount'));
       return;
     }
     const credentialMode = activeSegment === "apikey" ? "apikey" : "session";
@@ -515,7 +645,7 @@ export default function Accounts() {
           ? result.items.filter((item: any) => item?.status === "failed")
           : [];
         if (failedItems.length > 0) {
-          const firstMessage = failedItems[0]?.message || "创建失败";
+          const firstMessage = failedItems[0]?.message || tr('pages.accounts.failed');
           toast.error(`失败 ${failedItems.length} 条：${firstMessage}`);
         }
         load(true);
@@ -538,18 +668,18 @@ export default function Accounts() {
           );
           seededRecommendedModels = true;
         } catch (seedErr: any) {
-          toast.error(seedErr?.message || "连接已添加，但推荐模型补录失败");
+          toast.error(seedErr?.message || tr('pages.accounts.addRecommendedmodelFailed'));
         }
       }
       closeAddPanel();
       if (result.queued) {
-        toast.info(result.message || "账号已添加，后台正在同步初始化信息。");
+        toast.info(result.message || tr('pages.accounts.accountsAddSyncInfo'));
       } else if (result.tokenType === "apikey") {
-        toast.success("已添加为 API Key 账号（可用于代理转发）");
+        toast.success(tr('pages.accounts.addedApiKeyAccountCanUsedProxy'));
       } else {
         const parts: string[] = [];
-        if (result.usernameDetected) parts.push("用户名已自动识别");
-        if (result.apiTokenFound) parts.push("API Key 已自动获取");
+        if (result.usernameDetected) parts.push(tr('pages.accounts.usernameHasBeenAutomaticallyRecognized'));
+        if (result.apiTokenFound) parts.push(tr('pages.accounts.apiKeyHasBeenObtainedAutomatically'));
         const extra = parts.length ? `（${parts.join("，")}）` : "";
         toast.success(`账号已添加${extra}`);
       }
@@ -560,7 +690,7 @@ export default function Accounts() {
       }
       load(true);
     } catch (e: any) {
-      toast.error(e.message || "添加失败");
+      toast.error(e.message || tr('pages.accounts.addFailed'));
     } finally {
       setSaving(false);
     }
@@ -576,7 +706,7 @@ export default function Accounts() {
       await fn();
       if (successMsg) toast.success(successMsg);
     } catch (e: any) {
-      toast.error(e.message || "操作失败");
+      toast.error(e.message || tr('pages.accounts.operationFailed2'));
     } finally {
       setActionLoading((s) => ({ ...s, [key]: false }));
       void load(true);
@@ -598,10 +728,10 @@ export default function Accounts() {
 
   const formatModelFailure = (refresh: any, messageFallback?: string) => {
     const code = refresh?.errorCode;
-    if (code === "timeout") return "模型获取失败（请求超时）";
-    if (code === "unauthorized") return "模型获取失败，API Key 已无效";
-    if (code === "empty_models") return "模型获取失败：未获取到可用模型";
-    return messageFallback || refresh?.errorMessage || "模型获取失败";
+    if (code === "timeout") return tr('pages.accounts.modelFailedRequestTimeout');
+    if (code === "unauthorized") return tr('pages.accounts.modelFailedApiKeyInvalid');
+    if (code === "empty_models") return tr('pages.accounts.modelFailedAvailablemodel');
+    return messageFallback || refresh?.errorMessage || tr('pages.accounts.modelFailed2');
   };
 
   const handleCheckModels = async (accountId: number) => {
@@ -616,7 +746,7 @@ export default function Accounts() {
         toast.success(formatModelSuccess(refresh));
       }
     } catch (e: any) {
-      toast.error(e.message || "模型获取失败");
+      toast.error(e.message || tr('pages.accounts.modelFailed2'));
     } finally {
       setActionLoading((s) => ({ ...s, [key]: false }));
       void load(true);
@@ -676,7 +806,7 @@ export default function Accounts() {
       }
     } catch (e: any) {
       if (modelModalRequestSeqRef.current !== requestId) return;
-      toast.error(e.message || options.errorMessage || "加载模型列表失败");
+      toast.error(e.message || options.errorMessage || tr('pages.accounts.modelFailed3'));
       setModelModal((s) =>
         options.closeOnError
           ? { ...s, open: false, account: null, loading: false }
@@ -689,7 +819,7 @@ export default function Accounts() {
     await loadModelModalModels(account, {
       resetBeforeLoad: true,
       closeOnError: true,
-      errorMessage: "加载模型列表失败",
+      errorMessage: tr('pages.accounts.modelFailed3'),
     });
   };
 
@@ -724,13 +854,13 @@ export default function Accounts() {
       );
       try {
         await api.rebuildRoutes(false, false);
-        toast.success("模型禁用设置已保存，路由已重建");
+        toast.success(tr('pages.accounts.modeldisabledsettingsSaveRoutes'));
       } catch {
-        toast.error("模型禁用设置已保存，但路由重建失败，请手动刷新路由");
+        toast.error(tr('pages.accounts.modeldisabledsettingsSaveRoutesFailedManualrefreshroutes'));
       }
       closeModelModal();
     } catch (e: any) {
-      toast.error(e.message || "保存失败");
+      toast.error(e.message || tr('pages.accounts.saveFailed'));
     } finally {
       setModelModal((s) => ({ ...s, saving: false }));
     }
@@ -751,16 +881,16 @@ export default function Accounts() {
         modelsToAdd,
       );
       if (res.success) {
-        toast.success("模型已手动添加");
+        toast.success(tr('pages.accounts.modelManualadd'));
         setModelModal((s) => ({ ...s, manualModelsInput: "" }));
         await loadModelModalModels(modelModal.account, {
           refreshUpstream: false,
         });
       } else {
-        toast.error(res.message || "手动添加模型失败");
+        toast.error(res.message || tr('pages.accounts.manualaddmodelfailed'));
       }
     } catch (e: any) {
-      toast.error(e.message || "手动添加模型失败");
+      toast.error(e.message || tr('pages.accounts.manualaddmodelfailed'));
     } finally {
       setModelModal((s) => ({ ...s, addingManualModels: false }));
     }
@@ -776,31 +906,31 @@ export default function Accounts() {
     }
   > = {
     healthy: {
-      label: "健康",
+      label: tr('pages.accounts.healthy'),
       cls: "success",
       dotClass: "status-dot-success",
       pulse: true,
     },
     unhealthy: {
-      label: "异常",
+      label: tr('pages.accounts.error'),
       cls: "error",
       dotClass: "status-dot-error",
       pulse: true,
     },
     degraded: {
-      label: "降级",
+      label: tr('pages.accounts.downgrade'),
       cls: "warning",
       dotClass: "status-dot-pending",
       pulse: true,
     },
     disabled: {
-      label: "已禁用",
+      label: tr('pages.accounts.disabled2'),
       cls: "muted",
       dotClass: "status-dot-muted",
       pulse: false,
     },
     unknown: {
-      label: "未知",
+      label: tr('pages.accounts.unknown2'),
       cls: "muted",
       dotClass: "status-dot-pending",
       pulse: false,
@@ -811,8 +941,8 @@ export default function Accounts() {
     if (account.status === "expired") {
       return {
         ...runtimeHealthMap.unhealthy,
-        label: "已过期",
-        reason: account.runtimeHealth?.reason || "连接凭证已过期，请更新凭证",
+        label: tr('pages.accounts.expired'),
+        reason: account.runtimeHealth?.reason || tr('pages.accounts.expired2'),
       };
     }
     const capabilities = resolveAccountCapabilities(account);
@@ -827,10 +957,10 @@ export default function Accounts() {
     const reason =
       account.runtimeHealth?.reason ||
       (state === "disabled"
-        ? "账号或站点已禁用"
+        ? tr('pages.accounts.accountSiteHasBeenDisabled')
         : state === "unhealthy"
-          ? "最近健康检查失败"
-          : "尚未获取运行健康信息");
+          ? tr('pages.accounts.recentHealthCheckFailed')
+          : tr('pages.accounts.runningHealthInformationHasNotBeenObtained'));
     return { state, reason, ...cfg };
   };
 
@@ -858,13 +988,13 @@ export default function Accounts() {
     try {
       const res = await api.refreshAccountHealth();
       if (res?.queued) {
-        toast.info(res.message || "账号状态刷新任务已提交，完成后会自动更新。");
+        toast.info(res.message || tr('pages.accounts.accountStatusRefreshTaskHasBeenSubmitted'));
       } else {
-        toast.success(res?.message || "账号状态已刷新");
+        toast.success(res?.message || tr('pages.accounts.accountStatusHasBeenRefreshed'));
       }
       load(true);
     } catch (e: any) {
-      toast.error(e.message || "刷新账号状态失败");
+      toast.error(e.message || tr('pages.accounts.failedRefreshAccountStatus'));
     } finally {
       setActionLoading((s) => ({ ...s, "health-refresh": false }));
     }
@@ -877,11 +1007,11 @@ export default function Accounts() {
     try {
       await api.updateAccount(account.id, { checkinEnabled: nextEnabled });
       toast.success(
-        nextEnabled ? "已开启签到" : "已关闭签到（全部签到会忽略此账号）",
+        nextEnabled ? tr('pages.accounts.signEnabled') : tr('pages.accounts.signClosedAllSignInsWillIgnore'),
       );
       load(true);
     } catch (e: any) {
-      toast.error(e.message || "切换签到状态失败");
+      toast.error(e.message || tr('pages.accounts.failedSwitchSignStatus'));
     } finally {
       setActionLoading((s) => ({ ...s, [key]: false }));
     }
@@ -893,10 +1023,10 @@ export default function Accounts() {
     setActionLoading((s) => ({ ...s, [key]: true }));
     try {
       await api.updateAccount(account.id, { isPinned: nextPinned });
-      toast.success(nextPinned ? "账号已置顶" : "账号已取消置顶");
+      toast.success(nextPinned ? tr('pages.accounts.accountsPinTop') : tr('pages.accounts.accountsCancelpinTop'));
       load(true);
     } catch (e: any) {
-      toast.error(e.message || "切换账号置顶失败");
+      toast.error(e.message || tr('pages.accounts.accountspinTopfailed'));
     } finally {
       setActionLoading((s) => ({ ...s, [key]: false }));
     }
@@ -919,7 +1049,41 @@ export default function Accounts() {
       );
       load(true);
     } catch (e: any) {
-      toast.error(e.message || "更新账号排序失败");
+      toast.error(e.message || tr('pages.accounts.accountsFailed'));
+    } finally {
+      setActionLoading((s) => ({ ...s, [key]: false }));
+    }
+  };
+
+  const handleAccountDragStart = (event: DragStartEvent) => {
+    const activeId = Number(event.active.id);
+    setDraggingAccountId(Number.isFinite(activeId) ? activeId : null);
+  };
+
+  const clearAccountDragState = () => {
+    setDraggingAccountId(null);
+  };
+
+  const handleAccountDragEnd = async (event: DragEndEvent) => {
+    clearAccountDragState();
+    const activeId = Number(event.active.id);
+    const overId = event.over ? Number(event.over.id) : NaN;
+    if (!Number.isFinite(activeId) || !Number.isFinite(overId) || activeId === overId) return;
+
+    const updates = buildCustomReorderToTargetUpdates(accounts, activeId, overId);
+    if (updates.length === 0) return;
+
+    const key = `reorder-${activeId}`;
+    setActionLoading((s) => ({ ...s, [key]: true }));
+    try {
+      await Promise.all(
+        updates.map((update) =>
+          api.updateAccount(update.id, { sortOrder: update.sortOrder }),
+        ),
+      );
+      load(true);
+    } catch (e: any) {
+      toast.error(e.message || tr('pages.accounts.accountsFailed'));
     } finally {
       setActionLoading((s) => ({ ...s, [key]: false }));
     }
@@ -991,11 +1155,11 @@ export default function Accounts() {
           : null,
         proxyUrl: editForm.proxyUrl.trim() || null,
       });
-      toast.success("账号已更新");
+      toast.success(tr('pages.accounts.accounts'));
       closeEditPanel();
       load(true);
     } catch (e: any) {
-      toast.error(e.message || "更新账号失败");
+      toast.error(e.message || tr('pages.accounts.accountsfailed'));
     } finally {
       setSavingEdit(false);
     }
@@ -1069,7 +1233,7 @@ export default function Accounts() {
       );
       load(true);
     } catch (e: any) {
-      toast.error(e.message || "批量操作失败");
+      toast.error(e.message || tr('pages.accounts.operationFailed'));
     } finally {
       setBatchActionLoading(false);
     }
@@ -1084,7 +1248,7 @@ export default function Accounts() {
       await withLoading(
         `delete-${target.accountId}`,
         () => api.deleteAccount(target.accountId!),
-        "已删除",
+        tr('pages.accounts.deleted'),
       );
       return;
     }
@@ -1144,12 +1308,12 @@ export default function Accounts() {
       });
       setRebindVerifyResult(result);
       if (result.success && result.tokenType === "session") {
-        toast.success("Session Token 验证成功，可以重新绑定");
+        toast.success(tr('pages.accounts.sessionTokenVerifysuccessRebind'));
       } else if (result.success && result.tokenType !== "session") {
-        toast.error("当前是 API Key，不是 Session Token");
+        toast.error(tr('pages.accounts.apiKeySessionToken'));
       } else {
         toast.error(
-          normalizeVerifyFailureMessage(result.message || "Token 无效"),
+          normalizeVerifyFailureMessage(result.message || tr('pages.accounts.tokenInvalid')),
         );
       }
     } catch (e: any) {
@@ -1168,7 +1332,7 @@ export default function Accounts() {
         rebindVerifyResult?.tokenType === "session"
       )
     ) {
-      toast.error("请先验证新的 Session Token 成功");
+      toast.error(tr('pages.accounts.verifySessionTokenSuccess'));
       return;
     }
     const isSub2ApiRebindTarget =
@@ -1189,11 +1353,11 @@ export default function Accounts() {
             ? Number.parseInt(rebindForm.tokenExpiresAt, 10)
             : undefined,
       });
-      toast.success("账号重新绑定成功，状态已恢复");
+      toast.success(tr('pages.accounts.accountsrebindsuccessStatus'));
       closeRebindPanel();
       load(true);
     } catch (e: any) {
-      toast.error(e.message || "重新绑定失败");
+      toast.error(e.message || tr('pages.accounts.rebindfailed'));
     } finally {
       setRebindSaving(false);
     }
@@ -1262,11 +1426,12 @@ export default function Accounts() {
       : canAddVerifiedConnection;
 
   return (
-    <div className="animate-fade-in">
-      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <h2 className="text-xl font-semibold">{tr("连接管理")}</h2>
-        {activeSegment !== "tokens" && (
-          <div className="flex flex-wrap items-center gap-2">
+    <PageShell>
+      <PageHeader
+        title={tr('app.connectionManagement')}
+        description={tr('pages.accounts.connectionManagementSubtitle')}
+        actions={activeSegment !== "tokens" ? (
+          <>
             {isMobile ? (
               <>
                 <Button variant="outline"
@@ -1275,7 +1440,7 @@ export default function Accounts() {
                  
                  
                 >
-                  排序与操作
+                  {tr('pages.accounts.actions3')}
                 </Button>
                 <Button variant="outline"
                   type="button"
@@ -1286,7 +1451,7 @@ export default function Accounts() {
                  
                  
                 >
-                  {allVisibleAccountsSelected ? "取消全选" : "全选可见项"}
+                  {allVisibleAccountsSelected ? tr('pages.accounts.cancelselectAll') : tr('pages.accounts.selectVisibleItems')}
                 </Button>
               </>
             ) : (
@@ -1297,11 +1462,11 @@ export default function Accounts() {
                     value={sortMode}
                     onChange={(nextValue) => setSortMode(nextValue as SortMode)}
                     options={[
-                      { value: "custom", label: "自定义排序" },
-                      { value: "balance-desc", label: "余额高到低" },
-                      { value: "balance-asc", label: "余额低到高" },
+                      { value: "custom", label: tr('pages.accounts.customOrder') },
+                      { value: "balance-desc", label: tr('pages.accounts.balancehighLow') },
+                      { value: "balance-asc", label: tr('pages.accounts.balancelowHigh') },
                     ]}
-                    placeholder="自定义排序"
+                    placeholder={tr('pages.accounts.customOrder')}
                   />
                 </div>
                 {activeSegment === "session" && (
@@ -1310,7 +1475,7 @@ export default function Accounts() {
                       withLoading(
                         "checkin-all",
                         () => api.triggerCheckinAll(),
-                        "已触发全部签到",
+                        tr('pages.accounts.allSignInsHaveBeenTriggered'),
                       )
                     }
                     disabled={actionLoading["checkin-all"]}
@@ -1319,10 +1484,10 @@ export default function Accounts() {
                     {actionLoading["checkin-all"] ? (
                       <>
                         <LoaderCircle className="size-4 animate-spin" />
-                        {tr("签到中...")}
+                        {tr('pages.accounts.checking')}
                       </>
                     ) : (
-                      tr("全部签到")
+                      tr('pages.accounts.checkAll')
                     )}
                   </Button>
                 )}
@@ -1334,10 +1499,10 @@ export default function Accounts() {
                   {actionLoading["health-refresh"] ? (
                     <>
                       <LoaderCircle className="size-4 animate-spin" />
-                      {tr("刷新状态中...")}
+                      {tr('pages.accounts.refreshing')}
                     </>
                   ) : (
-                    tr("刷新账户状态")
+                    tr('pages.accounts.refreshAccountStatus')
                   )}
                 </Button>
               </>
@@ -1356,33 +1521,32 @@ export default function Accounts() {
               }}
              
             >
-              {showAdd ? tr("取消") : tr("+ 添加连接")}
+              {showAdd ? tr('app.cancel') : tr('pages.accounts.add2')}
             </Button>
-          </div>
-        )}
-        {activeSegment === "tokens" && embeddedTokenActions}
-      </div>
+          </>
+        ) : embeddedTokenActions}
+      />
 
       <ResponsiveFilterPanel
         isMobile={isMobile}
         mobileOpen={showMobileTools}
         onMobileClose={() => setShowMobileTools(false)}
-        mobileTitle="连接排序与操作"
+        mobileTitle={tr('pages.accounts.actions')}
         mobileContent={
           <div className="flex flex-col gap-3">
             <div className="flex flex-col gap-1.5">
               <div className="text-xs font-medium text-muted-foreground">
-                排序方式
+                {tr('pages.accounts.sort')}
               </div>
               <ModernSelect
                 value={sortMode}
                 onChange={(nextValue) => setSortMode(nextValue as SortMode)}
                 options={[
-                  { value: "custom", label: "自定义排序" },
-                  { value: "balance-desc", label: "余额高到低" },
-                  { value: "balance-asc", label: "余额低到高" },
+                  { value: "custom", label: tr('pages.accounts.customOrder') },
+                  { value: "balance-desc", label: tr('pages.accounts.balancehighLow') },
+                  { value: "balance-asc", label: tr('pages.accounts.balancelowHigh') },
                 ]}
-                placeholder="自定义排序"
+                placeholder={tr('pages.accounts.customOrder')}
               />
             </div>
             {activeSegment === "session" && (
@@ -1392,7 +1556,7 @@ export default function Accounts() {
                   await withLoading(
                     "checkin-all",
                     () => api.triggerCheckinAll(),
-                    "已触发全部签到",
+                    tr('pages.accounts.allSignInsHaveBeenTriggered'),
                   );
                 }}
                 disabled={actionLoading["checkin-all"]}
@@ -1402,10 +1566,10 @@ export default function Accounts() {
                 {actionLoading["checkin-all"] ? (
                   <>
                     <LoaderCircle className="size-4 animate-spin" />
-                    {tr("签到中...")}
+                    {tr('pages.accounts.checking')}
                   </>
                 ) : (
-                  tr("全部签到")
+                  tr('pages.accounts.checkAll')
                 )}
               </Button>
             )}
@@ -1421,10 +1585,10 @@ export default function Accounts() {
               {actionLoading["health-refresh"] ? (
                 <>
                   <LoaderCircle className="size-4 animate-spin" />
-                  {tr("刷新状态中...")}
+                  {tr('pages.accounts.refreshing')}
                 </>
               ) : (
-                tr("刷新账户状态")
+                tr('pages.accounts.refreshAccountStatus')
               )}
             </Button>
           </div>
@@ -1451,8 +1615,8 @@ export default function Accounts() {
         open={Boolean(deleteConfirm)}
         onClose={() => setDeleteConfirm(null)}
         onConfirm={confirmDelete}
-        title="确认删除连接"
-        confirmText="确认删除"
+        title={tr('pages.accounts.delete')}
+        confirmText={tr('components.deleteConfirmModal.delete')}
         loading={
           batchActionLoading ||
           (deleteConfirm?.mode === "single" &&
@@ -1461,25 +1625,25 @@ export default function Accounts() {
         description={
           deleteConfirm?.mode === "single" ? (
             <>
-              确定要删除连接{" "}
+              {tr('pages.accounts.delete4')}{" "}
               <strong>
                 {deleteConfirm.accountName || `#${deleteConfirm.accountId}`}
               </strong>{" "}
-              吗？
+              {tr('pages.accounts.textqcmnqj')}
             </>
           ) : (
             <>
-              确定要删除选中的 <strong>{deleteConfirm?.count || 0}</strong>{" "}
-              个连接吗？
+              {tr('pages.accounts.deleteZh')} <strong>{deleteConfirm?.count || 0}</strong>{" "}
+              {tr('pages.accounts.connections')}
             </>
           )
         }
       />
 
-      {activeSegment !== "tokens" && selectedAccountIds.length > 0 && (
+      {activeSegment !== "tokens" && isMobile && selectedAccountIds.length > 0 && (
         <ResponsiveBatchActionBar
           isMobile={isMobile}
-          info={`已选 ${selectedAccountIds.length} 项`}
+          info={selectedAccountCountText}
         >
           <Button type="button" variant="outline"
             data-testid="accounts-batch-refresh-balance"
@@ -1488,7 +1652,7 @@ export default function Accounts() {
            
            
           >
-            批量刷新余额
+            {tr('pages.accounts.refreshbalance')}
           </Button>
           <Button type="button" variant="outline"
             onClick={() => runBatchAccountAction("enable")}
@@ -1496,7 +1660,7 @@ export default function Accounts() {
            
            
           >
-            批量启用
+            {tr('pages.accounts.enabled')}
           </Button>
           <Button type="button" variant="outline"
             onClick={() => runBatchAccountAction("disable")}
@@ -1504,14 +1668,14 @@ export default function Accounts() {
            
            
           >
-            批量禁用
+            {tr('pages.accounts.disabled')}
           </Button>
           <Button type="button" variant="destructive" size="sm"
             onClick={() => runBatchAccountAction("delete")}
             disabled={batchActionLoading}
            
           >
-            批量删除
+            {tr('pages.accounts.delete2')}
           </Button>
         </ResponsiveBatchActionBar>
       )}
@@ -1528,16 +1692,16 @@ export default function Accounts() {
             onClose={closeAddPanel}
             title={
               activeSegment === "apikey"
-                ? "添加 API Key 连接"
+                ? tr('pages.accounts.addApiKey')
                 : addMode === "login"
-                  ? "账号密码登录"
-                  : "添加 Session 连接"
+                  ? tr('pages.accounts.accountspasswordsign')
+                  : tr('pages.accounts.addSession')
             }
             maxWidth={860}
             bodyStyle={{ display: "flex", flexDirection: "column", gap: 12 }}
             footer={
               <Button type="button" variant="outline" onClick={closeAddPanel}>
-                取消
+                {tr('app.cancel')}
               </Button>
             }
           >
@@ -1564,7 +1728,7 @@ export default function Accounts() {
                       setVerifyResult(null);
                     }}
                   >
-                    账号密码登录
+                    {tr('pages.accounts.accountspasswordsign')}
                   </Button>
                 </div>
 
@@ -1573,18 +1737,16 @@ export default function Accounts() {
                     <InfoNote>
                       <div>
                         <div className="mb-1 font-semibold">
-                          当前分段仅创建 Session 连接
+                          {tr('pages.accounts.session')}
                         </div>
                         <div>
-                          <strong>推荐</strong> 使用系统访问令牌（Access
-                          Token）；浏览器 Cookie 仅用于兼容场景。
+                          <strong>{tr('pages.accounts.recommended')}</strong> {tr('pages.accounts.usagesystemaccessTokenAccessTokenCookie')}
                         </div>
                         <div className="mt-0.5">
-                          以 NewAPI 为例：控制台 → 个人设置 → 安全设置 →
-                          生成「系统访问令牌」
+                          {tr('pages.accounts.newapiConsoleSettingsSettingsSystemaccessToken')}
                         </div>
                         <div className="mt-1.5 border-t pt-1.5 text-muted-foreground">
-                          获取 Cookie:{" "}
+                          {tr('pages.accounts.cookie')}{" "}
                           <kbd className="rounded border bg-card px-1.5 py-0.5 text-xs">
                             F12
                           </kbd>{" "}
@@ -1597,7 +1759,7 @@ export default function Accounts() {
                             rel="noopener noreferrer"
                             className="text-xs text-primary underline"
                           >
-                            查看认证方式与特殊站点说明文档
+                            {tr('pages.accounts.viewingSites')}
                           </a>
                         </div>
                       </div>
@@ -1610,12 +1772,12 @@ export default function Accounts() {
                         setVerifyResult(null);
                       }}
                       options={siteSelectOptions}
-                      placeholder="选择站点"
+                      placeholder={tr('pages.accounts.selectSite')}
                       searchable
                       searchPlaceholder={SITE_SELECT_SEARCH_PLACEHOLDER}
                     />
                     <Input
-                      placeholder="连接名称（可选）"
+                      placeholder={tr('pages.accounts.name')}
                       value={tokenForm.username}
                       onChange={(e) =>
                         setTokenForm((f) => ({
@@ -1625,7 +1787,7 @@ export default function Accounts() {
                       }
                     />
                     <Textarea
-                      placeholder="粘贴 Session Access Token 或浏览器 Cookie"
+                      placeholder={tr('pages.accounts.sessionAccessTokenCookie2')}
                       value={tokenForm.accessToken}
                       onChange={(e) => {
                         setTokenForm((f) => ({
@@ -1638,7 +1800,7 @@ export default function Accounts() {
                     />
                     <div className="grid gap-1">
                       <Input
-                        placeholder="用户 ID（可选）"
+                        placeholder={tr('pages.accounts.id')}
                         value={tokenForm.platformUserId}
                         onChange={(e) => {
                           setTokenForm((f) => ({
@@ -1649,14 +1811,14 @@ export default function Accounts() {
                         }}
                       />
                       <div className="text-xs text-muted-foreground">
-                        若站点要求 New-Api-User / User-ID，请在这里提前填写。
+                        {tr('pages.accounts.sitesNewApiUserUserId')}
                       </div>
                     </div>
                     {isSub2ApiSelected && (
                       <>
                         <div className="grid gap-1">
                           <Input
-                            placeholder="Sub2API refresh_token（可选，用于托管自动续期）"
+                            placeholder={tr('pages.accounts.sub2apiRefreshTokenAutomatic')}
                             value={tokenForm.refreshToken}
                             onChange={(e) =>
                               setTokenForm((f) => ({
@@ -1667,16 +1829,16 @@ export default function Accounts() {
                             className="font-mono"
                           />
                           <div className="text-xs text-muted-foreground">
-                            可在浏览器控制台执行{" "}
+                            {tr('pages.accounts.console')}{" "}
                             <code className="font-mono">
                               localStorage.getItem('refresh_token')
                             </code>{" "}
-                            获取。
+                            {tr('pages.accounts.fetch')}
                           </div>
                         </div>
                         <div className="grid gap-1">
                           <Input
-                            placeholder="token_expires_at（可选，毫秒时间戳）"
+                            placeholder={tr('pages.accounts.tokenExpiresSecondstime')}
                             value={tokenForm.tokenExpiresAt}
                             onChange={(e) =>
                               setTokenForm((f) => ({
@@ -1689,8 +1851,7 @@ export default function Accounts() {
                             }
                           />
                           <div className="text-xs text-muted-foreground">
-                            配置 refresh_token 后，metapi 会在 JWT 临近过期或
-                            401 时自动续期并回写新 token。
+                            {tr('pages.accounts.configurationRefreshTokenMetapiJwtExpired401')}
                           </div>
                         </div>
                       </>
@@ -1714,18 +1875,18 @@ export default function Accounts() {
                                 d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
                               />
                             </svg>
-                            Session 凭证有效（Access Token / Cookie）
+                            {tr('pages.accounts.sessionAccessTokenCookie')}
                           </AlertTitle>
                           <AlertDescription className="leading-relaxed">
                             <div>
-                              用户名:{" "}
+                              {tr('pages.accounts.username')}{" "}
                               <strong>
-                                {verifyResult.userInfo?.username || "未知"}
+                                {verifyResult.userInfo?.username || tr('pages.accounts.unknown2')}
                               </strong>
                             </div>
                             {verifyResult.balance && (
                               <div>
-                                余额:{" "}
+                                {tr('pages.accounts.balance')}{" "}
                                 <strong>
                                   $
                                   {(verifyResult.balance.balance || 0).toFixed(
@@ -1739,7 +1900,7 @@ export default function Accounts() {
                               <span className={verifyResult.apiToken ? "font-medium text-foreground" : "font-medium text-muted-foreground"}>
                                 {verifyResult.apiToken
                                   ? `已找到 (${verifyResult.apiToken.substring(0, 8)}...)`
-                                  : "未找到"}
+                                  : tr('pages.accounts.notFound')}
                               </span>
                             </div>
                           </AlertDescription>
@@ -1750,8 +1911,7 @@ export default function Accounts() {
                       verifyResult.tokenType === "apikey" && (
                         <Alert className="animate-scale-in">
                           <AlertTitle>
-                            当前分段仅接受 Session 凭证，请切到「API Key
-                            连接」分段创建。
+                            {tr('pages.accounts.sessionApiKey')}
                           </AlertTitle>
                         </Alert>
                       )}
@@ -1760,7 +1920,7 @@ export default function Accounts() {
                       verifyResult.needsUserId && (
                         <Alert className="animate-scale-in">
                           <AlertTitle>
-                            此站点要求用户 ID，请补充后重新验证
+                            {tr('pages.accounts.sitesIdVerify')}
                           </AlertTitle>
                         </Alert>
                       )}
@@ -1771,10 +1931,10 @@ export default function Accounts() {
                           <AlertTitle>
                             {normalizeVerifyFailureMessage(
                               verifyResult.message,
-                            ) || "Token 无效或已过期"}
+                            ) || tr('pages.accounts.tokenInvalidExpired')}
                           </AlertTitle>
                           <AlertDescription>
-                            {verifyFailureHint || "请检查 Token 是否正确"}
+                            {verifyFailureHint || tr('pages.accounts.checkToken')}
                           </AlertDescription>
                         </Alert>
                       )}
@@ -1792,10 +1952,10 @@ export default function Accounts() {
                         {verifying ? (
                           <>
                             <LoaderCircle className="size-4 animate-spin" />
-                            验证中...
+                            {tr('app.verifying')}
                           </>
                         ) : (
-                          "验证 Token"
+                          tr('pages.accounts.verifyToken')
                         )}
                       </Button>
                       <Button type="button"
@@ -1811,10 +1971,10 @@ export default function Accounts() {
                         {saving ? (
                           <>
                             <LoaderCircle className="size-4 animate-spin" />
-                            添加中...
+                            {tr('pages.accounts.adding')}
                           </>
                         ) : (
-                          "添加连接"
+                          tr('pages.accounts.add3')
                         )}
                       </Button>
                     </div>
@@ -1827,7 +1987,7 @@ export default function Accounts() {
                 ) : (
                   <div className="flex flex-col gap-3">
                     <InfoNote>
-                      输入目标站点的账号密码，将自动登录并获取访问令牌和 API Key
+                      {tr('pages.accounts.inputtargetsitesAccountspasswordAutomaticsignAccessTokenApiKey')}
                     </InfoNote>
                     <ModernSelect
                       value={String(loginForm.siteId || 0)}
@@ -1836,12 +1996,12 @@ export default function Accounts() {
                         setLoginForm((f) => ({ ...f, siteId: nextSiteId }));
                       }}
                       options={siteSelectOptions}
-                      placeholder="选择站点"
+                      placeholder={tr('pages.accounts.selectSite')}
                       searchable
                       searchPlaceholder={SITE_SELECT_SEARCH_PLACEHOLDER}
                     />
                 <Input
-                  placeholder="用户名"
+                  placeholder={tr('app.username')}
                   value={loginForm.username}
                       onChange={(e) =>
                         setLoginForm((f) => ({
@@ -1852,7 +2012,7 @@ export default function Accounts() {
                     />
                     <Input
                       type="password"
-                      placeholder="密码"
+                      placeholder={tr('pages.accounts.password')}
                       value={loginForm.password}
                       onChange={(e) =>
                         setLoginForm((f) => ({
@@ -1876,10 +2036,10 @@ export default function Accounts() {
                       {saving ? (
                         <>
                           <LoaderCircle className="size-4 animate-spin" />
-                          登录并添加...
+                          {tr('pages.accounts.loggingAdding')}
                         </>
                       ) : (
-                        "登录并添加"
+                        tr('pages.accounts.logAdd')
                       )}
                     </Button>
                   </div>
@@ -1888,9 +2048,7 @@ export default function Accounts() {
             ) : (
               <div className="flex flex-col gap-3">
                 <InfoNote>
-                  API Key
-                  连接只用于代理转发，不会自动派生账号令牌。系统会按站点平台能力自动引导到
-                  Session 或 API Key 创建流程。
+                  {tr('pages.accounts.apiKeyActingAutomaticAccountstokenSystemSitesplatformcapabilitiesautomatic')}
                 </InfoNote>
                 {createIntentPreset && (
                   <Alert className="animate-scale-in">
@@ -1900,13 +2058,12 @@ export default function Accounts() {
                     <AlertDescription className="leading-relaxed">
                       <div>{createIntentPreset.description}</div>
                       <div>
-                        推荐模型：
+                        {tr('pages.accounts.recommendedmodel')}
                         {createIntentPreset.recommendedModels.join(" / ")}
                       </div>
                       {createIntentPreset.recommendedSkipModelFetch && (
                         <div>
-                          建议直接跳过模型验证，先保存 Base URL +
-                          Key，再补入推荐模型完成初始化。
+                          {tr('pages.accounts.suggestionJumpOvermodelverifySaveBaseUrlKey')}
                         </div>
                       )}
                     </AlertDescription>
@@ -1917,7 +2074,7 @@ export default function Accounts() {
                           checked={applyCreatePresetModels}
                           onCheckedChange={(checked) => setApplyCreatePresetModels(checked === true)}
                         />
-                        <span>添加后自动补入推荐模型并重建路由</span>
+                        <span>{tr('pages.accounts.addAutomaticRecommendedmodelRoutes')}</span>
                       </label>
                     )}
                   </Alert>
@@ -1941,12 +2098,12 @@ export default function Accounts() {
                     }
                   }}
                   options={siteSelectOptions}
-                  placeholder="选择站点"
+                  placeholder={tr('pages.accounts.selectSite')}
                   searchable
                   searchPlaceholder={SITE_SELECT_SEARCH_PLACEHOLDER}
                 />
                 <Input
-                  placeholder="连接名称（可选）"
+                  placeholder={tr('pages.accounts.name')}
                   value={tokenForm.username}
                   onChange={(e) =>
                     setTokenForm((f) => ({
@@ -1957,7 +2114,7 @@ export default function Accounts() {
                   }
                 />
                 <Textarea
-                  placeholder="粘贴 API Key"
+                  placeholder={tr('pages.accounts.apiKey3')}
                   value={tokenForm.accessToken}
                   onChange={(e) => {
                     setTokenForm((f) => ({
@@ -1971,18 +2128,18 @@ export default function Accounts() {
                 />
                 {parsedApiKeys.length > 0 && (
                   <div className="text-xs text-muted-foreground">
-                    已识别 {parsedApiKeys.length} 个 API Key
+                    {tr('pages.accounts.recognized')} {parsedApiKeys.length} {tr('pages.accounts.apiKey')}
                     {isBatchApiKeyInput
-                      ? "，添加时会逐条创建同站点连接并参与轮询"
+                      ? tr('pages.accounts.addItemsSitesRoundRobin')
                       : ""}
                   </div>
                 )}
                 <div className="text-xs text-muted-foreground">
-                  支持换行、空格、逗号批量粘贴多个 API Key。
+                  {tr('pages.accounts.supportedApiKey')}
                 </div>
                 <div className="grid gap-1">
                   <Input
-                    placeholder="用户 ID（可选）"
+                    placeholder={tr('pages.accounts.id')}
                     value={tokenForm.platformUserId}
                     onChange={(e) => {
                       setTokenForm((f) => ({
@@ -1994,7 +2151,7 @@ export default function Accounts() {
                     }}
                   />
                   <div className="text-xs text-muted-foreground">
-                    若站点要求 New-Api-User / User-ID，请在这里提前填写。
+                    {tr('pages.accounts.sitesNewApiUserUserId')}
                   </div>
                 </div>
                 <label className="flex cursor-pointer items-center gap-2 self-start text-sm">
@@ -2006,7 +2163,7 @@ export default function Accounts() {
                         skipModelFetch: checked === true,
                       }))}
                   />
-                  <span>跳过模型验证（直接添加 API Key）</span>
+                  <span>{tr('pages.accounts.jumpOvermodelverifyAddApiKey')}</span>
                 </label>
                 {verifyResult &&
                   verifyResult.success &&
@@ -2027,16 +2184,16 @@ export default function Accounts() {
                             d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"
                           />
                         </svg>
-                        API Key 验证成功
+                        {tr('pages.accounts.apiKeyVerifysuccess')}
                       </AlertTitle>
                       <AlertDescription className="leading-relaxed">
                         <div>
-                          可用模型:{" "}
-                          <strong>{verifyResult.modelCount} 个</strong>
+                          {tr('pages.accounts.availablemodel')}{" "}
+                          <strong>{verifyResult.modelCount} {tr('pages.accounts.model')}</strong>
                         </div>
                         {verifyResult.models && (
                           <div className="text-muted-foreground">
-                            包含: {verifyResult.models.join(", ")}
+                            {tr('pages.accounts.includes')} {verifyResult.models.join(", ")}
                             {verifyResult.modelCount > 10 ? " ..." : ""}
                           </div>
                         )}
@@ -2048,7 +2205,7 @@ export default function Accounts() {
                   verifyResult.tokenType === "session" && (
                     <Alert className="animate-scale-in">
                       <AlertTitle>
-                        当前分段仅接受 API Key，请切到「Session 连接」分段创建。
+                        {tr('pages.accounts.apiKeySession')}
                       </AlertTitle>
                     </Alert>
                   )}
@@ -2057,7 +2214,7 @@ export default function Accounts() {
                   verifyResult.needsUserId && (
                     <Alert className="animate-scale-in">
                       <AlertTitle>
-                        此站点要求用户 ID，请补充后重新验证
+                        {tr('pages.accounts.sitesIdVerify')}
                       </AlertTitle>
                     </Alert>
                   )}
@@ -2067,10 +2224,10 @@ export default function Accounts() {
                     <Alert variant="destructive" className="animate-scale-in">
                       <AlertTitle>
                         {normalizeVerifyFailureMessage(verifyResult.message) ||
-                          "Token 无效或已过期"}
+                          tr('pages.accounts.tokenInvalidExpired')}
                       </AlertTitle>
                       <AlertDescription>
-                        {verifyFailureHint || "请检查 Token 是否正确"}
+                        {verifyFailureHint || tr('pages.accounts.checkToken')}
                       </AlertDescription>
                     </Alert>
                   )}
@@ -2089,12 +2246,12 @@ export default function Accounts() {
                     {verifying ? (
                       <>
                         <LoaderCircle className="size-4 animate-spin" />
-                        验证中...
+                        {tr('app.verifying')}
                       </>
                     ) : isBatchApiKeyInput ? (
-                      "批量添加时校验"
+                      tr('pages.accounts.addCheck')
                     ) : (
-                      "验证 API Key"
+                      tr('pages.accounts.verifyApiKey')
                     )}
                   </Button>
                   <Button type="button"
@@ -2110,19 +2267,19 @@ export default function Accounts() {
                     {saving ? (
                       <>
                         <LoaderCircle className="size-4 animate-spin" />
-                        添加中...
+                        {tr('pages.accounts.adding')}
                       </>
                     ) : isBatchApiKeyInput ? (
-                      "批量添加连接"
+                      tr('pages.accounts.add')
                     ) : (
-                      "添加连接"
+                      tr('pages.accounts.add3')
                     )}
                   </Button>
                 </div>
                 {!verifyResult?.success && (
                   <div className="text-xs text-muted-foreground">
                     {isBatchApiKeyInput
-                      ? "批量模式下无需先点验证，提交后会逐条校验并创建。"
+                      ? tr('pages.accounts.modeNoneVerifyItemscheck')
                       : addAccountPrereqHint}
                   </div>
                 )}
@@ -2134,26 +2291,25 @@ export default function Accounts() {
             <CenteredModal
               open={Boolean(rebindTarget)}
               onClose={closeRebindPanel}
-              title="重新绑定 Session Token"
+              title={tr('pages.accounts.rebindSessionToken')}
               maxWidth={820}
               bodyStyle={{ display: "flex", flexDirection: "column", gap: 12 }}
               footer={
                 <Button type="button" variant="outline" onClick={closeRebindPanel}>
-                  取消
+                  {tr('app.cancel')}
                 </Button>
               }
             >
               {activeRebindTarget ? (
                 <>
                   <div className="mb-3 text-xs text-muted-foreground">
-                    连接: {resolveAccountDisplayName(activeRebindTarget)} @{" "}
-                    {activeRebindTarget.site?.name || "-"}。请粘贴新的 Session
-                    Token，验证成功后再绑定。
+                    {tr('pages.accounts.connection')} {resolveAccountDisplayName(activeRebindTarget)} @{" "}
+                    {activeRebindTarget.site?.name || "-"}{tr('pages.accounts.sessionTokenVerifysuccess')}
                   </div>
 
                   <div className="mb-2.5 grid grid-cols-[minmax(0,1fr)_220px] gap-2.5">
                     <Textarea
-                      placeholder="粘贴新的 Session Token"
+                      placeholder={tr('pages.accounts.sessionToken2')}
                       value={rebindForm.accessToken}
                       onChange={(e) => {
                         setRebindForm((prev) => ({
@@ -2165,7 +2321,7 @@ export default function Accounts() {
                       className="h-[74px] resize-none font-mono"
                     />
                     <Input
-                      placeholder="用户 ID（可选）"
+                      placeholder={tr('pages.accounts.id')}
                       value={rebindForm.platformUserId}
                       onChange={(e) => {
                         setRebindForm((prev) => ({
@@ -2180,7 +2336,7 @@ export default function Accounts() {
                     <>
                       <div className="mb-1 grid grid-cols-[minmax(0,1fr)_220px] gap-2.5">
                         <Input
-                          placeholder="Sub2API refresh_token（可选）"
+                          placeholder={tr('pages.accounts.sub2apiRefreshToken')}
                           value={rebindForm.refreshToken}
                           onChange={(e) =>
                             setRebindForm((prev) => ({
@@ -2191,7 +2347,7 @@ export default function Accounts() {
                           className="font-mono"
                         />
                         <Input
-                          placeholder="token_expires_at（可选）"
+                          placeholder={tr('pages.accounts.tokenExpires')}
                           value={rebindForm.tokenExpiresAt}
                           onChange={(e) =>
                             setRebindForm((prev) => ({
@@ -2202,8 +2358,7 @@ export default function Accounts() {
                         />
                       </div>
                       <div className="mb-2.5 text-xs text-muted-foreground">
-                        留空将保持原有 refresh_token
-                        不变。配置后可用于托管自动续期。
+                        {tr('pages.accounts.refreshTokenConfigurationAvailableAutomatic')}
                       </div>
                     </>
                   )}
@@ -2212,10 +2367,10 @@ export default function Accounts() {
                     rebindVerifyResult.success &&
                     rebindVerifyResult.tokenType === "session" && (
                       <Alert className="mb-2.5 animate-scale-in">
-                        <AlertTitle>Session Token 有效</AlertTitle>
+                        <AlertTitle>{tr('pages.accounts.sessionToken')}</AlertTitle>
                         <AlertDescription>
-                          用户:{" "}
-                          {rebindVerifyResult.userInfo?.username || "未知"}
+                          {tr('pages.accounts.user')}{" "}
+                          {rebindVerifyResult.userInfo?.username || tr('pages.accounts.unknown2')}
                           {rebindVerifyResult.apiToken
                             ? `，已识别 API Key (${String(rebindVerifyResult.apiToken).slice(0, 8)}...)`
                             : ""}
@@ -2228,7 +2383,7 @@ export default function Accounts() {
                       <Alert variant="destructive" className="mb-2.5 animate-scale-in">
                         <AlertTitle>
                           {rebindVerifyResult.message ||
-                            "Token 无效或类型不正确"}
+                            tr('pages.accounts.tokenInvalidType')}
                         </AlertTitle>
                       </Alert>
                     )}
@@ -2245,10 +2400,10 @@ export default function Accounts() {
                       {rebindVerifying ? (
                         <>
                           <LoaderCircle className="size-4 animate-spin" />
-                          验证中...
+                          {tr('app.verifying')}
                         </>
                       ) : (
-                        "验证 Token"
+                        tr('pages.accounts.verifyToken')
                       )}
                     </Button>
                     <Button type="button"
@@ -2265,10 +2420,10 @@ export default function Accounts() {
                       {rebindSaving ? (
                         <>
                           <LoaderCircle className="size-4 animate-spin" />
-                          绑定中...
+                          {tr('pages.accounts.zh')}
                         </>
                       ) : (
-                        "确认重新绑定"
+                        tr('pages.accounts.confirmRebinding')
                       )}
                     </Button>
                   </div>
@@ -2280,13 +2435,13 @@ export default function Accounts() {
           <CenteredModal
             open={Boolean(editingAccount)}
             onClose={closeEditPanel}
-            title="编辑账号"
+            title={tr('pages.accounts.editaccounts')}
             maxWidth={860}
             bodyStyle={{ display: "flex", flexDirection: "column", gap: 12 }}
             footer={
               <>
                 <Button type="button" variant="outline" onClick={closeEditPanel}>
-                  取消
+                  {tr('app.cancel')}
                 </Button>
                 <Button type="button"
                   onClick={saveEditPanel}
@@ -2296,10 +2451,10 @@ export default function Accounts() {
                   {savingEdit ? (
                     <>
                       <LoaderCircle className="size-4 animate-spin" />{" "}
-                      保存中...
+                      {tr('pages.accounts.saving')}
                     </>
                   ) : (
-                    "保存修改"
+                    tr('pages.accounts.saveChanges')
                   )}
                 </Button>
               </>
@@ -2308,7 +2463,7 @@ export default function Accounts() {
             {editingAccount ? (
               <ResponsiveFormGrid>
                 <Input
-                  placeholder="账号名称"
+                  placeholder={tr('pages.accounts.accountsname')}
                   value={editForm.username}
                   onChange={(e) =>
                     setEditForm((prev) => ({
@@ -2327,10 +2482,10 @@ export default function Accounts() {
                     { value: "disabled", label: "disabled" },
                     { value: "expired", label: "expired" },
                   ]}
-                  placeholder="状态"
+                  placeholder={tr('components.notificationPanel.status')}
                 />
                 <Input
-                  placeholder="单位成本（可选）"
+                  placeholder={tr('pages.accounts.cost')}
                   value={editForm.unitCost}
                   onChange={(e) =>
                     setEditForm((prev) => ({
@@ -2347,7 +2502,7 @@ export default function Accounts() {
                         ...prev,
                         checkinEnabled: checked === true,
                       }))}      />
-                  启用签到
+                  {tr('pages.accounts.enabledsign')}
                 </label>
                 <Input
                   placeholder="Access Token"
@@ -2361,7 +2516,7 @@ export default function Accounts() {
                   className="font-mono"
                 />
                 <Input
-                  placeholder="API Token（可选）"
+                  placeholder={tr('pages.accounts.apiToken')}
                   value={editForm.apiToken}
                   onChange={(e) =>
                     setEditForm((prev) => ({
@@ -2372,7 +2527,7 @@ export default function Accounts() {
                   className="font-mono"
                 />
                 <Input
-                  placeholder="代理地址（可选，如 http://127.0.0.1:7890）"
+                  placeholder={tr('pages.accounts.actingHttp1270017890')}
                   value={editForm.proxyUrl}
                   onChange={(e) =>
                     setEditForm((prev) => ({
@@ -2382,14 +2537,13 @@ export default function Accounts() {
                   }
                 />
                 <div className="-mt-1 text-xs text-muted-foreground">
-                  覆盖站点和系统代理，留空则使用站点设置。支持 http/https/socks5
-                  协议。
+                  {tr('pages.accounts.sitesSystemactingUsagesitessettingsSupportedHttpHttpsSocks5')}
                 </div>
                 {(editingAccount?.site?.platform || "").toLowerCase() ===
                   "sub2api" && (
                   <>
                     <Input
-                      placeholder="Sub2API refresh_token（可选）"
+                      placeholder={tr('pages.accounts.sub2apiRefreshToken')}
                       value={editForm.refreshToken}
                       onChange={(e) =>
                         setEditForm((prev) => ({
@@ -2400,7 +2554,7 @@ export default function Accounts() {
                       className="font-mono"
                     />
                     <Input
-                      placeholder="token_expires_at（可选）"
+                      placeholder={tr('pages.accounts.tokenExpires')}
                       value={editForm.tokenExpiresAt}
                       onChange={(e) =>
                         setEditForm((prev) => ({
@@ -2415,7 +2569,7 @@ export default function Accounts() {
             ) : null}
           </CenteredModal>
 
-          <Card>
+          <>
             {visibleAccounts.length > 0 ? (
               isMobile ? (
                 <div className="grid gap-3">
@@ -2426,7 +2580,7 @@ export default function Accounts() {
                     const isExpanded = expandedAccountIds.includes(a.id);
                     const hintMessage =
                       a.status === "expired" && !capabilities.proxyOnly
-                        ? "账号已过期，请重新绑定"
+                        ? tr('pages.accounts.accountsExpiredRebind')
                         : health.reason || "-";
                     return (
                       <MobileCard
@@ -2455,7 +2609,7 @@ export default function Accounts() {
                                
                                
                               >
-                                代理
+                                {tr('components.notificationPanel.acting')}
                               </ToneBadge>
                             )}
                           </div>
@@ -2467,26 +2621,26 @@ export default function Accounts() {
                               onClick={() => toggleAccountDetails(a.id)}
                              
                             >
-                              {isExpanded ? "收起" : "详情"}
+                              {isExpanded ? tr('pages.accounts.collapse') : tr('pages.accounts.details')}
                             </Button>
                             <Button type="button" variant="ghost" size="sm"
                               onClick={() => openEditPanel(a)}
                              
                             >
-                              编辑
+                              {tr('pages.accounts.edit')}
                             </Button>
                             <Button type="button" variant="ghost" size="sm"
                               onClick={() => openModelModal(a)}
                               disabled={actionLoading[`models-${a.id}`]}
                              
                             >
-                              模型
+                              {tr('components.modelAnalysisPanel.model')}
                             </Button>
                           </>
                         }
                       >
                         <MobileField
-                          label="运行健康状态"
+                          label={tr('pages.accounts.healthystatus')}
                           value={
                             <div className="flex flex-col gap-1">
                               <ToneBadge tone={health.cls}
@@ -2508,7 +2662,7 @@ export default function Accounts() {
                           }
                         />
                         <MobileField
-                          label="余额"
+                          label={tr('components.notificationPanel.balance')}
                           value={
                             <div>
                               <div className="font-semibold text-foreground">
@@ -2523,7 +2677,7 @@ export default function Accounts() {
                           }
                         />
                         <MobileField
-                          label="已用"
+                          label={tr('pages.accounts.used')}
                           value={
                             <div>
                               <div>${(a.balanceUsed || 0).toFixed(2)}</div>
@@ -2538,7 +2692,7 @@ export default function Accounts() {
                         {isExpanded ? (
                           <div className="mt-3 grid gap-2">
                             <MobileField
-                              label="站点"
+                              label={tr('components.searchModal.sites2')}
                               value={
                                 <SiteBadgeLink
                                   siteId={a.site?.id}
@@ -2548,34 +2702,35 @@ export default function Accounts() {
                               }
                             />
                             <MobileField
-                              label="签到"
+                              label={tr('components.notificationPanel.sign')}
                               value={
                                 capabilities.canCheckin ? (
                                   <Button
                                     type="button"
-                                    variant={a.checkinEnabled ? "default" : "secondary"}
+                                    variant={a.checkinEnabled ? "softSuccess" : "softDestructive"}
                                     size="sm"
+                                    className="rounded-full px-3"
                                     onClick={() => handleToggleCheckin(a)}
                                     disabled={
                                       !!actionLoading[`checkin-toggle-${a.id}`]
                                     }
                                     data-tooltip={
                                       a.checkinEnabled
-                                        ? "点击关闭签到，全部签到会忽略此账号"
-                                        : "点击开启签到"
+                                        ? tr('pages.accounts.clickCloseSignAllSignInsWill')
+                                        : tr('pages.accounts.clickOpenSign')
                                     }
                                     aria-label={
                                       a.checkinEnabled
-                                        ? "点击关闭签到，全部签到会忽略此账号"
-                                        : "点击开启签到"
+                                        ? tr('pages.accounts.clickCloseSignAllSignInsWill')
+                                        : tr('pages.accounts.clickOpenSign')
                                     }
                                   >
                                     {actionLoading[`checkin-toggle-${a.id}`] ? (
                                       <LoaderCircle className="size-4 animate-spin" />
                                     ) : a.checkinEnabled ? (
-                                      "开启"
+                                      tr('pages.accounts.turn')
                                     ) : (
-                                      "关闭"
+                                      tr('pages.accounts.close')
                                     )}
                                   </Button>
                                 ) : (
@@ -2583,21 +2738,21 @@ export default function Accounts() {
                                    
                                    
                                   >
-                                    不支持
+                                    {tr('pages.accounts.unsupported')}
                                   </ToneBadge>
                                 )
                               }
                             />
                             <MobileField
-                              label="账号状态"
+                              label={tr('pages.accounts.accountsstatus')}
                               value={
                                 a.status === "expired"
-                                  ? "已过期"
+                                  ? tr('pages.accounts.expired')
                                   : a.status || "-"
                               }
                             />
                             <MobileField
-                              label="提示"
+                              label={tr('pages.accounts.tip')}
                               stacked
                               value={hintMessage}
                             />
@@ -2610,9 +2765,9 @@ export default function Accounts() {
                                 {actionLoading[`pin-toggle-${a.id}`] ? (
                                   <LoaderCircle className="size-4 animate-spin" />
                                 ) : a.isPinned ? (
-                                  "取消置顶"
+                                  tr('pages.accounts.cancelpinTop')
                                 ) : (
-                                  "置顶"
+                                  tr('pages.accounts.pinTop')
                                 )}
                               </Button>
                               {sortMode === "custom" && (
@@ -2626,7 +2781,7 @@ export default function Accounts() {
                                     }
                                    
                                   >
-                                    ↑ 上移
+                                    {tr('pages.accounts.moveUp')}
                                   </Button>
                                   <Button type="button" variant="ghost" size="sm"
                                     onClick={() =>
@@ -2637,7 +2792,7 @@ export default function Accounts() {
                                     }
                                    
                                   >
-                                    ↓ 下移
+                                    {tr('pages.accounts.moveDown')}
                                   </Button>
                                 </>
                               )}
@@ -2647,7 +2802,7 @@ export default function Accounts() {
                                     withLoading(
                                       `refresh-${a.id}`,
                                       () => api.refreshBalance(a.id),
-                                      "余额已刷新",
+                                      tr('pages.accounts.balanceHasBeenRefreshed'),
                                     )
                                   }
                                   disabled={actionLoading[`refresh-${a.id}`]}
@@ -2656,7 +2811,7 @@ export default function Accounts() {
                                   {actionLoading[`refresh-${a.id}`] ? (
                                     <LoaderCircle className="size-4 animate-spin" />
                                   ) : (
-                                    "刷新"
+                                    tr('pages.accounts.refresh')
                                   )}
                                 </Button>
                               )}
@@ -2666,7 +2821,7 @@ export default function Accounts() {
                                     withLoading(
                                       `checkin-${a.id}`,
                                       () => api.triggerCheckin(a.id),
-                                      "签到完成",
+                                      tr('pages.accounts.signCompleted'),
                                     )
                                   }
                                   disabled={actionLoading[`checkin-${a.id}`]}
@@ -2675,7 +2830,7 @@ export default function Accounts() {
                                   {actionLoading[`checkin-${a.id}`] ? (
                                     <LoaderCircle className="size-4 animate-spin" />
                                   ) : (
-                                    "签到"
+                                    tr('components.notificationPanel.sign')
                                   )}
                                 </Button>
                               )}
@@ -2685,7 +2840,7 @@ export default function Accounts() {
                                     onClick={() => openRebindPanel(a)}
                                    
                                   >
-                                    重新绑定
+                                    {tr('pages.accounts.rebind')}
                                   </Button>
                                 )}
                               <Button type="button" variant="destructive" size="sm"
@@ -2702,7 +2857,7 @@ export default function Accounts() {
                                 {actionLoading[`delete-${a.id}`] ? (
                                   <LoaderCircle className="size-4 animate-spin" />
                                 ) : (
-                                  "删除"
+                                  tr('pages.accounts.delete3')
                                 )}
                               </Button>
                             </div>
@@ -2713,299 +2868,382 @@ export default function Accounts() {
                   })}
                 </div>
               ) : (
-                <Table className="w-full text-sm">
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="w-11">
-                        <Checkbox
-                         
-                          checked={allVisibleAccountsSelected}
-                          onCheckedChange={(checked) => toggleSelectAllVisibleAccounts(checked === true)}            />
-                      </TableHead>
-                      <TableHead>连接名称</TableHead>
-                      <TableHead>站点</TableHead>
-                      <TableHead>运行健康状态</TableHead>
-                      <TableHead>余额</TableHead>
-                      <TableHead>已用</TableHead>
-                      <TableHead>签到</TableHead>
-                      <TableHead className="text-right">
-                        操作
-                      </TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {visibleAccounts.map((a: any, i: number) => {
-                      const capabilities = resolveAccountCapabilities(a);
-                      const connectionMode = resolveAccountCredentialMode(a);
-                      return (
-                        <TableRow
-                          key={a.id}
-                          data-testid={`account-row-${a.id}`}
-                          ref={(node) => {
-                            if (node) rowRefs.current.set(a.id, node);
-                            else rowRefs.current.delete(a.id);
-                          }}
-                          onClick={(event) =>
-                            handleAccountRowClick(a.id, event)
-                          }
-                          className={`animate-slide-up stagger-${Math.min(i + 1, 5)} row-selectable ${selectedAccountIds.includes(a.id) ? "row-selected" : ""} ${highlightAccountId === a.id ? "row-focus-highlight" : ""}`.trim()}
-                        >
-                          <TableCell>
-                            <Checkbox
-                              data-testid={`account-select-${a.id}`}
-                             
-                              checked={selectedAccountIds.includes(a.id)}
-                              onCheckedChange={(checked) => toggleAccountSelection(a.id, checked === true)}                />
-                          </TableCell>
-                          <TableCell className="text-foreground">
-                            <div className="font-semibold">
-                              {resolveAccountDisplayName(a)}
-                            </div>
-                            <div className="mt-1 flex gap-1">
-                              <ToneBadge tone={connectionMode === "apikey" ? "warning" : "info"}
-                               
-                               
-                              >
-                                {connectionMode === "apikey"
-                                  ? "API Key"
-                                  : "Session"}
-                              </ToneBadge>
-                              {parseAccountExtraConfig(a)?.proxyUrl && (
-                                <ToneBadge tone="-purple"
-                                 
-                                 
+                <DataTable minWidth={1040} density="compact">
+                  <DataTableToolbar className="border-b bg-muted/30 px-4">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <Checkbox
+                        checked={allVisibleAccountsSelected || (someVisibleAccountsSelected && "indeterminate")}
+                        aria-label={tr('pages.accounts.selectVisibleItems')}
+                        onCheckedChange={(checked) => toggleSelectAllVisibleAccounts(checked === true)}
+                      />
+                      <div className="min-w-0">
+                        <div className="text-sm font-semibold text-foreground">
+                          {selectedAccountIds.length > 0 ? selectedAccountCountText : visibleAccountCountText}
+                        </div>
+                        <div className="text-xs text-muted-foreground">
+                          {tr('pages.accounts.selectionActions')}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-center justify-end gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        data-testid="accounts-batch-refresh-balance"
+                        onClick={() => runBatchAccountAction("refreshBalance")}
+                        disabled={batchActionLoading || selectedAccountIds.length === 0}
+                      >
+                        {batchActionLoading ? <LoaderCircle className="size-4 animate-spin" /> : <Wallet className="size-4" />}
+                        {tr('pages.accounts.refreshbalance')}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => runBatchAccountAction("enable")}
+                        disabled={batchActionLoading || selectedAccountIds.length === 0}
+                      >
+                        <CheckCircle2 className="size-4" />
+                        {tr('pages.accounts.enabled')}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => runBatchAccountAction("disable")}
+                        disabled={batchActionLoading || selectedAccountIds.length === 0}
+                      >
+                        <CircleSlash className="size-4" />
+                        {tr('pages.accounts.disabled')}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghostMuted"
+                        size="sm"
+                        onClick={() => setSelectedAccountIds([])}
+                        disabled={batchActionLoading || selectedAccountIds.length === 0}
+                      >
+                        {tr('pages.accounts.clearSelection')}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghostDestructive"
+                        size="sm"
+                        onClick={() => runBatchAccountAction("delete")}
+                        disabled={batchActionLoading || selectedAccountIds.length === 0}
+                      >
+                        <Trash2 className="size-4" />
+                        {tr('pages.accounts.delete2')}
+                      </Button>
+                    </div>
+                  </DataTableToolbar>
+                  <DndContext
+                    sensors={accountReorderSensors}
+                    collisionDetection={closestCenter}
+                    onDragStart={handleAccountDragStart}
+                    onDragCancel={clearAccountDragState}
+                    onDragEnd={handleAccountDragEnd}
+                  >
+                    <SortableContext
+                      items={visibleAccounts.map((account) => account.id)}
+                      strategy={verticalListSortingStrategy}
+                    >
+                  <Table className="w-full text-sm">
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-11" />
+                        <TableHead className="w-11" />
+                        <TableHead className="min-w-56">{tr('pages.accounts.name2')}</TableHead>
+                        <TableHead className="min-w-36">{tr('components.searchModal.sites2')}</TableHead>
+                        <TableHead className="min-w-56">{tr('pages.accounts.healthystatus')}</TableHead>
+                        <TableHead className="min-w-28 text-right">{tr('components.notificationPanel.balance')}</TableHead>
+                        <TableHead className="min-w-28 text-right">{tr('pages.accounts.used')}</TableHead>
+                        <TableHead className="min-w-28">{tr('components.notificationPanel.sign')}</TableHead>
+                        <TableHead className="min-w-44 text-right">{tr('pages.accounts.actions2')}</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {visibleAccounts.map((a: any, i: number) => {
+                        const capabilities = resolveAccountCapabilities(a);
+                        const connectionMode = resolveAccountCredentialMode(a);
+                        const selected = selectedAccountIds.includes(a.id);
+                        const health = resolveRuntimeHealth(a);
+                        return (
+                          <SortableAccountTableRow
+                            key={a.id}
+                            account={a}
+                            selected={selected}
+                            data-testid={`account-row-${a.id}`}
+                            rowRef={(node) => {
+                              if (node) rowRefs.current.set(a.id, node);
+                              else rowRefs.current.delete(a.id);
+                            }}
+                            onClick={(event) => handleAccountRowClick(a.id, event)}
+                            className={`animate-slide-up stagger-${Math.min(i + 1, 5)} row-selectable ${highlightAccountId === a.id ? "row-focus-highlight" : ""}`.trim()}
+                          >
+                            {(dragHandle) => (
+                              <>
+                            <TableCell>
+                              {sortMode === "custom" && (
+                                <Button
+                                  ref={dragHandle.setActivatorNodeRef}
+                                  type="button"
+                                  variant="ghostMuted"
+                                  size="icon"
+                                  aria-label={tr('pages.accounts.reorder')}
+                                  className={dragHandle.isDragging ? "cursor-grabbing" : "cursor-grab"}
+                                  disabled={!!actionLoading[`reorder-${a.id}`]}
+                                  onClick={(event) => event.stopPropagation()}
+                                  {...dragHandle.attributes}
+                                  {...dragHandle.listeners}
                                 >
-                                  代理
+                                  {actionLoading[`reorder-${a.id}`] ? (
+                                    <LoaderCircle className="size-4 animate-spin" />
+                                  ) : (
+                                    <GripVertical className="size-4" />
+                                  )}
+                                </Button>
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              <Checkbox
+                                data-testid={`account-select-${a.id}`}
+                                checked={selected}
+                                aria-label={`${tr('pages.accounts.selectConnection')} ${resolveAccountDisplayName(a)}`}
+                                onCheckedChange={(checked) => toggleAccountSelection(a.id, checked === true)}
+                              />
+                            </TableCell>
+                            <TableCell className="text-foreground">
+                              <div className="flex min-w-0 flex-col gap-1">
+                                <div className="truncate font-semibold">
+                                  {resolveAccountDisplayName(a)}
+                                </div>
+                                <div className="flex flex-wrap gap-1">
+                                  <ToneBadge tone={connectionMode === "apikey" ? "warning" : "info"}>
+                                    {connectionMode === "apikey" ? "API Key" : "Session"}
+                                  </ToneBadge>
+                                  {parseAccountExtraConfig(a)?.proxyUrl && (
+                                    <ToneBadge tone="-purple">
+                                      {tr('components.notificationPanel.acting')}
+                                    </ToneBadge>
+                                  )}
+                                  {a.isPinned ? <ToneBadge tone="-info">{tr('pages.accounts.pinTop')}</ToneBadge> : null}
+                                </div>
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <SiteBadgeLink
+                                siteId={a.site?.id}
+                                siteName={a.site?.name}
+                                badgeStyle={{ fontSize: 11 }}
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex min-w-0 flex-col gap-1">
+                                <ToneBadge tone={health.cls}>
+                                  <span className={`status-dot ${health.dotClass} ${health.pulse ? "animate-pulse-dot" : ""}`} />
+                                  {health.label}
+                                </ToneBadge>
+                                <span
+                                  className="max-w-[240px] truncate text-[11px] text-muted-foreground"
+                                  data-tooltip={health.reason}
+                                >
+                                  {health.reason}
+                                </span>
+                              </div>
+                            </TableCell>
+                            <TableCell className="text-right tabular-nums">
+                              <div className="font-semibold text-foreground">
+                                ${(a.balance || 0).toFixed(2)}
+                              </div>
+                              <div className={(a.todayReward || 0) > 0 ? "text-[11px] font-medium text-success" : "text-[11px] font-medium text-muted-foreground"}>
+                                +{(a.todayReward || 0).toFixed(2)}
+                              </div>
+                            </TableCell>
+                            <TableCell className="text-right tabular-nums">
+                              <div>${(a.balanceUsed || 0).toFixed(2)}</div>
+                              <div className={(a.todaySpend || 0) > 0 ? "text-[11px] font-medium text-destructive" : "text-[11px] font-medium text-muted-foreground"}>
+                                -{(a.todaySpend || 0).toFixed(2)}
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              {capabilities.canCheckin ? (
+                                <Button
+                                  type="button"
+                                  variant={a.checkinEnabled ? "softSuccess" : "softDestructive"}
+                                  size="sm"
+                                  className="rounded-full px-3"
+                                  onClick={() => handleToggleCheckin(a)}
+                                  disabled={!!actionLoading[`checkin-toggle-${a.id}`]}
+                                  data-tooltip={
+                                    a.checkinEnabled
+                                      ? tr('pages.accounts.clickCloseSignAllSignInsWill')
+                                      : tr('pages.accounts.clickOpenSign')
+                                  }
+                                  aria-label={
+                                    a.checkinEnabled
+                                      ? tr('pages.accounts.clickCloseSignAllSignInsWill')
+                                      : tr('pages.accounts.clickOpenSign')
+                                  }
+                                >
+                                  {actionLoading[`checkin-toggle-${a.id}`] ? (
+                                    <LoaderCircle className="size-4 animate-spin" />
+                                  ) : a.checkinEnabled ? (
+                                    tr('pages.accounts.turn')
+                                  ) : (
+                                    tr('pages.accounts.close')
+                                  )}
+                                </Button>
+                              ) : (
+                                <ToneBadge tone="-muted">
+                                  {tr('pages.accounts.unsupported')}
                                 </ToneBadge>
                               )}
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <SiteBadgeLink
-                              siteId={a.site?.id}
-                              siteName={a.site?.name}
-                              badgeStyle={{ fontSize: 11 }}
-                            />
-                          </TableCell>
-                          <TableCell>
-                            {(() => {
-                              const health = resolveRuntimeHealth(a);
-                              return (
-                                <div className="flex flex-col gap-1">
-                                  <ToneBadge tone={health.cls}
-                                   
-                                   
-                                  >
-                                    <span
-                                      className={`status-dot ${health.dotClass} ${health.pulse ? "animate-pulse-dot" : ""}`}
-                                    />
-                                    {health.label}
-                                  </ToneBadge>
-                                  <span
-                                    className="max-w-[200px] truncate text-[11px] text-muted-foreground"
-                                    data-tooltip={health.reason}
-                                  >
-                                    {health.reason}
-                                  </span>
-                                </div>
-                              );
-                            })()}
-                          </TableCell>
-                          <TableCell className="tabular-nums">
-                            <div className="font-semibold text-foreground">
-                              ${(a.balance || 0).toFixed(2)}
-                            </div>
-                            <div
-                              className={(a.todayReward || 0) > 0 ? "text-[11px] font-medium text-emerald-600" : "text-[11px] font-medium text-muted-foreground"}
-                            >
-                              +{(a.todayReward || 0).toFixed(2)}
-                            </div>
-                          </TableCell>
-                          <TableCell className="text-xs tabular-nums">
-                            <div>${(a.balanceUsed || 0).toFixed(2)}</div>
-                            <div
-                              className={(a.todaySpend || 0) > 0 ? "text-[11px] font-medium text-destructive" : "text-[11px] font-medium text-muted-foreground"}
-                            >
-                              -{(a.todaySpend || 0).toFixed(2)}
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            {capabilities.canCheckin ? (
-                              <Button
-                                type="button"
-                                variant={a.checkinEnabled ? "default" : "secondary"}
-                                size="sm"
-                                onClick={() => handleToggleCheckin(a)}
-                                disabled={
-                                  !!actionLoading[`checkin-toggle-${a.id}`]
-                                }
-                                data-tooltip={
-                                  a.checkinEnabled
-                                    ? "点击关闭签到，全部签到会忽略此账号"
-                                    : "点击开启签到"
-                                }
-                                aria-label={
-                                  a.checkinEnabled
-                                    ? "点击关闭签到，全部签到会忽略此账号"
-                                    : "点击开启签到"
-                                }
-                              >
-                                {actionLoading[`checkin-toggle-${a.id}`] ? (
-                                  <LoaderCircle className="size-4 animate-spin" />
-                                ) : a.checkinEnabled ? (
-                                  "开启"
-                                ) : (
-                                  "关闭"
-                                )}
-                              </Button>
-                            ) : (
-                              <ToneBadge tone="-muted"
-                               
-                               
-                              >
-                                不支持
-                              </ToneBadge>
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <div className="flex items-center justify-end gap-1.5">
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => openEditPanel(a)}
+                                >
+                                  {tr('pages.accounts.edit')}
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="ghostPrimary"
+                                  size="sm"
+                                  onClick={() => openModelModal(a)}
+                                  disabled={actionLoading[`models-${a.id}`]}
+                                >
+                                  {tr('components.modelAnalysisPanel.model')}
+                                </Button>
+                                <DropdownMenu.Root>
+                                  <DropdownMenu.Trigger asChild>
+                                    <Button
+                                      type="button"
+                                      variant="ghostMuted"
+                                      size="icon"
+                                      aria-label={tr('pages.accounts.moreActions')}
+                                    >
+                                      <Ellipsis className="size-4" />
+                                    </Button>
+                                  </DropdownMenu.Trigger>
+                                  <DropdownMenu.Content align="end" className="min-w-44">
+                                    <DropdownMenu.Item
+                                      disabled={!!actionLoading[`pin-toggle-${a.id}`]}
+                                      onSelect={() => handleTogglePin(a)}
+                                    >
+                                      {actionLoading[`pin-toggle-${a.id}`] ? (
+                                        <LoaderCircle className="size-4 animate-spin" />
+                                      ) : a.isPinned ? (
+                                        <PinOff className="size-4" />
+                                      ) : (
+                                        <Pin className="size-4" />
+                                      )}
+                                      {a.isPinned ? tr('pages.accounts.cancelpinTop') : tr('pages.accounts.pinTop')}
+                                    </DropdownMenu.Item>
+                                    {capabilities.canRefreshBalance && (
+                                      <DropdownMenu.Item
+                                        disabled={!!actionLoading[`refresh-${a.id}`]}
+                                        onSelect={() =>
+                                          withLoading(
+                                            `refresh-${a.id}`,
+                                            () => api.refreshBalance(a.id),
+                                            tr('pages.accounts.balanceHasBeenRefreshed'),
+                                          )
+                                        }
+                                      >
+                                        {actionLoading[`refresh-${a.id}`] ? (
+                                          <LoaderCircle className="size-4 animate-spin" />
+                                        ) : (
+                                          <RefreshCw className="size-4" />
+                                        )}
+                                        {tr('pages.accounts.refresh')}
+                                      </DropdownMenu.Item>
+                                    )}
+                                    {capabilities.canCheckin && (
+                                      <DropdownMenu.Item
+                                        disabled={!!actionLoading[`checkin-${a.id}`]}
+                                        onSelect={() =>
+                                          withLoading(
+                                            `checkin-${a.id}`,
+                                            () => api.triggerCheckin(a.id),
+                                            tr('pages.accounts.signCompleted'),
+                                          )
+                                        }
+                                      >
+                                        {actionLoading[`checkin-${a.id}`] ? (
+                                          <LoaderCircle className="size-4 animate-spin" />
+                                        ) : (
+                                          <CheckCircle2 className="size-4" />
+                                        )}
+                                        {tr('components.notificationPanel.sign')}
+                                      </DropdownMenu.Item>
+                                    )}
+                                    {a.status === "expired" && !capabilities.proxyOnly && (
+                                      <DropdownMenu.Item onSelect={() => openRebindPanel(a)}>
+                                        <RefreshCw className="size-4" />
+                                        {tr('pages.accounts.rebind')}
+                                      </DropdownMenu.Item>
+                                    )}
+                                    <DropdownMenu.Separator />
+                                    <DropdownMenu.Item
+                                      variant="destructive"
+                                      disabled={!!actionLoading[`delete-${a.id}`]}
+                                      onSelect={() =>
+                                        setDeleteConfirm({
+                                          mode: "single",
+                                          accountId: a.id,
+                                          accountName: resolveAccountDisplayName(a),
+                                        })
+                                      }
+                                    >
+                                      {actionLoading[`delete-${a.id}`] ? (
+                                        <LoaderCircle className="size-4 animate-spin" />
+                                      ) : (
+                                        <Trash2 className="size-4" />
+                                      )}
+                                      {tr('pages.accounts.delete3')}
+                                    </DropdownMenu.Item>
+                                  </DropdownMenu.Content>
+                                </DropdownMenu.Root>
+                              </div>
+                            </TableCell>
+                              </>
                             )}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            <div className="flex flex-wrap justify-end gap-2">
-                              <Button type="button" variant="secondary" size="sm"
-                                onClick={() => handleTogglePin(a)}
-                                disabled={!!actionLoading[`pin-toggle-${a.id}`]}
-                               
-                              >
-                                {actionLoading[`pin-toggle-${a.id}`] ? (
-                                  <LoaderCircle className="size-4 animate-spin" />
-                                ) : a.isPinned ? (
-                                  "取消置顶"
-                                ) : (
-                                  "置顶"
-                                )}
-                              </Button>
-                              {sortMode === "custom" && (
-                                <>
-                                  <Button type="button" variant="ghost" size="sm"
-                                    onClick={() =>
-                                      handleMoveCustomOrder(a, "up")
-                                    }
-                                    disabled={
-                                      !!actionLoading[`reorder-${a.id}`]
-                                    }
-                                   
-                                  >
-                                    ↑
-                                  </Button>
-                                  <Button type="button" variant="ghost" size="sm"
-                                    onClick={() =>
-                                      handleMoveCustomOrder(a, "down")
-                                    }
-                                    disabled={
-                                      !!actionLoading[`reorder-${a.id}`]
-                                    }
-                                   
-                                  >
-                                    ↓
-                                  </Button>
-                                </>
-                              )}
-                              {capabilities.canRefreshBalance && (
-                                <Button type="button" variant="ghost" size="sm"
-                                  onClick={() =>
-                                    withLoading(
-                                      `refresh-${a.id}`,
-                                      () => api.refreshBalance(a.id),
-                                      "余额已刷新",
-                                    )
-                                  }
-                                  disabled={actionLoading[`refresh-${a.id}`]}
-                                 
-                                >
-                                  {actionLoading[`refresh-${a.id}`] ? (
-                                    <LoaderCircle className="size-4 animate-spin" />
-                                  ) : (
-                                    "刷新"
-                                  )}
-                                </Button>
-                              )}
-                              <Button type="button" variant="ghost" size="sm"
-                                onClick={() => openModelModal(a)}
-                                disabled={actionLoading[`models-${a.id}`]}
-                               
-                              >
-                                模型
-                              </Button>
-                              {capabilities.canCheckin && (
-                                <Button type="button" variant="secondary" size="sm"
-                                  onClick={() =>
-                                    withLoading(
-                                      `checkin-${a.id}`,
-                                      () => api.triggerCheckin(a.id),
-                                      "签到完成",
-                                    )
-                                  }
-                                  disabled={actionLoading[`checkin-${a.id}`]}
-                                 
-                                >
-                                  {actionLoading[`checkin-${a.id}`] ? (
-                                    <LoaderCircle className="size-4 animate-spin" />
-                                  ) : (
-                                    "签到"
-                                  )}
-                                </Button>
-                              )}
-                              {a.status === "expired" &&
-                                !capabilities.proxyOnly && (
-                                  <Button type="button" variant="secondary" size="sm"
-                                    onClick={() => openRebindPanel(a)}
-                                   
-                                  >
-                                    重新绑定
-                                  </Button>
-                                )}
-                              <Button type="button" variant="ghost" size="sm"
-                                onClick={() => openEditPanel(a)}
-                               
-                              >
-                                编辑
-                              </Button>
-                              <Button type="button" variant="destructive" size="sm"
-                                onClick={() =>
-                                  setDeleteConfirm({
-                                    mode: "single",
-                                    accountId: a.id,
-                                    accountName: resolveAccountDisplayName(a),
-                                  })
-                                }
-                                disabled={actionLoading[`delete-${a.id}`]}
-                               
-                              >
-                                {actionLoading[`delete-${a.id}`] ? (
-                                  <LoaderCircle className="size-4 animate-spin" />
-                                ) : (
-                                  "删除"
-                                )}
-                              </Button>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
+                          </SortableAccountTableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                    </SortableContext>
+                    <DragOverlay dropAnimation={null}>
+                      {draggingAccount ? (
+                        <AccountDragOverlayCard
+                          account={draggingAccount}
+                          accountName={resolveAccountDisplayName(draggingAccount)}
+                        />
+                      ) : null}
+                    </DragOverlay>
+                  </DndContext>
+                </DataTable>
               )
             ) : (
               <EmptyStateBlock
-                title={activeSegment === "apikey" ? "暂无 API Key 连接" : "暂无 Session 连接"}
+                title={activeSegment === "apikey" ? tr('pages.accounts.noneApiKey') : tr('pages.accounts.noneSession')}
                 description={activeSegment === "apikey"
                   ? sites.length > 0
-                    ? "请为现有站点补充 API Key 连接"
-                    : "请先添加站点，然后为站点补充 API Key 连接"
+                    ? tr('pages.accounts.sitesApiKey')
+                    : tr('pages.accounts.addSiteSitesApiKey')
                   : sites.length > 0
-                    ? "请为现有站点添加 Session 连接"
-                    : "请先添加站点，然后添加 Session 连接"}
+                    ? tr('pages.accounts.sitesaddSession')
+                    : tr('pages.accounts.addSiteAddSession')}
               />
             )}
-          </Card>
+          </>
         </>
       )}
 
@@ -3017,15 +3255,15 @@ export default function Accounts() {
           if (!modelModal.account) return;
           await loadModelModalModels(modelModal.account, {
             refreshUpstream: true,
-            successMessage: "模型列表已刷新",
-            errorMessage: "刷新失败",
+            successMessage: tr('pages.accounts.modelRefresh'),
+            errorMessage: tr('pages.accounts.refreshfailed'),
           });
         }}
         onReload={async () => {
           if (!modelModal.account) return;
           await loadModelModalModels(modelModal.account, {
             refreshUpstream: false,
-            errorMessage: "重新加载模型列表失败",
+            errorMessage: tr('pages.accounts.modelFailed'),
           });
         }}
         onToggleModelDisabled={toggleModelDisabled}
@@ -3037,6 +3275,6 @@ export default function Accounts() {
         }
         onAddManualModels={handleAddManualModels}
       />
-    </div>
+    </PageShell>
   );
 }

@@ -31,6 +31,12 @@ export function selectionFromFlowNodeId(nodeId: string): RouteGraphSelectionTarg
     : { kind: 'node', nodeId };
 }
 
+export function selectionFromFlowNode(input: { id: string; type?: string | null }): RouteGraphSelectionTarget {
+  return input.type === 'macro'
+    ? { kind: 'macro', macroId: input.id.replace(/^macro:/, '') }
+    : { kind: 'node', nodeId: input.id };
+}
+
 export function selectionFromFlowSelection(input: {
   nodeIds: string[];
   edgeIds: string[];
@@ -91,6 +97,64 @@ export function selectionForContextMenu(input: {
       : { nodeIds: [], edgeIds: [target.edgeId] };
   }
   return current;
+}
+
+export function normalizeContextMenuTargetForGraph<TGraph extends RouteGraphSourceLike>(
+  graph: TGraph,
+  target: RouteGraphSelectionTarget,
+): RouteGraphSelectionTarget {
+  if (target.kind === 'graph') return target;
+  if (target.kind === 'node') {
+    return graph.nodes.some((item) => item.id === target.nodeId) ? target : { kind: 'graph' };
+  }
+  if (target.kind === 'macro') {
+    return graph.macros.some((item) => item.id === target.macroId) ? target : { kind: 'graph' };
+  }
+  if (target.kind === 'edge') {
+    return graph.edges.some((item) => item.id === target.edgeId) ? target : { kind: 'graph' };
+  }
+  if (target.kind === 'port') {
+    const hasNode = graph.nodes.some((item) => item.id === target.nodeId);
+    const hasMacro = graph.macros.some((item) => macroFlowNodeId(item.id) === target.nodeId);
+    return hasNode || hasMacro ? target : { kind: 'graph' };
+  }
+  return { kind: 'graph' };
+}
+
+export function getRouteGraphContextMenuTarget(target: EventTarget | null): RouteGraphSelectionTarget {
+  if (typeof Element === 'undefined' || !(target instanceof Element)) return { kind: 'graph' };
+
+  const portElement = target.closest<HTMLElement>('.route-blueprint-port[data-port-id]');
+  if (portElement) {
+    const nodeElement = portElement.closest<HTMLElement>('.route-blueprint-node[data-node-id]');
+    const rawNodeId = nodeElement?.dataset.nodeId;
+    const portId = portElement.dataset.portId;
+    if (rawNodeId && portId) {
+      const nodeId = nodeElement?.dataset.nodeType === 'macro'
+        ? macroFlowNodeId(rawNodeId.replace(/^macro:/, ''))
+        : rawNodeId;
+      return { kind: 'port', nodeId, portId };
+    }
+  }
+
+  const edgeElement = target.closest('[data-route-graph-edge-id]');
+  const edgeId = edgeElement?.getAttribute('data-route-graph-edge-id');
+  if (edgeId) return { kind: 'edge', edgeId };
+
+  const nodeElement = target.closest<HTMLElement>('.route-blueprint-node[data-node-id]');
+  const nodeId = nodeElement?.dataset.nodeId;
+  if (nodeId) {
+    if (nodeElement.dataset.nodeType === 'macro') {
+      return { kind: 'macro', macroId: nodeId.replace(/^macro:/, '') };
+    }
+    return { kind: 'node', nodeId };
+  }
+
+  return { kind: 'graph' };
+}
+
+export function isRouteGraphElementContextMenuTarget(target: EventTarget | null): boolean {
+  return getRouteGraphContextMenuTarget(target).kind !== 'graph';
 }
 
 export function deleteSelectedGraphElements<TGraph extends RouteGraphSourceLike>(

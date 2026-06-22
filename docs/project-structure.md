@@ -16,13 +16,17 @@ metapi/
 ├── src/
 │   ├── desktop/          # Electron 主进程与桌面运行时
 │   ├── server/           # Fastify 服务、数据库、代理路由与业务服务
+│   ├── testing/          # Vitest / Playwright 共享测试 harness
 │   └── web/              # React 管理后台
 ├── tmp/                  # 临时调试文件（已 gitignore）
 ├── restart.bat           # Windows 快捷重启入口，转发到 scripts/dev/restart.bat
 ├── package.json          # 脚本入口与依赖清单
+├── package-lock.json     # npm 锁文件，CI 使用 npm ci
 ├── electron-builder.yml  # 桌面打包配置
 ├── drizzle.config.ts     # Drizzle 配置
+├── playwright.config.ts  # E2E 测试配置
 ├── vite.config.ts        # Web 构建配置
+├── vitest*.config.ts     # Unit / integration / architecture 测试配置
 └── tsconfig*.json        # TypeScript 配置
 ```
 
@@ -77,6 +81,21 @@ src/desktop/
 └── runtime.test.ts       # 桌面运行时测试
 ```
 
+### `src/testing`
+
+```text
+src/testing/
+├── dbHarness.ts          # 隔离 DATA_DIR / runtime DB / Fastify 清理 helper
+├── httpMock.ts           # fetch / Response mock helper
+├── webHarness.ts         # Web 测试登录态与 Storage helper
+├── vitest.setup.ts       # Vitest 全局清理
+└── e2e/                  # Playwright E2E specs
+```
+
+- 共享测试 harness 放这里，不放进业务目录。
+- 后端测试 fixture 放 `src/server/test/`，靠近服务端领域模型。
+- 新增测试层或 mock 策略时同步更新 [Testing Framework](./engineering/testing-framework.md)。
+
 ## 脚本与文档目录
 
 ```text
@@ -100,6 +119,8 @@ docs/
 ## 放置规则
 
 - 测试文件尽量与被测源码同目录，命名使用 `*.test.ts` 或 `*.test.tsx`。
+- 架构护栏测试命名使用 `*.architecture.test.ts` 或 `*.architecture.test.tsx`。
 - 运行时数据放 `data/`，临时排障文件放 `tmp/`，不要散落在仓库根目录。
+- 包管理以 npm 为准，CI 使用 `npm ci` 和 `package-lock.json`。
 - 桌面打包脚本统一放 `scripts/desktop/`，不要把一次性签名或打包命令写进根目录批处理。
 - 文档站真正对外可访问的静态资源放 `docs/public/`；仍需继续编辑的素材保留在 `docs/logos/` 或 `docs/screenshots/`。

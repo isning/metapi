@@ -1,3 +1,4 @@
+import { tr } from '../../i18n.js';
 export type TokenBindingOption = {
   id: number;
   name: string;
@@ -56,23 +57,23 @@ function buildDirectBindingPresentation(
   if (connectionMode === 'oauth') {
     return {
       isFollowingAccountDefault: false,
-      bindingModeLabel: 'OAuth授权',
+      bindingModeLabel: tr('pages.tokenRoutes.tokenBindingPresentation.oauth'),
       badgeTone: 'warning',
       effectiveTokenName: accountName,
-      helperText: `当前直接使用连接「${accountName}」的 OAuth 授权，不依赖账号令牌。`,
-      followOptionLabel: `固定使用：${accountName}(OAuth 授权)`,
-      followOptionDescription: `直接使用连接「${accountName}」的 OAuth 授权`,
+      helperText: tr('pages.tokenRoutes.tokenBindingPresentation.oauthDirectHelper').replace('{account}', accountName),
+      followOptionLabel: tr('pages.tokenRoutes.tokenBindingPresentation.fixedOauthLabel').replace('{account}', accountName),
+      followOptionDescription: tr('pages.tokenRoutes.tokenBindingPresentation.oauthDirectDescription').replace('{account}', accountName),
     };
   }
 
   return {
     isFollowingAccountDefault: false,
-    bindingModeLabel: 'API令牌',
+    bindingModeLabel: tr('pages.tokenRoutes.tokenBindingPresentation.apitoken'),
     badgeTone: 'warning',
     effectiveTokenName: accountName,
-    helperText: `当前直接使用连接「${accountName}」保存的 API Key，不依赖账号令牌。`,
-    followOptionLabel: `固定使用：${accountName}(跟随 API Key 设置)`,
-    followOptionDescription: `直接使用连接「${accountName}」保存的 API Key`,
+    helperText: tr('pages.tokenRoutes.tokenBindingPresentation.apiKeyDirectHelper').replace('{account}', accountName),
+    followOptionLabel: tr('pages.tokenRoutes.tokenBindingPresentation.fixedApiKeyLabel').replace('{account}', accountName),
+    followOptionDescription: tr('pages.tokenRoutes.tokenBindingPresentation.apiKeyDirectDescription').replace('{account}', accountName),
   };
 }
 
@@ -110,48 +111,48 @@ export function describeTokenBinding(
     ? options.find((option) => option.id === activeTokenId) || null
     : null;
   const connectionMode = context.connectionMode || 'session';
-  const accountName = String(context.accountName || '').trim() || '当前连接';
+  const accountName = String(context.accountName || '').trim() || tr('pages.oAuthManagement.currentConnection');
 
   if (!activeTokenId) {
     if (connectionMode === 'apikey' || connectionMode === 'oauth') {
       return buildDirectBindingPresentation(connectionMode, accountName);
     }
 
-    const effectiveTokenName = defaultToken?.name || fallbackTokenName || '未设置默认令牌';
+    const effectiveTokenName = defaultToken?.name || fallbackTokenName || tr('pages.tokenRoutes.tokenBindingPresentation.notSetdefaultToken');
     return {
       isFollowingAccountDefault: true,
-      bindingModeLabel: '跟随账号默认',
+      bindingModeLabel: tr('pages.tokenRoutes.addChannelModal.accountsdefault'),
       badgeTone: 'info',
       effectiveTokenName,
       helperText: defaultToken
-        ? `跟随账号默认。当前生效的是「${defaultToken.name}」，以后账号默认变化时会自动切换。`
-        : '跟随账号默认。当前账号还没有默认令牌。',
-      followOptionLabel: '跟随账号默认',
+        ? tr('pages.tokenRoutes.tokenBindingPresentation.followDefaultHelper').replace('{token}', defaultToken.name)
+        : tr('pages.tokenRoutes.tokenBindingPresentation.accountsdefaultAccountsDefaultToken'),
+      followOptionLabel: tr('pages.tokenRoutes.addChannelModal.accountsdefault'),
       followOptionDescription: defaultToken
-        ? `当前生效：${defaultToken.name}；以后账号默认变化时会自动切换`
-        : '以后账号默认变化时会自动切换',
+        ? tr('pages.tokenRoutes.tokenBindingPresentation.followDefaultDescription').replace('{token}', defaultToken.name)
+        : tr('pages.tokenRoutes.tokenBindingPresentation.accountsdefaultAutomatic'),
     };
   }
 
   const effectiveTokenName = selectedToken?.name || fallbackTokenName || `token-${activeTokenId}`;
   return {
     isFollowingAccountDefault: false,
-    bindingModeLabel: '固定令牌',
+    bindingModeLabel: tr('pages.tokenRoutes.tokenBindingPresentation.token'),
     badgeTone: 'warning',
     effectiveTokenName,
     helperText: selectedToken?.isDefault
-      ? `已固定到「${effectiveTokenName}」。它目前也是账号默认，但以后账号默认变化时，这个通道不会跟着变。`
-      : `已固定到「${effectiveTokenName}」，不会随账号默认变化。`,
+      ? tr('pages.tokenRoutes.tokenBindingPresentation.fixedDefaultHelper').replace('{token}', effectiveTokenName)
+      : tr('pages.tokenRoutes.tokenBindingPresentation.fixedTokenHelper').replace('{token}', effectiveTokenName),
     followOptionLabel: connectionMode === 'oauth'
-      ? 'OAuth授权'
-      : (connectionMode === 'apikey' ? 'API 设置' : '跟随账号默认'),
+      ? tr('pages.tokenRoutes.tokenBindingPresentation.oauth')
+      : (connectionMode === 'apikey' ? tr('pages.tokenRoutes.tokenBindingPresentation.apiSettings') : tr('pages.tokenRoutes.addChannelModal.accountsdefault')),
     followOptionDescription: connectionMode === 'oauth'
-      ? `直接使用连接「${accountName}」的 OAuth 授权`
+      ? tr('pages.tokenRoutes.tokenBindingPresentation.oauthDirectDescription').replace('{account}', accountName)
       : (connectionMode === 'apikey'
-          ? `直接使用连接「${accountName}」保存的 API Key`
+          ? tr('pages.tokenRoutes.tokenBindingPresentation.apiKeyDirectDescription').replace('{account}', accountName)
           : (defaultToken
-              ? `当前生效：${defaultToken.name}；以后账号默认变化时会自动切换`
-              : '以后账号默认变化时会自动切换')),
+              ? tr('pages.tokenRoutes.tokenBindingPresentation.followDefaultDescription').replace('{token}', defaultToken.name)
+              : tr('pages.tokenRoutes.tokenBindingPresentation.accountsdefaultAutomatic'))),
   };
 }
 
@@ -162,9 +163,9 @@ export function buildFixedTokenOptionLabel(
     includeSourceModel?: boolean;
   } = {},
 ): string {
-  let label = `固定使用：${token.name}`;
+  let label = tr('pages.tokenRoutes.tokenBindingPresentation.fixedTokenLabel').replace('{token}', token.name);
   if (options.includeDefaultTag && token.isDefault) {
-    label += '（当前账号默认）';
+    label += tr('pages.tokenRoutes.tokenBindingPresentation.accountsdefault');
   }
   if (options.includeSourceModel && token.sourceModel) {
     label += ` [${token.sourceModel}]`;
@@ -174,6 +175,6 @@ export function buildFixedTokenOptionLabel(
 
 export function buildFixedTokenOptionDescription(token: TokenBindingOption): string {
   return token.isDefault
-    ? '固定到这条令牌；它目前也是账号默认，但以后不会自动跟随'
-    : '固定到这条令牌；不随账号默认变化';
+    ? tr('pages.tokenRoutes.tokenBindingPresentation.itemstokenAccountsdefaultAutomatic')
+    : tr('pages.tokenRoutes.tokenBindingPresentation.itemstokenAccountsdefault');
 }

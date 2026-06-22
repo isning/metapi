@@ -121,6 +121,7 @@ describe('routeGraphSnapshot', () => {
         backend: { kind: 'routes', routeIds: [2, 3] },
         presentation: { displayName: 'public-model', displayIcon: 'openai' },
         routingStrategy: 'stable_first',
+        visibility: 'internal',
       }),
     ]);
 
@@ -130,7 +131,7 @@ describe('routeGraphSnapshot', () => {
         surface: expect.objectContaining({
           entry: expect.objectContaining({
             kind: 'external',
-            visibility: 'public',
+            visibility: 'internal',
             match: expect.objectContaining({ displayName: 'public-model' }),
           }),
           output: 'route',
@@ -138,7 +139,12 @@ describe('routeGraphSnapshot', () => {
         policy: { strategy: 'stable_first' },
       }),
     }));
-    expect(snapshot.nodes[0]?.macro?.config.groups.map((group) => group.input.routeIds)).toEqual([[2], [3]]);
+    expect(snapshot.nodes[0]?.macro?.config.groups.map((group) => group.input.endpointIds)).toEqual([
+      ['route-endpoint:product:route:2'],
+      ['route-endpoint:product:route:3'],
+    ]);
+    expect(snapshot.nodes[0]?.visibility).toBe('internal');
+    expect(snapshot.nodes[0]?.macro?.visibility).toBe('internal');
   });
 
   it('imports Model Group macros and projects them to route payloads', () => {
@@ -167,8 +173,8 @@ describe('routeGraphSnapshot', () => {
           },
           policy: { strategy: 'round_robin' },
           groups: [
-            { id: 'source:3', enabled: true, priority: 1, input: { kind: 'route_ids', routeIds: [3] } },
-            { id: 'source:2', enabled: true, priority: 0, input: { kind: 'route_ids', routeIds: [2] } },
+            { id: 'source:3', enabled: true, priority: 1, input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:product:route:3'] } },
+            { id: 'source:2', enabled: true, priority: 0, input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:product:route:2'] } },
           ],
           presentation: { displayIcon: 'openai' },
         },
@@ -192,6 +198,7 @@ describe('routeGraphSnapshot', () => {
       presentation: { displayName: 'public-model', displayIcon: 'openai' },
       routingStrategy: 'stable_first',
       enabled: true,
+      visibility: 'public',
       modelMapping: '',
       advancedOpen: false,
       macro: buildCandidateSelectorMacro({
@@ -217,9 +224,9 @@ describe('routeGraphSnapshot', () => {
           policy: { strategy: 'stable_first' },
           presentation: { displayIcon: 'openai' },
           groups: [
-            expect.objectContaining({ priority: 0, input: { kind: 'route_ids', routeIds: [5] } }),
-            expect.objectContaining({ priority: 1, input: { kind: 'route_ids', routeIds: [3] } }),
-            expect.objectContaining({ priority: 2, input: { kind: 'route_ids', routeIds: [8] } }),
+            expect.objectContaining({ priority: 0, input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:product:route:5'] } }),
+            expect.objectContaining({ priority: 1, input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:product:route:3'] } }),
+            expect.objectContaining({ priority: 2, input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:product:route:8'] } }),
           ],
         }),
       }),
@@ -233,6 +240,7 @@ describe('routeGraphSnapshot', () => {
       presentation: { displayName: ' ', displayIcon: ' anthropic ' },
       routingStrategy: 'round_robin',
       enabled: false,
+      visibility: 'public',
       modelMapping: '{"gpt-4o":"upstream"}',
       advancedOpen: true,
       macro: buildCandidateSelectorMacro({
@@ -289,7 +297,7 @@ describe('routeGraphSnapshot', () => {
               label: 'fast lane',
               enabled: true,
               priority: 0,
-              input: { kind: 'route_ids', routeIds: [5] },
+              input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:product:route:5'] },
               defaults: { enabled: true, weight: 99, priority: 0 },
             },
             {
@@ -297,7 +305,7 @@ describe('routeGraphSnapshot', () => {
               label: 'cheap lane',
               enabled: true,
               priority: 1,
-              input: { kind: 'route_ids', routeIds: [3] },
+              input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:product:route:3'] },
               defaults: { enabled: true, weight: 12, priority: 1 },
             },
           ],
@@ -315,7 +323,10 @@ describe('routeGraphSnapshot', () => {
     expect(macro.config.surface.entry.match.displayName).toBe('public-model');
     expect(macro.config.policy.strategy).toBe('round_robin');
     expect(macro.config.presentation?.displayIcon).toBe('anthropic');
-    expect(macro.config.groups.map((group) => group.input.routeIds[0])).toEqual([3, 5]);
+    expect(macro.config.groups.map((group) => group.input.endpointIds[0])).toEqual([
+      'route-endpoint:product:route:3',
+      'route-endpoint:product:route:5',
+    ]);
     expect(macro.config.groups.map((group) => group.defaults.weight)).toEqual([12, 99]);
     expect(macro.config.groups.map((group) => group.priority)).toEqual([0, 1]);
   });
@@ -346,9 +357,9 @@ describe('routeGraphSnapshot', () => {
           },
           policy: { strategy: 'priority_order' },
           groups: [
-            { id: 'source:1', enabled: true, priority: 0, input: { kind: 'route_ids', routeIds: [1] } },
-            { id: 'source:2', enabled: false, priority: 1, input: { kind: 'route_ids', routeIds: [2] } },
-            { id: 'source:3', enabled: true, priority: 2, input: { kind: 'route_ids', routeIds: [3] } },
+            { id: 'source:1', enabled: true, priority: 0, input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:product:route:1'] } },
+            { id: 'source:2', enabled: false, priority: 1, input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:product:route:2'] } },
+            { id: 'source:3', enabled: true, priority: 2, input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:product:route:3'] } },
           ],
         },
       },
@@ -446,9 +457,9 @@ describe('routeGraphSnapshot', () => {
           },
           policy: { strategy: 'stable_first' },
           groups: [
-            { id: 'p0', enabled: true, priority: 0, input: { kind: 'route_ids', routeIds: [2] } },
-            { id: 'p1', enabled: false, priority: 1, input: { kind: 'route_ids', routeIds: [1] } },
-            { id: 'p2', enabled: true, priority: 2, input: { kind: 'route_ids', routeIds: [3] } },
+            { id: 'p0', enabled: true, priority: 0, input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:product:route:2'] } },
+            { id: 'p1', enabled: false, priority: 1, input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:product:route:1'] } },
+            { id: 'p2', enabled: true, priority: 2, input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:product:route:3'] } },
           ],
           presentation: { displayIcon: 'anthropic' },
         },

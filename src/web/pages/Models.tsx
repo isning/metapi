@@ -1,41 +1,23 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../api.js';
 import {
   Check,
-  ChevronDown,
-  ChevronLeft,
-  ChevronRight,
-  Copy,
   Filter,
-  KeyRound,
-  List,
   RefreshCw,
-  Table2,
-  Users,
 } from 'lucide-react';
 import { BrandGlyph, getBrand, BrandIcon, type BrandInfo } from '../components/BrandIcon.js';
-import ModelRouteFlow, { type ModelRouteFlowData } from '../components/ModelRouteFlow.js';
-import SiteBadgeLink from '../components/SiteBadgeLink.js';
 import SearchInput from '../components/SearchInput.js';
 import EmptyStateBlock from '../components/EmptyStateBlock.js';
 import { useToast } from '../components/Toast.js';
 import ResponsiveFilterPanel from '../components/ResponsiveFilterPanel.js';
-import { useAnimatedVisibility } from '../components/useAnimatedVisibility.js';
 import { useIsMobile } from '../components/useIsMobile.js';
 import { mergeMarketplaceMetadata, shouldHydrateMarketplaceMetadata } from './helpers/modelsMarketplaceMetadata.js';
 import { tr } from '../i18n.js';
 import { Button } from '../components/ui/button/index.js';
-import { ButtonGroup } from '../components/ui/button-group/index.js';
 import { Skeleton } from '../components/ui/skeleton/index.js';
 import ToneBadge from '../components/ToneBadge.js';
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '../components/ui/card/index.js';
+import { Card, CardContent } from '../components/ui/card/index.js';
 import {
   Select,
   SelectContent,
@@ -44,63 +26,24 @@ import {
   SelectValue,
 } from '../components/ui/select/index.js';
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '../components/ui/table/index.js';
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+  PaginationLink,
+  PaginationNext,
+  PaginationPrevious,
+} from '../components/ui/pagination/index.js';
+import EntityWorkspaceLayout from '../components/workspace/EntityWorkspaceLayout.js';
+import ModelDetailsWorkspace, { ModelInspector } from './models/ModelDetailsWorkspace.js';
+import {
+  buildModelDetailsView,
+  type ModelDetailsTab,
+  type ModelMetricsRange,
+  type ModelRow,
+} from './models/modelDetailsView.js';
+import type { ModelRouteFlowData } from '../components/ModelRouteFlow.js';
 
 type SortColumn = 'name' | 'accountCount' | 'tokenCount' | 'avgLatency' | 'successRate';
-type ViewMode = 'card' | 'table';
-
-interface ModelTokenInfo {
-  id: number;
-  name: string;
-  isDefault: boolean;
-}
-
-interface ModelGroupPricing {
-  quotaType: number;
-  inputPerMillion?: number;
-  outputPerMillion?: number;
-  perCallInput?: number;
-  perCallOutput?: number;
-  perCallTotal?: number;
-}
-
-interface ModelPricingSource {
-  siteId: number;
-  siteName: string;
-  accountId: number;
-  username: string | null;
-  ownerBy: string | null;
-  enableGroups: string[];
-  groupPricing: Record<string, ModelGroupPricing>;
-}
-
-interface ModelAccountInfo {
-  id: number;
-  site: string;
-  username: string | null;
-  latency: number | null;
-  balance: number;
-  tokens: ModelTokenInfo[];
-}
-
-interface ModelRow {
-  name: string;
-  accountCount: number;
-  tokenCount: number;
-  avgLatency: number | null;
-  successRate: number | null;
-  description: string | null;
-  tags: string[];
-  supportedEndpointTypes: string[];
-  pricingSources: ModelPricingSource[];
-  accounts: ModelAccountInfo[];
-}
 
 interface ModelsMarketplaceResponse {
   models: ModelRow[];
@@ -117,52 +60,17 @@ function isKnownLatency(latency: number | null | undefined): latency is number {
   return typeof latency === 'number' && Number.isFinite(latency);
 }
 
-function getLatencyBadgeClass(latency: number | null) {
-  if (!isKnownLatency(latency)) return 'muted';
-  if (latency >= 3000) return 'error';
-  if (latency >= 1000) return 'warning';
-  return 'success';
-}
-
 function formatLatency(latency: number | null): string {
   return isKnownLatency(latency) ? `${latency}ms` : '—';
 }
 
-function getSuccessBadgeClass(rate: number | null) {
-  if (rate == null) return 'muted';
-  if (rate >= 90) return 'success';
-  if (rate >= 60) return 'warning';
-  return 'error';
-}
-
-function resolveMarketplaceDescription(model: ModelRow, metadataHydrating: boolean): string {
-  if (model.description && model.description.trim().length > 0) return model.description;
-  if (metadataHydrating) return tr('正在加载模型元数据...');
-
-  const hasOtherMetadata = model.tags.length > 0 || model.supportedEndpointTypes.length > 0 || model.pricingSources.length > 0;
-  if (hasOtherMetadata) return tr('上游未提供描述文本，但已同步标签、能力或价格信息。');
-  return tr('当前上游仅返回模型 ID，未返回描述字段。');
-}
-
-function renderGroupPricingValue(pricing: ModelGroupPricing): string {
-  if (pricing.quotaType === 0) {
-    return `${pricing.inputPerMillion ?? 0}/${pricing.outputPerMillion ?? 0} USD / 1M`;
-  }
-
-  if (pricing.perCallInput != null || pricing.perCallOutput != null) {
-    return `${pricing.perCallInput ?? 0}/${pricing.perCallOutput ?? 0} USD / call`;
-  }
-
-  return `${pricing.perCallTotal ?? 0} USD / call`;
-}
-
 const PAGE_SIZES = [10, 20, 50];
 const SORT_OPTIONS: Array<{ key: SortColumn; label: string }> = [
-  { key: 'accountCount', label: tr('账号数') },
-  { key: 'tokenCount', label: tr('令牌数') },
-  { key: 'avgLatency', label: tr('延迟') },
-  { key: 'successRate', label: tr('成功率') },
-  { key: 'name', label: tr('名称') },
+  { key: 'accountCount', label: tr('pages.models.accounts') },
+  { key: 'tokenCount', label: tr('pages.models.tokens') },
+  { key: 'avgLatency', label: tr('components.modelRouteFlow.latency') },
+  { key: 'successRate', label: tr('components.modelAnalysisPanel.successRate') },
+  { key: 'name', label: tr('pages.models.name') },
 ];
 
 function compareModels(a: ModelRow, b: ModelRow, sortBy: SortColumn, sortDir: 'asc' | 'desc'): number {
@@ -193,15 +101,6 @@ function SortIndicator({ active, direction }: { active: boolean; direction: 'asc
   return <span className="text-muted-foreground">{direction === 'desc' ? '↓' : '↑'}</span>;
 }
 
-function MetricText({ label, value }: { label: string; value: React.ReactNode }) {
-  return (
-    <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-      {label}
-      <span className="font-medium text-foreground">{value}</span>
-    </span>
-  );
-}
-
 function ModelTags({
   model,
   sites,
@@ -214,35 +113,17 @@ function ModelTags({
     <div className="flex flex-wrap gap-1.5">
       {brand ? <ToneBadge tone="-info">{brand.name}</ToneBadge> : null}
       {sites.map((site) => <ToneBadge key={site} tone="-muted">{site}</ToneBadge>)}
-      {model.successRate != null && model.successRate >= 90 ? <ToneBadge tone="-success">{tr('健康')}</ToneBadge> : null}
-      {model.successRate != null && model.successRate < 60 ? <ToneBadge tone="-warning">{tr('风险')}</ToneBadge> : null}
-      {isKnownLatency(model.avgLatency) && model.avgLatency <= 500 ? <ToneBadge tone="-success">{tr('低延迟')}</ToneBadge> : null}
+      {model.successRate != null && model.successRate >= 90 ? <ToneBadge tone="-success">{tr('pages.accounts.healthy')}</ToneBadge> : null}
+      {model.successRate != null && model.successRate < 60 ? <ToneBadge tone="-warning">{tr('pages.models.risk')}</ToneBadge> : null}
+      {isKnownLatency(model.avgLatency) && model.avgLatency <= 500 ? <ToneBadge tone="-success">{tr('pages.models.lowLatency')}</ToneBadge> : null}
     </div>
-  );
-}
-
-function SectionCard({
-  title,
-  children,
-}: {
-  title: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  return (
-    <Card>
-      <CardHeader className="p-3 pb-2">
-        <CardTitle>{title}</CardTitle>
-      </CardHeader>
-      <CardContent className="p-3 pt-0">
-        {children}
-      </CardContent>
-    </Card>
   );
 }
 
 /* ---- component ---- */
 export default function Models() {
   const toast = useToast();
+  const navigate = useNavigate();
   const [data, setData] = useState<ModelsMarketplaceResponse>({ models: [] });
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -250,23 +131,32 @@ export default function Models() {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [activeSite, setActiveSite] = useState<string | null>(null);
   const [activeBrand, setActiveBrand] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<ViewMode>('card');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
-  const [copied, setCopied] = useState<string | null>(null);
-  const [filterCollapsed, setFilterCollapsed] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [metadataHydrating, setMetadataHydrating] = useState(false);
   const [routeFlowByModel, setRouteFlowByModel] = useState<Record<string, ModelRouteFlowData | null>>({});
   const [routeFlowLoadingByModel, setRouteFlowLoadingByModel] = useState<Record<string, boolean>>({});
   const [routeFlowErrorByModel, setRouteFlowErrorByModel] = useState<Record<string, string>>({});
   const isMobile = useIsMobile();
-  const filterPanelPresence = useAnimatedVisibility(!isMobile && !filterCollapsed, 220);
   const latestPrimaryRequestRef = useRef(0);
   const latestMetadataRequestRef = useRef(0);
   const requestedRouteFlowModelsRef = useRef(new Set<string>());
   const location = useLocation();
+  const routeParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
+  const selectedModelName = routeParams.get('model') || '';
+  const workspaceTab = (routeParams.get('tab') || 'overview') as ModelDetailsTab;
+  const workspaceRange = (routeParams.get('range') || '24h') as ModelMetricsRange;
+  const routingViewMode = (routeParams.get('routingView') || 'effective') as 'effective' | 'candidates' | 'compiled' | 'diagnostics';
+
+  const updateRouteParams = useCallback((updates: Record<string, string | null>) => {
+    const params = new URLSearchParams(location.search);
+    for (const [key, value] of Object.entries(updates)) {
+      if (value == null || value === '') params.delete(key);
+      else params.set(key, value);
+    }
+    navigate({ pathname: location.pathname, search: params.toString() ? `?${params.toString()}` : '' }, { replace: false });
+  }, [location.pathname, location.search, navigate]);
   const siteIdByName = useMemo(() => {
     const index = new Map<string, number>();
     for (const model of data.models) {
@@ -295,9 +185,9 @@ export default function Models() {
       setData(next);
       if (refresh && next.meta?.refreshRequested) {
         if (next.meta.refreshReused) {
-          toast.info(tr('模型广场刷新进行中'));
+          toast.info(tr('pages.models.marketplaceRefreshProgress'));
         } else if (next.meta.refreshQueued) {
-          toast.info(tr('已开始刷新模型广场'));
+          toast.info(tr('pages.models.startedRefreshingMarketplace'));
         }
       }
       return next;
@@ -341,16 +231,6 @@ export default function Models() {
   }, []);
 
   useEffect(() => {
-    if (!isMobile) return;
-    if (viewMode !== 'card') {
-      setViewMode('card');
-    }
-    if (!filterCollapsed) {
-      setFilterCollapsed(true);
-    }
-  }, [filterCollapsed, isMobile, viewMode]);
-
-  useEffect(() => {
     let cancelled = false;
     let metadataTimer: ReturnType<typeof setTimeout> | null = null;
     const bootstrap = async () => {
@@ -386,40 +266,42 @@ export default function Models() {
   }, [location.search]);
 
   useEffect(() => {
-    if (!expanded) return;
-    if (requestedRouteFlowModelsRef.current.has(expanded)) return;
+    if (!selectedModelName) return;
+    if (requestedRouteFlowModelsRef.current.has(selectedModelName)) return;
 
     let cancelled = false;
-    requestedRouteFlowModelsRef.current.add(expanded);
-    setRouteFlowLoadingByModel((current) => ({ ...current, [expanded]: true }));
-    setRouteFlowErrorByModel((current) => ({ ...current, [expanded]: '' }));
-    void api.getModelRouteFlow(expanded)
+    requestedRouteFlowModelsRef.current.add(selectedModelName);
+    setRouteFlowLoadingByModel((current) => ({ ...current, [selectedModelName]: true }));
+    setRouteFlowErrorByModel((current) => ({ ...current, [selectedModelName]: '' }));
+    void api.getModelRouteFlow(selectedModelName)
       .then((result) => {
         if (cancelled) return;
         setRouteFlowByModel((current) => ({
           ...current,
-          [expanded]: (result as { flow?: ModelRouteFlowData }).flow || null,
+          [selectedModelName]: (result as { flow?: ModelRouteFlowData }).flow || null,
         }));
       })
       .catch((error) => {
         if (cancelled) return;
-        setRouteFlowByModel((current) => ({ ...current, [expanded]: null }));
-        requestedRouteFlowModelsRef.current.delete(expanded);
+        setRouteFlowByModel((current) => ({ ...current, [selectedModelName]: null }));
+        requestedRouteFlowModelsRef.current.delete(selectedModelName);
         setRouteFlowErrorByModel((current) => ({
           ...current,
-          [expanded]: error instanceof Error ? error.message : tr('加载路由流程失败。'),
+          [selectedModelName]: error instanceof Error ? error.message : tr('pages.modelTester.routesFailed'),
         }));
       })
       .finally(() => {
         if (!cancelled) {
-          setRouteFlowLoadingByModel((current) => ({ ...current, [expanded]: false }));
+          setRouteFlowLoadingByModel((current) => ({ ...current, [selectedModelName]: false }));
         }
       });
 
     return () => {
       cancelled = true;
+      requestedRouteFlowModelsRef.current.delete(selectedModelName);
+      setRouteFlowLoadingByModel((current) => ({ ...current, [selectedModelName]: false }));
     };
-  }, [expanded]);
+  }, [selectedModelName]);
 
   /* ---- derived: brand list ---- */
   const brandList = useMemo(() => {
@@ -506,6 +388,31 @@ export default function Models() {
 
   useEffect(() => { setPage(1); }, [search, activeSite, activeBrand, pageSize]);
 
+  const selectedModel = useMemo(() => (
+    selectedModelName ? detailModels.find((model) => model.name === selectedModelName) ?? null : null
+  ), [detailModels, selectedModelName]);
+
+  useEffect(() => {
+    if (!selectedModelName) return;
+    if (selectedModel) return;
+    const params = new URLSearchParams(location.search);
+    params.delete('model');
+    params.delete('node');
+    navigate({ pathname: location.pathname, search: params.toString() ? `?${params.toString()}` : '' }, { replace: true });
+  }, [location.pathname, location.search, navigate, selectedModel, selectedModelName]);
+
+  const selectedDetails = useMemo(() => {
+    if (!selectedModel) return null;
+    return buildModelDetailsView({
+      model: selectedModel,
+      brandName: getBrand(selectedModel.name)?.name ?? null,
+      routeFlow: routeFlowByModel[selectedModel.name] ?? null,
+      routeFlowLoading: !!routeFlowLoadingByModel[selectedModel.name],
+      routeFlowError: routeFlowErrorByModel[selectedModel.name] || '',
+      metadataHydrating,
+    });
+  }, [metadataHydrating, routeFlowByModel, routeFlowErrorByModel, routeFlowLoadingByModel, selectedModel]);
+
   /* ---- stats ---- */
   const totalCoverageSlots = detailModels.reduce((s, m) => s + m.accountCount, 0);
   const uniqueAccountCount = (() => {
@@ -517,163 +424,19 @@ export default function Models() {
     }
     return ids.size;
   })();
-  const latencyMetrics = detailModels
-    .map((model) => model.avgLatency)
-    .filter(isKnownLatency);
-  const avgLatency = latencyMetrics.length > 0
-    ? Math.round(latencyMetrics.reduce((sum, latency) => sum + latency, 0) / latencyMetrics.length)
-    : null;
-
   /* ---- copy ---- */
   const copyName = (name: string) => {
     navigator.clipboard.writeText(name).catch(() => { });
-    setCopied(name);
-    setTimeout(() => setCopied(null), 1500);
   };
-
-  const renderAccountCards = (model: ModelRow) => (
-    <div className="grid gap-2">
-      <div className="text-sm font-medium text-muted-foreground">{tr('账号明细')}</div>
-      {model.accounts.map((account) => (
-        <Card key={account.id}>
-          <CardContent className="grid gap-2 p-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <SiteBadgeLink siteId={siteIdByName.get(account.site)} siteName={account.site} badgeClassName="info" />
-              <span className="text-xs text-muted-foreground">{account.username || `ID:${account.id}`}</span>
-            </div>
-            <div className="grid gap-2 text-xs">
-              <div className="flex justify-between gap-3">
-                <span className="text-muted-foreground">{tr('延迟')}</span>
-                <ToneBadge tone={getLatencyBadgeClass(account.latency)}>
-                  {account.latency != null ? `${account.latency}ms` : '—'}
-                </ToneBadge>
-              </div>
-              <div className="flex justify-between gap-3">
-                <span className="text-muted-foreground">{tr('余额')}</span>
-                <span className="font-mono">${(account.balance || 0).toFixed(2)}</span>
-              </div>
-              <div className="grid gap-1">
-                <span className="text-muted-foreground">{tr('令牌')}</span>
-                <div className="flex flex-wrap gap-1">
-                  {account.tokens.length > 0 ? account.tokens.map((token) => (
-                    <ToneBadge tone={token.isDefault ? 'success' : 'muted'} key={token.id}>{token.name}</ToneBadge>
-                  )) : <span className="text-muted-foreground">—</span>}
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      ))}
-    </div>
-  );
-
-  const renderAccountsTable = (model: ModelRow) => (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>{tr('站点')}</TableHead>
-          <TableHead>{tr('账号')}</TableHead>
-          <TableHead>{tr('令牌')}</TableHead>
-          <TableHead>{tr('延迟')}</TableHead>
-          <TableHead>{tr('余额')}</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {model.accounts.map((account) => (
-          <TableRow key={account.id}>
-            <TableCell>
-              <SiteBadgeLink siteId={siteIdByName.get(account.site)} siteName={account.site} badgeClassName="info" />
-            </TableCell>
-            <TableCell className="text-xs">{account.username || `ID:${account.id}`}</TableCell>
-            <TableCell>
-              <div className="flex flex-wrap gap-1">
-                {account.tokens.length > 0 ? account.tokens.map((token) => (
-                  <ToneBadge tone={token.isDefault ? 'success' : 'muted'} key={token.id}>{token.name}</ToneBadge>
-                )) : <span className="text-muted-foreground">—</span>}
-              </div>
-            </TableCell>
-            <TableCell>
-              <ToneBadge tone={getLatencyBadgeClass(account.latency)}>
-                {account.latency != null ? `${account.latency}ms` : '—'}
-              </ToneBadge>
-            </TableCell>
-            <TableCell className="font-mono text-xs">${(account.balance || 0).toFixed(2)}</TableCell>
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
-  );
-
-  const renderModelDetails = (model: ModelRow) => (
-    <div className="grid gap-3">
-      <div className="grid gap-3 lg:grid-cols-2">
-        <SectionCard title={tr('基础信息')}>
-          <div className="grid gap-2">
-            <p className="text-sm text-muted-foreground">
-              {resolveMarketplaceDescription(model, metadataHydrating)}
-            </p>
-            <div className="flex flex-wrap gap-1.5">
-              {model.tags.length > 0 ? model.tags.map((tag) => (
-                <ToneBadge tone="-info" key={tag}>{tag}</ToneBadge>
-              )) : <ToneBadge tone="-muted">{metadataHydrating ? tr('加载元数据中...') : tr('暂无标签')}</ToneBadge>}
-            </div>
-          </div>
-        </SectionCard>
-
-        <SectionCard title={tr('接口能力')}>
-          <div className="flex flex-wrap gap-1.5">
-            {model.supportedEndpointTypes.length > 0 ? model.supportedEndpointTypes.map((endpoint) => (
-              <ToneBadge tone="-success" key={endpoint}>{endpoint}</ToneBadge>
-            )) : <ToneBadge tone="-muted">{metadataHydrating ? tr('加载元数据中...') : tr('未提供')}</ToneBadge>}
-          </div>
-        </SectionCard>
-      </div>
-
-      <SectionCard title={tr('分组计费')}>
-        {model.pricingSources.length > 0 ? (
-          <div className="grid gap-2">
-            {model.pricingSources.map((source) => (
-              <Card key={`${source.siteId}-${source.accountId}`}>
-                <CardContent className="grid gap-2 p-3">
-                  <div className="text-sm">
-                    <SiteBadgeLink siteId={source.siteId} siteName={source.siteName} /> · {source.username || `ID:${source.accountId}`}
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {Object.entries(source.groupPricing).map(([group, pricing]) => (
-                      <ToneBadge tone="-info" key={group}>
-                        {group}: {renderGroupPricingValue(pricing)}
-                      </ToneBadge>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        ) : (
-          <ToneBadge tone="-muted">{metadataHydrating ? tr('正在加载价格元数据...') : tr('暂无价格元数据')}</ToneBadge>
-        )}
-      </SectionCard>
-
-      <SectionCard title={tr('路由流程')}>
-        <ModelRouteFlow
-          flow={routeFlowByModel[model.name] ?? null}
-          loading={!!routeFlowLoadingByModel[model.name]}
-          error={routeFlowErrorByModel[model.name] || ''}
-        />
-      </SectionCard>
-
-      {isMobile ? renderAccountCards(model) : renderAccountsTable(model)}
-    </div>
-  );
 
   const filterControls = (
     <div className="grid gap-4">
       <div className="grid gap-2">
         <div className="flex items-center justify-between gap-2">
-          <div className="text-sm font-medium">{tr('品牌')}</div>
+          <div className="text-sm font-medium">{tr('pages.models.brands')}</div>
           {activeBrand ? (
             <Button type="button" variant="ghost" size="sm" onClick={() => setActiveBrand(null)}>
-              {tr('重置')}
+              {tr('pages.models.reset')}
             </Button>
           ) : null}
         </div>
@@ -684,7 +447,7 @@ export default function Models() {
           onClick={() => setActiveBrand(null)}
         >
           <Check className="size-4" />
-          <span className="min-w-0 flex-1 truncate text-left">{tr('全部品牌')}</span>
+          <span className="min-w-0 flex-1 truncate text-left">{tr('pages.models.allBrands')}</span>
           <ToneBadge tone="-muted">{data.models.length}</ToneBadge>
         </Button>
         {brandList.list.map(([brandName, { count, brand }]) => (
@@ -708,7 +471,7 @@ export default function Models() {
             onClick={() => setActiveBrand(activeBrand === '__other__' ? null : '__other__')}
           >
             <span className="inline-flex size-4 items-center justify-center text-xs text-muted-foreground">?</span>
-            <span className="min-w-0 flex-1 truncate text-left">{tr('其他')}</span>
+            <span className="min-w-0 flex-1 truncate text-left">{tr('pages.models.other')}</span>
             <ToneBadge tone="-muted">{brandList.otherCount}</ToneBadge>
           </Button>
         )}
@@ -716,10 +479,10 @@ export default function Models() {
 
       <div className="grid gap-2">
         <div className="flex items-center justify-between gap-2">
-          <div className="text-sm font-medium">{tr('供应商')}</div>
+          <div className="text-sm font-medium">{tr('pages.models.providers')}</div>
           {activeSite ? (
             <Button type="button" variant="ghost" size="sm" onClick={() => setActiveSite(null)}>
-              {tr('重置')}
+              {tr('pages.models.reset')}
             </Button>
           ) : null}
         </div>
@@ -741,7 +504,7 @@ export default function Models() {
       </div>
 
       <div className="grid gap-2">
-        <div className="text-sm font-medium">{tr('排序方式')}</div>
+        <div className="text-sm font-medium">{tr('pages.accounts.sort')}</div>
         {SORT_OPTIONS.map(opt => (
           <Button
             key={opt.key}
@@ -762,6 +525,108 @@ export default function Models() {
           </Button>
         ))}
       </div>
+    </div>
+  );
+
+  const selectModel = useCallback((modelName: string) => {
+    updateRouteParams({ model: modelName, tab: workspaceTab || 'overview' });
+  }, [updateRouteParams, workspaceTab]);
+
+  const modelIndexContent = (
+    <div className="grid gap-3 p-3">
+      <SearchInput
+        value={search}
+        onChange={e => setSearch(e.target.value)}
+        placeholder={tr('pages.modelTester.searchModelSupportsNameFragments')}
+      />
+      <div className="flex flex-wrap items-center gap-2">
+        <ToneBadge tone="-info">{tr('pages.models.total')} {filteredModels.length} {tr('pages.models.models2')}</ToneBadge>
+        <ToneBadge tone="-muted">{tr('pages.models.coverageTier')} {totalCoverageSlots}</ToneBadge>
+        <ToneBadge tone="-muted">{tr('pages.models.uniqueAccounts')} {uniqueAccountCount}</ToneBadge>
+      </div>
+      {filterControls}
+      <div className="grid gap-2">
+        {detailModels.length === 0 ? (
+          <EmptyStateBlock title={tr('pages.models.noModelYet')} description={tr('pages.models.checkSiteAccountStatusFirstThenRefresh')} />
+        ) : paged.map((model) => {
+          const selected = selectedModelName === model.name;
+          const sites = model.accounts.map((account) => account.site).filter((value, index, array) => array.indexOf(value) === index);
+          return (
+            <Button
+              key={model.name}
+              type="button"
+              variant={selected ? 'secondary' : 'outline'}
+              className="h-auto min-w-0 justify-start p-3 text-left"
+              onClick={() => selectModel(model.name)}
+            >
+              <div className="flex min-w-0 items-start gap-2">
+                <BrandIcon model={model.name} size={28} />
+                <div className="min-w-0 flex-1">
+                  <div className="truncate font-mono text-sm font-semibold">{model.name}</div>
+                  <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                    <span>{getBrand(model.name)?.name || 'unknown'}</span>
+                    <span>·</span>
+                    <span>{formatLatency(model.avgLatency)}</span>
+                    <span>·</span>
+                    <span>{model.successRate == null ? 'unknown' : `${model.successRate}%`}</span>
+                  </div>
+                  <div className="mt-2">
+                    <ModelTags model={model} sites={sites.slice(0, 2)} />
+                  </div>
+                </div>
+              </div>
+            </Button>
+          );
+        })}
+      </div>
+      {filteredModels.length > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-3">
+          <Pagination className="mx-0 w-auto">
+            <PaginationContent>
+              <PaginationItem>
+                <PaginationPrevious
+                  type="button"
+                  disabled={safePageVal <= 1}
+                  onClick={() => setPage(p => p - 1)}
+                  aria-label={tr('pages.models.previousPage')}
+                />
+              </PaginationItem>
+              {Array.from({ length: Math.min(totalPages, 5) }, (_, i) => {
+                let pageNum: number;
+                if (totalPages <= 5) pageNum = i + 1;
+                else if (safePageVal <= 3) pageNum = i + 1;
+                else if (safePageVal >= totalPages - 2) pageNum = totalPages - 4 + i;
+                else pageNum = safePageVal - 2 + i;
+                return (
+                  <PaginationItem key={pageNum}>
+                    <PaginationLink type="button" isActive={pageNum === safePageVal} onClick={() => setPage(pageNum)}>
+                      {pageNum}
+                    </PaginationLink>
+                  </PaginationItem>
+                );
+              })}
+              <PaginationItem>
+                <PaginationNext
+                  type="button"
+                  disabled={safePageVal >= totalPages}
+                  onClick={() => setPage(p => p + 1)}
+                  aria-label={tr('pages.models.nextPage')}
+                />
+              </PaginationItem>
+            </PaginationContent>
+          </Pagination>
+          <Select value={String(pageSize)} onValueChange={(nextValue) => setPageSize(Number(nextValue))}>
+            <SelectTrigger className="w-24">
+              <SelectValue placeholder={String(pageSize)} />
+            </SelectTrigger>
+            <SelectContent>
+              {PAGE_SIZES.map((size) => (
+                <SelectItem key={size} value={String(size)}>{size}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
     </div>
   );
 
@@ -786,7 +651,7 @@ export default function Models() {
               {isMobile && (
                 <Button type="button" variant="outline" onClick={() => setShowFilters(true)}>
                   <Filter className="size-4" />
-                  {tr('筛选')}
+                  {tr('components.mobileFilterSheet.filter')}
                 </Button>
               )}
             </div>
@@ -795,7 +660,7 @@ export default function Models() {
             isMobile={isMobile}
             mobileOpen={showFilters}
             onMobileClose={() => setShowFilters(false)}
-            mobileTitle={tr('筛选模型')}
+            mobileTitle={tr('pages.models.filtermodel')}
             mobileContent={filterControls}
           />
           <div className="grid gap-3">
@@ -808,64 +673,33 @@ export default function Models() {
 
   return (
     <div className="flex min-h-[400px] gap-6">
-      {!isMobile && filterPanelPresence.shouldRender && (
-        <Card className={`w-60 shrink-0 ${filterPanelPresence.isVisible ? '' : 'opacity-0'}`.trim()}>
-          <CardContent className="grid gap-4 p-3">
-            {filterControls}
-            <Button type="button" variant="outline" onClick={() => setFilterCollapsed(true)}>
-              {tr('收起')}
-            </Button>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* ====== RIGHT: Content Area ====== */}
       <div className="min-w-0 flex-1">
-        {/* Header */}
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <h2 className="flex items-center gap-2 text-xl font-semibold">
-              {activeBrand || activeSite || tr('模型广场')}
+              {activeBrand || activeSite || tr('app.modelMarketplace')}
               <ToneBadge tone="-info">
-                {tr('共')} {filteredModels.length} {tr('个模型')}
+                {tr('pages.models.total')} {filteredModels.length} {tr('pages.models.models2')}
               </ToneBadge>
             </h2>
             {(activeBrand || activeSite) && (
               <p className="mt-1 text-xs text-muted-foreground">
-                {activeBrand && activeBrand !== '__other__' ? `${tr('查看')} ${activeBrand} ${tr('品牌的所有模型')}` : activeSite ? `${tr('来自供应商')} ${activeSite} ${tr('的模型')}` : tr('其他未归类的模型')}
+                {activeBrand && activeBrand !== '__other__' ? `${tr('pages.downstreamKeys.viewing')} ${activeBrand} ${tr('pages.models.brandModels')}` : activeSite ? `${tr('pages.models.fromProvider')} ${activeSite} ${tr('pages.models.models')}` : tr('pages.models.otherUncategorizedModels')}
               </p>
             )}
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            {(isMobile || filterCollapsed) && (
-              <Button type="button" variant="outline"
-                onClick={() => {
-                  if (isMobile) {
-                    setShowFilters(true);
-                    return;
-                  }
-                  setFilterCollapsed(false);
-                }}
-              >
+            {isMobile && (
+              <Button type="button" variant="outline" onClick={() => setShowFilters(true)}>
                 <Filter className="size-4" />
-                {tr('筛选')}
+                {tr('components.mobileFilterSheet.filter')}
               </Button>
             )}
-            <Button type="button" variant="outline" size="icon" onClick={handleRefresh} aria-label={tr('刷新')}>
+            <Button type="button" variant="outline" size="icon" onClick={handleRefresh} aria-label={tr('pages.accounts.refresh')}>
               <RefreshCw className="size-4" />
             </Button>
             {metadataHydrating && (
-              <ToneBadge tone="-muted">{tr('加载元数据中...')}</ToneBadge>
-            )}
-            {!isMobile && (
-              <ButtonGroup>
-                <Button type="button" variant={viewMode === 'card' ? 'secondary' : 'outline'} size="icon" onClick={() => setViewMode('card')} aria-label={tr('卡片视图')}>
-                  <List className="size-4" />
-                </Button>
-                <Button type="button" variant={viewMode === 'table' ? 'secondary' : 'outline'} size="icon" onClick={() => setViewMode('table')} aria-label={tr('表格视图')}>
-                  <Table2 className="size-4" />
-                </Button>
-              </ButtonGroup>
+              <ToneBadge tone="-muted">{tr('pages.models.loadingMetadata')}</ToneBadge>
             )}
           </div>
         </div>
@@ -874,183 +708,33 @@ export default function Models() {
           isMobile={isMobile}
           mobileOpen={showFilters}
           onMobileClose={() => setShowFilters(false)}
-          mobileTitle={tr('筛选模型')}
+          mobileTitle={tr('pages.models.filtermodel')}
           mobileContent={filterControls}
         />
 
-        {/* Toolbar */}
-        <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <SearchInput
-            className="w-full lg:max-w-md"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder={tr('搜索模型（支持名称片段）')}
-          />
-          {/* Quick stats */}
-          <div className="flex flex-wrap items-center gap-4">
-            <MetricText label={tr('覆盖档位')} value={totalCoverageSlots} />
-            <MetricText label={tr('去重账号')} value={uniqueAccountCount} />
-            <MetricText label={tr('平均延迟')} value={<ToneBadge tone={getLatencyBadgeClass(avgLatency)}>{formatLatency(avgLatency)}</ToneBadge>} />
-          </div>
-        </div>
-
-        {/* Empty */}
-        {detailModels.length === 0 ? (
-          <EmptyStateBlock title={tr('暂无模型结果')} description={tr('请先检查站点与账号状态，然后点击刷新。')} />
-        ) : viewMode === 'card' ? (
-          <div className="grid gap-3">
-            {paged.map((model) => {
-              const isExpanded = expanded === model.name;
-              const sites = model.accounts.map((account) => account.site).filter((value, index, array) => array.indexOf(value) === index);
-              return (
-                <Card key={model.name} role="button" tabIndex={0} onClick={() => setExpanded(isExpanded ? null : model.name)} onKeyDown={(event) => {
-                  if (event.key === 'Enter' || event.key === ' ') {
-                    event.preventDefault();
-                    setExpanded(isExpanded ? null : model.name);
-                  }
-                }}>
-                  <CardHeader className="flex-row items-start gap-3 space-y-0">
-                    <BrandIcon model={model.name} size={44} />
-                    <div className="min-w-0 flex-1">
-                      <CardTitle className="truncate text-base">{model.name}</CardTitle>
-                      <CardDescription className="mt-1 flex flex-wrap items-center gap-2">
-                        <span className="inline-flex items-center gap-1"><Users className="size-3" />{model.accountCount} {tr('个账号')}</span>
-                        <span className="inline-flex items-center gap-1"><KeyRound className="size-3" />{model.tokenCount} {tr('令牌')}</span>
-                        <ToneBadge tone={getLatencyBadgeClass(model.avgLatency)}>{tr('延迟')} {formatLatency(model.avgLatency)}</ToneBadge>
-                        <ToneBadge tone={getSuccessBadgeClass(model.successRate)}>{tr('成功率')} {model.successRate != null ? `${model.successRate}%` : '—'}</ToneBadge>
-                      </CardDescription>
-                    </div>
-                    <div className="flex items-center gap-2" onClick={(event) => event.stopPropagation()}>
-                      <Button type="button" variant="outline" size="icon" aria-label={tr('复制模型名')} onClick={() => copyName(model.name)}>
-                        {copied === model.name ? <Check className="size-4" /> : <Copy className="size-4" />}
-                      </Button>
-                      <Button type="button" variant="outline" size="icon" aria-label={isExpanded ? tr('收起') : tr('展开')} onClick={() => setExpanded(isExpanded ? null : model.name)}>
-                        <ChevronDown className={`size-4 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
-                      </Button>
-                    </div>
-                  </CardHeader>
-                  <CardContent className="grid gap-3">
-                    <ModelTags model={model} sites={sites} />
-                    {isExpanded ? (
-                      <div onClick={(event) => event.stopPropagation()}>
-                        {renderModelDetails(model)}
-                      </div>
-                    ) : null}
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
-        ) : (
-          <Card>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-12" />
-                  <TableHead>
-                    <Button type="button" variant="ghost" size="sm" onClick={() => { setSortBy('name'); setSortDir((direction) => direction === 'asc' ? 'desc' : 'asc'); }}>
-                      {tr('模型名称')} <SortIndicator active={sortBy === 'name'} direction={sortDir} />
-                    </Button>
-                  </TableHead>
-                  <TableHead>
-                    <Button type="button" variant="ghost" size="sm" onClick={() => { setSortBy('accountCount'); setSortDir((direction) => direction === 'asc' ? 'desc' : 'asc'); }}>
-                      {tr('账号数')} <SortIndicator active={sortBy === 'accountCount'} direction={sortDir} />
-                    </Button>
-                  </TableHead>
-                  <TableHead>
-                    <Button type="button" variant="ghost" size="sm" onClick={() => { setSortBy('tokenCount'); setSortDir((direction) => direction === 'asc' ? 'desc' : 'asc'); }}>
-                      {tr('令牌数')} <SortIndicator active={sortBy === 'tokenCount'} direction={sortDir} />
-                    </Button>
-                  </TableHead>
-                  <TableHead>
-                    <Button type="button" variant="ghost" size="sm" onClick={() => { setSortBy('avgLatency'); setSortDir((direction) => direction === 'asc' ? 'desc' : 'asc'); }}>
-                      {tr('延迟')} <SortIndicator active={sortBy === 'avgLatency'} direction={sortDir} />
-                    </Button>
-                  </TableHead>
-                  <TableHead>
-                    <Button type="button" variant="ghost" size="sm" onClick={() => { setSortBy('successRate'); setSortDir((direction) => direction === 'asc' ? 'desc' : 'asc'); }}>
-                      {tr('成功率')} <SortIndicator active={sortBy === 'successRate'} direction={sortDir} />
-                    </Button>
-                  </TableHead>
-                  <TableHead>{tr('操作')}</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {paged.map((model) => {
-                  const isExpanded = expanded === model.name;
-                  return (
-                    <React.Fragment key={model.name}>
-                      <TableRow className="cursor-pointer" onClick={() => setExpanded(isExpanded ? null : model.name)}>
-                        <TableCell><BrandIcon model={model.name} size={28} /></TableCell>
-                        <TableCell><code className="rounded border px-2 py-1 text-xs">{model.name}</code></TableCell>
-                        <TableCell><ToneBadge tone="-info">{model.accountCount}</ToneBadge></TableCell>
-                        <TableCell><ToneBadge tone="-muted">{model.tokenCount}</ToneBadge></TableCell>
-                        <TableCell><ToneBadge tone={getLatencyBadgeClass(model.avgLatency)}>{formatLatency(model.avgLatency)}</ToneBadge></TableCell>
-                        <TableCell><ToneBadge tone={getSuccessBadgeClass(model.successRate)}>{model.successRate != null ? `${model.successRate}%` : '—'}</ToneBadge></TableCell>
-                        <TableCell onClick={(event) => event.stopPropagation()}>
-                          <Button type="button" variant="outline" size="icon" aria-label={tr('复制')} onClick={() => copyName(model.name)}>
-                            {copied === model.name ? <Check className="size-4" /> : <Copy className="size-4" />}
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                      {isExpanded ? (
-                        <TableRow>
-                          <TableCell colSpan={7}>
-                            {renderModelDetails(model)}
-                          </TableCell>
-                        </TableRow>
-                      ) : null}
-                    </React.Fragment>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          </Card>
-        )}
-
-        {/* Pagination */}
-        {filteredModels.length > 0 && (
-          <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-            <ButtonGroup>
-              <Button type="button" variant="outline" size="icon" disabled={safePageVal <= 1} onClick={() => setPage(p => p - 1)} aria-label={tr('上一页')}>
-                <ChevronLeft className="size-4" />
-              </Button>
-              {Array.from({ length: Math.min(totalPages, 7) }, (_, i) => {
-                let pageNum: number;
-                if (totalPages <= 7) {
-                  pageNum = i + 1;
-                } else if (safePageVal <= 4) {
-                  pageNum = i + 1;
-                } else if (safePageVal >= totalPages - 3) {
-                  pageNum = totalPages - 6 + i;
-                } else {
-                  pageNum = safePageVal - 3 + i;
-                }
-                return (
-                  <Button type="button" variant={pageNum === safePageVal ? 'secondary' : 'outline'} key={pageNum} onClick={() => setPage(pageNum)}>
-                    {pageNum}
-                  </Button>
-                );
-              })}
-              <Button type="button" variant="outline" size="icon" disabled={safePageVal >= totalPages} onClick={() => setPage(p => p + 1)} aria-label={tr('下一页')}>
-                <ChevronRight className="size-4" />
-              </Button>
-            </ButtonGroup>
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <span>{tr('每页条数')}</span>
-              <Select value={String(pageSize)} onValueChange={(nextValue) => setPageSize(Number(nextValue))}>
-                <SelectTrigger className="w-24">
-                  <SelectValue placeholder={String(pageSize)} />
-                </SelectTrigger>
-                <SelectContent>
-                  {PAGE_SIZES.map((size) => (
-                    <SelectItem key={size} value={String(size)}>{size}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-        )}
+        <EntityWorkspaceLayout
+          index={modelIndexContent}
+          workspace={(
+            <ModelDetailsWorkspace
+              details={selectedDetails}
+              tab={workspaceTab}
+              onTabChange={(nextTab) => updateRouteParams({ tab: nextTab })}
+              range={workspaceRange}
+              onRangeChange={(nextRange) => updateRouteParams({ range: nextRange })}
+              routingViewMode={routingViewMode}
+              onRoutingViewModeChange={(nextMode) => updateRouteParams({ routingView: nextMode })}
+              siteIdByName={siteIdByName}
+              metadataHydrating={metadataHydrating}
+              onCopyModel={copyName}
+              onRefresh={handleRefresh}
+              onCopyJson={(text) => {
+                navigator.clipboard.writeText(text).catch(() => {});
+              }}
+            />
+          )}
+          inspector={<ModelInspector details={selectedDetails} />}
+          mobile={isMobile}
+        />
       </div>
     </div>
   );

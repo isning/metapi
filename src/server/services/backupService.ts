@@ -8,8 +8,10 @@ import { getOauthInfoFromAccount } from './oauth/oauthAccount.js';
 import { PLATFORM_ALIASES, detectPlatformByUrlHint } from '../../shared/platformIdentity.js';
 import { publishRouteGraphSource } from './routeGraphService.js';
 import {
+  ROUTE_GRAPH_SCHEMA_VERSION,
   buildRouteGraphSpecsFromLegacyRoute,
   buildRouteGraphSourceFromLegacyRoutes,
+  compileRouteGraphSource,
   type RouteGraphBackendSpec,
   type RouteGraphMatchSpec,
 } from '../../shared/routeGraph.js';
@@ -521,6 +523,23 @@ function normalizeAccountsBackupSection(section: AccountsBackupSection): Account
     ...section,
     tokenRoutes: section.tokenRoutes.map(normalizeBackupTokenRouteRow),
   };
+}
+
+function canRestoreNativeRouteGraphSnapshot(routeGraph: BackupRouteGraphSection | undefined): boolean {
+  if (!routeGraph || !Array.isArray(routeGraph.versions) || routeGraph.versions.length === 0) return false;
+  const activeVersionId = routeGraph.activeVersion?.versionId;
+  if (typeof activeVersionId !== 'number') return false;
+  const activeVersion = routeGraph.versions.find((row) => row.id === activeVersionId);
+  if (!activeVersion) return false;
+
+  try {
+    const sourceGraph = JSON.parse(activeVersion.sourceGraphJson || '{}');
+    if (!isRecord(sourceGraph) || sourceGraph.version !== ROUTE_GRAPH_SCHEMA_VERSION) return false;
+    const compiled = compileRouteGraphSource(sourceGraph);
+    return !compiled.diagnostics.some((diagnostic) => diagnostic.severity === 'error');
+  } catch {
+    return false;
+  }
 }
 
 function buildModelAvailabilityIdentityKey(accountKey: string, modelName: string): string {
@@ -1804,11 +1823,7 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
   const runtimeState = await collectCurrentRuntimeStateSnapshot();
   const importedIndexes = buildRuntimeIdentityIndexesFromSection(normalizedSection);
   const routeGraphActiveVersionId = normalizedSection.routeGraph?.activeVersion?.versionId;
-  const shouldRestoreRouteGraph = !!normalizedSection.routeGraph
-    && Array.isArray(normalizedSection.routeGraph.versions)
-    && normalizedSection.routeGraph.versions.length > 0
-    && typeof routeGraphActiveVersionId === 'number'
-    && normalizedSection.routeGraph.versions.some((row) => row.id === routeGraphActiveVersionId);
+  const shouldRestoreRouteGraph = canRestoreNativeRouteGraphSnapshot(normalizedSection.routeGraph);
   const shouldReplaceOauthRouteUnits = Array.isArray(normalizedSection.oauthRouteUnits);
   const shouldReplaceSiteDisabledModels = Array.isArray(normalizedSection.siteDisabledModels);
   const shouldReplaceManualModels = Array.isArray(normalizedSection.manualModels);

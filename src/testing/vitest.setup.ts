@@ -10,6 +10,146 @@ vi.mock('react-dom', async () => {
   };
 });
 
+vi.mock('@radix-ui/react-checkbox', async () => {
+  const React = await vi.importActual<typeof import('react')>('react');
+  type CheckboxRootProps = {
+    checked?: boolean | 'indeterminate';
+    defaultChecked?: boolean;
+    disabled?: boolean;
+    onCheckedChange?: (checked: boolean | 'indeterminate') => void;
+    onChange?: (event: React.ChangeEvent<HTMLInputElement>) => void;
+    children?: React.ReactNode;
+  } & Omit<React.InputHTMLAttributes<HTMLInputElement>, 'checked' | 'defaultChecked' | 'onChange' | 'children'>;
+
+  const Root = React.forwardRef<HTMLInputElement, CheckboxRootProps>(({
+    checked,
+    defaultChecked,
+    disabled,
+    onCheckedChange,
+    onChange,
+    children: _children,
+    ...props
+  }, ref) => {
+    const normalizedChecked = checked === 'indeterminate'
+      ? false
+      : Boolean(checked ?? defaultChecked ?? false);
+    const state = checked === 'indeterminate' ? 'indeterminate' : (normalizedChecked ? 'checked' : 'unchecked');
+    return React.createElement('input', {
+      ...props,
+      ref,
+      type: 'checkbox',
+      checked: normalizedChecked,
+      disabled,
+      'data-state': state,
+      onChange: (event: React.ChangeEvent<HTMLInputElement>) => {
+        onChange?.(event);
+        onCheckedChange?.(event.target.checked);
+      },
+    });
+  });
+  Root.displayName = 'Checkbox';
+
+  const Indicator = React.forwardRef<HTMLSpanElement, React.HTMLAttributes<HTMLSpanElement>>((props, ref) => (
+    React.createElement('span', { ...props, ref })
+  ));
+  Indicator.displayName = 'CheckboxIndicator';
+
+  return {
+    Root,
+    Indicator,
+  };
+});
+
+vi.mock('@radix-ui/react-radio-group', async () => {
+  const React = await vi.importActual<typeof import('react')>('react');
+
+  type RadioGroupContextValue = {
+    value?: string;
+    disabled?: boolean;
+    onValueChange?: (value: string) => void;
+  };
+
+  const RadioGroupContext = React.createContext<RadioGroupContextValue>({});
+
+  type RootProps = {
+    value?: string;
+    defaultValue?: string;
+    disabled?: boolean;
+    onValueChange?: (value: string) => void;
+    children?: React.ReactNode;
+  } & React.HTMLAttributes<HTMLDivElement>;
+
+  const Root = React.forwardRef<HTMLDivElement, RootProps>(({
+    value,
+    defaultValue,
+    disabled,
+    onValueChange,
+    children,
+    ...props
+  }, ref) => {
+    const selectedValue = value ?? defaultValue;
+    return React.createElement(
+      RadioGroupContext.Provider,
+      { value: { value: selectedValue, disabled, onValueChange } },
+      React.createElement('div', {
+        ...props,
+        ref,
+        role: props.role ?? 'radiogroup',
+        'data-disabled': disabled ? '' : undefined,
+      }, children),
+    );
+  });
+  Root.displayName = 'RadioGroup';
+
+  type ItemProps = {
+    value: string;
+    disabled?: boolean;
+    children?: React.ReactNode;
+    onClick?: React.MouseEventHandler<HTMLButtonElement>;
+  } & Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, 'value' | 'onClick' | 'children'>;
+
+  const Item = React.forwardRef<HTMLButtonElement, ItemProps>(({
+    value,
+    disabled,
+    children,
+    onClick,
+    ...props
+  }, ref) => {
+    const group = React.useContext(RadioGroupContext);
+    const isDisabled = Boolean(disabled || group.disabled);
+    const checked = group.value === value;
+    return React.createElement('button', {
+      ...props,
+      ref,
+      type: 'button',
+      role: props.role ?? 'radio',
+      value,
+      disabled: isDisabled,
+      'aria-checked': checked,
+      'data-state': checked ? 'checked' : 'unchecked',
+      'data-disabled': isDisabled ? '' : undefined,
+      onClick: (event: React.MouseEvent<HTMLButtonElement>) => {
+        onClick?.(event);
+        if (!event.defaultPrevented && !isDisabled) {
+          group.onValueChange?.(value);
+        }
+      },
+    }, children);
+  });
+  Item.displayName = 'RadioGroupItem';
+
+  const Indicator = React.forwardRef<HTMLSpanElement, React.HTMLAttributes<HTMLSpanElement>>((props, ref) => (
+    React.createElement('span', { ...props, ref })
+  ));
+  Indicator.displayName = 'RadioGroupIndicator';
+
+  return {
+    Root,
+    Item,
+    Indicator,
+  };
+});
+
 function mergeGlobalObject(name: 'document' | 'window', patch: Record<string, unknown>) {
   const current = (globalThis as Record<string, unknown>)[name] as Record<string, unknown> | undefined;
   const next = current ? Object.assign(current, patch) : patch;
@@ -148,6 +288,13 @@ function installBrowserTestSeams() {
   }
   if (typeof globalThis.cancelAnimationFrame !== 'function') {
     vi.stubGlobal('cancelAnimationFrame', (id: number) => globalThis.clearTimeout(id));
+  }
+  if (typeof globalThis.getComputedStyle !== 'function') {
+    vi.stubGlobal('getComputedStyle', vi.fn(() => ({
+      animationDuration: '0s',
+      transitionDuration: '0s',
+      getPropertyValue: vi.fn(() => ''),
+    })));
   }
   if (typeof globalThis.ResizeObserver === 'undefined') {
     vi.stubGlobal('ResizeObserver', class ResizeObserver {

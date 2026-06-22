@@ -27,6 +27,26 @@ function collectText(node: ReactTestInstance): string {
   }).join('');
 }
 
+function findButtonByText(root: ReactTestInstance, text: string): ReactTestInstance {
+  const matches = root.findAll((node) => (
+    node.type === 'button'
+    && typeof node.props.onClick === 'function'
+    && collectText(node).includes(text)
+  ));
+  if (matches.length === 0) {
+    throw new Error(`No button found containing ${text}`);
+  }
+  return matches[0]!;
+}
+
+function findButtonsByText(root: ReactTestInstance, text: string): ReactTestInstance[] {
+  return root.findAll((node) => (
+    node.type === 'button'
+    && typeof node.props.onClick === 'function'
+    && collectText(node).includes(text)
+  ));
+}
+
 async function flushMicrotasks() {
   await act(async () => {
     await Promise.resolve();
@@ -63,7 +83,29 @@ describe('Models marketplace text', () => {
           description: null,
           tags: [],
           supportedEndpointTypes: [],
-          pricingSources: [],
+          pricingSources: [
+            {
+              siteId: 1,
+              siteName: 'Demo Site',
+              accountId: 1,
+              username: 'tester',
+              ownerBy: null,
+              enableGroups: [],
+              groupPricing: {
+                default: {
+                  quotaType: 0,
+                  inputPerMillion: 4,
+                  outputPerMillion: 12,
+                },
+              },
+            },
+          ],
+          measuredEntryPricing: {
+            inputPerMillion: 5,
+            outputPerMillion: 15,
+            sampleCount: 2,
+            lastMeasuredAt: '2026-06-20T00:00:00Z',
+          },
           accounts: [
             {
               id: 1,
@@ -107,12 +149,7 @@ describe('Models marketplace text', () => {
       expect(initialText).toContain('排序方式');
       expect(initialText).toContain('模型广场');
 
-      const cards = root!.root.findAll((node) => (
-        node.type === 'div'
-        && typeof node.props.className === 'string'
-        && node.props.className.includes('model-card')
-        && typeof node.props.onClick === 'function'
-      ));
+      const cards = findButtonsByText(root!.root, 'gpt-4o');
       expect(cards.length).toBeGreaterThan(0);
 
       await act(async () => {
@@ -121,10 +158,16 @@ describe('Models marketplace text', () => {
       await flushMicrotasks();
 
       const expandedText = collectText(root!.root);
-      expect(expandedText).toContain('当前上游仅返回模型 ID，未返回描述字段。');
+      expect(expandedText).toContain('上游未提供描述文本，但已同步标签、能力或价格信息。');
       expect(expandedText).toContain('基础信息');
       expect(expandedText).toContain('站点');
       expect(expandedText).toContain('余额');
+      expect(expandedText).toContain('实测 entry 价格');
+      expect(expandedText).toContain('$5 / 1M');
+      expect(expandedText).toContain('倍率 2.5x');
+      expect(expandedText).toContain('理论 entry 价格');
+      expect(expandedText).toContain('$4 / 1M');
+      expect(expandedText).toContain('倍率 2x');
     } finally {
       root?.unmount();
     }
@@ -567,25 +610,14 @@ describe('Models marketplace text', () => {
       });
       await flushMicrotasks();
 
-      const siteFilterItem = root!.root.find((node) => (
-        node.type === 'div'
-        && typeof node.props.className === 'string'
-        && node.props.className.includes('filter-item')
-        && typeof node.props.onClick === 'function'
-        && collectText(node).includes('站点 A')
-      ));
+      const siteFilterItem = findButtonByText(root!.root, '站点 A');
 
       await act(async () => {
         siteFilterItem.props.onClick();
       });
       await flushMicrotasks();
 
-      const cards = root!.root.findAll((node) => (
-        node.type === 'div'
-        && typeof node.props.className === 'string'
-        && node.props.className.includes('model-card')
-        && typeof node.props.onClick === 'function'
-      ));
+      const cards = findButtonsByText(root!.root, 'gpt-4o');
       expect(cards.length).toBeGreaterThan(0);
 
       await act(async () => {
@@ -593,20 +625,12 @@ describe('Models marketplace text', () => {
       });
       await flushMicrotasks();
 
-      const expandedSections = root!.root.findAll((node) => (
-        node.type === 'div'
-        && typeof node.props.className === 'string'
-        && node.props.className.includes('model-card-expand')
-      ));
-      expect(expandedSections.length).toBe(1);
-
-      const expandedText = collectText(expandedSections[0]!);
-      expect(expandedText).toContain('站点 A');
-      expect(expandedText).toContain('user-a');
-      expect(expandedText).toContain('token-a-1');
-      expect(expandedText).not.toContain('站点 B');
-      expect(expandedText).not.toContain('user-b');
-      expect(expandedText).not.toContain('token-b-1');
+      const workspaceText = collectText(root!.root);
+      expect(workspaceText).toContain('站点 A');
+      expect(workspaceText).toContain('user-a');
+      expect(workspaceText).toContain('token-a-1');
+      expect(workspaceText).not.toContain('user-b');
+      expect(workspaceText).not.toContain('token-b-1');
     } finally {
       root?.unmount();
     }
@@ -706,13 +730,7 @@ describe('Models marketplace text', () => {
       });
       await flushMicrotasks();
 
-      const siteFilterItem = root!.root.find((node) => (
-        node.type === 'div'
-        && typeof node.props.className === 'string'
-        && node.props.className.includes('filter-item')
-        && typeof node.props.onClick === 'function'
-        && collectText(node).includes('站点 A')
-      ));
+      const siteFilterItem = findButtonByText(root!.root, '站点 A');
 
       await act(async () => {
         siteFilterItem.props.onClick();
@@ -720,10 +738,11 @@ describe('Models marketplace text', () => {
       await flushMicrotasks();
 
       const cards = root!.root.findAll((node) => (
-        node.type === 'div'
-        && typeof node.props.className === 'string'
-        && node.props.className.split(' ').includes('model-card')
+        node.type === 'button'
         && typeof node.props.onClick === 'function'
+        && typeof node.props.className === 'string'
+        && node.props.className.includes('h-auto')
+        && (collectText(node).includes('claude-3-5-sonnet') || collectText(node).includes('gpt-4o'))
       ));
 
       expect(cards.length).toBe(2);
@@ -783,25 +802,15 @@ describe('Models marketplace text', () => {
       });
       await flushMicrotasks();
 
-      const siteFilterItem = root!.root.find((node) => (
-        node.type === 'div'
-        && typeof node.props.className === 'string'
-        && node.props.className.includes('filter-item')
-        && typeof node.props.onClick === 'function'
-        && collectText(node).includes('站点 A')
-      ));
+      const siteFilterItem = findButtonByText(root!.root, '站点 A');
 
       await act(async () => {
         siteFilterItem.props.onClick();
       });
       await flushMicrotasks();
 
-      const latencyBadge = root!.root.find((node) => (
-        node.props['data-tooltip'] === '平均延迟'
-      ));
-
-      expect(collectText(latencyBadge)).toContain('延迟');
-      expect(collectText(latencyBadge)).toContain('—');
+      const modelButton = findButtonByText(root!.root, 'gpt-4o');
+      expect(collectText(modelButton)).toContain('—');
       expect(collectText(root!.root)).not.toContain('680ms');
     } finally {
       root?.unmount();

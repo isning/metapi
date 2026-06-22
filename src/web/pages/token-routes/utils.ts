@@ -10,6 +10,7 @@ import {
   parseTokenRouteRegexPattern,
 } from '../../../shared/tokenRoutePatterns.js';
 
+import { tr } from '../../i18n.js';
 export const AUTO_ROUTE_DECISION_LIMIT = 80;
 export const ROUTE_RENDER_CHUNK = 40;
 export const ROUTE_BRAND_ICON_PREFIX = 'brand:';
@@ -96,7 +97,7 @@ export function getModelPatternError(modelPattern: string): string | null {
   if (!isRegexModelPattern(normalized)) return null;
   const parsed = parseRegexModelPattern(normalized);
   if (!parsed.error) return null;
-  return `模型匹配正则错误：${parsed.error}`;
+  return tr('pages.tokenRoutes.modelPatternRegexError').replace('{message}', parsed.error);
 }
 
 export function resolveRouteTitle(route: Pick<RouteRow | RouteSummaryRow, 'presentation' | 'match'>): string {
@@ -239,7 +240,7 @@ export function getChannelDecisionState(
     return {
       probability: 0,
       showBar: true,
-      reasonText: loadingDecision ? '计算中...' : '实时决策',
+      reasonText: loadingDecision ? tr('pages.tokenRoutes.utils.calculating') : tr('pages.tokenRoutes.utils.realTimeDecisionMaking'),
       reasonColor: 'var(--color-text-muted)',
     };
   }
@@ -248,7 +249,7 @@ export function getChannelDecisionState(
     return {
       probability: 0,
       showBar: true,
-      reasonText: loadingDecision ? '计算中...' : '无可用通道',
+      reasonText: loadingDecision ? tr('pages.tokenRoutes.utils.calculating') : tr('pages.tokenRoutes.utils.noChannelAvailable'),
       reasonColor: 'var(--color-text-muted)',
     };
   }
@@ -257,7 +258,7 @@ export function getChannelDecisionState(
     return {
       probability: 0,
       showBar: true,
-      reasonText: '失败避让',
+      reasonText: tr('pages.tokenRoutes.utils.failureAvoidance'),
       reasonColor: 'var(--color-warning)',
     };
   }
@@ -265,11 +266,11 @@ export function getChannelDecisionState(
   if (!candidate.eligible) {
     const nowIso = new Date().toISOString();
     const cooldownActive = !!channel.cooldownUntil && channel.cooldownUntil > nowIso;
-    if (cooldownActive || candidate.reason.includes('冷却中')) {
+    if (cooldownActive || candidate.reason.includes(tr('pages.tokenRoutes.utils.coolingDown'))) {
       return {
         probability: 0,
         showBar: true,
-        reasonText: '冷却中',
+        reasonText: tr('pages.tokenRoutes.utils.coolingDown'),
         reasonColor: 'var(--color-danger)',
       };
     }
@@ -277,7 +278,7 @@ export function getChannelDecisionState(
     return {
       probability: 0,
       showBar: true,
-      reasonText: candidate.reason || '不可用',
+      reasonText: candidate.reason || tr('pages.settings.updateCenterSection.notAvailable'),
       reasonColor: 'var(--color-text-muted)',
     };
   }
@@ -288,7 +289,7 @@ export function getChannelDecisionState(
       return {
         probability: 0,
         showBar: false,
-        reasonText: '近期失败',
+        reasonText: tr('pages.tokenRoutes.utils.recentFailure'),
         reasonColor: 'var(--color-warning)',
       };
     }
@@ -296,7 +297,7 @@ export function getChannelDecisionState(
     return {
       probability: 0,
       showBar: false,
-      reasonText: candidate.reason || '概率为 0%',
+      reasonText: candidate.reason || tr('pages.tokenRoutes.utils.probability0'),
       reasonColor: 'var(--color-text-muted)',
     };
   }
