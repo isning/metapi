@@ -41,4 +41,27 @@ describe('EntityWorkspaceLayout', () => {
       renderer.unmount();
     }
   });
+
+  it('lets the workspace use the inspector space when no inspector is provided', () => {
+    const renderer = create(
+      <EntityWorkspaceLayout
+        index={<div>index</div>}
+        workspace={<div>workspace</div>}
+      />,
+    );
+
+    try {
+      const panels = findPanels(renderer.root);
+      expect(panels.map((panel) => ({
+        defaultSize: panel.props.defaultSize,
+        minSize: panel.props.minSize,
+        maxSize: panel.props.maxSize,
+      }))).toEqual([
+        { defaultSize: '24%', minSize: '18%', maxSize: '34%' },
+        { defaultSize: '76%', minSize: '36%', maxSize: undefined },
+      ]);
+    } finally {
+      renderer.unmount();
+    }
+  });
 });

@@ -376,6 +376,100 @@
         }
       }
     },
+    "api_endpoint_profiles": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "site_id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "profile_key": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "api_type": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "label": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "base_url": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "path_template": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "auth_mode": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'bearer'",
+          "primaryKey": false
+        },
+        "enabled": {
+          "logicalType": "boolean",
+          "notNull": true,
+          "defaultValue": "true",
+          "primaryKey": false
+        },
+        "priority": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "capability_defaults_json": {
+          "logicalType": "json",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "compatibility_policy_ref": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "metadata_json": {
+          "logicalType": "json",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
     "checkin_logs": {
       "columns": {
         "id": {
@@ -409,6 +503,118 @@
           "primaryKey": false
         },
         "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
+    "credential_endpoint_bindings": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "site_id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "account_id": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "token_id": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "credential_key": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "credential_kind": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "api_endpoint_profile_id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "enabled": {
+          "logicalType": "boolean",
+          "notNull": true,
+          "defaultValue": "true",
+          "primaryKey": false
+        },
+        "support": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'supported'",
+          "primaryKey": false
+        },
+        "source": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'manual'",
+          "primaryKey": false
+        },
+        "priority": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "capability_override_json": {
+          "logicalType": "json",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "compatibility_policy_ref": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "pricing_policy_ref": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "measured_pricing_ref": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "metadata_json": {
+          "logicalType": "json",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
           "logicalType": "datetime",
           "notNull": false,
           "defaultValue": "datetime('now')",
@@ -987,6 +1193,18 @@
           "notNull": false,
           "defaultValue": "datetime('now')",
           "primaryKey": false
+        },
+        "fallback_scope": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "failure_class": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
         }
       }
     },
@@ -1052,13 +1270,13 @@
           "defaultValue": null,
           "primaryKey": false
         },
-        "sticky_hit_channel_id": {
+        "sticky_hit_target_id": {
           "logicalType": "integer",
           "notNull": false,
           "defaultValue": null,
           "primaryKey": false
         },
-        "selected_channel_id": {
+        "selected_target_id": {
           "logicalType": "integer",
           "notNull": false,
           "defaultValue": null,
@@ -1246,7 +1464,7 @@
           "defaultValue": null,
           "primaryKey": false
         },
-        "channel_id": {
+        "target_id": {
           "logicalType": "integer",
           "notNull": false,
           "defaultValue": null,
@@ -1377,6 +1595,12 @@
           "notNull": false,
           "defaultValue": null,
           "primaryKey": false
+        },
+        "route_decision_snapshot": {
+          "logicalType": "json",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
         }
       }
     },
@@ -1424,7 +1648,7 @@
           "defaultValue": null,
           "primaryKey": false
         },
-        "channel_id": {
+        "target_id": {
           "logicalType": "integer",
           "notNull": false,
           "defaultValue": null,
@@ -1474,7 +1698,7 @@
         }
       }
     },
-    "route_channels": {
+    "route_endpoint_targets": {
       "columns": {
         "id": {
           "logicalType": "integer",
@@ -1596,7 +1820,7 @@
           "defaultValue": null,
           "primaryKey": false
         },
-        "route_node_id": {
+        "route_endpoint_id": {
           "logicalType": "text",
           "notNull": false,
           "defaultValue": null,
@@ -2576,6 +2800,25 @@
       "unique": false
     },
     {
+      "name": "api_endpoint_profiles_site_api_type_idx",
+      "table": "api_endpoint_profiles",
+      "columns": [
+        "site_id",
+        "api_type",
+        "enabled"
+      ],
+      "unique": false
+    },
+    {
+      "name": "api_endpoint_profiles_site_profile_key_unique",
+      "table": "api_endpoint_profiles",
+      "columns": [
+        "site_id",
+        "profile_key"
+      ],
+      "unique": true
+    },
+    {
       "name": "checkin_logs_account_created_at_idx",
       "table": "checkin_logs",
       "columns": [
@@ -2597,6 +2840,49 @@
       "table": "checkin_logs",
       "columns": [
         "status"
+      ],
+      "unique": false
+    },
+    {
+      "name": "credential_endpoint_bindings_account_idx",
+      "table": "credential_endpoint_bindings",
+      "columns": [
+        "account_id"
+      ],
+      "unique": false
+    },
+    {
+      "name": "credential_endpoint_bindings_credential_profile_unique",
+      "table": "credential_endpoint_bindings",
+      "columns": [
+        "site_id",
+        "credential_key",
+        "api_endpoint_profile_id"
+      ],
+      "unique": true
+    },
+    {
+      "name": "credential_endpoint_bindings_profile_idx",
+      "table": "credential_endpoint_bindings",
+      "columns": [
+        "api_endpoint_profile_id"
+      ],
+      "unique": false
+    },
+    {
+      "name": "credential_endpoint_bindings_site_credential_idx",
+      "table": "credential_endpoint_bindings",
+      "columns": [
+        "site_id",
+        "credential_key"
+      ],
+      "unique": false
+    },
+    {
+      "name": "credential_endpoint_bindings_token_idx",
+      "table": "credential_endpoint_bindings",
+      "columns": [
+        "token_id"
       ],
       "unique": false
     },
@@ -2928,24 +3214,24 @@
       "unique": false
     },
     {
-      "name": "route_channels_account_id_idx",
-      "table": "route_channels",
+      "name": "route_endpoint_targets_account_id_idx",
+      "table": "route_endpoint_targets",
       "columns": [
         "account_id"
       ],
       "unique": false
     },
     {
-      "name": "route_channels_oauth_route_unit_id_idx",
-      "table": "route_channels",
+      "name": "route_endpoint_targets_oauth_route_unit_id_idx",
+      "table": "route_endpoint_targets",
       "columns": [
         "oauth_route_unit_id"
       ],
       "unique": false
     },
     {
-      "name": "route_channels_route_enabled_idx",
-      "table": "route_channels",
+      "name": "route_endpoint_targets_route_enabled_idx",
+      "table": "route_endpoint_targets",
       "columns": [
         "route_id",
         "enabled"
@@ -2953,24 +3239,24 @@
       "unique": false
     },
     {
-      "name": "route_channels_route_id_idx",
-      "table": "route_channels",
+      "name": "route_endpoint_targets_route_endpoint_id_idx",
+      "table": "route_endpoint_targets",
+      "columns": [
+        "route_endpoint_id"
+      ],
+      "unique": false
+    },
+    {
+      "name": "route_endpoint_targets_route_id_idx",
+      "table": "route_endpoint_targets",
       "columns": [
         "route_id"
       ],
       "unique": false
     },
     {
-      "name": "route_channels_route_node_id_idx",
-      "table": "route_channels",
-      "columns": [
-        "route_node_id"
-      ],
-      "unique": false
-    },
-    {
-      "name": "route_channels_route_token_idx",
-      "table": "route_channels",
+      "name": "route_endpoint_targets_route_token_idx",
+      "table": "route_endpoint_targets",
       "columns": [
         "route_id",
         "token_id"
@@ -2978,8 +3264,8 @@
       "unique": false
     },
     {
-      "name": "route_channels_token_id_idx",
-      "table": "route_channels",
+      "name": "route_endpoint_targets_token_id_idx",
+      "table": "route_endpoint_targets",
       "columns": [
         "token_id"
       ],
@@ -3274,6 +3560,23 @@
       ]
     },
     {
+      "name": "api_endpoint_profiles_site_profile_key_unique",
+      "table": "api_endpoint_profiles",
+      "columns": [
+        "site_id",
+        "profile_key"
+      ]
+    },
+    {
+      "name": "credential_endpoint_bindings_credential_profile_unique",
+      "table": "credential_endpoint_bindings",
+      "columns": [
+        "site_id",
+        "credential_key",
+        "api_endpoint_profile_id"
+      ]
+    },
+    {
       "name": "downstream_api_keys_key_unique",
       "table": "downstream_api_keys",
       "columns": [
@@ -3444,11 +3747,66 @@
       "onDelete": "CASCADE"
     },
     {
+      "table": "api_endpoint_profiles",
+      "columns": [
+        "site_id"
+      ],
+      "referencedTable": "sites",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
       "table": "checkin_logs",
       "columns": [
         "account_id"
       ],
       "referencedTable": "accounts",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "credential_endpoint_bindings",
+      "columns": [
+        "account_id"
+      ],
+      "referencedTable": "accounts",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "credential_endpoint_bindings",
+      "columns": [
+        "api_endpoint_profile_id"
+      ],
+      "referencedTable": "api_endpoint_profiles",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "credential_endpoint_bindings",
+      "columns": [
+        "site_id"
+      ],
+      "referencedTable": "sites",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "credential_endpoint_bindings",
+      "columns": [
+        "token_id"
+      ],
+      "referencedTable": "account_tokens",
       "referencedColumns": [
         "id"
       ],
@@ -3521,7 +3879,7 @@
       "onDelete": "CASCADE"
     },
     {
-      "table": "route_channels",
+      "table": "route_endpoint_targets",
       "columns": [
         "account_id"
       ],
@@ -3532,7 +3890,7 @@
       "onDelete": "CASCADE"
     },
     {
-      "table": "route_channels",
+      "table": "route_endpoint_targets",
       "columns": [
         "route_id"
       ],
@@ -3543,7 +3901,7 @@
       "onDelete": "CASCADE"
     },
     {
-      "table": "route_channels",
+      "table": "route_endpoint_targets",
       "columns": [
         "token_id"
       ],

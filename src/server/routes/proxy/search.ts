@@ -14,15 +14,16 @@ import { getProxyAuthContext } from '../../middleware/auth.js';
 import { buildUpstreamUrl } from './upstreamUrl.js';
 import { detectDownstreamClientContext, type DownstreamClientContext } from '../../proxy-core/downstreamClientContext.js';
 import { insertProxyLog } from '../../services/proxyLogStore.js';
+import { buildProxyLogRouteDecisionSnapshot } from '../../services/proxyLogRouteDecisionSnapshot.js';
 import { fetchWithObservedFirstByte, getObservedResponseMeta } from '../../proxy-core/firstByteTimeout.js';
-import { getProxyMaxChannelRetries } from '../../services/proxyChannelRetry.js';
+import { getProxyMaxTargetRetries } from '../../services/proxyTargetRetry.js';
 import { runWithSiteApiEndpointPool, SiteApiEndpointRequestError } from '../../services/siteApiEndpointService.js';
 import {
-  buildForcedChannelUnavailableMessage,
-  canRetryChannelSelection,
-  getTesterForcedChannelId,
-  selectProxyChannelForAttempt,
-} from '../../proxy-core/channelSelection.js';
+  buildForcedTargetUnavailableMessage,
+  canRetryTargetSelection,
+  getTesterForcedTargetId,
+  selectProxyTargetForAttempt,
+} from '../../proxy-core/targetSelection.js';
 const DEFAULT_SEARCH_MODEL = '__search';
 const DEFAULT_MAX_RESULTS = 10;
 const MAX_MAX_RESULTS = 20;
@@ -62,7 +63,7 @@ export async function searchProxyRoute(app: FastifyInstance) {
 
     if (!await ensureModelAllowedForDownstreamKey(request, reply, requestedModel)) return;
     const downstreamPolicy = getDownstreamRoutingPolicy(request);
-    const forcedChannelId = getTesterForcedChannelId({
+    const forcedTargetId = getTesterForcedTargetId({
       headers: request.headers as Record<string, unknown>,
       clientIp: request.ip,
     });
@@ -74,30 +75,30 @@ export async function searchProxyRoute(app: FastifyInstance) {
       body,
     });
     const firstByteTimeoutMs = Math.max(0, Math.trunc((config.proxyFirstByteTimeoutSec || 0) * 1000));
-    const excludeChannelIds: number[] = [];
+    const excludeTargetIds: number[] = [];
     let retryCount = 0;
 
-    while (retryCount <= getProxyMaxChannelRetries()) {
-      const selected = await selectProxyChannelForAttempt({
+    while (retryCount <= getProxyMaxTargetRetries()) {
+      const selected = await selectProxyTargetForAttempt({
         requestedModel,
         downstreamPolicy,
-        excludeChannelIds,
+        excludeTargetIds,
         retryCount,
-        forcedChannelId,
+        forcedTargetId,
       });
 
       if (!selected) {
-        const noChannelMessage = buildForcedChannelUnavailableMessage(forcedChannelId);
+        const noChannelMessage = buildForcedTargetUnavailableMessage(forcedTargetId);
         await reportProxyAllFailed({
           model: requestedModel,
-          reason: forcedChannelId ? noChannelMessage : 'No available channels after retries',
+          reason: forcedTargetId ? noChannelMessage : 'No available targets after retries',
         });
         return reply.code(503).send({
           error: { message: noChannelMessage, type: 'server_error' },
         });
       }
 
-      excludeChannelIds.push(selected.channel.id);
+      excludeTargetIds.push(selected.target.id);
       const upstreamModel = selected.actualModel || requestedModel;
       const forwardBody = {
         ...body,
@@ -145,8 +146,8 @@ export async function searchProxyRoute(app: FastifyInstance) {
         try { data = JSON.parse(text); } catch { data = { data: [] }; }
 
         const latency = Date.now() - startTime;
-        await recordTokenRouterEventBestEffort('record channel success', () => (
-          tokenRouter.recordSuccess(selected.channel.id, latency, 0, upstreamModel)
+        await recordTokenRouterEventBestEffort('record target success', () => (
+          tokenRouter.recordSuccess(selected.target.id, latency, 0, upstreamModel)
         ));
         recordDownstreamCostUsage(request, 0);
         logProxy(
@@ -168,7 +169,7 @@ export async function searchProxyRoute(app: FastifyInstance) {
         const status = error instanceof SiteApiEndpointRequestError ? (error.status || 0) : 0;
         const errorText = error?.message || 'network error';
         const firstByteLatencyMs = error instanceof SiteApiEndpointRequestError ? error.firstByteLatencyMs : null;
-        await recordTokenRouterEventBestEffort('record channel failure', () => tokenRouter.recordFailure(selected.channel.id, {
+        await recordTokenRouterEventBestEffort('record target failure', () => tokenRouter.recordFailure(selected.target.id, {
           status,
           errorText,
           modelName: upstreamModel,
@@ -195,7 +196,7 @@ export async function searchProxyRoute(app: FastifyInstance) {
             detail: `HTTP ${status}`,
           });
         }
-        if ((status > 0 ? shouldRetryProxyRequest(status, errorText) : true) && canRetryChannelSelection(retryCount, forcedChannelId)) {
+        if ((status > 0 ? shouldRetryProxyRequest(status, errorText) : true) && canRetryTargetSelection(retryCount, forcedTargetId)) {
           retryCount += 1;
           continue;
         }
@@ -230,9 +231,14 @@ async function logProxy(
 ) {
   try {
     const createdAt = formatUtcSqlDateTime(new Date());
+    const routeDecisionSnapshot = await buildProxyLogRouteDecisionSnapshot({
+      selected,
+      modelRequested,
+      capturedAt: createdAt,
+    });
     await insertProxyLog({
-      routeId: selected.channel.routeId,
-      channelId: selected.channel.id,
+      routeId: selected.target.routeId,
+      targetId: selected.target.id,
       accountId: selected.account.id,
       downstreamApiKeyId,
       modelRequested,
@@ -246,6 +252,7 @@ async function logProxy(
       completionTokens: 0,
       totalTokens: 0,
       estimatedCost: 0,
+      routeDecisionSnapshot,
       errorMessage: composeProxyLogMessage({
         clientKind: clientContext?.clientKind && clientContext.clientKind !== 'generic'
           ? clientContext.clientKind

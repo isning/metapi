@@ -7,7 +7,7 @@ import TokenRoutes from './TokenRoutes.js';
 const { apiMock, getBrandMock } = vi.hoisted(() => ({
   apiMock: {
     getRoutesSummary: vi.fn(),
-    getRouteChannels: vi.fn(),
+    getRouteTargets: vi.fn(),
     getModelTokenCandidates: vi.fn(),
     getRouteDecisionsBatch: vi.fn(),
     getRouteWideDecisionsBatch: vi.fn(),
@@ -56,7 +56,7 @@ describe('TokenRoutes cached snapshot load', () => {
         id: 1,
         modelMapping: null,
         match: { kind: 'model', requestedModelPattern: 'gpt-4o-mini', displayName: 'gpt-4o-mini' },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         presentation: { displayName: 'gpt-4o-mini', displayIcon: null },
         enabled: true,
         channelCount: 1,
@@ -66,12 +66,12 @@ describe('TokenRoutes cached snapshot load', () => {
           requestedModel: 'gpt-4o-mini',
           actualModel: 'gpt-4o-mini',
           matched: true,
-          selectedChannelId: 11,
+          selectedTargetId: 11,
           selectedLabel: 'cached-user @ cached-site / cached-token',
           summary: ['命中路由：gpt-4o-mini'],
           candidates: [
             {
-              channelId: 11,
+              targetId: 11,
               accountId: 101,
               username: 'cached-user',
               siteName: 'cached-site',
@@ -89,7 +89,7 @@ describe('TokenRoutes cached snapshot load', () => {
         decisionRefreshedAt: '2026-03-08T01:23:45.000Z',
       },
     ]);
-    apiMock.getRouteChannels.mockResolvedValue([
+    apiMock.getRouteTargets.mockResolvedValue([
       {
         id: 11,
         accountId: 101,

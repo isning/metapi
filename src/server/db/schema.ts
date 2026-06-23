@@ -45,6 +45,27 @@ export const siteApiEndpoints = sqliteTable('site_api_endpoints', {
   siteCooldownIdx: index('site_api_endpoints_site_cooldown_idx').on(table.siteId, table.cooldownUntil),
 }));
 
+export const apiEndpointProfiles = sqliteTable('api_endpoint_profiles', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  siteId: integer('site_id').notNull().references(() => sites.id, { onDelete: 'cascade' }),
+  profileKey: text('profile_key').notNull(),
+  apiType: text('api_type').notNull(),
+  label: text('label').notNull(),
+  baseUrl: text('base_url'),
+  pathTemplate: text('path_template'),
+  authMode: text('auth_mode').notNull().default('bearer'),
+  enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+  priority: integer('priority').default(0),
+  capabilityDefaultsJson: text('capability_defaults_json'),
+  compatibilityPolicyRef: text('compatibility_policy_ref'),
+  metadataJson: text('metadata_json'),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  siteProfileKeyUnique: uniqueIndex('api_endpoint_profiles_site_profile_key_unique').on(table.siteId, table.profileKey),
+  siteApiTypeIdx: index('api_endpoint_profiles_site_api_type_idx').on(table.siteId, table.apiType, table.enabled),
+}));
+
 export const siteDisabledModels = sqliteTable('site_disabled_models', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   siteId: integer('site_id').notNull().references(() => sites.id, { onDelete: 'cascade' }),
@@ -103,6 +124,33 @@ export const accountTokens = sqliteTable('account_tokens', {
   accountIdIdx: index('account_tokens_account_id_idx').on(table.accountId),
   accountEnabledIdx: index('account_tokens_account_enabled_idx').on(table.accountId, table.enabled),
   enabledIdx: index('account_tokens_enabled_idx').on(table.enabled),
+}));
+
+export const credentialEndpointBindings = sqliteTable('credential_endpoint_bindings', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  siteId: integer('site_id').notNull().references(() => sites.id, { onDelete: 'cascade' }),
+  accountId: integer('account_id').references(() => accounts.id, { onDelete: 'cascade' }),
+  tokenId: integer('token_id').references(() => accountTokens.id, { onDelete: 'cascade' }),
+  credentialKey: text('credential_key').notNull(),
+  credentialKind: text('credential_kind').notNull(),
+  apiEndpointProfileId: integer('api_endpoint_profile_id').notNull().references(() => apiEndpointProfiles.id, { onDelete: 'cascade' }),
+  enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+  support: text('support').notNull().default('supported'),
+  source: text('source').notNull().default('manual'),
+  priority: integer('priority').default(0),
+  capabilityOverrideJson: text('capability_override_json'),
+  compatibilityPolicyRef: text('compatibility_policy_ref'),
+  pricingPolicyRef: text('pricing_policy_ref'),
+  measuredPricingRef: text('measured_pricing_ref'),
+  metadataJson: text('metadata_json'),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  credentialProfileUnique: uniqueIndex('credential_endpoint_bindings_credential_profile_unique').on(table.siteId, table.credentialKey, table.apiEndpointProfileId),
+  siteCredentialIdx: index('credential_endpoint_bindings_site_credential_idx').on(table.siteId, table.credentialKey),
+  accountIdx: index('credential_endpoint_bindings_account_idx').on(table.accountId),
+  tokenIdx: index('credential_endpoint_bindings_token_idx').on(table.tokenId),
+  profileIdx: index('credential_endpoint_bindings_profile_idx').on(table.apiEndpointProfileId),
 }));
 
 export const checkinLogs = sqliteTable('checkin_logs', {
@@ -268,10 +316,10 @@ export const oauthRouteUnitMembers = sqliteTable('oauth_route_unit_members', {
   unitCooldownIdx: index('oauth_route_unit_members_unit_cooldown_idx').on(table.unitId, table.cooldownUntil),
 }));
 
-export const routeChannels = sqliteTable('route_channels', {
+export const routeEndpointTargets = sqliteTable('route_endpoint_targets', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   routeId: integer('route_id').notNull().references(() => tokenRoutes.id, { onDelete: 'cascade' }),
-  routeNodeId: text('route_node_id'),
+  routeEndpointId: text('route_endpoint_id'),
   accountId: integer('account_id').notNull().references(() => accounts.id, { onDelete: 'cascade' }),
   tokenId: integer('token_id').references(() => accountTokens.id, { onDelete: 'set null' }),
   oauthRouteUnitId: integer('oauth_route_unit_id'),
@@ -291,19 +339,19 @@ export const routeChannels = sqliteTable('route_channels', {
   cooldownLevel: integer('cooldown_level').notNull().default(0),
   cooldownUntil: text('cooldown_until'),
 }, (table) => ({
-  routeIdIdx: index('route_channels_route_id_idx').on(table.routeId),
-  routeNodeIdIdx: index('route_channels_route_node_id_idx').on(table.routeNodeId),
-  accountIdIdx: index('route_channels_account_id_idx').on(table.accountId),
-  tokenIdIdx: index('route_channels_token_id_idx').on(table.tokenId),
-  oauthRouteUnitIdx: index('route_channels_oauth_route_unit_id_idx').on(table.oauthRouteUnitId),
-  routeEnabledIdx: index('route_channels_route_enabled_idx').on(table.routeId, table.enabled),
-  routeTokenIdx: index('route_channels_route_token_idx').on(table.routeId, table.tokenId),
+  routeIdIdx: index('route_endpoint_targets_route_id_idx').on(table.routeId),
+  routeEndpointIdIdx: index('route_endpoint_targets_route_endpoint_id_idx').on(table.routeEndpointId),
+  accountIdIdx: index('route_endpoint_targets_account_id_idx').on(table.accountId),
+  tokenIdIdx: index('route_endpoint_targets_token_id_idx').on(table.tokenId),
+  oauthRouteUnitIdx: index('route_endpoint_targets_oauth_route_unit_id_idx').on(table.oauthRouteUnitId),
+  routeEnabledIdx: index('route_endpoint_targets_route_enabled_idx').on(table.routeId, table.enabled),
+  routeTokenIdx: index('route_endpoint_targets_route_token_idx').on(table.routeId, table.tokenId),
 }));
 
 export const proxyLogs = sqliteTable('proxy_logs', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   routeId: integer('route_id'),
-  channelId: integer('channel_id'),
+  targetId: integer('target_id'),
   accountId: integer('account_id'),
   downstreamApiKeyId: integer('downstream_api_key_id'),
   modelRequested: text('model_requested'),
@@ -318,6 +366,7 @@ export const proxyLogs = sqliteTable('proxy_logs', {
   totalTokens: integer('total_tokens'),
   estimatedCost: real('estimated_cost'),
   billingDetails: text('billing_details'),
+  routeDecisionSnapshot: text('route_decision_snapshot'),
   clientFamily: text('client_family'),
   clientAppId: text('client_app_id'),
   clientAppName: text('client_app_name'),
@@ -346,8 +395,8 @@ export const proxyDebugTraces = sqliteTable('proxy_debug_traces', {
   requestHeadersJson: text('request_headers_json'),
   requestBodyJson: text('request_body_json'),
   stickySessionKey: text('sticky_session_key'),
-  stickyHitChannelId: integer('sticky_hit_channel_id'),
-  selectedChannelId: integer('selected_channel_id'),
+  stickyHitTargetId: integer('sticky_hit_target_id'),
+  selectedTargetId: integer('selected_target_id'),
   selectedRouteId: integer('selected_route_id'),
   selectedAccountId: integer('selected_account_id'),
   selectedSiteId: integer('selected_site_id'),
@@ -386,6 +435,8 @@ export const proxyDebugAttempts = sqliteTable('proxy_debug_attempts', {
   recoverApplied: integer('recover_applied', { mode: 'boolean' }).default(false),
   downgradeDecision: integer('downgrade_decision', { mode: 'boolean' }).default(false),
   downgradeReason: text('downgrade_reason'),
+  fallbackScope: text('fallback_scope'),
+  failureClass: text('failure_class'),
   memoryWriteJson: text('memory_write_json'),
   createdAt: text('created_at').default(sql`(datetime('now'))`),
 }, (table) => ({
@@ -401,7 +452,7 @@ export const proxyVideoTasks = sqliteTable('proxy_video_tasks', {
   tokenValue: text('token_value').notNull(),
   requestedModel: text('requested_model'),
   actualModel: text('actual_model'),
-  channelId: integer('channel_id'),
+  targetId: integer('target_id'),
   accountId: integer('account_id'),
   statusSnapshot: text('status_snapshot'),
   upstreamResponseMeta: text('upstream_response_meta'),

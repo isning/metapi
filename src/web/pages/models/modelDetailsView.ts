@@ -26,6 +26,9 @@ export type ModelPricingSource = {
   groupPricing: Record<string, ModelGroupPricing>;
 };
 
+type RouteFlowTheoreticalPricing = NonNullable<NonNullable<ModelRouteFlowData['entryPricing']>['theoretical']>;
+type ModelEntryPricingCandidate = RouteFlowTheoreticalPricing['candidates'][number];
+
 export type ModelEntryPricing = {
   inputPerMillion: number | null;
   outputPerMillion: number | null;
@@ -38,6 +41,8 @@ export type ModelEntryPricing = {
   strategy?: string | null;
   sampleCount?: number;
   lastMeasuredAt?: string | null;
+  diagnostics?: Array<{ level: 'info' | 'warn' | 'error'; message: string }>;
+  candidates?: ModelEntryPricingCandidate[];
 };
 
 export type ModelAccountInfo = {
@@ -88,8 +93,10 @@ export type ModelDetailsView = {
 };
 
 const ENTRY_PRICE_MULTIPLIER_BASE_PER_MILLION = 2;
+const ENTRY_TOTAL_MULTIPLIER_BASE = ENTRY_PRICE_MULTIPLIER_BASE_PER_MILLION * 2;
 
 function normalizeFiniteNumber(value: unknown): number | null {
+  if (value == null) return null;
   const numberValue = typeof value === 'number' ? value : Number(value);
   return Number.isFinite(numberValue) ? numberValue : null;
 }
@@ -99,17 +106,27 @@ function toEntryMultiplier(price: number | null): number | null {
   return Math.round((price / ENTRY_PRICE_MULTIPLIER_BASE_PER_MILLION) * 1_000_000) / 1_000_000;
 }
 
+function toTotalMultiplier(totalCostUsd: number | null): number | null {
+  if (totalCostUsd == null) return null;
+  return Math.round((totalCostUsd / ENTRY_TOTAL_MULTIPLIER_BASE) * 1_000_000) / 1_000_000;
+}
+
 export function buildMeasuredEntryPricing(model: ModelRow): ModelEntryPricing | null {
   const measured = model.measuredEntryPricing;
   if (!measured) return null;
   const inputPerMillion = normalizeFiniteNumber(measured.inputPerMillion);
   const outputPerMillion = normalizeFiniteNumber(measured.outputPerMillion);
   if (inputPerMillion == null && outputPerMillion == null) return null;
+  const totalCostUsd = inputPerMillion != null && outputPerMillion != null
+    ? Math.round((inputPerMillion + outputPerMillion) * 1_000_000) / 1_000_000
+    : null;
   return {
     inputPerMillion,
     outputPerMillion,
+    totalCostUsd,
     inputMultiplier: toEntryMultiplier(inputPerMillion),
     outputMultiplier: toEntryMultiplier(outputPerMillion),
+    totalMultiplier: toTotalMultiplier(totalCostUsd),
     sourceCount: 1,
     sampleCount: measured.sampleCount,
     lastMeasuredAt: measured.lastMeasuredAt,
@@ -161,6 +178,8 @@ export function buildRouteFlowTheoreticalEntryPricing(routeFlow: ModelRouteFlowD
     sourceCount: pricing.sourceCount,
     estimateLevel: pricing.estimateLevel,
     strategy: pricing.strategy,
+    diagnostics: pricing.diagnostics,
+    candidates: pricing.candidates,
   };
 }
 

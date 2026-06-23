@@ -21,18 +21,18 @@ export function getNodeCardSubtitle(node: RouteGraphNode): string {
   }
   if (node.type === 'dispatcher') return `${String(node.mode || 'route')} dispatcher`;
   if (node.type === 'route_endpoint') {
-    const kind = String(node.endpointKind || 'route_product');
+    const config = (node.config || {}) as { targets?: unknown[] };
+    const targetCount = Array.isArray(config.targets) ? config.targets.length : 0;
+    const kind = String(node.endpointKind || (targetCount > 0 ? 'supply' : 'route_product'));
     const exposure = String(node.exposure || (kind === 'supply' ? 'none' : node.visibility));
+    if (kind === 'supply') {
+      return targetCount === 1 ? '1 upstream target' : `${targetCount} upstream targets`;
+    }
     return `${kind.replace('_', ' ')} · ${exposure}`;
   }
   if (node.type === 'filter') {
     const count = Array.isArray(node.operations) ? node.operations.length : 0;
     return count === 1 ? '1 operation' : `${count} operations`;
-  }
-  if (node.type === 'model_endpoint') {
-    const config = (node.config || {}) as { targets?: unknown[] };
-    const count = Array.isArray(config.targets) ? config.targets.length : 0;
-    return count === 1 ? '1 model target' : `${count} model targets`;
   }
   if (node.type === 'synthetic_endpoint') return `${String(node.statusCode || 503)} synthetic response`;
   return node.ownership === 'manual' ? 'manual node' : `${node.ownership} node`;

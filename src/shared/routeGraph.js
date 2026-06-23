@@ -6,18 +6,17 @@ import {
 
 export const ROUTE_GRAPH_SCHEMA_VERSION = 2;
 export const ROUTE_GRAPH_MATCH_KIND_MODEL = 'model';
-export const ROUTE_GRAPH_BACKEND_KIND_CHANNELS = 'channels';
+export const ROUTE_GRAPH_BACKEND_KIND_SUPPLY = 'supply';
 export const ROUTE_GRAPH_BACKEND_KIND_ROUTES = 'routes';
 export const ROUTE_GRAPH_NODE_TYPES = Object.freeze([
   'entry',
   'route_endpoint',
   'filter',
   'dispatcher',
-  'model_endpoint',
   'synthetic_endpoint',
   'auto_node',
 ]);
-export const ROUTE_GRAPH_TERMINAL_NODE_TYPES = Object.freeze(['model_endpoint', 'synthetic_endpoint', 'auto_node']);
+export const ROUTE_GRAPH_TERMINAL_NODE_TYPES = Object.freeze(['route_endpoint', 'synthetic_endpoint', 'auto_node']);
 export const ROUTE_GRAPH_SELECTION_STRATEGIES = Object.freeze([
   'priority_order',
   'weighted',
@@ -54,6 +53,7 @@ export const ROUTE_GRAPH_EDGE_KINDS = Object.freeze([
 ]);
 export const ROUTE_GRAPH_MACRO_KINDS = Object.freeze(['candidate_selector']);
 export const ROUTE_PROGRAM_BUNDLE_VERSION = 3;
+export const ROUTE_FLAT_PROGRAM_BUNDLE_VERSION = 4;
 export const ROUTE_GRAPH_CANDIDATE_SELECTOR_INPUT_KINDS = Object.freeze([
   'route_endpoints',
   'model_pattern',
@@ -137,10 +137,6 @@ const ROUTE_GRAPH_DEFAULT_PORTS = Object.freeze({
     { id: 'bidirect.in', label: 'dispatch input', direction: 'input', kind: 'bidirect', accepts: ['bidirect'], required: true },
     { id: 'bidirect[1...].out', label: 'dispatch path', direction: 'output', kind: 'bidirect', multiple: true, collection: { type: 'arr', min: 1 } },
     { id: 'route.in', label: 'endpoint candidates', direction: 'input', kind: 'route', accepts: ['route'], multiple: true, collection: { type: 'set', min: 1 } },
-  ],
-  model_endpoint: [
-    { id: 'route.out', label: 'endpoint target', direction: 'output', kind: 'route' },
-    { id: 'bidirect.in', label: 'invoke endpoint', direction: 'input', kind: 'bidirect', accepts: ['bidirect'], multiple: true },
   ],
   synthetic_endpoint: [
     { id: 'route.out', label: 'synthetic target', direction: 'output', kind: 'route' },
@@ -297,7 +293,7 @@ export function normalizeRouteGraphBackendSpec(input) {
       routeIds: Array.from(new Set(routeIds)),
     };
   }
-  return { kind: ROUTE_GRAPH_BACKEND_KIND_CHANNELS };
+  return { kind: ROUTE_GRAPH_BACKEND_KIND_SUPPLY };
 }
 
 export function parseRouteGraphMatchSpec(raw) {
@@ -349,7 +345,7 @@ export function buildRouteGraphSpecsFromLegacyRoute(input) {
       displayName,
     }),
     backendSpec: normalizeRouteGraphBackendSpec({
-      kind: ROUTE_GRAPH_BACKEND_KIND_CHANNELS,
+      kind: ROUTE_GRAPH_BACKEND_KIND_SUPPLY,
     }),
   };
 }
@@ -381,7 +377,7 @@ export function getRouteGraphExposedModelName(matchSpec, backendSpec) {
 
 export function isRouteGraphExactModelMatch(matchSpec, backendSpec) {
   const normalizedBackend = normalizeRouteGraphBackendSpec(backendSpec);
-  if (normalizedBackend.kind !== ROUTE_GRAPH_BACKEND_KIND_CHANNELS) return false;
+  if (normalizedBackend.kind !== ROUTE_GRAPH_BACKEND_KIND_SUPPLY) return false;
   const normalizedMatch = normalizeRouteGraphMatchSpec(matchSpec);
   return isExactTokenRouteModelPattern(normalizedMatch.requestedModelPattern);
 }
@@ -397,10 +393,6 @@ export function routeGraphMatchesRequestedModel(model, matchSpec, backendSpec) {
 
 export function legacyRouteIdToRouteGraphEntryNodeId(routeId) {
   return `entry:legacy:${Number(routeId)}`;
-}
-
-export function legacyRouteIdToRouteGraphPoolNodeId(routeId) {
-  return `pool:legacy:${Number(routeId)}`;
 }
 
 function canonicalRouteGraphModelKey(model) {
@@ -511,16 +503,16 @@ function normalizeRouteFilter(input) {
   };
 }
 
-function normalizeModelEndpointTarget(input) {
+function normalizeRouteExecutableTarget(input) {
   const raw = isPlainObject(input) ? input : {};
-  const channelId = normalizeString(raw.channelId || raw.id);
+  const targetId = normalizeString(raw.targetId || raw.id);
   const model = normalizeString(raw.model || raw.sourceModel);
   const modelSource = normalizeEnum(raw.modelSource, ['fixed', 'request'], model ? 'fixed' : 'request');
   const tokenId = normalizePositiveInteger(raw.tokenId);
   const accountId = normalizePositiveInteger(raw.accountId);
   const siteId = normalizePositiveInteger(raw.siteId);
   return {
-    channelId,
+    targetId,
     model,
     modelSource,
     ...(raw.enabled === false ? { enabled: false } : {}),
@@ -534,10 +526,10 @@ function normalizeModelEndpointTarget(input) {
   };
 }
 
-function normalizeModelEndpointConfig(input) {
+function normalizeRouteExecutableTargetConfig(input) {
   const raw = isPlainObject(input) ? input : {};
   const targets = Array.isArray(raw.targets)
-    ? raw.targets.map(normalizeModelEndpointTarget).filter((target) => target.channelId && (target.model || target.modelSource === 'request'))
+    ? raw.targets.map(normalizeRouteExecutableTarget).filter((target) => target.targetId && (target.model || target.modelSource === 'request'))
     : [];
   return {
     ...raw,
@@ -562,13 +554,14 @@ export function normalizeRouteGraphNode(input) {
   if (type === 'route_endpoint') {
     const routeId = normalizePositiveInteger(raw.routeId || raw.legacyRouteId || raw.match?.routeId);
     const routeEndpointId = normalizeString(raw.routeEndpointId || raw.endpointId || raw.id);
-    const endpointKind = normalizeEnum(raw.endpointKind, ROUTE_GRAPH_ENDPOINT_KINDS, 'route_product');
+    const hasExecutableTargets = Array.isArray(raw.config?.targets) && raw.config.targets.length > 0;
+    const endpointKind = normalizeEnum(raw.endpointKind, ROUTE_GRAPH_ENDPOINT_KINDS, hasExecutableTargets ? 'supply' : 'route_product');
     const exposure = endpointKind === 'supply'
       ? 'none'
       : normalizeEnum(raw.exposure || raw.visibility, ROUTE_GRAPH_ENDPOINT_EXPOSURES, 'internal');
     const resolvesTo = isPlainObject(raw.resolvesTo)
       ? {
-        kind: normalizeEnum(raw.resolvesTo.kind, ['model_endpoint', 'route_builder', 'synthetic', 'external'], 'external'),
+        kind: normalizeEnum(raw.resolvesTo.kind, ['route_builder', 'synthetic', 'external'], 'external'),
         id: normalizeString(raw.resolvesTo.id),
       }
       : undefined;
@@ -588,6 +581,8 @@ export function normalizeRouteGraphNode(input) {
       ...(resolvesTo && resolvesTo.id ? { resolvesTo } : {}),
       backend: normalizeRouteGraphBackendSpec(raw.backend),
       match: isPlainObject(raw.match) ? normalizeRouteGraphMatchSpec(raw.match) : undefined,
+      config: normalizeRouteExecutableTargetConfig(raw.config),
+      ...(isPlainObject(raw.compatibilityPolicy) ? { compatibilityPolicy: raw.compatibilityPolicy } : {}),
       metadata: isPlainObject(raw.metadata) ? raw.metadata : {},
       provenance: isPlainObject(raw.provenance) ? raw.provenance : { source: 'manual' },
     };
@@ -609,17 +604,6 @@ export function normalizeRouteGraphNode(input) {
       policy: isPlainObject(raw.policy) ? raw.policy : { strategy: 'weighted' },
     };
   }
-  if (type === 'model_endpoint') {
-    return {
-      ...base,
-      type,
-      routeNodeId: normalizeString(raw.routeNodeId),
-      legacyRouteId: normalizePositiveInteger(raw.legacyRouteId),
-      metadata: isPlainObject(raw.metadata) ? raw.metadata : {},
-      compatibilityPolicy: isPlainObject(raw.compatibilityPolicy) ? raw.compatibilityPolicy : undefined,
-      config: normalizeModelEndpointConfig(raw.config),
-    };
-  }
   if (type === 'synthetic_endpoint') {
     return {
       ...base,
@@ -634,7 +618,7 @@ export function normalizeRouteGraphNode(input) {
     return {
       ...base,
       type,
-      routeNodeId: normalizeString(raw.routeNodeId || raw.id),
+      routeEndpointId: normalizeString(raw.routeEndpointId || raw.id),
       routingStrategy: normalizeEnum(raw.routingStrategy, ['weighted', 'round_robin', 'stable_first'], 'weighted'),
       legacyRouteId: normalizePositiveInteger(raw.legacyRouteId),
     };
@@ -685,7 +669,7 @@ function normalizeCandidateSelectorInput(input) {
   }
   if (kind === 'inline_endpoints') {
     const endpoints = Array.isArray(raw.endpoints)
-      ? raw.endpoints.map(normalizeModelEndpointTarget).filter((target) => target.channelId && (target.model || target.modelSource === 'request'))
+      ? raw.endpoints.map(normalizeRouteExecutableTarget).filter((target) => target.targetId && (target.model || target.modelSource === 'request'))
       : [];
     return { kind, endpoints };
   }
@@ -839,7 +823,7 @@ export function normalizeRouteGraphMacro(input) {
   };
 }
 
-export function buildCandidateSelectorMacroFromRouteProjection(input) {
+export function buildCandidateSelectorMacroFromRouteBinding(input) {
   const endpointIds = Array.isArray(input?.endpointIds)
     ? Array.from(new Set(input.endpointIds.map((value) => normalizeString(value)).filter(Boolean)))
     : [];
@@ -1138,7 +1122,7 @@ function canPublicEntryOverrideDuplicate(left, right) {
 function shouldPreferPublicEntryResolution(existing, next) {
   if (!existing) return true;
   return (
-    (existing.backendKind === ROUTE_GRAPH_BACKEND_KIND_CHANNELS && next.backendKind === ROUTE_GRAPH_BACKEND_KIND_ROUTES)
+    (existing.backendKind === ROUTE_GRAPH_BACKEND_KIND_SUPPLY && next.backendKind === ROUTE_GRAPH_BACKEND_KIND_ROUTES)
     || (!existing.isMacroEntry && next.isMacroEntry)
     || (next.isExplicitGroupEntry && existing.isAutoModelEntry)
   );
@@ -1268,26 +1252,20 @@ function inferRouteProductEndpointForEntry(entry, routeProducts) {
 function routeProgramEndpointIdForNode(node) {
   if (!node) return '';
   if (node.type === 'route_endpoint') return node.routeEndpointId || node.endpointId || node.id;
-  if (node.type === 'model_endpoint') {
-    return normalizeString(node.routeNodeId)
-      || (normalizePositiveInteger(node.legacyRouteId) ? routeGraphRouteProductEndpointIdFromRoute(node.legacyRouteId) : '')
-      || `model-endpoint:${node.id}`;
-  }
   if (node.type === 'synthetic_endpoint') return `synthetic:${node.id}`;
   return node.id;
 }
 
-function compiledEndpointTargetsForModelEndpointNode(targetNode, endpointId, routeId) {
-  if (!targetNode || targetNode.type !== 'model_endpoint') return [];
+function compiledEndpointTargetsForRouteEndpointNode(targetNode, endpointId, routeId) {
+  if (!targetNode || targetNode.type !== 'route_endpoint') return [];
   const targets = Array.isArray(targetNode.config?.targets) ? targetNode.config.targets : [];
   return targets.map((target, index) => {
-    const channelId = normalizeString(target.channelId || target.id || index);
-    const targetId = `${endpointId}:target:${index}:${macroSafeId(channelId || index)}`;
+    const rawTargetId = normalizeString(target.targetId || target.id || index);
+    const compiledTargetId = `${endpointId}:target:${index}:${macroSafeId(rawTargetId || index)}`;
     return {
       endpointId,
-      targetId,
+      targetId: compiledTargetId,
       nodeId: targetNode.id,
-      channelId,
       model: normalizeString(target.model),
       modelSource: target.modelSource === 'request' ? 'request' : 'fixed',
       enabled: target.enabled !== false && targetNode.enabled !== false,
@@ -1300,7 +1278,7 @@ function compiledEndpointTargetsForModelEndpointNode(targetNode, endpointId, rou
       ...(isPlainObject(target.metadata) ? { metadata: target.metadata } : {}),
       ...(isPlainObject(target.compatibilityPolicy)
         ? { compatibilityPolicy: target.compatibilityPolicy }
-        : (isPlainObject(targetNode.compatibilityPolicy) ? { compatibilityPolicy: targetNode.compatibilityPolicy } : {})),
+        : (isPlainObject(targetNode.config?.compatibilityPolicy) ? { compatibilityPolicy: targetNode.config.compatibilityPolicy } : {})),
       sourceRef: routeProgramSourceRefFromNode(targetNode, {
         endpointId,
         routeId: routeId || targetNode.legacyRouteId,
@@ -1311,9 +1289,12 @@ function compiledEndpointTargetsForModelEndpointNode(targetNode, endpointId, rou
 }
 
 function compiledEndpointTargetsForRouteEndpoint(endpoint, endpointNode, nodesById) {
-  if (endpoint?.resolvesTo?.kind !== 'model_endpoint') return [];
-  const targetNode = nodesById[endpoint.resolvesTo.id];
-  return compiledEndpointTargetsForModelEndpointNode(targetNode, endpoint.endpointId, endpoint.routeId)
+  const targetNode = endpointNode?.type === 'route_endpoint'
+    && Array.isArray(endpointNode.config?.targets)
+    && endpointNode.config.targets.length > 0
+    ? endpointNode
+    : null;
+  return compiledEndpointTargetsForRouteEndpointNode(targetNode, endpoint.endpointId, endpoint.routeId)
     .map((target) => ({
       ...target,
       enabled: target.enabled && endpoint.enabled !== false,
@@ -1374,15 +1355,12 @@ function routeProgramIncoming(edgesByFromPort, nodeId, targetPortId) {
 }
 
 function routeProgramTerminalModelForEndpoint(nodesById, node) {
-  if (!node || node.type !== 'model_endpoint') return '';
-  const routeNodeId = normalizeString(node.routeNodeId);
-  if (routeNodeId) {
-    const routeNode = nodesById[routeNodeId];
-    if (routeNode?.match?.requestedModelPattern && isExactTokenRouteModelPattern(routeNode.match.requestedModelPattern)) {
-      return routeNode.match.requestedModelPattern;
-    }
+  if (!node || node.type !== 'route_endpoint') return '';
+  if (node.match?.requestedModelPattern && isExactTokenRouteModelPattern(node.match.requestedModelPattern)) {
+    return node.match.requestedModelPattern;
   }
-  const routeId = normalizePositiveInteger(node.legacyRouteId);
+  if (node.match?.displayName) return node.match.displayName;
+  const routeId = normalizePositiveInteger(node.legacyRouteId || node.routeId);
   if (routeId) {
     const legacyEntry = nodesById[legacyRouteIdToRouteGraphEntryNodeId(routeId)];
     if (legacyEntry?.match?.requestedModelPattern && isExactTokenRouteModelPattern(legacyEntry.match.requestedModelPattern)) {
@@ -1397,7 +1375,13 @@ function routeProgramTargetSelectionPolicy(node) {
   return isPlainObject(config.targetSelection) ? config.targetSelection : { strategy: 'weighted' };
 }
 
-function routeProgramModelEndpointCompatibilityPolicy(node) {
+function routeProgramSupplyEndpointTargetSelectionPolicy(endpointNode, nodesById) {
+  const endpointConfig = isPlainObject(endpointNode?.config) ? endpointNode.config : {};
+  if (isPlainObject(endpointConfig.targetSelection)) return endpointConfig.targetSelection;
+  return { strategy: 'weighted' };
+}
+
+function routeProgramEndpointCompatibilityPolicy(node) {
   if (isPlainObject(node?.compatibilityPolicy)) return node.compatibilityPolicy;
   const config = isPlainObject(node?.config) ? node.config : {};
   return isPlainObject(config.compatibilityPolicy) ? config.compatibilityPolicy : undefined;
@@ -1640,7 +1624,8 @@ function buildRouteProgramOpsForEntry(input) {
     }
 
     if (node.type === 'route_endpoint') {
-      if (node.endpointKind === 'supply') {
+      const hasExecutableTargets = Array.isArray(node.config?.targets) && node.config.targets.length > 0;
+      if (node.endpointKind === 'supply' || hasExecutableTargets) {
         const opId = routeProgramOpId(program.id, `${node.id}:select-supply`);
         if (opsById.has(opId)) {
           compiledByState.set(stateKey, opId);
@@ -1660,10 +1645,11 @@ function buildRouteProgramOpsForEntry(input) {
           endpointId,
           nodeId: node.id,
           routeId,
-          routeNodeId: normalizeString(node.resolvesTo?.id) || null,
-          terminalModel: normalizeString(node.match?.requestedModelPattern || node.match?.displayName || node.publicModelName),
-          targetSelectionPolicy: routeProgramTargetSelectionPolicy(node),
+          routeEndpointId: node.id,
+          terminalModel: routeProgramTerminalModelForEndpoint(nodesById, node),
+          targetSelectionPolicy: routeProgramSupplyEndpointTargetSelectionPolicy(node, nodesById),
           targets,
+          ...(routeProgramEndpointCompatibilityPolicy(node) ? { compatibilityPolicy: routeProgramEndpointCompatibilityPolicy(node) } : {}),
           sourceRef: routeProgramSourceRefFromNode(node, { endpointId, routeId }),
         });
       }
@@ -1673,8 +1659,7 @@ function buildRouteProgramOpsForEntry(input) {
         return opId;
       }
       let targetNodeId = '';
-      if (node.resolvesTo?.kind === 'model_endpoint') targetNodeId = node.resolvesTo.id;
-      else if (node.resolvesTo?.kind === 'route_builder') targetNodeId = `macro:${macroSafeId(node.resolvesTo.id)}:dispatcher`;
+      if (node.resolvesTo?.kind === 'route_builder') targetNodeId = `macro:${macroSafeId(node.resolvesTo.id)}:dispatcher`;
       else if (node.resolvesTo?.kind === 'synthetic') targetNodeId = node.resolvesTo.id;
       const nextOpId = targetNodeId
         ? compileNode(targetNodeId, 'route_endpoint.selected', path.concat(stateKey))
@@ -1703,25 +1688,22 @@ function buildRouteProgramOpsForEntry(input) {
       });
     }
 
-    if (node.type === 'model_endpoint' || node.type === 'auto_node') {
+    if (node.type === 'auto_node') {
       const opId = routeProgramOpId(program.id, `${node.id}:select-supply`);
       compiledByState.set(stateKey, opId);
       const endpointId = routeProgramEndpointIdForNode(node);
       const routeId = normalizePositiveInteger(node.legacyRouteId) || null;
-      const targets = node.type === 'model_endpoint'
-        ? compiledEndpointTargetsForModelEndpointNode(node, endpointId, routeId)
-        : [];
       return addOp({
         id: opId,
         op: 'select_supply',
         endpointId,
         nodeId: node.id,
         routeId,
-        routeNodeId: normalizeString(node.routeNodeId) || null,
-        terminalModel: node.type === 'model_endpoint' ? routeProgramTerminalModelForEndpoint(nodesById, node) : '',
-        targetSelectionPolicy: node.type === 'model_endpoint' ? routeProgramTargetSelectionPolicy(node) : { strategy: 'weighted' },
-        targets,
-        ...(routeProgramModelEndpointCompatibilityPolicy(node) ? { compatibilityPolicy: routeProgramModelEndpointCompatibilityPolicy(node) } : {}),
+        routeEndpointId: normalizeString(node.routeEndpointId) || null,
+        terminalModel: '',
+        targetSelectionPolicy: { strategy: 'weighted' },
+        targets: [],
+        ...(routeProgramEndpointCompatibilityPolicy(node) ? { compatibilityPolicy: routeProgramEndpointCompatibilityPolicy(node) } : {}),
         sourceRef: routeProgramSourceRefFromNode(node, { endpointId, routeId }),
       });
     }
@@ -1942,6 +1924,187 @@ function buildRouteProgramBundleV3(input) {
   };
 }
 
+function flatTerminalStats(terminal) {
+  if (!terminal) return { terminalKind: 'dispatch', targetCount: 0, enabledTargetCount: 0 };
+  if (terminal.kind === 'synthetic') return { terminalKind: 'synthetic', targetCount: 0, enabledTargetCount: 0 };
+  const targets = Array.isArray(terminal.targets) ? terminal.targets : [];
+  return {
+    terminalKind: 'supply',
+    targetCount: targets.length,
+    enabledTargetCount: targets.filter((target) => target.enabled !== false).length,
+  };
+}
+
+function flatDecisionStats(decision) {
+  if (!decision) return { terminalKind: 'dispatch', targetCount: 0, enabledTargetCount: 0 };
+  if (decision.kind === 'terminal') return flatTerminalStats(decision.terminal);
+  const candidates = Array.isArray(decision.dispatch?.candidates) ? decision.dispatch.candidates : [];
+  return {
+    terminalKind: 'dispatch',
+    targetCount: candidates.reduce((sum, candidate) => sum + (Number(candidate.targetCount) || 0), 0),
+    enabledTargetCount: candidates.reduce((sum, candidate) => sum + (Number(candidate.enabledTargetCount) || 0), 0),
+  };
+}
+
+function buildFlatTerminalFromRouteProgramOp(op) {
+  if (!op) return null;
+  if (op.op === 'synthetic') {
+    return {
+      kind: 'synthetic',
+      nodeId: op.nodeId,
+      statusCode: op.statusCode === 429 ? 429 : 503,
+      message: op.message || 'No route is available.',
+      sourceRef: op.sourceRef || {},
+    };
+  }
+  if (op.op === 'select_supply') {
+    return {
+      kind: 'supply',
+      endpointId: op.endpointId,
+      nodeId: op.nodeId,
+      routeId: normalizePositiveInteger(op.routeId) || null,
+      ...(normalizeString(op.routeEndpointId) ? { routeEndpointId: normalizeString(op.routeEndpointId) } : {}),
+      ...(normalizeString(op.terminalModel) ? { terminalModel: normalizeString(op.terminalModel) } : {}),
+      targetSelectionPolicy: isPlainObject(op.targetSelectionPolicy) ? op.targetSelectionPolicy : { strategy: 'weighted' },
+      targets: Array.isArray(op.targets) ? op.targets : [],
+      ...(isPlainObject(op.compatibilityPolicy) ? { compatibilityPolicy: op.compatibilityPolicy } : {}),
+      sourceRef: op.sourceRef || {},
+    };
+  }
+  return null;
+}
+
+function buildFlatDecisionFromRouteProgramOps(input) {
+  const { program, opsById, opId, diagnostics } = input;
+  let currentOpId = normalizeString(opId);
+  const filterStages = [];
+  const visited = new Set(input.visited || []);
+  while (currentOpId) {
+    if (visited.has(currentOpId)) {
+      addDiagnostic(diagnostics, 'error', 'flat_program.cycle', `Flat route program ${program.id} contains a cycle at ${currentOpId}.`);
+      return null;
+    }
+    visited.add(currentOpId);
+    const op = opsById.get(currentOpId);
+    if (!op) {
+      addDiagnostic(diagnostics, 'error', 'flat_program.missing_op', `Flat route program ${program.id} references missing op ${currentOpId}.`);
+      return null;
+    }
+    if (op.op === 'filter') {
+      filterStages.push({
+        nodeId: op.nodeId,
+        phase: op.phase,
+        operations: Array.isArray(op.operations) ? op.operations : [],
+        sourceRef: op.sourceRef || {},
+      });
+      currentOpId = normalizeString(op.nextOpId);
+      continue;
+    }
+    if (op.op === 'call_product') {
+      currentOpId = normalizeString(op.nextOpId);
+      continue;
+    }
+    if (op.op === 'dispatch') {
+      const candidates = (Array.isArray(op.candidates) ? op.candidates : []).map((candidate, index) => {
+        const next = buildFlatDecisionFromRouteProgramOps({
+          program,
+          opsById,
+          opId: candidate.targetOpId,
+          diagnostics,
+          visited: new Set(visited),
+        });
+        if (!next) return null;
+        const stats = flatDecisionStats(next);
+        return {
+          id: candidate.id,
+          kind: op.mode === 'flow' ? 'bidirect' : (op.mode === 'target' ? 'target' : 'route'),
+          ...(normalizeString(candidate.nodeId) ? { nodeId: normalizeString(candidate.nodeId) } : {}),
+          ...(normalizeString(candidate.edgeId) ? { edgeId: normalizeString(candidate.edgeId) } : {}),
+          ...(normalizeString(candidate.endpointId) ? { endpointId: normalizeString(candidate.endpointId) } : {}),
+          enabled: candidate.enabled !== false,
+          weight: Number.isFinite(Number(candidate.weight)) ? Number(candidate.weight) : 1,
+          priority: Number.isFinite(Number(candidate.priority)) ? Number(candidate.priority) : 0,
+          order: index,
+          ...(isPlainObject(candidate.metadata) ? { metadata: candidate.metadata } : {}),
+          sourceRef: candidate.sourceRef || {},
+          next,
+          ...stats,
+        };
+      }).filter(Boolean);
+      return {
+        kind: 'dispatch',
+        filterStages,
+        dispatch: {
+          id: op.id,
+          nodeId: op.nodeId,
+          mode: op.mode,
+          policy: isPlainObject(op.policy) ? op.policy : { strategy: 'weighted' },
+          candidates,
+          enabledCandidateCount: candidates.filter((candidate) => candidate.enabled !== false).length,
+          sourceRef: op.sourceRef || {},
+        },
+      };
+    }
+    const terminal = buildFlatTerminalFromRouteProgramOp(op);
+    if (terminal) {
+      return {
+        kind: 'terminal',
+        filterStages,
+        terminal,
+      };
+    }
+    addDiagnostic(diagnostics, 'error', 'flat_program.unsupported_op', `Flat route program ${program.id} cannot compile op ${currentOpId}.`);
+    return null;
+  }
+  addDiagnostic(diagnostics, 'error', 'flat_program.empty_path', `Flat route program ${program.id} has an empty execution path.`);
+  return null;
+}
+
+function buildRouteProgramBundleV4FromV3(bundle) {
+  const diagnostics = Array.isArray(bundle?.diagnostics) ? [...bundle.diagnostics] : [];
+  const programs = [];
+  for (const program of Array.isArray(bundle?.programs) ? bundle.programs : []) {
+    const opsById = new Map((Array.isArray(program.ops) ? program.ops : []).map((op) => [op.id, op]));
+    const start = normalizeString(program.startOpId)
+      ? buildFlatDecisionFromRouteProgramOps({
+        program,
+        opsById,
+        opId: program.startOpId,
+        diagnostics,
+      })
+      : null;
+    if (!start) {
+      addDiagnostic(diagnostics, 'error', 'flat_program.entry_without_program', `Public entry ${program.entryNodeId} did not compile to a flat route program.`, program.entryNodeId);
+    }
+    programs.push({
+      id: program.id,
+      entryNodeId: program.entryNodeId,
+      publicModelName: program.publicModelName,
+      enabled: program.enabled !== false,
+      ...(normalizeString(program.rootEndpointId) ? { rootEndpointId: normalizeString(program.rootEndpointId) } : {}),
+      start,
+      sourceRef: program.sourceRef || {},
+    });
+  }
+  const bundleWithoutHash = {
+    version: ROUTE_FLAT_PROGRAM_BUNDLE_VERSION,
+    matcher: bundle?.matcher || { exact: {}, normalizedExact: {}, patterns: [] },
+    programs,
+    endpointCatalog: bundle?.endpointCatalog || { byId: {}, productToProgram: {}, supplyTargets: {} },
+    debug: bundle?.debug || {
+      sourceHash: '',
+      primitiveHash: '',
+      sourceRefs: {},
+      generatedByMacro: {},
+    },
+    diagnostics,
+  };
+  return {
+    ...bundleWithoutHash,
+    hash: stableJson(bundleWithoutHash),
+  };
+}
+
 function deriveEntryBackendSpec(entryNodeId, nodesById, outgoingByNodeId) {
   const incomingByNodeId = new Map();
   for (const edges of outgoingByNodeId.values()) {
@@ -1968,7 +2131,7 @@ function deriveEntryBackendSpec(entryNodeId, nodesById, outgoingByNodeId) {
   if (routeIds.length > 0) {
     return normalizeRouteGraphBackendSpec({ kind: ROUTE_GRAPH_BACKEND_KIND_ROUTES, routeIds: Array.from(new Set(routeIds)) });
   }
-  return normalizeRouteGraphBackendSpec({ kind: ROUTE_GRAPH_BACKEND_KIND_CHANNELS });
+  return normalizeRouteGraphBackendSpec({ kind: ROUTE_GRAPH_BACKEND_KIND_SUPPLY });
 }
 
 function macroProvenance(macro, role) {
@@ -2016,9 +2179,7 @@ function findRouteProductEndpoint(nodes, endpointId) {
 
 function findExecutableEndpointForSupplyEndpoint(nodes, routeEndpoint) {
   if (!routeEndpoint || routeEndpoint.type !== 'route_endpoint' || routeEndpoint.endpointKind !== 'supply') return null;
-  if (routeEndpoint.resolvesTo?.kind === 'model_endpoint' && routeEndpoint.resolvesTo.id) {
-    return nodes.find((node) => node.id === routeEndpoint.resolvesTo.id && node.type === 'model_endpoint') || null;
-  }
+  if (Array.isArray(routeEndpoint.config?.targets) && routeEndpoint.config.targets.length > 0) return routeEndpoint;
   return null;
 }
 
@@ -2081,9 +2242,9 @@ function materializeCandidateItems(group, items, keyForItem) {
 }
 
 function findEntryForEndpointCandidate(nodes, endpoint) {
-  if (!endpoint || endpoint.type !== 'model_endpoint') return null;
-  if (endpoint.routeNodeId) {
-    const directEntry = nodes.find((node) => node.id === endpoint.routeNodeId && node.type === 'entry');
+  if (!endpoint || endpoint.type !== 'route_endpoint') return null;
+  if (endpoint.routeEndpointId) {
+    const directEntry = nodes.find((node) => node.id === endpoint.routeEndpointId && node.type === 'entry');
     if (directEntry) return directEntry;
   }
   const routeId = legacyRouteIdFromRouteGraphNode(endpoint);
@@ -2094,7 +2255,7 @@ function findEntryForEndpointCandidate(nodes, endpoint) {
   return null;
 }
 
-function modelEndpointPatternNames(nodes, endpoint) {
+function routeEndpointPatternNames(nodes, endpoint) {
   const values = [];
   const push = (value) => {
     const normalized = normalizeString(value);
@@ -2119,9 +2280,14 @@ function patternCandidateItemsForGroup(source, group) {
   const pattern = normalizeString(group.input?.pattern);
   if (!pattern) return [];
   return source.nodes
-    .filter((node) => node.type === 'model_endpoint' && node.enabled !== false)
+    .filter((node) => (
+      node.enabled !== false
+      && (
+        node.type === 'route_endpoint' && Array.isArray(node.config?.targets) && node.config.targets.length > 0
+      )
+    ))
     .flatMap((endpoint) => {
-      const models = modelEndpointPatternNames(source.nodes, endpoint);
+      const models = routeEndpointPatternNames(source.nodes, endpoint);
       const matchedModel = models.find((model) => matchesTokenRouteModelPattern(model, pattern));
       if (!matchedModel) return [];
       return [{
@@ -2296,7 +2462,7 @@ function lowerCandidateSelectorMacro(macro, source) {
           }, config.surface.output);
           continue;
         }
-        if (routeEndpoint.endpointKind === 'supply' && routeEndpoint.resolvesTo?.kind === 'model_endpoint') {
+        if (routeEndpoint.endpointKind === 'supply' && findExecutableEndpointForSupplyEndpoint(source.nodes, routeEndpoint)) {
           candidateNodeIds.push(routeEndpoint.id);
           addMacroCandidateEdge(edges, macro, macroId, group, routeEndpoint.id, dispatcherId, {
             ...mergeCandidateOverrideMetadata(group, routeEndpoint, {
@@ -2344,10 +2510,10 @@ function lowerCandidateSelectorMacro(macro, source) {
           ...target,
           index,
           model: target.model || '',
-          endpointId: target.channelId,
+          endpointId: target.targetId,
         })),
         (item, dedupeBy) => {
-          if (dedupeBy === 'endpoint_id') return String(item.endpointId || item.channelId || '');
+          if (dedupeBy === 'endpoint_id') return String(item.endpointId || item.targetId || '');
           if (dedupeBy === 'model') return String(item.model || '');
           return '';
         },
@@ -2357,10 +2523,17 @@ function lowerCandidateSelectorMacro(macro, source) {
       candidateNodeIds.push(candidateId);
       nodes.push(normalizeRouteGraphNode({
         id: candidateId,
-        type: 'model_endpoint',
+        type: 'route_endpoint',
         name: group.label || `${macro.id} inline endpoints`,
         enabled: group.defaults?.enabled !== false,
         visibility: 'internal',
+        endpointKind: 'supply',
+        exposure: 'none',
+        resolutionStatus: 'resolved',
+        ownerKind: 'macro',
+        sourceKind: 'inline',
+        routeEndpointId: candidateId,
+        endpointId: candidateId,
         ownership: 'derived',
         provenance: macroProvenance(macro, 'inline_endpoint'),
         metadata: {
@@ -2568,12 +2741,12 @@ function compilePrimitiveRouteGraph(sourceInput, preDiagnostics = []) {
     if (node.type === 'auto_node' && node.ownership === 'manual') {
       addDiagnostic(diagnostics, 'error', 'auto_node.manual', `Auto node ${node.id} cannot be manual-owned.`, node.id);
     }
-    if (node.type === 'model_endpoint' && node.enabled !== false) {
+    if (node.type === 'route_endpoint' && node.endpointKind === 'supply' && node.enabled !== false) {
       const targets = Array.isArray(node.config?.targets)
-        ? node.config.targets.filter((target) => normalizeString(target?.channelId) && (normalizeString(target?.model) || target?.modelSource === 'request'))
+        ? node.config.targets.filter((target) => normalizeString(target?.targetId) && (normalizeString(target?.model) || target?.modelSource === 'request'))
         : [];
       if (targets.length === 0) {
-        addDiagnostic(diagnostics, 'warning', 'model_endpoint.targets_required', `Model endpoint ${node.id} has no executable target yet.`, node.id);
+        addDiagnostic(diagnostics, 'warning', 'route_endpoint.targets_required', `Route endpoint ${node.id} has no executable target yet.`, node.id);
       }
     }
     if (node.type === 'dispatcher' && node.mode === 'route') {
@@ -2645,8 +2818,8 @@ function compilePrimitiveRouteGraph(sourceInput, preDiagnostics = []) {
     const info = publicEntryResolutionInfo(node, backend);
     if (publicNames.has(lower)) {
       const existing = publicNames.get(lower);
-      const sameRouteProjection = info.routeId !== null && existing.routeId !== null && info.routeId === existing.routeId;
-      if (!sameRouteProjection && !canPublicEntryOverrideDuplicate(existing, info)) {
+      const sameRouteBinding = info.routeId !== null && existing.routeId !== null && info.routeId === existing.routeId;
+      if (!sameRouteBinding && !canPublicEntryOverrideDuplicate(existing, info)) {
         addDiagnostic(diagnostics, 'error', 'public_model.duplicate', `Public model ${publicName} is declared by both ${existing.nodeId} and ${node.id}.`, node.id);
       }
       if (shouldPreferPublicEntryResolution(existing, info)) {
@@ -2699,7 +2872,7 @@ function compilePrimitiveRouteGraph(sourceInput, preDiagnostics = []) {
     .map((node) => ({
       nodeId: node.id,
       type: node.type,
-      routeNodeId: node.routeNodeId || node.id,
+      routeEndpointId: node.routeEndpointId || node.id,
       legacyRouteId: node.legacyRouteId || null,
       routingStrategy: node.routingStrategy || 'weighted',
       statusCode: node.statusCode || null,
@@ -2766,9 +2939,13 @@ function compileRouteGraph(sourceInput) {
     primitiveSource: lowered.primitiveSource,
     compiledGraph: nextCompiledGraph,
   });
+  const flatProgramBundle = buildRouteProgramBundleV4FromV3(programBundle);
   const diagnostics = [
     ...compiled.diagnostics,
     ...(Array.isArray(programBundle.diagnostics) ? programBundle.diagnostics : []),
+    ...(Array.isArray(flatProgramBundle.diagnostics) ? flatProgramBundle.diagnostics.filter((diagnostic) => (
+      String(diagnostic?.code || '').startsWith('flat_program.')
+    )) : []),
   ];
   return {
     ...compiled,
@@ -2779,6 +2956,7 @@ function compileRouteGraph(sourceInput) {
     compiled: {
       ...nextCompiledGraph,
       programBundle,
+      flatProgramBundle,
     },
   };
 }
@@ -2810,16 +2988,16 @@ export function findRouteGraphEntryForModel(compiledGraph, model) {
       && entry.match.requestedModelPattern === model
     ))
     || enabledPublicEntries.find((entry) => (
-      normalizeRouteGraphBackendSpec(entry.backend).kind === ROUTE_GRAPH_BACKEND_KIND_CHANNELS
+      normalizeRouteGraphBackendSpec(entry.backend).kind === ROUTE_GRAPH_BACKEND_KIND_SUPPLY
       && entry.match?.displayName === model
     ))
     || enabledPublicEntries.find((entry) => (
-      normalizeRouteGraphBackendSpec(entry.backend).kind === ROUTE_GRAPH_BACKEND_KIND_CHANNELS
+      normalizeRouteGraphBackendSpec(entry.backend).kind === ROUTE_GRAPH_BACKEND_KIND_SUPPLY
       && isExactTokenRouteModelPattern(entry.match?.requestedModelPattern || '')
       && entry.match.requestedModelPattern === model
     ))
     || enabledPublicEntries.find((entry) => (
-      normalizeRouteGraphBackendSpec(entry.backend).kind === ROUTE_GRAPH_BACKEND_KIND_CHANNELS
+      normalizeRouteGraphBackendSpec(entry.backend).kind === ROUTE_GRAPH_BACKEND_KIND_SUPPLY
       && matchesTokenRouteModelPattern(model, entry.match?.requestedModelPattern || '')
     ))
     || null;
@@ -2831,7 +3009,7 @@ export function buildRouteGraphSourceFromLegacyRoutes(routesInput) {
   const edges = [];
   const macros = [];
   const automaticExactGroups = new Map();
-  const routeProjections = routes
+  const routeBindings = routes
     .map((route) => {
       const routeId = normalizePositiveInteger(route.id);
       if (!routeId) return null;
@@ -2839,7 +3017,7 @@ export function buildRouteGraphSourceFromLegacyRoutes(routesInput) {
       const backend = normalizeRouteGraphBackendSpec(route.backend || parseRouteGraphBackendSpec(route.backendSpec));
       const ownership = normalizeEnum(route.ownership, ROUTE_GRAPH_OWNERSHIPS.filter((item) => item !== 'derived'), 'manual');
       const visibility = normalizeEnum(route.visibility, ROUTE_GRAPH_VISIBILITIES, 'public');
-      const projectExactRouteAsMacro = backend.kind === ROUTE_GRAPH_BACKEND_KIND_CHANNELS
+      const projectExactRouteAsMacro = backend.kind === ROUTE_GRAPH_BACKEND_KIND_SUPPLY
         && ownership === 'auto_generated'
         && route.projectAsMacro !== false;
       const canonicalModelKey = projectExactRouteAsMacro
@@ -2859,10 +3037,26 @@ export function buildRouteGraphSourceFromLegacyRoutes(routesInput) {
           : normalizeString(route.productEndpointId) || routeGraphRouteProductEndpointIdFromRoute(routeId),
         supplyEndpointId: normalizeString(route.supplyEndpointId)
           || routeGraphSupplyEndpointIdFromIdentity(route.endpointIdentity, routeId),
+        supplyEndpointSpecs: Array.isArray(route.supplyEndpointSpecs)
+          ? route.supplyEndpointSpecs
+            .map((spec) => (isPlainObject(spec) ? {
+              endpointId: normalizeString(spec.endpointId) || routeGraphSupplyEndpointIdFromIdentity(spec.endpointIdentity, routeId),
+              endpointIdentity: isPlainObject(spec.endpointIdentity) ? spec.endpointIdentity : undefined,
+              endpointLocalRefs: Array.isArray(spec.endpointLocalRefs) ? spec.endpointLocalRefs : [],
+              targets: Array.isArray(spec.targets) ? spec.targets : [],
+            } : null))
+            .filter((spec) => spec && spec.endpointId)
+          : [],
       };
     })
     .filter(Boolean);
-  const productEndpointIdByRouteId = new Map(routeProjections.map((projection) => [projection.routeId, projection.productEndpointId]));
+  const productEndpointIdByRouteId = new Map(routeBindings.map((binding) => [binding.routeId, binding.productEndpointId]));
+  const supplyEndpointIdsByRouteId = new Map(routeBindings.map((binding) => [
+    binding.routeId,
+    (binding.supplyEndpointSpecs.length > 0
+      ? binding.supplyEndpointSpecs.map((spec) => spec.endpointId)
+      : [binding.supplyEndpointId]).filter(Boolean),
+  ]));
   const pushNode = (node) => {
     const normalized = normalizeRouteGraphNode(node);
     if (!nodesById.has(normalized.id)) nodesById.set(normalized.id, normalized);
@@ -2900,67 +3094,63 @@ export function buildRouteGraphSourceFromLegacyRoutes(routesInput) {
       },
     }));
   };
-  for (const projection of routeProjections) {
-    const { route, routeId, match, backend, ownership, visibility, projectExactRouteAsMacro, canonicalModelKey } = projection;
+  for (const binding of routeBindings) {
+    const { route, routeId, match, backend, ownership, visibility, projectExactRouteAsMacro, canonicalModelKey } = binding;
     const routeLabel = route.displayName || match.displayName || match.requestedModelPattern || `Route ${routeId}`;
-    const modelEndpointId = legacyRouteIdToRouteGraphPoolNodeId(routeId);
     if (projectExactRouteAsMacro) {
-      const supplyEndpointId = projection.supplyEndpointId;
-      const productEndpointId = projection.productEndpointId;
+      const productEndpointId = binding.productEndpointId;
       const macroId = routeGraphAutoModelMacroId(canonicalModelKey || routeId);
-      const projectionMetadata = {
-        projectedByMacroId: macroId,
-        projectionRole: 'generated_supply_resource',
-        canonicalModel: canonicalModelKey,
-        ...(isPlainObject(route.endpointIdentity) ? { endpointIdentity: route.endpointIdentity } : {}),
-      };
-      pushOrMergeSupplyEndpointNode({
-        id: supplyEndpointId,
-        type: 'route_endpoint',
-        name: routeLabel,
-        enabled: route.enabled !== false,
-        visibility: 'internal',
-        endpointKind: 'supply',
-        exposure: 'none',
-        resolutionStatus: 'resolved',
-        ownership,
-        ownerKind: 'automatic_route',
-        sourceKind: 'upstream_model',
-        routeEndpointId: supplyEndpointId,
-        endpointId: supplyEndpointId,
-        routeId,
-        legacyRouteId: routeId,
-        backend,
-        match,
-        resolvesTo: { kind: 'model_endpoint', id: modelEndpointId },
-        metadata: {
-          ...projectionMetadata,
-          upstreamModel: match.requestedModelPattern || match.displayName || '',
-          canonicalModel: canonicalModelKey,
-          sourceRouteId: routeId,
-          localRouteId: routeId,
-          sourceRouteIds: [routeId],
-          localRouteIds: [routeId],
+      const supplySpecs = binding.supplyEndpointSpecs.length > 0
+        ? binding.supplyEndpointSpecs
+        : [{
+          endpointId: binding.supplyEndpointId,
+          endpointIdentity: isPlainObject(route.endpointIdentity) ? route.endpointIdentity : undefined,
           endpointLocalRefs: Array.isArray(route.endpointLocalRefs) ? route.endpointLocalRefs : [],
-        },
-        provenance: route.provenance || { source: 'legacy', routeId },
-      });
-      pushNode({
-        id: modelEndpointId,
-        type: 'model_endpoint',
-        name: `${routeLabel} endpoint`,
-        enabled: route.enabled !== false,
-        visibility: 'internal',
-        ownership,
-        routeNodeId: supplyEndpointId,
-        legacyRouteId: routeId,
-        metadata: projectionMetadata,
-        config: {
           targets: Array.isArray(route.targets) ? route.targets : [],
-          targetSelection: { strategy: 'defer_to_router' },
-        },
-        provenance: route.provenance || { source: 'legacy', routeId },
-      });
+        }];
+      for (const spec of supplySpecs) {
+        const supplyEndpointId = spec.endpointId;
+        const routeBindingMetadata = {
+          generatedByMacroId: macroId,
+          syncRole: 'generated_supply_resource',
+          canonicalModel: canonicalModelKey,
+          ...(isPlainObject(spec.endpointIdentity) ? { endpointIdentity: spec.endpointIdentity } : {}),
+        };
+        pushOrMergeSupplyEndpointNode({
+          id: supplyEndpointId,
+          type: 'route_endpoint',
+          name: routeLabel,
+          enabled: route.enabled !== false,
+          visibility: 'internal',
+          endpointKind: 'supply',
+          exposure: 'none',
+          resolutionStatus: 'resolved',
+          ownership,
+          ownerKind: 'automatic_route',
+          sourceKind: 'upstream_model',
+          routeEndpointId: supplyEndpointId,
+          endpointId: supplyEndpointId,
+          routeId,
+          legacyRouteId: routeId,
+          backend,
+          match,
+          config: {
+            targets: spec.targets,
+            targetSelection: { strategy: 'defer_to_router' },
+          },
+          metadata: {
+            ...routeBindingMetadata,
+            upstreamModel: match.requestedModelPattern || match.displayName || '',
+            canonicalModel: canonicalModelKey,
+            sourceRouteId: routeId,
+            localRouteId: routeId,
+            sourceRouteIds: [routeId],
+            localRouteIds: [routeId],
+            endpointLocalRefs: spec.endpointLocalRefs,
+          },
+          provenance: route.provenance || { source: 'legacy', routeId },
+        });
+      }
       if (!automaticExactGroups.has(productEndpointId)) {
         automaticExactGroups.set(productEndpointId, {
           macroId,
@@ -2978,14 +3168,24 @@ export function buildRouteGraphSourceFromLegacyRoutes(routesInput) {
       }
       const group = automaticExactGroups.get(productEndpointId);
       group.routeIds.push(routeId);
-      group.supplyEndpointIds.push(supplyEndpointId);
+      for (const spec of supplySpecs) group.supplyEndpointIds.push(spec.endpointId);
       group.enabled = group.enabled || route.enabled !== false;
       if (visibility === 'public') group.visibility = 'public';
       continue;
     }
 
-    const productEndpointId = projection.productEndpointId;
-    const projectionMetadata = {};
+    const productEndpointId = binding.productEndpointId;
+    const channelSupplySpecs = backend.kind === ROUTE_GRAPH_BACKEND_KIND_SUPPLY
+      ? (binding.supplyEndpointSpecs.length > 0
+        ? binding.supplyEndpointSpecs
+        : [{
+          endpointId: binding.supplyEndpointId,
+          endpointIdentity: isPlainObject(route.endpointIdentity) ? route.endpointIdentity : undefined,
+          endpointLocalRefs: Array.isArray(route.endpointLocalRefs) ? route.endpointLocalRefs : [],
+          targets: Array.isArray(route.targets) ? route.targets : [],
+        }])
+      : [];
+    const routeBindingMetadata = {};
     pushNode({
       id: productEndpointId,
       type: 'route_endpoint',
@@ -3006,15 +3206,54 @@ export function buildRouteGraphSourceFromLegacyRoutes(routesInput) {
       match,
       resolvesTo: backend.kind === ROUTE_GRAPH_BACKEND_KIND_ROUTES
         ? { kind: 'route_builder', id: `route:${routeId}:model-group` }
-        : { kind: 'model_endpoint', id: modelEndpointId },
-      metadata: projectionMetadata,
+        : undefined,
+      metadata: routeBindingMetadata,
       provenance: route.provenance || { source: 'legacy', routeId },
     });
+    for (const spec of channelSupplySpecs) {
+      const supplyEndpointId = spec.endpointId;
+      pushOrMergeSupplyEndpointNode({
+        id: supplyEndpointId,
+        type: 'route_endpoint',
+        name: routeLabel,
+        enabled: route.enabled !== false,
+        visibility: 'internal',
+        endpointKind: 'supply',
+        exposure: 'none',
+        resolutionStatus: 'resolved',
+        ownership,
+        ownerKind: ownership === 'auto_generated' ? 'automatic_route' : 'manual_route',
+        sourceKind: 'upstream_model',
+        routeEndpointId: supplyEndpointId,
+        endpointId: supplyEndpointId,
+        routeId,
+        legacyRouteId: routeId,
+        backend,
+        match,
+        config: {
+          targets: Array.isArray(spec.targets) ? spec.targets : [],
+          targetSelection: { strategy: 'defer_to_router' },
+        },
+        metadata: {
+          ...(isPlainObject(spec.endpointIdentity) ? { endpointIdentity: spec.endpointIdentity } : {}),
+          upstreamModel: match.requestedModelPattern || match.displayName || '',
+          sourceRouteId: routeId,
+          localRouteId: routeId,
+          sourceRouteIds: [routeId],
+          localRouteIds: [routeId],
+          endpointLocalRefs: Array.isArray(spec.endpointLocalRefs) ? spec.endpointLocalRefs : [],
+        },
+        provenance: route.provenance || { source: 'legacy', routeId },
+      });
+    }
     if (backend.kind === ROUTE_GRAPH_BACKEND_KIND_ROUTES) {
-      const candidateEndpointIds = backend.routeIds.map((sourceRouteId) => (
-        productEndpointIdByRouteId.get(sourceRouteId) || routeGraphRouteProductEndpointIdFromRoute(sourceRouteId)
-      ));
-      macros.push(buildCandidateSelectorMacroFromRouteProjection({
+      const candidateEndpointIds = backend.routeIds.flatMap((sourceRouteId) => {
+        const supplyEndpointIds = supplyEndpointIdsByRouteId.get(sourceRouteId) || [];
+        if (supplyEndpointIds.length > 0) return supplyEndpointIds;
+        const productEndpointId = productEndpointIdByRouteId.get(sourceRouteId);
+        return productEndpointId ? [productEndpointId] : [];
+      });
+      macros.push(buildCandidateSelectorMacroFromRouteBinding({
         id: routeId,
         stableId: `route:${routeId}:model-group`,
         displayName: routeLabel,
@@ -3029,7 +3268,7 @@ export function buildRouteGraphSourceFromLegacyRoutes(routesInput) {
           provenance: {
             source: 'automatic_route_construction',
             routeId,
-            projection: 'explicit_group_macro',
+            binding: 'explicit_group_macro',
           },
         },
       }));
@@ -3046,7 +3285,7 @@ export function buildRouteGraphSourceFromLegacyRoutes(routesInput) {
             provenance: {
               source: 'automatic_route_construction',
               routeId,
-              projection: 'explicit_group_candidate_edge',
+              binding: 'explicit_group_candidate_edge',
             },
             candidate: {
               routeEndpointId: endpointId,
@@ -3070,26 +3309,10 @@ export function buildRouteGraphSourceFromLegacyRoutes(routesInput) {
         ownership,
         match,
         selectionStrategy: route.routingStrategy || 'weighted',
-        metadata: projectionMetadata,
+        metadata: routeBindingMetadata,
         provenance: route.provenance || { source: 'legacy', routeId },
       });
     }
-    pushNode({
-      id: modelEndpointId,
-      type: 'model_endpoint',
-      name: `${routeLabel} endpoint`,
-      enabled: route.enabled !== false,
-      visibility: 'internal',
-      ownership,
-      routeNodeId: productEndpointId,
-      legacyRouteId: routeId,
-      metadata: projectionMetadata,
-      config: {
-        targets: Array.isArray(route.targets) ? route.targets : [],
-        targetSelection: { strategy: 'defer_to_router' },
-      },
-      provenance: route.provenance || { source: 'legacy', routeId },
-    });
     if (visibility === 'public') {
       pushNode({
         id: dispatcherId,
@@ -3101,19 +3324,21 @@ export function buildRouteGraphSourceFromLegacyRoutes(routesInput) {
         mode: 'route',
         ordering: 'explicit',
         policy: { strategy: route.routingStrategy || 'weighted' },
-        metadata: projectionMetadata,
+        metadata: routeBindingMetadata,
         provenance: route.provenance || { source: 'legacy', routeId },
       });
-      edges.push(normalizeRouteGraphEdge({
-        id: `edge:${modelEndpointId}:route.out:${dispatcherId}:route.in`,
-        sourceNodeId: modelEndpointId,
-        sourcePortId: 'route.out',
-        targetNodeId: dispatcherId,
-        targetPortId: 'route.in',
-        kind: 'route_flow',
-        ownership,
-        metadata: projectionMetadata,
-      }));
+      for (const spec of channelSupplySpecs) {
+        edges.push(normalizeRouteGraphEdge({
+          id: `edge:${spec.endpointId}:route.out:${dispatcherId}:route.in`,
+          sourceNodeId: spec.endpointId,
+          sourcePortId: 'route.out',
+          targetNodeId: dispatcherId,
+          targetPortId: 'route.in',
+          kind: 'route_flow',
+          ownership,
+          metadata: routeBindingMetadata,
+        }));
+      }
       edges.push(normalizeRouteGraphEdge({
         id: `edge:${entryId}:bidirect.out:${dispatcherId}:bidirect.in`,
         sourceNodeId: entryId,
@@ -3122,7 +3347,7 @@ export function buildRouteGraphSourceFromLegacyRoutes(routesInput) {
         targetPortId: 'bidirect.in',
         kind: 'bidirect_flow',
         ownership,
-        metadata: projectionMetadata,
+        metadata: routeBindingMetadata,
       }));
     }
   }
@@ -3155,7 +3380,7 @@ export function buildRouteGraphSourceFromLegacyRoutes(routesInput) {
       },
       provenance: { source: 'automatic_route_construction', canonicalModel: group.canonicalModelKey },
     });
-    macros.push(buildCandidateSelectorMacroFromRouteProjection({
+    macros.push(buildCandidateSelectorMacroFromRouteBinding({
       id: group.routeIds[0] || 0,
       stableId: group.macroId,
       displayName: group.displayName,
@@ -3172,7 +3397,7 @@ export function buildRouteGraphSourceFromLegacyRoutes(routesInput) {
           source: 'automatic_route_construction',
           canonicalModel: group.canonicalModelKey,
           routeIds: group.routeIds,
-          projection: 'automatic_model_group',
+          binding: 'automatic_model_group',
         },
       },
     }));
@@ -3190,7 +3415,7 @@ export function buildRouteGraphSourceFromLegacyRoutes(routesInput) {
             source: 'automatic_route_construction',
             canonicalModel: group.canonicalModelKey,
             routeIds: group.routeIds,
-            projection: 'automatic_model_group_candidate_edge',
+            binding: 'automatic_model_group_candidate_edge',
           },
           candidate: {
             routeEndpointId: endpointId,

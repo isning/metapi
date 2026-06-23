@@ -243,7 +243,7 @@ export interface CanonicalUsage {
 }
 
 export interface PricingPeriodState {
-  scope: 'entry_node' | 'model_endpoint' | 'target' | 'account' | 'site';
+  scope: 'entry_node' | 'route_endpoint' | 'target' | 'account' | 'site';
   targetId: string;
   period: 'day' | 'month' | 'billing_cycle';
   periodStart: string;
@@ -312,7 +312,7 @@ export interface PricingObservationDiagnostic {
 export interface PricingObservation {
   id: string;
   source: 'upstream_catalog' | 'measured_billing';
-  scope: 'site' | 'account' | 'entry_node' | 'model_endpoint' | 'target';
+  scope: 'site' | 'account' | 'entry_node' | 'route_endpoint' | 'target';
   targetId: string;
   publicModelName?: string;
   upstreamModelName?: string;

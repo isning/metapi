@@ -163,7 +163,7 @@ describe('DownstreamKeys mobile layout', () => {
       {
         id: 11,
         match: { kind: 'model', requestedModelPattern: 'gpt-4.1-mini', displayName: 'GPT 4.1 Mini' },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         presentation: { displayName: 'GPT 4.1 Mini', displayIcon: null },
         enabled: true,
       },

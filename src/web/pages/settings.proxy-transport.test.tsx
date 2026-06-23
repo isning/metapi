@@ -57,8 +57,8 @@ describe('Settings proxy transport', () => {
       logCleanupRetentionDays: 14,
       codexUpstreamWebsocketEnabled: false,
       responsesCompactFallbackToResponsesEnabled: false,
-      proxySessionChannelConcurrencyLimit: 4,
-      proxySessionChannelQueueWaitMs: 3200,
+      proxySessionTargetConcurrencyLimit: 4,
+      proxySessionTargetQueueWaitMs: 3200,
       routingFallbackUnitCost: 1,
       routingWeights: {},
       adminIpAllowlist: [],
@@ -76,8 +76,8 @@ describe('Settings proxy transport', () => {
       success: true,
       codexUpstreamWebsocketEnabled: true,
       responsesCompactFallbackToResponsesEnabled: true,
-      proxySessionChannelConcurrencyLimit: 6,
-      proxySessionChannelQueueWaitMs: 4200,
+      proxySessionTargetConcurrencyLimit: 6,
+      proxySessionTargetQueueWaitMs: 4200,
     });
     apiMock.getModelTokenCandidates.mockResolvedValue({ models: {} });
   });
@@ -155,8 +155,8 @@ describe('Settings proxy transport', () => {
       expect(apiMock.updateRuntimeSettings).toHaveBeenCalledWith({
         codexUpstreamWebsocketEnabled: true,
         responsesCompactFallbackToResponsesEnabled: true,
-        proxySessionChannelConcurrencyLimit: 6,
-        proxySessionChannelQueueWaitMs: 4200,
+        proxySessionTargetConcurrencyLimit: 6,
+        proxySessionTargetQueueWaitMs: 4200,
       });
     } finally {
       root?.unmount();

@@ -16,6 +16,14 @@ import * as Dialog from '../components/ui/dialog/index.js';
 import * as DropdownMenu from '../components/ui/dropdown-menu/index.js';
 import { Input } from '../components/ui/input/index.js';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select/index.js';
+import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+  PaginationLink,
+  PaginationNext,
+  PaginationPrevious,
+} from '../components/ui/pagination/index.js';
 import * as Tabs from '../components/ui/tabs/index.js';
 import { useIsMobile } from '../components/useIsMobile.js';
 import PageHeader from '../components/workspace/PageHeader.js';
@@ -27,7 +35,7 @@ import {
   type RouteCandidateView,
   type RouteModelCandidatesByModelName,
 } from './helpers/routeModelCandidatesIndex.js';
-import { getInitialVisibleCount, getNextVisibleCount } from './helpers/progressiveRender.js';
+import { getRouteListPageNumbers, getRouteListPageWindow } from './helpers/progressiveRender.js';
 import {
   buildRouteMissingTokenIndex,
   normalizeMissingTokenModels,
@@ -35,7 +43,7 @@ import {
   type RouteMissingTokenHint,
 } from './helpers/routeMissingTokenHints.js';
 import { buildVisibleRouteList } from './helpers/routeListVisibility.js';
-import { buildZeroChannelPlaceholderRoutes } from './helpers/zeroChannelRoutes.js';
+import { buildZeroTargetPlaceholderRoutes } from './helpers/zeroTargetRoutes.js';
 import {
   getRouteRoutingStrategyDescription,
   getRouteRoutingStrategyLabel,
@@ -93,11 +101,11 @@ import {
   resolveRouteMacroBinding,
   type RouteMacroBindingGraph,
 } from './token-routes/routeMacroBinding.js';
-import { useRouteChannels } from './token-routes/useRouteChannels.js';
+import { useRouteTargets } from './token-routes/useRouteTargets.js';
 import RouteFilterBar, { type EnabledFilter } from './token-routes/RouteFilterBar.js';
 import ManualRoutePanel from './token-routes/ManualRoutePanel.js';
 import RouteCard from './token-routes/RouteCard.js';
-import AddChannelModal from './token-routes/AddChannelModal.js';
+import AddRouteTargetModal from './token-routes/AddRouteTargetModal.js';
 import RouteGraphWorkbench, {
   defaultGraph,
   getMacroDisplayName,
@@ -140,6 +148,8 @@ const EMPTY_ROUTE_CANDIDATE_VIEW: RouteCandidateView = {
   accountOptions: [],
   tokenOptionsByAccountId: {},
 };
+const DEFAULT_ROUTE_PAGE_SIZE = 20;
+const ROUTE_PAGE_SIZES = [20, 40, 80, 120] as const;
 const EMPTY_MISSING_ITEMS: MissingTokenRouteSiteActionItem[] = [];
 const EMPTY_MISSING_GROUP_ITEMS: MissingTokenGroupRouteSiteActionItem[] = [];
 const ROUTE_ICON_OPTIONS: RouteIconOption[] = [
@@ -153,7 +163,7 @@ type RouteEditorForm = {
     displayName: string | null;
   };
   backend:
-    | { kind: 'channels' }
+    | { kind: 'supply' }
     | { kind: 'routes'; routeIds: number[] };
   presentation: {
     displayName: string;
@@ -166,14 +176,14 @@ type RouteEditorForm = {
   visibility: 'public' | 'internal';
   macro?: RouteGraphSnapshotMacro | null;
 };
-type ChannelDeleteConfirmation = {
-  channelId: number;
+type TargetDeleteConfirmation = {
+  targetId: number;
   routeId: number;
   dontAskAgain: boolean;
   resolve: (confirmed: boolean, dontAskAgain: boolean) => void;
 };
 type SiteBlockConfirmation = {
-  channelId: number;
+  targetId: number;
   routeId: number;
   modelName: string;
   siteName: string;
@@ -360,8 +370,8 @@ export default function TokenRoutes() {
   const [routeGroupListTab, setRouteGroupListTab] = useState<RouteGroupListTab>('public');
   const [filterCollapsed, setFilterCollapsed] = useState(true);
   const [showFilters, setShowFilters] = useState(false);
-  const [showZeroChannelRoutes, setShowZeroChannelRoutes] = useState(false);
-  const [sortBy, setSortBy] = useState<RouteSortBy>('channelCount');
+  const [showZeroTargetRoutes, setShowZeroTargetRoutes] = useState(false);
+  const [sortBy, setSortBy] = useState<RouteSortBy>('targetCount');
   const [sortDir, setSortDir] = useState<RouteSortDir>('desc');
 
   const [showManual, setShowManual] = useState(false);
@@ -377,8 +387,8 @@ export default function TokenRoutes() {
   const [routeGraphFocusIntent, setRouteGraphFocusIntent] = useState<RouteGraphFocusIntent | null>(null);
   const routeGraphFocusIntentSeqRef = useRef(0);
 
-  const [channelTokenDraft, setChannelTokenDraft] = useState<Record<number, number>>({});
-  const [updatingChannel, setUpdatingChannel] = useState<Record<number, boolean>>({});
+  const [targetTokenDraft, setTargetTokenDraft] = useState<Record<number, number>>({});
+  const [updatingTarget, setUpdatingTarget] = useState<Record<number, boolean>>({});
   const [savingPriorityByRoute, setSavingPriorityByRoute] = useState<Record<number, boolean>>({});
   const [updatingRoutingStrategyByRoute, setUpdatingRoutingStrategyByRoute] = useState<Record<number, boolean>>({});
   const [clearingCooldownByRoute, setClearingCooldownByRoute] = useState<Record<number, boolean>>({});
@@ -386,38 +396,39 @@ export default function TokenRoutes() {
   const [decisionByRoute, setDecisionByRoute] = useState<Record<number, RouteDecision | null>>({});
   const [loadingDecision, setLoadingDecision] = useState(false);
   const [decisionAutoSkipped, setDecisionAutoSkipped] = useState(false);
-  const [visibleRouteCount, setVisibleRouteCount] = useState(ROUTE_RENDER_CHUNK);
+  const [routePage, setRoutePage] = useState(1);
+  const [routePageSize, setRoutePageSize] = useState(DEFAULT_ROUTE_PAGE_SIZE);
   const [expandedSourceGroupMap, setExpandedSourceGroupMap] = useState<Record<string, boolean>>({});
   const [expandedRouteIds, setExpandedRouteIds] = useState<number[]>([]);
   const [closingDesktopDetailRouteIds, setClosingDesktopDetailRouteIds] = useState<number[]>([]);
-  const [addChannelModalRouteId, setAddChannelModalRouteId] = useState<number | null>(null);
-  const [channelDeleteConfirmation, setChannelDeleteConfirmation] = useState<ChannelDeleteConfirmation | null>(null);
+  const [addRouteTargetModalRouteId, setAddRouteTargetModalRouteId] = useState<number | null>(null);
+  const [targetDeleteConfirmation, setTargetDeleteConfirmation] = useState<TargetDeleteConfirmation | null>(null);
   const [siteBlockConfirmation, setSiteBlockConfirmation] = useState<SiteBlockConfirmation | null>(null);
   const isMobile = useIsMobile();
   const desktopDetailCloseTimersRef = useRef<Record<number, ReturnType<typeof globalThis.setTimeout>>>({});
   const routeGraphImportInputRef = useRef<HTMLInputElement>(null);
 
   const {
-    channelsByRouteId,
-    loadingChannelsByRouteId,
-    loadChannels,
-    invalidateChannels,
-    setChannels,
-  } = useRouteChannels();
+    targetsByRouteId,
+    loadingTargetsByRouteId,
+    loadTargets,
+    invalidateTargets,
+    setTargets,
+  } = useRouteTargets();
 
   const toast = useToast();
 
-  const confirmDeleteChannel = useCallback((channelId: number, routeId: number) => new Promise<{ confirmed: boolean; dontAskAgain: boolean }>((resolve) => {
-    setChannelDeleteConfirmation({
-      channelId,
+  const confirmDeleteTarget = useCallback((targetId: number, routeId: number) => new Promise<{ confirmed: boolean; dontAskAgain: boolean }>((resolve) => {
+    setTargetDeleteConfirmation({
+      targetId,
       routeId,
       dontAskAgain: false,
       resolve: (confirmed, dontAskAgain) => resolve({ confirmed, dontAskAgain }),
     });
   }), []);
 
-  const closeDeleteChannelConfirmation = useCallback((confirmed: boolean) => {
-    setChannelDeleteConfirmation((current) => {
+  const closeDeleteTargetConfirmation = useCallback((confirmed: boolean) => {
+    setTargetDeleteConfirmation((current) => {
       current?.resolve(confirmed, current.dontAskAgain);
       return null;
     });
@@ -613,18 +624,18 @@ export default function TokenRoutes() {
       const res = await api.rebuildRoutes(true);
       if (res?.queued) {
         toast.info(res.message || tr('pages.tokenRoutes.routeReconstructionHasStartedPleaseCheckLog'));
-        invalidateChannels();
+        invalidateTargets();
         await load();
         return;
       }
       const createdRoutes = res?.rebuild?.createdRoutes ?? 0;
-      const createdChannels = res?.rebuild?.createdChannels ?? 0;
+      const createdTargets = res?.rebuild?.createdTargets ?? 0;
       toast.success(
         tr('pages.tokenRoutes.rebuildComplete')
           .replace('{routes}', String(createdRoutes))
-          .replace('{channels}', String(createdChannels)),
+          .replace('{targets}', String(createdTargets)),
       );
-      invalidateChannels();
+      invalidateTargets();
       await load();
     } catch (e: any) {
       toast.error(e.message || tr('pages.tokenRoutes.failedRebuildRoute'));
@@ -657,14 +668,14 @@ export default function TokenRoutes() {
     [routeSummaries],
   );
 
-  const zeroChannelPlaceholderRoutes = useMemo(
-    () => buildZeroChannelPlaceholderRoutes(routeSummaries, missingTokenModelsByName, missingTokenGroupModelsByName),
+  const zeroTargetPlaceholderRoutes = useMemo(
+    () => buildZeroTargetPlaceholderRoutes(routeSummaries, missingTokenModelsByName, missingTokenGroupModelsByName),
     [routeSummaries, missingTokenModelsByName, missingTokenGroupModelsByName],
   );
 
   const visibleRouteRows = useMemo(
-    () => (showZeroChannelRoutes ? [...routeSummaries, ...zeroChannelPlaceholderRoutes] : routeSummaries),
-    [routeSummaries, showZeroChannelRoutes, zeroChannelPlaceholderRoutes],
+    () => (showZeroTargetRoutes ? [...routeSummaries, ...zeroTargetPlaceholderRoutes] : routeSummaries),
+    [routeSummaries, showZeroTargetRoutes, zeroTargetPlaceholderRoutes],
   );
 
   const canSaveRoute = useMemo(() => {
@@ -779,9 +790,9 @@ export default function TokenRoutes() {
       });
       if (editingRouteId) {
         const currentRoute = routeSummaries.find((route) => route.id === editingRouteId) || null;
-        const modelPatternChanged = form.backend.kind === 'channels' && !!currentRoute && getRouteRequestedModelPattern(currentRoute) !== trimmedModelPattern;
+        const modelPatternChanged = form.backend.kind === 'supply' && !!currentRoute && getRouteRequestedModelPattern(currentRoute) !== trimmedModelPattern;
         await api.updateRoute(editingRouteId, payload);
-        toast.success(form.backend.kind === 'channels' && modelPatternChanged ? tr('pages.tokenRoutes.groupsMatchchannels') : tr('pages.tokenRoutes.groups'));
+        toast.success(form.backend.kind === 'supply' && modelPatternChanged ? tr('pages.tokenRoutes.groupsMatchtargets') : tr('pages.tokenRoutes.groups'));
       } else {
         await api.addRoute(payload);
         toast.success(tr('pages.tokenRoutes.groupCreated'));
@@ -807,7 +818,7 @@ export default function TokenRoutes() {
       },
       backend: isRouteBackendReferences(route.backend)
         ? { kind: 'routes', routeIds: getRouteBackendRouteIds(route.backend) }
-        : { kind: 'channels' },
+        : { kind: 'supply' },
       presentation: {
         displayName: getRouteDisplayName(route) || '',
         displayIcon: normalizeRouteDisplayIconValue(getRouteDisplayIcon(route)),
@@ -1118,12 +1129,12 @@ export default function TokenRoutes() {
         icon: resolveRouteIcon(route),
         brand: routeBrandById.get(route.id) || null,
         modelPattern: getRouteRequestedModelPattern(route),
-        channelCount: route.channelCount,
+        targetCount: route.targetCount,
         sourceRouteCount: getRouteBackendRouteIds(route.backend).length,
       }))
       .sort((a, b) => {
-        if (a.channelCount === b.channelCount) return a.title.localeCompare(b.title, undefined, { sensitivity: 'base' });
-        return b.channelCount - a.channelCount;
+        if (a.targetCount === b.targetCount) return a.title.localeCompare(b.title, undefined, { sensitivity: 'base' });
+        return b.targetCount - a.targetCount;
       })
   ), [listVisibleRoutes, routeBrandById]);
 
@@ -1134,8 +1145,8 @@ export default function TokenRoutes() {
 
   const sortedRoutes = useMemo(() => (
     [...listVisibleRoutes].sort((a, b) => {
-      if (sortBy === 'channelCount') {
-        const countCmp = a.channelCount - b.channelCount;
+      if (sortBy === 'targetCount') {
+        const countCmp = a.targetCount - b.targetCount;
         if (countCmp !== 0) return sortDir === 'asc' ? countCmp : -countCmp;
       }
 
@@ -1209,7 +1220,7 @@ export default function TokenRoutes() {
     let enabled = 0;
     let disabled = 0;
     for (const route of baseFilteredRoutes) {
-      if (route.kind === 'zero_channel' || route.readOnly === true || route.isVirtual === true) continue;
+      if (route.kind === 'zero_target' || route.readOnly === true || route.isVirtual === true) continue;
       if (route.enabled) enabled++;
       else disabled++;
     }
@@ -1219,7 +1230,7 @@ export default function TokenRoutes() {
   const filteredRoutes = useMemo(() => {
     if (enabledFilter === 'all') return baseFilteredRoutes;
     return baseFilteredRoutes.filter((route) => {
-      if (route.kind === 'zero_channel' || route.readOnly === true || route.isVirtual === true) return false;
+      if (route.kind === 'zero_target' || route.readOnly === true || route.isVirtual === true) return false;
       return enabledFilter === 'enabled' ? route.enabled : !route.enabled;
     });
   }, [baseFilteredRoutes, enabledFilter]);
@@ -1227,7 +1238,7 @@ export default function TokenRoutes() {
   const selectableRouteIds = useMemo(() => {
     return new Set(
       filteredRoutes
-        .filter((route) => route.kind !== 'zero_channel' && route.readOnly !== true && route.isVirtual !== true)
+        .filter((route) => route.kind !== 'zero_target' && route.readOnly !== true && route.isVirtual !== true)
         .map((route) => route.id),
     );
   }, [filteredRoutes]);
@@ -1299,31 +1310,27 @@ export default function TokenRoutes() {
   };
 
   useEffect(() => {
-    setVisibleRouteCount(getInitialVisibleCount(filteredRoutes.length, ROUTE_RENDER_CHUNK));
-  }, [filteredRoutes.length]);
+    setRoutePage(1);
+  }, [routeGroupListTab, search, activeBrand, activeSite, activeEndpointType, activeGroupFilter, enabledFilter, sortBy, sortDir, showZeroTargetRoutes, routePageSize]);
 
-  const handleLoadMoreRoutes = useCallback(() => {
-    setVisibleRouteCount((current) => getNextVisibleCount(current, filteredRoutes.length, ROUTE_RENDER_CHUNK));
-  }, [filteredRoutes.length]);
-
-  const loadMoreSentinelRef = useRef<HTMLDivElement>(null);
-
-  const shouldShowLoadMore = filteredRoutes.length > 0 && visibleRouteCount < filteredRoutes.length;
+  const routePageWindow = useMemo(() => getRouteListPageWindow({
+    page: routePage,
+    total: filteredRoutes.length,
+    pageSize: routePageSize,
+  }), [filteredRoutes.length, routePage, routePageSize]);
 
   useEffect(() => {
-    const el = loadMoreSentinelRef.current;
-    if (!el) return;
-    const observer = new IntersectionObserver(
-      (entries) => { if (entries[0]?.isIntersecting) handleLoadMoreRoutes(); },
-      { rootMargin: '200px' },
-    );
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [handleLoadMoreRoutes, shouldShowLoadMore]);
+    setRoutePage((current) => routePageWindow.safePage === current ? current : routePageWindow.safePage);
+  }, [routePageWindow.safePage]);
+
+  const routePageNumbers = useMemo(
+    () => getRouteListPageNumbers(routePageWindow.safePage, routePageWindow.totalPages),
+    [routePageWindow.safePage, routePageWindow.totalPages],
+  );
 
   const visibleRoutes = useMemo(
-    () => filteredRoutes.slice(0, visibleRouteCount),
-    [filteredRoutes, visibleRouteCount],
+    () => filteredRoutes.slice(routePageWindow.startIndex, routePageWindow.endIndex),
+    [filteredRoutes, routePageWindow.endIndex, routePageWindow.startIndex],
   );
 
   const activeRoute = useMemo(() => (
@@ -1336,10 +1343,10 @@ export default function TokenRoutes() {
       if (activeRouteId !== null) setActiveRouteId(null);
       return;
     }
-    if (activeRouteId == null || !filteredRoutes.some((route) => route.id === activeRouteId)) {
-      setActiveRouteId(filteredRoutes[0]!.id);
+    if (activeRouteId == null || !visibleRoutes.some((route) => route.id === activeRouteId)) {
+      setActiveRouteId(visibleRoutes[0]?.id ?? filteredRoutes[0]!.id);
     }
-  }, [activeRouteId, filteredRoutes, isMobile]);
+  }, [activeRouteId, filteredRoutes, isMobile, visibleRoutes]);
 
   // Lazy per-route candidate index — only computes for routes actually accessed
   const candidateIndexCacheRef = useRef<{ key: string; cache: Map<number, RouteCandidateView> }>({ key: '', cache: new Map() });
@@ -1435,42 +1442,42 @@ export default function TokenRoutes() {
     navigate(`/tokens?${params.toString()}`);
   };
 
-  const handleDeleteChannel = async (channelId: number, routeId: number) => {
-    const dismissedKey = 'metapi:channel-delete-warning-dismissed';
+  const handleDeleteTarget = async (targetId: number, routeId: number) => {
+    const dismissedKey = 'metapi:target-delete-warning-dismissed';
     const dismissed = localStorage.getItem(dismissedKey) === 'true';
     if (!dismissed) {
-      const { confirmed, dontAskAgain } = await confirmDeleteChannel(channelId, routeId);
+      const { confirmed, dontAskAgain } = await confirmDeleteTarget(targetId, routeId);
       if (!confirmed) return;
       if (dontAskAgain) localStorage.setItem(dismissedKey, 'true');
     }
     try {
-      await api.deleteChannel(channelId);
-      toast.success(tr('pages.tokenRoutes.channelRemoved'));
-      await loadChannels(routeId, true);
+      await api.deleteRouteTarget(targetId);
+      toast.success(tr('pages.tokenRoutes.targetRemoved'));
+      await loadTargets(routeId, true);
       setRouteSummaries((prev) =>
-        prev.map((r) => r.id === routeId ? { ...r, channelCount: Math.max(0, r.channelCount - 1) } : r),
+        prev.map((r) => r.id === routeId ? { ...r, targetCount: Math.max(0, r.targetCount - 1) } : r),
       );
     } catch (e: any) {
-      toast.error(e.message || tr('pages.tokenRoutes.failedRemoveChannel'));
+      toast.error(e.message || tr('pages.tokenRoutes.failedRemoveTarget'));
     }
   };
 
-  const handleToggleChannelEnabled = async (channelId: number, routeId: number, enabled: boolean) => {
-    if (updatingChannel[channelId]) return;
-    setUpdatingChannel((prev) => ({ ...prev, [channelId]: true }));
+  const handleToggleTargetEnabled = async (targetId: number, routeId: number, enabled: boolean) => {
+    if (updatingTarget[targetId]) return;
+    setUpdatingTarget((prev) => ({ ...prev, [targetId]: true }));
     try {
-      await api.updateChannel(channelId, { enabled });
-      toast.success(enabled ? tr('pages.tokenRoutes.channelsenabled') : tr('pages.tokenRoutes.channelsdisabled'));
-      await loadChannels(routeId, true);
+      await api.updateRouteTarget(targetId, { enabled });
+      toast.success(enabled ? tr('pages.tokenRoutes.targetsenabled') : tr('pages.tokenRoutes.targetsdisabled'));
+      await loadTargets(routeId, true);
     } catch (e: any) {
-      toast.error(e.message || tr('pages.tokenRoutes.channelsstatusfailed'));
+      toast.error(e.message || tr('pages.tokenRoutes.targetsstatusfailed'));
     } finally {
-      setUpdatingChannel((prev) => ({ ...prev, [channelId]: false }));
+      setUpdatingTarget((prev) => ({ ...prev, [targetId]: false }));
     }
   };
 
-  const handleChannelTokenSave = async (routeId: number, channelId: number, accountId: number) => {
-    const tokenId = channelTokenDraft[channelId];
+  const handleTargetTokenSave = async (routeId: number, targetId: number, accountId: number) => {
+    const tokenId = targetTokenDraft[targetId];
     const tokenOptions = getRouteCandidateView(routeId).tokenOptionsByAccountId[accountId] || [];
 
     if (tokenId && tokenOptions.length > 0 && !tokenOptions.some((token) => token.id === tokenId)) {
@@ -1478,19 +1485,19 @@ export default function TokenRoutes() {
       return;
     }
 
-    setUpdatingChannel((prev) => ({ ...prev, [channelId]: true }));
+    setUpdatingTarget((prev) => ({ ...prev, [targetId]: true }));
     try {
-      await api.updateChannel(channelId, { tokenId: tokenId || null });
-      toast.success(tr('pages.tokenRoutes.channelTokenUpdated'));
-      await loadChannels(routeId, true);
+      await api.updateRouteTarget(targetId, { tokenId: tokenId || null });
+      toast.success(tr('pages.tokenRoutes.targetTokenUpdated'));
+      await loadTargets(routeId, true);
     } catch (e: any) {
       toast.error(e.message || tr('pages.tokenRoutes.updateTokenFailed'));
     } finally {
-      setUpdatingChannel((prev) => ({ ...prev, [channelId]: false }));
+      setUpdatingTarget((prev) => ({ ...prev, [targetId]: false }));
     }
   };
 
-  const handleChannelDragEnd = async (routeId: number, event: DragEndEvent) => {
+  const handleTargetDragEnd = async (routeId: number, event: DragEndEvent) => {
     if (savingPriorityByRoute[routeId]) return;
 
     const { active, over } = event;
@@ -1499,30 +1506,30 @@ export default function TokenRoutes() {
     const route = routeSummaries.find((item) => item.id === routeId);
     if (!route) return;
 
-    const channels = channelsByRouteId[routeId] || [];
-    const activeChannel = channels.find((channel) => channel.id === Number(active.id));
-    if (!activeChannel) return;
+    const targets = targetsByRouteId[routeId] || [];
+    const activeTarget = targets.find((target) => target.id === Number(active.id));
+    if (!activeTarget) return;
 
     const overIsNewLayer = isPriorityRailNewLayerId(over.id);
-    const targetChannel = overIsNewLayer
+    const overTarget = overIsNewLayer
       ? null
-      : channels.find((channel) => channel.id === Number(over.id));
+      : targets.find((target) => target.id === Number(over.id));
 
-    if (!overIsNewLayer && !targetChannel) return;
-    if (!overIsNewLayer && (targetChannel?.priority ?? 0) === (activeChannel.priority ?? 0)) return;
+    if (!overIsNewLayer && !overTarget) return;
+    if (!overIsNewLayer && (overTarget?.priority ?? 0) === (activeTarget.priority ?? 0)) return;
 
-    const reordered = applyPriorityRailDrop(channels, Number(active.id), over.id);
-    const changedChannels = reordered.filter((channel) => {
-      const previous = channels.find((item) => item.id === channel.id);
-      return (previous?.priority ?? 0) !== channel.priority;
+    const reordered = applyPriorityRailDrop(targets, Number(active.id), over.id);
+    const changedTargets = reordered.filter((target) => {
+      const previous = targets.find((item) => item.id === target.id);
+      return (previous?.priority ?? 0) !== target.priority;
     });
 
-    if (changedChannels.length === 0) return;
+    if (changedTargets.length === 0) return;
 
     if (isExplicitGroupRoute(route)) {
       const changedSourceRouteIds = Array.from(new Set(
-        changedChannels
-          .map((channel) => channel.routeId)
+        changedTargets
+          .map((target) => target.routeId)
           .filter((value): value is number => typeof value === 'number' && Number.isFinite(value) && value > 0),
       ));
       if (changedSourceRouteIds.length > 0) {
@@ -1541,16 +1548,16 @@ export default function TokenRoutes() {
       }
     }
 
-    const previousChannels = channels.map((channel) => ({ ...channel }));
+    const previousTargets = targets.map((target) => ({ ...target }));
 
-    setChannels(routeId, reordered);
+    setTargets(routeId, reordered);
     setSavingPriorityByRoute((prev) => ({ ...prev, [routeId]: true }));
 
     try {
-      await api.batchUpdateChannels(
-        reordered.map((channel) => ({
-          id: channel.id,
-          priority: channel.priority,
+      await api.batchUpdateRouteTargets(
+        reordered.map((target) => ({
+          id: target.id,
+          priority: target.priority,
         })),
       );
 
@@ -1566,33 +1573,33 @@ export default function TokenRoutes() {
         }
       }
     } catch (e: any) {
-      setChannels(routeId, previousChannels);
-      toast.error(e.message || tr('pages.tokenRoutes.failedSaveChannelPriorityRolledBack'));
+      setTargets(routeId, previousTargets);
+      toast.error(e.message || tr('pages.tokenRoutes.failedSaveTargetPriorityRolledBack'));
     } finally {
       setSavingPriorityByRoute((prev) => ({ ...prev, [routeId]: false }));
     }
   };
 
-  const handleSiteBlockModel = async (channelId: number, routeId: number) => {
-    const channels = channelsByRouteId[routeId] || [];
-    const channel = channels.find((c) => c.id === channelId);
-    if (!channel?.site?.id) {
-      toast.error(tr('pages.tokenRoutes.channelsSitesinfo'));
+  const handleSiteBlockModel = async (targetId: number, routeId: number) => {
+    const targets = targetsByRouteId[routeId] || [];
+    const target = targets.find((c) => c.id === targetId);
+    if (!target?.site?.id) {
+      toast.error(tr('pages.tokenRoutes.targetsSitesinfo'));
       return;
     }
     const route = routeSummaries.find((r) => r.id === routeId);
     const routePattern = route ? getRouteRequestedModelPattern(route) : '';
-    const modelName = channel.sourceModel || (route && isExactModelPattern(routePattern) ? routePattern : '') || '';
+    const modelName = target.sourceModel || (route && isExactModelPattern(routePattern) ? routePattern : '') || '';
     if (!modelName) {
-      toast.error(tr('pages.tokenRoutes.channelsModelNoneUsagesitesRoutesSiteseditzhmanualdisabled'));
+      toast.error(tr('pages.tokenRoutes.targetsModelNoneUsagesitesRoutesSiteseditzhmanualdisabled'));
       return;
     }
-    const siteName = channel.site.name || tr('pages.proxyLogs.unknownSite');
-    const confirmed = await confirmSiteBlock({ channelId, routeId, modelName, siteName });
+    const siteName = target.site.name || tr('pages.proxyLogs.unknownSite');
+    const confirmed = await confirmSiteBlock({ targetId, routeId, modelName, siteName });
     if (!confirmed) return;
 
     try {
-      const siteId = channel.site.id;
+      const siteId = target.site.id;
       const existing = await api.getSiteDisabledModels(siteId);
       const currentModels: string[] = existing?.models || [];
       if (currentModels.includes(modelName)) {
@@ -1610,7 +1617,7 @@ export default function TokenRoutes() {
           .replace('{site}', siteName),
       );
       await api.rebuildRoutes(false);
-      invalidateChannels();
+      invalidateTargets();
       await load();
     } catch (e: any) {
       toast.error(e.message || tr('pages.tokenRoutes.sitesModelfailed'));
@@ -1625,7 +1632,7 @@ export default function TokenRoutes() {
       toast.success(tr('pages.tokenRoutes.routescooldownClear'));
 
       try {
-        await loadChannels(routeId, true);
+        await loadTargets(routeId, true);
         const route = routeSummaries.find((item) => item.id === routeId);
         if (route) {
           if (isRouteExactModel(route)) {
@@ -1657,12 +1664,12 @@ export default function TokenRoutes() {
       setActiveRouteId((current) => (current === routeId ? current : routeId));
       loadCandidates();
       const route = routeById.get(routeId) || null;
-      const isReadOnlyRoute = route?.kind === 'zero_channel' || route?.readOnly === true || route?.isVirtual === true;
-      if (!channelsByRouteId[routeId] && !isReadOnlyRoute) {
+      const isReadOnlyRoute = route?.kind === 'zero_target' || route?.readOnly === true || route?.isVirtual === true;
+      if (!targetsByRouteId[routeId] && !isReadOnlyRoute) {
         try {
-          await loadChannels(routeId);
+          await loadTargets(routeId);
         } catch {
-          toast.error(tr('pages.tokenRoutes.channelsfailed'));
+          toast.error(tr('pages.tokenRoutes.targetsfailed'));
         }
       }
       return;
@@ -1696,14 +1703,14 @@ export default function TokenRoutes() {
       setClosingDesktopDetailRouteIds((prev) => prev.filter((id) => id !== routeId));
       loadCandidates();
       setExpandedRouteIds((prev) => [...prev, routeId]);
-      // Load channels on demand
+      // Load targets on demand
       const route = routeById.get(routeId) || null;
-      const isReadOnlyRoute = route?.kind === 'zero_channel' || route?.readOnly === true || route?.isVirtual === true;
-      if (!channelsByRouteId[routeId] && !isReadOnlyRoute) {
+      const isReadOnlyRoute = route?.kind === 'zero_target' || route?.readOnly === true || route?.isVirtual === true;
+      if (!targetsByRouteId[routeId] && !isReadOnlyRoute) {
         try {
-          await loadChannels(routeId);
+          await loadTargets(routeId);
         } catch {
-          toast.error(tr('pages.tokenRoutes.channelsfailed'));
+          toast.error(tr('pages.tokenRoutes.targetsfailed'));
         }
       }
     }
@@ -1719,13 +1726,13 @@ export default function TokenRoutes() {
   useEffect(() => {
     if (isMobile || activeRouteId == null) return;
     const route = routeById.get(activeRouteId) || null;
-    const isReadOnlyRoute = route?.kind === 'zero_channel' || route?.readOnly === true || route?.isVirtual === true;
+    const isReadOnlyRoute = route?.kind === 'zero_target' || route?.readOnly === true || route?.isVirtual === true;
     loadCandidates();
-    if (!route || isReadOnlyRoute || channelsByRouteId[activeRouteId] || loadingChannelsByRouteId[activeRouteId]) return;
-    void loadChannels(activeRouteId).catch(() => {
-      toast.error(tr('pages.tokenRoutes.channelsfailed'));
+    if (!route || isReadOnlyRoute || targetsByRouteId[activeRouteId] || loadingTargetsByRouteId[activeRouteId]) return;
+    void loadTargets(activeRouteId).catch(() => {
+      toast.error(tr('pages.tokenRoutes.targetsfailed'));
     });
-  }, [activeRouteId, channelsByRouteId, isMobile, loadChannels, loadingChannelsByRouteId, routeById, toast]);
+  }, [activeRouteId, targetsByRouteId, isMobile, loadTargets, loadingTargetsByRouteId, routeById, toast]);
 
   const getMissingTokenSiteItems = (routeId: number): MissingTokenRouteSiteActionItem[] => {
     const cached = missingTokenSiteItemsCacheRef.current.cache.get(routeId);
@@ -1834,39 +1841,39 @@ export default function TokenRoutes() {
     [],
   );
   const stableTokenDraftChange = useCallback(
-    (channelId: number, tokenId: number) => setChannelTokenDraft((prev) => ({ ...prev, [channelId]: tokenId })),
+    (targetId: number, tokenId: number) => setTargetTokenDraft((prev) => ({ ...prev, [targetId]: tokenId })),
     [],
   );
-  const stableAddChannel = useCallback((routeId: number) => {
+  const stableAddTarget = useCallback((routeId: number) => {
     loadCandidates();
-    setAddChannelModalRouteId(routeId);
+    setAddRouteTargetModalRouteId(routeId);
   }, []);
   const stableToggleSourceGroup = useCallback(
     (groupKey: string) => setExpandedSourceGroupMap((prev) => ({ ...prev, [groupKey]: !prev[groupKey] })),
     [],
   );
-  const handleChannelTokenSaveRef = useRef(handleChannelTokenSave);
-  handleChannelTokenSaveRef.current = handleChannelTokenSave;
-  const stableChannelTokenSave = useCallback(
-    (routeId: number, channelId: number, accountId: number) => handleChannelTokenSaveRef.current(routeId, channelId, accountId),
+  const handleTargetTokenSaveRef = useRef(handleTargetTokenSave);
+  handleTargetTokenSaveRef.current = handleTargetTokenSave;
+  const stableTargetTokenSave = useCallback(
+    (routeId: number, targetId: number, accountId: number) => handleTargetTokenSaveRef.current(routeId, targetId, accountId),
     [],
   );
-  const handleDeleteChannelRef = useRef(handleDeleteChannel);
-  handleDeleteChannelRef.current = handleDeleteChannel;
-  const stableDeleteChannel = useCallback(
-    (channelId: number, routeId: number) => handleDeleteChannelRef.current(channelId, routeId),
+  const handleDeleteTargetRef = useRef(handleDeleteTarget);
+  handleDeleteTargetRef.current = handleDeleteTarget;
+  const stableDeleteTarget = useCallback(
+    (targetId: number, routeId: number) => handleDeleteTargetRef.current(targetId, routeId),
     [],
   );
-  const handleToggleChannelEnabledRef = useRef(handleToggleChannelEnabled);
-  handleToggleChannelEnabledRef.current = handleToggleChannelEnabled;
-  const stableToggleChannelEnabled = useCallback(
-    (channelId: number, routeId: number, enabled: boolean) => handleToggleChannelEnabledRef.current(channelId, routeId, enabled),
+  const handleToggleTargetEnabledRef = useRef(handleToggleTargetEnabled);
+  handleToggleTargetEnabledRef.current = handleToggleTargetEnabled;
+  const stableToggleTargetEnabled = useCallback(
+    (targetId: number, routeId: number, enabled: boolean) => handleToggleTargetEnabledRef.current(targetId, routeId, enabled),
     [],
   );
-  const handleChannelDragEndRef = useRef(handleChannelDragEnd);
-  handleChannelDragEndRef.current = handleChannelDragEnd;
-  const stableChannelDragEnd = useCallback(
-    (routeId: number, event: DragEndEvent) => handleChannelDragEndRef.current(routeId, event),
+  const handleTargetDragEndRef = useRef(handleTargetDragEnd);
+  handleTargetDragEndRef.current = handleTargetDragEnd;
+  const stableTargetDragEnd = useCallback(
+    (routeId: number, event: DragEndEvent) => handleTargetDragEndRef.current(routeId, event),
     [],
   );
   const handleCreateTokenRef = useRef(handleCreateTokenForMissingAccount);
@@ -1878,7 +1885,7 @@ export default function TokenRoutes() {
   const handleSiteBlockModelRef = useRef(handleSiteBlockModel);
   handleSiteBlockModelRef.current = handleSiteBlockModel;
   const stableSiteBlockModel = useCallback(
-    (channelId: number, routeId: number) => handleSiteBlockModelRef.current(channelId, routeId),
+    (targetId: number, routeId: number) => handleSiteBlockModelRef.current(targetId, routeId),
     [],
   );
   const handleClearRouteCooldownRef = useRef(handleClearRouteCooldown);
@@ -1888,8 +1895,8 @@ export default function TokenRoutes() {
     [],
   );
 
-  const addChannelModalRoute = addChannelModalRouteId
-    ? routeSummaries.find((r) => r.id === addChannelModalRouteId) || null
+  const addRouteTargetModalRoute = addRouteTargetModalRouteId
+    ? routeSummaries.find((r) => r.id === addRouteTargetModalRouteId) || null
     : null;
 
   const activeRouteNode = activeRoute ? buildRouteGraphNodeFromRoute(activeRoute) : null;
@@ -1946,11 +1953,11 @@ export default function TokenRoutes() {
     setRouteEditorMode('graph');
   }, [focusRouteGraphMacro]);
 
-  const handleAddChannelSuccess = async () => {
-    if (!addChannelModalRouteId) return;
-    // Reload channels for this route
-    await loadChannels(addChannelModalRouteId, true);
-    // Refresh summary to update channel count
+  const handleAddTargetSuccess = async () => {
+    if (!addRouteTargetModalRouteId) return;
+    // Reload targets for this route
+    await loadTargets(addRouteTargetModalRouteId, true);
+    // Refresh summary to update target count
     await load();
   };
 
@@ -2120,7 +2127,7 @@ export default function TokenRoutes() {
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="modelPattern">{tr('pages.tokenRoutes.modelName')}</SelectItem>
-                          <SelectItem value="channelCount">{tr('pages.tokenRoutes.channelCount')}</SelectItem>
+                          <SelectItem value="targetCount">{tr('pages.tokenRoutes.targetCount')}</SelectItem>
                         </SelectContent>
                       </Select>
                       <Button type="button" variant="outline" onClick={() => setSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'))}>
@@ -2131,12 +2138,12 @@ export default function TokenRoutes() {
                         <ListChecks className="size-4" />
                         {batchSelectMode ? tr('pages.tokenRoutes.exitBatchMode') : tr('pages.tokenRoutes.actions')}
                       </Button>
-                      <Button type="button" variant={showZeroChannelRoutes ? 'secondary' : 'outline'} aria-pressed={showZeroChannelRoutes} onClick={() => {
-                        if (!showZeroChannelRoutes) loadCandidates();
-                        setShowZeroChannelRoutes((prev) => !prev);
+                      <Button type="button" variant={showZeroTargetRoutes ? 'secondary' : 'outline'} aria-pressed={showZeroTargetRoutes} onClick={() => {
+                        if (!showZeroTargetRoutes) loadCandidates();
+                        setShowZeroTargetRoutes((prev) => !prev);
                       }}>
                         <Network className="size-4" />
-                        {showZeroChannelRoutes ? tr('pages.tokenRoutes.0Channelsroutes2') : tr('pages.tokenRoutes.0Channelsroutes')}
+                        {showZeroTargetRoutes ? tr('pages.tokenRoutes.0Targetsroutes2') : tr('pages.tokenRoutes.0Targetsroutes')}
                       </Button>
                       <Input
                         ref={routeGraphImportInputRef}
@@ -2316,10 +2323,10 @@ export default function TokenRoutes() {
         {visibleRoutes.map((route) => {
           const isExpanded = expandedRouteIds.includes(route.id);
           const isDesktopDetailClosing = closingDesktopDetailRouteIds.includes(route.id);
-          const isReadOnlyRoute = route.kind === 'zero_channel' || route.readOnly === true || route.isVirtual === true;
+          const isReadOnlyRoute = route.kind === 'zero_target' || route.readOnly === true || route.isVirtual === true;
           const exactRoute = isRouteExactModel(route);
           const explicitGroupRoute = isExplicitGroupRoute(route);
-          const channelManagementDisabled = explicitGroupRoute;
+          const targetManagementDisabled = explicitGroupRoute;
           const routeTitle = resolveRouteTitle(route);
 
           const isSelectable = selectableRouteIds.has(route.id);
@@ -2378,21 +2385,21 @@ export default function TokenRoutes() {
                           {route.enabled ? tr('pages.downstreamKeys.disabled') : tr('pages.downstreamKeys.enabled')}
                         </Button>
                       )}
-                      {!isReadOnlyRoute && !channelManagementDisabled && (
+                      {!isReadOnlyRoute && !targetManagementDisabled && (
                         <Button
                           type="button"
                           variant="ghost"
                           size="sm"
-                          onClick={() => stableAddChannel(route.id)}
+                          onClick={() => stableAddTarget(route.id)}
                         >
-                          {tr('pages.tokenRoutes.addchannels')}
+                          {tr('pages.tokenRoutes.addtargets')}
                         </Button>
                       )}
                     </ButtonGroup>
                   )}
                 >
                   <MobileField label={tr('components.modelAnalysisPanel.model')} value={getRouteRequestedModelPattern(route) || resolveRouteTitle(route)} stacked />
-                  <MobileField label={tr('pages.tokenRoutes.channels')} value={route.channelCount} />
+                  <MobileField label={tr('pages.tokenRoutes.targets')} value={route.targetCount} />
                   <MobileField label={tr('pages.oAuthManagement.strategy')} value={isReadOnlyRoute ? tr('pages.tokenRoutes.notGenerated') : getRouteRoutingStrategyLabel(route.routingStrategy)} />
                   <MobileField label={tr('components.notificationPanel.status')} value={isReadOnlyRoute ? tr('pages.tokenRoutes.notGenerated') : (route.enabled ? tr('pages.downstreamKeys.enabled') : tr('pages.downstreamKeys.disabled'))} />
                   {explicitGroupRoute && (
@@ -2416,23 +2423,23 @@ export default function TokenRoutes() {
                     clearingCooldown={!!clearingCooldownByRoute[route.id]}
                     onRoutingStrategyChange={stableRoutingStrategyChange}
                     updatingRoutingStrategy={!!updatingRoutingStrategyByRoute[route.id]}
-                    channels={channelsByRouteId[route.id]}
-                    loadingChannels={!!loadingChannelsByRouteId[route.id]}
+                    targets={targetsByRouteId[route.id]}
+                    loadingTargets={!!loadingTargetsByRouteId[route.id]}
                     routeDecision={decisionByRoute[route.id] || null}
                     loadingDecision={loadingDecision}
                     candidateView={getRouteCandidateView(route.id)}
-                    channelTokenDraft={channelTokenDraft}
-                    updatingChannel={updatingChannel}
+                    targetTokenDraft={targetTokenDraft}
+                    updatingTarget={updatingTarget}
                     savingPriority={!!savingPriorityByRoute[route.id]}
                     onTokenDraftChange={stableTokenDraftChange}
-                    onSaveToken={stableChannelTokenSave}
-                    onDeleteChannel={stableDeleteChannel}
-                    onToggleChannelEnabled={stableToggleChannelEnabled}
-                    onChannelDragEnd={stableChannelDragEnd}
+                    onSaveToken={stableTargetTokenSave}
+                    onDeleteTarget={stableDeleteTarget}
+                    onToggleTargetEnabled={stableToggleTargetEnabled}
+                    onTargetDragEnd={stableTargetDragEnd}
                     missingTokenSiteItems={getMissingTokenSiteItems(route.id)}
                     missingTokenGroupItems={getMissingTokenGroupItems(route.id)}
                     onCreateTokenForMissing={stableCreateTokenForMissing}
-                    onAddChannel={stableAddChannel}
+                    onAddTarget={stableAddTarget}
                     onSiteBlockModel={stableSiteBlockModel}
                     expandedSourceGroupMap={expandedSourceGroupMap}
                     onToggleSourceGroup={stableToggleSourceGroup}
@@ -2456,23 +2463,23 @@ export default function TokenRoutes() {
               clearingCooldown={!!clearingCooldownByRoute[route.id]}
               onRoutingStrategyChange={stableRoutingStrategyChange}
               updatingRoutingStrategy={!!updatingRoutingStrategyByRoute[route.id]}
-              channels={channelsByRouteId[route.id]}
-              loadingChannels={!!loadingChannelsByRouteId[route.id]}
+              targets={targetsByRouteId[route.id]}
+              loadingTargets={!!loadingTargetsByRouteId[route.id]}
               routeDecision={decisionByRoute[route.id] || null}
               loadingDecision={loadingDecision}
               candidateView={EMPTY_ROUTE_CANDIDATE_VIEW}
-              channelTokenDraft={channelTokenDraft}
-              updatingChannel={updatingChannel}
+              targetTokenDraft={targetTokenDraft}
+              updatingTarget={updatingTarget}
               savingPriority={!!savingPriorityByRoute[route.id]}
               onTokenDraftChange={stableTokenDraftChange}
-              onSaveToken={stableChannelTokenSave}
-              onDeleteChannel={stableDeleteChannel}
-              onToggleChannelEnabled={stableToggleChannelEnabled}
-              onChannelDragEnd={stableChannelDragEnd}
+              onSaveToken={stableTargetTokenSave}
+              onDeleteTarget={stableDeleteTarget}
+              onToggleTargetEnabled={stableToggleTargetEnabled}
+              onTargetDragEnd={stableTargetDragEnd}
               missingTokenSiteItems={EMPTY_MISSING_ITEMS}
               missingTokenGroupItems={EMPTY_MISSING_GROUP_ITEMS}
               onCreateTokenForMissing={stableCreateTokenForMissing}
-              onAddChannel={stableAddChannel}
+              onAddTarget={stableAddTarget}
               onSiteBlockModel={stableSiteBlockModel}
               expandedSourceGroupMap={expandedSourceGroupMap}
               onToggleSourceGroup={stableToggleSourceGroup}
@@ -2597,23 +2604,23 @@ export default function TokenRoutes() {
                       clearingCooldown={!!clearingCooldownByRoute[activeRoute.id]}
                       onRoutingStrategyChange={stableRoutingStrategyChange}
                       updatingRoutingStrategy={!!updatingRoutingStrategyByRoute[activeRoute.id]}
-                      channels={channelsByRouteId[activeRoute.id]}
-                      loadingChannels={!!loadingChannelsByRouteId[activeRoute.id]}
+                      targets={targetsByRouteId[activeRoute.id]}
+                      loadingTargets={!!loadingTargetsByRouteId[activeRoute.id]}
                       routeDecision={decisionByRoute[activeRoute.id] || null}
                       loadingDecision={loadingDecision}
                       candidateView={getRouteCandidateView(activeRoute.id)}
-                      channelTokenDraft={channelTokenDraft}
-                      updatingChannel={updatingChannel}
+                      targetTokenDraft={targetTokenDraft}
+                      updatingTarget={updatingTarget}
                       savingPriority={!!savingPriorityByRoute[activeRoute.id]}
                       onTokenDraftChange={stableTokenDraftChange}
-                      onSaveToken={stableChannelTokenSave}
-                      onDeleteChannel={stableDeleteChannel}
-                      onToggleChannelEnabled={stableToggleChannelEnabled}
-                      onChannelDragEnd={stableChannelDragEnd}
+                      onSaveToken={stableTargetTokenSave}
+                      onDeleteTarget={stableDeleteTarget}
+                      onToggleTargetEnabled={stableToggleTargetEnabled}
+                      onTargetDragEnd={stableTargetDragEnd}
                       missingTokenSiteItems={getMissingTokenSiteItems(activeRoute.id)}
                       missingTokenGroupItems={getMissingTokenGroupItems(activeRoute.id)}
                       onCreateTokenForMissing={stableCreateTokenForMissing}
-                      onAddChannel={stableAddChannel}
+                      onAddTarget={stableAddTarget}
                       onSiteBlockModel={stableSiteBlockModel}
                       expandedSourceGroupMap={expandedSourceGroupMap}
                       onToggleSourceGroup={stableToggleSourceGroup}
@@ -2805,7 +2812,7 @@ export default function TokenRoutes() {
                         <div className="min-w-0 flex-1">
                           <div className="text-sm font-semibold">{tr('pages.tokenRoutes.routeWorkbench.diagnostics')}</div>
                           <div className="mt-3 grid gap-2 text-xs">
-                            <div className="flex justify-between gap-3"><span className="text-muted-foreground">{tr('pages.tokenRoutes.channels')}</span><span>{activeRoute.enabledChannelCount} / {activeRoute.channelCount}</span></div>
+                            <div className="flex justify-between gap-3"><span className="text-muted-foreground">{tr('pages.tokenRoutes.targets')}</span><span>{activeRoute.enabledTargetCount} / {activeRoute.targetCount}</span></div>
                             <div className="flex justify-between gap-3"><span className="text-muted-foreground">{tr('pages.tokenRoutes.routeCard.cached')}</span><span>{activeRoute.decisionSnapshot ? tr('pages.tokenRoutes.routeWorkbench.yes') : tr('pages.tokenRoutes.routeWorkbench.no')}</span></div>
                             <div className="flex justify-between gap-3"><span className="text-muted-foreground">{tr('pages.tokenRoutes.routeWorkbench.selectionCandidates')}</span><span>{decisionByRoute[activeRoute.id]?.candidates?.length || 0}</span></div>
                             <div className="flex justify-between gap-3"><span className="text-muted-foreground">{tr('pages.tokenRoutes.routeWorkbench.missingTokens')}</span><span>{getMissingTokenSiteItems(activeRoute.id).length + getMissingTokenGroupItems(activeRoute.id).length}</span></div>
@@ -2841,9 +2848,64 @@ export default function TokenRoutes() {
         )}
       </div>
 
-      {shouldShowLoadMore && (
-          <div ref={loadMoreSentinelRef} className="py-3 text-center text-xs text-muted-foreground">
-          {tr('pages.tokenRoutes.routes3')} {visibleRouteCount} / {filteredRoutes.length}
+      {filteredRoutes.length > 0 && (
+        <div className="flex flex-wrap items-center gap-3 border-t pt-3">
+          <div className="mr-auto text-xs text-muted-foreground">
+            {tr('pages.tokenRoutes.routeBrowser.showingRoutes')
+              .replace('{start}', String(routePageWindow.displayedStart))
+              .replace('{end}', String(routePageWindow.displayedEnd))
+              .replace('{total}', String(filteredRoutes.length))}
+          </div>
+          <Pagination className="mx-0 w-auto">
+            <PaginationContent>
+              <PaginationItem>
+                <PaginationPrevious
+                  type="button"
+                  disabled={routePageWindow.safePage <= 1}
+                  onClick={() => setRoutePage((current) => Math.max(1, current - 1))}
+                  aria-label={tr('pages.models.previousPage')}
+                />
+              </PaginationItem>
+              {routePageNumbers.map((pageNumber) => (
+                <PaginationItem key={pageNumber}>
+                  <PaginationLink
+                    type="button"
+                    isActive={pageNumber === routePageWindow.safePage}
+                    onClick={() => setRoutePage(pageNumber)}
+                  >
+                    {pageNumber}
+                  </PaginationLink>
+                </PaginationItem>
+              ))}
+              <PaginationItem>
+                <PaginationNext
+                  type="button"
+                  disabled={routePageWindow.safePage >= routePageWindow.totalPages}
+                  onClick={() => setRoutePage((current) => Math.min(routePageWindow.totalPages, current + 1))}
+                  aria-label={tr('pages.models.nextPage')}
+                />
+              </PaginationItem>
+            </PaginationContent>
+          </Pagination>
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <span>{tr('pages.proxyLogs.rowsPerPage')}</span>
+            <Select
+              value={String(routePageSize)}
+              onValueChange={(nextValue) => {
+                setRoutePageSize(Number(nextValue));
+                setRoutePage(1);
+              }}
+            >
+              <SelectTrigger className="w-24">
+                <SelectValue placeholder={String(routePageSize)} />
+              </SelectTrigger>
+              <SelectContent>
+                {ROUTE_PAGE_SIZES.map((size) => (
+                  <SelectItem key={size} value={String(size)}>{size}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
       )}
 
@@ -2858,40 +2920,40 @@ export default function TokenRoutes() {
         />
       )}
 
-      {/* Add channel modal */}
-      {addChannelModalRoute && (
-        <AddChannelModal
-          open={!!addChannelModalRouteId}
-          onClose={() => setAddChannelModalRouteId(null)}
-          routeId={addChannelModalRoute.id}
-          routeTitle={resolveRouteTitle(addChannelModalRoute)}
-          candidateView={getRouteCandidateView(addChannelModalRoute.id)}
-          onSuccess={handleAddChannelSuccess}
-          missingTokenHints={getRouteMissingTokenHints(addChannelModalRoute.id)}
+      {/* Add target modal */}
+      {addRouteTargetModalRoute && (
+        <AddRouteTargetModal
+          open={!!addRouteTargetModalRouteId}
+          onClose={() => setAddRouteTargetModalRouteId(null)}
+          routeId={addRouteTargetModalRoute.id}
+          routeTitle={resolveRouteTitle(addRouteTargetModalRoute)}
+          candidateView={getRouteCandidateView(addRouteTargetModalRoute.id)}
+          onSuccess={handleAddTargetSuccess}
+          missingTokenHints={getRouteMissingTokenHints(addRouteTargetModalRoute.id)}
           onCreateTokenForMissing={handleCreateTokenForMissingAccount}
-          existingChannelAccountIds={new Set((channelsByRouteId[addChannelModalRoute.id] || []).map((c) => c.accountId))}
+          existingTargetAccountIds={new Set((targetsByRouteId[addRouteTargetModalRoute.id] || []).map((c) => c.accountId))}
         />
       )}
-          <Dialog.Root open={!!channelDeleteConfirmation} onOpenChange={(open) => { if (!open) closeDeleteChannelConfirmation(false); }}>
+          <Dialog.Root open={!!targetDeleteConfirmation} onOpenChange={(open) => { if (!open) closeDeleteTargetConfirmation(false); }}>
             <Dialog.Content>
               <Dialog.Header>
-                <Dialog.Title>{tr('pages.tokenRoutes.confirmRemovechannels')}</Dialog.Title>
+                <Dialog.Title>{tr('pages.tokenRoutes.confirmRemovetargets')}</Dialog.Title>
                 <Dialog.Description>
-                  {tr('pages.tokenRoutes.removeChannelsModelrefreshAutoRebuildChannelsSuggestionusagedisabled')}
+                  {tr('pages.tokenRoutes.removeTargetsModelrefreshAutoRebuildTargetsSuggestionusagedisabled')}
                 </Dialog.Description>
               </Dialog.Header>
               <label className="mt-4 flex items-center gap-2 text-sm">
                 <Checkbox
-                  checked={channelDeleteConfirmation?.dontAskAgain === true}
+                  checked={targetDeleteConfirmation?.dontAskAgain === true}
                   onCheckedChange={(checked) => {
-                    setChannelDeleteConfirmation((current) => current ? { ...current, dontAskAgain: checked === true } : current);
+                    setTargetDeleteConfirmation((current) => current ? { ...current, dontAskAgain: checked === true } : current);
                   }}
                 />
                 {tr('pages.tokenRoutes.doNotShowAgain')}
               </label>
               <Dialog.Footer>
-                <Button type="button" variant="outline" onClick={() => closeDeleteChannelConfirmation(false)}>{tr('app.cancel')}</Button>
-                <Button type="button" variant="destructive" onClick={() => closeDeleteChannelConfirmation(true)}>{tr('pages.tokenRoutes.confirmRemove')}</Button>
+                <Button type="button" variant="outline" onClick={() => closeDeleteTargetConfirmation(false)}>{tr('app.cancel')}</Button>
+                <Button type="button" variant="destructive" onClick={() => closeDeleteTargetConfirmation(true)}>{tr('pages.tokenRoutes.confirmRemove')}</Button>
               </Dialog.Footer>
             </Dialog.Content>
           </Dialog.Root>
@@ -2901,7 +2963,7 @@ export default function TokenRoutes() {
               <Dialog.Header>
                 <Dialog.Title>{tr('pages.tokenRoutes.sites2')}</Dialog.Title>
                 <Dialog.Description>
-                  {tr('pages.tokenRoutes.model2')}{siteBlockConfirmation?.modelName || ''}{tr('pages.tokenRoutes.sites')}{siteBlockConfirmation?.siteName || ''}{tr('pages.tokenRoutes.disabledAutomaticRoutesSitesModelChannels')}
+                  {tr('pages.tokenRoutes.model2')}{siteBlockConfirmation?.modelName || ''}{tr('pages.tokenRoutes.sites')}{siteBlockConfirmation?.siteName || ''}{tr('pages.tokenRoutes.disabledAutomaticRoutesSitesModelTargets')}
                 </Dialog.Description>
               </Dialog.Header>
               <Dialog.Footer>

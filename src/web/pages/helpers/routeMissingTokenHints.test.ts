@@ -6,7 +6,7 @@ import {
   type RouteMissingTokenRoute,
 } from './routeMissingTokenHints.js';
 
-function buildRoute(id: number, requestedModelPattern: string, backend: RouteMissingTokenRoute['backend'] = { kind: 'channels' }): RouteMissingTokenRoute {
+function buildRoute(id: number, requestedModelPattern: string, backend: RouteMissingTokenRoute['backend'] = { kind: 'supply' }): RouteMissingTokenRoute {
   return {
     id,
     match: { kind: 'model', requestedModelPattern, displayName: null },

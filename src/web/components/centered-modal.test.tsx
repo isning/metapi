@@ -16,3 +16,12 @@ describe('CenteredModal shadcn migration contract', () => {
     expect(source).not.toContain("createPortal");
   });
 });
+
+describe('Shared dialog viewport constraints', () => {
+  it('keeps raw Dialog.Content inside the viewport by default', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/web/components/ui/dialog/index.tsx'), 'utf8');
+
+    expect(source).toContain('max-h-[calc(100dvh-2rem)]');
+    expect(source).toContain('overflow-y-auto');
+  });
+});

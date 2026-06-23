@@ -165,7 +165,7 @@ const nativeMetapiPayload = JSON.stringify({
         enabled: true,
       },
     ],
-    routeChannels: [
+    routeEndpointTargets: [
       {
         id: 1,
         routeId: 1,
@@ -196,6 +196,64 @@ const nativeMetapiPayload = JSON.stringify({
         supportedModels: '["gpt-5-nano"]',
       },
     ],
+  },
+  preferences: {
+    settings: [
+      { key: 'locale', value: 'zh-CN' },
+    ],
+  },
+});
+
+const nativeMetapiLegacyChannelsPayload = JSON.stringify({
+  version: '2.1',
+  timestamp: 1735689600000,
+  accounts: {
+    sites: [
+      {
+        id: 1,
+        name: 'Native Site',
+        url: 'https://native.example.com',
+        platform: 'new-api',
+      },
+    ],
+    accounts: [
+      {
+        id: 1,
+        siteId: 1,
+        username: 'native-user',
+        accessToken: 'session-token',
+        apiToken: 'api-token',
+        status: 'active',
+      },
+    ],
+    accountTokens: [
+      {
+        id: 1,
+        accountId: 1,
+        name: 'default',
+        token: 'sk-native',
+        enabled: true,
+        isDefault: true,
+      },
+    ],
+    tokenRoutes: [
+      {
+        id: 1,
+        modelPattern: 'gpt-5-nano',
+        enabled: true,
+      },
+    ],
+    routeChannels: [
+      {
+        id: 1,
+        routeId: 1,
+        accountId: 1,
+        tokenId: 1,
+        enabled: true,
+        manualOverride: false,
+      },
+    ],
+    routeGroupSources: [],
   },
   preferences: {
     settings: [
@@ -331,7 +389,33 @@ describe('ImportExport', () => {
 
       const rendered = collectText(root!.root);
       expect(rendered).not.toContain('ALL-API-Hub V2');
-      expect(rendered).toContain('统计：站点 1 / 账号 1 / 令牌 1 / 路由 1 / 通道 1 / 站点禁用模型 1 / 手工模型 1 / 下游 Key 1 / 设置 1');
+      expect(rendered).toContain('统计：站点 1 / 账号 1 / 令牌 1 / 路由 1 / 目标 1 / 站点禁用模型 1 / 手工模型 1 / 下游 Key 1 / 设置 1');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('shows native v2.1 routeChannels backups as account imports', async () => {
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter>
+            <ImportExport />
+          </MemoryRouter>,
+        );
+      });
+
+      const textarea = root!.root.findByType('textarea');
+      await act(async () => {
+        textarea.props.onChange({ target: { value: nativeMetapiLegacyChannelsPayload } });
+      });
+      await flushMicrotasks();
+
+      const rendered = collectText(root!.root);
+      expect(rendered).not.toContain('ALL-API-Hub V2');
+      expect(rendered).toContain('包含分区：连接与路由策略 + 系统设置');
+      expect(rendered).toContain('统计：站点 1 / 账号 1 / 令牌 1 / 路由 1 / 目标 1');
     } finally {
       root?.unmount();
     }

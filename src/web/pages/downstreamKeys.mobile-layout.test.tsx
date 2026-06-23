@@ -155,7 +155,7 @@ describe('DownstreamKeys mobile layout', () => {
       {
         id: 11,
         match: { kind: 'model', requestedModelPattern: 'claude-*', displayName: '默认群组' },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         presentation: { displayName: '默认群组', displayIcon: null },
         enabled: true,
       },

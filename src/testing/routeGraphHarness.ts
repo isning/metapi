@@ -113,10 +113,10 @@ export function createDirectModelRouteGraph(model = 'gpt-test'): RouteGraphSourc
     })
     .node({
       id: 'endpoint:test',
-      type: 'model_endpoint',
+      type: 'route_endpoint',
       config: {
         targets: [{
-          channelId: 'test-channel',
+          targetId: 'test-channel',
           model,
           modelSource: 'fixed',
         }],

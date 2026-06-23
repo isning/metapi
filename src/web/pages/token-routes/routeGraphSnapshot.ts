@@ -29,7 +29,7 @@ export type RouteGraphSnapshotNode = {
     displayIcon?: string | null;
   };
   backend:
-    | { kind: 'channels' }
+    | { kind: 'supply' }
     | { kind: 'routes'; routeIds: number[] };
   routingStrategy?: RouteRoutingStrategy;
   modelMapping?: Record<string, string> | null;
@@ -95,7 +95,7 @@ export type RouteGraphEditorForm = {
     displayName: string | null;
   };
   backend:
-    | { kind: 'channels' }
+    | { kind: 'supply' }
     | { kind: 'routes'; routeIds: number[] };
   presentation: {
     displayName: string;
@@ -124,7 +124,7 @@ export function routeGraphEditorFormToRoutePayload(form: RouteGraphEditorForm): 
     },
     backend: form.backend.kind === 'routes'
       ? { kind: 'routes', routeIds }
-      : { kind: 'channels' },
+      : { kind: 'supply' },
     macro: macro || undefined,
     presentation: {
       displayName,
@@ -417,7 +417,7 @@ export function buildRouteGraphNodeFromRoute(route: RouteSummaryRow): RouteGraph
     id: route.id,
     stableId: `route:${route.id}`,
     ...(macro ? { macro } : {}),
-    ownership: route.kind === 'zero_channel' || route.readOnly || route.isVirtual ? 'derived' : 'manual',
+    ownership: route.kind === 'zero_target' || route.readOnly || route.isVirtual ? 'derived' : 'manual',
     visibility,
     enabled: route.enabled,
     match: {
@@ -431,7 +431,7 @@ export function buildRouteGraphNodeFromRoute(route: RouteSummaryRow): RouteGraph
     },
     backend: isRouteBackendReferences(route.backend)
       ? { kind: 'routes', routeIds }
-      : { kind: 'channels' },
+      : { kind: 'supply' },
     routingStrategy: normalizeRouteRoutingStrategyValue(route.routingStrategy),
     modelMapping: parseModelMappingForSnapshot(route.modelMapping),
   };
@@ -484,7 +484,7 @@ export function validateRouteGraphNodeDraft(input: unknown): RouteGraphValidatio
   const macro = normalizeCandidateSelectorMacro(input.macro);
   const displayName = normalizeStringOrNull(presentation.displayName ?? match.displayName);
   const requestedModelPattern = normalizeStringOrNull(match.requestedModelPattern);
-  const backendKind = macro || backendRaw.kind === 'routes' ? 'routes' : 'channels';
+  const backendKind = macro || backendRaw.kind === 'routes' ? 'routes' : 'supply';
 
   if (backendKind === 'routes') {
     const macroDisplayName = macro?.config.surface.entry.match.displayName || null;
@@ -543,7 +543,7 @@ export function validateRouteGraphNodeDraft(input: unknown): RouteGraphValidatio
         displayName,
         displayIcon: normalizeStringOrNull(presentation.displayIcon),
       },
-      backend: { kind: 'channels' },
+      backend: { kind: 'supply' },
       routingStrategy: normalizeRouteRoutingStrategyValue(input.routingStrategy as RouteRoutingStrategy | undefined),
       modelMapping: isRecord(input.modelMapping) ? normalizeModelMappingObject(input.modelMapping) : null,
     },
@@ -625,7 +625,7 @@ export function routeGraphNodeToEditorForm(node: RouteGraphNodeDraft): RouteGrap
     },
     backend: node.backend.kind === 'routes'
       ? { kind: 'routes' as const, routeIds: [...routeIds] }
-      : { kind: 'channels' as const },
+      : { kind: 'supply' as const },
     presentation: {
       displayName,
       displayIcon: normalizeRouteDisplayIconValue(macro?.config.presentation?.displayIcon ?? node.presentation?.displayIcon),
@@ -634,7 +634,7 @@ export function routeGraphNodeToEditorForm(node: RouteGraphNodeDraft): RouteGrap
     visibility: macro?.visibility || node.visibility,
     enabled: node.enabled !== false,
     modelMapping: stringifyModelMapping(node.modelMapping) || '',
-    advancedOpen: node.backend.kind === 'channels',
+    advancedOpen: node.backend.kind === 'supply',
     macro: macro || node.macro || null,
   };
 }

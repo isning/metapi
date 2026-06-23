@@ -23,7 +23,7 @@ public model name
   -> entry
   -> filters
   -> dispatcher / selector
-  -> model_endpoint candidates
+  -> route_endpoint candidates
   -> selected upstream target
 ```
 
@@ -103,7 +103,7 @@ Workspace state must be deep-linkable:
 /models
 /models/:model
 /models/:model?tab=routing
-/models/:model?tab=routing&node=model_endpoint:123
+/models/:model?tab=routing&node=route_endpoint:123
 /models/:model?tab=performance&range=24h
 ```
 
@@ -185,7 +185,7 @@ flow with multiple view modes:
 
 Graph nodes must distinguish type and state:
 
-- node type color identifies entry/filter/dispatcher/macro/model_endpoint;
+- node type color identifies entry/filter/dispatcher/macro/route_endpoint;
 - status badge/dot identifies healthy/degraded/disabled/error;
 - selected node uses primary ring;
 - disabled nodes remain readable;
@@ -230,7 +230,7 @@ Policies are shown with `Collapsible` sections. Each policy should show the
 effective value and, when available, its inheritance/source chain:
 
 ```text
-global default -> site default -> API key override -> model endpoint override
+global default -> site default -> API key override -> route endpoint override
 ```
 
 ### Diagnostics

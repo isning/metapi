@@ -66,6 +66,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { Checkbox } from '../components/ui/checkbox/index.js';
 import { Input } from '../components/ui/input/index.js';
 import { RadioGroup, RadioGroupItem } from '../components/ui/radio-group/index.js';
+import { Skeleton } from '../components/ui/skeleton/index.js';
 import * as DropdownMenu from '../components/ui/dropdown-menu/index.js';
 import {
   CheckCircle2,
@@ -396,6 +397,109 @@ const SITE_PLATFORM_OPTIONS = [
   { value: 'gemini', label: 'gemini', description: tr('pages.sites.generalGeminiGoogleAi') },
   { value: 'cliproxyapi', label: 'cliproxyapi', description: tr('pages.sites.cpa') },
 ];
+
+function SitesLoadingSkeleton({ isMobile }: { isMobile: boolean }) {
+  if (isMobile) {
+    return (
+      <div className="grid gap-3">
+        {[0, 1, 2].map((index) => (
+          <MobileCard
+            key={index}
+            title={<Skeleton className="h-5 w-40" />}
+            subtitle={<Skeleton className="h-4 w-60 max-w-full" />}
+          >
+            <div className="grid gap-3">
+              <div className="flex flex-wrap gap-2">
+                <Skeleton className="h-5 w-20 rounded-full" />
+                <Skeleton className="h-5 w-16 rounded-full" />
+                <Skeleton className="h-5 w-24 rounded-full" />
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <Skeleton className="h-9 w-full" />
+                <Skeleton className="h-9 w-full" />
+                <Skeleton className="h-9 w-full" />
+                <Skeleton className="h-9 w-full" />
+              </div>
+            </div>
+          </MobileCard>
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <DataTable minWidth={1120} density="compact" aria-busy="true">
+      <DataTableToolbar className="border-b bg-muted/30 px-4">
+        <div className="flex min-w-0 items-center gap-3">
+          <Skeleton className="size-4" />
+          <div className="grid gap-1.5">
+            <Skeleton className="h-4 w-24" />
+            <Skeleton className="h-3 w-36" />
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Skeleton className="h-8 w-28" />
+          <Skeleton className="h-8 w-28" />
+          <Skeleton className="h-8 w-20" />
+          <Skeleton className="h-8 w-24" />
+        </div>
+      </DataTableToolbar>
+      <Table className="sites-table w-full text-sm">
+        <TableHeader>
+          <TableRow>
+            <TableHead className="w-11" />
+            <TableHead className="w-11" />
+            <TableHead className="min-w-56">{tr('pages.models.name')}</TableHead>
+            <TableHead className="min-w-64">{tr('pages.sites.signUrl')}</TableHead>
+            <TableHead className="min-w-32 text-right">{tr('pages.sites.balance')}</TableHead>
+            <TableHead className="sites-status-col text-center">{tr('components.notificationPanel.status')}</TableHead>
+            <TableHead className="sites-system-proxy-col text-center">{tr('pages.settings.systemacting3')}</TableHead>
+            <TableHead className="sites-weight-col text-right">{tr('pages.sites.weight')}</TableHead>
+            <TableHead className="min-w-32">{tr('pages.sites.platform')}</TableHead>
+            <TableHead className="sites-created-col">{tr('pages.sites.time')}</TableHead>
+            <TableHead className="sites-actions-col text-right">{tr('pages.accounts.actions2')}</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {[0, 1, 2, 3, 4].map((index) => (
+            <TableRow key={index}>
+              <TableCell><Skeleton className="size-8" /></TableCell>
+              <TableCell><Skeleton className="size-4" /></TableCell>
+              <TableCell>
+                <div className="grid gap-2">
+                  <Skeleton className="h-4 w-44" />
+                  <div className="flex gap-1.5">
+                    <Skeleton className="h-5 w-24 rounded-full" />
+                    <Skeleton className="h-5 w-20 rounded-full" />
+                  </div>
+                </div>
+              </TableCell>
+              <TableCell><Skeleton className="h-4 w-56" /></TableCell>
+              <TableCell><Skeleton className="ml-auto h-5 w-24" /></TableCell>
+              <TableCell><Skeleton className="mx-auto h-5 w-16 rounded-full" /></TableCell>
+              <TableCell><Skeleton className="mx-auto h-5 w-16 rounded-full" /></TableCell>
+              <TableCell><Skeleton className="ml-auto h-5 w-12" /></TableCell>
+              <TableCell><Skeleton className="h-5 w-20 rounded-full" /></TableCell>
+              <TableCell>
+                <div className="grid gap-1">
+                  <Skeleton className="h-3 w-20" />
+                  <Skeleton className="h-3 w-14" />
+                </div>
+              </TableCell>
+              <TableCell>
+                <div className="flex justify-end gap-1.5">
+                  <Skeleton className="h-8 w-16" />
+                  <Skeleton className="h-8 w-14" />
+                  <Skeleton className="size-8" />
+                </div>
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </DataTable>
+  );
+}
 
 export default function Sites() {
   const location = useLocation();
@@ -2025,7 +2129,9 @@ export default function Sites() {
       )}
 
       <>
-        {sites.length > 0 ? (
+        {!loaded ? (
+          <SitesLoadingSkeleton isMobile={isMobile} />
+        ) : sites.length > 0 ? (
           isMobile ? (
             <div className="grid gap-3">
               {sortedSites.map((site) => {

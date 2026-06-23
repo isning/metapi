@@ -22,7 +22,7 @@ import { tr } from '../i18n.js';
 import { UpstreamCompatibilityPolicyEditor } from '../components/UpstreamCompatibilityPolicyEditor.js';
 import { Button } from '../components/ui/button/index.js';
 import { ButtonGroup } from '../components/ui/button-group/index.js';
-import { LoaderCircle } from 'lucide-react';
+import { LoaderCircle, Waypoints } from 'lucide-react';
 import { Skeleton } from '../components/ui/skeleton/index.js';
 import ToneBadge from '../components/ToneBadge.js';
 import InfoNote from '../components/InfoNote.js';
@@ -43,6 +43,7 @@ type SyncStatus = 'success' | 'skipped' | 'failed';
 type TokensPanelProps = {
   embedded?: boolean;
   onEmbeddedActionsChange?: (actions: React.ReactNode | null) => void;
+  onConfigureEndpointBindings?: (token: any) => void;
 };
 
 type AccountTokenSyncResult = {
@@ -134,7 +135,7 @@ async function copyText(text: string) {
   document.body.removeChild(textarea);
 }
 
-export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: TokensPanelProps) {
+export function TokensPanel({ embedded = false, onEmbeddedActionsChange, onConfigureEndpointBindings }: TokensPanelProps) {
   const location = useLocation();
   const navigate = useNavigate();
   const isMobile = useIsMobile();
@@ -1199,6 +1200,17 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
                         >
                           {isPending ? tr('pages.tokens.edit') : tr('pages.accounts.edit')}
                         </Button>
+                        {onConfigureEndpointBindings ? (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => onConfigureEndpointBindings(token)}
+                          >
+                            <Waypoints className="size-4" />
+                            {tr('pages.accounts.endpointBindings.action')}
+                          </Button>
+                        ) : null}
                       </>
                     )}
                   >
@@ -1394,6 +1406,17 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange }: Token
                         >
                           {isPending ? tr('pages.tokens.edit') : tr('pages.accounts.edit')}
                         </Button>
+                        {onConfigureEndpointBindings ? (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => onConfigureEndpointBindings(token)}
+                          >
+                            <Waypoints className="size-4" />
+                            {tr('pages.accounts.endpointBindings.action')}
+                          </Button>
+                        ) : null}
                         {!isPending ? (
                           <Button type="button" variant="secondary" size="sm"
                             onClick={() => withRowLoading(`${loadingPrefix}-toggle`, async () => {

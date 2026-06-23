@@ -19,6 +19,7 @@ import InfoNote from "../components/InfoNote.js";
 import PageHeader from "../components/workspace/PageHeader.js";
 import PageShell from "../components/workspace/PageShell.js";
 import AccountModelsModal from "./accounts/AccountModelsModal.js";
+import EndpointBindingsModal from "./accounts/EndpointBindingsModal.js";
 import {
   buildAddAccountPrereqHint,
   buildVerifyFailureHint,
@@ -58,6 +59,7 @@ import {
   RefreshCw,
   Trash2,
   Wallet,
+  Waypoints,
 } from 'lucide-react';
 import ToneBadge from '../components/ToneBadge.js';
 import { Alert, AlertDescription, AlertTitle } from '../components/ui/alert/index.js';
@@ -68,6 +70,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { Checkbox } from '../components/ui/checkbox/index.js';
 import { Textarea } from '../components/ui/textarea/index.js';
 import { Input } from '../components/ui/input/index.js';
+import { Skeleton } from '../components/ui/skeleton/index.js';
 import * as DropdownMenu from '../components/ui/dropdown-menu/index.js';
 
 type ConnectionsSegment = "session" | "apikey" | "tokens";
@@ -224,6 +227,104 @@ function AccountDragOverlayCard({
   );
 }
 
+function AccountsLoadingSkeleton({ isMobile }: { isMobile: boolean }) {
+  if (isMobile) {
+    return (
+      <div className="grid gap-3">
+        {[0, 1, 2].map((index) => (
+          <MobileCard
+            key={index}
+            title={<Skeleton className="h-5 w-40" />}
+            subtitle={<Skeleton className="h-4 w-56 max-w-full" />}
+          >
+            <div className="grid gap-3">
+              <div className="flex flex-wrap gap-2">
+                <Skeleton className="h-5 w-16 rounded-full" />
+                <Skeleton className="h-5 w-24 rounded-full" />
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <Skeleton className="h-9 w-full" />
+                <Skeleton className="h-9 w-full" />
+                <Skeleton className="h-9 w-full" />
+                <Skeleton className="h-9 w-full" />
+              </div>
+            </div>
+          </MobileCard>
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <DataTable minWidth={1040} density="compact" aria-busy="true">
+      <DataTableToolbar className="border-b bg-muted/30 px-4">
+        <div className="flex min-w-0 items-center gap-3">
+          <Skeleton className="size-4" />
+          <div className="grid gap-1.5">
+            <Skeleton className="h-4 w-28" />
+            <Skeleton className="h-3 w-36" />
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Skeleton className="h-8 w-24" />
+          <Skeleton className="h-8 w-20" />
+          <Skeleton className="h-8 w-20" />
+          <Skeleton className="h-8 w-24" />
+        </div>
+      </DataTableToolbar>
+      <Table className="w-full text-sm">
+        <TableHeader>
+          <TableRow>
+            <TableHead className="w-11" />
+            <TableHead className="w-11" />
+            <TableHead className="min-w-56">{tr('pages.accounts.name2')}</TableHead>
+            <TableHead className="min-w-36">{tr('components.searchModal.sites2')}</TableHead>
+            <TableHead className="min-w-56">{tr('pages.accounts.healthystatus')}</TableHead>
+            <TableHead className="min-w-28 text-right">{tr('components.notificationPanel.balance')}</TableHead>
+            <TableHead className="min-w-28 text-right">{tr('pages.accounts.used')}</TableHead>
+            <TableHead className="min-w-28">{tr('components.notificationPanel.sign')}</TableHead>
+            <TableHead className="min-w-44 text-right">{tr('pages.accounts.actions2')}</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {[0, 1, 2, 3, 4].map((index) => (
+            <TableRow key={index}>
+              <TableCell><Skeleton className="size-8" /></TableCell>
+              <TableCell><Skeleton className="size-4" /></TableCell>
+              <TableCell>
+                <div className="grid gap-2">
+                  <Skeleton className="h-4 w-44" />
+                  <div className="flex gap-1.5">
+                    <Skeleton className="h-5 w-16 rounded-full" />
+                    <Skeleton className="h-5 w-20 rounded-full" />
+                  </div>
+                </div>
+              </TableCell>
+              <TableCell><Skeleton className="h-5 w-28 rounded-full" /></TableCell>
+              <TableCell>
+                <div className="grid gap-2">
+                  <Skeleton className="h-5 w-24 rounded-full" />
+                  <Skeleton className="h-3 w-40" />
+                </div>
+              </TableCell>
+              <TableCell><Skeleton className="ml-auto h-5 w-20" /></TableCell>
+              <TableCell><Skeleton className="ml-auto h-5 w-20" /></TableCell>
+              <TableCell><Skeleton className="h-7 w-16 rounded-full" /></TableCell>
+              <TableCell>
+                <div className="flex justify-end gap-1.5">
+                  <Skeleton className="h-8 w-14" />
+                  <Skeleton className="h-8 w-14" />
+                  <Skeleton className="size-8" />
+                </div>
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </DataTable>
+  );
+}
+
 export default function Accounts() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -319,6 +420,11 @@ export default function Accounts() {
     manualModelsInput: "",
     addingManualModels: false,
   });
+  const [endpointBindingsTarget, setEndpointBindingsTarget] = useState<{
+    siteId: number;
+    credentialKey: string;
+    titleContext: string;
+  } | null>(null);
   const rowRefs = useRef<Map<number, HTMLTableRowElement>>(new Map());
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastRebindTargetRef = useRef<any | null>(null);
@@ -894,6 +1000,32 @@ export default function Accounts() {
     } finally {
       setModelModal((s) => ({ ...s, addingManualModels: false }));
     }
+  };
+
+  const openEndpointBindingsForAccount = (account: any) => {
+    const siteId = Number(account?.siteId ?? account?.site?.id);
+    if (!Number.isFinite(siteId) || siteId <= 0) {
+      toast.error(tr('pages.accounts.endpointBindings.noCredentialsDescription'));
+      return;
+    }
+    setEndpointBindingsTarget({
+      siteId,
+      credentialKey: `account:${account.id}`,
+      titleContext: `${resolveAccountDisplayName(account)} @ ${account.site?.name || '-'}`,
+    });
+  };
+
+  const openEndpointBindingsForToken = (token: any) => {
+    const siteId = Number(token?.siteId ?? token?.site?.id);
+    if (!Number.isFinite(siteId) || siteId <= 0) {
+      toast.error(tr('pages.accounts.endpointBindings.noCredentialsDescription'));
+      return;
+    }
+    setEndpointBindingsTarget({
+      siteId,
+      credentialKey: `account-token:${token.id}`,
+      titleContext: `${token.name || `#${token.id}`} @ ${token.site?.name || '-'}`,
+    });
   };
 
   const runtimeHealthMap: Record<
@@ -1640,6 +1772,14 @@ export default function Accounts() {
         }
       />
 
+      <EndpointBindingsModal
+        open={Boolean(endpointBindingsTarget)}
+        siteId={endpointBindingsTarget?.siteId ?? null}
+        initialCredentialKey={endpointBindingsTarget?.credentialKey ?? null}
+        titleContext={endpointBindingsTarget?.titleContext ?? null}
+        onClose={() => setEndpointBindingsTarget(null)}
+      />
+
       {activeSegment !== "tokens" && isMobile && selectedAccountIds.length > 0 && (
         <ResponsiveBatchActionBar
           isMobile={isMobile}
@@ -1684,6 +1824,7 @@ export default function Accounts() {
         <TokensPanel
           embedded
           onEmbeddedActionsChange={setEmbeddedTokenActions}
+          onConfigureEndpointBindings={openEndpointBindingsForToken}
         />
       ) : (
         <>
@@ -2570,9 +2711,11 @@ export default function Accounts() {
           </CenteredModal>
 
           <>
-            {visibleAccounts.length > 0 ? (
-              isMobile ? (
-                <div className="grid gap-3">
+        {!loaded ? (
+          <AccountsLoadingSkeleton isMobile={isMobile} />
+        ) : visibleAccounts.length > 0 ? (
+          isMobile ? (
+            <div className="grid gap-3">
                   {visibleAccounts.map((a: any) => {
                     const capabilities = resolveAccountCapabilities(a);
                     const connectionMode = resolveAccountCredentialMode(a);
@@ -2635,6 +2778,15 @@ export default function Accounts() {
                              
                             >
                               {tr('components.modelAnalysisPanel.model')}
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => openEndpointBindingsForAccount(a)}
+                            >
+                              <Waypoints className="size-4" />
+                              {tr('pages.accounts.endpointBindings.action')}
                             </Button>
                           </>
                         }
@@ -3119,6 +3271,15 @@ export default function Accounts() {
                                   disabled={actionLoading[`models-${a.id}`]}
                                 >
                                   {tr('components.modelAnalysisPanel.model')}
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => openEndpointBindingsForAccount(a)}
+                                >
+                                  <Waypoints className="size-4" />
+                                  {tr('pages.accounts.endpointBindings.action')}
                                 </Button>
                                 <DropdownMenu.Root>
                                   <DropdownMenu.Trigger asChild>

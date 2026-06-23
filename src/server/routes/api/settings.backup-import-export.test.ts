@@ -39,7 +39,7 @@ describe('settings backup import/export api', () => {
     await db.delete(schema.routeGraphActiveVersion).run();
     await db.delete(schema.routeGraphVersions).run();
     await db.delete(schema.routeGroupSources).run();
-    await db.delete(schema.routeChannels).run();
+    await db.delete(schema.routeEndpointTargets).run();
     await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.accountTokens).run();
     await db.delete(schema.accounts).run();

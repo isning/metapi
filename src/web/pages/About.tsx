@@ -24,7 +24,7 @@ const FEATURES = [
   { icon: '🔍', title: tr('app.autoModelDiscovery'), desc: tr('app.newUpstreamModelsAppearAutomaticallyZeroConfig') },
   { icon: '🏪', title: tr('app.modelMarketplace'), desc: tr('pages.about.crossSiteModelCoveragePricingComparisonLatency') },
   { icon: '✅', title: tr('pages.about.autoCheck'), desc: tr('pages.about.scheduledCheckBalanceRefreshNeverMissOne') },
-  { icon: '🔔', title: tr('pages.about.multiChannelAlerts'), desc: tr('pages.about.webhookBarkServerchanEmailGetNotifiedWhen') },
+  { icon: '🔔', title: tr('pages.about.multiTargetAlerts'), desc: tr('pages.about.webhookBarkServerchanEmailGetNotifiedWhen') },
   { icon: '📦', title: tr('pages.about.lightweightDeployment'), desc: tr('pages.about.singleDockerContainerBuiltSqliteNoExternal') },
 ];
 

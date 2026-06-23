@@ -74,15 +74,15 @@ describe('routeGraphViewModel', () => {
     };
     const endpoint: RouteGraphNode = {
       id: 'endpoint.primary',
-      type: 'model_endpoint',
+      type: 'route_endpoint',
       name: 'Primary endpoint',
       enabled: true,
       visibility: 'internal',
       ownership: 'manual',
       config: {
         targets: [
-          { channelId: 'channel-a', model: 'gpt-a' },
-          { channelId: 'channel-b', model: 'gpt-b' },
+          { targetId: 'target-a', model: 'gpt-a' },
+          { targetId: 'target-b', model: 'gpt-b' },
         ],
         targetSelection: { strategy: 'weighted' },
       },
@@ -96,7 +96,7 @@ describe('routeGraphViewModel', () => {
       { label: 'Manual', value: 3 },
     ]);
     expect(getNodeCardSubtitle(entry)).toBe('gpt-public');
-    expect(getNodeCardSubtitle(endpoint)).toBe('2 model targets');
+    expect(getNodeCardSubtitle(endpoint)).toBe('2 upstream targets');
     expect(getNodeCardMetrics(graph, dispatcher)).toEqual([
       '2 connections',
       '88% success',
@@ -283,7 +283,7 @@ describe('routeGraphViewModel', () => {
     };
     const disabledDerived: RouteGraphNode = {
       id: 'endpoint.derived',
-      type: 'model_endpoint',
+      type: 'route_endpoint',
       name: 'Derived endpoint',
       enabled: false,
       visibility: 'internal',
@@ -294,7 +294,7 @@ describe('routeGraphViewModel', () => {
     expect(getModelListSubtitle(manualPublic)).toBe('enabled · manual');
     expect(getOutlineSubtitle(manualPublic)).toBe('entry · public · manual');
     expect(getModelListSubtitle(disabledDerived)).toBe('disabled · derived');
-    expect(getOutlineSubtitle(disabledDerived)).toBe('model_endpoint · internal · derived');
+    expect(getOutlineSubtitle(disabledDerived)).toBe('route_endpoint · internal · derived');
   });
 
   it('summarizes unknown and fallback node types without repeating enabled/public facts', () => {
@@ -364,11 +364,11 @@ describe('routeGraphViewModel', () => {
     };
     const endpointOne: RouteGraphNode = {
       id: 'endpoint.one',
-      type: 'model_endpoint',
+      type: 'route_endpoint',
       enabled: true,
       visibility: 'internal',
       ownership: 'manual',
-      config: { targets: [{ channelId: '1', model: 'gpt-4.1' }] },
+      config: { targets: [{ targetId: '1', model: 'gpt-4.1' }] },
     };
     const syntheticDefault: RouteGraphNode = {
       id: 'synthetic.default',
@@ -406,7 +406,7 @@ describe('routeGraphViewModel', () => {
     expect(getNodeModeLabel(dispatcherDefault)).toBe('route');
     expect(getNodeCardSubtitle(filterOne)).toBe('1 operation');
     expect(getNodeCardSubtitle(filterZero)).toBe('0 operations');
-    expect(getNodeCardSubtitle(endpointOne)).toBe('1 model target');
+    expect(getNodeCardSubtitle(endpointOne)).toBe('1 upstream target');
     expect(getNodeCardSubtitle(syntheticDefault)).toBe('503 synthetic response');
     expect(getNodeCardSubtitle(manualAuto)).toBe('manual node');
     expect(getNodeCardMetrics(graph, dispatcherDefault)).toEqual(['0 connections', 'weighted']);

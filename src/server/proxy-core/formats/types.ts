@@ -1,5 +1,6 @@
 import type { DownstreamRoutingPolicy } from '../../services/downstreamPolicyTypes.js';
 import type { RouteGraphPostBuildFilters } from '../../services/routeGraphRuntimeService.js';
+import type { RouteExecutionScope } from '../../services/tokenRouter.js';
 import type { ResolvedUpstreamCompatibilityPolicy } from '../../contracts/upstreamCompatibilityPolicy.js';
 import type { UpstreamEndpoint } from '../orchestration/upstreamRequest.js';
 
@@ -152,7 +153,8 @@ export interface DownstreamProtocolAdapter {
   selectChannel?(options: {
     requestedModel: string;
     policy: any;
-    excludeChannelIds: number[];
-    forcedChannelId: number | null;
+    excludeTargetIds: number[];
+    forcedTargetId: number | null;
+    routeExecutionScope?: RouteExecutionScope | null;
   }): Promise<any>;
 }

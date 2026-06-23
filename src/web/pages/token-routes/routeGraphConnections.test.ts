@@ -272,12 +272,12 @@ describe('routeGraphConnections', () => {
       nodes: [
         {
           id: 'endpoint.derived',
-          type: 'model_endpoint',
+          type: 'route_endpoint',
           enabled: true,
           visibility: 'internal',
           ownership: 'derived',
           config: {
-            targets: [{ channelId: 'derived', model: 'derived-model' }],
+            targets: [{ targetId: 'derived', model: 'derived-model' }],
             targetSelection: { strategy: 'weighted' },
           },
         },

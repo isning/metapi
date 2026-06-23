@@ -28,7 +28,7 @@ const RESPONSES_WEBSOCKET_MODE_HEADER = 'x-metapi-responses-websocket-mode';
 const RESPONSES_WEBSOCKET_TRANSPORT_HEADER = 'x-metapi-responses-websocket-transport';
 const codexWebsocketRuntime = createCodexWebsocketRuntime();
 
-type SelectedChannel = NonNullable<Awaited<ReturnType<typeof tokenRouter.selectChannel>>>;
+type SelectedTarget = NonNullable<Awaited<ReturnType<typeof tokenRouter.selectTarget>>>;
 type ResponsesWebsocketAuthContext = DownstreamTokenAuthSuccess;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -82,7 +82,7 @@ function readNestedRecord(value: unknown, key: string): Record<string, unknown> 
   return isRecord(nested) ? nested : null;
 }
 function selectedChannelModelMatches(
-  selectedChannel: SelectedChannel | null,
+  selectedChannel: SelectedTarget | null,
   requestModel: string,
 ): boolean {
   if (!selectedChannel) return false;
@@ -93,7 +93,7 @@ function selectedChannelModelMatches(
 }
 
 function selectedChannelSupportsCodexWebsocketTransport(
-  selectedChannel: SelectedChannel | null,
+  selectedChannel: SelectedTarget | null,
   requestModel: string,
 ): boolean {
   if (!selectedChannel) return false;
@@ -121,7 +121,7 @@ function selectedChannelSupportsCodexWebsocketTransport(
 }
 
 function selectedChannelSupportsIncrementalInput(
-  selectedChannel: SelectedChannel | null,
+  selectedChannel: SelectedTarget | null,
   requestModel: string,
 ): boolean {
   return selectedChannelSupportsCodexWebsocketTransport(selectedChannel, requestModel);
@@ -139,8 +139,8 @@ function unwrapCodexWebsocketRuntimeError(error: unknown): CodexWebsocketRuntime
   );
 }
 
-function shouldReuseSelectedChannel(
-  selectedChannel: SelectedChannel | null,
+function shouldReuseSelectedTarget(
+  selectedChannel: SelectedTarget | null,
   requestModel: string,
 ): boolean {
   if (!selectedChannel) return false;
@@ -321,7 +321,7 @@ async function supportsResponsesWebsocketIncrementalInput(
   if (!requestModel) return false;
 
   try {
-    const selected = await tokenRouter.previewSelectedChannel(requestModel, authContext.policy);
+    const selected = await tokenRouter.previewSelectedTarget(requestModel, authContext.policy);
     return selectedChannelSupportsIncrementalInput(selected, requestModel);
   } catch {
     return false;
@@ -342,7 +342,7 @@ async function handleResponsesWebsocketConnection(
   const runtimeSessionKeys = new Set<string>();
   let lastRequest: Record<string, unknown> | null = null;
   let lastResponseOutput: unknown[] = [];
-  let selectedChannel: SelectedChannel | null = null;
+  let selectedChannel: SelectedTarget | null = null;
   let messageQueue = Promise.resolve();
 
   socket.once('close', () => {
@@ -423,9 +423,9 @@ async function handleResponsesWebsocketConnection(
             return;
           }
 
-          if (!shouldReuseSelectedChannel(selectedChannel, requestModel)) {
+          if (!shouldReuseSelectedTarget(selectedChannel, requestModel)) {
             selectedChannel = requestModel
-              ? await tokenRouter.selectChannel(requestModel, authContext.policy)
+              ? await tokenRouter.selectTarget(requestModel, authContext.policy)
               : null;
           }
 
@@ -477,7 +477,7 @@ async function handleResponsesWebsocketConnection(
               sessionId: websocketSessionId,
               siteId: codexWebsocketChannel.site.id,
               accountId: codexWebsocketChannel.account.id,
-              channelId: codexWebsocketChannel.channel.id,
+              targetId: codexWebsocketChannel.target.id,
             }) || websocketSessionId;
             runtimeSessionKeys.add(websocketRuntimeSessionKey);
 
@@ -505,7 +505,7 @@ async function handleResponsesWebsocketConnection(
                       site: codexWebsocketChannel.site,
                       account: codexWebsocketChannel.account,
                       token: codexWebsocketChannel.token,
-                      modelEndpointCompatibilityPolicy: codexWebsocketChannel.routeGraph?.modelEndpointCompatibilityPolicy,
+                      routeEndpointCompatibilityPolicy: codexWebsocketChannel.routeGraph?.routeEndpointCompatibilityPolicy,
                       selectedEndpointTarget: codexWebsocketChannel.routeGraph?.selectedEndpointTarget,
                     }),
                   });

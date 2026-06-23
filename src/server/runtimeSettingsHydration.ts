@@ -139,22 +139,22 @@ export function applyRuntimeSettings(settingsMap: Map<string, string>) {
     config.logCleanupRetentionDays = normalizeLogCleanupRetentionDays(logCleanupRetentionDays);
   }
 
-  const proxySessionChannelConcurrencyLimit = parseSettingFromMap<number>(settingsMap, 'proxy_session_channel_concurrency_limit');
+  const proxySessionTargetConcurrencyLimit = parseSettingFromMap<number>(settingsMap, 'proxy_session_target_concurrency_limit');
   if (
-    typeof proxySessionChannelConcurrencyLimit === 'number'
-    && Number.isFinite(proxySessionChannelConcurrencyLimit)
-    && proxySessionChannelConcurrencyLimit >= 0
+    typeof proxySessionTargetConcurrencyLimit === 'number'
+    && Number.isFinite(proxySessionTargetConcurrencyLimit)
+    && proxySessionTargetConcurrencyLimit >= 0
   ) {
-    config.proxySessionChannelConcurrencyLimit = Math.trunc(proxySessionChannelConcurrencyLimit);
+    config.proxySessionTargetConcurrencyLimit = Math.trunc(proxySessionTargetConcurrencyLimit);
   }
 
-  const proxySessionChannelQueueWaitMs = parseSettingFromMap<number>(settingsMap, 'proxy_session_channel_queue_wait_ms');
+  const proxySessionTargetQueueWaitMs = parseSettingFromMap<number>(settingsMap, 'proxy_session_target_queue_wait_ms');
   if (
-    typeof proxySessionChannelQueueWaitMs === 'number'
-    && Number.isFinite(proxySessionChannelQueueWaitMs)
-    && proxySessionChannelQueueWaitMs >= 0
+    typeof proxySessionTargetQueueWaitMs === 'number'
+    && Number.isFinite(proxySessionTargetQueueWaitMs)
+    && proxySessionTargetQueueWaitMs >= 0
   ) {
-    config.proxySessionChannelQueueWaitMs = Math.trunc(proxySessionChannelQueueWaitMs);
+    config.proxySessionTargetQueueWaitMs = Math.trunc(proxySessionTargetQueueWaitMs);
   }
 
   const proxyDebugTraceEnabled = parseSettingFromMap<boolean>(settingsMap, 'proxy_debug_trace_enabled');

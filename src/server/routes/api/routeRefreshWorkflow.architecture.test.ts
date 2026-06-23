@@ -52,9 +52,9 @@ describe('route refresh workflow architecture boundaries', () => {
     const genericOrchestratorSource = readSource('../../proxy-core/orchestration/genericProxyOrchestrator.ts');
     const modelListOrchestratorSource = readSource('../../proxy-core/orchestration/modelListOrchestrator.ts');
     const geminiAdapterSource = readSource('../../proxy-core/formats/gemini.ts');
-    const channelSelectionSource = readSource('../../proxy-core/channelSelection.ts');
+    const targetSelectionSource = readSource('../../proxy-core/targetSelection.ts');
 
-    for (const source of [schedulerSource, oauthServiceSource, channelSelectionSource]) {
+    for (const source of [schedulerSource, oauthServiceSource, targetSelectionSource]) {
       expectImportsRouteRefreshWorkflow(source);
       expectNoDirectModelServiceRouteRefresh(source);
     }

@@ -66,13 +66,13 @@ vi.mock('../../services/oauth/refreshSingleflight.js', () => ({
   refreshOauthAccessTokenSingleflight: vi.fn(),
 }));
 
-vi.mock('../../services/proxyChannelCoordinator.js', () => ({
-  proxyChannelCoordinator: {
+vi.mock('../../services/proxyTargetCoordinator.js', () => ({
+  proxyTargetCoordinator: {
     buildStickySessionKey: vi.fn(),
-    getStickyChannelId: vi.fn(),
-    bindStickyChannel: vi.fn(),
-    clearStickyChannel: vi.fn(),
-    acquireChannelLease: vi.fn(),
+    getStickyTargetId: vi.fn(),
+    bindStickyTarget: vi.fn(),
+    clearStickyTarget: vi.fn(),
+    acquireTargetLease: vi.fn(),
   },
 }));
 
@@ -80,8 +80,8 @@ vi.mock('../executors/types.js', () => ({
   readRuntimeResponseText: vi.fn(),
 }));
 
-vi.mock('../channelSelection.js', () => ({
-  selectProxyChannelForAttempt: vi.fn(),
+vi.mock('../targetSelection.js', () => ({
+  selectProxyTargetForAttempt: vi.fn(),
 }));
 
 describe('shared surface usage source logging', () => {
@@ -111,7 +111,7 @@ describe('shared surface usage source logging', () => {
 
     await toolkit.log({
       selected: {
-        channel: { id: 11, routeId: 22 },
+        target: { id: 11, routeId: 22 },
         account: { id: 33, username: 'oauth-user' },
         site: { name: 'Codex OAuth' },
         actualModel: 'upstream-model',

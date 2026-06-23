@@ -101,7 +101,7 @@ describe('POST /api/routes/decision/batch refreshPricingCatalog', () => {
       });
     });
 
-    await db.delete(schema.routeChannels).run();
+    await db.delete(schema.routeEndpointTargets).run();
     await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.routeGraphActiveVersion).run();
     await db.delete(schema.routeGraphDrafts).run();
@@ -166,7 +166,7 @@ describe('POST /api/routes/decision/batch refreshPricingCatalog', () => {
       status: 'active',
     }).returning().get();
 
-    await db.insert(schema.routeChannels).values([
+    await db.insert(schema.routeEndpointTargets).values([
       {
         routeId: route.id,
         accountId: accountA.id,
@@ -248,8 +248,8 @@ describe('POST /api/routes/decision/batch refreshPricingCatalog', () => {
     expect(candidateA).toBeTruthy();
     expect(candidateB).toBeTruthy();
     expect(candidateB?.probability || 0).toBeGreaterThan(candidateA?.probability || 0);
-    expect(candidateA?.reason || '').toContain('成本=目录');
-    expect(candidateB?.reason || '').toContain('成本=目录');
+    expect(candidateA?.reason || '').toContain('成本=端点价');
+    expect(candidateB?.reason || '').toContain('成本=端点价');
     expect(fetchMock).toHaveBeenCalledTimes(4);
   });
 });

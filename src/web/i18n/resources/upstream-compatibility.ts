@@ -95,7 +95,7 @@ export const upstreamCompatibilityResources = {
     'upstreamCompatibility.inheritOrderTitle': 'Inheritance source',
     'upstreamCompatibility.inheritSource.defaultChain': 'the parent configuration chain',
     'upstreamCompatibility.inheritSource.platformDefault': 'the platform default compatibility policy',
-    'upstreamCompatibility.inheritSource.routeEndpointChain': 'the runtime upstream selection chain: platform default, site, account, model endpoint, and target override',
+    'upstreamCompatibility.inheritSource.routeEndpointChain': 'the runtime upstream selection chain: platform default, site, account, route endpoint, and target override',
     'upstreamCompatibility.inheritSource.tokenChain': 'the platform default, site, and account configuration',
     'upstreamCompatibility.jsonModeDescription': 'Editing the raw policy JSON directly. Use this for debugging or advanced fields not exposed in the form.',
     'upstreamCompatibility.jsonWarning': 'Advanced JSON bypasses the guided form checks. Use it only when you are sure about the policy structure.',

@@ -56,8 +56,8 @@ interface RuntimeSettingsBody {
   codexUpstreamWebsocketEnabled?: boolean;
   responsesCompactFallbackToResponsesEnabled?: boolean;
   disableCrossProtocolFallback?: boolean;
-  proxySessionChannelConcurrencyLimit?: number;
-  proxySessionChannelQueueWaitMs?: number;
+  proxySessionTargetConcurrencyLimit?: number;
+  proxySessionTargetQueueWaitMs?: number;
   proxyDebugTraceEnabled?: boolean;
   proxyDebugCaptureHeaders?: boolean;
   proxyDebugCaptureBodies?: boolean;
@@ -446,16 +446,16 @@ function applyImportedSettingToRuntime(key: string, value: unknown) {
       }
       return;
     }
-    case 'proxy_session_channel_concurrency_limit': {
+    case 'proxy_session_target_concurrency_limit': {
       const limit = Number(value);
       if (!Number.isFinite(limit) || limit < 0) return;
-      config.proxySessionChannelConcurrencyLimit = Math.trunc(limit);
+      config.proxySessionTargetConcurrencyLimit = Math.trunc(limit);
       return;
     }
-    case 'proxy_session_channel_queue_wait_ms': {
+    case 'proxy_session_target_queue_wait_ms': {
       const queueWaitMs = Number(value);
       if (!Number.isFinite(queueWaitMs) || queueWaitMs < 0) return;
-      config.proxySessionChannelQueueWaitMs = Math.trunc(queueWaitMs);
+      config.proxySessionTargetQueueWaitMs = Math.trunc(queueWaitMs);
       return;
     }
     case 'proxy_debug_trace_enabled': {
@@ -725,8 +725,8 @@ function getRuntimeSettingsResponse(currentAdminIp = '') {
     codexUpstreamWebsocketEnabled: config.codexUpstreamWebsocketEnabled,
     responsesCompactFallbackToResponsesEnabled: config.responsesCompactFallbackToResponsesEnabled,
     disableCrossProtocolFallback: config.disableCrossProtocolFallback,
-    proxySessionChannelConcurrencyLimit: config.proxySessionChannelConcurrencyLimit,
-    proxySessionChannelQueueWaitMs: config.proxySessionChannelQueueWaitMs,
+    proxySessionTargetConcurrencyLimit: config.proxySessionTargetConcurrencyLimit,
+    proxySessionTargetQueueWaitMs: config.proxySessionTargetQueueWaitMs,
     proxyDebugTraceEnabled: config.proxyDebugTraceEnabled,
     proxyDebugCaptureHeaders: config.proxyDebugCaptureHeaders,
     proxyDebugCaptureBodies: config.proxyDebugCaptureBodies,
@@ -1234,30 +1234,30 @@ export async function settingsRoutes(app: FastifyInstance) {
       upsertSetting('disable_cross_protocol_fallback', config.disableCrossProtocolFallback);
     }
 
-    if (body.proxySessionChannelConcurrencyLimit !== undefined) {
-      const limit = Number(body.proxySessionChannelConcurrencyLimit);
+    if (body.proxySessionTargetConcurrencyLimit !== undefined) {
+      const limit = Number(body.proxySessionTargetConcurrencyLimit);
       if (!Number.isFinite(limit) || limit < 0) {
-        return reply.code(400).send({ success: false, message: '会话通道并发上限必须是大于等于 0 的整数' });
+        return reply.code(400).send({ success: false, message: '会话目标并发上限必须是大于等于 0 的整数' });
       }
       const nextLimit = Math.trunc(limit);
-      if (nextLimit !== config.proxySessionChannelConcurrencyLimit) {
-        changedLabels.push(`会话通道并发上限（${config.proxySessionChannelConcurrencyLimit} -> ${nextLimit}）`);
+      if (nextLimit !== config.proxySessionTargetConcurrencyLimit) {
+        changedLabels.push(`会话目标并发上限（${config.proxySessionTargetConcurrencyLimit} -> ${nextLimit}）`);
       }
-      config.proxySessionChannelConcurrencyLimit = nextLimit;
-      upsertSetting('proxy_session_channel_concurrency_limit', config.proxySessionChannelConcurrencyLimit);
+      config.proxySessionTargetConcurrencyLimit = nextLimit;
+      upsertSetting('proxy_session_target_concurrency_limit', config.proxySessionTargetConcurrencyLimit);
     }
 
-    if (body.proxySessionChannelQueueWaitMs !== undefined) {
-      const rawQueueWaitMs = Number(body.proxySessionChannelQueueWaitMs);
+    if (body.proxySessionTargetQueueWaitMs !== undefined) {
+      const rawQueueWaitMs = Number(body.proxySessionTargetQueueWaitMs);
       if (!Number.isFinite(rawQueueWaitMs) || rawQueueWaitMs < 0) {
-        return reply.code(400).send({ success: false, message: '会话通道排队等待时间必须是大于等于 0 的整数毫秒' });
+        return reply.code(400).send({ success: false, message: '会话目标排队等待时间必须是大于等于 0 的整数毫秒' });
       }
       const nextQueueWaitMs = Math.trunc(rawQueueWaitMs);
-      if (nextQueueWaitMs !== config.proxySessionChannelQueueWaitMs) {
-        changedLabels.push(`会话通道排队等待（${config.proxySessionChannelQueueWaitMs}ms -> ${nextQueueWaitMs}ms）`);
+      if (nextQueueWaitMs !== config.proxySessionTargetQueueWaitMs) {
+        changedLabels.push(`会话目标排队等待（${config.proxySessionTargetQueueWaitMs}ms -> ${nextQueueWaitMs}ms）`);
       }
-      config.proxySessionChannelQueueWaitMs = nextQueueWaitMs;
-      upsertSetting('proxy_session_channel_queue_wait_ms', config.proxySessionChannelQueueWaitMs);
+      config.proxySessionTargetQueueWaitMs = nextQueueWaitMs;
+      upsertSetting('proxy_session_target_queue_wait_ms', config.proxySessionTargetQueueWaitMs);
     }
 
     if (body.proxyDebugTraceEnabled !== undefined) {
@@ -1834,7 +1834,7 @@ export async function settingsRoutes(app: FastifyInstance) {
       appendSettingsEvent({
         type: 'status',
         title: '数据库迁移已完成',
-        message: `目标 ${result.dialect}，已迁移站点 ${result.rows.sites}、账号 ${result.rows.accounts}、令牌 ${result.rows.accountTokens}、路由 ${result.rows.tokenRoutes}、通道 ${result.rows.routeChannels}、设置 ${result.rows.settings}`,
+        message: `目标 ${result.dialect}，已迁移站点 ${result.rows.sites}、账号 ${result.rows.accounts}、令牌 ${result.rows.accountTokens}、路由 ${result.rows.tokenRoutes}、通道 ${result.rows.routeEndpointTargets}、设置 ${result.rows.settings}`,
       });
       return {
         success: true,
@@ -1986,7 +1986,7 @@ export async function settingsRoutes(app: FastifyInstance) {
 
   app.post('/api/settings/maintenance/clear-cache', async (_, reply) => {
     const deletedModelAvailability = (await db.delete(schema.modelAvailability).run()).changes;
-    const deletedRouteChannels = (await db.delete(schema.routeChannels).run()).changes;
+    const deletedRouteEndpointTargets = (await db.delete(schema.routeEndpointTargets).run()).changes;
     const deletedTokenRoutes = (await db.delete(schema.tokenRoutes).run()).changes;
 
     const { task, reused } = startBackgroundTask(
@@ -1998,7 +1998,9 @@ export async function settingsRoutes(app: FastifyInstance) {
         successMessage: (currentTask) => {
           const rebuild = (currentTask.result as any)?.rebuild;
           if (!rebuild) return '缓存清理后重建路由已完成';
-          return `缓存清理后重建完成：新增路由 ${rebuild.createdRoutes}，移除旧路由 ${rebuild.removedRoutes ?? 0}，新增通道 ${rebuild.createdChannels}，移除通道 ${rebuild.removedChannels}`;
+          const createdTargets = rebuild.createdTargets ?? rebuild.createdChannels ?? 0;
+          const removedTargets = rebuild.removedTargets ?? rebuild.removedChannels ?? 0;
+          return `缓存清理后重建完成：新增路由 ${rebuild.createdRoutes ?? 0}，移除旧路由 ${rebuild.removedRoutes ?? 0}，新增目标 ${createdTargets}，移除目标 ${removedTargets}`;
         },
         failureMessage: (currentTask) => `缓存清理后重建失败：${currentTask.error || 'unknown error'}`,
       },
@@ -2012,7 +2014,7 @@ export async function settingsRoutes(app: FastifyInstance) {
       jobId: task.id,
       message: '缓存已清理，重建路由已开始执行',
       deletedModelAvailability,
-      deletedRouteChannels,
+      deletedRouteEndpointTargets,
       deletedTokenRoutes,
     });
   });
@@ -2020,7 +2022,7 @@ export async function settingsRoutes(app: FastifyInstance) {
   app.post('/api/settings/maintenance/clear-usage', async () => {
     const deletedProxyLogs = (await db.delete(schema.proxyLogs).run()).changes;
 
-    await db.update(schema.routeChannels).set({
+    await db.update(schema.routeEndpointTargets).set({
       successCount: 0,
       failCount: 0,
       totalLatencyMs: 0,

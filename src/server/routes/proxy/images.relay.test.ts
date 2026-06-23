@@ -77,7 +77,7 @@ describe('/v1/images/edits relay with scenario upstreams', () => {
   });
 
   it('records a failed proxy log when the upstream image edits endpoint returns an error', async () => {
-    const { managedKey, route, channel, account } = await harness.seedRoute({ model: 'gpt-image-1' });
+    const { managedKey, route, target, account } = await harness.seedRoute({ model: 'gpt-image-1' });
     harness.upstream.add({
       method: 'POST',
       path: '/v1/images/edits',
@@ -106,7 +106,7 @@ describe('/v1/images/edits relay with scenario upstreams', () => {
     expect(response.statusCode, response.body).toBe(503);
     expect(response.json()).toMatchObject({
       error: expect.objectContaining({
-        message: expect.stringContaining('No available channels'),
+        message: expect.stringContaining('No available targets'),
       }),
     });
 
@@ -114,7 +114,7 @@ describe('/v1/images/edits relay with scenario upstreams', () => {
     expect(logs.some((log) => log.status === 'failed'
       && log.httpStatus === 502
       && log.routeId === route.id
-      && log.channelId === channel.id
+      && log.targetId === target.id
       && log.accountId === account.id
       && log.downstreamApiKeyId === managedKey.id
       && log.modelRequested === 'gpt-image-1'

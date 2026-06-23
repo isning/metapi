@@ -201,7 +201,7 @@ export default function ManualRoutePanel({
   }, [editingRouteId, show]);
 
   const backendKind = form.backend.kind;
-  const editingDirectChannelsNode = editingRouteId !== null && backendKind === 'channels';
+  const editingDirectTargetsNode = editingRouteId !== null && backendKind === 'supply';
   const displayName = form.presentation.displayName;
   const displayIcon = form.presentation.displayIcon;
   const modelPattern = form.match.requestedModelPattern;
@@ -353,10 +353,10 @@ export default function ManualRoutePanel({
     }
 
     return list.sort((a, b) => {
-      if (a.channelCount === b.channelCount) {
+      if (a.targetCount === b.targetCount) {
         return renderRouteOptionLabel(a).localeCompare(renderRouteOptionLabel(b), undefined, { sensitivity: 'base' });
       }
-      return b.channelCount - a.channelCount;
+      return b.targetCount - a.targetCount;
     });
   }, [
     activeSourceBrand,
@@ -420,7 +420,7 @@ export default function ManualRoutePanel({
       },
       backend: backendKind === 'routes'
         ? { kind: 'routes', routeIds: sourceRouteIds }
-        : { kind: 'channels' },
+        : { kind: 'supply' },
       ...(backendKind === 'routes' && displayName.trim() ? {
         macro: updateCandidateSelectorMacroFromEditor({
           macro: form.macro || currentRouteNodeJson?.macro || null,
@@ -502,16 +502,16 @@ export default function ManualRoutePanel({
         : !!modelPattern.trim() && !modelPatternError;
     }
     if (wizardStep === 'backend') {
-      return backendKind === 'channels' || sourceRouteIds.length > 0;
+      return backendKind === 'supply' || sourceRouteIds.length > 0;
     }
     return true;
   }, [backendKind, displayName, modelPattern, modelPatternError, sourceRouteIds.length, wizardStep]);
 
-  const setRouteType = (nextKind: 'routes' | 'channels') => {
+  const setRouteType = (nextKind: 'routes' | 'supply') => {
     setForm((current) => ({
       ...current,
-      backend: nextKind === 'routes' ? { kind: 'routes', routeIds: [] } : { kind: 'channels' },
-      advancedOpen: nextKind === 'channels',
+      backend: nextKind === 'routes' ? { kind: 'routes', routeIds: [] } : { kind: 'supply' },
+      advancedOpen: nextKind === 'supply',
     }));
     setWizardStep('match');
   };
@@ -633,9 +633,9 @@ export default function ManualRoutePanel({
             value={form.routingStrategy}
             onChange={(nextValue) => setForm((current) => ({ ...current, routingStrategy: nextValue as RouteRoutingStrategy }))}
             options={[
-              { value: 'weighted', label: tr('pages.tokenRoutes.manualRoutePanel.weightedRandom'), description: tr('pages.tokenRoutes.manualRoutePanel.channelsweightedRandomselect') },
-              { value: 'round_robin', label: tr('pages.oAuthManagement.roundRobin'), description: tr('pages.tokenRoutes.manualRoutePanel.availablechannelsSelect') },
-              { value: 'stable_first', label: tr('pages.settings.stableFirst'), description: tr('pages.tokenRoutes.manualRoutePanel.selectAvailablechannels') },
+              { value: 'weighted', label: tr('pages.tokenRoutes.manualRoutePanel.weightedRandom'), description: tr('pages.tokenRoutes.manualRoutePanel.targetsweightedRandomselect') },
+              { value: 'round_robin', label: tr('pages.oAuthManagement.roundRobin'), description: tr('pages.tokenRoutes.manualRoutePanel.availabletargetsSelect') },
+              { value: 'stable_first', label: tr('pages.settings.stableFirst'), description: tr('pages.tokenRoutes.manualRoutePanel.selectAvailabletargets') },
             ]}
             placeholder={tr('pages.tokenRoutes.manualRoutePanel.selectroutesstrategy')}
           />
@@ -743,8 +743,8 @@ export default function ManualRoutePanel({
       badge: `${sourceRouteIds.length} sources`,
     }
     : {
-      title: tr('pages.tokenRoutes.manualRoutePanel.directChannels'),
-      description: tr('pages.tokenRoutes.manualRoutePanel.exactGlobRegexRulesChannels'),
+      title: tr('pages.tokenRoutes.manualRoutePanel.directTargets'),
+      description: tr('pages.tokenRoutes.manualRoutePanel.exactGlobRegexRulesTargets'),
       badge: modelPattern.trim() || tr('pages.tokenRoutes.manualRoutePanel.matchRule'),
     };
 
@@ -763,13 +763,13 @@ export default function ManualRoutePanel({
       </Button>
       <Button
         type="button"
-        variant={backendKind === 'channels' ? 'secondary' : 'outline'}
+        variant={backendKind === 'supply' ? 'secondary' : 'outline'}
         className="h-auto grid justify-start gap-2 p-3 text-left"
-        onClick={() => setRouteType('channels')}
+        onClick={() => setRouteType('supply')}
       >
-        <span className="text-xs font-medium text-muted-foreground">{tr('pages.tokenRoutes.manualRoutePanel.directChannels')}</span>
-        <span className="text-sm font-semibold">{tr('pages.tokenRoutes.manualRoutePanel.rulesChannels')}</span>
-        <span className="text-xs text-muted-foreground">{tr('pages.tokenRoutes.manualRoutePanel.modelmatchrulesChannelsSupportedExactGlobRe')}</span>
+        <span className="text-xs font-medium text-muted-foreground">{tr('pages.tokenRoutes.manualRoutePanel.directTargets')}</span>
+        <span className="text-sm font-semibold">{tr('pages.tokenRoutes.manualRoutePanel.rulesTargets')}</span>
+        <span className="text-xs text-muted-foreground">{tr('pages.tokenRoutes.manualRoutePanel.modelmatchrulesTargetsSupportedExactGlobRe')}</span>
         <span className="text-xs text-muted-foreground">{previewModelSamples.length} {tr('pages.tokenRoutes.manualRoutePanel.preview2')}</span>
       </Button>
       <Button
@@ -981,7 +981,7 @@ export default function ManualRoutePanel({
                 <span>{label}</span>
               </span>
               <span className="text-xs text-muted-foreground">
-                {route.channelCount} {tr('pages.tokenRoutes.channels')} · {(route.siteNames || []).slice(0, 2).join(', ') || tr('pages.tokenRoutes.manualRoutePanel.nonesites')}
+                {route.targetCount} {tr('pages.tokenRoutes.targets')} · {(route.siteNames || []).slice(0, 2).join(', ') || tr('pages.tokenRoutes.manualRoutePanel.nonesites')}
               </span>
             </Button>
           );
@@ -992,7 +992,7 @@ export default function ManualRoutePanel({
     <div className="grid gap-3">
       <div className="text-sm font-medium">{tr('pages.tokenRoutes.manualRoutePanel.automaticmodel')}</div>
       <div className="text-xs text-muted-foreground">
-        {tr('pages.tokenRoutes.manualRoutePanel.saveModelavailableSitesrulesModelEndpointRulespreviewSelect')}
+        {tr('pages.tokenRoutes.manualRoutePanel.saveModelavailableSitesrulesRouteEndpointRulespreviewSelect')}
       </div>
       <div className="grid gap-2 md:grid-cols-3">
         <span><b>{previewMatchedModels.length}</b>{tr('pages.tokenRoutes.manualRoutePanel.zh')}</span>
@@ -1026,7 +1026,7 @@ export default function ManualRoutePanel({
           <span>{tr('pages.tokenRoutes.automaticbrands')}</span>
         </label>
       )}
-      {backendKind === 'channels' && (
+      {backendKind === 'supply' && (
         <label className="grid gap-2 text-sm font-medium">
           <span>{tr('pages.tokenRoutes.manualRoutePanel.groups')}</span>
           <ModernSelect
@@ -1175,11 +1175,11 @@ export default function ManualRoutePanel({
               </nav>
 
               <section className="grid min-w-0 gap-3 rounded-lg border p-3">
-                {editingDirectChannelsNode ? (
+                {editingDirectTargetsNode ? (
                   <div className="grid gap-1 rounded-lg border p-3">
-                    <div className="text-sm font-medium">{tr('Direct Channels')}</div>
+                    <div className="text-sm font-medium">{tr('Direct Targets')}</div>
                     <div className="text-xs text-muted-foreground">
-                      {tr('pages.tokenRoutes.manualRoutePanel.channelsMatchAvailablemodelMatchautomaticchannels')}
+                      {tr('pages.tokenRoutes.manualRoutePanel.targetsMatchAvailablemodelMatchautomatictargets')}
                     </div>
                   </div>
                 ) : null}
@@ -1433,7 +1433,7 @@ export default function ManualRoutePanel({
 
                         <div className="flex flex-wrap gap-1.5">
                           <ToneBadge tone="-info">
-                            {route.channelCount} {tr('pages.tokenRoutes.channels')}
+                            {route.targetCount} {tr('pages.tokenRoutes.targets')}
                           </ToneBadge>
                           <ToneBadge tone="-muted">
                             {siteNames.length} {tr('components.searchModal.sites2')}

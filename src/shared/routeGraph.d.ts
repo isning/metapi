@@ -1,11 +1,10 @@
 export type RouteGraphMatchKind = 'model';
-export type RouteGraphBackendKind = 'channels' | 'routes';
+export type RouteGraphBackendKind = 'supply' | 'routes';
 export type RouteGraphNodeType =
   | 'entry'
   | 'route_endpoint'
   | 'filter'
   | 'dispatcher'
-  | 'model_endpoint'
   | 'synthetic_endpoint'
   | 'auto_node';
 export type RouteGraphVisibility = 'public' | 'internal';
@@ -63,7 +62,7 @@ export type RouteGraphMatchSpec = {
 };
 
 export type RouteGraphBackendSpec =
-  | { kind: 'channels' }
+  | { kind: 'supply' }
   | { kind: 'routes'; routeIds: number[] };
 
 export type RouteNodeProvenance =
@@ -106,11 +105,12 @@ export type RouteEndpointNode = BaseRouteGraphNode & {
   ownerKind: 'automatic_route' | 'manual_route' | 'macro';
   sourceKind: RouteGraphEndpointSourceKind;
   resolvesTo?: {
-    kind: 'model_endpoint' | 'route_builder' | 'synthetic' | 'external';
+    kind: 'route_builder' | 'synthetic' | 'external';
     id: string;
   };
   backend: RouteGraphBackendSpec;
   match?: RouteGraphMatchSpec;
+  config?: RouteExecutableTargetConfig | Record<string, unknown>;
   metadata?: Record<string, unknown>;
 };
 
@@ -146,33 +146,29 @@ export type DispatcherNode = BaseRouteGraphNode & {
   policy: DispatcherPolicy;
 };
 
-export type ModelEndpointNode = BaseRouteGraphNode & {
-  type: 'model_endpoint';
-  routeNodeId?: string;
-  legacyRouteId?: number | null;
+export type RouteExecutableTarget = {
+  targetId: string;
+  model: string;
+  modelSource?: 'fixed' | 'request';
+  enabled?: boolean;
+  tokenId?: string | number | null;
+  accountId?: string | number | null;
+  siteId?: string | number | null;
+  weight?: number | null;
+  priority?: number | null;
   metadata?: Record<string, unknown>;
   compatibilityPolicy?: Record<string, unknown>;
-  config?: {
-    targets: Array<{
-      channelId: string;
-      model: string;
-      modelSource?: 'fixed' | 'request';
-      enabled?: boolean;
-      tokenId?: string | number | null;
-      accountId?: string | number | null;
-      siteId?: string | number | null;
-      weight?: number | null;
-      priority?: number | null;
-      metadata?: Record<string, unknown>;
-      compatibilityPolicy?: Record<string, unknown>;
-    }>;
-    targetSelection?: {
-      strategy: RouteGraphSelectionStrategy | 'direct' | 'defer_to_router';
-      score?: unknown;
-      fallback?: unknown;
-      select?: string;
-    };
-  } | Record<string, unknown>;
+};
+
+export type RouteExecutableTargetConfig = {
+  targets: RouteExecutableTarget[];
+  targetSelection?: {
+    strategy: RouteGraphSelectionStrategy | 'direct' | 'defer_to_router';
+    score?: unknown;
+    fallback?: unknown;
+    select?: string;
+  };
+  compatibilityPolicy?: Record<string, unknown>;
 };
 
 export type SyntheticEndpointNode = BaseRouteGraphNode & {
@@ -185,7 +181,7 @@ export type SyntheticEndpointNode = BaseRouteGraphNode & {
 
 export type AutoNode = BaseRouteGraphNode & {
   type: 'auto_node';
-  routeNodeId?: string;
+  routeEndpointId?: string;
   routingStrategy?: 'weighted' | 'round_robin' | 'stable_first';
   legacyRouteId?: number | null;
 };
@@ -195,7 +191,6 @@ export type RouteGraphNode =
   | RouteEndpointNode
   | FilterNode
   | DispatcherNode
-  | ModelEndpointNode
   | SyntheticEndpointNode
   | AutoNode;
 
@@ -232,7 +227,7 @@ export type CandidateSelectorMacroConfig = {
       | { kind: 'model_pattern'; pattern: string }
       | { kind: 'metadata_query'; cel: string }
       | { kind: 'endpoint_query'; cel: string }
-      | { kind: 'inline_endpoints'; endpoints: NonNullable<ModelEndpointNode['config']> extends { targets: infer T } ? T : unknown[] }
+      | { kind: 'inline_endpoints'; endpoints: RouteExecutableTarget[] }
       | { kind: 'synthetic'; statusCode: SyntheticEndpointNode['statusCode']; message: string };
     defaults?: {
       enabled?: boolean;
@@ -323,7 +318,7 @@ export type CompiledEndpointTarget = {
   endpointId: string;
   targetId: string;
   nodeId: string;
-  channelId: string;
+  targetId: string;
   model: string;
   modelSource?: 'fixed' | 'request';
   enabled: boolean;
@@ -385,7 +380,7 @@ export type RouteProgramOp =
       endpointId: string;
       nodeId: string;
       routeId: number | null;
-      routeNodeId?: string | null;
+      routeEndpointId?: string | null;
       terminalModel?: string;
       targetSelectionPolicy?: Record<string, unknown>;
       targets: CompiledEndpointTarget[];
@@ -426,7 +421,7 @@ export type RouteProgramEndpoint = {
   match: RouteGraphMatchSpec;
   backend: RouteGraphBackendSpec;
   resolvesTo?: {
-    kind: 'model_endpoint' | 'route_builder' | 'synthetic' | 'external';
+    kind: 'route_builder' | 'synthetic' | 'external';
     id: string;
   };
   targetRefs: string[];
@@ -460,10 +455,99 @@ export type RouteProgramBundleV3 = {
   diagnostics: RouteProgramDiagnostic[];
 };
 
+export type RouteFlatFilterStage = {
+  nodeId: string;
+  phase: 'pre_selection' | 'post_build';
+  operations: RouteFilter[];
+  sourceRef: RouteProgramSourceRef;
+};
+
+export type RouteFlatTerminal =
+  | {
+      kind: 'supply';
+      endpointId: string;
+      nodeId: string;
+      routeId: number | null;
+      routeEndpointId?: string | null;
+      terminalModel?: string;
+      targetSelectionPolicy?: Record<string, unknown>;
+      targets: CompiledEndpointTarget[];
+      compatibilityPolicy?: Record<string, unknown>;
+      sourceRef: RouteProgramSourceRef;
+    }
+  | {
+      kind: 'synthetic';
+      nodeId: string;
+      statusCode: 429 | 503;
+      message: string;
+      sourceRef: RouteProgramSourceRef;
+    };
+
+export type RouteFlatDecision =
+  | {
+      kind: 'dispatch';
+      filterStages: RouteFlatFilterStage[];
+      dispatch: RouteFlatDispatchPlan;
+    }
+  | {
+      kind: 'terminal';
+      filterStages: RouteFlatFilterStage[];
+      terminal: RouteFlatTerminal;
+    };
+
+export type RouteFlatCandidate = {
+  id: string;
+  kind: 'route' | 'bidirect' | 'target';
+  nodeId?: string;
+  edgeId?: string;
+  endpointId?: string;
+  enabled: boolean;
+  weight: number;
+  priority: number;
+  order: number;
+  metadata?: Record<string, unknown>;
+  sourceRef: RouteProgramSourceRef;
+  next: RouteFlatDecision;
+  terminalKind: 'supply' | 'synthetic' | 'dispatch';
+  targetCount: number;
+  enabledTargetCount: number;
+};
+
+export type RouteFlatDispatchPlan = {
+  id: string;
+  nodeId: string;
+  mode: 'route' | 'flow' | 'target';
+  policy: DispatcherPolicy;
+  candidates: RouteFlatCandidate[];
+  enabledCandidateCount: number;
+  sourceRef: RouteProgramSourceRef;
+};
+
+export type RouteFlatProgram = {
+  id: string;
+  entryNodeId: string;
+  publicModelName: string;
+  enabled: boolean;
+  rootEndpointId?: string | null;
+  start: RouteFlatDecision | null;
+  sourceRef: RouteProgramSourceRef;
+};
+
+export type RouteProgramBundleV4 = {
+  version: 4;
+  hash: string;
+  matcher: RouteMatcherTable;
+  programs: RouteFlatProgram[];
+  endpointCatalog: RouteProgramEndpointCatalog;
+  debug: RouteProgramDebugInfo;
+  diagnostics: RouteProgramDiagnostic[];
+};
+
 export type CompiledRouteGraph = {
   version: 2;
   hash: string;
   programBundle: RouteProgramBundleV3;
+  flatProgramBundle: RouteProgramBundleV4;
   entries: Array<{
     nodeId: string;
     enabled: boolean;
@@ -484,7 +568,7 @@ export type CompiledRouteGraph = {
     ownerKind: 'automatic_route' | 'manual_route' | 'macro';
     sourceKind: RouteGraphEndpointSourceKind;
     resolvesTo?: {
-      kind: 'model_endpoint' | 'route_builder' | 'synthetic' | 'external';
+      kind: 'route_builder' | 'synthetic' | 'external';
       id: string;
     };
     backend: RouteGraphBackendSpec;
@@ -496,8 +580,8 @@ export type CompiledRouteGraph = {
   edgesByFromPort: Record<string, RouteGraphEdge[]>;
   terminals: Array<{
     nodeId: string;
-    type: 'model_endpoint' | 'synthetic_endpoint' | 'auto_node';
-    routeNodeId: string;
+    type: 'route_endpoint' | 'synthetic_endpoint' | 'auto_node';
+    routeEndpointId: string;
     legacyRouteId: number | null;
     routingStrategy: string;
     statusCode: number | null;
@@ -517,11 +601,12 @@ export type RouteGraphCompileResult = {
 
 export const ROUTE_GRAPH_SCHEMA_VERSION: 2;
 export const ROUTE_PROGRAM_BUNDLE_VERSION: 3;
+export const ROUTE_FLAT_PROGRAM_BUNDLE_VERSION: 4;
 export const ROUTE_GRAPH_MATCH_KIND_MODEL: 'model';
-export const ROUTE_GRAPH_BACKEND_KIND_CHANNELS: 'channels';
+export const ROUTE_GRAPH_BACKEND_KIND_SUPPLY: 'supply';
 export const ROUTE_GRAPH_BACKEND_KIND_ROUTES: 'routes';
 export const ROUTE_GRAPH_NODE_TYPES: readonly RouteGraphNodeType[];
-export const ROUTE_GRAPH_TERMINAL_NODE_TYPES: readonly ('model_endpoint' | 'synthetic_endpoint' | 'auto_node')[];
+export const ROUTE_GRAPH_TERMINAL_NODE_TYPES: readonly ('route_endpoint' | 'synthetic_endpoint' | 'auto_node')[];
 export const ROUTE_GRAPH_SELECTION_STRATEGIES: readonly RouteGraphSelectionStrategy[];
 export const ROUTE_GRAPH_VISIBILITIES: readonly RouteGraphVisibility[];
 export const ROUTE_GRAPH_OWNERSHIPS: readonly RouteGraphOwnership[];
@@ -548,7 +633,6 @@ export function getRouteGraphExposedModelName(matchSpec: unknown, backendSpec: u
 export function isRouteGraphExactModelMatch(matchSpec: unknown, backendSpec: unknown): boolean;
 export function routeGraphMatchesRequestedModel(model: string, matchSpec: unknown, backendSpec: unknown): boolean;
 export function legacyRouteIdToRouteGraphEntryNodeId(routeId: number): string;
-export function legacyRouteIdToRouteGraphPoolNodeId(routeId: number): string;
 export function routeGraphRouteProductEndpointIdFromRoute(routeId: number): string;
 export function routeGraphSupplyEndpointIdFromRoute(routeId: number): string;
 export function routeGraphSupplyEndpointIdFromIdentity(identity: unknown, fallbackRouteId: number): string;
@@ -560,7 +644,7 @@ export function getRouteGraphMacroPort(macroInput: unknown, portId: string): Rou
 export function normalizeRouteGraphNode(input: unknown): RouteGraphNode;
 export function normalizeRouteGraphEdge(input: unknown): RouteGraphEdge;
 export function normalizeRouteGraphMacro(input: unknown): RouteGraphMacro;
-export function buildCandidateSelectorMacroFromRouteProjection(input: {
+export function buildCandidateSelectorMacroFromRouteBinding(input: {
   id?: number;
   stableId?: string | null;
   displayName?: string | null;

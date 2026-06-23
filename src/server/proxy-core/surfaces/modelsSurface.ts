@@ -9,8 +9,8 @@ type ModelsSurfaceInput = {
   responseFormat: 'openai' | 'claude';
   tokenRouter: {
     getAvailableModels(): Promise<string[]>;
-    explainSelection(modelName: string, excludeChannelIds: number[], downstreamPolicy: unknown): Promise<{
-      selectedChannelId?: number | null;
+    explainSelection(modelName: string, excludeTargetIds: number[], downstreamPolicy: unknown): Promise<{
+      selectedTargetId?: number | null;
     }>;
   };
   refreshModelsAndRebuildRoutes(): Promise<unknown>;
@@ -32,7 +32,7 @@ async function readVisibleModels(input: ModelsSurfaceInput): Promise<string[]> {
       continue;
     }
     const decision = await input.tokenRouter.explainSelection(modelName, [], input.downstreamPolicy);
-    if (typeof decision.selectedChannelId === 'number') {
+    if (typeof decision.selectedTargetId === 'number') {
       allowed.push(modelName);
     }
   }
@@ -123,12 +123,12 @@ export async function retrieveModelSurface(input: RetrieveModelSurfaceInput) {
   }
 
   let decision = await input.tokenRouter.explainSelection(modelId, [], input.downstreamPolicy);
-  if (typeof decision.selectedChannelId !== 'number') {
+  if (typeof decision.selectedTargetId !== 'number') {
     await input.refreshModelsAndRebuildRoutes();
     decision = await input.tokenRouter.explainSelection(modelId, [], input.downstreamPolicy);
   }
 
-  if (typeof decision.selectedChannelId !== 'number') {
+  if (typeof decision.selectedTargetId !== 'number') {
     return {
       statusCode: 404,
       payload: modelNotFoundPayload(modelId),

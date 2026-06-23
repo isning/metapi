@@ -1,21 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { buildZeroChannelPlaceholderRoutes } from './zeroChannelRoutes.js';
+import { buildZeroTargetPlaceholderRoutes } from './zeroTargetRoutes.js';
 import type { MissingTokenModelsByName } from './routeMissingTokenHints.js';
 import type { RouteSummaryRow } from '../token-routes/types.js';
 
-describe('buildZeroChannelPlaceholderRoutes', () => {
+describe('buildZeroTargetPlaceholderRoutes', () => {
   it('merges missing-token and missing-group models into exact zero-channel placeholders', () => {
     const routes: RouteSummaryRow[] = [
       {
         id: 1,
         match: { kind: 'model', requestedModelPattern: 'gpt-4o-mini', displayName: 'gpt-4o-mini' },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         presentation: { displayName: 'gpt-4o-mini', displayIcon: null },
         modelMapping: null,
         routingStrategy: 'weighted',
         enabled: true,
-        channelCount: 1,
-        enabledChannelCount: 1,
+        targetCount: 1,
+        enabledTargetCount: 1,
         siteNames: ['site-a'],
         decisionSnapshot: null,
         decisionRefreshedAt: null,
@@ -47,18 +47,18 @@ describe('buildZeroChannelPlaceholderRoutes', () => {
       ],
     };
 
-    const placeholders = buildZeroChannelPlaceholderRoutes(routes, modelsWithoutToken, modelsMissingTokenGroups);
+    const placeholders = buildZeroTargetPlaceholderRoutes(routes, modelsWithoutToken, modelsMissingTokenGroups);
 
     expect(placeholders).toHaveLength(1);
     expect(placeholders[0]).toMatchObject({
       match: { kind: 'model', requestedModelPattern: 'gpt-5.2-codex', displayName: null },
-      backend: { kind: 'channels' },
+      backend: { kind: 'supply' },
       presentation: { displayName: null, displayIcon: null },
-      channelCount: 0,
-      enabledChannelCount: 0,
+      targetCount: 0,
+      enabledTargetCount: 0,
       enabled: false,
       decisionSnapshot: null,
-      kind: 'zero_channel',
+      kind: 'zero_target',
       readOnly: true,
       isVirtual: true,
     });

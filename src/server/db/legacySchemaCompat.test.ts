@@ -9,6 +9,8 @@ describe('legacy schema compat boundary', () => {
     expect(classifyLegacyCompatMutation('ALTER TABLE proxy_logs ADD COLUMN client_app_id text;')).toBe('legacy');
     expect(classifyLegacyCompatMutation('CREATE INDEX proxy_logs_client_app_id_created_at_idx ON proxy_logs(client_app_id, created_at);')).toBe('legacy');
     expect(classifyLegacyCompatMutation('UPDATE "sites" SET "use_system_proxy" = FALSE WHERE "use_system_proxy" IS NULL')).toBe('legacy');
+    expect(classifyLegacyCompatMutation('ALTER TABLE proxy_logs ADD COLUMN target_id integer;')).toBe('forbidden');
+    expect(classifyLegacyCompatMutation('UPDATE proxy_logs SET target_id = channel_id WHERE target_id IS NULL AND channel_id IS NOT NULL;')).toBe('forbidden');
     expect(classifyLegacyCompatMutation('ALTER TABLE sites ADD COLUMN brand_new_column text;')).toBe('forbidden');
     expect(classifyLegacyCompatMutation('UPDATE "sites" SET "brand_new_column" = 1')).toBe('forbidden');
   });

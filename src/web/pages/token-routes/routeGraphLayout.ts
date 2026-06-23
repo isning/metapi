@@ -22,7 +22,7 @@ const ORIGIN_X = 120;
 const ORIGIN_Y = 96;
 const COLUMN_GAP = 284;
 const ROW_GAP = 112;
-const MACRO_ROW_GAP = 96;
+const MACRO_ROW_GAP = 120;
 const GROUP_GAP = 32;
 
 function getItemId(item: LayoutItem): string {
@@ -39,13 +39,24 @@ function getItemRank(item: LayoutItem): number {
   if (type === 'entry') return 0;
   if (type === 'filter') return 10;
   if (type === 'dispatcher') return 30;
-  if (type === 'model_endpoint') return 40;
+  if (type === 'route_endpoint') return 40;
   if (type === 'synthetic_endpoint') return 50;
   return 60;
 }
 
-function getItemRowGap(item: LayoutItem): number {
-  return item.kind === 'macro' ? MACRO_ROW_GAP : ROW_GAP;
+function getItemRowGapWithOptions(item: LayoutItem, options: RouteGraphLayoutOptions): number {
+  void options;
+  if (item.kind !== 'macro') return ROW_GAP;
+  return estimateRouteGraphMacroRowGap(item.macro!);
+}
+
+export function getRouteGraphMacroRowGap(): number {
+  return MACRO_ROW_GAP;
+}
+
+export function estimateRouteGraphMacroRowGap(macro: RouteGraphMacro): number {
+  void macro;
+  return getRouteGraphMacroRowGap();
 }
 
 function getItemGroupRank(item: LayoutItem): number {
@@ -168,7 +179,7 @@ export function layoutRouteGraph<TGraph extends RouteGraphLayoutSource>(
           x: ORIGIN_X + level * COLUMN_GAP,
           y: cursorY,
         });
-        cursorY += getItemRowGap(item);
+        cursorY += getItemRowGapWithOptions(item, options);
       }
       cursorY += GROUP_GAP;
     }

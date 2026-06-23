@@ -16,18 +16,18 @@ vi.mock('./runtimeModelProbe.js', () => ({
 }));
 
 type DbModule = typeof import('../db/index.js');
-type RecoveryModule = typeof import('./channelRecoveryProbeService.js');
-type CoordinatorModule = typeof import('./proxyChannelCoordinator.js');
+type RecoveryModule = typeof import('./targetRecoveryProbeService.js');
+type CoordinatorModule = typeof import('./proxyTargetCoordinator.js');
 type ConfigModule = typeof import('../config.js');
 type TokenRouterModule = typeof import('./tokenRouter.js');
 
-describe('channelRecoveryProbeService', () => {
+describe('targetRecoveryProbeService', () => {
   let db: DbModule['db'];
   let schema: DbModule['schema'];
-  let runChannelRecoveryProbeSweep: RecoveryModule['runChannelRecoveryProbeSweep'];
-  let resetChannelRecoveryProbeState: RecoveryModule['resetChannelRecoveryProbeState'];
-  let proxyChannelCoordinator: CoordinatorModule['proxyChannelCoordinator'];
-  let resetProxyChannelCoordinatorState: CoordinatorModule['resetProxyChannelCoordinatorState'];
+  let runTargetRecoveryProbeSweep: RecoveryModule['runTargetRecoveryProbeSweep'];
+  let resetTargetRecoveryProbeState: RecoveryModule['resetTargetRecoveryProbeState'];
+  let proxyTargetCoordinator: CoordinatorModule['proxyTargetCoordinator'];
+  let resetProxyTargetCoordinatorState: CoordinatorModule['resetProxyTargetCoordinatorState'];
   let invalidateTokenRouterCache: TokenRouterModule['invalidateTokenRouterCache'];
   let resetSiteRuntimeHealthState: TokenRouterModule['resetSiteRuntimeHealthState'];
   let config: ConfigModule['config'];
@@ -36,27 +36,27 @@ describe('channelRecoveryProbeService', () => {
   let originalConcurrencyLimit = 0;
 
   beforeAll(async () => {
-    dataDir = mkdtempSync(join(tmpdir(), 'metapi-channel-recovery-probe-'));
+    dataDir = mkdtempSync(join(tmpdir(), 'metapi-target-recovery-probe-'));
     originalDataDir = process.env.DATA_DIR;
     process.env.DATA_DIR = dataDir;
 
     await import('../db/migrate.js');
     const dbModule = await import('../db/index.js');
-    const recoveryModule = await import('./channelRecoveryProbeService.js');
-    const coordinatorModule = await import('./proxyChannelCoordinator.js');
+    const recoveryModule = await import('./targetRecoveryProbeService.js');
+    const coordinatorModule = await import('./proxyTargetCoordinator.js');
     const configModule = await import('../config.js');
     const tokenRouterModule = await import('./tokenRouter.js');
 
     db = dbModule.db;
     schema = dbModule.schema;
-    runChannelRecoveryProbeSweep = recoveryModule.runChannelRecoveryProbeSweep;
-    resetChannelRecoveryProbeState = recoveryModule.resetChannelRecoveryProbeState;
-    proxyChannelCoordinator = coordinatorModule.proxyChannelCoordinator;
-    resetProxyChannelCoordinatorState = coordinatorModule.resetProxyChannelCoordinatorState;
+    runTargetRecoveryProbeSweep = recoveryModule.runTargetRecoveryProbeSweep;
+    resetTargetRecoveryProbeState = recoveryModule.resetTargetRecoveryProbeState;
+    proxyTargetCoordinator = coordinatorModule.proxyTargetCoordinator;
+    resetProxyTargetCoordinatorState = coordinatorModule.resetProxyTargetCoordinatorState;
     invalidateTokenRouterCache = tokenRouterModule.invalidateTokenRouterCache;
     resetSiteRuntimeHealthState = tokenRouterModule.resetSiteRuntimeHealthState;
     config = configModule.config;
-    originalConcurrencyLimit = config.proxySessionChannelConcurrencyLimit;
+    originalConcurrencyLimit = config.proxySessionTargetConcurrencyLimit;
   });
 
   beforeEach(async () => {
@@ -66,13 +66,13 @@ describe('channelRecoveryProbeService', () => {
       latencyMs: 320,
       reason: 'probe succeeded',
     });
-    config.proxySessionChannelConcurrencyLimit = 1;
-    resetChannelRecoveryProbeState();
-    resetProxyChannelCoordinatorState();
+    config.proxySessionTargetConcurrencyLimit = 1;
+    resetTargetRecoveryProbeState();
+    resetProxyTargetCoordinatorState();
     invalidateTokenRouterCache();
     resetSiteRuntimeHealthState();
 
-    await db.delete(schema.routeChannels).run();
+    await db.delete(schema.routeEndpointTargets).run();
     await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.routeGraphActiveVersion).run();
     await db.delete(schema.routeGraphDrafts).run();
@@ -85,9 +85,9 @@ describe('channelRecoveryProbeService', () => {
   });
 
   afterAll(() => {
-    config.proxySessionChannelConcurrencyLimit = originalConcurrencyLimit;
-    resetChannelRecoveryProbeState();
-    resetProxyChannelCoordinatorState();
+    config.proxySessionTargetConcurrencyLimit = originalConcurrencyLimit;
+    resetTargetRecoveryProbeState();
+    resetProxyTargetCoordinatorState();
     invalidateTokenRouterCache();
     resetSiteRuntimeHealthState();
     rmSync(dataDir, { recursive: true, force: true });
@@ -127,7 +127,7 @@ describe('channelRecoveryProbeService', () => {
       enabled: true,
     });
 
-    const channel = await db.insert(schema.routeChannels).values({
+    const channel = await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: account.id,
       tokenId: token.id,
@@ -140,7 +140,7 @@ describe('channelRecoveryProbeService', () => {
     await publishCurrentGraphNativeTokenRouteFixtures();
     invalidateTokenRouterCache();
 
-    await runChannelRecoveryProbeSweep();
+    await runTargetRecoveryProbeSweep();
 
     expect(probeRuntimeModelMock).toHaveBeenCalledTimes(1);
     expect(probeRuntimeModelMock.mock.calls[0]?.[0]).toMatchObject({
@@ -148,8 +148,8 @@ describe('channelRecoveryProbeService', () => {
       tokenValue: 'sk-recovery-token',
     });
 
-    const refreshed = await db.select().from(schema.routeChannels)
-      .where(eq(schema.routeChannels.id, channel.id))
+    const refreshed = await db.select().from(schema.routeEndpointTargets)
+      .where(eq(schema.routeEndpointTargets.id, channel.id))
       .get();
     expect(refreshed?.cooldownUntil).toBeNull();
     expect(refreshed?.lastFailAt).toBeNull();
@@ -189,7 +189,7 @@ describe('channelRecoveryProbeService', () => {
       enabled: true,
     });
 
-    const channel = await db.insert(schema.routeChannels).values({
+    const channel = await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: account.id,
       tokenId: token.id,
@@ -198,14 +198,14 @@ describe('channelRecoveryProbeService', () => {
     await publishCurrentGraphNativeTokenRouteFixtures();
     invalidateTokenRouterCache();
 
-    const lease = await proxyChannelCoordinator.acquireChannelLease({
-      channelId: channel.id,
+    const lease = await proxyTargetCoordinator.acquireTargetLease({
+      targetId: channel.id,
       accountExtraConfig: account.extraConfig,
     });
     expect(lease.status).toBe('acquired');
     if (lease.status !== 'acquired') return;
 
-    await runChannelRecoveryProbeSweep();
+    await runTargetRecoveryProbeSweep();
 
     expect(probeRuntimeModelMock).toHaveBeenCalledTimes(1);
     expect(probeRuntimeModelMock.mock.calls[0]?.[0]).toMatchObject({
@@ -253,7 +253,7 @@ describe('channelRecoveryProbeService', () => {
       enabled: true,
     });
 
-    await db.insert(schema.routeChannels).values([
+    await db.insert(schema.routeEndpointTargets).values([
       {
         routeId: route.id,
         accountId: account.id,
@@ -280,7 +280,7 @@ describe('channelRecoveryProbeService', () => {
     await publishCurrentGraphNativeTokenRouteFixtures();
     invalidateTokenRouterCache();
 
-    await runChannelRecoveryProbeSweep();
+    await runTargetRecoveryProbeSweep();
 
     expect(probeRuntimeModelMock).toHaveBeenCalledTimes(1);
     expect(probeRuntimeModelMock.mock.calls[0]?.[0]).toMatchObject({
@@ -324,15 +324,15 @@ describe('channelRecoveryProbeService', () => {
           enabled: true,
         });
 
-        const channel = await db.insert(schema.routeChannels).values({
+        const channel = await db.insert(schema.routeEndpointTargets).values({
           routeId: route.id,
           accountId: account.id,
           tokenId: token.id,
           enabled: true,
         }).returning().get();
 
-        const lease = await proxyChannelCoordinator.acquireChannelLease({
-          channelId: channel.id,
+        const lease = await proxyTargetCoordinator.acquireTargetLease({
+          targetId: channel.id,
           accountExtraConfig: account.extraConfig,
         });
         expect(lease.status).toBe('acquired');
@@ -344,14 +344,14 @@ describe('channelRecoveryProbeService', () => {
       invalidateTokenRouterCache();
 
       const startedAt = Date.UTC(2026, 3, 1, 0, 0, 0);
-      await runChannelRecoveryProbeSweep(startedAt);
+      await runTargetRecoveryProbeSweep(startedAt);
 
       expect(probeRuntimeModelMock).toHaveBeenCalledTimes(4);
       expect(probeRuntimeModelMock.mock.calls.map((call) => call[0]?.tokenValue)).not.toContain('sk-priority-token-5');
 
       probeRuntimeModelMock.mockClear();
 
-      await runChannelRecoveryProbeSweep(startedAt + 5 * 60 * 1000);
+      await runTargetRecoveryProbeSweep(startedAt + 5 * 60 * 1000);
 
       expect(probeRuntimeModelMock).toHaveBeenCalledTimes(4);
       const secondSweepTokens = probeRuntimeModelMock.mock.calls.map((call) => call[0]?.tokenValue);

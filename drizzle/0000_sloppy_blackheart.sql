@@ -42,7 +42,7 @@ CREATE TABLE `model_availability` (
 CREATE TABLE `proxy_logs` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
 	`route_id` integer,
-	`channel_id` integer,
+	`target_id` integer,
 	`account_id` integer,
 	`model_requested` text,
 	`model_actual` text,
@@ -58,7 +58,7 @@ CREATE TABLE `proxy_logs` (
 	`created_at` text DEFAULT (datetime('now'))
 );
 --> statement-breakpoint
-CREATE TABLE `route_channels` (
+CREATE TABLE `route_endpoint_targets` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
 	`route_id` integer NOT NULL,
 	`account_id` integer NOT NULL,

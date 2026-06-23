@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { macroFlowNodeId } from './routeGraphConnections.js';
-import { layoutRouteGraph } from './routeGraphLayout.js';
+import { getRouteGraphMacroRowGap, layoutRouteGraph } from './routeGraphLayout.js';
 import type { RouteGraphEdge, RouteGraphMacro, RouteGraphNode } from './routeGraphTypes.js';
 
 function node(input: Partial<RouteGraphNode> & Pick<RouteGraphNode, 'id' | 'type'>): RouteGraphNode {
@@ -40,10 +40,10 @@ describe('routeGraphLayout', () => {
     const graph = layoutRouteGraph({
       nodes: [
         node({ id: 'entry:gpt', type: 'entry', ownership: 'auto_generated' }),
-        node({ id: 'route:a', type: 'model_endpoint', routeId: 10 }),
-        node({ id: 'route:b', type: 'model_endpoint', routeId: 11 }),
-        node({ id: 'route:c', type: 'model_endpoint', routeId: 12 }),
-        node({ id: 'route:d', type: 'model_endpoint', routeId: 13 }),
+        node({ id: 'route:a', type: 'route_endpoint', routeId: 10 }),
+        node({ id: 'route:b', type: 'route_endpoint', routeId: 11 }),
+        node({ id: 'route:c', type: 'route_endpoint', routeId: 12 }),
+        node({ id: 'route:d', type: 'route_endpoint', routeId: 13 }),
         node({ id: 'fallback', type: 'synthetic_endpoint' }),
       ],
       macros: [
@@ -68,20 +68,20 @@ describe('routeGraphLayout', () => {
     }, { preserveExistingPositions: false });
 
     const entry = graph.nodes.find((item) => item.id === 'entry:gpt')!;
-    const modelEndpoints = graph.nodes.filter((item) => item.type === 'model_endpoint');
+    const routeEndpoints = graph.nodes.filter((item) => item.type === 'route_endpoint');
     const group = graph.macros[0]!;
 
     expect(entry.position?.x).toBeLessThan(group.position!.x);
-    expect(group.position?.x).toBeLessThan(Math.min(...modelEndpoints.map((item) => item.position!.x)));
-    expect(new Set(modelEndpoints.map((item) => item.position!.x))).toHaveLength(1);
-    expect(modelEndpoints.map((item) => item.position!.y)).toEqual([...modelEndpoints.map((item) => item.position!.y)].sort((a, b) => a - b));
+    expect(group.position?.x).toBeLessThan(Math.min(...routeEndpoints.map((item) => item.position!.x)));
+    expect(new Set(routeEndpoints.map((item) => item.position!.x))).toHaveLength(1);
+    expect(routeEndpoints.map((item) => item.position!.y)).toEqual([...routeEndpoints.map((item) => item.position!.y)].sort((a, b) => a - b));
   });
 
   it('preserves user positions when only filling missing generated positions', () => {
     const graph = layoutRouteGraph({
       nodes: [
         node({ id: 'entry:manual', type: 'entry', ownership: 'manual', position: { x: 44, y: 55 } }),
-        node({ id: 'endpoint:auto', type: 'model_endpoint' }),
+        node({ id: 'endpoint:auto', type: 'route_endpoint' }),
       ],
       macros: [],
       edges: [edge('entry:manual', 'endpoint:auto')],
@@ -91,7 +91,7 @@ describe('routeGraphLayout', () => {
     expect(graph.nodes.find((item) => item.id === 'endpoint:auto')?.position?.x).toBeGreaterThan(44);
   });
 
-  it('keeps collapsed macro rows compact enough for the semantic overview', () => {
+  it('spaces collapsed macro rows by the fixed macro card footprint', () => {
     const graph = layoutRouteGraph({
       nodes: [],
       macros: [
@@ -103,6 +103,8 @@ describe('routeGraphLayout', () => {
     }, { preserveExistingPositions: false });
 
     const yPositions = graph.macros.map((item) => item.position!.y);
-    expect(yPositions).toEqual([96, 192, 288]);
+    expect(yPositions).toEqual([...yPositions].sort((a, b) => a - b));
+    expect(yPositions[1]! - yPositions[0]!).toBe(getRouteGraphMacroRowGap());
+    expect(yPositions[2]! - yPositions[1]!).toBe(getRouteGraphMacroRowGap());
   });
 });

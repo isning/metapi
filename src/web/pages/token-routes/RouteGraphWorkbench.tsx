@@ -124,7 +124,7 @@ import {
   toggleGraphEdgeSelection,
   toggleGraphNodeSelection,
 } from './routeGraphEditorInteractions.js';
-import { layoutRouteGraph } from './routeGraphLayout.js';
+import { estimateRouteGraphMacroRowGap, layoutRouteGraph } from './routeGraphLayout.js';
 
 import { tr } from '../../i18n.js';
 type RouteFlowEdgeData = RouteGraphEdge & {
@@ -133,6 +133,7 @@ type RouteFlowEdgeData = RouteGraphEdge & {
     macroId: string;
     count: number;
     expanded: boolean;
+    targetKind: 'macro' | 'dispatcher';
     onToggle: (macroId: string) => void;
   };
 };
@@ -234,7 +235,7 @@ type ViewState = {
 };
 const INSPECTOR_TABS = ['Overview', 'Config', 'Ports', 'Connections', 'JSON'] as const;
 const BOTTOM_TABS = ['Diagnostics', 'Diff', 'History'] as const;
-const QUICK_TEMPLATE_IDS = ['entry', 'dispatcher', 'model_endpoint', 'reasoning_effort'] as const;
+const QUICK_TEMPLATE_IDS = ['entry', 'dispatcher', 'route_endpoint', 'reasoning_effort'] as const;
 const ROUTE_GRAPH_MINIMAP_NODE_LIMIT = 240;
 export const DEFAULT_ROUTE_GRAPH_VIEW_STATE: ViewState = {
   showGeneratedPrimitives: false,
@@ -253,6 +254,33 @@ function routeGraphAccentStyle(color: string): CSSProperties {
 
 function hiddenSupplyAnchorNodeId(macroId: string): string {
   return `hidden-supply-anchor:${macroId}`;
+}
+
+function routeGraphSafeId(value: string): string {
+  return String(value || 'x')
+    .trim()
+    .replace(/[^a-zA-Z0-9_.:-]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'x';
+}
+
+function macroDispatcherNodeId(macroId: string): string {
+  return `macro:${routeGraphSafeId(macroId)}:dispatcher`;
+}
+
+function getVisibleMacroSupplyTarget(input: {
+  macro: RouteGraphMacro;
+  visibleNodeIds: Set<string>;
+  visibleMacroIds: Set<string>;
+}): { nodeId: string; kind: 'macro' | 'dispatcher' } | null {
+  const macroNodeId = macroFlowNodeId(input.macro.id);
+  if (input.visibleMacroIds.has(macroNodeId) || input.visibleMacroIds.has(input.macro.id)) {
+    return { nodeId: macroNodeId, kind: 'macro' };
+  }
+  const dispatcherNodeId = macroDispatcherNodeId(input.macro.id);
+  if (input.visibleNodeIds.has(dispatcherNodeId)) {
+    return { nodeId: dispatcherNodeId, kind: 'dispatcher' };
+  }
+  return null;
 }
 
 export function defaultGraph(): RouteGraphSource {
@@ -434,7 +462,12 @@ function normalizeGraph(input: unknown): RouteGraphSource {
 }
 
 export function filterGraphForView(graph: RouteGraphSource, view: ViewState): RouteGraphSource {
-  const semanticGraph = layoutRouteGraph(graph, { preserveExistingPositions: true });
+  const semanticGraph = layoutRouteGraph({
+    ...graph,
+    macros: graph.macros.map((macro) => (
+      macro.ownership === 'manual' ? macro : { ...macro, position: undefined }
+    )),
+  }, { preserveExistingPositions: true });
   const expandedMacroIds = new Set(view.expandedMacroIds);
   const expandedSupplyMacroIds = new Set(view.expandedSupplyMacroIds || []);
   const usePrimitiveGraph = view.showGeneratedPrimitives || expandedMacroIds.size > 0;
@@ -451,20 +484,40 @@ export function filterGraphForView(graph: RouteGraphSource, view: ViewState): Ro
   if (!view.showGeneratedPrimitives) {
     for (const macro of semanticGraph.macros) {
       if (!expandedMacroIds.has(macro.id)) continue;
+      const candidateNodeIds = new Set(getMacroCandidateNodeIdsFromEdges(primitiveGraph, macro.id));
+      const expandedSupplyNodes = expandedSupplyMacroIds.has(macro.id)
+        ? getSupplyNodesForSemanticCandidateEdges(semanticGraph, semanticCandidateEdgesByMacroId.get(macro.id) || [])
+        : [];
       for (const node of getMacroInternalPrimitiveNodes(primitiveGraph, macro.id)) {
         expandedPrimitiveNodeIds.add(node.id);
       }
-      for (const [nodeId, position] of getAnchoredMacroPrimitivePositions(primitiveGraph, macro)) {
+      for (const [nodeId, position] of getAnchoredMacroPrimitivePositions(
+        primitiveGraph,
+        macro,
+        expandedSupplyNodes.length,
+        candidateNodeIds,
+      )) {
         expandedPrimitivePositions.set(nodeId, position);
       }
-      expandedReservations.push(...getExpandedMacroReservations(primitiveGraph, macro));
+      expandedReservations.push(...getExpandedMacroReservations(
+        primitiveGraph,
+        macro,
+        expandedSupplyNodes.length,
+        candidateNodeIds,
+      ));
     }
     for (const macro of semanticGraph.macros) {
       if (!expandedSupplyMacroIds.has(macro.id)) continue;
       const edges = semanticCandidateEdgesByMacroId.get(macro.id) || [];
       const supplyNodes = getSupplyNodesForSemanticCandidateEdges(semanticGraph, edges);
+      const candidateNodeIds = new Set(getMacroCandidateNodeIdsFromEdges(primitiveGraph, macro.id));
+      const occupiedInputPositions = expandedMacroIds.has(macro.id)
+        ? getAnchoredMacroPrimitivePositions(primitiveGraph, macro, supplyNodes.length, candidateNodeIds)
+          .map(([, position]) => position)
+          .filter((position) => Math.abs(position.x - ((macro.position?.x || 120) + EXPANDED_MACRO_INPUT_X_OFFSET)) < 1)
+        : [];
       for (const node of supplyNodes) expandedSupplyNodeIds.add(node.id);
-      for (const [nodeId, position] of getAnchoredMacroSupplyPositions(macro, supplyNodes)) {
+      for (const [nodeId, position] of getAnchoredMacroSupplyPositions(macro, supplyNodes, occupiedInputPositions)) {
         expandedSupplyPositions.set(nodeId, position);
       }
     }
@@ -545,13 +598,29 @@ function getExpandedSupplySemanticEdges(graph: RouteGraphSource, expandedSupplyM
   return graph.macros.flatMap((macro) => expandedSupplyMacroIds.has(macro.id) ? getMacroSemanticCandidateEdges(graph, macro) : []);
 }
 
-function getAnchoredMacroSupplyPositions(macro: RouteGraphMacro, supplyNodes: RouteGraphNode[]): Array<[string, { x: number; y: number }]> {
+function getAnchoredMacroSupplyPositions(
+  macro: RouteGraphMacro,
+  supplyNodes: RouteGraphNode[],
+  occupiedInputPositions: Array<{ x: number; y: number }> = [],
+): Array<[string, { x: number; y: number }]> {
   const anchor = macro.position || { x: 120, y: 120 };
-  const startY = anchor.y - Math.max(0, supplyNodes.length - 1) * (EXPANDED_MACRO_STACK_Y_GAP / 2);
-  return supplyNodes
+  const sortedSupplyNodes = supplyNodes
     .slice()
-    .sort((left, right) => left.id.localeCompare(right.id))
-    .map((node, index) => [node.id, { x: anchor.x + EXPANDED_MACRO_INPUT_X_OFFSET, y: startY + index * EXPANDED_MACRO_STACK_Y_GAP }]);
+    .sort((left, right) => left.id.localeCompare(right.id));
+  if (occupiedInputPositions.length === 0) {
+    const startY = anchor.y - Math.max(0, sortedSupplyNodes.length - 1) * (EXPANDED_MACRO_STACK_Y_GAP / 2);
+    return sortedSupplyNodes.map((node, index) => [node.id, { x: anchor.x + EXPANDED_MACRO_INPUT_X_OFFSET, y: startY + index * EXPANDED_MACRO_STACK_Y_GAP }]);
+  }
+
+  const occupiedYs = occupiedInputPositions.map((position) => position.y);
+  const totalSlots = occupiedYs.length + sortedSupplyNodes.length;
+  const startY = anchor.y - Math.max(0, totalSlots - 1) * (EXPANDED_MACRO_STACK_Y_GAP / 2);
+  const slots = Array.from({ length: totalSlots }, (_, index) => startY + index * EXPANDED_MACRO_STACK_Y_GAP);
+  const availableSlots = slots.filter((slotY) => !occupiedYs.some((occupiedY) => Math.abs(occupiedY - slotY) < EXPANDED_MACRO_STACK_Y_GAP / 2));
+  return sortedSupplyNodes.map((node, index) => {
+    const fallbackY = (Math.max(...occupiedYs) || anchor.y) + (index + 1) * EXPANDED_MACRO_STACK_Y_GAP;
+    return [node.id, { x: anchor.x + EXPANDED_MACRO_INPUT_X_OFFSET, y: availableSlots[index] ?? fallbackY }];
+  });
 }
 
 export type MacroGeneratedPreviewRow = {
@@ -584,7 +653,12 @@ const EXPANDED_MACRO_STACK_Y_GAP = 96;
 const EXPANDED_MACRO_ESTIMATED_NODE_HEIGHT = 96;
 const EXPANDED_MACRO_RESERVED_GAP = 32;
 const EXPANDED_MACRO_COLLISION_COLUMN_WIDTH = 172;
-const COLLAPSED_MACRO_STACK_GAP = 92;
+const HIDDEN_SUPPLY_CONTROL_LENGTH = 72;
+const HIDDEN_SUPPLY_DISPATCHER_CONTROL_LENGTH = 38;
+const HIDDEN_SUPPLY_CONTROL_PORT_ROW_HEIGHT = 15;
+const HIDDEN_SUPPLY_CONTROL_MACRO_PORTS_TOP = 33;
+const HIDDEN_SUPPLY_CONTROL_PORT_CENTER_OFFSET = 7;
+const HIDDEN_SUPPLY_CONTROL_SOURCE_Y_OFFSET = 3;
 const ROUTE_GRAPH_NODE_WIDTH = 224;
 const ROUTE_GRAPH_NODE_HEIGHT_ESTIMATE = 120;
 
@@ -828,9 +902,28 @@ export function getMacroGeneratedPreviewRows(graph: RouteGraphSource, macro: Rou
   });
 }
 
+export function getMacroPriorityGroupCount(macro: RouteGraphMacro, generatedRows: MacroGeneratedPreviewRow[] = []): number {
+  const rowPriorities = new Set<number>();
+  for (const row of generatedRows) {
+    const priority = Number(row.priority);
+    if (Number.isFinite(priority)) rowPriorities.add(Math.trunc(priority));
+  }
+  if (rowPriorities.size > 0) return rowPriorities.size;
+
+  const groupPriorities = new Set<number>();
+  for (const group of getMacroGroupPreviews(macro)) {
+    if (!group.enabled) continue;
+    const priority = Number(group.priority);
+    if (Number.isFinite(priority)) groupPriorities.add(Math.trunc(priority));
+  }
+  return groupPriorities.size;
+}
+
 function getAnchoredMacroPrimitivePositions(
   primitiveGraph: RouteGraphSource,
   macro: RouteGraphMacro,
+  extraInputSlotCount = 0,
+  excludedInputNodeIds: ReadonlySet<string> = new Set(),
 ): Array<[string, { x: number; y: number }]> {
   const anchor = macro.position || { x: 120, y: 120 };
   const generatedNodes = getMacroGeneratedPrimitiveNodes(primitiveGraph, macro.id);
@@ -866,11 +959,14 @@ function getAnchoredMacroPrimitivePositions(
     if (rightRole === 'entry' && leftRole !== 'entry') return 1;
     return left.id.localeCompare(right.id);
   };
-  const inputNodes = generatedNodes.filter((node) => inputNodeIds.has(node.id)).sort(sortByRoleThenId);
+  const inputNodes = generatedNodes
+    .filter((node) => inputNodeIds.has(node.id) && !excludedInputNodeIds.has(node.id))
+    .sort(sortByRoleThenId);
   const outputNodes = generatedNodes.filter((node) => outputNodeIds.has(node.id)).sort(sortByRoleThenId);
   const positions: Array<[string, { x: number; y: number }]> = [];
   if (dispatcher) positions.push([dispatcher.id, { x: anchor.x, y: anchor.y }]);
-  const inputStartY = anchor.y - Math.max(0, inputNodes.length - 1) * (EXPANDED_MACRO_STACK_Y_GAP / 2);
+  const inputSlotCount = inputNodes.length + extraInputSlotCount;
+  const inputStartY = anchor.y - Math.max(0, inputSlotCount - 1) * (EXPANDED_MACRO_STACK_Y_GAP / 2);
   inputNodes.forEach((node, index) => {
     positions.push([node.id, { x: anchor.x + EXPANDED_MACRO_INPUT_X_OFFSET, y: inputStartY + index * EXPANDED_MACRO_STACK_Y_GAP }]);
   });
@@ -881,8 +977,13 @@ function getAnchoredMacroPrimitivePositions(
   return positions;
 }
 
-function getExpandedMacroReservations(primitiveGraph: RouteGraphSource, macro: RouteGraphMacro): ExpandedMacroReservation[] {
-  const positions = getAnchoredMacroPrimitivePositions(primitiveGraph, macro);
+function getExpandedMacroReservations(
+  primitiveGraph: RouteGraphSource,
+  macro: RouteGraphMacro,
+  extraInputSlotCount = 0,
+  excludedInputNodeIds: ReadonlySet<string> = new Set(),
+): ExpandedMacroReservation[] {
+  const positions = getAnchoredMacroPrimitivePositions(primitiveGraph, macro, extraInputSlotCount, excludedInputNodeIds);
   const anchor = macro.position || { x: 120, y: 120 };
   const byColumn = new Map<number, { top: number; bottom: number }>();
   for (const [, position] of positions.length > 0 ? positions : [[macroFlowNodeId(macro.id), anchor] as const]) {
@@ -939,7 +1040,7 @@ function stackVisibleMacrosAfterExpandedReservations(
       ? shiftedPosition
       : { ...shiftedPosition, y: nextY };
     positionByMacroId.set(macro.id, position);
-    nextYByColumn.set(column, position.y + COLLAPSED_MACRO_STACK_GAP);
+    nextYByColumn.set(column, position.y + estimateRouteGraphMacroRowGap(macro));
   }
 
   return macros.map((macro) => {
@@ -1088,21 +1189,59 @@ function graphToFlowNodes(
     position: macro.position || { x: 120, y: 120 },
     draggable: isRouteGraphFlowNodeDraggable(macro, 'macro'),
   }));
-  const hiddenSupplyAnchorNodes = positionedGraph.macros
+  const positionedNodeById = new Map(positionedGraph.nodes.map((node) => [node.id, node]));
+  const positionedMacroById = new Map(positionedGraph.macros.map((macro) => [macro.id, macro]));
+  const visibleNodeIds = new Set(positionedGraph.nodes.map((node) => node.id));
+  const visibleMacroIds = new Set(positionedGraph.macros.flatMap((macro) => [macro.id, macroFlowNodeId(macro.id)]));
+  const hiddenSupplyAnchorNodes = hiddenSupplyGraph.macros
     .filter((macro) => (getMacroHiddenSupplyByPort(hiddenSupplyGraph, macro)['candidates.in'] || 0) > 0)
     .filter((macro) => !view.showGeneratedPrimitives && !(view.expandedSupplyMacroIds || []).includes(macro.id))
-    .map((macro): RouteFlowNode => {
-      const anchor = macro.position || { x: 120, y: 120 };
+    .map((macro): RouteFlowNode | null => {
+      const target = getVisibleMacroSupplyTarget({ macro, visibleNodeIds, visibleMacroIds });
+      if (!target) return null;
+      const targetNode = target.kind === 'dispatcher' ? positionedNodeById.get(target.nodeId) : null;
+      const anchor = target.kind === 'macro'
+        ? positionedMacroById.get(macro.id)?.position
+        : targetNode?.position;
+      if (!anchor) return null;
+      const anchorY = target.kind === 'macro'
+        ? getMacroPortAnchorY(macro, 'candidates.in', anchor.y)
+        : targetNode
+          ? getNodePortAnchorY(targetNode, 'route.in', anchor.y)
+          : anchor.y;
+      const anchorX = anchor.x;
+      const controlLength = target.kind === 'dispatcher'
+        ? HIDDEN_SUPPLY_DISPATCHER_CONTROL_LENGTH
+        : HIDDEN_SUPPLY_CONTROL_LENGTH;
       return {
         id: hiddenSupplyAnchorNodeId(macro.id),
         type: 'hidden_supply_anchor',
         data: { __hiddenSupplyAnchor: true, macroId: macro.id },
-        position: { x: anchor.x - 136, y: anchor.y + 23 },
+        position: { x: anchorX - controlLength, y: anchorY + HIDDEN_SUPPLY_CONTROL_SOURCE_Y_OFFSET },
         draggable: false,
         selectable: false,
       };
-    });
+    })
+    .filter((node): node is RouteFlowNode => node !== null);
   return [...primitiveNodes, ...macroNodes, ...hiddenSupplyAnchorNodes];
+}
+
+function getMacroPortAnchorY(macro: RouteGraphMacro, portId: string, macroY: number): number {
+  const inputPorts = getMacroPorts(macro).filter((port) => port.direction === 'input');
+  const index = Math.max(0, inputPorts.findIndex((port) => port.id === portId));
+  return macroY
+    + HIDDEN_SUPPLY_CONTROL_MACRO_PORTS_TOP
+    + HIDDEN_SUPPLY_CONTROL_PORT_CENTER_OFFSET
+    + index * HIDDEN_SUPPLY_CONTROL_PORT_ROW_HEIGHT;
+}
+
+function getNodePortAnchorY(node: RouteGraphNode, portId: string, nodeY: number): number {
+  const inputPorts = getNodePorts(node).filter((port) => port.direction === 'input');
+  const index = Math.max(0, inputPorts.findIndex((port) => port.id === portId));
+  return nodeY
+    + HIDDEN_SUPPLY_CONTROL_MACRO_PORTS_TOP
+    + HIDDEN_SUPPLY_CONTROL_PORT_CENTER_OFFSET
+    + index * HIDDEN_SUPPLY_CONTROL_PORT_ROW_HEIGHT;
 }
 
 function graphToFlowEdges(graph: RouteGraphSource, highlightedEdgeIds: Set<string>, hiddenSupplyControls: Map<string, RouteFlowEdgeData['__hiddenSupplyControl']> = new Map()): RouteFlowEdge[] {
@@ -1131,28 +1270,28 @@ function getHiddenSupplyControlEdges(input: {
   const expandedSupplyMacroIds = new Set(input.view.expandedSupplyMacroIds || []);
   const edges: RouteGraphEdge[] = [];
   const controls = new Map<string, RouteFlowEdgeData['__hiddenSupplyControl']>();
-  for (const macro of input.visibleGraph.macros) {
+  for (const macro of input.graph.macros) {
     const count = getMacroHiddenSupplyByPort(input.graph, macro)['candidates.in'] || 0;
     if (count <= 0) continue;
     const expanded = expandedSupplyMacroIds.has(macro.id);
-    const id = expanded ? `hidden-supply-control:${macro.id}:expanded` : `hidden-supply-control:${macro.id}:collapsed`;
+    const target = getVisibleMacroSupplyTarget({ macro, visibleNodeIds, visibleMacroIds });
+    if (!target) continue;
+    const id = expanded ? `hidden-supply-control:${macro.id}:${target.kind}:expanded` : `hidden-supply-control:${macro.id}:${target.kind}:collapsed`;
     const sourceNodeId = expanded
       ? (getMacroSemanticCandidateEdges(input.graph, macro).find((edge) => visibleNodeIds.has(edge.sourceNodeId))?.sourceNodeId || hiddenSupplyAnchorNodeId(macro.id))
       : hiddenSupplyAnchorNodeId(macro.id);
-    const targetNodeId = macroFlowNodeId(macro.id);
-    if (!visibleMacroIds.has(targetNodeId)) continue;
     if (!visibleNodeIds.has(sourceNodeId) && sourceNodeId !== hiddenSupplyAnchorNodeId(macro.id)) continue;
     edges.push({
       id,
       sourceNodeId,
       sourcePortId: 'route.out',
-      targetNodeId,
-      targetPortId: 'candidates.in',
+      targetNodeId: target.nodeId,
+      targetPortId: target.kind === 'macro' ? 'candidates.in' : 'route.in',
       kind: 'route_flow',
       ownership: 'derived',
       metadata: { hiddenSupplyControl: true },
     });
-    controls.set(id, { macroId: macro.id, count, expanded, onToggle: input.onToggle });
+    controls.set(id, { macroId: macro.id, count, expanded, targetKind: target.kind, onToggle: input.onToggle });
   }
   return { edges, controls };
 }
@@ -1300,7 +1439,7 @@ const NodeShell = memo(function NodeShell({ data }: NodeProps<RouteFlowNode>) {
     >
       <div className="route-blueprint-node-head">
         <span className="route-blueprint-node-icon" aria-hidden="true">
-          {data.type === 'dispatcher' ? <GitFork size={13} /> : data.type === 'filter' ? <Workflow size={13} /> : data.type === 'model_endpoint' ? <Boxes size={13} /> : <Layers3 size={13} />}
+          {data.type === 'dispatcher' ? <GitFork size={13} /> : data.type === 'filter' ? <Workflow size={13} /> : data.type === 'route_endpoint' ? <Boxes size={13} /> : <Layers3 size={13} />}
         </span>
         <div className="route-blueprint-node-head-main">
           <div className="route-blueprint-node-title">{title}</div>
@@ -1424,8 +1563,8 @@ const RouteGraphEdgeView = memo(function RouteGraphEdgeView(props: EdgeProps<Rou
           d={path}
           data-kind={edge?.kind}
           style={routeGraphAccentStyle(edge ? ROUTE_GRAPH_VISUAL_COLORS.edge[edge.kind] : ROUTE_GRAPH_VISUAL_COLORS.edge.request_flow)}
-          strokeWidth={props.selected || highlighted ? 3 : control ? 1.6 : 2}
-          strokeDasharray={control || edge?.ownership === 'auto_generated' || edge?.kind === 'metrics_link' ? '6 5' : undefined}
+          strokeWidth={props.selected || highlighted ? 3 : control ? 1.25 : 2}
+          strokeDasharray={control ? '4 4' : edge?.ownership === 'auto_generated' || edge?.kind === 'metrics_link' ? '6 5' : undefined}
         />
       </g>
       {control && (
@@ -1471,7 +1610,6 @@ const flowNodeTypes = {
   route_endpoint: NodeShell,
   filter: NodeShell,
   dispatcher: NodeShell,
-  model_endpoint: NodeShell,
   synthetic_endpoint: NodeShell,
   auto_node: NodeShell,
   macro: MacroNodeShell,
@@ -2701,6 +2839,7 @@ function RouteGraphWorkbenchInner({ mode = 'graph', focusIntent = null, onFocusI
           disableKeyboardA11y
           nodeDragThreshold={2}
           connectionDragThreshold={4}
+          proOptions={{ hideAttribution: true }}
         >
           <Background gap={22} />
           <Controls />
@@ -3783,6 +3922,7 @@ function Inspector({
     const generatedRows = getMacroGeneratedPreviewRows(semanticGraph, selectedMacro);
     const generatedPreviewGraph = getMacroGeneratedPreviewGraph(semanticGraph, selectedMacro);
     const groupPreviews = getMacroGroupPreviews(selectedMacro);
+    const priorityGroupCount = getMacroPriorityGroupCount(selectedMacro, generatedRows);
     const expandedOnCanvas = expandedMacroIds.includes(selectedMacro.id);
     return (
       <div className="route-graph-inspector-content">
@@ -3849,7 +3989,7 @@ function Inspector({
                   {tr('pages.tokenRoutes.routeGraphWorkbench.generatedViewSummary')
                     .replace('{name}', getMacroDisplayName(selectedMacro))
                     .replace('{paths}', String(generatedRows.length))
-                    .replace('{groups}', String(groupPreviews.length))}
+                    .replace('{groups}', String(priorityGroupCount))}
                 </div>
               </div>
               <div className="route-graph-hidden-supply-summary rounded-md border border-dashed p-3">

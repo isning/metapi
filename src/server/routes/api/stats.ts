@@ -8,6 +8,10 @@ import { buildModelAnalysis } from "../../services/modelAnalysisService.js";
 import {
   fetchModelPricingCatalog,
 } from "../../services/modelPricingService.js";
+import {
+  quoteEndpointPricing,
+  type PricingResolution,
+} from "../../services/pricingQuoteService.js";
 import { compileModelRouteFlow } from "../../services/routeFlowService.js";
 import {
   buildModelAvailabilityProbeTaskDedupeKey,
@@ -28,6 +32,10 @@ import {
   parseProxyLogBillingDetails,
   withProxyLogSelectFields,
 } from "../../services/proxyLogStore.js";
+import {
+  mapRouteDecisionSnapshotToResponse,
+  summarizeRouteDecisionSnapshotValue,
+} from "../../services/proxyLogRouteDecisionSnapshot.js";
 import {
   getProxyDebugTraceDetail,
   listProxyDebugTraces,
@@ -594,7 +602,10 @@ function buildSiteAvailabilitySummaries(
 
 function mapProxyLogRow(
   row: {
-    proxy_logs: Record<string, unknown> & { billingDetails?: string | null };
+    proxy_logs: Record<string, unknown> & {
+      billingDetails?: string | null;
+      routeDecisionSnapshot?: string | null;
+    };
     accounts: { username?: string | null } | null;
     sites: {
       id?: number | null;
@@ -607,6 +618,45 @@ function mapProxyLogRow(
       groupName?: string | null;
       tags?: string | null;
     } | null;
+    token_routes?: {
+      id?: number | null;
+      displayName?: string | null;
+      displayIcon?: string | null;
+      routingStrategy?: string | null;
+      enabled?: boolean | number | null;
+      decisionSnapshot?: string | null;
+      decisionRefreshedAt?: string | null;
+    } | null;
+    route_endpoint_targets?: {
+      id?: number | null;
+      routeEndpointId?: string | null;
+      accountId?: number | null;
+      tokenId?: number | null;
+      oauthRouteUnitId?: number | null;
+      sourceModel?: string | null;
+      priority?: number | null;
+      weight?: number | null;
+      enabled?: boolean | number | null;
+      manualOverride?: boolean | number | null;
+      successCount?: number | null;
+      failCount?: number | null;
+      totalLatencyMs?: number | null;
+      totalCost?: number | null;
+      lastUsedAt?: string | null;
+      lastSelectedAt?: string | null;
+      lastFailAt?: string | null;
+      consecutiveFailCount?: number | null;
+      cooldownLevel?: number | null;
+      cooldownUntil?: string | null;
+    } | null;
+    target_account_tokens?: {
+      id?: number | null;
+      name?: string | null;
+      tokenGroup?: string | null;
+      enabled?: boolean | number | null;
+      valueStatus?: string | null;
+      source?: string | null;
+    } | null;
   },
   options?: { includeBillingDetails?: boolean },
 ) {
@@ -616,6 +666,90 @@ function mapProxyLogRow(
       ? row.proxy_logs.errorMessage
       : "",
   );
+  const routeDecisionSnapshot = options?.includeBillingDetails
+    ? mapRouteDecisionSnapshotToResponse(row.proxy_logs.routeDecisionSnapshot)
+    : null;
+  const currentRouteDecision = {
+    source: "current" as const,
+    capturedAt: null,
+    requestedModel:
+      typeof row.proxy_logs.modelRequested === "string"
+        ? row.proxy_logs.modelRequested
+        : null,
+    actualModel:
+      typeof row.proxy_logs.modelActual === "string"
+        ? row.proxy_logs.modelActual
+        : null,
+    route: row.token_routes
+      ? {
+          id: row.token_routes.id ?? null,
+          displayName: row.token_routes.displayName ?? null,
+          displayIcon: row.token_routes.displayIcon ?? null,
+          routingStrategy: row.token_routes.routingStrategy ?? null,
+          enabled:
+            row.token_routes.enabled == null
+              ? null
+              : Boolean(row.token_routes.enabled),
+          decisionRefreshedAt:
+            row.token_routes.decisionRefreshedAt ?? null,
+          snapshotSummary: summarizeRouteDecisionSnapshotValue(
+            row.token_routes.decisionSnapshot,
+          ),
+        }
+      : null,
+    target: row.route_endpoint_targets
+      ? {
+          id: row.route_endpoint_targets.id ?? null,
+          routeEndpointId:
+            row.route_endpoint_targets.routeEndpointId ?? null,
+          accountId: row.route_endpoint_targets.accountId ?? null,
+          tokenId: row.route_endpoint_targets.tokenId ?? null,
+          oauthRouteUnitId:
+            row.route_endpoint_targets.oauthRouteUnitId ?? null,
+          sourceModel: row.route_endpoint_targets.sourceModel ?? null,
+          priority: row.route_endpoint_targets.priority ?? null,
+          weight: row.route_endpoint_targets.weight ?? null,
+          enabled:
+            row.route_endpoint_targets.enabled == null
+              ? null
+              : Boolean(row.route_endpoint_targets.enabled),
+          manualOverride:
+            row.route_endpoint_targets.manualOverride == null
+              ? null
+              : Boolean(row.route_endpoint_targets.manualOverride),
+          successCount:
+            row.route_endpoint_targets.successCount ?? null,
+          failCount: row.route_endpoint_targets.failCount ?? null,
+          totalLatencyMs:
+            row.route_endpoint_targets.totalLatencyMs ?? null,
+          totalCost: row.route_endpoint_targets.totalCost ?? null,
+          lastUsedAt: row.route_endpoint_targets.lastUsedAt ?? null,
+          lastSelectedAt:
+            row.route_endpoint_targets.lastSelectedAt ?? null,
+          lastFailAt: row.route_endpoint_targets.lastFailAt ?? null,
+          consecutiveFailCount:
+            row.route_endpoint_targets.consecutiveFailCount ?? null,
+          cooldownLevel:
+            row.route_endpoint_targets.cooldownLevel ?? null,
+          cooldownUntil:
+            row.route_endpoint_targets.cooldownUntil ?? null,
+        }
+      : null,
+    token: row.target_account_tokens
+      ? {
+          id: row.target_account_tokens.id ?? null,
+          name: row.target_account_tokens.name ?? null,
+          tokenGroup: row.target_account_tokens.tokenGroup ?? null,
+          enabled:
+            row.target_account_tokens.enabled == null
+              ? null
+              : Boolean(row.target_account_tokens.enabled),
+          valueStatus: row.target_account_tokens.valueStatus ?? null,
+          source: row.target_account_tokens.source ?? null,
+        }
+      : null,
+  };
+
   return {
     ...row.proxy_logs,
     isStream:
@@ -644,6 +778,11 @@ function mapProxyLogRow(
     downstreamKeyName: row.downstream_api_keys?.name || null,
     downstreamKeyGroupName: row.downstream_api_keys?.groupName || null,
     downstreamKeyTags: parseDownstreamKeyTags(row.downstream_api_keys?.tags),
+    ...(options?.includeBillingDetails
+      ? {
+          routeDecision: routeDecisionSnapshot ?? currentRouteDecision,
+        }
+      : {}),
   };
 }
 
@@ -1018,6 +1157,47 @@ export async function statsRoutes(app: FastifyInstance) {
                 groupName: schema.downstreamApiKeys.groupName,
                 tags: schema.downstreamApiKeys.tags,
               },
+              token_routes: {
+                id: schema.tokenRoutes.id,
+                displayName: schema.tokenRoutes.displayName,
+                displayIcon: schema.tokenRoutes.displayIcon,
+                routingStrategy: schema.tokenRoutes.routingStrategy,
+                enabled: schema.tokenRoutes.enabled,
+                decisionSnapshot: schema.tokenRoutes.decisionSnapshot,
+                decisionRefreshedAt: schema.tokenRoutes.decisionRefreshedAt,
+              },
+              route_endpoint_targets: {
+                id: schema.routeEndpointTargets.id,
+                routeEndpointId: schema.routeEndpointTargets.routeEndpointId,
+                accountId: schema.routeEndpointTargets.accountId,
+                tokenId: schema.routeEndpointTargets.tokenId,
+                oauthRouteUnitId:
+                  schema.routeEndpointTargets.oauthRouteUnitId,
+                sourceModel: schema.routeEndpointTargets.sourceModel,
+                priority: schema.routeEndpointTargets.priority,
+                weight: schema.routeEndpointTargets.weight,
+                enabled: schema.routeEndpointTargets.enabled,
+                manualOverride: schema.routeEndpointTargets.manualOverride,
+                successCount: schema.routeEndpointTargets.successCount,
+                failCount: schema.routeEndpointTargets.failCount,
+                totalLatencyMs: schema.routeEndpointTargets.totalLatencyMs,
+                totalCost: schema.routeEndpointTargets.totalCost,
+                lastUsedAt: schema.routeEndpointTargets.lastUsedAt,
+                lastSelectedAt: schema.routeEndpointTargets.lastSelectedAt,
+                lastFailAt: schema.routeEndpointTargets.lastFailAt,
+                consecutiveFailCount:
+                  schema.routeEndpointTargets.consecutiveFailCount,
+                cooldownLevel: schema.routeEndpointTargets.cooldownLevel,
+                cooldownUntil: schema.routeEndpointTargets.cooldownUntil,
+              },
+              target_account_tokens: {
+                id: schema.accountTokens.id,
+                name: schema.accountTokens.name,
+                tokenGroup: schema.accountTokens.tokenGroup,
+                enabled: schema.accountTokens.enabled,
+                valueStatus: schema.accountTokens.valueStatus,
+                source: schema.accountTokens.source,
+              },
             })
             .from(schema.proxyLogs)
             .leftJoin(
@@ -1032,13 +1212,26 @@ export async function statsRoutes(app: FastifyInstance) {
                 schema.downstreamApiKeys.id,
               ),
             )
+            .leftJoin(
+              schema.tokenRoutes,
+              eq(schema.proxyLogs.routeId, schema.tokenRoutes.id),
+            )
+            .leftJoin(
+              schema.routeEndpointTargets,
+              eq(schema.proxyLogs.targetId, schema.routeEndpointTargets.id),
+            )
+            .leftJoin(
+              schema.accountTokens,
+              eq(schema.routeEndpointTargets.tokenId, schema.accountTokens.id),
+            )
             .where(eq(schema.proxyLogs.id, id))
             .get(),
-        { includeBillingDetails: true },
+        { includeBillingDetails: true, includeRouteDecisionSnapshot: true },
       )) as
         | {
             proxy_logs: Record<string, unknown> & {
               billingDetails?: string | null;
+              routeDecisionSnapshot?: string | null;
             };
             accounts: { username?: string | null } | null;
             sites: {
@@ -1051,6 +1244,45 @@ export async function statsRoutes(app: FastifyInstance) {
               name?: string | null;
               groupName?: string | null;
               tags?: string | null;
+            } | null;
+            token_routes: {
+              id?: number | null;
+              displayName?: string | null;
+              displayIcon?: string | null;
+              routingStrategy?: string | null;
+              enabled?: boolean | number | null;
+              decisionSnapshot?: string | null;
+              decisionRefreshedAt?: string | null;
+            } | null;
+            route_endpoint_targets: {
+              id?: number | null;
+              routeEndpointId?: string | null;
+              accountId?: number | null;
+              tokenId?: number | null;
+              oauthRouteUnitId?: number | null;
+              sourceModel?: string | null;
+              priority?: number | null;
+              weight?: number | null;
+              enabled?: boolean | number | null;
+              manualOverride?: boolean | number | null;
+              successCount?: number | null;
+              failCount?: number | null;
+              totalLatencyMs?: number | null;
+              totalCost?: number | null;
+              lastUsedAt?: string | null;
+              lastSelectedAt?: string | null;
+              lastFailAt?: string | null;
+              consecutiveFailCount?: number | null;
+              cooldownLevel?: number | null;
+              cooldownUntil?: string | null;
+            } | null;
+            target_account_tokens: {
+              id?: number | null;
+              name?: string | null;
+              tokenGroup?: string | null;
+              enabled?: boolean | number | null;
+              valueStatus?: string | null;
+              source?: string | null;
             } | null;
           }
         | undefined;
@@ -1113,7 +1345,9 @@ export async function statsRoutes(app: FastifyInstance) {
             successMessage: (currentTask) => {
               const rebuild = (currentTask.result as any)?.rebuild;
               if (!rebuild) return "模型广场刷新已完成";
-              return `模型广场刷新完成：新增路由 ${rebuild.createdRoutes}，移除旧路由 ${rebuild.removedRoutes ?? 0}，新增通道 ${rebuild.createdChannels}，移除通道 ${rebuild.removedChannels}`;
+              const createdTargets = rebuild.createdTargets ?? rebuild.createdChannels ?? 0;
+              const removedTargets = rebuild.removedTargets ?? rebuild.removedChannels ?? 0;
+              return `模型广场刷新完成：新增路由 ${rebuild.createdRoutes ?? 0}，移除旧路由 ${rebuild.removedRoutes ?? 0}，新增目标 ${createdTargets}，移除目标 ${removedTargets}`;
             },
             failureMessage: (currentTask) =>
               `模型广场刷新失败：${currentTask.error || "unknown error"}`,
@@ -1265,25 +1499,25 @@ export async function statsRoutes(app: FastifyInstance) {
         description: string | null;
         tags: Set<string>;
         supportedEndpointTypes: Set<string>;
-        pricingSources: Array<{
-          siteId: number;
-          siteName: string;
-          accountId: number;
-          username: string | null;
-          ownerBy: string | null;
-          enableGroups: string[];
-          groupPricing: Record<
-            string,
-            {
-              quotaType: number;
-              inputPerMillion?: number;
-              outputPerMillion?: number;
-              perCallInput?: number;
-              perCallOutput?: number;
-              perCallTotal?: number;
-            }
-          >;
-        }>;
+      };
+      type MarketplacePricingSource = {
+        siteId: number;
+        siteName: string;
+        accountId: number;
+        username: string | null;
+        ownerBy: string | null;
+        enableGroups: string[];
+        groupPricing: Record<
+          string,
+          {
+            quotaType: number;
+            inputPerMillion?: number;
+            outputPerMillion?: number;
+            perCallInput?: number;
+            perCallOutput?: number;
+            perCallTotal?: number;
+          }
+        >;
       };
 
       const modelMetadataMap = new Map<string, ModelMetadataAggregate>();
@@ -1307,11 +1541,14 @@ export async function statsRoutes(app: FastifyInstance) {
                 id: row.sites.id,
                 url: row.sites.url,
                 platform: row.sites.platform,
+                apiKey: row.sites.apiKey,
               },
               account: {
                 id: row.accounts.id,
+                username: row.accounts.username,
                 accessToken: row.accounts.accessToken,
                 apiToken: row.accounts.apiToken,
+                extraConfig: row.accounts.extraConfig,
               },
               modelName: "__metadata__",
               totalTokens: 0,
@@ -1335,7 +1572,6 @@ export async function statsRoutes(app: FastifyInstance) {
                 description: null,
                 tags: new Set<string>(),
                 supportedEndpointTypes: new Set<string>(),
-                pricingSources: [],
               });
             }
 
@@ -1348,16 +1584,6 @@ export async function statsRoutes(app: FastifyInstance) {
             for (const endpointType of model.supportedEndpointTypes) {
               aggregate.supportedEndpointTypes.add(endpointType);
             }
-
-            aggregate.pricingSources.push({
-              siteId: result.site.id,
-              siteName: result.site.name,
-              accountId: result.account.id,
-              username: result.account.username,
-              ownerBy: model.ownerBy,
-              enableGroups: model.enableGroups,
-              groupPricing: model.groupPricing,
-            });
           }
         }
       }
@@ -1465,6 +1691,120 @@ export async function statsRoutes(app: FastifyInstance) {
         existingAccount.latency = nextLatency;
       }
 
+      const pricingSourcesByModel = new Map<string, MarketplacePricingSource[]>();
+      if (includePricing) {
+        const pricingSourceMap = new Map<string, {
+          modelKey: string;
+          source: MarketplacePricingSource;
+        }>();
+        const upsertPricingSource = (input: {
+          modelName: string;
+          siteId: number;
+          siteName: string;
+          accountId: number;
+          username: string | null;
+          tokenGroup: string | null;
+          resolution: PricingResolution;
+        }) => {
+          const modelKey = input.modelName.toLowerCase();
+          const group = (input.tokenGroup || 'default').trim() || 'default';
+          const sourceKey = `${modelKey}:${input.siteId}:${input.accountId}`;
+          const existing = pricingSourceMap.get(sourceKey);
+          const source = existing?.source || {
+            siteId: input.siteId,
+            siteName: input.siteName,
+            accountId: input.accountId,
+            username: input.username,
+            ownerBy: null,
+            enableGroups: [],
+            groupPricing: {},
+          };
+          if (!source.enableGroups.includes(group)) source.enableGroups.push(group);
+          const summary = input.resolution.summary;
+          source.groupPricing[group] = {
+            quotaType: summary.requestUsd != null && summary.inputPerMillion == null && summary.outputPerMillion == null ? 1 : 0,
+            ...(summary.inputPerMillion != null ? { inputPerMillion: summary.inputPerMillion } : {}),
+            ...(summary.outputPerMillion != null ? { outputPerMillion: summary.outputPerMillion } : {}),
+            ...(summary.requestUsd != null ? { perCallTotal: summary.requestUsd } : {}),
+          };
+          pricingSourceMap.set(sourceKey, { modelKey, source });
+        };
+
+        await Promise.all([
+          ...availability.map(async (row) => {
+            const m = row.token_model_availability;
+            const t = row.account_tokens;
+            const a = row.accounts;
+            const s = row.sites;
+            if (
+              !m.available ||
+              !t.enabled ||
+              t.valueStatus !== ACCOUNT_TOKEN_VALUE_STATUS_READY ||
+              a.status !== "active" ||
+              s.status !== "active"
+            ) return;
+
+            const quote = await quoteEndpointPricing({
+              supply: {
+                siteId: s.id,
+                accountId: a.id,
+                tokenId: t.id,
+                tokenGroup: t.tokenGroup,
+                provider: s.platform,
+                modelName: m.modelName,
+              },
+              usageProfile: 'preview_1m_io',
+              includeReference: true,
+            });
+            if (!quote.endpoint) return;
+            upsertPricingSource({
+              modelName: m.modelName,
+              siteId: s.id,
+              siteName: s.name,
+              accountId: a.id,
+              username: a.username,
+              tokenGroup: t.tokenGroup,
+              resolution: quote.endpoint,
+            });
+          }),
+          ...accountAvailability.map(async (row) => {
+            const m = row.model_availability;
+            const a = row.accounts;
+            const s = row.sites;
+            if (!m.available || a.status !== "active" || s.status !== "active") return;
+
+            const quote = await quoteEndpointPricing({
+              supply: {
+                siteId: s.id,
+                accountId: a.id,
+                provider: s.platform,
+                modelName: m.modelName,
+              },
+              usageProfile: 'preview_1m_io',
+              includeReference: true,
+            });
+            if (!quote.endpoint) return;
+            upsertPricingSource({
+              modelName: m.modelName,
+              siteId: s.id,
+              siteName: s.name,
+              accountId: a.id,
+              username: a.username,
+              tokenGroup: null,
+              resolution: quote.endpoint,
+            });
+          }),
+        ]);
+
+        for (const { modelKey, source } of pricingSourceMap.values()) {
+          if (!pricingSourcesByModel.has(modelKey)) pricingSourcesByModel.set(modelKey, []);
+          pricingSourcesByModel.get(modelKey)!.push({
+            ...source,
+            enableGroups: source.enableGroups.sort((a, b) => a.localeCompare(b)),
+          });
+        }
+      }
+
       let upstreamDescriptionMap = new Map<string, string>();
       if (includePricing) {
         const hasMissingDescription = Object.keys(modelMap).some(
@@ -1509,7 +1849,7 @@ export async function statsRoutes(app: FastifyInstance) {
                 a.localeCompare(b),
               )
             : [],
-          pricingSources: metadata?.pricingSources || [],
+          pricingSources: pricingSourcesByModel.get(m.name.toLowerCase()) || [],
           measuredEntryPricing: measuredPricing
             ? {
                 inputPerMillion: measuredPricing.inputWeight > 0
@@ -1784,11 +2124,14 @@ export async function statsRoutes(app: FastifyInstance) {
                     id: row.sites.id,
                     url: row.sites.url,
                     platform: row.sites.platform,
+                    apiKey: row.sites.apiKey,
                   },
                   account: {
                     id: row.accounts.id,
+                    username: row.accounts.username,
                     accessToken: row.accounts.accessToken,
                     apiToken: row.accounts.apiToken,
+                    extraConfig: row.accounts.extraConfig,
                   },
                   modelName: "__metadata__",
                   totalTokens: 0,

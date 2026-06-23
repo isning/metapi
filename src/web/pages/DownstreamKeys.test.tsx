@@ -143,11 +143,11 @@ beforeEach(() => {
   apiMock.getRoutesLite.mockResolvedValue(routeSummaryRows([
     { id: 11, enabled: true ,
         match: { kind: 'model', requestedModelPattern: 'claude-*', displayName: '默认群组' },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         presentation: { displayName: '默认群组', displayIcon: null }},
     { id: 12, enabled: true ,
         match: { kind: 'model', requestedModelPattern: 'gpt-4.1-mini', displayName: 'GPT 4.1 Mini' },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         presentation: { displayName: 'GPT 4.1 Mini', displayIcon: null }},
   ]));
   apiMock.getAccounts.mockResolvedValue([
@@ -553,19 +553,19 @@ describe('DownstreamKeys page', () => {
     apiMock.getRoutesLite.mockResolvedValue(routeSummaryRows([
       { id: 11, enabled: true ,
         match: { kind: 'model', requestedModelPattern: 'claude-*', displayName: '默认群组' },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         presentation: { displayName: '默认群组', displayIcon: null }},
       { id: 12, enabled: true ,
         match: { kind: 'model', requestedModelPattern: 'gpt-4.1-mini', displayName: 'GPT 4.1 Mini' },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         presentation: { displayName: 'GPT 4.1 Mini', displayIcon: null }},
       { id: 13, enabled: true ,
         match: { kind: 'model', requestedModelPattern: 're:^gemini-2\\..*$', displayName: 'Gemini 全家桶' },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         presentation: { displayName: 'Gemini 全家桶', displayIcon: null }},
       { id: 14, enabled: true ,
         match: { kind: 'model', requestedModelPattern: 'claude-opus-4-6', displayName: 'Claude Opus 4.6' },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         presentation: { displayName: 'Claude Opus 4.6', displayIcon: null }},
     ]));
 
@@ -638,19 +638,19 @@ describe('DownstreamKeys page', () => {
     apiMock.getRoutesLite.mockResolvedValue(routeSummaryRows([
       { id: 11, enabled: true ,
         match: { kind: 'model', requestedModelPattern: 'claude-*', displayName: '默认群组' },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         presentation: { displayName: '默认群组', displayIcon: null }},
       { id: 12, enabled: true ,
         match: { kind: 'model', requestedModelPattern: 'gpt-4.1-mini', displayName: 'GPT 4.1 Mini' },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         presentation: { displayName: 'GPT 4.1 Mini', displayIcon: null }},
       { id: 13, enabled: true ,
         match: { kind: 'model', requestedModelPattern: 're:^gemini-2\\..*$', displayName: 'Gemini 全家桶' },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         presentation: { displayName: 'Gemini 全家桶', displayIcon: null }},
       { id: 14, enabled: true ,
         match: { kind: 'model', requestedModelPattern: 'claude-opus-4-6', displayName: 'Claude Opus 4.6' },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         presentation: { displayName: 'Claude Opus 4.6', displayIcon: null }},
     ]));
 

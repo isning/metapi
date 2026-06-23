@@ -8,7 +8,7 @@ const { apiMock, getBrandMock, routeGraphWorkbenchRenderMock } = vi.hoisted(() =
   apiMock: {
     getRoutesSummary: vi.fn(),
     getRouteGraphActive: vi.fn(),
-    getRouteChannels: vi.fn(),
+    getRouteTargets: vi.fn(),
     getModelTokenCandidates: vi.fn(),
     getRouteDecision: vi.fn(),
     getRouteDecisionsBatch: vi.fn(),
@@ -209,7 +209,7 @@ describe('TokenRoutes desktop detail panel', () => {
         id: 1,
         modelMapping: null,
         match: { kind: 'model', requestedModelPattern: 'gpt-4o-mini', displayName: 'gpt-4o-mini' },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         presentation: { displayName: 'gpt-4o-mini', displayIcon: null },
         routingStrategy: 'weighted',
         enabled: true,
@@ -223,7 +223,7 @@ describe('TokenRoutes desktop detail panel', () => {
         id: 2,
         modelMapping: null,
         match: { kind: 'model', requestedModelPattern: 'claude-3.7-sonnet', displayName: 'claude-3.7-sonnet' },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         presentation: { displayName: 'claude-3.7-sonnet', displayIcon: null },
         routingStrategy: 'weighted',
         enabled: true,
@@ -242,7 +242,7 @@ describe('TokenRoutes desktop detail panel', () => {
         macros: [],
       },
     });
-    apiMock.getRouteChannels.mockResolvedValue([
+    apiMock.getRouteTargets.mockResolvedValue([
       {
         id: 11,
         accountId: 101,
@@ -264,7 +264,7 @@ describe('TokenRoutes desktop detail panel', () => {
     apiMock.getRouteDecisionsBatch.mockResolvedValue({ decisions: {} });
     apiMock.getRouteWideDecisionsBatch.mockResolvedValue({ decisions: {} });
     apiMock.updateRoute.mockResolvedValue({});
-    apiMock.rebuildRoutes.mockResolvedValue({ rebuild: { createdRoutes: 0, createdChannels: 0 } });
+    apiMock.rebuildRoutes.mockResolvedValue({ rebuild: { createdRoutes: 0, createdTargets: 0 } });
     apiMock.deleteRoute.mockResolvedValue({});
     apiMock.deleteChannel.mockResolvedValue({});
   });

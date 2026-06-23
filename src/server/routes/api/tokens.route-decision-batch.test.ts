@@ -42,7 +42,7 @@ describe('POST /api/routes/decision/batch', () => {
       enabled: true,
     }).returning().get();
 
-    await db.insert(schema.routeChannels).values({
+    await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: account.id,
       tokenId: null,
@@ -70,7 +70,7 @@ describe('POST /api/routes/decision/batch', () => {
 
   beforeEach(async () => {
     seedId = 0;
-    await db.delete(schema.routeChannels).run();
+    await db.delete(schema.routeEndpointTargets).run();
     await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.accounts).run();
     await db.delete(schema.sites).run();
@@ -127,7 +127,7 @@ describe('POST /api/routes/decision/batch', () => {
       enabled: true,
     }).returning().get();
 
-    await db.insert(schema.routeChannels).values({
+    await db.insert(schema.routeEndpointTargets).values({
       routeId: exactRoute.id,
       accountId: account.id,
       tokenId: null,
@@ -142,7 +142,7 @@ describe('POST /api/routes/decision/batch', () => {
       enabled: true,
     }).returning().get();
 
-    const wildcardChannel = await db.insert(schema.routeChannels).values({
+    const wildcardChannel = await db.insert(schema.routeEndpointTargets).values({
       routeId: wildcardRoute.id,
       accountId: account.id,
       tokenId: null,
@@ -163,14 +163,14 @@ describe('POST /api/routes/decision/batch', () => {
     expect(response.statusCode).toBe(200);
     const body = response.json() as {
       success: boolean;
-      decisions: Record<string, Record<string, { routeId?: number; matched: boolean; candidates: Array<{ channelId: number }> }>>;
+      decisions: Record<string, Record<string, { routeId?: number; matched: boolean; candidates: Array<{ targetId: number }> }>>;
     };
     expect(body.success).toBe(true);
 
     const decision = body.decisions[String(wildcardRoute.id)]?.['claude-opus-4-6'];
     expect(decision?.matched).toBe(true);
     expect(decision?.routeId).toBe(wildcardRoute.id);
-    expect(decision?.candidates.some((candidate) => candidate.channelId === wildcardChannel.id)).toBe(true);
+    expect(decision?.candidates.some((candidate) => candidate.targetId === wildcardChannel.id)).toBe(true);
   });
 
   it('returns route-wide wildcard probabilities normalized to 100 across all channels', async () => {
@@ -193,7 +193,7 @@ describe('POST /api/routes/decision/batch', () => {
       enabled: true,
     }).returning().get();
 
-    const channelA = await db.insert(schema.routeChannels).values({
+    const channelA = await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: account.id,
       tokenId: null,
@@ -203,7 +203,7 @@ describe('POST /api/routes/decision/batch', () => {
       enabled: true,
     }).returning().get();
 
-    const channelB = await db.insert(schema.routeChannels).values({
+    const channelB = await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: account.id,
       tokenId: null,
@@ -225,7 +225,7 @@ describe('POST /api/routes/decision/batch', () => {
       decisions: Record<string, {
         matched: boolean;
         routeId?: number;
-        candidates: Array<{ channelId: number; probability: number }>;
+        candidates: Array<{ targetId: number; probability: number }>;
       }>;
     };
     expect(body.success).toBe(true);
@@ -233,8 +233,8 @@ describe('POST /api/routes/decision/batch', () => {
     const decision = body.decisions[String(route.id)];
     expect(decision?.matched).toBe(true);
     expect(decision?.routeId).toBe(route.id);
-    expect(decision?.candidates.some((candidate) => candidate.channelId === channelA.id)).toBe(true);
-    expect(decision?.candidates.some((candidate) => candidate.channelId === channelB.id)).toBe(true);
+    expect(decision?.candidates.some((candidate) => candidate.targetId === channelA.id)).toBe(true);
+    expect(decision?.candidates.some((candidate) => candidate.targetId === channelB.id)).toBe(true);
 
     const totalProbability = (decision?.candidates || []).reduce((sum, candidate) => sum + (candidate.probability || 0), 0);
     expect(totalProbability).toBeCloseTo(100, 1);

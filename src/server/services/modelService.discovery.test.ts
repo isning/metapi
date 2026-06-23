@@ -80,7 +80,7 @@ describe('refreshModelsForAccount credential discovery', () => {
     proxyAgentCtorMock.mockReset();
     refreshOauthAccessTokenSingleflightMock.mockReset();
 
-    await db.delete(schema.routeChannels).run();
+    await db.delete(schema.routeEndpointTargets).run();
     await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.routeGraphDrafts).run();
     await db.delete(schema.routeGraphActiveVersion).run();
@@ -2295,9 +2295,10 @@ describe('refreshModelsForAccount credential discovery', () => {
     ]).run();
 
     const rebuild = await rebuildTokenRoutesFromAvailability();
+    expect(rebuild.createdTargets).toBe(1);
     expect(rebuild.createdChannels).toBe(1);
 
-    const channels = await db.select().from(schema.routeChannels).all();
+    const channels = await db.select().from(schema.routeEndpointTargets).all();
     expect(channels).toHaveLength(1);
     expect(channels[0]).toMatchObject({
       oauthRouteUnitId: routeUnit.id,
@@ -2326,8 +2327,8 @@ describe('refreshModelsForAccount credential discovery', () => {
         ownership: 'auto_generated',
       }),
       expect.objectContaining({
-        id: `pool:legacy:${generatedRoute!.id}`,
-        type: 'model_endpoint',
+        id: `route-endpoint:route:${generatedRoute!.id}`,
+        type: 'route_endpoint',
         ownership: 'auto_generated',
       }),
     ]));
@@ -2352,8 +2353,18 @@ describe('refreshModelsForAccount credential discovery', () => {
     const selection = await evaluateActiveRouteGraphForModel('gpt-5.4');
     expect(selection).toMatchObject({
       selectedRouteId: generatedRoute!.id,
-      terminalKind: 'model_endpoint',
-      selectedEndpointTarget: null,
+      terminalKind: 'route_endpoint',
+      selectedEndpointTarget: expect.objectContaining({
+        targetId: String(channels[0].id),
+        accountId: channels[0].accountId,
+        model: 'gpt-5.4',
+        priority: channels[0].priority,
+        weight: channels[0].weight,
+        metadata: expect.objectContaining({
+          routeChannelId: channels[0].id,
+          oauthRouteUnitId: routeUnit.id,
+        }),
+      }),
     });
   });
 });

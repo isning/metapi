@@ -34,7 +34,7 @@ import {
   PaginationPrevious,
 } from '../components/ui/pagination/index.js';
 import EntityWorkspaceLayout from '../components/workspace/EntityWorkspaceLayout.js';
-import ModelDetailsWorkspace, { ModelInspector } from './models/ModelDetailsWorkspace.js';
+import ModelDetailsWorkspace from './models/ModelDetailsWorkspace.js';
 import {
   buildModelDetailsView,
   type ModelDetailsTab,
@@ -732,7 +732,6 @@ export default function Models() {
               }}
             />
           )}
-          inspector={<ModelInspector details={selectedDetails} />}
           mobile={isMobile}
         />
       </div>

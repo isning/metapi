@@ -3,6 +3,7 @@ import { describe, expect, it, beforeAll, beforeEach, afterAll } from "vitest";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mkdtempSync } from "node:fs";
+import { eq } from "drizzle-orm";
 import { formatUtcSqlDateTime } from "../../services/localTimeService.js";
 
 type DbModule = typeof import("../../db/index.js");
@@ -235,9 +236,94 @@ describe("stats proxy logs routes", () => {
       .returning()
       .get();
 
+    const route = await db
+      .insert(schema.tokenRoutes)
+      .values({
+        displayName: "detail-route",
+        displayIcon: "route",
+        routingStrategy: "stable_first",
+        enabled: true,
+        decisionSnapshot: JSON.stringify({
+          match: {
+            kind: "model",
+            requestedModelPattern: "gpt-5",
+          },
+          backend: {
+            kind: "routes",
+            routeIds: [],
+          },
+        }),
+        decisionRefreshedAt: formatUtcSqlDateTime(
+          new Date("2026-03-09T08:00:00.000Z"),
+        ),
+      })
+      .returning()
+      .get();
+
+    await db
+      .update(schema.tokenRoutes)
+      .set({
+        decisionSnapshot: JSON.stringify({
+          match: {
+            kind: "model",
+            requestedModelPattern: "gpt-5",
+          },
+          backend: {
+            kind: "routes",
+            routeIds: [route.id],
+          },
+        }),
+      })
+      .where(eq(schema.tokenRoutes.id, route.id))
+      .run();
+
+    const targetToken = await db
+      .insert(schema.accountTokens)
+      .values({
+        accountId: account.id,
+        name: "detail-token-name",
+        token: "sk-target-token",
+        tokenGroup: "premium",
+        enabled: true,
+        valueStatus: "ready",
+        source: "manual",
+      })
+      .returning()
+      .get();
+
+    const routeTarget = await db
+      .insert(schema.routeEndpointTargets)
+      .values({
+        routeId: route.id,
+        routeEndpointId: `entry:legacy:${route.id}`,
+        accountId: account.id,
+        tokenId: targetToken.id,
+        sourceModel: "gpt-5",
+        priority: 7,
+        weight: 13,
+        enabled: true,
+        manualOverride: true,
+        successCount: 5,
+        failCount: 2,
+        totalLatencyMs: 300,
+        totalCost: 0.42,
+        lastSelectedAt: formatUtcSqlDateTime(
+          new Date("2026-03-09T08:03:00.000Z"),
+        ),
+        consecutiveFailCount: 1,
+        cooldownLevel: 2,
+        cooldownUntil: formatUtcSqlDateTime(
+          new Date("2026-03-09T08:30:00.000Z"),
+        ),
+      })
+      .returning()
+      .get();
+
     const inserted = await db
       .insert(schema.proxyLogs)
       .values({
+        routeId: route.id,
+        targetId: routeTarget.id,
         accountId: account.id,
         downstreamApiKeyId: downstreamKey.id,
         modelRequested: "gpt-5",
@@ -255,6 +341,64 @@ describe("stats proxy logs routes", () => {
         estimatedCost: 0.12,
         errorMessage: "downstream: /v1/chat upstream: /api/chat",
         createdAt: formatUtcSqlDateTime(new Date("2026-03-09T08:05:00.000Z")),
+        routeDecisionSnapshot: JSON.stringify({
+          schemaVersion: 1,
+          capturedAt: formatUtcSqlDateTime(
+            new Date("2026-03-09T08:05:00.000Z"),
+          ),
+          requestedModel: "gpt-5",
+          actualModel: "gpt-5",
+          route: {
+            id: route.id,
+            displayName: "snapshot-route",
+            displayIcon: "route",
+            routingStrategy: "stable_first",
+            enabled: true,
+            decisionRefreshedAt: formatUtcSqlDateTime(
+              new Date("2026-03-09T08:00:00.000Z"),
+            ),
+            snapshotSummary: {
+              matchKind: "model",
+              requestedModelPattern: "gpt-5",
+              backendKind: "routes",
+              sourceRouteIds: [route.id],
+            },
+          },
+          target: {
+            id: routeTarget.id,
+            routeEndpointId: `entry:legacy:${route.id}`,
+            accountId: account.id,
+            tokenId: targetToken.id,
+            oauthRouteUnitId: null,
+            sourceModel: "gpt-5",
+            priority: 7,
+            weight: 13,
+            enabled: true,
+            manualOverride: true,
+            successCount: 5,
+            failCount: 2,
+            totalLatencyMs: 300,
+            totalCost: 0.42,
+            lastUsedAt: null,
+            lastSelectedAt: formatUtcSqlDateTime(
+              new Date("2026-03-09T08:03:00.000Z"),
+            ),
+            lastFailAt: null,
+            consecutiveFailCount: 1,
+            cooldownLevel: 2,
+            cooldownUntil: formatUtcSqlDateTime(
+              new Date("2026-03-09T08:30:00.000Z"),
+            ),
+          },
+          token: {
+            id: targetToken.id,
+            name: "snapshot-token-name",
+            tokenGroup: "premium",
+            enabled: true,
+            valueStatus: "ready",
+            source: "manual",
+          },
+        }),
         billingDetails: JSON.stringify({
           breakdown: { totalCost: 0.12 },
           usage: { promptTokens: 100, completionTokens: 20 },
@@ -263,6 +407,32 @@ describe("stats proxy logs routes", () => {
       .run();
 
     const logId = Number(inserted.lastInsertRowid || 0);
+    await db
+      .update(schema.tokenRoutes)
+      .set({
+        displayName: "mutated-route",
+        routingStrategy: "weighted",
+      })
+      .where(eq(schema.tokenRoutes.id, route.id))
+      .run();
+    await db
+      .update(schema.routeEndpointTargets)
+      .set({
+        priority: 99,
+        weight: 99,
+        successCount: 999,
+      })
+      .where(eq(schema.routeEndpointTargets.id, routeTarget.id))
+      .run();
+    await db
+      .update(schema.accountTokens)
+      .set({
+        name: "mutated-token-name",
+        tokenGroup: "mutated",
+      })
+      .where(eq(schema.accountTokens.id, targetToken.id))
+      .run();
+
     const response = await app.inject({
       method: "GET",
       url: `/api/stats/proxy-logs/${logId}`,
@@ -283,6 +453,7 @@ describe("stats proxy logs routes", () => {
       isStream: boolean | null;
       firstByteLatencyMs: number | null;
       billingDetails: Record<string, unknown> | null;
+      routeDecision: Record<string, any>;
     };
 
     expect(body.id).toBe(logId);
@@ -300,6 +471,44 @@ describe("stats proxy logs routes", () => {
     expect(body.billingDetails).toMatchObject({
       breakdown: { totalCost: 0.12 },
       usage: { promptTokens: 100, completionTokens: 20 },
+    });
+    expect(body.routeDecision).toMatchObject({
+      source: "snapshot",
+      capturedAt: formatUtcSqlDateTime(new Date("2026-03-09T08:05:00.000Z")),
+      route: {
+        id: route.id,
+        displayName: "snapshot-route",
+        routingStrategy: "stable_first",
+        enabled: true,
+        snapshotSummary: {
+          matchKind: "model",
+          requestedModelPattern: "gpt-5",
+          backendKind: "routes",
+          sourceRouteIds: [route.id],
+        },
+      },
+      target: {
+        id: routeTarget.id,
+        routeEndpointId: `entry:legacy:${route.id}`,
+        tokenId: targetToken.id,
+        sourceModel: "gpt-5",
+        priority: 7,
+        weight: 13,
+        enabled: true,
+        manualOverride: true,
+        successCount: 5,
+        failCount: 2,
+        consecutiveFailCount: 1,
+        cooldownLevel: 2,
+      },
+      token: {
+        id: targetToken.id,
+        name: "snapshot-token-name",
+        tokenGroup: "premium",
+        enabled: true,
+        valueStatus: "ready",
+        source: "manual",
+      },
     });
   });
 

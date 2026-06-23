@@ -47,7 +47,7 @@ describe('/v1/models route', () => {
 
   beforeEach(async () => {
     invalidateTokenRouterCache();
-    await db.delete(schema.routeChannels).run();
+    await db.delete(schema.routeEndpointTargets).run();
     await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.tokenModelAvailability).run();
     await db.delete(schema.modelAvailability).run();
@@ -62,7 +62,7 @@ describe('/v1/models route', () => {
     delete process.env.DATA_DIR;
   });
 
-  it('hides models that have no routable channel even if model availability contains them', async () => {
+  it('hides models that have no routable target even if model availability contains them', async () => {
     const site = await db.insert(schema.sites).values({
       name: 'test-site',
       url: 'https://upstream.example.com',
@@ -102,7 +102,7 @@ describe('/v1/models route', () => {
       enabled: true,
     }).returning().get();
 
-    await db.insert(schema.routeChannels).values({
+    await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: account.id,
       tokenId: token.id,
@@ -169,7 +169,7 @@ describe('/v1/models route', () => {
       enabled: true,
     }).returning().get();
 
-    await db.insert(schema.routeChannels).values({
+    await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: account.id,
       tokenId: token.id,
@@ -238,7 +238,7 @@ describe('/v1/models route', () => {
       enabled: true,
     }).returning().get();
 
-    await db.insert(schema.routeChannels).values([
+    await db.insert(schema.routeEndpointTargets).values([
       {
         routeId: allowedRoute.id,
         accountId: account.id,
@@ -321,7 +321,7 @@ describe('/v1/models route', () => {
       enabled: true,
     }).returning().get();
 
-    await db.insert(schema.routeChannels).values({
+    await db.insert(schema.routeEndpointTargets).values({
       routeId: groupRoute.id,
       accountId: account.id,
       tokenId: token.id,
@@ -451,7 +451,7 @@ describe('/v1/models route', () => {
       enabled: true,
     }).returning().get();
 
-    await db.insert(schema.routeChannels).values([
+    await db.insert(schema.routeEndpointTargets).values([
       {
         routeId: sourceRouteA.id,
         accountId: account.id,
@@ -557,7 +557,7 @@ describe('/v1/models route', () => {
       enabled: true,
     }).returning().get();
 
-    await db.insert(schema.routeChannels).values([
+    await db.insert(schema.routeEndpointTargets).values([
       {
         routeId: searchRoute.id,
         accountId: account.id,
@@ -633,7 +633,7 @@ describe('/v1/models route', () => {
       enabled: true,
     }).returning().get();
 
-    await db.insert(schema.routeChannels).values({
+    await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: account.id,
       tokenId: token.id,
@@ -690,7 +690,7 @@ describe('/v1/models route', () => {
       enabled: true,
     }).returning().get();
 
-    await db.insert(schema.routeChannels).values({
+    await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: account.id,
       tokenId: token.id,

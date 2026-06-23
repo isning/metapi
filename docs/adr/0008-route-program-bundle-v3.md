@@ -30,7 +30,7 @@ it is not the right long-term execution representation:
 - every request pays for graph interpretation work that can be done at compile
   time;
 - runtime selection must understand UI/debug graph details;
-- channel, pool, token, site, and account concepts can leak into route graph
+- target, pool, token, site, and account concepts can leak into route graph
   execution as graph-level objects;
 - diagnostics and UI source mapping are harder because the executable shape is
   not explicit;
@@ -57,7 +57,7 @@ The source and compiled layers become:
    built from the program bundle.
 
 `CompiledRouteGraph` may temporarily keep its existing v2 fields while carrying
-`programBundle`. Those v2 fields are debug and migration projections only. The
+`programBundle`. Those v2 fields are debug and migration views only. The
 request runtime executes `RouteProgramBundleV3`; it must not reconstruct or
 interpret the v2 graph snapshot per request.
 
@@ -135,7 +135,7 @@ type RouteProgramOp =
   | { op: 'synthetic'; nodeId: string; statusCode: number; message: string };
 ```
 
-`channel`, `pool`, `token`, `site`, and `account` stay inside
+`target`, `pool`, `token`, `site`, and `account` stay inside
 `CompiledEndpointTarget` metadata. They must not become top-level compiled graph
 concepts.
 
@@ -143,9 +143,9 @@ Route products are allowed to inline their resolved executable path for
 performance, but source maps must keep pointing to the owning `route_endpoint`
 and macro.
 
-## Endpoint Catalog Projection
+## Endpoint Catalog View
 
-The program bundle owns a catalog projection used by runtime and UI:
+The program bundle owns a catalog view used by runtime and UI:
 
 ```ts
 type RouteProgramEndpointCatalog = {
@@ -226,7 +226,7 @@ This migration is implemented in stages:
 
 Persisted compiled JSON may still carry both v2 fields and `programBundle`.
 That is not the execution contract; it is a debug and migration bridge while UI
-consumers finish moving to program source maps and endpoint catalog projections.
+consumers finish moving to program source maps and endpoint catalog views.
 
 ## Consequences
 

@@ -16,15 +16,17 @@ import type { BuiltEndpointRequest } from './endpointFlow.js';
 import { buildUpstreamUrl } from './upstreamRequest.js';
 import { recordOauthQuotaHeadersSnapshot, recordOauthQuotaResetHint } from '../../services/oauth/quota.js';
 import { refreshOauthAccessTokenSingleflight } from '../../services/oauth/refreshSingleflight.js';
-import { proxyChannelCoordinator } from '../../services/proxyChannelCoordinator.js';
+import { proxyTargetCoordinator } from '../../services/proxyTargetCoordinator.js';
 import { readRuntimeResponseText } from '../executors/types.js';
-import { selectProxyChannelForAttempt } from '../channelSelection.js';
+import { selectProxyTargetForAttempt } from '../targetSelection.js';
+import type { RouteExecutionScope } from '../../services/tokenRouter.js';
+import { buildProxyLogRouteDecisionSnapshot } from '../../services/proxyLogRouteDecisionSnapshot.js';
 
-type SelectedChannel = Awaited<ReturnType<typeof tokenRouter.selectChannel>>;
+type SelectedTarget = Awaited<ReturnType<typeof tokenRouter.selectTarget>>;
 type SurfaceWarningScope = string;
 
-type SurfaceSelectedChannel = {
-  channel: { routeId: number | null; id: number; tokenId?: number | null };
+type SurfaceSelectedTarget = {
+  target: { routeId: number | null; id: number; tokenId?: number | null };
   account: { id: number; username?: string | null };
   site: { name?: string | null };
   token?: { id?: number | null; tokenGroup?: string | null } | null;
@@ -46,7 +48,7 @@ type SurfaceFailureOutcome =
   | { action: 'retry' }
   | SurfaceFailureResponse;
 
-type SurfaceOauthRefreshSelectedChannel = {
+type SurfaceOauthRefreshSelectedTarget = {
   account: {
     id: number;
     accessToken?: string | null;
@@ -61,7 +63,7 @@ type SurfaceOauthRefreshContext<TRequest extends BuiltEndpointRequest> = {
   rawErrText: string;
 };
 
-type SurfaceSuccessSelectedChannel = SurfaceSelectedChannel & {
+type SurfaceSuccessSelectedTarget = SurfaceSelectedTarget & {
   account: Record<string, unknown> & {
     id: number;
     username?: string | null;
@@ -105,12 +107,13 @@ type SurfaceResolvedUsageSummary = {
 export async function selectSurfaceChannelForAttempt(input: {
   requestedModel: string;
   downstreamPolicy: DownstreamRoutingPolicy;
-  excludeChannelIds: number[];
+  excludeTargetIds: number[];
   retryCount: number;
   stickySessionKey?: string | null;
-  forcedChannelId?: number | null;
-}): Promise<SelectedChannel> {
-  return await selectProxyChannelForAttempt(input);
+  forcedTargetId?: number | null;
+  routeExecutionScope?: RouteExecutionScope | null;
+}): Promise<SelectedTarget> {
+  return await selectProxyTargetForAttempt(input);
 }
 
 export function buildSurfaceStickySessionKey(input: {
@@ -119,7 +122,7 @@ export function buildSurfaceStickySessionKey(input: {
   downstreamPath: string;
   downstreamApiKeyId?: number | null;
 }): string | null {
-  return proxyChannelCoordinator.buildStickySessionKey({
+  return proxyTargetCoordinator.buildStickySessionKey({
     clientKind: input.clientContext?.clientKind || null,
     sessionId: input.clientContext?.sessionId || null,
     requestedModel: input.requestedModel,
@@ -128,21 +131,21 @@ export function buildSurfaceStickySessionKey(input: {
   });
 }
 
-export function getSurfaceStickyPreferredChannelId(stickySessionKey?: string | null): number | null {
+export function getSurfaceStickyPreferredTargetId(stickySessionKey?: string | null): number | null {
   if (!stickySessionKey) return null;
-  return proxyChannelCoordinator.getStickyChannelId(stickySessionKey) ?? null;
+  return proxyTargetCoordinator.getStickyTargetId(stickySessionKey) ?? null;
 }
 
 export function bindSurfaceStickyChannel(input: {
   stickySessionKey?: string | null;
   selected: {
-    channel: { id: number };
+    target: { id: number };
     account?: { extraConfig?: string | null; oauthProvider?: string | null } | null;
   };
 }): void {
-  proxyChannelCoordinator.bindStickyChannel(
+  proxyTargetCoordinator.bindStickyTarget(
     input.stickySessionKey,
-    input.selected.channel.id,
+    input.selected.target.id,
     input.selected.account || undefined,
   );
 }
@@ -150,27 +153,27 @@ export function bindSurfaceStickyChannel(input: {
 export function clearSurfaceStickyChannel(input: {
   stickySessionKey?: string | null;
   selected: {
-    channel: { id: number };
+    target: { id: number };
   };
 }): void {
-  proxyChannelCoordinator.clearStickyChannel(
+  proxyTargetCoordinator.clearStickyTarget(
     input.stickySessionKey,
-    input.selected.channel.id,
+    input.selected.target.id,
   );
 }
 
 export async function acquireSurfaceChannelLease(input: {
   stickySessionKey?: string | null;
   selected: {
-    channel: { id: number };
+    target: { id: number };
     account?: { extraConfig?: string | null; oauthProvider?: string | null } | null;
   };
 }) {
-  return await proxyChannelCoordinator.acquireChannelLease({
-    // Only session-addressable requests should consume the guarded per-channel
+  return await proxyTargetCoordinator.acquireTargetLease({
+    // Only session-addressable requests should consume the guarded per-target
     // lease pool. Requests without a stable downstream session key should keep
     // the pre-sticky-session parallel behavior instead of contending globally.
-    channelId: input.stickySessionKey ? input.selected.channel.id : 0,
+    targetId: input.stickySessionKey ? input.selected.target.id : 0,
     accountExtraConfig: input.selected.account?.extraConfig,
     accountOauthProvider: input.selected.account?.oauthProvider,
   });
@@ -178,14 +181,14 @@ export async function acquireSurfaceChannelLease(input: {
 
 export function buildSurfaceChannelBusyMessage(waitMs: number): string {
   return waitMs > 0
-    ? `Channel busy: waited ${waitMs}ms for an available session slot`
-    : 'Channel busy: no session slot available';
+    ? `Target busy: waited ${waitMs}ms for an available session slot`
+    : 'Target busy: no session slot available';
 }
 
 export async function writeSurfaceProxyLog(input: {
   warningScope: string;
   selected: {
-    channel: { routeId: number | null; id: number | null };
+    target: { routeId: number | null; id: number | null };
     account: { id: number | null };
     actualModel?: string | null;
   };
@@ -221,9 +224,14 @@ export async function writeSurfaceProxyLog(input: {
       usageSource: input.usageSource || null,
       errorMessage: input.errorMessage,
     });
+    const routeDecisionSnapshot = await buildProxyLogRouteDecisionSnapshot({
+      selected: input.selected,
+      modelRequested: input.modelRequested,
+      capturedAt: createdAt,
+    });
     await insertProxyLog({
-      routeId: input.selected.channel.routeId,
-      channelId: input.selected.channel.id,
+      routeId: input.selected.target.routeId,
+      targetId: input.selected.target.id,
       accountId: input.selected.account.id,
       downstreamApiKeyId: input.downstreamApiKeyId ?? null,
       modelRequested: input.modelRequested,
@@ -238,6 +246,7 @@ export async function writeSurfaceProxyLog(input: {
       totalTokens: input.totalTokens ?? null,
       estimatedCost: input.estimatedCost ?? 0,
       billingDetails: input.billingDetails ?? null,
+      routeDecisionSnapshot,
       clientFamily: input.clientContext?.clientKind || null,
       clientAppId: input.clientContext?.clientAppId || null,
       clientAppName: input.clientContext?.clientAppName || null,
@@ -278,7 +287,7 @@ export function createSurfaceDispatchRequest(input: {
 
 export async function trySurfaceOauthRefreshRecovery<TRequest extends BuiltEndpointRequest>(input: {
   ctx: SurfaceOauthRefreshContext<TRequest>;
-  selected: SurfaceOauthRefreshSelectedChannel;
+  selected: SurfaceOauthRefreshSelectedTarget;
   siteUrl: string;
   buildRequest: (endpoint: TRequest['endpoint']) => TRequest;
   dispatchRequest: (
@@ -327,7 +336,7 @@ export async function trySurfaceOauthRefreshRecovery<TRequest extends BuiltEndpo
 }
 
 export async function recordSurfaceSuccess(input: {
-  selected: SurfaceSuccessSelectedChannel;
+  selected: SurfaceSuccessSelectedTarget;
   requestedModel: string;
   modelName: string;
   parsedUsage: SurfaceUsageSummary;
@@ -340,7 +349,7 @@ export async function recordSurfaceSuccess(input: {
   retryCount: number;
   upstreamPath?: string | null;
   logSuccess: (args: {
-    selected: SurfaceSelectedChannel;
+    selected: SurfaceSelectedTarget;
     modelRequested: string;
     status: string;
     httpStatus: number;
@@ -404,7 +413,7 @@ export async function recordSurfaceSuccess(input: {
     const billing = await resolveProxyLogBilling({
       site: input.selected.site,
       account: input.selected.account,
-      tokenId: input.selected.token?.id ?? input.selected.channel.tokenId ?? null,
+      tokenId: input.selected.token?.id ?? input.selected.target.tokenId ?? null,
       upstreamGroup: input.selected.token?.tokenGroup ?? null,
       modelName: input.modelName,
       parsedUsage: input.parsedUsage,
@@ -420,7 +429,7 @@ export async function recordSurfaceSuccess(input: {
   }
 
   tokenRouter.recordSuccess(
-    input.selected.channel.id,
+    input.selected.target.id,
     input.latencyMs,
     estimatedCost,
     input.modelName,
@@ -480,7 +489,7 @@ export function createSurfaceFailureToolkit(input: {
   downstreamApiKeyId?: number | null;
 }) {
   const log = async (args: {
-    selected: SurfaceSelectedChannel;
+    selected: SurfaceSelectedTarget;
     modelRequested: string;
     status: string;
     httpStatus: number;
@@ -536,7 +545,7 @@ export function createSurfaceFailureToolkit(input: {
   return {
     log,
     async handleUpstreamFailure(args: {
-      selected: SurfaceSelectedChannel;
+      selected: SurfaceSelectedTarget;
       requestedModel: string;
       modelName: string;
       status: number;
@@ -548,7 +557,7 @@ export function createSurfaceFailureToolkit(input: {
       retryCount: number;
     }): Promise<SurfaceFailureOutcome> {
       const rawErrText = args.rawErrText || args.errText;
-      await tokenRouter.recordFailure(args.selected.channel.id, {
+      await tokenRouter.recordFailure(args.selected.target.id, {
         status: args.status,
         errorText: rawErrText,
         modelName: args.modelName,
@@ -602,7 +611,7 @@ export function createSurfaceFailureToolkit(input: {
     },
 
     async handleDetectedFailure(args: {
-      selected: SurfaceSelectedChannel;
+      selected: SurfaceSelectedTarget;
       requestedModel: string;
       modelName: string;
       failure: { status: number; reason: string };
@@ -615,7 +624,7 @@ export function createSurfaceFailureToolkit(input: {
       totalTokens?: number | null;
       upstreamPath?: string | null;
     }): Promise<SurfaceFailureOutcome> {
-      await tokenRouter.recordFailure(args.selected.channel.id, {
+      await tokenRouter.recordFailure(args.selected.target.id, {
         status: args.failure.status,
         errorText: args.failure.reason,
         modelName: args.modelName,
@@ -659,7 +668,7 @@ export function createSurfaceFailureToolkit(input: {
     },
 
     async handleExecutionError(args: {
-      selected: SurfaceSelectedChannel;
+      selected: SurfaceSelectedTarget;
       requestedModel: string;
       modelName: string;
       errorMessage: string;
@@ -668,7 +677,7 @@ export function createSurfaceFailureToolkit(input: {
       latencyMs: number;
       retryCount: number;
     }): Promise<SurfaceFailureOutcome> {
-      await tokenRouter.recordFailure(args.selected.channel.id, {
+      await tokenRouter.recordFailure(args.selected.target.id, {
         errorText: args.errorMessage,
         modelName: args.modelName,
       });
@@ -705,7 +714,7 @@ export function createSurfaceFailureToolkit(input: {
     },
 
     async recordStreamFailure(args: {
-      selected: SurfaceSelectedChannel;
+      selected: SurfaceSelectedTarget;
       requestedModel: string;
       modelName: string;
       errorMessage: string | null;
@@ -722,13 +731,13 @@ export function createSurfaceFailureToolkit(input: {
     }) {
       const errorMessage = args.errorMessage || 'stream processing failed';
       if (typeof args.runtimeFailureStatus === 'number') {
-        await tokenRouter.recordFailure(args.selected.channel.id, {
+        await tokenRouter.recordFailure(args.selected.target.id, {
           status: args.runtimeFailureStatus,
           errorText: errorMessage,
           modelName: args.modelName,
         });
       } else {
-        await tokenRouter.recordFailure(args.selected.channel.id, {
+        await tokenRouter.recordFailure(args.selected.target.id, {
           errorText: errorMessage,
           modelName: args.modelName,
         });

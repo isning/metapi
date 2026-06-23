@@ -10,8 +10,12 @@ import {
   type PricingEvaluation,
   type PricingPlan,
 } from '../pricing-core/index.js';
+import { DEFAULT_PRICING_GROUP, type UpstreamPricingCatalog, type UpstreamPricingModel } from './upstreamPricingCatalog.js';
+import { fetchUpstreamPricingCatalog } from './upstreamPricingCatalogService.js';
+import { loadPricingReferenceConfig } from './pricingReferenceConfigService.js';
 
 export type UpstreamCostPricingScope = 'site_model' | 'account_model' | 'token_model' | 'token_model_group';
+export type UpstreamCostMatchedScope = UpstreamCostPricingScope | 'provider_catalog';
 
 export interface UpstreamCostPricingPayload {
   scope: UpstreamCostPricingScope;
@@ -51,7 +55,7 @@ export interface UpstreamCostResolveInput {
 
 export interface UpstreamCostResolveResult {
   pricing: UpstreamCostPricingRecord;
-  matchedScope: UpstreamCostPricingScope;
+  matchedScope: UpstreamCostMatchedScope;
   priority: number;
 }
 
@@ -72,6 +76,22 @@ export interface UpstreamCostEvaluationResult extends UpstreamCostResolveResult 
 }
 
 type Row = typeof schema.upstreamModelCostPricings.$inferSelect;
+type CatalogContext = {
+  site: {
+    id: number;
+    url: string;
+    platform: string;
+    apiKey?: string | null;
+  };
+  account: {
+    id: number;
+    username?: string | null;
+    accessToken?: string | null;
+    apiToken?: string | null;
+    extraConfig?: string | Record<string, unknown> | null;
+  };
+  tokenGroup?: string | null;
+};
 
 const VALID_SCOPES = new Set<UpstreamCostPricingScope>([
   'site_model',
@@ -324,12 +344,15 @@ export async function resolveUpstreamCostPricing(input: UpstreamCostResolveInput
     .sort((a, b) => b.priority - a.priority);
 
   const match = ranked[0];
-  if (!match) return null;
-  return {
-    pricing: rowToRecord(match.row),
-    matchedScope: match.row.scope as UpstreamCostPricingScope,
-    priority: match.priority,
-  };
+  if (match) {
+    return {
+      pricing: rowToRecord(match.row),
+      matchedScope: match.row.scope as UpstreamCostPricingScope,
+      priority: match.priority,
+    };
+  }
+
+  return await resolveProviderCatalogCostPricing(input);
 }
 
 export async function evaluateUpstreamCostPricing(input: UpstreamCostEvaluationInput): Promise<UpstreamCostEvaluationResult | null> {
@@ -339,7 +362,7 @@ export async function evaluateUpstreamCostPricing(input: UpstreamCostEvaluationI
   const evaluation = evaluatePricingPlan({
     plan: resolved.pricing.plan,
     usage,
-    source: 'user_override',
+    source: resolved.pricing.sourceType === 'provider_catalog' ? 'upstream_catalog' : 'user_override',
     context: {
       model: input.modelName,
       provider: input.context?.provider,
@@ -349,12 +372,229 @@ export async function evaluateUpstreamCostPricing(input: UpstreamCostEvaluationI
       region: input.context?.region,
       metadata: {
         ...(input.context?.metadata || {}),
-        upstreamCostPricingId: resolved.pricing.id,
+        upstreamCostPricingId: resolved.pricing.id > 0 ? resolved.pricing.id : null,
         upstreamCostPricingScope: resolved.pricing.scope,
+        upstreamCostPricingMatchedScope: resolved.matchedScope,
+        upstreamCostPricingSourceType: resolved.pricing.sourceType,
       },
     },
   });
   return { ...resolved, evaluation };
+}
+
+export async function shouldUseProviderCatalogPricing(): Promise<boolean> {
+  const config = await loadPricingReferenceConfig();
+  return config.catalog.providerCatalogSuggestionsEnabled;
+}
+
+async function resolveProviderCatalogCostPricing(
+  input: UpstreamCostResolveInput,
+): Promise<UpstreamCostResolveResult | null> {
+  if (!await shouldUseProviderCatalogPricing()) return null;
+
+  const context = await loadProviderCatalogContext(input);
+  if (!context) return null;
+
+  const catalog = await fetchUpstreamPricingCatalog({
+    site: context.site,
+    account: context.account,
+  });
+  if (!catalog) return null;
+
+  const normalizedModelName = normalizeUpstreamModelName(input.modelName);
+  const model = findCatalogModel(catalog, normalizedModelName);
+  if (!model) return null;
+
+  const group = selectCatalogGroup({
+    catalog,
+    model,
+    preferredGroup: input.tokenGroup || context.tokenGroup,
+  });
+  const multiplier = catalog.groupRatio[group] || catalog.groupRatio[DEFAULT_PRICING_GROUP] || 1;
+  const plan = buildProviderCatalogPricingPlan(model, multiplier);
+  if (!plan) return null;
+
+  const pricing: UpstreamCostPricingRecord = {
+    id: 0,
+    scope: input.accountId ? 'account_model' : 'site_model',
+    scopeKey: [
+      'provider_catalog',
+      `site:${input.siteId}`,
+      `account:${input.accountId ?? '-'}`,
+      `token:${input.tokenId ?? '-'}`,
+      `group:${group}`,
+      `model:${normalizedModelName}`,
+    ].join('|'),
+    siteId: input.siteId,
+    accountId: input.accountId ?? null,
+    tokenId: input.tokenId ?? null,
+    tokenGroup: group === DEFAULT_PRICING_GROUP ? null : group,
+    modelName: model.modelName,
+    normalizedModelName,
+    displayName: model.modelName,
+    enabled: true,
+    plan,
+    planFingerprint: stableSha256(plan),
+    sourceType: 'provider_catalog',
+    metadata: {
+      source: 'provider_catalog',
+      catalogModelName: model.modelName,
+      group,
+      ownerBy: model.ownerBy ?? null,
+      quotaType: model.quotaType,
+    },
+    notes: null,
+    createdAt: null,
+    updatedAt: null,
+  };
+
+  return {
+    pricing,
+    matchedScope: 'provider_catalog',
+    priority: 10,
+  };
+}
+
+async function loadProviderCatalogContext(input: UpstreamCostResolveInput): Promise<CatalogContext | null> {
+  const accountId = input.accountId ?? null;
+  if (accountId == null) {
+    const site = await db.select({
+      id: schema.sites.id,
+      url: schema.sites.url,
+      platform: schema.sites.platform,
+      apiKey: schema.sites.apiKey,
+    })
+      .from(schema.sites)
+      .where(eq(schema.sites.id, normalizePositiveId(input.siteId, 'siteId')))
+      .get();
+    if (!site) return null;
+    return {
+      site,
+      account: { id: 0 },
+      tokenGroup: input.tokenGroup ?? null,
+    };
+  }
+
+  const rows = await db.select({
+    siteId: schema.sites.id,
+    siteUrl: schema.sites.url,
+    sitePlatform: schema.sites.platform,
+    siteApiKey: schema.sites.apiKey,
+    accountId: schema.accounts.id,
+    accountUsername: schema.accounts.username,
+    accountAccessToken: schema.accounts.accessToken,
+    accountApiToken: schema.accounts.apiToken,
+    accountExtraConfig: schema.accounts.extraConfig,
+    tokenGroup: schema.accountTokens.tokenGroup,
+  })
+    .from(schema.accounts)
+    .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
+    .leftJoin(schema.accountTokens, and(
+      eq(schema.accountTokens.id, input.tokenId ?? -1),
+      eq(schema.accountTokens.accountId, schema.accounts.id),
+    ))
+    .where(and(
+      eq(schema.accounts.id, normalizePositiveId(accountId, 'accountId')),
+      eq(schema.sites.id, normalizePositiveId(input.siteId, 'siteId')),
+    ))
+    .all();
+
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    site: {
+      id: row.siteId,
+      url: row.siteUrl,
+      platform: row.sitePlatform,
+      apiKey: row.siteApiKey,
+    },
+    account: {
+      id: row.accountId,
+      username: row.accountUsername,
+      accessToken: row.accountAccessToken,
+      apiToken: row.accountApiToken,
+      extraConfig: row.accountExtraConfig,
+    },
+    tokenGroup: input.tokenGroup ?? row.tokenGroup ?? null,
+  };
+}
+
+function findCatalogModel(catalog: UpstreamPricingCatalog, normalizedModelName: string): UpstreamPricingModel | null {
+  for (const model of catalog.models.values()) {
+    if (normalizeUpstreamModelName(model.modelName) === normalizedModelName) return model;
+  }
+  return null;
+}
+
+function selectCatalogGroup(input: {
+  catalog: UpstreamPricingCatalog;
+  model: UpstreamPricingModel;
+  preferredGroup?: string | null;
+}): string {
+  const allowed = new Set([...(input.model.enableGroups || []), DEFAULT_PRICING_GROUP]);
+  const preferred = normalizeOptionalText(input.preferredGroup, 128);
+  if (preferred && allowed.has(preferred) && input.catalog.groupRatio[preferred] != null) return preferred;
+  if (allowed.has(DEFAULT_PRICING_GROUP)) return DEFAULT_PRICING_GROUP;
+  return [...allowed][0] || DEFAULT_PRICING_GROUP;
+}
+
+function buildProviderCatalogPricingPlan(
+  model: UpstreamPricingModel,
+  multiplier: number,
+): PricingPlan | null {
+  if (model.quotaType === 1) {
+    const requestUsd = providerCatalogPerCallPrice(model, multiplier);
+    if (requestUsd == null) return null;
+    return createSimpleTokenPricingPlan({ requestUsd });
+  }
+
+  const direct = providerCatalogDirectTokenPrices(model, multiplier);
+  return createSimpleTokenPricingPlan({
+    inputPerMillion: direct.inputPerMillion,
+    outputPerMillion: direct.outputPerMillion,
+    ...(direct.cacheReadPerMillion == null ? {} : { cacheReadPerMillion: direct.cacheReadPerMillion }),
+    ...(direct.cacheWritePerMillion == null ? {} : { cacheWritePerMillion: direct.cacheWritePerMillion }),
+  });
+}
+
+function providerCatalogDirectTokenPrices(model: UpstreamPricingModel, multiplier: number) {
+  const price = model.modelPrice;
+  const hasDirectPrice = price && typeof price === 'object';
+  const input = hasDirectPrice
+    ? (price.input == null ? undefined : Number(price.input) * multiplier)
+    : model.modelRatio * 2 * multiplier;
+  const output = hasDirectPrice
+    ? (price.output == null ? undefined : Number(price.output) * multiplier)
+    : model.modelRatio * model.completionRatio * 2 * multiplier;
+  const cacheRead = hasDirectPrice
+    ? null
+    : model.modelRatio * (model.cacheRatio ?? 1) * 2 * multiplier;
+  const cacheWrite = hasDirectPrice
+    ? null
+    : model.modelRatio * (model.cacheCreationRatio ?? 1) * 2 * multiplier;
+
+  return {
+    inputPerMillion: sanitizeNonNegative(input),
+    outputPerMillion: sanitizeNonNegative(output),
+    cacheReadPerMillion: sanitizeNonNegative(cacheRead),
+    cacheWritePerMillion: sanitizeNonNegative(cacheWrite),
+  };
+}
+
+function providerCatalogPerCallPrice(model: UpstreamPricingModel, multiplier: number): number | null {
+  if (typeof model.modelPrice === 'number') return sanitizeNonNegative(model.modelPrice * multiplier) ?? null;
+  if (model.modelPrice && typeof model.modelPrice === 'object') {
+    if (model.modelPrice.input == null) return null;
+    return sanitizeNonNegative(Number(model.modelPrice.input) * multiplier * 0.002) ?? null;
+  }
+  return null;
+}
+
+function sanitizeNonNegative(value: unknown): number | undefined {
+  if (value == null) return undefined;
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric < 0) return undefined;
+  return Math.round(numeric * 1_000_000_000_000) / 1_000_000_000_000;
 }
 
 function matchPriority(row: Row, input: UpstreamCostResolveInput): number {

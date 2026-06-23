@@ -86,7 +86,7 @@ const NODE_EDITOR_BY_TYPE: Partial<Record<RouteGraphNodeType, (props: NodeEditor
   entry: EntryNodeEditor,
   filter: FilterNodeEditor,
   dispatcher: DispatcherEditor,
-  model_endpoint: ModelEndpointEditor,
+  route_endpoint: RouteEndpointEditor,
   auto_node: AutoNodeEditor,
   synthetic_endpoint: SyntheticEndpointEditor,
 };
@@ -230,8 +230,8 @@ function DispatcherEditor({ readonly, node, onChange }: NodeEditorProps) {
   );
 }
 
-function ModelEndpointEditor({ readonly, node, onChange }: NodeEditorProps) {
-  const config = (node.config && typeof node.config === 'object' ? node.config : { targets: [{ channelId: node.id, model: node.id }], targetSelection: { strategy: 'weighted' } }) as Record<string, unknown>;
+function RouteEndpointEditor({ readonly, node, onChange }: NodeEditorProps) {
+  const config = (node.config && typeof node.config === 'object' ? node.config : { targets: [{ targetId: node.id, model: node.id }], targetSelection: { strategy: 'weighted' } }) as Record<string, unknown>;
   const metadata = (node.metadata && typeof node.metadata === 'object' ? node.metadata : {}) as Record<string, unknown>;
   const targetSelection = (config.targetSelection && typeof config.targetSelection === 'object' ? config.targetSelection : { strategy: 'weighted' }) as Record<string, unknown>;
   const policyForm = policyFormFromStoredValue(config.compatibilityPolicy);
@@ -242,7 +242,7 @@ function ModelEndpointEditor({ readonly, node, onChange }: NodeEditorProps) {
   };
   return (
     <div className="grid gap-3">
-      <div className="text-sm font-medium">{tr('pages.tokenRoutes.nodeForm.modelEndpoint')}</div>
+      <div className="text-sm font-medium">{tr('pages.tokenRoutes.nodeForm.routeEndpoint')}</div>
       <label>
         {tr('pages.tokenRoutes.nodeForm.targetSelection')}
         <SelectField

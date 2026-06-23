@@ -29,6 +29,7 @@ describe('upstream cost pricing routes', () => {
   });
 
   beforeEach(async () => {
+    await db.delete(schema.settings).run();
     await db.delete(schema.upstreamModelCostPricings).run();
     await db.delete(schema.accountTokens).run();
     await db.delete(schema.accounts).run();
@@ -133,6 +134,67 @@ describe('upstream cost pricing routes', () => {
     });
     expect(deleted.statusCode).toBe(200);
     expect(deleted.json()).toEqual({ success: true });
+  });
+
+  it('reads and updates reference pricing config', async () => {
+    const initial = await app.inject({
+      method: 'GET',
+      url: '/api/pricing/reference-config',
+      headers: app.adminHeaders(),
+    });
+    expect(initial.statusCode).toBe(200);
+    expect(initial.json()).toMatchObject({
+      schemaVersion: 1,
+      defaultReferenceMode: 'auto',
+      catalog: {
+        builtInCatalogEnabled: true,
+        providerCatalogSuggestionsEnabled: true,
+      },
+    });
+
+    const update = await app.inject({
+      method: 'PUT',
+      url: '/api/pricing/reference-config',
+      headers: app.adminHeaders(),
+      payload: {
+        defaultReferenceMode: 'manual',
+        fallbackProfile: 'unknown',
+        catalog: {
+          builtInCatalogEnabled: false,
+          providerCatalogSuggestionsEnabled: true,
+        },
+        driftCheck: {
+          enabled: true,
+          windowHours: 12,
+          minSampleSize: 5,
+          relativeTolerance: 0.2,
+          absoluteToleranceUsd: 0.000002,
+          notifyOnWarning: false,
+        },
+      },
+    });
+    expect(update.statusCode).toBe(200);
+    expect(update.json()).toMatchObject({
+      schemaVersion: 1,
+      defaultReferenceMode: 'manual',
+      fallbackProfile: 'unknown',
+      catalog: {
+        builtInCatalogEnabled: false,
+        providerCatalogSuggestionsEnabled: true,
+      },
+      driftCheck: {
+        enabled: true,
+        windowHours: 12,
+        minSampleSize: 5,
+      },
+    });
+
+    const loaded = await app.inject({
+      method: 'GET',
+      url: '/api/pricing/reference-config',
+      headers: app.adminHeaders(),
+    });
+    expect(loaded.json()).toMatchObject(update.json());
   });
 });
 

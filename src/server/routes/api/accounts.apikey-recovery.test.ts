@@ -40,7 +40,7 @@ describe('accounts api key recovery', { timeout: 15_000 }, () => {
 
     await db.delete(schema.proxyLogs).run();
     await db.delete(schema.checkinLogs).run();
-    await db.delete(schema.routeChannels).run();
+    await db.delete(schema.routeEndpointTargets).run();
     await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.tokenModelAvailability).run();
     await db.delete(schema.modelAvailability).run();
@@ -106,8 +106,8 @@ describe('accounts api key recovery', { timeout: 15_000 }, () => {
       .all();
     expect(availabilityRows.map((row) => row.modelName)).toContain('gpt-4.1');
 
-    const routeChannels = await db.select().from(schema.routeChannels).all();
-    expect(routeChannels.some((channel) => channel.accountId === account.id)).toBe(true);
+    const routeEndpointTargets = await db.select().from(schema.routeEndpointTargets).all();
+    expect(routeEndpointTargets.some((channel) => channel.accountId === account.id)).toBe(true);
   });
 
   it('keeps an expired API key connection pinned when only status is edited', async () => {
@@ -180,7 +180,7 @@ describe('accounts api key recovery', { timeout: 15_000 }, () => {
       enabled: true,
     }).returning().get();
 
-    const seededChannel = await db.insert(schema.routeChannels).values({
+    const seededChannel = await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: account.id,
       tokenId: null,
@@ -225,8 +225,8 @@ describe('accounts api key recovery', { timeout: 15_000 }, () => {
       modelName: 'gpt-4.1',
     });
 
-    const routeChannels = await db.select().from(schema.routeChannels).all();
-    expect(routeChannels).toContainEqual(expect.objectContaining({
+    const routeEndpointTargets = await db.select().from(schema.routeEndpointTargets).all();
+    expect(routeEndpointTargets).toContainEqual(expect.objectContaining({
       id: seededChannel.id,
       routeId: route.id,
       accountId: account.id,

@@ -29,7 +29,7 @@ describe('TokenRouter oauth route units', () => {
   });
 
   beforeEach(async () => {
-    await db.delete(schema.routeChannels).run();
+    await db.delete(schema.routeEndpointTargets).run();
     await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.modelAvailability).run();
     await db.delete(schema.accountTokens).run();
@@ -99,7 +99,7 @@ describe('TokenRouter oauth route units', () => {
       { accountId: accountA.id, modelName: 'gpt-5.4', available: true },
       { accountId: accountB.id, modelName: 'gpt-5.4', available: true },
     ]).run();
-    const channel = await db.insert(schema.routeChannels).values({
+    const channel = await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: accountA.id,
       tokenId: null,
@@ -114,8 +114,8 @@ describe('TokenRouter oauth route units', () => {
     const first = await router.selectChannel('gpt-5.4');
     const second = await router.selectChannel('gpt-5.4');
 
-    expect(first?.channel.id).toBe(channel.id);
-    expect(second?.channel.id).toBe(channel.id);
+    expect(first?.target.id).toBe(channel.id);
+    expect(second?.target.id).toBe(channel.id);
     expect(first?.account.id).toBe(accountA.id);
     expect(second?.account.id).toBe(accountB.id);
   });
@@ -175,7 +175,7 @@ describe('TokenRouter oauth route units', () => {
       { accountId: accountA.id, modelName: 'gpt-5.4', available: true },
       { accountId: accountB.id, modelName: 'gpt-5.4', available: true },
     ]).run();
-    const channel = await db.insert(schema.routeChannels).values({
+    const channel = await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: accountA.id,
       tokenId: null,
@@ -194,7 +194,7 @@ describe('TokenRouter oauth route units', () => {
 
     await router.recordFailure(channel.id, { status: 503, errorText: 'unavailable' }, accountA.id);
     const third = await router.selectChannel('gpt-5.4');
-    expect(third?.channel.id).toBe(channel.id);
+    expect(third?.target.id).toBe(channel.id);
     expect(third?.account.id).toBe(accountB.id);
   });
 
@@ -253,7 +253,7 @@ describe('TokenRouter oauth route units', () => {
       { accountId: accountA.id, modelName: 'gpt-5.4', available: true },
       { accountId: accountB.id, modelName: 'gpt-5.4', available: true },
     ]).run();
-    const channel = await db.insert(schema.routeChannels).values({
+    const channel = await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: accountA.id,
       tokenId: null,
@@ -269,7 +269,7 @@ describe('TokenRouter oauth route units', () => {
 
     const router = new TokenRouter();
     const selected = await router.selectChannel('gpt-5.4');
-    expect(selected?.channel.id).toBe(channel.id);
+    expect(selected?.target.id).toBe(channel.id);
     expect(tokenRouterTestUtils.getStableFirstRotationCacheSize()).toBe(1);
 
     await router.recordFailure(channel.id, { status: 503, errorText: 'pooled unavailable' }, accountA.id);
@@ -309,7 +309,7 @@ describe('TokenRouter oauth route units', () => {
       strategy: 'round_robin',
       enabled: true,
     }).returning().get();
-    await db.insert(schema.routeChannels).values({
+    await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: account.id,
       tokenId: null,
@@ -380,7 +380,7 @@ describe('TokenRouter oauth route units', () => {
       { accountId: accountA.id, modelName: 'gpt-5.4', available: true },
       { accountId: accountB.id, modelName: 'gpt-5.4', available: true },
     ]).run();
-    const channel = await db.insert(schema.routeChannels).values({
+    const channel = await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: accountA.id,
       tokenId: null,
@@ -394,7 +394,7 @@ describe('TokenRouter oauth route units', () => {
     const router = new TokenRouter();
     const selected = await router.selectChannel('gpt-5.4');
 
-    expect(selected?.channel.id).toBe(channel.id);
+    expect(selected?.target.id).toBe(channel.id);
     expect(selected?.account.id).toBe(accountA.id);
     expect(selected?.tokenValue).toBe('oauth-api-token-a');
   });
@@ -453,7 +453,7 @@ describe('TokenRouter oauth route units', () => {
       { accountId: accountA.id, modelName: 'gpt-5.4', available: true },
       { accountId: accountB.id, modelName: 'gpt-5.4', available: true },
     ]).run();
-    const channel = await db.insert(schema.routeChannels).values({
+    const channel = await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: accountA.id,
       tokenId: null,

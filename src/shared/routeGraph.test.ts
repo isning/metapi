@@ -22,19 +22,19 @@ describe('routeGraph port-native source', () => {
             displayName: null,
             routeId: 11,
           },
-          backend: { kind: 'channels' },
-          targets: [{ channelId: '11', model: 'gpt-4o', accountId: 1, tokenId: 1, weight: 10 }],
+          backend: { kind: 'supply' },
+          targets: [{ targetId: '11', model: 'gpt-4o', accountId: 1, tokenId: 1, weight: 10 }],
         },
     ]);
 
     expect(source.nodes).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 'entry:legacy:11', type: 'entry' }),
       expect.objectContaining({ id: 'dispatcher:legacy:11', type: 'dispatcher', mode: 'route' }),
-      expect.objectContaining({ id: 'pool:legacy:11', type: 'model_endpoint' }),
+      expect.objectContaining({ id: 'route-endpoint:product:route:11', type: 'route_endpoint', endpointKind: 'route_product' }),
     ]));
     expect(source.edges).toEqual(expect.arrayContaining([
       expect.objectContaining({ sourceNodeId: 'entry:legacy:11', sourcePortId: 'bidirect.out', targetNodeId: 'dispatcher:legacy:11', targetPortId: 'bidirect.in', kind: 'bidirect_flow' }),
-      expect.objectContaining({ sourceNodeId: 'pool:legacy:11', sourcePortId: 'route.out', targetNodeId: 'dispatcher:legacy:11', targetPortId: 'route.in', kind: 'route_flow' }),
+      expect.objectContaining({ sourceNodeId: 'route-endpoint:supply:route:11', sourcePortId: 'route.out', targetNodeId: 'dispatcher:legacy:11', targetPortId: 'route.in', kind: 'route_flow' }),
     ]));
     expect(compileRouteGraphSource(source).ok).toBe(true);
     const compiled = compileRouteGraphSource(source);
@@ -68,6 +68,48 @@ describe('routeGraph port-native source', () => {
         },
       },
     });
+    expect(compiled.compiled.flatProgramBundle).toMatchObject({
+      version: 4,
+      matcher: {
+        exact: {
+          'gpt-4o': expect.objectContaining({
+            programId: 'program:entry:legacy:11',
+            entryNodeId: 'entry:legacy:11',
+            publicModelName: 'gpt-4o',
+            rootEndpointId: 'route-endpoint:product:route:11',
+          }),
+        },
+      },
+      programs: [
+        expect.objectContaining({
+          id: 'program:entry:legacy:11',
+          start: expect.objectContaining({
+            kind: 'dispatch',
+            dispatch: expect.objectContaining({
+              nodeId: 'dispatcher:legacy:11',
+              candidates: [
+                expect.objectContaining({
+                  endpointId: 'route-endpoint:supply:route:11',
+                  terminalKind: 'supply',
+                  targetCount: 1,
+                  next: expect.objectContaining({
+                    kind: 'terminal',
+                    terminal: expect.objectContaining({
+                      kind: 'supply',
+                      endpointId: 'route-endpoint:supply:route:11',
+                      routeId: 11,
+                      targets: [
+                        expect.objectContaining({ targetId: '11', model: 'gpt-4o' }),
+                      ],
+                    }),
+                  }),
+                }),
+              ],
+            }),
+          }),
+        }),
+      ],
+    });
     expect(compiled.compiled.programBundle.programs).toEqual([
       expect.objectContaining({
         id: 'program:entry:legacy:11',
@@ -83,17 +125,17 @@ describe('routeGraph port-native source', () => {
             nodeId: 'dispatcher:legacy:11',
             candidates: [
               expect.objectContaining({
-                nodeId: 'pool:legacy:11',
-                endpointId: 'route-endpoint:product:route:11',
-                targetOpId: 'program:entry:legacy:11:op:pool:legacy:11:select-supply',
+                nodeId: 'route-endpoint:supply:route:11',
+                endpointId: 'route-endpoint:supply:route:11',
+                targetOpId: 'program:entry:legacy:11:op:route-endpoint:supply:route:11:select-supply',
               }),
             ],
           }),
           expect.objectContaining({
-            id: 'program:entry:legacy:11:op:pool:legacy:11:select-supply',
+            id: 'program:entry:legacy:11:op:route-endpoint:supply:route:11:select-supply',
             op: 'select_supply',
-            endpointId: 'route-endpoint:product:route:11',
-            nodeId: 'pool:legacy:11',
+            endpointId: 'route-endpoint:supply:route:11',
+            nodeId: 'route-endpoint:supply:route:11',
             routeId: 11,
           }),
         ]),
@@ -108,8 +150,8 @@ describe('routeGraph port-native source', () => {
           enabled: true,
           displayName: null,
           match: { kind: 'model', requestedModelPattern: 'source-model', displayName: null, routeId: 11 },
-          backend: { kind: 'channels' },
-          targets: [{ channelId: '11', model: 'source-model', accountId: 1, tokenId: 1, weight: 10 }],
+          backend: { kind: 'supply' },
+          targets: [{ targetId: '11', model: 'source-model', accountId: 1, tokenId: 1, weight: 10 }],
         },
       {
         id: 21,
@@ -128,7 +170,7 @@ describe('routeGraph port-native source', () => {
         config: expect.objectContaining({
           groups: [
             expect.objectContaining({
-              input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:product:route:11'] },
+              input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:supply:route:11'] },
             }),
           ],
         }),
@@ -141,7 +183,7 @@ describe('routeGraph port-native source', () => {
       expect.objectContaining({ id: 'route-endpoint:product:route:11', type: 'route_endpoint', endpointKind: 'route_product' }),
     ]));
     expect(result.primitiveSource.edges).toEqual(expect.arrayContaining([
-      expect.objectContaining({ sourceNodeId: 'route-endpoint:product:route:11', sourcePortId: 'route.out', targetNodeId: 'macro:route:21:model-group:dispatcher', targetPortId: 'route.in', kind: 'route_flow' }),
+      expect.objectContaining({ sourceNodeId: 'route-endpoint:supply:route:11', sourcePortId: 'route.out', targetNodeId: 'macro:route:21:model-group:dispatcher', targetPortId: 'route.in', kind: 'route_flow' }),
     ]));
   });
 
@@ -152,18 +194,18 @@ describe('routeGraph port-native source', () => {
         enabled: true,
         displayName: 'GLM-5.1',
         match: { kind: 'model', requestedModelPattern: 'GLM-5.1', displayName: 'GLM-5.1', routeId: 11 },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         ownership: 'auto_generated',
-        targets: [{ channelId: '11', model: 'GLM-5.1', accountId: 1, tokenId: 1, weight: 10 }],
+        targets: [{ targetId: '11', model: 'GLM-5.1', accountId: 1, tokenId: 1, weight: 10 }],
       },
       {
         id: 22,
         enabled: true,
         displayName: 'glm-5.1',
         match: { kind: 'model', requestedModelPattern: 'glm-5.1', displayName: 'glm-5.1', routeId: 22 },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         ownership: 'auto_generated',
-        targets: [{ channelId: '22', model: 'glm-5.1', accountId: 1, tokenId: 2, weight: 10 }],
+        targets: [{ targetId: '22', model: 'glm-5.1', accountId: 1, tokenId: 2, weight: 10 }],
       },
     ]);
 
@@ -223,13 +265,13 @@ describe('routeGraph port-native source', () => {
     expect(result.compiled.programBundle.endpointCatalog.supplyTargets['route-endpoint:supply:route:11']).toEqual([
       expect.objectContaining({
         endpointId: 'route-endpoint:supply:route:11',
-        nodeId: 'pool:legacy:11',
-        channelId: '11',
+        nodeId: 'route-endpoint:supply:route:11',
+        targetId: '11',
         model: 'GLM-5.1',
         routeId: 11,
       }),
     ]);
-    expect(result.primitiveSource.nodes.some((node) => node.id.startsWith('macro:auto-model:glm-5.1:candidate:') && node.type === 'model_endpoint')).toBe(false);
+    expect(result.primitiveSource.nodes.some((node) => node.id.startsWith('macro:auto-model:glm-5.1:candidate:') && node.type === 'route_endpoint')).toBe(false);
     expect(result.primitiveSource.edges).toEqual(expect.arrayContaining([
       expect.objectContaining({
         sourceNodeId: 'route-endpoint:supply:route:11',
@@ -259,7 +301,7 @@ describe('routeGraph port-native source', () => {
         nodeId: 'route-endpoint:supply:route:11',
         routeId: 11,
         targets: expect.arrayContaining([
-          expect.objectContaining({ nodeId: 'pool:legacy:11', channelId: '11', model: 'GLM-5.1' }),
+          expect.objectContaining({ nodeId: 'route-endpoint:supply:route:11', targetId: '11', model: 'GLM-5.1' }),
         ]),
       }),
     ]));
@@ -276,18 +318,18 @@ describe('routeGraph port-native source', () => {
         enabled: true,
         displayName: 'deepseek-v4-flash:free',
         match: { kind: 'model', requestedModelPattern: 'deepseek-v4-flash:free', displayName: 'deepseek-v4-flash:free', routeId: 3392 },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         ownership: 'auto_generated',
-        targets: [{ channelId: '3392', model: 'deepseek-v4-flash:free', accountId: 1, tokenId: 1, weight: 10 }],
+        targets: [{ targetId: '3392', model: 'deepseek-v4-flash:free', accountId: 1, tokenId: 1, weight: 10 }],
       },
       {
         id: 3393,
         enabled: true,
         displayName: 'DeepSeek-V4-Flash:Free',
         match: { kind: 'model', requestedModelPattern: 'DeepSeek-V4-Flash:Free', displayName: 'DeepSeek-V4-Flash:Free', routeId: 3393 },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         ownership: 'auto_generated',
-        targets: [{ channelId: '3393', model: 'DeepSeek-V4-Flash:Free', accountId: 1, tokenId: 2, weight: 10 }],
+        targets: [{ targetId: '3393', model: 'DeepSeek-V4-Flash:Free', accountId: 1, tokenId: 2, weight: 10 }],
       },
     ]);
 
@@ -366,13 +408,13 @@ describe('routeGraph port-native source', () => {
     ]);
   });
 
-  it('preserves compatibility policy on model endpoints and targets', () => {
+  it('preserves compatibility policy on route endpoints and targets', () => {
     const source = normalizeRouteGraphSource({
       version: 1,
       nodes: [
         {
           id: 'endpoint.compat',
-          type: 'model_endpoint',
+          type: 'route_endpoint',
           enabled: true,
           visibility: 'internal',
           ownership: 'manual',
@@ -386,7 +428,7 @@ describe('routeGraph port-native source', () => {
           config: {
             targets: [
               {
-                channelId: '1',
+                targetId: '1',
                 model: 'compat-model',
                 compatibilityPolicy: {
                   reasoningHistory: {
@@ -429,10 +471,9 @@ describe('routeGraph port-native source', () => {
   it('exposes stable default ports for every primitive node type', () => {
     const nodes = [
       { id: 'entry:ports', type: 'entry' },
-      { id: 'route-endpoint:ports', type: 'route_endpoint' },
       { id: 'filter:ports', type: 'filter' },
       { id: 'dispatcher:ports', type: 'dispatcher', mode: 'route' },
-      { id: 'endpoint:ports', type: 'model_endpoint' },
+      { id: 'endpoint:ports', type: 'route_endpoint' },
       { id: 'synthetic:ports', type: 'synthetic_endpoint' },
     ];
 
@@ -452,10 +493,6 @@ describe('routeGraph port-native source', () => {
       entry: [
         { id: 'bidirect.out', label: 'matched flow', direction: 'output', kind: 'bidirect', enabled: true, collection: undefined, required: undefined, multiple: undefined },
       ],
-      route_endpoint: [
-        { id: 'route.out', label: 'route product', direction: 'output', kind: 'route', enabled: true, collection: undefined, required: undefined, multiple: undefined },
-        { id: 'bidirect.in', label: 'invoke route', direction: 'input', kind: 'bidirect', enabled: true, collection: undefined, required: undefined, multiple: true },
-      ],
       filter: [
         { id: 'request.in', label: 'before mutation', direction: 'input', kind: 'request', enabled: true, collection: undefined, required: undefined, multiple: undefined },
         { id: 'request.out', label: 'after mutation', direction: 'output', kind: 'request', enabled: true, collection: undefined, required: undefined, multiple: undefined },
@@ -467,9 +504,9 @@ describe('routeGraph port-native source', () => {
         { id: 'bidirect[1...].out', label: 'dispatch path', direction: 'output', kind: 'bidirect', enabled: false, collection: { type: 'arr', min: 1 }, required: undefined, multiple: true },
         { id: 'route.in', label: 'endpoint candidates', direction: 'input', kind: 'route', enabled: true, collection: { type: 'set', min: 1 }, required: undefined, multiple: true },
       ],
-      model_endpoint: [
-        { id: 'route.out', label: 'endpoint target', direction: 'output', kind: 'route', enabled: true, collection: undefined, required: undefined, multiple: undefined },
-        { id: 'bidirect.in', label: 'invoke endpoint', direction: 'input', kind: 'bidirect', enabled: true, collection: undefined, required: undefined, multiple: true },
+      route_endpoint: [
+        { id: 'route.out', label: 'route product', direction: 'output', kind: 'route', enabled: true, collection: undefined, required: undefined, multiple: undefined },
+        { id: 'bidirect.in', label: 'invoke route', direction: 'input', kind: 'bidirect', enabled: true, collection: undefined, required: undefined, multiple: true },
       ],
       synthetic_endpoint: [
         { id: 'route.out', label: 'synthetic target', direction: 'output', kind: 'route', enabled: true, collection: undefined, required: undefined, multiple: undefined },
@@ -492,11 +529,11 @@ describe('routeGraph port-native source', () => {
         },
         {
           id: 'pool:a',
-          type: 'model_endpoint',
+          type: 'route_endpoint',
           enabled: true,
           visibility: 'internal',
           ownership: 'manual',
-          config: { targets: [{ channelId: 'channel:a', model: 'a' }], targetSelection: { strategy: 'weighted' } },
+          config: { targets: [{ targetId: 'target:a', model: 'a' }], targetSelection: { strategy: 'weighted' } },
         },
       ],
       edges: [
@@ -532,11 +569,11 @@ describe('routeGraph port-native source', () => {
         },
         {
           id: 'pool:a',
-          type: 'model_endpoint',
+          type: 'route_endpoint',
           enabled: true,
           visibility: 'internal',
           ownership: 'manual',
-          config: { targets: [{ channelId: 'channel:a', model: 'a' }], targetSelection: { strategy: 'weighted' } },
+          config: { targets: [{ targetId: 'target:a', model: 'a' }], targetSelection: { strategy: 'weighted' } },
         },
       ],
       edges: [
@@ -682,19 +719,19 @@ describe('routeGraph port-native source', () => {
         },
         {
           id: 'endpoint:a',
-          type: 'model_endpoint',
+          type: 'route_endpoint',
           enabled: true,
           visibility: 'internal',
           ownership: 'manual',
-          config: { targets: [{ channelId: 'a', model: 'multi-model-a' }], targetSelection: { strategy: 'weighted' } },
+          config: { targets: [{ targetId: 'a', model: 'multi-model-a' }], targetSelection: { strategy: 'weighted' } },
         },
         {
           id: 'endpoint:b',
-          type: 'model_endpoint',
+          type: 'route_endpoint',
           enabled: true,
           visibility: 'internal',
           ownership: 'manual',
-          config: { targets: [{ channelId: 'b', model: 'multi-model-b' }], targetSelection: { strategy: 'weighted' } },
+          config: { targets: [{ targetId: 'b', model: 'multi-model-b' }], targetSelection: { strategy: 'weighted' } },
         },
       ],
       edges: [
@@ -748,9 +785,9 @@ describe('routeGraph port-native source', () => {
         enabled: true,
         displayName: 'same-route-public',
         match: { kind: 'model', requestedModelPattern: 'same-route-public', displayName: 'same-route-public', routeId: 1 },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         ownership: 'auto_generated',
-        targets: [{ channelId: '1', model: 'same-route-public', accountId: 1, tokenId: 1, weight: 10 }],
+        targets: [{ targetId: '1', model: 'same-route-public', accountId: 1, tokenId: 1, weight: 10 }],
       },
     ]);
 
@@ -815,11 +852,11 @@ describe('routeGraph port-native source', () => {
         },
         {
           id: 'pool:bad-regex',
-          type: 'model_endpoint',
+          type: 'route_endpoint',
           enabled: true,
           visibility: 'internal',
           ownership: 'manual',
-          config: { targets: [{ channelId: 'channel:bad-regex', model: 'bad-regex' }], targetSelection: { strategy: 'weighted' } },
+          config: { targets: [{ targetId: 'target:bad-regex', model: 'bad-regex' }], targetSelection: { strategy: 'weighted' } },
         },
       ],
       edges: [
@@ -862,19 +899,19 @@ describe('routeGraph port-native source', () => {
         },
         {
           id: 'endpoint:route',
-          type: 'model_endpoint',
+          type: 'route_endpoint',
           enabled: true,
           visibility: 'internal',
           ownership: 'manual',
-          config: { targets: [{ channelId: 'channel:route', model: 'route-model' }], targetSelection: { strategy: 'weighted' } },
+          config: { targets: [{ targetId: 'target:route', model: 'route-model' }], targetSelection: { strategy: 'weighted' } },
         },
         {
           id: 'endpoint:ignored-flow',
-          type: 'model_endpoint',
+          type: 'route_endpoint',
           enabled: true,
           visibility: 'internal',
           ownership: 'manual',
-          config: { targets: [{ channelId: 'channel:ignored', model: 'ignored' }], targetSelection: { strategy: 'weighted' } },
+          config: { targets: [{ targetId: 'target:ignored', model: 'ignored' }], targetSelection: { strategy: 'weighted' } },
         },
       ],
       edges: [
@@ -909,19 +946,19 @@ describe('routeGraph port-native source', () => {
         },
         {
           id: 'endpoint:flow',
-          type: 'model_endpoint',
+          type: 'route_endpoint',
           enabled: true,
           visibility: 'internal',
           ownership: 'manual',
-          config: { targets: [{ channelId: 'channel:flow', model: 'flow-model' }], targetSelection: { strategy: 'weighted' } },
+          config: { targets: [{ targetId: 'target:flow', model: 'flow-model' }], targetSelection: { strategy: 'weighted' } },
         },
         {
           id: 'endpoint:ignored-route',
-          type: 'model_endpoint',
+          type: 'route_endpoint',
           enabled: true,
           visibility: 'internal',
           ownership: 'manual',
-          config: { targets: [{ channelId: 'channel:ignored-route', model: 'ignored-route' }], targetSelection: { strategy: 'weighted' } },
+          config: { targets: [{ targetId: 'target:ignored-route', model: 'ignored-route' }], targetSelection: { strategy: 'weighted' } },
         },
       ],
       edges: [
@@ -1015,11 +1052,11 @@ describe('routeGraph port-native source', () => {
         },
         {
           id: 'endpoint:metadata',
-          type: 'model_endpoint',
+          type: 'route_endpoint',
           enabled: true,
           visibility: 'internal',
           ownership: 'manual',
-          config: { targets: [{ channelId: 'metadata', model: 'metadata-model' }], targetSelection: { strategy: 'weighted' } },
+          config: { targets: [{ targetId: 'metadata', model: 'metadata-model' }], targetSelection: { strategy: 'weighted' } },
         },
       ],
       edges: [
@@ -1080,11 +1117,11 @@ describe('routeGraph port-native source', () => {
         },
         {
           id: 'endpoint:filter',
-          type: 'model_endpoint',
+          type: 'route_endpoint',
           enabled: true,
           visibility: 'internal',
           ownership: 'manual',
-          config: { targets: [{ channelId: 'channel:filter', model: 'filter-model' }], targetSelection: { strategy: 'weighted' } },
+          config: { targets: [{ targetId: 'target:filter', model: 'filter-model' }], targetSelection: { strategy: 'weighted' } },
         },
       ],
       edges: [
@@ -1126,8 +1163,8 @@ describe('routeGraph port-native source', () => {
         enabled: true,
         displayName: null,
         match: { kind: 'model', requestedModelPattern: 'source-model', displayName: null, routeId: 11 },
-        backend: { kind: 'channels' },
-        targets: [{ channelId: '11', model: 'source-model', accountId: 1, tokenId: 1, weight: 10 }],
+        backend: { kind: 'supply' },
+        targets: [{ targetId: '11', model: 'source-model', accountId: 1, tokenId: 1, weight: 10 }],
       },
     ]);
 
@@ -1155,7 +1192,7 @@ describe('routeGraph port-native source', () => {
                 id: 'p0',
                 enabled: true,
                 priority: 0,
-                input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:product:route:11'] },
+                input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:supply:route:11'] },
                 defaults: { weight: 10 },
               },
             ],
@@ -1174,7 +1211,7 @@ describe('routeGraph port-native source', () => {
     expect(result.primitiveSource.edges).toEqual(expect.arrayContaining([
       expect.objectContaining({ sourceNodeId: 'macro:model-group:public:entry', targetNodeId: 'macro:model-group:public:dispatcher', kind: 'bidirect_flow' }),
       expect.objectContaining({
-        sourceNodeId: 'route-endpoint:product:route:11',
+        sourceNodeId: 'route-endpoint:supply:route:11',
         targetNodeId: 'macro:model-group:public:dispatcher',
         kind: 'route_flow',
         metadata: expect.objectContaining({
@@ -1194,8 +1231,8 @@ describe('routeGraph port-native source', () => {
         enabled: true,
         displayName: null,
         match: { kind: 'model', requestedModelPattern: 'source-model', displayName: null, routeId: 11 },
-        backend: { kind: 'channels' },
-        targets: [{ channelId: '11', model: 'source-model', accountId: 1, tokenId: 1, weight: 10 }],
+        backend: { kind: 'supply' },
+        targets: [{ targetId: '11', model: 'source-model', accountId: 1, tokenId: 1, weight: 10 }],
       },
     ]);
 
@@ -1242,7 +1279,7 @@ describe('routeGraph port-native source', () => {
             },
             policy: { strategy: 'priority_order' },
             groups: [
-              { id: 'p0', enabled: true, priority: 0, input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:product:route:11'] } },
+              { id: 'p0', enabled: true, priority: 0, input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:supply:route:11'] } },
             ],
           },
         },
@@ -1276,8 +1313,8 @@ describe('routeGraph port-native source', () => {
         enabled: true,
         displayName: null,
         match: { kind: 'model', requestedModelPattern: 'source-model', displayName: null, routeId: 11 },
-        backend: { kind: 'channels' },
-        targets: [{ channelId: '11', model: 'source-model', accountId: 1, tokenId: 1, weight: 10 }],
+        backend: { kind: 'supply' },
+        targets: [{ targetId: '11', model: 'source-model', accountId: 1, tokenId: 1, weight: 10 }],
       },
     ]);
 
@@ -1342,7 +1379,7 @@ describe('routeGraph port-native source', () => {
             },
             policy: { strategy: 'priority_order' },
             groups: [
-              { id: 'p0', enabled: true, priority: 0, input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:product:route:11'] } },
+              { id: 'p0', enabled: true, priority: 0, input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:supply:route:11'] } },
             ],
           },
         },
@@ -1357,8 +1394,8 @@ describe('routeGraph port-native source', () => {
     }));
     expect(result.primitiveSource.edges).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        id: 'macro-semantic:macro-to-dispatcher:route-out:route-endpoint:product:route:11',
-        sourceNodeId: 'route-endpoint:product:route:11',
+        id: 'macro-semantic:macro-to-dispatcher:route-out:route-endpoint:supply:route:11',
+        sourceNodeId: 'route-endpoint:supply:route:11',
         sourcePortId: 'route.out',
         targetNodeId: 'dispatcher:reuse',
         targetPortId: 'route.in',
@@ -1374,9 +1411,9 @@ describe('routeGraph port-native source', () => {
         enabled: true,
         displayName: 'source-model',
         match: { kind: 'model', requestedModelPattern: 'source-model', displayName: 'source-model', routeId: 11 },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         ownership: 'auto_generated',
-        targets: [{ channelId: '11', model: 'source-model', accountId: 1, tokenId: 1, weight: 10 }],
+        targets: [{ targetId: '11', model: 'source-model', accountId: 1, tokenId: 1, weight: 10 }],
       },
     ]);
 
@@ -1432,9 +1469,9 @@ describe('routeGraph port-native source', () => {
         enabled: true,
         displayName: 'model-example',
         match: { kind: 'model', requestedModelPattern: 'model-example', displayName: 'model-example', routeId: 11 },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         ownership: 'auto_generated',
-        targets: [{ channelId: '11', model: 'model-example', accountId: 1, tokenId: 1, weight: 10 }],
+        targets: [{ targetId: '11', model: 'model-example', accountId: 1, tokenId: 1, weight: 10 }],
       },
     ]);
 
@@ -1473,18 +1510,18 @@ describe('routeGraph port-native source', () => {
         enabled: true,
         displayName: 'GLM-5.1',
         match: { kind: 'model', requestedModelPattern: 'GLM-5.1', displayName: 'GLM-5.1', routeId: 11 },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         ownership: 'auto_generated',
-        targets: [{ channelId: '11', model: 'GLM-5.1', accountId: 1, tokenId: 1, weight: 10 }],
+        targets: [{ targetId: '11', model: 'GLM-5.1', accountId: 1, tokenId: 1, weight: 10 }],
       },
       {
         id: 22,
         enabled: true,
         displayName: 'glm-5.1',
         match: { kind: 'model', requestedModelPattern: 'glm-5.1', displayName: 'glm-5.1', routeId: 22 },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         ownership: 'auto_generated',
-        targets: [{ channelId: '22', model: 'glm-5.1', accountId: 1, tokenId: 2, weight: 10 }],
+        targets: [{ targetId: '22', model: 'glm-5.1', accountId: 1, tokenId: 2, weight: 10 }],
       },
     ]);
     const macro = source.macros[0];
@@ -1532,9 +1569,9 @@ describe('routeGraph port-native source', () => {
         enabled: false,
         displayName: 'disabled-model',
         match: { kind: 'model', requestedModelPattern: 'disabled-model', displayName: 'disabled-model', routeId: 11 },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         ownership: 'auto_generated',
-        targets: [{ channelId: '11', model: 'disabled-model', accountId: 1, tokenId: 1, weight: 10 }],
+        targets: [{ targetId: '11', model: 'disabled-model', accountId: 1, tokenId: 1, weight: 10 }],
       },
     ]);
 
@@ -1561,8 +1598,8 @@ describe('routeGraph port-native source', () => {
         enabled: true,
         displayName: null,
         match: { kind: 'model', requestedModelPattern: 'source-model', displayName: null, routeId: 11 },
-        backend: { kind: 'channels' },
-        targets: [{ channelId: '11', model: 'source-model', accountId: 1, tokenId: 1, weight: 10 }],
+        backend: { kind: 'supply' },
+        targets: [{ targetId: '11', model: 'source-model', accountId: 1, tokenId: 1, weight: 10 }],
       },
     ]);
 
@@ -1582,7 +1619,7 @@ describe('routeGraph port-native source', () => {
             },
             policy: { strategy: 'priority_order' },
             groups: [
-              { id: 'p0', enabled: true, priority: 0, input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:product:route:11'] } },
+              { id: 'p0', enabled: true, priority: 0, input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:supply:route:11'] } },
             ],
           },
         },
@@ -1601,24 +1638,24 @@ describe('routeGraph port-native source', () => {
         enabled: true,
         displayName: null,
         match: { kind: 'model', requestedModelPattern: 'claude-opus-4-6', displayName: null, routeId: 11 },
-        backend: { kind: 'channels' },
-        targets: [{ channelId: '11', model: 'claude-opus-4-6', accountId: 1, tokenId: 1, weight: 10 }],
+        backend: { kind: 'supply' },
+        targets: [{ targetId: '11', model: 'claude-opus-4-6', accountId: 1, tokenId: 1, weight: 10 }],
       },
       {
         id: 12,
         enabled: true,
         displayName: null,
         match: { kind: 'model', requestedModelPattern: 'claude-sonnet-4-6', displayName: null, routeId: 12 },
-        backend: { kind: 'channels' },
-        targets: [{ channelId: '12', model: 'claude-sonnet-4-6', accountId: 1, tokenId: 1, weight: 10 }],
+        backend: { kind: 'supply' },
+        targets: [{ targetId: '12', model: 'claude-sonnet-4-6', accountId: 1, tokenId: 1, weight: 10 }],
       },
       {
         id: 13,
         enabled: true,
         displayName: null,
         match: { kind: 'model', requestedModelPattern: 'gpt-4o-mini', displayName: null, routeId: 13 },
-        backend: { kind: 'channels' },
-        targets: [{ channelId: '13', model: 'gpt-4o-mini', accountId: 1, tokenId: 1, weight: 10 }],
+        backend: { kind: 'supply' },
+        targets: [{ targetId: '13', model: 'gpt-4o-mini', accountId: 1, tokenId: 1, weight: 10 }],
       },
     ]);
 
@@ -1661,7 +1698,7 @@ describe('routeGraph port-native source', () => {
     expect(result.primitiveSource.nodes).toEqual(expect.arrayContaining([
       expect.objectContaining({
         id: 'macro:pattern-selector:candidate:claude:route:11',
-        type: 'model_endpoint',
+        type: 'route_endpoint',
         ownership: 'derived',
         metadata: expect.objectContaining({
           macroCandidate: expect.objectContaining({
@@ -1675,7 +1712,7 @@ describe('routeGraph port-native source', () => {
       }),
       expect.objectContaining({
         id: 'macro:pattern-selector:candidate:claude:route:12',
-        type: 'model_endpoint',
+        type: 'route_endpoint',
         ownership: 'derived',
         metadata: expect.objectContaining({
           macroCandidate: expect.objectContaining({
@@ -1715,24 +1752,24 @@ describe('routeGraph port-native source', () => {
         enabled: true,
         displayName: null,
         match: { kind: 'model', requestedModelPattern: 'claude-opus-4-6', displayName: null, routeId: 11 },
-        backend: { kind: 'channels' },
-        targets: [{ channelId: '11', model: 'claude-opus-4-6', accountId: 1, tokenId: 1, weight: 10 }],
+        backend: { kind: 'supply' },
+        targets: [{ targetId: '11', model: 'claude-opus-4-6', accountId: 1, tokenId: 1, weight: 10 }],
       },
       {
         id: 12,
         enabled: true,
         displayName: null,
         match: { kind: 'model', requestedModelPattern: 'claude-opus-4-6-alt', displayName: null, routeId: 12 },
-        backend: { kind: 'channels' },
-        targets: [{ channelId: '12', model: 'claude-opus-4-6', accountId: 1, tokenId: 1, weight: 10 }],
+        backend: { kind: 'supply' },
+        targets: [{ targetId: '12', model: 'claude-opus-4-6', accountId: 1, tokenId: 1, weight: 10 }],
       },
       {
         id: 13,
         enabled: true,
         displayName: null,
         match: { kind: 'model', requestedModelPattern: 'claude-sonnet-4-6', displayName: null, routeId: 13 },
-        backend: { kind: 'channels' },
-        targets: [{ channelId: '13', model: 'claude-sonnet-4-6', accountId: 1, tokenId: 1, weight: 10 }],
+        backend: { kind: 'supply' },
+        targets: [{ targetId: '13', model: 'claude-sonnet-4-6', accountId: 1, tokenId: 1, weight: 10 }],
       },
     ]);
 
@@ -1881,8 +1918,8 @@ describe('routeGraph port-native source', () => {
         { id: 'entry:b', type: 'entry', enabled: true, visibility: 'public', ownership: 'manual', match: { requestedModelPattern: 'dup-model' } },
         { id: 'dispatcher:a', type: 'dispatcher', enabled: true, visibility: 'internal', ownership: 'manual', mode: 'route', policy: { strategy: 'weighted' } },
         { id: 'filter:a', type: 'filter', enabled: true, visibility: 'internal', ownership: 'manual', operations: [] },
-        { id: 'endpoint:a', type: 'model_endpoint', enabled: true, visibility: 'internal', ownership: 'manual', config: { targets: [{ channelId: 'a', model: 'dup-model' }], targetSelection: { strategy: 'weighted' } } },
-        { id: 'endpoint:b', type: 'model_endpoint', enabled: true, visibility: 'internal', ownership: 'manual', config: { targets: [{ channelId: 'b', model: 'dup-model' }], targetSelection: { strategy: 'weighted' } } },
+        { id: 'endpoint:a', type: 'route_endpoint', enabled: true, visibility: 'internal', ownership: 'manual', config: { targets: [{ targetId: 'a', model: 'dup-model' }], targetSelection: { strategy: 'weighted' } } },
+        { id: 'endpoint:b', type: 'route_endpoint', enabled: true, visibility: 'internal', ownership: 'manual', config: { targets: [{ targetId: 'b', model: 'dup-model' }], targetSelection: { strategy: 'weighted' } } },
       ],
       edges: [
         { id: 'entry-a-dispatcher', sourceNodeId: 'entry:a', sourcePortId: 'bidirect.out', targetNodeId: 'dispatcher:a', targetPortId: 'bidirect.in', kind: 'bidirect_flow', ownership: 'manual' },
@@ -1907,7 +1944,7 @@ describe('routeGraph port-native source', () => {
       nodes: [
         { id: 'entry:required', type: 'entry', enabled: true, visibility: 'public', ownership: 'manual', match: { requestedModelPattern: 'required-model' } },
         { id: 'dispatcher:required', type: 'dispatcher', enabled: true, visibility: 'internal', ownership: 'manual', mode: 'route', policy: { strategy: 'weighted' } },
-        { id: 'endpoint:required', type: 'model_endpoint', enabled: true, visibility: 'internal', ownership: 'manual', config: { targets: [{ channelId: 'required', model: 'required-model' }], targetSelection: { strategy: 'weighted' } } },
+        { id: 'endpoint:required', type: 'route_endpoint', enabled: true, visibility: 'internal', ownership: 'manual', config: { targets: [{ targetId: 'required', model: 'required-model' }], targetSelection: { strategy: 'weighted' } } },
       ],
       edges: [
         { id: 'route-only', sourceNodeId: 'endpoint:required', sourcePortId: 'route.out', targetNodeId: 'dispatcher:required', targetPortId: 'route.in', kind: 'route_flow', ownership: 'manual' },
@@ -1947,7 +1984,7 @@ describe('routeGraph port-native source', () => {
                 priority: 0,
                 input: {
                   kind: 'inline_endpoints',
-                  endpoints: [{ channelId: 'disabled', model: 'disabled-model' }],
+                  endpoints: [{ targetId: 'disabled', model: 'disabled-model' }],
                 },
               },
               {
@@ -1957,8 +1994,8 @@ describe('routeGraph port-native source', () => {
                 input: {
                   kind: 'inline_endpoints',
                   endpoints: [
-                    { channelId: 'inline-a', model: 'inline-model-a', metadata: { region: 'sg' } },
-                    { channelId: 'inline-b', model: 'inline-model-b' },
+                    { targetId: 'inline-a', model: 'inline-model-a', metadata: { region: 'sg' } },
+                    { targetId: 'inline-b', model: 'inline-model-b' },
                   ],
                 },
                 defaults: {
@@ -1985,7 +2022,7 @@ describe('routeGraph port-native source', () => {
     expect(result.primitiveSource.nodes).toEqual(expect.arrayContaining([
       expect.objectContaining({
         id: 'macro:model-group:mixed:candidate:inline:inline',
-        type: 'model_endpoint',
+        type: 'route_endpoint',
         ownership: 'derived',
         metadata: expect.objectContaining({
           tier: 'premium',
@@ -1998,8 +2035,8 @@ describe('routeGraph port-native source', () => {
         }),
         config: expect.objectContaining({
           targets: [
-            expect.objectContaining({ channelId: 'inline-a', model: 'inline-model-a', metadata: { region: 'sg' } }),
-            expect.objectContaining({ channelId: 'inline-b', model: 'inline-model-b' }),
+            expect.objectContaining({ targetId: 'inline-a', model: 'inline-model-a', metadata: { region: 'sg' } }),
+            expect.objectContaining({ targetId: 'inline-b', model: 'inline-model-b' }),
           ],
           targetSelection: { strategy: 'defer_to_router' },
         }),
@@ -2065,7 +2102,7 @@ describe('routeGraph port-native source', () => {
                 priority: 0,
                 input: {
                   kind: 'inline_endpoints',
-                  endpoints: [{ channelId: 'flow-a', model: 'flow-model-a' }],
+                  endpoints: [{ targetId: 'flow-a', model: 'flow-model-a' }],
                 },
               },
               {
@@ -2090,7 +2127,7 @@ describe('routeGraph port-native source', () => {
       }),
       expect.objectContaining({
         id: 'macro:model-group:flow:candidate:primary:inline',
-        type: 'model_endpoint',
+        type: 'route_endpoint',
       }),
       expect.objectContaining({
         id: 'macro:model-group:flow:candidate:fallback:synthetic',
@@ -2147,11 +2184,11 @@ describe('routeGraph port-native source', () => {
         },
         {
           id: 'endpoint:outer',
-          type: 'model_endpoint',
+          type: 'route_endpoint',
           enabled: true,
           visibility: 'internal',
           ownership: 'manual',
-          config: { targets: [{ channelId: 'outer', model: 'outer-model' }], targetSelection: { strategy: 'weighted' } },
+          config: { targets: [{ targetId: 'outer', model: 'outer-model' }], targetSelection: { strategy: 'weighted' } },
         },
       ],
       edges: [
@@ -2203,7 +2240,7 @@ describe('routeGraph port-native source', () => {
             groups: [
               {
                 id: 'inline',
-                input: { kind: 'inline_endpoints', endpoints: [{ channelId: 'macro-inline', model: 'macro-model' }] },
+                input: { kind: 'inline_endpoints', endpoints: [{ targetId: 'macro-inline', model: 'macro-model' }] },
               },
             ],
           },
@@ -2242,12 +2279,12 @@ describe('routeGraph port-native source', () => {
         },
         {
           id: 'endpoint:outer-embedded',
-          type: 'model_endpoint',
+          type: 'route_endpoint',
           enabled: true,
           visibility: 'internal',
           ownership: 'manual',
           legacyRouteId: 77,
-          config: { targets: [{ channelId: 'outer-embedded', model: 'outer-embedded-model' }], targetSelection: { strategy: 'weighted' } },
+          config: { targets: [{ targetId: 'outer-embedded', model: 'outer-embedded-model' }], targetSelection: { strategy: 'weighted' } },
         },
       ],
       edges: [
@@ -2401,11 +2438,11 @@ describe('routeGraph port-native source', () => {
         },
         {
           id: 'endpoint:direction',
-          type: 'model_endpoint',
+          type: 'route_endpoint',
           enabled: true,
           visibility: 'internal',
           ownership: 'manual',
-          config: { targets: [{ channelId: 'direction', model: 'direction-model' }], targetSelection: { strategy: 'weighted' } },
+          config: { targets: [{ targetId: 'direction', model: 'direction-model' }], targetSelection: { strategy: 'weighted' } },
         },
       ],
       edges: [
@@ -2440,11 +2477,11 @@ describe('routeGraph port-native source', () => {
         { id: 'entry:b', type: 'entry', enabled: true, visibility: 'public', ownership: 'manual', match: { requestedModelPattern: 'multi-b' } },
         {
           id: 'endpoint:shared',
-          type: 'model_endpoint',
+          type: 'route_endpoint',
           enabled: true,
           visibility: 'internal',
           ownership: 'manual',
-          config: { targets: [{ channelId: 'shared', model: 'multi-shared' }], targetSelection: { strategy: 'weighted' } },
+          config: { targets: [{ targetId: 'shared', model: 'multi-shared' }], targetSelection: { strategy: 'weighted' } },
         },
       ],
       edges: [
@@ -2471,11 +2508,11 @@ describe('routeGraph port-native source', () => {
         },
         {
           id: 'endpoint:reachable',
-          type: 'model_endpoint',
+          type: 'route_endpoint',
           enabled: true,
           visibility: 'internal',
           ownership: 'manual',
-          config: { targets: [{ channelId: 'reachable', model: 'reachable-model' }], targetSelection: { strategy: 'weighted' } },
+          config: { targets: [{ targetId: 'reachable', model: 'reachable-model' }], targetSelection: { strategy: 'weighted' } },
         },
         {
           id: 'filter:orphan-connected',
@@ -2487,11 +2524,11 @@ describe('routeGraph port-native source', () => {
         },
         {
           id: 'endpoint:orphan-connected',
-          type: 'model_endpoint',
+          type: 'route_endpoint',
           enabled: true,
           visibility: 'internal',
           ownership: 'manual',
-          config: { targets: [{ channelId: 'orphan', model: 'orphan-model' }], targetSelection: { strategy: 'weighted' } },
+          config: { targets: [{ targetId: 'orphan', model: 'orphan-model' }], targetSelection: { strategy: 'weighted' } },
         },
       ],
       edges: [
@@ -2511,16 +2548,16 @@ describe('routeGraph port-native source', () => {
         enabled: true,
         displayName: null,
         match: { kind: 'model', requestedModelPattern: 'source-a', routeId: 11 },
-        backend: { kind: 'channels' },
-        targets: [{ channelId: '11', model: 'source-a' }],
+        backend: { kind: 'supply' },
+        targets: [{ targetId: '11', model: 'source-a' }],
       },
       {
         id: 22,
         enabled: true,
         displayName: null,
         match: { kind: 'model', requestedModelPattern: 'source-b', routeId: 22 },
-        backend: { kind: 'channels' },
-        targets: [{ channelId: '22', model: 'source-b' }],
+        backend: { kind: 'supply' },
+        targets: [{ targetId: '22', model: 'source-b' }],
       },
     ]);
 
@@ -2539,7 +2576,7 @@ describe('routeGraph port-native source', () => {
               {
                 id: 'limited',
                 priority: 0,
-                input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:product:route:22', 'route-endpoint:product:route:11'] },
+                input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:supply:route:22', 'route-endpoint:supply:route:11'] },
                 materialization: { sort: 'route_id', limit: 1 },
               },
             ],
@@ -2551,13 +2588,13 @@ describe('routeGraph port-native source', () => {
     expect(result.ok).toBe(true);
     expect(result.primitiveSource.edges).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        sourceNodeId: 'route-endpoint:product:route:11',
+        sourceNodeId: 'route-endpoint:supply:route:11',
         targetNodeId: 'macro:model-group:limited:dispatcher',
         kind: 'route_flow',
       }),
     ]));
     expect(result.primitiveSource.edges.some((edge) => (
-      edge.sourceNodeId === 'route-endpoint:product:route:22'
+      edge.sourceNodeId === 'route-endpoint:supply:route:22'
       && edge.targetNodeId === 'macro:model-group:limited:dispatcher'
     ))).toBe(false);
   });
@@ -2569,8 +2606,8 @@ describe('routeGraph port-native source', () => {
         enabled: true,
         displayName: 'source-model',
         match: { kind: 'model', requestedModelPattern: 'source-model', displayName: null, routeId: 1 },
-        backend: { kind: 'channels' },
-        targets: [{ channelId: '1', model: 'source-model', accountId: 1, tokenId: 1, weight: 10 }],
+        backend: { kind: 'supply' },
+        targets: [{ targetId: '1', model: 'source-model', accountId: 1, tokenId: 1, weight: 10 }],
       },
       {
         id: 2,
@@ -2584,8 +2621,8 @@ describe('routeGraph port-native source', () => {
         enabled: true,
         displayName: 'colliding',
         match: { kind: 'model', requestedModelPattern: 'colliding', displayName: 'colliding', routeId: 3 },
-        backend: { kind: 'channels' },
-        targets: [{ channelId: '3', model: 'colliding', accountId: 1, tokenId: 1, weight: 10 }],
+        backend: { kind: 'supply' },
+        targets: [{ targetId: '3', model: 'colliding', accountId: 1, tokenId: 1, weight: 10 }],
       },
     ]);
 
@@ -2601,8 +2638,8 @@ describe('routeGraph port-native source', () => {
         enabled: true,
         displayName: 'base-one',
         match: { kind: 'model', requestedModelPattern: 'base-one', displayName: 'base-one', routeId: 1 },
-        backend: { kind: 'channels' },
-        targets: [{ channelId: '1', model: 'base-one' }],
+        backend: { kind: 'supply' },
+        targets: [{ targetId: '1', model: 'base-one' }],
       },
       {
         id: 2,
@@ -2614,10 +2651,10 @@ describe('routeGraph port-native source', () => {
       {
         id: 3,
         enabled: true,
-        displayName: 'exact-channel',
-        match: { kind: 'model', requestedModelPattern: 'macro-hit', displayName: 'exact-channel', routeId: 3 },
-        backend: { kind: 'channels' },
-        targets: [{ channelId: '3', model: 'macro-hit' }],
+        displayName: 'exact-target',
+        match: { kind: 'model', requestedModelPattern: 'macro-hit', displayName: 'exact-target', routeId: 3 },
+        backend: { kind: 'supply' },
+        targets: [{ targetId: '3', model: 'macro-hit' }],
       },
     ]);
 

@@ -273,7 +273,7 @@ function isRouteGraphTokenRoutesReplacement(currentContract: SchemaContract, pre
     && !!currentContract.tables.route_graph_versions
     && !!currentContract.tables.route_graph_drafts
     && !!currentContract.tables.route_graph_active_version
-    && !!currentContract.tables.route_channels?.columns.route_node_id;
+    && !!currentContract.tables.route_endpoint_targets?.columns.route_endpoint_id;
 }
 
 function isAllowedRouteGraphReplacementColumnRemoval(tableName: string, columnName: string): boolean {
@@ -409,8 +409,8 @@ function buildRouteGraphBackendSpecExpression(
 ): string {
   if (!hasRouteMode) {
     return dialect === 'mysql'
-      ? `JSON_OBJECT('kind', 'channels')`
-      : `'{"kind":"channels"}'`;
+      ? `JSON_OBJECT('kind', 'supply')`
+      : `'{"kind":"supply"}'`;
   }
 
   const routeMode = quoteQualifiedIdentifier(dialect, 'token_routes', 'route_mode');
@@ -418,13 +418,13 @@ function buildRouteGraphBackendSpecExpression(
     const routeIds = hasRouteGroupSources
       ? `(SELECT COALESCE(JSON_ARRAYAGG(${quoteIdentifier(dialect, 'source_route_id')}), JSON_ARRAY()) FROM ${quoteIdentifier(dialect, 'route_group_sources')} WHERE ${quoteQualifiedIdentifier(dialect, 'route_group_sources', 'group_route_id')} = ${quoteQualifiedIdentifier(dialect, 'token_routes', 'id')})`
       : 'JSON_ARRAY()';
-    return `CASE WHEN ${routeMode} = 'explicit_group' THEN JSON_OBJECT('kind', 'routes', 'routeIds', ${routeIds}) ELSE JSON_OBJECT('kind', 'channels') END`;
+    return `CASE WHEN ${routeMode} = 'explicit_group' THEN JSON_OBJECT('kind', 'routes', 'routeIds', ${routeIds}) ELSE JSON_OBJECT('kind', 'supply') END`;
   }
 
   const routeIds = hasRouteGroupSources
     ? `(SELECT COALESCE(jsonb_agg(${quoteQualifiedIdentifier(dialect, 'route_group_sources', 'source_route_id')} ORDER BY ${quoteQualifiedIdentifier(dialect, 'route_group_sources', 'source_route_id')}), '[]'::jsonb) FROM ${quoteIdentifier(dialect, 'route_group_sources')} WHERE ${quoteQualifiedIdentifier(dialect, 'route_group_sources', 'group_route_id')} = ${quoteQualifiedIdentifier(dialect, 'token_routes', 'id')})`
     : `'[]'::jsonb`;
-  return `CASE WHEN ${routeMode} = 'explicit_group' THEN jsonb_build_object('kind', 'routes', 'routeIds', ${routeIds})::text ELSE '{"kind":"channels"}' END`;
+  return `CASE WHEN ${routeMode} = 'explicit_group' THEN jsonb_build_object('kind', 'routes', 'routeIds', ${routeIds})::text ELSE '{"kind":"supply"}' END`;
 }
 
 function buildSqliteRouteGraphMatchSpecExpression(previousColumns: Record<string, SchemaContractColumn>): string {
@@ -446,12 +446,12 @@ function buildSqliteRouteGraphBackendSpecExpression(
   hasRouteGroupSources: boolean,
 ): string {
   if (!previousColumns.route_mode) {
-    return `json_object('kind', 'channels')`;
+    return `json_object('kind', 'supply')`;
   }
   const routeIds = hasRouteGroupSources
     ? `coalesce(json((SELECT json_group_array("route_group_sources"."source_route_id") FROM "route_group_sources" WHERE "route_group_sources"."group_route_id" = "token_routes"."id" ORDER BY "route_group_sources"."source_route_id")), json('[]'))`
     : `json('[]')`;
-  return `CASE WHEN coalesce("token_routes"."route_mode", 'pattern') = 'explicit_group' THEN json_object('kind', 'routes', 'routeIds', ${routeIds}) ELSE json_object('kind', 'channels') END`;
+  return `CASE WHEN coalesce("token_routes"."route_mode", 'pattern') = 'explicit_group' THEN json_object('kind', 'routes', 'routeIds', ${routeIds}) ELSE json_object('kind', 'supply') END`;
 }
 
 function buildSqliteTokenRouteValueExpression(

@@ -1740,15 +1740,15 @@
           "notNull": false,
           "autoincrement": false
         },
-        "sticky_hit_channel_id": {
-          "name": "sticky_hit_channel_id",
+        "sticky_hit_target_id": {
+          "name": "sticky_hit_target_id",
           "type": "integer",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
         },
-        "selected_channel_id": {
-          "name": "selected_channel_id",
+        "selected_target_id": {
+          "name": "selected_target_id",
           "type": "integer",
           "primaryKey": false,
           "notNull": false,
@@ -2030,8 +2030,8 @@
           "notNull": false,
           "autoincrement": false
         },
-        "channel_id": {
-          "name": "channel_id",
+        "target_id": {
+          "name": "target_id",
           "type": "integer",
           "primaryKey": false,
           "notNull": false,
@@ -2301,8 +2301,8 @@
           "notNull": false,
           "autoincrement": false
         },
-        "channel_id": {
-          "name": "channel_id",
+        "target_id": {
+          "name": "target_id",
           "type": "integer",
           "primaryKey": false,
           "notNull": false,
@@ -2388,8 +2388,8 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
-    "route_channels": {
-      "name": "route_channels",
+    "route_endpoint_targets": {
+      "name": "route_endpoint_targets",
       "columns": {
         "id": {
           "name": "id",
@@ -2543,44 +2543,44 @@
         }
       },
       "indexes": {
-        "route_channels_route_id_idx": {
-          "name": "route_channels_route_id_idx",
+        "route_endpoint_targets_route_id_idx": {
+          "name": "route_endpoint_targets_route_id_idx",
           "columns": [
             "route_id"
           ],
           "isUnique": false
         },
-        "route_channels_account_id_idx": {
-          "name": "route_channels_account_id_idx",
+        "route_endpoint_targets_account_id_idx": {
+          "name": "route_endpoint_targets_account_id_idx",
           "columns": [
             "account_id"
           ],
           "isUnique": false
         },
-        "route_channels_token_id_idx": {
-          "name": "route_channels_token_id_idx",
+        "route_endpoint_targets_token_id_idx": {
+          "name": "route_endpoint_targets_token_id_idx",
           "columns": [
             "token_id"
           ],
           "isUnique": false
         },
-        "route_channels_oauth_route_unit_id_idx": {
-          "name": "route_channels_oauth_route_unit_id_idx",
+        "route_endpoint_targets_oauth_route_unit_id_idx": {
+          "name": "route_endpoint_targets_oauth_route_unit_id_idx",
           "columns": [
             "oauth_route_unit_id"
           ],
           "isUnique": false
         },
-        "route_channels_route_enabled_idx": {
-          "name": "route_channels_route_enabled_idx",
+        "route_endpoint_targets_route_enabled_idx": {
+          "name": "route_endpoint_targets_route_enabled_idx",
           "columns": [
             "route_id",
             "enabled"
           ],
           "isUnique": false
         },
-        "route_channels_route_token_idx": {
-          "name": "route_channels_route_token_idx",
+        "route_endpoint_targets_route_token_idx": {
+          "name": "route_endpoint_targets_route_token_idx",
           "columns": [
             "route_id",
             "token_id"
@@ -2589,9 +2589,9 @@
         }
       },
       "foreignKeys": {
-        "route_channels_route_id_token_routes_id_fk": {
-          "name": "route_channels_route_id_token_routes_id_fk",
-          "tableFrom": "route_channels",
+        "route_endpoint_targets_route_id_token_routes_id_fk": {
+          "name": "route_endpoint_targets_route_id_token_routes_id_fk",
+          "tableFrom": "route_endpoint_targets",
           "tableTo": "token_routes",
           "columnsFrom": [
             "route_id"
@@ -2602,9 +2602,9 @@
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
-        "route_channels_account_id_accounts_id_fk": {
-          "name": "route_channels_account_id_accounts_id_fk",
-          "tableFrom": "route_channels",
+        "route_endpoint_targets_account_id_accounts_id_fk": {
+          "name": "route_endpoint_targets_account_id_accounts_id_fk",
+          "tableFrom": "route_endpoint_targets",
           "tableTo": "accounts",
           "columnsFrom": [
             "account_id"
@@ -2615,9 +2615,9 @@
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
-        "route_channels_token_id_account_tokens_id_fk": {
-          "name": "route_channels_token_id_account_tokens_id_fk",
-          "tableFrom": "route_channels",
+        "route_endpoint_targets_token_id_account_tokens_id_fk": {
+          "name": "route_endpoint_targets_token_id_account_tokens_id_fk",
+          "tableFrom": "route_endpoint_targets",
           "tableTo": "account_tokens",
           "columnsFrom": [
             "token_id"

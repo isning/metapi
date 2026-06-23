@@ -43,9 +43,9 @@ import {
   stopModelAvailabilityProbeScheduler,
 } from './services/modelAvailabilityProbeService.js';
 import {
-  startChannelRecoveryProbeScheduler,
-  stopChannelRecoveryProbeScheduler,
-} from './services/channelRecoveryProbeService.js';
+  startTargetRecoveryProbeScheduler,
+  stopTargetRecoveryProbeScheduler,
+} from './services/targetRecoveryProbeService.js';
 import {
   startSub2ApiManagedRefreshScheduler,
   stopSub2ApiManagedRefreshScheduler,
@@ -271,7 +271,7 @@ await startScheduler();
 await reloadBackupWebdavScheduler();
 startSiteAnnouncementPolling();
 startModelAvailabilityProbeScheduler();
-startChannelRecoveryProbeScheduler();
+startTargetRecoveryProbeScheduler();
 startSub2ApiManagedRefreshScheduler();
 startUpdateCenterPolling();
 startUsageAggregationProjectorScheduler();
@@ -289,7 +289,7 @@ app.addHook('onClose', async () => {
   stopProxyFileRetentionService();
   stopProxyLogRetentionService();
   stopModelAvailabilityProbeScheduler();
-  stopChannelRecoveryProbeScheduler();
+  stopTargetRecoveryProbeScheduler();
   await stopUsageAggregationProjectorScheduler();
   await stopAdminSnapshotWarmScheduler();
   await stopSub2ApiManagedRefreshScheduler();

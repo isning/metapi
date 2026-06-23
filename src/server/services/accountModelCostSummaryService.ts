@@ -1,4 +1,4 @@
-import { evaluateUpstreamCostPricing } from "./upstreamCostPricingService.js";
+import { quoteEndpointPricing } from "./pricingQuoteService.js";
 
 export type AccountModelCostSummary = {
   configured: boolean;
@@ -14,12 +14,6 @@ type AccountModelCostToken = {
   isDefault: boolean | null;
 };
 
-const ACCOUNT_MODEL_COST_PREVIEW_USAGE = {
-  inputTokens: 1_000_000,
-  outputTokens: 1_000_000,
-  requestCount: 1,
-};
-
 export async function buildAccountModelCostSummary(input: {
   siteId: number;
   accountId: number;
@@ -31,21 +25,24 @@ export async function buildAccountModelCostSummary(input: {
     enabledTokens.find((token) => token.isDefault) || enabledTokens[0] || null;
 
   try {
-    const evaluated = await evaluateUpstreamCostPricing({
-      siteId: input.siteId,
-      accountId: input.accountId,
-      tokenId: preferredToken?.id,
-      tokenGroup: preferredToken?.tokenGroup || undefined,
-      modelName: input.modelName,
-      usage: ACCOUNT_MODEL_COST_PREVIEW_USAGE,
+    const quote = await quoteEndpointPricing({
+      supply: {
+        siteId: input.siteId,
+        accountId: input.accountId,
+        tokenId: preferredToken?.id,
+        tokenGroup: preferredToken?.tokenGroup || undefined,
+        modelName: input.modelName,
+      },
+      usageProfile: 'preview_1m_io',
+      includeReference: false,
     });
-    if (!evaluated) return emptyAccountModelCostSummary();
+    if (!quote.endpoint) return emptyAccountModelCostSummary();
     return {
       configured: true,
-      matchedScope: evaluated.matchedScope,
-      pricingId: evaluated.pricing.id,
-      totalCostUsd: Number.isFinite(evaluated.evaluation.totalCostUsd)
-        ? evaluated.evaluation.totalCostUsd
+      matchedScope: quote.endpoint.matchedScope,
+      pricingId: typeof quote.endpoint.sourceId === 'number' ? quote.endpoint.sourceId : null,
+      totalCostUsd: Number.isFinite(quote.endpoint.summary.totalCostUsd)
+        ? quote.endpoint.summary.totalCostUsd
         : null,
     };
   } catch {

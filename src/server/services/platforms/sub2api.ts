@@ -443,7 +443,7 @@ export class Sub2ApiAdapter extends BasePlatformAdapter {
     return Array.from(new Set(models));
   }
 
-  private resolveModelEndpoints(baseUrl: string): string[] {
+  private resolveRouteEndpoints(baseUrl: string): string[] {
     const normalizedBase = normalizeBaseUrl(baseUrl);
     if (!normalizedBase) return [];
     if (/\/models$/i.test(normalizedBase)) return [normalizedBase];
@@ -519,7 +519,7 @@ export class Sub2ApiAdapter extends BasePlatformAdapter {
     const authToken = this.normalizeTokenKeyForCompare(token);
     if (!authToken) return [];
 
-    for (const url of this.resolveModelEndpoints(baseUrl)) {
+    for (const url of this.resolveRouteEndpoints(baseUrl)) {
       try {
         const res = await this.fetchJson<any>(url, {
           headers: { Authorization: `Bearer ${authToken}` },

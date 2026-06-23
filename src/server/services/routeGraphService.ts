@@ -4,8 +4,8 @@ import { db, schema } from '../db/index.js';
 import {
   buildRouteGraphSourceFromLegacyRoutes,
   compileRouteGraphSource,
+  deriveLegacyModelPatternFromSpecs,
   legacyRouteIdToRouteGraphEntryNodeId,
-  legacyRouteIdToRouteGraphPoolNodeId,
   normalizeRouteGraphBackendSpec,
   normalizeRouteGraphSource,
   parseRouteGraphSource,
@@ -58,7 +58,7 @@ export type RouteGraphDraftState = {
   stale: boolean;
 };
 
-export type RouteGraphLegacyProjection = {
+export type RouteGraphRouteTableBinding = {
   routeId: number;
   entryNodeId: string;
   match: RouteGraphMatchSpec;
@@ -108,12 +108,12 @@ export type RouteEndpointSourceRouteResolution = {
   unresolvedEndpointIds: string[];
 };
 
-export class RouteGraphProjectionValidationError extends Error {
+export class RouteGraphSyncValidationError extends Error {
   diagnostics: RouteGraphDiagnostic[];
 
   constructor(diagnostics: RouteGraphDiagnostic[]) {
-    super(`Cannot reconcile route graph projection: ${diagnostics.map((item) => item.message).join('; ')}`);
-    this.name = 'RouteGraphProjectionValidationError';
+    super(`Cannot reconcile route graph sync: ${diagnostics.map((item) => item.message).join('; ')}`);
+    this.name = 'RouteGraphSyncValidationError';
     this.diagnostics = diagnostics;
   }
 }
@@ -128,7 +128,8 @@ function parseJsonObject<T>(raw: string | null | undefined, fallback: T): T {
 }
 
 function hasRouteProgramBundle(compiledGraph: CompiledRouteGraph | null | undefined): boolean {
-  const bundle = (compiledGraph as { programBundle?: unknown } | null | undefined)?.programBundle;
+  const candidateGraph = compiledGraph as { programBundle?: unknown; flatProgramBundle?: unknown } | null | undefined;
+  const bundle = candidateGraph?.programBundle;
   if (!bundle || typeof bundle !== 'object' || Array.isArray(bundle)) return false;
   const candidate = bundle as {
     version?: unknown;
@@ -148,7 +149,7 @@ function hasRouteProgramBundle(compiledGraph: CompiledRouteGraph | null | undefi
   ))) {
     return false;
   }
-  return candidate.programs.some((program) => (
+  const hasV3 = candidate.programs.some((program) => (
     program
     && typeof program === 'object'
     && !Array.isArray(program)
@@ -156,6 +157,38 @@ function hasRouteProgramBundle(compiledGraph: CompiledRouteGraph | null | undefi
     && !!String((program as { startOpId?: unknown }).startOpId).trim()
     && Array.isArray((program as { ops?: unknown }).ops)
   ));
+  if (!hasV3) return false;
+
+  const flatBundle = candidateGraph?.flatProgramBundle;
+  if (!flatBundle || typeof flatBundle !== 'object' || Array.isArray(flatBundle)) return false;
+  const flatCandidate = flatBundle as {
+    version?: unknown;
+    matcher?: unknown;
+    programs?: unknown;
+    diagnostics?: unknown;
+  };
+  if (flatCandidate.version !== 4 || !flatCandidate.matcher || typeof flatCandidate.matcher !== 'object' || !Array.isArray(flatCandidate.programs)) {
+    return false;
+  }
+  if (Array.isArray(flatCandidate.diagnostics) && flatCandidate.diagnostics.some((diagnostic) => (
+    diagnostic
+    && typeof diagnostic === 'object'
+    && !Array.isArray(diagnostic)
+    && (diagnostic as { severity?: unknown }).severity === 'error'
+    && (
+      String((diagnostic as { code?: unknown }).code || '').startsWith('program.')
+      || String((diagnostic as { code?: unknown }).code || '').startsWith('flat_program.')
+    )
+  ))) {
+    return false;
+  }
+  const hasV4 = flatCandidate.programs.some((program) => (
+    program
+    && typeof program === 'object'
+    && !Array.isArray(program)
+    && !!(program as { start?: unknown }).start
+  ));
+  return hasV4;
 }
 
 function nowIso(): string {
@@ -363,7 +396,7 @@ function appendOwnershipDiagnostics(input: {
     input.diagnostics.push({
       severity: 'error',
       code: 'ownership.non_manual_macro_create',
-      message: `Non-manual macro ${candidateMacro.id} cannot be created in a draft; create a manual macro or let the projection system generate it.`,
+      message: `Non-manual macro ${candidateMacro.id} cannot be created in a draft; create a manual macro or let the route table sync generate it.`,
     });
   }
 }
@@ -377,7 +410,7 @@ async function getNextGraphVersionNumber(): Promise<number> {
 }
 
 async function loadLegacyRouteGraphSource(): Promise<RouteGraphSource> {
-  return await buildRouteGraphSourceFromCurrentProjectionTable(null);
+  return await buildRouteGraphSourceFromRouteTable(null);
 }
 
 function routeIdFromLegacyGraphNodeId(nodeId: string): number | null {
@@ -398,14 +431,14 @@ function removedReferenceNodeLegacyGroupRouteId(nodeId: string): number | null {
   return Number.isFinite(routeId) && routeId > 0 ? routeId : null;
 }
 
-function isProjectionOwnedNodeId(nodeId: string): boolean {
+function isRouteTableSyncedNodeId(nodeId: string): boolean {
   return isLegacyGraphNodeId(nodeId)
     || /^route-endpoint:(?:supply:.+|product:route:\d+|product:auto-model:.+)$/.test(nodeId)
     || /^macro:auto-model:.+/.test(nodeId)
     || removedReferenceNodeLegacyGroupRouteId(nodeId) !== null;
 }
 
-function isProjectionOwnedMacroId(macroId: string): boolean {
+function isRouteTableSyncedMacroId(macroId: string): boolean {
   return /^route:\d+:model-group$/.test(macroId)
     || /^auto-model:.+$/.test(macroId);
 }
@@ -418,7 +451,7 @@ function macroSemanticGraphNodeId(macroId: string): string {
   return `macro:${safeId}`;
 }
 
-function routeIdFromProjectionMacroId(macroId: string | null | undefined): number | null {
+function routeIdFromRouteTableMacroId(macroId: string | null | undefined): number | null {
   const match = /^route:(\d+):model-group$/.exec(String(macroId || ''));
   if (!match) return null;
   const routeId = Number(match[1]);
@@ -429,7 +462,7 @@ function isEntryNode(node: { type?: string } | null | undefined): node is { type
   return !!node && node.type === 'entry';
 }
 
-function routeIdFromProjectionCandidateNode(node: { id?: string; type?: string; match?: RouteGraphMatchSpec; legacyRouteId?: number | null } | null | undefined): number | null {
+function routeIdFromRouteTableCandidateNode(node: { id?: string; type?: string; match?: RouteGraphMatchSpec; legacyRouteId?: number | null } | null | undefined): number | null {
   if (!node) return null;
   const direct = Number(node.legacyRouteId);
   if (Number.isFinite(direct) && direct > 0) return Math.trunc(direct);
@@ -443,7 +476,7 @@ function routeIdFromProjectionCandidateNode(node: { id?: string; type?: string; 
   return Number.isFinite(routeId) && routeId > 0 ? routeId : null;
 }
 
-function routeIdsFromProjectionCandidateNode(node: {
+function routeIdsFromRouteTableCandidateNode(node: {
   id?: string;
   type?: string;
   match?: RouteGraphMatchSpec;
@@ -455,13 +488,13 @@ function routeIdsFromProjectionCandidateNode(node: {
     const backend = normalizeRouteGraphBackendSpec(node.backend);
     if (backend.kind === 'routes') return backend.routeIds;
   }
-  const routeId = routeIdFromProjectionEntryNode(node);
+  const routeId = routeIdFromRouteTableEntryNode(node);
   return routeId ? [routeId] : [];
 }
 
-function routeIdFromProjectionEntryNode(node: { id?: string; type?: string; match?: RouteGraphMatchSpec; legacyRouteId?: number | null } | null | undefined): number | null {
+function routeIdFromRouteTableEntryNode(node: { id?: string; type?: string; match?: RouteGraphMatchSpec; legacyRouteId?: number | null } | null | undefined): number | null {
   if (!node) return null;
-  if (node.type === 'model_endpoint' || node.type === 'auto_node') {
+  if (node.type === 'auto_node') {
     const direct = Number(node.legacyRouteId);
     if (Number.isFinite(direct) && direct > 0) return Math.trunc(direct);
     const match = /^(?:pool):legacy:(\d+)$/.exec(String(node.id || ''));
@@ -470,7 +503,7 @@ function routeIdFromProjectionEntryNode(node: { id?: string; type?: string; matc
       return Number.isFinite(routeId) && routeId > 0 ? routeId : null;
     }
   }
-  return routeIdFromProjectionCandidateNode(node);
+  return routeIdFromRouteTableCandidateNode(node);
 }
 
 function collectMatchAndBackendByLegacyRouteId(source: RouteGraphSource | null | undefined): Map<number, {
@@ -482,7 +515,7 @@ function collectMatchAndBackendByLegacyRouteId(source: RouteGraphSource | null |
   if (!source) return result;
   const macroVisibilityByRouteId = new Map<number, RouteGraphVisibility>();
   for (const macro of source.macros || []) {
-    const routeId = routeIdFromProjectionMacroId(macro.id);
+    const routeId = routeIdFromRouteTableMacroId(macro.id);
     if (!routeId) continue;
     macroVisibilityByRouteId.set(routeId, macro.visibility === 'internal' ? 'internal' : 'public');
   }
@@ -510,28 +543,49 @@ function collectMatchAndBackendByLegacyRouteId(source: RouteGraphSource | null |
   return result;
 }
 
-export async function buildRouteGraphSourceFromCurrentProjectionTable(
+function isRouteTableExactModelPattern(value: string): boolean {
+  const model = String(value || '').trim();
+  return Boolean(model) && !/[*?]/.test(model) && !model.startsWith('re:');
+}
+
+function inferRouteTableExactModel(input: {
+  route: { id: number; displayName: string | null };
+  previous?: { match: RouteGraphMatchSpec; backend: RouteGraphBackendSpec } | undefined;
+  isExplicitGroup: boolean;
+  accountModels: string[];
+}): string {
+  if (input.isExplicitGroup) return '';
+  if (input.previous) {
+    const previousModel = String(input.previous.match.requestedModelPattern || deriveLegacyModelPatternFromSpecs(input.previous.match, { kind: 'supply' })).trim();
+    if (isRouteTableExactModelPattern(previousModel)) return previousModel;
+  }
+  const routeDisplayName = typeof input.route.displayName === 'string' ? input.route.displayName.trim() : '';
+  if (isRouteTableExactModelPattern(routeDisplayName)) return routeDisplayName;
+  return input.accountModels.length === 1 ? input.accountModels[0] : '';
+}
+
+export async function buildRouteGraphSourceFromRouteTable(
   baseSource?: RouteGraphSource | null,
   routeOverrides: Map<number, { match: RouteGraphMatchSpec; backend: RouteGraphBackendSpec; visibility?: RouteGraphVisibility }> = new Map(),
 ): Promise<RouteGraphSource> {
-  const [routes, groupSources, routeChannels] = await Promise.all([
+  const [routes, groupSources, routeEndpointTargets] = await Promise.all([
     db.select().from(schema.tokenRoutes).all(),
     db.select().from(schema.routeGroupSources).all(),
-    db.select().from(schema.routeChannels).all(),
+    db.select().from(schema.routeEndpointTargets).all(),
   ]);
-  const accountIdsWithRouteChannels = Array.from(new Set(routeChannels.map((channel) => channel.accountId)));
-  const tokenIdsWithRouteChannels = Array.from(new Set(routeChannels
+  const accountIdsWithRouteEndpointTargets = Array.from(new Set(routeEndpointTargets.map((channel) => channel.accountId)));
+  const tokenIdsWithRouteEndpointTargets = Array.from(new Set(routeEndpointTargets
     .map((channel) => channel.tokenId)
     .filter((tokenId): tokenId is number => Number.isFinite(Number(tokenId)))));
   const [accounts, tokens, sites] = await Promise.all([
-    accountIdsWithRouteChannels.length > 0 ? db.select().from(schema.accounts).all() : Promise.resolve([]),
-    tokenIdsWithRouteChannels.length > 0 ? db.select().from(schema.accountTokens).all() : Promise.resolve([]),
-    accountIdsWithRouteChannels.length > 0 ? db.select().from(schema.sites).all() : Promise.resolve([]),
+    accountIdsWithRouteEndpointTargets.length > 0 ? db.select().from(schema.accounts).all() : Promise.resolve([]),
+    tokenIdsWithRouteEndpointTargets.length > 0 ? db.select().from(schema.accountTokens).all() : Promise.resolve([]),
+    accountIdsWithRouteEndpointTargets.length > 0 ? db.select().from(schema.sites).all() : Promise.resolve([]),
   ]);
   const accountById = new Map<number, typeof accounts[number]>(accounts.map((account) => [account.id, account]));
   const tokenById = new Map<number, typeof tokens[number]>(tokens.map((token) => [token.id, token]));
   const siteById = new Map<number, typeof sites[number]>(sites.map((site) => [site.id, site]));
-  const previousProjectionByRouteId = collectMatchAndBackendByLegacyRouteId(baseSource);
+  const previousRouteBindingByRouteId = collectMatchAndBackendByLegacyRouteId(baseSource);
   const sourceRouteIdsByGroupRouteId = new Map<number, number[]>();
   for (const source of groupSources) {
     const existing = sourceRouteIdsByGroupRouteId.get(source.groupRouteId) || [];
@@ -542,7 +596,8 @@ export async function buildRouteGraphSourceFromCurrentProjectionTable(
   const sourceModelsByRouteId = new Map<number, string[]>();
   const endpointStableTargetsByRouteId = new Map<number, Array<Record<string, unknown>>>();
   const endpointLocalRefsByRouteId = new Map<number, Array<Record<string, unknown>>>();
-  for (const channel of routeChannels) {
+  const supplyEndpointSpecsByRouteId = new Map<number, Array<Record<string, unknown>>>();
+  for (const channel of routeEndpointTargets) {
     const sourceModel = String(channel.sourceModel || '').trim();
     const account = accountById.get(channel.accountId) || null;
     const token = channel.tokenId ? tokenById.get(channel.tokenId) || null : null;
@@ -566,23 +621,24 @@ export async function buildRouteGraphSourceFromCurrentProjectionTable(
     };
     const localRef = {
       localRouteId: channel.routeId,
-      routeChannelId: channel.id,
+      routeTargetId: channel.id,
       accountId: channel.accountId,
       tokenId: channel.tokenId,
       oauthRouteUnitId: channel.oauthRouteUnitId,
     };
     const existingTargets = targetsByRouteId.get(channel.routeId) || [];
-    existingTargets.push({
-      channelId: String(channel.id),
+    const target = {
+      targetId: String(channel.id),
       model: sourceModel,
       modelSource: sourceModel ? 'fixed' : 'request',
       accountId: channel.accountId,
       tokenId: channel.tokenId,
+      siteId: site?.id ?? null,
       weight: channel.weight,
       priority: channel.priority,
       metadata: {
         ...localRef,
-        routeChannelId: channel.id,
+        routeTargetId: channel.id,
         endpointIdentity: stableEndpointIdentity,
         oauthRouteUnitId: channel.oauthRouteUnitId,
         enabled: channel.enabled !== false,
@@ -593,13 +649,21 @@ export async function buildRouteGraphSourceFromCurrentProjectionTable(
         cooldownLevel: channel.cooldownLevel || 0,
         cooldownUntil: channel.cooldownUntil || null,
       },
-    });
+    };
+    existingTargets.push(target);
     targetsByRouteId.set(channel.routeId, existingTargets);
     const existingLocalRefs = endpointLocalRefsByRouteId.get(channel.routeId) || [];
     existingLocalRefs.push(localRef);
     endpointLocalRefsByRouteId.set(channel.routeId, existingLocalRefs);
     const existingIdentities = endpointStableTargetsByRouteId.get(channel.routeId) || [];
     endpointStableTargetsByRouteId.set(channel.routeId, [...existingIdentities, stableEndpointIdentity]);
+    const existingSupplySpecs = supplyEndpointSpecsByRouteId.get(channel.routeId) || [];
+    existingSupplySpecs.push({
+      endpointIdentity: stableEndpointIdentity,
+      endpointLocalRefs: [localRef],
+      targets: [target],
+    });
+    supplyEndpointSpecsByRouteId.set(channel.routeId, existingSupplySpecs);
     if (!sourceModel) {
       continue;
     }
@@ -608,10 +672,10 @@ export async function buildRouteGraphSourceFromCurrentProjectionTable(
     sourceModelsByRouteId.set(channel.routeId, existing);
   }
   const availableModelsByAccountId = new Map<number, string[]>();
-  if (accountIdsWithRouteChannels.length > 0) {
+  if (accountIdsWithRouteEndpointTargets.length > 0) {
     const availabilityRows = await db.select().from(schema.modelAvailability).all();
     for (const row of availabilityRows) {
-      if (!row.available || !accountIdsWithRouteChannels.includes(row.accountId)) continue;
+      if (!row.available || !accountIdsWithRouteEndpointTargets.includes(row.accountId)) continue;
       const modelName = String(row.modelName || '').trim();
       if (!modelName) continue;
       const existing = availableModelsByAccountId.get(row.accountId) || [];
@@ -619,18 +683,28 @@ export async function buildRouteGraphSourceFromCurrentProjectionTable(
       availableModelsByAccountId.set(row.accountId, existing);
     }
   }
-  for (const channel of routeChannels) {
-    if (sourceModelsByRouteId.has(channel.routeId)) continue;
-    const accountModels = availableModelsByAccountId.get(channel.accountId) || [];
-    const route = routes.find((item) => item.id === channel.routeId);
-    const routeDisplayName = typeof route?.displayName === 'string' ? route.displayName.trim() : '';
-    const exactRouteModel = routeDisplayName && !/[*?]/.test(routeDisplayName) && !routeDisplayName.startsWith('re:')
-      ? routeDisplayName
-      : '';
-    const inferredModel = exactRouteModel || (accountModels.length === 1 ? accountModels[0] : '');
+  for (const route of routes) {
+    if (sourceModelsByRouteId.has(route.id)) continue;
+    const routeTargets = routeEndpointTargets.filter((channel) => channel.routeId === route.id);
+    if (routeTargets.length === 0) continue;
+    const routeAccountModelSet = new Set<string>();
+    for (const target of routeTargets) {
+      for (const model of availableModelsByAccountId.get(target.accountId) || []) {
+        routeAccountModelSet.add(model);
+      }
+    }
+    const routeAccountModels = Array.from(routeAccountModelSet);
+    const sourceRouteIds = sourceRouteIdsByGroupRouteId.get(route.id) || [];
+    const previous = routeOverrides.get(route.id) ?? previousRouteBindingByRouteId.get(route.id);
+    const inferredModel = inferRouteTableExactModel({
+      route,
+      previous,
+      isExplicitGroup: sourceRouteIds.length > 0,
+      accountModels: routeAccountModels,
+    });
     if (!inferredModel) continue;
-    sourceModelsByRouteId.set(channel.routeId, [inferredModel]);
-    const inferredTargets = endpointStableTargetsByRouteId.get(channel.routeId) || [];
+    sourceModelsByRouteId.set(route.id, [inferredModel]);
+    const inferredTargets = endpointStableTargetsByRouteId.get(route.id) || [];
     let inferredIdentityChanged = false;
     const nextInferredTargets = inferredTargets.map((target) => {
       if (String(target.model || '').trim()) return target;
@@ -638,11 +712,11 @@ export async function buildRouteGraphSourceFromCurrentProjectionTable(
       return { ...target, model: inferredModel };
     });
     if (inferredIdentityChanged) {
-      endpointStableTargetsByRouteId.set(channel.routeId, nextInferredTargets);
+      endpointStableTargetsByRouteId.set(route.id, nextInferredTargets);
     }
-    const targets = targetsByRouteId.get(channel.routeId) || [];
+    const targets = targetsByRouteId.get(route.id) || [];
     for (const target of targets) {
-      if (target.channelId === String(channel.id) && typeof target.model === 'string' && !target.model) {
+      if (typeof target.model === 'string' && !target.model) {
         target.model = inferredModel;
         target.modelSource = 'fixed';
         const metadata = target.metadata && typeof target.metadata === 'object' && !Array.isArray(target.metadata)
@@ -656,12 +730,53 @@ export async function buildRouteGraphSourceFromCurrentProjectionTable(
         }
       }
     }
+    const nextSupplySpecs = (supplyEndpointSpecsByRouteId.get(route.id) || []).map((spec) => {
+      const endpointIdentity = spec.endpointIdentity && typeof spec.endpointIdentity === 'object' && !Array.isArray(spec.endpointIdentity)
+        ? {
+          ...(spec.endpointIdentity as Record<string, unknown>),
+          model: String((spec.endpointIdentity as Record<string, unknown>).model || '').trim() || inferredModel,
+        }
+        : spec.endpointIdentity;
+      const specTargets = Array.isArray(spec.targets)
+        ? spec.targets.map((target) => {
+          if (!target || typeof target !== 'object' || Array.isArray(target)) return target;
+          const targetRecord = target as Record<string, unknown>;
+          if (String(targetRecord.model || '').trim()) return targetRecord;
+          const metadata = targetRecord.metadata && typeof targetRecord.metadata === 'object' && !Array.isArray(targetRecord.metadata)
+            ? targetRecord.metadata as Record<string, unknown>
+            : {};
+          const targetIdentity = metadata.endpointIdentity && typeof metadata.endpointIdentity === 'object' && !Array.isArray(metadata.endpointIdentity)
+            ? metadata.endpointIdentity as Record<string, unknown>
+            : null;
+          return {
+            ...targetRecord,
+            model: inferredModel,
+            modelSource: 'fixed',
+            metadata: targetIdentity
+              ? {
+                ...metadata,
+                endpointIdentity: {
+                  ...targetIdentity,
+                  model: String(targetIdentity.model || '').trim() || inferredModel,
+                },
+              }
+              : metadata,
+          };
+        })
+        : spec.targets;
+      return {
+        ...spec,
+        endpointIdentity,
+        targets: specTargets,
+      };
+    });
+    supplyEndpointSpecsByRouteId.set(route.id, nextSupplySpecs);
   }
   return buildRouteGraphSourceFromLegacyRoutes(routes.map((route) => {
     const sourceRouteIds = sourceRouteIdsByGroupRouteId.get(route.id) || [];
     const isExplicitGroup = sourceRouteIds.length > 0;
     const sourceModels = sourceModelsByRouteId.get(route.id) || [];
-    const previous = routeOverrides.get(route.id) ?? previousProjectionByRouteId.get(route.id);
+    const previous = routeOverrides.get(route.id) ?? previousRouteBindingByRouteId.get(route.id);
     const previousMatch = previous?.match;
     const visibility = previous?.visibility || 'public';
     const inferredPattern = previousMatch?.requestedModelPattern
@@ -682,57 +797,58 @@ export async function buildRouteGraphSourceFromCurrentProjectionTable(
       },
       backend: isExplicitGroup
         ? { kind: 'routes', routeIds: sourceRouteIds }
-        : { kind: 'channels' },
+        : { kind: 'supply' },
       visibility,
       ownership: route.ownership || 'auto_generated',
       endpointIdentity: buildRouteEndpointIdentityFromTargets(endpointStableTargetsByRouteId.get(route.id) || [], endpointIdentityFallbackModel),
       endpointLocalRefs: endpointLocalRefsByRouteId.get(route.id) || [],
       targets: targetsByRouteId.get(route.id) || [],
+      supplyEndpointSpecs: supplyEndpointSpecsByRouteId.get(route.id) || [],
     };
   }));
 }
 
-export async function reconcileActiveGraphWithProjectionTable(
+export async function reconcileActiveGraphWithRouteTable(
   active: ActiveRouteGraphVersion,
   routeOverrides: Map<number, { match: RouteGraphMatchSpec; backend: RouteGraphBackendSpec; visibility?: RouteGraphVisibility }> = new Map(),
   options: { allowDiagnostics?: boolean } = {},
 ): Promise<ActiveRouteGraphVersion> {
-  const projectionSource = await buildRouteGraphSourceFromCurrentProjectionTable(active.sourceGraph, routeOverrides);
-  const keptNodes = active.sourceGraph.nodes.filter((node) => !isProjectionOwnedNodeId(node.id));
-  const keptMacros = (active.sourceGraph.macros || []).filter((macro) => !isProjectionOwnedMacroId(macro.id));
-  const nextNodes = [...keptNodes, ...projectionSource.nodes];
+  const syncedRouteSource = await buildRouteGraphSourceFromRouteTable(active.sourceGraph, routeOverrides);
+  const keptNodes = active.sourceGraph.nodes.filter((node) => !isRouteTableSyncedNodeId(node.id));
+  const keptMacros = (active.sourceGraph.macros || []).filter((macro) => !isRouteTableSyncedMacroId(macro.id));
+  const nextNodes = [...keptNodes, ...syncedRouteSource.nodes];
   const nextNodeIds = new Set(nextNodes.map((node) => node.id));
-  for (const macro of [...keptMacros, ...(projectionSource.macros || [])]) {
+  for (const macro of [...keptMacros, ...(syncedRouteSource.macros || [])]) {
     nextNodeIds.add(macroSemanticGraphNodeId(macro.id));
   }
-  const projectionEdgeIds = new Set(projectionSource.edges.map((edge) => edge.id));
+  const syncedRouteEdgeIds = new Set(syncedRouteSource.edges.map((edge) => edge.id));
   const keptEdges = active.sourceGraph.edges.filter((edge) => (
     nextNodeIds.has(edge.sourceNodeId)
     && nextNodeIds.has(edge.targetNodeId)
-    && !projectionEdgeIds.has(edge.id)
+    && !syncedRouteEdgeIds.has(edge.id)
   ));
   const nextSource = normalizeRouteGraphSource({
     ...active.sourceGraph,
     nodes: nextNodes,
-    edges: [...keptEdges, ...projectionSource.edges],
-    macros: [...keptMacros, ...(projectionSource.macros || [])],
+    edges: [...keptEdges, ...syncedRouteSource.edges],
+    macros: [...keptMacros, ...(syncedRouteSource.macros || [])],
   });
   if (JSON.stringify(nextSource) === JSON.stringify(active.sourceGraph)) {
     if (!options.allowDiagnostics) {
       const compiled = compileRouteGraphSource(nextSource);
       if (!compiled.ok) {
-        throw new RouteGraphProjectionValidationError(compiled.diagnostics);
+        throw new RouteGraphSyncValidationError(compiled.diagnostics);
       }
     }
     return active;
   }
   const published = await publishRouteGraphSource({
     sourceGraph: nextSource,
-    createdBy: 'projection-reconcile',
+    createdBy: 'route-table-sync',
     allowDiagnostics: options.allowDiagnostics,
   });
   if (!published.ok) {
-    throw new RouteGraphProjectionValidationError(published.diagnostics);
+    throw new RouteGraphSyncValidationError(published.diagnostics);
   }
   return published.version;
 }
@@ -799,7 +915,7 @@ export async function publishRouteGraphSource(input: {
 
 export async function ensureActiveRouteGraphVersion(): Promise<ActiveRouteGraphVersion> {
   const active = await getActiveRouteGraphVersion();
-  if (active) return await reconcileActiveGraphWithProjectionTable(active, new Map(), { allowDiagnostics: true });
+  if (active) return await reconcileActiveGraphWithRouteTable(active, new Map(), { allowDiagnostics: true });
 
   const sourceGraph = await loadLegacyRouteGraphSource();
   const published = await publishRouteGraphSource({
@@ -810,7 +926,7 @@ export async function ensureActiveRouteGraphVersion(): Promise<ActiveRouteGraphV
   if (!published.ok) {
     throw new Error(`Cannot bootstrap route graph: ${published.diagnostics.map((item) => item.message).join('; ')}`);
   }
-  return await reconcileActiveGraphWithProjectionTable(published.version, new Map(), { allowDiagnostics: true });
+  return await reconcileActiveGraphWithRouteTable(published.version, new Map(), { allowDiagnostics: true });
 }
 
 export async function getActiveRouteGraphVersion(): Promise<ActiveRouteGraphVersion | null> {
@@ -1021,7 +1137,7 @@ export async function rebaseRouteGraphDraft(): Promise<RouteGraphDraftState> {
   });
 }
 
-export async function loadRouteGraphLegacyProjections(): Promise<Map<number, RouteGraphLegacyProjection>> {
+export async function loadRouteGraphRouteTableBindings(): Promise<Map<number, RouteGraphRouteTableBinding>> {
   const bindings = await loadActiveRouteGraphRouteBindings();
   return new Map(Array.from(bindings.entries()).map(([routeId, binding]) => [routeId, {
     routeId: binding.routeId,
@@ -1045,10 +1161,10 @@ export async function listRouteEndpointCatalog(): Promise<RouteEndpointCatalogIt
   const nodesById = new Map(Object.entries(compiledGraph.nodesById || {}));
   const routeRows = await db.select().from(schema.tokenRoutes).all();
   const routeById = new Map<number, typeof routeRows[number]>(routeRows.map((route) => [route.id, route]));
-  const routeChannels = await db.select().from(schema.routeChannels).all();
+  const routeEndpointTargets = await db.select().from(schema.routeEndpointTargets).all();
   const routeSiteNames = new Map<number, Set<string>>();
   const routeModels = new Map<number, Set<string>>();
-  const accountIds = Array.from(new Set(routeChannels.map((channel) => channel.accountId).filter((id): id is number => Number.isFinite(Number(id)))));
+  const accountIds = Array.from(new Set(routeEndpointTargets.map((channel) => channel.accountId).filter((id): id is number => Number.isFinite(Number(id)))));
   const accounts = accountIds.length > 0
     ? await db.select().from(schema.accounts).all()
     : [];
@@ -1057,7 +1173,7 @@ export async function listRouteEndpointCatalog(): Promise<RouteEndpointCatalogIt
     : [];
   const accountById = new Map<number, typeof accounts[number]>(accounts.map((account) => [account.id, account]));
   const siteById = new Map<number, typeof sites[number]>(sites.map((site) => [site.id, site]));
-  for (const channel of routeChannels) {
+  for (const channel of routeEndpointTargets) {
     const model = String(channel.sourceModel || '').trim();
     if (model) {
       const models = routeModels.get(channel.routeId) || new Set<string>();
@@ -1158,7 +1274,7 @@ export async function loadActiveRouteGraphRouteBindings(): Promise<Map<number, R
   const active = await ensureActiveRouteGraphVersion();
   const macroVisibilityByRouteId = new Map<number, RouteGraphVisibility>();
   for (const macro of active.sourceGraph.macros || []) {
-    const routeId = routeIdFromProjectionMacroId(macro.id);
+    const routeId = routeIdFromRouteTableMacroId(macro.id);
     if (!routeId) continue;
     macroVisibilityByRouteId.set(routeId, macro.visibility === 'internal' ? 'internal' : 'public');
   }
@@ -1173,7 +1289,7 @@ export async function loadActiveRouteGraphRouteBindings(): Promise<Map<number, R
     if (!incoming.has(edge.targetNodeId)) incoming.set(edge.targetNodeId, []);
     incoming.get(edge.targetNodeId)!.push(edge);
   }
-  const projection = new Map<number, RouteGraphRouteBinding>();
+  const binding = new Map<number, RouteGraphRouteBinding>();
   for (const endpoint of compiled.compiled.routeEndpoints || []) {
     if (endpoint.endpointKind !== 'route_product') continue;
     const routeId = Number(endpoint.routeId);
@@ -1193,7 +1309,7 @@ export async function loadActiveRouteGraphRouteBindings(): Promise<Map<number, R
           .filter((candidateEdge) => candidateEdge.targetPortId === 'route.in');
         for (const candidateEdge of routeCandidateEdges) {
           const source = byEntryId.get(candidateEdge.sourceNodeId);
-          sourceRouteIds.push(...routeIdsFromProjectionCandidateNode(source));
+          sourceRouteIds.push(...routeIdsFromRouteTableCandidateNode(source));
         }
         continue;
       }
@@ -1211,13 +1327,13 @@ export async function loadActiveRouteGraphRouteBindings(): Promise<Map<number, R
     const modelPattern = routeMode === 'explicit_group'
       ? (endpoint.match.displayName || endpoint.match.requestedModelPattern || '')
       : (endpoint.match.requestedModelPattern || endpoint.match.displayName || '');
-    projection.set(routeId, {
+    binding.set(routeId, {
       routeId,
       entryNodeId: endpoint.nodeId,
       match: endpoint.match,
       backend: routeMode === 'explicit_group'
         ? { kind: 'routes', routeIds: groupSourceRouteIds }
-        : { kind: 'channels' },
+        : { kind: 'supply' },
       visibility: macroVisibilityByRouteId.get(routeId) || (endpoint.exposure === 'internal' ? 'internal' : 'public'),
       sourceRouteIds: routeMode === 'explicit_group' ? groupSourceRouteIds : [],
       exposedModelName: modelPattern,
@@ -1225,16 +1341,16 @@ export async function loadActiveRouteGraphRouteBindings(): Promise<Map<number, R
       routeMode,
     });
   }
-  if (projection.size > 0) return projection;
+  if (binding.size > 0) return binding;
   for (const node of primitiveSource.nodes) {
     if (node.type !== 'entry') continue;
     const routeId = Number(node.match.routeId || String(node.id).replace(/^entry:legacy:/, ''));
     if (!Number.isFinite(routeId) || routeId <= 0) continue;
-    projection.set(routeId, {
+    binding.set(routeId, {
       routeId,
       entryNodeId: node.id,
       match: node.match,
-      backend: { kind: 'channels' },
+      backend: { kind: 'supply' },
       visibility: 'public',
       sourceRouteIds: [],
       exposedModelName: node.match.requestedModelPattern || node.match.displayName || '',
@@ -1242,5 +1358,5 @@ export async function loadActiveRouteGraphRouteBindings(): Promise<Map<number, R
       routeMode: 'pattern',
     });
   }
-  return projection;
+  return binding;
 }

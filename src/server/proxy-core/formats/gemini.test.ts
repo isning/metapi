@@ -268,7 +268,7 @@ describe('gemini native proxy routes', () => {
     recordSuccessMock.mockResolvedValue(undefined);
     recordFailureMock.mockResolvedValue(undefined);
     resetUpstreamEndpointRuntimeState();
-    explainSelectionMock.mockResolvedValue({ selectedChannelId: 11 });
+    explainSelectionMock.mockResolvedValue({ selectedTargetId: 11 });
     isModelAllowedByPolicyOrAllowedRoutesMock.mockResolvedValue(true);
   });
 
@@ -427,8 +427,8 @@ describe('gemini native proxy routes', () => {
     });
     explainSelectionMock.mockImplementation(async (modelName: string) => (
       modelName === 'gemini-2.5-pro'
-        ? { selectedChannelId: 21 }
-        : { selectedChannelId: undefined }
+        ? { selectedTargetId: 21 }
+        : { selectedTargetId: undefined }
     ));
 
     const response = await app.inject({
@@ -995,7 +995,7 @@ describe('gemini native proxy routes', () => {
     expect(safeUpdateSurfaceProxyDebugSelectionMock).toHaveBeenCalledWith(
       expect.objectContaining({ traceId: 801 }),
       expect.objectContaining({
-        selectedChannelId: 41,
+        selectedTargetId: 41,
         selectedSitePlatform: 'openai',
       }),
     );
@@ -1523,8 +1523,8 @@ describe('gemini native proxy routes', () => {
     isModelAllowedByPolicyOrAllowedRoutesMock.mockImplementation(async (modelName: string) => modelName === 'gemini-2.5-flash');
     explainSelectionMock.mockImplementation(async (modelName: string) => (
       modelName === 'gemini-2.5-flash'
-        ? { selectedChannelId: 11 }
-        : { selectedChannelId: undefined }
+        ? { selectedTargetId: 11 }
+        : { selectedTargetId: undefined }
     ));
     fetchMock.mockResolvedValue(new Response(JSON.stringify({
       models: [
@@ -1599,7 +1599,7 @@ describe('gemini native proxy routes', () => {
     expect(dbInsertMock).toHaveBeenCalledTimes(1);
     expect(dbInsertValuesMock).toHaveBeenCalledWith(expect.objectContaining({
       routeId: 22,
-      channelId: 11,
+      targetId: 11,
       accountId: 33,
       modelRequested: 'gemini-2.5-flash',
       modelActual: 'gemini-2.5-flash',
@@ -2355,14 +2355,14 @@ describe('gemini native proxy routes', () => {
     expect(response.statusCode).toBe(200);
     expect(dbInsertMock).toHaveBeenCalledTimes(2);
     expect(dbInsertValuesMock).toHaveBeenNthCalledWith(1, expect.objectContaining({
-      channelId: 11,
+      targetId: 11,
       status: 'failed',
       httpStatus: 500,
       retryCount: 0,
       errorMessage: '[downstream:/v1beta/models/gemini-2.5-flash:streamGenerateContent] [upstream:/v1beta/models/gemini-2.5-flash:streamGenerateContent] {\"error\":{\"message\":\"upstream unavailable\"}}',
     }));
     expect(dbInsertValuesMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
-      channelId: 12,
+      targetId: 12,
       status: 'success',
       httpStatus: 200,
       retryCount: 1,

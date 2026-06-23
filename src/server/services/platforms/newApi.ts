@@ -3,6 +3,11 @@ import type { RequestInit as UndiciRequestInit } from 'undici';
 import { createContext, runInContext } from 'node:vm';
 import { withSiteProxyRequestInit } from '../siteProxy.js';
 import { fetchJsonWithShieldCookieRetry } from './newApiShield.js';
+import {
+  normalizeCommonPricingPayload,
+  type UpstreamPricingCatalog,
+  type UpstreamPricingCredential,
+} from '../upstreamPricingCatalog.js';
 
 export class NewApiAdapter extends BasePlatformAdapter {
   readonly platformName: string = 'new-api';
@@ -1252,6 +1257,49 @@ export class NewApiAdapter extends BasePlatformAdapter {
     }
 
     return [];
+  }
+
+  private async fetchPricingCatalogByCookie(
+    baseUrl: string,
+    token: string,
+    platformUserId?: number,
+  ): Promise<UpstreamPricingCatalog | null> {
+    for (const cookie of this.buildCookieCandidates(token)) {
+      try {
+        const headers: Record<string, string> = { Cookie: cookie };
+        if (platformUserId) headers['New-Api-User'] = String(platformUserId);
+        const payload = await this.fetchJsonRaw<any>(`${baseUrl}/api/pricing`, { headers });
+        const catalog = normalizeCommonPricingPayload(payload);
+        if (catalog) return catalog;
+      } catch {}
+    }
+    return null;
+  }
+
+  override async getPricingCatalog(
+    baseUrl: string,
+    credential: UpstreamPricingCredential,
+  ): Promise<UpstreamPricingCatalog | null> {
+    const token = (credential.token || '').trim();
+    const shouldPreferCookie = !!token && (this.platformName === 'anyrouter' || token.includes('='));
+    const platformUserId = credential.platformUserId;
+
+    if (shouldPreferCookie) {
+      const cookieCatalog = await this.fetchPricingCatalogByCookie(baseUrl, token, platformUserId || undefined);
+      if (cookieCatalog) return cookieCatalog;
+    }
+
+    try {
+      const headers = token ? this.authHeaders(token, platformUserId || undefined) : {};
+      const payload = await this.fetchJson<any>(`${baseUrl}/api/pricing`, { headers });
+      const catalog = normalizeCommonPricingPayload(payload);
+      if (catalog) return catalog;
+    } catch {}
+
+    if (token && !shouldPreferCookie) {
+      return this.fetchPricingCatalogByCookie(baseUrl, token, platformUserId || undefined);
+    }
+    return null;
   }
 
   async getApiToken(baseUrl: string, accessToken: string, platformUserId?: number): Promise<string | null> {

@@ -3,8 +3,10 @@ import { db, schema } from '../db/index.js';
 import { getLocalRangeStartUtc } from './localTimeService.js';
 import { evaluateActiveRouteGraphForModel, type RouteGraphRuntimeTraceStep } from './routeGraphRuntimeService.js';
 import { ensureActiveRouteGraphVersion } from './routeGraphService.js';
-import { estimateRouteEntryPricing, type EntryPricingEstimate } from './routeEntryPricingService.js';
-import { tokenRouter, type RouteDecisionExplanation } from './tokenRouter.js';
+import {
+  estimateRouteEntryPricing,
+  type EntryPricingEstimate,
+} from './routeEntryPricingService.js';
 import {
   resolveDispatchUpstreamCompatibilityPolicy,
 } from './upstreamCompatibilityPolicyResolver.js';
@@ -16,12 +18,7 @@ export type RouteFlowNodeKind =
   | 'dispatcher'
   | 'filter'
   | 'route_endpoint'
-  | 'model_endpoint'
-  | 'synthetic_endpoint'
-  | 'route'
-  | 'transform'
-  | 'pool'
-  | 'channel';
+  | 'synthetic_endpoint';
 export type RouteFlowVisibility = 'public' | 'internal' | 'terminal';
 export type RouteFlowDiagnosticLevel = 'info' | 'warn' | 'error';
 
@@ -75,7 +72,6 @@ export type CompiledRouteFlow = {
   actualModel: string;
   matched: boolean;
   selectedRouteId?: number | null;
-  selectedChannelId?: number | null;
   selectedAccountId?: number | null;
   routePattern?: string | null;
   summary: string[];
@@ -88,7 +84,7 @@ export type CompiledRouteFlow = {
   compatibilityPolicy?: {
     resolved: ResolvedUpstreamCompatibilityPolicy;
     layers: Array<{
-      source: 'site' | 'account' | 'token' | 'model_endpoint' | 'target';
+      source: 'site' | 'account' | 'token' | 'endpoint_policy' | 'target';
       configured: boolean;
     }>;
   };
@@ -103,68 +99,120 @@ type ChannelHealth = {
   history: RouteFlowNode['history'];
 };
 
-type RouteChannelRow = typeof schema.routeChannels.$inferSelect;
+type RuntimeStatsSourceRow = typeof schema.routeEndpointTargets.$inferSelect;
+type RuntimeCredentialIdentity = {
+  targetId: number;
+  routeId: number;
+  sourceModel: string | null;
+  siteId: number;
+  siteName: string;
+  siteUrl: string;
+  sitePlatform: string;
+  accountId: number;
+  accountUsername: string | null;
+  tokenId: number | null;
+  tokenName: string | null;
+  tokenGroup: string | null;
+};
 
 function roundRate(successCount: number, totalCalls: number): number | null {
   if (totalCalls <= 0) return null;
   return Math.round((successCount / totalCalls) * 1000) / 10;
 }
 
-function buildRouteBadges(decision: RouteDecisionExplanation): string[] {
-  const badges: string[] = [];
-  if (typeof decision.routeId === 'number') badges.push(`route #${decision.routeId}`);
-  if (decision.matched) badges.push('matched');
-  if (decision.selectedChannelId) badges.push('selected');
-  return badges;
-}
-
-function buildCandidateBadges(candidate: RouteDecisionExplanation['candidates'][number]): string[] {
-  const badges = [
-    `P${candidate.priority}`,
-    `W${candidate.weight}`,
-    `${Math.round(candidate.probability * 10) / 10}%`,
-  ];
-  if (candidate.eligible) badges.push('eligible');
-  if (candidate.recentlyFailed) badges.push('recent-fail');
-  if (candidate.avoidedByRecentFailure) badges.push('cooldown-avoid');
-  return badges;
-}
-
 function buildGraphCandidateBadges(candidate: NonNullable<EntryPricingEstimate>['candidates'][number]): string[] {
   const badges = [
     candidate.priority != null ? `P${candidate.priority}` : null,
     candidate.weight != null ? `W${candidate.weight}` : null,
-    `${Math.round(candidate.probability * 1000) / 10}%`,
+    candidate.probability == null ? null : `${Math.round(candidate.probability * 1000) / 10}%`,
     candidate.matchedScope || null,
   ].filter((badge): badge is string => !!badge);
   return badges.length > 0 ? badges : ['candidate'];
 }
 
 function graphCandidatePercent(candidate: NonNullable<EntryPricingEstimate>['candidates'][number]): string {
+  if (candidate.probability == null) return 'N/A';
   return `${Math.round(candidate.probability * 1000) / 10}%`;
+}
+
+function trimDisplay(value: string | null | undefined): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function endpointCredentialLabel(input: {
+  candidate: NonNullable<EntryPricingEstimate>['candidates'][number];
+  identity?: RuntimeCredentialIdentity;
+}): string {
+  const accountId = input.identity?.accountId ?? input.candidate.accountId;
+  const tokenId = input.identity?.tokenId ?? input.candidate.tokenId;
+  const accountLabel = trimDisplay(input.identity?.accountUsername)
+    || (accountId != null ? `account #${accountId}` : 'account');
+  const tokenLabel = trimDisplay(input.identity?.tokenName)
+    || trimDisplay(input.identity?.tokenGroup)
+    || (tokenId != null ? `token #${tokenId}` : '');
+  return tokenLabel ? `${accountLabel} / ${tokenLabel}` : accountLabel;
+}
+
+function graphCandidateDisplay(input: {
+  candidate: NonNullable<EntryPricingEstimate>['candidates'][number];
+  identity?: RuntimeCredentialIdentity;
+  supplyEndpointId?: string | null;
+}): { label: string; subtitle: string } {
+  const siteId = input.identity?.siteId ?? input.candidate.siteId;
+  const siteLabel = trimDisplay(input.identity?.siteName)
+    || trimDisplay(input.identity?.siteUrl)
+    || (siteId != null ? `site #${siteId}` : 'upstream');
+  const modelName = input.candidate.modelName || trimDisplay(input.identity?.sourceModel) || 'upstream target';
+  const details = [
+    modelName,
+    input.supplyEndpointId ? `endpoint ${input.supplyEndpointId}` : null,
+    input.candidate.targetId ? `target ${input.candidate.targetId}` : null,
+    input.identity?.routeId != null ? `route #${input.identity.routeId}` : null,
+    trimDisplay(input.identity?.sitePlatform) || null,
+  ].filter((item): item is string => !!item);
+  return {
+    label: `${siteLabel} · ${endpointCredentialLabel(input)}`,
+    subtitle: details.join(' · '),
+  };
+}
+
+function targetIdentityValue(value: unknown): string {
+  return typeof value === 'string' || typeof value === 'number' ? String(value).trim() : '';
+}
+
+function candidateEndpointIdentity(candidate: NonNullable<EntryPricingEstimate>['candidates'][number]): string {
+  return targetIdentityValue(candidate.sourceRef?.endpointId) || targetIdentityValue(candidate.endpointId);
+}
+
+function candidateRuntimeTargetId(candidate: NonNullable<EntryPricingEstimate>['candidates'][number]): number | null {
+  const direct = Number(candidate.targetId);
+  if (Number.isFinite(direct) && direct > 0) return Math.trunc(direct);
+  const derivedTargetMatch = /:target:\d+:(\d+)$/.exec(candidate.targetId);
+  if (!derivedTargetMatch) return null;
+  const parsed = Number(derivedTargetMatch[1]);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : null;
+}
+
+function candidateMatchesSelectedEndpoint(input: {
+  candidate: NonNullable<EntryPricingEstimate>['candidates'][number];
+  target: NonNullable<Awaited<ReturnType<typeof evaluateActiveRouteGraphForModel>>>['selectedEndpointTarget'];
+}): boolean {
+  const targetEndpointId = targetIdentityValue(input.target?.sourceRef?.endpointId) || targetIdentityValue(input.target?.endpointId);
+  return !!targetEndpointId && candidateEndpointIdentity(input.candidate) === targetEndpointId;
 }
 
 function routeFlowNodeStatusForCandidate(input: {
   candidate: NonNullable<EntryPricingEstimate>['candidates'][number];
   target: NonNullable<Awaited<ReturnType<typeof evaluateActiveRouteGraphForModel>>>['selectedEndpointTarget'];
   health: ChannelHealth;
-  channel?: RouteChannelRow;
+  runtimeStatsSource?: RuntimeStatsSourceRow;
 }): RouteFlowNode['status'] {
-  if (input.candidate.channelId === input.target?.channelId) return 'selected';
-  if ((input.channel?.consecutiveFailCount ?? 0) > 0 || input.health.failureCount > input.health.successCount) return 'blocked';
+  if (candidateMatchesSelectedEndpoint({
+    candidate: input.candidate,
+    target: input.target,
+  })) return 'selected';
+  if ((input.runtimeStatsSource?.consecutiveFailCount ?? 0) > 0 || input.health.failureCount > input.health.successCount) return 'blocked';
   return 'available';
-}
-
-function graphEndpointLabel(input: {
-  endpointId: string;
-  nodeId: string;
-  modelName: string;
-  routeId?: number | null;
-}): string {
-  const sourceName = input.endpointId || input.nodeId;
-  if (sourceName && sourceName !== input.modelName) return sourceName;
-  if (input.routeId) return `route ${input.routeId}`;
-  return input.modelName || input.nodeId || 'supply endpoint';
 }
 
 function findGraphDispatcherNodeId(input: {
@@ -185,7 +233,6 @@ function routeGraphTraceKind(step: RouteGraphRuntimeTraceStep): RouteFlowNodeKin
   if (step.nodeType === 'dispatcher') return 'dispatcher';
   if (step.nodeType === 'filter' || step.appliedFilters.length > 0) return 'filter';
   if (step.nodeType === 'route_endpoint') return 'route_endpoint';
-  if (step.nodeType === 'model_endpoint') return 'model_endpoint';
   if (step.nodeType === 'synthetic_endpoint') return 'synthetic_endpoint';
   return 'route_endpoint';
 }
@@ -260,28 +307,52 @@ function appendGraphTraceFlow(input: {
     });
   }
 
-  if (input.trace.terminalNodeId) {
-    input.terminalLinkSource.current = `graph:${input.trace.terminalNodeId}`;
-  } else {
-    input.terminalLinkSource.current = previousStepNodeId;
-  }
+  input.terminalLinkSource.current = previousStepNodeId;
 }
 
-async function loadChannelRows(channelIds: number[]): Promise<Map<number, RouteChannelRow>> {
-  const uniqueIds = Array.from(new Set(channelIds.filter((id) => Number.isFinite(id) && id > 0)));
-  if (uniqueIds.length === 0) return new Map<number, RouteChannelRow>();
+async function loadRuntimeStatsSources(targetIds: number[]): Promise<Map<number, RuntimeStatsSourceRow>> {
+  const uniqueIds = Array.from(new Set(targetIds.filter((id) => Number.isFinite(id) && id > 0)));
+  if (uniqueIds.length === 0) return new Map<number, RuntimeStatsSourceRow>();
 
-  const rows = await db.select().from(schema.routeChannels)
-    .where(inArray(schema.routeChannels.id, uniqueIds))
+  const rows = await db.select().from(schema.routeEndpointTargets)
+    .where(inArray(schema.routeEndpointTargets.id, uniqueIds))
     .all();
-  return new Map(rows.map((row) => [row.id, row as RouteChannelRow]));
+  return new Map(rows.map((row) => [row.id, row as RuntimeStatsSourceRow]));
 }
 
-async function loadChannelHealth(model: string, channelIds: number[]): Promise<Map<number, ChannelHealth>> {
-  const uniqueIds = Array.from(new Set(channelIds.filter((id) => Number.isFinite(id) && id > 0)));
+async function loadRuntimeCredentialIdentities(targetIds: number[]): Promise<Map<number, RuntimeCredentialIdentity>> {
+  const uniqueIds = Array.from(new Set(targetIds.filter((id) => Number.isFinite(id) && id > 0)));
+  if (uniqueIds.length === 0) return new Map<number, RuntimeCredentialIdentity>();
+
+  const rows = await db.select({
+    targetId: schema.routeEndpointTargets.id,
+    routeId: schema.routeEndpointTargets.routeId,
+    sourceModel: schema.routeEndpointTargets.sourceModel,
+    siteId: schema.sites.id,
+    siteName: schema.sites.name,
+    siteUrl: schema.sites.url,
+    sitePlatform: schema.sites.platform,
+    accountId: schema.accounts.id,
+    accountUsername: schema.accounts.username,
+    tokenId: schema.accountTokens.id,
+    tokenName: schema.accountTokens.name,
+    tokenGroup: schema.accountTokens.tokenGroup,
+  })
+    .from(schema.routeEndpointTargets)
+    .innerJoin(schema.accounts, eq(schema.routeEndpointTargets.accountId, schema.accounts.id))
+    .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
+    .leftJoin(schema.accountTokens, eq(schema.routeEndpointTargets.tokenId, schema.accountTokens.id))
+    .where(inArray(schema.routeEndpointTargets.id, uniqueIds))
+    .all();
+
+  return new Map(rows.map((row) => [row.targetId, row]));
+}
+
+async function loadRuntimeEndpointHealth(model: string, targetIds: number[]): Promise<Map<number, ChannelHealth>> {
+  const uniqueIds = Array.from(new Set(targetIds.filter((id) => Number.isFinite(id) && id > 0)));
   const result = new Map<number, ChannelHealth>();
-  for (const channelId of uniqueIds) {
-    result.set(channelId, {
+  for (const targetId of uniqueIds) {
+    result.set(targetId, {
       successCount: 0,
       failureCount: 0,
       totalCalls: 0,
@@ -293,7 +364,7 @@ async function loadChannelHealth(model: string, channelIds: number[]): Promise<M
 
   const since = getLocalRangeStartUtc(7);
   const recentLogs = await db.select({
-    channelId: schema.proxyLogs.channelId,
+    targetId: schema.proxyLogs.targetId,
     status: schema.proxyLogs.status,
     httpStatus: schema.proxyLogs.httpStatus,
     latencyMs: schema.proxyLogs.latencyMs,
@@ -301,7 +372,7 @@ async function loadChannelHealth(model: string, channelIds: number[]): Promise<M
     createdAt: schema.proxyLogs.createdAt,
   }).from(schema.proxyLogs)
     .where(and(
-      inArray(schema.proxyLogs.channelId, uniqueIds),
+      inArray(schema.proxyLogs.targetId, uniqueIds),
       gte(schema.proxyLogs.createdAt, since),
       or(
         eq(schema.proxyLogs.modelRequested, model),
@@ -313,19 +384,19 @@ async function loadChannelHealth(model: string, channelIds: number[]): Promise<M
 
   const latencyTotals = new Map<number, { total: number; samples: number }>();
   for (const log of recentLogs) {
-    const channelId = log.channelId;
-    if (typeof channelId !== 'number') continue;
-    const target = result.get(channelId);
+    const targetId = log.targetId;
+    if (typeof targetId !== 'number') continue;
+    const target = result.get(targetId);
     if (!target) continue;
 
     target.totalCalls += 1;
     if (log.status === 'success') {
       target.successCount += 1;
       if (typeof log.latencyMs === 'number' && log.latencyMs >= 0) {
-        const current = latencyTotals.get(channelId) || { total: 0, samples: 0 };
+        const current = latencyTotals.get(targetId) || { total: 0, samples: 0 };
         current.total += log.latencyMs;
         current.samples += 1;
-        latencyTotals.set(channelId, current);
+        latencyTotals.set(targetId, current);
       }
     } else {
       target.failureCount += 1;
@@ -341,8 +412,8 @@ async function loadChannelHealth(model: string, channelIds: number[]): Promise<M
     }
   }
 
-  for (const [channelId, latency] of latencyTotals.entries()) {
-    const target = result.get(channelId);
+  for (const [targetId, latency] of latencyTotals.entries()) {
+    const target = result.get(targetId);
     if (!target || latency.samples <= 0) continue;
     target.avgLatencyMs = Math.round(latency.total / latency.samples);
   }
@@ -353,7 +424,6 @@ async function loadChannelHealth(model: string, channelIds: number[]): Promise<M
 async function resolveGraphCompatibilityPolicy(input: {
   selection: NonNullable<Awaited<ReturnType<typeof evaluateActiveRouteGraphForModel>>>;
   candidateIdentity?: {
-    channelId?: string | number | null;
     siteId: number | null;
     accountId: number | null;
     tokenId: number | null;
@@ -362,26 +432,9 @@ async function resolveGraphCompatibilityPolicy(input: {
   const selection = input.selection;
   const fallback = input.candidateIdentity || null;
   const target = selection.selectedEndpointTarget;
-  const channelId = Number(target?.channelId ?? fallback?.channelId);
   let siteId = Number(target?.siteId ?? fallback?.siteId);
   let accountId = Number(target?.accountId ?? fallback?.accountId);
   let tokenId = Number(target?.tokenId ?? fallback?.tokenId);
-  if ((!Number.isFinite(siteId) || siteId <= 0 || !Number.isFinite(accountId) || accountId <= 0) && Number.isFinite(channelId) && channelId > 0) {
-    const channelIdentity = await db.select({
-      siteId: schema.accounts.siteId,
-      accountId: schema.routeChannels.accountId,
-      tokenId: schema.routeChannels.tokenId,
-    })
-      .from(schema.routeChannels)
-      .innerJoin(schema.accounts, eq(schema.routeChannels.accountId, schema.accounts.id))
-      .where(eq(schema.routeChannels.id, Math.trunc(channelId)))
-      .get();
-    if (channelIdentity) {
-      siteId = Number(channelIdentity.siteId);
-      accountId = Number(channelIdentity.accountId);
-      tokenId = Number(channelIdentity.tokenId);
-    }
-  }
   const [site, account, token] = await Promise.all([
     Number.isFinite(siteId) && siteId > 0
       ? db.select({ compatibilityPolicy: schema.sites.compatibilityPolicy })
@@ -408,14 +461,14 @@ async function resolveGraphCompatibilityPolicy(input: {
       site,
       account,
       token,
-      modelEndpointCompatibilityPolicy: selection.modelEndpointCompatibilityPolicy,
+      routeEndpointCompatibilityPolicy: selection.routeEndpointCompatibilityPolicy,
       selectedEndpointTarget: target,
     }),
     layers: [
       { source: 'site', configured: !!site?.compatibilityPolicy },
       { source: 'account', configured: !!account?.extraConfig },
       { source: 'token', configured: !!token?.compatibilityPolicy },
-      { source: 'model_endpoint', configured: !!selection.modelEndpointCompatibilityPolicy },
+      { source: 'endpoint_policy', configured: !!selection.routeEndpointCompatibilityPolicy },
       { source: 'target', configured: !!target?.compatibilityPolicy },
     ],
   };
@@ -425,11 +478,14 @@ export async function compileModelRouteFlow(model: string): Promise<CompiledRout
   const requestedModel = model.trim();
   const compiledAt = new Date().toISOString();
   const activeGraph = await ensureActiveRouteGraphVersion();
-  const graphSelection = await evaluateActiveRouteGraphForModel(requestedModel);
-  const theoreticalEntryPricing = await estimateRouteEntryPricing({
-    bundle: activeGraph.compiledGraph.programBundle,
-    requestedModel,
-  });
+  const [graphSelection, staticEntryPricing] = await Promise.all([
+    evaluateActiveRouteGraphForModel(requestedModel),
+    estimateRouteEntryPricing({
+      bundle: activeGraph.compiledGraph.flatProgramBundle || activeGraph.compiledGraph.programBundle,
+      requestedModel,
+    }),
+  ]);
+  const theoreticalEntryPricing = staticEntryPricing;
 
   const nodes: RouteFlowNode[] = [{
     id: 'request',
@@ -447,14 +503,15 @@ export async function compileModelRouteFlow(model: string): Promise<CompiledRout
   const terminalLinkSource = { current: 'request' };
 
   if (graphSelection) {
+    const target = graphSelection.selectedEndpointTarget;
+    const selectedEndpointId = targetIdentityValue(target?.sourceRef?.endpointId) || targetIdentityValue(target?.endpointId);
     const selectedPricingCandidate = theoreticalEntryPricing?.candidates.find((candidate) => (
-      candidate.channelId === graphSelection.selectedEndpointTarget?.channelId
+      candidateEndpointIdentity(candidate) === selectedEndpointId
     )) || theoreticalEntryPricing?.candidates[0] || null;
     const compatibilityPolicy = await resolveGraphCompatibilityPolicy({
       selection: graphSelection,
       candidateIdentity: selectedPricingCandidate
         ? {
-          channelId: selectedPricingCandidate.channelId,
           siteId: selectedPricingCandidate.siteId,
           accountId: selectedPricingCandidate.accountId,
           tokenId: selectedPricingCandidate.tokenId,
@@ -468,76 +525,69 @@ export async function compileModelRouteFlow(model: string): Promise<CompiledRout
       trace: graphSelection.trace,
     });
 
-    const target = graphSelection.selectedEndpointTarget;
-    if (graphSelection.terminalKind === 'model_endpoint' && graphSelection.terminalNodeId) {
-      const terminalGraphNodeId = `graph:${graphSelection.terminalNodeId}`;
-      const terminalNode = nodes.find((node) => node.id === terminalGraphNodeId);
-      if (terminalNode) {
-        terminalNode.status = 'selected';
-        terminalNode.visibility = 'terminal';
-        terminalNode.badges = Array.from(new Set([
-          ...terminalNode.badges,
-          'terminal',
-          'model_endpoint',
-        ]));
-        terminalNode.metrics = {
-          ...terminalNode.metrics,
-          priority: target?.priority ?? null,
-          weight: target?.weight ?? null,
-        };
-      }
-    }
-
     const pricingCandidates = theoreticalEntryPricing?.candidates || [];
-    const graphChannelIds = pricingCandidates
-      .map((candidate) => Number(candidate.channelId))
-      .filter((channelId) => Number.isFinite(channelId) && channelId > 0);
-    const [graphChannelRows, graphHealthByChannelId] = await Promise.all([
-      loadChannelRows(graphChannelIds),
-      loadChannelHealth(requestedModel, graphChannelIds),
+    const graphTargetIds = pricingCandidates
+      .map((candidate) => candidateRuntimeTargetId(candidate))
+      .filter((targetId): targetId is number => targetId != null);
+    const [runtimeStatsSources, runtimeHealthBySourceId, runtimeCredentialIdentities] = await Promise.all([
+      loadRuntimeStatsSources(graphTargetIds),
+      loadRuntimeEndpointHealth(requestedModel, graphTargetIds),
+      loadRuntimeCredentialIdentities(graphTargetIds),
     ]);
     const dispatcherNodeId = findGraphDispatcherNodeId({ nodes, trace: graphSelection.trace }) || terminalLinkSource.current;
     const semanticCandidateTargets = new Set<string>();
+    const semanticSupplyEndpointNodes = new Set<string>();
 
     for (const candidate of pricingCandidates.sort((left, right) => {
-      if (left.channelId === target?.channelId) return -1;
-      if (right.channelId === target?.channelId) return 1;
-      if (right.probability !== left.probability) return right.probability - left.probability;
-      return left.channelId.localeCompare(right.channelId);
+      if (candidateEndpointIdentity(left) === selectedEndpointId) return -1;
+      if (candidateEndpointIdentity(right) === selectedEndpointId) return 1;
+      const rightProbability = right.probability ?? -1;
+      const leftProbability = left.probability ?? -1;
+      if (rightProbability !== leftProbability) return rightProbability - leftProbability;
+      return candidateEndpointIdentity(left).localeCompare(candidateEndpointIdentity(right));
     })) {
-      const channelId = Number(candidate.channelId);
-      if (!Number.isFinite(channelId) || channelId <= 0) continue;
-      const channel = graphChannelRows.get(channelId);
-      const health = graphHealthByChannelId.get(channelId) || {
+      const supplyEndpointId = candidateEndpointIdentity(candidate);
+      if (!supplyEndpointId) {
+        diagnostics.push({
+          level: 'warn',
+          message: `Skipping pricing candidate without route_endpoint id for ${candidate.modelName || requestedModel}.`,
+        });
+        continue;
+      }
+      const targetId = candidateRuntimeTargetId(candidate);
+      const hasRuntimeTargetStats = targetId != null;
+      const runtimeStatsSource = hasRuntimeTargetStats ? runtimeStatsSources.get(targetId) : undefined;
+      const runtimeCredentialIdentity = hasRuntimeTargetStats ? runtimeCredentialIdentities.get(targetId) : undefined;
+      const health = (hasRuntimeTargetStats ? runtimeHealthBySourceId.get(targetId) : undefined) || {
         successCount: 0,
         failureCount: 0,
         totalCalls: 0,
         avgLatencyMs: null,
         history: [],
       };
-      const selected = candidate.channelId === target?.channelId;
-      const supplyNodeId = `graph:${candidate.nodeId || candidate.endpointId || `route-endpoint:${candidate.channelId}`}`;
-      const candidateStatus = routeFlowNodeStatusForCandidate({ candidate, target, health, channel });
+      const semanticSupplyNodeId = `graph:${supplyEndpointId}`;
+      semanticSupplyEndpointNodes.add(semanticSupplyNodeId);
+      const supplyNodeId = semanticSupplyNodeId;
+      const selected = candidateMatchesSelectedEndpoint({ candidate, target });
+      const candidateStatus = selected
+        ? 'selected'
+        : routeFlowNodeStatusForCandidate({ candidate, target, health, runtimeStatsSource });
+      const candidateDisplay = graphCandidateDisplay({
+        candidate,
+        identity: runtimeCredentialIdentity,
+        supplyEndpointId,
+      });
       if (!nodes.some((node) => node.id === supplyNodeId)) {
         nodes.push({
           id: supplyNodeId,
           kind: 'route_endpoint',
           visibility: 'internal',
-          label: graphEndpointLabel({
-            endpointId: candidate.endpointId,
-            nodeId: candidate.nodeId,
-            modelName: candidate.modelName,
-            routeId: candidate.sourceRef?.routeId ?? null,
-          }),
-          subtitle: [
-            'supply endpoint',
-            candidate.modelName,
-            candidate.siteId != null ? `site ${candidate.siteId}` : null,
-            candidate.tokenId != null ? `token ${candidate.tokenId}` : null,
-          ].filter(Boolean).join(' / '),
+          label: candidateDisplay.label,
+          subtitle: candidateDisplay.subtitle,
           status: candidateStatus,
           badges: Array.from(new Set([
             'supply',
+            'supply-target',
             ...buildGraphCandidateBadges(candidate),
           ])),
           metrics: {
@@ -546,15 +596,15 @@ export async function compileModelRouteFlow(model: string): Promise<CompiledRout
             recentSuccessCount: health.successCount,
             recentFailureCount: health.failureCount,
             avgLatencyMs: health.avgLatencyMs,
-            probability: candidate.probability * 100,
+            probability: candidate.probability == null ? null : candidate.probability * 100,
             priority: candidate.priority,
             weight: candidate.weight,
-            failCount: channel?.failCount ?? null,
-            consecutiveFailureCount: channel?.consecutiveFailCount ?? null,
-            lastUsedAt: channel?.lastUsedAt ?? null,
-            lastSelectedAt: channel?.lastSelectedAt ?? null,
-            lastFailureAt: channel?.lastFailAt ?? null,
-            cooldownUntil: channel?.cooldownUntil ?? null,
+            failCount: runtimeStatsSource?.failCount ?? null,
+            consecutiveFailureCount: runtimeStatsSource?.consecutiveFailCount ?? null,
+            lastUsedAt: runtimeStatsSource?.lastUsedAt ?? null,
+            lastSelectedAt: runtimeStatsSource?.lastSelectedAt ?? null,
+            lastFailureAt: runtimeStatsSource?.lastFailAt ?? null,
+            cooldownUntil: runtimeStatsSource?.cooldownUntil ?? null,
           },
           history: health.history,
         });
@@ -563,34 +613,54 @@ export async function compileModelRouteFlow(model: string): Promise<CompiledRout
         if (supplyNode) {
           supplyNode.kind = 'route_endpoint';
           supplyNode.visibility = 'internal';
+          supplyNode.label = candidateDisplay.label;
+          supplyNode.subtitle = candidateDisplay.subtitle;
           supplyNode.status = selected ? 'selected' : supplyNode.status;
           supplyNode.metrics = {
             ...supplyNode.metrics,
-            probability: candidate.probability * 100,
+            successRate: roundRate(health.successCount, health.totalCalls),
+            totalCalls: health.totalCalls,
+            recentSuccessCount: health.successCount,
+            recentFailureCount: health.failureCount,
+            avgLatencyMs: health.avgLatencyMs,
+            probability: candidate.probability == null ? null : candidate.probability * 100,
             priority: candidate.priority,
             weight: candidate.weight,
+            failCount: runtimeStatsSource?.failCount ?? null,
+            consecutiveFailureCount: runtimeStatsSource?.consecutiveFailCount ?? null,
+            lastUsedAt: runtimeStatsSource?.lastUsedAt ?? null,
+            lastSelectedAt: runtimeStatsSource?.lastSelectedAt ?? null,
+            lastFailureAt: runtimeStatsSource?.lastFailAt ?? null,
+            cooldownUntil: runtimeStatsSource?.cooldownUntil ?? null,
           };
-          supplyNode.badges = Array.from(new Set([...supplyNode.badges, 'supply', ...buildGraphCandidateBadges(candidate)]));
+          supplyNode.history = health.history;
+          supplyNode.badges = Array.from(new Set([...supplyNode.badges, 'supply', 'supply-target', ...buildGraphCandidateBadges(candidate)]));
         }
       }
       if (!edges.some((edge) => edge.source === supplyNodeId && edge.target === dispatcherNodeId)) {
         edges.push({
-          id: `graph-candidate-supply-${candidate.endpointId || candidate.channelId}`,
+          id: `graph-candidate-supply-${supplyEndpointId}`,
           source: supplyNodeId,
           target: dispatcherNodeId,
-          label: selected
-            ? `selected · ${graphCandidatePercent(candidate)}`
-            : graphCandidatePercent(candidate),
+          label: graphCandidatePercent(candidate),
         });
       }
       semanticCandidateTargets.add(supplyNodeId);
     }
+    terminalLinkSource.current = dispatcherNodeId;
     for (let index = edges.length - 1; index >= 0; index -= 1) {
       const edge = edges[index];
       if (
-        edge.id.startsWith('graph-step:')
-        && edge.source === dispatcherNodeId
-        && semanticCandidateTargets.has(edge.target)
+        (
+          edge.id.startsWith('graph-step:')
+          && edge.source === dispatcherNodeId
+          && (semanticCandidateTargets.has(edge.target) || semanticSupplyEndpointNodes.has(edge.target))
+        )
+        || (
+          edge.id.startsWith('graph-edge:')
+          && edge.target === dispatcherNodeId
+          && semanticSupplyEndpointNodes.has(edge.source)
+        )
       ) {
         edges.splice(index, 1);
       }
@@ -616,18 +686,21 @@ export async function compileModelRouteFlow(model: string): Promise<CompiledRout
     return {
       version: 1,
       requestedModel,
-      actualModel: graphSelection.currentModel,
+      actualModel: target?.modelSource === 'request'
+        ? graphSelection.currentModel
+        : (target?.model || graphSelection.currentModel),
       matched: true,
       selectedRouteId: graphSelection.selectedRouteId ?? graphSelection.matchedRouteId ?? null,
-      selectedChannelId: null,
       selectedAccountId: target?.accountId == null || typeof target.accountId !== 'number' ? null : target.accountId,
       routePattern: null,
       summary: graphSelection.terminalKind === 'synthetic_endpoint'
         ? [`route graph synthetic response ${syntheticStatus}`]
         : [
-          `compiled graph selected ${graphSelection.terminalKind}`,
+          `compiled graph selected route_endpoint`,
           graphSelection.selectedRouteId ? `route #${graphSelection.selectedRouteId}` : null,
-          target?.channelId ? `target ${target.channelId}` : null,
+          selectedPricingCandidate?.sourceRef?.endpointId
+            ? `supply ${selectedPricingCandidate.sourceRef.endpointId}`
+            : null,
         ].filter((line): line is string => !!line),
       nodes,
       edges,
@@ -640,163 +713,29 @@ export async function compileModelRouteFlow(model: string): Promise<CompiledRout
     };
   }
 
-  const decision = await tokenRouter.explainSelection(requestedModel);
-  nodes[0]!.status = decision.matched ? 'active' : 'blocked';
-  const channelIds = decision.candidates.map((candidate) => candidate.channelId);
-  const [channelRows, healthByChannelId] = await Promise.all([
-    loadChannelRows(channelIds),
-    loadChannelHealth(requestedModel, channelIds),
-  ]);
-
-  if (!decision.matched) {
-    nodes.push({
-      id: 'unmatched',
-      kind: 'pool',
-      visibility: 'terminal',
-      label: 'No route matched',
-      subtitle: 'route compiler stopped before channel pool',
-      status: 'blocked',
-      badges: ['terminal'],
-      metrics: {},
-      history: [],
-    });
-    edges.push({ id: 'request-unmatched', source: 'request', target: 'unmatched', label: 'match' });
-    diagnostics.push({ level: 'warn', message: '当前模型没有命中启用路由' });
-    return {
-      version: 1,
-      requestedModel,
-      actualModel: decision.actualModel,
-      matched: false,
-      selectedRouteId: null,
-      selectedChannelId: null,
-      selectedAccountId: null,
-      routePattern: null,
-      summary: decision.summary,
-      nodes,
-      edges,
-      diagnostics,
-      compiledAt,
-    };
-  }
-
-  const routeNodeId = decision.routeId ? `route:${decision.routeId}` : 'route:matched';
   nodes.push({
-    id: routeNodeId,
-    kind: 'route',
-    visibility: 'public',
-    label: decision.modelPattern || 'matched route',
-    subtitle: decision.actualModel === requestedModel ? null : `actual: ${decision.actualModel}`,
-    status: 'active',
-    badges: buildRouteBadges(decision),
+    id: 'graph:unmatched',
+    kind: 'synthetic_endpoint',
+    visibility: 'terminal',
+    label: 'No route matched',
+    subtitle: 'compiled route graph has no public entry for this model',
+    status: 'blocked',
+    badges: ['terminal', 'synthetic_endpoint'],
     metrics: {},
     history: [],
   });
-  edges.push({ id: 'request-route', source: 'request', target: routeNodeId, label: 'match' });
-  terminalLinkSource.current = routeNodeId;
-
-  let upstreamNodeSource = terminalLinkSource.current;
-  const actualModel = decision.actualModel;
-  if (decision.actualModel !== requestedModel) {
-    nodes.push({
-      id: 'transform:model-map',
-      kind: 'transform',
-      visibility: 'internal',
-      label: 'Model rewrite',
-      subtitle: `${requestedModel} -> ${decision.actualModel}`,
-      status: 'active',
-      badges: ['internal'],
-      metrics: {},
-      history: [],
-    });
-    edges.push({ id: 'route-transform-model-map', source: routeNodeId, target: 'transform:model-map', label: 'rewrite' });
-    upstreamNodeSource = 'transform:model-map';
-  }
-
-  nodes.push({
-    id: 'pool:channels',
-    kind: 'pool',
-    visibility: 'terminal',
-    label: 'Channel pool',
-    subtitle: `${decision.candidates.length} candidates`,
-    status: decision.selectedChannelId ? 'selected' : 'blocked',
-    badges: decision.selectedChannelId ? ['terminal', 'selected'] : ['terminal'],
-    metrics: {
-      totalCalls: decision.candidates.length,
-    },
-    history: [],
-  });
-  edges.push({ id: 'route-pool', source: upstreamNodeSource, target: 'pool:channels', label: 'resolve' });
-
-  const sortedCandidates = [...decision.candidates].sort((left, right) => {
-    if (left.channelId === decision.selectedChannelId) return -1;
-    if (right.channelId === decision.selectedChannelId) return 1;
-    if (right.eligible !== left.eligible) return Number(right.eligible) - Number(left.eligible);
-    if (right.probability !== left.probability) return right.probability - left.probability;
-    return left.channelId - right.channelId;
-  });
-
-  for (const candidate of sortedCandidates) {
-    const channel = channelRows.get(candidate.channelId);
-    const health = healthByChannelId.get(candidate.channelId) || {
-      successCount: 0,
-      failureCount: 0,
-      totalCalls: 0,
-      avgLatencyMs: null,
-      history: [],
-    };
-    const selected = candidate.channelId === decision.selectedChannelId;
-    const blocked = !candidate.eligible || candidate.avoidedByRecentFailure || candidate.recentlyFailed;
-    const nodeId = `channel:${candidate.channelId}`;
-    nodes.push({
-      id: nodeId,
-      kind: 'channel',
-      visibility: 'internal',
-      label: `${candidate.username} @ ${candidate.siteName}`,
-      subtitle: `${candidate.tokenName} / channel #${candidate.channelId}`,
-      status: selected ? 'selected' : (blocked ? 'blocked' : 'available'),
-      badges: buildCandidateBadges(candidate),
-      metrics: {
-        successRate: roundRate(health.successCount, health.totalCalls),
-        totalCalls: health.totalCalls,
-        recentSuccessCount: health.successCount,
-        recentFailureCount: health.failureCount,
-        avgLatencyMs: health.avgLatencyMs,
-        probability: candidate.probability,
-        priority: candidate.priority,
-        weight: candidate.weight,
-        failCount: channel?.failCount ?? null,
-        consecutiveFailureCount: channel?.consecutiveFailCount ?? null,
-        lastUsedAt: channel?.lastUsedAt ?? null,
-        lastSelectedAt: channel?.lastSelectedAt ?? null,
-        lastFailureAt: channel?.lastFailAt ?? null,
-        cooldownUntil: channel?.cooldownUntil ?? null,
-      },
-      history: health.history,
-    });
-    edges.push({
-      id: `pool-channel-${candidate.channelId}`,
-      source: 'pool:channels',
-      target: nodeId,
-      label: selected ? 'selected' : (candidate.eligible ? `${Math.round(candidate.probability * 10) / 10}%` : 'blocked'),
-    });
-  }
-
-  if (decision.candidates.length === 0) {
-    diagnostics.push({ level: 'warn', message: '路由已命中，但没有候选通道' });
-  } else if (!decision.selectedChannelId) {
-    diagnostics.push({ level: 'warn', message: '路由已命中，但本次没有选出通道' });
-  }
+  edges.push({ id: 'request-unmatched', source: 'request', target: 'graph:unmatched', label: 'match' });
+  diagnostics.push({ level: 'warn', message: '当前模型没有命中启用路由图入口' });
 
   return {
     version: 1,
     requestedModel,
-    actualModel,
-    matched: true,
-    selectedRouteId: decision.routeId ?? null,
-    selectedChannelId: decision.selectedChannelId ?? null,
-    selectedAccountId: decision.selectedAccountId ?? null,
-    routePattern: decision.modelPattern ?? null,
-    summary: decision.summary,
+    actualModel: requestedModel,
+    matched: false,
+    selectedRouteId: null,
+    selectedAccountId: null,
+    routePattern: null,
+    summary: ['no compiled route graph entry matched'],
     nodes,
     edges,
     diagnostics,

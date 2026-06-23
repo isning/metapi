@@ -11,12 +11,12 @@ Metapi already has several routing concepts:
   regex patterns;
 - explicit group routes expose a public display name and aggregate source
   routes;
-- route channels bind accounts, tokens, upstream models, priority, weight,
+- route endpoint targets bind accounts, tokens, upstream models, priority, weight,
   cooldown, and runtime health;
 - payload rules can inject, override, or remove payload fields.
 
 These features solve related problems, but they are not one architecture.
-Pattern routes, groups, channel selection, payload mutation, health-aware
+Pattern routes, groups, target selection, payload mutation, health-aware
 failover, and provider compatibility rules currently risk becoming separate
 control paths.
 
@@ -27,7 +27,7 @@ single graph:
 public model entry
   -> request/filter transforms
   -> dispatcher policy
-  <- model_endpoint[] / synthetic_endpoint[] candidate resources
+  <- route_endpoint[] / synthetic_endpoint[] candidate resources
   -> selected terminal or flow execution
   -> response
 ```
@@ -54,23 +54,23 @@ type RouteGraphNode =
   | EntryNode
   | FilterNode
   | DispatcherNode
-  | ModelEndpointNode
+  | RouteEndpointNode
   | SyntheticEndpointNode
   | AutoNode;
 ```
 
-The previous `route_ref`, `route_query`, `routes`, and `channel_pool` concepts
+The previous `route_ref`, `route_query`, `routes`, and `target_pool` concepts
 are not final runtime concepts:
 
 - `route_ref` is removed. Graph node IDs and port edges are the reference
   mechanism.
 - `route_query` is removed. Querying and candidate selection are represented by
-  explicit route-mode `dispatcher` policy over connected `model_endpoint[]`
+  explicit route-mode `dispatcher` policy over connected `route_endpoint[]`
   inputs.
 - `routes` candidate flow is removed. Candidate resources are
-  `model_endpoint[]`.
-- `channel_pool` is replaced by `model_endpoint`. A model endpoint is a
-  user-facing terminal resource abstraction, not a low-level channel bucket.
+  `route_endpoint[]`.
+- `target_pool` is replaced by `route_endpoint`. A route endpoint is a
+  user-facing terminal resource abstraction, not a low-level target bucket.
 
 Protocol transformers remain protocol-pure. They must not import route graph
 runtime modules, Fastify route adapters, token routing services, or provider
@@ -132,23 +132,23 @@ affects routing must be expressed in a downstream `dispatcher` policy.
 
 ### Model Endpoint
 
-`model_endpoint` is a candidate executable model resource. It does not dispatch
+`route_endpoint` is a candidate executable model resource. It does not dispatch
 between other graph nodes.
 
 It can represent one or more concrete upstream targets:
 
 ```ts
-type ModelEndpointNode = BaseRouteGraphNode & {
-  type: 'model_endpoint';
+type RouteEndpointNode = BaseRouteGraphNode & {
+  type: 'route_endpoint';
   metadata?: Record<string, unknown>;
   config: {
-    targets: ModelEndpointTarget[];
+    targets: RouteEndpointTarget[];
     targetSelection?: TargetSelectionPolicy;
   };
 };
 
-type ModelEndpointTarget = {
-  channelId: string;
+type RouteEndpointTarget = {
+  targetId: string;
   model: string;
   tokenId?: string;
   accountId?: string;
@@ -160,23 +160,23 @@ type ModelEndpointTarget = {
 };
 ```
 
-`model_endpoint` may choose among its own `targets[]` using local execution
+`route_endpoint` may choose among its own `targets[]` using local execution
 metadata such as priority, weight, availability, and credential state. It must
 not silently jump to another graph endpoint or implement cross-endpoint
 fallback policy.
 
-`targetSelection.strategy: 'defer_to_router'` is reserved for graph projections
-that should preserve candidate multiplicity for downstream token routing. In
-that mode the graph still terminates at `model_endpoint`, but it does not
-collapse `targets[]` to a single concrete target. Legacy projections use this
-mode so the router can keep applying health, cost, and stable-first policy
-over the underlying channels.
+`targetSelection.strategy: 'defer_to_router'` is reserved for generated graph
+resources that should preserve candidate multiplicity for downstream token
+routing. In that mode the graph still terminates at `route_endpoint`, but it
+does not collapse `targets[]` to a single concrete target. Generated route-table
+resources use this mode so the router can keep applying health, cost, and
+stable-first policy over the underlying targets.
 
 Custom metadata is first-class:
 
 ```json
 {
-  "type": "model_endpoint",
+  "type": "route_endpoint",
   "id": "endpoint.deepseek.reasoning",
   "label": "DeepSeek Reasoning",
   "metadata": {
@@ -189,7 +189,7 @@ Custom metadata is first-class:
   "config": {
     "targets": [
       {
-        "channelId": "deepseek-main",
+        "targetId": "deepseek-main",
         "model": "deepseek-reasoner",
         "weight": 100,
         "metadata": {
@@ -202,7 +202,7 @@ Custom metadata is first-class:
 }
 ```
 
-Model endpoints also carry upstream compatibility policy. This policy is not a
+Route endpoints also carry upstream compatibility policy. This policy is not a
 router and is not provider-specific transformer code. It is declarative metadata
 compiled with the selected endpoint and handed to the protocol request builder
 as a resolved policy.
@@ -364,7 +364,7 @@ global default
   -> protocol default
   -> site default
   -> account/token default
-  -> model endpoint default
+  -> route endpoint default
   -> route graph node override
 ```
 
@@ -394,7 +394,7 @@ to structured reasoning:
       }
     }
   },
-  "modelEndpoint": {
+  "routeEndpoint": {
     "reasoningHistory": {
       "transport": {
         "mode": "native"
@@ -423,8 +423,8 @@ The following are forbidden:
 The following are allowed:
 
 - a graph filter setting or overriding compatibility policy metadata;
-- a site/account/model endpoint storing default compatibility policy;
-- a model endpoint target overriding inherited compatibility policy for one
+- a site/account/route endpoint storing default compatibility policy;
+- a route endpoint target overriding inherited compatibility policy for one
   concrete target;
 - a protocol request builder encoding canonical reasoning history according to
   the resolved policy.
@@ -438,7 +438,7 @@ Recommended UI model:
 
 - site settings: "Compatibility defaults";
 - account/token settings: "Override site compatibility";
-- model endpoint inspector: "Endpoint compatibility";
+- route endpoint inspector: "Endpoint compatibility";
 - route graph filter: "Set compatibility policy";
 - compiled preview: show the resolved policy for each candidate endpoint;
 - route trace: show which layer supplied each resolved field.
@@ -503,7 +503,7 @@ In `route` mode, the dispatcher consumes:
 
 ```text
 entry/filter.bidirect.out -> dispatcher.bidirect.in
-model_endpoint.route.out[] | synthetic_endpoint.route.out[] -> dispatcher.route.in
+route_endpoint.route.out[] | synthetic_endpoint.route.out[] -> dispatcher.route.in
 ```
 
 `route` mode is a terminal route chooser. It selects one terminal candidate and
@@ -580,7 +580,7 @@ type DispatcherCelContext = {
 ```
 
 In `route` mode, `candidate.metadata` comes from the connected
-`model_endpoint`, `synthetic_endpoint`, target metadata, edge metadata, and
+`route_endpoint`, `synthetic_endpoint`, target metadata, edge metadata, and
 computed runtime health. In `flow` mode, `candidate.metadata` comes only from
 the indexed output configuration and edge metadata. Flow-mode bidirect
 candidates must not inherit endpoint metadata by implication.
@@ -643,7 +643,7 @@ type SyntheticEndpointNode = BaseRouteGraphNode & {
 };
 ```
 
-It exposes the same route candidate port as `model_endpoint`, so route-mode
+It exposes the same route candidate port as `route_endpoint`, so route-mode
 dispatchers can include it in fallback policy:
 
 ```text
@@ -704,7 +704,7 @@ filter:
   bidirect.in
   bidirect.out
 
-model_endpoint:
+route_endpoint:
   route.out
 
 synthetic_endpoint:
@@ -720,7 +720,7 @@ dispatcher:
 candidate domain:
 
 - `mode: 'route'` consumes `route.in` candidates and terminates at a selected
-  `model_endpoint` or `synthetic_endpoint`;
+  `route_endpoint` or `synthetic_endpoint`;
 - `mode: 'flow'` consumes ordered `bidirect[1...].out` candidates and continues
   the bidirectional path.
 
@@ -1060,7 +1060,7 @@ type CandidateSelectorMacroConfig = {
       | { kind: 'model_pattern'; pattern: string }
       | { kind: 'metadata_query'; cel: string }
       | { kind: 'endpoint_query'; cel: string }
-      | { kind: 'inline_endpoints'; endpoints: ModelEndpointTarget[] }
+      | { kind: 'inline_endpoints'; endpoints: RouteEndpointTarget[] }
       | { kind: 'synthetic'; statusCode: number; message: string };
     defaults?: {
       enabled?: boolean;
@@ -1105,7 +1105,7 @@ elements appropriate to the selected surface:
 ```text
 external public entry
   -> dispatcher(mode: 'route')
-  -> model_endpoint[] / synthetic_endpoint[] candidate adapters
+  -> route_endpoint[] / synthetic_endpoint[] candidate adapters
 
 embedded selector
   -> dispatcher(mode: 'flow' | 'route')
@@ -1129,9 +1129,9 @@ public entries appear in downstream model lists; external internal entries are
 editable and callable inside the graph but not exposed as public downstream
 models.
 
-Candidate adapter `model_endpoint` nodes use `targetSelection.strategy:
-'defer_to_router'` when they reference legacy/projection route channels. This
-preserves the source route's internal channel-level health, cooldown, stable
+Candidate adapter `route_endpoint` nodes use `targetSelection.strategy:
+'defer_to_router'` when they reference generated route table route endpoint targets. This
+preserves the source route's internal target-level health, cooldown, stable
 selection, weight, and priority behavior while the selector dispatcher makes
 only the higher-level candidate choice.
 
@@ -1180,8 +1180,8 @@ groups = sourceRouteIds.map((routeId, index) => ({
 }));
 ```
 
-If a newer legacy database already contains ordered source rows, the preserved
-source order becomes the initial `priority`. Channel-level priority and weight
+If an imported database already contains ordered source rows, the preserved
+source order becomes the initial `priority`. Target-level priority and weight
 remain inside each source route and must not be copied into group-local
 candidate fields.
 
@@ -1201,7 +1201,7 @@ The old graph facade:
 backend: { kind: 'routes'; routeIds: number[] }
 ```
 
-is a compatibility projection over `candidate_selector.groups`. It is not the
+is a route-table binding view over `candidate_selector.groups`. It is not the
 canonical semantic representation once macro support exists.
 
 ## Compilation
@@ -1222,7 +1222,7 @@ The compiler must reject:
 - public entries that cannot reach an active dispatcher path;
 - route-mode dispatchers without route candidates;
 - flow-mode dispatchers without at least one bidirect output;
-- model endpoints without executable targets, unless explicitly marked disabled
+- route endpoints without executable targets, unless explicitly marked disabled
   or synthetic.
 
 Compilation starts from public `entry` nodes and follows typed port edges. A
@@ -1252,7 +1252,7 @@ semantic, and primitive nodes when the concept is already primitive.
 
 Automatic route construction must surface generated routes as semantic graph
 objects first. A route created from model availability is not merely a hidden
-`entry -> dispatcher -> model_endpoint` fragment; it is an operator-visible
+`entry -> dispatcher -> route_endpoint` fragment; it is an operator-visible
 **Model Group** / `candidate_selector` macro whose generated primitive route
 resources are implementation detail.
 
@@ -1276,20 +1276,20 @@ Automatic exact-model routes are represented as a read-only
 - one route-id backed group pointing at the generated executable route resource;
 - a stable id `route:<legacyRouteId>:model-group`.
 
-The generated primitive legacy route resource may still exist in the semantic
-source as an internal compatibility projection so the macro resolver and
-runtime binding exporter can reuse the same `route_channels` execution data.
-The generated endpoint resource and generated edges should be marked as
-projection/generated metadata where the node kind supports metadata, and none
-of those primitives may be presented as the primary editable route. A future
-migration may replace this compatibility resource with macro-owned inline
-endpoint materialization, but the user-facing contract remains the same:
-automatic route construction emits semantic macros.
+The generated primitive route resource may still exist in the semantic source as
+internal generated graph data so the macro resolver and runtime binding exporter
+can reuse the same `route_endpoint_targets` execution data. The generated
+endpoint resource and generated edges should be marked as generated metadata
+where the node kind supports metadata, and none of those primitives may be
+presented as the primary editable route. A future migration may replace this
+generated resource with macro-owned inline endpoint materialization, but the
+user-facing contract remains the same: automatic route construction emits
+semantic macros.
 
 Generated primitive nodes must use the same final node vocabulary:
 
 - discovered public model -> `entry`;
-- discovered executable target -> `model_endpoint`;
+- discovered executable target -> `route_endpoint`;
 - generated route selection policy -> `dispatcher(mode: 'route')`;
 - generated bidirectional composition -> `dispatcher(mode: 'flow')`;
 - provider compatibility preset -> `filter`;
@@ -1311,7 +1311,7 @@ built-in guardrails or presets. `derived` objects are compiler output and
 runtime traces.
 
 Manual drafts must not be overwritten silently by automatic rebuilds. If an
-automatic rebuild creates new generated model endpoints, the system may add
+automatic rebuild creates new generated route endpoints, the system may add
 them as read-only route candidate resources, but conflicts with manual edits
 must be shown as draft conflicts before publish.
 
@@ -1322,10 +1322,10 @@ Legacy pattern routes and explicit groups are migration inputs only.
 Migration target:
 
 ```text
-legacy token_routes / route_group_sources / route_channels
+legacy token_routes / route_group_sources / route_endpoint_targets
   -> semantic route graph macros and primitives
   -> lowering pipeline
-  -> entry / filter / dispatcher / model_endpoint / synthetic_endpoint graph
+  -> entry / filter / dispatcher / route_endpoint / synthetic_endpoint graph
 ```
 
 Mapping:
@@ -1333,18 +1333,18 @@ Mapping:
 - legacy exact or pattern route produced by automatic construction -> read-only
   `candidate_selector` macro plus hidden generated route resource;
 - legacy manual exact or pattern route -> route-like semantic object, or
-  directly to public `entry` + route-mode `dispatcher` + `model_endpoint` when
+  directly to public `entry` + route-mode `dispatcher` + `route_endpoint` when
   no higher semantic editor is needed;
 - legacy explicit group -> `Model Group` preset backed by a
   `candidate_selector` macro with route-id based priority bands;
-- legacy route channel -> `model_endpoint.config.targets[]`;
+- legacy route target -> `route_endpoint.config.targets[]`;
 - legacy payload rule -> `filter.operations[]`;
 - legacy cooldown/health state -> computed runtime metadata used by dispatcher
   policy;
 - legacy dummy fallback -> `synthetic_endpoint`.
 
 The final runtime API must not preserve `route_ref`, `route_query`,
-`channel_pool`, backend route arrays, or node-level route edges as compatibility
+`target_pool`, backend route arrays, or node-level route edges as compatibility
 architecture.
 
 ## Frontend Model
@@ -1368,7 +1368,7 @@ The graph editor should expose:
 - graph-level advanced JSON in a separate tab;
 - validation diagnostics;
 - compiled preview and route trace;
-- model endpoint metadata and runtime metadata panels.
+- route endpoint metadata and runtime metadata panels.
 
 The UI must not expose internal generated nodes as public downstream models.
 Model marketplace flow visualization must use compiled trace data, not raw
@@ -1391,7 +1391,7 @@ legacy route rows or model-name inference.
 - Provider-specific adaptations become configured filters and dispatcher
   policies rather than transformer branches.
 - Health-aware routing is explicit policy over computed metadata.
-- Custom model endpoint metadata is supported without becoming an implicit routing
+- Custom route endpoint metadata is supported without becoming an implicit routing
   language.
 - Pattern routes and groups remain user-facing presets and migration inputs,
   but no longer define the runtime architecture.

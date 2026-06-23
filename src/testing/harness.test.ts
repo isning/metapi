@@ -71,7 +71,7 @@ describe('test harnesses', () => {
       { nodeId: 'entry:test', model: 'gpt-harness' },
     ]));
     expect(result.compiled.terminals).toEqual(expect.arrayContaining([
-      expect.objectContaining({ nodeId: 'endpoint:test', type: 'model_endpoint' }),
+      expect.objectContaining({ nodeId: 'endpoint:test', type: 'route_endpoint' }),
     ]));
   });
 

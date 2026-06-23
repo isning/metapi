@@ -10,8 +10,8 @@ describe('listModelsSurface', () => {
       tokenRouter: {
         getAvailableModels: vi.fn().mockResolvedValue(['routable-model', 'orphan-model']),
         explainSelection: vi.fn()
-          .mockResolvedValueOnce({ selectedChannelId: null })
-          .mockResolvedValueOnce({ selectedChannelId: 11 }),
+          .mockResolvedValueOnce({ selectedTargetId: null })
+          .mockResolvedValueOnce({ selectedTargetId: 11 }),
       },
       refreshModelsAndRebuildRoutes: vi.fn(),
       isModelAllowed: vi.fn().mockResolvedValue(true),
@@ -37,7 +37,7 @@ describe('listModelsSurface', () => {
       responseFormat: 'claude',
       tokenRouter: {
         getAvailableModels: vi.fn().mockResolvedValue(['claude-opus-4-6']),
-        explainSelection: vi.fn().mockResolvedValue({ selectedChannelId: 22 }),
+        explainSelection: vi.fn().mockResolvedValue({ selectedTargetId: 22 }),
       },
       refreshModelsAndRebuildRoutes: vi.fn(),
       isModelAllowed: vi.fn().mockResolvedValue(true),
@@ -67,7 +67,7 @@ describe('listModelsSurface', () => {
     const isModelAllowed = vi.fn()
       .mockResolvedValueOnce(false)
       .mockResolvedValueOnce(true);
-    const explainSelection = vi.fn().mockResolvedValue({ selectedChannelId: 33 });
+    const explainSelection = vi.fn().mockResolvedValue({ selectedTargetId: 33 });
 
     const result = await listModelsSurface({
       downstreamPolicy: { type: 'whitelist' },
@@ -104,7 +104,7 @@ describe('retrieveModelSurface', () => {
       responseFormat: 'openai',
       tokenRouter: {
         getAvailableModels: vi.fn(),
-        explainSelection: vi.fn().mockResolvedValue({ selectedChannelId: 11 }),
+        explainSelection: vi.fn().mockResolvedValue({ selectedTargetId: 11 }),
       },
       refreshModelsAndRebuildRoutes: vi.fn(),
       isModelAllowed: vi.fn().mockResolvedValue(true),
@@ -123,7 +123,7 @@ describe('retrieveModelSurface', () => {
   });
 
   it('refreshes once before returning model_not_found for an unroutable model', async () => {
-    const explainSelection = vi.fn().mockResolvedValue({ selectedChannelId: null });
+    const explainSelection = vi.fn().mockResolvedValue({ selectedTargetId: null });
     const refreshModelsAndRebuildRoutes = vi.fn().mockResolvedValue(undefined);
 
     const result = await retrieveModelSurface({

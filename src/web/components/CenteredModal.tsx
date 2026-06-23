@@ -26,7 +26,7 @@ export default function CenteredModal({
   closeOnEscape = false,
   showCloseButton = true,
 }: CenteredModalProps) {
-  const maxWidthClass = maxWidth <= 560 ? 'w-[min(92vw,560px)]' : 'w-[min(94vw,860px)]';
+  const viewportWidth = maxWidth <= 560 ? '92vw' : '94vw';
 
   return (
     <Dialog.Root
@@ -36,7 +36,8 @@ export default function CenteredModal({
       }}
     >
       <Dialog.Content
-        className={`${maxWidthClass} max-h-[calc(100dvh-2rem)] overflow-hidden`}
+        className="max-h-[calc(100dvh-2rem)] overflow-hidden"
+        style={{ width: `min(${viewportWidth}, ${maxWidth}px)` }}
         closeButton={showCloseButton}
         onClose={onClose}
         onEscapeKeyDown={(event) => {
@@ -51,7 +52,7 @@ export default function CenteredModal({
           <Dialog.Description className="sr-only">Modal dialog</Dialog.Description>
         </Dialog.Header>
         <div
-          className={bodyStyle ? 'min-h-0 overflow-y-auto pb-3' : 'grid min-h-0 gap-3 overflow-y-auto pb-3'}
+          className={bodyStyle ? 'min-h-0 overflow-x-hidden overflow-y-auto pb-3' : 'grid min-h-0 gap-3 overflow-x-hidden overflow-y-auto pb-3'}
           style={bodyStyle}
         >
           {children}

@@ -250,7 +250,7 @@ function isGraphNativeRouteGraphReplacement(
     && !!currentContract.tables.route_graph_versions
     && !!currentContract.tables.route_graph_drafts
     && !!currentContract.tables.route_graph_active_version
-    && !!currentContract.tables.route_channels?.columns.route_node_id;
+    && !!currentContract.tables.route_endpoint_targets?.columns.route_endpoint_id;
 }
 
 function collectIndexedColumns(contract: SchemaContract): Map<string, Set<string>> {

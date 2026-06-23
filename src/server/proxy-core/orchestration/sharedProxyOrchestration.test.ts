@@ -22,10 +22,10 @@ const recordSuccessMock = vi.fn();
 const resolveProxyUsageWithSelfLogFallbackMock = vi.fn();
 const resolveProxyLogBillingMock = vi.fn();
 const refreshOauthAccessTokenSingleflightMock = vi.fn();
-const getStickyChannelIdMock = vi.fn();
-const bindStickyChannelMock = vi.fn();
-const clearStickyChannelMock = vi.fn();
-const acquireChannelLeaseMock = vi.fn();
+const getStickyTargetIdMock = vi.fn();
+const bindStickyTargetMock = vi.fn();
+const clearStickyTargetMock = vi.fn();
+const acquireTargetLeaseMock = vi.fn();
 const buildStickySessionKeyMock = vi.fn();
 let consoleWarnMock: ReturnType<typeof vi.spyOn>;
 let consoleErrorMock: ReturnType<typeof vi.spyOn>;
@@ -40,12 +40,12 @@ vi.mock('../../services/tokenRouter.js', () => ({
   },
 }));
 
-vi.mock('../../services/proxyChannelCoordinator.js', () => ({
-  proxyChannelCoordinator: {
-    getStickyChannelId: (...args: unknown[]) => getStickyChannelIdMock(...args),
-    bindStickyChannel: (...args: unknown[]) => bindStickyChannelMock(...args),
-    clearStickyChannel: (...args: unknown[]) => clearStickyChannelMock(...args),
-    acquireChannelLease: (...args: unknown[]) => acquireChannelLeaseMock(...args),
+vi.mock('../../services/proxyTargetCoordinator.js', () => ({
+  proxyTargetCoordinator: {
+    getStickyTargetId: (...args: unknown[]) => getStickyTargetIdMock(...args),
+    bindStickyTarget: (...args: unknown[]) => bindStickyTargetMock(...args),
+    clearStickyTarget: (...args: unknown[]) => clearStickyTargetMock(...args),
+    acquireTargetLease: (...args: unknown[]) => acquireTargetLeaseMock(...args),
     buildStickySessionKey: (...args: unknown[]) => buildStickySessionKeyMock(...args),
   },
 }));
@@ -129,17 +129,17 @@ describe('selectSurfaceChannelForAttempt', () => {
     resolveProxyUsageWithSelfLogFallbackMock.mockReset();
     resolveProxyLogBillingMock.mockReset();
     refreshOauthAccessTokenSingleflightMock.mockReset();
-    getStickyChannelIdMock.mockReset();
-    bindStickyChannelMock.mockReset();
-    clearStickyChannelMock.mockReset();
-    acquireChannelLeaseMock.mockReset();
+    getStickyTargetIdMock.mockReset();
+    bindStickyTargetMock.mockReset();
+    clearStickyTargetMock.mockReset();
+    acquireTargetLeaseMock.mockReset();
     buildStickySessionKeyMock.mockReset();
     consoleWarnMock = vi.spyOn(console, 'warn').mockImplementation(() => {});
     consoleErrorMock = vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
-  it('refreshes models and retries selectChannel on the first attempt when no channel is available', async () => {
-    const selected = { channel: { id: 11 } };
+  it('refreshes models and retries selectChannel on the first attempt when no target is available', async () => {
+    const selected = { target: { id: 11 } };
     selectChannelMock
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce(selected);
@@ -148,7 +148,7 @@ describe('selectSurfaceChannelForAttempt', () => {
     const result = await selectSurfaceChannelForAttempt({
       requestedModel: 'gpt-5.2',
       downstreamPolicy: EMPTY_DOWNSTREAM_ROUTING_POLICY,
-      excludeChannelIds: [],
+      excludeTargetIds: [],
       retryCount: 0,
     });
 
@@ -159,14 +159,14 @@ describe('selectSurfaceChannelForAttempt', () => {
   });
 
   it('uses selectNextChannel on retry attempts without refreshing models', async () => {
-    const selected = { channel: { id: 22 } };
+    const selected = { target: { id: 22 } };
     selectNextChannelMock.mockResolvedValueOnce(selected);
 
     const { selectSurfaceChannelForAttempt } = await import('./sharedProxyOrchestration.js');
     const result = await selectSurfaceChannelForAttempt({
       requestedModel: 'gpt-5.2',
       downstreamPolicy: EMPTY_DOWNSTREAM_ROUTING_POLICY,
-      excludeChannelIds: [11],
+      excludeTargetIds: [11],
       retryCount: 1,
     });
 
@@ -180,16 +180,16 @@ describe('selectSurfaceChannelForAttempt', () => {
     expect(refreshModelsAndRebuildRoutesMock).not.toHaveBeenCalled();
   });
 
-  it('prefers the sticky session channel on the first attempt when it is still eligible', async () => {
-    const selected = { channel: { id: 55 } };
-    getStickyChannelIdMock.mockReturnValueOnce(55);
+  it('prefers the sticky session target on the first attempt when it is still eligible', async () => {
+    const selected = { target: { id: 55 } };
+    getStickyTargetIdMock.mockReturnValueOnce(55);
     selectPreferredChannelMock.mockResolvedValueOnce(selected);
 
     const { selectSurfaceChannelForAttempt } = await import('./sharedProxyOrchestration.js');
     const result = await selectSurfaceChannelForAttempt({
       requestedModel: 'gpt-5.2',
       downstreamPolicy: EMPTY_DOWNSTREAM_ROUTING_POLICY,
-      excludeChannelIds: [],
+      excludeTargetIds: [],
       retryCount: 0,
       stickySessionKey: 'sticky-session',
     });
@@ -202,21 +202,21 @@ describe('selectSurfaceChannelForAttempt', () => {
       [],
     );
     expect(selectChannelMock).not.toHaveBeenCalled();
-    expect(clearStickyChannelMock).not.toHaveBeenCalled();
+    expect(clearStickyTargetMock).not.toHaveBeenCalled();
   });
 
-  it('uses the forced tester channel before sticky or automatic selection', async () => {
-    const selected = { channel: { id: 88 } };
+  it('uses the forced tester target before sticky or automatic selection', async () => {
+    const selected = { target: { id: 88 } };
     selectPreferredChannelMock.mockResolvedValueOnce(selected);
 
     const { selectSurfaceChannelForAttempt } = await import('./sharedProxyOrchestration.js');
     const result = await selectSurfaceChannelForAttempt({
       requestedModel: 'gpt-5.2',
       downstreamPolicy: EMPTY_DOWNSTREAM_ROUTING_POLICY,
-      excludeChannelIds: [],
+      excludeTargetIds: [],
       retryCount: 0,
       stickySessionKey: 'sticky-session',
-      forcedChannelId: 88,
+      forcedTargetId: 88,
     });
 
     expect(result).toBe(selected);
@@ -226,22 +226,22 @@ describe('selectSurfaceChannelForAttempt', () => {
       EMPTY_DOWNSTREAM_ROUTING_POLICY,
       [],
     );
-    expect(getStickyChannelIdMock).not.toHaveBeenCalled();
+    expect(getStickyTargetIdMock).not.toHaveBeenCalled();
     expect(selectChannelMock).not.toHaveBeenCalled();
     expect(selectNextChannelMock).not.toHaveBeenCalled();
     expect(refreshModelsAndRebuildRoutesMock).not.toHaveBeenCalled();
   });
 
-  it('does not refresh or fall back when the forced tester channel is unavailable', async () => {
+  it('does not refresh or fall back when the forced tester target is unavailable', async () => {
     selectPreferredChannelMock.mockResolvedValueOnce(null);
 
     const { selectSurfaceChannelForAttempt } = await import('./sharedProxyOrchestration.js');
     const result = await selectSurfaceChannelForAttempt({
       requestedModel: 'gpt-5.2',
       downstreamPolicy: EMPTY_DOWNSTREAM_ROUTING_POLICY,
-      excludeChannelIds: [],
+      excludeTargetIds: [],
       retryCount: 0,
-      forcedChannelId: 91,
+      forcedTargetId: 91,
     });
 
     expect(result).toBeNull();
@@ -256,9 +256,9 @@ describe('selectSurfaceChannelForAttempt', () => {
     expect(refreshModelsAndRebuildRoutesMock).not.toHaveBeenCalled();
   });
 
-  it('refreshes and retries the sticky preferred channel before clearing a stale binding', async () => {
-    const selected = { channel: { id: 22 } };
-    getStickyChannelIdMock.mockReturnValueOnce(55);
+  it('refreshes and retries the sticky preferred target before clearing a stale binding', async () => {
+    const selected = { target: { id: 22 } };
+    getStickyTargetIdMock.mockReturnValueOnce(55);
     selectPreferredChannelMock
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce(null);
@@ -268,7 +268,7 @@ describe('selectSurfaceChannelForAttempt', () => {
     const result = await selectSurfaceChannelForAttempt({
       requestedModel: 'gpt-5.2',
       downstreamPolicy: EMPTY_DOWNSTREAM_ROUTING_POLICY,
-      excludeChannelIds: [],
+      excludeTargetIds: [],
       retryCount: 0,
       stickySessionKey: 'sticky-session',
     });
@@ -276,13 +276,13 @@ describe('selectSurfaceChannelForAttempt', () => {
     expect(result).toBe(selected);
     expect(refreshModelsAndRebuildRoutesMock).toHaveBeenCalledTimes(1);
     expect(selectPreferredChannelMock).toHaveBeenCalledTimes(2);
-    expect(clearStickyChannelMock).toHaveBeenCalledWith('sticky-session', 55);
+    expect(clearStickyTargetMock).toHaveBeenCalledWith('sticky-session', 55);
     expect(selectChannelMock).toHaveBeenCalledWith('gpt-5.2', EMPTY_DOWNSTREAM_ROUTING_POLICY);
   });
 
-  it('keeps the sticky binding when route refresh recovers the preferred channel', async () => {
-    const selected = { channel: { id: 55 } };
-    getStickyChannelIdMock.mockReturnValueOnce(55);
+  it('keeps the sticky binding when route refresh recovers the preferred target', async () => {
+    const selected = { target: { id: 55 } };
+    getStickyTargetIdMock.mockReturnValueOnce(55);
     selectPreferredChannelMock
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce(selected);
@@ -291,7 +291,7 @@ describe('selectSurfaceChannelForAttempt', () => {
     const result = await selectSurfaceChannelForAttempt({
       requestedModel: 'gpt-5.2',
       downstreamPolicy: EMPTY_DOWNSTREAM_ROUTING_POLICY,
-      excludeChannelIds: [],
+      excludeTargetIds: [],
       retryCount: 0,
       stickySessionKey: 'sticky-session',
     });
@@ -299,12 +299,12 @@ describe('selectSurfaceChannelForAttempt', () => {
     expect(result).toBe(selected);
     expect(refreshModelsAndRebuildRoutesMock).toHaveBeenCalledTimes(1);
     expect(selectPreferredChannelMock).toHaveBeenCalledTimes(2);
-    expect(clearStickyChannelMock).not.toHaveBeenCalled();
+    expect(clearStickyTargetMock).not.toHaveBeenCalled();
     expect(selectChannelMock).not.toHaveBeenCalled();
   });
 
   it('logs refresh failures and still retries selection once on the first attempt', async () => {
-    const selected = { channel: { id: 33 } };
+    const selected = { target: { id: 33 } };
     selectChannelMock
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce(selected);
@@ -314,7 +314,7 @@ describe('selectSurfaceChannelForAttempt', () => {
     const result = await selectSurfaceChannelForAttempt({
       requestedModel: 'gpt-5.2',
       downstreamPolicy: EMPTY_DOWNSTREAM_ROUTING_POLICY,
-      excludeChannelIds: [],
+      excludeTargetIds: [],
       retryCount: 0,
     });
 
@@ -335,7 +335,7 @@ describe('selectSurfaceChannelForAttempt', () => {
     await writeSurfaceProxyLog({
       warningScope: 'chat',
       selected: {
-        channel: { id: 11, routeId: 22 },
+        target: { id: 11, routeId: 22 },
         account: { id: 33 },
         actualModel: 'upstream-model',
       },
@@ -375,7 +375,7 @@ describe('selectSurfaceChannelForAttempt', () => {
     });
     expect(insertProxyLogMock).toHaveBeenCalledWith({
       routeId: 22,
-      channelId: 11,
+      targetId: 11,
       accountId: 33,
       downstreamApiKeyId: 44,
       modelRequested: 'gpt-5.2',
@@ -470,7 +470,7 @@ describe('selectSurfaceChannelForAttempt', () => {
 
     const result = await toolkit.handleUpstreamFailure({
       selected: {
-        channel: { id: 11, routeId: 22 },
+        target: { id: 11, routeId: 22 },
         account: { id: 33, username: 'oauth-user' },
         site: { name: 'Codex OAuth' },
         actualModel: 'upstream-model',
@@ -497,7 +497,7 @@ describe('selectSurfaceChannelForAttempt', () => {
     });
     expect(reportProxyAllFailedMock).not.toHaveBeenCalled();
     expect(insertProxyLogMock).toHaveBeenCalledWith(expect.objectContaining({
-      channelId: 11,
+      targetId: 11,
       accountId: 33,
       downstreamApiKeyId: 44,
       modelRequested: 'gpt-5.2',
@@ -529,7 +529,7 @@ describe('selectSurfaceChannelForAttempt', () => {
 
     await expect(toolkit.handleUpstreamFailure({
       selected: {
-        channel: { id: 11, routeId: 22 },
+        target: { id: 11, routeId: 22 },
         account: { id: 33, username: 'oauth-user' },
         site: { name: 'Codex OAuth' },
         actualModel: 'upstream-model',
@@ -563,7 +563,7 @@ describe('selectSurfaceChannelForAttempt', () => {
 
     const result = await toolkit.handleUpstreamFailure({
       selected: {
-        channel: { id: 11, routeId: 22 },
+        target: { id: 11, routeId: 22 },
         account: { id: 33, username: 'oauth-user' },
         site: { name: 'Codex OAuth' },
         actualModel: 'upstream-model',
@@ -619,7 +619,7 @@ describe('selectSurfaceChannelForAttempt', () => {
 
     await expect(toolkit.handleUpstreamFailure({
       selected: {
-        channel: { id: 11, routeId: 22 },
+        target: { id: 11, routeId: 22 },
         account: { id: 33, username: 'oauth-user' },
         site: { name: 'Codex OAuth' },
         actualModel: 'upstream-model',
@@ -660,7 +660,7 @@ describe('selectSurfaceChannelForAttempt', () => {
 
     const result = await toolkit.handleDetectedFailure({
       selected: {
-        channel: { id: 11, routeId: 22 },
+        target: { id: 11, routeId: 22 },
         account: { id: 33, username: 'oauth-user' },
         site: { name: 'Codex OAuth' },
         actualModel: 'upstream-model',
@@ -717,7 +717,7 @@ describe('selectSurfaceChannelForAttempt', () => {
 
     const result = await toolkit.handleExecutionError({
       selected: {
-        channel: { id: 11, routeId: 22 },
+        target: { id: 11, routeId: 22 },
         account: { id: 33, username: 'oauth-user' },
         site: { name: 'Codex OAuth' },
         actualModel: 'upstream-model',
@@ -765,7 +765,7 @@ describe('selectSurfaceChannelForAttempt', () => {
 
     await toolkit.recordStreamFailure({
       selected: {
-        channel: { id: 11, routeId: 22 },
+        target: { id: 11, routeId: 22 },
         account: { id: 33, username: 'oauth-user' },
         site: { name: 'Codex OAuth' },
         actualModel: 'upstream-model',
@@ -924,7 +924,7 @@ describe('selectSurfaceChannelForAttempt', () => {
     const { recordSurfaceSuccess } = await import('./sharedProxyOrchestration.js');
     const result = await recordSurfaceSuccess({
       selected: {
-        channel: { id: 11, routeId: 22 },
+        target: { id: 11, routeId: 22 },
         account: { id: 33, username: 'oauth-user' },
         site: { id: 44, url: 'https://upstream.example.com', name: 'Codex OAuth' },
         tokenValue: 'live-token',
@@ -987,7 +987,7 @@ describe('selectSurfaceChannelForAttempt', () => {
     expect(recordDownstreamCost).toHaveBeenCalledWith(0.42);
     expect(logSuccess).toHaveBeenCalledWith({
       selected: {
-        channel: { id: 11, routeId: 22 },
+        target: { id: 11, routeId: 22 },
         account: { id: 33, username: 'oauth-user' },
         site: { id: 44, url: 'https://upstream.example.com', name: 'Codex OAuth' },
         tokenValue: 'live-token',
@@ -1044,7 +1044,7 @@ describe('selectSurfaceChannelForAttempt', () => {
     const { recordSurfaceSuccess } = await import('./sharedProxyOrchestration.js');
     await recordSurfaceSuccess({
       selected: {
-        channel: { id: 11, routeId: 22 },
+        target: { id: 11, routeId: 22 },
         account: { id: 33, username: 'oauth-user' },
         site: { id: 44, url: 'https://upstream.example.com', platform: 'new-api', name: 'Upstream' },
         tokenValue: 'live-token',
@@ -1096,7 +1096,7 @@ describe('selectSurfaceChannelForAttempt', () => {
     const { recordSurfaceSuccess } = await import('./sharedProxyOrchestration.js');
     await recordSurfaceSuccess({
       selected: {
-        channel: { id: 11, routeId: 22 },
+        target: { id: 11, routeId: 22 },
         account: { id: 33, username: 'oauth-user' },
         site: { id: 44, url: 'https://upstream.example.com', name: 'Codex OAuth' },
         tokenValue: 'live-token',
@@ -1137,7 +1137,7 @@ describe('selectSurfaceChannelForAttempt', () => {
     const { recordSurfaceSuccess } = await import('./sharedProxyOrchestration.js');
     const result = await recordSurfaceSuccess({
       selected: {
-        channel: { id: 11, routeId: 22 },
+        target: { id: 11, routeId: 22 },
         account: { id: 33, username: 'oauth-user' },
         site: { id: 44, url: 'https://upstream.example.com', name: 'Codex OAuth' },
         tokenValue: 'live-token',

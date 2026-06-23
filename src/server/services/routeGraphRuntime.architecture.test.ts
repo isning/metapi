@@ -9,7 +9,11 @@ describe('route graph runtime architecture', () => {
   it('executes route programs instead of reconstructing the v2 compiled graph', () => {
     const source = readRuntimeSource();
 
-    expect(source).toContain('evaluateRouteProgramBundle');
+    expect(source).toContain('evaluateFlatRouteProgramBundle');
+    expect(source).toContain('flatProgramBundle');
+    expect(source).toContain("from './selectorEngine.js'");
+    expect(source).toContain('selectRuntimeCandidate');
+    expect(source).not.toContain("from '@bufbuild/cel'");
     expect(source).not.toContain('evaluateCompiledRouteGraphV2');
     expect(source).not.toContain('findRouteGraphEntryForModel');
     expect(source).not.toContain('graphSourceFromCompiled');

@@ -334,7 +334,7 @@
           "defaultValue": null,
           "primaryKey": false
         },
-        "channel_id": {
+        "target_id": {
           "logicalType": "integer",
           "notNull": false,
           "defaultValue": null,
@@ -426,7 +426,7 @@
         }
       }
     },
-    "route_channels": {
+    "route_endpoint_targets": {
       "columns": {
         "id": {
           "logicalType": "integer",
@@ -873,16 +873,16 @@
       "unique": false
     },
     {
-      "name": "route_channels_account_id_idx",
-      "table": "route_channels",
+      "name": "route_endpoint_targets_account_id_idx",
+      "table": "route_endpoint_targets",
       "columns": [
         "account_id"
       ],
       "unique": false
     },
     {
-      "name": "route_channels_route_enabled_idx",
-      "table": "route_channels",
+      "name": "route_endpoint_targets_route_enabled_idx",
+      "table": "route_endpoint_targets",
       "columns": [
         "route_id",
         "enabled"
@@ -890,16 +890,16 @@
       "unique": false
     },
     {
-      "name": "route_channels_route_id_idx",
-      "table": "route_channels",
+      "name": "route_endpoint_targets_route_id_idx",
+      "table": "route_endpoint_targets",
       "columns": [
         "route_id"
       ],
       "unique": false
     },
     {
-      "name": "route_channels_route_token_idx",
-      "table": "route_channels",
+      "name": "route_endpoint_targets_route_token_idx",
+      "table": "route_endpoint_targets",
       "columns": [
         "route_id",
         "token_id"
@@ -907,8 +907,8 @@
       "unique": false
     },
     {
-      "name": "route_channels_token_id_idx",
-      "table": "route_channels",
+      "name": "route_endpoint_targets_token_id_idx",
+      "table": "route_endpoint_targets",
       "columns": [
         "token_id"
       ],
@@ -1062,7 +1062,7 @@
       "onDelete": "CASCADE"
     },
     {
-      "table": "route_channels",
+      "table": "route_endpoint_targets",
       "columns": [
         "account_id"
       ],
@@ -1073,7 +1073,7 @@
       "onDelete": "CASCADE"
     },
     {
-      "table": "route_channels",
+      "table": "route_endpoint_targets",
       "columns": [
         "route_id"
       ],
@@ -1084,7 +1084,7 @@
       "onDelete": "CASCADE"
     },
     {
-      "table": "route_channels",
+      "table": "route_endpoint_targets",
       "columns": [
         "token_id"
       ],

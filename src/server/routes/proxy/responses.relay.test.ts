@@ -363,7 +363,7 @@ describe('/v1/responses relay with scenario upstreams', () => {
   });
 
   it('records a normalized failure log when every upstream responses candidate fails', async () => {
-    const { managedKey, route, channel, account } = await harness.seedRoute({ model: 'responses-failure-model' });
+    const { managedKey, route, target, account } = await harness.seedRoute({ model: 'responses-failure-model' });
     harness.upstream.add({
       method: 'POST',
       path: '/v1/responses',
@@ -393,7 +393,7 @@ describe('/v1/responses relay with scenario upstreams', () => {
     expect(response.statusCode, response.body).toBe(503);
     expect(response.json()).toMatchObject({
       error: expect.objectContaining({
-        message: expect.stringContaining('No available channels for this model'),
+        message: expect.stringContaining('No available targets for this model'),
       }),
     });
 
@@ -401,7 +401,7 @@ describe('/v1/responses relay with scenario upstreams', () => {
     expect(logs.some((log) => log.status === 'failed'
       && log.httpStatus === 503
       && log.routeId === route.id
-      && log.channelId === channel.id
+      && log.targetId === target.id
       && log.accountId === account.id
       && log.downstreamApiKeyId === managedKey.id
       && log.modelRequested === 'responses-failure-model'

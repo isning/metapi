@@ -9,7 +9,7 @@ const { apiMock, getBrandMock } = vi.hoisted(() => ({
   apiMock: {
     getRoutesSummary: vi.fn(),
     refreshRouteDecisionSnapshots: vi.fn(),
-    getRouteChannels: vi.fn(),
+    getRouteTargets: vi.fn(),
     getTask: vi.fn(),
     getTasks: vi.fn(),
     getModelTokenCandidates: vi.fn(),
@@ -72,7 +72,7 @@ describe('TokenRoutes refresh decision action', () => {
       {
         id: 1, modelMapping: null, enabled: true,
         match: { kind: 'model', requestedModelPattern: 'gpt-4o-mini', displayName: 'gpt-4o-mini' },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         presentation: { displayName: 'gpt-4o-mini', displayIcon: null },
         channelCount: 0, enabledChannelCount: 0, siteNames: [],
         decisionSnapshot: null, decisionRefreshedAt: null,
@@ -80,13 +80,13 @@ describe('TokenRoutes refresh decision action', () => {
       {
         id: 2, modelMapping: null, enabled: true,
         match: { kind: 'model', requestedModelPattern: 're:^claude-(opus|sonnet)-4-6$', displayName: 'claude-group' },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         presentation: { displayName: 'claude-group', displayIcon: null },
         channelCount: 0, enabledChannelCount: 0, siteNames: [],
         decisionSnapshot: null, decisionRefreshedAt: null,
       },
     ]);
-    apiMock.getRouteChannels.mockResolvedValue([]);
+    apiMock.getRouteTargets.mockResolvedValue([]);
     apiMock.refreshRouteDecisionSnapshots.mockResolvedValue({ queued: true, jobId: 'task-1', status: 'pending' });
     apiMock.getTasks.mockResolvedValue({ tasks: [] });
     apiMock.getTask.mockResolvedValue({ task: { id: 'task-1', status: 'succeeded' } });
@@ -107,7 +107,7 @@ describe('TokenRoutes refresh decision action', () => {
           {
             id: 1, modelMapping: null, enabled: true,
             match: { kind: 'model', requestedModelPattern: 'gpt-4o-mini', displayName: 'gpt-4o-mini' },
-            backend: { kind: 'channels' },
+            backend: { kind: 'supply' },
             presentation: { displayName: 'gpt-4o-mini', displayIcon: null },
             channelCount: 0, enabledChannelCount: 0, siteNames: [],
             decisionSnapshot: null, decisionRefreshedAt: null,
@@ -115,7 +115,7 @@ describe('TokenRoutes refresh decision action', () => {
           {
             id: 2, modelMapping: null, enabled: true,
             match: { kind: 'model', requestedModelPattern: 're:^claude-(opus|sonnet)-4-6$', displayName: 'claude-group' },
-            backend: { kind: 'channels' },
+            backend: { kind: 'supply' },
             presentation: { displayName: 'claude-group', displayIcon: null },
             channelCount: 0, enabledChannelCount: 0, siteNames: [],
             decisionSnapshot: null, decisionRefreshedAt: null,
@@ -125,7 +125,7 @@ describe('TokenRoutes refresh decision action', () => {
           {
             id: 1, modelMapping: null, enabled: true,
             match: { kind: 'model', requestedModelPattern: 'gpt-4o-mini', displayName: 'gpt-4o-mini' },
-            backend: { kind: 'channels' },
+            backend: { kind: 'supply' },
             presentation: { displayName: 'gpt-4o-mini', displayIcon: null },
             channelCount: 0, enabledChannelCount: 0, siteNames: [],
             decisionSnapshot: { matched: true, candidates: [] }, decisionRefreshedAt: '2026-04-01T00:00:00.000Z',
@@ -133,7 +133,7 @@ describe('TokenRoutes refresh decision action', () => {
           {
             id: 2, modelMapping: null, enabled: true,
             match: { kind: 'model', requestedModelPattern: 're:^claude-(opus|sonnet)-4-6$', displayName: 'claude-group' },
-            backend: { kind: 'channels' },
+            backend: { kind: 'supply' },
             presentation: { displayName: 'claude-group', displayIcon: null },
             channelCount: 0, enabledChannelCount: 0, siteNames: [],
             decisionSnapshot: { matched: true, candidates: [] }, decisionRefreshedAt: '2026-04-01T00:00:00.000Z',
@@ -176,7 +176,7 @@ describe('TokenRoutes refresh decision action', () => {
           {
             id: 1, modelMapping: null, enabled: true,
             match: { kind: 'model', requestedModelPattern: 'gpt-4o-mini', displayName: 'gpt-4o-mini' },
-            backend: { kind: 'channels' },
+            backend: { kind: 'supply' },
             presentation: { displayName: 'gpt-4o-mini', displayIcon: null },
             channelCount: 0, enabledChannelCount: 0, siteNames: [],
             decisionSnapshot: null, decisionRefreshedAt: null,
@@ -186,7 +186,7 @@ describe('TokenRoutes refresh decision action', () => {
           {
             id: 1, modelMapping: null, enabled: true,
             match: { kind: 'model', requestedModelPattern: 'gpt-4o-mini', displayName: 'gpt-4o-mini' },
-            backend: { kind: 'channels' },
+            backend: { kind: 'supply' },
             presentation: { displayName: 'gpt-4o-mini', displayIcon: null },
             channelCount: 0, enabledChannelCount: 0, siteNames: [],
             decisionSnapshot: { matched: true, candidates: [] }, decisionRefreshedAt: '2026-04-01T00:00:00.000Z',

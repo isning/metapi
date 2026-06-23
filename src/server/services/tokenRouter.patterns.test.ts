@@ -27,14 +27,14 @@ describe('TokenRouter patterns and model mapping', () => {
   async function buildLegacyRouteGraphRows() {
     const [routes, channels] = await Promise.all([
       db.select().from(schema.tokenRoutes).all(),
-      db.select().from(schema.routeChannels).all(),
+      db.select().from(schema.routeEndpointTargets).all(),
     ]);
     const targetsByRouteId = new Map<number, Array<Record<string, unknown>>>();
     for (const channel of channels) {
       const sourceModel = (channel.sourceModel || '').trim();
       const existing = targetsByRouteId.get(channel.routeId) || [];
       existing.push({
-        channelId: String(channel.id),
+        targetId: String(channel.id),
         model: sourceModel,
         modelSource: sourceModel ? 'fixed' : 'request',
         accountId: channel.accountId,
@@ -91,7 +91,7 @@ describe('TokenRouter patterns and model mapping', () => {
     await db.delete(schema.routeGraphActiveVersion).run();
     await db.delete(schema.routeGraphDrafts).run();
     await db.delete(schema.routeGraphVersions).run();
-    await db.delete(schema.routeChannels).run();
+    await db.delete(schema.routeEndpointTargets).run();
     await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.accountTokens).run();
     await db.delete(schema.accounts).run();
@@ -139,7 +139,7 @@ describe('TokenRouter patterns and model mapping', () => {
       modelMapping,
       enabled: true,
     }).returning().get();
-    const channel = await db.insert(schema.routeChannels).values({
+    const channel = await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: account.id,
       tokenId: null,
@@ -163,9 +163,9 @@ describe('TokenRouter patterns and model mapping', () => {
           displayName: options?.displayName ?? null,
           routeId: route.id,
         },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         targets: [{
-          channelId: String(channel.id),
+          targetId: String(channel.id),
           model: sourceModel,
           modelSource: sourceModel ? 'fixed' : 'request',
           accountId: account.id,
@@ -220,7 +220,7 @@ describe('TokenRouter patterns and model mapping', () => {
           match: isGroup
             ? { kind: 'model', requestedModelPattern: '', displayName: row.displayName, routeId: row.id }
             : { kind: 'model', requestedModelPattern: seededModelPatternByRouteId.get(row.id) || row.displayName || '', displayName: null, routeId: row.id },
-          backend: isGroup ? { kind: 'routes', routeIds: groupSourceRouteIds } : { kind: 'channels' },
+          backend: isGroup ? { kind: 'routes', routeIds: groupSourceRouteIds } : { kind: 'supply' },
         };
       })),
       createdBy: 'test',
@@ -250,8 +250,8 @@ describe('TokenRouter patterns and model mapping', () => {
 
     const selected = await router.selectChannel('claude-opus-4-6');
     expect(selected).toBeTruthy();
-    expect(selected?.channel.id).toBe(glob.channel.id);
-    expect(selected?.channel.id).not.toBe(invalid.channel.id);
+    expect(selected?.target.id).toBe(glob.target.id);
+    expect(selected?.target.id).not.toBe(invalid.target.id);
   });
 
   it('supports exact, glob and re: keys in modelMapping with exact taking precedence', async () => {
@@ -326,8 +326,8 @@ describe('TokenRouter patterns and model mapping', () => {
     const decision = await router.explainSelection('claude-opus-4-6');
 
     expect(selected).toBeTruthy();
-    expect(selected?.channel.routeId).toBe(source.route.id);
-    expect(selected?.channel.id).not.toBe(exact.channel.id);
+    expect(selected?.target.routeId).toBe(source.route.id);
+    expect(selected?.target.id).not.toBe(exact.target.id);
     expect(selected?.actualModel).toBe('claude-opus-4-5');
     expect(decision.routeId).toBe(grouped.id);
     expect(decision.actualModel).toBe('claude-opus-4-5');

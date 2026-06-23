@@ -260,13 +260,57 @@ type TestChatRequestPayload = {
   messages: Array<{ role: string; content: string }>;
   targetFormat?: "openai" | "claude" | "responses" | "gemini";
   stream?: boolean;
-  forcedChannelId?: number | null;
+  forcedTargetId?: number | null;
   temperature?: number;
   top_p?: number;
   max_tokens?: number;
   frequency_penalty?: number;
   presence_penalty?: number;
   seed?: number;
+};
+
+export type CredentialEndpointBindingSupport = "supported" | "unsupported" | "unknown" | "blocked";
+
+export type CredentialEndpointMatrixProfile = {
+  id: string;
+  rowId: number;
+  profileKey: string;
+  siteId: number;
+  apiType: string;
+  label: string;
+  baseUrl?: string | null;
+  pathTemplate?: string | null;
+  authMode: string;
+  enabled: boolean;
+  priority?: number | null;
+  compatibilityPolicyRef?: string | null;
+  metadata?: Record<string, unknown>;
+};
+
+export type CredentialEndpointMatrixBinding = {
+  id: number | null;
+  apiEndpointProfileId: number;
+  enabled: boolean;
+  support: CredentialEndpointBindingSupport;
+  source: string;
+  priority: number;
+  persisted: boolean;
+};
+
+export type CredentialEndpointMatrixCredential = {
+  credentialKind: "account" | "account_token";
+  credentialKey: string;
+  accountId: number;
+  tokenId: number | null;
+  label: string;
+  detail: string | null;
+  bindings: CredentialEndpointMatrixBinding[];
+};
+
+export type CredentialEndpointMatrix = {
+  siteId: number;
+  profiles: CredentialEndpointMatrixProfile[];
+  credentials: CredentialEndpointMatrixCredential[];
 };
 
 export type ProxyTestMethod = "POST" | "GET" | "DELETE";
@@ -286,7 +330,7 @@ export type ProxyTestRequestEnvelope = {
   stream?: boolean;
   jobMode?: boolean;
   rawMode?: boolean;
-  forcedChannelId?: number | null;
+  forcedTargetId?: number | null;
   jsonBody?: unknown;
   rawJsonText?: string;
   multipartFields?: Record<string, string>;
@@ -368,8 +412,8 @@ export type RuntimeSettingsPayload = {
   codexUpstreamWebsocketEnabled?: boolean;
   responsesCompactFallbackToResponsesEnabled?: boolean;
   disableCrossProtocolFallback?: boolean;
-  proxySessionChannelConcurrencyLimit?: number;
-  proxySessionChannelQueueWaitMs?: number;
+  proxySessionTargetConcurrencyLimit?: number;
+  proxySessionTargetQueueWaitMs?: number;
   proxyDebugTraceEnabled?: boolean;
   proxyDebugCaptureHeaders?: boolean;
   proxyDebugCaptureBodies?: boolean;
@@ -465,6 +509,9 @@ export type UpstreamCostPricingScope =
   | "account_model"
   | "token_model"
   | "token_model_group";
+export type UpstreamCostMatchedScope =
+  | UpstreamCostPricingScope
+  | "provider_catalog";
 
 export type UpstreamCostPricingRecord = {
   id: number;
@@ -509,6 +556,24 @@ export type UpstreamCostPricingPayload = {
   notes?: string | null;
 };
 
+export type PricingReferenceConfig = {
+  schemaVersion: 1;
+  defaultReferenceMode: "auto" | "manual" | "default" | "override";
+  fallbackProfile: "system_default" | "free" | "unknown";
+  catalog: {
+    builtInCatalogEnabled: boolean;
+    providerCatalogSuggestionsEnabled: boolean;
+  };
+  driftCheck: {
+    enabled: boolean;
+    windowHours: number;
+    minSampleSize: number;
+    relativeTolerance: number;
+    absoluteToleranceUsd: number;
+    notifyOnWarning: boolean;
+  };
+};
+
 export type ProxyLogListItem = {
   id: number;
   createdAt: string;
@@ -542,9 +607,59 @@ export type ProxyLogListItem = {
 
 export type ProxyLogDetail = ProxyLogListItem & {
   routeId?: number | null;
-  channelId?: number | null;
+  targetId?: number | null;
   httpStatus?: number | null;
   billingDetails?: ProxyLogBillingDetails;
+  routeDecision?: {
+    source?: "snapshot" | "current";
+    capturedAt?: string | null;
+    requestedModel?: string | null;
+    actualModel?: string | null;
+    route: {
+      id: number | null;
+      displayName: string | null;
+      displayIcon: string | null;
+      routingStrategy: string | null;
+      enabled: boolean | null;
+      decisionRefreshedAt: string | null;
+      snapshotSummary: {
+        matchKind: string | null;
+        requestedModelPattern: string | null;
+        backendKind: string | null;
+        sourceRouteIds: number[];
+      } | null;
+    } | null;
+    target: {
+      id: number | null;
+      routeEndpointId: string | null;
+      accountId: number | null;
+      tokenId: number | null;
+      oauthRouteUnitId: number | null;
+      sourceModel: string | null;
+      priority: number | null;
+      weight: number | null;
+      enabled: boolean | null;
+      manualOverride: boolean | null;
+      successCount: number | null;
+      failCount: number | null;
+      totalLatencyMs: number | null;
+      totalCost: number | null;
+      lastUsedAt: string | null;
+      lastSelectedAt: string | null;
+      lastFailAt: string | null;
+      consecutiveFailCount: number | null;
+      cooldownLevel: number | null;
+      cooldownUntil: string | null;
+    } | null;
+    token: {
+      id: number | null;
+      name: string | null;
+      tokenGroup: string | null;
+      enabled: boolean | null;
+      valueStatus: string | null;
+      source: string | null;
+    } | null;
+  };
 };
 
 export type ProxyLogsSummary = {
@@ -587,7 +702,7 @@ export type ProxyDebugTraceListItem = {
   clientKind?: string | null;
   sessionId?: string | null;
   requestedModel?: string | null;
-  selectedChannelId?: number | null;
+  selectedTargetId?: number | null;
   finalStatus?: string | null;
   finalHttpStatus?: number | null;
   finalUpstreamPath?: string | null;
@@ -604,12 +719,34 @@ export type ProxyDebugTraceDetail = {
     traceHint?: string | null;
     requestedModel?: string | null;
     stickySessionKey?: string | null;
-    stickyHitChannelId?: number | null;
-    selectedChannelId?: number | null;
+    stickyHitTargetId?: number | null;
+    selectedTargetId?: number | null;
     selectedRouteId?: number | null;
     selectedAccountId?: number | null;
     selectedSiteId?: number | null;
     selectedSitePlatform?: string | null;
+    selectedRouteDisplay?: {
+      id: number;
+      label?: string | null;
+      routingStrategy?: string | null;
+    } | null;
+    selectedTargetDisplay?: {
+      id: number;
+      label?: string | null;
+      sourceModel?: string | null;
+      routeEndpointId?: string | null;
+      tokenGroup?: string | null;
+      priority?: number | null;
+      weight?: number | null;
+      siteName?: string | null;
+      sitePlatform?: string | null;
+    } | null;
+    selectedSiteDisplay?: {
+      id: number;
+      label?: string | null;
+      platform?: string | null;
+      url?: string | null;
+    } | null;
     endpointCandidatesJson?: string | null;
     endpointRuntimeStateJson?: string | null;
     decisionSummaryJson?: string | null;
@@ -637,6 +774,8 @@ export type ProxyDebugTraceDetail = {
     recoverApplied?: boolean | null;
     downgradeDecision?: boolean | null;
     downgradeReason?: string | null;
+    fallbackScope?: string | null;
+    failureClass?: string | null;
     memoryWriteJson?: string | null;
     createdAt?: string | null;
   }>;
@@ -840,6 +979,25 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ models }),
     }),
+  getSiteEndpointBindings: (siteId: number) =>
+    request<CredentialEndpointMatrix>(`/api/sites/${siteId}/endpoint-bindings`),
+  updateSiteEndpointBindings: (
+    siteId: number,
+    credentialKey: string,
+    bindings: Array<{
+      apiEndpointProfileId: number;
+      enabled: boolean;
+      support: CredentialEndpointBindingSupport;
+      priority?: number;
+    }>,
+  ) =>
+    request<CredentialEndpointMatrix>(
+      `/api/sites/${siteId}/endpoint-bindings/${encodeURIComponent(credentialKey)}`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ bindings }),
+      },
+    ),
   getSiteAvailableModels: (siteId: number) =>
     request(`/api/sites/${siteId}/available-models`),
   probeSiteNow: (siteId: number, options?: { scope?: 'single' | 'all'; modelName?: string; latencyThresholdMs?: number }) =>
@@ -1000,19 +1158,19 @@ export const api = {
   getRoutes: () => request("/api/routes"),
   getRoutesLite: () => request("/api/routes/lite"),
   getRoutesSummary: () => request("/api/routes/summary"),
-  getRouteChannels: (routeId: number) =>
-    request(`/api/routes/${routeId}/channels`),
-  batchAddChannels: (
+  getRouteTargets: (routeId: number) =>
+    request(`/api/routes/${routeId}/targets`),
+  batchAddTargets: (
     routeId: number,
-    channels: Array<{
+    targets: Array<{
       accountId: number;
       tokenId?: number;
       sourceModel?: string;
     }>,
   ) =>
-    request(`/api/routes/${routeId}/channels/batch`, {
+    request(`/api/routes/${routeId}/targets/batch`, {
       method: "POST",
-      body: JSON.stringify({ channels }),
+      body: JSON.stringify({ targets }),
     }),
   addRoute: (data: any) =>
     request("/api/routes", { method: "POST", body: JSON.stringify(data) }),
@@ -1027,23 +1185,23 @@ export const api = {
       method: "POST",
       body: JSON.stringify(data),
     }),
-  addChannel: (routeId: number, data: any) =>
-    request(`/api/routes/${routeId}/channels`, {
+  addRouteTarget: (routeId: number, data: any) =>
+    request(`/api/routes/${routeId}/targets`, {
       method: "POST",
       body: JSON.stringify(data),
     }),
-  updateChannel: (id: number, data: any) =>
-    request(`/api/channels/${id}`, {
+  updateRouteTarget: (id: number, data: any) =>
+    request(`/api/targets/${id}`, {
       method: "PUT",
       body: JSON.stringify(data),
     }),
-  batchUpdateChannels: (updates: Array<{ id: number; priority: number }>) =>
-    request("/api/channels/batch", {
+  batchUpdateRouteTargets: (updates: Array<{ id: number; priority: number }>) =>
+    request("/api/targets/batch", {
       method: "PUT",
       body: JSON.stringify({ updates }),
     }),
-  deleteChannel: (id: number) =>
-    request(`/api/channels/${id}`, { method: "DELETE" }),
+  deleteRouteTarget: (id: number) =>
+    request(`/api/targets/${id}`, { method: "DELETE" }),
   rebuildRoutes: (refreshModels = true, wait = false) =>
     request("/api/routes/rebuild", {
       method: "POST",
@@ -1513,6 +1671,13 @@ export const api = {
       timeoutMs: 45_000,
     }),
   getModelTokenCandidates: () => request("/api/models/token-candidates"),
+  getPricingReferenceConfig: () =>
+    request<PricingReferenceConfig>("/api/pricing/reference-config"),
+  updatePricingReferenceConfig: (data: PricingReferenceConfig) =>
+    request<PricingReferenceConfig>("/api/pricing/reference-config", {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
   listUpstreamCostPricings: (params?: {
     siteId?: number;
     accountId?: number;
@@ -1549,7 +1714,7 @@ export const api = {
   }) =>
     request<{
       pricing: UpstreamCostPricingRecord | null;
-      matchedScope?: UpstreamCostPricingScope;
+      matchedScope?: UpstreamCostMatchedScope;
       priority?: number;
     }>(`/api/pricing/upstream-cost/resolve${buildQueryString(params)}`),
   previewUpstreamCostPricing: (data: {
@@ -1563,7 +1728,7 @@ export const api = {
   }) =>
     request<{
       pricing: UpstreamCostPricingRecord | null;
-      matchedScope?: UpstreamCostPricingScope;
+      matchedScope?: UpstreamCostMatchedScope;
       priority?: number;
       evaluation?: Record<string, unknown> | null;
     }>("/api/pricing/upstream-cost/preview", {

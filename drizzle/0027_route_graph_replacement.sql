@@ -34,11 +34,11 @@ CREATE TABLE `route_graph_active_version` (
 --> statement-breakpoint
 CREATE UNIQUE INDEX `route_graph_active_version_singleton_unique` ON `route_graph_active_version` (`id`);
 --> statement-breakpoint
-ALTER TABLE `route_channels` ADD `route_node_id` text;
+ALTER TABLE `route_endpoint_targets` ADD `route_endpoint_id` text;
 --> statement-breakpoint
-UPDATE `route_channels` SET `route_node_id` = 'entry:legacy:' || `route_id` WHERE `route_node_id` IS NULL OR trim(`route_node_id`) = '';
+UPDATE `route_endpoint_targets` SET `route_endpoint_id` = 'entry:legacy:' || `route_id` WHERE `route_endpoint_id` IS NULL OR trim(`route_endpoint_id`) = '';
 --> statement-breakpoint
-CREATE INDEX `route_channels_route_node_id_idx` ON `route_channels` (`route_node_id`);
+CREATE INDEX `route_endpoint_targets_route_endpoint_id_idx` ON `route_endpoint_targets` (`route_endpoint_id`);
 --> statement-breakpoint
 INSERT INTO `route_graph_versions` (
 	`version`,
@@ -79,13 +79,13 @@ SELECT
 				FROM `token_routes`
 				UNION ALL
 				SELECT json_object(
-					'id', 'pool:legacy:' || `token_routes`.`id`,
-					'type', 'channel_pool',
+					'id', 'route-endpoint:legacy:' || `token_routes`.`id`,
+					'type', 'route_endpoint',
 					'name', coalesce(nullif(trim(`token_routes`.`display_name`), ''), `token_routes`.`model_pattern`) || ' pool',
 					'enabled', CASE WHEN coalesce(`token_routes`.`enabled`, 1) THEN json('true') ELSE json('false') END,
 					'visibility', 'internal',
 					'ownership', 'manual',
-					'routeNodeId', 'entry:legacy:' || `token_routes`.`id`,
+					'routeEndpointId', 'entry:legacy:' || `token_routes`.`id`,
 					'legacyRouteId', `token_routes`.`id`,
 					'routingStrategy', coalesce(`token_routes`.`routing_strategy`, 'weighted'),
 					'provenance', json_object('source', 'legacy', 'routeId', `token_routes`.`id`)
@@ -98,9 +98,9 @@ SELECT
 			SELECT json_group_array(json(`edge_json`))
 			FROM (
 				SELECT json_object(
-					'id', 'edge:entry:legacy:' || `token_routes`.`id` || ':pool:legacy:' || `token_routes`.`id`,
+					'id', 'edge:entry:legacy:' || `token_routes`.`id` || ':route-endpoint:legacy:' || `token_routes`.`id`,
 					'sourceNodeId', 'entry:legacy:' || `token_routes`.`id`,
-					'targetNodeId', 'pool:legacy:' || `token_routes`.`id`,
+					'targetNodeId', 'route-endpoint:legacy:' || `token_routes`.`id`,
 					'ownership', 'manual'
 				) AS `edge_json`
 				FROM `token_routes`

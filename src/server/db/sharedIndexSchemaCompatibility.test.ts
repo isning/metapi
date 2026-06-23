@@ -38,7 +38,7 @@ describe('ensureSharedIndexSchemaCompatibility', () => {
         'model_availability',
         'token_model_availability',
         'token_routes',
-        'route_channels',
+        'route_endpoint_targets',
         'proxy_logs',
         'proxy_video_tasks',
         'downstream_api_keys',

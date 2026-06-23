@@ -1,8 +1,11 @@
 import type {
   CompiledEndpointTarget,
+  RouteFlatDecision,
+  RouteFlatProgram,
   RouteProgramSourceRef,
   RouteProgram,
   RouteProgramBundleV3,
+  RouteProgramBundleV4,
   RouteProgramCandidate,
   RouteProgramOp,
 } from '../../shared/routeGraph.js';
@@ -10,7 +13,11 @@ import {
   matchesTokenRouteModelPattern,
   parseTokenRouteRegexPattern,
 } from '../../shared/tokenRoutePatterns.js';
-import { evaluateUpstreamCostPricing } from './upstreamCostPricingService.js';
+import { quoteEndpointPricing, type PricingResolution } from './pricingQuoteService.js';
+import {
+  estimateRuntimeSelectorProbabilities,
+  type RuntimeSelectorCandidate,
+} from './selectorEngine.js';
 
 export type EntryPricingEstimateLevel = 'exact' | 'static_estimate' | 'incomplete';
 
@@ -18,12 +25,11 @@ export type EntryPricingCandidate = {
   targetId: string;
   endpointId: string;
   nodeId: string;
-  channelId: string;
   siteId: number | null;
   accountId: number | null;
   tokenId: number | null;
   modelName: string;
-  probability: number;
+  probability: number | null;
   weight: number | null;
   priority: number | null;
   inputPerMillion: number | null;
@@ -48,21 +54,29 @@ export type EntryPricingEstimate = {
   candidates: EntryPricingCandidate[];
 };
 
-const PREVIEW_USAGE = {
-  inputTokens: 1_000_000,
-  outputTokens: 1_000_000,
-  requestCount: 1,
+export type EntryPricingProbabilityOverride = {
+  targetId: string | number | null | undefined;
+  probability: number | null | undefined;
 };
+
 const ENTRY_PRICE_MULTIPLIER_BASE_PER_MILLION = 2;
 const TOTAL_MULTIPLIER_BASE = ENTRY_PRICE_MULTIPLIER_BASE_PER_MILLION * 2;
 
 type WeightedTarget = {
   target: CompiledEndpointTarget;
-  probability: number;
+  probability: number | null;
+  fallbackProbability: number | null;
   weight: number | null;
   priority: number | null;
   strategy: string | null;
   incomplete: boolean;
+};
+
+type ProbabilityCandidate = {
+  enabled?: boolean;
+  weight?: number | null;
+  priority?: number | null;
+  metadata?: Record<string, unknown>;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -104,6 +118,129 @@ function totalMultiplier(total: number | null): number | null {
   return roundPrice(total / TOTAL_MULTIPLIER_BASE);
 }
 
+function normalizeProbabilityRatio(value: unknown): number | null {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return null;
+  return Math.max(0, Math.min(1, parsed));
+}
+
+function recalculateEntryPricingEstimate(
+  estimate: EntryPricingEstimate,
+  candidates: EntryPricingCandidate[],
+): EntryPricingEstimate {
+  const fallbackProbabilityByTargetId = buildFallbackProbabilityByTargetId(candidates);
+  let weightedInput = 0;
+  let inputWeight = 0;
+  let weightedOutput = 0;
+  let outputWeight = 0;
+  let weightedTotal = 0;
+  let totalWeight = 0;
+  let hasUnknownProbability = false;
+
+  for (const candidate of candidates) {
+    const probability = candidate.probability ?? fallbackProbabilityByTargetId.get(candidate.targetId) ?? null;
+    if (candidate.probability == null) {
+      hasUnknownProbability = true;
+    }
+    if (probability == null) continue;
+    if (candidate.inputPerMillion != null) {
+      weightedInput += candidate.inputPerMillion * probability;
+      inputWeight += probability;
+    }
+    if (candidate.outputPerMillion != null) {
+      weightedOutput += candidate.outputPerMillion * probability;
+      outputWeight += probability;
+    }
+    if (candidate.totalCostUsd != null) {
+      weightedTotal += candidate.totalCostUsd * probability;
+      totalWeight += probability;
+    }
+  }
+
+  const inputPerMillion = inputWeight > 0 ? roundPrice(weightedInput / inputWeight) : null;
+  const outputPerMillion = outputWeight > 0 ? roundPrice(weightedOutput / outputWeight) : null;
+  const totalCostUsd = totalWeight > 0 ? roundPrice(weightedTotal / totalWeight) : null;
+  const estimateLevel: EntryPricingEstimateLevel = hasUnknownProbability
+    ? 'incomplete'
+    : (estimate.diagnostics.length > 0 ? 'static_estimate' : 'exact');
+
+  return {
+    ...estimate,
+    inputPerMillion,
+    outputPerMillion,
+    totalCostUsd,
+    inputMultiplier: toMultiplier(inputPerMillion),
+    outputMultiplier: toMultiplier(outputPerMillion),
+    totalMultiplier: totalMultiplier(totalCostUsd),
+    sourceCount: candidates.filter((candidate) => (
+      candidate.totalCostUsd != null
+      || candidate.inputPerMillion != null
+      || candidate.outputPerMillion != null
+    )).length,
+    estimateLevel,
+    candidates,
+  };
+}
+
+function buildFallbackProbabilityByTargetId(
+  candidates: Array<Pick<EntryPricingCandidate, 'targetId' | 'weight'>>,
+): Map<string, number> {
+  const enabled = candidates.filter((candidate) => candidate.targetId);
+  const totalWeight = enabled.reduce((sum, candidate) => {
+    const weight = asPositiveNumber(candidate.weight) ?? 1;
+    return sum + weight;
+  }, 0);
+  const result = new Map<string, number>();
+  if (totalWeight <= 0) return result;
+  for (const candidate of enabled) {
+    const weight = asPositiveNumber(candidate.weight) ?? 1;
+    result.set(candidate.targetId, weight / totalWeight);
+  }
+  return result;
+}
+
+function applyFallbackCandidateProbabilities(
+  candidates: EntryPricingCandidate[],
+  fallbackProbabilityByTargetId: Map<string, number | null>,
+): EntryPricingCandidate[] {
+  if (fallbackProbabilityByTargetId.size === 0) return candidates;
+  return candidates.map((candidate) => {
+    if (candidate.probability != null) return candidate;
+    const probability = fallbackProbabilityByTargetId.get(candidate.targetId);
+    if (probability == null) return candidate;
+    return {
+      ...candidate,
+      probability: roundPrice(probability) ?? probability,
+    };
+  });
+}
+
+export function applyRuntimeEntryPricingProbabilities(input: {
+  estimate: EntryPricingEstimate | null | undefined;
+  overrides: EntryPricingProbabilityOverride[];
+}): EntryPricingEstimate | null {
+  if (!input.estimate) return null;
+  const probabilityByTargetId = new Map<string, number | null>();
+  for (const override of input.overrides) {
+    const targetId = String(override.targetId ?? '').trim();
+    if (!targetId) continue;
+    probabilityByTargetId.set(targetId, normalizeProbabilityRatio(override.probability));
+  }
+  if (probabilityByTargetId.size === 0) return input.estimate;
+
+  const candidates = input.estimate.candidates.map((candidate) => {
+    const targetId = String(candidate.targetId ?? '').trim();
+    const probability = probabilityByTargetId.has(targetId)
+      ? probabilityByTargetId.get(targetId) ?? null
+      : null;
+    return {
+      ...candidate,
+      probability: probability == null ? null : (roundPrice(probability) ?? probability),
+    };
+  });
+  return recalculateEntryPricingEstimate(input.estimate, candidates);
+}
+
 function programMatchesModel(bundle: RouteProgramBundleV3, requestedModel: string): RouteProgram | null {
   const exact = bundle.matcher?.exact?.[requestedModel]
     || bundle.matcher?.normalizedExact?.[requestedModel.toLowerCase()]
@@ -117,65 +254,63 @@ function programMatchesModel(bundle: RouteProgramBundleV3, requestedModel: strin
   return (bundle.programs || []).find((program) => program.id === exact.programId && program.enabled !== false) || null;
 }
 
-function probabilityForCandidates(
+function flatProgramMatchesModel(bundle: RouteProgramBundleV4, requestedModel: string): RouteFlatProgram | null {
+  const exact = bundle.matcher?.exact?.[requestedModel]
+    || bundle.matcher?.normalizedExact?.[requestedModel.toLowerCase()]
+    || (bundle.matcher?.patterns || []).find((pattern) => {
+      if (pattern.patternKind !== 'regex') return matchesTokenRouteModelPattern(requestedModel, pattern.pattern);
+      const parsed = parseTokenRouteRegexPattern(pattern.pattern);
+      if (parsed.error) return false;
+      return matchesTokenRouteModelPattern(requestedModel, pattern.pattern);
+    });
+  if (!exact?.programId) return null;
+  return (bundle.programs || []).find((program) => program.id === exact.programId && program.enabled !== false) || null;
+}
+
+function runtimeCandidateFromProbabilityCandidate<T extends ProbabilityCandidate>(
+  candidate: T,
+  index: number,
+  kind: string,
+): RuntimeSelectorCandidate<T> {
+  const weight = asPositiveNumber(candidate.weight) ?? 1;
+  return {
+    idx: index,
+    kind,
+    metadata: isRecord(candidate.metadata) ? candidate.metadata : {},
+    runtime: {},
+    enabled: candidate.enabled !== false,
+    weight,
+    priority: asFiniteNumber(candidate.priority) ?? 0,
+    score: weight,
+    order: index,
+    payload: candidate,
+  };
+}
+
+function probabilityForCandidates<T extends ProbabilityCandidate>(
   policy: Record<string, unknown> | null | undefined,
-  candidates: RouteProgramCandidate[],
-): Array<{ candidate: RouteProgramCandidate; probability: number; strategy: string; incomplete: boolean }> {
+  candidates: T[],
+  kind: string,
+): Array<{ candidate: T; probability: number | null; strategy: string; incomplete: boolean }> {
   const enabled = candidates.filter((candidate) => candidate.enabled !== false);
   if (enabled.length === 0) return [];
-  const strategy = asTrimmedString(policy?.strategy) || 'weighted';
 
-  if (strategy === 'direct' || strategy === 'cel_select') {
-    return enabled.map((candidate, index) => ({
-      candidate,
-      probability: index === 0 ? 1 : 0,
-      strategy,
-      incomplete: true,
-    }));
-  }
+  const runtimeCandidates = candidates.map((candidate, index) => (
+    runtimeCandidateFromProbabilityCandidate(candidate, index, kind)
+  ));
+  const estimate = estimateRuntimeSelectorProbabilities({
+    selectorId: `${kind}:entry-pricing`,
+    policy,
+    candidates: runtimeCandidates,
+  });
 
-  if (strategy === 'stable_first') {
-    return enabled.map((candidate, index) => ({
-      candidate,
-      probability: index === 0 ? 1 : 0,
-      strategy,
-      incomplete: false,
-    }));
-  }
-
-  if (strategy === 'priority_order') {
-    const maxPriority = Math.max(...enabled.map((candidate) => asFiniteNumber(candidate.priority) ?? 0));
-    const top = enabled.filter((candidate) => (asFiniteNumber(candidate.priority) ?? 0) === maxPriority);
-    const weightTotal = top.reduce((sum, candidate) => sum + (asPositiveNumber(candidate.weight) ?? 1), 0);
-    return enabled.map((candidate) => {
-      const active = top.includes(candidate);
-      const weight = asPositiveNumber(candidate.weight) ?? 1;
-      return {
-        candidate,
-        probability: active && weightTotal > 0 ? weight / weightTotal : 0,
-        strategy,
-        incomplete: false,
-      };
-    });
-  }
-
-  if (strategy === 'round_robin') {
-    return enabled.map((candidate) => ({
-      candidate,
-      probability: 1 / enabled.length,
-      strategy,
-      incomplete: false,
-    }));
-  }
-
-  const weightTotal = enabled.reduce((sum, candidate) => sum + (asPositiveNumber(candidate.weight) ?? 1), 0);
   return enabled.map((candidate) => {
-    const weight = asPositiveNumber(candidate.weight) ?? 1;
+    const originalIndex = candidates.indexOf(candidate);
     return {
       candidate,
-      probability: weightTotal > 0 ? weight / weightTotal : 0,
-      strategy,
-      incomplete: false,
+      probability: estimate.probabilities[originalIndex] ?? null,
+      strategy: estimate.strategy,
+      incomplete: estimate.estimateLevel !== 'static',
     };
   });
 }
@@ -183,7 +318,7 @@ function probabilityForCandidates(
 function probabilityForTargets(
   policy: Record<string, unknown> | null | undefined,
   targets: CompiledEndpointTarget[],
-): Array<{ target: CompiledEndpointTarget; probability: number; weight: number | null; priority: number | null; strategy: string; incomplete: boolean }> {
+): Array<{ target: CompiledEndpointTarget; probability: number | null; fallbackProbability: number | null; weight: number | null; priority: number | null; strategy: string; incomplete: boolean }> {
   const candidates = targets.map((target, index): RouteProgramCandidate => ({
     id: target.targetId || `${target.endpointId}:${index}`,
     kind: 'target',
@@ -194,16 +329,23 @@ function probabilityForTargets(
     metadata: isRecord(target.metadata) ? target.metadata : {},
     sourceRef: target.sourceRef || {},
   }));
-  return probabilityForCandidates(policy, candidates)
+  const fallbackProbabilityByTargetId = isRecord(policy) && policy.strategy === 'defer_to_router'
+    ? buildFallbackProbabilityByTargetId(candidates.map((candidate) => ({
+      targetId: String(candidate.targetRef?.targetId ?? candidate.id),
+      weight: candidate.weight,
+    })))
+    : new Map<string, number>();
+  return probabilityForCandidates(policy, candidates, 'target')
     .map((item) => ({
       target: targets[candidates.indexOf(item.candidate)],
       probability: item.probability,
+      fallbackProbability: fallbackProbabilityByTargetId.get(String(item.candidate.targetRef?.targetId ?? item.candidate.id)) ?? null,
       weight: asFiniteNumber(item.candidate.weight),
       priority: asFiniteNumber(item.candidate.priority),
       strategy: item.strategy,
       incomplete: item.incomplete,
     }))
-    .filter((item) => !!item.target);
+    .filter((item): item is { target: CompiledEndpointTarget; probability: number | null; fallbackProbability: number | null; weight: number | null; priority: number | null; strategy: string; incomplete: boolean } => !!item.target);
 }
 
 function collectProgramTargets(input: {
@@ -216,10 +358,10 @@ function collectProgramTargets(input: {
   let incomplete = false;
   const visited = new Set<string>();
 
-  const visit = (opId: string | null | undefined, probability: number) => {
+  const visit = (opId: string | null | undefined, probability: number | null) => {
     const id = asTrimmedString(opId);
-    if (!id || probability <= 0) return;
-    const guardKey = `${id}:${probability}`;
+    if (!id || (probability != null && probability <= 0)) return;
+    const guardKey = `${id}:${probability == null ? 'dynamic' : probability}`;
     if (visited.has(guardKey)) return;
     visited.add(guardKey);
     const op = opsById.get(id);
@@ -239,11 +381,14 @@ function collectProgramTargets(input: {
     }
 
     if (op.op === 'dispatch') {
-      const weighted = probabilityForCandidates(op.policy, op.candidates || []);
+      const weighted = probabilityForCandidates(op.policy, op.candidates || [], 'route');
       for (const item of weighted) {
         strategies.add(item.strategy);
-        if (item.incomplete) incomplete = true;
-        visit(item.candidate.targetOpId, probability * item.probability);
+        if (item.incomplete || item.probability == null) incomplete = true;
+        visit(
+          item.candidate.targetOpId,
+          probability == null || item.probability == null ? null : probability * item.probability,
+        );
       }
       return;
     }
@@ -252,10 +397,13 @@ function collectProgramTargets(input: {
       const weighted = probabilityForTargets(op.targetSelectionPolicy, op.targets || []);
       for (const item of weighted) {
         strategies.add(item.strategy);
-        if (item.incomplete) incomplete = true;
+        if (item.incomplete || item.probability == null) incomplete = true;
         targets.push({
           target: item.target,
-          probability: probability * item.probability,
+          probability: probability == null || item.probability == null ? null : probability * item.probability,
+          fallbackProbability: probability != null && item.probability == null && item.fallbackProbability != null
+            ? probability * item.fallbackProbability
+            : null,
           weight: item.weight,
           priority: item.priority,
           strategy: item.strategy,
@@ -274,19 +422,75 @@ function collectProgramTargets(input: {
   return { targets, strategies, incomplete };
 }
 
-function componentUnitPrice(evaluation: NonNullable<Awaited<ReturnType<typeof evaluateUpstreamCostPricing>>>['evaluation'], kind: string): number | null {
-  const component = evaluation.components.find((item) => item.kind === kind);
-  return component ? roundPrice(component.unitPriceUsd) : null;
+function collectFlatProgramTargets(input: {
+  program: RouteFlatProgram;
+  requestedModel: string;
+}): { targets: WeightedTarget[]; strategies: Set<string>; incomplete: boolean } {
+  const targets: WeightedTarget[] = [];
+  const strategies = new Set<string>();
+  let incomplete = false;
+  const visited = new Set<string>();
+
+  const visit = (decision: RouteFlatDecision | null | undefined, probability: number | null) => {
+    if (!decision || (probability != null && probability <= 0)) return;
+    const guardKey = `${decision.kind}:${decision.kind === 'dispatch' ? decision.dispatch.id : decision.terminal.nodeId}:${probability == null ? 'dynamic' : probability}`;
+    if (visited.has(guardKey)) return;
+    visited.add(guardKey);
+
+    if (decision.kind === 'dispatch') {
+      const weighted = probabilityForCandidates(decision.dispatch.policy, decision.dispatch.candidates || [], 'route');
+      for (const item of weighted) {
+        strategies.add(item.strategy);
+        if (item.incomplete || item.probability == null) incomplete = true;
+        visit(
+          item.candidate.next,
+          probability == null || item.probability == null ? null : probability * item.probability,
+        );
+      }
+      return;
+    }
+
+    if (decision.terminal.kind === 'synthetic') {
+      incomplete = true;
+      return;
+    }
+
+    const weighted = probabilityForTargets(decision.terminal.targetSelectionPolicy, decision.terminal.targets || []);
+    for (const item of weighted) {
+      strategies.add(item.strategy);
+      if (item.incomplete || item.probability == null) incomplete = true;
+      targets.push({
+        target: item.target,
+        probability: probability == null || item.probability == null ? null : probability * item.probability,
+        fallbackProbability: probability != null && item.probability == null && item.fallbackProbability != null
+          ? probability * item.fallbackProbability
+          : null,
+        weight: item.weight,
+        priority: item.priority,
+        strategy: item.strategy,
+        incomplete: item.incomplete,
+      });
+    }
+  };
+
+  visit(input.program.start, 1);
+  return { targets, strategies, incomplete };
 }
 
 export async function estimateRouteEntryPricing(input: {
-  bundle: RouteProgramBundleV3;
+  bundle: RouteProgramBundleV3 | RouteProgramBundleV4;
   requestedModel: string;
 }): Promise<EntryPricingEstimate | null> {
-  const program = programMatchesModel(input.bundle, input.requestedModel);
-  if (!program) return null;
-
-  const collected = collectProgramTargets({ program, requestedModel: input.requestedModel });
+  const collected = input.bundle.version === 4
+    ? (() => {
+      const program = flatProgramMatchesModel(input.bundle as RouteProgramBundleV4, input.requestedModel);
+      return program ? collectFlatProgramTargets({ program, requestedModel: input.requestedModel }) : null;
+    })()
+    : (() => {
+      const program = programMatchesModel(input.bundle as RouteProgramBundleV3, input.requestedModel);
+      return program ? collectProgramTargets({ program, requestedModel: input.requestedModel }) : null;
+    })();
+  if (!collected) return null;
   const diagnostics: EntryPricingEstimate['diagnostics'] = [];
   let weightedInput = 0;
   let inputWeight = 0;
@@ -296,7 +500,7 @@ export async function estimateRouteEntryPricing(input: {
   let totalWeight = 0;
 
   const candidates = await Promise.all(collected.targets
-    .filter((item) => item.probability > 0)
+    .filter((item) => item.probability == null || item.probability >= 0)
     .map(async (item): Promise<EntryPricingCandidate> => {
     const target = item.target;
     const siteId = toPositiveInteger(target.siteId);
@@ -309,18 +513,17 @@ export async function estimateRouteEntryPricing(input: {
     if (siteId == null || accountId == null) {
       diagnostics.push({
         level: 'warn',
-        message: `Missing site/account identity for target ${target.targetId || target.channelId}.`,
+        message: `Missing site/account identity for target ${target.targetId}.`,
       });
       return {
         targetId: target.targetId,
         endpointId: target.endpointId,
         nodeId: target.nodeId,
-        channelId: target.channelId,
         siteId,
         accountId,
         tokenId,
         modelName,
-        probability: roundPrice(item.probability) ?? item.probability,
+        probability: item.probability == null ? null : (roundPrice(item.probability) ?? item.probability),
         weight: item.weight,
         priority: item.priority,
         inputPerMillion: null,
@@ -332,33 +535,37 @@ export async function estimateRouteEntryPricing(input: {
       };
     }
 
-    const evaluated = await evaluateUpstreamCostPricing({
-      siteId,
-      accountId,
-      tokenId,
-      tokenGroup: typeof target.metadata?.tokenGroup === 'string' ? target.metadata.tokenGroup : undefined,
-      modelName,
-      usage: PREVIEW_USAGE,
+    const quote = await quoteEndpointPricing({
+      supply: {
+        siteId,
+        accountId,
+        tokenId,
+        tokenGroup: typeof target.metadata?.tokenGroup === 'string' ? target.metadata.tokenGroup : undefined,
+        modelName,
+      },
+      usageProfile: 'preview_1m_io',
+      includeReference: false,
     });
-    const inputPerMillion = evaluated ? componentUnitPrice(evaluated.evaluation, 'input_tokens') : null;
-    const outputPerMillion = evaluated ? componentUnitPrice(evaluated.evaluation, 'output_tokens') : null;
-    const totalCostUsd = evaluated ? roundPrice(evaluated.evaluation.totalCostUsd) : null;
+    const evaluated: PricingResolution | null = quote.endpoint;
+    const inputPerMillion = evaluated?.summary.inputPerMillion ?? null;
+    const outputPerMillion = evaluated?.summary.outputPerMillion ?? null;
+    const totalCostUsd = evaluated?.summary.totalCostUsd ?? null;
 
     if (!evaluated) {
       diagnostics.push({
         level: 'info',
-        message: `No configured upstream cost for ${modelName} on target ${target.targetId || target.channelId}.`,
+        message: `No configured upstream cost for ${modelName} on target ${target.targetId}.`,
       });
     }
-    if (inputPerMillion != null) {
+    if (inputPerMillion != null && item.probability != null) {
       weightedInput += inputPerMillion * item.probability;
       inputWeight += item.probability;
     }
-    if (outputPerMillion != null) {
+    if (outputPerMillion != null && item.probability != null) {
       weightedOutput += outputPerMillion * item.probability;
       outputWeight += item.probability;
     }
-    if (totalCostUsd != null) {
+    if (totalCostUsd != null && item.probability != null) {
       weightedTotal += totalCostUsd * item.probability;
       totalWeight += item.probability;
     }
@@ -367,27 +574,72 @@ export async function estimateRouteEntryPricing(input: {
       targetId: target.targetId,
       endpointId: target.endpointId,
       nodeId: target.nodeId,
-      channelId: target.channelId,
       siteId,
       accountId,
       tokenId,
       modelName,
-      probability: roundPrice(item.probability) ?? item.probability,
+      probability: item.probability == null ? null : (roundPrice(item.probability) ?? item.probability),
       weight: item.weight,
       priority: item.priority,
       inputPerMillion,
       outputPerMillion,
       totalCostUsd,
-      pricingId: evaluated?.pricing.id ?? null,
+      pricingId: typeof evaluated?.sourceId === 'number' ? evaluated.sourceId : null,
       matchedScope: evaluated?.matchedScope ?? null,
       sourceRef: target.sourceRef || {},
     };
   }));
 
   if (candidates.length === 0) return null;
+  const aggregateFallbackProbabilityByTargetId = buildFallbackProbabilityByTargetId(candidates);
+  const displayFallbackProbabilityByTargetId = new Map<string, number | null>();
+  for (const item of collected.targets) {
+    displayFallbackProbabilityByTargetId.set(item.target.targetId, item.fallbackProbability);
+  }
+  const hasFallbackProbability = aggregateFallbackProbabilityByTargetId.size > 0;
+  if ((inputWeight <= 0 || outputWeight <= 0 || totalWeight <= 0) && hasFallbackProbability) {
+    let fallbackWeightedInput = 0;
+    let fallbackInputWeight = 0;
+    let fallbackWeightedOutput = 0;
+    let fallbackOutputWeight = 0;
+    let fallbackWeightedTotal = 0;
+    let fallbackTotalWeight = 0;
+    for (const candidate of candidates) {
+      if (candidate.probability != null) continue;
+      const probability = aggregateFallbackProbabilityByTargetId.get(candidate.targetId);
+      if (probability == null) continue;
+      if (candidate.inputPerMillion != null) {
+        fallbackWeightedInput += candidate.inputPerMillion * probability;
+        fallbackInputWeight += probability;
+      }
+      if (candidate.outputPerMillion != null) {
+        fallbackWeightedOutput += candidate.outputPerMillion * probability;
+        fallbackOutputWeight += probability;
+      }
+      if (candidate.totalCostUsd != null) {
+        fallbackWeightedTotal += candidate.totalCostUsd * probability;
+        fallbackTotalWeight += probability;
+      }
+    }
+    if (inputWeight <= 0) {
+      weightedInput = fallbackWeightedInput;
+      inputWeight = fallbackInputWeight;
+    }
+    if (outputWeight <= 0) {
+      weightedOutput = fallbackWeightedOutput;
+      outputWeight = fallbackOutputWeight;
+    }
+    if (totalWeight <= 0) {
+      weightedTotal = fallbackWeightedTotal;
+      totalWeight = fallbackTotalWeight;
+    }
+  }
   const inputPerMillion = inputWeight > 0 ? roundPrice(weightedInput / inputWeight) : null;
   const outputPerMillion = outputWeight > 0 ? roundPrice(weightedOutput / outputWeight) : null;
   const totalCostUsd = totalWeight > 0 ? roundPrice(weightedTotal / totalWeight) : null;
+  const displayCandidates = collected.incomplete
+    ? applyFallbackCandidateProbabilities(candidates, displayFallbackProbabilityByTargetId)
+    : candidates;
   const estimateLevel: EntryPricingEstimateLevel = collected.incomplete
     ? 'incomplete'
     : (diagnostics.length > 0 ? 'static_estimate' : 'exact');
@@ -403,6 +655,6 @@ export async function estimateRouteEntryPricing(input: {
     estimateLevel,
     strategy: collected.strategies.size === 1 ? [...collected.strategies][0] : (collected.strategies.size > 1 ? 'mixed' : null),
     diagnostics,
-    candidates,
+    candidates: displayCandidates,
   };
 }

@@ -62,7 +62,7 @@ export const codexPlatformProfile: PlatformProfile = {
     context: {
       siteId: number;
       accountId: number;
-      channelId: number;
+      targetId: number;
       headers: Record<string, string>;
       codexSessionStoreKey?: string | null;
     },

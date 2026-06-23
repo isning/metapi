@@ -31,7 +31,7 @@ describe('PUT /api/routes/:id route rebuild', () => {
       requestedModelPattern: modelPattern,
       displayName: options.displayName ?? null,
     },
-    backend: { kind: 'channels' },
+    backend: { kind: 'supply' },
     presentation: {
       displayName: options.displayName ?? null,
       displayIcon: null,
@@ -111,7 +111,7 @@ describe('PUT /api/routes/:id route rebuild', () => {
 
   beforeEach(async () => {
     resetTokenRouteReadLimitersForTests();
-    await db.delete(schema.routeChannels).run();
+    await db.delete(schema.routeEndpointTargets).run();
     await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.tokenModelAvailability).run();
     await db.delete(schema.modelAvailability).run();
@@ -137,7 +137,7 @@ describe('PUT /api/routes/:id route rebuild', () => {
       enabled: true,
     }).returning().get();
 
-    const autoChannel = await db.insert(schema.routeChannels).values({
+    const autoChannel = await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: oldCandidate.account.id,
       tokenId: oldCandidate.token.id,
@@ -148,7 +148,7 @@ describe('PUT /api/routes/:id route rebuild', () => {
       manualOverride: false,
     }).returning().get();
 
-    const manualChannel = await db.insert(schema.routeChannels).values({
+    const manualChannel = await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: manualCandidate.account.id,
       tokenId: manualCandidate.token.id,
@@ -172,18 +172,18 @@ describe('PUT /api/routes/:id route rebuild', () => {
         requestedModelPattern: 're:^gemini-.*$',
         displayName: 'new-group',
       },
-      backend: { kind: 'channels' },
+      backend: { kind: 'supply' },
       presentation: { displayName: 'new-group' },
     });
 
-    const routeChannels = await db.select().from(schema.routeChannels)
-      .where(eq(schema.routeChannels.routeId, route.id))
+    const routeEndpointTargets = await db.select().from(schema.routeEndpointTargets)
+      .where(eq(schema.routeEndpointTargets.routeId, route.id))
       .all();
 
-    expect(routeChannels.some((channel) => channel.id === manualChannel.id)).toBe(true);
-    expect(routeChannels.some((channel) => channel.id === autoChannel.id)).toBe(false);
+    expect(routeEndpointTargets.some((channel) => channel.id === manualChannel.id)).toBe(true);
+    expect(routeEndpointTargets.some((channel) => channel.id === autoChannel.id)).toBe(false);
 
-    const rebuiltAuto = routeChannels.find((channel) =>
+    const rebuiltAuto = routeEndpointTargets.find((channel) =>
       channel.accountId === newCandidate.account.id
       && channel.tokenId === newCandidate.token.id
       && channel.sourceModel === 'gemini-2.0-flash',
@@ -237,7 +237,7 @@ describe('PUT /api/routes/:id route rebuild', () => {
       enabled: true,
     }).returning().get();
 
-    await db.insert(schema.routeChannels).values([
+    await db.insert(schema.routeEndpointTargets).values([
       {
         routeId: exactRouteA.id,
         accountId: sourceA.account.id,
@@ -282,8 +282,8 @@ describe('PUT /api/routes/:id route rebuild', () => {
 
     const createdRouteId = (createResponse.json() as { id: number }).id;
 
-    const storedChannels = await db.select().from(schema.routeChannels)
-      .where(eq(schema.routeChannels.routeId, createdRouteId))
+    const storedChannels = await db.select().from(schema.routeEndpointTargets)
+      .where(eq(schema.routeEndpointTargets.routeId, createdRouteId))
       .all();
     expect(storedChannels).toHaveLength(0);
 
@@ -302,7 +302,7 @@ describe('PUT /api/routes/:id route rebuild', () => {
 
     const channelsResponse = await app.inject({
       method: 'GET',
-      url: `/api/routes/${createdRouteId}/channels`,
+      url: `/api/routes/${createdRouteId}/targets`,
     });
     expect(channelsResponse.statusCode).toBe(200);
     expect(channelsResponse.json()).toEqual(expect.arrayContaining([
@@ -325,7 +325,7 @@ describe('PUT /api/routes/:id route rebuild', () => {
       ...tokenRouteFixture({ modelPattern: 'claude-opus-4-5' }),
       enabled: true,
     }).returning().get();
-    await db.insert(schema.routeChannels).values({
+    await db.insert(schema.routeEndpointTargets).values({
       routeId: exactRouteA.id,
       accountId: sourceA.account.id,
       tokenId: sourceA.token.id,
@@ -466,7 +466,7 @@ describe('PUT /api/routes/:id route rebuild', () => {
       enabled: true,
     }).returning().get();
 
-    await db.insert(schema.routeChannels).values([
+    await db.insert(schema.routeEndpointTargets).values([
       {
         routeId: exactRouteA.id,
         accountId: sourceA.account.id,
@@ -500,7 +500,7 @@ describe('PUT /api/routes/:id route rebuild', () => {
 
     const channelsResponse = await app.inject({
       method: 'GET',
-      url: `/api/routes/${createdRouteId}/channels`,
+      url: `/api/routes/${createdRouteId}/targets`,
     });
 
     expect(channelsResponse.statusCode).toBe(200);
@@ -602,7 +602,7 @@ describe('PUT /api/routes/:id route rebuild', () => {
 
     const response = await app.inject({
       method: 'POST',
-      url: `/api/routes/${route.id}/channels`,
+      url: `/api/routes/${route.id}/targets`,
       payload: {
         accountId: String(seeded.account.id),
         tokenId: seeded.token.id,
@@ -622,7 +622,7 @@ describe('PUT /api/routes/:id route rebuild', () => {
       ...tokenRouteFixture({ modelPattern: 'gpt-4o-mini' }),
       enabled: true,
     }).returning().get();
-    const channel = await db.insert(schema.routeChannels).values({
+    const channel = await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: seeded.account.id,
       tokenId: seeded.token.id,
@@ -635,7 +635,7 @@ describe('PUT /api/routes/:id route rebuild', () => {
 
     const response = await app.inject({
       method: 'PUT',
-      url: `/api/channels/${channel.id}`,
+      url: `/api/targets/${channel.id}`,
       payload: {
         enabled: 'false',
       },
@@ -657,7 +657,7 @@ describe('PUT /api/routes/:id route rebuild', () => {
 
     const response = await app.inject({
       method: 'POST',
-      url: `/api/routes/${route.id}/channels/batch`,
+      url: `/api/routes/${route.id}/targets/batch`,
       payload: {
         channels: [
           {
@@ -694,7 +694,7 @@ describe('PUT /api/routes/:id route rebuild', () => {
       ...tokenRouteFixture({ modelPattern: 'gpt-4o-mini' }),
       enabled: true,
     }).returning().get();
-    const channel = await db.insert(schema.routeChannels).values({
+    const channel = await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: seeded.account.id,
       tokenId: alternateToken.id,
@@ -707,7 +707,7 @@ describe('PUT /api/routes/:id route rebuild', () => {
 
     const response = await app.inject({
       method: 'PUT',
-      url: `/api/channels/${channel.id}`,
+      url: `/api/targets/${channel.id}`,
       payload: {
         tokenId: null,
       },
@@ -719,7 +719,7 @@ describe('PUT /api/routes/:id route rebuild', () => {
       tokenId: seeded.token.id,
     });
 
-    const updated = await db.select().from(schema.routeChannels).where(eq(schema.routeChannels.id, channel.id)).get();
+    const updated = await db.select().from(schema.routeEndpointTargets).where(eq(schema.routeEndpointTargets.id, channel.id)).get();
     expect(updated?.tokenId).toBe(seeded.token.id);
   });
 
@@ -736,7 +736,7 @@ describe('PUT /api/routes/:id route rebuild', () => {
       enabled: true,
     }).returning().get();
 
-    await db.insert(schema.routeChannels).values([
+    await db.insert(schema.routeEndpointTargets).values([
       {
         routeId: exactRoute.id,
         accountId: exactCandidate.account.id,
@@ -789,7 +789,7 @@ describe('PUT /api/routes/:id route rebuild', () => {
       ...tokenRouteFixture({ modelPattern: 'visibility-toggle-model' }),
       enabled: true,
     }).returning().get();
-    await db.insert(schema.routeChannels).values({
+    await db.insert(schema.routeEndpointTargets).values({
       routeId: exactRoute.id,
       accountId: exactCandidate.account.id,
       tokenId: exactCandidate.token.id,
@@ -830,7 +830,7 @@ describe('PUT /api/routes/:id route rebuild', () => {
       ...tokenRouteFixture({ modelPattern: 'batch-visibility-model' }),
       enabled: true,
     }).returning().get();
-    await db.insert(schema.routeChannels).values({
+    await db.insert(schema.routeEndpointTargets).values({
       routeId: exactRoute.id,
       accountId: exactCandidate.account.id,
       tokenId: exactCandidate.token.id,

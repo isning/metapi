@@ -111,7 +111,7 @@ describe('/v1/completions site api endpoint rotation', () => {
     });
 
     await db.delete(schema.proxyLogs).run();
-    await db.delete(schema.routeChannels).run();
+    await db.delete(schema.routeEndpointTargets).run();
     await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.tokenModelAvailability).run();
     await db.delete(schema.modelAvailability).run();

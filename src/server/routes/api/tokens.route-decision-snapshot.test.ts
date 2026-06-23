@@ -36,7 +36,7 @@ describe('route decision snapshots', () => {
   });
 
   beforeEach(async () => {
-    await db.delete(schema.routeChannels).run();
+    await db.delete(schema.routeEndpointTargets).run();
     await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.routeGraphActiveVersion).run();
     await db.delete(schema.routeGraphDrafts).run();
@@ -76,7 +76,7 @@ describe('route decision snapshots', () => {
       enabled: true,
     });
 
-    await db.insert(schema.routeChannels).values({
+    await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: account.id,
       tokenId: null,
@@ -138,7 +138,7 @@ describe('route decision snapshots', () => {
       enabled: true,
     });
 
-    await db.insert(schema.routeChannels).values([
+    await db.insert(schema.routeEndpointTargets).values([
       {
         routeId: route.id,
         accountId: account.id,

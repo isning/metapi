@@ -11,7 +11,7 @@ function buildStableVirtualRouteId(modelName: string): number {
   return -Math.max(1, hash || normalized.length || 1);
 }
 
-export function buildZeroChannelPlaceholderRoutes(
+export function buildZeroTargetPlaceholderRoutes(
   routes: RouteSummaryRow[],
   modelsWithoutToken: MissingTokenModelsByName,
   modelsMissingTokenGroups: MissingTokenModelsByName,
@@ -54,17 +54,17 @@ export function buildZeroChannelPlaceholderRoutes(
           tokenId: null,
           siteId: null,
         },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         presentation: { displayName: null, displayIcon: null },
         modelMapping: null,
         routingStrategy: null,
         enabled: false,
-        channelCount: 0,
-        enabledChannelCount: 0,
+        targetCount: 0,
+        enabledTargetCount: 0,
         siteNames: Array.from(siteNames).sort((left, right) => left.localeCompare(right, undefined, { sensitivity: 'base' })),
         decisionSnapshot: null,
         decisionRefreshedAt: null,
-        kind: 'zero_channel',
+        kind: 'zero_target',
         readOnly: true,
         isVirtual: true,
       });

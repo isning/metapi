@@ -47,7 +47,7 @@ describe('proxy debug trace relay capture', () => {
   });
 
   it('captures scoped non-stream relay request, attempt, endpoint decision, and final response body', async () => {
-    const { managedKey, route, channel, account, site } = await harness.seedRoute({ model: 'debug-trace-model' });
+    const { managedKey, route, target, account, site } = await harness.seedRoute({ model: 'debug-trace-model' });
     config.proxyDebugTraceEnabled = true;
     config.proxyDebugCaptureHeaders = true;
     config.proxyDebugCaptureBodies = true;
@@ -107,7 +107,7 @@ describe('proxy debug trace relay capture', () => {
       traceHint: 'trace-session-1',
       requestedModel: 'debug-trace-model',
       downstreamApiKeyId: managedKey.id,
-      selectedChannelId: channel.id,
+      selectedTargetId: target.id,
       selectedRouteId: route.id,
       selectedAccountId: account.id,
       selectedSiteId: site.id,
@@ -149,15 +149,53 @@ describe('proxy debug trace relay capture', () => {
     expect(candidates).toEqual(expect.arrayContaining(['responses', 'chat']));
 
     const attempts = await harness.db.select().from(harness.schema.proxyDebugAttempts).all();
-    expect(attempts.length).toBeGreaterThanOrEqual(1);
+    expect(attempts.length).toBeGreaterThanOrEqual(2);
     expect(attempts).toEqual(expect.arrayContaining([
       expect.objectContaining({
         traceId: traces[0]!.id,
-        endpoint: 'openai/chat',
+        attemptIndex: 0,
+        endpoint: 'responses',
+        requestPath: '/v1/responses',
+        responseStatus: 404,
+        rawErrorText: expect.stringContaining('responses unavailable'),
+        runtimeExecutor: 'default',
+      }),
+      expect.objectContaining({
+        traceId: traces[0]!.id,
+        attemptIndex: 1,
+        endpoint: 'chat',
         requestPath: '/v1/chat/completions',
+        responseStatus: 200,
         runtimeExecutor: 'default',
       }),
     ]));
+    const failedAttempt = attempts.find((entry) => entry.endpoint === 'responses');
+    expect(JSON.parse(failedAttempt?.requestHeadersJson || '{}')).toMatchObject({
+      'Content-Type': 'application/json',
+    });
+    expect(JSON.parse(failedAttempt?.requestBodyJson || '{}')).toMatchObject({
+      model: 'debug-trace-model',
+    });
+    expect(JSON.parse(failedAttempt?.responseHeadersJson || '{}')).toMatchObject({
+      'content-type': expect.stringContaining('application/json'),
+    });
+    expect(JSON.parse(failedAttempt?.responseBodyJson || '{}')).toMatchObject({
+      error: { message: 'responses unavailable' },
+    });
+    expect(JSON.parse(failedAttempt?.memoryWriteJson || '{}')).toMatchObject({
+      action: 'failure',
+      endpoint: 'responses',
+      blockedEndpoint: 'responses',
+    });
+    const successAttempt = attempts.find((entry) => entry.endpoint === 'chat');
+    expect(JSON.parse(successAttempt?.responseBodyJson || '{}')).toMatchObject({
+      id: 'chatcmpl_debug_trace',
+      choices: [
+        expect.objectContaining({
+          message: { role: 'assistant', content: 'debug trace response' },
+        }),
+      ],
+    });
   });
 
   it('does not capture relay requests when scoped debug filters do not match', async () => {

@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const evaluateUpstreamCostPricingMock = vi.hoisted(() => vi.fn());
+const quoteEndpointPricingMock = vi.hoisted(() => vi.fn());
 
-vi.mock("./upstreamCostPricingService.js", () => ({
-  evaluateUpstreamCostPricing: evaluateUpstreamCostPricingMock,
+vi.mock("./pricingQuoteService.js", () => ({
+  quoteEndpointPricing: quoteEndpointPricingMock,
 }));
 
 describe("accountModelCostSummaryService", () => {
@@ -12,10 +12,12 @@ describe("accountModelCostSummaryService", () => {
   });
 
   it("evaluates model cost with the default enabled token", async () => {
-    evaluateUpstreamCostPricingMock.mockResolvedValue({
-      matchedScope: "token_model",
-      pricing: { id: 42 },
-      evaluation: { totalCostUsd: 10 },
+    quoteEndpointPricingMock.mockResolvedValue({
+      endpoint: {
+        matchedScope: "token_model",
+        sourceId: 42,
+        summary: { totalCostUsd: 10 },
+      },
     });
 
     const { buildAccountModelCostSummary } = await import(
@@ -31,17 +33,16 @@ describe("accountModelCostSummaryService", () => {
       ],
     });
 
-    expect(evaluateUpstreamCostPricingMock).toHaveBeenCalledWith({
-      siteId: 1,
-      accountId: 2,
-      tokenId: 11,
-      tokenGroup: "primary",
-      modelName: "gpt-4o-mini",
-      usage: {
-        inputTokens: 1_000_000,
-        outputTokens: 1_000_000,
-        requestCount: 1,
+    expect(quoteEndpointPricingMock).toHaveBeenCalledWith({
+      supply: {
+        siteId: 1,
+        accountId: 2,
+        tokenId: 11,
+        tokenGroup: "primary",
+        modelName: "gpt-4o-mini",
       },
+      usageProfile: "preview_1m_io",
+      includeReference: false,
     });
     expect(summary).toEqual({
       configured: true,
@@ -52,7 +53,7 @@ describe("accountModelCostSummaryService", () => {
   });
 
   it("returns an empty summary when no pricing matches", async () => {
-    evaluateUpstreamCostPricingMock.mockResolvedValue(null);
+    quoteEndpointPricingMock.mockResolvedValue({ endpoint: null });
 
     const { buildAccountModelCostSummary } = await import(
       "./accountModelCostSummaryService.js"

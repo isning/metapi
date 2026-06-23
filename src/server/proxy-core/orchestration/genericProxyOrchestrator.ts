@@ -2,9 +2,11 @@ import { TextDecoder } from 'node:util';
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import { config } from '../../config.js';
 import { tokenRouter } from '../../services/tokenRouter.js';
+import type { RouteExecutionScope } from '../../services/tokenRouter.js';
 import { reportProxyAllFailed } from '../../services/alertService.js';
 import { hasProxyUsagePayload, mergeProxyUsage, parseProxyUsage } from '../../services/proxyUsageParser.js';
 import { resolveUpstreamEndpointCandidates } from '../../services/upstreamEndpointDerivation.js';
+import { loadCredentialApiVariantConfig } from '../../services/credentialEndpointBindingService.js';
 import { buildUpstreamEndpointRequest } from '../formats/upstreamRequestBuilder.js';
 import {
   getUpstreamEndpointRuntimeStateSnapshot,
@@ -22,7 +24,7 @@ import { getProxyAuthContext, getProxyResourceOwner } from '../../middleware/aut
 import { getObservedResponseMeta } from '../firstByteTimeout.js';
 import { getRuntimeResponseReader, readRuntimeResponseText } from '../executors/types.js';
 import { detectDownstreamClientContext } from '../downstreamClientContext.js';
-import { getProxyMaxChannelRetries } from '../../services/proxyChannelRetry.js';
+import { getProxyMaxTargetRetries } from '../../services/proxyTargetRetry.js';
 import { shouldAbortSameSiteEndpointFallback } from '../../services/proxyRetryPolicy.js';
 import { applyOpenAiServiceTierPolicy } from '../serviceTierPolicy.js';
 import { maybeHandleWebSearchOnlySimulation } from '../webSearchSimulation.js';
@@ -41,6 +43,11 @@ import {
 import { isCodexResponsesSurface } from '../cliProfiles/codexProfile.js';
 import { protocolAdapters, type CompatibilityEndpoint } from '../formats/protocolAdapters.js';
 import {
+  buildApiAttemptPlan,
+  endpointCandidatesFromApiAttemptPlan,
+  summarizeApiAttemptPlanForDebug,
+} from '../apiVariants.js';
+import {
   acquireSurfaceChannelLease,
   bindSurfaceStickyChannel,
   buildSurfaceChannelBusyMessage,
@@ -48,7 +55,7 @@ import {
   clearSurfaceStickyChannel,
   createSurfaceFailureToolkit,
   createSurfaceDispatchRequest,
-  getSurfaceStickyPreferredChannelId,
+  getSurfaceStickyPreferredTargetId,
   recordSurfaceSuccess,
   selectSurfaceChannelForAttempt,
   trySurfaceOauthRefreshRecovery,
@@ -70,10 +77,10 @@ import {
   startSurfaceProxyDebugTrace,
 } from '../../services/proxyDebugTraceRuntime.js';
 import {
-  buildForcedChannelUnavailableMessage,
-  canRetryChannelSelection,
-  getTesterForcedChannelId,
-} from '../channelSelection.js';
+  buildForcedTargetUnavailableMessage,
+  canRetryTargetSelection,
+  getTesterForcedTargetId,
+} from '../targetSelection.js';
 import { resolvePlatformProfile } from '../platforms/registry.js';
 import type { DownstreamProtocolAdapter, TransformedDownstreamRequest } from '../formats/types.js';
 import { createConfiguredProtocolAdapter } from '../formats/configuredProtocolAdapter.js';
@@ -195,12 +202,12 @@ export async function handleGenericSurfaceRequest(
     }
 
     if (!await ensureModelAllowedForDownstreamKey(request, reply, requestedModel)) return;
-    const forcedChannelId = getTesterForcedChannelId({
+    const forcedTargetId = getTesterForcedTargetId({
       headers: request.headers as Record<string, unknown>,
       clientIp: request.ip,
     });
     const downstreamApiKeyId = getProxyAuthContext(request)?.keyId ?? null;
-    const maxRetries = getProxyMaxChannelRetries();
+    const maxRetries = getProxyMaxTargetRetries();
     const failureToolkit = createSurfaceFailureToolkit({
       warningScope: adapter.format,
       downstreamPath,
@@ -265,32 +272,35 @@ export async function handleGenericSurfaceRequest(
     }
 
     let retryCount = 0;
-    const excludeChannelIds: number[] = [];
+    const excludeTargetIds: number[] = [];
+    let routeExecutionScope: RouteExecutionScope | null = null;
 
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      const stickyPreferredChannelId = getSurfaceStickyPreferredChannelId(stickySessionKey);
+      const stickyPreferredTargetId = getSurfaceStickyPreferredTargetId(stickySessionKey);
 
       const selected = adapter.selectChannel
         ? await adapter.selectChannel({
             requestedModel,
             policy: downstreamPolicy,
-            excludeChannelIds,
-            forcedChannelId,
+            excludeTargetIds,
+            forcedTargetId,
+            routeExecutionScope,
           })
         : await selectSurfaceChannelForAttempt({
             requestedModel,
             downstreamPolicy,
-            excludeChannelIds,
-            forcedChannelId,
+            excludeTargetIds,
+            forcedTargetId,
             retryCount: attempt,
             stickySessionKey,
+            routeExecutionScope,
           });
 
       if (!selected) {
-        const noChannelMessage = buildForcedChannelUnavailableMessage(forcedChannelId);
+        const noChannelMessage = buildForcedTargetUnavailableMessage(forcedTargetId);
         await reportProxyAllFailed({
           model: requestedModel,
-          reason: forcedChannelId ? noChannelMessage : 'No available channels after retries',
+          reason: forcedTargetId ? noChannelMessage : 'No available targets after retries',
         });
         const payload = {
           error: { message: noChannelMessage, type: 'server_error' as const },
@@ -306,16 +316,17 @@ export async function handleGenericSurfaceRequest(
         });
       }
 
-      excludeChannelIds.push(selected.channel.id);
+      excludeTargetIds.push(selected.target.id);
+      routeExecutionScope = selected.routeExecutionScope ?? routeExecutionScope;
       await safeUpdateSurfaceProxyDebugSelection(debugTrace, {
         stickySessionKey,
-        stickyHitChannelId: (
-          stickyPreferredChannelId && stickyPreferredChannelId === selected.channel.id
-            ? stickyPreferredChannelId
+        stickyHitTargetId: (
+          stickyPreferredTargetId && stickyPreferredTargetId === selected.target.id
+            ? stickyPreferredTargetId
             : null
         ),
-        selectedChannelId: selected.channel.id,
-        selectedRouteId: selected.channel.routeId ?? null,
+        selectedTargetId: selected.target.id,
+        selectedRouteId: selected.target.routeId ?? null,
         selectedAccountId: selected.account.id,
         selectedSiteId: selected.site.id,
         selectedSitePlatform: selected.site.platform,
@@ -329,7 +340,7 @@ export async function handleGenericSurfaceRequest(
         site: selected.site,
         account: selected.account,
         token: selected.token,
-        modelEndpointCompatibilityPolicy: selected.routeGraph?.modelEndpointCompatibilityPolicy,
+        routeEndpointCompatibilityPolicy: selected.routeGraph?.routeEndpointCompatibilityPolicy,
         selectedEndpointTarget: selected.routeGraph?.selectedEndpointTarget,
       });
       const oauth = getOauthInfoFromAccount(selected.account);
@@ -342,7 +353,7 @@ export async function handleGenericSurfaceRequest(
             sessionId: codexSessionId,
             siteId: selected.site.id,
             accountId: selected.account.id,
-            channelId: selected.channel.id,
+            targetId: selected.target.id,
           })
         : null;
 
@@ -387,13 +398,6 @@ export async function handleGenericSurfaceRequest(
       const channelLease = leaseResult.lease;
       try {
         const debugAttemptIndex = attempt;
-      await safeInsertSurfaceProxyDebugAttempt(debugTrace, {
-        attemptIndex: debugAttemptIndex,
-        endpoint: adapter.format,
-        requestPath: downstreamPath,
-        targetUrl: selected.site.url,
-        runtimeExecutor: 'default',
-      });
 
       const finalizeDebugSuccess = async (
         status: number,
@@ -569,7 +573,7 @@ export async function handleGenericSurfaceRequest(
               {
                 siteId: selected.site.id,
                 accountId: selected.account.id,
-                channelId: selected.channel.id,
+                targetId: selected.target.id,
                 headers: endpointRequest.headers as Record<string, string>,
                 codexSessionStoreKey: codexSessionStoreKey || null,
               },
@@ -635,6 +639,28 @@ export async function handleGenericSurfaceRequest(
           rawCandidates,
           routeGraphFilters?.endpointPreference,
         );
+        const endpointFallbackDisabled = !!disableCrossProtocolFallback || isCompactRequest || config.disableCrossProtocolFallback;
+        const apiVariantConfig = await loadCredentialApiVariantConfig({
+          siteId: selected.site.id,
+          accountId: selected.account.id,
+          tokenId: selected.token?.id ?? selected.target.tokenId ?? null,
+        });
+        const credentialKey = apiVariantConfig?.credentialKey.credentialKey ?? (
+          selected.token?.id || selected.target.tokenId
+            ? `account-token:${selected.token?.id ?? selected.target.tokenId}`
+            : `account:${selected.account.id}`
+        );
+        const apiAttemptPlan = buildApiAttemptPlan({
+          siteId: selected.site.id,
+          credentialId: credentialKey,
+          modelName,
+          canonicalModel: modelName,
+          endpointCandidates: candidates,
+          endpointProfiles: apiVariantConfig?.endpointProfiles,
+          credentialEndpointBindings: apiVariantConfig?.credentialEndpointBindings,
+          disableCrossProtocolFallback: endpointFallbackDisabled,
+        });
+        const plannedCandidates = endpointCandidatesFromApiAttemptPlan(apiAttemptPlan);
 
         const endpointRuntimeContext = {
           siteId: selected.site.id,
@@ -649,26 +675,30 @@ export async function handleGenericSurfaceRequest(
         };
 
         await safeUpdateSurfaceProxyDebugCandidates(debugTrace, {
-          endpointCandidates: candidates,
+          endpointCandidates: plannedCandidates,
           endpointRuntimeState: getUpstreamEndpointRuntimeStateSnapshot(endpointRuntimeContext),
           decisionSummary: {
             retryCount,
             downstreamFormat: adapter.format,
             stickySessionKey,
-            stickyPreferredChannelId,
+            stickyPreferredTargetId,
             oauthProvider: oauth?.provider || null,
             isCodexSite,
             isCompactRequest,
+            credentialKey,
+            apiAttemptPlan: summarizeApiAttemptPlanForDebug(apiAttemptPlan),
           },
         });
 
-        if (candidates.length === 0) {
+        if (plannedCandidates.length === 0) {
           return {
             ok: false as const,
             status: 503,
-            errText: 'No available channels for this model',
+            errText: 'No available targets for this model',
           };
         }
+        const debugAttemptBase = reserveSurfaceProxyDebugAttemptBase(debugTrace, plannedCandidates.length);
+        const getDebugAttemptIndex = (endpointIndex: number) => debugAttemptBase + endpointIndex;
 
         const endpointStrategy = adapter.buildUpstreamRequest && transformed.requestKind
           ? null
@@ -681,7 +711,7 @@ export async function handleGenericSurfaceRequest(
             })
           : protocolAdapters.chat.createEndpointStrategy({
               downstreamFormat: adapter.format.startsWith('openai') ? 'openai' : (adapter.format.startsWith('claude') || adapter.format.startsWith('anthropic') ? 'claude' : adapter.format) as any,
-              endpointCandidates: candidates as CompatibilityEndpoint[],
+              endpointCandidates: plannedCandidates as CompatibilityEndpoint[],
               modelName,
               requestedModelHint: requestedModel,
               sitePlatform: selected.site.platform,
@@ -768,22 +798,24 @@ export async function handleGenericSurfaceRequest(
 
         return executeEndpointFlow({
           siteUrl: siteApiBaseUrl,
-          disableCrossProtocolFallback: !!disableCrossProtocolFallback || isCompactRequest || config.disableCrossProtocolFallback,
+          disableCrossProtocolFallback: endpointFallbackDisabled,
           firstByteTimeoutMs: Math.max(0, Math.trunc((config.proxyFirstByteTimeoutSec || 0) * 1000)),
-          endpointCandidates: candidates,
+          endpointCandidates: plannedCandidates,
           buildRequest: (endpoint) => buildEndpointRequest(endpoint as CompatibilityEndpoint),
           dispatchRequest,
           tryRecover,
           shouldDowngrade: endpointStrategy?.shouldDowngrade as ((ctx: any) => boolean) | undefined,
           onDowngrade: async (ctx) => {
             if (!endpointStrategy) return;
-            protocolAdapters.chat.promoteRequiredEndpointCandidateAfterProtocolError(candidates as CompatibilityEndpoint[], {
+            protocolAdapters.chat.promoteRequiredEndpointCandidateAfterProtocolError(plannedCandidates as CompatibilityEndpoint[], {
               currentEndpoint: ctx.request.endpoint as CompatibilityEndpoint,
               upstreamErrorText: ctx.rawErrText,
             });
-            await safeUpdateSurfaceProxyDebugAttempt(debugTrace, attempt, {
+            await safeUpdateSurfaceProxyDebugAttempt(debugTrace, getDebugAttemptIndex(ctx.endpointIndex), {
               downgradeDecision: true,
-              downgradeReason: 'cross_protocol_downgrade',
+              downgradeReason: 'api_variant_fallback',
+              fallbackScope: 'api_variant',
+              failureClass: 'protocol_mismatch',
             });
           },
           shouldAbortRemainingEndpoints: (ctx) => shouldAbortSameSiteEndpointFallback(
@@ -795,7 +827,7 @@ export async function handleGenericSurfaceRequest(
             const status = ctx.response.status || 502;
             if (adapter.buildUpstreamRequest && transformed.requestKind) {
               try {
-                await tokenRouter.recordFailure?.(selected.channel.id, {
+                await tokenRouter.recordFailure?.(selected.target.id, {
                   status,
                   errorText: ctx.rawErrText || ctx.errText,
                 });
@@ -803,11 +835,26 @@ export async function handleGenericSurfaceRequest(
                 // best effort only
               }
             }
-            recordUpstreamEndpointFailure({
+            const memoryWrite = recordUpstreamEndpointFailure({
               ...endpointRuntimeContext,
               endpoint: ctx.request.endpoint,
               status,
               errorText: ctx.rawErrText,
+            });
+            await safeInsertSurfaceProxyDebugAttempt(debugTrace, {
+              attemptIndex: getDebugAttemptIndex(ctx.endpointIndex),
+              endpoint: ctx.request.endpoint,
+              requestPath: ctx.request.path,
+              targetUrl: ctx.targetUrl,
+              runtimeExecutor: ctx.request.runtime?.executor ?? 'default',
+              requestHeaders: ctx.request.headers,
+              requestBody: ctx.request.body,
+              responseStatus: status,
+              responseHeaders: buildSurfaceProxyDebugResponseHeaders(ctx.response),
+              responseBody: parseSurfaceProxyDebugTextPayload(ctx.rawErrText),
+              rawErrorText: ctx.rawErrText || ctx.errText,
+              recoverApplied: ctx.recoverApplied === true,
+              memoryWrite,
             });
             await failureToolkit.log({
               selected,
@@ -826,9 +873,23 @@ export async function handleGenericSurfaceRequest(
             });
           },
           onAttemptSuccess: async (ctx) => {
-            recordUpstreamEndpointSuccess({
+            const memoryWrite = recordUpstreamEndpointSuccess({
               ...endpointRuntimeContext,
               endpoint: ctx.request.endpoint,
+            });
+            await safeInsertSurfaceProxyDebugAttempt(debugTrace, {
+              attemptIndex: getDebugAttemptIndex(ctx.endpointIndex),
+              endpoint: ctx.request.endpoint,
+              requestPath: ctx.request.path,
+              targetUrl: ctx.targetUrl,
+              runtimeExecutor: ctx.request.runtime?.executor ?? 'default',
+              requestHeaders: ctx.request.headers,
+              requestBody: ctx.request.body,
+              responseStatus: ctx.response.status,
+              responseHeaders: buildSurfaceProxyDebugResponseHeaders(ctx.response),
+              responseBody: await captureSurfaceProxyDebugSuccessResponseBody(debugTrace, ctx),
+              recoverApplied: ctx.recoverApplied === true,
+              memoryWrite,
             });
           },
         });
@@ -873,7 +934,7 @@ export async function handleGenericSurfaceRequest(
             upstreamPath: '[proxy] request build failed',
           });
           try {
-            await tokenRouter.recordFailure?.(selected.channel.id, {
+            await tokenRouter.recordFailure?.(selected.target.id, {
               status: endpointFailureStatus,
               errorText: err.message || 'Upstream request build failed',
             });
@@ -920,7 +981,7 @@ export async function handleGenericSurfaceRequest(
             retryCount,
           });
           const terminalFailureOutcome = failureOutcome.action === 'retry'
-            ? (canRetryChannelSelection(retryCount, forcedChannelId)
+            ? (canRetryTargetSelection(retryCount, forcedTargetId)
               ? null
               : finalizeRetryAsUpstreamFailure(endpointFailureStatus || 502, err.message))
             : failureOutcome;
@@ -940,7 +1001,7 @@ export async function handleGenericSurfaceRequest(
         const latency = Date.now() - startTime;
         if (adapter.buildUpstreamRequest && transformed.requestKind) {
           try {
-            await tokenRouter.recordFailure?.(selected.channel.id, {
+            await tokenRouter.recordFailure?.(selected.target.id, {
               errorText: err.message || 'Upstream request failed',
             });
           } catch {
@@ -959,7 +1020,7 @@ export async function handleGenericSurfaceRequest(
             totalTokens: 0,
             upstreamPath: '[proxy] execution pool error',
           });
-          if (canRetryChannelSelection(retryCount, forcedChannelId)) {
+          if (canRetryTargetSelection(retryCount, forcedTargetId)) {
             retryCount += 1;
             continue;
           }
@@ -988,7 +1049,7 @@ export async function handleGenericSurfaceRequest(
       if (!endpointResult!.ok) {
         const status = endpointResult!.status || 502;
         if (adapter.buildUpstreamRequest && transformed.requestKind) {
-          if (canRetryChannelSelection(retryCount, forcedChannelId)) {
+          if (canRetryTargetSelection(retryCount, forcedTargetId)) {
             retryCount += 1;
             continue;
           }
@@ -1013,7 +1074,7 @@ export async function handleGenericSurfaceRequest(
           retryCount,
         });
         const terminalFailureOutcome = failureOutcome.action === 'retry'
-          ? (canRetryChannelSelection(retryCount, forcedChannelId)
+          ? (canRetryTargetSelection(retryCount, forcedTargetId)
             ? null
             : finalizeRetryAsUpstreamFailure(status, endpointResult!.errText || 'Upstream request failed'))
           : failureOutcome;
@@ -1214,7 +1275,7 @@ export async function handleGenericSurfaceRequest(
             upstreamPath: successfulUpstreamPath,
           });
           const terminalFailureOutcome = failureOutcome.action === 'retry'
-            ? (canRetryChannelSelection(retryCount, forcedChannelId)
+            ? (canRetryTargetSelection(retryCount, forcedTargetId)
               ? null
               : finalizeRetryAsUpstreamFailure(failure.status, failure.reason))
             : failureOutcome;
@@ -1441,7 +1502,7 @@ export async function handleGenericSurfaceRequest(
           upstreamPath: formatLoggedUpstreamPath(adapter, successfulUpstreamPath),
         });
         const terminalFailureOutcome = failureOutcome.action === 'retry'
-          ? (canRetryChannelSelection(retryCount, forcedChannelId)
+          ? (canRetryTargetSelection(retryCount, forcedTargetId)
             ? null
             : finalizeRetryAsUpstreamFailure(failure.status, failure.reason))
           : failureOutcome;

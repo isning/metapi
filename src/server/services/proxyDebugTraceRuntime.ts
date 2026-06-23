@@ -127,7 +127,14 @@ export async function safeUpdateSurfaceProxyDebugAttempt(
 ): Promise<void> {
   if (!session) return;
   try {
-    await updateProxyDebugAttempt(session.traceId, attemptIndex, input);
+    await updateProxyDebugAttempt(session.traceId, attemptIndex, {
+      ...input,
+      ...(input.requestHeaders !== undefined ? { requestHeaders: session.options.captureHeaders ? input.requestHeaders : null } : {}),
+      ...(input.requestBody !== undefined ? { requestBody: session.options.captureBodies ? input.requestBody : null } : {}),
+      ...(input.responseHeaders !== undefined ? { responseHeaders: session.options.captureHeaders ? input.responseHeaders : null } : {}),
+      ...(input.responseBody !== undefined ? { responseBody: session.options.captureBodies ? input.responseBody : null } : {}),
+      maxBodyBytes: session.options.maxBodyBytes,
+    });
   } catch (error) {
     console.warn('[proxy-debug] failed to update attempt', error);
   }

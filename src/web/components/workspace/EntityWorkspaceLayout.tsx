@@ -29,6 +29,8 @@ export default function EntityWorkspaceLayout({
     );
   }
 
+  const workspaceDefaultSize = inspector ? '54%' : '76%';
+
   return (
     <div className="h-[calc(100vh-160px)] min-h-[680px] overflow-hidden rounded-lg border bg-card">
       <ResizablePanelGroup orientation="horizontal">
@@ -38,7 +40,7 @@ export default function EntityWorkspaceLayout({
           </ScrollArea>
         </ResizablePanel>
         <ResizableHandle withHandle />
-        <ResizablePanel defaultSize="54%" minSize="36%">
+        <ResizablePanel defaultSize={workspaceDefaultSize} minSize="36%">
           <ScrollArea className="h-full">
             {workspace}
           </ScrollArea>

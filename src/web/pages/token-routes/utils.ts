@@ -1,7 +1,7 @@
 import type { CSSProperties } from 'react';
 import { getBrand, normalizeBrandIconKey, type BrandInfo } from '../../components/BrandIcon.js';
 import type { RouteDecisionCandidate, RouteMode } from '../../../shared/tokenRouteContract.js';
-import type { RouteRow, RouteChannel, ChannelDecisionState, RouteSummaryRow } from './types.js';
+import type { RouteRow, RouteEndpointTarget, TargetDecisionState, RouteSummaryRow } from './types.js';
 import type { RouteGraphBackendSpec, RouteGraphMatchSpec } from '../../../shared/routeGraph.js';
 import {
   isExactTokenRouteModelPattern,
@@ -179,8 +179,8 @@ export function resolveRouteIcon(route: Pick<RouteRow | RouteSummaryRow, 'presen
   return { kind: 'text', value: icon };
 }
 
-export function normalizeChannels(channels: RouteChannel[]): RouteChannel[] {
-  return [...(channels || [])].sort((a, b) => {
+export function normalizeTargets(targets: RouteEndpointTarget[]): RouteEndpointTarget[] {
+  return [...(targets || [])].sort((a, b) => {
     const pa = a.priority ?? 0;
     const pb = b.priority ?? 0;
     if (pa === pb) return (a.id ?? 0) - (b.id ?? 0);
@@ -191,7 +191,7 @@ export function normalizeChannels(channels: RouteChannel[]): RouteChannel[] {
 export function normalizeRoutes(routeRows: any[]): RouteRow[] {
   return (routeRows || []).map((route) => ({
     ...(route as RouteRow),
-    channels: normalizeChannels(route.channels || []),
+    targets: normalizeTargets(route.targets || []),
   }));
 }
 
@@ -230,12 +230,12 @@ export function getProbabilityColor(probability: number): string {
   return 'var(--color-border)';
 }
 
-export function getChannelDecisionState(
+export function getTargetDecisionState(
   candidate: RouteDecisionCandidate | undefined,
-  channel: RouteChannel,
+  target: RouteEndpointTarget,
   isExactRoute: boolean,
   loadingDecision: boolean,
-): ChannelDecisionState {
+): TargetDecisionState {
   if (!isExactRoute && !candidate) {
     return {
       probability: 0,
@@ -249,7 +249,7 @@ export function getChannelDecisionState(
     return {
       probability: 0,
       showBar: true,
-      reasonText: loadingDecision ? tr('pages.tokenRoutes.utils.calculating') : tr('pages.tokenRoutes.utils.noChannelAvailable'),
+      reasonText: loadingDecision ? tr('pages.tokenRoutes.utils.calculating') : tr('pages.tokenRoutes.utils.noTargetAvailable'),
       reasonColor: 'var(--color-text-muted)',
     };
   }
@@ -265,7 +265,7 @@ export function getChannelDecisionState(
 
   if (!candidate.eligible) {
     const nowIso = new Date().toISOString();
-    const cooldownActive = !!channel.cooldownUntil && channel.cooldownUntil > nowIso;
+    const cooldownActive = !!target.cooldownUntil && target.cooldownUntil > nowIso;
     if (cooldownActive || candidate.reason.includes(tr('pages.tokenRoutes.utils.coolingDown'))) {
       return {
         probability: 0,

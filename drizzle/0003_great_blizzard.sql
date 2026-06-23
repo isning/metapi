@@ -44,15 +44,15 @@ CREATE INDEX IF NOT EXISTS `token_routes_model_pattern_idx` ON `token_routes` (`
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS `token_routes_enabled_idx` ON `token_routes` (`enabled`);
 --> statement-breakpoint
-CREATE INDEX IF NOT EXISTS `route_channels_route_id_idx` ON `route_channels` (`route_id`);
+CREATE INDEX IF NOT EXISTS `route_endpoint_targets_route_id_idx` ON `route_endpoint_targets` (`route_id`);
 --> statement-breakpoint
-CREATE INDEX IF NOT EXISTS `route_channels_account_id_idx` ON `route_channels` (`account_id`);
+CREATE INDEX IF NOT EXISTS `route_endpoint_targets_account_id_idx` ON `route_endpoint_targets` (`account_id`);
 --> statement-breakpoint
-CREATE INDEX IF NOT EXISTS `route_channels_token_id_idx` ON `route_channels` (`token_id`);
+CREATE INDEX IF NOT EXISTS `route_endpoint_targets_token_id_idx` ON `route_endpoint_targets` (`token_id`);
 --> statement-breakpoint
-CREATE INDEX IF NOT EXISTS `route_channels_route_enabled_idx` ON `route_channels` (`route_id`,`enabled`);
+CREATE INDEX IF NOT EXISTS `route_endpoint_targets_route_enabled_idx` ON `route_endpoint_targets` (`route_id`,`enabled`);
 --> statement-breakpoint
-CREATE INDEX IF NOT EXISTS `route_channels_route_token_idx` ON `route_channels` (`route_id`,`token_id`);
+CREATE INDEX IF NOT EXISTS `route_endpoint_targets_route_token_idx` ON `route_endpoint_targets` (`route_id`,`token_id`);
 --> statement-breakpoint
 CREATE INDEX IF NOT EXISTS `proxy_logs_created_at_idx` ON `proxy_logs` (`created_at`);
 --> statement-breakpoint

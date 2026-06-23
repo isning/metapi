@@ -29,7 +29,7 @@ type ParsedSummary = {
   profilesCount: number;
   tokensCount: number;
   routesCount: number;
-  channelsCount: number;
+  targetsCount: number;
   siteDisabledModelsCount: number;
   manualModelsCount: number;
   downstreamApiKeysCount: number;
@@ -121,7 +121,7 @@ function parseImportSummary(raw: string): ParsedSummary | null {
     profilesCount: 0,
     tokensCount: 0,
     routesCount: 0,
-    channelsCount: 0,
+    targetsCount: 0,
     siteDisabledModelsCount: 0,
     manualModelsCount: 0,
     downstreamApiKeysCount: 0,
@@ -151,7 +151,7 @@ function parseImportSummary(raw: string): ParsedSummary | null {
       && Array.isArray(accountsSection.sites)
       && Array.isArray(accountsSection.accountTokens)
       && Array.isArray(accountsSection.tokenRoutes)
-      && Array.isArray(accountsSection.routeChannels)
+      && Array.isArray(accountsSection.routeEndpointTargets)
     );
     const hasLegacyAccountRows = Array.isArray(accountsSection?.accounts)
       && accountsSection.accounts.some((row: any) => row && typeof row === 'object' && !Array.isArray(row) && (
@@ -213,7 +213,7 @@ function parseImportSummary(raw: string): ParsedSummary | null {
       profilesCount,
       tokensCount: toCount(accountsSection?.accountTokens),
       routesCount: toCount(accountsSection?.tokenRoutes),
-      channelsCount: toCount(accountsSection?.routeChannels),
+      targetsCount: toCount(accountsSection?.routeEndpointTargets || accountsSection?.routeChannels),
       siteDisabledModelsCount: toCount(accountsSection?.siteDisabledModels),
       manualModelsCount: toCount(accountsSection?.manualModels),
       downstreamApiKeysCount: toCount(accountsSection?.downstreamApiKeys),
@@ -599,13 +599,13 @@ export default function ImportExport() {
                         || summary.accountsCount
                         || summary.tokensCount
                         || summary.routesCount
-                        || summary.channelsCount
+                        || summary.targetsCount
                         || summary.siteDisabledModelsCount
                         || summary.manualModelsCount
                         || summary.downstreamApiKeysCount
                         || summary.settingsCount) ? (
                         <div>
-                          {tr('pages.importExport.sites')} {summary.sitesCount} {tr('pages.importExport.accounts')} {summary.accountsCount} {tr('pages.importExport.token')} {summary.tokensCount} {tr('pages.importExport.routes')} {summary.routesCount} {tr('pages.importExport.channels')} {summary.channelsCount} {tr('pages.importExport.sitesdisabledmodel')} {summary.siteDisabledModelsCount} {tr('pages.importExport.model')} {summary.manualModelsCount} {tr('pages.importExport.key')} {summary.downstreamApiKeysCount} {tr('pages.importExport.settings')} {summary.settingsCount}
+                          {tr('pages.importExport.sites')} {summary.sitesCount} {tr('pages.importExport.accounts')} {summary.accountsCount} {tr('pages.importExport.token')} {summary.tokensCount} {tr('pages.importExport.routes')} {summary.routesCount} {tr('pages.importExport.targets')} {summary.targetsCount} {tr('pages.importExport.sitesdisabledmodel')} {summary.siteDisabledModelsCount} {tr('pages.importExport.model')} {summary.manualModelsCount} {tr('pages.importExport.key')} {summary.downstreamApiKeysCount} {tr('pages.importExport.settings')} {summary.settingsCount}
                         </div>
                       ) : null}
                       {summary.hasLegacyData ? <div>{tr('pages.importExport.modeimport')}</div> : null}

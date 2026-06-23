@@ -21,13 +21,13 @@ function buildRoute(overrides: Partial<RouteSummaryRow> = {}): RouteSummaryRow {
   return {
     id: 7,
     match: { kind: 'model', requestedModelPattern: 'gpt-4o', displayName: 'gpt-4o' },
-    backend: { kind: 'channels' },
+    backend: { kind: 'supply' },
     presentation: { displayName: 'gpt-4o', displayIcon: null },
     modelMapping: null,
     routingStrategy: 'weighted',
     enabled: true,
-    channelCount: 1,
-    enabledChannelCount: 1,
+    targetCount: 1,
+    enabledTargetCount: 1,
     siteNames: ['openai'],
     decisionSnapshot: null,
     decisionRefreshedAt: null,
@@ -42,7 +42,7 @@ describe('routeGraphSnapshot', () => {
       buildRoute({ id: 4, modelMapping: '{"public":"upstream"}' }),
       buildRoute({ id: 5, modelMapping: '[]' }),
       buildRoute({ id: 6, modelMapping: '{"public":42}' }),
-      buildRoute({ id: 2, match: { kind: 'model', requestedModelPattern: 'missing-model', displayName: null }, kind: 'zero_channel', isVirtual: true }),
+      buildRoute({ id: 2, match: { kind: 'model', requestedModelPattern: 'missing-model', displayName: null }, kind: 'zero_target', isVirtual: true }),
       buildRoute({ id: 3, match: { kind: 'model', requestedModelPattern: 'readonly-model', displayName: null }, readOnly: true }),
     ]);
 
@@ -58,7 +58,7 @@ describe('routeGraphSnapshot', () => {
     const validation = validateRouteGraphNodeDraft({
       ownership: 'auto_generated',
       match: { requestedModelPattern: 'gpt-*' },
-      backend: { kind: 'channels' },
+      backend: { kind: 'supply' },
     });
 
     expect(validation.ok).toBe(false);
@@ -233,10 +233,10 @@ describe('routeGraphSnapshot', () => {
     });
   });
 
-  it('builds channel route payloads from editor form without macro data', () => {
+  it('builds target route payloads from editor form without macro data', () => {
     const payload = routeGraphEditorFormToRoutePayload({
       match: { kind: 'model', requestedModelPattern: 'gpt-*', displayName: 'GPT wildcard' },
-      backend: { kind: 'channels' },
+      backend: { kind: 'supply' },
       presentation: { displayName: ' ', displayIcon: ' anthropic ' },
       routingStrategy: 'round_robin',
       enabled: false,
@@ -259,7 +259,7 @@ describe('routeGraphSnapshot', () => {
         requestedModelPattern: 'gpt-*',
         displayName: 'GPT wildcard',
       },
-      backend: { kind: 'channels' },
+      backend: { kind: 'supply' },
       macro: undefined,
       presentation: {
         displayName: 'GPT wildcard',
@@ -407,7 +407,7 @@ describe('routeGraphSnapshot', () => {
           enabled: false,
           match: { requestedModelPattern: 'gpt-*', displayName: 'GPT' },
           presentation: { displayName: 'GPT', displayIcon: ' OpenAI ' },
-          backend: { kind: 'channels' },
+          backend: { kind: 'supply' },
           routingStrategy: 'round_robin',
           modelMapping: {
             ' public ': ' upstream ',
@@ -425,7 +425,7 @@ describe('routeGraphSnapshot', () => {
     expect(valid.snapshot.nodes[0]).toMatchObject({
       visibility: 'internal',
       enabled: false,
-      backend: { kind: 'channels' },
+      backend: { kind: 'supply' },
       routingStrategy: 'round_robin',
       modelMapping: { public: 'upstream' },
     });
@@ -484,7 +484,7 @@ describe('routeGraphSnapshot', () => {
     });
   });
 
-  it('converts plain channel nodes to route payloads and editor forms', () => {
+  it('converts plain target nodes to route payloads and editor forms', () => {
     const validation = validateRouteGraphNodeDraft({
       id: 21,
       stableId: 'route:21',
@@ -493,7 +493,7 @@ describe('routeGraphSnapshot', () => {
       enabled: true,
       match: { requestedModelPattern: 're:^gpt-.*', displayName: 'GPT regex' },
       presentation: { displayName: 'GPT regex', displayIcon: ' openai ' },
-      backend: { kind: 'channels' },
+      backend: { kind: 'supply' },
       routingStrategy: 'stable_first',
       modelMapping: { 'gpt-4o': 'upstream-gpt-4o' },
     });
@@ -507,7 +507,7 @@ describe('routeGraphSnapshot', () => {
         requestedModelPattern: 're:^gpt-.*',
         displayName: 'GPT regex',
       },
-      backend: { kind: 'channels' },
+      backend: { kind: 'supply' },
       presentation: {
         displayName: 'GPT regex',
         displayIcon: 'openai',
@@ -520,7 +520,7 @@ describe('routeGraphSnapshot', () => {
         requestedModelPattern: 're:^gpt-.*',
         displayName: 'GPT regex',
       },
-      backend: { kind: 'channels' },
+      backend: { kind: 'supply' },
       advancedOpen: true,
       modelMapping: '{"gpt-4o":"upstream-gpt-4o"}',
     });

@@ -22,7 +22,7 @@ describe('routeGraphRegistry', () => {
       'entry',
       'filter',
       'dispatcher',
-      'model_endpoint',
+      'route_endpoint',
       'synthetic_endpoint',
     ]);
 
@@ -38,7 +38,7 @@ describe('routeGraphRegistry', () => {
 
     const entry = makeNode('entry', 2, { x: 10, y: 20 });
     const dispatcher = makeNode('dispatcher', 3);
-    const endpoint = makeNode('model_endpoint', 4);
+    const endpoint = makeNode('route_endpoint', 4);
     const synthetic = makeNode('synthetic_endpoint', 5);
     const auto = makeNode('auto_node', 6);
     const unknown = makeNode('missing_type' as RouteGraphNodeType, 7);
@@ -65,12 +65,12 @@ describe('routeGraphRegistry', () => {
       policy: { strategy: 'weighted' },
     });
     expect(endpoint).toMatchObject({
-      type: 'model_endpoint',
+      type: 'route_endpoint',
       config: {
         targets: [
           {
-            channelId: 'model_endpoint:1706000000000:4',
-            model: 'model_endpoint:1706000000000:4',
+            targetId: 'route_endpoint:1706000000000:4',
+            model: 'route_endpoint:1706000000000:4',
           },
         ],
         targetSelection: { strategy: 'weighted' },
@@ -180,7 +180,7 @@ describe('routeGraphRegistry', () => {
       'entry',
       'dispatcher-route',
       'dispatcher',
-      'model_endpoint',
+      'route_endpoint',
       'reasoning_effort',
       'thinking',
       'model_rewrite',
@@ -209,8 +209,8 @@ describe('routeGraphRegistry', () => {
       mode: 'flow',
       policy: { strategy: 'weighted' },
     });
-    expect(byId.get('model_endpoint')?.create(9)).toMatchObject({
-      type: 'model_endpoint',
+    expect(byId.get('route_endpoint')?.create(9)).toMatchObject({
+      type: 'route_endpoint',
       config: {
         targetSelection: { strategy: 'weighted' },
       },
@@ -263,6 +263,6 @@ describe('routeGraphRegistry', () => {
       message: 'No backend for this model',
     });
     expect(templateAccent(byId.get('reasoning_effort')!)).toBe(ROUTE_GRAPH_VISUAL_COLORS.templateCategory.Transform);
-    expect(templateAccent(byId.get('model_endpoint')!)).toBe(ROUTE_GRAPH_VISUAL_COLORS.node.model_endpoint);
+    expect(templateAccent(byId.get('route_endpoint')!)).toBe(ROUTE_GRAPH_VISUAL_COLORS.node.route_endpoint);
   });
 });

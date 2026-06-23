@@ -10,6 +10,11 @@ import {
   updateUpstreamCostPricing,
   type UpstreamCostPricingPayload,
 } from '../../services/upstreamCostPricingService.js';
+import {
+  loadPricingReferenceConfig,
+  savePricingReferenceConfig,
+} from '../../services/pricingReferenceConfigService.js';
+import { clearEndpointPricingReferenceCache } from '../../services/endpointPricingService.js';
 import type { PricingPlan } from '../../pricing-core/index.js';
 
 type Query = {
@@ -40,6 +45,20 @@ type ResolveQuery = {
 };
 
 export async function upstreamCostPricingRoutes(app: FastifyInstance) {
+  app.get('/api/pricing/reference-config', async () => {
+    return await loadPricingReferenceConfig();
+  });
+
+  app.put<{ Body: Record<string, unknown> }>('/api/pricing/reference-config', async (request, reply) => {
+    try {
+      const saved = await savePricingReferenceConfig(request.body);
+      clearEndpointPricingReferenceCache();
+      return saved;
+    } catch (error) {
+      return reply.code(400).send({ error: errorMessage(error) });
+    }
+  });
+
   app.get<{ Querystring: Query }>('/api/pricing/upstream-cost', async (request) => {
     return await listUpstreamCostPricings({
       siteId: parseOptionalPositiveInt(request.query.siteId),
@@ -97,6 +116,7 @@ export async function upstreamCostPricingRoutes(app: FastifyInstance) {
   app.post<{ Body: Body }>('/api/pricing/upstream-cost', async (request, reply) => {
     try {
       const created = await createUpstreamCostPricing(normalizeBody(request.body));
+      clearEndpointPricingReferenceCache();
       return reply.code(201).send(created);
     } catch (error) {
       return reply.code(400).send({ error: errorMessage(error) });
@@ -108,6 +128,7 @@ export async function upstreamCostPricingRoutes(app: FastifyInstance) {
       const id = parseRequiredPositiveInt(request.params.id, 'id');
       const updated = await updateUpstreamCostPricing(id, normalizePatchBody(request.body));
       if (!updated) return reply.code(404).send({ error: 'Upstream cost pricing not found' });
+      clearEndpointPricingReferenceCache();
       return updated;
     } catch (error) {
       return reply.code(400).send({ error: errorMessage(error) });
@@ -118,6 +139,7 @@ export async function upstreamCostPricingRoutes(app: FastifyInstance) {
     const id = parseRequiredPositiveInt(request.params.id, 'id');
     const deleted = await deleteUpstreamCostPricing(id);
     if (!deleted) return reply.code(404).send({ error: 'Upstream cost pricing not found' });
+    clearEndpointPricingReferenceCache();
     return { success: true };
   });
 }

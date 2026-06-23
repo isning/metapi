@@ -1,4 +1,9 @@
 import { ApiTokenInfo, BasePlatformAdapter, CheckinResult, BalanceInfo, CreateApiTokenOptions } from './base.js';
+import {
+  normalizeCommonPricingPayload,
+  type UpstreamPricingCatalog,
+  type UpstreamPricingCredential,
+} from '../upstreamPricingCatalog.js';
 
 type CreateApiTokenPayload = {
   name: string;
@@ -173,6 +178,18 @@ export class OneApiAdapter extends BasePlatformAdapter {
     }
 
     return ['default'];
+  }
+
+  async getPricingCatalog(
+    baseUrl: string,
+    credential: UpstreamPricingCredential,
+  ): Promise<UpstreamPricingCatalog | null> {
+    const headers: Record<string, string> = {};
+    if (credential.token) {
+      headers.Authorization = `Bearer ${credential.token}`;
+    }
+    const payload = await this.fetchJson<any>(`${baseUrl}/api/pricing`, { headers });
+    return normalizeCommonPricingPayload(payload);
   }
 
   async createApiToken(

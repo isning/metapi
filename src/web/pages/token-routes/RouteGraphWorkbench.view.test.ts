@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { macroFlowNodeId } from './routeGraphConnections.js';
-import { DEFAULT_ROUTE_GRAPH_VIEW_STATE, canReplaceRouteGraphMacro, canReplaceRouteGraphNode, computeRouteGraphInspectorAnchor, filterGraphForView, filterRouteGraphFlowNodeChanges, getMacroGeneratedPreviewRows, getMacroHiddenSupplyByPort, isRouteGraphFlowNodeDraggable, preservesGeneratedRouteGraphArtifacts } from './RouteGraphWorkbench.js';
+import { DEFAULT_ROUTE_GRAPH_VIEW_STATE, canReplaceRouteGraphMacro, canReplaceRouteGraphNode, computeRouteGraphInspectorAnchor, filterGraphForView, filterRouteGraphFlowNodeChanges, getMacroGeneratedPreviewRows, getMacroHiddenSupplyByPort, getMacroPriorityGroupCount, isRouteGraphFlowNodeDraggable, preservesGeneratedRouteGraphArtifacts } from './RouteGraphWorkbench.js';
+import type { RouteGraphSource } from './RouteGraphWorkbench.js';
 import type { RouteGraphEdge, RouteGraphMacro, RouteGraphNode } from './routeGraphTypes.js';
 
 function generatedNode(id: string, type: RouteGraphNode['type']): RouteGraphNode {
@@ -19,10 +20,9 @@ const generatedSupplyEndpoint: RouteGraphNode = {
   ...generatedNode('route-endpoint:supply:route:127:openai:gpt-test', 'route_endpoint'),
   endpointKind: 'supply',
   routeEndpointId: 'route-endpoint:supply:route:127:openai:gpt-test',
-  resolvesTo: { kind: 'model_endpoint', id: 'pool:legacy:127' },
 };
 const generatedDispatcher = generatedNode('dispatcher:legacy:127', 'dispatcher');
-const generatedEndpoint = generatedNode('pool:legacy:127', 'model_endpoint');
+const generatedEndpoint = generatedNode('route-endpoint:route:127', 'route_endpoint');
 const otherGeneratedEntry = generatedNode('entry:legacy:128', 'entry');
 const otherGeneratedRouteEndpoint = generatedNode('route-endpoint:product:route:128', 'route_endpoint');
 
@@ -80,8 +80,8 @@ const edges: RouteGraphEdge[] = [
     ownership: 'auto_generated',
   },
   {
-    id: 'pool-dispatcher',
-    sourceNodeId: 'pool:legacy:127',
+    id: 'route-endpoint-dispatcher',
+    sourceNodeId: 'route-endpoint:route:127',
     sourcePortId: 'route.out',
     targetNodeId: 'dispatcher:legacy:127',
     targetPortId: 'route.in',
@@ -202,7 +202,7 @@ describe('RouteGraphWorkbench view filtering', () => {
       { id: 'filter:manual', type: 'filter', data: manualFilter, position: { x: 0, y: 0 } },
     ]);
 
-    expect(changes.map((change) => `${change.type}:${change.id}`)).toEqual([
+    expect(changes.map((change) => `${change.type}:${'id' in change ? change.id : ''}`)).toEqual([
       'position:macro:route:manual:model-group',
       'position:filter:manual',
       'select:macro:route:auto:model-group',
@@ -236,6 +236,40 @@ describe('RouteGraphWorkbench view filtering', () => {
     expect(visible.edges.map((edge) => edge.id)).toEqual(['macro-manual']);
   });
 
+  it('derives generated macro positions instead of preserving stale generated positions', () => {
+    const visible = filterGraphForView({
+      ...graph,
+      macros: [
+        { ...generatedMacro, position: { x: 120, y: 120 } },
+        { ...otherMacro, position: { x: 120, y: 120 } },
+      ],
+    }, DEFAULT_ROUTE_GRAPH_VIEW_STATE);
+    const first = visible.macros.find((macro) => macro.id === generatedMacro.id)!;
+    const second = visible.macros.find((macro) => macro.id === otherMacro.id)!;
+
+    expect(first.position).toBeDefined();
+    expect(second.position).toBeDefined();
+    expect(first.position).not.toEqual({ x: 120, y: 120 });
+    expect(second.position).not.toEqual({ x: 120, y: 120 });
+    expect(first.position).not.toEqual(second.position);
+  });
+
+  it('preserves manual macro positions while deriving generated macro positions', () => {
+    const visible = filterGraphForView({
+      ...graph,
+      macros: [
+        { ...manualMacro, position: { x: 120, y: 120 } },
+        { ...generatedMacro, position: { x: 120, y: 120 } },
+      ],
+    }, DEFAULT_ROUTE_GRAPH_VIEW_STATE);
+    const manual = visible.macros.find((macro) => macro.id === manualMacro.id)!;
+    const generated = visible.macros.find((macro) => macro.id === generatedMacro.id)!;
+
+    expect(manual.position).toEqual({ x: 120, y: 120 });
+    expect(generated.position).toBeDefined();
+    expect(generated.position).not.toEqual({ x: 120, y: 120 });
+  });
+
   it('marks hidden supply on the collapsed macro candidates port', () => {
     expect(getMacroHiddenSupplyByPort(graph, generatedMacro)).toEqual({ 'candidates.in': 1 });
   });
@@ -254,7 +288,7 @@ describe('RouteGraphWorkbench view filtering', () => {
       'route-endpoint:product:route:127',
       'route-endpoint:supply:route:127:openai:gpt-test',
       'dispatcher:legacy:127',
-      'pool:legacy:127',
+      'route-endpoint:route:127',
       'entry:legacy:128',
       'route-endpoint:product:route:128',
       'filter:manual',
@@ -266,11 +300,11 @@ describe('RouteGraphWorkbench view filtering', () => {
     expect(visible.macros).toEqual([]);
     expect(visible.edges.map((edge) => edge.id)).toEqual(expect.arrayContaining([
       'entry-dispatcher',
-      'pool-dispatcher',
+      'route-endpoint-dispatcher',
       'macro:route:auto:model-group:edge:entry-dispatcher',
       'macro:route:other:model-group:edge:entry-dispatcher',
+      'macro:route:other:model-group:edge:candidate:group:0:route-endpoint:product:route:128',
       'macro-semantic:supply-macro-candidates:candidate-in',
-      'macro-semantic:macro-manual:route-out:route-endpoint:supply:route:127:openai:gpt-test',
     ]));
     expect(visible.edges).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -283,7 +317,7 @@ describe('RouteGraphWorkbench view filtering', () => {
     ]));
   });
 
-  it('can expand one macro without expanding supply projections', () => {
+  it('can expand one macro without expanding supply targets', () => {
     const visible = filterGraphForView(graph, { ...DEFAULT_ROUTE_GRAPH_VIEW_STATE, expandedMacroIds: [generatedMacro.id] });
 
     expect(visible.nodes.map((node) => node.id)).toEqual(expect.arrayContaining([
@@ -299,8 +333,10 @@ describe('RouteGraphWorkbench view filtering', () => {
     ]);
     const dispatcher = visible.nodes.find((node) => node.id === 'macro:route:auto:model-group:dispatcher')!;
     const entry = visible.nodes.find((node) => node.id === 'macro:route:auto:model-group:entry')!;
-    expect(dispatcher.position).toEqual({ x: 640, y: 320 });
-    expect(entry.position).toEqual({ x: 364, y: 272 });
+    expect(dispatcher.position).toBeDefined();
+    expect(dispatcher.position).not.toEqual(generatedMacro.position);
+    expect(entry.position?.x).toBe((dispatcher.position?.x || 0) - 276);
+    expect(entry.position?.y).toBe(dispatcher.position?.y);
     expect(visible.nodes.some((node) => node.id.startsWith('macro:route:other:model-group:'))).toBe(false);
   });
 
@@ -322,7 +358,24 @@ describe('RouteGraphWorkbench view filtering', () => {
       targetPortId: 'candidates.in',
     });
     const candidate = visible.nodes.find((node) => node.id === 'route-endpoint:supply:route:127:openai:gpt-test')!;
-    expect(candidate.position).toEqual({ x: 364, y: 320 });
+    const macro = visible.macros.find((item) => item.id === generatedMacro.id)!;
+    expect(candidate.position?.x).toBe((macro.position?.x || 0) - 276);
+    expect(candidate.position?.y).toBe(macro.position?.y);
+  });
+
+  it('stacks supply endpoints with expanded macro entry nodes without leaving a large gap', () => {
+    const expanded = filterGraphForView(graph, {
+      ...DEFAULT_ROUTE_GRAPH_VIEW_STATE,
+      expandedMacroIds: [generatedMacro.id],
+      expandedSupplyMacroIds: [generatedMacro.id],
+    });
+    const entry = expanded.nodes.find((node) => node.id === 'macro:route:auto:model-group:entry')!;
+    const dispatcher = expanded.nodes.find((node) => node.id === 'macro:route:auto:model-group:dispatcher')!;
+    const candidate = expanded.nodes.find((node) => node.id === 'route-endpoint:supply:route:127:openai:gpt-test')!;
+
+    expect(candidate.position?.x).toBe(entry.position?.x);
+    expect(Math.abs((candidate.position?.y || 0) - (entry.position?.y || 0))).toBeGreaterThanOrEqual(96);
+    expect(Math.abs((((candidate.position?.y || 0) + (entry.position?.y || 0)) / 2) - (dispatcher.position?.y || 0))).toBeLessThanOrEqual(1);
   });
 
   it('builds macro inspector preview rows from candidate edges for existing route endpoints', () => {
@@ -372,6 +425,29 @@ describe('RouteGraphWorkbench view filtering', () => {
     ]);
   });
 
+  it('counts generated priority groups by distinct priority instead of candidate row count', () => {
+    const macroWithSharedPriority: RouteGraphMacro = {
+      ...generatedMacro,
+      config: {
+        groups: [
+          { id: 'p0-a', enabled: true, priority: 0, input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:supply:route:201'] } },
+          { id: 'p0-b', enabled: true, priority: 0, input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:supply:route:202'] } },
+          { id: 'p0-c', enabled: true, priority: 0, input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:supply:route:203'] } },
+          { id: 'p0-d', enabled: true, priority: 0, input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:supply:route:204'] } },
+        ],
+      },
+    };
+    const rows = getMacroGeneratedPreviewRows({
+      version: 2,
+      nodes: [],
+      macros: [macroWithSharedPriority],
+      edges: [],
+    }, macroWithSharedPriority);
+
+    expect(rows).toHaveLength(4);
+    expect(getMacroPriorityGroupCount(macroWithSharedPriority, rows)).toBe(1);
+  });
+
   it('anchors expanded primitives at the laid-out macro position when the macro has no saved position', () => {
     const graphWithoutMacroPosition = {
       ...graph,
@@ -387,7 +463,7 @@ describe('RouteGraphWorkbench view filtering', () => {
     expect(expandedDispatcher.position?.x).toBe(collapsedMacro.position?.x);
     expect(expandedDispatcher.position?.y).toBe(collapsedMacro.position?.y);
     expect(expandedEntry.position?.x).toBe((collapsedMacro.position?.x || 0) - 276);
-    expect(expandedEntry.position?.y).toBeLessThan(collapsedMacro.position?.y || 0);
+    expect(expandedEntry.position?.y).toBe(collapsedMacro.position?.y);
     expect(expandedDispatcher.position).not.toEqual({ x: 120, y: 120 });
   });
 
@@ -415,8 +491,8 @@ describe('RouteGraphWorkbench view filtering', () => {
       nodes: [
         ...graph.nodes,
         generatedNode('route-endpoint:product:route:129', 'route_endpoint'),
-        generatedNode('pool:legacy:128', 'model_endpoint'),
-        generatedNode('pool:legacy:129', 'model_endpoint'),
+        generatedNode('route-endpoint:route:128', 'route_endpoint'),
+        generatedNode('route-endpoint:route:129', 'route_endpoint'),
       ],
       macros: [
         {
@@ -435,8 +511,140 @@ describe('RouteGraphWorkbench view filtering', () => {
       ],
     };
     const expanded = filterGraphForView(longInputGraph, { ...DEFAULT_ROUTE_GRAPH_VIEW_STATE, expandedMacroIds: [generatedMacro.id] });
+    const expandedDispatcher = expanded.nodes.find((node) => node.id === 'macro:route:auto:model-group:dispatcher')!;
     const followingMacro = expanded.macros.find((macro) => macro.id === otherMacro.id)!;
 
-    expect(followingMacro.position).toEqual({ x: 640, y: 448 });
+    expect(followingMacro.position!.y).toBeGreaterThan(expandedDispatcher.position!.y + 100);
+  });
+
+  it('stacks expanded supply endpoints by the route node footprint', () => {
+    const secondSupplyEndpoint: RouteGraphNode = {
+      ...generatedNode('route-endpoint:supply:route:129:openai:gpt-test', 'route_endpoint'),
+      endpointKind: 'supply',
+      routeEndpointId: 'route-endpoint:supply:route:129:openai:gpt-test',
+    };
+    const thirdSupplyEndpoint: RouteGraphNode = {
+      ...generatedNode('route-endpoint:supply:route:130:openai:gpt-test', 'route_endpoint'),
+      endpointKind: 'supply',
+      routeEndpointId: 'route-endpoint:supply:route:130:openai:gpt-test',
+    };
+    const multiEndpointGraph: RouteGraphSource = {
+      ...graph,
+      nodes: [
+        ...graph.nodes,
+        secondSupplyEndpoint,
+        thirdSupplyEndpoint,
+      ],
+      edges: [
+        ...graph.edges,
+        {
+          id: 'supply-macro-candidates-129',
+          sourceNodeId: secondSupplyEndpoint.id,
+          sourcePortId: 'route.out',
+          targetNodeId: macroFlowNodeId(generatedMacro.id),
+          targetPortId: 'candidates.in',
+          kind: 'route_flow',
+          ownership: 'auto_generated',
+        },
+        {
+          id: 'supply-macro-candidates-130',
+          sourceNodeId: thirdSupplyEndpoint.id,
+          sourcePortId: 'route.out',
+          targetNodeId: macroFlowNodeId(generatedMacro.id),
+          targetPortId: 'candidates.in',
+          kind: 'route_flow',
+          ownership: 'auto_generated',
+        },
+      ],
+      macros: [{
+        ...generatedMacro,
+        config: {
+          groups: [{
+            input: {
+              kind: 'route_endpoints',
+              endpointIds: [
+                generatedSupplyEndpoint.id,
+                secondSupplyEndpoint.id,
+                thirdSupplyEndpoint.id,
+              ],
+            },
+          }],
+        },
+      }],
+    };
+    const expanded = filterGraphForView(multiEndpointGraph, { ...DEFAULT_ROUTE_GRAPH_VIEW_STATE, expandedSupplyMacroIds: [generatedMacro.id] });
+    const endpoints = expanded.nodes
+      .filter((node) => node.type === 'route_endpoint' && node.endpointKind === 'supply')
+      .sort((left, right) => left.position!.y - right.position!.y);
+
+    expect(endpoints).toHaveLength(3);
+    expect(endpoints[1]!.position!.y - endpoints[0]!.position!.y).toBeGreaterThanOrEqual(96);
+    expect(endpoints[2]!.position!.y - endpoints[1]!.position!.y).toBeGreaterThanOrEqual(96);
+  });
+
+  it('packs expanded macro entry and multiple supply endpoints into one input column', () => {
+    const secondSupplyEndpoint: RouteGraphNode = {
+      ...generatedNode('route-endpoint:supply:route:129:openai:gpt-test', 'route_endpoint'),
+      endpointKind: 'supply',
+      routeEndpointId: 'route-endpoint:supply:route:129:openai:gpt-test',
+    };
+    const thirdSupplyEndpoint: RouteGraphNode = {
+      ...generatedNode('route-endpoint:supply:route:130:openai:gpt-test', 'route_endpoint'),
+      endpointKind: 'supply',
+      routeEndpointId: 'route-endpoint:supply:route:130:openai:gpt-test',
+    };
+    const multiEndpointGraph: RouteGraphSource = {
+      ...graph,
+      nodes: [...graph.nodes, secondSupplyEndpoint, thirdSupplyEndpoint],
+      edges: [
+        ...graph.edges,
+        {
+          id: 'supply-macro-candidates-129',
+          sourceNodeId: secondSupplyEndpoint.id,
+          sourcePortId: 'route.out',
+          targetNodeId: macroFlowNodeId(generatedMacro.id),
+          targetPortId: 'candidates.in',
+          kind: 'route_flow',
+          ownership: 'auto_generated',
+        },
+        {
+          id: 'supply-macro-candidates-130',
+          sourceNodeId: thirdSupplyEndpoint.id,
+          sourcePortId: 'route.out',
+          targetNodeId: macroFlowNodeId(generatedMacro.id),
+          targetPortId: 'candidates.in',
+          kind: 'route_flow',
+          ownership: 'auto_generated',
+        },
+      ],
+      macros: [{
+        ...generatedMacro,
+        config: {
+          groups: [{
+            input: {
+              kind: 'route_endpoints',
+              endpointIds: [generatedSupplyEndpoint.id, secondSupplyEndpoint.id, thirdSupplyEndpoint.id],
+            },
+          }],
+        },
+      }],
+    };
+    const expanded = filterGraphForView(multiEndpointGraph, {
+      ...DEFAULT_ROUTE_GRAPH_VIEW_STATE,
+      expandedMacroIds: [generatedMacro.id],
+      expandedSupplyMacroIds: [generatedMacro.id],
+    });
+    const inputColumnNodes = expanded.nodes
+      .filter((node) => node.id === 'macro:route:auto:model-group:entry' || (node.type === 'route_endpoint' && node.endpointKind === 'supply'))
+      .sort((left, right) => left.position!.y - right.position!.y);
+    const dispatcher = expanded.nodes.find((node) => node.id === 'macro:route:auto:model-group:dispatcher')!;
+
+    expect(inputColumnNodes).toHaveLength(4);
+    for (let index = 1; index < inputColumnNodes.length; index += 1) {
+      expect(inputColumnNodes[index]!.position!.y - inputColumnNodes[index - 1]!.position!.y).toBeGreaterThanOrEqual(96);
+      expect(inputColumnNodes[index]!.position!.y - inputColumnNodes[index - 1]!.position!.y).toBeLessThanOrEqual(110);
+    }
+    const columnCenter = (inputColumnNodes[0]!.position!.y + inputColumnNodes[inputColumnNodes.length - 1]!.position!.y) / 2;
+    expect(Math.abs(columnCenter - (dispatcher.position?.y || 0))).toBeLessThanOrEqual(1);
   });
 });

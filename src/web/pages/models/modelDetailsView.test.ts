@@ -62,6 +62,34 @@ function routeFlowWithTheoreticalPricing(): ModelRouteFlowData {
 }
 
 describe('modelDetailsView pricing', () => {
+  it('derives measured preview total and total multiplier from measured input/output rates', () => {
+    const details = buildModelDetailsView({
+      model: model({
+        measuredEntryPricing: {
+          inputPerMillion: 0.7,
+          outputPerMillion: 1.4,
+          sampleCount: 1,
+          lastMeasuredAt: '2026-06-23T00:00:00.000Z',
+        },
+      }),
+      brandName: null,
+      routeFlow: null,
+      routeFlowLoading: false,
+      routeFlowError: '',
+      metadataHydrating: false,
+    });
+
+    expect(details.pricing.measured).toMatchObject({
+      inputPerMillion: 0.7,
+      outputPerMillion: 1.4,
+      totalCostUsd: 2.1,
+      inputMultiplier: 0.35,
+      outputMultiplier: 0.7,
+      totalMultiplier: 0.525,
+      sampleCount: 1,
+    });
+  });
+
   it('uses route-flow probability weighted theoretical entry pricing before metadata fallback', () => {
     const details = buildModelDetailsView({
       model: model(),
@@ -79,6 +107,38 @@ describe('modelDetailsView pricing', () => {
       strategy: 'weighted',
       estimateLevel: 'exact',
       sourceCount: 2,
+    });
+  });
+
+  it('falls back to marketplace pricing when route-flow theoretical pricing is entirely unknown', () => {
+    const flow = routeFlowWithTheoreticalPricing();
+    flow.entryPricing!.theoretical = {
+      ...flow.entryPricing!.theoretical!,
+      inputPerMillion: null,
+      outputPerMillion: null,
+      totalCostUsd: null,
+      inputMultiplier: null,
+      outputMultiplier: null,
+      totalMultiplier: null,
+      sourceCount: 2,
+      estimateLevel: 'incomplete',
+    };
+
+    const details = buildModelDetailsView({
+      model: model(),
+      brandName: null,
+      routeFlow: flow,
+      routeFlowLoading: false,
+      routeFlowError: '',
+      metadataHydrating: false,
+    });
+
+    expect(details.pricing.theoretical).toMatchObject({
+      inputPerMillion: 1,
+      outputPerMillion: 2,
+      inputMultiplier: 0.5,
+      outputMultiplier: 1,
+      sourceCount: 1,
     });
   });
 });

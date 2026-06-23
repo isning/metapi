@@ -1,21 +1,21 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { buildConfig, config } from '../config.js';
 import {
-  canRetryProxyChannel,
-  getProxyMaxChannelAttempts,
-  getProxyMaxChannelRetries,
-} from './proxyChannelRetry.js';
+  canRetryProxyTarget,
+  getProxyMaxTargetAttempts,
+  getProxyMaxTargetRetries,
+} from './proxyTargetRetry.js';
 
-const originalProxyMaxChannelAttempts = config.proxyMaxChannelAttempts;
+const originalProxyMaxChannelAttempts = config.proxyMaxTargetAttempts;
 
 afterEach(() => {
-  config.proxyMaxChannelAttempts = originalProxyMaxChannelAttempts;
+  config.proxyMaxTargetAttempts = originalProxyMaxChannelAttempts;
 });
 
-describe('proxyChannelRetry', () => {
+describe('proxyTargetRetry', () => {
   it('parses proxy max channel attempts from config with a safer default', () => {
-    expect(buildConfig({} as NodeJS.ProcessEnv).proxyMaxChannelAttempts).toBe(3);
-    expect(buildConfig({ PROXY_MAX_CHANNEL_ATTEMPTS: '3' } as NodeJS.ProcessEnv).proxyMaxChannelAttempts).toBe(3);
+    expect(buildConfig({} as NodeJS.ProcessEnv).proxyMaxTargetAttempts).toBe(3);
+    expect(buildConfig({ PROXY_MAX_TARGET_ATTEMPTS: '3' } as NodeJS.ProcessEnv).proxyMaxTargetAttempts).toBe(3);
   });
 
   it('configures high default stream hardening limits with environment overrides', () => {
@@ -43,19 +43,19 @@ describe('proxyChannelRetry', () => {
   });
 
   it('derives retry budget from total channel attempts', () => {
-    config.proxyMaxChannelAttempts = 5;
+    config.proxyMaxTargetAttempts = 5;
 
-    expect(getProxyMaxChannelAttempts()).toBe(5);
-    expect(getProxyMaxChannelRetries()).toBe(4);
-    expect(canRetryProxyChannel(3)).toBe(true);
-    expect(canRetryProxyChannel(4)).toBe(false);
+    expect(getProxyMaxTargetAttempts()).toBe(5);
+    expect(getProxyMaxTargetRetries()).toBe(4);
+    expect(canRetryProxyTarget(3)).toBe(true);
+    expect(canRetryProxyTarget(4)).toBe(false);
   });
 
   it('clamps invalid runtime config to at least one channel attempt', () => {
-    config.proxyMaxChannelAttempts = 0;
+    config.proxyMaxTargetAttempts = 0;
 
-    expect(getProxyMaxChannelAttempts()).toBe(1);
-    expect(getProxyMaxChannelRetries()).toBe(0);
-    expect(canRetryProxyChannel(0)).toBe(false);
+    expect(getProxyMaxTargetAttempts()).toBe(1);
+    expect(getProxyMaxTargetRetries()).toBe(0);
+    expect(canRetryProxyTarget(0)).toBe(false);
   });
 });

@@ -893,17 +893,17 @@ export async function listOauthConnections(options: {
   ));
 
   const routeChannelRows = await db.select({
-    accountId: schema.routeChannels.accountId,
-    oauthRouteUnitId: schema.routeChannels.oauthRouteUnitId,
+    accountId: schema.routeEndpointTargets.accountId,
+    oauthRouteUnitId: schema.routeEndpointTargets.oauthRouteUnitId,
     count: sql<number>`COUNT(*)`,
-  }).from(schema.routeChannels)
+  }).from(schema.routeEndpointTargets)
     .where(routeUnitIds.length > 0
       ? or(
-        inArray(schema.routeChannels.accountId, accountIds),
-        inArray(schema.routeChannels.oauthRouteUnitId, routeUnitIds),
+        inArray(schema.routeEndpointTargets.accountId, accountIds),
+        inArray(schema.routeEndpointTargets.oauthRouteUnitId, routeUnitIds),
       )
-      : inArray(schema.routeChannels.accountId, accountIds))
-    .groupBy(schema.routeChannels.accountId, schema.routeChannels.oauthRouteUnitId)
+      : inArray(schema.routeEndpointTargets.accountId, accountIds))
+    .groupBy(schema.routeEndpointTargets.accountId, schema.routeEndpointTargets.oauthRouteUnitId)
     .all();
   const routeChannelCountByAccount = new Map<number, number>();
   const routeChannelCountByRouteUnit = new Map<number, number>();

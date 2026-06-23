@@ -79,7 +79,7 @@ async function decorateRoutesWithSources(
         tokenId: null,
         siteId: null,
       },
-      backend: binding?.backend ?? { kind: 'channels' },
+      backend: binding?.backend ?? { kind: 'supply' },
       routeMode: binding?.routeMode ?? 'pattern',
       modelPattern: binding?.exactModelName || binding?.exposedModelName || '',
       sourceRouteIds: sourceRouteIdsByRouteId.get(route.id) ?? binding?.sourceRouteIds ?? [],
@@ -139,15 +139,15 @@ export async function clearRouteCooldown(routeId: number): Promise<{ success: tr
   const actualRouteIds = await resolveCooldownClearRouteIds(route);
   const channelRows: Array<{ id: number; routeId: number }> = actualRouteIds.length > 0
     ? await db.select({
-      id: schema.routeChannels.id,
-      routeId: schema.routeChannels.routeId,
-    }).from(schema.routeChannels)
-      .where(inArray(schema.routeChannels.routeId, actualRouteIds))
+      id: schema.routeEndpointTargets.id,
+      routeId: schema.routeEndpointTargets.routeId,
+    }).from(schema.routeEndpointTargets)
+      .where(inArray(schema.routeEndpointTargets.routeId, actualRouteIds))
       .all()
     : [];
 
   const affectedRouteIds = Array.from(new Set(channelRows.map((row) => row.routeId)));
-  const clearedChannels = await tokenRouter.clearChannelFailureState(channelRows.map((row) => row.id));
+  const clearedChannels = await tokenRouter.clearTargetFailureState(channelRows.map((row) => row.id));
 
   await clearRouteDecisionSnapshot(route.id);
   if (affectedRouteIds.length > 0) {

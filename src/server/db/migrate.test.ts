@@ -30,6 +30,59 @@ function applyMigrationSql(sqlite: Database.Database, sqlText: string) {
   }
 }
 
+function applyMigrationSqlToleratingExistingSchema(sqlite: Database.Database, sqlText: string) {
+  const statements = sqlText
+    .split('--> statement-breakpoint')
+    .map((statement) => statement.trim())
+    .filter((statement) => statement.length > 0);
+
+  for (const statement of statements) {
+    const normalizedStatement = statement.replace(/[\n\r\t]+/g, ' ').replace(/["`]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+    if (
+      normalizedStatement.includes('update proxy_logs')
+      && normalizedStatement.includes('target_id = channel_id')
+      && !sqlite.prepare("SELECT 1 FROM pragma_table_info('proxy_logs') WHERE name = 'channel_id'").get()
+    ) {
+      continue;
+    }
+    if (
+      normalizedStatement.includes('update proxy_debug_traces')
+      && normalizedStatement.includes('sticky_hit_target_id = sticky_hit_channel_id')
+      && !sqlite.prepare("SELECT 1 FROM pragma_table_info('proxy_debug_traces') WHERE name = 'sticky_hit_channel_id'").get()
+    ) {
+      continue;
+    }
+    if (
+      normalizedStatement.includes('update proxy_debug_traces')
+      && normalizedStatement.includes('selected_target_id = selected_channel_id')
+      && !sqlite.prepare("SELECT 1 FROM pragma_table_info('proxy_debug_traces') WHERE name = 'selected_channel_id'").get()
+    ) {
+      continue;
+    }
+    if (
+      normalizedStatement.includes('update proxy_video_tasks')
+      && normalizedStatement.includes('target_id = channel_id')
+      && !sqlite.prepare("SELECT 1 FROM pragma_table_info('proxy_video_tasks') WHERE name = 'channel_id'").get()
+    ) {
+      continue;
+    }
+
+    try {
+      sqlite.exec(statement);
+    } catch (error) {
+      const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+      if (
+        message.includes('duplicate column')
+        || message.includes('duplicate column name')
+        || message.includes('already exists')
+      ) {
+        continue;
+      }
+      throw error;
+    }
+  }
+}
+
 function recordAppliedMigrations(
   sqlite: Database.Database,
   journalEntries: MigrationJournalEntry[],
@@ -67,7 +120,7 @@ describe('sqlite migrate bootstrap', () => {
 
     for (const entry of journalEntries) {
       const sqlText = readFileSync(join(migrationsDir, `${entry.tag}.sql`), 'utf8');
-      applyMigrationSql(sqlite, sqlText);
+      applyMigrationSqlToleratingExistingSchema(sqlite, sqlText);
     }
 
     sqlite.close();
@@ -379,7 +432,7 @@ describe('sqlite migrate bootstrap', () => {
 
     for (const entry of appliedEntries) {
       const sqlText = readFileSync(join(migrationsDir, `${entry.tag}.sql`), 'utf8');
-      applyMigrationSql(sqlite, sqlText);
+      applyMigrationSqlToleratingExistingSchema(sqlite, sqlText);
     }
     recordAppliedMigrations(sqlite, appliedEntries);
 
@@ -423,7 +476,7 @@ describe('sqlite migrate bootstrap', () => {
 
     for (const entry of appliedEntries) {
       const sqlText = readFileSync(join(migrationsDir, `${entry.tag}.sql`), 'utf8');
-      applyMigrationSql(sqlite, sqlText);
+      applyMigrationSqlToleratingExistingSchema(sqlite, sqlText);
     }
 
     // Simulate SQLite legacy compatibility code partially adding the latest proxy log columns
@@ -455,6 +508,81 @@ describe('sqlite migrate bootstrap', () => {
     verified.close();
   });
 
+  it('runs the proxy target backfill migration for legacy channel columns', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'metapi-migrate-proxy-target-backfill-'));
+    const dbPath = join(dataDir, 'hub.db');
+    const sqlite = new Database(dbPath);
+    const journalEntries = readMigrationJournalEntries();
+    const appliedEntries = journalEntries.filter((entry) => entry.tag !== '0031_proxy_target_column_backfill');
+
+    for (const entry of appliedEntries) {
+      const sqlText = readFileSync(join(migrationsDir, `${entry.tag}.sql`), 'utf8');
+      applyMigrationSqlToleratingExistingSchema(sqlite, sqlText);
+    }
+    recordAppliedMigrations(sqlite, appliedEntries);
+
+    sqlite.exec(`
+      ALTER TABLE proxy_logs ADD COLUMN channel_id integer;
+      INSERT INTO proxy_logs (route_id, channel_id, account_id, model_requested)
+      VALUES (1, 77, 2, 'gpt-5');
+
+      ALTER TABLE proxy_debug_traces ADD COLUMN sticky_hit_channel_id integer;
+      ALTER TABLE proxy_debug_traces ADD COLUMN selected_channel_id integer;
+      INSERT INTO proxy_debug_traces (
+        downstream_path,
+        sticky_hit_channel_id,
+        selected_channel_id,
+        created_at,
+        updated_at
+      )
+      VALUES ('/v1/responses', 88, 99, datetime('now'), datetime('now'));
+
+      ALTER TABLE proxy_video_tasks ADD COLUMN channel_id integer;
+      INSERT INTO proxy_video_tasks (
+        public_id,
+        upstream_video_id,
+        site_url,
+        token_value,
+        channel_id
+      )
+      VALUES ('video_legacy', 'upstream_legacy', 'https://example.com', 'token', 66);
+    `);
+    sqlite.close();
+
+    process.env.DATA_DIR = dataDir;
+    vi.resetModules();
+
+    await expect(import('./migrate.js')).resolves.toMatchObject({
+      runSqliteMigrations: expect.any(Function),
+    });
+
+    const verified = new Database(dbPath, { readonly: true });
+    const appliedRows = verified
+      .prepare('SELECT created_at FROM __drizzle_migrations ORDER BY created_at ASC')
+      .all() as Array<{ created_at: number }>;
+    const proxyLog = verified
+      .prepare('SELECT target_id FROM proxy_logs WHERE channel_id = 77 LIMIT 1')
+      .get() as { target_id: number | null } | undefined;
+    const proxyDebugTrace = verified
+      .prepare('SELECT sticky_hit_target_id, selected_target_id FROM proxy_debug_traces WHERE selected_channel_id = 99 LIMIT 1')
+      .get() as { sticky_hit_target_id: number | null; selected_target_id: number | null } | undefined;
+    const proxyVideoTask = verified
+      .prepare("SELECT target_id FROM proxy_video_tasks WHERE public_id = 'video_legacy'")
+      .get() as { target_id: number | null } | undefined;
+
+    expect(appliedRows.map((row) => Number(row.created_at))).toEqual(
+      journalEntries.map((entry) => entry.when),
+    );
+    expect(proxyLog?.target_id).toBe(77);
+    expect(proxyDebugTrace).toMatchObject({
+      sticky_hit_target_id: 88,
+      selected_target_id: 99,
+    });
+    expect(proxyVideoTask?.target_id).toBe(66);
+
+    verified.close();
+  });
+
   it('reconciles stale migration timestamps when the latest migration hash already exists', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'metapi-migrate-stale-timestamp-'));
     const dbPath = join(dataDir, 'hub.db');
@@ -463,7 +591,7 @@ describe('sqlite migrate bootstrap', () => {
 
     for (const entry of journalEntries) {
       const sqlText = readFileSync(join(migrationsDir, `${entry.tag}.sql`), 'utf8');
-      applyMigrationSql(sqlite, sqlText);
+      applyMigrationSqlToleratingExistingSchema(sqlite, sqlText);
     }
     recordAppliedMigrations(sqlite, journalEntries);
 
@@ -531,7 +659,7 @@ describe('sqlite migrate bootstrap', () => {
       VALUES (
         127,
         '{"kind":"model","requestedModelPattern":"gpt-legacy-*","displayName":null}',
-        '{"kind":"channels"}',
+        '{"kind":"supply"}',
         NULL,
         'weighted',
         1,
@@ -562,10 +690,10 @@ describe('sqlite migrate bootstrap', () => {
         version_id integer NOT NULL,
         updated_at text DEFAULT (datetime('now'))
       );
-      CREATE TABLE route_channels (
+      CREATE TABLE route_endpoint_targets (
         id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
         route_id integer NOT NULL,
-        route_node_id text,
+        route_endpoint_id text,
         account_id integer NOT NULL,
         priority integer DEFAULT 0,
         weight integer DEFAULT 10,
@@ -632,7 +760,7 @@ describe('sqlite migrate bootstrap', () => {
 
     for (const entry of appliedEntries) {
       const sqlText = readFileSync(join(migrationsDir, `${entry.tag}.sql`), 'utf8');
-      applyMigrationSql(sqlite, sqlText);
+      applyMigrationSqlToleratingExistingSchema(sqlite, sqlText);
     }
     recordAppliedMigrations(sqlite, appliedEntries);
 

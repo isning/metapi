@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
-  parseRouteChannelBatchCreatePayload,
-  parseRouteChannelCreatePayload,
-  parseRouteChannelUpdatePayload,
+  parseRouteEndpointTargetBatchCreatePayload,
+  parseRouteEndpointTargetCreatePayload,
+  parseRouteEndpointTargetUpdatePayload,
   parseRouteGraphSourcePayload,
   parseRouteRebuildPayload,
   parseTokenRouteBatchPayload,
@@ -61,36 +61,21 @@ describe('token route payload contracts', () => {
       },
     });
 
-    expect(parseTokenRouteUpdatePayload({ backend: { kind: 'channels' }, enabled: false })).toEqual({
+    expect(parseTokenRouteUpdatePayload({ backend: { kind: 'supply' }, enabled: false })).toEqual({
       success: true,
-      data: { backend: { kind: 'channels' }, enabled: false },
+      data: { backend: { kind: 'supply' }, enabled: false },
     });
   });
 
-  it('normalizes legacy pattern and explicit-group token route payloads', () => {
+  it('rejects legacy flat token route payloads', () => {
     expect(parseTokenRouteCreatePayload({
       modelPattern: 'deepseek-*',
       displayName: 'DeepSeek',
       displayIcon: 'brain',
       routeMode: 'pattern',
     })).toEqual({
-      success: true,
-      data: {
-        modelPattern: 'deepseek-*',
-        displayName: 'DeepSeek',
-        displayIcon: 'brain',
-        routeMode: 'pattern',
-        match: {
-          kind: 'model',
-          requestedModelPattern: 'deepseek-*',
-          displayName: 'DeepSeek',
-        },
-        backend: { kind: 'channels' },
-        presentation: {
-          displayName: 'DeepSeek',
-          displayIcon: 'brain',
-        },
-      },
+      success: false,
+      error: 'Invalid match. Expected Route Graph match object.',
     });
 
     expect(parseTokenRouteCreatePayload({
@@ -98,40 +83,23 @@ describe('token route payload contracts', () => {
       displayName: 'Fast Group',
       sourceRouteIds: ['1', 2, 0, 'bad'],
     })).toEqual({
-      success: true,
-      data: {
-        routeMode: 'explicit_group',
-        displayName: 'Fast Group',
-        sourceRouteIds: ['1', 2, 0, 'bad'],
-        match: {
-          kind: 'model',
-          requestedModelPattern: '',
-          displayName: 'Fast Group',
-        },
-        backend: {
-          kind: 'routes',
-          routeIds: [1, 2],
-        },
-        presentation: {
-          displayName: 'Fast Group',
-          displayIcon: null,
-        },
-      },
+      success: false,
+      error: 'Invalid match. Expected Route Graph match object.',
     });
   });
 
-  it('accepts route channel, rebuild, batch, and graph source payloads', () => {
-    expect(parseRouteChannelCreatePayload({
+  it('accepts route endpoint target, rebuild, batch, and graph source payloads', () => {
+    expect(parseRouteEndpointTargetCreatePayload({
       accountId: 1,
       tokenId: null,
       sourceModel: 'gpt-4.1',
       priority: 0,
       weight: 10,
     })).toMatchObject({ success: true });
-    expect(parseRouteChannelBatchCreatePayload({
-      channels: [{ accountId: 1, tokenId: 2, sourceModel: 'gpt-4.1' }],
+    expect(parseRouteEndpointTargetBatchCreatePayload({
+      targets: [{ accountId: 1, tokenId: 2, sourceModel: 'gpt-4.1' }],
     })).toMatchObject({ success: true });
-    expect(parseRouteChannelUpdatePayload({
+    expect(parseRouteEndpointTargetUpdatePayload({
       tokenId: null,
       sourceModel: null,
       priority: 1,
@@ -155,7 +123,7 @@ describe('token route payload contracts', () => {
   it('returns field-specific validation messages', () => {
     const cases: Array<[string, () => unknown, string]> = [
       ['non-object', () => parseTokenRouteCreatePayload([]), '请求体必须是对象'],
-      ['match', () => parseTokenRouteCreatePayload({ match: null, backend: { kind: 'channels' } }), 'Invalid match. Expected Route Graph match object.'],
+      ['match', () => parseTokenRouteCreatePayload({ match: null, backend: { kind: 'supply' } }), 'Invalid match. Expected Route Graph match object.'],
       ['backend', () => parseTokenRouteCreatePayload({ match: {}, backend: { kind: 'routes', routeIds: [0] } }), 'Invalid backend. Expected Route Graph backend object.'],
       ['presentation', () => parseTokenRouteUpdatePayload({ presentation: { displayIcon: 1 } }), 'Invalid presentation. Expected Route Graph presentation object.'],
       ['displayName', () => parseTokenRouteUpdatePayload({ match: { displayName: 1 } }), 'Invalid match. Expected Route Graph match object.'],
@@ -164,19 +132,19 @@ describe('token route payload contracts', () => {
       ['enabled', () => parseTokenRouteUpdatePayload({ enabled: 'yes' }), 'Invalid enabled. Expected boolean.'],
       ['ids', () => parseTokenRouteBatchPayload({ ids: [0] }), 'Invalid ids. Expected number[].'],
       ['action', () => parseTokenRouteBatchPayload({ action: 1 }), 'Invalid action. Expected string.'],
-      ['accountId', () => parseRouteChannelCreatePayload({ accountId: 0 }), 'Invalid accountId. Expected positive number.'],
-      ['tokenId', () => parseRouteChannelCreatePayload({ accountId: 1, tokenId: 0 }), 'Invalid tokenId. Expected positive number or null.'],
-      ['sourceModel', () => parseRouteChannelUpdatePayload({ sourceModel: 1 }), 'Invalid sourceModel. Expected string or null.'],
-      ['priority', () => parseRouteChannelUpdatePayload({ priority: 'high' }), 'Invalid priority. Expected number.'],
-      ['weight', () => parseRouteChannelUpdatePayload({ weight: 'heavy' }), 'Invalid weight. Expected number.'],
+      ['accountId', () => parseRouteEndpointTargetCreatePayload({ accountId: 0 }), 'Invalid accountId. Expected positive number.'],
+      ['tokenId', () => parseRouteEndpointTargetCreatePayload({ accountId: 1, tokenId: 0 }), 'Invalid tokenId. Expected positive number or null.'],
+      ['sourceModel', () => parseRouteEndpointTargetUpdatePayload({ sourceModel: 1 }), 'Invalid sourceModel. Expected string or null.'],
+      ['priority', () => parseRouteEndpointTargetUpdatePayload({ priority: 'high' }), 'Invalid priority. Expected number.'],
+      ['weight', () => parseRouteEndpointTargetUpdatePayload({ weight: 'heavy' }), 'Invalid weight. Expected number.'],
       ['refreshModels', () => parseRouteRebuildPayload({ refreshModels: 'yes' }), 'Invalid refreshModels. Expected boolean.'],
       ['wait', () => parseRouteRebuildPayload({ wait: 'yes' }), 'Invalid wait. Expected boolean.'],
       ['nodes', () => parseRouteGraphSourcePayload({ nodes: [{ id: '', type: 'entry' }], edges: [] }), 'Invalid route graph nodes. Expected typed node array.'],
       ['edges', () => parseRouteGraphSourcePayload({ nodes: [], edges: [{ sourceNodeId: '' }] }), 'Invalid route graph edges. Expected edge array.'],
-      ['channels empty', () => parseRouteChannelBatchCreatePayload({ channels: [] }), 'Invalid channels. Expected channel array.'],
-      ['channels accountId', () => parseRouteChannelBatchCreatePayload({ channels: [{ accountId: 0 }] }), 'Invalid channels[].accountId. Expected positive number.'],
-      ['channels tokenId', () => parseRouteChannelBatchCreatePayload({ channels: [{ accountId: 1, tokenId: 0 }] }), 'Invalid channels[].tokenId. Expected positive number or null.'],
-      ['channels sourceModel', () => parseRouteChannelBatchCreatePayload({ channels: [{ accountId: 1, sourceModel: 1 }] }), 'Invalid channels[].sourceModel. Expected string.'],
+      ['targets empty', () => parseRouteEndpointTargetBatchCreatePayload({ targets: [] }), 'Invalid targets. Expected target array.'],
+      ['targets accountId', () => parseRouteEndpointTargetBatchCreatePayload({ targets: [{ accountId: 0 }] }), 'Invalid targets[].accountId. Expected positive number.'],
+      ['targets tokenId', () => parseRouteEndpointTargetBatchCreatePayload({ targets: [{ accountId: 1, tokenId: 0 }] }), 'Invalid targets[].tokenId. Expected positive number or null.'],
+      ['targets sourceModel', () => parseRouteEndpointTargetBatchCreatePayload({ targets: [{ accountId: 1, sourceModel: 1 }] }), 'Invalid targets[].sourceModel. Expected string.'],
     ];
 
     for (const [name, parse, error] of cases) {

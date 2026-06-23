@@ -86,6 +86,7 @@ export default function AccountModelsModal({
     if (scope === 'account_model') return tr('components.searchModal.accounts2');
     if (scope === 'token_model') return 'Token';
     if (scope === 'token_model_group') return tr('pages.accounts.accountModelsModal.tokenGroup');
+    if (scope === 'provider_catalog') return tr('upstreamCostPricing.source.providerCatalog');
     return tr('pages.settings.notConfigured');
   };
 
@@ -292,15 +293,15 @@ export default function AccountModelsModal({
       <Dialog.Root open={!!costModelName} onOpenChange={(open) => {
         if (!open) setCostModelName(null);
       }}>
-        <Dialog.Content className="w-[min(94vw,980px)]" onClose={() => setCostModelName(null)}>
-          <Dialog.Header>
+        <Dialog.Content className="w-[min(94vw,980px)] overflow-hidden p-0" onClose={() => setCostModelName(null)}>
+          <Dialog.Header className="shrink-0 border-b px-5 py-4">
             <Dialog.Title>{tr('pages.accounts.accountModelsModal.upstreamCostPricing')}</Dialog.Title>
             <Dialog.Description>
               {tr('pages.accounts.accountModelsModal.configureCostMetapiPaysWhenAccountModel')}
             </Dialog.Description>
           </Dialog.Header>
           {costModelName && siteId > 0 && accountId > 0 ? (
-            <div className="mt-3">
+            <div className="min-h-0 overflow-y-auto px-5 py-4">
               <UpstreamCostPricingEditor
                 open={!!costModelName}
                 siteId={siteId}

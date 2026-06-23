@@ -27,7 +27,7 @@ semantic layers:
 1. **Ingress**: where downstream requests enter the graph.
 2. **Route product**: a reusable compiled route target that other graph objects
    can select.
-3. **Execution target**: the concrete model/channel/token target eventually
+3. **Execution target**: the concrete model/target/token target eventually
    called.
 
 The current `internal entry` collapses layers 1 and 2.
@@ -46,7 +46,7 @@ type RouteGraphNode =
   | RouteEndpointNode
   | FilterNode
   | DispatcherNode
-  | ModelEndpointNode
+  | RouteEndpointNode
   | SyntheticEndpointNode
   | AutoNode;
 ```
@@ -122,16 +122,16 @@ route endpoints, not raw database route ids.
 
 ### Model Endpoint
 
-`model_endpoint` remains the compiled/runtime executable primitive for concrete
-upstream targets. It represents channels, tokens/API keys, upstream models, and
+`route_endpoint` remains the compiled/runtime executable primitive for concrete
+upstream targets. It represents targets, tokens/API keys, upstream models, and
 target-selection metadata after semantic route products have been lowered.
 
-`model_endpoint` is not a semantic route product and is not the normal object a
+`route_endpoint` is not a semantic route product and is not the normal object a
 manual route should reference. The semantic and catalog-facing endpoint
 abstraction is `route_endpoint`; ADR-0007 refines that abstraction so concrete
 upstream supplies and reusable route products are both represented as
 `route_endpoint` with different endpoint kinds. A route endpoint may lower to
-one or more model endpoints through generated selector/dispatcher logic.
+one or more route endpoints through generated selector/dispatcher logic.
 
 ## Macro Surface
 
@@ -169,7 +169,7 @@ type CandidateSelectorGroupInput =
   | { kind: 'route_endpoints'; endpointIds: string[] }
   | { kind: 'endpoint_query'; cel: string }
   | { kind: 'model_pattern'; pattern: string }
-  | { kind: 'inline_model_endpoints'; endpoints: ModelEndpointTarget[] }
+  | { kind: 'inline_route_endpoints'; endpoints: RouteEndpointTarget[] }
   | { kind: 'synthetic'; statusCode: number; message: string };
 ```
 
@@ -177,8 +177,8 @@ Behavior:
 
 - `route_endpoints` is the normal manual picker path and preserves user order;
 - `endpoint_query` is the advanced dynamic path and receives endpoint metadata;
-- `model_pattern` materializes route/model endpoint candidates by pattern;
-- `inline_model_endpoints` is for explicitly declared upstream model targets;
+- `model_pattern` materializes route/route endpoint candidates by pattern;
+- `inline_route_endpoints` is for explicitly declared upstream model targets;
 - `synthetic` represents fallback/error responses.
 
 Manual macros must not use database route ids as their primary graph input.
@@ -219,13 +219,13 @@ type RouteEndpointCatalogItem = {
 The manual macro picker uses this catalog instead of `RouteSummaryRow[]` or
 `routeIds[]`.
 
-## Projection And Compilation
+## Generated Views And Compilation
 
-Automatic and list-created routes project as semantic route products first.
+Automatic and list-created routes materialize as semantic route products first.
 
 Automatic exact-model discovery has an additional grouping layer defined in
 ADR-0007. A discovered upstream model target is not itself a public route
-product. Automatic construction groups upstream model endpoints by canonical
+product. Automatic construction groups upstream route endpoints by canonical
 public model and emits one stable automatic route group product endpoint for
 manual reuse.
 
@@ -236,7 +236,7 @@ entry(public model)
   -> generated selector / dispatcher
   -> route_endpoint
   -> generated execution path
-  -> model_endpoint | synthetic_endpoint
+  -> route_endpoint | synthetic_endpoint
 ```
 
 Internal route:
@@ -245,7 +245,7 @@ Internal route:
 route_endpoint
   -> generated selector / dispatcher
   -> generated execution path
-  -> model_endpoint | synthetic_endpoint
+  -> route_endpoint | synthetic_endpoint
 ```
 
 The exact primitive layout may differ as long as the compiled graph preserves
@@ -291,7 +291,7 @@ graphs.
 Migration rewrites existing saved graphs:
 
 - delete every `entry` whose visibility was `internal`;
-- create a route endpoint for each route projection/macro output;
+- create a route endpoint for each generated route or macro output;
 - convert macro `route_ids` group inputs to `route_endpoints`;
 - reconnect internal-entry consumers to the corresponding route endpoint;
 - reject any remaining non-public entry during normalization/validation.
@@ -320,8 +320,8 @@ Costs:
 
 ## Non-Goals
 
-- This ADR does not redesign model endpoint pricing or compatibility policy.
+- This ADR does not redesign route endpoint pricing or compatibility policy.
 - This ADR does not require a new visual layout engine.
 - This ADR does not make every generated primitive user-editable.
-- This ADR does not remove model endpoints, synthetic endpoints, filters, or
+- This ADR does not remove route endpoints, synthetic endpoints, filters, or
   dispatchers.

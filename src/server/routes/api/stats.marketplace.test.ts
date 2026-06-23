@@ -34,10 +34,11 @@ describe('/api/models/marketplace', () => {
   beforeEach(async () => {
     resetModelsMarketplaceCacheForTests();
     await db.delete(schema.proxyLogs).run();
-    await db.delete(schema.routeChannels).run();
+    await db.delete(schema.routeEndpointTargets).run();
     await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.tokenModelAvailability).run();
     await db.delete(schema.modelAvailability).run();
+    await db.delete(schema.upstreamModelCostPricings).run();
     await db.delete(schema.accountTokens).run();
     await db.delete(schema.checkinLogs).run();
     await db.delete(schema.accounts).run();
@@ -391,5 +392,87 @@ describe('/api/models/marketplace', () => {
     });
     expect(cachedBody.models.map((model) => model.name)).toContain('cache-model');
     expect(cachedBody.models.map((model) => model.name)).not.toContain('cache-model-mutated-after-first-read');
+  });
+
+  it('uses endpoint pricing for marketplace theoretical pricing metadata', async () => {
+    const upstreamCost = await import('../../services/upstreamCostPricingService.js');
+    const site = await db.insert(schema.sites).values({
+      name: 'priced-site',
+      url: 'https://priced-site.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'priced-user',
+      accessToken: 'priced-access',
+      apiToken: 'priced-api',
+      status: 'active',
+    }).returning().get();
+    const token = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'priced-token',
+      token: 'sk-priced',
+      tokenGroup: 'vip',
+      valueStatus: 'ready',
+      enabled: true,
+      isDefault: true,
+    }).returning().get();
+
+    await db.insert(schema.tokenModelAvailability).values({
+      tokenId: token.id,
+      modelName: 'priced-model',
+      available: true,
+      latencyMs: 42,
+    }).run();
+    await upstreamCost.createUpstreamCostPricing({
+      scope: 'token_model_group',
+      siteId: site.id,
+      accountId: account.id,
+      tokenId: token.id,
+      tokenGroup: 'vip',
+      modelName: 'priced-model',
+      plan: upstreamCost.createSimpleTokenPricingPlan({
+        inputPerMillion: 7,
+        outputPerMillion: 11,
+      }),
+    });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/models/marketplace?includePricing=true',
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as {
+      models: Array<{
+        name: string;
+        pricingSources: Array<{
+          siteId: number;
+          accountId: number;
+          enableGroups: string[];
+          groupPricing: Record<string, {
+            inputPerMillion?: number;
+            outputPerMillion?: number;
+          }>;
+        }>;
+      }>;
+      meta: { includePricing: boolean };
+    };
+    const model = body.models.find((item) => item.name === 'priced-model');
+    expect(model?.pricingSources).toEqual([
+      expect.objectContaining({
+        siteId: site.id,
+        accountId: account.id,
+        enableGroups: ['vip'],
+        groupPricing: {
+          vip: expect.objectContaining({
+            inputPerMillion: 7,
+            outputPerMillion: 11,
+          }),
+        },
+      }),
+    ]);
+    expect(body.meta.includePricing).toBe(true);
   });
 });

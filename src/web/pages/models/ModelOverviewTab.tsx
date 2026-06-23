@@ -5,6 +5,7 @@ import ToneBadge from '../../components/ToneBadge.js';
 import SectionHeading from '../../components/details/SectionHeading.js';
 import MetricGrid from '../../components/metrics/MetricGrid.js';
 import MetricTile from '../../components/metrics/MetricTile.js';
+import EstimateLevelBadge from '../../components/pricing/EstimateLevelBadge.js';
 import { Card, CardContent } from '../../components/ui/card/index.js';
 import type { ModelDetailsView, ModelEntryPricing } from './modelDetailsView.js';
 import { formatLatencyValue, formatSuccessRate } from './modelDetailsView.js';
@@ -50,14 +51,22 @@ function PricingSummaryCard({
           <div className="text-sm font-semibold">{title}</div>
           <div className="mt-1 text-xs text-muted-foreground">{description}</div>
         </div>
-        {pricing ? <ToneBadge tone="-info">{pricing.sampleCount ?? pricing.sourceCount} samples</ToneBadge> : <ToneBadge tone="-muted">{tr('pages.settings.notConfigured')}</ToneBadge>}
+        {!pricing ? <ToneBadge tone="-muted">{tr('pages.settings.notConfigured')}</ToneBadge> : null}
       </div>
       {pricing ? (
         <div className="mt-3 grid gap-2">
           {(pricing.strategy || pricing.estimateLevel) && (
             <div className="flex flex-wrap gap-1.5">
               {pricing.strategy ? <ToneBadge tone="-muted">{pricing.strategy}</ToneBadge> : null}
-              {pricing.estimateLevel ? <ToneBadge tone={pricing.estimateLevel === 'exact' ? '-success' : '-warning'}>{pricing.estimateLevel}</ToneBadge> : null}
+              {pricing.estimateLevel ? (
+                <EstimateLevelBadge
+                  level={pricing.estimateLevel}
+                  diagnostics={pricing.diagnostics}
+                  candidates={pricing.candidates}
+                  sourceCount={pricing.sourceCount}
+                  strategy={pricing.strategy}
+                />
+              ) : null}
             </div>
           )}
           <div className="grid gap-2 sm:grid-cols-3">

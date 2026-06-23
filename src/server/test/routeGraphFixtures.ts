@@ -29,7 +29,7 @@ export function tokenRouteFixture(input: LegacyRouteFixtureInput = {}) {
         kind: 'routes',
         routeIds: input.sourceRouteIds ?? [],
       }
-      : { kind: 'channels' },
+      : { kind: 'supply' },
     displayName,
     displayIcon: input.displayIcon ?? null,
     modelMapping: input.modelMapping ?? null,

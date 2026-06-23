@@ -281,7 +281,7 @@ describe('OpenAI-compatible relay surfaces with scenario upstreams', () => {
   });
 
   it('records a failed proxy log when embeddings upstream candidates are exhausted', async () => {
-    const { managedKey, route, channel, account } = await harness.seedRoute({ model: 'embedding-failure-model' });
+    const { managedKey, route, target, account } = await harness.seedRoute({ model: 'embedding-failure-model' });
     harness.upstream.add({
       method: 'POST',
       path: '/v1/embeddings',
@@ -311,7 +311,7 @@ describe('OpenAI-compatible relay surfaces with scenario upstreams', () => {
     expect(response.statusCode, response.body).toBe(503);
     expect(response.json()).toMatchObject({
       error: expect.objectContaining({
-        message: expect.stringContaining('No available channels'),
+        message: expect.stringContaining('No available targets'),
       }),
     });
 
@@ -319,7 +319,7 @@ describe('OpenAI-compatible relay surfaces with scenario upstreams', () => {
     expect(logs.some((log) => log.status === 'failed'
       && log.httpStatus === 502
       && log.routeId === route.id
-      && log.channelId === channel.id
+      && log.targetId === target.id
       && log.accountId === account.id
       && log.downstreamApiKeyId === managedKey.id
       && log.modelRequested === 'embedding-failure-model'

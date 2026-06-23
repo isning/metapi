@@ -52,7 +52,7 @@ public route product. Supply endpoints never declare downstream public models.
 This ADR refines ADR-0006. `route_endpoint` remains the reusable graph product
 abstraction, but it is also the unified endpoint catalog item for concrete
 supplies. Code and UI should not introduce a separate
-`upstream_model_endpoint` node type.
+`upstream_route_endpoint` node type.
 
 ## Unified Endpoint Contract
 
@@ -75,7 +75,7 @@ type RouteEndpointNode = BaseRouteGraphNode & {
   resolutionStatus: 'resolved' | 'unresolved' | 'degraded';
   match?: RouteGraphMatchSpec;
   resolvesTo?: {
-    kind: 'model_endpoint' | 'route_builder' | 'synthetic' | 'external';
+    kind: 'route_endpoint' | 'route_builder' | 'synthetic' | 'external';
     id: string;
   };
   metadata?: Record<string, unknown>;
@@ -121,7 +121,7 @@ site/account/token/base-url/platform/upstream-model/compatibility/cost-policy
 Example ids:
 
 ```text
-route-endpoint:supply:route-channel:123
+route-endpoint:supply:route-endpoint-target:123
 route-endpoint:supply:fingerprint:8f54d2b0
 ```
 
@@ -140,7 +140,7 @@ dispatch:
   "compatibilityPolicyRef": "policy:qwen-thinking",
   "pricingPolicyRef": "price:glm-5.1",
   "sourceRouteId": 439,
-  "sourceChannelId": 123,
+  "sourceTargetId": 123,
   "fingerprint": "..."
 }
 ```
@@ -148,7 +148,7 @@ dispatch:
 Identity rules:
 
 - prefer a stable database id when the endpoint is backed by a persisted row,
-  such as `route-channel:{routeChannelId}`;
+  such as `route-endpoint-target:{routeEndpointTargetId}`;
 - otherwise derive a deterministic fingerprint from stable upstream dimensions;
 - display labels may change without changing endpoint identity;
 - mutable details belong in metadata and in the fingerprint source, not in a
@@ -262,7 +262,7 @@ canonical model key
     -> route_endpoint endpointKind=supply []
 ```
 
-The builder may preserve priority groups from existing route/channel ordering.
+The builder may preserve priority groups from existing route/target ordering.
 That ordering belongs in macro policy or candidate metadata, not in duplicate
 public route rows.
 
@@ -282,7 +282,7 @@ Advanced mode may allow selecting concrete supply endpoints:
 ```text
 manual-route
   candidates:
-    route-endpoint:supply:route-channel:123
+    route-endpoint:supply:route-endpoint-target:123
 ```
 
 The default picker must prefer route products because they survive automatic
@@ -364,7 +364,7 @@ Runtime dispatch for a public automatic group is:
 entry(public model)
   -> route builder dispatcher
   -> route_endpoint endpointKind=supply
-  -> concrete account/token/channel target
+  -> concrete account/token/target
 ```
 
 Runtime dispatch for a manual route referencing an automatic product is:
@@ -375,7 +375,7 @@ manual entry
   -> route_endpoint endpointKind=route_product
   -> automatic route builder dispatcher
   -> route_endpoint endpointKind=supply
-  -> concrete account/token/channel target
+  -> concrete account/token/target
 ```
 
 The compiled graph may inline these paths for execution. The semantic graph
@@ -539,7 +539,7 @@ When duplicate public exposure exists:
 
 ## Migration
 
-Existing automatic exact route projections require an explicit one-time
+Existing automatic exact route generated data requires an explicit one-time
 configuration migration. Runtime graph loading does not preserve forward
 compatibility with old route-endpoint ids or route-id macro inputs.
 

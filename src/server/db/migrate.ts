@@ -60,7 +60,7 @@ const VERIFIED_SCHEMA_MARKERS: SchemaMarker[] = [
   { table: 'model_availability' },
   { table: 'proxy_logs' },
   { table: 'token_routes' },
-  { table: 'route_channels', column: 'token_id' },
+  { table: 'route_endpoint_targets', column: 'token_id' },
   { table: 'account_tokens' },
   { table: 'token_model_availability' },
   { table: 'events' },
@@ -156,7 +156,7 @@ function hasGraphNativeTokenRoutesReplacement(sqlite: Database.Database): boolea
   return tableExists(sqlite, 'route_graph_versions')
     && tableExists(sqlite, 'route_graph_drafts')
     && tableExists(sqlite, 'route_graph_active_version')
-    && columnExists(sqlite, 'route_channels', 'route_node_id')
+    && columnExists(sqlite, 'route_endpoint_targets', 'route_endpoint_id')
     && columnExists(sqlite, 'token_routes', 'display_name')
     && !columnExists(sqlite, 'token_routes', 'model_pattern')
     && !columnExists(sqlite, 'token_routes', 'route_mode')
@@ -182,7 +182,7 @@ function hasRouteGraphScaffolding(sqlite: Database.Database): boolean {
   return tableExists(sqlite, 'route_graph_versions')
     || tableExists(sqlite, 'route_graph_drafts')
     || tableExists(sqlite, 'route_graph_active_version')
-    || columnExists(sqlite, 'route_channels', 'route_node_id');
+    || columnExists(sqlite, 'route_endpoint_targets', 'route_endpoint_id');
 }
 
 function selectExistingTokenRouteColumnExpression(
@@ -507,6 +507,42 @@ function isReplacedRouteGraphLegacyTokenRoutesStatement(
     );
 }
 
+function isLegacyProxyTargetBackfillStatement(
+  sqlite: Database.Database,
+  statement: string,
+): boolean {
+  const normalized = normalizeSqlForMatch(statement);
+  if (
+    normalized.includes('update proxy_logs')
+    && normalized.includes('target_id = channel_id')
+  ) {
+    return !columnExists(sqlite, 'proxy_logs', 'channel_id');
+  }
+
+  if (
+    normalized.includes('update proxy_debug_traces')
+    && normalized.includes('sticky_hit_target_id = sticky_hit_channel_id')
+  ) {
+    return !columnExists(sqlite, 'proxy_debug_traces', 'sticky_hit_channel_id');
+  }
+
+  if (
+    normalized.includes('update proxy_debug_traces')
+    && normalized.includes('selected_target_id = selected_channel_id')
+  ) {
+    return !columnExists(sqlite, 'proxy_debug_traces', 'selected_channel_id');
+  }
+
+  if (
+    normalized.includes('update proxy_video_tasks')
+    && normalized.includes('target_id = channel_id')
+  ) {
+    return !columnExists(sqlite, 'proxy_video_tasks', 'channel_id');
+  }
+
+  return false;
+}
+
 function isSitesPlatformUrlUniqueConflictError(error: unknown): boolean {
   const lowered = normalizeSchemaErrorMessage(error).toLowerCase();
   if (!lowered.includes('unique constraint failed: sites.platform, sites.url')) {
@@ -524,15 +560,18 @@ function isSitesPlatformUrlUniqueConflictError(error: unknown): boolean {
 
 function replayMigrationStatements(sqlite: Database.Database, statements: string[]): void {
   for (const statement of statements) {
-      if (isReplacedRouteGraphLegacyTokenRoutesStatement(sqlite, statement)) {
+    if (
+      isReplacedRouteGraphLegacyTokenRoutesStatement(sqlite, statement)
+      || isLegacyProxyTargetBackfillStatement(sqlite, statement)
+    ) {
+      continue;
+    }
+    try {
+      sqlite.exec(statement);
+    } catch (error) {
+      if (isRecoverableSchemaConflictError(error)) {
         continue;
       }
-      try {
-        sqlite.exec(statement);
-      } catch (error) {
-        if (isRecoverableSchemaConflictError(error)) {
-          continue;
-        }
 
       if (isSitesPlatformUrlUniqueConflictError(error) && deduplicateLegacySitesForUniqueIndex(sqlite)) {
         try {

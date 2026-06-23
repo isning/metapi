@@ -19,7 +19,7 @@ export type SeedProxyRouteInput = {
   tokenValue?: string;
   accountExtraConfig?: Record<string, unknown>;
   routeEnabled?: boolean;
-  channelEnabled?: boolean;
+  targetEnabled?: boolean;
 };
 
 export type SeedProxyRouteResult = {
@@ -27,7 +27,7 @@ export type SeedProxyRouteResult = {
   account: any;
   token: any;
   route: any;
-  channel: any;
+  target: any;
   managedKey: any;
 };
 
@@ -79,7 +79,7 @@ export async function createProxyRelayHarness(prefix = 'metapi-proxy-relay-'): P
     await db.delete(schema.routeGraphDrafts).run();
     await db.delete(schema.routeGraphActiveVersion).run();
     await db.delete(schema.routeGraphVersions).run();
-    await db.delete(schema.routeChannels).run();
+    await db.delete(schema.routeEndpointTargets).run();
     await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.downstreamApiKeys).run();
     await db.delete(schema.accountTokens).run();
@@ -119,14 +119,14 @@ export async function createProxyRelayHarness(prefix = 'metapi-proxy-relay-'): P
       ...tokenRouteFixture({ modelPattern: model }),
       enabled: input.routeEnabled ?? true,
     }).returning().get();
-    const channel = await db.insert(schema.routeChannels).values({
+    const target = await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: account.id,
       tokenId: token.id,
       sourceModel: model,
       priority: 0,
       weight: 10,
-      enabled: input.channelEnabled ?? true,
+      enabled: input.targetEnabled ?? true,
     }).returning().get();
     const managedKey = await db.insert(schema.downstreamApiKeys).values({
       name: `${model}-managed-key`,
@@ -135,7 +135,7 @@ export async function createProxyRelayHarness(prefix = 'metapi-proxy-relay-'): P
       supportedModels: JSON.stringify([model]),
     }).returning().get();
     tokenRouterModule.invalidateTokenRouterCache();
-    return { site, account, token, route, channel, managedKey };
+    return { site, account, token, route, target, managedKey };
   }
 
   return {

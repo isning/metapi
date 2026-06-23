@@ -45,7 +45,7 @@ const Content = React.forwardRef<
 >(({ className, children, closeButton = true, onClose, ...props }, ref) => {
   const open = React.useContext(DialogOpenContext);
   const contentClassName = cn(
-    'fixed left-1/2 top-1/2 z-50 flex w-[min(92vw,560px)] flex-col rounded-lg border border-border bg-background p-4 text-foreground shadow-lg',
+    'fixed left-1/2 top-1/2 z-50 flex max-h-[calc(100dvh-2rem)] w-[min(92vw,560px)] flex-col overflow-y-auto rounded-lg border border-border bg-background p-4 text-foreground shadow-lg',
     centeredContentMotionClassName,
     className,
   );

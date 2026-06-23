@@ -43,7 +43,7 @@ describe('upstream compatibility policy resolver', () => {
           },
         },
       },
-      modelEndpointCompatibilityPolicy: {
+      routeEndpointCompatibilityPolicy: {
         reasoningHistory: {
           transport: {
             thinkTag: {

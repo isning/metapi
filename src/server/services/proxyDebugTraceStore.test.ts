@@ -56,8 +56,8 @@ describe('proxyDebugTraceStore', () => {
 
     await store.updateProxyDebugTraceSelection(trace.id, {
       stickySessionKey: 'key:7|codex|/v1/responses|gpt-4o|sess-1',
-      stickyHitChannelId: 12,
-      selectedChannelId: 12,
+      stickyHitTargetId: 12,
+      selectedTargetId: 12,
       selectedRouteId: 99,
       selectedAccountId: 33,
       selectedSiteId: 8,
@@ -102,6 +102,8 @@ describe('proxyDebugTraceStore', () => {
       recoverApplied: false,
       downgradeDecision: true,
       downgradeReason: '[upstream:/responses] forbidden',
+      fallbackScope: 'api_variant',
+      failureClass: 'protocol_mismatch',
       memoryWrite: {
         action: 'failure',
         blockedEndpoint: 'responses',
@@ -131,7 +133,7 @@ describe('proxyDebugTraceStore', () => {
       downstreamPath: '/v1/responses',
       clientKind: 'codex',
       sessionId: 'sess-1',
-      selectedChannelId: 12,
+      selectedTargetId: 12,
       finalStatus: 'failed',
       finalHttpStatus: 503,
       finalUpstreamPath: '/responses',
@@ -149,6 +151,9 @@ describe('proxyDebugTraceStore', () => {
       runtimeExecutor: 'codex',
       responseStatus: 403,
       downgradeDecision: true,
+      downgradeReason: '[upstream:/responses] forbidden',
+      fallbackScope: 'api_variant',
+      failureClass: 'protocol_mismatch',
     });
   });
 

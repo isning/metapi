@@ -38,7 +38,7 @@ describe('rebuildTokenRoutesFromAvailability', () => {
     await db.delete(schema.routeGraphDrafts).run();
     await db.delete(schema.routeGraphActiveVersion).run();
     await db.delete(schema.routeGraphVersions).run();
-    await db.delete(schema.routeChannels).run();
+    await db.delete(schema.routeEndpointTargets).run();
     await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.tokenModelAvailability).run();
     await db.delete(schema.modelAvailability).run();
@@ -91,10 +91,10 @@ describe('rebuildTokenRoutesFromAvailability', () => {
     const route = await findRouteByExposedModel('gpt-5.2-codex');
     expect(route).toBeDefined();
 
-    const channels = await db.select().from(schema.routeChannels)
+    const channels = await db.select().from(schema.routeEndpointTargets)
       .where(and(
-        eq(schema.routeChannels.routeId, route!.id),
-        eq(schema.routeChannels.accountId, account.id),
+        eq(schema.routeEndpointTargets.routeId, route!.id),
+        eq(schema.routeEndpointTargets.accountId, account.id),
       ))
       .all();
 
@@ -151,10 +151,10 @@ describe('rebuildTokenRoutesFromAvailability', () => {
     const route = await findRouteByExposedModel('gpt-4.1');
     expect(route).toBeDefined();
 
-    const channels = await db.select().from(schema.routeChannels)
+    const channels = await db.select().from(schema.routeEndpointTargets)
       .where(and(
-        eq(schema.routeChannels.routeId, route!.id),
-        eq(schema.routeChannels.accountId, account.id),
+        eq(schema.routeEndpointTargets.routeId, route!.id),
+        eq(schema.routeEndpointTargets.accountId, account.id),
       ))
       .all();
 
@@ -201,10 +201,10 @@ describe('rebuildTokenRoutesFromAvailability', () => {
     const route = await findRouteByExposedModel('gpt-5.2-codex');
     expect(route).toBeDefined();
 
-    const channels = await db.select().from(schema.routeChannels)
+    const channels = await db.select().from(schema.routeEndpointTargets)
       .where(and(
-        eq(schema.routeChannels.routeId, route!.id),
-        eq(schema.routeChannels.accountId, account.id),
+        eq(schema.routeEndpointTargets.routeId, route!.id),
+        eq(schema.routeEndpointTargets.accountId, account.id),
       ))
       .all();
 
@@ -252,10 +252,10 @@ describe('rebuildTokenRoutesFromAvailability', () => {
     const route = await findRouteByExposedModel('gpt-5.2-codex');
     expect(route).toBeDefined();
 
-    const channels = await db.select().from(schema.routeChannels)
+    const channels = await db.select().from(schema.routeEndpointTargets)
       .where(and(
-        eq(schema.routeChannels.routeId, route!.id),
-        eq(schema.routeChannels.accountId, account.id),
+        eq(schema.routeEndpointTargets.routeId, route!.id),
+        eq(schema.routeEndpointTargets.accountId, account.id),
       ))
       .all();
 
@@ -298,7 +298,7 @@ describe('rebuildTokenRoutesFromAvailability', () => {
       enabled: true,
     }).returning().get();
 
-    await db.insert(schema.routeChannels).values({
+    await db.insert(schema.routeEndpointTargets).values({
       routeId: staleRoute.id,
       accountId: account.id,
       tokenId: token.id,
@@ -313,7 +313,7 @@ describe('rebuildTokenRoutesFromAvailability', () => {
       enabled: true,
     }).returning().get();
 
-    await db.insert(schema.routeChannels).values({
+    await db.insert(schema.routeEndpointTargets).values({
       routeId: wildcardRoute.id,
       accountId: account.id,
       tokenId: token.id,
@@ -331,13 +331,13 @@ describe('rebuildTokenRoutesFromAvailability', () => {
     const oldRoute = await db.select().from(schema.tokenRoutes).where(eq(schema.tokenRoutes.id, staleRoute.id)).get();
     expect(oldRoute).toBeUndefined();
 
-    const oldChannels = await db.select().from(schema.routeChannels).where(eq(schema.routeChannels.routeId, staleRoute.id)).all();
+    const oldChannels = await db.select().from(schema.routeEndpointTargets).where(eq(schema.routeEndpointTargets.routeId, staleRoute.id)).all();
     expect(oldChannels).toHaveLength(0);
 
     const latestRoute = await findRouteByExposedModel('latest-model');
     expect(latestRoute).toBeDefined();
-    const latestChannels = await db.select().from(schema.routeChannels)
-      .where(and(eq(schema.routeChannels.routeId, latestRoute!.id), eq(schema.routeChannels.tokenId, token.id)))
+    const latestChannels = await db.select().from(schema.routeEndpointTargets)
+      .where(and(eq(schema.routeEndpointTargets.routeId, latestRoute!.id), eq(schema.routeEndpointTargets.tokenId, token.id)))
       .all();
     expect(latestChannels.length).toBeGreaterThan(0);
 
@@ -423,8 +423,8 @@ describe('rebuildTokenRoutesFromAvailability', () => {
         ownership: 'auto_generated',
       }),
       expect.objectContaining({
-        id: `pool:legacy:${generatedRouteId}`,
-        type: 'model_endpoint',
+        id: `route-endpoint:route:${generatedRouteId}`,
+        type: 'route_endpoint',
         ownership: 'auto_generated',
       }),
     ]));

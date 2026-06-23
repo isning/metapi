@@ -8,7 +8,7 @@ import TokenRoutes from './TokenRoutes.js';
 const { apiMock, getBrandMock } = vi.hoisted(() => ({
   apiMock: {
     getRoutesSummary: vi.fn(),
-    getRouteChannels: vi.fn(),
+    getRouteTargets: vi.fn(),
     getModelTokenCandidates: vi.fn(),
     getRouteDecisionsBatch: vi.fn(),
     getRouteWideDecisionsBatch: vi.fn(),
@@ -56,7 +56,7 @@ describe('TokenRoutes routing strategy updates', () => {
           id: 1,
           modelMapping: null,
           match: { kind: 'model', requestedModelPattern: 'gpt-4o-mini', displayName: 'gpt-4o-mini' },
-          backend: { kind: 'channels' },
+          backend: { kind: 'supply' },
           presentation: { displayName: 'gpt-4o-mini', displayIcon: null },
           routingStrategy: 'weighted',
           enabled: true,
@@ -67,7 +67,7 @@ describe('TokenRoutes routing strategy updates', () => {
           decisionRefreshedAt: null,
         },
       ]);
-    apiMock.getRouteChannels.mockResolvedValue([]);
+    apiMock.getRouteTargets.mockResolvedValue([]);
     apiMock.getModelTokenCandidates.mockResolvedValue({ models: {} });
     apiMock.getRouteDecisionsBatch.mockResolvedValue({ decisions: {} });
     apiMock.getRouteWideDecisionsBatch.mockResolvedValue({ decisions: {} });

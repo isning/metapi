@@ -179,14 +179,14 @@ describe('NodeForm', () => {
     const endpointChange = vi.fn();
     const endpoint: RouteGraphNode = {
       id: 'endpoint.primary',
-      type: 'model_endpoint',
+      type: 'route_endpoint',
       name: 'Endpoint',
       enabled: true,
       visibility: 'internal',
       ownership: 'manual',
       metadata: { tier: 'fast' },
       config: {
-        targets: [{ channelId: 'channel-a', model: 'gpt-a' }],
+        targets: [{ targetId: 'target-a', model: 'gpt-a' }],
         targetSelection: { strategy: 'weighted' },
       },
     };
@@ -211,14 +211,14 @@ describe('NodeForm', () => {
     act(() => {
       configEditor!.props.onChange({
         target: {
-          value: '{"targets":[{"channelId":"channel-b","model":"gpt-b","metadata":{"region":"us"}}],"targetSelection":{"strategy":"stable_first"}}',
+          value: '{"targets":[{"targetId":"target-b","model":"gpt-b","metadata":{"region":"us"}}],"targetSelection":{"strategy":"stable_first"}}',
         },
       });
     });
     expect(endpointChange).toHaveBeenLastCalledWith({
       ...endpoint,
       config: {
-        targets: [{ channelId: 'channel-b', model: 'gpt-b', metadata: { region: 'us' } }],
+        targets: [{ targetId: 'target-b', model: 'gpt-b', metadata: { region: 'us' } }],
         targetSelection: { strategy: 'stable_first' },
       },
     });

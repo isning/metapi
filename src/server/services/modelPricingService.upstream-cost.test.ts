@@ -1,8 +1,14 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   bootIsolatedRuntimeDb,
   type IsolatedRuntimeDbHandle,
 } from '../../testing/dbHarness.js';
+
+const fetchUpstreamPricingCatalogMock = vi.hoisted(() => vi.fn());
+
+vi.mock('./upstreamPricingCatalogService.js', () => ({
+  fetchUpstreamPricingCatalog: fetchUpstreamPricingCatalogMock,
+}));
 
 type DbModule = typeof import('../db/index.js');
 type PricingModule = typeof import('./modelPricingService.js');
@@ -24,6 +30,8 @@ describe('modelPricingService upstream cost integration', () => {
   });
 
   beforeEach(async () => {
+    fetchUpstreamPricingCatalogMock.mockReset();
+    await db.delete(schema.settings).run();
     await db.delete(schema.upstreamModelCostPricings).run();
     await db.delete(schema.accountTokens).run();
     await db.delete(schema.accounts).run();
@@ -97,5 +105,67 @@ describe('modelPricingService upstream cost integration', () => {
         totalCost: 0.02,
       },
     });
+  });
+
+  it('does not bypass the provider catalog switch through the legacy catalog cost path', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'Catalog Disabled Cost',
+      url: 'https://catalog-disabled.example.com',
+      platform: 'openai',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'catalog-disabled',
+      accessToken: 'access-token',
+    }).returning().get();
+    const token = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'paid',
+      token: 'sk-paid',
+      tokenGroup: 'paid',
+    }).returning().get();
+    await db.insert(schema.settings).values({
+      key: 'pricing_reference_config_v1',
+      value: JSON.stringify({
+        schemaVersion: 1,
+        defaultReferenceMode: 'manual',
+        fallbackProfile: 'system_default',
+        catalog: {
+          builtInCatalogEnabled: true,
+          providerCatalogSuggestionsEnabled: false,
+        },
+        driftCheck: {
+          enabled: false,
+        },
+      }),
+    }).run();
+    fetchUpstreamPricingCatalogMock.mockResolvedValue({
+      models: new Map([['catalog-only-model', {
+        modelName: 'catalog-only-model',
+        quotaType: 0,
+        modelRatio: 100,
+        completionRatio: 1,
+        cacheRatio: 1,
+        cacheCreationRatio: 1,
+        modelPrice: null,
+        enableGroups: ['default'],
+      }]]),
+      groupRatio: { default: 1 },
+    });
+
+    const input = {
+      site,
+      account,
+      tokenId: token.id,
+      upstreamGroup: 'paid',
+      modelName: 'catalog-only-model',
+      promptTokens: 1000,
+      completionTokens: 0,
+      totalTokens: 1000,
+    };
+
+    await expect(pricing.estimateProxyCost(input)).resolves.toBe(0.002);
+    await expect(pricing.buildProxyBillingDetails(input)).resolves.toBeNull();
+    expect(fetchUpstreamPricingCatalogMock).not.toHaveBeenCalled();
   });
 });

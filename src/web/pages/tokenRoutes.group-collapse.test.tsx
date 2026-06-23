@@ -9,7 +9,7 @@ import { routeSummaryFixture } from './testApiCompat.js';
 const { apiMock, getBrandMock } = vi.hoisted(() => ({
   apiMock: {
     getRoutesSummary: vi.fn(),
-    getRouteChannels: vi.fn(),
+    getRouteTargets: vi.fn(),
     getModelTokenCandidates: vi.fn(),
     getRouteDecisionsBatch: vi.fn(),
     getRouteWideDecisionsBatch: vi.fn(),
@@ -156,7 +156,7 @@ describe('TokenRoutes grouped source models', () => {
     getBrandMock.mockReturnValue(null);
     vi.stubGlobal('confirm', vi.fn(() => true));
     apiMock.getModelTokenCandidates.mockResolvedValue({ models: {} });
-    apiMock.getRouteChannels.mockResolvedValue([]);
+    apiMock.getRouteTargets.mockResolvedValue([]);
     apiMock.getRouteDecisionsBatch.mockResolvedValue({ decisions: {} });
     apiMock.getRouteWideDecisionsBatch.mockResolvedValue({ decisions: {} });
     apiMock.updateRoute.mockResolvedValue({});
@@ -176,14 +176,14 @@ describe('TokenRoutes grouped source models', () => {
         channelCount: 1, enabledChannelCount: 1, siteNames: ['test'],
         decisionSnapshot: null, decisionRefreshedAt: null,
         match: { kind: 'model', requestedModelPattern: '[NV]deepseek-v3.1-terminus', displayName: null },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         presentation: { displayName: null, displayIcon: null }},
       {
         id: 3383, modelMapping: null, enabled: true,
         channelCount: 4, enabledChannelCount: 4, siteNames: ['site-a', 'site-b'],
         decisionSnapshot: null, decisionRefreshedAt: null,
         match: { kind: 'model', requestedModelPattern: 're:^claude-(opus|sonnet)-4-5$', displayName: 'claude-opus-4-6' },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         presentation: { displayName: 'claude-opus-4-6', displayIcon: null }},
     ]));
 
@@ -242,10 +242,10 @@ describe('TokenRoutes grouped source models', () => {
         channelCount: 2, enabledChannelCount: 2, siteNames: ['site-a', 'site-b'],
         decisionSnapshot: null, decisionRefreshedAt: null,
         match: { kind: 'model', requestedModelPattern: 're:^claude-opus-(4-6|4-5)$', displayName: 'claude-opus-4-6' },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         presentation: { displayName: 'claude-opus-4-6', displayIcon: null }},
     ]));
-    apiMock.getRouteChannels.mockResolvedValue(channels);
+    apiMock.getRouteTargets.mockResolvedValue(channels);
 
     let root!: WebTestRenderer;
     try {
@@ -275,6 +275,56 @@ describe('TokenRoutes grouped source models', () => {
     }
   });
 
+  it('paginates route list instead of progressively loading every matching route', async () => {
+    const routes = Array.from({ length: 45 }, (_, index) => {
+      const id = index + 1;
+      return {
+        id,
+        modelMapping: null,
+        enabled: true,
+        targetCount: 1,
+        enabledTargetCount: 1,
+        siteNames: ['site-a'],
+        decisionSnapshot: null,
+        decisionRefreshedAt: null,
+        match: { kind: 'model' as const, requestedModelPattern: `route-${String(id).padStart(2, '0')}`, displayName: null },
+        backend: { kind: 'supply' as const },
+        presentation: { displayName: null, displayIcon: null },
+      };
+    });
+    apiMock.getRoutesSummary.mockResolvedValue(routeSummaryRows(routes));
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/routes']}>
+            <ToastProvider>
+              <TokenRoutes />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      expect(collectText(root.root)).toContain('显示第 1 - 20 条，共 45 条路由');
+      expect(collectText(root.root)).toContain('route-26');
+      expect(collectText(root.root)).not.toContain('route-25');
+
+      const nextPageButton = findButtonByAriaLabel(root.root, '下一页');
+      await act(async () => {
+        nextPageButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(collectText(root.root)).toContain('显示第 21 - 40 条，共 45 条路由');
+      expect(collectText(root.root)).not.toContain('route-26');
+      expect(collectText(root.root)).toContain('route-25');
+    } finally {
+      root?.unmount();
+    }
+  });
+
   it('renders oauth route unit summary and members after expanding a pooled route', async () => {
     apiMock.getRoutesSummary.mockResolvedValue(routeSummaryRows([
       {
@@ -282,10 +332,10 @@ describe('TokenRoutes grouped source models', () => {
         channelCount: 1, enabledChannelCount: 1, siteNames: ['codex-oauth'],
         decisionSnapshot: null, decisionRefreshedAt: null,
         match: { kind: 'model', requestedModelPattern: 'gpt-4.1', displayName: null },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         presentation: { displayName: null, displayIcon: null }},
     ]));
-    apiMock.getRouteChannels.mockResolvedValue([
+    apiMock.getRouteTargets.mockResolvedValue([
       {
         id: 511, routeId: 31, accountId: 901, tokenId: null, sourceModel: 'gpt-4.1',
         priority: 0, weight: 1, enabled: true, manualOverride: false,
@@ -346,10 +396,10 @@ describe('TokenRoutes grouped source models', () => {
         channelCount: 1, enabledChannelCount: 1, siteNames: ['site-a'],
         decisionSnapshot: null, decisionRefreshedAt: null,
         match: { kind: 'model', requestedModelPattern: 'gpt-5-codex', displayName: 'gpt-5-codex' },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         presentation: { displayName: 'gpt-5-codex', displayIcon: null }},
     ]));
-    apiMock.getRouteChannels.mockResolvedValue([
+    apiMock.getRouteTargets.mockResolvedValue([
       {
         id: 11, routeId: 1, accountId: 101, tokenId: null, sourceModel: 'gpt-5-codex',
         priority: 0, weight: 1, enabled: true, manualOverride: false,
@@ -409,14 +459,14 @@ describe('TokenRoutes grouped source models', () => {
         channelCount: 1, enabledChannelCount: 1, siteNames: ['site-a'],
         decisionSnapshot: null, decisionRefreshedAt: null,
         match: { kind: 'model', requestedModelPattern: 'claude-opus-4-5', displayName: null },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         presentation: { displayName: null, displayIcon: null }},
       {
         id: 12, modelMapping: null, enabled: true,
         channelCount: 1, enabledChannelCount: 1, siteNames: ['site-b'],
         decisionSnapshot: null, decisionRefreshedAt: null,
         match: { kind: 'model', requestedModelPattern: 'claude-sonnet-4-5', displayName: null },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         presentation: { displayName: null, displayIcon: null }},
       {
         id: 21, modelMapping: null, enabled: true,
@@ -433,7 +483,7 @@ describe('TokenRoutes grouped source models', () => {
         backend: { kind: 'routes', routeIds: [12] },
         presentation: { displayName: 'claude-proxy-b', displayIcon: '' }},
     ]));
-    apiMock.getRouteChannels.mockResolvedValue([
+    apiMock.getRouteTargets.mockResolvedValue([
       {
         id: 101, routeId: 11, accountId: 101, tokenId: 1001, sourceModel: 'claude-opus-4-5',
         priority: 0, weight: 1, enabled: true, manualOverride: false,
@@ -500,14 +550,14 @@ describe('TokenRoutes grouped source models', () => {
         channelCount: 1, enabledChannelCount: 1, siteNames: ['site-a'],
         decisionSnapshot: null, decisionRefreshedAt: null,
         match: { kind: 'model', requestedModelPattern: 'claude-opus-4-5', displayName: null },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         presentation: { displayName: null, displayIcon: null }},
       {
         id: 12, modelMapping: null, enabled: true,
         channelCount: 1, enabledChannelCount: 1, siteNames: ['site-b'],
         decisionSnapshot: null, decisionRefreshedAt: null,
         match: { kind: 'model', requestedModelPattern: 'claude-sonnet-4-5', displayName: null },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         presentation: { displayName: null, displayIcon: null }},
       {
         id: 21, modelMapping: null, enabled: true,
@@ -524,7 +574,7 @@ describe('TokenRoutes grouped source models', () => {
         backend: { kind: 'routes', routeIds: [12] },
         presentation: { displayName: 'claude-proxy-b', displayIcon: '' }},
     ]));
-    apiMock.getRouteChannels.mockResolvedValue([
+    apiMock.getRouteTargets.mockResolvedValue([
       {
         id: 101, routeId: 11, accountId: 101, tokenId: 1001, sourceModel: 'claude-opus-4-5',
         priority: 0, weight: 1, enabled: true, manualOverride: false,
@@ -586,7 +636,7 @@ describe('TokenRoutes grouped source models', () => {
         channelCount: 0, enabledChannelCount: 0, siteNames: [],
         decisionSnapshot: null, decisionRefreshedAt: null,
         match: { kind: 'model', requestedModelPattern: 'gpt-5.2-codex', displayName: 'gpt-5.2-codex' },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         presentation: { displayName: 'gpt-5.2-codex', displayIcon: null }},
     ]));
     apiMock.getModelTokenCandidates.mockResolvedValue({
@@ -597,7 +647,7 @@ describe('TokenRoutes grouped source models', () => {
         ],
       },
     });
-    apiMock.getRouteChannels.mockResolvedValue([]);
+    apiMock.getRouteTargets.mockResolvedValue([]);
 
     let root!: WebTestRenderer;
     try {
@@ -727,7 +777,7 @@ describe('TokenRoutes grouped source models', () => {
       expect(expandedText).not.toContain('添加通道');
       expect(expandedText).not.toContain('删除路由');
       expect(expandedText).not.toContain('编辑群组');
-      expect(apiMock.getRouteChannels).not.toHaveBeenCalled();
+      expect(apiMock.getRouteTargets).not.toHaveBeenCalled();
     } finally {
       root?.unmount();
     }
@@ -740,7 +790,7 @@ describe('TokenRoutes grouped source models', () => {
         channelCount: 0, enabledChannelCount: 0, siteNames: [],
         decisionSnapshot: null, decisionRefreshedAt: null,
         match: { kind: 'model', requestedModelPattern: 'gpt-5.2-codex', displayName: 'gpt-5.2-codex' },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         presentation: { displayName: 'gpt-5.2-codex', displayIcon: null }},
     ]));
     apiMock.getModelTokenCandidates.mockResolvedValue({
@@ -780,7 +830,7 @@ describe('TokenRoutes grouped source models', () => {
         channelCount: 0, enabledChannelCount: 0, siteNames: [],
         decisionSnapshot: null, decisionRefreshedAt: null,
         match: { kind: 'model', requestedModelPattern: 'claude-opus-4-6', displayName: 'claude-opus-4-6' },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         presentation: { displayName: 'claude-opus-4-6', displayIcon: null }},
     ]));
     apiMock.getModelTokenCandidates.mockResolvedValue({
@@ -799,7 +849,7 @@ describe('TokenRoutes grouped source models', () => {
         ],
       },
     });
-    apiMock.getRouteChannels.mockResolvedValue([]);
+    apiMock.getRouteTargets.mockResolvedValue([]);
 
     let root!: WebTestRenderer;
     try {
@@ -836,7 +886,7 @@ describe('TokenRoutes grouped source models', () => {
         channelCount: 1, enabledChannelCount: 1, siteNames: ['Wong'],
         decisionSnapshot: null, decisionRefreshedAt: null,
         match: { kind: 'model', requestedModelPattern: 'gpt-5.2-codex', displayName: 'gpt-5.2-codex' },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         presentation: { displayName: 'gpt-5.2-codex', displayIcon: null }},
     ]));
     apiMock.getModelTokenCandidates.mockResolvedValue({
@@ -892,7 +942,7 @@ describe('TokenRoutes grouped source models', () => {
         channelCount: 0, enabledChannelCount: 0, siteNames: [],
         decisionSnapshot: null, decisionRefreshedAt: null,
         match: { kind: 'model', requestedModelPattern: 'nvidia/vila', displayName: 'nvidia/vila' },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         presentation: { displayName: 'nvidia/vila', displayIcon: null }},
     ]));
 
@@ -933,7 +983,7 @@ describe('TokenRoutes grouped source models', () => {
         channelCount: 1, enabledChannelCount: 1, siteNames: ['site-a'],
         decisionSnapshot: null, decisionRefreshedAt: null,
         match: { kind: 'model', requestedModelPattern: 'gpt-4o-mini', displayName: 'gpt-4o-mini' },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         presentation: { displayName: 'gpt-4o-mini', displayIcon: null }},
     ]));
     apiMock.getModelTokenCandidates.mockResolvedValue({
@@ -974,9 +1024,9 @@ describe('TokenRoutes grouped source models', () => {
         id: 1, modelMapping: null, enabled: true,
         channelCount: 0, enabledChannelCount: 0, siteNames: [],
         decisionSnapshot: null, decisionRefreshedAt: null,
-        match: { kind: 'model', requestedModelPattern: 'custom-model-without-channel', displayName: 'custom-model-without-channel' },
-        backend: { kind: 'channels' },
-        presentation: { displayName: 'custom-model-without-channel', displayIcon: null }},
+        match: { kind: 'model', requestedModelPattern: 'custom-model-without-target', displayName: 'custom-model-without-target' },
+        backend: { kind: 'supply' },
+        presentation: { displayName: 'custom-model-without-target', displayIcon: null }},
     ]));
     apiMock.getModelTokenCandidates.mockResolvedValue({
       models: {},
@@ -1018,21 +1068,21 @@ describe('TokenRoutes grouped source models', () => {
         channelCount: 0, enabledChannelCount: 0, siteNames: [],
         decisionSnapshot: null, decisionRefreshedAt: null,
         match: { kind: 'model', requestedModelPattern: 'minimax-m2.1', displayName: 'minimax-m2.1' },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         presentation: { displayName: 'minimax-m2.1', displayIcon: null }},
       {
         id: 2, modelMapping: null, enabled: true,
         channelCount: 0, enabledChannelCount: 0, siteNames: [],
         decisionSnapshot: null, decisionRefreshedAt: null,
         match: { kind: 'model', requestedModelPattern: 'minimaxai/minimax-m2.1', displayName: 'minimaxai/minimax-m2.1' },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         presentation: { displayName: 'minimaxai/minimax-m2.1', displayIcon: null }},
       {
         id: 3, modelMapping: null, enabled: true,
         channelCount: 0, enabledChannelCount: 0, siteNames: [],
         decisionSnapshot: null, decisionRefreshedAt: null,
         match: { kind: 'model', requestedModelPattern: 're:^(minimax-m2\\.1|minimaxai/minimax-m2\\.1)$', displayName: 'minimax2.1' },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         presentation: { displayName: 'minimax2.1', displayIcon: null }},
     ]));
 
@@ -1064,7 +1114,7 @@ describe('TokenRoutes grouped source models', () => {
         channelCount: 0, enabledChannelCount: 0, siteNames: [],
         decisionSnapshot: null, decisionRefreshedAt: null,
         match: { kind: 'model', requestedModelPattern: 're:^(gpt-5\\.2-codex)$', displayName: 'Codex' },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         presentation: { displayName: 'Codex', displayIcon: null }},
     ]));
     apiMock.getModelTokenCandidates.mockResolvedValue({
@@ -1111,21 +1161,21 @@ describe('TokenRoutes grouped source models', () => {
         channelCount: 0, enabledChannelCount: 0, siteNames: [],
         decisionSnapshot: null, decisionRefreshedAt: null,
         match: { kind: 'model', requestedModelPattern: 'gpt-4o-mini', displayName: 'gpt-4o-mini' },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         presentation: { displayName: 'gpt-4o-mini', displayIcon: null }},
       {
         id: 2, modelMapping: null, enabled: true,
         channelCount: 0, enabledChannelCount: 0, siteNames: [],
         decisionSnapshot: null, decisionRefreshedAt: null,
         match: { kind: 'model', requestedModelPattern: 'official/gpt-4o-mini', displayName: 'official/gpt-4o-mini' },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         presentation: { displayName: 'official/gpt-4o-mini', displayIcon: null }},
       {
         id: 3, modelMapping: null, enabled: true,
         channelCount: 0, enabledChannelCount: 0, siteNames: [],
         decisionSnapshot: null, decisionRefreshedAt: null,
         match: { kind: 'model', requestedModelPattern: 're:^(gpt-4o-mini|official/gpt-4o-mini)$', displayName: 'gpt-4o-mini' },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         presentation: { displayName: 'gpt-4o-mini', displayIcon: null }},
     ]));
 
@@ -1157,7 +1207,7 @@ describe('TokenRoutes grouped source models', () => {
         channelCount: 0, enabledChannelCount: 0, siteNames: [],
         decisionSnapshot: null, decisionRefreshedAt: null,
         match: { kind: 'model', requestedModelPattern: 're:^claude-(opus|sonnet)-4-6$', displayName: 'claude-4-6-group' },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         presentation: { displayName: 'claude-4-6-group', displayIcon: null }},
     ]));
 
@@ -1208,21 +1258,21 @@ describe('TokenRoutes grouped source models', () => {
         channelCount: 3, enabledChannelCount: 3, siteNames: ['Wong'],
         decisionSnapshot: null, decisionRefreshedAt: null,
         match: { kind: 'model', requestedModelPattern: 'gpt-5.4', displayName: null },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         presentation: { displayName: null, displayIcon: null }},
       {
         id: 12, modelMapping: null, enabled: true,
         channelCount: 2, enabledChannelCount: 2, siteNames: ['Alpha'],
         decisionSnapshot: null, decisionRefreshedAt: null,
         match: { kind: 'model', requestedModelPattern: 'claude-sonnet-4-5', displayName: null },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         presentation: { displayName: null, displayIcon: null }},
       {
         id: 13, modelMapping: null, enabled: true,
         channelCount: 1, enabledChannelCount: 1, siteNames: ['Wong'],
         decisionSnapshot: null, decisionRefreshedAt: null,
         match: { kind: 'model', requestedModelPattern: 'gemini-2.5-pro', displayName: null },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         presentation: { displayName: null, displayIcon: null }},
     ]));
     apiMock.getModelTokenCandidates.mockResolvedValue({
@@ -1314,14 +1364,14 @@ describe('TokenRoutes grouped source models', () => {
         channelCount: 40, enabledChannelCount: 40, siteNames: ['Wong'],
         decisionSnapshot: null, decisionRefreshedAt: null,
         match: { kind: 'model', requestedModelPattern: 'deepseek-chat', displayName: null },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         presentation: { displayName: null, displayIcon: null }},
       {
         id: 12, modelMapping: null, enabled: true,
         channelCount: 55, enabledChannelCount: 55, siteNames: ['Wong'],
         decisionSnapshot: null, decisionRefreshedAt: null,
         match: { kind: 'model', requestedModelPattern: 'deepseek-reasoner', displayName: null },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         presentation: { displayName: null, displayIcon: null }},
       {
         id: 21, modelMapping: null, enabled: true,
@@ -1331,7 +1381,7 @@ describe('TokenRoutes grouped source models', () => {
         backend: { kind: 'routes', routeIds: [11, 12] },
         presentation: { displayName: 'deepseekv1', displayIcon: '' }},
     ]));
-    apiMock.getRouteChannels.mockResolvedValue([
+    apiMock.getRouteTargets.mockResolvedValue([
       {
         id: 101, accountId: 1, tokenId: 1, sourceModel: 'deepseek-chat',
         priority: 0, weight: 1, enabled: true, manualOverride: false,
@@ -1379,14 +1429,14 @@ describe('TokenRoutes grouped source models', () => {
         channelCount: 1, enabledChannelCount: 1, siteNames: ['site-a'],
         decisionSnapshot: null, decisionRefreshedAt: null,
         match: { kind: 'model', requestedModelPattern: 'claude-opus-4-5', displayName: null },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         presentation: { displayName: null, displayIcon: null }},
       {
         id: 12, modelMapping: null, enabled: true,
         channelCount: 0, enabledChannelCount: 0, siteNames: [],
         decisionSnapshot: null, decisionRefreshedAt: null,
         match: { kind: 'model', requestedModelPattern: 'claude-sonnet-4-5', displayName: null },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         presentation: { displayName: null, displayIcon: null }},
     ]));
 
@@ -1455,7 +1505,7 @@ describe('TokenRoutes grouped source models', () => {
         channelCount: 1, enabledChannelCount: 1, siteNames: ['site-a'],
         decisionSnapshot: null, decisionRefreshedAt: null,
         match: { kind: 'model', requestedModelPattern: 'claude-opus-4-5', displayName: null },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         presentation: { displayName: null, displayIcon: null }},
     ]));
 
@@ -1528,10 +1578,10 @@ describe('TokenRoutes grouped source models', () => {
           channelCount: 0, enabledChannelCount: 0, siteNames: [],
           decisionSnapshot: null, decisionRefreshedAt: null,
           match: { kind: 'model', requestedModelPattern: 're:^claude-.*$', displayName: 'group-a' },
-          backend: { kind: 'channels' },
+          backend: { kind: 'supply' },
           presentation: { displayName: 'group-a', displayIcon: '' }},
       ]));
-    apiMock.getRouteChannels.mockResolvedValue([]);
+    apiMock.getRouteTargets.mockResolvedValue([]);
 
     let root!: WebTestRenderer;
     try {
@@ -1575,14 +1625,14 @@ describe('TokenRoutes grouped source models', () => {
           channelCount: 1, enabledChannelCount: 1, siteNames: ['site-a'],
           decisionSnapshot: null, decisionRefreshedAt: null,
           match: { kind: 'model', requestedModelPattern: 'claude-opus-4-5', displayName: null },
-          backend: { kind: 'channels' },
+          backend: { kind: 'supply' },
           presentation: { displayName: null, displayIcon: null }},
         {
           id: 12, modelMapping: null, enabled: true,
           channelCount: 1, enabledChannelCount: 1, siteNames: ['site-b'],
           decisionSnapshot: null, decisionRefreshedAt: null,
           match: { kind: 'model', requestedModelPattern: 'claude-sonnet-4-5', displayName: null },
-          backend: { kind: 'channels' },
+          backend: { kind: 'supply' },
           presentation: { displayName: null, displayIcon: null }},
         {
           id: 21, modelMapping: null, enabled: true,
@@ -1598,14 +1648,14 @@ describe('TokenRoutes grouped source models', () => {
           channelCount: 1, enabledChannelCount: 1, siteNames: ['site-a'],
           decisionSnapshot: null, decisionRefreshedAt: null,
           match: { kind: 'model', requestedModelPattern: 'claude-opus-4-5', displayName: null },
-          backend: { kind: 'channels' },
+          backend: { kind: 'supply' },
           presentation: { displayName: null, displayIcon: null }},
         {
           id: 12, modelMapping: null, enabled: true,
           channelCount: 1, enabledChannelCount: 1, siteNames: ['site-b'],
           decisionSnapshot: null, decisionRefreshedAt: null,
           match: { kind: 'model', requestedModelPattern: 'claude-sonnet-4-5', displayName: null },
-          backend: { kind: 'channels' },
+          backend: { kind: 'supply' },
           presentation: { displayName: null, displayIcon: null }},
         {
           id: 21, modelMapping: null, enabled: true,
@@ -1615,7 +1665,7 @@ describe('TokenRoutes grouped source models', () => {
           backend: { kind: 'routes', routeIds: [11, 12] },
           presentation: { displayName: 'claude-opus-4-6', displayIcon: '' }},
       ]));
-    apiMock.getRouteChannels.mockResolvedValue([]);
+    apiMock.getRouteTargets.mockResolvedValue([]);
 
     let root!: WebTestRenderer;
     try {
@@ -1681,7 +1731,7 @@ describe('TokenRoutes grouped source models', () => {
         channelCount: 6, enabledChannelCount: 6, siteNames: ['Wong'],
         decisionSnapshot: null, decisionRefreshedAt: null,
         match: { kind: 'model', requestedModelPattern: 'claude-haiku-4-5-20251001', displayName: null },
-        backend: { kind: 'channels' },
+        backend: { kind: 'supply' },
         presentation: { displayName: null, displayIcon: null }},
       {
         id: 21, modelMapping: null, enabled: true,
@@ -1691,7 +1741,7 @@ describe('TokenRoutes grouped source models', () => {
         backend: { kind: 'routes', routeIds: [11] },
         presentation: { displayName: 'claude-haiku-proxy', displayIcon: '' }},
     ]));
-    apiMock.getRouteChannels.mockResolvedValue([
+    apiMock.getRouteTargets.mockResolvedValue([
       {
         id: 101,
         routeId: 11,

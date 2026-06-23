@@ -9,7 +9,7 @@ import * as routeRefreshWorkflow from '../../services/routeRefreshWorkflow.js';
 import { readRuntimeResponseText } from '../executors/types.js';
 import type { DownstreamProtocolAdapter } from '../formats/types.js';
 import { getDownstreamRoutingPolicy } from '../downstreamPolicy.js';
-import { getTesterForcedChannelId, canRetryChannelSelection, buildForcedChannelUnavailableMessage } from '../channelSelection.js';
+import { getTesterForcedTargetId, canRetryTargetSelection, buildForcedTargetUnavailableMessage } from '../targetSelection.js';
 
 type ListedModel = { name: string; displayName: string };
 
@@ -47,7 +47,7 @@ async function filterListedModelsForPolicy(
     if (!modelName) continue;
     if (!await isModelAllowedByPolicyOrAllowedRoutes(modelName, policy)) continue;
     const decision = await tokenRouter.explainSelection?.(modelName, [], policy);
-    if (decision && typeof decision.selectedChannelId !== 'number') continue;
+    if (decision && typeof decision.selectedTargetId !== 'number') continue;
     filteredModels.push(item);
   }
 
@@ -82,7 +82,7 @@ async function readRouteAwareModels(request: FastifyRequest): Promise<ListedMode
   for (const modelName of deduped) {
     if (!await isModelAllowedByPolicyOrAllowedRoutes(modelName, policy)) continue;
     const decision = await tokenRouter.explainSelection?.(modelName, [], policy);
-    if (decision && typeof decision.selectedChannelId !== 'number') continue;
+    if (decision && typeof decision.selectedTargetId !== 'number') continue;
     allowed.push({
       name: `models/${modelName}`,
       displayName: modelName,
@@ -94,17 +94,17 @@ async function readRouteAwareModels(request: FastifyRequest): Promise<ListedMode
 async function selectModelListChannel(
   request: FastifyRequest,
   adapter: DownstreamProtocolAdapter,
-  forcedChannelId: number | null,
-  excludeChannelIds: number[],
+  forcedTargetId: number | null,
+  excludeTargetIds: number[],
   retryCount: number,
 ) {
   const policy = getDownstreamRoutingPolicy(request);
   for (const modelName of adapter.modelListModelProbes || []) {
-    const selected = forcedChannelId !== null
-      ? await tokenRouter.selectPreferredChannel(modelName, forcedChannelId, policy, excludeChannelIds)
+    const selected = forcedTargetId !== null
+      ? await tokenRouter.selectPreferredTarget(modelName, forcedTargetId, policy, excludeTargetIds)
       : retryCount === 0
-        ? await tokenRouter.selectChannel(modelName, policy)
-        : await tokenRouter.selectNextChannel(modelName, excludeChannelIds, policy);
+        ? await tokenRouter.selectTarget(modelName, policy)
+        : await tokenRouter.selectNextTarget(modelName, excludeTargetIds, policy);
     if (selected) return selected;
   }
   return null;
@@ -115,24 +115,24 @@ export async function handleModelListSurfaceRequest(
   reply: FastifyReply,
   adapter: DownstreamProtocolAdapter,
 ) {
-  const forcedChannelId = getTesterForcedChannelId({
+  const forcedTargetId = getTesterForcedTargetId({
     headers: request.headers as Record<string, unknown>,
     clientIp: request.ip,
   });
-  const excludeChannelIds: number[] = [];
+  const excludeTargetIds: number[] = [];
   let retryCount = 0;
   let lastStatus = 503;
-  let lastText = forcedChannelId
-    ? buildForcedChannelUnavailableMessage(forcedChannelId)
-    : 'No available channels for model list';
+  let lastText = forcedTargetId
+    ? buildForcedTargetUnavailableMessage(forcedTargetId)
+    : 'No available targets for model list';
   let lastContentType = 'application/json';
 
   while (retryCount <= 3) {
-    const selected = await selectModelListChannel(request, adapter, forcedChannelId, excludeChannelIds, retryCount);
+    const selected = await selectModelListChannel(request, adapter, forcedTargetId, excludeTargetIds, retryCount);
     if (!selected) {
       return reply.code(lastStatus).type(lastContentType).send(lastText);
     }
-    excludeChannelIds.push(selected.channel.id);
+    excludeTargetIds.push(selected.target.id);
 
     try {
       const staticModels = adapter.getStaticModelList?.({ sitePlatform: selected.site.platform });
@@ -168,11 +168,11 @@ export async function handleModelListSurfaceRequest(
         lastStatus = upstream.status;
         lastText = text;
         lastContentType = upstream.headers.get('content-type') || 'application/json';
-        await tokenRouter.recordFailure?.(selected.channel.id, {
+        await tokenRouter.recordFailure?.(selected.target.id, {
           status: upstream.status,
           errorText: text,
         });
-        if (canRetryChannelSelection(retryCount, forcedChannelId)) {
+        if (canRetryTargetSelection(retryCount, forcedTargetId)) {
           retryCount += 1;
           continue;
         }
@@ -184,7 +184,7 @@ export async function handleModelListSurfaceRequest(
         return reply.code(upstream.status).type(upstream.headers.get('content-type') || 'application/json').send(text);
       }
     } catch (error) {
-      await tokenRouter.recordFailure?.(selected.channel.id, {
+      await tokenRouter.recordFailure?.(selected.target.id, {
         errorText: error instanceof Error ? error.message : 'Model list upstream request failed',
       });
       lastStatus = 502;
@@ -194,7 +194,7 @@ export async function handleModelListSurfaceRequest(
           type: 'upstream_error',
         },
       });
-      if (canRetryChannelSelection(retryCount, forcedChannelId)) {
+      if (canRetryTargetSelection(retryCount, forcedTargetId)) {
         retryCount += 1;
         continue;
       }

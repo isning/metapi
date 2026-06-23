@@ -64,7 +64,7 @@ describe('POST /api/routes/:id/cooldown/clear', () => {
 
   beforeEach(async () => {
     await db.delete(schema.routeGroupSources).run();
-    await db.delete(schema.routeChannels).run();
+    await db.delete(schema.routeEndpointTargets).run();
     await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.accountTokens).run();
     await db.delete(schema.accounts).run();
@@ -84,7 +84,7 @@ describe('POST /api/routes/:id/cooldown/clear', () => {
       enabled: true,
     }).returning().get();
 
-    const channel = await db.insert(schema.routeChannels).values({
+    const channel = await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: seeded.account.id,
       tokenId: seeded.token.id,
@@ -109,8 +109,8 @@ describe('POST /api/routes/:id/cooldown/clear', () => {
       clearedChannels: 1,
     });
 
-    const refreshed = await db.select().from(schema.routeChannels)
-      .where(eq(schema.routeChannels.id, channel.id))
+    const refreshed = await db.select().from(schema.routeEndpointTargets)
+      .where(eq(schema.routeEndpointTargets.id, channel.id))
       .get();
 
     expect(refreshed).toMatchObject({
@@ -141,7 +141,7 @@ describe('POST /api/routes/:id/cooldown/clear', () => {
       sourceRouteId: sourceRoute.id,
     }).run();
 
-    const channel = await db.insert(schema.routeChannels).values({
+    const channel = await db.insert(schema.routeEndpointTargets).values({
       routeId: sourceRoute.id,
       accountId: seeded.account.id,
       tokenId: seeded.token.id,
@@ -167,8 +167,8 @@ describe('POST /api/routes/:id/cooldown/clear', () => {
       clearedChannels: 1,
     });
 
-    const refreshed = await db.select().from(schema.routeChannels)
-      .where(eq(schema.routeChannels.id, channel.id))
+    const refreshed = await db.select().from(schema.routeEndpointTargets)
+      .where(eq(schema.routeEndpointTargets.id, channel.id))
       .get();
 
     expect(refreshed).toMatchObject({
@@ -208,7 +208,7 @@ describe('POST /api/routes/:id/cooldown/clear', () => {
       { groupRouteId: groupRoute.id, sourceRouteId: wildcardSourceRoute.id },
     ]).run();
 
-    const visibleChannel = await db.insert(schema.routeChannels).values({
+    const visibleChannel = await db.insert(schema.routeEndpointTargets).values({
       routeId: visibleSourceRoute.id,
       accountId: seeded.account.id,
       tokenId: seeded.token.id,
@@ -221,7 +221,7 @@ describe('POST /api/routes/:id/cooldown/clear', () => {
       cooldownLevel: 2,
       cooldownUntil: '2099-01-01T00:00:00.000Z',
     }).returning().get();
-    const disabledChannel = await db.insert(schema.routeChannels).values({
+    const disabledChannel = await db.insert(schema.routeEndpointTargets).values({
       routeId: disabledSourceRoute.id,
       accountId: seeded.account.id,
       tokenId: seeded.token.id,
@@ -234,7 +234,7 @@ describe('POST /api/routes/:id/cooldown/clear', () => {
       cooldownLevel: 3,
       cooldownUntil: '2099-01-01T00:00:00.000Z',
     }).returning().get();
-    const wildcardChannel = await db.insert(schema.routeChannels).values({
+    const wildcardChannel = await db.insert(schema.routeEndpointTargets).values({
       routeId: wildcardSourceRoute.id,
       accountId: seeded.account.id,
       tokenId: seeded.token.id,
@@ -259,14 +259,14 @@ describe('POST /api/routes/:id/cooldown/clear', () => {
       clearedChannels: 1,
     });
 
-    const refreshedVisible = await db.select().from(schema.routeChannels)
-      .where(eq(schema.routeChannels.id, visibleChannel.id))
+    const refreshedVisible = await db.select().from(schema.routeEndpointTargets)
+      .where(eq(schema.routeEndpointTargets.id, visibleChannel.id))
       .get();
-    const refreshedDisabled = await db.select().from(schema.routeChannels)
-      .where(eq(schema.routeChannels.id, disabledChannel.id))
+    const refreshedDisabled = await db.select().from(schema.routeEndpointTargets)
+      .where(eq(schema.routeEndpointTargets.id, disabledChannel.id))
       .get();
-    const refreshedWildcard = await db.select().from(schema.routeChannels)
-      .where(eq(schema.routeChannels.id, wildcardChannel.id))
+    const refreshedWildcard = await db.select().from(schema.routeEndpointTargets)
+      .where(eq(schema.routeEndpointTargets.id, wildcardChannel.id))
       .get();
 
     expect(refreshedVisible).toMatchObject({

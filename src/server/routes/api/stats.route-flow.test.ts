@@ -6,14 +6,12 @@ import {
 import { createTestApp, type TestAppHandle } from '../../../testing/appHarness.js';
 
 type DbModule = typeof import('../../db/index.js');
-type TokenRouterModule = typeof import('../../services/tokenRouter.js');
 type RouteGraphServiceModule = typeof import('../../services/routeGraphService.js');
 
 describe('/api/models/route-flow', () => {
   let app: TestAppHandle | null = null;
   let db: DbModule['db'];
   let schema: DbModule['schema'];
-  let invalidateTokenRouterCache: TokenRouterModule['invalidateTokenRouterCache'] | null = null;
   let publishRouteGraphSource: RouteGraphServiceModule['publishRouteGraphSource'] | null = null;
   let runtimeDb: IsolatedRuntimeDbHandle | null = null;
 
@@ -21,11 +19,9 @@ describe('/api/models/route-flow', () => {
     runtimeDb = await bootIsolatedRuntimeDb('metapi-stats-route-flow-');
     const dbModule = runtimeDb.dbModule;
     const routesModule = await import('./stats.js');
-    const tokenRouterModule = await import('../../services/tokenRouter.js');
     const routeGraphServiceModule = await import('../../services/routeGraphService.js');
     db = dbModule.db;
     schema = dbModule.schema;
-    invalidateTokenRouterCache = tokenRouterModule.invalidateTokenRouterCache;
     publishRouteGraphSource = routeGraphServiceModule.publishRouteGraphSource;
 
     app = await createTestApp({
@@ -39,21 +35,19 @@ describe('/api/models/route-flow', () => {
     await db.delete(schema.routeGraphDrafts).run();
     await db.delete(schema.routeGraphActiveVersion).run();
     await db.delete(schema.routeGraphVersions).run();
-    await db.delete(schema.routeChannels).run();
+    await db.delete(schema.routeEndpointTargets).run();
     await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.accountTokens).run();
     await db.delete(schema.accounts).run();
     await db.delete(schema.sites).run();
-    invalidateTokenRouterCache();
   });
 
   afterAll(async () => {
     await app?.close();
-    invalidateTokenRouterCache?.();
     await runtimeDb?.cleanup();
   });
 
-  it('uses graph-native route program while preserving candidate channel metrics', async () => {
+  it('uses graph-native route program while preserving supply endpoint metrics', async () => {
     const site = await db.insert(schema.sites).values({
       name: 'flow-site',
       url: 'https://flow-site.example.com',
@@ -80,7 +74,7 @@ describe('/api/models/route-flow', () => {
       enabled: true,
       routingStrategy: 'weighted',
     }).returning().get();
-    const channel = await db.insert(schema.routeChannels).values({
+    const channel = await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: account.id,
       tokenId: null,
@@ -93,7 +87,7 @@ describe('/api/models/route-flow', () => {
     await db.insert(schema.proxyLogs).values([
       {
         routeId: route.id,
-        channelId: channel.id,
+        targetId: channel.id,
         accountId: account.id,
         modelRequested: 'gpt-4o-mini',
         modelActual: 'gpt-4o-mini',
@@ -104,7 +98,7 @@ describe('/api/models/route-flow', () => {
       },
       {
         routeId: route.id,
-        channelId: channel.id,
+        targetId: channel.id,
         accountId: account.id,
         modelRequested: 'gpt-4o-mini',
         modelActual: 'gpt-4o-mini',
@@ -127,8 +121,16 @@ describe('/api/models/route-flow', () => {
       flow: {
         matched: boolean;
         selectedRouteId: number | null;
-        selectedChannelId: number | null;
-        nodes: Array<{ id: string; kind: string; status: string; metrics: Record<string, unknown>; history: unknown[] }>;
+        nodes: Array<{
+          id: string;
+          kind: string;
+          label: string;
+          subtitle?: string | null;
+          status: string;
+          badges: string[];
+          metrics: Record<string, unknown>;
+          history: unknown[];
+        }>;
         edges: Array<{ source: string; target: string; label?: string | null }>;
         compatibilityPolicy?: {
           resolved: {
@@ -145,39 +147,43 @@ describe('/api/models/route-flow', () => {
     expect(body.success).toBe(true);
     expect(body.flow.matched).toBe(true);
     expect(body.flow.selectedRouteId).toBe(route.id);
-    expect(body.flow.selectedChannelId).toBeNull();
+    expect('selectedTargetId' in body.flow).toBe(false);
     expect(body.flow.nodes.some((node) => node.id === 'graph:macro:auto-model:gpt-4o-mini:entry' && node.kind === 'entry')).toBe(true);
     expect(body.flow.nodes.some((node) => node.id === 'graph:macro:auto-model:gpt-4o-mini:dispatcher' && node.kind === 'dispatcher')).toBe(true);
-    expect(body.flow.nodes.some((node) => node.kind === 'pool')).toBe(false);
-    expect(body.flow.nodes.some((node) => node.kind === 'model_endpoint' || node.kind === 'route_endpoint')).toBe(true);
+    expect(body.flow.nodes.some((node) => node.kind === 'pool' || node.kind === 'channel')).toBe(false);
+    expect(body.flow.nodes.some((node) => node.id.startsWith('pool:') || node.id.startsWith('channel:'))).toBe(false);
+    expect(body.flow.nodes.some((node) => node.kind === 'route_endpoint')).toBe(true);
     expect(body.flow.nodes.some((node) => node.id.startsWith('target:'))).toBe(false);
     expect(body.flow.edges.some((edge) => edge.source === 'request' && edge.target === 'graph:macro:auto-model:gpt-4o-mini:entry')).toBe(true);
-    expect(body.flow.nodes).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        id: `channel:${channel.id}`,
-        kind: 'channel',
-        metrics: expect.objectContaining({
-          totalCalls: 2,
-          recentSuccessCount: 1,
-          recentFailureCount: 1,
-          avgLatencyMs: 120,
-        }),
-        history: expect.arrayContaining([
-          expect.objectContaining({ status: 'success' }),
-          expect.objectContaining({ status: 'failed' }),
-        ]),
+    const supplyNode = body.flow.nodes.find((node) => (
+      node.kind === 'route_endpoint'
+      && node.badges?.includes?.('supply')
+      && node.metrics.totalCalls === 2
+    ));
+    expect(supplyNode).toMatchObject({
+      kind: 'route_endpoint',
+      label: expect.stringContaining('flow-site'),
+      metrics: expect.objectContaining({
+        totalCalls: 2,
+        recentSuccessCount: 1,
+        recentFailureCount: 1,
+        avgLatencyMs: 120,
       }),
-    ]));
-    expect(body.flow.edges.some((edge) => edge.source === 'pool:channels' && edge.target === `channel:${channel.id}`)).toBe(false);
+      history: expect.arrayContaining([
+        expect.objectContaining({ status: 'success' }),
+        expect.objectContaining({ status: 'failed' }),
+      ]),
+    });
+    expect(supplyNode?.label).toContain('flow-user');
+    expect(supplyNode?.subtitle).toContain('endpoint ');
     expect(body.flow.edges).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        source: expect.stringMatching(/^graph:/),
-        target: `channel:${channel.id}`,
-        label: expect.stringContaining('%'),
+        source: supplyNode?.id,
+        target: 'graph:macro:auto-model:gpt-4o-mini:dispatcher',
       }),
     ]));
     const targetNode = body.flow.nodes.find((node) => (
-      (node.kind === 'model_endpoint' || node.kind === 'route_endpoint')
+      node.kind === 'route_endpoint'
       && node.status === 'selected'
     ));
     expect(targetNode).toMatchObject({
@@ -190,6 +196,186 @@ describe('/api/models/route-flow', () => {
         closeTag: '</reason>',
       },
     });
+  });
+
+  it('renders each upstream target behind a supply endpoint as its own candidate node', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'multi-upstream-site',
+      url: 'https://multi-upstream.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+    const accounts = await Promise.all(Array.from({ length: 4 }, async (_unused, index) => (
+      await db.insert(schema.accounts).values({
+        siteId: site.id,
+        username: `multi-upstream-${index + 1}`,
+        apiToken: `sk-multi-${index + 1}`,
+        accessToken: `access-multi-${index + 1}`,
+        status: 'active',
+      }).returning().get()
+    )));
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'multi-upstream-model',
+      enabled: true,
+      routingStrategy: 'weighted',
+    }).returning().get();
+    const channels = await Promise.all(accounts.map(async (account) => (
+      await db.insert(schema.routeEndpointTargets).values({
+        routeId: route.id,
+        accountId: account.id,
+        tokenId: null,
+        sourceModel: 'multi-upstream-model',
+        priority: 0,
+        weight: 10,
+        enabled: true,
+      }).returning().get()
+    )));
+
+    const response = await app!.inject({
+      method: 'GET',
+      url: '/api/models/route-flow?model=multi-upstream-model',
+      headers: app!.adminHeaders(),
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as {
+      success: boolean;
+      flow: {
+        nodes: Array<{
+          id: string;
+          kind: string;
+          badges: string[];
+          metrics: Record<string, unknown>;
+        }>;
+        edges: Array<{ source: string; target: string; label?: string | null }>;
+        entryPricing?: {
+          theoretical?: {
+            candidates?: Array<{ targetId: string; probability: number }>;
+          } | null;
+        };
+      };
+    };
+
+    expect(body.success).toBe(true);
+    expect(body.flow.entryPricing?.theoretical?.candidates).toHaveLength(4);
+    const candidateTargetIds = body.flow.entryPricing?.theoretical?.candidates?.map((candidate) => candidate.targetId).sort() || [];
+    for (const channel of channels) {
+      expect(candidateTargetIds.some((targetId) => targetId.endsWith(`:${channel.id}`))).toBe(true);
+    }
+    expect(body.flow.entryPricing?.theoretical?.candidates?.map((candidate) => candidate.probability)).toEqual([0.25, 0.25, 0.25, 0.25]);
+    const targetNodes = body.flow.nodes.filter((node) => (
+      node.kind === 'route_endpoint'
+      && node.badges?.includes?.('supply-target')
+    ));
+    expect(targetNodes).toHaveLength(4);
+    expect(targetNodes.map((node) => node.metrics.probability)).toEqual([25, 25, 25, 25]);
+    for (const node of targetNodes) {
+      expect(body.flow.edges).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          source: node.id,
+          label: '25%',
+        }),
+      ]));
+    }
+  });
+
+  it('uses target weights for incomplete route-flow probabilities when router-deferred target selection is unavailable', async () => {
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'runtime-prob-model',
+      enabled: true,
+      routingStrategy: 'weighted',
+    }).returning().get();
+    const cheapSite = await db.insert(schema.sites).values({
+      name: 'runtime-cheap-site',
+      url: 'https://runtime-cheap.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+    const expensiveSite = await db.insert(schema.sites).values({
+      name: 'runtime-expensive-site',
+      url: 'https://runtime-expensive.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+    const cheapAccount = await db.insert(schema.accounts).values({
+      siteId: cheapSite.id,
+      username: 'runtime-cheap-user',
+      apiToken: 'sk-runtime-cheap',
+      accessToken: 'access-runtime-cheap',
+      status: 'active',
+    }).returning().get();
+    const expensiveAccount = await db.insert(schema.accounts).values({
+      siteId: expensiveSite.id,
+      username: 'runtime-expensive-user',
+      apiToken: 'sk-runtime-expensive',
+      accessToken: 'access-runtime-expensive',
+      status: 'active',
+    }).returning().get();
+    const cheapChannel = await db.insert(schema.routeEndpointTargets).values({
+      routeId: route.id,
+      accountId: cheapAccount.id,
+      tokenId: null,
+      sourceModel: 'runtime-prob-model',
+      priority: 0,
+      weight: 10,
+      enabled: true,
+      successCount: 10,
+      failCount: 0,
+      totalCost: 0.01,
+    }).returning().get();
+    const expensiveChannel = await db.insert(schema.routeEndpointTargets).values({
+      routeId: route.id,
+      accountId: expensiveAccount.id,
+      tokenId: null,
+      sourceModel: 'runtime-prob-model',
+      priority: 0,
+      weight: 10,
+      enabled: true,
+      successCount: 10,
+      failCount: 0,
+      totalCost: 0.1,
+    }).returning().get();
+
+    const response = await app!.inject({
+      method: 'GET',
+      url: '/api/models/route-flow?model=runtime-prob-model',
+      headers: app!.adminHeaders(),
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as {
+      success: boolean;
+      flow: {
+        nodes: Array<{
+          id: string;
+          kind: string;
+          label: string;
+          subtitle?: string | null;
+          metrics: Record<string, unknown>;
+        }>;
+        edges: Array<{ source: string; target: string; label?: string | null }>;
+        entryPricing?: {
+          theoretical?: {
+            candidates?: Array<{ targetId: string; probability: number | null }>;
+          } | null;
+        };
+      };
+    };
+
+    expect(body.success).toBe(true);
+    const pricingCandidates = body.flow.entryPricing?.theoretical?.candidates || [];
+    expect(pricingCandidates).toHaveLength(2);
+    expect(pricingCandidates.map((candidate) => candidate.probability)).toEqual([0.5, 0.5]);
+
+    const cheapNode = body.flow.nodes.find((node) => node.kind === 'route_endpoint' && node.label.includes('runtime-cheap-user'));
+    const expensiveNode = body.flow.nodes.find((node) => node.kind === 'route_endpoint' && node.label.includes('runtime-expensive-user'));
+    expect(cheapNode?.metrics.probability).toBe(50);
+    expect(expensiveNode?.metrics.probability).toBe(50);
+
+    const cheapEdge = body.flow.edges.find((edge) => edge.source === cheapNode?.id);
+    const expensiveEdge = body.flow.edges.find((edge) => edge.source === expensiveNode?.id);
+    expect(cheapEdge?.label).toBe('50%');
+    expect(expensiveEdge?.label).toBe('50%');
   });
 
   it('returns a terminal unmatched node for unknown models', async () => {
@@ -209,7 +395,7 @@ describe('/api/models/route-flow', () => {
     };
     expect(body.flow.matched).toBe(false);
     expect(body.flow.nodes).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 'unmatched', status: 'blocked' }),
+      expect.objectContaining({ id: 'graph:unmatched', status: 'blocked' }),
     ]));
     expect(body.flow.diagnostics).toEqual(expect.arrayContaining([
       expect.objectContaining({ level: 'warn' }),
@@ -267,7 +453,6 @@ describe('/api/models/route-flow', () => {
       flow: {
         matched: boolean;
         selectedRouteId: number | null;
-        selectedChannelId: number | null;
         summary: string[];
         nodes: Array<{ id: string; label: string; status: string; badges: string[] }>;
         edges: Array<{ source: string; target: string; label?: string | null }>;
@@ -276,7 +461,7 @@ describe('/api/models/route-flow', () => {
     };
     expect(body.flow.matched).toBe(true);
     expect(body.flow.selectedRouteId).toBeNull();
-    expect(body.flow.selectedChannelId).toBeNull();
+    expect('selectedTargetId' in body.flow).toBe(false);
     expect(body.flow.summary).toEqual(['route graph synthetic response 429']);
     expect(body.flow.nodes).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 'graph:entry.synthetic', status: 'active' }),

@@ -20,6 +20,11 @@ import { getSiteInitializationPreset } from '../../../shared/siteInitializationP
 import { normalizeSiteApiEndpointBaseUrl } from '../../services/siteApiEndpointService.js';
 import { analyzePrimarySiteUrl } from '../../../shared/sitePrimaryUrl.js';
 import { probeSiteModels } from '../../services/modelService.js';
+import {
+  listCredentialEndpointMatrix,
+  replaceCredentialEndpointBindings,
+  type CredentialEndpointBindingUpdate,
+} from '../../services/credentialEndpointBindingService.js';
 
 function sseWrite(raw: import('http').ServerResponse, event: string, data: unknown) {
   try { raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch { /* ignore */ }
@@ -225,6 +230,70 @@ function normalizeSiteApiEndpointsInput(input: unknown): {
   }
 
   return { valid: true, present: true, apiEndpoints };
+}
+
+function parseCredentialEndpointBindingUpdates(input: unknown): {
+  valid: boolean;
+  bindings: CredentialEndpointBindingUpdate[];
+  error?: string;
+} {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    return { valid: false, bindings: [], error: 'Invalid body. Expected an object.' };
+  }
+  const rawBindings = (input as { bindings?: unknown }).bindings;
+  if (!Array.isArray(rawBindings)) {
+    return { valid: false, bindings: [], error: 'bindings must be an array.' };
+  }
+
+  const seenProfileIds = new Set<number>();
+  const bindings: CredentialEndpointBindingUpdate[] = [];
+  for (let index = 0; index < rawBindings.length; index += 1) {
+    const row = rawBindings[index];
+    if (!row || typeof row !== 'object' || Array.isArray(row)) {
+      return { valid: false, bindings: [], error: `Invalid binding at index ${index}.` };
+    }
+    const record = row as Record<string, unknown>;
+    const profileId = Number.parseInt(String(record.apiEndpointProfileId ?? ''), 10);
+    if (!Number.isFinite(profileId) || profileId <= 0) {
+      return { valid: false, bindings: [], error: `Invalid apiEndpointProfileId at index ${index}.` };
+    }
+    if (seenProfileIds.has(profileId)) {
+      return { valid: false, bindings: [], error: `Duplicate apiEndpointProfileId: ${profileId}.` };
+    }
+    seenProfileIds.add(profileId);
+
+    const enabled = normalizePinnedFlag(record.enabled);
+    if (record.enabled !== undefined && enabled === null) {
+      return { valid: false, bindings: [], error: `Invalid enabled value at index ${index}.` };
+    }
+
+    const support = typeof record.support === 'string' ? record.support.trim() : undefined;
+    if (
+      support !== undefined
+      && support !== 'supported'
+      && support !== 'unsupported'
+      && support !== 'unknown'
+      && support !== 'blocked'
+    ) {
+      return { valid: false, bindings: [], error: `Invalid support value at index ${index}.` };
+    }
+
+    const priority = record.priority === undefined || record.priority === null || record.priority === ''
+      ? index
+      : Number.parseInt(String(record.priority), 10);
+    if (!Number.isFinite(priority)) {
+      return { valid: false, bindings: [], error: `Invalid priority at index ${index}.` };
+    }
+
+    bindings.push({
+      apiEndpointProfileId: profileId,
+      ...(enabled !== null ? { enabled } : {}),
+      support: (support || 'supported') as CredentialEndpointBindingUpdate['support'],
+      priority,
+    });
+  }
+
+  return { valid: true, bindings };
 }
 
 async function loadSiteApiEndpointsBySiteIds(siteIds: number[]) {
@@ -751,6 +820,56 @@ export async function sitesRoutes(app: FastifyInstance) {
     invalidateSiteCaches();
     return { success: true };
   });
+
+  app.get<{ Params: { id: string } }>('/api/sites/:id/endpoint-bindings', async (request, reply) => {
+    const id = parseInt(request.params.id);
+    if (Number.isNaN(id)) {
+      return reply.code(400).send({ error: 'Invalid site id' });
+    }
+    const existingSite = await db.select({ id: schema.sites.id }).from(schema.sites).where(eq(schema.sites.id, id)).get();
+    if (!existingSite) {
+      return reply.code(404).send({ error: 'Site not found' });
+    }
+    return listCredentialEndpointMatrix(id);
+  });
+
+  app.put<{ Params: { id: string; credentialKey: string }; Body: unknown }>(
+    '/api/sites/:id/endpoint-bindings/:credentialKey',
+    async (request, reply) => {
+      const id = parseInt(request.params.id);
+      if (Number.isNaN(id)) {
+        return reply.code(400).send({ error: 'Invalid site id' });
+      }
+      const existingSite = await db.select({ id: schema.sites.id }).from(schema.sites).where(eq(schema.sites.id, id)).get();
+      if (!existingSite) {
+        return reply.code(404).send({ error: 'Site not found' });
+      }
+
+      const parsed = parseCredentialEndpointBindingUpdates(request.body);
+      if (!parsed.valid) {
+        return reply.code(400).send({ error: parsed.error || 'Invalid endpoint binding payload.' });
+      }
+
+      try {
+        const result = await replaceCredentialEndpointBindings({
+          siteId: id,
+          credentialKey: request.params.credentialKey,
+          bindings: parsed.bindings,
+        });
+        invalidateSiteCaches();
+        return result;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to update endpoint bindings.';
+        if (message.includes('Endpoint profile') && message.includes('does not belong to this site')) {
+          return reply.code(400).send({ error: message });
+        }
+        if (message.includes('does not belong to this site')) {
+          return reply.code(404).send({ error: message });
+        }
+        throw error;
+      }
+    },
+  );
 
   app.post<{ Body: unknown }>('/api/sites/batch', async (request, reply) => {
     const parsedBody = parseSiteBatchPayload(request.body);

@@ -25,8 +25,8 @@ import { tr } from '../../i18n.js';
 import { formatDateTimeMinuteLocal } from '../helpers/checkinLogTime.js';
 import type {
   RouteSummaryRow,
-  RouteChannel,
-  RouteChannelRouteUnit,
+  RouteEndpointTarget,
+  RouteEndpointTargetRouteUnit,
   RouteDecision,
   RouteDecisionCandidate,
   MissingTokenRouteSiteActionItem,
@@ -34,7 +34,7 @@ import type {
   RouteRoutingStrategy,
 } from './types.js';
 import type { RouteCandidateView, RouteTokenOption } from '../helpers/routeModelCandidatesIndex.js';
-import { SortableChannelRow } from './SortableChannelRow.js';
+import { SortableRouteTargetRow } from './SortableRouteTargetRow.js';
 import {
   getRouteRoutingStrategyLabel,
   getRouteRoutingStrategyDescription,
@@ -82,30 +82,30 @@ type RouteCardProps = {
   clearingCooldown: boolean;
   onRoutingStrategyChange: (route: RouteSummaryRow, strategy: RouteRoutingStrategy) => void;
   updatingRoutingStrategy: boolean;
-  // Channel data (loaded on demand)
-  channels: RouteChannel[] | undefined;
-  loadingChannels: boolean;
+  // Target data (loaded on demand)
+  targets: RouteEndpointTarget[] | undefined;
+  loadingTargets: boolean;
   // Decision data
   routeDecision: RouteDecision | null;
   loadingDecision: boolean;
-  // Channel interaction
+  // Target interaction
   candidateView: RouteCandidateView;
-  channelTokenDraft: Record<number, number>;
-  updatingChannel: Record<number, boolean>;
+  targetTokenDraft: Record<number, number>;
+  updatingTarget: Record<number, boolean>;
   savingPriority: boolean;
-  onTokenDraftChange: (channelId: number, tokenId: number) => void;
-  onSaveToken: (routeId: number, channelId: number, accountId: number) => void;
-  onDeleteChannel: (channelId: number, routeId: number) => void;
-  onToggleChannelEnabled: (channelId: number, routeId: number, enabled: boolean) => void;
-  onChannelDragEnd: (routeId: number, event: DragEndEvent) => void;
+  onTokenDraftChange: (targetId: number, tokenId: number) => void;
+  onSaveToken: (routeId: number, targetId: number, accountId: number) => void;
+  onDeleteTarget: (targetId: number, routeId: number) => void;
+  onToggleTargetEnabled: (targetId: number, routeId: number, enabled: boolean) => void;
+  onTargetDragEnd: (routeId: number, event: DragEndEvent) => void;
   // Missing token hints
   missingTokenSiteItems: MissingTokenRouteSiteActionItem[];
   missingTokenGroupItems: MissingTokenGroupRouteSiteActionItem[];
   onCreateTokenForMissing: (accountId: number, modelName: string) => void;
-  // Add channel
-  onAddChannel: (routeId: number) => void;
+  // Add target
+  onAddTarget: (routeId: number) => void;
   // Site block model
-  onSiteBlockModel: (channelId: number, routeId: number) => void;
+  onSiteBlockModel: (targetId: number, routeId: number) => void;
   // Source group expansion
   expandedSourceGroupMap: Record<string, boolean>;
   onToggleSourceGroup: (groupKey: string) => void;
@@ -115,11 +115,11 @@ function getRouteUnitStrategyLabel(strategy: string | null | undefined): string 
   return strategy === 'stick_until_unavailable' ? tr('pages.oAuthManagement.notAvailable') : tr('pages.oAuthManagement.roundRobin');
 }
 
-function collectRouteUnits(channels: RouteChannel[] | undefined): RouteChannelRouteUnit[] {
-  if (!Array.isArray(channels) || channels.length === 0) return [];
-  const unitsById = new Map<string, RouteChannelRouteUnit>();
-  for (const channel of channels) {
-    const routeUnit = channel.routeUnit;
+function collectRouteUnits(targets: RouteEndpointTarget[] | undefined): RouteEndpointTargetRouteUnit[] {
+  if (!Array.isArray(targets) || targets.length === 0) return [];
+  const unitsById = new Map<string, RouteEndpointTargetRouteUnit>();
+  for (const target of targets) {
+    const routeUnit = target.routeUnit;
     if (!routeUnit) continue;
     const key = String(routeUnit.id);
     if (!unitsById.has(key)) {
@@ -215,20 +215,20 @@ function PriorityBucketHeader({
 }
 
 function PriorityDragPreview({
-  channel,
+  target,
   displayPriority,
   width,
 }: {
-  channel: RouteChannel;
+  target: RouteEndpointTarget;
   displayPriority: number;
   width?: number | null;
 }) {
   const resolvedWidth = Number.isFinite(width ?? Number.NaN) ? width ?? undefined : undefined;
-  const effectiveTokenName = channel.token?.name || `account-${channel.accountId}`;
+  const effectiveTokenName = target.token?.name || `account-${target.accountId}`;
 
   return (
     <div
-      data-testid="route-channel-drag-overlay"
+      data-testid="route-target-drag-overlay"
       className="pointer-events-none grid h-full max-w-[calc(100vw-32px)] grid-cols-[minmax(0,1fr)_auto] items-center gap-2.5 rounded-lg border bg-muted p-3 text-foreground shadow-md"
       style={{
         width: resolvedWidth,
@@ -240,26 +240,26 @@ function PriorityDragPreview({
           P{displayPriority}
         </ToneBadge>
         <span className="min-w-0 font-semibold">
-          {channel.account?.username || `account-${channel.accountId}`}
+          {target.account?.username || `account-${target.accountId}`}
         </span>
         <ToneBadge tone="-muted">
-          {channel.site?.name || 'unknown'}
+          {target.site?.name || 'unknown'}
         </ToneBadge>
         <ToneBadge tone="">
           {tr('pages.tokenRoutes.routeCard.currentlyEffective')}{effectiveTokenName}
         </ToneBadge>
-        {channel.sourceModel ? (
+        {target.sourceModel ? (
           <ToneBadge tone="-info">
-            {channel.sourceModel}
+            {target.sourceModel}
           </ToneBadge>
         ) : null}
-        {channel.manualOverride ? (
+        {target.manualOverride ? (
           <ToneBadge tone="-warning">
             {tr('pages.tokenRoutes.routeCard.manualconfiguration')}
           </ToneBadge>
         ) : null}
       </div>
-      <RouteSuccessFailStat successCount={channel.successCount} failCount={channel.failCount} />
+      <RouteSuccessFailStat successCount={target.successCount} failCount={target.failCount} />
     </div>
   );
 }
@@ -271,29 +271,29 @@ function renderDragOverlayNode(node: ReactNode) {
   return createPortal(node, document.body);
 }
 
-type SortableChannelShellProps = {
-  channel: RouteChannel;
+type SortableTargetShellProps = {
+  target: RouteEndpointTarget;
   bucketIndex: number;
-  channelIndex: number;
-  bucketChannelCount: number;
+  targetIndex: number;
+  bucketTargetCount: number;
   totalBucketCount: number;
   compact: boolean;
   readOnlyRoute: boolean;
   savingPriority: boolean;
   candidateView: RouteCandidateView;
-  channelTokenDraft: Record<number, number>;
-  updatingChannel: Record<number, boolean>;
-  activeDragChannelId: number | null;
+  targetTokenDraft: Record<number, number>;
+  updatingTarget: Record<number, boolean>;
+  activeDragTargetId: number | null;
   decisionMap: Map<number, RouteDecisionCandidate>;
   exactRoute: boolean;
   loadingDecision: boolean;
-  channelManagementDisabled: boolean;
+  targetManagementDisabled: boolean;
   routeId: number;
-  onTokenDraftChange: (channelId: number, tokenId: number) => void;
-  onSaveToken: (routeId: number, channelId: number, accountId: number) => void;
-  onDeleteChannel: (channelId: number, routeId: number) => void;
-  onToggleChannelEnabled: (channelId: number, routeId: number, enabled: boolean) => void;
-  onSiteBlockModel: (channelId: number, routeId: number) => void;
+  onTokenDraftChange: (targetId: number, tokenId: number) => void;
+  onSaveToken: (routeId: number, targetId: number, accountId: number) => void;
+  onDeleteTarget: (targetId: number, routeId: number) => void;
+  onToggleTargetEnabled: (targetId: number, routeId: number, enabled: boolean) => void;
+  onSiteBlockModel: (targetId: number, routeId: number) => void;
   railLabel: string;
   mobileRailLabel: string;
   railNodeStyle: CSSProperties;
@@ -301,35 +301,35 @@ type SortableChannelShellProps = {
   useDragOverlay: boolean;
 };
 
-function SortableChannelShell({
-  channel,
+function SortableTargetShell({
+  target,
   bucketIndex,
-  channelIndex,
-  bucketChannelCount,
+  targetIndex,
+  bucketTargetCount,
   totalBucketCount,
   compact,
   readOnlyRoute,
   savingPriority,
   candidateView,
-  channelTokenDraft,
-  updatingChannel,
-  activeDragChannelId,
+  targetTokenDraft,
+  updatingTarget,
+  activeDragTargetId,
   decisionMap,
   exactRoute,
   loadingDecision,
-  channelManagementDisabled,
+  targetManagementDisabled,
   routeId,
   onTokenDraftChange,
   onSaveToken,
-  onDeleteChannel,
-  onToggleChannelEnabled,
+  onDeleteTarget,
+  onToggleTargetEnabled,
   onSiteBlockModel,
   railLabel,
   mobileRailLabel,
   railNodeStyle,
   showCompactRailHeader,
   useDragOverlay,
-}: SortableChannelShellProps) {
+}: SortableTargetShellProps) {
   const {
     attributes,
     listeners,
@@ -339,15 +339,15 @@ function SortableChannelShell({
     transition,
     isDragging,
   } = useSortable({
-    id: channel.id,
+    id: target.id,
     disabled: savingPriority || readOnlyRoute,
   });
 
-  const tokenOptions = candidateView.tokenOptionsByAccountId[channel.accountId] || [];
-  const activeTokenId = channelTokenDraft[channel.id] ?? channel.tokenId ?? 0;
-  const showDesktopRailHeader = !compact && channelIndex === 0;
+  const tokenOptions = candidateView.tokenOptionsByAccountId[target.accountId] || [];
+  const activeTokenId = targetTokenDraft[target.id] ?? target.tokenId ?? 0;
+  const showDesktopRailHeader = !compact && targetIndex === 0;
   const showDesktopRailLine = !compact
-    && (bucketIndex < totalBucketCount - 1 || channelIndex < bucketChannelCount - 1);
+    && (bucketIndex < totalBucketCount - 1 || targetIndex < bucketTargetCount - 1);
   const shellTransition = [
     transition,
     'opacity 180ms ease',
@@ -359,8 +359,8 @@ function SortableChannelShell({
   return (
     <div
       ref={setNodeRef}
-      data-testid="route-channel-shell"
-      data-channel-id={channel.id}
+      data-testid="route-target-shell"
+      data-target-id={target.id}
       style={{
         visibility: useDragOverlay && isDragging ? 'hidden' : undefined,
         transform: CSS.Translate.toString(translatedTransform),
@@ -425,29 +425,29 @@ function SortableChannelShell({
         </div>
       ) : null}
 
-      <SortableChannelRow
-        channel={channel}
+      <SortableRouteTargetRow
+        target={target}
         displayPriority={bucketIndex}
         showPriorityBadge={compact}
         dragging={isDragging}
         dragHandleProps={{ ...attributes, ...listeners }}
         dragHandleRef={setActivatorNodeRef}
-        dragInProgress={activeDragChannelId != null}
-        decisionCandidate={decisionMap.get(channel.id)}
+        dragInProgress={activeDragTargetId != null}
+        decisionCandidate={decisionMap.get(target.id)}
         isExactRoute={exactRoute}
         loadingDecision={loadingDecision}
         isSavingPriority={savingPriority}
         readOnly={readOnlyRoute}
-        channelManagementDisabled={channelManagementDisabled}
+        targetManagementDisabled={targetManagementDisabled}
         mobile={compact}
         tokenOptions={tokenOptions}
         activeTokenId={activeTokenId}
-        isUpdatingToken={!!updatingChannel[channel.id]}
+        isUpdatingToken={!!updatingTarget[target.id]}
         onTokenDraftChange={onTokenDraftChange}
-        onSaveToken={() => onSaveToken(routeId, channel.id, channel.accountId)}
-        onDeleteChannel={() => onDeleteChannel(channel.id, routeId)}
-        onToggleEnabled={(enabled) => onToggleChannelEnabled(channel.id, routeId, enabled)}
-        onSiteBlockModel={channelManagementDisabled ? undefined : () => onSiteBlockModel(channel.id, routeId)}
+        onSaveToken={() => onSaveToken(routeId, target.id, target.accountId)}
+        onDeleteTarget={() => onDeleteTarget(target.id, routeId)}
+        onToggleEnabled={(enabled) => onToggleTargetEnabled(target.id, routeId, enabled)}
+        onSiteBlockModel={targetManagementDisabled ? undefined : () => onSiteBlockModel(target.id, routeId)}
       />
     </div>
   );
@@ -469,23 +469,23 @@ function RouteCardInner({
   clearingCooldown,
   onRoutingStrategyChange,
   updatingRoutingStrategy,
-  channels,
-  loadingChannels,
+  targets,
+  loadingTargets,
   routeDecision,
   loadingDecision,
   candidateView,
-  channelTokenDraft,
-  updatingChannel,
+  targetTokenDraft,
+  updatingTarget,
   savingPriority,
   onTokenDraftChange,
   onSaveToken,
-  onDeleteChannel,
-  onToggleChannelEnabled,
-  onChannelDragEnd,
+  onDeleteTarget,
+  onToggleTargetEnabled,
+  onTargetDragEnd,
   missingTokenSiteItems,
   missingTokenGroupItems,
   onCreateTokenForMissing,
-  onAddChannel,
+  onAddTarget,
   onSiteBlockModel,
   expandedSourceGroupMap,
   onToggleSourceGroup,
@@ -496,8 +496,8 @@ function RouteCardInner({
   const explicitGroupSourceCount = getRouteBackendRouteIds(route.backend).length;
   const routePattern = getRouteRequestedModelPattern(route);
   const routeDisplayName = getRouteDisplayName(route);
-  const readOnlyRoute = route.kind === 'zero_channel' || route.readOnly === true || route.isVirtual === true;
-  const channelManagementDisabled = explicitGroupRoute;
+  const readOnlyRoute = route.kind === 'zero_target' || route.readOnly === true || route.isVirtual === true;
+  const targetManagementDisabled = explicitGroupRoute;
   const title = resolveRouteTitle(route);
   const routingStrategy = normalizeRouteRoutingStrategyValue(route.routingStrategy);
   const routingStrategyDescription = getRouteRoutingStrategyDescription(routingStrategy);
@@ -506,9 +506,9 @@ function RouteCardInner({
   const cachedDecisionTooltip = route.decisionRefreshedAt
     ? `${tr('pages.tokenRoutes.routeCard.lastRefreshed')}: ${formatDateTimeMinuteLocal(route.decisionRefreshedAt)}`
     : undefined;
-  const showAddChannelButton = !readOnlyRoute && !channelManagementDisabled;
-  const showMissingTokenHints = !channelManagementDisabled && (missingTokenSiteItems.length > 0 || missingTokenGroupItems.length > 0);
-  const routeUnits = collectRouteUnits(channels);
+  const showAddTargetButton = !readOnlyRoute && !targetManagementDisabled;
+  const showMissingTokenHints = !targetManagementDisabled && (missingTokenSiteItems.length > 0 || missingTokenGroupItems.length > 0);
+  const routeUnits = collectRouteUnits(targets);
   const routingStrategyOptions = [
     {
       value: 'weighted',
@@ -533,36 +533,36 @@ function RouteCardInner({
   );
 
   const decisionMap = new Map<number, RouteDecisionCandidate>(
-    (routeDecision?.candidates || []).map((c) => [c.channelId, c]),
+    (routeDecision?.candidates || []).map((c) => [c.targetId, c]),
   );
 
-  const priorityBuckets = buildPriorityBuckets(channels || []);
-  const priorityRailSections = buildPriorityRailSections(channels || []);
-  const [activeDragChannelId, setActiveDragChannelId] = useState<number | null>(null);
+  const priorityBuckets = buildPriorityBuckets(targets || []);
+  const priorityRailSections = buildPriorityRailSections(targets || []);
+  const [activeDragTargetId, setActiveDragTargetId] = useState<number | null>(null);
   const [activeDragRowWidth, setActiveDragRowWidth] = useState<number | null>(null);
   const useDragOverlay = compact && detailPanel;
 
   const clearDragState = () => {
-    setActiveDragChannelId(null);
+    setActiveDragTargetId(null);
     setActiveDragRowWidth(null);
   };
 
   const handleDragStart = (event: DragStartEvent) => {
     const nextId = Number(event.active.id);
-    setActiveDragChannelId(Number.isFinite(nextId) ? nextId : null);
+    setActiveDragTargetId(Number.isFinite(nextId) ? nextId : null);
     setActiveDragRowWidth(event.active.rect?.current?.initial?.width ?? null);
   };
 
   const handleDragEnd = (event: DragEndEvent) => {
-    onChannelDragEnd(route.id, event);
+    onTargetDragEnd(route.id, event);
     clearDragState();
   };
-  const activeDragChannel = activeDragChannelId == null
+  const activeDragTarget = activeDragTargetId == null
     ? null
-    : (channels || []).find((channel) => channel.id === activeDragChannelId) || null;
-  const activeDragBucketIndex = activeDragChannel == null
+    : (targets || []).find((target) => target.id === activeDragTargetId) || null;
+  const activeDragTargetBucketIndex = activeDragTarget == null
     ? -1
-    : priorityBuckets.findIndex((bucket) => bucket.channels.some((channel) => channel.id === activeDragChannel.id));
+    : priorityBuckets.findIndex((bucket) => bucket.targets.some((target) => target.id === activeDragTarget.id));
   const renderClearCooldownButton = () => {
     if (readOnlyRoute) return null;
     return (
@@ -571,7 +571,7 @@ function RouteCardInner({
       </Button>
     );
   };
-  const renderAddChannelButton = ({
+  const renderAddTargetButton = ({
     fullWidth = false,
     alignRight = false,
   }: {
@@ -579,11 +579,11 @@ function RouteCardInner({
     alignRight?: boolean;
   } = {}) => (
     <Button type="button" variant="outline"
-      onClick={() => onAddChannel(route.id)}
+      onClick={() => onAddTarget(route.id)}
      
      
     >
-      + {tr('pages.tokenRoutes.addchannels')}
+      + {tr('pages.tokenRoutes.addtargets')}
     </Button>
   );
 
@@ -660,12 +660,12 @@ function RouteCardInner({
                 {explicitGroupSourceCount} {tr('pages.tokenRoutes.manualRoutePanel.model2')}
               </ToneBadge>
               <ToneBadge tone="-muted">
-                {route.channelCount} {tr('pages.tokenRoutes.channels')}
+                {route.targetCount} {tr('pages.tokenRoutes.targets')}
               </ToneBadge>
             </>
           ) : (
             <ToneBadge tone="-info">
-              {route.channelCount} {tr('pages.tokenRoutes.channels')}
+              {route.targetCount} {tr('pages.tokenRoutes.targets')}
             </ToneBadge>
           )}
           {hasCachedDecisionSnapshot ? (
@@ -680,7 +680,7 @@ function RouteCardInner({
 
           {readOnlyRoute ? (
             <ToneBadge tone="-warning">
-              {tr('pages.tokenRoutes.routeCard.0Channels')}
+              {tr('pages.tokenRoutes.routeCard.0Targets')}
             </ToneBadge>
           ) : (
             <ToneBadge tone="-muted"
@@ -747,12 +747,12 @@ function RouteCardInner({
                   {explicitGroupSourceCount} {tr('pages.tokenRoutes.manualRoutePanel.model2')}
                 </ToneBadge>
                 <ToneBadge tone="-muted">
-                  {route.channelCount} {tr('pages.tokenRoutes.channels')}
+                  {route.targetCount} {tr('pages.tokenRoutes.targets')}
                 </ToneBadge>
               </>
             ) : (
               <ToneBadge tone="-info">
-                {route.channelCount} {tr('pages.tokenRoutes.channels')}
+                {route.targetCount} {tr('pages.tokenRoutes.targets')}
               </ToneBadge>
             )}
             {hasCachedDecisionSnapshot ? (
@@ -766,7 +766,7 @@ function RouteCardInner({
             ) : null}
             {readOnlyRoute && (
               <ToneBadge tone="-warning">
-                {tr('pages.tokenRoutes.routeCard.0Channels')}
+                {tr('pages.tokenRoutes.routeCard.0Targets')}
               </ToneBadge>
             )}
             {savingPriority && (
@@ -824,7 +824,7 @@ function RouteCardInner({
                 </ToneBadge>
               )}
               <ToneBadge tone="-info">
-                {route.channelCount} {tr('pages.tokenRoutes.channels')}
+                {route.targetCount} {tr('pages.tokenRoutes.targets')}
               </ToneBadge>
               {hasCachedDecisionSnapshot ? (
                 <ToneBadge tone="-success"
@@ -932,7 +932,7 @@ function RouteCardInner({
                   />
                 </div>
               </div>
-              {showAddChannelButton ? renderAddChannelButton({ alignRight: true }) : null}
+              {showAddTargetButton ? renderAddTargetButton({ alignRight: true }) : null}
             </>
           ) : (
             <>
@@ -969,7 +969,7 @@ function RouteCardInner({
         </div>
       )}
 
-      {/* Missing token hints + Add channel button */}
+      {/* Missing token hints + Add target button */}
       <div className={cn('mb-2 flex flex-wrap justify-between gap-1.5', compact ? 'flex-col items-stretch' : 'flex-row items-start')}>
         {showMissingTokenHints ? (
           <div className="flex flex-1 flex-col gap-1">
@@ -1016,17 +1016,17 @@ function RouteCardInner({
               </div>
             )}
           </div>
-        ) : (!compact && showAddChannelButton ? <div /> : null)}
-        {!compact && showAddChannelButton ? renderAddChannelButton() : null}
+        ) : (!compact && showAddTargetButton ? <div /> : null)}
+        {!compact && showAddTargetButton ? renderAddTargetButton() : null}
       </div>
 
-      {/* Channel list */}
-      {loadingChannels ? (
+      {/* Target list */}
+      {loadingTargets ? (
         <div className="flex items-center gap-2 py-2">
           <LoaderCircle className="size-4 animate-spin" />
-          <span className="text-sm text-muted-foreground">{tr('pages.modelTester.channelszh')}</span>
+          <span className="text-sm text-muted-foreground">{tr('pages.modelTester.targetszh')}</span>
         </div>
-      ) : channels && channels.length > 0 ? (
+      ) : targets && targets.length > 0 ? (
         <div className="flex flex-col gap-1">
           <DndContext
             sensors={sensors}
@@ -1035,18 +1035,18 @@ function RouteCardInner({
             onDragCancel={clearDragState}
             onDragEnd={handleDragEnd}
           >
-            <SortableContext items={(channels || []).map((channel) => channel.id)} strategy={translateOnlyRectSortingStrategy}>
+            <SortableContext items={(targets || []).map((target) => target.id)} strategy={translateOnlyRectSortingStrategy}>
               <div
-                data-testid="route-channel-sortable-list"
+                data-testid="route-target-sortable-list"
                 className={compact ? 'flex flex-col gap-2' : 'flex flex-col gap-1'}
               >
                 {priorityBuckets.map((bucket, bucketIndex) => {
                   const railSection = priorityRailSections[bucketIndex];
-                  const railLabel = `P${bucketIndex} · ${bucket.channels.length}`;
-                  const mobileRailLabel = `${railLabel} ${tr('pages.tokenRoutes.channels')}`;
+                  const railLabel = `P${bucketIndex} · ${bucket.targets.length}`;
+                  const mobileRailLabel = `${railLabel} ${tr('pages.tokenRoutes.targets')}`;
                   const railNodeStyle = buildPriorityRailNodeStyle(bucketIndex, false);
                   const showStandaloneCompactRailHeader = compact && detailPanel;
-                  const showNewLayerTarget = activeDragChannelId != null
+                  const showNewLayerTarget = activeDragTargetId != null
                     && !readOnlyRoute
                     && (!compact || detailPanel);
 
@@ -1059,36 +1059,36 @@ function RouteCardInner({
                         />
                       ) : null}
 
-                      {bucket.channels.map((channel, channelIndex) => {
+                      {bucket.targets.map((target, targetIndex) => {
                         return (
-                          <SortableChannelShell
-                            key={channel.id}
-                            channel={channel}
+                          <SortableTargetShell
+                            key={target.id}
+                            target={target}
                             bucketIndex={bucketIndex}
-                            channelIndex={channelIndex}
-                            bucketChannelCount={bucket.channels.length}
+                            targetIndex={targetIndex}
+                            bucketTargetCount={bucket.targets.length}
                             totalBucketCount={priorityBuckets.length}
                             compact={compact}
                             readOnlyRoute={readOnlyRoute}
                             savingPriority={savingPriority}
                             candidateView={candidateView}
-                            channelTokenDraft={channelTokenDraft}
-                            updatingChannel={updatingChannel}
-                            activeDragChannelId={activeDragChannelId}
+                            targetTokenDraft={targetTokenDraft}
+                            updatingTarget={updatingTarget}
+                            activeDragTargetId={activeDragTargetId}
                             decisionMap={decisionMap}
                             exactRoute={exactRoute}
                             loadingDecision={loadingDecision}
-                            channelManagementDisabled={channelManagementDisabled}
+                            targetManagementDisabled={targetManagementDisabled}
                             routeId={route.id}
                             onTokenDraftChange={onTokenDraftChange}
                             onSaveToken={onSaveToken}
-                            onDeleteChannel={onDeleteChannel}
-                            onToggleChannelEnabled={onToggleChannelEnabled}
+                            onDeleteTarget={onDeleteTarget}
+                            onToggleTargetEnabled={onToggleTargetEnabled}
                             onSiteBlockModel={onSiteBlockModel}
-                            railLabel={railSection ? `P${bucketIndex} · ${railSection.channelCount}` : railLabel}
+                            railLabel={railSection ? `P${bucketIndex} · ${railSection.targetCount}` : railLabel}
                             mobileRailLabel={mobileRailLabel}
                             railNodeStyle={railNodeStyle}
-                            showCompactRailHeader={!showStandaloneCompactRailHeader && channelIndex === 0}
+                            showCompactRailHeader={!showStandaloneCompactRailHeader && targetIndex === 0}
                             useDragOverlay={useDragOverlay}
                           />
                         );
@@ -1108,10 +1108,10 @@ function RouteCardInner({
             </SortableContext>
             {useDragOverlay ? renderDragOverlayNode(
               <DragOverlay>
-                {activeDragChannel ? (
+                {activeDragTarget ? (
                   <PriorityDragPreview
-                    channel={activeDragChannel}
-                    displayPriority={Math.max(0, activeDragBucketIndex)}
+                    target={activeDragTarget}
+                    displayPriority={Math.max(0, activeDragTargetBucketIndex)}
                     width={activeDragRowWidth}
                   />
                 ) : null}
@@ -1122,21 +1122,21 @@ function RouteCardInner({
       ) : (
         <EmptyStateBlock
           className={cn('rounded-md border bg-muted/20', compact ? 'p-4' : 'p-6')}
-          title={readOnlyRoute ? tr('pages.tokenRoutes.routeCard.nonechannelsConfigurationRoutes') : tr('pages.tokenRoutes.routeCard.nonechannels')}
+          title={readOnlyRoute ? tr('pages.tokenRoutes.routeCard.nonetargetsConfigurationRoutes') : tr('pages.tokenRoutes.routeCard.nonetargets')}
         />
       )}
     </Card>
   );
 }
 
-function buildChannelInteractionSignature(
-  channels: RouteChannel[] | undefined,
-  channelTokenDraft: Record<number, number>,
-  updatingChannel: Record<number, boolean>,
+function buildTargetInteractionSignature(
+  targets: RouteEndpointTarget[] | undefined,
+  targetTokenDraft: Record<number, number>,
+  updatingTarget: Record<number, boolean>,
 ): string {
-  if (!Array.isArray(channels) || channels.length === 0) return '';
-  return channels
-    .map((channel) => `${channel.id}:${channelTokenDraft[channel.id] ?? ''}:${updatingChannel[channel.id] ? 1 : 0}`)
+  if (!Array.isArray(targets) || targets.length === 0) return '';
+  return targets
+    .map((target) => `${target.id}:${targetTokenDraft[target.id] ?? ''}:${updatingTarget[target.id] ? 1 : 0}`)
     .join('|');
 }
 
@@ -1166,29 +1166,29 @@ function areRouteCardPropsEqual(prev: RouteCardProps, next: RouteCardProps): boo
     || prev.onRoutingStrategyChange !== next.onRoutingStrategyChange
     || prev.onTokenDraftChange !== next.onTokenDraftChange
     || prev.onSaveToken !== next.onSaveToken
-    || prev.onDeleteChannel !== next.onDeleteChannel
-    || prev.onToggleChannelEnabled !== next.onToggleChannelEnabled
-    || prev.onChannelDragEnd !== next.onChannelDragEnd
+    || prev.onDeleteTarget !== next.onDeleteTarget
+    || prev.onToggleTargetEnabled !== next.onToggleTargetEnabled
+    || prev.onTargetDragEnd !== next.onTargetDragEnd
     || prev.onCreateTokenForMissing !== next.onCreateTokenForMissing
-    || prev.onAddChannel !== next.onAddChannel
+    || prev.onAddTarget !== next.onAddTarget
     || prev.onSiteBlockModel !== next.onSiteBlockModel
     || prev.onToggleSourceGroup !== next.onToggleSourceGroup
     || prev.clearingCooldown !== next.clearingCooldown
     || prev.updatingRoutingStrategy !== next.updatingRoutingStrategy
     || prev.savingPriority !== next.savingPriority
-    || prev.loadingChannels !== next.loadingChannels
+    || prev.loadingTargets !== next.loadingTargets
     || prev.loadingDecision !== next.loadingDecision
     || prev.routeDecision !== next.routeDecision
     || prev.candidateView !== next.candidateView
     || prev.missingTokenSiteItems !== next.missingTokenSiteItems
     || prev.missingTokenGroupItems !== next.missingTokenGroupItems
-    || prev.channels !== next.channels
+    || prev.targets !== next.targets
   ) {
     return false;
   }
 
-  return buildChannelInteractionSignature(prev.channels, prev.channelTokenDraft, prev.updatingChannel)
-    === buildChannelInteractionSignature(next.channels, next.channelTokenDraft, next.updatingChannel);
+  return buildTargetInteractionSignature(prev.targets, prev.targetTokenDraft, prev.updatingTarget)
+    === buildTargetInteractionSignature(next.targets, next.targetTokenDraft, next.updatingTarget);
 }
 
 const RouteCard = memo(RouteCardInner, areRouteCardPropsEqual);

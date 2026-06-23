@@ -33,8 +33,10 @@ interface ResolveProxyLogBillingInput {
   };
   account: {
     id: number;
+    username?: string | null;
     accessToken?: string | null;
     apiToken?: string | null;
+    extraConfig?: string | Record<string, unknown> | null;
   };
   tokenId?: number | null;
   upstreamGroup?: string | null;

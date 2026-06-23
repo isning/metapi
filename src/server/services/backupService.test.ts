@@ -14,7 +14,7 @@ describe('backupService', () => {
   let db: DbModule['db'];
   let schema: DbModule['schema'];
   let backupService: BackupServiceModule;
-  let loadRouteGraphLegacyProjections: RouteGraphServiceModule['loadRouteGraphLegacyProjections'];
+  let loadRouteGraphRouteTableBindings: RouteGraphServiceModule['loadRouteGraphRouteTableBindings'];
   let publishRouteGraphSource: RouteGraphServiceModule['publishRouteGraphSource'];
   let dataDir = '';
 
@@ -30,12 +30,14 @@ describe('backupService', () => {
     db = dbModule.db;
     schema = dbModule.schema;
     backupService = serviceModule;
-    loadRouteGraphLegacyProjections = routeGraphServiceModule.loadRouteGraphLegacyProjections;
+    loadRouteGraphRouteTableBindings = routeGraphServiceModule.loadRouteGraphRouteTableBindings;
     publishRouteGraphSource = routeGraphServiceModule.publishRouteGraphSource;
   });
 
   beforeEach(async () => {
-    await db.delete(schema.routeChannels).run();
+    await db.delete(schema.credentialEndpointBindings).run();
+    await db.delete(schema.apiEndpointProfiles).run();
+    await db.delete(schema.routeEndpointTargets).run();
     await db.delete(schema.routeGroupSources).run();
     await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.tokenModelAvailability).run();
@@ -145,7 +147,7 @@ describe('backupService', () => {
       displayName: 'gpt-route',
       displayIcon: 'icon-gpt',
       modelMapping: JSON.stringify({ to: 'gpt-4o-mini' }),
-      decisionSnapshot: JSON.stringify({ channelIds: [1, 2] }),
+      decisionSnapshot: JSON.stringify({ targetIds: [1, 2] }),
       decisionRefreshedAt: now,
       routingStrategy: 'round_robin',
       enabled: true,
@@ -177,7 +179,7 @@ describe('backupService', () => {
         },
         {
           id: 'endpoint:manual:roundtrip',
-          type: 'model_endpoint',
+          type: 'route_endpoint',
           name: 'Manual endpoint',
           enabled: true,
           visibility: 'internal',
@@ -191,7 +193,7 @@ describe('backupService', () => {
           },
           config: {
             targets: [{
-              channelId: 'manual-channel',
+              targetId: 'manual-target',
               model: 'gpt-graph-upstream',
               compatibilityPolicy: {
                 reasoningHistory: {
@@ -223,7 +225,7 @@ describe('backupService', () => {
     const published = await publishRouteGraphSource({ sourceGraph: graphSource, createdBy: 'test' });
     expect(published.ok).toBe(true);
 
-    await db.insert(schema.routeChannels).values({
+    await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: account.id,
       tokenId: accountToken.id,
@@ -350,8 +352,8 @@ describe('backupService', () => {
     expect(exported.accounts.accounts[0]).not.toHaveProperty('balanceUsed');
     expect(exported.accounts.accounts[0]).not.toHaveProperty('lastCheckinAt');
     expect(exported.accounts.accounts[0]).not.toHaveProperty('lastBalanceRefresh');
-    expect(exported.accounts.routeChannels[0]).not.toHaveProperty('successCount');
-    expect(exported.accounts.routeChannels[0]).not.toHaveProperty('lastUsedAt');
+    expect(exported.accounts.routeEndpointTargets[0]).not.toHaveProperty('successCount');
+    expect(exported.accounts.routeEndpointTargets[0]).not.toHaveProperty('lastUsedAt');
     expect(exported.accounts.sites[0].compatibilityPolicy).toContain('content_think_tag');
     expect(exported.accounts.accountTokens[0].compatibilityPolicy).toContain('"native"');
     expect(exported.accounts.downstreamApiKeys[0]).not.toHaveProperty('usedCost');
@@ -368,7 +370,7 @@ describe('backupService', () => {
     const restoredSite = await db.select().from(schema.sites).where(eq(schema.sites.id, site.id)).get();
     const restoredAccount = await db.select().from(schema.accounts).where(eq(schema.accounts.id, account.id)).get();
     const restoredRoute = await db.select().from(schema.tokenRoutes).where(eq(schema.tokenRoutes.id, route.id)).get();
-    const restoredChannel = await db.select().from(schema.routeChannels).where(eq(schema.routeChannels.routeId, route.id)).get();
+    const restoredChannel = await db.select().from(schema.routeEndpointTargets).where(eq(schema.routeEndpointTargets.routeId, route.id)).get();
     const restoredDisabledModels = await db.select().from(schema.siteDisabledModels).all();
     const restoredModelAvailability = await db.select().from(schema.modelAvailability).all();
     const restoredDownstreamKeys = await db.select().from(schema.downstreamApiKeys).all();
@@ -395,9 +397,9 @@ describe('backupService', () => {
 
     expect(restoredRoute?.displayName).toBe('gpt-route');
     expect(restoredRoute?.displayIcon).toBe('icon-gpt');
-    const projections = await loadRouteGraphLegacyProjections();
-    expect(projections.get(restoredRoute?.id ?? 0)?.backend.kind).toBe('routes');
-    expect(restoredRoute?.decisionSnapshot).toBe('{"channelIds":[1,2]}');
+    const bindings = await loadRouteGraphRouteTableBindings();
+    expect(bindings.get(restoredRoute?.id ?? 0)?.backend.kind).toBe('routes');
+    expect(restoredRoute?.decisionSnapshot).toBe('{"targetIds":[1,2]}');
     expect(restoredRoute?.decisionRefreshedAt).toBe(now);
     expect(restoredRoute?.routingStrategy).toBe('round_robin');
     const restoredToken = await db.select().from(schema.accountTokens).where(eq(schema.accountTokens.id, accountToken.id)).get();
@@ -634,7 +636,7 @@ describe('backupService', () => {
       updatedAt: exportedAt,
     }).returning().get();
 
-    await db.insert(schema.routeChannels).values({
+    await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: account.id,
       tokenId: accountToken.id,
@@ -656,8 +658,8 @@ describe('backupService', () => {
     }).run();
 
     const insertedChannel = await db.select()
-      .from(schema.routeChannels)
-      .where(eq(schema.routeChannels.routeId, route.id))
+      .from(schema.routeEndpointTargets)
+      .where(eq(schema.routeEndpointTargets.routeId, route.id))
       .get();
 
     expect(insertedChannel).toBeTruthy();
@@ -679,7 +681,7 @@ describe('backupService', () => {
       updatedAt: localRuntimeAt,
     }).where(eq(schema.accounts.id, account.id)).run();
 
-    await db.update(schema.routeChannels).set({
+    await db.update(schema.routeEndpointTargets).set({
       successCount: 77,
       failCount: 9,
       totalLatencyMs: 4321,
@@ -690,7 +692,7 @@ describe('backupService', () => {
       consecutiveFailCount: 4,
       cooldownLevel: 2,
       cooldownUntil: localRuntimeAt,
-    }).where(eq(schema.routeChannels.id, insertedChannel!.id)).run();
+    }).where(eq(schema.routeEndpointTargets.id, insertedChannel!.id)).run();
 
     await db.insert(schema.checkinLogs).values({
       accountId: account.id,
@@ -702,7 +704,7 @@ describe('backupService', () => {
 
     await db.insert(schema.proxyLogs).values({
       routeId: route.id,
-      channelId: insertedChannel!.id,
+      targetId: insertedChannel!.id,
       accountId: account.id,
       modelRequested: 'gpt-4o',
       modelActual: 'gpt-4o',
@@ -720,7 +722,7 @@ describe('backupService', () => {
     const restoredSite = await db.select().from(schema.sites).where(eq(schema.sites.id, site.id)).get();
     const restoredAccount = await db.select().from(schema.accounts).where(eq(schema.accounts.id, account.id)).get();
     const restoredRoute = await db.select().from(schema.tokenRoutes).where(eq(schema.tokenRoutes.id, route.id)).get();
-    const restoredChannel = await db.select().from(schema.routeChannels).where(eq(schema.routeChannels.id, insertedChannel!.id)).get();
+    const restoredChannel = await db.select().from(schema.routeEndpointTargets).where(eq(schema.routeEndpointTargets.id, insertedChannel!.id)).get();
     const restoredProxyLogs = await db.select().from(schema.proxyLogs).all();
     const restoredCheckinLogs = await db.select().from(schema.checkinLogs).all();
 
@@ -740,7 +742,7 @@ describe('backupService', () => {
     expect(restoredProxyLogs).toHaveLength(1);
     expect(restoredProxyLogs[0]?.accountId).toBe(account.id);
     expect(restoredProxyLogs[0]?.routeId).toBe(route.id);
-    expect(restoredProxyLogs[0]?.channelId).toBe(insertedChannel!.id);
+    expect(restoredProxyLogs[0]?.targetId).toBe(insertedChannel!.id);
     expect(restoredProxyLogs[0]?.totalTokens).toBe(321);
     expect(restoredCheckinLogs).toHaveLength(1);
     expect(restoredCheckinLogs[0]?.accountId).toBe(account.id);
@@ -799,7 +801,7 @@ describe('backupService', () => {
       updatedAt: exportedAt,
     }).returning().get();
 
-    await db.insert(schema.routeChannels).values({
+    await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: account.id,
       tokenId: accountToken.id,
@@ -821,8 +823,8 @@ describe('backupService', () => {
     }).run();
 
     const insertedChannel = await db.select()
-      .from(schema.routeChannels)
-      .where(eq(schema.routeChannels.routeId, route.id))
+      .from(schema.routeEndpointTargets)
+      .where(eq(schema.routeEndpointTargets.routeId, route.id))
       .get();
 
     expect(insertedChannel).toBeTruthy();
@@ -991,7 +993,7 @@ describe('backupService', () => {
       updatedAt: localRuntimeAt,
     }).where(eq(schema.accounts.id, account.id)).run();
 
-    await db.update(schema.routeChannels).set({
+    await db.update(schema.routeEndpointTargets).set({
       successCount: 77,
       failCount: 9,
       totalLatencyMs: 4321,
@@ -1002,7 +1004,7 @@ describe('backupService', () => {
       consecutiveFailCount: 4,
       cooldownLevel: 2,
       cooldownUntil: localRuntimeAt,
-    }).where(eq(schema.routeChannels.id, insertedChannel!.id)).run();
+    }).where(eq(schema.routeEndpointTargets.id, insertedChannel!.id)).run();
 
     await db.delete(schema.siteDisabledModels)
       .where(eq(schema.siteDisabledModels.siteId, site.id))
@@ -1091,7 +1093,7 @@ describe('backupService', () => {
     await db.insert(schema.proxyLogs).values([
       {
         routeId: route.id,
-        channelId: insertedChannel!.id,
+        targetId: insertedChannel!.id,
         accountId: account.id,
         downstreamApiKeyId: downstreamKey.id,
         modelRequested: 'gpt-4o',
@@ -1103,7 +1105,7 @@ describe('backupService', () => {
       },
       {
         routeId: route.id,
-        channelId: insertedChannel!.id,
+        targetId: insertedChannel!.id,
         accountId: account.id,
         downstreamApiKeyId: localOnlyDownstreamKey.id,
         modelRequested: 'gpt-4o-mini',
@@ -1123,7 +1125,7 @@ describe('backupService', () => {
     const restoredSite = await db.select().from(schema.sites).where(eq(schema.sites.id, site.id)).get();
     const restoredAccount = await db.select().from(schema.accounts).where(eq(schema.accounts.id, account.id)).get();
     const restoredRoute = await db.select().from(schema.tokenRoutes).where(eq(schema.tokenRoutes.id, route.id)).get();
-    const restoredChannel = await db.select().from(schema.routeChannels).where(eq(schema.routeChannels.id, insertedChannel!.id)).get();
+    const restoredChannel = await db.select().from(schema.routeEndpointTargets).where(eq(schema.routeEndpointTargets.id, insertedChannel!.id)).get();
     const restoredSiteApiEndpoints = await db.select()
       .from(schema.siteApiEndpoints)
       .where(eq(schema.siteApiEndpoints.siteId, site.id))
@@ -1352,7 +1354,7 @@ describe('backupService', () => {
         ],
         accountTokens: [],
         tokenRoutes: [],
-        routeChannels: [],
+        routeEndpointTargets: [],
         routeGroupSources: [],
       },
     } as Record<string, unknown>;
@@ -1393,6 +1395,117 @@ describe('backupService', () => {
         totalCost: 1.25,
       }),
     ]);
+  });
+
+  it('imports native v2.1 account backups that still use routeChannels', async () => {
+    const payload = {
+      version: '2.1',
+      timestamp: Date.now(),
+      accounts: {
+        sites: [
+          {
+            id: 1,
+            name: 'v2.1 native site',
+            url: 'https://native-21.example.com',
+            platform: 'new-api',
+            status: 'active',
+            createdAt: '2026-03-20T00:00:00.000Z',
+            updatedAt: '2026-03-20T00:00:00.000Z',
+          },
+        ],
+        accounts: [
+          {
+            id: 1,
+            siteId: 1,
+            username: 'native-21-user',
+            accessToken: '',
+            apiToken: 'native-21-api-token',
+            balance: 10,
+            quota: 20,
+            unitCost: null,
+            valueScore: 0,
+            status: 'active',
+            checkinEnabled: false,
+            createdAt: '2026-03-20T00:00:00.000Z',
+            updatedAt: '2026-03-20T00:00:00.000Z',
+          },
+        ],
+        accountTokens: [
+          {
+            id: 1,
+            accountId: 1,
+            name: 'default',
+            token: 'native-21-api-token',
+            tokenGroup: 'default',
+            source: 'legacy',
+            enabled: true,
+            isDefault: true,
+            createdAt: '2026-03-20T00:00:00.000Z',
+            updatedAt: '2026-03-20T00:00:00.000Z',
+          },
+        ],
+        tokenRoutes: [
+          {
+            id: 127,
+            modelPattern: 'gpt-native-21',
+            routingStrategy: 'weighted',
+            enabled: true,
+            createdAt: '2026-03-20T00:00:00.000Z',
+            updatedAt: '2026-03-20T00:00:00.000Z',
+          },
+        ],
+        routeChannels: [
+          {
+            id: 1,
+            routeId: 127,
+            channelId: 999,
+            accountId: 1,
+            tokenId: 1,
+            sourceModel: 'gpt-native-21-upstream',
+            priority: 0,
+            weight: 10,
+            enabled: true,
+            manualOverride: false,
+          },
+        ],
+        routeGroupSources: [],
+      },
+      preferences: {
+        settings: [
+          { key: 'metapi_config_version', value: '2.1' },
+        ],
+      },
+    } as Record<string, unknown>;
+
+    const result = await backupService.importBackup(payload);
+
+    expect(result.allImported).toBe(true);
+    expect(result.sections.accounts).toBe(true);
+    expect(result.sections.preferences).toBe(true);
+
+    const sites = await db.select().from(schema.sites).all();
+    const accounts = await db.select().from(schema.accounts).all();
+    const targets = await db.select().from(schema.routeEndpointTargets).all();
+    const bindings = await loadRouteGraphRouteTableBindings();
+
+    expect(sites).toHaveLength(1);
+    expect(accounts).toEqual([
+      expect.objectContaining({
+        username: 'native-21-user',
+        apiToken: 'native-21-api-token',
+      }),
+    ]);
+    expect(targets).toEqual([
+      expect.objectContaining({
+        id: 1,
+        routeId: 127,
+        routeEndpointId: 'entry:legacy:127',
+        accountId: 1,
+        tokenId: 1,
+        sourceModel: 'gpt-native-21-upstream',
+      }),
+    ]);
+    expect(bindings.get(127)?.modelPattern).toBe('gpt-native-21');
   });
 
   it('normalizes pre-route-graph token route rows during account import', async () => {
@@ -1470,7 +1583,7 @@ describe('backupService', () => {
             updated_at: '2026-03-20T00:00:00.000Z',
           },
         ],
-        routeChannels: [
+        routeEndpointTargets: [
           {
             id: 1,
             routeId: 127,
@@ -1528,9 +1641,9 @@ describe('backupService', () => {
       }),
     ]);
 
-    const projections = await loadRouteGraphLegacyProjections();
-    expect(projections.get(127)?.modelPattern).toBe('gpt-legacy-*');
-    expect(projections.get(128)?.modelPattern).toBe('claude-legacy-*');
+    const bindings = await loadRouteGraphRouteTableBindings();
+    expect(bindings.get(127)?.modelPattern).toBe('gpt-legacy-*');
+    expect(bindings.get(128)?.modelPattern).toBe('claude-legacy-*');
   });
 
   it('regenerates the route graph from imported routes instead of restoring old graph snapshots', async () => {
@@ -1597,7 +1710,7 @@ describe('backupService', () => {
             updatedAt: '2026-03-20T00:00:00.000Z',
           },
         ],
-        routeChannels: [
+        routeEndpointTargets: [
           {
             id: 1,
             routeId: 127,
@@ -2060,7 +2173,7 @@ describe('backupService', () => {
         ],
         accountTokens: [],
         tokenRoutes: [],
-        routeChannels: [],
+        routeEndpointTargets: [],
       },
     } as Record<string, unknown>;
 
@@ -2180,7 +2293,7 @@ describe('backupService', () => {
         ],
         accountTokens: [],
         tokenRoutes: [],
-        routeChannels: [],
+        routeEndpointTargets: [],
         routeGroupSources: [],
       },
     };

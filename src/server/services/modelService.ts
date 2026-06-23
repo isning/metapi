@@ -20,7 +20,7 @@ import {
 import { invalidateTokenRouterCache } from './tokenRouter.js';
 import {
   ensureActiveRouteGraphVersion,
-  loadRouteGraphLegacyProjections,
+  loadRouteGraphRouteTableBindings,
 } from './routeGraphService.js';
 import { getBlockedBrandRules, isModelBlockedByBrand } from './brandMatcher.js';
 import { config } from '../config.js';
@@ -57,11 +57,11 @@ type CompiledTokenRoute = typeof schema.tokenRoutes.$inferSelect & {
   modelPattern: string;
 };
 
-function compileTokenRoute(row: typeof schema.tokenRoutes.$inferSelect, projection?: Awaited<ReturnType<typeof loadRouteGraphLegacyProjections>> extends Map<number, infer P> ? P : never): CompiledTokenRoute {
+function compileTokenRoute(row: typeof schema.tokenRoutes.$inferSelect, binding?: Awaited<ReturnType<typeof loadRouteGraphRouteTableBindings>> extends Map<number, infer P> ? P : never): CompiledTokenRoute {
   return {
     ...row,
-    routeMode: projection?.routeMode ?? 'pattern',
-    modelPattern: projection?.modelPattern ?? row.displayName ?? '',
+    routeMode: binding?.routeMode ?? 'pattern',
+    modelPattern: binding?.modelPattern ?? row.displayName ?? '',
   };
 }
 let inFlightRefreshModelsAndRebuildRoutes: Promise<{
@@ -1459,10 +1459,10 @@ export async function rebuildTokenRoutesFromAvailability() {
       ? `route-unit:${input.oauthRouteUnitId}`
       : `${input.accountId}:${input.tokenId ?? 'account'}`
   );
-  const buildChannelKey = (channel: typeof schema.routeChannels.$inferSelect) => (
-    channel.oauthRouteUnitId
-      ? `route-unit:${channel.oauthRouteUnitId}`
-      : `${channel.accountId}:${channel.tokenId ?? 'account'}`
+  const buildTargetKey = (target: typeof schema.routeEndpointTargets.$inferSelect) => (
+    target.oauthRouteUnitId
+      ? `route-unit:${target.oauthRouteUnitId}`
+      : `${target.accountId}:${target.tokenId ?? 'account'}`
   );
   const addModelCandidate = (
     modelNameRaw: string | null | undefined,
@@ -1502,13 +1502,13 @@ export async function rebuildTokenRoutesFromAvailability() {
     addModelCandidate(row.token_model_availability.modelName, row.accounts.id, row.account_tokens.id, row.accounts.siteId);
   }
 
-  const projections = await loadRouteGraphLegacyProjections();
-  const routes = (await db.select().from(schema.tokenRoutes).all()).map((row) => compileTokenRoute(row, projections.get(row.id)));
-  const channels = await db.select().from(schema.routeChannels).all();
+  const bindings = await loadRouteGraphRouteTableBindings();
+  const routes = (await db.select().from(schema.tokenRoutes).all()).map((row) => compileTokenRoute(row, bindings.get(row.id)));
+  const targets = await db.select().from(schema.routeEndpointTargets).all();
 
   let createdRoutes = 0;
-  let createdChannels = 0;
-  let removedChannels = 0;
+  let createdTargets = 0;
+  let removedTargets = 0;
   let removedRoutes = 0;
 
   for (const [modelName, candidateMap] of modelCandidates.entries()) {
@@ -1527,14 +1527,14 @@ export async function rebuildTokenRoutesFromAvailability() {
       createdRoutes++;
     }
 
-    const routeChannels = channels.filter((channel) => channel.routeId === route.id);
+    const routeEndpointTargets = targets.filter((target) => target.routeId === route.id);
     const desiredKeys = new Set(Array.from(candidateMap.keys()));
 
     for (const [candidateKey, candidate] of candidateMap.entries()) {
-      const exists = routeChannels.some((channel) => buildChannelKey(channel) === candidateKey);
+      const exists = routeEndpointTargets.some((target) => buildTargetKey(target) === candidateKey);
       if (exists) continue;
 
-      const inserted = await db.insert(schema.routeChannels).values({
+      const inserted = await db.insert(schema.routeEndpointTargets).values({
         routeId: route.id,
         accountId: candidate.accountId,
         tokenId: candidate.tokenId,
@@ -1546,38 +1546,38 @@ export async function rebuildTokenRoutesFromAvailability() {
       }).run();
       const insertedId = getInsertedRowId(inserted);
       if (insertedId == null) continue;
-      const created = await db.select().from(schema.routeChannels).where(eq(schema.routeChannels.id, insertedId)).get();
+      const created = await db.select().from(schema.routeEndpointTargets).where(eq(schema.routeEndpointTargets.id, insertedId)).get();
       if (!created) continue;
-      channels.push(created);
-      routeChannels.push(created);
-      createdChannels++;
+      targets.push(created);
+      routeEndpointTargets.push(created);
+      createdTargets++;
       desiredKeys.add(candidateKey);
     }
 
-    for (const channel of [...routeChannels]) {
-      const channelKey = buildChannelKey(channel);
+    for (const target of [...routeEndpointTargets]) {
+      const channelKey = buildTargetKey(target);
       if (desiredKeys.has(channelKey)) {
         continue;
       }
 
-      if (!channel.tokenId) {
-        const preferred = await getPreferredAccountToken(channel.accountId);
-        if (preferred && desiredKeys.has(`${channel.accountId}:${preferred.id}`)) {
-          await db.update(schema.routeChannels)
+      if (!target.tokenId) {
+        const preferred = await getPreferredAccountToken(target.accountId);
+        if (preferred && desiredKeys.has(`${target.accountId}:${preferred.id}`)) {
+          await db.update(schema.routeEndpointTargets)
             .set({ tokenId: preferred.id })
-            .where(eq(schema.routeChannels.id, channel.id))
+            .where(eq(schema.routeEndpointTargets.id, target.id))
             .run();
           continue;
         }
       }
 
-      if (!channel.manualOverride) {
-        await db.delete(schema.routeChannels).where(eq(schema.routeChannels.id, channel.id)).run();
-        const routeChannelIndex = routeChannels.findIndex((item) => item.id === channel.id);
-        if (routeChannelIndex >= 0) routeChannels.splice(routeChannelIndex, 1);
-        const channelIndex = channels.findIndex((item) => item.id === channel.id);
-        if (channelIndex >= 0) channels.splice(channelIndex, 1);
-        removedChannels++;
+      if (!target.manualOverride) {
+        await db.delete(schema.routeEndpointTargets).where(eq(schema.routeEndpointTargets.id, target.id)).run();
+        const routeTargetIndex = routeEndpointTargets.findIndex((item) => item.id === target.id);
+        if (routeTargetIndex >= 0) routeEndpointTargets.splice(routeTargetIndex, 1);
+        const targetIndex = targets.findIndex((item) => item.id === target.id);
+        if (targetIndex >= 0) targets.splice(targetIndex, 1);
+        removedTargets++;
       }
     }
   }
@@ -1592,9 +1592,9 @@ export async function rebuildTokenRoutesFromAvailability() {
       continue;
     }
 
-    const routeChannelCount = channels.filter((channel) => channel.routeId === route.id).length;
-    if (routeChannelCount > 0) {
-      removedChannels += routeChannelCount;
+    const routeTargetCount = targets.filter((target) => target.routeId === route.id).length;
+    if (routeTargetCount > 0) {
+      removedTargets += routeTargetCount;
     }
 
     const deleted = (await db.delete(schema.tokenRoutes).where(eq(schema.tokenRoutes.id, route.id)).run()).changes;
@@ -1605,7 +1605,7 @@ export async function rebuildTokenRoutesFromAvailability() {
 
   await ensureActiveRouteGraphVersion();
 
-  if (createdRoutes > 0 || createdChannels > 0 || removedChannels > 0 || removedRoutes > 0) {
+  if (createdRoutes > 0 || createdTargets > 0 || removedTargets > 0 || removedRoutes > 0) {
     await clearAllRouteDecisionSnapshots();
   }
 
@@ -1614,8 +1614,10 @@ export async function rebuildTokenRoutesFromAvailability() {
   return {
     models: modelCandidates.size,
     createdRoutes,
-    createdChannels,
-    removedChannels,
+    createdTargets,
+    removedTargets,
+    createdChannels: createdTargets,
+    removedChannels: removedTargets,
     removedRoutes,
   };
 }

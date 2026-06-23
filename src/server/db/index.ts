@@ -25,6 +25,8 @@ type SqlMethod = 'all' | 'get' | 'run' | 'values' | 'execute';
 
 const TABLES_WITH_NUMERIC_ID = new Set([
   'sites',
+  'api_endpoint_profiles',
+  'credential_endpoint_bindings',
   'accounts',
   'account_tokens',
   'checkin_logs',
@@ -33,7 +35,7 @@ const TABLES_WITH_NUMERIC_ID = new Set([
   'token_routes',
   'upstream_model_cost_pricings',
   'route_group_sources',
-  'route_channels',
+  'route_endpoint_targets',
   'oauth_route_units',
   'oauth_route_unit_members',
   'proxy_logs',
@@ -55,6 +57,7 @@ let proxyLogBillingDetailsColumnAvailable: boolean | null = null;
 let proxyLogDownstreamApiKeyIdColumnAvailable: boolean | null = null;
 let proxyLogClientColumnsAvailable: boolean | null = null;
 let proxyLogStreamTimingColumnsAvailable: boolean | null = null;
+let proxyLogRouteDecisionSnapshotColumnAvailable: boolean | null = null;
 
 function buildMysqlPoolOptions(
   connectionString = config.dbUrl,
@@ -172,7 +175,7 @@ function execSqliteLegacyCompat(sqlText: string): void {
 }
 
 function ensureTokenManagementSchema() {
-  if (!tableExists('accounts') || !tableExists('route_channels')) {
+  if (!tableExists('accounts') || !tableExists('route_endpoint_targets')) {
     return;
   }
   execSqliteLegacyCompat(`
@@ -191,8 +194,8 @@ function ensureTokenManagementSchema() {
       FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE cascade
     );
   `);
-  if (!tableColumnExists('route_channels', 'token_id')) {
-    execSqliteLegacyCompat('ALTER TABLE route_channels ADD COLUMN token_id integer;');
+  if (!tableColumnExists('route_endpoint_targets', 'token_id')) {
+    execSqliteLegacyCompat('ALTER TABLE route_endpoint_targets ADD COLUMN token_id integer;');
   }
 
   if (!tableColumnExists('account_tokens', 'token_group')) {
@@ -254,7 +257,7 @@ function ensureProxyVideoTaskSchema() {
       token_value text NOT NULL,
       requested_model text,
       actual_model text,
-      channel_id integer,
+      target_id integer,
       account_id integer,
       status_snapshot text,
       upstream_response_meta text,
@@ -498,7 +501,7 @@ export async function ensureProxyFileCompatibilityColumns(): Promise<void> {
 }
 
 function ensureRouteGroupingSchema() {
-  if (!tableExists('token_routes') || !tableExists('route_channels')) {
+  if (!tableExists('token_routes') || !tableExists('route_endpoint_targets')) {
     return;
   }
 
@@ -538,20 +541,20 @@ function ensureRouteGroupingSchema() {
     execSqliteLegacyCompat(`ALTER TABLE token_routes ADD COLUMN routing_strategy text DEFAULT 'weighted';`);
   }
 
-  if (!tableColumnExists('route_channels', 'source_model')) {
-    execSqliteLegacyCompat(`ALTER TABLE route_channels ADD COLUMN source_model text;`);
+  if (!tableColumnExists('route_endpoint_targets', 'source_model')) {
+    execSqliteLegacyCompat(`ALTER TABLE route_endpoint_targets ADD COLUMN source_model text;`);
   }
 
-  if (!tableColumnExists('route_channels', 'last_selected_at')) {
-    execSqliteLegacyCompat(`ALTER TABLE route_channels ADD COLUMN last_selected_at text;`);
+  if (!tableColumnExists('route_endpoint_targets', 'last_selected_at')) {
+    execSqliteLegacyCompat(`ALTER TABLE route_endpoint_targets ADD COLUMN last_selected_at text;`);
   }
 
-  if (!tableColumnExists('route_channels', 'consecutive_fail_count')) {
-    execSqliteLegacyCompat(`ALTER TABLE route_channels ADD COLUMN consecutive_fail_count integer NOT NULL DEFAULT 0;`);
+  if (!tableColumnExists('route_endpoint_targets', 'consecutive_fail_count')) {
+    execSqliteLegacyCompat(`ALTER TABLE route_endpoint_targets ADD COLUMN consecutive_fail_count integer NOT NULL DEFAULT 0;`);
   }
 
-  if (!tableColumnExists('route_channels', 'cooldown_level')) {
-    execSqliteLegacyCompat(`ALTER TABLE route_channels ADD COLUMN cooldown_level integer NOT NULL DEFAULT 0;`);
+  if (!tableColumnExists('route_endpoint_targets', 'cooldown_level')) {
+    execSqliteLegacyCompat(`ALTER TABLE route_endpoint_targets ADD COLUMN cooldown_level integer NOT NULL DEFAULT 0;`);
   }
 
 }
@@ -1099,11 +1102,39 @@ export async function ensureProxyLogStreamTimingColumns(): Promise<boolean> {
   }
 }
 
+export async function hasProxyLogRouteDecisionSnapshotColumn(): Promise<boolean> {
+  if (proxyLogRouteDecisionSnapshotColumnAvailable !== null) {
+    return proxyLogRouteDecisionSnapshotColumnAvailable;
+  }
+
+  if (runtimeDbDialect === 'sqlite') {
+    proxyLogRouteDecisionSnapshotColumnAvailable = tableExists('proxy_logs')
+      && tableColumnExists('proxy_logs', 'route_decision_snapshot');
+    return proxyLogRouteDecisionSnapshotColumnAvailable;
+  }
+
+  if (runtimeDbDialect === 'mysql') {
+    if (!mysqlPool) return false;
+    const [rows] = await mysqlPool.query('SHOW COLUMNS FROM `proxy_logs` LIKE ?', ['route_decision_snapshot']);
+    proxyLogRouteDecisionSnapshotColumnAvailable = Array.isArray(rows) && rows.length > 0;
+    return proxyLogRouteDecisionSnapshotColumnAvailable;
+  }
+
+  if (!pgPool) return false;
+  const result = await pgPool.query(
+    'SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = $1 AND column_name = $2 LIMIT 1',
+    ['proxy_logs', 'route_decision_snapshot'],
+  );
+  proxyLogRouteDecisionSnapshotColumnAvailable = Number(result.rowCount || 0) > 0;
+  return proxyLogRouteDecisionSnapshotColumnAvailable;
+}
+
 function resetSchemaCapabilityCache() {
   proxyLogBillingDetailsColumnAvailable = null;
   proxyLogDownstreamApiKeyIdColumnAvailable = null;
   proxyLogClientColumnsAvailable = null;
   proxyLogStreamTimingColumnsAvailable = null;
+  proxyLogRouteDecisionSnapshotColumnAvailable = null;
 }
 
 async function sqliteProxyQuery(sqlText: string, params: unknown[], method: SqlMethod) {
@@ -1364,7 +1395,9 @@ function initSqliteDb() {
   ensureRouteGroupingSchema();
   ensureDownstreamApiKeySchema();
   ensureProxyLogBillingDetailsSchema();
+  ensureProxyLogDownstreamApiKeyIdSchema();
   ensureProxyLogClientSchema();
+  ensureProxyLogStreamTimingSchema();
   ensureProxyVideoTaskSchema();
   ensureProxyFileSchema();
 

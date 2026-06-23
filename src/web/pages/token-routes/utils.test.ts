@@ -14,7 +14,7 @@ vi.mock('../../components/BrandIcon.js', () => ({
 import {
   ROUTE_ICON_NONE_VALUE,
   buildSourceGroupKey,
-  getChannelDecisionState,
+  getTargetDecisionState,
   getModelPatternError,
   getPriorityTagStyle,
   getProbabilityColor,
@@ -29,7 +29,7 @@ import {
   isRouteBackendReferences,
   isRouteExactModel,
   matchesModelPattern,
-  normalizeChannels,
+  normalizeTargets,
   normalizePlatformKey,
   normalizeRoutes,
   normalizeRouteDisplayIconValue,
@@ -42,19 +42,19 @@ import {
   siteAvatarLetters,
   toBrandIconValue,
 } from './utils.js';
-import type { RouteChannel, RouteDecisionCandidate, RouteSummaryRow } from './types.js';
+import type { RouteEndpointTarget, RouteDecisionCandidate, RouteSummaryRow } from './types.js';
 
-function route(overrides: Partial<RouteSummaryRow> & { channels?: RouteChannel[] } = {}): RouteSummaryRow {
+function route(overrides: Partial<RouteSummaryRow> & { targets?: RouteEndpointTarget[] } = {}): RouteSummaryRow {
   return {
     id: 1,
     match: { kind: 'model', requestedModelPattern: 'gpt-*', displayName: null },
-    backend: { kind: 'channels' },
+    backend: { kind: 'supply' },
     presentation: { displayName: null, displayIcon: null },
     modelMapping: null,
     routingStrategy: 'weighted',
     enabled: true,
-    channelCount: 0,
-    enabledChannelCount: 0,
+    targetCount: 0,
+    enabledTargetCount: 0,
     siteNames: [],
     decisionSnapshot: null,
     decisionRefreshedAt: null,
@@ -62,7 +62,7 @@ function route(overrides: Partial<RouteSummaryRow> & { channels?: RouteChannel[]
   };
 }
 
-function channel(overrides: Partial<RouteChannel> = {}): RouteChannel {
+function target(overrides: Partial<RouteEndpointTarget> = {}): RouteEndpointTarget {
   return {
     id: 1,
     accountId: 1,
@@ -79,7 +79,7 @@ function channel(overrides: Partial<RouteChannel> = {}): RouteChannel {
 
 function candidate(overrides: Partial<RouteDecisionCandidate> = {}): RouteDecisionCandidate {
   return {
-    channelId: 1,
+    targetId: 1,
     accountId: 1,
     username: 'user',
     siteName: 'site',
@@ -157,15 +157,15 @@ describe('token route metadata helpers', () => {
     expect(inferEndpointTypesFromPlatform('unknown')).toEqual([]);
   });
 
-  it('normalizes channel, route, source-group, avatar, and visual helper output', () => {
-    expect(normalizeChannels([
-      channel({ id: 3, priority: 2 }),
-      channel({ id: 1, priority: 0 }),
-      channel({ id: 2, priority: 0 }),
+  it('normalizes target, route, source-group, avatar, and visual helper output', () => {
+    expect(normalizeTargets([
+      target({ id: 3, priority: 2 }),
+      target({ id: 1, priority: 0 }),
+      target({ id: 2, priority: 0 }),
     ]).map((item) => item.id)).toEqual([1, 2, 3]);
     expect(normalizeRoutes([
-      route({ id: 1, channels: [channel({ id: 2, priority: 2 }), channel({ id: 1, priority: 1 })] }),
-    ] as any)[0].channels.map((item) => item.id)).toEqual([1, 2]);
+      route({ id: 1, targets: [target({ id: 2, priority: 2 }), target({ id: 1, priority: 1 })] }),
+    ] as any)[0].targets.map((item) => item.id)).toEqual([1, 2]);
     expect(buildSourceGroupKey(1, ' model-a ')).toBe('1::model-a');
     expect(buildSourceGroupKey(1, '   ')).toBe('1::__ungrouped__');
     expect(siteAvatarLetters('New API')).toBe('NA');
@@ -185,80 +185,80 @@ describe('token route metadata helpers', () => {
   });
 });
 
-describe('getChannelDecisionState', () => {
+describe('getTargetDecisionState', () => {
   it('summarizes missing candidate states for exact and non-exact routes', () => {
-    expect(getChannelDecisionState(undefined, channel(), false, false)).toMatchObject({
+    expect(getTargetDecisionState(undefined, target(), false, false)).toMatchObject({
       reasonText: '实时决策',
       showBar: true,
     });
-    expect(getChannelDecisionState(undefined, channel(), false, true)).toMatchObject({
+    expect(getTargetDecisionState(undefined, target(), false, true)).toMatchObject({
       reasonText: '计算中...',
     });
-    expect(getChannelDecisionState(undefined, channel(), true, false)).toMatchObject({
+    expect(getTargetDecisionState(undefined, target(), true, false)).toMatchObject({
       reasonText: '无可用通道',
     });
   });
 
   it('summarizes avoided, ineligible, zero-probability, and eligible candidate states', () => {
-    expect(getChannelDecisionState(candidate({
+    expect(getTargetDecisionState(candidate({
       probability: 50,
       eligible: true,
       reason: '',
       avoidedByRecentFailure: true,
-    }), channel(), true, false)).toMatchObject({
+    }), target(), true, false)).toMatchObject({
       probability: 0,
       reasonText: '失败避让',
     });
 
-    expect(getChannelDecisionState(candidate({
+    expect(getTargetDecisionState(candidate({
       probability: 0,
       eligible: false,
       reason: '冷却中',
-    }), channel(), true, false)).toMatchObject({
+    }), target(), true, false)).toMatchObject({
       reasonText: '冷却中',
       reasonColor: 'var(--color-danger)',
     });
 
-    expect(getChannelDecisionState(candidate({
+    expect(getTargetDecisionState(candidate({
       probability: 0,
       eligible: false,
       reason: '',
-    }), channel({ cooldownUntil: '2999-01-01T00:00:00.000Z' }), true, false)).toMatchObject({
+    }), target({ cooldownUntil: '2999-01-01T00:00:00.000Z' }), true, false)).toMatchObject({
       reasonText: '冷却中',
     });
 
-    expect(getChannelDecisionState(candidate({
+    expect(getTargetDecisionState(candidate({
       probability: 0,
       eligible: false,
       reason: 'disabled',
-    }), channel(), true, false)).toMatchObject({
+    }), target(), true, false)).toMatchObject({
       reasonText: 'disabled',
     });
 
-    expect(getChannelDecisionState(candidate({
+    expect(getTargetDecisionState(candidate({
       probability: 0,
       eligible: true,
       reason: '',
       recentlyFailed: true,
-    }), channel(), true, false)).toMatchObject({
+    }), target(), true, false)).toMatchObject({
       showBar: false,
       reasonText: '近期失败',
     });
 
-    expect(getChannelDecisionState(candidate({
+    expect(getTargetDecisionState(candidate({
       probability: 0,
       eligible: true,
       reason: '',
-    }), channel(), true, false)).toMatchObject({
+    }), target(), true, false)).toMatchObject({
       showBar: false,
       reasonText: '概率为 0%',
     });
 
-    expect(getChannelDecisionState(candidate({
+    expect(getTargetDecisionState(candidate({
       probability: 42,
       eligible: true,
       reason: '',
-    }), channel(), true, false)).toMatchObject({
+    }), target(), true, false)).toMatchObject({
       probability: 42,
       showBar: true,
       reasonText: '',

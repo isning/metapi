@@ -18,7 +18,7 @@ import {
   buildSearchRequestEnvelope,
   buildVideoCreateRequestEnvelope,
   buildVideoInspectRequestEnvelope,
-  attachForcedChannelToEnvelope,
+  attachForcedTargetToEnvelope,
   countConversationTurns,
   collectModelTesterModelNames,
   createLoadingAssistantMessage,
@@ -96,7 +96,7 @@ type UploadState = {
 };
 
 type ConversationFileState = ConversationDraftFile;
-type ForcedChannelOption = {
+type ForcedTargetOption = {
   value: string;
   label: string;
   description?: string;
@@ -666,11 +666,11 @@ export default function ModelTester() {
   const [inputs, setInputs] = useState<ModelTesterInputs>(DEFAULT_INPUTS);
   const [modeState, setModeState] = useState<ModelTesterModeState>(DEFAULT_MODE_STATE);
   const [parameterEnabled, setParameterEnabled] = useState<ParameterEnabled>(DEFAULT_PARAMETER_ENABLED);
-  const [forcedChannelId, setForcedChannelId] = useState<number | null>(null);
-  const [forcedChannelOptions, setForcedChannelOptions] = useState<ForcedChannelOption[]>([]);
-  const [loadingForcedChannels, setLoadingForcedChannels] = useState(false);
-  const [forcedChannelHint, setForcedChannelHint] = useState('');
-  const [forcedChannelHydrationReady, setForcedChannelHydrationReady] = useState(false);
+  const [forcedTargetId, setForcedTargetId] = useState<number | null>(null);
+  const [forcedTargetOptions, setForcedTargetOptions] = useState<ForcedTargetOption[]>([]);
+  const [loadingForcedTargets, setLoadingForcedTargets] = useState(false);
+  const [forcedTargetHint, setForcedTargetHint] = useState('');
+  const [forcedTargetHydrationReady, setForcedTargetHydrationReady] = useState(false);
   const [routeFlow, setRouteFlow] = useState<ModelRouteFlowData | null>(null);
   const [routeFlowLoading, setRouteFlowLoading] = useState(false);
   const [routeFlowError, setRouteFlowError] = useState('');
@@ -774,7 +774,7 @@ export default function ModelTester() {
     setParameterEnabled(restored.parameterEnabled);
     setPendingPayload(restored.pendingPayload);
     setPendingJobId(restored.pendingJobId || null);
-    setForcedChannelId(restored.forcedChannelId ?? null);
+    setForcedTargetId(restored.forcedTargetId ?? null);
     setCustomRequestMode(restored.customRequestMode);
     setCustomRequestBody(restored.customRequestBody);
     setShowDebugPanel(restored.showDebugPanel);
@@ -833,7 +833,7 @@ export default function ModelTester() {
         pushDebug('error', tr('pages.modelTester.failedGetModelList'));
       } finally {
         setLoadingModels(false);
-        setForcedChannelHydrationReady(true);
+        setForcedTargetHydrationReady(true);
       }
     };
 
@@ -842,32 +842,32 @@ export default function ModelTester() {
   }, []);
 
   useEffect(() => {
-    if (!forcedChannelHydrationReady) return;
+    if (!forcedTargetHydrationReady) return;
 
     if (!inputs.model) {
-      setForcedChannelOptions([]);
-      setForcedChannelHint('');
-      setForcedChannelId(null);
+      setForcedTargetOptions([]);
+      setForcedTargetHint('');
+      setForcedTargetId(null);
       return;
     }
 
     if (customRequestMode) {
-      setForcedChannelOptions([]);
-      setForcedChannelHint(tr('pages.modelTester.customRequestmodeChannelsnotAvailable'));
-      setForcedChannelId(null);
+      setForcedTargetOptions([]);
+      setForcedTargetHint(tr('pages.modelTester.customRequestmodeTargetsnotAvailable'));
+      setForcedTargetId(null);
       return;
     }
 
     if (inputs.mode === 'videos.inspect') {
-      setForcedChannelOptions([]);
-      setForcedChannelHint(tr('pages.modelTester.deleteChannels'));
-      setForcedChannelId(null);
+      setForcedTargetOptions([]);
+      setForcedTargetHint(tr('pages.modelTester.deleteTargets'));
+      setForcedTargetId(null);
       return;
     }
 
     let cancelled = false;
-    setLoadingForcedChannels(true);
-    setForcedChannelHint('');
+    setLoadingForcedTargets(true);
+    setForcedTargetHint('');
 
     void api.getRouteDecision(inputs.model)
       .then((result) => {
@@ -876,39 +876,39 @@ export default function ModelTester() {
           ? (result as any).decision.candidates as Array<Record<string, unknown>>
           : [];
         const nextOptions = candidates
-          .filter((candidate) => candidate?.eligible === true && typeof candidate?.channelId === 'number')
+          .filter((candidate) => candidate?.eligible === true && typeof candidate?.targetId === 'number')
           .map((candidate) => ({
-            value: String(candidate.channelId),
+            value: String(candidate.targetId),
             label: `${candidate.username || `account-${candidate.accountId || 'unknown'}`} @ ${candidate.siteName || 'unknown'} / ${candidate.tokenName || 'default'} (P${candidate.priority ?? 0})`,
             description: typeof candidate.reason === 'string' && candidate.reason.trim().length > 0
               ? candidate.reason
               : undefined,
           }));
-        setForcedChannelOptions(nextOptions);
+        setForcedTargetOptions(nextOptions);
         if (nextOptions.length === 0) {
-          setForcedChannelHint(tr('pages.modelTester.modelnoneChannels2'));
+          setForcedTargetHint(tr('pages.modelTester.modelnoneTargets2'));
         }
-        if (typeof forcedChannelId === 'number' && !nextOptions.some((option) => option.value === String(forcedChannelId))) {
-          setForcedChannelId(null);
+        if (typeof forcedTargetId === 'number' && !nextOptions.some((option) => option.value === String(forcedTargetId))) {
+          setForcedTargetId(null);
         }
       })
       .catch(() => {
         if (cancelled) return;
-        setForcedChannelOptions([]);
-        setForcedChannelHint(tr('pages.modelTester.channelsFailed'));
-        setForcedChannelId(null);
+        setForcedTargetOptions([]);
+        setForcedTargetHint(tr('pages.modelTester.targetsFailed'));
+        setForcedTargetId(null);
       })
       .finally(() => {
-        if (!cancelled) setLoadingForcedChannels(false);
+        if (!cancelled) setLoadingForcedTargets(false);
       });
 
     return () => {
       cancelled = true;
     };
-  }, [customRequestMode, forcedChannelHydrationReady, inputs.mode, inputs.model]);
+  }, [customRequestMode, forcedTargetHydrationReady, inputs.mode, inputs.model]);
 
   useEffect(() => {
-    if (!forcedChannelHydrationReady || !inputs.model || customRequestMode) {
+    if (!forcedTargetHydrationReady || !inputs.model || customRequestMode) {
       setRouteFlow(null);
       setRouteFlowError('');
       setRouteFlowLoading(false);
@@ -935,7 +935,7 @@ export default function ModelTester() {
     return () => {
       cancelled = true;
     };
-  }, [customRequestMode, forcedChannelHydrationReady, inputs.model]);
+  }, [customRequestMode, forcedTargetHydrationReady, inputs.model]);
 
   useEffect(() => {
     if (!inputs.model) return;
@@ -958,7 +958,7 @@ export default function ModelTester() {
       },
       pendingPayload,
       pendingJobId,
-      forcedChannelId,
+      forcedTargetId,
       customRequestMode,
       customRequestBody,
       showDebugPanel,
@@ -968,7 +968,7 @@ export default function ModelTester() {
     activeDebugTab,
     customRequestBody,
     customRequestMode,
-    forcedChannelId,
+    forcedTargetId,
     input,
     inputs,
     messages,
@@ -1273,18 +1273,18 @@ export default function ModelTester() {
     };
   }, [buildApiPayload, buildClaudeBodyFromMessages, buildConversationMessagesWithSystem, buildResponsesBodyFromMessages, customRequestBody, customRequestMode, inputs, parameterEnabled]);
 
-  const forcedChannelSelectOptions = useMemo<ForcedChannelOption[]>(() => [
+  const forcedTargetSelectOptions = useMemo<ForcedTargetOption[]>(() => [
     {
       value: '__auto__',
       label: tr('pages.modelTester.automaticDefault'),
-      description: tr('pages.modelTester.routesnormalselectchannels'),
+      description: tr('pages.modelTester.routesnormalselecttargets'),
     },
-    ...forcedChannelOptions,
-  ], [forcedChannelOptions]);
+    ...forcedTargetOptions,
+  ], [forcedTargetOptions]);
 
-  const attachEnvelopeForcedChannel = useCallback((envelope: ProxyTestEnvelope) => (
-    attachForcedChannelToEnvelope(envelope, forcedChannelId)
-  ), [forcedChannelId]);
+  const attachEnvelopeForcedTarget = useCallback((envelope: ProxyTestEnvelope) => (
+    attachForcedTargetToEnvelope(envelope, forcedTargetId)
+  ), [forcedTargetId]);
 
   const buildModeProxyEnvelope = useCallback((): ProxyTestEnvelope | null => {
     if (inputs.mode === 'embeddings') {
@@ -1427,7 +1427,7 @@ export default function ModelTester() {
   const previewPayload = useMemo(() => {
     if (inputs.mode !== 'conversation') {
       const envelope = buildModeProxyEnvelope();
-      return envelope ? attachEnvelopeForcedChannel(envelope) : null;
+      return envelope ? attachEnvelopeForcedTarget(envelope) : null;
     }
     if (customRequestMode) {
       const raw = customRequestBody.trim();
@@ -1439,10 +1439,10 @@ export default function ModelTester() {
       }
     }
     if (inputs.protocol === 'gemini') {
-      return attachEnvelopeForcedChannel(buildConversationProxyEnvelope(messages));
+      return attachEnvelopeForcedTarget(buildConversationProxyEnvelope(messages));
     }
-    return attachEnvelopeForcedChannel(buildApiPayload(buildConversationMessagesWithSystem(messages), inputs, parameterEnabled));
-  }, [attachEnvelopeForcedChannel, buildConversationMessagesWithSystem, buildConversationProxyEnvelope, buildModeProxyEnvelope, customRequestBody, customRequestMode, inputs, messages, parameterEnabled]);
+    return attachEnvelopeForcedTarget(buildApiPayload(buildConversationMessagesWithSystem(messages), inputs, parameterEnabled));
+  }, [attachEnvelopeForcedTarget, buildConversationMessagesWithSystem, buildConversationProxyEnvelope, buildModeProxyEnvelope, customRequestBody, customRequestMode, inputs, messages, parameterEnabled]);
 
   useEffect(() => {
     setDebugPreview(formatJson(previewPayload));
@@ -1866,7 +1866,7 @@ export default function ModelTester() {
     payload: TestChatPayload,
     options?: { syncedCustomBody?: string },
   ) => {
-    const effectivePayload = attachEnvelopeForcedChannel(payload);
+    const effectivePayload = attachEnvelopeForcedTarget(payload);
     setMessages(nextMessages);
     if (options?.syncedCustomBody !== undefined) {
       setCustomRequestBody(options.syncedCustomBody);
@@ -1883,13 +1883,13 @@ export default function ModelTester() {
     } else {
       await startChatJob(effectivePayload);
     }
-  }, [attachEnvelopeForcedChannel, startChatJob, startStream]);
+  }, [attachEnvelopeForcedTarget, startChatJob, startStream]);
 
   const dispatchProxyEnvelope = useCallback(async (envelope: ProxyTestEnvelope, nextMessages?: ChatMessage[]) => {
-    const effectiveEnvelope = attachEnvelopeForcedChannel(envelope);
+    const effectiveEnvelope = attachEnvelopeForcedTarget(envelope);
     setError('');
     setDebugRequest(formatJson(effectiveEnvelope.rawMode
-      ? { path: effectiveEnvelope.path, rawJsonText: effectiveEnvelope.rawJsonText, forcedChannelId: effectiveEnvelope.forcedChannelId }
+      ? { path: effectiveEnvelope.path, rawJsonText: effectiveEnvelope.rawJsonText, forcedTargetId: effectiveEnvelope.forcedTargetId }
       : effectiveEnvelope));
     setDebugResponse('');
     setActiveDebugTab(DEBUG_TABS.REQUEST);
@@ -1925,7 +1925,7 @@ export default function ModelTester() {
     } finally {
       setSending(false);
     }
-  }, [attachEnvelopeForcedChannel, pushDebug, startProxyStream]);
+  }, [attachEnvelopeForcedTarget, pushDebug, startProxyStream]);
 
   const buildPayloadWithMessages = useCallback((nextMessages: ChatMessage[]): {
     payload: TestChatPayload | null;
@@ -2519,29 +2519,29 @@ export default function ModelTester() {
 
           <div className="mb-3.5">
             <div className="mb-1.5 text-xs font-medium text-muted-foreground">
-              {tr('pages.modelTester.channels')}
+              {tr('pages.modelTester.targets')}
             </div>
             <ModernSelect
-              value={typeof forcedChannelId === 'number' ? String(forcedChannelId) : '__auto__'}
+              value={typeof forcedTargetId === 'number' ? String(forcedTargetId) : '__auto__'}
               onChange={(next) => {
                 if (!next || next === '__auto__') {
-                  setForcedChannelId(null);
+                  setForcedTargetId(null);
                   return;
                 }
                 const parsed = Number.parseInt(next, 10);
-                setForcedChannelId(Number.isFinite(parsed) && parsed > 0 ? parsed : null);
+                setForcedTargetId(Number.isFinite(parsed) && parsed > 0 ? parsed : null);
               }}
-              options={forcedChannelSelectOptions}
-              placeholder={loadingForcedChannels ? tr('pages.modelTester.channelszh') : tr('pages.modelTester.automaticDefault')}
-              disabled={customRequestMode || inputs.mode === 'videos.inspect' || loadingForcedChannels}
-              emptyLabel={tr('pages.modelTester.modelnoneChannels')}
+              options={forcedTargetSelectOptions}
+              placeholder={loadingForcedTargets ? tr('pages.modelTester.targetszh') : tr('pages.modelTester.automaticDefault')}
+              disabled={customRequestMode || inputs.mode === 'videos.inspect' || loadingForcedTargets}
+              emptyLabel={tr('pages.modelTester.modelnoneTargets')}
               menuMaxHeight={300}
             />
             <div className="mt-1 text-xs text-muted-foreground">
-              {forcedChannelHint
-                || (typeof forcedChannelId === 'number'
-                  ? `已固定到通道 #${forcedChannelId}，失败不会自动切换。`
-                  : tr('pages.modelTester.defaultautomaticChannels'))}
+              {forcedTargetHint
+                || (typeof forcedTargetId === 'number'
+                  ? `已固定到目标 #${forcedTargetId}，失败不会自动切换。`
+                  : tr('pages.modelTester.defaultautomaticTargets'))}
             </div>
           </div>
 
@@ -2553,6 +2553,7 @@ export default function ModelTester() {
               flow={routeFlow}
               loading={routeFlowLoading}
               error={routeFlowError}
+              compact
             />
           </div>
 

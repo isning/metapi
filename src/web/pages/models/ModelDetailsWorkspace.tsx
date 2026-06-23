@@ -3,8 +3,6 @@ import { BrandIcon } from '../../components/BrandIcon.js';
 import EmptyStateBlock from '../../components/EmptyStateBlock.js';
 import ToneBadge from '../../components/ToneBadge.js';
 import EntityHeader from '../../components/workspace/EntityHeader.js';
-import InspectorPanel from '../../components/workspace/InspectorPanel.js';
-import JsonBlock from '../../components/details/JsonBlock.js';
 import { Button } from '../../components/ui/button/index.js';
 import * as Tabs from '../../components/ui/tabs/index.js';
 import type { ModelDetailsTab, ModelDetailsView, ModelMetricsRange } from './modelDetailsView.js';
@@ -141,30 +139,5 @@ export default function ModelDetailsWorkspace({
         </Tabs.Tabs>
       </div>
     </div>
-  );
-}
-
-export function ModelInspector({ details }: { details: ModelDetailsView | null }) {
-  if (!details) return <InspectorPanel />;
-  return (
-    <InspectorPanel
-      title={details.model.name}
-      description="Model workspace context"
-      summary={(
-        <div className="grid gap-2 text-sm">
-          <div>Status: {details.status}</div>
-          <div>Route nodes: {details.routeFlow?.nodes.length ?? 'unknown'}</div>
-          <div>Diagnostics: {details.diagnostics.length}</div>
-        </div>
-      )}
-      metrics={(
-        <div className="grid gap-2 text-sm">
-          <div>Success: {formatSuccessRate(details.model.successRate)}</div>
-          <div>Latency: {formatLatencyValue(details.model.avgLatency)}</div>
-        </div>
-      )}
-      config={<div className="text-sm text-muted-foreground">Select graph nodes in a future routing slice to inspect node config here.</div>}
-      json={<JsonBlock value={details.routeFlow ?? details.model} />}
-    />
   );
 }

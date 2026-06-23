@@ -1203,7 +1203,7 @@ describe('buildUpstreamEndpointRequest', () => {
       downstreamFormat: 'openai',
       downstreamHeaders: {
         'x-metapi-responses-websocket-transport': '1',
-        'x-metapi-tester-forced-channel-id': '77',
+        'x-metapi-tester-forced-target-id': '77',
       },
       platformHeaders: {
         Originator: 'codex_cli_rs',
@@ -1212,7 +1212,7 @@ describe('buildUpstreamEndpointRequest', () => {
 
     expect(request.headers['x-codex-beta-features']).toBe('multi_agent');
     expect(request.headers['x-metapi-responses-websocket-transport']).toBeUndefined();
-    expect(request.headers['x-metapi-tester-forced-channel-id']).toBeUndefined();
+    expect(request.headers['x-metapi-tester-forced-target-id']).toBeUndefined();
   });
 
   it('applies configured payload rules before preparing codex responses requests while forcing store false', () => {

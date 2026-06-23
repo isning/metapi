@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-const routeChannelCreatePayloadSchema = z.object({
+const routeEndpointTargetCreatePayloadSchema = z.object({
   accountId: z.number().int().positive(),
   tokenId: z.union([z.number().int().positive(), z.null()]).optional(),
   sourceModel: z.string().optional(),
@@ -8,15 +8,15 @@ const routeChannelCreatePayloadSchema = z.object({
   weight: z.number().optional(),
 }).passthrough();
 
-const routeChannelBatchCreatePayloadSchema = z.object({
-  channels: z.array(z.object({
+const routeEndpointTargetBatchCreatePayloadSchema = z.object({
+  targets: z.array(z.object({
     accountId: z.number().int().positive(),
     tokenId: z.union([z.number().int().positive(), z.null()]).optional(),
     sourceModel: z.string().optional(),
   }).passthrough()).min(1),
 }).passthrough();
 
-const routeChannelUpdatePayloadSchema = z.object({
+const routeEndpointTargetUpdatePayloadSchema = z.object({
   tokenId: z.union([z.number().int().positive(), z.null()]).optional(),
   sourceModel: z.union([z.string(), z.null()]).optional(),
   priority: z.number().optional(),
@@ -32,7 +32,7 @@ const routeGraphMatchPayloadSchema = z.object({
 
 const routeGraphBackendPayloadSchema = z.discriminatedUnion('kind', [
   z.object({
-    kind: z.literal('channels'),
+    kind: z.literal('supply'),
   }).passthrough(),
   z.object({
     kind: z.literal('routes'),
@@ -98,9 +98,9 @@ const routeGraphSourcePayloadSchema = z.object({
   metadata: z.record(z.string(), z.unknown()).optional(),
 }).passthrough();
 
-export type RouteChannelBatchCreatePayload = z.output<typeof routeChannelBatchCreatePayloadSchema>;
-export type RouteChannelCreatePayload = z.output<typeof routeChannelCreatePayloadSchema>;
-export type RouteChannelUpdatePayload = z.output<typeof routeChannelUpdatePayloadSchema>;
+export type RouteEndpointTargetBatchCreatePayload = z.output<typeof routeEndpointTargetBatchCreatePayloadSchema>;
+export type RouteEndpointTargetCreatePayload = z.output<typeof routeEndpointTargetCreatePayloadSchema>;
+export type RouteEndpointTargetUpdatePayload = z.output<typeof routeEndpointTargetUpdatePayloadSchema>;
 export type RouteRebuildPayload = z.output<typeof routeRebuildPayloadSchema>;
 export type RouteGraphSourcePayload = z.output<typeof routeGraphSourcePayloadSchema>;
 export type TokenRouteBatchPayload = z.output<typeof tokenRouteBatchPayloadSchema>;
@@ -109,63 +109,6 @@ export type TokenRouteUpdatePayload = z.output<typeof tokenRouteUpdatePayloadSch
 
 function normalizeTokenRoutePayloadInput(input: unknown): unknown {
   return input === undefined ? {} : input;
-}
-
-function normalizeLegacyTokenRoutePayloadInput(input: unknown): unknown {
-  const raw = normalizeTokenRoutePayloadInput(input);
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw;
-  const record = raw as Record<string, unknown>;
-  if (record.match !== undefined || record.backend !== undefined) return raw;
-  const hasLegacyRouteShape = record.modelPattern !== undefined
-    || record.routeMode !== undefined
-    || record.sourceRouteIds !== undefined
-    || record.displayName !== undefined
-    || record.displayIcon !== undefined;
-  if (!hasLegacyRouteShape) return raw;
-
-  const routeMode = typeof record.routeMode === 'string' ? record.routeMode : 'pattern';
-  const displayName = typeof record.displayName === 'string' || record.displayName === null
-    ? record.displayName
-    : null;
-  const modelPattern = typeof record.modelPattern === 'string'
-    ? record.modelPattern
-    : (typeof displayName === 'string' ? displayName : '');
-  const sourceRouteIds = Array.isArray(record.sourceRouteIds)
-    ? record.sourceRouteIds.filter((value): value is number => Number.isFinite(Number(value)) && Number(value) > 0).map((value) => Math.trunc(Number(value)))
-    : [];
-
-  if (routeMode === 'explicit_group') {
-    return {
-      ...record,
-      match: {
-        kind: 'model',
-        requestedModelPattern: '',
-        displayName: displayName || modelPattern,
-      },
-      backend: {
-        kind: 'routes',
-        routeIds: sourceRouteIds,
-      },
-      presentation: {
-        displayName: displayName || modelPattern,
-        displayIcon: record.displayIcon ?? null,
-      },
-    };
-  }
-
-  return {
-    ...record,
-    match: {
-      kind: 'model',
-      requestedModelPattern: modelPattern,
-      displayName,
-    },
-    backend: { kind: 'channels' },
-    presentation: {
-      displayName,
-      displayIcon: record.displayIcon ?? null,
-    },
-  };
 }
 
 function formatTokenRoutePayloadError(error: z.ZodError): string {
@@ -234,17 +177,17 @@ function formatTokenRoutePayloadError(error: z.ZodError): string {
   if (firstPath === 'edges') {
     return 'Invalid route graph edges. Expected edge array.';
   }
-  if (firstPath === 'channels' && thirdPath === 'accountId') {
-    return 'Invalid channels[].accountId. Expected positive number.';
+  if (firstPath === 'targets' && thirdPath === 'accountId') {
+    return 'Invalid targets[].accountId. Expected positive number.';
   }
-  if (firstPath === 'channels' && thirdPath === 'tokenId') {
-    return 'Invalid channels[].tokenId. Expected positive number or null.';
+  if (firstPath === 'targets' && thirdPath === 'tokenId') {
+    return 'Invalid targets[].tokenId. Expected positive number or null.';
   }
-  if (firstPath === 'channels' && thirdPath === 'sourceModel') {
-    return 'Invalid channels[].sourceModel. Expected string.';
+  if (firstPath === 'targets' && thirdPath === 'sourceModel') {
+    return 'Invalid targets[].sourceModel. Expected string.';
   }
-  if (firstPath === 'channels') {
-    return 'Invalid channels. Expected channel array.';
+  if (firstPath === 'targets') {
+    return 'Invalid targets. Expected target array.';
   }
   return 'Invalid token route payload.';
 }
@@ -268,12 +211,12 @@ function parseTokenRoutePayload<T extends z.ZodTypeAny>(
 
 export function parseTokenRouteCreatePayload(input: unknown):
 { success: true; data: TokenRouteCreatePayload } | { success: false; error: string } {
-  return parseTokenRoutePayload(tokenRouteCreatePayloadSchema, normalizeLegacyTokenRoutePayloadInput(input));
+  return parseTokenRoutePayload(tokenRouteCreatePayloadSchema, input);
 }
 
 export function parseTokenRouteUpdatePayload(input: unknown):
 { success: true; data: TokenRouteUpdatePayload } | { success: false; error: string } {
-  return parseTokenRoutePayload(tokenRouteUpdatePayloadSchema, normalizeLegacyTokenRoutePayloadInput(input));
+  return parseTokenRoutePayload(tokenRouteUpdatePayloadSchema, input);
 }
 
 export function parseTokenRouteBatchPayload(input: unknown):
@@ -281,19 +224,19 @@ export function parseTokenRouteBatchPayload(input: unknown):
   return parseTokenRoutePayload(tokenRouteBatchPayloadSchema, input);
 }
 
-export function parseRouteChannelCreatePayload(input: unknown):
-{ success: true; data: RouteChannelCreatePayload } | { success: false; error: string } {
-  return parseTokenRoutePayload(routeChannelCreatePayloadSchema, input);
+export function parseRouteEndpointTargetCreatePayload(input: unknown):
+{ success: true; data: RouteEndpointTargetCreatePayload } | { success: false; error: string } {
+  return parseTokenRoutePayload(routeEndpointTargetCreatePayloadSchema, input);
 }
 
-export function parseRouteChannelBatchCreatePayload(input: unknown):
-{ success: true; data: RouteChannelBatchCreatePayload } | { success: false; error: string } {
-  return parseTokenRoutePayload(routeChannelBatchCreatePayloadSchema, input);
+export function parseRouteEndpointTargetBatchCreatePayload(input: unknown):
+{ success: true; data: RouteEndpointTargetBatchCreatePayload } | { success: false; error: string } {
+  return parseTokenRoutePayload(routeEndpointTargetBatchCreatePayloadSchema, input);
 }
 
-export function parseRouteChannelUpdatePayload(input: unknown):
-{ success: true; data: RouteChannelUpdatePayload } | { success: false; error: string } {
-  return parseTokenRoutePayload(routeChannelUpdatePayloadSchema, input);
+export function parseRouteEndpointTargetUpdatePayload(input: unknown):
+{ success: true; data: RouteEndpointTargetUpdatePayload } | { success: false; error: string } {
+  return parseTokenRoutePayload(routeEndpointTargetUpdatePayloadSchema, input);
 }
 
 export function parseRouteRebuildPayload(input: unknown):

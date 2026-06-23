@@ -25,8 +25,8 @@ const recordOauthQuotaResetHintMock = vi.fn<(input: unknown) => Promise<void>>(a
 const insertedProxyLogs: Record<string, unknown>[] = [];
 const originalProxyEmptyContentFailEnabled = config.proxyEmptyContentFailEnabled;
 const originalProxyStickySessionEnabled = config.proxyStickySessionEnabled;
-const originalProxySessionChannelConcurrencyLimit = config.proxySessionChannelConcurrencyLimit;
-const originalProxySessionChannelQueueWaitMs = config.proxySessionChannelQueueWaitMs;
+const originalProxySessionChannelConcurrencyLimit = config.proxySessionTargetConcurrencyLimit;
+const originalProxySessionChannelQueueWaitMs = config.proxySessionTargetQueueWaitMs;
 const dbInsertMock = vi.fn((_arg?: any) => ({
   values: (values: Record<string, unknown>) => {
     insertedProxyLogs.push(values);
@@ -196,8 +196,8 @@ describe('responses proxy codex oauth refresh', () => {
     resetCodexSessionResponseStore();
     config.proxyEmptyContentFailEnabled = false;
     config.proxyStickySessionEnabled = originalProxyStickySessionEnabled;
-    config.proxySessionChannelConcurrencyLimit = originalProxySessionChannelConcurrencyLimit;
-    config.proxySessionChannelQueueWaitMs = originalProxySessionChannelQueueWaitMs;
+    config.proxySessionTargetConcurrencyLimit = originalProxySessionChannelConcurrencyLimit;
+    config.proxySessionTargetQueueWaitMs = originalProxySessionChannelQueueWaitMs;
     (config as any).openAiServiceTierRules = undefined;
     fetchMock.mockReset();
     selectChannelMock.mockReset();
@@ -248,8 +248,8 @@ describe('responses proxy codex oauth refresh', () => {
   afterAll(async () => {
     config.proxyEmptyContentFailEnabled = originalProxyEmptyContentFailEnabled;
     config.proxyStickySessionEnabled = originalProxyStickySessionEnabled;
-    config.proxySessionChannelConcurrencyLimit = originalProxySessionChannelConcurrencyLimit;
-    config.proxySessionChannelQueueWaitMs = originalProxySessionChannelQueueWaitMs;
+    config.proxySessionTargetConcurrencyLimit = originalProxySessionChannelConcurrencyLimit;
+    config.proxySessionTargetQueueWaitMs = originalProxySessionChannelQueueWaitMs;
     if (app) {
       await app.close();
     }
@@ -1196,8 +1196,8 @@ describe('responses proxy codex oauth refresh', () => {
 
   it('does not gate codex responses requests without a downstream session id behind the session lease queue', async () => {
     config.proxyStickySessionEnabled = true;
-    config.proxySessionChannelConcurrencyLimit = 1;
-    config.proxySessionChannelQueueWaitMs = 20;
+    config.proxySessionTargetConcurrencyLimit = 1;
+    config.proxySessionTargetQueueWaitMs = 20;
 
     const firstUpstream = createDeferred<Response>();
     fetchMock

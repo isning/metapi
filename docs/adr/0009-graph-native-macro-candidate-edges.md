@@ -22,12 +22,12 @@ The remaining modeling gap is macro candidate ownership. Current
 ids into dispatcher candidates. That is enough for list-style editing, but it
 does not make candidate relationships graph-native:
 
-- generated previews may show cloned `model_endpoint` nodes instead of the
+- generated previews may show cloned `route_endpoint` nodes instead of the
   actual upstream supply endpoint;
 - a concrete supply endpoint is not visibly connected to the macro that selects
   it;
 - generated node and edge ids can become the apparent editing target even though
-  automatic graph data is a projection;
+  automatic graph data is read-only generated data;
 - route group lists can drift toward being a parallel route model instead of a
   high-level editor over the semantic graph.
 
@@ -39,7 +39,7 @@ route_endpoint endpointKind=supply
   -> generated dispatcher route candidates
 ```
 
-The route group list is a domain-specific projection of this semantic graph. It
+The route group list is a domain-specific view of this semantic graph. It
 must not create or own a separate route system.
 
 ## Decision
@@ -76,7 +76,7 @@ route_endpoint:supply:... route.out
 ```
 
 The dispatcher candidate is the `route_endpoint endpointKind=supply` node
-itself. It is not a cloned `model_endpoint`. `model_endpoint` may still exist as
+itself. It is not a cloned `route_endpoint`. `route_endpoint` may still exist as
 a low-level compatibility or target-selection implementation detail, but it is
 not the user-facing candidate identity for upstream supply.
 
@@ -104,14 +104,14 @@ remains `route`, so existing dispatcher candidate semantics stay coherent.
 `candidate_selector` lowering must support:
 
 1. explicit semantic graph edges targeting `macro.candidates.in`;
-2. compatibility generation from `macro.config.groups[].input.endpointIds`
+2. generated edge materialization from `macro.config.groups[].input.endpointIds`
    during migration and transitional editing.
 
 The graph-native edge path is the source model going forward.
 
 ## Candidate Configuration And Overrides
 
-Automatic graph nodes and edges are projections. They are not directly
+Automatic graph nodes and edges are generated graph data. They are not directly
 editable. Users must not delete, reconnect, drag-rewire, or mutate automatic
 candidate edges on the canvas.
 
@@ -146,7 +146,7 @@ effectiveCandidate = generatedDefault + macro candidate override
 
 Rules:
 
-- automatic candidate edges are read-only projection output;
+- automatic candidate edges are read-only generated output;
 - priority bucket changes write `candidateOverrides`;
 - weight changes write `candidateOverrides`;
 - enable/disable and include/exclude write `candidateOverrides`;
@@ -159,14 +159,14 @@ Rules:
 
 ## List View Relationship
 
-The route group list is not a second route model. It is a high-level projection
-of graph semantic objects:
+The route group list is not a second route model. It is a high-level view of
+graph semantic objects:
 
 ```text
 semantic graph
   -> candidate_selector macros
   -> route_product endpoints
-  -> route group list projection
+  -> route group list view
 ```
 
 List edits write graph semantic mutations:
@@ -259,7 +259,7 @@ The lowered debug graph may still show generated primitive entry and dispatcher
 nodes for macro inspection, but candidate nodes should remain semantic endpoint
 nodes whenever possible. Source maps must point back to:
 
-- the candidate edge or generated candidate projection;
+- the candidate edge or generated candidate edge;
 - the owning macro;
 - the selected endpoint id;
 - any candidate override that affected policy.
@@ -295,7 +295,7 @@ Benefits:
   supply endpoint;
 - generated graph previews link to actual graph endpoints, not clone nodes;
 - list and graph editing share one semantic source of truth;
-- automatic rebuilds can refresh generated projection while preserving user
+- automatic rebuilds can refresh generated graph data while preserving user
   overrides;
 - manual macros can aggregate products, concrete supplies, and synthetic
   fallbacks with one picker.
@@ -318,7 +318,7 @@ Migration should:
    `supply/product -> macro.candidates.in` edges when deterministic.
 3. Preserve group policy by moving candidate instance properties into
    `candidateOverrides` or generated edge metadata.
-4. Preserve automatic graph data as read-only projections.
+4. Preserve automatic graph data as read-only generated data.
 5. Recompile active route graphs to program bundle v3.
 6. Fail import with actionable diagnostics if candidate ownership cannot be
    determined.

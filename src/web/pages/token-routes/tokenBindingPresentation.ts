@@ -121,13 +121,13 @@ export function describeTokenBinding(
     const effectiveTokenName = defaultToken?.name || fallbackTokenName || tr('pages.tokenRoutes.tokenBindingPresentation.notSetdefaultToken');
     return {
       isFollowingAccountDefault: true,
-      bindingModeLabel: tr('pages.tokenRoutes.addChannelModal.accountsdefault'),
+      bindingModeLabel: tr('pages.tokenRoutes.addRouteTargetModal.accountsdefault'),
       badgeTone: 'info',
       effectiveTokenName,
       helperText: defaultToken
         ? tr('pages.tokenRoutes.tokenBindingPresentation.followDefaultHelper').replace('{token}', defaultToken.name)
         : tr('pages.tokenRoutes.tokenBindingPresentation.accountsdefaultAccountsDefaultToken'),
-      followOptionLabel: tr('pages.tokenRoutes.addChannelModal.accountsdefault'),
+      followOptionLabel: tr('pages.tokenRoutes.addRouteTargetModal.accountsdefault'),
       followOptionDescription: defaultToken
         ? tr('pages.tokenRoutes.tokenBindingPresentation.followDefaultDescription').replace('{token}', defaultToken.name)
         : tr('pages.tokenRoutes.tokenBindingPresentation.accountsdefaultAutomatic'),
@@ -145,7 +145,7 @@ export function describeTokenBinding(
       : tr('pages.tokenRoutes.tokenBindingPresentation.fixedTokenHelper').replace('{token}', effectiveTokenName),
     followOptionLabel: connectionMode === 'oauth'
       ? tr('pages.tokenRoutes.tokenBindingPresentation.oauth')
-      : (connectionMode === 'apikey' ? tr('pages.tokenRoutes.tokenBindingPresentation.apiSettings') : tr('pages.tokenRoutes.addChannelModal.accountsdefault')),
+      : (connectionMode === 'apikey' ? tr('pages.tokenRoutes.tokenBindingPresentation.apiSettings') : tr('pages.tokenRoutes.addRouteTargetModal.accountsdefault')),
     followOptionDescription: connectionMode === 'oauth'
       ? tr('pages.tokenRoutes.tokenBindingPresentation.oauthDirectDescription').replace('{account}', accountName)
       : (connectionMode === 'apikey'

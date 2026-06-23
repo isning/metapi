@@ -27,7 +27,7 @@ describe('rebuildTokenRoutesFromAvailability with site disabled models', () => {
     });
 
     beforeEach(async () => {
-        await db.delete(schema.routeChannels).run();
+        await db.delete(schema.routeEndpointTargets).run();
         await db.delete(schema.tokenRoutes).run();
         await db.delete(schema.tokenModelAvailability).run();
         await db.delete(schema.modelAvailability).run();
@@ -133,8 +133,8 @@ describe('rebuildTokenRoutesFromAvailability with site disabled models', () => {
             .get();
         expect(route).toBeDefined();
 
-        const channels = await db.select().from(schema.routeChannels)
-            .where(eq(schema.routeChannels.routeId, route!.id))
+        const channels = await db.select().from(schema.routeEndpointTargets)
+            .where(eq(schema.routeEndpointTargets.routeId, route!.id))
             .all();
 
         // Only site B's channel should exist

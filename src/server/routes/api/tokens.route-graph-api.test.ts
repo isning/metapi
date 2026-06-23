@@ -44,7 +44,7 @@ describe('/api/route-graph lifecycle', () => {
       ...tokenRouteFixture({ modelPattern: model }),
       enabled: true,
     }).returning().get();
-    const channel = await db.insert(schema.routeChannels).values({
+    const channel = await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: account.id,
       tokenId: token.id,
@@ -81,7 +81,7 @@ describe('/api/route-graph lifecycle', () => {
     await db.delete(schema.routeGraphActiveVersion).run();
     await db.delete(schema.routeGraphVersions).run();
     await db.delete(schema.routeGroupSources).run();
-    await db.delete(schema.routeChannels).run();
+    await db.delete(schema.routeEndpointTargets).run();
     await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.accountTokens).run();
     await db.delete(schema.accounts).run();
@@ -117,7 +117,6 @@ describe('/api/route-graph lifecycle', () => {
     expect(activeBody.sourceGraph.nodes).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: expect.stringMatching(/^route-endpoint:supply:upstream-model:/), type: 'route_endpoint', endpointKind: 'supply' }),
       expect.objectContaining({ id: 'route-endpoint:product:auto-model:graph-api-model', type: 'route_endpoint', endpointKind: 'route_product' }),
-      expect.objectContaining({ id: `pool:legacy:${seeded.route.id}`, type: 'model_endpoint' }),
     ]));
     expect(activeBody.compiledGraph.publicModels).toEqual(expect.arrayContaining([
       expect.objectContaining({ model: 'graph-api-model' }),
@@ -215,13 +214,13 @@ describe('/api/route-graph lifecycle', () => {
         },
         {
           id: 'endpoint.manual',
-          type: 'model_endpoint',
+          type: 'route_endpoint',
           enabled: true,
           visibility: 'internal',
           ownership: 'manual',
           legacyRouteId: seeded.route.id,
           config: {
-            targets: [{ channelId: String(seeded.channel.id), model: 'manual-api-model' }],
+            targets: [{ targetId: String(seeded.target.id), model: 'manual-api-model' }],
             targetSelection: { strategy: 'defer_to_router' },
           },
         },
@@ -341,20 +340,17 @@ describe('/api/route-graph lifecycle', () => {
     });
     expect(initialDraft.statusCode).toBe(200);
 
-    const createGroup = await app.inject({
-      method: 'POST',
-      url: '/api/routes',
-      headers: app.adminHeaders(),
-      payload: {
-        match: { kind: 'model', requestedModelPattern: '', displayName: 'public-group' },
-        backend: { kind: 'routes', routeIds: [source.route.id] },
-        presentation: { displayName: 'public-group', displayIcon: 'Layers' },
-        routingStrategy: 'round_robin',
-        enabled: true,
-      },
+    const groupInsert = await db.insert(schema.tokenRoutes).values({
+      displayName: 'public-group',
+      displayIcon: 'Layers',
+      routingStrategy: 'round_robin',
+      enabled: true,
     });
-    expect(createGroup.statusCode).toBe(200);
-    const groupRouteId = createGroup.json().id as number;
+    const groupRouteId = Number(groupInsert.lastInsertRowid || groupInsert.insertId);
+    await db.insert(schema.routeGroupSources).values({
+      groupRouteId,
+      sourceRouteId: source.route.id,
+    });
 
     const rebase = await app.inject({
       method: 'POST',
@@ -379,7 +375,7 @@ describe('/api/route-graph lifecycle', () => {
                   expect.objectContaining({
                     input: {
                       kind: 'route_endpoints',
-                      endpointIds: ['route-endpoint:product:auto-model:source-model'],
+                      endpointIds: [expect.stringMatching(/^route-endpoint:supply:upstream-model:/)],
                     },
                   }),
                 ],
@@ -407,6 +403,13 @@ describe('/api/route-graph lifecycle', () => {
         macros?: Array<unknown>;
       };
     };
+    const supplyEndpoint = activeBody.sourceGraph.nodes.find((node: any) => (
+      node?.type === 'route_endpoint'
+      && node?.endpointKind === 'supply'
+      && Array.isArray(node?.metadata?.sourceRouteIds)
+      && node.metadata.sourceRouteIds.includes(source.route.id)
+    )) as { id: string } | undefined;
+    expect(supplyEndpoint).toBeDefined();
 
     const graphWithMacro = {
       version: 1,
@@ -440,7 +443,7 @@ describe('/api/route-graph lifecycle', () => {
                 priority: 0,
                 input: {
                   kind: 'route_endpoints',
-                  endpointIds: ['route-endpoint:product:auto-model:macro-source-model'],
+                  endpointIds: [supplyEndpoint!.id],
                 },
                 defaults: {
                   weight: 10,
@@ -487,12 +490,9 @@ describe('/api/route-graph lifecycle', () => {
     const runtimeSelection = await evaluateActiveRouteGraphForModel('macro-public-model');
     expect(runtimeSelection).toMatchObject({
       selectedRouteId: source.route.id,
-      terminalKind: 'model_endpoint',
+      terminalKind: 'route_endpoint',
       currentModel: 'macro-source-model',
-      selectedEndpointTarget: expect.objectContaining({
-        channelId: String(source.channel.id),
-        model: 'macro-source-model',
-      }),
+      selectedEndpointTarget: null,
     });
   });
 
@@ -597,7 +597,7 @@ describe('/api/route-graph lifecycle', () => {
     const runtimeSelection = await evaluateActiveRouteGraphForModel('claude-pattern-group');
     expect(runtimeSelection).toMatchObject({
       selectedRouteId: opus.route.id,
-      terminalKind: 'model_endpoint',
+      terminalKind: 'route_endpoint',
       currentModel: 'claude-opus-api-model',
     });
     expect(runtimeSelection?.selectedEndpointTarget).toBeNull();
@@ -619,6 +619,13 @@ describe('/api/route-graph lifecycle', () => {
       };
       version: { id: number };
     };
+    const supplyEndpoint = activeBody.sourceGraph.nodes.find((node: any) => (
+      node?.type === 'route_endpoint'
+      && node?.endpointKind === 'supply'
+      && Array.isArray(node?.metadata?.sourceRouteIds)
+      && node.metadata.sourceRouteIds.includes(source.route.id)
+    )) as { id: string } | undefined;
+    expect(supplyEndpoint).toBeDefined();
 
     const graphWithEmbeddedMacro = {
       version: 1,
@@ -677,7 +684,7 @@ describe('/api/route-graph lifecycle', () => {
           id: 'embedded-to-endpoint',
           sourceNodeId: 'macro:api:embedded',
           sourcePortId: 'flow.out',
-          targetNodeId: `pool:legacy:${source.route.id}`,
+          targetNodeId: supplyEndpoint!.id,
           targetPortId: 'bidirect.in',
           kind: 'bidirect_flow',
           ownership: 'manual',
@@ -714,7 +721,7 @@ describe('/api/route-graph lifecycle', () => {
     const runtimeSelection = await evaluateActiveRouteGraphForModel('embedded-source-model');
     expect(runtimeSelection).toMatchObject({
       selectedRouteId: source.route.id,
-      terminalKind: 'model_endpoint',
+      terminalKind: 'route_endpoint',
       currentModel: 'embedded-source-model',
     });
   });

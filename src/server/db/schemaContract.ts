@@ -107,11 +107,84 @@ function splitMigrationStatements(sqlText: string): string[] {
     .filter((statement) => statement.length > 0);
 }
 
+function normalizeSqlForMatch(sqlText: string): string {
+  return sqlText
+    .replace(/[`"]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+function columnExists(sqlite: Database.Database, table: string, column: string): boolean {
+  try {
+    const rows = sqlite.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name?: string }>;
+    return rows.some((row) => row.name === column);
+  } catch {
+    return false;
+  }
+}
+
+function isRecoverableSchemaConflictError(error: unknown): boolean {
+  const message = typeof error === 'object' && error && 'message' in error
+    ? String((error as { message?: unknown }).message || '')
+    : String(error || '');
+  const lowered = message.toLowerCase();
+  return lowered.includes('duplicate column')
+    || lowered.includes('duplicate column name')
+    || lowered.includes('already exists');
+}
+
+function shouldSkipLegacyProxyTargetBackfillStatement(
+  sqlite: Database.Database,
+  statement: string,
+): boolean {
+  const normalized = normalizeSqlForMatch(statement);
+  if (
+    normalized.includes('update proxy_logs')
+    && normalized.includes('target_id = channel_id')
+  ) {
+    return !columnExists(sqlite, 'proxy_logs', 'channel_id');
+  }
+
+  if (
+    normalized.includes('update proxy_debug_traces')
+    && normalized.includes('sticky_hit_target_id = sticky_hit_channel_id')
+  ) {
+    return !columnExists(sqlite, 'proxy_debug_traces', 'sticky_hit_channel_id');
+  }
+
+  if (
+    normalized.includes('update proxy_debug_traces')
+    && normalized.includes('selected_target_id = selected_channel_id')
+  ) {
+    return !columnExists(sqlite, 'proxy_debug_traces', 'selected_channel_id');
+  }
+
+  if (
+    normalized.includes('update proxy_video_tasks')
+    && normalized.includes('target_id = channel_id')
+  ) {
+    return !columnExists(sqlite, 'proxy_video_tasks', 'channel_id');
+  }
+
+  return false;
+}
+
 function applySqliteMigrations(sqlite: Database.Database, migrationsFolder: string): void {
   for (const migrationFile of resolveMigrationFiles(migrationsFolder)) {
     const sqlText = readFileSync(join(migrationsFolder, migrationFile), 'utf8');
     for (const statement of splitMigrationStatements(sqlText)) {
-      sqlite.exec(statement);
+      if (shouldSkipLegacyProxyTargetBackfillStatement(sqlite, statement)) {
+        continue;
+      }
+      try {
+        sqlite.exec(statement);
+      } catch (error) {
+        if (isRecoverableSchemaConflictError(error)) {
+          continue;
+        }
+        throw error;
+      }
     }
   }
 }

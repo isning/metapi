@@ -81,7 +81,7 @@ function buildListResponse(overrides?: Partial<{
     ],
     total: 1,
     page: 1,
-    pageSize: 50,
+    pageSize: 20,
     summary: {
       totalCount: 12,
       successCount: 8,
@@ -178,6 +178,56 @@ describe('ProxyLogs server-driven page', () => {
       downstreamKeyName: '移动端灰度',
       downstreamKeyGroupName: '项目A',
       downstreamKeyTags: ['VIP', '灰度'],
+      routeDecision: {
+        source: 'snapshot',
+        capturedAt: '2026-03-09 15:56:30',
+        requestedModel: 'gpt-4o',
+        actualModel: 'gpt-4o',
+        route: {
+          id: 31,
+          displayName: '主力路由',
+          displayIcon: 'route',
+          routingStrategy: 'stable_first',
+          enabled: true,
+          decisionRefreshedAt: '2026-03-09 15:50:00',
+          snapshotSummary: {
+            matchKind: 'model',
+            requestedModelPattern: 'gpt-4o',
+            backendKind: 'routes',
+            sourceRouteIds: [31, 32],
+          },
+        },
+        target: {
+          id: 91,
+          routeEndpointId: 'entry:legacy:31',
+          accountId: 3,
+          tokenId: 8,
+          oauthRouteUnitId: null,
+          sourceModel: 'gpt-4o',
+          priority: 10,
+          weight: 20,
+          enabled: true,
+          manualOverride: true,
+          successCount: 11,
+          failCount: 2,
+          totalLatencyMs: 3000,
+          totalCost: 0.4,
+          lastUsedAt: '2026-03-09 15:55:00',
+          lastSelectedAt: '2026-03-09 15:56:00',
+          lastFailAt: null,
+          consecutiveFailCount: 1,
+          cooldownLevel: 0,
+          cooldownUntil: null,
+        },
+        token: {
+          id: 8,
+          name: 'Premium Token',
+          tokenGroup: 'premium',
+          enabled: true,
+          valueStatus: 'ready',
+          source: 'manual',
+        },
+      },
       billingDetails: {
         breakdown: {
           inputPerMillion: 1,
@@ -227,9 +277,56 @@ describe('ProxyLogs server-driven page', () => {
         id: 701,
         requestedModel: 'gpt-4o',
         sessionId: 'sess-debug-1',
+        downstreamPath: '/v1/responses',
+        finalStatus: 'failed',
+        finalHttpStatus: 502,
+        finalUpstreamPath: '/responses',
+        clientKind: 'codex',
+        selectedTargetId: 91,
+        selectedRouteId: 31,
+        selectedSiteId: 12,
+        selectedSitePlatform: 'new-api',
+        selectedRouteDisplay: {
+          id: 31,
+          label: 'GPT-4o production route',
+          routingStrategy: 'weighted',
+        },
+        selectedTargetDisplay: {
+          id: 91,
+          label: 'alice @ main-site / primary-token',
+          sourceModel: 'gpt-4o',
+          siteName: 'main-site',
+          sitePlatform: 'new-api',
+        },
+        selectedSiteDisplay: {
+          id: 12,
+          label: 'main-site',
+          platform: 'new-api',
+          url: 'https://upstream.example.com',
+        },
         requestHeadersJson: '{\n  "authorization": "Bearer demo"\n}',
+        decisionSummaryJson: '{\n  "downstreamFormat": "openai/responses"\n}',
       },
-      attempts: [],
+      attempts: [
+        {
+          id: 9001,
+          attemptIndex: 0,
+          endpoint: 'openai/responses',
+          requestPath: '/v1/responses',
+          targetUrl: 'https://upstream.example.com/responses',
+          runtimeExecutor: 'default',
+          requestHeadersJson: '{\n  "content-type": "application/json"\n}',
+          requestBodyJson: '{\n  "model": "gpt-4o"\n}',
+          responseStatus: 502,
+          responseHeadersJson: '{\n  "x-request-id": "req_1"\n}',
+          responseBodyJson: '{\n  "error": "bad gateway"\n}',
+          rawErrorText: 'bad gateway',
+          recoverApplied: true,
+          downgradeDecision: false,
+          downgradeReason: null,
+          memoryWriteJson: '{\n  "blocked": ["responses"]\n}',
+        },
+      ],
     });
     apiMock.updateRuntimeSettings.mockResolvedValue({
       success: true,
@@ -265,14 +362,14 @@ describe('ProxyLogs server-driven page', () => {
       await flushMicrotasks();
 
       expect(apiMock.getProxyLogs).toHaveBeenCalledWith({
-        limit: 50,
+        limit: 20,
         offset: 0,
         status: 'all',
         search: '',
       });
 
       const text = collectText(root!.root);
-      expect(text).toContain('消耗总额 $1.2300');
+      expect(text).toContain('$1.2300');
       expect(text).toContain('全部 12');
       expect(text).toContain('成功 8');
       expect(text).toContain('失败 4');
@@ -582,7 +679,11 @@ describe('ProxyLogs server-driven page', () => {
 
       expect(apiMock.getProxyDebugTraceDetail).toHaveBeenCalledWith(701);
       expect(collectText(root.root)).toContain('原始下游请求头');
-      expect(collectText(root.root)).toContain('Attempt 记录');
+      expect(collectText(root.root)).toContain('Attempt 时间线');
+      expect(collectText(root.root)).toContain('alice @ main-site / primary-token (#91)');
+      expect(collectText(root.root)).toContain('GPT-4o production route (#31)');
+      expect(collectText(root.root)).toContain('main-site · new-api (#12)');
+      expect(collectText(root.root)).toContain('运行时状态更新');
     } finally {
       root?.unmount();
     }
@@ -916,20 +1017,20 @@ describe('ProxyLogs server-driven page', () => {
       await flushMicrotasks();
 
       expect(apiMock.getProxyLogs).toHaveBeenNthCalledWith(2, {
-        limit: 50,
+        limit: 20,
         offset: 0,
         status: 'failed',
         search: '',
       });
       expect(apiMock.getProxyLogs).toHaveBeenNthCalledWith(3, {
-        limit: 50,
+        limit: 20,
         offset: 0,
         status: 'failed',
         search: '',
         client: 'app:cherry_studio',
       });
       expect(apiMock.getProxyLogs).toHaveBeenLastCalledWith({
-        limit: 50,
+        limit: 20,
         offset: 0,
         status: 'failed',
         search: 'mini',
@@ -965,6 +1066,12 @@ describe('ProxyLogs server-driven page', () => {
       await flushMicrotasks();
 
       expect(apiMock.getProxyLogDetail).toHaveBeenCalledTimes(1);
+      const expandedText = collectText(root.root);
+      expect(expandedText).toContain('路由决策');
+      expect(expandedText).toContain('请求时快照');
+      expect(expandedText).toContain('主力路由');
+      expect(expandedText).toContain('Premium Token');
+      expect(expandedText).toContain('稳定优先');
 
       await act(async () => {
         row.props.onClick();
@@ -1061,7 +1168,7 @@ describe('ProxyLogs server-driven page', () => {
       const expectedFrom = new Date(2026, 2, 9, 8, 0).toISOString();
       const expectedTo = new Date(2026, 2, 9, 9, 0).toISOString();
       expect(apiMock.getProxyLogs).toHaveBeenCalledWith({
-        limit: 50,
+        limit: 20,
         offset: 0,
         status: 'all',
         search: '',

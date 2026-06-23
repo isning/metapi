@@ -240,7 +240,7 @@ describe('/v1/chat/completions relay with scenario upstreams', () => {
     expect(logs).toEqual([]);
   });
 
-  it('applies managed key allowedRouteIds to the actual relay channel selection', async () => {
+  it('applies managed key allowedRouteIds to the actual relay target selection', async () => {
     const allowed = await harness.seedRoute({
       model: 'policy-shared-model',
       siteUrl: 'https://allowed-route.example.com',
@@ -273,7 +273,7 @@ describe('/v1/chat/completions relay with scenario upstreams', () => {
       }),
       enabled: true,
     }).returning().get();
-    const blockedChannel = await harness.db.insert(harness.schema.routeChannels).values({
+    const blockedChannel = await harness.db.insert(harness.schema.routeEndpointTargets).values({
       routeId: blockedRoute.id,
       accountId: blockedAccount.id,
       tokenId: blockedToken.id,
@@ -346,15 +346,15 @@ describe('/v1/chat/completions relay with scenario upstreams', () => {
     const logs = await harness.db.select().from(harness.schema.proxyLogs).all();
     expect(logs.some((log) => log.status === 'success'
       && log.routeId === allowed.route.id
-      && log.channelId === allowed.channel.id
+      && log.targetId === allowed.target.id
       && log.accountId === allowed.account.id
       && log.downstreamApiKeyId === managedKey!.id)).toBe(true);
     expect(logs.some((log) => log.status === 'success' && log.routeId === blockedRoute.id)).toBe(false);
-    expect(logs.some((log) => log.status === 'success' && log.channelId === blockedChannel.id)).toBe(false);
+    expect(logs.some((log) => log.status === 'success' && log.targetId === blockedChannel.id)).toBe(false);
   });
 
   it('records a normalized failure log when every upstream chat candidate fails', async () => {
-    const { managedKey, route, channel, account } = await harness.seedRoute({ model: 'relay-failure-model' });
+    const { managedKey, route, target, account } = await harness.seedRoute({ model: 'relay-failure-model' });
     harness.upstream.add({
       method: 'POST',
       path: '/v1/responses',
@@ -389,7 +389,7 @@ describe('/v1/chat/completions relay with scenario upstreams', () => {
     expect(response.statusCode, response.body).toBe(503);
     expect(response.json()).toMatchObject({
       error: expect.objectContaining({
-        message: expect.stringContaining('No available channels for this model'),
+        message: expect.stringContaining('No available targets for this model'),
       }),
     });
 
@@ -397,7 +397,7 @@ describe('/v1/chat/completions relay with scenario upstreams', () => {
     expect(logs.some((log) => log.status === 'failed'
       && log.httpStatus === 502
       && log.routeId === route.id
-      && log.channelId === channel.id
+      && log.targetId === target.id
       && log.accountId === account.id
       && log.downstreamApiKeyId === managedKey.id
       && log.modelRequested === 'relay-failure-model'

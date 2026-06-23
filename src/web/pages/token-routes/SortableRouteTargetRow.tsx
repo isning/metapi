@@ -1,13 +1,13 @@
 import { useState, type CSSProperties } from 'react';
 import ModernSelect from '../../components/ModernSelect.js';
-import type { SortableChannelRowProps } from './types.js';
+import type { SortableRouteTargetRowProps } from './types.js';
 import {
   buildFixedTokenOptionDescription,
   buildFixedTokenOptionLabel,
   describeTokenBinding,
   resolveTokenBindingConnectionMode,
 } from './tokenBindingPresentation.js';
-import { getChannelDecisionState } from './utils.js';
+import { getTargetDecisionState } from './utils.js';
 import { Button } from '../../components/ui/button/index.js';
 import { LoaderCircle } from 'lucide-react';
 import ToneBadge from '../../components/ToneBadge.js';
@@ -72,8 +72,8 @@ function ProbabilityIndicator({
   );
 }
 
-export function SortableChannelRow({
-  channel,
+export function SortableRouteTargetRow({
+  target,
   displayPriority,
   showPriorityBadge = true,
   dragging = false,
@@ -84,7 +84,7 @@ export function SortableChannelRow({
   loadingDecision,
   isSavingPriority,
   readOnly = false,
-  channelManagementDisabled = false,
+  targetManagementDisabled = false,
   dragInProgress = false,
   mobile = false,
   tokenOptions,
@@ -92,36 +92,36 @@ export function SortableChannelRow({
   isUpdatingToken,
   onTokenDraftChange,
   onSaveToken,
-  onDeleteChannel,
+  onDeleteTarget,
   onToggleEnabled,
   onSiteBlockModel,
-}: SortableChannelRowProps) {
-  const resolvedPriority = displayPriority ?? channel.priority ?? 0;
-  const managementLocked = readOnly || channelManagementDisabled;
+}: SortableRouteTargetRowProps) {
+  const resolvedPriority = displayPriority ?? target.priority ?? 0;
+  const managementLocked = readOnly || targetManagementDisabled;
   const suppressTooltips = dragInProgress || dragging;
   const rowClassName = cn(
     'rounded-lg border bg-card shadow-sm transition-colors',
     dragging && 'bg-muted opacity-90 shadow-md',
-    channel.enabled === false && 'opacity-60',
+    target.enabled === false && 'opacity-60',
   );
-  const decisionState = getChannelDecisionState(decisionCandidate, channel, isExactRoute, loadingDecision);
+  const decisionState = getTargetDecisionState(decisionCandidate, target, isExactRoute, loadingDecision);
   const tokenBinding = describeTokenBinding(
     tokenOptions,
     activeTokenId,
-    channel.token?.name ?? null,
+    target.token?.name ?? null,
     {
-      connectionMode: resolveTokenBindingConnectionMode(channel.account),
-      accountName: channel.account?.username || `account-${channel.accountId}`,
+      connectionMode: resolveTokenBindingConnectionMode(target.account),
+      accountName: target.account?.username || `account-${target.accountId}`,
     },
   );
-  const routeUnit = channel.routeUnit ?? null;
+  const routeUnit = target.routeUnit ?? null;
   const routeUnitName = routeUnit?.name?.trim() || tr('pages.tokenRoutes.routeCard.oauthRoutes');
   const routeUnitStrategyLabel = routeUnit ? getRouteUnitStrategyLabel(routeUnit.strategy) : '';
   const routeUnitMemberSummary = routeUnit?.members?.length
     ? routeUnit.members.map((member) => formatRouteUnitMemberLabel(member)).join('、')
     : null;
   const routeUnitMemberSummaryText = routeUnitMemberSummary
-    ? tr('pages.tokenRoutes.sortableChannelRow.membersSummary').replace('{members}', routeUnitMemberSummary)
+    ? tr('pages.tokenRoutes.sortableTargetRow.membersSummary').replace('{members}', routeUnitMemberSummary)
     : null;
 
   const [mobileDetailsOpen, setMobileDetailsOpen] = useState(false);
@@ -134,8 +134,8 @@ export function SortableChannelRow({
             ref={dragHandleRef}
             {...dragHandleProps}
             disabled={isSavingPriority || managementLocked}
-            data-tooltip={suppressTooltips ? undefined : (managementLocked ? tr('pages.tokenRoutes.sortableChannelRow.routesEdit') : tr('pages.tokenRoutes.sortableChannelRow.dragDropAdjustPriorityBuckets'))}
-            aria-label={tr('pages.tokenRoutes.sortableChannelRow.dragDropAdjustPriorityBuckets')}
+            data-tooltip={suppressTooltips ? undefined : (managementLocked ? tr('pages.tokenRoutes.sortableTargetRow.routesEdit') : tr('pages.tokenRoutes.sortableTargetRow.dragDropAdjustPriorityBuckets'))}
+            aria-label={tr('pages.tokenRoutes.sortableTargetRow.dragDropAdjustPriorityBuckets')}
           />
 
           <div className="flex min-w-0 flex-1 flex-col gap-1.5">
@@ -147,14 +147,14 @@ export function SortableChannelRow({
               ) : null}
 
               <span className="min-w-0 text-sm font-semibold text-foreground">
-                {channel.account?.username || `account-${channel.accountId}`}
+                {target.account?.username || `account-${target.accountId}`}
               </span>
 
               <ToneBadge tone="-muted">
-                {channel.site?.name || 'unknown'}
+                {target.site?.name || 'unknown'}
               </ToneBadge>
 
-              <SuccessFailStat className="ml-auto" successCount={channel.successCount} failCount={channel.failCount} />
+              <SuccessFailStat className="ml-auto" successCount={target.successCount} failCount={target.failCount} />
             </div>
 
             <div className="flex flex-wrap items-center gap-1.5">
@@ -164,22 +164,22 @@ export function SortableChannelRow({
 
               <ToneBadge
                 tone=""
-                data-tooltip={suppressTooltips ? undefined : tr('pages.tokenRoutes.sortableChannelRow.currentlyEffectiveToken').replace('{token}', tokenBinding.effectiveTokenName)}
+                data-tooltip={suppressTooltips ? undefined : tr('pages.tokenRoutes.sortableTargetRow.currentlyEffectiveToken').replace('{token}', tokenBinding.effectiveTokenName)}
               >
                 {tr('pages.tokenRoutes.routeCard.currentlyEffective')}{tokenBinding.effectiveTokenName}
               </ToneBadge>
 
-              {channel.sourceModel ? (
+              {target.sourceModel ? (
                 <ToneBadge tone="-info">
-                  {channel.sourceModel}
+                  {target.sourceModel}
                 </ToneBadge>
               ) : null}
 
-              {channel.manualOverride ? (
+              {target.manualOverride ? (
                 <ToneBadge tone="-warning"
                  
                  
-                  data-tooltip={suppressTooltips ? undefined : tr('pages.tokenRoutes.sortableChannelRow.channelAddedManuallyUserNotAutomaticallyGenerated')}
+                  data-tooltip={suppressTooltips ? undefined : tr('pages.tokenRoutes.sortableTargetRow.targetAddedManuallyUserNotAutomaticallyGenerated')}
                 >
                   {tr('pages.tokenRoutes.routeCard.manualconfiguration')}
                 </ToneBadge>
@@ -194,7 +194,7 @@ export function SortableChannelRow({
                     {routeUnitName}
                   </ToneBadge>
                   <ToneBadge tone="-muted">
-                    {routeUnit.memberCount} {tr('pages.tokenRoutes.sortableChannelRow.members')}
+                    {routeUnit.memberCount} {tr('pages.tokenRoutes.sortableTargetRow.members')}
                   </ToneBadge>
                   <ToneBadge tone="-muted">
                     {routeUnitStrategyLabel}
@@ -206,7 +206,7 @@ export function SortableChannelRow({
             {routeUnitMemberSummaryText ? (
               <div className="flex flex-wrap items-start gap-1.5">
                 <span className="whitespace-nowrap text-xs text-muted-foreground">
-                  {tr('pages.tokenRoutes.sortableChannelRow.memberSummary')}{routeUnit?.memberCount || 0} {tr('pages.tokenRoutes.routeCard.members')} {routeUnitStrategyLabel}）
+                  {tr('pages.tokenRoutes.sortableTargetRow.memberSummary')}{routeUnit?.memberCount || 0} {tr('pages.tokenRoutes.routeCard.members')} {routeUnitStrategyLabel}）
                 </span>
                 <span className="text-xs leading-snug text-muted-foreground">
                   {routeUnitMemberSummaryText}
@@ -215,7 +215,7 @@ export function SortableChannelRow({
             ) : null}
 
             <div className="flex flex-wrap items-center gap-1.5">
-              <span className="whitespace-nowrap text-xs text-muted-foreground">{tr('pages.tokenRoutes.sortableChannelRow.zhprobability')}</span>
+              <span className="whitespace-nowrap text-xs text-muted-foreground">{tr('pages.tokenRoutes.sortableTargetRow.zhprobability')}</span>
               <ProbabilityIndicator
                 probability={decisionState.probability}
                 tooltip={suppressTooltips ? undefined : (decisionState.probability <= 0 ? decisionState.reasonText : undefined)}
@@ -228,7 +228,7 @@ export function SortableChannelRow({
                   type="button"
                   onClick={() => setMobileDetailsOpen((current) => !current)}
                 >
-                  {mobileDetailsOpen ? tr('pages.tokenRoutes.sortableChannelRow.collapseconfiguration') : tr('pages.tokenRoutes.sortableChannelRow.configurationchannels')}
+                  {mobileDetailsOpen ? tr('pages.tokenRoutes.sortableTargetRow.collapseconfiguration') : tr('pages.tokenRoutes.sortableTargetRow.configurationtargets')}
                 </Button>
               )}
             </div>
@@ -239,7 +239,7 @@ export function SortableChannelRow({
                   <ModernSelect
                     size="sm"
                     value={String(activeTokenId || 0)}
-                    onChange={(nextValue) => onTokenDraftChange(channel.id, Number.parseInt(nextValue, 10) || 0)}
+                    onChange={(nextValue) => onTokenDraftChange(target.id, Number.parseInt(nextValue, 10) || 0)}
                     disabled={isUpdatingToken}
                     options={[
                       {
@@ -253,7 +253,7 @@ export function SortableChannelRow({
                         description: buildFixedTokenOptionDescription(token),
                       })),
                     ]}
-                    placeholder={tr('pages.tokenRoutes.sortableChannelRow.selecttoken')}
+                    placeholder={tr('pages.tokenRoutes.sortableTargetRow.selecttoken')}
                   />
                   <div className="mt-1 text-xs leading-snug text-muted-foreground">
                     {tokenBinding.helperText}
@@ -275,19 +275,19 @@ export function SortableChannelRow({
                     type="button"
                     variant="secondary"
                     size="sm"
-                    onClick={() => onToggleEnabled(channel.enabled === false)}
+                    onClick={() => onToggleEnabled(target.enabled === false)}
                   >
-                    {channel.enabled === false ? tr('pages.downstreamKeys.enabled') : tr('pages.downstreamKeys.disabled')}
+                    {target.enabled === false ? tr('pages.downstreamKeys.enabled') : tr('pages.downstreamKeys.disabled')}
                   </Button>
 
-                  {onSiteBlockModel && channel.site?.id ? (
+                  {onSiteBlockModel && target.site?.id ? (
                     <Button
                       type="button"
                       variant="secondary"
                       size="sm"
                       onClick={onSiteBlockModel}
                     >
-                      {tr('pages.tokenRoutes.sortableChannelRow.sites')}
+                      {tr('pages.tokenRoutes.sortableTargetRow.sites')}
                     </Button>
                   ) : null}
 
@@ -295,7 +295,7 @@ export function SortableChannelRow({
                     type="button"
                     variant="destructive"
                     size="sm"
-                    onClick={onDeleteChannel}
+                    onClick={onDeleteTarget}
                   >
                     {tr('pages.settings.remove')}
                   </Button>
@@ -322,8 +322,8 @@ export function SortableChannelRow({
           ref={dragHandleRef}
           {...dragHandleProps}
           disabled={isSavingPriority || managementLocked}
-          data-tooltip={suppressTooltips ? undefined : (managementLocked ? tr('pages.tokenRoutes.sortableChannelRow.routesEdit') : tr('pages.tokenRoutes.sortableChannelRow.dragDropAdjustPriorityBuckets'))}
-          aria-label={tr('pages.tokenRoutes.sortableChannelRow.dragDropAdjustPriorityBuckets')}
+          data-tooltip={suppressTooltips ? undefined : (managementLocked ? tr('pages.tokenRoutes.sortableTargetRow.routesEdit') : tr('pages.tokenRoutes.sortableTargetRow.dragDropAdjustPriorityBuckets'))}
+          aria-label={tr('pages.tokenRoutes.sortableTargetRow.dragDropAdjustPriorityBuckets')}
         />
 
         {showPriorityBadge ? (
@@ -333,11 +333,11 @@ export function SortableChannelRow({
         ) : null}
 
         <span className="font-semibold text-foreground">
-          {channel.account?.username || `account-${channel.accountId}`}
+          {target.account?.username || `account-${target.accountId}`}
         </span>
 
         <ToneBadge tone="-muted">
-          {channel.site?.name || 'unknown'}
+          {target.site?.name || 'unknown'}
         </ToneBadge>
 
         <ToneBadge tone="">
@@ -346,27 +346,27 @@ export function SortableChannelRow({
 
         <ToneBadge
           tone=""
-          data-tooltip={suppressTooltips ? undefined : tr('pages.tokenRoutes.sortableChannelRow.currentlyEffectiveToken').replace('{token}', tokenBinding.effectiveTokenName)}
+          data-tooltip={suppressTooltips ? undefined : tr('pages.tokenRoutes.sortableTargetRow.currentlyEffectiveToken').replace('{token}', tokenBinding.effectiveTokenName)}
         >
           {tr('pages.tokenRoutes.routeCard.currentlyEffective')}{tokenBinding.effectiveTokenName}
         </ToneBadge>
 
-        {channel.sourceModel ? (
+        {target.sourceModel ? (
           <ToneBadge tone="-info">
-            {channel.sourceModel}
+            {target.sourceModel}
           </ToneBadge>
         ) : null}
 
-        {channel.manualOverride ? (
+        {target.manualOverride ? (
           <ToneBadge
             tone="-warning"
-            data-tooltip={suppressTooltips ? undefined : tr('pages.tokenRoutes.sortableChannelRow.channelAddedManuallyUserNotAutomaticallyGenerated')}
+            data-tooltip={suppressTooltips ? undefined : tr('pages.tokenRoutes.sortableTargetRow.targetAddedManuallyUserNotAutomaticallyGenerated')}
           >
             {tr('pages.tokenRoutes.routeCard.manualconfiguration')}
           </ToneBadge>
         ) : null}
 
-        {channel.enabled === false ? (
+        {target.enabled === false ? (
           <ToneBadge tone="-muted">{tr('pages.accounts.disabled2')}</ToneBadge>
         ) : null}
 
@@ -379,7 +379,7 @@ export function SortableChannelRow({
               {routeUnitName}
             </ToneBadge>
             <ToneBadge tone="-muted">
-              {routeUnit.memberCount} {tr('pages.tokenRoutes.sortableChannelRow.members')}
+              {routeUnit.memberCount} {tr('pages.tokenRoutes.sortableTargetRow.members')}
             </ToneBadge>
             <ToneBadge tone="-muted">
               {routeUnitStrategyLabel}
@@ -390,7 +390,7 @@ export function SortableChannelRow({
         {routeUnitMemberSummaryText ? (
           <div className="flex w-full flex-wrap items-start gap-1.5">
             <span className="whitespace-nowrap text-xs text-muted-foreground">
-              {tr('pages.tokenRoutes.sortableChannelRow.memberSummary')}{routeUnit?.memberCount || 0} {tr('pages.tokenRoutes.routeCard.members')} {routeUnitStrategyLabel}）
+              {tr('pages.tokenRoutes.sortableTargetRow.memberSummary')}{routeUnit?.memberCount || 0} {tr('pages.tokenRoutes.routeCard.members')} {routeUnitStrategyLabel}）
             </span>
             <span className="text-xs leading-snug text-muted-foreground">
               {routeUnitMemberSummaryText}
@@ -399,12 +399,12 @@ export function SortableChannelRow({
         ) : null}
 
         <div className="flex w-full flex-wrap items-center gap-1.5">
-          <span className="whitespace-nowrap text-xs text-muted-foreground">{tr('pages.tokenRoutes.sortableChannelRow.zhprobability')}</span>
+          <span className="whitespace-nowrap text-xs text-muted-foreground">{tr('pages.tokenRoutes.sortableTargetRow.zhprobability')}</span>
           <ProbabilityIndicator
             probability={decisionState.probability}
             tooltip={suppressTooltips ? undefined : (decisionState.probability <= 0 ? decisionState.reasonText : undefined)}
           />
-          <SuccessFailStat successCount={channel.successCount} failCount={channel.failCount} />
+          <SuccessFailStat successCount={target.successCount} failCount={target.failCount} />
         </div>
       </div>
 
@@ -415,7 +415,7 @@ export function SortableChannelRow({
               <ModernSelect
                 size="sm"
                 value={String(activeTokenId || 0)}
-                onChange={(nextValue) => onTokenDraftChange(channel.id, Number.parseInt(nextValue, 10) || 0)}
+                onChange={(nextValue) => onTokenDraftChange(target.id, Number.parseInt(nextValue, 10) || 0)}
                 disabled={isUpdatingToken}
                 options={[
                   {
@@ -429,7 +429,7 @@ export function SortableChannelRow({
                     description: buildFixedTokenOptionDescription(token),
                   })),
                 ]}
-                placeholder={tr('pages.tokenRoutes.sortableChannelRow.selecttoken')}
+                placeholder={tr('pages.tokenRoutes.sortableTargetRow.selecttoken')}
               />
               <div className="mt-1 text-xs leading-snug text-muted-foreground">
                 {tokenBinding.helperText}
@@ -450,22 +450,22 @@ export function SortableChannelRow({
             type="button"
             variant="secondary"
             size="sm"
-            onClick={() => onToggleEnabled(channel.enabled === false)}
-            data-tooltip={suppressTooltips ? undefined : (channel.enabled === false ? tr('pages.tokenRoutes.sortableChannelRow.enabledChannels') : tr('pages.tokenRoutes.sortableChannelRow.disabledChannels'))}
+            onClick={() => onToggleEnabled(target.enabled === false)}
+            data-tooltip={suppressTooltips ? undefined : (target.enabled === false ? tr('pages.tokenRoutes.sortableTargetRow.enabledTargets') : tr('pages.tokenRoutes.sortableTargetRow.disabledTargets'))}
           >
-            {channel.enabled === false ? tr('pages.downstreamKeys.enabled') : tr('pages.downstreamKeys.disabled')}
+            {target.enabled === false ? tr('pages.downstreamKeys.enabled') : tr('pages.downstreamKeys.disabled')}
           </Button>
 
           <div className="flex items-center gap-1">
-            {onSiteBlockModel && channel.site?.id ? (
+            {onSiteBlockModel && target.site?.id ? (
               <Button
                 type="button"
                 variant="secondary"
                 size="sm"
                 onClick={onSiteBlockModel}
-                data-tooltip={suppressTooltips ? undefined : tr('pages.tokenRoutes.sortableChannelRow.blockModelOnSiteTooltip').replace('{site}', channel.site?.name || tr('pages.accounts.unknown2'))}
+                data-tooltip={suppressTooltips ? undefined : tr('pages.tokenRoutes.sortableTargetRow.blockModelOnSiteTooltip').replace('{site}', target.site?.name || tr('pages.accounts.unknown2'))}
               >
-                {tr('pages.tokenRoutes.sortableChannelRow.sites')}
+                {tr('pages.tokenRoutes.sortableTargetRow.sites')}
               </Button>
             ) : null}
 
@@ -473,7 +473,7 @@ export function SortableChannelRow({
               type="button"
               variant="destructive"
               size="sm"
-              onClick={onDeleteChannel}
+              onClick={onDeleteTarget}
             >
               {tr('pages.settings.remove')}
             </Button>

@@ -81,8 +81,8 @@ type RuntimeSettings = {
   codexUpstreamWebsocketEnabled: boolean;
   responsesCompactFallbackToResponsesEnabled: boolean;
   disableCrossProtocolFallback: boolean;
-  proxySessionChannelConcurrencyLimit: number;
-  proxySessionChannelQueueWaitMs: number;
+  proxySessionTargetConcurrencyLimit: number;
+  proxySessionTargetQueueWaitMs: number;
   routingFallbackUnitCost: number;
   proxyFirstByteTimeoutSec: number;
   routeFailureCooldownMaxValue: number;
@@ -111,10 +111,24 @@ type DatabaseMigrationSummary = {
   timestamp: number;
   rows: {
     sites: number;
+    siteApiEndpoints?: number;
+    apiEndpointProfiles?: number;
+    credentialEndpointBindings?: number;
+    siteAnnouncements?: number;
+    siteDisabledModels?: number;
     accounts: number;
     accountTokens: number;
     tokenRoutes: number;
-    routeChannels: number;
+    routeEndpointTargets: number;
+    routeGroupSources?: number;
+    checkinLogs?: number;
+    modelAvailability?: number;
+    tokenModelAvailability?: number;
+    proxyLogs?: number;
+    proxyVideoTasks?: number;
+    proxyFiles?: number;
+    downstreamApiKeys?: number;
+    events?: number;
     settings: number;
   };
 };
@@ -412,8 +426,8 @@ export default function Settings() {
     codexUpstreamWebsocketEnabled: false,
     responsesCompactFallbackToResponsesEnabled: false,
     disableCrossProtocolFallback: false,
-    proxySessionChannelConcurrencyLimit: 2,
-    proxySessionChannelQueueWaitMs: 1500,
+    proxySessionTargetConcurrencyLimit: 2,
+    proxySessionTargetQueueWaitMs: 1500,
     routingFallbackUnitCost: 1,
     proxyFirstByteTimeoutSec: 0,
     routeFailureCooldownMaxValue: 30,
@@ -535,7 +549,7 @@ export default function Settings() {
   }, [factoryResetOpen]);
 
   const proxyTransportModeLabel = runtime.codexUpstreamWebsocketEnabled ? tr('pages.settings.websocketEnabled') : tr('pages.settings.http');
-  const proxyTransportQueueLabel = `会话池 ${runtime.proxySessionChannelConcurrencyLimit} 并发 / ${runtime.proxySessionChannelQueueWaitMs}ms`;
+  const proxyTransportQueueLabel = `会话池 ${runtime.proxySessionTargetConcurrencyLimit} 并发 / ${runtime.proxySessionTargetQueueWaitMs}ms`;
   const modelAvailabilityProbeDirty = runtime.modelAvailabilityProbeEnabled !== savedModelAvailabilityProbeEnabled;
   const modelAvailabilityProbeStatusTone: SettingsPillTone = modelAvailabilityProbeDirty
     ? 'warning'
@@ -599,11 +613,11 @@ export default function Settings() {
         codexUpstreamWebsocketEnabled: !!runtimeInfo.codexUpstreamWebsocketEnabled,
         responsesCompactFallbackToResponsesEnabled: !!runtimeInfo.responsesCompactFallbackToResponsesEnabled,
         disableCrossProtocolFallback: !!runtimeInfo.disableCrossProtocolFallback,
-        proxySessionChannelConcurrencyLimit: Number(runtimeInfo.proxySessionChannelConcurrencyLimit) >= 0
-          ? Math.trunc(Number(runtimeInfo.proxySessionChannelConcurrencyLimit))
+        proxySessionTargetConcurrencyLimit: Number(runtimeInfo.proxySessionTargetConcurrencyLimit) >= 0
+          ? Math.trunc(Number(runtimeInfo.proxySessionTargetConcurrencyLimit))
           : 2,
-        proxySessionChannelQueueWaitMs: Number(runtimeInfo.proxySessionChannelQueueWaitMs) >= 0
-          ? Math.trunc(Number(runtimeInfo.proxySessionChannelQueueWaitMs))
+        proxySessionTargetQueueWaitMs: Number(runtimeInfo.proxySessionTargetQueueWaitMs) >= 0
+          ? Math.trunc(Number(runtimeInfo.proxySessionTargetQueueWaitMs))
           : 1500,
         routingFallbackUnitCost: Number(runtimeInfo.routingFallbackUnitCost) > 0
           ? Number(runtimeInfo.routingFallbackUnitCost)
@@ -814,8 +828,8 @@ export default function Settings() {
       const res = await api.updateRuntimeSettings({
         codexUpstreamWebsocketEnabled: runtime.codexUpstreamWebsocketEnabled,
         responsesCompactFallbackToResponsesEnabled: runtime.responsesCompactFallbackToResponsesEnabled,
-        proxySessionChannelConcurrencyLimit: runtime.proxySessionChannelConcurrencyLimit,
-        proxySessionChannelQueueWaitMs: runtime.proxySessionChannelQueueWaitMs,
+        proxySessionTargetConcurrencyLimit: runtime.proxySessionTargetConcurrencyLimit,
+        proxySessionTargetQueueWaitMs: runtime.proxySessionTargetQueueWaitMs,
       });
       setRuntime((prev) => ({
         ...prev,
@@ -825,12 +839,12 @@ export default function Settings() {
         responsesCompactFallbackToResponsesEnabled: typeof res?.responsesCompactFallbackToResponsesEnabled === 'boolean'
           ? res.responsesCompactFallbackToResponsesEnabled
           : prev.responsesCompactFallbackToResponsesEnabled,
-        proxySessionChannelConcurrencyLimit: Number(res?.proxySessionChannelConcurrencyLimit) >= 0
-          ? Math.trunc(Number(res.proxySessionChannelConcurrencyLimit))
-          : prev.proxySessionChannelConcurrencyLimit,
-        proxySessionChannelQueueWaitMs: Number(res?.proxySessionChannelQueueWaitMs) >= 0
-          ? Math.trunc(Number(res.proxySessionChannelQueueWaitMs))
-          : prev.proxySessionChannelQueueWaitMs,
+        proxySessionTargetConcurrencyLimit: Number(res?.proxySessionTargetConcurrencyLimit) >= 0
+          ? Math.trunc(Number(res.proxySessionTargetConcurrencyLimit))
+          : prev.proxySessionTargetConcurrencyLimit,
+        proxySessionTargetQueueWaitMs: Number(res?.proxySessionTargetQueueWaitMs) >= 0
+          ? Math.trunc(Number(res.proxySessionTargetQueueWaitMs))
+          : prev.proxySessionTargetQueueWaitMs,
       }));
       toast.success(tr('pages.settings.settingsSave'));
     } catch (err: any) {
@@ -1659,40 +1673,40 @@ export default function Settings() {
           </label>
           <ResponsiveFormGrid columns={2}>
             <SettingsField
-              label={tr('pages.settings.channels')}
+              label={tr('pages.settings.targets')}
               hint={tr('pages.settings.stableSessionIdRequestRequestLease')}
             >
               <Input
                 type="number"
                 min={0}
-                value={runtime.proxySessionChannelConcurrencyLimit}
+                value={runtime.proxySessionTargetConcurrencyLimit}
                 onChange={(e) => {
                   const nextValue = Number(e.target.value);
                   setRuntime((prev) => ({
                     ...prev,
-                    proxySessionChannelConcurrencyLimit: Number.isFinite(nextValue) && nextValue >= 0
+                    proxySessionTargetConcurrencyLimit: Number.isFinite(nextValue) && nextValue >= 0
                       ? Math.trunc(nextValue)
-                      : prev.proxySessionChannelConcurrencyLimit,
+                      : prev.proxySessionTargetConcurrencyLimit,
                   }));
                 }}
               />
             </SettingsField>
             <SettingsField
               label={tr('pages.settings.timeSeconds')}
-              hint={tr('pages.settings.timeChannelsRequest')}
+              hint={tr('pages.settings.timeTargetsRequest')}
             >
               <Input
                 type="number"
                 min={0}
                 step={100}
-                value={runtime.proxySessionChannelQueueWaitMs}
+                value={runtime.proxySessionTargetQueueWaitMs}
                 onChange={(e) => {
                   const nextValue = Number(e.target.value);
                   setRuntime((prev) => ({
                     ...prev,
-                    proxySessionChannelQueueWaitMs: Number.isFinite(nextValue) && nextValue >= 0
+                    proxySessionTargetQueueWaitMs: Number.isFinite(nextValue) && nextValue >= 0
                       ? Math.trunc(nextValue)
-                      : prev.proxySessionChannelQueueWaitMs,
+                      : prev.proxySessionTargetQueueWaitMs,
                   }));
                 }}
               />
@@ -2281,7 +2295,7 @@ export default function Settings() {
             <div className="grid gap-1 rounded-md border p-3 text-sm text-muted-foreground">
               <div>{tr('pages.settings.target')}{migrationSummary.dialect}（{migrationSummary.connection}）</div>
               <div>{tr('pages.importExport.version')}{migrationSummary.version}{tr('pages.importExport.time')}{new Date(migrationSummary.timestamp).toLocaleString()}</div>
-              <div>{tr('pages.settings.sites')} {migrationSummary.rows.sites} {tr('pages.importExport.accounts')} {migrationSummary.rows.accounts} {tr('pages.importExport.token')} {migrationSummary.rows.accountTokens} {tr('pages.importExport.routes')} {migrationSummary.rows.tokenRoutes} {tr('pages.importExport.channels')} {migrationSummary.rows.routeChannels} {tr('pages.importExport.settings')} {migrationSummary.rows.settings}</div>
+              <div>{tr('pages.settings.sites')} {migrationSummary.rows.sites} {tr('pages.importExport.accounts')} {migrationSummary.rows.accounts} {tr('pages.importExport.token')} {migrationSummary.rows.accountTokens} {tr('pages.importExport.routes')} {migrationSummary.rows.tokenRoutes} {tr('pages.importExport.targets')} {migrationSummary.rows.routeEndpointTargets} {tr('pages.importExport.settings')} {migrationSummary.rows.settings}</div>
             </div>
           )}
         </SettingsCard>

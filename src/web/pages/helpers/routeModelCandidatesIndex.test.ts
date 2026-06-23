@@ -6,7 +6,7 @@ import {
   type RouteModelCandidateRoute,
 } from './routeModelCandidatesIndex.js';
 
-function buildRoute(id: number, requestedModelPattern: string, backend: RouteModelCandidateRoute['backend'] = { kind: 'channels' }): RouteModelCandidateRoute {
+function buildRoute(id: number, requestedModelPattern: string, backend: RouteModelCandidateRoute['backend'] = { kind: 'supply' }): RouteModelCandidateRoute {
   return {
     id,
     match: { kind: 'model', requestedModelPattern, displayName: null },

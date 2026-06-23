@@ -164,13 +164,13 @@ async function applyDummyRouteWeights(modelName: string, priority: number, weigh
   const routeId = Number(entry?.match?.routeId || 0);
   if (!Number.isFinite(routeId) || routeId <= 0) return;
 
-  const channels = await db.select().from(schema.routeChannels)
-    .where(eq(schema.routeChannels.routeId, Math.trunc(routeId)))
+  const channels = await db.select().from(schema.routeEndpointTargets)
+    .where(eq(schema.routeEndpointTargets.routeId, Math.trunc(routeId)))
     .all();
   for (const channel of channels) {
-    await db.update(schema.routeChannels)
+    await db.update(schema.routeEndpointTargets)
       .set({ priority, weight })
-      .where(eq(schema.routeChannels.id, channel.id))
+      .where(eq(schema.routeEndpointTargets.id, channel.id))
       .run();
   }
 }

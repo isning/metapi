@@ -110,37 +110,22 @@ export const routeGraphNodeDefinitions = {
     title: 'Route Endpoint',
     detail: 'Semantic route endpoint exposed by route products or upstream supply.',
     accent: '#16a34a',
-    primitive: false,
+    primitive: true,
     defaultPorts: [
       { id: 'route.out', label: 'route product', direction: 'output', kind: 'route' },
       { id: 'bidirect.in', label: 'invoke route', direction: 'input', kind: 'bidirect', accepts: ['bidirect'], multiple: true },
     ],
-    createDefaultNode: (index, position) => ({
-      ...baseNode('route_endpoint', index, position),
-      endpointKind: 'route_product',
-      exposure: 'internal',
-      resolutionStatus: 'resolved',
-      ownerKind: 'manual_route',
-      sourceKind: 'manual_group',
-      metadata: {},
-    }),
-  },
-  model_endpoint: {
-    kicker: 'Primitive',
-    title: 'Model Endpoint',
-    detail: 'Executable model target container.',
-    accent: '#059669',
-    primitive: true,
-    defaultPorts: [
-      { id: 'route.out', label: 'endpoint target', direction: 'output', kind: 'route' },
-      { id: 'bidirect.in', label: 'invoke endpoint', direction: 'input', kind: 'bidirect', accepts: ['bidirect'] },
-    ],
     createDefaultNode: (index, position) => {
-      const node = baseNode('model_endpoint', index, position);
+      const node = baseNode('route_endpoint', index, position);
       return {
         ...node,
+        endpointKind: 'supply',
+        exposure: 'none',
+        resolutionStatus: 'resolved',
+        ownerKind: 'manual_route',
+        sourceKind: 'upstream_model',
         metadata: {},
-        config: { targets: [{ channelId: node.id, model: node.id }], targetSelection: { strategy: 'weighted' } },
+        config: { targets: [{ targetId: node.id, model: node.id }], targetSelection: { strategy: 'weighted' } },
       };
     },
   },
@@ -329,13 +314,13 @@ export function buildAddTemplates(): AddTemplate[] {
       create: (index, position) => ({ ...makeNode('dispatcher', index, position), mode: 'flow', policy: { strategy: 'weighted' } }),
     },
     {
-      id: 'model_endpoint',
+      id: 'route_endpoint',
       category: 'Core',
       kicker: 'Endpoint',
-      title: 'Model Endpoint',
-      detail: 'Declare executable model targets with custom metadata.',
-      primitiveType: 'model_endpoint',
-      create: (index, position) => makeNode('model_endpoint', index, position),
+      title: 'Supply Route Endpoint',
+      detail: 'Declare executable upstream model targets with custom metadata.',
+      primitiveType: 'route_endpoint',
+      create: (index, position) => makeNode('route_endpoint', index, position),
     },
     {
       id: 'dummy_503',

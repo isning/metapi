@@ -1,5 +1,5 @@
 export type RouteGraphOwnership = 'manual' | 'auto_generated' | 'system' | 'derived';
-export type RouteGraphNodeType = 'entry' | 'route_endpoint' | 'filter' | 'dispatcher' | 'model_endpoint' | 'synthetic_endpoint' | 'auto_node';
+export type RouteGraphNodeType = 'entry' | 'route_endpoint' | 'filter' | 'dispatcher' | 'synthetic_endpoint' | 'auto_node';
 export type RouteGraphPortKind =
   | 'request'
   | 'bidirect'

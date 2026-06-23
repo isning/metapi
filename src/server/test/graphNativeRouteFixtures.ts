@@ -6,7 +6,7 @@ async function loadGraphNativeFixtureModules() {
   return {
     db: dbModule.db,
     schema: dbModule.schema,
-    buildRouteGraphSourceFromCurrentProjectionTable: routeGraphService.buildRouteGraphSourceFromCurrentProjectionTable,
+    buildRouteGraphSourceFromRouteTable: routeGraphService.buildRouteGraphSourceFromRouteTable,
     publishRouteGraphSource: routeGraphService.publishRouteGraphSource,
   };
 }
@@ -19,29 +19,29 @@ type GraphNativeTokenRouteFixtureInput = {
   routingStrategy?: string | null;
 };
 
-const routeProjectionOverrides = new Map<number, {
+const routeBindingOverrides = new Map<number, {
   match: RouteGraphMatchSpec;
   backend: RouteGraphBackendSpec;
 }>();
 
 export function resetGraphNativeTokenRouteFixtures() {
-  routeProjectionOverrides.clear();
+  routeBindingOverrides.clear();
 }
 
 export async function publishCurrentGraphNativeTokenRouteFixtures() {
   const {
     db,
     schema,
-    buildRouteGraphSourceFromCurrentProjectionTable,
+    buildRouteGraphSourceFromRouteTable,
     publishRouteGraphSource,
   } = await loadGraphNativeFixtureModules();
   const routes = await db.select({ id: schema.tokenRoutes.id }).from(schema.tokenRoutes).all();
   const routeIds = new Set(routes.map((route) => route.id));
-  for (const routeId of Array.from(routeProjectionOverrides.keys())) {
-    if (!routeIds.has(routeId)) routeProjectionOverrides.delete(routeId);
+  for (const routeId of Array.from(routeBindingOverrides.keys())) {
+    if (!routeIds.has(routeId)) routeBindingOverrides.delete(routeId);
   }
 
-  const sourceGraph = await buildRouteGraphSourceFromCurrentProjectionTable(null, routeProjectionOverrides);
+  const sourceGraph = await buildRouteGraphSourceFromRouteTable(null, routeBindingOverrides);
   const published = await publishRouteGraphSource({
     sourceGraph,
     createdBy: 'test-fixture',
@@ -62,7 +62,7 @@ export async function createGraphNativeTokenRouteFixture(input: GraphNativeToken
     enabled: input.enabled ?? true,
   }).returning().get();
 
-  routeProjectionOverrides.set(route.id, {
+  routeBindingOverrides.set(route.id, {
     match: {
       kind: 'model',
       requestedModelPattern: input.modelPattern,
@@ -76,7 +76,7 @@ export async function createGraphNativeTokenRouteFixture(input: GraphNativeToken
       tokenId: null,
       siteId: null,
     },
-    backend: { kind: 'channels' },
+    backend: { kind: 'supply' },
   });
   await publishCurrentGraphNativeTokenRouteFixtures();
 

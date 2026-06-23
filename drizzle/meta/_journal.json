@@ -204,6 +204,34 @@
       "when": 1781910000000,
       "tag": "0029_upstream_model_cost_pricing",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "6",
+      "when": 1782138550467,
+      "tag": "0030_supply_api_endpoint_bindings",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "6",
+      "when": 1782216342410,
+      "tag": "0031_proxy_target_column_backfill",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "6",
+      "when": 1782221402796,
+      "tag": "0032_proxy_log_route_decision_snapshot",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "6",
+      "when": 1782224453154,
+      "tag": "0032_naive_violations",
+      "breakpoints": true
     }
   ]
 }

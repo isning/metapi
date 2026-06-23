@@ -16,14 +16,14 @@ function route(overrides: Partial<RouteSummaryRow> = {}): RouteSummaryRow {
   return {
     id: 77,
     match: { kind: 'model', requestedModelPattern: 'gpt-auto-native', displayName: 'gpt-auto-native' },
-    backend: { kind: 'channels' },
+    backend: { kind: 'supply' },
     presentation: { displayName: 'gpt-auto-native', displayIcon: null },
     modelMapping: null,
     routingStrategy: 'weighted',
     visibility: 'public',
     enabled: true,
-    channelCount: 1,
-    enabledChannelCount: 1,
+    targetCount: 1,
+    enabledTargetCount: 1,
     siteNames: ['openai'],
     decisionSnapshot: null,
     decisionRefreshedAt: null,
@@ -79,7 +79,7 @@ function endpointNode(overrides: Partial<RouteGraphNode> = {}): RouteGraphNode {
     ownership: 'auto_generated',
     endpointId: 'route-endpoint:supply:upstream-model:openai:credential:gpt-auto-native:abc12345',
     routeId: 77,
-    backend: { kind: 'channels' },
+    backend: { kind: 'supply' },
     ...overrides,
   };
 }
