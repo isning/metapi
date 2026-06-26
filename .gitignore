@@ -1,5 +1,6 @@
 node_modules/
 dist/
+coverage/
 release/
 data/*
 !data/.gitkeep
@@ -9,6 +10,8 @@ data/*
 logs/
 tmp/*
 !tmp/.gitkeep
+test-results/
+playwright-report/
 .worktrees/
 
 # Local desktop/debug artifacts

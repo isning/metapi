@@ -17,6 +17,11 @@ What was still missing was one place that states the mechanical rules behind
 those choices and a lightweight loop that continuously checks for drift. This
 document is that shared contract.
 
+The executable test layer split lives in
+[Testing Framework](./testing-framework.md). Keep feature tests and mock
+harnesses aligned with that document before adding broad new test data or
+browser flows.
+
 ## Golden Principles
 
 ### 1. One Invariant, One Source Of Truth

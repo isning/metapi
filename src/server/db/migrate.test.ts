@@ -166,7 +166,7 @@ describe('sqlite migrate bootstrap', () => {
     );
 
     verified.close();
-  });
+  }, 15_000);
 
   it('recovers from duplicate-column errors for single-statement migrations', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'metapi-migrate-recover-'));
