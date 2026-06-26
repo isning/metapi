@@ -808,14 +808,39 @@ export const events = sqliteTable('events', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   type: text('type').notNull(), // 'checkin' | 'balance' | 'token' | 'proxy' | 'status'
   title: text('title').notNull(),
+  summary: text('summary'),
+  description: text('description'),
   message: text('message'),
   level: text('level').notNull().default('info'), // 'info' | 'warning' | 'error'
+  severity: text('severity').notNull().default('info'), // 'critical' | 'warning' | 'info' | 'success'
+  scope: text('scope').notNull().default('activity'), // 'notification' | 'attention' | 'activity' | 'announcement'
+  category: text('category'),
+  state: text('state').notNull().default('open'), // 'open' | 'read' | 'acknowledged' | 'snoozed' | 'resolved'
   read: integer('read', { mode: 'boolean' }).default(false),
+  readAt: text('read_at'),
+  acknowledgedAt: text('acknowledged_at'),
+  snoozedUntil: text('snoozed_until'),
+  resolvedAt: text('resolved_at'),
+  subjectType: text('subject_type'),
+  subjectId: text('subject_id'),
+  subjectLabel: text('subject_label'),
+  detailsJson: text('details_json'),
+  actionsJson: text('actions_json'),
+  dedupeKey: text('dedupe_key'),
+  occurrenceCount: integer('occurrence_count').notNull().default(1),
+  firstSeenAt: text('first_seen_at'),
+  lastSeenAt: text('last_seen_at'),
+  source: text('source'),
   relatedId: integer('related_id'),
   relatedType: text('related_type'), // 'account' | 'site' | 'route'
   createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
 }, (table) => ({
   readCreatedIdx: index('events_read_created_at_idx').on(table.read, table.createdAt),
   typeCreatedIdx: index('events_type_created_at_idx').on(table.type, table.createdAt),
+  scopeStateCreatedIdx: index('events_scope_state_created_at_idx').on(table.scope, table.state, table.createdAt),
+  categoryCreatedIdx: index('events_category_created_at_idx').on(table.category, table.createdAt),
+  subjectIdx: index('events_subject_idx').on(table.subjectType, table.subjectId),
+  dedupeKeyIdx: index('events_dedupe_key_idx').on(table.dedupeKey),
   createdAtIdx: index('events_created_at_idx').on(table.createdAt),
 }));

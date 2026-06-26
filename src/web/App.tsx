@@ -12,13 +12,18 @@ import {
   THEME_MODE_STORAGE_KEY,
   USER_PROFILE_STORAGE_KEY,
 } from './appLocalState.js';
-import { I18nProvider, useI18n } from './i18n.js';
+import { I18nProvider, tr, useI18n } from './i18n.js';
 import { resolveLoginErrorMessage } from './loginError.js';
 import { SITE_DOCS_URL, SITE_GITHUB_URL } from './docsLink.js';
 import { useAnimatedVisibility } from './components/useAnimatedVisibility.js';
 import { useIsMobile } from './components/useIsMobile.js';
 import { MobileDrawer } from './components/MobileDrawer.js';
 import CenteredModal from './components/CenteredModal.js';
+import { Alert, AlertDescription } from './components/ui/alert/index.js';
+import { Button } from './components/ui/button/index.js';
+import * as DropdownMenu from './components/ui/dropdown-menu/index.js';
+import { Input } from './components/ui/input/index.js';
+import { Skeleton } from './components/ui/skeleton/index.js';
 const Dashboard = lazy(() => import('./pages/Dashboard.js'));
 const Sites = lazy(() => import('./pages/Sites.js'));
 const Accounts = lazy(() => import('./pages/Accounts.js'));
@@ -32,6 +37,7 @@ const ImportExport = lazy(() => import('./pages/ImportExport.js'));
 const NotificationSettings = lazy(() => import('./pages/NotificationSettings.js'));
 const ProgramLogs = lazy(() => import('./pages/ProgramLogs.js'));
 const Models = lazy(() => import('./pages/Models.js'));
+const CostCatalog = lazy(() => import('./pages/CostCatalog.js'));
 const About = lazy(() => import('./pages/About.js'));
 const ModelTester = lazy(() => import('./pages/ModelTester.js'));
 const Monitors = lazy(() => import('./pages/Monitors.js'));
@@ -116,7 +122,7 @@ function resolveStoredProfile(): UserProfile {
       ? parsed.avatarStyle.trim()
       : '';
     return {
-      name: name || '管理员',
+      name: name || tr('app.admin'),
       avatarSeed: resolvedSeed,
       avatarStyle: DICEBEAR_STYLES.includes(avatarStyle as DicebearStyle)
         ? avatarStyle
@@ -134,16 +140,16 @@ export function Login({ onLogin, t }: { onLogin: (token: string) => void; t: (te
   const [error, setError] = useState('');
   const capabilityRows = [
     {
-      title: t('统一代理网关'),
-      description: t('一个 Key、一个入口，兼容 OpenAI / Claude 下游格式'),
+      title: t('app.unifiedProxyGateway'),
+      description: t('app.oneKeyOneEndpointCompatibleOpenaiClaude'),
     },
     {
-      title: t('自动模型发现'),
-      description: t('上游新增模型自动出现在模型列表，零配置路由生成'),
+      title: t('app.autoModelDiscovery'),
+      description: t('app.newUpstreamModelsAppearAutomaticallyZeroConfig'),
     },
     {
-      title: t('智能路由引擎'),
-      description: t('按成本、延迟、成功率自动选择最优通道，故障自动转移'),
+      title: t('app.smartRoutingEngine'),
+      description: t('app.autoSelectsOptimalRouteCostLatencySuccess'),
     },
   ];
 
@@ -176,7 +182,7 @@ export function Login({ onLogin, t }: { onLogin: (token: string) => void; t: (te
         setLoading(false);
       }
     } catch {
-      setError(t('无法连接到服务器'));
+      setError(t('app.unableConnectServer'));
       setLoading(false);
     }
   };
@@ -193,15 +199,15 @@ export function Login({ onLogin, t }: { onLogin: (token: string) => void; t: (te
             </div>
             <div className="login-brand-summary">
               <div className="login-brand-name">Metapi</div>
-              <div className="login-brand-kicker">{t('中转站的中转站')}</div>
+              <div className="login-brand-kicker">{t('app.hubHubs')}</div>
             </div>
           </div>
           <div className="login-brand-copy-block">
             <p className="login-brand-copy">
-              {t('把分散的 New API / One API / OneHub 等站点聚合成统一网关，自动发现模型、智能路由、成本更优。')}
+              {t('app.turnFragmentedNewApiOneApiOnehub')}
             </p>
           </div>
-          <div className="login-compat-line">{t('兼容 New API / One API / OneHub / DoneHub / Veloera / AnyRouter / Sub2API')}</div>
+          <div className="login-compat-line">{t('app.compatibleNewApiOneApiOnehubDonehub')}</div>
           <div className="login-capability-list">
             {capabilityRows.map((feature, index) => (
               <div key={feature.title} className="login-capability-row">
@@ -235,44 +241,44 @@ export function Login({ onLogin, t }: { onLogin: (token: string) => void; t: (te
               rel="noopener noreferrer"
               className="login-doc-link"
             >
-              {t('部署文档')}
+              {t('app.deploymentDocs')}
             </a>
           </div>
         </section>
 
         <section className="login-auth-stage">
           <div className="login-auth-panel">
-            <div className="login-auth-eyebrow">{t('管理员入口')}</div>
-            <h2 className="login-auth-title">{t('登录')}</h2>
-            <p className="login-auth-copy">{t('请输入管理员令牌后继续。')}</p>
-            <label className="login-auth-label" htmlFor="admin-token-input">{t('管理员令牌')}</label>
-            <input
+            <div className="login-auth-eyebrow">{t('app.adminAccess')}</div>
+            <h2 className="login-auth-title">{t('app.sign')}</h2>
+            <p className="login-auth-copy">{t('app.enterAdminTokenContinue')}</p>
+            <label className="login-auth-label" htmlFor="admin-token-input">{t('app.adminToken')}</label>
+            <Input
               id="admin-token-input"
               type="password"
-              placeholder={t('管理员令牌')}
+              placeholder={t('app.adminToken')}
               value={token}
               onChange={(e) => {
                 setToken(e.target.value);
                 setError('');
               }}
               onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
-              className="login-auth-input"
             />
             {error && (
-              <div className="alert alert-error animate-shake" style={{ marginBottom: 12 }}>
-                {error}
-              </div>
+              <Alert variant="destructive" className="mb-3 animate-shake">
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
             )}
-            <button
+            <Button
+              type="button"
               onClick={handleLogin}
               disabled={loading || !token}
-              className="btn btn-primary login-auth-submit"
+              className="w-full py-[13px]"
             >
-              {loading ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} />{t('验证中...')}</> : t('登录')}
-            </button>
-            <div className="login-auth-note">{t('仅校验本地服务访问权限，不会把令牌发送到第三方。')}</div>
+              {loading ? t('app.verifying') : t('app.sign')}
+            </Button>
+            <div className="login-auth-note">{t('app.onlyChecksLocalServiceAccessNeverSends')}</div>
             <div className="login-auth-footer">
-              <span>{t('管理员登录后继续。')}</span>
+              <span>{t('app.continueAdminSign')}</span>
             </div>
           </div>
         </section>
@@ -309,17 +315,6 @@ function UserProfileModal({
 
   const avatarUrl = buildDicebearAvatarUrl(avatarStyle, avatarSeed);
 
-  const inputStyle: React.CSSProperties = {
-    width: '100%',
-    padding: '10px 14px',
-    border: '1px solid var(--color-border)',
-    borderRadius: 'var(--radius-sm)',
-    fontSize: 13,
-    outline: 'none',
-    background: 'var(--color-bg)',
-    color: 'var(--color-text-primary)',
-  };
-
   const handleRandomAvatar = () => {
     const nextSeed = createRandomAvatarSeed();
     setAvatarSeed(nextSeed);
@@ -329,11 +324,11 @@ function UserProfileModal({
   const handleSubmit = () => {
     const normalizedName = name.trim();
     if (!normalizedName) {
-      setError(t('用户名不能为空'));
+      setError(t('app.usernameCannotEmpty'));
       return;
     }
     if (Array.from(normalizedName).length > 24) {
-      setError(t('用户名最多 24 个字符'));
+      setError(t('app.usernameCanMost24Characters'));
       return;
     }
     onSave({
@@ -349,55 +344,54 @@ function UserProfileModal({
     <CenteredModal
       open={open}
       onClose={onClose}
-      title={t('个人信息')}
+      title={t('app.profile')}
       maxWidth={440}
       closeOnBackdrop
       closeOnEscape
       bodyStyle={{ display: 'flex', flexDirection: 'column', gap: 12 }}
       footer={(
         <>
-          <button onClick={onClose} className="btn btn-ghost">{t('取消')}</button>
-          <button onClick={handleSubmit} className="btn btn-primary">{t('保存')}</button>
+          <Button type="button" variant="ghost" onClick={onClose}>{t('app.cancel')}</Button>
+          <Button type="button" onClick={handleSubmit}>{t('app.save')}</Button>
         </>
       )}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 2 }}>
-        <div className="topbar-avatar" style={{ width: 40, height: 40, fontSize: 14 }}>
+      <div className="mb-0.5 flex items-center gap-2.5">
+        <div className="size-10 overflow-hidden rounded-full">
           <img
             src={avatarUrl}
             alt={name.trim() || 'avatar'}
-            style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover' }}
+            className="size-full rounded-full object-cover"
           />
         </div>
-        <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>{t('右上角头像实时预览')}</div>
+        <div className="text-xs text-muted-foreground">{t('app.topRightAvatarLivePreview')}</div>
       </div>
 
       <div>
-        <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>{t('用户名')}</div>
-        <input
+        <div className="mb-1.5 text-xs text-muted-foreground">{t('app.username')}</div>
+        <Input
           value={name}
           onChange={(e) => {
             setName(e.target.value);
             setError('');
           }}
-          placeholder={t('例如：小王')}
-          style={inputStyle}
+          placeholder={t('app.eGAlex')}
         />
       </div>
 
       <div>
-        <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>
-          {t('头像（Dicebear 随机） · 风格：')}{avatarStyle}
+        <div className="mb-1.5 text-xs text-muted-foreground">
+          {t('app.avatarDicebearRandomStyle')}{avatarStyle}
         </div>
-        <button type="button" className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={handleRandomAvatar}>
-          {t('换一个随机头像')}
-        </button>
+        <Button type="button" variant="outline" onClick={handleRandomAvatar}>
+          {t('app.randomizeAvatar')}
+        </Button>
       </div>
 
       {error && (
-        <div className="alert alert-error">
-          {error}
-        </div>
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
       )}
     </CenteredModal>
   );
@@ -405,36 +399,37 @@ function UserProfileModal({
 
 export const sidebarGroups = [
   {
-    label: '控制台',
+    label: tr('app.console'),
     items: [
-      { to: '/', label: '仪表盘', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M4 5a1 1 0 011-1h4a1 1 0 011 1v5a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM14 5a1 1 0 011-1h4a1 1 0 011 1v2a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zM14 12a1 1 0 011-1h4a1 1 0 011 1v7a1 1 0 01-1 1h-4a1 1 0 01-1-1v-7z" /></svg> },
-      { to: '/sites', label: '站点管理', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" /></svg> },
-      { to: '/site-announcements', label: '站点公告', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M7 8h10M7 12h10M7 16h6M5 4h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z" /></svg> },
-      { to: '/accounts', label: '连接管理', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" /></svg> },
-      { to: '/oauth', label: 'OAuth 管理', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M15 7a3 3 0 106 0 3 3 0 00-6 0zM3 17a3 3 0 106 0 3 3 0 00-6 0zM15 17a3 3 0 106 0 3 3 0 00-6 0zM6 14V10m0 0a3 3 0 113-3m-3 3a3 3 0 003 3h6" /></svg> },
-      { to: '/downstream-keys', label: '下游密钥', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M15 7a4 4 0 11-8 0 4 4 0 018 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M7 21a6 6 0 0110.8-3.6M15.5 18.5l2-2m0 0l2 2m-2-2V21" /></svg> },
-      { to: '/checkin', label: '签到记录', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> },
-      { to: '/routes', label: '路由', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" /></svg> },
-      { to: '/logs', label: '使用日志', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg> },
-      { to: '/monitor', label: '可用性监控', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M3 5a2 2 0 012-2h14a2 2 0 012 2v11a2 2 0 01-2 2h-5l-2.5 3-2.5-3H5a2 2 0 01-2-2V5z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M7 10h3l1.5-2.5L14 13l1.5-3H17" /></svg> },
+      { to: '/', label: tr('app.dashboard'), icon: <svg className="size-4.5 shrink-0 opacity-75" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M4 5a1 1 0 011-1h4a1 1 0 011 1v5a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM14 5a1 1 0 011-1h4a1 1 0 011 1v2a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zM14 12a1 1 0 011-1h4a1 1 0 011 1v7a1 1 0 01-1 1h-4a1 1 0 01-1-1v-7z" /></svg> },
+      { to: '/sites', label: tr('app.siteManagement'), icon: <svg className="size-4.5 shrink-0 opacity-75" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" /></svg> },
+      { to: '/site-announcements', label: tr('app.sites'), icon: <svg className="size-4.5 shrink-0 opacity-75" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M7 8h10M7 12h10M7 16h6M5 4h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z" /></svg> },
+      { to: '/accounts', label: tr('app.connectionManagement'), icon: <svg className="size-4.5 shrink-0 opacity-75" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" /></svg> },
+      { to: '/costs', label: tr('app.costCatalog'), icon: <svg className="size-4.5 shrink-0 opacity-75" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M12 6c-4.418 0-8 1.343-8 3s3.582 3 8 3 8-1.343 8-3-3.582-3-8-3z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M4 9v6c0 1.657 3.582 3 8 3s8-1.343 8-3V9M4 12c0 1.657 3.582 3 8 3s8-1.343 8-3" /></svg> },
+      { to: '/oauth', label: tr('app.oauth'), icon: <svg className="size-4.5 shrink-0 opacity-75" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M15 7a3 3 0 106 0 3 3 0 00-6 0zM3 17a3 3 0 106 0 3 3 0 00-6 0zM15 17a3 3 0 106 0 3 3 0 00-6 0zM6 14V10m0 0a3 3 0 113-3m-3 3a3 3 0 003 3h6" /></svg> },
+      { to: '/downstream-keys', label: tr('app.downstreamKeys'), icon: <svg className="size-4.5 shrink-0 opacity-75" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M15 7a4 4 0 11-8 0 4 4 0 018 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M7 21a6 6 0 0110.8-3.6M15.5 18.5l2-2m0 0l2 2m-2-2V21" /></svg> },
+      { to: '/checkin', label: tr('app.checkLogs'), icon: <svg className="size-4.5 shrink-0 opacity-75" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> },
+      { to: '/routes', label: tr('app.routes'), icon: <svg className="size-4.5 shrink-0 opacity-75" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" /></svg> },
+      { to: '/logs', label: tr('app.usageLogs'), icon: <svg className="size-4.5 shrink-0 opacity-75" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg> },
+      { to: '/monitor', label: tr('app.availabilityMonitor'), icon: <svg className="size-4.5 shrink-0 opacity-75" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M3 5a2 2 0 012-2h14a2 2 0 012 2v11a2 2 0 01-2 2h-5l-2.5 3-2.5-3H5a2 2 0 01-2-2V5z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M7 10h3l1.5-2.5L14 13l1.5-3H17" /></svg> },
     ],
   },
   {
-    label: '系统',
+    label: tr('app.system'),
     items: [
-      { to: '/settings', label: '设置', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg> },
-      { to: '/events', label: '程序日志', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg> },
-      { to: '/settings/import-export', label: '导入/导出', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M7 7h10M7 12h6m-6 5h10M5 3h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2z" /></svg> },
-      { to: '/settings/notify', label: '通知设置', icon: <svg className="sidebar-item-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" /></svg> },
+      { to: '/settings', label: tr('app.settings'), icon: <svg className="size-4.5 shrink-0 opacity-75" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg> },
+      { to: '/events', label: tr('app.systemLogs'), icon: <svg className="size-4.5 shrink-0 opacity-75" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg> },
+      { to: '/settings/import-export', label: tr('app.importExport'), icon: <svg className="size-4.5 shrink-0 opacity-75" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M7 7h10M7 12h6m-6 5h10M5 3h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2z" /></svg> },
+      { to: '/settings/notify', label: tr('app.notificationSettings'), icon: <svg className="size-4.5 shrink-0 opacity-75" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" /></svg> },
     ],
   },
 ];
 
 const topNavItems = [
-  { label: '控制台', to: '/' },
-  { label: '模型广场', to: '/models' },
-  { label: '模型操练场', to: '/playground' },
-  { label: '关于', to: '/about' },
+  { label: tr('app.console'), to: '/' },
+  { label: tr('app.modelMarketplace'), to: '/models' },
+  { label: tr('app.modelPlayground'), to: '/playground' },
+  { label: tr('app.about'), to: '/about' },
 ];
 
 function PageTransition({ children }: { children: React.ReactNode }) {
@@ -444,9 +439,9 @@ function PageTransition({ children }: { children: React.ReactNode }) {
 
 function RouteLoadingFallback() {
   return (
-    <div className="animate-fade-in" style={{ padding: 16 }}>
-      <div className="skeleton" style={{ width: 220, height: 24, marginBottom: 16 }} />
-      <div className="skeleton" style={{ width: '100%', height: 120, borderRadius: 12 }} />
+    <div className="animate-fade-in p-4">
+      <Skeleton className="mb-4 h-6 w-[220px]" />
+      <Skeleton className="h-28 w-full" />
     </div>
   );
 }
@@ -456,9 +451,7 @@ function AppShell() {
   const [authed, setAuthed] = useState(() => hasValidAuthSession(localStorage));
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
-  const userMenuRef = useRef<HTMLDivElement>(null);
   const [showThemeMenu, setShowThemeMenu] = useState(false);
-  const themeMenuRef = useRef<HTMLDivElement>(null);
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => resolveStoredThemeMode());
   const [systemPrefersDark, setSystemPrefersDark] = useState(() => window.matchMedia('(prefers-color-scheme: dark)').matches);
   const [userProfile, setUserProfile] = useState<UserProfile>(() => resolveStoredProfile());
@@ -466,8 +459,6 @@ function AppShell() {
   const [showSearch, setShowSearch] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const themeMenuPresence = useAnimatedVisibility(showThemeMenu, 160);
-  const userMenuPresence = useAnimatedVisibility(showUserMenu, 160);
   const [unreadCount, setUnreadCount] = useState(0);
   const notifBtnRef = useRef<HTMLButtonElement>(null);
   const latestTaskEventIdRef = useRef(0);
@@ -477,8 +468,8 @@ function AppShell() {
     ? (systemPrefersDark ? 'dark' : 'light')
     : themeMode;
   const rawDisplayName = (userProfile.name || '').trim();
-  const displayName = rawDisplayName ? (rawDisplayName === '管理员' ? t('管理员') : rawDisplayName) : t('管理员');
-  const resolvedThemeLabel = resolvedTheme === 'dark' ? t('深色') : t('浅色');
+  const displayName = rawDisplayName ? (rawDisplayName === '管理员' ? t('app.admin') : rawDisplayName) : t('app.admin');
+  const resolvedThemeLabel = resolvedTheme === 'dark' ? t('app.dark') : t('app.light');
   const avatarUrl = buildDicebearAvatarUrl(userProfile.avatarStyle, userProfile.avatarSeed);
 
   useEffect(() => {
@@ -532,12 +523,14 @@ function AppShell() {
 
     const pollEvents = async () => {
       try {
-        const recentEvents = await api.getEvents('limit=30');
+        const [recentEvents, notificationCount] = await Promise.all([
+          api.getEvents('limit=30'),
+          api.getEventCount('scope=notification'),
+        ]);
 
         if (cancelled) return;
         const rows = Array.isArray(recentEvents) ? recentEvents : [];
-        const unread = rows.filter((r: any) => !r.read).length;
-        setUnreadCount(unread);
+        setUnreadCount(notificationCount.count || 0);
         const maxId = rows.reduce((acc: number, row: any) => Math.max(acc, Number(row?.id) || 0), 0);
 
         if (latestTaskEventIdRef.current === 0) {
@@ -549,13 +542,13 @@ function AppShell() {
           .filter((row: any) => (
             (Number(row?.id) || 0) > latestTaskEventIdRef.current
             && row?.relatedType === 'task'
-            && !String(row?.title || '').includes('已开始')
+            && !String(row?.title || '').includes(tr('app.started'))
           ))
           .sort((a: any, b: any) => (a.id || 0) - (b.id || 0))
           .slice(-3);
 
         for (const event of newTaskEvents) {
-          const message = event?.message || event?.title || t('任务状态已更新');
+          const message = event?.message || event?.title || t('app.taskStatusUpdated');
           if (event?.level === 'error') {
             toast.error(message);
           } else if (event?.level === 'warning') {
@@ -587,7 +580,7 @@ function AppShell() {
     const check = () => {
       if (hasValidAuthSession(localStorage)) return;
       setAuthed(false);
-      toast.info(t('会话已过期，请重新登录'));
+      toast.info(t('app.sessionExpiredPleaseSignAgain'));
     };
 
     check();
@@ -599,21 +592,8 @@ function AppShell() {
     if (!authed) return;
     if (localStorage.getItem(FIRST_USE_DOC_REMINDER_KEY)) return;
     localStorage.setItem(FIRST_USE_DOC_REMINDER_KEY, '1');
-    toast.info(`${t('首次使用建议先阅读站点文档：')}${SITE_DOCS_URL}`);
+    toast.info(`${t('app.firstTimeSetupReadSiteDocs')}${SITE_DOCS_URL}`);
   }, [authed, t, toast]);
-
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
-        setShowUserMenu(false);
-      }
-      if (themeMenuRef.current && !themeMenuRef.current.contains(e.target as Node)) {
-        setShowThemeMenu(false);
-      }
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, []);
 
   const handleSelectThemeMode = (nextMode: ThemeMode) => {
     setThemeMode(nextMode);
@@ -623,7 +603,7 @@ function AppShell() {
   const handleSaveProfile = (nextProfile: UserProfile) => {
     const normalizedSeed = nextProfile.avatarSeed.trim() || createRandomAvatarSeed();
     const normalized = {
-      name: nextProfile.name.trim() || t('管理员'),
+      name: nextProfile.name.trim() || t('app.admin'),
       avatarSeed: normalizedSeed,
       avatarStyle: DICEBEAR_STYLES.includes(nextProfile.avatarStyle as DicebearStyle)
         ? nextProfile.avatarStyle
@@ -632,7 +612,7 @@ function AppShell() {
     setUserProfile(normalized);
     localStorage.setItem(USER_PROFILE_STORAGE_KEY, JSON.stringify(normalized));
     setShowProfileModal(false);
-    toast.success(t('个人信息已保存'));
+    toast.success(t('app.profileSaved'));
   };
 
   if (!authed) {
@@ -644,140 +624,139 @@ function AppShell() {
 
   return (
     <>
-      <header className="topbar">
+      <header className="sticky top-0 z-50 flex h-14 items-center border-b bg-background/85 px-5 backdrop-blur">
         {isMobile && (
-          <button
-            className="topbar-icon-btn"
-            aria-label={t('打开导航')}
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label={t('app.opennavigate')}
             onClick={() => setDrawerOpen(true)}
             type="button"
           >
             <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
             </svg>
-          </button>
+          </Button>
         )}
-        <div className="topbar-logo">
-          <img src="/logo.png" alt="Metapi" style={{ width: 28, height: 28, borderRadius: 6 }} />
-          <span className="topbar-logo-text">Metapi</span>
+        <div className="mr-8 flex items-center gap-2.5">
+          <img src="/logo.png" alt="Metapi" className="size-7 rounded-md" />
+          <span className="text-[15px] font-bold text-foreground">Metapi</span>
         </div>
-        <nav className="topbar-nav">
+        <nav className="flex items-center gap-1">
           {topNavItems.map((item) => (
-            <NavLink key={item.to} to={item.to} end className={({ isActive }) => `topbar-nav-item ${isActive ? 'active' : ''}`}>
+            <NavLink
+              key={item.to}
+              to={item.to}
+              end
+              className={({ isActive }) => `rounded-md px-3.5 py-1.5 text-sm font-medium transition-colors ${isActive ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'}`}
+            >
               {t(item.label)}
             </NavLink>
           ))}
         </nav>
-        <div className="topbar-right">
-          <button
-            className="topbar-icon-btn"
-            aria-label={language === 'zh' ? 'Switch to English' : '切换到中文'}
+        <div className="ml-auto flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label={language === 'zh' ? 'Switch to English' : tr('app.switchChinese')}
             onClick={toggleLanguage}
-            style={{ minWidth: 36, fontSize: 12, fontWeight: 700 }}
+            className="min-w-9"
           >
-            {language === 'zh' ? 'EN' : '中'}
-          </button>
-          <button className="topbar-search-trigger" aria-label={t('搜索 (Ctrl+K)')} onClick={() => setShowSearch(true)}>
+            {language === 'zh' ? 'EN' : tr('app.languageChinese')}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className="min-w-[170px] justify-start gap-2.5 px-3"
+            aria-label={t('app.searchCtrlK')}
+            onClick={() => setShowSearch(true)}
+          >
             <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
-            <span className="topbar-search-label">{t('搜索')}</span>
-            <kbd className="topbar-search-kbd">Ctrl K</kbd>
-          </button>
-          <div style={{ position: 'relative' }}>
-            <button ref={notifBtnRef} className="topbar-icon-btn" aria-label={t('通知')} onClick={() => setShowNotifications(!showNotifications)}>
+            <span className="text-sm font-semibold">{t('app.search')}</span>
+            <kbd className="ml-auto rounded-md border bg-muted px-2 py-1 text-[11px] font-bold leading-none text-muted-foreground">Ctrl K</kbd>
+          </Button>
+          <div className="relative">
+            <Button ref={notifBtnRef} type="button" variant="ghost" size="icon" aria-label={t('app.notifications')} onClick={() => setShowNotifications(!showNotifications)}>
               <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" /></svg>
               {unreadCount > 0 && (
-                <span className="topbar-badge">
+                <span className="absolute right-0 top-0 inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-destructive px-1 text-[11px] font-semibold text-destructive-foreground">
                   {unreadCount > 99 ? '99+' : unreadCount}
                 </span>
               )}
-            </button>
+            </Button>
             <NotificationPanel open={showNotifications} onClose={() => setShowNotifications(false)} anchorRef={notifBtnRef} onUnreadCountChange={setUnreadCount} />
           </div>
-          <div ref={themeMenuRef} style={{ position: 'relative' }}>
-            <button
-              className="topbar-icon-btn"
-              aria-label={themeMode === 'system'
-                ? `${t('跟随系统')} (${resolvedThemeLabel})`
-                : (themeMode === 'light' ? t('浅色模式') : t('深色模式'))}
-              onClick={() => {
-                setShowThemeMenu((prev) => !prev);
-                setShowUserMenu(false);
-              }}
-            >
-              {themeMode === 'system' ? (
-                <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5h16v10H4V5zm6 12h4m-7 2h10" /></svg>
-              ) : themeMode === 'light' ? (
-                <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" /></svg>
-              ) : (
-                <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" /></svg>
-              )}
-            </button>
-            {themeMenuPresence.shouldRender && (
-              <div className={`user-dropdown ${themeMenuPresence.isVisible ? '' : 'is-closing'}`.trim()} style={{ right: 0, left: 'auto', minWidth: 168 }}>
-                <button
-                  className="user-dropdown-item"
-                  onClick={() => handleSelectThemeMode('system')}
-                  style={themeMode === 'system' ? { background: 'var(--color-primary-light)', color: 'var(--color-primary)' } : undefined}
-                >
-                  {t('跟随系统')}（{resolvedThemeLabel}）
-                </button>
-                <button
-                  className="user-dropdown-item"
-                  onClick={() => handleSelectThemeMode('light')}
-                  style={themeMode === 'light' ? { background: 'var(--color-primary-light)', color: 'var(--color-primary)' } : undefined}
-                >
-                  {t('浅色模式')}
-                </button>
-                <button
-                  className="user-dropdown-item"
-                  onClick={() => handleSelectThemeMode('dark')}
-                  style={themeMode === 'dark' ? { background: 'var(--color-primary-light)', color: 'var(--color-primary)' } : undefined}
-                >
-                  {t('深色模式')}
-                </button>
-              </div>
-            )}
-          </div>
-          <div ref={userMenuRef} style={{ position: 'relative' }}>
-            <button
-              type="button"
-              className="topbar-avatar"
-              aria-label={displayName}
-              aria-haspopup="menu"
-              aria-expanded={showUserMenu}
-              onClick={() => {
-                setShowUserMenu(!showUserMenu);
-                setShowThemeMenu(false);
-              }}
-            >
-              <img
-                src={avatarUrl}
-                alt={displayName}
-                style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover' }}
-              />
-            </button>
-            {userMenuPresence.shouldRender && (
-              <div className={`user-dropdown ${userMenuPresence.isVisible ? '' : 'is-closing'}`.trim()}>
-                <button
-                  className="user-dropdown-item"
-                  onClick={() => {
-                    setShowProfileModal(true);
-                    setShowUserMenu(false);
-                  }}
-                >
-                  <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
-                  {t('个人信息')}
-                </button>
-                <button onClick={() => {
+          <DropdownMenu.Root open={showThemeMenu} onOpenChange={(nextOpen) => {
+            setShowThemeMenu(nextOpen);
+            if (nextOpen) setShowUserMenu(false);
+          }}>
+            <DropdownMenu.Trigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label={themeMode === 'system'
+                  ? `${t('app.followSystem')} (${resolvedThemeLabel})`
+                  : (themeMode === 'light' ? t('app.lightMode') : t('app.darkMode'))}
+              >
+                {themeMode === 'system' ? (
+                  <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5h16v10H4V5zm6 12h4m-7 2h10" /></svg>
+                ) : themeMode === 'light' ? (
+                  <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" /></svg>
+                ) : (
+                  <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" /></svg>
+                )}
+              </Button>
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Content align="end">
+              <DropdownMenu.RadioGroup value={themeMode} onValueChange={(value) => handleSelectThemeMode(value as ThemeMode)}>
+                <DropdownMenu.RadioItem value="system">{t('app.followSystem')}（{resolvedThemeLabel}）</DropdownMenu.RadioItem>
+                <DropdownMenu.RadioItem value="light">{t('app.lightMode')}</DropdownMenu.RadioItem>
+                <DropdownMenu.RadioItem value="dark">{t('app.darkMode')}</DropdownMenu.RadioItem>
+              </DropdownMenu.RadioGroup>
+            </DropdownMenu.Content>
+          </DropdownMenu.Root>
+          <DropdownMenu.Root open={showUserMenu} onOpenChange={(nextOpen) => {
+            setShowUserMenu(nextOpen);
+            if (nextOpen) setShowThemeMenu(false);
+          }}>
+            <DropdownMenu.Trigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-8 p-0"
+                aria-label={displayName}
+              >
+                <img
+                  src={avatarUrl}
+                  alt={displayName}
+                  className="size-full rounded-full object-cover"
+                />
+              </Button>
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Content align="end">
+              <DropdownMenu.Item
+                onSelect={() => {
+                  setShowProfileModal(true);
+                  setShowUserMenu(false);
+                }}
+              >
+                <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
+                {t('app.profile')}
+              </DropdownMenu.Item>
+              <DropdownMenu.Item
+                variant="destructive"
+                onSelect={() => {
                   clearAuthSession(localStorage);
                   setAuthed(false);
-                }} className="user-dropdown-item danger">
-                  <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
-                  {t('退出登录')}
-                </button>
-              </div>
-            )}
-          </div>
+                }}
+              >
+                <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
+                {t('app.signOut')}
+              </DropdownMenu.Item>
+            </DropdownMenu.Content>
+          </DropdownMenu.Root>
         </div>
       </header>
 
@@ -786,23 +765,23 @@ function AppShell() {
           <MobileDrawer
             open={drawerOpen}
             onClose={() => setDrawerOpen(false)}
-            title={t('导航菜单')}
-            closeLabel={t('关闭导航')}
+            title={t('app.navigate')}
+            closeLabel={t('app.closenavigate')}
           >
-            <div className="mobile-drawer-header">
-              <img src="/logo.png" alt="Metapi" />
-              <span>Metapi</span>
+            <div className="flex items-center gap-2">
+              <img src="/logo.png" alt="Metapi" className="size-8 rounded-md" />
+              <span className="text-sm font-semibold">Metapi</span>
             </div>
-            <nav className="mobile-nav">
+            <nav className="flex flex-1 flex-col overflow-y-auto px-3 pb-6 pt-3">
               {sidebarGroups.map((group) => (
-                <div key={group.label} className="mobile-nav-group">
-                  <div className="mobile-nav-label">{t(group.label)}</div>
+                <div key={group.label} className="mb-2">
+                  <div className="px-3 pb-1.5 pt-3 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">{t(group.label)}</div>
                   {group.items.map((item) => (
                     <NavLink
                       key={item.to}
                       to={item.to}
                       end={item.to === '/' || item.to === '/settings'}
-                      className={({ isActive }) => `mobile-nav-item ${isActive ? 'active' : ''}`}
+                      className={({ isActive }) => `relative flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors ${isActive ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'}`}
                       onClick={() => setDrawerOpen(false)}
                     >
                       {item.icon}
@@ -811,13 +790,13 @@ function AppShell() {
                   ))}
                 </div>
               ))}
-              <div className="mobile-nav-group">
-                <div className="mobile-nav-label">{t('更多')}</div>
+              <div className="mb-2">
+                <div className="px-3 pb-1.5 pt-3 text-[11px] font-bold uppercase tracking-wide text-muted-foreground">{t('app.more')}</div>
                 {topNavItems.filter((n) => n.to !== '/').map((item) => (
                   <NavLink
                     key={item.to}
                     to={item.to}
-                    className={({ isActive }) => `mobile-nav-item ${isActive ? 'active' : ''}`}
+                    className={({ isActive }) => `relative flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors ${isActive ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'}`}
                     onClick={() => setDrawerOpen(false)}
                   >
                     <span>{t(item.label)}</span>
@@ -827,16 +806,16 @@ function AppShell() {
             </nav>
           </MobileDrawer>
         ) : (
-          <aside className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
+          <aside className={`sticky top-14 flex h-[calc(100vh-3.5rem)] flex-col overflow-hidden border-r bg-background px-2.5 py-3 transition-[width] ${sidebarCollapsed ? 'w-16' : 'w-[220px]'}`}>
             {sidebarGroups.map((group) => (
-              <div key={group.label} className="sidebar-group">
-                {!sidebarCollapsed && <div className="sidebar-group-label">{t(group.label)}</div>}
+              <div key={group.label} className="mb-2">
+                {!sidebarCollapsed && <div className="px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{t(group.label)}</div>}
                 {group.items.map((item) => (
                   <NavLink
                     key={item.to}
                     to={item.to}
                     end={item.to === '/' || item.to === '/settings'}
-                    className={({ isActive }) => `sidebar-item ${isActive ? 'active' : ''}`}
+                    className={({ isActive }) => `relative flex items-center gap-2.5 whitespace-nowrap rounded-md px-3 py-2 text-[13.5px] font-medium transition-colors ${isActive ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'}`}
                     data-tooltip={sidebarCollapsed ? t(item.label) : undefined}
                     aria-label={sidebarCollapsed ? t(item.label) : undefined}
                   >
@@ -846,12 +825,17 @@ function AppShell() {
                 ))}
               </div>
             ))}
-            <button className="sidebar-collapse-btn" onClick={() => setSidebarCollapsed(!sidebarCollapsed)}>
-              <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" style={{ transform: sidebarCollapsed ? 'rotate(180deg)' : 'none', transition: 'transform 0.3s ease', flexShrink: 0 }}>
+            <Button
+              type="button"
+              variant="ghostMuted"
+              className="mt-auto w-full justify-start gap-2 whitespace-nowrap px-3"
+              onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+            >
+              <svg className={`size-4 shrink-0 transition-transform ${sidebarCollapsed ? 'rotate-180' : ''}`} width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
               </svg>
-              {!sidebarCollapsed && <span>{t('收起侧边栏')}</span>}
-            </button>
+              {!sidebarCollapsed && <span>{t('app.collapseSidebar')}</span>}
+            </Button>
           </aside>
         )}
 
@@ -863,6 +847,7 @@ function AppShell() {
                 <Route path="/sites" element={<Sites />} />
                 <Route path="/site-announcements" element={<SiteAnnouncements />} />
                 <Route path="/accounts" element={<Accounts />} />
+                <Route path="/costs" element={<CostCatalog />} />
                 <Route path="/oauth" element={<OAuthManagement />} />
                 <Route path="/tokens" element={<Tokens />} />
                 <Route path="/checkin" element={<CheckinLog />} />
