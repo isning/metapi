@@ -1,8 +1,9 @@
 import Fastify, { type FastifyInstance } from 'fastify';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { waitForBackgroundTaskToReachTerminalState } from '../../test-fixtures/backgroundTaskTestUtils.js';
 
 const verifyTokenMock = vi.fn();
 const getModelsMock = vi.fn();
@@ -15,12 +16,16 @@ vi.mock('../../services/platforms/index.js', () => ({
 }));
 
 type DbModule = typeof import('../../db/index.js');
+type BackgroundTaskModule = typeof import('../../services/backgroundTaskService.js');
 
 describe('accounts api endpoint host selection', { timeout: 15_000 }, () => {
   let app: FastifyInstance;
   let db: DbModule['db'];
   let schema: DbModule['schema'];
   let dataDir = '';
+  let resetBackgroundTasks: BackgroundTaskModule['__resetBackgroundTasksForTests'];
+  let getBackgroundTask: BackgroundTaskModule['getBackgroundTask'];
+  let listBackgroundTasks: BackgroundTaskModule['listBackgroundTasks'];
 
   beforeAll(async () => {
     dataDir = mkdtempSync(join(tmpdir(), 'metapi-accounts-api-site-'));
@@ -29,8 +34,12 @@ describe('accounts api endpoint host selection', { timeout: 15_000 }, () => {
     await import('../../db/migrate.js');
     const dbModule = await import('../../db/index.js');
     const routesModule = await import('./accounts.js');
+    const backgroundTaskModule = await import('../../services/backgroundTaskService.js');
     db = dbModule.db;
     schema = dbModule.schema;
+    resetBackgroundTasks = backgroundTaskModule.__resetBackgroundTasksForTests;
+    getBackgroundTask = backgroundTaskModule.getBackgroundTask;
+    listBackgroundTasks = backgroundTaskModule.listBackgroundTasks;
 
     app = Fastify();
     await app.register(routesModule.accountsRoutes);
@@ -39,10 +48,11 @@ describe('accounts api endpoint host selection', { timeout: 15_000 }, () => {
   beforeEach(async () => {
     verifyTokenMock.mockReset();
     getModelsMock.mockReset();
+    resetBackgroundTasks();
 
     await db.delete(schema.proxyLogs).run();
     await db.delete(schema.checkinLogs).run();
-    await db.delete(schema.routeChannels).run();
+    await db.delete(schema.routeEndpointTargets).run();
     await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.tokenModelAvailability).run();
     await db.delete(schema.modelAvailability).run();
@@ -50,6 +60,17 @@ describe('accounts api endpoint host selection', { timeout: 15_000 }, () => {
     await db.delete(schema.accounts).run();
     await db.delete(schema.siteApiEndpoints).run();
     await db.delete(schema.sites).run();
+  });
+
+  afterEach(async () => {
+    const tasks = listBackgroundTasks(200);
+    await Promise.all(tasks.map((task) => (
+      waitForBackgroundTaskToReachTerminalState(getBackgroundTask, task.id, {
+        timeoutMs: 5_000,
+        pollMs: 5,
+      })
+    )));
+    resetBackgroundTasks();
   });
 
   afterAll(async () => {
@@ -270,9 +291,11 @@ describe('accounts api endpoint host selection', { timeout: 15_000 }, () => {
   });
 
   it('supports batch creating multiple API key connections for one site', async () => {
-    getModelsMock
-      .mockResolvedValueOnce(['gpt-4o-mini'])
-      .mockResolvedValueOnce(['gpt-4.1-mini']);
+    getModelsMock.mockImplementation(async (_baseUrl, token) => {
+      if (token === 'sk-batch-a') return ['gpt-4o-mini'];
+      if (token === 'sk-batch-b') return ['gpt-4.1-mini'];
+      throw new Error(`unexpected token ${String(token)}`);
+    });
 
     const site = await db.insert(schema.sites).values({
       name: 'Nihao Batch Pool',
@@ -307,8 +330,10 @@ describe('accounts api endpoint host selection', { timeout: 15_000 }, () => {
       createdCount: 2,
       failedCount: 0,
     });
-    expect(getModelsMock).toHaveBeenNthCalledWith(1, 'https://api.example.com', 'sk-batch-a', undefined);
-    expect(getModelsMock).toHaveBeenNthCalledWith(2, 'https://api.example.com', 'sk-batch-b', undefined);
+    expect(getModelsMock.mock.calls).toEqual(expect.arrayContaining([
+      ['https://api.example.com', 'sk-batch-a', undefined],
+      ['https://api.example.com', 'sk-batch-b', undefined],
+    ]));
 
     const accounts = await db.select().from(schema.accounts).all();
     expect(accounts).toHaveLength(2);
@@ -317,9 +342,11 @@ describe('accounts api endpoint host selection', { timeout: 15_000 }, () => {
   });
 
   it('treats accessTokens payloads as batch API key creation even without credentialMode', async () => {
-    getModelsMock
-      .mockResolvedValueOnce(['gpt-4o-mini'])
-      .mockResolvedValueOnce(['gpt-4.1-mini']);
+    getModelsMock.mockImplementation(async (_baseUrl, token) => {
+      if (token === 'sk-array-a') return ['gpt-4o-mini'];
+      if (token === 'sk-array-b') return ['gpt-4.1-mini'];
+      throw new Error(`unexpected token ${String(token)}`);
+    });
 
     const site = await db.insert(schema.sites).values({
       name: 'Nihao Batch Array',
@@ -353,8 +380,10 @@ describe('accounts api endpoint host selection', { timeout: 15_000 }, () => {
       createdCount: 2,
       failedCount: 0,
     });
-    expect(getModelsMock).toHaveBeenNthCalledWith(1, 'https://api.example.com', 'sk-array-a', undefined);
-    expect(getModelsMock).toHaveBeenNthCalledWith(2, 'https://api.example.com', 'sk-array-b', undefined);
+    expect(getModelsMock.mock.calls).toEqual(expect.arrayContaining([
+      ['https://api.example.com', 'sk-array-a', undefined],
+      ['https://api.example.com', 'sk-array-b', undefined],
+    ]));
 
     const accounts = await db.select().from(schema.accounts).all();
     expect(accounts).toHaveLength(2);

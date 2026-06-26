@@ -3,6 +3,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
+import { compileRouteGraphSource } from '../../shared/routeGraph.js';
 
 const getApiTokenMock = vi.fn();
 const getModelsMock = vi.fn();
@@ -40,6 +41,8 @@ vi.mock('./oauth/refreshSingleflight.js', () => ({
 
 type DbModule = typeof import('../db/index.js');
 type ModelServiceModule = typeof import('./modelService.js');
+type RouteGraphServiceModule = typeof import('./routeGraphService.js');
+type RouteGraphRuntimeModule = typeof import('./routeGraphRuntimeService.js');
 
 describe('refreshModelsForAccount credential discovery', () => {
   let db: DbModule['db'];
@@ -47,6 +50,8 @@ describe('refreshModelsForAccount credential discovery', () => {
   let refreshModelsForAccount: ModelServiceModule['refreshModelsForAccount'];
   let refreshModelsAndRebuildRoutes: ModelServiceModule['refreshModelsAndRebuildRoutes'];
   let rebuildTokenRoutesFromAvailability: ModelServiceModule['rebuildTokenRoutesFromAvailability'];
+  let ensureActiveRouteGraphVersion: RouteGraphServiceModule['ensureActiveRouteGraphVersion'];
+  let evaluateActiveRouteGraphForModel: RouteGraphRuntimeModule['evaluateActiveRouteGraphForModel'];
   let dataDir = '';
 
   beforeAll(async () => {
@@ -56,12 +61,16 @@ describe('refreshModelsForAccount credential discovery', () => {
     await import('../db/migrate.js');
     const dbModule = await import('../db/index.js');
     const modelService = await import('./modelService.js');
+    const routeGraphService = await import('./routeGraphService.js');
+    const routeGraphRuntimeService = await import('./routeGraphRuntimeService.js');
 
     db = dbModule.db;
     schema = dbModule.schema;
     refreshModelsForAccount = modelService.refreshModelsForAccount;
     refreshModelsAndRebuildRoutes = modelService.refreshModelsAndRebuildRoutes;
     rebuildTokenRoutesFromAvailability = modelService.rebuildTokenRoutesFromAvailability;
+    ensureActiveRouteGraphVersion = routeGraphService.ensureActiveRouteGraphVersion;
+    evaluateActiveRouteGraphForModel = routeGraphRuntimeService.evaluateActiveRouteGraphForModel;
   });
 
   beforeEach(async () => {
@@ -71,7 +80,15 @@ describe('refreshModelsForAccount credential discovery', () => {
     proxyAgentCtorMock.mockReset();
     refreshOauthAccessTokenSingleflightMock.mockReset();
 
-    await db.delete(schema.routeChannels).run();
+    await db.delete(schema.routeGraphDrafts).run();
+    await db.delete(schema.routeGraphActiveVersion).run();
+    await db.delete(schema.routeGraphVersions).run();
+    await db.delete(schema.routeGroupCandidates).run();
+    await db.delete(schema.routeGroupBuckets).run();
+    await db.delete(schema.routeSupplyEndpointState).run();
+    await db.delete(schema.routeSupplyEndpoints).run();
+    await db.delete(schema.routeGroups).run();
+    await db.delete(schema.routeEndpointTargets).run();
     await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.tokenModelAvailability).run();
     await db.delete(schema.modelAvailability).run();
@@ -276,6 +293,68 @@ describe('refreshModelsForAccount credential discovery', () => {
       .where(eq(schema.tokenModelAvailability.tokenId, token!.id))
       .all();
     expect(tokenRows.map((row) => row.modelName)).toEqual(['gpt-5-nano']);
+  });
+
+  it('updates existing token model availability rows during refresh and rebuild', async () => {
+    getApiTokenMock.mockResolvedValue(null);
+    getModelsMock.mockImplementation(async (_baseUrl: string, token: string) => (
+      token === 'sk-refresh-token'
+        ? ['claude-haiku-4-5-20251001', 'claude-opus-4-6']
+        : []
+    ));
+
+    const site = await db.insert(schema.sites).values({
+      name: 'site-token-availability-upsert',
+      url: 'https://site-token-availability-upsert.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'token-availability-upsert-user',
+      accessToken: '',
+      apiToken: '',
+      status: 'active',
+      extraConfig: JSON.stringify({ credentialMode: 'session' }),
+    }).returning().get();
+
+    const token = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'default',
+      token: 'sk-refresh-token',
+      source: 'manual',
+      enabled: true,
+      isDefault: true,
+    }).returning().get();
+
+    await db.insert(schema.tokenModelAvailability).values({
+      tokenId: token.id,
+      modelName: 'claude-haiku-4-5-20251001',
+      available: false,
+      latencyMs: 9999,
+      checkedAt: '2026-01-01T00:00:00.000Z',
+    }).run();
+
+    const result = await refreshModelsAndRebuildRoutes();
+    expect(result.refresh).toHaveLength(1);
+    expect(result.refresh[0]).toMatchObject({
+      accountId: account.id,
+      status: 'success',
+      modelCount: 2,
+    });
+
+    const tokenRows = await db.select().from(schema.tokenModelAvailability)
+      .where(eq(schema.tokenModelAvailability.tokenId, token.id))
+      .all();
+    expect(tokenRows.map((row) => row.modelName).sort()).toEqual([
+      'claude-haiku-4-5-20251001',
+      'claude-opus-4-6',
+    ]);
+    expect(tokenRows.find((row) => row.modelName === 'claude-haiku-4-5-20251001')).toMatchObject({
+      available: true,
+      latencyMs: expect.any(Number),
+    });
   });
 
   it('marks runtime health unhealthy when model discovery fails', async () => {
@@ -2221,12 +2300,65 @@ describe('refreshModelsForAccount credential discovery', () => {
     ]).run();
 
     const rebuild = await rebuildTokenRoutesFromAvailability();
+    expect(rebuild.createdTargets).toBe(1);
     expect(rebuild.createdChannels).toBe(1);
 
-    const channels = await db.select().from(schema.routeChannels).all();
+    const channels = await db.select().from(schema.routeEndpointTargets).all();
     expect(channels).toHaveLength(1);
     expect(channels[0]).toMatchObject({
       oauthRouteUnitId: routeUnit.id,
+    });
+
+    const routes = await db.select().from(schema.tokenRoutes).all();
+    const generatedRoute = routes.find((route) => route.displayName === 'gpt-5.4' || route.modelPattern === 'gpt-5.4');
+    expect(generatedRoute).toBeDefined();
+
+    const activeGraph = await ensureActiveRouteGraphVersion();
+    const compiled = compileRouteGraphSource(activeGraph.sourceGraph);
+    expect(compiled.ok).toBe(true);
+    expect(activeGraph.sourceGraph.nodes).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'route-endpoint:product:auto-model:gpt-5.4',
+        type: 'route_endpoint',
+        endpointKind: 'route_product',
+        exposure: 'public',
+        ownership: 'auto_generated',
+      }),
+      expect.objectContaining({
+        id: expect.stringMatching(/^route-endpoint:supply:upstream-model:codex:[a-f0-9]{8}:gpt-5\.4:[a-f0-9]{8}$/),
+        type: 'route_endpoint',
+        endpointKind: 'supply',
+        exposure: 'none',
+        ownership: 'auto_generated',
+      }),
+    ]));
+    expect(activeGraph.sourceGraph.macros).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'auto-model:gpt-5.4',
+        kind: 'candidate_selector',
+        ownership: 'auto_generated',
+      }),
+    ]));
+    expect(compiled.compiled.publicModels).toEqual(expect.arrayContaining([
+      expect.objectContaining({ nodeId: 'macro:auto-model:gpt-5.4:entry', model: 'gpt-5.4' }),
+    ]));
+    expect(compiled.compiled.programBundle.endpointCatalog.byId).toMatchObject({
+      'route-endpoint:product:auto-model:gpt-5.4': expect.objectContaining({
+        endpointKind: 'route_product',
+        exposure: 'public',
+        routeId: generatedRoute!.id,
+      }),
+    });
+
+    const selection = await evaluateActiveRouteGraphForModel('gpt-5.4');
+    expect(selection).toMatchObject({
+      selectedRouteId: generatedRoute!.id,
+      terminalKind: 'route_endpoint',
+    });
+    expect(channels[0]).toMatchObject({
+      routeId: generatedRoute!.id,
+      oauthRouteUnitId: routeUnit.id,
+      sourceModel: 'gpt-5.4',
     });
   });
 });

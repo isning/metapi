@@ -27,7 +27,7 @@ describe('rebuildTokenRoutesFromAvailability with site disabled models', () => {
     });
 
     beforeEach(async () => {
-        await db.delete(schema.routeChannels).run();
+        await db.delete(schema.routeEndpointTargets).run();
         await db.delete(schema.tokenRoutes).run();
         await db.delete(schema.tokenModelAvailability).run();
         await db.delete(schema.modelAvailability).run();
@@ -76,7 +76,7 @@ describe('rebuildTokenRoutesFromAvailability with site disabled models', () => {
         expect(rebuild.models).toBe(0);
 
         const routes = await db.select().from(schema.tokenRoutes)
-            .where(eq(schema.tokenRoutes.modelPattern, 'gpt-4o'))
+            .where(eq(schema.tokenRoutes.displayName, 'gpt-4o'))
             .all();
         expect(routes).toHaveLength(0);
     });
@@ -129,12 +129,12 @@ describe('rebuildTokenRoutesFromAvailability with site disabled models', () => {
         expect(rebuild.models).toBe(1);
 
         const route = await db.select().from(schema.tokenRoutes)
-            .where(eq(schema.tokenRoutes.modelPattern, 'claude-sonnet-4-5-20250929'))
+            .where(eq(schema.tokenRoutes.displayName, 'claude-sonnet-4-5-20250929'))
             .get();
         expect(route).toBeDefined();
 
-        const channels = await db.select().from(schema.routeChannels)
-            .where(eq(schema.routeChannels.routeId, route!.id))
+        const channels = await db.select().from(schema.routeEndpointTargets)
+            .where(eq(schema.routeEndpointTargets.routeId, route!.id))
             .all();
 
         // Only site B's channel should exist
@@ -170,7 +170,7 @@ describe('rebuildTokenRoutesFromAvailability with site disabled models', () => {
         expect(rebuild.models).toBe(1);
 
         const route = await db.select().from(schema.tokenRoutes)
-            .where(eq(schema.tokenRoutes.modelPattern, 'gpt-5'))
+            .where(eq(schema.tokenRoutes.displayName, 'gpt-5'))
             .get();
         expect(route).toBeDefined();
     });

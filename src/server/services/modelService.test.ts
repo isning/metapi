@@ -6,11 +6,15 @@ import { and, eq } from 'drizzle-orm';
 
 type DbModule = typeof import('../db/index.js');
 type ModelServiceModule = typeof import('./modelService.js');
+type RouteGraphServiceModule = typeof import('./routeGraphService.js');
 
 describe('rebuildTokenRoutesFromAvailability', () => {
   let db: DbModule['db'];
   let schema: DbModule['schema'];
   let rebuildTokenRoutesFromAvailability: ModelServiceModule['rebuildTokenRoutesFromAvailability'];
+  let publishRouteGraphSource: RouteGraphServiceModule['publishRouteGraphSource'];
+  let getActiveRouteGraphVersion: RouteGraphServiceModule['getActiveRouteGraphVersion'];
+  let loadActiveRouteGraphRouteBindings: RouteGraphServiceModule['loadActiveRouteGraphRouteBindings'];
   let dataDir = '';
 
   beforeAll(async () => {
@@ -20,14 +24,26 @@ describe('rebuildTokenRoutesFromAvailability', () => {
     await import('../db/migrate.js');
     const dbModule = await import('../db/index.js');
     const modelService = await import('./modelService.js');
+    const routeGraphService = await import('./routeGraphService.js');
 
     db = dbModule.db;
     schema = dbModule.schema;
     rebuildTokenRoutesFromAvailability = modelService.rebuildTokenRoutesFromAvailability;
+    publishRouteGraphSource = routeGraphService.publishRouteGraphSource;
+    getActiveRouteGraphVersion = routeGraphService.getActiveRouteGraphVersion;
+    loadActiveRouteGraphRouteBindings = routeGraphService.loadActiveRouteGraphRouteBindings;
   });
 
   beforeEach(async () => {
-    await db.delete(schema.routeChannels).run();
+    await db.delete(schema.routeGraphDrafts).run();
+    await db.delete(schema.routeGraphActiveVersion).run();
+    await db.delete(schema.routeGraphVersions).run();
+    await db.delete(schema.routeGroupCandidates).run();
+    await db.delete(schema.routeGroupBuckets).run();
+    await db.delete(schema.routeSupplyEndpointState).run();
+    await db.delete(schema.routeSupplyEndpoints).run();
+    await db.delete(schema.routeGroups).run();
+    await db.delete(schema.routeEndpointTargets).run();
     await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.tokenModelAvailability).run();
     await db.delete(schema.modelAvailability).run();
@@ -39,6 +55,15 @@ describe('rebuildTokenRoutesFromAvailability', () => {
   afterAll(() => {
     delete process.env.DATA_DIR;
   });
+
+  async function findRouteByExposedModel(model: string) {
+    const bindings = await loadActiveRouteGraphRouteBindings();
+    const binding = Array.from(bindings.values()).find((item) => item.exposedModelName === model);
+    if (!binding) return null;
+    return await db.select().from(schema.tokenRoutes)
+      .where(eq(schema.tokenRoutes.id, binding.routeId))
+      .get();
+  }
 
   it('creates an exact route with an account-direct channel for apikey model availability', async () => {
     const site = await db.insert(schema.sites).values({
@@ -68,21 +93,44 @@ describe('rebuildTokenRoutesFromAvailability', () => {
 
     expect(rebuild.models).toBe(1);
 
-    const route = await db.select().from(schema.tokenRoutes)
-      .where(eq(schema.tokenRoutes.modelPattern, 'gpt-5.2-codex'))
-      .get();
+    const route = await findRouteByExposedModel('gpt-5.2-codex');
     expect(route).toBeDefined();
 
-    const channels = await db.select().from(schema.routeChannels)
+    const channels = await db.select().from(schema.routeEndpointTargets)
       .where(and(
-        eq(schema.routeChannels.routeId, route!.id),
-        eq(schema.routeChannels.accountId, account.id),
+        eq(schema.routeEndpointTargets.routeId, route!.id),
+        eq(schema.routeEndpointTargets.accountId, account.id),
       ))
       .all();
 
     expect(channels).toHaveLength(1);
     expect(channels[0]?.tokenId ?? null).toBeNull();
     expect(channels[0]?.manualOverride).toBe(false);
+
+    const routeGroup = await db.select().from(schema.routeGroups)
+      .where(and(
+        eq(schema.routeGroups.kind, 'automatic'),
+        eq(schema.routeGroups.groupKey, 'upstream:gpt-5.2-codex'),
+      ))
+      .get();
+    expect(routeGroup).toBeDefined();
+    expect(routeGroup?.legacyRouteId).toBe(route!.id);
+
+    const supplyEndpoints = await db.select().from(schema.routeSupplyEndpoints).all();
+    expect(supplyEndpoints).toHaveLength(1);
+    expect(supplyEndpoints[0]).toMatchObject({
+      upstreamModelName: 'gpt-5.2-codex',
+      legacyTargetId: channels[0]!.id,
+    });
+
+    const candidates = await db.select().from(schema.routeGroupCandidates)
+      .where(eq(schema.routeGroupCandidates.groupId, routeGroup!.id))
+      .all();
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]).toMatchObject({
+      candidateKind: 'supply_endpoint',
+      supplyEndpointId: supplyEndpoints[0]!.id,
+    });
   });
 
   it('ignores hidden account_tokens for direct apikey connections when rebuilding routes', async () => {
@@ -130,15 +178,13 @@ describe('rebuildTokenRoutesFromAvailability', () => {
 
     expect(rebuild.models).toBe(1);
 
-    const route = await db.select().from(schema.tokenRoutes)
-      .where(eq(schema.tokenRoutes.modelPattern, 'gpt-4.1'))
-      .get();
+    const route = await findRouteByExposedModel('gpt-4.1');
     expect(route).toBeDefined();
 
-    const channels = await db.select().from(schema.routeChannels)
+    const channels = await db.select().from(schema.routeEndpointTargets)
       .where(and(
-        eq(schema.routeChannels.routeId, route!.id),
-        eq(schema.routeChannels.accountId, account.id),
+        eq(schema.routeEndpointTargets.routeId, route!.id),
+        eq(schema.routeEndpointTargets.accountId, account.id),
       ))
       .all();
 
@@ -182,15 +228,13 @@ describe('rebuildTokenRoutesFromAvailability', () => {
 
     expect(rebuild.models).toBe(1);
 
-    const route = await db.select().from(schema.tokenRoutes)
-      .where(eq(schema.tokenRoutes.modelPattern, 'gpt-5.2-codex'))
-      .get();
+    const route = await findRouteByExposedModel('gpt-5.2-codex');
     expect(route).toBeDefined();
 
-    const channels = await db.select().from(schema.routeChannels)
+    const channels = await db.select().from(schema.routeEndpointTargets)
       .where(and(
-        eq(schema.routeChannels.routeId, route!.id),
-        eq(schema.routeChannels.accountId, account.id),
+        eq(schema.routeEndpointTargets.routeId, route!.id),
+        eq(schema.routeEndpointTargets.accountId, account.id),
       ))
       .all();
 
@@ -235,15 +279,13 @@ describe('rebuildTokenRoutesFromAvailability', () => {
 
     expect(rebuild.models).toBe(1);
 
-    const route = await db.select().from(schema.tokenRoutes)
-      .where(eq(schema.tokenRoutes.modelPattern, 'gpt-5.2-codex'))
-      .get();
+    const route = await findRouteByExposedModel('gpt-5.2-codex');
     expect(route).toBeDefined();
 
-    const channels = await db.select().from(schema.routeChannels)
+    const channels = await db.select().from(schema.routeEndpointTargets)
       .where(and(
-        eq(schema.routeChannels.routeId, route!.id),
-        eq(schema.routeChannels.accountId, account.id),
+        eq(schema.routeEndpointTargets.routeId, route!.id),
+        eq(schema.routeEndpointTargets.accountId, account.id),
       ))
       .all();
 
@@ -282,11 +324,11 @@ describe('rebuildTokenRoutesFromAvailability', () => {
     }).run();
 
     const staleRoute = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'old-model',
+      displayName: 'old-model',
       enabled: true,
     }).returning().get();
 
-    await db.insert(schema.routeChannels).values({
+    await db.insert(schema.routeEndpointTargets).values({
       routeId: staleRoute.id,
       accountId: account.id,
       tokenId: token.id,
@@ -297,11 +339,11 @@ describe('rebuildTokenRoutesFromAvailability', () => {
     }).run();
 
     const wildcardRoute = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-*',
+      displayName: 'gpt-*',
       enabled: true,
     }).returning().get();
 
-    await db.insert(schema.routeChannels).values({
+    await db.insert(schema.routeEndpointTargets).values({
       routeId: wildcardRoute.id,
       accountId: account.id,
       tokenId: token.id,
@@ -319,17 +361,187 @@ describe('rebuildTokenRoutesFromAvailability', () => {
     const oldRoute = await db.select().from(schema.tokenRoutes).where(eq(schema.tokenRoutes.id, staleRoute.id)).get();
     expect(oldRoute).toBeUndefined();
 
-    const oldChannels = await db.select().from(schema.routeChannels).where(eq(schema.routeChannels.routeId, staleRoute.id)).all();
+    const oldChannels = await db.select().from(schema.routeEndpointTargets).where(eq(schema.routeEndpointTargets.routeId, staleRoute.id)).all();
     expect(oldChannels).toHaveLength(0);
 
-    const latestRoute = await db.select().from(schema.tokenRoutes).where(eq(schema.tokenRoutes.modelPattern, 'latest-model')).get();
+    const latestRoute = await findRouteByExposedModel('latest-model');
     expect(latestRoute).toBeDefined();
-    const latestChannels = await db.select().from(schema.routeChannels)
-      .where(and(eq(schema.routeChannels.routeId, latestRoute!.id), eq(schema.routeChannels.tokenId, token.id)))
+    const latestChannels = await db.select().from(schema.routeEndpointTargets)
+      .where(and(eq(schema.routeEndpointTargets.routeId, latestRoute!.id), eq(schema.routeEndpointTargets.tokenId, token.id)))
       .all();
     expect(latestChannels.length).toBeGreaterThan(0);
 
     const wildcardRouteAfter = await db.select().from(schema.tokenRoutes).where(eq(schema.tokenRoutes.id, wildcardRoute.id)).get();
     expect(wildcardRouteAfter).toBeDefined();
+  });
+
+  it('keeps automatic and manual route groups separate when model names overlap', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'manual-overlap-site',
+      url: 'https://manual-overlap.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'overlap-user',
+      accessToken: 'access-token',
+      status: 'active',
+    }).returning().get();
+    const token = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'overlap-token',
+      token: 'sk-overlap',
+      source: 'manual',
+      enabled: true,
+      isDefault: true,
+    }).returning().get();
+
+    const manualRoute = await db.insert(schema.tokenRoutes).values({
+      displayName: 'deepseek-v4-flash-rerouted',
+      enabled: true,
+    }).returning().get();
+    await db.insert(schema.routeGroups).values({
+      kind: 'manual',
+      groupKey: 'manual:deepseek-v4-flash-rerouted',
+      publicModelName: 'deepseek-v4-flash-rerouted',
+      displayName: 'deepseek-v4-flash-rerouted',
+      visibility: 'public',
+      enabled: true,
+      routingStrategy: 'weighted',
+      sourceMode: 'manual',
+      legacyRouteId: manualRoute.id,
+      syncStatus: 'active',
+    }).run();
+
+    await db.insert(schema.tokenModelAvailability).values({
+      tokenId: token.id,
+      modelName: 'deepseek-v4-flash',
+      available: true,
+    }).run();
+
+    await rebuildTokenRoutesFromAvailability();
+
+    const automaticGroup = await db.select().from(schema.routeGroups)
+      .where(and(
+        eq(schema.routeGroups.kind, 'automatic'),
+        eq(schema.routeGroups.groupKey, 'upstream:deepseek-v4-flash'),
+      ))
+      .get();
+    expect(automaticGroup).toBeDefined();
+    expect(automaticGroup?.legacyRouteId).not.toBe(manualRoute.id);
+
+    const manualGroup = await db.select().from(schema.routeGroups)
+      .where(and(
+        eq(schema.routeGroups.kind, 'manual'),
+        eq(schema.routeGroups.groupKey, 'manual:deepseek-v4-flash-rerouted'),
+      ))
+      .get();
+    expect(manualGroup?.legacyRouteId).toBe(manualRoute.id);
+
+    const automaticRoute = await findRouteByExposedModel('deepseek-v4-flash');
+    expect(automaticRoute?.id).toBe(automaticGroup?.legacyRouteId);
+  });
+
+  it('rebuilds automatic projection routes without deleting manual graph nodes', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'site-graph',
+      url: 'https://site-graph.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'graph-user',
+      accessToken: 'access-token',
+      status: 'active',
+    }).returning().get();
+
+    const token = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'graph-token',
+      token: 'sk-graph',
+      source: 'manual',
+      enabled: true,
+      isDefault: true,
+    }).returning().get();
+
+    await db.insert(schema.tokenModelAvailability).values({
+      tokenId: token.id,
+      modelName: 'auto-generated-model',
+      available: true,
+    }).run();
+
+    const manualGraph = {
+      version: 1,
+      nodes: [
+        {
+          id: 'filter:manual:reasoning',
+          type: 'filter',
+          name: 'Manual reasoning policy',
+          enabled: true,
+          visibility: 'internal',
+          ownership: 'manual',
+          operations: [{ type: 'set_payload', path: 'reasoning_effort', value: 'medium' }],
+        },
+      ],
+      edges: [],
+      macros: [],
+    };
+    const published = await publishRouteGraphSource({ sourceGraph: manualGraph, createdBy: 'test', allowDiagnostics: true });
+    expect(published.ok).toBe(true);
+
+    const rebuild = await rebuildTokenRoutesFromAvailability();
+    expect(rebuild.createdRoutes).toBe(1);
+
+    const active = await getActiveRouteGraphVersion();
+    const generatedProduct = active?.sourceGraph.nodes.find((node) => (
+      node.type === 'route_endpoint'
+      && node.ownership === 'auto_generated'
+      && node.id === 'route-endpoint:product:auto-model:auto-generated-model'
+    ));
+    expect(generatedProduct).toBeDefined();
+    const generatedRouteId = generatedProduct && 'routeId' in generatedProduct ? generatedProduct.routeId : null;
+    const generatedSupply = active?.sourceGraph.nodes.find((node) => (
+      node.type === 'route_endpoint'
+      && node.endpointKind === 'supply'
+      && node.routeId === generatedRouteId
+    ));
+    expect(generatedSupply?.id).toEqual(expect.stringMatching(/^route-endpoint:supply:upstream-model:/));
+    expect(active?.sourceGraph.nodes).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'filter:manual:reasoning',
+        ownership: 'manual',
+      }),
+      expect.objectContaining({
+        id: 'route-endpoint:product:auto-model:auto-generated-model',
+        type: 'route_endpoint',
+        endpointKind: 'route_product',
+        ownership: 'auto_generated',
+      }),
+    ]));
+    expect(active?.sourceGraph.macros).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'auto-model:auto-generated-model',
+        kind: 'candidate_selector',
+        ownership: 'auto_generated',
+        config: expect.objectContaining({
+          surface: expect.objectContaining({
+            entry: expect.objectContaining({
+              match: expect.objectContaining({
+                requestedModelPattern: 'auto-generated-model',
+              }),
+            }),
+          }),
+          groups: [
+            expect.objectContaining({
+              input: { kind: 'route_endpoints', endpointIds: [generatedSupply?.id] },
+            }),
+          ],
+        }),
+      }),
+    ]));
   });
 });

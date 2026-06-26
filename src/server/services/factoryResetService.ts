@@ -25,7 +25,8 @@ type PreservedInfrastructureState = {
 
 async function clearAllBusinessData() {
   await db.transaction(async (tx) => {
-    await tx.delete(schema.routeChannels).run();
+    await tx.delete(schema.credentialEndpointBindings).run();
+    await tx.delete(schema.routeEndpointTargets).run();
     await tx.delete(schema.tokenModelAvailability).run();
     await tx.delete(schema.modelAvailability).run();
     await tx.delete(schema.proxyLogs).run();
@@ -34,6 +35,7 @@ async function clearAllBusinessData() {
     await tx.delete(schema.checkinLogs).run();
     await tx.delete(schema.accountTokens).run();
     await tx.delete(schema.accounts).run();
+    await tx.delete(schema.apiEndpointProfiles).run();
     await tx.delete(schema.tokenRoutes).run();
     await tx.delete(schema.sites).run();
     await tx.delete(schema.downstreamApiKeys).run();

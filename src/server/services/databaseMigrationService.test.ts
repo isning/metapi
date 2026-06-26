@@ -15,6 +15,8 @@ function createDbSchemaMock() {
     settings: { __table: 'settings' },
     sites: { __table: 'sites' },
     siteApiEndpoints: { __table: 'siteApiEndpoints' },
+    apiEndpointProfiles: { __table: 'apiEndpointProfiles' },
+    credentialEndpointBindings: { __table: 'credentialEndpointBindings' },
     siteAnnouncements: { __table: 'siteAnnouncements' },
     siteDisabledModels: { __table: 'siteDisabledModels' },
     accounts: { __table: 'accounts' },
@@ -23,7 +25,7 @@ function createDbSchemaMock() {
     modelAvailability: { __table: 'modelAvailability' },
     tokenModelAvailability: { __table: 'tokenModelAvailability' },
     tokenRoutes: { __table: 'tokenRoutes' },
-    routeChannels: { __table: 'routeChannels' },
+    routeEndpointTargets: { __table: 'routeEndpointTargets' },
     routeGroupSources: { __table: 'routeGroupSources' },
     proxyLogs: { __table: 'proxyLogs' },
     proxyVideoTasks: { __table: 'proxyVideoTasks' },
@@ -224,7 +226,7 @@ describe('databaseMigrationService', () => {
         modelAvailability: [],
         tokenModelAvailability: [],
         tokenRoutes: [],
-        routeChannels: [],
+        routeEndpointTargets: [],
         proxyLogs: [],
         proxyVideoTasks: [],
         proxyFiles: [],
@@ -279,7 +281,7 @@ describe('databaseMigrationService', () => {
         modelAvailability: [],
         tokenModelAvailability: [],
         tokenRoutes: [],
-        routeChannels: [],
+        routeEndpointTargets: [],
         routeGroupSources: [],
         proxyLogs: [],
         proxyVideoTasks: [],
@@ -321,6 +323,93 @@ describe('databaseMigrationService', () => {
     ]);
   });
 
+  it('includes api endpoint profiles and credential bindings when building migration statements', () => {
+    const statements = __databaseMigrationServiceTestUtils.buildStatements({
+      version: 'test',
+      timestamp: Date.now(),
+      accounts: {
+        sites: [{
+          id: 1,
+          name: 'demo',
+          url: 'https://example.com',
+          platform: 'new-api',
+          status: 'active',
+        }],
+        siteApiEndpoints: [],
+        apiEndpointProfiles: [{
+          id: 7,
+          siteId: 1,
+          profileKey: 'openai_responses',
+          apiType: 'openai_responses',
+          label: 'Responses',
+          authMode: 'bearer',
+          enabled: true,
+          priority: 0,
+          capabilityDefaultsJson: { status: 'supported' },
+          metadataJson: { source: 'default' },
+        }],
+        siteAnnouncements: [],
+        siteDisabledModels: [],
+        accounts: [{
+          id: 2,
+          siteId: 1,
+          username: 'user',
+          accessToken: 'access',
+          status: 'active',
+        }],
+        accountTokens: [{
+          id: 3,
+          accountId: 2,
+          name: 'token',
+          token: 'sk-token',
+          source: 'manual',
+          enabled: true,
+          isDefault: true,
+        }],
+        credentialEndpointBindings: [{
+          id: 8,
+          siteId: 1,
+          accountId: 2,
+          tokenId: 3,
+          credentialKey: 'account-token:3',
+          credentialKind: 'account_token',
+          apiEndpointProfileId: 7,
+          enabled: true,
+          support: 'supported',
+          source: 'manual',
+          priority: 1,
+          capabilityOverrideJson: { input: { tools: 'native' } },
+          metadataJson: { note: 'verified' },
+        }],
+        checkinLogs: [],
+        modelAvailability: [],
+        tokenModelAvailability: [],
+        tokenRoutes: [],
+        routeEndpointTargets: [],
+        routeGroupSources: [],
+        proxyLogs: [],
+        proxyVideoTasks: [],
+        proxyFiles: [],
+        downstreamApiKeys: [],
+        events: [],
+      },
+      preferences: {
+        settings: [],
+      },
+    } as any);
+
+    const profileStatement = statements.find((statement) => statement.table === 'api_endpoint_profiles');
+    expect(profileStatement?.values[profileStatement.columns.indexOf('profile_key')]).toBe('openai_responses');
+    expect(profileStatement?.values[profileStatement.columns.indexOf('capability_defaults_json')]).toBe('{"status":"supported"}');
+    expect(profileStatement?.values[profileStatement.columns.indexOf('metadata_json')]).toBe('{"source":"default"}');
+
+    const bindingStatement = statements.find((statement) => statement.table === 'credential_endpoint_bindings');
+    expect(bindingStatement?.values[bindingStatement.columns.indexOf('credential_key')]).toBe('account-token:3');
+    expect(bindingStatement?.values[bindingStatement.columns.indexOf('api_endpoint_profile_id')]).toBe(7);
+    expect(bindingStatement?.values[bindingStatement.columns.indexOf('capability_override_json')]).toBe('{"input":{"tools":"native"}}');
+    expect(bindingStatement?.values[bindingStatement.columns.indexOf('metadata_json')]).toBe('{"note":"verified"}');
+  });
+
   it('serializes parsed JSON-column values when building migration statements', () => {
     const statements = __databaseMigrationServiceTestUtils.buildStatements({
       version: 'test',
@@ -355,7 +444,7 @@ describe('databaseMigrationService', () => {
           decisionSnapshot: { channels: [1] },
           enabled: true,
         }],
-        routeChannels: [],
+        routeEndpointTargets: [],
         routeGroupSources: [],
         proxyLogs: [{
           id: 4,
@@ -399,7 +488,7 @@ describe('databaseMigrationService', () => {
     expect(siteStatement?.values[siteStatement.columns.indexOf('custom_headers')]).toBe('{"x-site-scope":"internal"}');
     expect(accountStatement?.values[accountStatement.columns.indexOf('extra_config')]).toBe('{"platformUserId":42}');
     expect(tokenRouteStatement?.values[tokenRouteStatement.columns.indexOf('model_mapping')]).toBe('{"*":"gpt-4o-mini"}');
-    expect(tokenRouteStatement?.values[tokenRouteStatement.columns.indexOf('decision_snapshot')]).toBe('{"channels":[1]}');
+    expect(tokenRouteStatement?.values[tokenRouteStatement.columns.indexOf('decision_snapshot')]).toBe('{"targets":[1]}');
     expect(proxyLogStatement?.values[proxyLogStatement.columns.indexOf('billing_details')]).toBe('{"total":1.25}');
     expect(proxyVideoStatement?.values[proxyVideoStatement.columns.indexOf('status_snapshot')]).toBe('{"status":"done"}');
     expect(proxyVideoStatement?.values[proxyVideoStatement.columns.indexOf('upstream_response_meta')]).toBe('{"id":"video"}');
@@ -455,7 +544,7 @@ describe('databaseMigrationService', () => {
           decisionSnapshot: { candidates: [1, 2] },
           enabled: true,
         }],
-        routeChannels: [],
+        routeEndpointTargets: [],
         routeGroupSources: [],
         proxyLogs: [{
           id: 4,
@@ -544,7 +633,7 @@ describe('databaseMigrationService', () => {
           decisionSnapshot: { matched: true, channels: [1] },
           enabled: true,
         }],
-        routeChannels: [],
+        routeEndpointTargets: [],
         routeGroupSources: [],
         proxyLogs: [{
           id: 4,
@@ -558,7 +647,7 @@ describe('databaseMigrationService', () => {
           tokenValue: 'sk-video',
           requestedModel: 'veo-3',
           actualModel: 'veo-3',
-          channelId: 9,
+          targetId: 9,
           accountId: 2,
           statusSnapshot: { status: 'done' },
           upstreamResponseMeta: { id: 'video' },
@@ -590,7 +679,7 @@ describe('databaseMigrationService', () => {
     expect(siteStatement?.values[siteStatement.columns.indexOf('custom_headers')]).toBe('{"x-site-scope":"internal"}');
     expect(accountStatement?.values[accountStatement.columns.indexOf('extra_config')]).toBe('{"platformUserId":1001,"credentialMode":"session"}');
     expect(routeStatement?.values[routeStatement.columns.indexOf('model_mapping')]).toBe('{"gpt-*":"gpt-4.1"}');
-    expect(routeStatement?.values[routeStatement.columns.indexOf('decision_snapshot')]).toBe('{"matched":true,"channels":[1]}');
+    expect(routeStatement?.values[routeStatement.columns.indexOf('decision_snapshot')]).toBe('{"matched":true,"targets":[1]}');
     expect(proxyLogStatement?.values[proxyLogStatement.columns.indexOf('billing_details')]).toBe('{"source":"pricing","total":1.25}');
     expect(videoStatement?.values[videoStatement.columns.indexOf('status_snapshot')]).toBe('{"status":"done"}');
     expect(videoStatement?.values[videoStatement.columns.indexOf('upstream_response_meta')]).toBe('{"id":"video"}');
@@ -633,7 +722,7 @@ describe('databaseMigrationService', () => {
           decisionSnapshot: { matched: true, routeId: 3 },
           enabled: true,
         }],
-        routeChannels: [],
+        routeEndpointTargets: [],
         routeGroupSources: [],
         proxyLogs: [{
           id: 4,
@@ -718,7 +807,7 @@ describe('databaseMigrationService', () => {
           decisionSnapshot: { matched: true, routeId: 3 },
           enabled: true,
         }],
-        routeChannels: [],
+        routeEndpointTargets: [],
         routeGroupSources: [],
         proxyLogs: [{
           id: 4,
@@ -796,14 +885,14 @@ describe('databaseMigrationService', () => {
           displayIcon: 'icon-claude',
           modelMapping: null,
           routeMode: 'explicit_group',
-          decisionSnapshot: '{"channels":[1]}',
+          decisionSnapshot: '{"targets":[1]}',
           decisionRefreshedAt: '2026-03-14T01:30:00.000Z',
           routingStrategy: 'round_robin',
           enabled: true,
           createdAt: '2026-03-14T00:00:00.000Z',
           updatedAt: '2026-03-14T01:00:00.000Z',
         }],
-        routeChannels: [],
+        routeEndpointTargets: [],
         proxyLogs: [],
         proxyVideoTasks: [{
           id: 5,
@@ -813,7 +902,7 @@ describe('databaseMigrationService', () => {
           tokenValue: 'sk-video',
           requestedModel: 'veo-3',
           actualModel: 'veo-3',
-          channelId: 7,
+          targetId: 7,
           accountId: 9,
           statusSnapshot: '{"status":"done"}',
           upstreamResponseMeta: '{"id":"video"}',
@@ -839,7 +928,7 @@ describe('databaseMigrationService', () => {
         }],
         routeGroupSources: [{
           id: 9,
-          groupRouteId: 12,
+          groupRouteId: 10,
           sourceRouteId: 13,
         }],
         downstreamApiKeys: [],
@@ -855,9 +944,17 @@ describe('databaseMigrationService', () => {
     expect(statements.some((statement) => statement.table === 'proxy_files')).toBe(true);
     expect(statements.some((statement) => statement.table === 'route_group_sources')).toBe(true);
     const tokenRouteStatement = statements.find((statement) => statement.table === 'token_routes');
-    const routeModeIndex = tokenRouteStatement?.columns.indexOf('route_mode') ?? -1;
-    expect(routeModeIndex).toBeGreaterThanOrEqual(0);
-    expect(tokenRouteStatement?.values[routeModeIndex]).toBe('explicit_group');
+    expect(tokenRouteStatement?.columns).not.toContain('match_spec');
+    expect(tokenRouteStatement?.columns).not.toContain('backend_spec');
+    const graphVersionStatement = statements.find((statement) => statement.table === 'route_graph_versions');
+    const graphSourceIndex = graphVersionStatement?.columns.indexOf('source_graph_json') ?? -1;
+    expect(graphSourceIndex).toBeGreaterThanOrEqual(0);
+    const graphSource = JSON.parse(String(graphVersionStatement?.values[graphSourceIndex])) as {
+      macros?: Array<{ kind?: string; config?: { groups?: Array<{ input?: { endpointIds?: string[] } }> } }>;
+    };
+    const selectorMacro = graphSource.macros?.find((macro) => macro.kind === 'candidate_selector');
+    expect(selectorMacro).toBeTruthy();
+    expect(selectorMacro?.config?.groups?.map((group) => group.input?.endpointIds)).toContainEqual(['route-endpoint:product:route:13']);
   });
 
   it('includes site announcements in migration statements', () => {
@@ -873,7 +970,7 @@ describe('databaseMigrationService', () => {
         modelAvailability: [],
         tokenModelAvailability: [],
         tokenRoutes: [],
-        routeChannels: [],
+        routeEndpointTargets: [],
         routeGroupSources: [],
         proxyLogs: [],
         proxyVideoTasks: [],
@@ -936,6 +1033,8 @@ describe('databaseMigrationService', () => {
         dismissedAt: null,
         rawPayload: '{"id":"notice-1"}',
       }],
+      apiEndpointProfiles: [],
+      credentialEndpointBindings: [],
       siteDisabledModels: [],
       accounts: [],
       accountTokens: [],
@@ -943,7 +1042,7 @@ describe('databaseMigrationService', () => {
       modelAvailability: [],
       tokenModelAvailability: [],
       tokenRoutes: [],
-      routeChannels: [],
+      routeEndpointTargets: [],
       routeGroupSources: [],
       proxyLogs: [],
       proxyVideoTasks: [],
@@ -1006,7 +1105,7 @@ describe('databaseMigrationService', () => {
         modelAvailability: [],
         tokenModelAvailability: [],
         tokenRoutes: [],
-        routeChannels: [],
+        routeEndpointTargets: [],
         routeGroupSources: [],
         proxyLogs: [],
         proxyVideoTasks: [],
@@ -1028,7 +1127,17 @@ describe('databaseMigrationService', () => {
       .filter((statement) => statement.table === 'settings')
       .map((statement) => statement.values[0]);
 
-    expect(migratedSettingKeys).toContain('routing_fallback_unit_cost');
+    expect(migratedSettingKeys).not.toContain('routing_fallback_unit_cost');
+    expect(migratedSettingKeys).toContain('platform_pricing_config_v1');
+    const platformPricingStatement = statements.find((statement) => (
+      statement.table === 'settings' && statement.values[0] === 'platform_pricing_config_v1'
+    ));
+    expect(JSON.parse(String(platformPricingStatement?.values[1] || '{}'))).toMatchObject({
+      upstreamDefaultPricing: {
+        inputPerMillion: 1,
+        outputPerMillion: 1,
+      },
+    });
     expect(migratedSettingKeys).not.toContain('db_type');
     expect(migratedSettingKeys).not.toContain('db_url');
     expect(migratedSettingKeys).not.toContain('db_ssl');

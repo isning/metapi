@@ -37,7 +37,7 @@ describe('settings factory reset api', () => {
   });
 
   beforeEach(async () => {
-    await db.delete(schema.routeChannels).run();
+    await db.delete(schema.routeEndpointTargets).run();
     await db.delete(schema.tokenModelAvailability).run();
     await db.delete(schema.modelAvailability).run();
     await db.delete(schema.proxyLogs).run();
@@ -92,7 +92,7 @@ describe('settings factory reset api', () => {
     }).run();
     const routeId = Number(routeInsert.lastInsertRowid);
 
-    await db.insert(schema.routeChannels).values({
+    await db.insert(schema.routeEndpointTargets).values({
       routeId,
       accountId,
       tokenId,
@@ -177,7 +177,7 @@ describe('settings factory reset api', () => {
     expect(await db.select().from(schema.accounts).all()).toHaveLength(0);
     expect(await db.select().from(schema.accountTokens).all()).toHaveLength(0);
     expect(await db.select().from(schema.tokenRoutes).all()).toHaveLength(0);
-    expect(await db.select().from(schema.routeChannels).all()).toHaveLength(0);
+    expect(await db.select().from(schema.routeEndpointTargets).all()).toHaveLength(0);
     expect(await db.select().from(schema.modelAvailability).all()).toHaveLength(0);
     expect(await db.select().from(schema.tokenModelAvailability).all()).toHaveLength(0);
     expect(await db.select().from(schema.proxyLogs).all()).toHaveLength(0);

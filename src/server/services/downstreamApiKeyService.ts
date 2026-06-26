@@ -2,6 +2,7 @@ import { and, eq, inArray, sql } from 'drizzle-orm';
 import { minimatch } from 'minimatch';
 import { db, schema } from '../db/index.js';
 import { config } from '../config.js';
+import { loadActiveRouteGraphRouteBindings } from './routeGraphService.js';
 import {
   EMPTY_DOWNSTREAM_ROUTING_POLICY,
   type DownstreamExcludedCredentialRef,
@@ -74,10 +75,6 @@ function maskSecret(value: string): string {
   if (!value) return '';
   if (value.length <= 8) return '****';
   return `${value.slice(0, 4)}****${value.slice(-4)}`;
-}
-
-function getExposedRouteName(route: { modelPattern: string; displayName: string | null }): string {
-  return (route.displayName || '').trim() || route.modelPattern.trim();
 }
 
 function normalizePositiveNumberOrNull(value: unknown): number | null {
@@ -309,10 +306,9 @@ export function isModelAllowedByPolicy(model: string, policy: DownstreamRoutingP
 async function isModelMatchedByAllowedRoutes(model: string, allowedRouteIds: number[]): Promise<boolean> {
   if (allowedRouteIds.length === 0) return false;
 
+  const routeBindings = await loadActiveRouteGraphRouteBindings();
   const routes = await db.select({
     id: schema.tokenRoutes.id,
-    modelPattern: schema.tokenRoutes.modelPattern,
-    displayName: schema.tokenRoutes.displayName,
   })
     .from(schema.tokenRoutes)
     .where(and(
@@ -321,7 +317,10 @@ async function isModelMatchedByAllowedRoutes(model: string, allowedRouteIds: num
     ))
     .all();
 
-  return routes.some((route) => getExposedRouteName(route) === model);
+  return routes.some((route) => {
+    const binding = routeBindings.get(route.id);
+    return !!binding && binding.exposedModelName === model;
+  });
 }
 
 export async function isModelAllowedByPolicyOrAllowedRoutes(model: string, policy: DownstreamRoutingPolicy): Promise<boolean> {
