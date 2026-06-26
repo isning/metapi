@@ -141,6 +141,6 @@ export const appResources = {
     'app.usernameCanMost24Characters': 'Username can be at most 24 characters',
     'app.usernameCannotEmpty': 'Username cannot be empty',
     'app.verifying': 'Verifying...',
-    'app.languageChinese': '中',
+    'app.languageChinese': 'ZH',
   },
 } as const;
