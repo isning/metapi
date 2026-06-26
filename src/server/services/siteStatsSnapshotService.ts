@@ -12,6 +12,9 @@ import { createAdminSnapshotPersistence } from "./adminSnapshotStore.js";
 import {
   runUsageAggregationProjectionPass,
 } from "./usageAggregationService.js";
+import {
+  valueWalletBalanceInBaseUnit,
+} from "./walletBalanceValuationService.js";
 
 export type SiteStatsSnapshotPayload = {
   distribution: Array<{
@@ -19,6 +22,10 @@ export type SiteStatsSnapshotPayload = {
     siteName: string;
     platform: string | null;
     totalBalance: number;
+    rawBalance: number;
+    baseCostUnit: string;
+    valuedAccountCount: number;
+    valuationWarningCount: number;
     totalSpend: number;
     accountCount: number;
   }>;
@@ -37,7 +44,7 @@ async function loadSiteStatsSnapshotPayload(
   const sinceDay = getLocalRangeStartDayKey(days);
   await runUsageAggregationProjectionPass();
 
-  const [spendRows, trendRows, sites, accountDistributionRows] =
+  const [spendRows, trendRows, sites, accountRows] =
     await Promise.all([
     db
       .select({
@@ -59,16 +66,15 @@ async function loadSiteStatsSnapshotPayload(
       .all(),
     db
       .select({
+        accountId: schema.accounts.id,
         siteId: schema.sites.id,
         siteName: schema.sites.name,
         platform: schema.sites.platform,
-        totalBalance: sql<number>`coalesce(sum(coalesce(${schema.accounts.balance}, 0)), 0)`,
-        accountCount: sql<number>`count(*)`,
+        balance: schema.accounts.balance,
       })
       .from(schema.accounts)
       .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
       .where(eq(schema.sites.status, "active"))
-      .groupBy(schema.sites.id, schema.sites.name, schema.sites.platform)
       .all(),
   ]);
 
@@ -78,13 +84,55 @@ async function loadSiteStatsSnapshotPayload(
     spendBySiteId.set(row.siteId, Number(row.totalSpend || 0));
   }
 
-  const distribution = accountDistributionRows.map((row) => ({
-    siteId: row.siteId,
-    siteName: row.siteName,
-    platform: row.platform,
-    totalBalance: toRoundedMicroNumber(Number(row.totalBalance || 0)),
-    totalSpend: toRoundedMicroNumber(spendBySiteId.get(row.siteId) || 0),
-    accountCount: Number(row.accountCount || 0),
+  const valuationRows = await Promise.all(accountRows.map(async (row) => ({
+    row,
+    valuation: await valueWalletBalanceInBaseUnit({
+      siteId: row.siteId,
+      accountId: row.accountId,
+      balance: row.balance,
+    }),
+  })));
+
+  const distributionBySiteId = new Map<number, {
+    siteId: number;
+    siteName: string;
+    platform: string | null;
+    totalBalance: number;
+    rawBalance: number;
+    baseCostUnit: string;
+    valuedAccountCount: number;
+    valuationWarningCount: number;
+    totalSpend: number;
+    accountCount: number;
+  }>();
+
+  for (const { row, valuation } of valuationRows) {
+    const current = distributionBySiteId.get(row.siteId) || {
+      siteId: row.siteId,
+      siteName: row.siteName,
+      platform: row.platform,
+      totalBalance: 0,
+      rawBalance: 0,
+      baseCostUnit: valuation.baseCostUnit,
+      valuedAccountCount: 0,
+      valuationWarningCount: 0,
+      totalSpend: toRoundedMicroNumber(spendBySiteId.get(row.siteId) || 0),
+      accountCount: 0,
+    };
+    current.accountCount += 1;
+    current.rawBalance += valuation.balance;
+    if (valuation.normalizedValue != null) {
+      current.totalBalance += valuation.normalizedValue;
+      current.valuedAccountCount += 1;
+    }
+    current.valuationWarningCount += valuation.diagnostics.filter((item) => item.level === 'warn' || item.level === 'error').length;
+    distributionBySiteId.set(row.siteId, current);
+  }
+
+  const distribution = [...distributionBySiteId.values()].map((row) => ({
+    ...row,
+    totalBalance: toRoundedMicroNumber(row.totalBalance),
+    rawBalance: toRoundedMicroNumber(row.rawBalance),
   }));
 
   const dayMap: Record<

@@ -22,9 +22,15 @@ import {
 import { estimateRewardWithTodayIncomeFallback } from "./todayIncomeRewardService.js";
 import { createAdminSnapshotPersistence } from "./adminSnapshotStore.js";
 import { runUsageAggregationProjectionPass } from "./usageAggregationService.js";
+import { valueWalletBalanceInBaseUnit } from "./walletBalanceValuationService.js";
+import { loadPlatformPricingConfig } from "./platformPricingConfigService.js";
 
 export type DashboardSummaryPayload = {
   totalBalance: number;
+  rawBalance: number;
+  baseCostUnit: string;
+  valuedAccountCount: number;
+  balanceValuationWarningCount: number;
   totalUsed: number;
   todaySpend: number;
   todayReward: number;
@@ -65,6 +71,20 @@ const dashboardInsightsPersistence =
     key: "default",
   });
 
+function normalizeCostUnit(value: unknown): string {
+  const text = String(value || '').trim();
+  return text ? text.toUpperCase() : 'USD';
+}
+
+function isValuationWarning(diagnostic: { level: 'info' | 'warn' | 'error' }) {
+  return diagnostic.level === 'warn' || diagnostic.level === 'error';
+}
+
+async function resolveBaseCostUnit(): Promise<string> {
+  const platformConfig = await loadPlatformPricingConfig();
+  return normalizeCostUnit(platformConfig.baseCostUnit);
+}
+
 async function loadDashboardSummaryPayload(): Promise<DashboardSummaryPayload> {
   await runUsageAggregationProjectionPass();
 
@@ -75,10 +95,28 @@ async function loadDashboardSummaryPayload(): Promise<DashboardSummaryPayload> {
     .where(eq(schema.sites.status, "active"))
     .all();
   const accounts = accountRows.map((row) => row.accounts);
-  const totalBalance = accounts.reduce(
-    (sum, account) => sum + (account.balance || 0),
+  const balanceValuations = await Promise.all(accountRows.map(async (row) => ({
+    account: row.accounts,
+    valuation: await valueWalletBalanceInBaseUnit({
+      siteId: row.sites.id,
+      accountId: row.accounts.id,
+      balance: row.accounts.balance,
+    }),
+  })));
+  const totalBalance = balanceValuations.reduce(
+    (sum, item) => sum + (item.valuation.normalizedValue ?? 0),
     0,
   );
+  const rawBalance = balanceValuations.reduce(
+    (sum, item) => sum + item.valuation.balance,
+    0,
+  );
+  const valuedAccountCount = balanceValuations.filter((item) => item.valuation.normalizedValue != null).length;
+  const balanceValuationWarningCount = balanceValuations.reduce(
+    (sum, item) => sum + item.valuation.diagnostics.filter((diagnostic) => diagnostic.level === 'warn' || diagnostic.level === 'error').length,
+    0,
+  );
+  const baseCostUnit = balanceValuations.find((item) => item.valuation.baseCostUnit)?.valuation.baseCostUnit || 'USD';
   const activeCount = accounts.filter(
     (account) => account.status === "active",
   ).length;
@@ -222,7 +260,11 @@ async function loadDashboardSummaryPayload(): Promise<DashboardSummaryPayload> {
   );
 
   return {
-    totalBalance,
+    totalBalance: toRoundedMicroNumber(totalBalance),
+    rawBalance: toRoundedMicroNumber(rawBalance),
+    baseCostUnit,
+    valuedAccountCount,
+    balanceValuationWarningCount,
     totalUsed: toRoundedMicroNumber(totalUsed),
     todaySpend: toRoundedMicroNumber(todaySpend),
     todayReward: toRoundedMicroNumber(todayReward),
@@ -256,7 +298,7 @@ async function loadDashboardInsightsPayload(): Promise<DashboardInsightsPayload>
   const modelAnalysisSinceDay = getLocalRangeStartDayKey(7);
   await runUsageAggregationProjectionPass();
 
-  const [activeSites, siteAvailabilityRows, modelDayRows] =
+  const [activeSites, siteAvailabilityRows, modelDayRows, baseCostUnit] =
     await Promise.all([
       db
         .select({
@@ -280,6 +322,7 @@ async function loadDashboardInsightsPayload(): Promise<DashboardInsightsPayload>
         .from(schema.modelDayUsage)
         .where(gte(schema.modelDayUsage.localDay, modelAnalysisSinceDay))
         .all(),
+      resolveBaseCostUnit(),
     ]);
 
   const sortedSites = activeSites.sort(
@@ -294,6 +337,51 @@ async function loadDashboardInsightsPayload(): Promise<DashboardInsightsPayload>
     },
   );
   const activeSiteIdSet = new Set(sortedSites.map((site) => site.id));
+  const accountValuationMultiplierByKey = new Map<
+    string,
+    {
+      multiplier: number | null;
+      warningCount: number;
+    }
+  >();
+  const getAccountValuationMultiplier = async (siteId: number, accountId: number) => {
+    const key = `${siteId}:${accountId}`;
+    const cached = accountValuationMultiplierByKey.get(key);
+    if (cached) return cached;
+    const valuation = await valueWalletBalanceInBaseUnit({
+      siteId,
+      accountId,
+      balance: 1,
+    });
+    const next = {
+      multiplier: valuation.normalizedValue,
+      warningCount: valuation.diagnostics.filter(isValuationWarning).length,
+    };
+    accountValuationMultiplierByKey.set(key, next);
+    return next;
+  };
+
+  const modelRowsInActiveSites = modelDayRows.filter((row) => activeSiteIdSet.has(row.siteId));
+  const modelRowsWithValuedSpend = await Promise.all(
+    modelRowsInActiveSites.map(async (row) => {
+      const valuation = await getAccountValuationMultiplier(row.siteId, row.accountId);
+      return {
+        localDay: row.localDay,
+        model: row.model,
+        totalCalls: row.totalCalls,
+        successCalls: row.successCalls,
+        totalTokens: row.totalTokens,
+        totalSpend: valuation.multiplier == null
+          ? 0
+          : toRoundedMicroNumber(Number(row.totalSpend || 0) * valuation.multiplier),
+        totalLatencyMs: row.totalLatencyMs,
+        valued: valuation.multiplier != null,
+      };
+    }),
+  );
+  const modelValuationWarningCount = Array.from(accountValuationMultiplierByKey.values())
+    .reduce((sum, item) => sum + item.warningCount, 0);
+  const modelValuedRows = modelRowsWithValuedSpend.filter((row) => row.valued).length;
 
   return {
     siteAvailability: buildSiteAvailabilitySummariesFromHourlyAggregates(
@@ -312,18 +400,17 @@ async function loadDashboardInsightsPayload(): Promise<DashboardInsightsPayload>
       siteAvailabilityNow,
     ),
     modelAnalysis: buildModelAnalysisFromDailyUsage(
-      modelDayRows
-        .filter((row) => activeSiteIdSet.has(row.siteId))
-        .map((row) => ({
-          localDay: row.localDay,
-          model: row.model,
-          totalCalls: row.totalCalls,
-          successCalls: row.successCalls,
-          totalTokens: row.totalTokens,
-          totalSpend: row.totalSpend,
-          totalLatencyMs: row.totalLatencyMs,
-        })),
-      { days: 7 },
+      modelRowsWithValuedSpend,
+      {
+        days: 7,
+        costUnit: baseCostUnit,
+        valuation: {
+          source: 'wallet_valuation',
+          valuedRows: modelValuedRows,
+          totalRows: modelRowsWithValuedSpend.length,
+          warningCount: modelValuationWarningCount,
+        },
+      },
     ),
   };
 }

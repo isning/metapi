@@ -9,6 +9,17 @@ import {
   fetchModelPricingCatalog,
 } from "../../services/modelPricingService.js";
 import {
+  quoteEndpointPricing,
+  quoteReferencePricing,
+  type PricingResolution,
+} from "../../services/pricingQuoteService.js";
+import { comparePricingSummaries } from "../../services/pricingComparisonService.js";
+import { compileModelRouteFlow } from "../../services/routeFlowService.js";
+import {
+  ensureActiveRouteGraphVersion,
+  listRouteEndpointCatalog,
+} from "../../services/routeGraphService.js";
+import {
   buildModelAvailabilityProbeTaskDedupeKey,
   queueModelAvailabilityProbeTask,
   type ModelAvailabilityProbeExecutionResult,
@@ -28,11 +39,18 @@ import {
   withProxyLogSelectFields,
 } from "../../services/proxyLogStore.js";
 import {
+  mapRouteDecisionSnapshotToResponse,
+  summarizeRouteDecisionSnapshotValue,
+} from "../../services/proxyLogRouteDecisionSnapshot.js";
+import {
   getProxyDebugTraceDetail,
   listProxyDebugTraces,
 } from "../../services/proxyDebugTraceStore.js";
 import { parseProxyLogMessageMeta } from "../../services/proxyLogMessage.js";
-import { requiresManagedAccountTokens } from "../../services/accountExtraConfig.js";
+import {
+  requiresManagedAccountTokens,
+  supportsDirectAccountRoutingConnection,
+} from "../../services/accountExtraConfig.js";
 import { ACCOUNT_TOKEN_VALUE_STATUS_READY } from "../../services/accountTokenService.js";
 import {
   formatLocalDateTime,
@@ -80,6 +98,21 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
+function readRecordNumber(
+  record: Record<string, unknown> | null | undefined,
+  key: string,
+): number | null {
+  if (!record) return null;
+  const value = record[key];
+  const numberValue = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(numberValue) ? numberValue : null;
+}
+
+function roundPricingValue(value: number | null): number | null {
+  if (value == null || !Number.isFinite(value)) return null;
+  return Math.round(value * 1_000_000) / 1_000_000;
+}
+
 const MODELS_MARKETPLACE_BASE_TTL_MS = 15_000;
 const MODELS_MARKETPLACE_PRICING_TTL_MS = 90_000;
 const limitModelTokenCandidatesRead = createRateLimitGuard({
@@ -91,6 +124,26 @@ const limitModelTokenCandidatesRead = createRateLimitGuard({
 type ModelsMarketplaceCacheEntry = {
   expiresAt: number;
   models: any[];
+};
+
+type MeasuredEntryPricingAggregate = {
+  inputWeightedTotal: number;
+  inputWeight: number;
+  outputWeightedTotal: number;
+  outputWeight: number;
+  sampleCount: number;
+  lastMeasuredAt: string | null;
+};
+
+type MeasuredEntryPricingSummary = {
+  inputPerMillion: number | null;
+  outputPerMillion: number | null;
+  totalCostUsd: number | null;
+  inputMultiplier: number | null;
+  outputMultiplier: number | null;
+  totalMultiplier: number | null;
+  sampleCount: number;
+  lastMeasuredAt: string | null;
 };
 
 const modelsMarketplaceCache = new Map<
@@ -121,6 +174,10 @@ function writeModelsMarketplaceCache(
     expiresAt: Date.now() + ttl,
     models,
   });
+}
+
+export function __resetModelsMarketplaceCacheForTests(): void {
+  modelsMarketplaceCache.clear();
 }
 
 function proxyCostSqlExpression() {
@@ -570,7 +627,10 @@ function buildSiteAvailabilitySummaries(
 
 function mapProxyLogRow(
   row: {
-    proxy_logs: Record<string, unknown> & { billingDetails?: string | null };
+    proxy_logs: Record<string, unknown> & {
+      billingDetails?: string | null;
+      routeDecisionSnapshot?: string | null;
+    };
     accounts: { username?: string | null } | null;
     sites: {
       id?: number | null;
@@ -583,6 +643,45 @@ function mapProxyLogRow(
       groupName?: string | null;
       tags?: string | null;
     } | null;
+    token_routes?: {
+      id?: number | null;
+      displayName?: string | null;
+      displayIcon?: string | null;
+      routingStrategy?: string | null;
+      enabled?: boolean | number | null;
+      decisionSnapshot?: string | null;
+      decisionRefreshedAt?: string | null;
+    } | null;
+    route_endpoint_targets?: {
+      id?: number | null;
+      routeEndpointId?: string | null;
+      accountId?: number | null;
+      tokenId?: number | null;
+      oauthRouteUnitId?: number | null;
+      sourceModel?: string | null;
+      priority?: number | null;
+      weight?: number | null;
+      enabled?: boolean | number | null;
+      manualOverride?: boolean | number | null;
+      successCount?: number | null;
+      failCount?: number | null;
+      totalLatencyMs?: number | null;
+      totalCost?: number | null;
+      lastUsedAt?: string | null;
+      lastSelectedAt?: string | null;
+      lastFailAt?: string | null;
+      consecutiveFailCount?: number | null;
+      cooldownLevel?: number | null;
+      cooldownUntil?: string | null;
+    } | null;
+    target_account_tokens?: {
+      id?: number | null;
+      name?: string | null;
+      tokenGroup?: string | null;
+      enabled?: boolean | number | null;
+      valueStatus?: string | null;
+      source?: string | null;
+    } | null;
   },
   options?: { includeBillingDetails?: boolean },
 ) {
@@ -592,6 +691,90 @@ function mapProxyLogRow(
       ? row.proxy_logs.errorMessage
       : "",
   );
+  const routeDecisionSnapshot = options?.includeBillingDetails
+    ? mapRouteDecisionSnapshotToResponse(row.proxy_logs.routeDecisionSnapshot)
+    : null;
+  const currentRouteDecision = {
+    source: "current" as const,
+    capturedAt: null,
+    requestedModel:
+      typeof row.proxy_logs.modelRequested === "string"
+        ? row.proxy_logs.modelRequested
+        : null,
+    actualModel:
+      typeof row.proxy_logs.modelActual === "string"
+        ? row.proxy_logs.modelActual
+        : null,
+    route: row.token_routes
+      ? {
+          id: row.token_routes.id ?? null,
+          displayName: row.token_routes.displayName ?? null,
+          displayIcon: row.token_routes.displayIcon ?? null,
+          routingStrategy: row.token_routes.routingStrategy ?? null,
+          enabled:
+            row.token_routes.enabled == null
+              ? null
+              : Boolean(row.token_routes.enabled),
+          decisionRefreshedAt:
+            row.token_routes.decisionRefreshedAt ?? null,
+          snapshotSummary: summarizeRouteDecisionSnapshotValue(
+            row.token_routes.decisionSnapshot,
+          ),
+        }
+      : null,
+    target: row.route_endpoint_targets
+      ? {
+          id: row.route_endpoint_targets.id ?? null,
+          routeEndpointId:
+            row.route_endpoint_targets.routeEndpointId ?? null,
+          accountId: row.route_endpoint_targets.accountId ?? null,
+          tokenId: row.route_endpoint_targets.tokenId ?? null,
+          oauthRouteUnitId:
+            row.route_endpoint_targets.oauthRouteUnitId ?? null,
+          sourceModel: row.route_endpoint_targets.sourceModel ?? null,
+          priority: row.route_endpoint_targets.priority ?? null,
+          weight: row.route_endpoint_targets.weight ?? null,
+          enabled:
+            row.route_endpoint_targets.enabled == null
+              ? null
+              : Boolean(row.route_endpoint_targets.enabled),
+          manualOverride:
+            row.route_endpoint_targets.manualOverride == null
+              ? null
+              : Boolean(row.route_endpoint_targets.manualOverride),
+          successCount:
+            row.route_endpoint_targets.successCount ?? null,
+          failCount: row.route_endpoint_targets.failCount ?? null,
+          totalLatencyMs:
+            row.route_endpoint_targets.totalLatencyMs ?? null,
+          totalCost: row.route_endpoint_targets.totalCost ?? null,
+          lastUsedAt: row.route_endpoint_targets.lastUsedAt ?? null,
+          lastSelectedAt:
+            row.route_endpoint_targets.lastSelectedAt ?? null,
+          lastFailAt: row.route_endpoint_targets.lastFailAt ?? null,
+          consecutiveFailCount:
+            row.route_endpoint_targets.consecutiveFailCount ?? null,
+          cooldownLevel:
+            row.route_endpoint_targets.cooldownLevel ?? null,
+          cooldownUntil:
+            row.route_endpoint_targets.cooldownUntil ?? null,
+        }
+      : null,
+    token: row.target_account_tokens
+      ? {
+          id: row.target_account_tokens.id ?? null,
+          name: row.target_account_tokens.name ?? null,
+          tokenGroup: row.target_account_tokens.tokenGroup ?? null,
+          enabled:
+            row.target_account_tokens.enabled == null
+              ? null
+              : Boolean(row.target_account_tokens.enabled),
+          valueStatus: row.target_account_tokens.valueStatus ?? null,
+          source: row.target_account_tokens.source ?? null,
+        }
+      : null,
+  };
+
   return {
     ...row.proxy_logs,
     isStream:
@@ -620,6 +803,11 @@ function mapProxyLogRow(
     downstreamKeyName: row.downstream_api_keys?.name || null,
     downstreamKeyGroupName: row.downstream_api_keys?.groupName || null,
     downstreamKeyTags: parseDownstreamKeyTags(row.downstream_api_keys?.tags),
+    ...(options?.includeBillingDetails
+      ? {
+          routeDecision: routeDecisionSnapshot ?? currentRouteDecision,
+        }
+      : {}),
   };
 }
 
@@ -635,6 +823,16 @@ function buildProxyLogModelAnalysisSelectFields() {
   };
 }
 
+function buildProxyLogModelPricingSelectFields() {
+  return {
+    createdAt: schema.proxyLogs.createdAt,
+    modelActual: schema.proxyLogs.modelActual,
+    modelRequested: schema.proxyLogs.modelRequested,
+    status: schema.proxyLogs.status,
+    billingDetails: schema.proxyLogs.billingDetails,
+  };
+}
+
 function buildProxyLogSiteTrendSelectFields() {
   return {
     createdAt: schema.proxyLogs.createdAt,
@@ -646,6 +844,7 @@ function buildProxyLogSiteTrendSelectFields() {
 export async function statsRoutes(app: FastifyInstance) {
   const proxyLogBaseFields = getProxyLogBaseSelectFields();
   const proxyLogModelAnalysisFields = buildProxyLogModelAnalysisSelectFields();
+  const proxyLogModelPricingFields = buildProxyLogModelPricingSelectFields();
   const proxyLogSiteTrendFields = buildProxyLogSiteTrendSelectFields();
 
   app.get<{ Querystring: { refresh?: string; view?: string } }>(
@@ -983,6 +1182,47 @@ export async function statsRoutes(app: FastifyInstance) {
                 groupName: schema.downstreamApiKeys.groupName,
                 tags: schema.downstreamApiKeys.tags,
               },
+              token_routes: {
+                id: schema.tokenRoutes.id,
+                displayName: schema.tokenRoutes.displayName,
+                displayIcon: schema.tokenRoutes.displayIcon,
+                routingStrategy: schema.tokenRoutes.routingStrategy,
+                enabled: schema.tokenRoutes.enabled,
+                decisionSnapshot: schema.tokenRoutes.decisionSnapshot,
+                decisionRefreshedAt: schema.tokenRoutes.decisionRefreshedAt,
+              },
+              route_endpoint_targets: {
+                id: schema.routeEndpointTargets.id,
+                routeEndpointId: schema.routeEndpointTargets.routeEndpointId,
+                accountId: schema.routeEndpointTargets.accountId,
+                tokenId: schema.routeEndpointTargets.tokenId,
+                oauthRouteUnitId:
+                  schema.routeEndpointTargets.oauthRouteUnitId,
+                sourceModel: schema.routeEndpointTargets.sourceModel,
+                priority: schema.routeEndpointTargets.priority,
+                weight: schema.routeEndpointTargets.weight,
+                enabled: schema.routeEndpointTargets.enabled,
+                manualOverride: schema.routeEndpointTargets.manualOverride,
+                successCount: schema.routeEndpointTargets.successCount,
+                failCount: schema.routeEndpointTargets.failCount,
+                totalLatencyMs: schema.routeEndpointTargets.totalLatencyMs,
+                totalCost: schema.routeEndpointTargets.totalCost,
+                lastUsedAt: schema.routeEndpointTargets.lastUsedAt,
+                lastSelectedAt: schema.routeEndpointTargets.lastSelectedAt,
+                lastFailAt: schema.routeEndpointTargets.lastFailAt,
+                consecutiveFailCount:
+                  schema.routeEndpointTargets.consecutiveFailCount,
+                cooldownLevel: schema.routeEndpointTargets.cooldownLevel,
+                cooldownUntil: schema.routeEndpointTargets.cooldownUntil,
+              },
+              target_account_tokens: {
+                id: schema.accountTokens.id,
+                name: schema.accountTokens.name,
+                tokenGroup: schema.accountTokens.tokenGroup,
+                enabled: schema.accountTokens.enabled,
+                valueStatus: schema.accountTokens.valueStatus,
+                source: schema.accountTokens.source,
+              },
             })
             .from(schema.proxyLogs)
             .leftJoin(
@@ -997,13 +1237,26 @@ export async function statsRoutes(app: FastifyInstance) {
                 schema.downstreamApiKeys.id,
               ),
             )
+            .leftJoin(
+              schema.tokenRoutes,
+              eq(schema.proxyLogs.routeId, schema.tokenRoutes.id),
+            )
+            .leftJoin(
+              schema.routeEndpointTargets,
+              eq(schema.proxyLogs.targetId, schema.routeEndpointTargets.id),
+            )
+            .leftJoin(
+              schema.accountTokens,
+              eq(schema.routeEndpointTargets.tokenId, schema.accountTokens.id),
+            )
             .where(eq(schema.proxyLogs.id, id))
             .get(),
-        { includeBillingDetails: true },
+        { includeBillingDetails: true, includeRouteDecisionSnapshot: true },
       )) as
         | {
             proxy_logs: Record<string, unknown> & {
               billingDetails?: string | null;
+              routeDecisionSnapshot?: string | null;
             };
             accounts: { username?: string | null } | null;
             sites: {
@@ -1016,6 +1269,45 @@ export async function statsRoutes(app: FastifyInstance) {
               name?: string | null;
               groupName?: string | null;
               tags?: string | null;
+            } | null;
+            token_routes: {
+              id?: number | null;
+              displayName?: string | null;
+              displayIcon?: string | null;
+              routingStrategy?: string | null;
+              enabled?: boolean | number | null;
+              decisionSnapshot?: string | null;
+              decisionRefreshedAt?: string | null;
+            } | null;
+            route_endpoint_targets: {
+              id?: number | null;
+              routeEndpointId?: string | null;
+              accountId?: number | null;
+              tokenId?: number | null;
+              oauthRouteUnitId?: number | null;
+              sourceModel?: string | null;
+              priority?: number | null;
+              weight?: number | null;
+              enabled?: boolean | number | null;
+              manualOverride?: boolean | number | null;
+              successCount?: number | null;
+              failCount?: number | null;
+              totalLatencyMs?: number | null;
+              totalCost?: number | null;
+              lastUsedAt?: string | null;
+              lastSelectedAt?: string | null;
+              lastFailAt?: string | null;
+              consecutiveFailCount?: number | null;
+              cooldownLevel?: number | null;
+              cooldownUntil?: string | null;
+            } | null;
+            target_account_tokens: {
+              id?: number | null;
+              name?: string | null;
+              tokenGroup?: string | null;
+              enabled?: boolean | number | null;
+              valueStatus?: string | null;
+              source?: string | null;
             } | null;
           }
         | undefined;
@@ -1078,7 +1370,9 @@ export async function statsRoutes(app: FastifyInstance) {
             successMessage: (currentTask) => {
               const rebuild = (currentTask.result as any)?.rebuild;
               if (!rebuild) return "模型广场刷新已完成";
-              return `模型广场刷新完成：新增路由 ${rebuild.createdRoutes}，移除旧路由 ${rebuild.removedRoutes ?? 0}，新增通道 ${rebuild.createdChannels}，移除通道 ${rebuild.removedChannels}`;
+              const createdTargets = rebuild.createdTargets ?? rebuild.createdChannels ?? 0;
+              const removedTargets = rebuild.removedTargets ?? rebuild.removedChannels ?? 0;
+              return `模型广场刷新完成：新增路由 ${rebuild.createdRoutes ?? 0}，移除旧路由 ${rebuild.removedRoutes ?? 0}，新增目标 ${createdTargets}，移除目标 ${removedTargets}`;
             },
             failureMessage: (currentTask) =>
               `模型广场刷新失败：${currentTask.error || "unknown error"}`,
@@ -1161,6 +1455,11 @@ export async function statsRoutes(app: FastifyInstance) {
         .from(schema.proxyLogs)
         .where(gte(schema.proxyLogs.createdAt, last7d))
         .all();
+      const recentPricingLogs = await db
+        .select(proxyLogModelPricingFields)
+        .from(schema.proxyLogs)
+        .where(gte(schema.proxyLogs.createdAt, last7d))
+        .all();
 
       const modelLogStats: Record<
         string,
@@ -1174,30 +1473,76 @@ export async function statsRoutes(app: FastifyInstance) {
         if (log.status === "success") modelLogStats[model].success++;
         modelLogStats[model].totalLatency += log.latencyMs || 0;
       }
+      const measuredPricingStats: Record<string, MeasuredEntryPricingAggregate> = {};
+      for (const log of recentPricingLogs) {
+        if (log.status !== "success") continue;
+        const model = String(log.modelActual || log.modelRequested || "").trim();
+        if (!model) continue;
+        const billingDetails = parseProxyLogBillingDetails(log.billingDetails);
+        const breakdown = isRecord(billingDetails?.breakdown) ? billingDetails.breakdown : null;
+        if (!breakdown) continue;
+
+        const inputPrice = readRecordNumber(breakdown, "inputPerMillion");
+        const outputPrice = readRecordNumber(breakdown, "outputPerMillion");
+        if (!Number.isFinite(inputPrice) && !Number.isFinite(outputPrice)) continue;
+
+        const usage = isRecord(billingDetails?.usage) ? billingDetails.usage : null;
+        const inputWeight = Math.max(
+          1,
+          readRecordNumber(usage, "billablePromptTokens")
+            || readRecordNumber(usage, "promptTokens")
+            || 0,
+        );
+        const outputWeight = Math.max(1, readRecordNumber(usage, "completionTokens") || 0);
+        if (!measuredPricingStats[model]) {
+          measuredPricingStats[model] = {
+            inputWeightedTotal: 0,
+            inputWeight: 0,
+            outputWeightedTotal: 0,
+            outputWeight: 0,
+            sampleCount: 0,
+            lastMeasuredAt: null,
+          };
+        }
+        const aggregate = measuredPricingStats[model];
+        aggregate.sampleCount += 1;
+        if (inputPrice != null) {
+          aggregate.inputWeightedTotal += inputPrice * inputWeight;
+          aggregate.inputWeight += inputWeight;
+        }
+        if (outputPrice != null) {
+          aggregate.outputWeightedTotal += outputPrice * outputWeight;
+          aggregate.outputWeight += outputWeight;
+        }
+        const createdAt = typeof log.createdAt === "string" ? log.createdAt : null;
+        if (createdAt && (!aggregate.lastMeasuredAt || createdAt > aggregate.lastMeasuredAt)) {
+          aggregate.lastMeasuredAt = createdAt;
+        }
+      }
 
       type ModelMetadataAggregate = {
         description: string | null;
         tags: Set<string>;
         supportedEndpointTypes: Set<string>;
-        pricingSources: Array<{
-          siteId: number;
-          siteName: string;
-          accountId: number;
-          username: string | null;
-          ownerBy: string | null;
-          enableGroups: string[];
-          groupPricing: Record<
-            string,
-            {
-              quotaType: number;
-              inputPerMillion?: number;
-              outputPerMillion?: number;
-              perCallInput?: number;
-              perCallOutput?: number;
-              perCallTotal?: number;
-            }
-          >;
-        }>;
+      };
+      type MarketplacePricingSource = {
+        siteId: number;
+        siteName: string;
+        accountId: number;
+        username: string | null;
+        ownerBy: string | null;
+        enableGroups: string[];
+        groupPricing: Record<
+          string,
+          {
+            quotaType: number;
+            inputPerMillion?: number;
+            outputPerMillion?: number;
+            perCallInput?: number;
+            perCallOutput?: number;
+            perCallTotal?: number;
+          }
+        >;
       };
 
       const modelMetadataMap = new Map<string, ModelMetadataAggregate>();
@@ -1221,11 +1566,14 @@ export async function statsRoutes(app: FastifyInstance) {
                 id: row.sites.id,
                 url: row.sites.url,
                 platform: row.sites.platform,
+                apiKey: row.sites.apiKey,
               },
               account: {
                 id: row.accounts.id,
+                username: row.accounts.username,
                 accessToken: row.accounts.accessToken,
                 apiToken: row.accounts.apiToken,
+                extraConfig: row.accounts.extraConfig,
               },
               modelName: "__metadata__",
               totalTokens: 0,
@@ -1249,7 +1597,6 @@ export async function statsRoutes(app: FastifyInstance) {
                 description: null,
                 tags: new Set<string>(),
                 supportedEndpointTypes: new Set<string>(),
-                pricingSources: [],
               });
             }
 
@@ -1262,16 +1609,6 @@ export async function statsRoutes(app: FastifyInstance) {
             for (const endpointType of model.supportedEndpointTypes) {
               aggregate.supportedEndpointTypes.add(endpointType);
             }
-
-            aggregate.pricingSources.push({
-              siteId: result.site.id,
-              siteName: result.site.name,
-              accountId: result.account.id,
-              username: result.account.username,
-              ownerBy: model.ownerBy,
-              enableGroups: model.enableGroups,
-              groupPricing: model.groupPricing,
-            });
           }
         }
       }
@@ -1290,10 +1627,83 @@ export async function statsRoutes(app: FastifyInstance) {
               unitCost: number | null;
               balance: number;
               tokens: Array<{ id: number; name: string; isDefault: boolean }>;
+              credentialKeys: Set<string>;
             }
           >;
         }
       > = {};
+
+      const ensureModelAccount = (
+        modelName: string,
+        account: typeof schema.accounts.$inferSelect,
+        site: typeof schema.sites.$inferSelect,
+        latencyMs: number | null | undefined,
+      ) => {
+        if (!modelMap[modelName]) {
+          modelMap[modelName] = {
+            name: modelName,
+            accountsById: new Map(),
+          };
+        }
+
+        const existingAccount = modelMap[modelName].accountsById.get(account.id);
+        if (!existingAccount) {
+          const nextAccount = {
+            id: account.id,
+            site: site.name,
+            username: account.username,
+            latency: latencyMs ?? null,
+            unitCost: account.unitCost,
+            balance: account.balance || 0,
+            tokens: [] as Array<{ id: number; name: string; isDefault: boolean }>,
+            credentialKeys: new Set<string>(),
+          };
+          modelMap[modelName].accountsById.set(account.id, nextAccount);
+          return nextAccount;
+        }
+
+        if (existingAccount.latency == null) {
+          existingAccount.latency = latencyMs ?? null;
+        } else if (latencyMs != null) {
+          existingAccount.latency = Math.min(existingAccount.latency, latencyMs);
+        }
+        return existingAccount;
+      };
+
+      const addManagedTokenInfo = (
+        account: ReturnType<typeof ensureModelAccount>,
+        token: typeof schema.accountTokens.$inferSelect,
+      ) => {
+        if (!account.tokens.some((item) => item.id === token.id)) {
+          account.tokens.push({
+            id: token.id,
+            name: token.name,
+            isDefault: !!token.isDefault,
+          });
+        }
+      };
+
+      const addManagedTokenCredential = (
+        account: ReturnType<typeof ensureModelAccount>,
+        token: typeof schema.accountTokens.$inferSelect,
+      ) => {
+        addManagedTokenInfo(account, token);
+        account.credentialKeys.add(`token:${token.id}`);
+      };
+
+      const addDirectAccountCredential = (
+        account: ReturnType<typeof ensureModelAccount>,
+        key: string,
+      ) => {
+        account.credentialKeys.add(key);
+      };
+      const hasAccountCredentialValue = (account: {
+        accessToken?: string | null;
+        apiToken?: string | null;
+      }) => (
+        String(account.accessToken || "").trim().length > 0 ||
+        String(account.apiToken || "").trim().length > 0
+      );
 
       for (const row of availability) {
         const m = row.token_model_availability;
@@ -1303,44 +1713,14 @@ export async function statsRoutes(app: FastifyInstance) {
         if (
           !m.available ||
           !t.enabled ||
+          t.valueStatus !== ACCOUNT_TOKEN_VALUE_STATUS_READY ||
           a.status !== "active" ||
           s.status !== "active"
         )
           continue;
 
-        if (!modelMap[m.modelName]) {
-          modelMap[m.modelName] = {
-            name: m.modelName,
-            accountsById: new Map(),
-          };
-        }
-
-        const existingAccount = modelMap[m.modelName].accountsById.get(a.id);
-        if (!existingAccount) {
-          modelMap[m.modelName].accountsById.set(a.id, {
-            id: a.id,
-            site: s.name,
-            username: a.username,
-            latency: m.latencyMs,
-            unitCost: a.unitCost,
-            balance: a.balance || 0,
-            tokens: [{ id: t.id, name: t.name, isDefault: !!t.isDefault }],
-          });
-        } else {
-          const nextLatency = (() => {
-            if (existingAccount.latency == null) return m.latencyMs;
-            if (m.latencyMs == null) return existingAccount.latency;
-            return Math.min(existingAccount.latency, m.latencyMs);
-          })();
-          existingAccount.latency = nextLatency;
-          if (!existingAccount.tokens.some((token) => token.id === t.id)) {
-            existingAccount.tokens.push({
-              id: t.id,
-              name: t.name,
-              isDefault: !!t.isDefault,
-            });
-          }
-        }
+        const account = ensureModelAccount(m.modelName, a, s, m.latencyMs);
+        addManagedTokenCredential(account, t);
       }
 
       for (const row of accountAvailability) {
@@ -1350,33 +1730,281 @@ export async function statsRoutes(app: FastifyInstance) {
         if (!m.available || a.status !== "active" || s.status !== "active")
           continue;
 
-        if (!modelMap[m.modelName]) {
-          modelMap[m.modelName] = {
-            name: m.modelName,
-            accountsById: new Map(),
+        const account = ensureModelAccount(m.modelName, a, s, m.latencyMs);
+        if (supportsDirectAccountRoutingConnection(a) || hasAccountCredentialValue(a)) {
+          addDirectAccountCredential(account, `account:${a.id}`);
+        }
+      }
+
+      try {
+        const activeGraph = await ensureActiveRouteGraphVersion();
+        const routeEndpointCatalog = await listRouteEndpointCatalog();
+        const publicRouteIdsByModel = new Map<string, Set<number>>();
+        const addPublicModelRouteId = (modelName: string, routeIdInput: unknown) => {
+          const routeId = Number(routeIdInput);
+          if (!modelName || !Number.isFinite(routeId) || routeId <= 0) return;
+          const normalizedRouteId = Math.trunc(routeId);
+          const routeIds = publicRouteIdsByModel.get(modelName) || new Set<number>();
+          routeIds.add(normalizedRouteId);
+          publicRouteIdsByModel.set(modelName, routeIds);
+        };
+        const recordRouteIdsFromArray = (modelName: string, values: unknown) => {
+          if (!Array.isArray(values)) return;
+          for (const routeId of values) addPublicModelRouteId(modelName, routeId);
+        };
+        const readRecordValue = (value: unknown): Record<string, unknown> | null => (
+          value && typeof value === "object" && !Array.isArray(value)
+            ? value as Record<string, unknown>
+            : null
+        );
+        const collectCompiledMacroRouteIds = (modelName: string, entryNodeId: string) => {
+          const nodesById = activeGraph.compiledGraph.nodesById || {};
+          const entryNode = readRecordValue(nodesById[entryNodeId]);
+          const provenance = readRecordValue(entryNode?.provenance);
+          const macroId = typeof provenance?.macroId === "string" ? provenance.macroId : "";
+          if (!macroId) return;
+          for (const node of Object.values(nodesById)) {
+            const nodeRecord = readRecordValue(node);
+            if (!nodeRecord) continue;
+            const nodeProvenance = readRecordValue(nodeRecord.provenance);
+            const metadata = readRecordValue(nodeRecord.metadata);
+            const macroCandidate = readRecordValue(metadata?.macroCandidate);
+            const belongsToMacro = nodeProvenance?.macroId === macroId || macroCandidate?.macroId === macroId;
+            if (!belongsToMacro) continue;
+            addPublicModelRouteId(modelName, nodeRecord.routeId);
+            addPublicModelRouteId(modelName, nodeRecord.legacyRouteId);
+            addPublicModelRouteId(modelName, macroCandidate?.routeId);
+            addPublicModelRouteId(modelName, macroCandidate?.localRouteId);
+            recordRouteIdsFromArray(modelName, metadata?.sourceRouteIds);
+            recordRouteIdsFromArray(modelName, metadata?.localRouteIds);
+            const configRecord = readRecordValue(nodeRecord.config);
+            const targets = Array.isArray(configRecord?.targets) ? configRecord.targets : [];
+            for (const target of targets) {
+              const targetRecord = readRecordValue(target);
+              const targetMetadata = readRecordValue(targetRecord?.metadata);
+              addPublicModelRouteId(modelName, targetMetadata?.localRouteId);
+              addPublicModelRouteId(modelName, targetMetadata?.routeId);
+            }
+          }
+        };
+        for (const publicModel of activeGraph.compiledGraph.publicModels || []) {
+          const modelName = String(publicModel.model || "").trim();
+          if (!modelName) continue;
+          if (!modelMap[modelName]) {
+            modelMap[modelName] = {
+              name: modelName,
+              accountsById: new Map(),
+            };
+          }
+          collectCompiledMacroRouteIds(modelName, publicModel.nodeId);
+        }
+        const publicRouteProducts = routeEndpointCatalog.filter((endpoint) => (
+          endpoint.enabled !== false
+          && endpoint.endpointKind === "route_product"
+          && endpoint.exposure === "public"
+          && endpoint.resolutionStatus !== "unresolved"
+          && String(endpoint.publicModelName || endpoint.modelPattern || endpoint.label || "").trim()
+        ));
+        const publicSourceRouteIds = new Set<number>();
+        for (const endpoint of publicRouteProducts) {
+          const modelName = String(
+            endpoint.publicModelName ||
+            endpoint.modelPattern ||
+            endpoint.label ||
+            "",
+          ).trim();
+          for (const routeId of endpoint.sourceRouteIds || []) {
+            if (Number.isFinite(Number(routeId)) && Number(routeId) > 0) {
+              const normalizedRouteId = Math.trunc(Number(routeId));
+              publicSourceRouteIds.add(normalizedRouteId);
+              addPublicModelRouteId(modelName, normalizedRouteId);
+            }
+          }
+        }
+        for (const routeIds of publicRouteIdsByModel.values()) {
+          for (const routeId of routeIds) publicSourceRouteIds.add(routeId);
+        }
+
+        if (publicSourceRouteIds.size > 0) {
+          const targetRows = await db
+            .select()
+            .from(schema.routeEndpointTargets)
+            .innerJoin(
+              schema.accounts,
+              eq(schema.routeEndpointTargets.accountId, schema.accounts.id),
+            )
+            .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
+            .leftJoin(
+              schema.accountTokens,
+              eq(schema.routeEndpointTargets.tokenId, schema.accountTokens.id),
+            )
+            .where(
+              and(
+                eq(schema.routeEndpointTargets.enabled, true),
+                eq(schema.accounts.status, "active"),
+                eq(schema.sites.status, "active"),
+              ),
+            )
+            .all();
+          const targetsByRouteId = new Map<number, typeof targetRows>();
+          for (const row of targetRows) {
+            const routeId = Number(row.route_endpoint_targets.routeId);
+            if (!publicSourceRouteIds.has(routeId)) continue;
+            const token = row.account_tokens;
+            if (
+              token &&
+              (
+                !token.enabled ||
+                token.valueStatus !== ACCOUNT_TOKEN_VALUE_STATUS_READY
+              )
+            ) continue;
+            const rows = targetsByRouteId.get(routeId) || [];
+            rows.push(row);
+            targetsByRouteId.set(routeId, rows);
+          }
+
+          for (const [modelName, sourceRouteIdSet] of publicRouteIdsByModel.entries()) {
+            if (!modelName) continue;
+            const sourceRouteIds = Array.from(sourceRouteIdSet);
+            for (const routeId of sourceRouteIds) {
+              for (const row of targetsByRouteId.get(routeId) || []) {
+                const target = row.route_endpoint_targets;
+                const account = ensureModelAccount(
+                  modelName,
+                  row.accounts,
+                  row.sites,
+                  null,
+                );
+                if (row.account_tokens) {
+                  addManagedTokenInfo(account, row.account_tokens);
+                }
+                addDirectAccountCredential(account, `route-target:${target.id}`);
+              }
+            }
+            if (!modelMap[modelName]) {
+              modelMap[modelName] = {
+                name: modelName,
+                accountsById: new Map(),
+              };
+            }
+          }
+        }
+      } catch (error) {
+        console.warn("[models/marketplace] failed to include public route graph models", error);
+      }
+
+      const pricingSourcesByModel = new Map<string, MarketplacePricingSource[]>();
+      if (includePricing) {
+        const pricingSourceMap = new Map<string, {
+          modelKey: string;
+          source: MarketplacePricingSource;
+        }>();
+        const upsertPricingSource = (input: {
+          modelName: string;
+          siteId: number;
+          siteName: string;
+          accountId: number;
+          username: string | null;
+          tokenGroup: string | null;
+          resolution: PricingResolution;
+        }) => {
+          const modelKey = input.modelName.toLowerCase();
+          const group = (input.tokenGroup || 'default').trim() || 'default';
+          const sourceKey = `${modelKey}:${input.siteId}:${input.accountId}`;
+          const existing = pricingSourceMap.get(sourceKey);
+          const source = existing?.source || {
+            siteId: input.siteId,
+            siteName: input.siteName,
+            accountId: input.accountId,
+            username: input.username,
+            ownerBy: null,
+            enableGroups: [],
+            groupPricing: {},
           };
-        }
+          if (!source.enableGroups.includes(group)) source.enableGroups.push(group);
+          const summary = input.resolution.summary;
+          source.groupPricing[group] = {
+            quotaType: summary.requestUsd != null && summary.inputPerMillion == null && summary.outputPerMillion == null ? 1 : 0,
+            ...(summary.inputPerMillion != null ? { inputPerMillion: summary.inputPerMillion } : {}),
+            ...(summary.outputPerMillion != null ? { outputPerMillion: summary.outputPerMillion } : {}),
+            ...(summary.requestUsd != null ? { perCallTotal: summary.requestUsd } : {}),
+          };
+          pricingSourceMap.set(sourceKey, { modelKey, source });
+        };
 
-        const existingAccount = modelMap[m.modelName].accountsById.get(a.id);
-        if (!existingAccount) {
-          modelMap[m.modelName].accountsById.set(a.id, {
-            id: a.id,
-            site: s.name,
-            username: a.username,
-            latency: m.latencyMs,
-            unitCost: a.unitCost,
-            balance: a.balance || 0,
-            tokens: [],
+        await Promise.all([
+          ...availability.map(async (row) => {
+            const m = row.token_model_availability;
+            const t = row.account_tokens;
+            const a = row.accounts;
+            const s = row.sites;
+            if (
+              !m.available ||
+              !t.enabled ||
+              t.valueStatus !== ACCOUNT_TOKEN_VALUE_STATUS_READY ||
+              a.status !== "active" ||
+              s.status !== "active"
+            ) return;
+
+            const quote = await quoteEndpointPricing({
+              supply: {
+                siteId: s.id,
+                accountId: a.id,
+                tokenId: t.id,
+                tokenGroup: t.tokenGroup,
+                provider: s.platform,
+                modelName: m.modelName,
+              },
+              usageProfile: 'preview_1m_io',
+              includeReference: true,
+            });
+            if (!quote.endpoint) return;
+            upsertPricingSource({
+              modelName: m.modelName,
+              siteId: s.id,
+              siteName: s.name,
+              accountId: a.id,
+              username: a.username,
+              tokenGroup: t.tokenGroup,
+              resolution: quote.endpoint,
+            });
+          }),
+          ...accountAvailability.map(async (row) => {
+            const m = row.model_availability;
+            const a = row.accounts;
+            const s = row.sites;
+            if (!m.available || a.status !== "active" || s.status !== "active") return;
+
+            const quote = await quoteEndpointPricing({
+              supply: {
+                siteId: s.id,
+                accountId: a.id,
+                provider: s.platform,
+                modelName: m.modelName,
+              },
+              usageProfile: 'preview_1m_io',
+              includeReference: true,
+            });
+            if (!quote.endpoint) return;
+            upsertPricingSource({
+              modelName: m.modelName,
+              siteId: s.id,
+              siteName: s.name,
+              accountId: a.id,
+              username: a.username,
+              tokenGroup: null,
+              resolution: quote.endpoint,
+            });
+          }),
+        ]);
+
+        for (const { modelKey, source } of pricingSourceMap.values()) {
+          if (!pricingSourcesByModel.has(modelKey)) pricingSourcesByModel.set(modelKey, []);
+          pricingSourcesByModel.get(modelKey)!.push({
+            ...source,
+            enableGroups: source.enableGroups.sort((a, b) => a.localeCompare(b)),
           });
-          continue;
         }
-
-        const nextLatency = (() => {
-          if (existingAccount.latency == null) return m.latencyMs;
-          if (m.latencyMs == null) return existingAccount.latency;
-          return Math.min(existingAccount.latency, m.latencyMs);
-        })();
-        existingAccount.latency = nextLatency;
       }
 
       let upstreamDescriptionMap = new Map<string, string>();
@@ -1392,24 +2020,80 @@ export async function statsRoutes(app: FastifyInstance) {
         }
       }
 
+      const measuredEntryPricingByModel = new Map<string, MeasuredEntryPricingSummary>();
+      await Promise.all(Object.entries(measuredPricingStats).map(async ([modelName, measuredPricing]) => {
+        const inputPerMillion = measuredPricing.inputWeight > 0
+          ? roundPricingValue(measuredPricing.inputWeightedTotal / measuredPricing.inputWeight)
+          : null;
+        const outputPerMillion = measuredPricing.outputWeight > 0
+          ? roundPricingValue(measuredPricing.outputWeightedTotal / measuredPricing.outputWeight)
+          : null;
+        const totalCostUsd = inputPerMillion != null && outputPerMillion != null
+          ? roundPricingValue(inputPerMillion + outputPerMillion)
+          : null;
+        const referenceQuote = await quoteReferencePricing({
+          subject: {
+            modelName,
+          },
+          usageProfile: 'preview_1m_io',
+        });
+        const reference = referenceQuote.reference?.summary ?? null;
+        const comparison = comparePricingSummaries(
+          { inputPerMillion, outputPerMillion, totalCostUsd },
+          reference,
+        );
+        measuredEntryPricingByModel.set(modelName, {
+          inputPerMillion,
+          outputPerMillion,
+          totalCostUsd,
+          inputMultiplier: comparison.inputMultiplier,
+          outputMultiplier: comparison.outputMultiplier,
+          totalMultiplier: comparison.totalMultiplier,
+          sampleCount: measuredPricing.sampleCount,
+          lastMeasuredAt: measuredPricing.lastMeasuredAt,
+        });
+      }));
+
       const models = Object.values(modelMap).map((m) => {
         const logStats = modelLogStats[m.name];
-        const accounts = Array.from(m.accountsById.values());
-        const avgLatency =
-          accounts.reduce((sum, a) => sum + (a.latency || 0), 0) /
-          (accounts.length || 1);
+        const accounts = Array.from(m.accountsById.values()).map((account) => ({
+          id: account.id,
+          site: account.site,
+          username: account.username,
+          latency: account.latency,
+          unitCost: account.unitCost,
+          balance: account.balance,
+          tokens: account.tokens,
+          managedTokenCount: account.tokens.length,
+          credentialCount: account.credentialKeys.size,
+        }));
+        const latencyValues = accounts
+          .map((account) => account.latency)
+          .filter((latency): latency is number => typeof latency === "number" && Number.isFinite(latency));
+        const avgLatency = latencyValues.length > 0
+          ? latencyValues.reduce((sum, latency) => sum + latency, 0) / latencyValues.length
+          : null;
         const metadata = modelMetadataMap.get(m.name.toLowerCase());
+        const measuredPricing = measuredEntryPricingByModel.get(m.name) || null;
         const fallbackDescription = metadata?.description
           ? null
           : upstreamDescriptionMap.get(m.name.toLowerCase()) || null;
+        const managedTokenCount = accounts.reduce(
+          (sum, account) => sum + account.managedTokenCount,
+          0,
+        );
+        const credentialCount = accounts.reduce(
+          (sum, account) => sum + account.credentialCount,
+          0,
+        );
         return {
           name: m.name,
           accountCount: accounts.length,
-          tokenCount: accounts.reduce(
-            (sum, account) => sum + account.tokens.length,
-            0,
-          ),
-          avgLatency: Math.round(avgLatency),
+          tokenCount: managedTokenCount,
+          managedTokenCount,
+          credentialCount,
+          endpointCount: credentialCount,
+          avgLatency: avgLatency == null ? null : Math.round(avgLatency),
           successRate: logStats
             ? Math.round((logStats.success / logStats.total) * 1000) / 10
             : null,
@@ -1422,7 +2106,10 @@ export async function statsRoutes(app: FastifyInstance) {
                 a.localeCompare(b),
               )
             : [],
-          pricingSources: metadata?.pricingSources || [],
+          pricingSources: pricingSourcesByModel.get(m.name.toLowerCase()) || [],
+          measuredEntryPricing: measuredPricing
+            ? measuredPricing
+            : null,
           accounts,
         };
       });
@@ -1440,6 +2127,19 @@ export async function statsRoutes(app: FastifyInstance) {
           includePricing,
         },
       };
+    },
+  );
+
+  app.get<{ Querystring: { model?: string } }>(
+    "/api/models/route-flow",
+    async (request, reply) => {
+      const model = (request.query.model || "").trim();
+      if (!model) {
+        return reply.code(400).send({ success: false, message: "model 不能为空" });
+      }
+
+      const flow = await compileModelRouteFlow(model);
+      return { success: true, flow };
     },
   );
 
@@ -1672,11 +2372,14 @@ export async function statsRoutes(app: FastifyInstance) {
                     id: row.sites.id,
                     url: row.sites.url,
                     platform: row.sites.platform,
+                    apiKey: row.sites.apiKey,
                   },
                   account: {
                     id: row.accounts.id,
+                    username: row.accounts.username,
                     accessToken: row.accounts.accessToken,
                     apiToken: row.accounts.apiToken,
+                    extraConfig: row.accounts.extraConfig,
                   },
                   modelName: "__metadata__",
                   totalTokens: 0,

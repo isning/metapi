@@ -731,6 +731,7 @@ export const modelDayUsage = sqliteTable('model_day_usage', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   localDay: text('local_day').notNull(),
   siteId: integer('site_id').notNull().references(() => sites.id, { onDelete: 'cascade' }),
+  accountId: integer('account_id').notNull().references(() => accounts.id, { onDelete: 'cascade' }),
   model: text('model').notNull(),
   totalCalls: integer('total_calls').notNull().default(0),
   successCalls: integer('success_calls').notNull().default(0),
@@ -742,9 +743,10 @@ export const modelDayUsage = sqliteTable('model_day_usage', {
   createdAt: text('created_at').default(sql`(datetime('now'))`),
   updatedAt: text('updated_at').default(sql`(datetime('now'))`),
 }, (table) => ({
-  daySiteModelUnique: uniqueIndex('model_day_usage_day_site_model_unique').on(table.localDay, table.siteId, table.model),
+  daySiteAccountModelUnique: uniqueIndex('model_day_usage_day_site_account_model_unique').on(table.localDay, table.siteId, table.accountId, table.model),
   dayIdx: index('model_day_usage_day_idx').on(table.localDay),
   siteIdx: index('model_day_usage_site_id_idx').on(table.siteId),
+  accountIdx: index('model_day_usage_account_id_idx').on(table.accountId),
   modelIdx: index('model_day_usage_model_idx').on(table.model),
   nonNegative: check(
     'model_day_usage_non_negative',

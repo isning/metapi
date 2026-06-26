@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, create, type ReactTestInstance } from 'react-test-renderer';
+import { MemoryRouter } from 'react-router-dom';
 import { ToastProvider } from '../components/Toast.js';
 import Dashboard from './Dashboard.js';
 import { installDashboardSnapshotCompat } from './testApiCompat.js';
@@ -13,6 +14,7 @@ const { apiMock } = vi.hoisted(() => ({
     getSiteDistribution: vi.fn(),
     getSiteTrend: vi.fn(),
     getSites: vi.fn(),
+    getEvents: vi.fn(),
   },
 }));
 
@@ -27,9 +29,22 @@ function collectText(node: ReactTestInstance): string {
   }).join('');
 }
 
-function isStatCard(node: ReactTestInstance): boolean {
-  return typeof node.props.className === 'string'
-    && /(^|\s)stat-card(\s|$)/.test(node.props.className);
+function isCard(node: ReactTestInstance): boolean {
+  return node.props['data-slot'] === 'card';
+}
+
+function findStatCards(root: ReactTestInstance): ReactTestInstance[] {
+  return root.findAll((node) => {
+    if (!isCard(node)) return false;
+    const text = collectText(node);
+    return [
+      '账户数据',
+      '使用统计',
+      '资源消耗',
+      '签到状态',
+      '性能指标',
+    ].some((title) => text.includes(title));
+  });
 }
 
 async function flushMicrotasks() {
@@ -48,6 +63,7 @@ describe('Dashboard performance stat card', () => {
     apiMock.getSiteDistribution.mockResolvedValue({ distribution: [] });
     apiMock.getSiteTrend.mockResolvedValue({ trend: [] });
     apiMock.getSites.mockResolvedValue([]);
+    apiMock.getEvents.mockResolvedValue([]);
     globalThis.document = {
       visibilityState: 'visible',
       addEventListener: vi.fn(),
@@ -84,28 +100,26 @@ describe('Dashboard performance stat card', () => {
     try {
       await act(async () => {
         root = create(
-          <ToastProvider>
-            <Dashboard />
-          </ToastProvider>,
+          <MemoryRouter initialEntries={['/']}>
+            <ToastProvider>
+              <Dashboard />
+            </ToastProvider>
+          </MemoryRouter>,
         );
       });
       await flushMicrotasks();
 
-      const statGrid = root!.root.find((node) => (
-        typeof node.props.className === 'string'
-        && node.props.className.includes('dashboard-stat-grid')
-      ));
-
-      const statCards = statGrid.findAll(isStatCard);
+      const statCards = findStatCards(root!.root);
+      const statGridText = statCards.map((card) => collectText(card)).join('');
 
       expect(statCards).toHaveLength(5);
-      expect(collectText(statGrid)).toContain('性能指标');
-      expect(collectText(statGrid)).toContain('RPM');
-      expect(collectText(statGrid)).toContain('17');
-      expect(collectText(statGrid)).toContain('TPM');
-      expect(collectText(statGrid)).toContain('8K');
-      expect(collectText(statGrid)).toContain('24h Tokens');
-      expect(collectText(statGrid)).toContain('606.6M');
+      expect(statGridText).toContain('性能指标');
+      expect(statGridText).toContain('RPM');
+      expect(statGridText).toContain('17');
+      expect(statGridText).toContain('TPM');
+      expect(statGridText).toContain('8K');
+      expect(statGridText).toContain('24h Tokens');
+      expect(statGridText).toContain('606.6M');
     } finally {
       root?.unmount();
     }
@@ -124,17 +138,15 @@ describe('Dashboard performance stat card', () => {
     try {
       await act(async () => {
         root = create(
-          <ToastProvider>
-            <Dashboard />
-          </ToastProvider>,
+          <MemoryRouter initialEntries={['/']}>
+            <ToastProvider>
+              <Dashboard />
+            </ToastProvider>
+          </MemoryRouter>,
         );
       });
 
-      const statGrid = root!.root.find((node) => (
-        typeof node.props.className === 'string'
-        && node.props.className.includes('dashboard-stat-grid')
-      ));
-      const statCards = statGrid.findAll(isStatCard);
+      const statCards = root!.root.findAll(isCard);
 
       expect(statCards).toHaveLength(5);
     } finally {

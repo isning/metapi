@@ -1054,6 +1054,12 @@
           "defaultValue": null,
           "primaryKey": false
         },
+        "account_id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
         "model": {
           "logicalType": "text",
           "notNull": true,
@@ -3769,6 +3775,14 @@
       "unique": false
     },
     {
+      "name": "model_day_usage_account_id_idx",
+      "table": "model_day_usage",
+      "columns": [
+        "account_id"
+      ],
+      "unique": false
+    },
+    {
       "name": "model_day_usage_day_idx",
       "table": "model_day_usage",
       "columns": [
@@ -3777,11 +3791,12 @@
       "unique": false
     },
     {
-      "name": "model_day_usage_day_site_model_unique",
+      "name": "model_day_usage_day_site_account_model_unique",
       "table": "model_day_usage",
       "columns": [
         "local_day",
         "site_id",
+        "account_id",
         "model"
       ],
       "unique": true
@@ -4583,11 +4598,12 @@
       ]
     },
     {
-      "name": "model_day_usage_day_site_model_unique",
+      "name": "model_day_usage_day_site_account_model_unique",
       "table": "model_day_usage",
       "columns": [
         "local_day",
         "site_id",
+        "account_id",
         "model"
       ]
     },
@@ -4851,6 +4867,17 @@
     },
     {
       "table": "model_availability",
+      "columns": [
+        "account_id"
+      ],
+      "referencedTable": "accounts",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "model_day_usage",
       "columns": [
         "account_id"
       ],

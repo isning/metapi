@@ -1,6 +1,10 @@
-import React, { useMemo, useState } from 'react';
-import { VChart } from '@visactor/react-vchart';
+import { useMemo, useState } from 'react';
+import EmptyStateBlock from '../EmptyStateBlock.js';
+import { Skeleton } from '../ui/skeleton/index.js';
+import { ChartFrame, ChartMetricToggle, ChartShell } from './ChartShell.js';
+import { useThemeChartPalette } from '../useThemeLabelColor.js';
 
+import { tr } from '../../i18n.js';
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
 /* ------------------------------------------------------------------ */
@@ -13,6 +17,7 @@ interface SiteTrendData {
 interface SiteTrendChartProps {
   data: SiteTrendData[];
   loading?: boolean;
+  baseCostUnit?: string;
 }
 
 /* ------------------------------------------------------------------ */
@@ -22,27 +27,17 @@ interface SiteTrendChartProps {
 type Metric = 'spend' | 'calls';
 
 const METRIC_OPTIONS: { key: Metric; label: string }[] = [
-  { key: 'spend', label: '消耗趋势' },
-  { key: 'calls', label: '调用趋势' },
-];
-
-const COLOR_PALETTE = [
-  '#4f46e5',
-  '#06b6d4',
-  '#10b981',
-  '#f59e0b',
-  '#ef4444',
-  '#8b5cf6',
-  '#ec4899',
-  '#14b8a6',
+  { key: 'spend', label: tr('components.modelAnalysisPanel.consumptionTrend') },
+  { key: 'calls', label: tr('components.charts.siteTrendChart.callTrend') },
 ];
 
 /* ------------------------------------------------------------------ */
 /*  Component                                                          */
 /* ------------------------------------------------------------------ */
 
-export default function SiteTrendChart({ data, loading }: SiteTrendChartProps) {
+export default function SiteTrendChart({ data, loading, baseCostUnit = 'USD' }: SiteTrendChartProps) {
   const [metric, setMetric] = useState<Metric>('spend');
+  const chartPalette = useThemeChartPalette();
 
   /* ---------- data transform ---------- */
 
@@ -61,12 +56,9 @@ export default function SiteTrendChart({ data, loading }: SiteTrendChartProps) {
 
   if (loading) {
     return (
-      <div style={containerStyle}>
-        <div style={headerStyle}>
-          <div className="skeleton" style={{ width: 200, height: 32, borderRadius: 'var(--radius-sm)' }} />
-        </div>
-        <div className="skeleton" style={{ width: '100%', height: 300, borderRadius: 'var(--radius-sm)' }} />
-      </div>
+      <ChartShell actions={<Skeleton className="h-8 w-[200px]" />}>
+        <Skeleton className="h-[300px] w-full" />
+      </ChartShell>
     );
   }
 
@@ -74,15 +66,9 @@ export default function SiteTrendChart({ data, loading }: SiteTrendChartProps) {
 
   if (!data || data.length === 0 || flatData.length === 0) {
     return (
-      <div style={containerStyle}>
-        <div style={headerStyle}>
-          <MetricToggle metric={metric} onChange={setMetric} />
-        </div>
-        <div className="empty-state" style={{ padding: 48 }}>
-          <div className="empty-state-title">暂无趋势数据</div>
-          <div className="empty-state-desc">数据加载后将自动展示趋势图表</div>
-        </div>
-      </div>
+      <ChartShell actions={<MetricToggle metric={metric} onChange={setMetric} />}>
+        <EmptyStateBlock title={tr('components.charts.downstreamKeyTrendChart.noTrendData')} description={tr('components.charts.siteTrendChart.automatic')} />
+      </ChartShell>
     );
   }
 
@@ -118,7 +104,7 @@ export default function SiteTrendChart({ data, loading }: SiteTrendChartProps) {
             key: (datum: Record<string, unknown>) => datum?.site ?? '',
             value: (datum: Record<string, unknown>) => {
               const v = Number(datum?.value ?? 0);
-              return metric === 'spend' ? `$${v.toFixed(4)}` : String(v);
+              return metric === 'spend' ? `${v.toFixed(4)} ${baseCostUnit}` : String(v);
             },
           },
         ],
@@ -130,7 +116,7 @@ export default function SiteTrendChart({ data, loading }: SiteTrendChartProps) {
             key: (datum: Record<string, unknown>) => datum?.site ?? '',
             value: (datum: Record<string, unknown>) => {
               const v = Number(datum?.value ?? 0);
-              return metric === 'spend' ? `$${v.toFixed(4)}` : String(v);
+              return metric === 'spend' ? `${v.toFixed(4)} ${baseCostUnit}` : String(v);
             },
           },
         ],
@@ -157,7 +143,7 @@ export default function SiteTrendChart({ data, loading }: SiteTrendChartProps) {
         domainLine: { visible: false },
       },
     ],
-    color: COLOR_PALETTE,
+    color: chartPalette,
     background: 'transparent',
     padding: { left: 8, right: 16, top: 8, bottom: 8 },
   };
@@ -165,14 +151,9 @@ export default function SiteTrendChart({ data, loading }: SiteTrendChartProps) {
   /* ---------- render ---------- */
 
   return (
-    <div style={containerStyle}>
-      <div style={headerStyle}>
-        <MetricToggle metric={metric} onChange={setMetric} />
-      </div>
-      <div style={{ width: '100%', height: 320 }}>
-        <VChart spec={spec as any} style={{ width: '100%', height: '100%' }} />
-      </div>
-    </div>
+    <ChartShell actions={<MetricToggle metric={metric} onChange={setMetric} />}>
+      <ChartFrame spec={spec} height={320} />
+    </ChartShell>
   );
 }
 
@@ -188,66 +169,6 @@ function MetricToggle({
   onChange: (m: Metric) => void;
 }) {
   return (
-    <div style={toggleGroupStyle}>
-      {METRIC_OPTIONS.map((opt) => (
-        <button
-          key={opt.key}
-          onClick={() => onChange(opt.key)}
-          style={{
-            ...toggleBtnBase,
-            ...(metric === opt.key ? toggleBtnActive : toggleBtnInactive),
-          }}
-        >
-          {opt.label}
-        </button>
-      ))}
-    </div>
+    <ChartMetricToggle value={metric} options={METRIC_OPTIONS} onChange={onChange} />
   );
 }
-
-/* ------------------------------------------------------------------ */
-/*  Styles (inline, consistent with project conventions)               */
-/* ------------------------------------------------------------------ */
-
-const containerStyle: React.CSSProperties = {
-  background: 'var(--color-bg-card)',
-  borderRadius: 'var(--radius-md)',
-  border: '1px solid var(--color-border-light)',
-  boxShadow: 'var(--shadow-card)',
-  padding: 20,
-};
-
-const headerStyle: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'space-between',
-  marginBottom: 16,
-};
-
-const toggleGroupStyle: React.CSSProperties = {
-  display: 'inline-flex',
-  gap: 0,
-  borderRadius: 'var(--radius-sm)',
-  border: '1px solid var(--color-border)',
-  overflow: 'hidden',
-};
-
-const toggleBtnBase: React.CSSProperties = {
-  padding: '6px 16px',
-  fontSize: 13,
-  fontWeight: 500,
-  cursor: 'pointer',
-  border: 'none',
-  transition: 'all 0.2s ease',
-  fontFamily: 'inherit',
-};
-
-const toggleBtnActive: React.CSSProperties = {
-  background: 'var(--color-primary)',
-  color: '#ffffff',
-};
-
-const toggleBtnInactive: React.CSSProperties = {
-  background: 'var(--color-bg-card)',
-  color: 'var(--color-text-secondary)',
-};

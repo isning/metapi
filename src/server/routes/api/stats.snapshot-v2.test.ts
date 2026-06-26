@@ -35,7 +35,7 @@ describe("stats snapshot v2 routes", () => {
     await db.delete(schema.adminSnapshots).run();
     await db.delete(schema.proxyLogs).run();
     await db.delete(schema.checkinLogs).run();
-    await db.delete(schema.routeChannels).run();
+    await db.delete(schema.routeEndpointTargets).run();
     await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.tokenModelAvailability).run();
     await db.delete(schema.modelAvailability).run();
@@ -76,6 +76,24 @@ describe("stats snapshot v2 routes", () => {
       })
       .returning()
       .get();
+
+    await db.insert(schema.walletAcquisitionProfiles).values({
+      scope: 'site',
+      scopeKey: `site|site:${site.id}|account:-|token:-`,
+      siteId: site.id,
+      inheritance: 'override',
+      walletUnit: 'POINTS',
+      faceValuePrice: 1,
+      rechargeDiscount: 0.5,
+      confidence: 'estimated',
+    }).run();
+    await db.insert(schema.fxRateSnapshots).values({
+      fromCurrency: 'POINTS',
+      toCurrency: 'USD',
+      rate: 0.01,
+      source: 'manual',
+      capturedAt: new Date().toISOString(),
+    }).run();
 
     await db
       .insert(schema.proxyLogs)
@@ -124,10 +142,16 @@ describe("stats snapshot v2 routes", () => {
     const summary = summaryResponse.json() as {
       generatedAt: string;
       totalBalance: number;
+      rawBalance: number;
+      baseCostUnit: string;
+      valuedAccountCount: number;
       proxy24h: { total: number };
     };
     expect(Date.parse(summary.generatedAt)).not.toBeNaN();
-    expect(summary.totalBalance).toBe(42);
+    expect(summary.totalBalance).toBe(0.21);
+    expect(summary.rawBalance).toBe(42);
+    expect(summary.baseCostUnit).toBe('USD');
+    expect(summary.valuedAccountCount).toBe(1);
     expect(summary.proxy24h.total).toBe(2);
 
     const insightsResponse = await app.inject({
@@ -138,13 +162,30 @@ describe("stats snapshot v2 routes", () => {
     const insights = insightsResponse.json() as {
       generatedAt: string;
       siteAvailability: Array<{ siteId: number }>;
-      modelAnalysis: { totals: { calls: number } };
+      modelAnalysis: {
+        costUnit: string;
+        valuation: {
+          source: string;
+          valuedRows: number;
+          totalRows: number;
+          warningCount: number;
+        };
+        totals: { calls: number; spend: number };
+      };
     };
     expect(Date.parse(insights.generatedAt)).not.toBeNaN();
     expect(insights.siteAvailability).toEqual([
       expect.objectContaining({ siteId: site.id }),
     ]);
     expect(insights.modelAnalysis.totals.calls).toBe(3);
+    expect(insights.modelAnalysis.costUnit).toBe('USD');
+    expect(insights.modelAnalysis.valuation).toMatchObject({
+      source: 'wallet_valuation',
+      valuedRows: 3,
+      totalRows: 3,
+      warningCount: 0,
+    });
+    expect(insights.modelAnalysis.totals.spend).toBe(0.00425);
 
     const siteDistributionResponse = await app.inject({
       method: "GET",
@@ -152,10 +193,22 @@ describe("stats snapshot v2 routes", () => {
     });
     expect(siteDistributionResponse.statusCode).toBe(200);
     const siteDistribution = siteDistributionResponse.json() as {
-      distribution: Array<{ siteId: number; totalSpend: number }>;
+      distribution: Array<{
+        siteId: number;
+        totalBalance: number;
+        rawBalance: number;
+        totalSpend: number;
+        valuedAccountCount: number;
+      }>;
     };
     expect(siteDistribution.distribution).toEqual([
-      expect.objectContaining({ siteId: site.id, totalSpend: 0.85 }),
+      expect.objectContaining({
+        siteId: site.id,
+        totalBalance: 0.21,
+        rawBalance: 42,
+        totalSpend: 0.85,
+        valuedAccountCount: 1,
+      }),
     ]);
 
     const siteTrendResponse = await app.inject({

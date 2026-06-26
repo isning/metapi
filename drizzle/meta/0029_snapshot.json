@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "d584f431-0d84-4a66-96c4-a5dd8d901069",
-  "prevId": "7692286e-983c-4375-93b7-d9289ac5a7f0",
+  "id": "feb8c5a4-345c-4266-a619-a31372ccaeca",
+  "prevId": "11d634a1-669e-44c0-bc53-f60e7a1452cf",
   "tables": {
     "account_tokens": {
       "name": "account_tokens",
@@ -37,6 +37,13 @@
         },
         "token_group": {
           "name": "token_group",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "compatibility_policy": {
+          "name": "compatibility_policy",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
@@ -492,6 +499,27 @@
           "notNull": false,
           "autoincrement": false
         },
+        "lease_owner": {
+          "name": "lease_owner",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "lease_token": {
+          "name": "lease_token",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "lease_expires_at": {
+          "name": "lease_expires_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "recompute_from_id": {
           "name": "recompute_from_id",
           "type": "integer",
@@ -572,9 +600,168 @@
             "recompute_from_id"
           ],
           "isUnique": false
+        },
+        "analytics_projection_checkpoints_lease_expires_at_idx": {
+          "name": "analytics_projection_checkpoints_lease_expires_at_idx",
+          "columns": [
+            "lease_expires_at"
+          ],
+          "isUnique": false
         }
       },
       "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "api_endpoint_profiles": {
+      "name": "api_endpoint_profiles",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "site_id": {
+          "name": "site_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "profile_key": {
+          "name": "profile_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "api_type": {
+          "name": "api_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "label": {
+          "name": "label",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "base_url": {
+          "name": "base_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "path_template": {
+          "name": "path_template",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "auth_mode": {
+          "name": "auth_mode",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'bearer'"
+        },
+        "enabled": {
+          "name": "enabled",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": true
+        },
+        "priority": {
+          "name": "priority",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false,
+          "default": 0
+        },
+        "capability_defaults_json": {
+          "name": "capability_defaults_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "compatibility_policy_ref": {
+          "name": "compatibility_policy_ref",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "metadata_json": {
+          "name": "metadata_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false,
+          "default": "(datetime('now'))"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false,
+          "default": "(datetime('now'))"
+        }
+      },
+      "indexes": {
+        "api_endpoint_profiles_site_profile_key_unique": {
+          "name": "api_endpoint_profiles_site_profile_key_unique",
+          "columns": [
+            "site_id",
+            "profile_key"
+          ],
+          "isUnique": true
+        },
+        "api_endpoint_profiles_site_api_type_idx": {
+          "name": "api_endpoint_profiles_site_api_type_idx",
+          "columns": [
+            "site_id",
+            "api_type",
+            "enabled"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "api_endpoint_profiles_site_id_sites_id_fk": {
+          "name": "api_endpoint_profiles_site_id_sites_id_fk",
+          "tableFrom": "api_endpoint_profiles",
+          "tableTo": "sites",
+          "columnsFrom": [
+            "site_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}
@@ -657,6 +844,240 @@
           "tableTo": "accounts",
           "columnsFrom": [
             "account_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "credential_endpoint_bindings": {
+      "name": "credential_endpoint_bindings",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "site_id": {
+          "name": "site_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "account_id": {
+          "name": "account_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "token_id": {
+          "name": "token_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "credential_key": {
+          "name": "credential_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "credential_kind": {
+          "name": "credential_kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "api_endpoint_profile_id": {
+          "name": "api_endpoint_profile_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "enabled": {
+          "name": "enabled",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": true
+        },
+        "support": {
+          "name": "support",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'supported'"
+        },
+        "source": {
+          "name": "source",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'manual'"
+        },
+        "priority": {
+          "name": "priority",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false,
+          "default": 0
+        },
+        "capability_override_json": {
+          "name": "capability_override_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "compatibility_policy_ref": {
+          "name": "compatibility_policy_ref",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "pricing_policy_ref": {
+          "name": "pricing_policy_ref",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "measured_pricing_ref": {
+          "name": "measured_pricing_ref",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "metadata_json": {
+          "name": "metadata_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false,
+          "default": "(datetime('now'))"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false,
+          "default": "(datetime('now'))"
+        }
+      },
+      "indexes": {
+        "credential_endpoint_bindings_credential_profile_unique": {
+          "name": "credential_endpoint_bindings_credential_profile_unique",
+          "columns": [
+            "site_id",
+            "credential_key",
+            "api_endpoint_profile_id"
+          ],
+          "isUnique": true
+        },
+        "credential_endpoint_bindings_site_credential_idx": {
+          "name": "credential_endpoint_bindings_site_credential_idx",
+          "columns": [
+            "site_id",
+            "credential_key"
+          ],
+          "isUnique": false
+        },
+        "credential_endpoint_bindings_account_idx": {
+          "name": "credential_endpoint_bindings_account_idx",
+          "columns": [
+            "account_id"
+          ],
+          "isUnique": false
+        },
+        "credential_endpoint_bindings_token_idx": {
+          "name": "credential_endpoint_bindings_token_idx",
+          "columns": [
+            "token_id"
+          ],
+          "isUnique": false
+        },
+        "credential_endpoint_bindings_profile_idx": {
+          "name": "credential_endpoint_bindings_profile_idx",
+          "columns": [
+            "api_endpoint_profile_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "credential_endpoint_bindings_site_id_sites_id_fk": {
+          "name": "credential_endpoint_bindings_site_id_sites_id_fk",
+          "tableFrom": "credential_endpoint_bindings",
+          "tableTo": "sites",
+          "columnsFrom": [
+            "site_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "credential_endpoint_bindings_account_id_accounts_id_fk": {
+          "name": "credential_endpoint_bindings_account_id_accounts_id_fk",
+          "tableFrom": "credential_endpoint_bindings",
+          "tableTo": "accounts",
+          "columnsFrom": [
+            "account_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "credential_endpoint_bindings_token_id_account_tokens_id_fk": {
+          "name": "credential_endpoint_bindings_token_id_account_tokens_id_fk",
+          "tableFrom": "credential_endpoint_bindings",
+          "tableTo": "account_tokens",
+          "columnsFrom": [
+            "token_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "credential_endpoint_bindings_api_endpoint_profile_id_api_endpoint_profiles_id_fk": {
+          "name": "credential_endpoint_bindings_api_endpoint_profile_id_api_endpoint_profiles_id_fk",
+          "tableFrom": "credential_endpoint_bindings",
+          "tableTo": "api_endpoint_profiles",
+          "columnsFrom": [
+            "api_endpoint_profile_id"
           ],
           "columnsTo": [
             "id"
@@ -1205,7 +1626,12 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "checkConstraints": {}
+      "checkConstraints": {
+        "model_day_usage_non_negative": {
+          "name": "model_day_usage_non_negative",
+          "value": "\"model_day_usage\".\"total_calls\" >= 0 and \"model_day_usage\".\"success_calls\" >= 0 and \"model_day_usage\".\"failed_calls\" >= 0 and \"model_day_usage\".\"total_tokens\" >= 0 and \"model_day_usage\".\"total_spend\" >= 0 and \"model_day_usage\".\"total_latency_ms\" >= 0 and \"model_day_usage\".\"latency_count\" >= 0"
+        }
+      }
     },
     "oauth_route_unit_members": {
       "name": "oauth_route_unit_members",
@@ -2405,6 +2831,13 @@
           "notNull": true,
           "autoincrement": false
         },
+        "route_endpoint_id": {
+          "name": "route_endpoint_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "account_id": {
           "name": "account_id",
           "type": "integer",
@@ -2550,6 +2983,13 @@
           ],
           "isUnique": false
         },
+        "route_endpoint_targets_route_endpoint_id_idx": {
+          "name": "route_endpoint_targets_route_endpoint_id_idx",
+          "columns": [
+            "route_endpoint_id"
+          ],
+          "isUnique": false
+        },
         "route_endpoint_targets_account_id_idx": {
           "name": "route_endpoint_targets_account_id_idx",
           "columns": [
@@ -2629,6 +3069,220 @@
           "onUpdate": "no action"
         }
       },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "route_graph_active_version": {
+      "name": "route_graph_active_version",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "version_id": {
+          "name": "version_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false,
+          "default": "(datetime('now'))"
+        }
+      },
+      "indexes": {
+        "route_graph_active_version_singleton_unique": {
+          "name": "route_graph_active_version_singleton_unique",
+          "columns": [
+            "id"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "route_graph_active_version_version_id_route_graph_versions_id_fk": {
+          "name": "route_graph_active_version_version_id_route_graph_versions_id_fk",
+          "tableFrom": "route_graph_active_version",
+          "tableTo": "route_graph_versions",
+          "columnsFrom": [
+            "version_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "route_graph_drafts": {
+      "name": "route_graph_drafts",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "base_version": {
+          "name": "base_version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "working_graph_json": {
+          "name": "working_graph_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'active'"
+        },
+        "diagnostics_json": {
+          "name": "diagnostics_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false,
+          "default": "(datetime('now'))"
+        }
+      },
+      "indexes": {
+        "route_graph_drafts_status_idx": {
+          "name": "route_graph_drafts_status_idx",
+          "columns": [
+            "status"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "route_graph_drafts_base_version_route_graph_versions_id_fk": {
+          "name": "route_graph_drafts_base_version_route_graph_versions_id_fk",
+          "tableFrom": "route_graph_drafts",
+          "tableTo": "route_graph_versions",
+          "columnsFrom": [
+            "base_version"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "route_graph_versions": {
+      "name": "route_graph_versions",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "source_graph_json": {
+          "name": "source_graph_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "compiled_graph_json": {
+          "name": "compiled_graph_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'archived'"
+        },
+        "created_by": {
+          "name": "created_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false,
+          "default": "'system'"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false,
+          "default": "(datetime('now'))"
+        },
+        "activated_at": {
+          "name": "activated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "route_graph_versions_version_unique": {
+          "name": "route_graph_versions_version_unique",
+          "columns": [
+            "version"
+          ],
+          "isUnique": true
+        },
+        "route_graph_versions_status_idx": {
+          "name": "route_graph_versions_status_idx",
+          "columns": [
+            "status"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}
@@ -3178,7 +3832,12 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "checkConstraints": {}
+      "checkConstraints": {
+        "site_day_usage_non_negative": {
+          "name": "site_day_usage_non_negative",
+          "value": "\"site_day_usage\".\"total_calls\" >= 0 and \"site_day_usage\".\"success_calls\" >= 0 and \"site_day_usage\".\"failed_calls\" >= 0 and \"site_day_usage\".\"total_tokens\" >= 0 and \"site_day_usage\".\"total_summary_spend\" >= 0 and \"site_day_usage\".\"total_site_spend\" >= 0 and \"site_day_usage\".\"total_latency_ms\" >= 0 and \"site_day_usage\".\"latency_count\" >= 0"
+        }
+      }
     },
     "site_disabled_models": {
       "name": "site_disabled_models",
@@ -3395,7 +4054,12 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "checkConstraints": {}
+      "checkConstraints": {
+        "site_hour_usage_non_negative": {
+          "name": "site_hour_usage_non_negative",
+          "value": "\"site_hour_usage\".\"total_calls\" >= 0 and \"site_hour_usage\".\"success_calls\" >= 0 and \"site_hour_usage\".\"failed_calls\" >= 0 and \"site_hour_usage\".\"total_tokens\" >= 0 and \"site_hour_usage\".\"total_summary_spend\" >= 0 and \"site_hour_usage\".\"total_site_spend\" >= 0 and \"site_hour_usage\".\"total_latency_ms\" >= 0 and \"site_hour_usage\".\"latency_count\" >= 0"
+        }
+      }
     },
     "sites": {
       "name": "sites",
@@ -3457,6 +4121,13 @@
           "notNull": false,
           "autoincrement": false
         },
+        "compatibility_policy": {
+          "name": "compatibility_policy",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "status": {
           "name": "status",
           "type": "text",
@@ -3495,6 +4166,38 @@
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
+        },
+        "post_refresh_probe_enabled": {
+          "name": "post_refresh_probe_enabled",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false,
+          "default": false
+        },
+        "post_refresh_probe_model": {
+          "name": "post_refresh_probe_model",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false,
+          "default": "''"
+        },
+        "post_refresh_probe_scope": {
+          "name": "post_refresh_probe_scope",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false,
+          "default": "'single'"
+        },
+        "post_refresh_probe_latency_threshold_ms": {
+          "name": "post_refresh_probe_latency_threshold_ms",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false,
+          "default": 0
         },
         "created_at": {
           "name": "created_at",
@@ -3643,13 +4346,6 @@
           "notNull": true,
           "autoincrement": true
         },
-        "model_pattern": {
-          "name": "model_pattern",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
         "display_name": {
           "name": "display_name",
           "type": "text",
@@ -3663,14 +4359,6 @@
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
-        },
-        "route_mode": {
-          "name": "route_mode",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false,
-          "default": "'pattern'"
         },
         "model_mapping": {
           "name": "model_mapping",
@@ -3727,13 +4415,6 @@
         }
       },
       "indexes": {
-        "token_routes_model_pattern_idx": {
-          "name": "token_routes_model_pattern_idx",
-          "columns": [
-            "model_pattern"
-          ],
-          "isUnique": false
-        },
         "token_routes_enabled_idx": {
           "name": "token_routes_enabled_idx",
           "columns": [
@@ -3743,6 +4424,231 @@
         }
       },
       "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "upstream_model_cost_pricings": {
+      "name": "upstream_model_cost_pricings",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "scope": {
+          "name": "scope",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "scope_key": {
+          "name": "scope_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "site_id": {
+          "name": "site_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "account_id": {
+          "name": "account_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "token_id": {
+          "name": "token_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "token_group": {
+          "name": "token_group",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "model_name": {
+          "name": "model_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "normalized_model_name": {
+          "name": "normalized_model_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "display_name": {
+          "name": "display_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "enabled": {
+          "name": "enabled",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": true
+        },
+        "plan_json": {
+          "name": "plan_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "plan_fingerprint": {
+          "name": "plan_fingerprint",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "source_type": {
+          "name": "source_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'user'"
+        },
+        "metadata_json": {
+          "name": "metadata_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "notes": {
+          "name": "notes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false,
+          "default": "(datetime('now'))"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false,
+          "default": "(datetime('now'))"
+        }
+      },
+      "indexes": {
+        "upstream_model_cost_pricings_site_model_idx": {
+          "name": "upstream_model_cost_pricings_site_model_idx",
+          "columns": [
+            "site_id",
+            "normalized_model_name",
+            "enabled"
+          ],
+          "isUnique": false
+        },
+        "upstream_model_cost_pricings_account_model_idx": {
+          "name": "upstream_model_cost_pricings_account_model_idx",
+          "columns": [
+            "account_id",
+            "normalized_model_name",
+            "enabled"
+          ],
+          "isUnique": false
+        },
+        "upstream_model_cost_pricings_token_model_idx": {
+          "name": "upstream_model_cost_pricings_token_model_idx",
+          "columns": [
+            "token_id",
+            "normalized_model_name",
+            "enabled"
+          ],
+          "isUnique": false
+        },
+        "upstream_model_cost_pricings_token_group_model_idx": {
+          "name": "upstream_model_cost_pricings_token_group_model_idx",
+          "columns": [
+            "token_id",
+            "token_group",
+            "normalized_model_name",
+            "enabled"
+          ],
+          "isUnique": false
+        },
+        "upstream_model_cost_pricings_scope_key_unique": {
+          "name": "upstream_model_cost_pricings_scope_key_unique",
+          "columns": [
+            "scope_key"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "upstream_model_cost_pricings_site_id_sites_id_fk": {
+          "name": "upstream_model_cost_pricings_site_id_sites_id_fk",
+          "tableFrom": "upstream_model_cost_pricings",
+          "tableTo": "sites",
+          "columnsFrom": [
+            "site_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "upstream_model_cost_pricings_account_id_accounts_id_fk": {
+          "name": "upstream_model_cost_pricings_account_id_accounts_id_fk",
+          "tableFrom": "upstream_model_cost_pricings",
+          "tableTo": "accounts",
+          "columnsFrom": [
+            "account_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "upstream_model_cost_pricings_token_id_account_tokens_id_fk": {
+          "name": "upstream_model_cost_pricings_token_id_account_tokens_id_fk",
+          "tableFrom": "upstream_model_cost_pricings",
+          "tableTo": "account_tokens",
+          "columnsFrom": [
+            "token_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}

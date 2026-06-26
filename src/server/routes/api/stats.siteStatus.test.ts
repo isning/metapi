@@ -31,7 +31,7 @@ describe('stats dashboard filters disabled sites', () => {
   beforeEach(async () => {
     await db.delete(schema.proxyLogs).run();
     await db.delete(schema.checkinLogs).run();
-    await db.delete(schema.routeChannels).run();
+    await db.delete(schema.routeEndpointTargets).run();
     await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.tokenModelAvailability).run();
     await db.delete(schema.modelAvailability).run();
@@ -84,11 +84,15 @@ describe('stats dashboard filters disabled sites', () => {
     expect(response.statusCode).toBe(200);
     const body = response.json() as {
       totalBalance: number;
+      rawBalance: number;
+      valuedAccountCount: number;
       activeAccounts: number;
       totalAccounts: number;
     };
 
-    expect(body.totalBalance).toBe(100);
+    expect(body.totalBalance).toBe(0);
+    expect(body.rawBalance).toBe(100);
+    expect(body.valuedAccountCount).toBe(0);
     expect(body.activeAccounts).toBe(1);
     expect(body.totalAccounts).toBe(1);
   });

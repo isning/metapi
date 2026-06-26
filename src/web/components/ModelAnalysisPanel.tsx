@@ -1,9 +1,23 @@
 import { useMemo, useState } from 'react';
-import { VChart } from '@visactor/react-vchart';
 import { InlineBrandIcon } from './BrandIcon.js';
 import { formatCompactTokenMetric } from '../numberFormat.js';
-import { useThemeLabelColor } from './useThemeLabelColor.js';
+import { useThemeChartPalette, useThemeLabelColor, useThemeToken } from './useThemeLabelColor.js';
+import EmptyStateBlock from './EmptyStateBlock.js';
+import ToneBadge from './ToneBadge.js';
+import { Button } from './ui/button/index.js';
+import { ButtonGroup } from './ui/button-group/index.js';
+import { Card, CardContent } from './ui/card/index.js';
+import { ChartFrame, ChartLegendSwatch } from './charts/ChartShell.js';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from './ui/table/index.js';
 
+import { tr } from '../i18n.js';
 type TabKey = 'spend' | 'trend' | 'calls' | 'rank';
 
 interface SpendDistributionItem { model: string; spend: number; calls: number; }
@@ -12,6 +26,13 @@ interface CallsDistributionItem { model: string; calls: number; share: number; }
 interface CallRankingItem { model: string; calls: number; successRate: number; avgLatencyMs: number; spend: number; tokens: number; }
 
 interface ModelAnalysisData {
+  costUnit?: string;
+  valuation?: {
+    source?: 'raw' | 'wallet_valuation';
+    valuedRows?: number;
+    totalRows?: number;
+    warningCount?: number;
+  };
   totals?: { spend?: number; calls?: number; tokens?: number };
   spendDistribution?: SpendDistributionItem[];
   spendTrend?: SpendTrendItem[];
@@ -24,10 +45,10 @@ interface ModelAnalysisPanelProps {
 }
 
 const tabs: Array<{ key: TabKey; label: string; icon: string }> = [
-  { key: 'spend', label: '消耗分布', icon: '💰' },
-  { key: 'trend', label: '消耗趋势', icon: '📈' },
-  { key: 'calls', label: '调用分布', icon: '🔄' },
-  { key: 'rank', label: '排行榜', icon: '🏆' },
+  { key: 'spend', label: tr('components.modelAnalysisPanel.consumptionDistribution'), icon: '💰' },
+  { key: 'trend', label: tr('components.modelAnalysisPanel.consumptionTrend'), icon: '📈' },
+  { key: 'calls', label: tr('components.modelAnalysisPanel.callDistribution'), icon: '🔄' },
+  { key: 'rank', label: tr('components.modelAnalysisPanel.rankingList'), icon: '🏆' },
 ];
 
 function toSafeNumber(value: unknown): number {
@@ -35,11 +56,16 @@ function toSafeNumber(value: unknown): number {
   return value;
 }
 
-function formatCurrency(value: number): string {
+function normalizeCostUnit(value: unknown): string {
+  const text = String(value || '').trim();
+  return text ? text.toUpperCase() : 'USD';
+}
+
+function formatCurrency(value: number, unit: string): string {
   const n = toSafeNumber(value);
-  if (n >= 1000) return `$${n.toFixed(2)}`;
-  if (n >= 1) return `$${n.toFixed(3)}`;
-  return `$${n.toFixed(6)}`;
+  if (n >= 1000) return `${n.toFixed(2)} ${unit}`;
+  if (n >= 1) return `${n.toFixed(3)} ${unit}`;
+  return `${n.toFixed(6)} ${unit}`;
 }
 
 function formatPercent(value: number): string {
@@ -48,16 +74,29 @@ function formatPercent(value: number): string {
 
 function EmptyBlock() {
   return (
-    <div className="empty-state" style={{ padding: 28 }}>
-      <div className="empty-state-title">暂无模型调用数据</div>
-      <div className="empty-state-desc">等待代理流量进入后会自动生成统计图表</div>
-    </div>
+    <EmptyStateBlock
+      title={tr('components.modelAnalysisPanel.noModelYetcalls')}
+      description={tr('components.modelAnalysisPanel.proxyTrafficEmptyDescription')}
+    />
   );
 }
 
 export default function ModelAnalysisPanel({ data }: ModelAnalysisPanelProps) {
   const [activeTab, setActiveTab] = useState<TabKey>('spend');
   const labelColor = useThemeLabelColor();
+  const primaryColor = useThemeToken('--primary', '#2563eb');
+  const primaryHoverColor = useThemeToken('--color-primary-hover', '#1d4ed8');
+  const chartPalette = useThemeChartPalette();
+  const costUnit = normalizeCostUnit(data?.costUnit);
+  const valuation = {
+    source: data?.valuation?.source || 'raw',
+    valuedRows: toSafeNumber(data?.valuation?.valuedRows),
+    totalRows: toSafeNumber(data?.valuation?.totalRows),
+    warningCount: toSafeNumber(data?.valuation?.warningCount),
+  };
+  const hasValuationWarnings = valuation.source === 'wallet_valuation'
+    && valuation.totalRows > 0
+    && (valuation.valuedRows < valuation.totalRows || valuation.warningCount > 0);
 
   const totals = {
     spend: toSafeNumber(data?.totals?.spend),
@@ -76,25 +115,37 @@ export default function ModelAnalysisPanel({ data }: ModelAnalysisPanelProps) {
 
   const spendBarSpec = useMemo(() => ({
     type: 'bar' as const,
-    data: [{ id: 'data', values: spendDistribution.map(d => ({ model: d.model.length > 25 ? d.model.slice(0, 25) + '...' : d.model, value: toSafeNumber(d.spend) })).reverse() }],
+    data: [{
+      id: 'data',
+      values: spendDistribution.map(d => ({
+        model: d.model.length > 25 ? `${d.model.slice(0, 25)}...` : d.model,
+        value: toSafeNumber(d.spend),
+        displayValue: formatCurrency(d.spend, costUnit),
+      })).reverse(),
+    }],
     xField: 'value', yField: 'model', direction: 'horizontal' as const,
-    bar: { style: { cornerRadius: [0, 6, 6, 0], fill: { gradient: 'linear' as const, x0: 0, y0: 0, x1: 1, y1: 0, stops: [{ offset: 0, color: '#4f46e5' }, { offset: 1, color: '#818cf8' }] } } },
-    label: { visible: true, position: 'right', formatter: '{value}', style: { fontSize: 11, fill: labelColor, stroke: 'transparent' } },
+    bar: { style: { cornerRadius: [0, 6, 6, 0], fill: { gradient: 'linear' as const, x0: 0, y0: 0, x1: 1, y1: 0, stops: [{ offset: 0, color: primaryColor }, { offset: 1, color: primaryHoverColor }] } } },
+    label: {
+      visible: true,
+      position: 'right',
+      formatter: '{displayValue}',
+      style: { fontSize: 11, fill: labelColor, stroke: 'transparent' },
+    },
     axes: [{ orient: 'left', label: { style: { fontSize: 11, fill: labelColor } } }, { orient: 'bottom', visible: false }],
     animation: true, background: 'transparent',
-  }), [spendDistribution, labelColor]);
+  }), [costUnit, labelColor, primaryColor, primaryHoverColor, spendDistribution]);
 
   const trendSpec = useMemo(() => ({
     type: 'area' as const,
     data: [{ id: 'data', values: spendTrend.map(d => ({ day: d.day, spend: toSafeNumber(d.spend) })) }],
     xField: 'day', yField: 'spend',
-    line: { style: { lineWidth: 2.5, curveType: 'monotone' as const, stroke: '#4f46e5' } },
-    area: { style: { fill: { gradient: 'linear' as const, x0: 0, y0: 0, x1: 0, y1: 1, stops: [{ offset: 0, color: 'rgba(79,70,229,0.25)' }, { offset: 1, color: 'rgba(79,70,229,0.02)' }] }, curveType: 'monotone' as const } },
-    point: { visible: true, style: { size: 7, fill: '#4f46e5', stroke: '#fff', lineWidth: 2 } },
+    line: { style: { lineWidth: 2.5, curveType: 'monotone' as const, stroke: primaryColor } },
+    area: { style: { fill: { gradient: 'linear' as const, x0: 0, y0: 0, x1: 0, y1: 1, stops: [{ offset: 0, color: primaryColor }, { offset: 1, color: 'transparent' }] }, fillOpacity: 0.22, curveType: 'monotone' as const } },
+    point: { visible: true, style: { size: 7, fill: primaryColor, stroke: '#fff', lineWidth: 2 } },
     axes: [{ orient: 'bottom' as const, label: { style: { fontSize: 11, fill: labelColor } } }, { orient: 'left' as const, label: { style: { fontSize: 11, fill: labelColor } } }],
-    tooltip: { mark: { content: [{ key: () => '消耗', value: (datum: any) => formatCurrency(datum?.spend ?? 0) }] } },
+    tooltip: { mark: { content: [{ key: () => tr('components.modelAnalysisPanel.spend'), value: (datum: any) => formatCurrency(datum?.spend ?? 0, costUnit) }] } },
     animation: true, background: 'transparent',
-  }), [spendTrend, labelColor]);
+  }), [costUnit, labelColor, primaryColor, spendTrend]);
 
   const callsPieSpec = useMemo(() => ({
     type: 'pie' as const,
@@ -105,57 +156,76 @@ export default function ModelAnalysisPanel({ data }: ModelAnalysisPanelProps) {
     label: { visible: true, position: 'outside', formatter: '{_percent_}%', style: { fill: labelColor } },
     legends: { visible: false },
     animation: true,
-    color: ['#4f46e5', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6'],
+    color: chartPalette,
     background: 'transparent',
-  }), [callsDistribution, labelColor]);
+  }), [callsDistribution, chartPalette, labelColor]);
 
   if (!hasData) return <EmptyBlock />;
 
   return (
     <div>
       {/* Summary Cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 20 }}>
-        <div className="stat-summary-card stat-summary-purple">
-          <div className="stat-summary-card-label">总消耗</div>
-          <div className="stat-summary-card-value">{formatCurrency(totals.spend)}</div>
-        </div>
-        <div className="stat-summary-card stat-summary-blue">
-          <div className="stat-summary-card-label">总调用</div>
-          <div className="stat-summary-card-value">{Math.round(totals.calls).toLocaleString()}</div>
-        </div>
-        <div className="stat-summary-card stat-summary-green">
-          <div className="stat-summary-card-label">总 Tokens</div>
-          <div className="stat-summary-card-value">{formatCompactTokenMetric(totals.tokens)}</div>
-        </div>
+      <div className="mb-5 grid grid-cols-3 gap-3">
+        <Card>
+          <CardContent className="pt-3">
+            <div className="text-xs text-muted-foreground">{tr('components.modelAnalysisPanel.totalSpend')}</div>
+            <div className="mt-1 text-2xl font-semibold">{formatCurrency(totals.spend, costUnit)}</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-3">
+            <div className="text-xs text-muted-foreground">{tr('components.modelAnalysisPanel.totalCalls')}</div>
+            <div className="mt-1 text-2xl font-semibold">{Math.round(totals.calls).toLocaleString()}</div>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-3">
+            <div className="text-xs text-muted-foreground">{tr('components.modelAnalysisPanel.tokens')}</div>
+            <div className="mt-1 text-2xl font-semibold">{formatCompactTokenMetric(totals.tokens)}</div>
+          </CardContent>
+        </Card>
       </div>
 
       {/* Pill Tabs */}
-      <div style={{ marginBottom: 16 }}>
-        <div className="pill-tabs">
+      <div className="mb-4">
+        <ButtonGroup>
           {tabs.map(tab => (
-            <button
+            <Button
+              type="button"
               key={tab.key}
-              className={`pill-tab ${activeTab === tab.key ? 'active' : ''}`}
+              variant={activeTab === tab.key ? 'secondary' : 'outline'}
               onClick={() => setActiveTab(tab.key)}
             >
               {tab.icon} {tab.label}
-            </button>
+            </Button>
           ))}
-        </div>
+        </ButtonGroup>
+        {valuation.source === 'wallet_valuation' ? (
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+            <ToneBadge tone={hasValuationWarnings ? 'warning' : 'success'}>
+              {hasValuationWarnings
+                ? tr('components.modelAnalysisPanel.valuationPartial')
+                : tr('components.modelAnalysisPanel.valuationApplied')}
+            </ToneBadge>
+            <span>
+              {tr('components.modelAnalysisPanel.valuationCoverage')
+                .replace('{valued}', String(Math.round(valuation.valuedRows)))
+                .replace('{total}', String(Math.round(valuation.totalRows)))}
+            </span>
+          </div>
+        ) : null}
       </div>
 
       {/* Chart Content */}
       {activeTab === 'spend' && (
         <div>
-          <div style={{ height: 300 }}>
-            <VChart spec={spendBarSpec} />
-          </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 14px', marginTop: 10, padding: '0 4px' }}>
+          <ChartFrame spec={spendBarSpec} />
+          <div className="mt-2.5 flex flex-wrap gap-x-3.5 gap-y-1.5 px-1">
             {spendDistribution.map(d => (
-              <span key={d.model} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'var(--color-text-secondary)' }}>
+              <span key={d.model} className="inline-flex items-center gap-1 text-xs text-muted-foreground">
                 <InlineBrandIcon model={d.model} size={13} />
-                <span style={{ maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.model}</span>
-                <span style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600, color: 'var(--color-text-primary)' }}>{formatCurrency(d.spend)}</span>
+                <span className="max-w-[150px] truncate">{d.model}</span>
+                <span className="font-semibold tabular-nums text-foreground">{formatCurrency(d.spend, costUnit)}</span>
               </span>
             ))}
           </div>
@@ -163,25 +233,20 @@ export default function ModelAnalysisPanel({ data }: ModelAnalysisPanelProps) {
       )}
 
       {activeTab === 'trend' && (
-        <div style={{ height: 300 }}>
-          <VChart spec={trendSpec} />
-        </div>
+        <ChartFrame spec={trendSpec} />
       )}
 
       {activeTab === 'calls' && (
         <div>
-          <div style={{ height: 300 }}>
-            <VChart spec={callsPieSpec} />
-          </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 14px', marginTop: 10, padding: '0 4px' }}>
+          <ChartFrame spec={callsPieSpec} />
+          <div className="mt-2.5 flex flex-wrap gap-x-3.5 gap-y-1.5 px-1">
             {callsDistribution.map((d, idx) => {
-              const pieColors = ['#4f46e5', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6'];
               return (
-                <span key={d.model} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'var(--color-text-secondary)' }}>
-                  <span style={{ width: 8, height: 8, borderRadius: 2, background: pieColors[idx % pieColors.length], flexShrink: 0 }} />
+                <span key={d.model} className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                  <ChartLegendSwatch color={chartPalette[idx % chartPalette.length] || chartPalette[0] || '#2563eb'} />
                   <InlineBrandIcon model={d.model} size={13} />
-                  <span style={{ maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.model}</span>
-                  <span style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600, color: 'var(--color-text-primary)' }}>{d.calls}</span>
+                  <span className="max-w-[150px] truncate">{d.model}</span>
+                  <span className="font-semibold tabular-nums text-foreground">{d.calls}</span>
                 </span>
               );
             })}
@@ -190,98 +255,43 @@ export default function ModelAnalysisPanel({ data }: ModelAnalysisPanelProps) {
       )}
 
       {activeTab === 'rank' && (
-        <div style={{ overflow: 'hidden', border: '1px solid var(--color-border-light)', borderRadius: 'var(--radius-md)' }}>
-          <table className="data-table" style={{ width: '100%' }}>
-            <thead>
-              <tr>
-                <th style={{ width: 36, textAlign: 'center' }}>#</th>
-                <th>模型</th>
-                <th style={{ textAlign: 'center' }}>调用</th>
-                <th style={{ textAlign: 'center' }}>成功率</th>
-                <th style={{ textAlign: 'center' }}>平均延迟</th>
-                <th style={{ textAlign: 'right' }}>消耗</th>
-              </tr>
-            </thead>
-            <tbody>
-              {callRanking.map((item, index) => {
-                const latMs = item.avgLatencyMs;
-                const latSec = latMs / 1000;
-                // ≤15s green, 15-60s gradient green→yellow→red, >60s or failed → red
-                let latColor: string;
-                let latBg: string;
-                if (latSec <= 15) {
-                  // green gradient: 0s=#22c55e → 15s=blend towards yellow
-                  const t = Math.min(latSec / 15, 1);
-                  const r = Math.round(34 + t * (245 - 34));
-                  const g = Math.round(197 + t * (158 - 197));
-                  const b = Math.round(94 + t * (11 - 94));
-                  latColor = `rgb(${r},${g},${b})`;
-                  latBg = `rgba(${r},${g},${b},0.08)`;
-                } else if (latSec <= 60) {
-                  // yellow→red gradient: 15s=#f59e0b → 60s=#ef4444
-                  const t = Math.min((latSec - 15) / 45, 1);
-                  const r = Math.round(245 + t * (239 - 245));
-                  const g = Math.round(158 + t * (68 - 158));
-                  const b = Math.round(11 + t * (68 - 11));
-                  latColor = `rgb(${r},${g},${b})`;
-                  latBg = `rgba(${r},${g},${b},0.08)`;
-                } else {
-                  latColor = '#ef4444';
-                  latBg = 'rgba(239,68,68,0.08)';
-                }
-                const latText = latMs >= 1000 ? `${(latMs / 1000).toFixed(latSec >= 60 ? 0 : 1)}s` : `${latMs}ms`;
-                const rateColor = item.successRate >= 90 ? '#16a34a' : item.successRate >= 60 ? '#d97706' : '#dc2626';
-                const rateBg = item.successRate >= 90 ? 'rgba(34,197,94,0.1)' : item.successRate >= 60 ? 'rgba(245,158,11,0.1)' : 'rgba(239,68,68,0.1)';
-
-                return (
-                  <tr key={item.model}>
-                    <td style={{ textAlign: 'center', padding: '8px 4px' }}>
-                      <span style={{
-                        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                        width: 22, height: 22, borderRadius: 6, fontSize: 11, fontWeight: 700,
-                        background: index < 3
-                          ? ['linear-gradient(135deg,#fbbf24,#f59e0b)', 'linear-gradient(135deg,#94a3b8,#cbd5e1)', 'linear-gradient(135deg,#d97706,#fbbf24)'][index]
-                          : 'var(--color-bg)',
-                        color: index < 3 ? '#fff' : 'var(--color-text-muted)',
-                      }}>
-                        {index + 1}
-                      </span>
-                    </td>
-                    <td>
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-                        <InlineBrandIcon model={item.model} size={14} />
-                        <code style={{ fontSize: 12, fontWeight: 500 }}>{item.model}</code>
-                      </span>
-                    </td>
-                    <td style={{ textAlign: 'center', fontWeight: 600, fontVariantNumeric: 'tabular-nums', fontSize: 13 }}>
-                      {Math.round(item.calls).toLocaleString()}
-                    </td>
-                    <td style={{ textAlign: 'center' }}>
-                      <span style={{
-                        padding: '2px 8px', borderRadius: 4, fontSize: 11, fontWeight: 600,
-                        background: rateBg, color: rateColor,
-                      }}>
-                        {formatPercent(item.successRate)}
-                      </span>
-                    </td>
-                    <td style={{ textAlign: 'center' }}>
-                      <span style={{
-                        fontVariantNumeric: 'tabular-nums', fontSize: 12, fontWeight: 600,
-                        color: latColor, background: latBg,
-                        padding: '2px 8px', borderRadius: 4,
-                      }}>
-                        {latText}
-                      </span>
-                    </td>
-                    <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 500, fontSize: 13 }}>
-                      {formatCurrency(item.spend)}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="w-9 text-center">#</TableHead>
+              <TableHead>{tr('components.modelAnalysisPanel.model')}</TableHead>
+              <TableHead className="text-center">{tr('components.modelAnalysisPanel.calls')}</TableHead>
+              <TableHead className="text-center">{tr('components.modelAnalysisPanel.successRate')}</TableHead>
+              <TableHead className="text-center">{tr('components.modelAnalysisPanel.avgLatency')}</TableHead>
+              <TableHead className="text-right">{tr('components.modelAnalysisPanel.spend2')}</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {callRanking.map((item, index) => {
+              const latMs = item.avgLatencyMs;
+              const latText = latMs >= 1000 ? `${(latMs / 1000).toFixed(latMs >= 60000 ? 0 : 1)}s` : `${latMs}ms`;
+              return (
+                <TableRow key={item.model}>
+                  <TableCell className="text-center font-mono text-xs text-muted-foreground">{index + 1}</TableCell>
+                  <TableCell>
+                    <span className="inline-flex min-w-0 items-center gap-1.5">
+                      <InlineBrandIcon model={item.model} size={14} />
+                      <code className="truncate text-xs font-medium">{item.model}</code>
+                    </span>
+                  </TableCell>
+                  <TableCell className="text-center font-mono text-sm font-semibold">{Math.round(item.calls).toLocaleString()}</TableCell>
+                  <TableCell className="text-center">
+                    <ToneBadge tone={item.successRate >= 90 ? 'success' : item.successRate >= 60 ? 'warning' : 'error'}>
+                      {formatPercent(item.successRate)}
+                    </ToneBadge>
+                  </TableCell>
+                  <TableCell className="text-center"><ToneBadge tone="-muted">{latText}</ToneBadge></TableCell>
+                  <TableCell className="text-right font-mono text-sm font-medium">{formatCurrency(item.spend, costUnit)}</TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
       )}
     </div>
   );

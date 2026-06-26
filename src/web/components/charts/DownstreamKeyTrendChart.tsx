@@ -1,13 +1,16 @@
-import React, { useMemo, useState } from 'react';
-import { VChart } from '@visactor/react-vchart';
+import { useMemo, useState } from 'react';
 import { formatDateTimeMinuteLocal } from '../../pages/helpers/checkinLogTime.js';
+import { Skeleton } from '../ui/skeleton/index.js';
+import EmptyStateBlock from '../EmptyStateBlock.js';
+import { ChartFrame, ChartMetricToggle, ChartShell } from './ChartShell.js';
 
+import { tr } from '../../i18n.js';
 type Metric = 'tokens' | 'requests' | 'cost';
 
 const METRIC_OPTIONS: Array<{ key: Metric; label: string }> = [
   { key: 'tokens', label: 'Tokens' },
-  { key: 'requests', label: '请求数' },
-  { key: 'cost', label: '成本' },
+  { key: 'requests', label: tr('components.charts.downstreamKeyTrendChart.requests') },
+  { key: 'cost', label: tr('components.charts.downstreamKeyTrendChart.cost') },
 ];
 
 export type DownstreamKeyTrendBucket = {
@@ -65,26 +68,17 @@ export default function DownstreamKeyTrendChart({
 
   if (loading) {
     return (
-      <div style={containerStyle}>
-        <div style={headerStyle}>
-          <div className="skeleton" style={{ width: 160, height: 30, borderRadius: 'var(--radius-sm)' }} />
-        </div>
-        <div className="skeleton" style={{ width: '100%', height, borderRadius: 'var(--radius-sm)' }} />
-      </div>
+      <ChartShell actions={<Skeleton className="h-[30px] w-40" />}>
+        <Skeleton className="w-full" style={{ height }} />
+      </ChartShell>
     );
   }
 
   if (!flatData || flatData.length === 0) {
     return (
-      <div style={containerStyle}>
-        <div style={headerStyle}>
-          <MetricToggle metric={metric} onChange={setMetric} />
-        </div>
-        <div className="empty-state" style={{ padding: 32 }}>
-          <div className="empty-state-title">暂无趋势数据</div>
-          <div className="empty-state-desc">该 Key 在所选时间范围内没有可用的 tokens 记录</div>
-        </div>
-      </div>
+      <ChartShell actions={<MetricToggle metric={metric} onChange={setMetric} />}>
+        <EmptyStateBlock title={tr('components.charts.downstreamKeyTrendChart.noTrendData')} description={tr('components.charts.downstreamKeyTrendChart.keyTimeAvailableTokens')} />
+      </ChartShell>
     );
   }
 
@@ -148,14 +142,9 @@ export default function DownstreamKeyTrendChart({
   };
 
   return (
-    <div style={containerStyle}>
-      <div style={headerStyle}>
-        <MetricToggle metric={metric} onChange={setMetric} />
-      </div>
-      <div style={{ width: '100%', height }}>
-        <VChart spec={spec as any} style={{ width: '100%', height: '100%' }} />
-      </div>
-    </div>
+    <ChartShell actions={<MetricToggle metric={metric} onChange={setMetric} />}>
+      <ChartFrame spec={spec} height={height} />
+    </ChartShell>
   );
 }
 
@@ -167,62 +156,6 @@ function MetricToggle({
   onChange: (m: Metric) => void;
 }) {
   return (
-    <div style={toggleGroupStyle}>
-      {METRIC_OPTIONS.map((opt) => (
-        <button
-          key={opt.key}
-          onClick={() => onChange(opt.key)}
-          style={{
-            ...toggleBtnBase,
-            ...(metric === opt.key ? toggleBtnActive : toggleBtnInactive),
-          }}
-        >
-          {opt.label}
-        </button>
-      ))}
-    </div>
+    <ChartMetricToggle value={metric} options={METRIC_OPTIONS} onChange={onChange} />
   );
 }
-
-const containerStyle: React.CSSProperties = {
-  background: 'var(--color-bg-card)',
-  borderRadius: 'var(--radius-md)',
-  border: '1px solid var(--color-border-light)',
-  boxShadow: 'var(--shadow-card)',
-  padding: 16,
-};
-
-const headerStyle: React.CSSProperties = {
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'space-between',
-  marginBottom: 10,
-};
-
-const toggleGroupStyle: React.CSSProperties = {
-  display: 'inline-flex',
-  gap: 0,
-  borderRadius: 'var(--radius-sm)',
-  border: '1px solid var(--color-border)',
-  overflow: 'hidden',
-};
-
-const toggleBtnBase: React.CSSProperties = {
-  padding: '6px 12px',
-  fontSize: 12,
-  fontWeight: 500,
-  cursor: 'pointer',
-  border: 'none',
-  transition: 'all 0.2s ease',
-  fontFamily: 'inherit',
-};
-
-const toggleBtnActive: React.CSSProperties = {
-  background: 'var(--color-primary)',
-  color: '#ffffff',
-};
-
-const toggleBtnInactive: React.CSSProperties = {
-  background: 'var(--color-bg-card)',
-  color: 'var(--color-text-secondary)',
-};

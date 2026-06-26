@@ -183,6 +183,90 @@
       "when": 1776944000000,
       "tag": "0026_site_probe_latency_threshold",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "6",
+      "when": 1776944100000,
+      "tag": "0027_route_graph_replacement",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "6",
+      "when": 1781827200000,
+      "tag": "0028_upstream_compatibility_policy",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "6",
+      "when": 1781910000000,
+      "tag": "0029_upstream_model_cost_pricing",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "6",
+      "when": 1782138550467,
+      "tag": "0030_supply_api_endpoint_bindings",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "6",
+      "when": 1782216342410,
+      "tag": "0031_proxy_target_column_backfill",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "6",
+      "when": 1782221402796,
+      "tag": "0032_proxy_log_route_decision_snapshot",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "6",
+      "when": 1782224453154,
+      "tag": "0032_naive_violations",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "6",
+      "when": 1782241413042,
+      "tag": "0033_woozy_wild_pack",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "6",
+      "when": 1782280840665,
+      "tag": "0034_bright_ender_wiggin",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "6",
+      "when": 1782341525000,
+      "tag": "0035_cost_unit_wallet_acquisition",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "6",
+      "when": 1782403200000,
+      "tag": "0036_inbox_attention_events",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "6",
+      "when": 1782464400000,
+      "tag": "0037_model_day_usage_account",
+      "breakpoints": true
     }
   ]
 }
