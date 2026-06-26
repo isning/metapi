@@ -7,7 +7,7 @@ import TokenRoutes from './TokenRoutes.js';
 const { apiMock, getBrandMock } = vi.hoisted(() => ({
   apiMock: {
     getRoutesSummary: vi.fn(),
-    getRouteChannels: vi.fn(),
+    getRouteTargets: vi.fn(),
     getModelTokenCandidates: vi.fn(),
     getRouteDecisionsBatch: vi.fn(),
     getRouteWideDecisionsBatch: vi.fn(),
@@ -78,10 +78,10 @@ describe('TokenRoutes mobile layout', () => {
     apiMock.getRoutesSummary.mockResolvedValue([
       {
         id: 1,
-        modelPattern: 'gpt-4o-mini',
-        displayName: 'gpt-4o-mini',
-        displayIcon: null,
         modelMapping: null,
+        match: { kind: 'model', requestedModelPattern: 'gpt-4o-mini', displayName: 'gpt-4o-mini' },
+        backend: { kind: 'supply' },
+        presentation: { displayName: 'gpt-4o-mini', displayIcon: null },
         routingStrategy: 'weighted',
         enabled: true,
         channelCount: 1,
@@ -91,7 +91,7 @@ describe('TokenRoutes mobile layout', () => {
         decisionRefreshedAt: null,
       },
     ]);
-    apiMock.getRouteChannels.mockResolvedValue([
+    apiMock.getRouteTargets.mockResolvedValue([
       {
         id: 11,
         accountId: 101,
@@ -126,7 +126,7 @@ describe('TokenRoutes mobile layout', () => {
     apiMock.getRouteDecisionsBatch.mockResolvedValue({ decisions: {} });
     apiMock.getRouteWideDecisionsBatch.mockResolvedValue({ decisions: {} });
     apiMock.updateRoute.mockResolvedValue({});
-    apiMock.rebuildRoutes.mockResolvedValue({ rebuild: { createdRoutes: 0, createdChannels: 0 } });
+    apiMock.rebuildRoutes.mockResolvedValue({ rebuild: { createdRoutes: 0, createdTargets: 0 } });
     apiMock.deleteRoute.mockResolvedValue({});
     apiMock.deleteChannel.mockResolvedValue({});
   });
@@ -154,7 +154,7 @@ describe('TokenRoutes mobile layout', () => {
       const summaryText = collectText(root!.root);
       expect(summaryText).toContain('详情');
       expect(summaryText).toContain('禁用');
-      expect(summaryText).toContain('添加通道');
+      expect(summaryText).toContain('添加目标');
 
       const expandButton = root!.root.find((node) => (
         node.type === 'button'
@@ -170,7 +170,7 @@ describe('TokenRoutes mobile layout', () => {
       const expandedText = collectText(root!.root);
       expect(expandedText).toContain('路由策略');
       expect(expandedText).toContain('权重随机');
-      expect(expandedText).toContain('P0 · 1 通道');
+      expect(expandedText).toContain('P0 · 1');
       expect(expandedText).toContain('user_a');
       expect(expandedText).toContain('token-a');
     } finally {

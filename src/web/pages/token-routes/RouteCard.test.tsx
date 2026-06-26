@@ -23,7 +23,7 @@ vi.mock('@dnd-kit/sortable', async () => {
 });
 
 import RouteCard from './RouteCard.js';
-import type { RouteChannel, RouteSummaryRow } from './types.js';
+import type { RouteEndpointTarget, RouteSummaryRow } from './types.js';
 import { getRouteRoutingStrategyDescription } from './routingStrategy.js';
 import { translateOnlyRectSortingStrategy } from './sortingStrategies.js';
 
@@ -43,14 +43,14 @@ const LONG_REGEX_PATTERN = 're:(?:.*|.*/)(minimax-m2.1)$';
 function buildRoute(overrides: Partial<RouteSummaryRow> = {}): RouteSummaryRow {
   return {
     id: 42,
-    modelPattern: LONG_REGEX_PATTERN,
-    displayName: 'm.',
-    displayIcon: null,
+    match: { kind: 'model', requestedModelPattern: LONG_REGEX_PATTERN, displayName: 'm.' },
+    backend: { kind: 'supply' },
+    presentation: { displayName: 'm.', displayIcon: null },
     modelMapping: null,
     routingStrategy: 'weighted',
     enabled: true,
-    channelCount: 4,
-    enabledChannelCount: 4,
+    targetCount: 4,
+    enabledTargetCount: 4,
     siteNames: ['site-a'],
     decisionSnapshot: null,
     decisionRefreshedAt: null,
@@ -58,7 +58,7 @@ function buildRoute(overrides: Partial<RouteSummaryRow> = {}): RouteSummaryRow {
   };
 }
 
-function buildChannel(overrides: Partial<RouteChannel> = {}): RouteChannel {
+function buildTarget(overrides: Partial<RouteEndpointTarget> = {}): RouteEndpointTarget {
   return {
     id: 11,
     accountId: 101,
@@ -78,14 +78,14 @@ function buildChannel(overrides: Partial<RouteChannel> = {}): RouteChannel {
 }
 
 describe('RouteCard', () => {
-  it('renders oauth route unit summary and member labels on expanded channels', () => {
+  it('renders oauth route unit summary and member labels on expanded targets', () => {
     const root = create(
       <RouteCard
         route={buildRoute({
-          modelPattern: 'gpt-4.1',
-          displayName: 'gpt-4.1',
-          channelCount: 1,
-          enabledChannelCount: 1,
+          match: { kind: 'model', requestedModelPattern: 'gpt-4.1', displayName: 'gpt-4.1' },
+          presentation: { displayName: 'gpt-4.1', displayIcon: null },
+          targetCount: 1,
+          enabledTargetCount: 1,
         })}
         brand={null}
         expanded
@@ -97,8 +97,8 @@ describe('RouteCard', () => {
         clearingCooldown={false}
         onRoutingStrategyChange={vi.fn()}
         updatingRoutingStrategy={false}
-        channels={[
-          buildChannel({
+        targets={[
+          buildTarget({
             account: { username: 'route-unit-anchor' },
             routeUnit: {
               id: 'pool-1',
@@ -113,22 +113,22 @@ describe('RouteCard', () => {
             },
           }),
         ]}
-        loadingChannels={false}
+        loadingTargets={false}
         routeDecision={null}
         loadingDecision={false}
         candidateView={{ routeCandidates: [], accountOptions: [], tokenOptionsByAccountId: {} }}
-        channelTokenDraft={{}}
-        updatingChannel={{}}
+        targetTokenDraft={{}}
+        updatingTarget={{}}
         savingPriority={false}
         onTokenDraftChange={vi.fn()}
         onSaveToken={vi.fn()}
-        onDeleteChannel={vi.fn()}
-        onToggleChannelEnabled={vi.fn()}
-        onChannelDragEnd={vi.fn()}
+        onDeleteTarget={vi.fn()}
+        onToggleTargetEnabled={vi.fn()}
+        onTargetDragEnd={vi.fn()}
         missingTokenSiteItems={[]}
         missingTokenGroupItems={[]}
         onCreateTokenForMissing={vi.fn()}
-        onAddChannel={vi.fn()}
+        onAddTarget={vi.fn()}
         onSiteBlockModel={vi.fn()}
         expandedSourceGroupMap={{}}
         onToggleSourceGroup={vi.fn()}
@@ -159,23 +159,23 @@ describe('RouteCard', () => {
         clearingCooldown={false}
         onRoutingStrategyChange={vi.fn()}
         updatingRoutingStrategy={false}
-        channels={undefined}
-        loadingChannels={false}
+        targets={undefined}
+        loadingTargets={false}
         routeDecision={null}
         loadingDecision={false}
         candidateView={{ routeCandidates: [], accountOptions: [], tokenOptionsByAccountId: {} }}
-        channelTokenDraft={{}}
-        updatingChannel={{}}
+        targetTokenDraft={{}}
+        updatingTarget={{}}
         savingPriority={false}
         onTokenDraftChange={vi.fn()}
         onSaveToken={vi.fn()}
-        onDeleteChannel={vi.fn()}
-        onToggleChannelEnabled={vi.fn()}
-        onChannelDragEnd={vi.fn()}
+        onDeleteTarget={vi.fn()}
+        onToggleTargetEnabled={vi.fn()}
+        onTargetDragEnd={vi.fn()}
         missingTokenSiteItems={[]}
         missingTokenGroupItems={[]}
         onCreateTokenForMissing={vi.fn()}
-        onAddChannel={vi.fn()}
+        onAddTarget={vi.fn()}
         onSiteBlockModel={vi.fn()}
         expandedSourceGroupMap={{}}
         onToggleSourceGroup={vi.fn()}
@@ -185,27 +185,22 @@ describe('RouteCard', () => {
     expect(collectText(root.root)).toContain('m.');
 
     const regexBadge = root.root.find((node) => (
-      node.type === 'span'
-      && typeof node.props.className === 'string'
-      && node.props.className.includes('badge-muted')
+      node.props?.['data-tone'] === '-muted'
       && collectText(node) === LONG_REGEX_PATTERN
     ));
 
-    expect(regexBadge.props.style).toMatchObject({
-      flex: '0 1 116px',
-      maxWidth: 116,
-      minWidth: 0,
-      overflow: 'hidden',
-      textOverflow: 'ellipsis',
-      whiteSpace: 'nowrap',
-    });
+    expect(regexBadge.props.className).toContain('flex-[0_1_116px]');
+    expect(regexBadge.props.className).toContain('max-w-[116px]');
+    expect(regexBadge.props.className).toContain('min-w-0');
+    expect(regexBadge.props.className).toContain('truncate');
   });
 
   it('gives the collapsed group title more layout priority than the regex badge', () => {
     const root = create(
       <RouteCard
         route={buildRoute({
-          displayName: 'minimax m2.1 群组名称',
+          match: { kind: 'model', requestedModelPattern: LONG_REGEX_PATTERN, displayName: 'minimax m2.1 群组名称' },
+          presentation: { displayName: 'minimax m2.1 群组名称', displayIcon: null },
         })}
         brand={null}
         expanded={false}
@@ -217,23 +212,23 @@ describe('RouteCard', () => {
         clearingCooldown={false}
         onRoutingStrategyChange={vi.fn()}
         updatingRoutingStrategy={false}
-        channels={undefined}
-        loadingChannels={false}
+        targets={undefined}
+        loadingTargets={false}
         routeDecision={null}
         loadingDecision={false}
         candidateView={{ routeCandidates: [], accountOptions: [], tokenOptionsByAccountId: {} }}
-        channelTokenDraft={{}}
-        updatingChannel={{}}
+        targetTokenDraft={{}}
+        updatingTarget={{}}
         savingPriority={false}
         onTokenDraftChange={vi.fn()}
         onSaveToken={vi.fn()}
-        onDeleteChannel={vi.fn()}
-        onToggleChannelEnabled={vi.fn()}
-        onChannelDragEnd={vi.fn()}
+        onDeleteTarget={vi.fn()}
+        onToggleTargetEnabled={vi.fn()}
+        onTargetDragEnd={vi.fn()}
         missingTokenSiteItems={[]}
         missingTokenGroupItems={[]}
         onCreateTokenForMissing={vi.fn()}
-        onAddChannel={vi.fn()}
+        onAddTarget={vi.fn()}
         onSiteBlockModel={vi.fn()}
         expandedSourceGroupMap={{}}
         onToggleSourceGroup={vi.fn()}
@@ -249,15 +244,15 @@ describe('RouteCard', () => {
       && collectText(node) === 'minimax m2.1 群组名称'
     ));
     const regexBadge = titleRow.find((node) => (
-      node.type === 'span'
-      && typeof node.props.className === 'string'
-      && node.props.className.includes('badge-muted')
+      node.props?.['data-tone'] === '-muted'
       && collectText(node) === LONG_REGEX_PATTERN
     ));
 
-    expect(titleNode.props.style.flex).toBe('1 1 180px');
-    expect(regexBadge.props.style.flex).toBe('0 1 116px');
-    expect(regexBadge.props.style.maxWidth).toBe(116);
+    expect(titleNode.props.className).toContain('flex-[1_1_180px]');
+    expect(titleNode.props.className).toContain('min-w-0');
+    expect(titleNode.props.className).toContain('truncate');
+    expect(regexBadge.props.className).toContain('flex-[0_1_116px]');
+    expect(regexBadge.props.className).toContain('max-w-[116px]');
   });
 
   it('renders a clear cooldown action on expanded cards', () => {
@@ -275,23 +270,23 @@ describe('RouteCard', () => {
         clearingCooldown={false}
         onRoutingStrategyChange={vi.fn()}
         updatingRoutingStrategy={false}
-        channels={[]}
-        loadingChannels={false}
+        targets={[]}
+        loadingTargets={false}
         routeDecision={null}
         loadingDecision={false}
         candidateView={{ routeCandidates: [], accountOptions: [], tokenOptionsByAccountId: {} }}
-        channelTokenDraft={{}}
-        updatingChannel={{}}
+        targetTokenDraft={{}}
+        updatingTarget={{}}
         savingPriority={false}
         onTokenDraftChange={vi.fn()}
         onSaveToken={vi.fn()}
-        onDeleteChannel={vi.fn()}
-        onToggleChannelEnabled={vi.fn()}
-        onChannelDragEnd={vi.fn()}
+        onDeleteTarget={vi.fn()}
+        onToggleTargetEnabled={vi.fn()}
+        onTargetDragEnd={vi.fn()}
         missingTokenSiteItems={[]}
         missingTokenGroupItems={[]}
         onCreateTokenForMissing={vi.fn()}
-        onAddChannel={vi.fn()}
+        onAddTarget={vi.fn()}
         onSiteBlockModel={vi.fn()}
         expandedSourceGroupMap={{}}
         onToggleSourceGroup={vi.fn()}
@@ -324,23 +319,23 @@ describe('RouteCard', () => {
         clearingCooldown={false}
         onRoutingStrategyChange={vi.fn()}
         updatingRoutingStrategy={false}
-        channels={undefined}
-        loadingChannels={false}
+        targets={undefined}
+        loadingTargets={false}
         routeDecision={null}
         loadingDecision={false}
         candidateView={{ routeCandidates: [], accountOptions: [], tokenOptionsByAccountId: {} }}
-        channelTokenDraft={{}}
-        updatingChannel={{}}
+        targetTokenDraft={{}}
+        updatingTarget={{}}
         savingPriority={false}
         onTokenDraftChange={vi.fn()}
         onSaveToken={vi.fn()}
-        onDeleteChannel={vi.fn()}
-        onToggleChannelEnabled={vi.fn()}
-        onChannelDragEnd={vi.fn()}
+        onDeleteTarget={vi.fn()}
+        onToggleTargetEnabled={vi.fn()}
+        onTargetDragEnd={vi.fn()}
         missingTokenSiteItems={[]}
         missingTokenGroupItems={[]}
         onCreateTokenForMissing={vi.fn()}
-        onAddChannel={vi.fn()}
+        onAddTarget={vi.fn()}
         onSiteBlockModel={vi.fn()}
         expandedSourceGroupMap={{}}
         onToggleSourceGroup={vi.fn()}
@@ -348,8 +343,9 @@ describe('RouteCard', () => {
     );
 
     const summaryCard = root.root.find((node) => (
-      node.type === 'div'
-      && String(node.props.className || '').includes('route-card-collapsed')
+      node.props?.role === 'button'
+      && typeof node.props.onKeyDown === 'function'
+      && String(node.props.className || '').includes('route--collapsed')
     ));
 
     expect(summaryCard.props.role).toBe('button');
@@ -362,7 +358,7 @@ describe('RouteCard', () => {
     expect(onToggleExpand).toHaveBeenCalledTimes(2);
   });
 
-  it('renders desktop priority rail summaries for multiple channel layers', () => {
+  it('renders desktop priority rail summaries for multiple target layers', () => {
     const root = create(
       <RouteCard
         route={buildRoute()}
@@ -376,14 +372,14 @@ describe('RouteCard', () => {
         clearingCooldown={false}
         onRoutingStrategyChange={vi.fn()}
         updatingRoutingStrategy={false}
-        channels={[
-          buildChannel({
+        targets={[
+          buildTarget({
             id: 11,
             priority: 0,
             account: { username: 'user_a' },
             site: { id: 1, name: 'site-a', platform: 'openai' },
           }),
-          buildChannel({
+          buildTarget({
             id: 12,
             accountId: 102,
             tokenId: 1002,
@@ -394,22 +390,22 @@ describe('RouteCard', () => {
             token: { id: 1002, name: 'token-b', accountId: 102, enabled: true, isDefault: false },
           }),
         ]}
-        loadingChannels={false}
+        loadingTargets={false}
         routeDecision={null}
         loadingDecision={false}
         candidateView={{ routeCandidates: [], accountOptions: [], tokenOptionsByAccountId: {} }}
-        channelTokenDraft={{}}
-        updatingChannel={{}}
+        targetTokenDraft={{}}
+        updatingTarget={{}}
         savingPriority={false}
         onTokenDraftChange={vi.fn()}
         onSaveToken={vi.fn()}
-        onDeleteChannel={vi.fn()}
-        onToggleChannelEnabled={vi.fn()}
-        onChannelDragEnd={vi.fn()}
+        onDeleteTarget={vi.fn()}
+        onToggleTargetEnabled={vi.fn()}
+        onTargetDragEnd={vi.fn()}
         missingTokenSiteItems={[]}
         missingTokenGroupItems={[]}
         onCreateTokenForMissing={vi.fn()}
-        onAddChannel={vi.fn()}
+        onAddTarget={vi.fn()}
         onSiteBlockModel={vi.fn()}
         expandedSourceGroupMap={{}}
         onToggleSourceGroup={vi.fn()}
@@ -452,8 +448,8 @@ describe('RouteCard', () => {
         clearingCooldown={false}
         onRoutingStrategyChange={vi.fn()}
         updatingRoutingStrategy={false}
-        channels={[
-          buildChannel({
+        targets={[
+          buildTarget({
             id: 11,
             account: { username: 'pool-representative' },
             site: { id: 1, name: 'site-a', platform: 'openai' },
@@ -472,22 +468,22 @@ describe('RouteCard', () => {
             } as any ),
           }),
         ]}
-        loadingChannels={false}
+        loadingTargets={false}
         routeDecision={null}
         loadingDecision={false}
         candidateView={{ routeCandidates: [], accountOptions: [], tokenOptionsByAccountId: {} }}
-        channelTokenDraft={{}}
-        updatingChannel={{}}
+        targetTokenDraft={{}}
+        updatingTarget={{}}
         savingPriority={false}
         onTokenDraftChange={vi.fn()}
         onSaveToken={vi.fn()}
-        onDeleteChannel={vi.fn()}
-        onToggleChannelEnabled={vi.fn()}
-        onChannelDragEnd={vi.fn()}
+        onDeleteTarget={vi.fn()}
+        onToggleTargetEnabled={vi.fn()}
+        onTargetDragEnd={vi.fn()}
         missingTokenSiteItems={[]}
         missingTokenGroupItems={[]}
         onCreateTokenForMissing={vi.fn()}
-        onAddChannel={vi.fn()}
+        onAddTarget={vi.fn()}
         onSiteBlockModel={vi.fn()}
         expandedSourceGroupMap={{}}
         onToggleSourceGroup={vi.fn()}
@@ -502,7 +498,7 @@ describe('RouteCard', () => {
     expect(text).toContain('成员摘要');
   });
 
-  it('uses translate-only rect sorting for flat channel shell rows', () => {
+  it('uses translate-only rect sorting for flat target shell rows', () => {
     const root = create(
       <RouteCard
         route={buildRoute()}
@@ -516,26 +512,26 @@ describe('RouteCard', () => {
         clearingCooldown={false}
         onRoutingStrategyChange={vi.fn()}
         updatingRoutingStrategy={false}
-        channels={[
-          buildChannel({ id: 11, priority: 0 }),
-          buildChannel({ id: 12, accountId: 102, tokenId: 1002, priority: 1 }),
+        targets={[
+          buildTarget({ id: 11, priority: 0 }),
+          buildTarget({ id: 12, accountId: 102, tokenId: 1002, priority: 1 }),
         ]}
-        loadingChannels={false}
+        loadingTargets={false}
         routeDecision={null}
         loadingDecision={false}
         candidateView={{ routeCandidates: [], accountOptions: [], tokenOptionsByAccountId: {} }}
-        channelTokenDraft={{}}
-        updatingChannel={{}}
+        targetTokenDraft={{}}
+        updatingTarget={{}}
         savingPriority={false}
         onTokenDraftChange={vi.fn()}
         onSaveToken={vi.fn()}
-        onDeleteChannel={vi.fn()}
-        onToggleChannelEnabled={vi.fn()}
-        onChannelDragEnd={vi.fn()}
+        onDeleteTarget={vi.fn()}
+        onToggleTargetEnabled={vi.fn()}
+        onTargetDragEnd={vi.fn()}
         missingTokenSiteItems={[]}
         missingTokenGroupItems={[]}
         onCreateTokenForMissing={vi.fn()}
-        onAddChannel={vi.fn()}
+        onAddTarget={vi.fn()}
         onSiteBlockModel={vi.fn()}
         expandedSourceGroupMap={{}}
         onToggleSourceGroup={vi.fn()}
@@ -562,26 +558,26 @@ describe('RouteCard', () => {
         clearingCooldown={false}
         onRoutingStrategyChange={vi.fn()}
         updatingRoutingStrategy={false}
-        channels={[
-          buildChannel({ id: 11, priority: 0 }),
-          buildChannel({ id: 12, accountId: 102, tokenId: 1002, priority: 0 }),
+        targets={[
+          buildTarget({ id: 11, priority: 0 }),
+          buildTarget({ id: 12, accountId: 102, tokenId: 1002, priority: 0 }),
         ]}
-        loadingChannels={false}
+        loadingTargets={false}
         routeDecision={null}
         loadingDecision={false}
         candidateView={{ routeCandidates: [], accountOptions: [], tokenOptionsByAccountId: {} }}
-        channelTokenDraft={{}}
-        updatingChannel={{}}
+        targetTokenDraft={{}}
+        updatingTarget={{}}
         savingPriority={false}
         onTokenDraftChange={vi.fn()}
         onSaveToken={vi.fn()}
-        onDeleteChannel={vi.fn()}
-        onToggleChannelEnabled={vi.fn()}
-        onChannelDragEnd={vi.fn()}
+        onDeleteTarget={vi.fn()}
+        onToggleTargetEnabled={vi.fn()}
+        onTargetDragEnd={vi.fn()}
         missingTokenSiteItems={[]}
         missingTokenGroupItems={[]}
         onCreateTokenForMissing={vi.fn()}
-        onAddChannel={vi.fn()}
+        onAddTarget={vi.fn()}
         onSiteBlockModel={vi.fn()}
         expandedSourceGroupMap={{}}
         onToggleSourceGroup={vi.fn()}
@@ -606,9 +602,9 @@ describe('RouteCard', () => {
     expect(collectText(root.root)).toContain('放到新档位');
     const shells = root.root.findAll((node) => (
       node.type === 'div'
-      && node.props['data-testid'] === 'route-channel-shell'
+      && node.props['data-testid'] === 'route-target-shell'
     ));
-    const activeShell = shells.find((node) => node.props['data-channel-id'] === 12);
+    const activeShell = shells.find((node) => node.props['data-target-id'] === 12);
     expect(activeShell).toBeDefined();
     expect(activeShell?.props.style.visibility).toBe('hidden');
 
@@ -616,11 +612,11 @@ describe('RouteCard', () => {
       node.type === 'div'
       && node.props['data-testid'] === 'route-priority-new-layer-target'
     ));
-    expect(newLayerTarget.props.style.display).toBe('flex');
-    expect(newLayerTarget.props.style.minHeight).toBe(34);
+    expect(newLayerTarget.props.className).toContain('flex');
+    expect(newLayerTarget.props.className).toContain('min-h-8');
   });
 
-  it('keeps compact desktop detail bucket headers outside draggable channel shells', () => {
+  it('keeps compact desktop detail bucket headers outside draggable target shells', () => {
     const root = create(
       <RouteCard
         route={buildRoute()}
@@ -636,27 +632,27 @@ describe('RouteCard', () => {
         clearingCooldown={false}
         onRoutingStrategyChange={vi.fn()}
         updatingRoutingStrategy={false}
-        channels={[
-          buildChannel({ id: 11, priority: 0 }),
-          buildChannel({ id: 12, accountId: 102, tokenId: 1002, priority: 0 }),
-          buildChannel({ id: 21, accountId: 103, tokenId: 1003, priority: 1 }),
+        targets={[
+          buildTarget({ id: 11, priority: 0 }),
+          buildTarget({ id: 12, accountId: 102, tokenId: 1002, priority: 0 }),
+          buildTarget({ id: 21, accountId: 103, tokenId: 1003, priority: 1 }),
         ]}
-        loadingChannels={false}
+        loadingTargets={false}
         routeDecision={null}
         loadingDecision={false}
         candidateView={{ routeCandidates: [], accountOptions: [], tokenOptionsByAccountId: {} }}
-        channelTokenDraft={{}}
-        updatingChannel={{}}
+        targetTokenDraft={{}}
+        updatingTarget={{}}
         savingPriority={false}
         onTokenDraftChange={vi.fn()}
         onSaveToken={vi.fn()}
-        onDeleteChannel={vi.fn()}
-        onToggleChannelEnabled={vi.fn()}
-        onChannelDragEnd={vi.fn()}
+        onDeleteTarget={vi.fn()}
+        onToggleTargetEnabled={vi.fn()}
+        onTargetDragEnd={vi.fn()}
         missingTokenSiteItems={[]}
         missingTokenGroupItems={[]}
         onCreateTokenForMissing={vi.fn()}
-        onAddChannel={vi.fn()}
+        onAddTarget={vi.fn()}
         onSiteBlockModel={vi.fn()}
         expandedSourceGroupMap={{}}
         onToggleSourceGroup={vi.fn()}
@@ -669,7 +665,7 @@ describe('RouteCard', () => {
     ));
     const shells = root.root.findAll((node) => (
       node.type === 'div'
-      && node.props['data-testid'] === 'route-channel-shell'
+      && node.props['data-testid'] === 'route-target-shell'
     ));
 
     expect(bucketHeaders.map((node) => collectText(node))).toEqual([
@@ -681,7 +677,7 @@ describe('RouteCard', () => {
     expect(collectText(shells[2]!)).not.toContain('P1 · 1 通道');
   });
 
-  it('renders desktop channel rows in sortable shell order within a single sortable list', () => {
+  it('renders desktop target rows in sortable shell order within a single sortable list', () => {
     const root = create(
       <RouteCard
         route={buildRoute()}
@@ -695,27 +691,27 @@ describe('RouteCard', () => {
         clearingCooldown={false}
         onRoutingStrategyChange={vi.fn()}
         updatingRoutingStrategy={false}
-        channels={[
-          buildChannel({ id: 11, priority: 0 }),
-          buildChannel({ id: 12, accountId: 102, tokenId: 1002, priority: 0 }),
-          buildChannel({ id: 21, accountId: 103, tokenId: 1003, priority: 1 }),
+        targets={[
+          buildTarget({ id: 11, priority: 0 }),
+          buildTarget({ id: 12, accountId: 102, tokenId: 1002, priority: 0 }),
+          buildTarget({ id: 21, accountId: 103, tokenId: 1003, priority: 1 }),
         ]}
-        loadingChannels={false}
+        loadingTargets={false}
         routeDecision={null}
         loadingDecision={false}
         candidateView={{ routeCandidates: [], accountOptions: [], tokenOptionsByAccountId: {} }}
-        channelTokenDraft={{}}
-        updatingChannel={{}}
+        targetTokenDraft={{}}
+        updatingTarget={{}}
         savingPriority={false}
         onTokenDraftChange={vi.fn()}
         onSaveToken={vi.fn()}
-        onDeleteChannel={vi.fn()}
-        onToggleChannelEnabled={vi.fn()}
-        onChannelDragEnd={vi.fn()}
+        onDeleteTarget={vi.fn()}
+        onToggleTargetEnabled={vi.fn()}
+        onTargetDragEnd={vi.fn()}
         missingTokenSiteItems={[]}
         missingTokenGroupItems={[]}
         onCreateTokenForMissing={vi.fn()}
-        onAddChannel={vi.fn()}
+        onAddTarget={vi.fn()}
         onSiteBlockModel={vi.fn()}
         expandedSourceGroupMap={{}}
         onToggleSourceGroup={vi.fn()}
@@ -724,22 +720,22 @@ describe('RouteCard', () => {
 
     const sortableList = root.root.find((node) => (
       node.type === 'div'
-      && node.props['data-testid'] === 'route-channel-sortable-list'
+      && node.props['data-testid'] === 'route-target-sortable-list'
     ));
     const directShells = sortableList.findAll((node) => (
       node.type === 'div'
-      && node.props['data-testid'] === 'route-channel-shell'
+      && node.props['data-testid'] === 'route-target-shell'
     ));
 
-    expect(directShells.map((child) => child.props['data-channel-id'])).toEqual([11, 12, 21]);
+    expect(directShells.map((child) => child.props['data-target-id'])).toEqual([11, 12, 21]);
   });
 
   it('omits long explanatory copy in compact detail panels', () => {
     const root = create(
       <RouteCard
         route={buildRoute({
-          modelPattern: 'gpt-4o-*',
-          displayName: 'gpt-4o',
+          match: { kind: 'model', requestedModelPattern: 'gpt-4o-*', displayName: 'gpt-4o' },
+          presentation: { displayName: 'gpt-4o', displayIcon: null },
         })}
         brand={null}
         expanded
@@ -753,23 +749,23 @@ describe('RouteCard', () => {
         clearingCooldown={false}
         onRoutingStrategyChange={vi.fn()}
         updatingRoutingStrategy={false}
-        channels={[buildChannel()]}
-        loadingChannels={false}
+        targets={[buildTarget()]}
+        loadingTargets={false}
         routeDecision={null}
         loadingDecision={false}
         candidateView={{ routeCandidates: [], accountOptions: [], tokenOptionsByAccountId: {} }}
-        channelTokenDraft={{}}
-        updatingChannel={{}}
+        targetTokenDraft={{}}
+        updatingTarget={{}}
         savingPriority={false}
         onTokenDraftChange={vi.fn()}
         onSaveToken={vi.fn()}
-        onDeleteChannel={vi.fn()}
-        onToggleChannelEnabled={vi.fn()}
-        onChannelDragEnd={vi.fn()}
+        onDeleteTarget={vi.fn()}
+        onToggleTargetEnabled={vi.fn()}
+        onTargetDragEnd={vi.fn()}
         missingTokenSiteItems={[]}
         missingTokenGroupItems={[]}
         onCreateTokenForMissing={vi.fn()}
-        onAddChannel={vi.fn()}
+        onAddTarget={vi.fn()}
         onSiteBlockModel={vi.fn()}
         expandedSourceGroupMap={{}}
         onToggleSourceGroup={vi.fn()}
@@ -781,7 +777,7 @@ describe('RouteCard', () => {
     expect(detailText).not.toContain(getRouteRoutingStrategyDescription('weighted'));
   });
 
-  it('places compact route strategy and add channel controls on the same row', () => {
+  it('places compact route strategy and add target controls on the same row', () => {
     const root = create(
       <RouteCard
         route={buildRoute()}
@@ -797,23 +793,23 @@ describe('RouteCard', () => {
         clearingCooldown={false}
         onRoutingStrategyChange={vi.fn()}
         updatingRoutingStrategy={false}
-        channels={[buildChannel()]}
-        loadingChannels={false}
+        targets={[buildTarget()]}
+        loadingTargets={false}
         routeDecision={null}
         loadingDecision={false}
         candidateView={{ routeCandidates: [], accountOptions: [], tokenOptionsByAccountId: {} }}
-        channelTokenDraft={{}}
-        updatingChannel={{}}
+        targetTokenDraft={{}}
+        updatingTarget={{}}
         savingPriority={false}
         onTokenDraftChange={vi.fn()}
         onSaveToken={vi.fn()}
-        onDeleteChannel={vi.fn()}
-        onToggleChannelEnabled={vi.fn()}
-        onChannelDragEnd={vi.fn()}
+        onDeleteTarget={vi.fn()}
+        onToggleTargetEnabled={vi.fn()}
+        onTargetDragEnd={vi.fn()}
         missingTokenSiteItems={[]}
         missingTokenGroupItems={[]}
         onCreateTokenForMissing={vi.fn()}
-        onAddChannel={vi.fn()}
+        onAddTarget={vi.fn()}
         onSiteBlockModel={vi.fn()}
         expandedSourceGroupMap={{}}
         onToggleSourceGroup={vi.fn()}
@@ -828,25 +824,25 @@ describe('RouteCard', () => {
       node.type === 'div'
       && node.props['data-testid'] === 'compact-route-strategy-select'
     ));
-    const addChannelButton = compactActionRow.find((node) => (
+    const addRouteTargetButton = compactActionRow.find((node) => (
       node.type === 'button'
       && collectText(node).includes('添加通道')
     ));
 
-    expect(compactActionRow.props.style.flexDirection).toBe('row');
-    expect(compactActionRow.props.style.justifyContent).toBe('flex-start');
+    expect(compactActionRow.props.className).toContain('flex');
+    expect(compactActionRow.props.className).toContain('justify-start');
     expect(collectText(compactActionRow)).toContain('路由策略');
     expect(collectText(compactActionRow)).toContain('添加通道');
     expect(strategySelectWrap.props.style.flex).toBe('0 0 168px');
-    expect(addChannelButton.props.style.marginLeft).toBe('auto');
+    expect(strategySelectWrap.props.style.flex).toBe('0 0 168px');
   });
 
   it('keeps compact status badges inline with the route name', () => {
     const root = create(
       <RouteCard
         route={buildRoute({
-          modelPattern: 'gpt-5.2-codex',
-          channelCount: 16,
+          match: { kind: 'model', requestedModelPattern: 'gpt-5.2-codex', displayName: 'm.' },
+          targetCount: 16,
         })}
         brand={null}
         expanded
@@ -860,23 +856,23 @@ describe('RouteCard', () => {
         clearingCooldown={false}
         onRoutingStrategyChange={vi.fn()}
         updatingRoutingStrategy={false}
-        channels={[buildChannel()]}
-        loadingChannels={false}
+        targets={[buildTarget()]}
+        loadingTargets={false}
         routeDecision={null}
         loadingDecision={false}
         candidateView={{ routeCandidates: [], accountOptions: [], tokenOptionsByAccountId: {} }}
-        channelTokenDraft={{}}
-        updatingChannel={{}}
+        targetTokenDraft={{}}
+        updatingTarget={{}}
         savingPriority={false}
         onTokenDraftChange={vi.fn()}
         onSaveToken={vi.fn()}
-        onDeleteChannel={vi.fn()}
-        onToggleChannelEnabled={vi.fn()}
-        onChannelDragEnd={vi.fn()}
+        onDeleteTarget={vi.fn()}
+        onToggleTargetEnabled={vi.fn()}
+        onTargetDragEnd={vi.fn()}
         missingTokenSiteItems={[]}
         missingTokenGroupItems={[]}
         onCreateTokenForMissing={vi.fn()}
-        onAddChannel={vi.fn()}
+        onAddTarget={vi.fn()}
         onSiteBlockModel={vi.fn()}
         expandedSourceGroupMap={{}}
         onToggleSourceGroup={vi.fn()}
@@ -888,19 +884,19 @@ describe('RouteCard', () => {
       && node.props['data-testid'] === 'compact-route-header-main'
     ));
 
-    expect(compactHeaderMain.props.style.flexDirection).toBe('row');
+    expect(compactHeaderMain.props.className).toContain('flex-row');
     expect(collectText(compactHeaderMain)).toContain('gpt-5.2-codex');
     expect(collectText(compactHeaderMain)).toContain('启用');
     expect(collectText(compactHeaderMain)).toContain('16 通道');
   });
 
-  it('skips collapsed rerenders when only expanded-channel state changes', () => {
+  it('skips collapsed rerenders when only expanded-target state changes', () => {
     const routeTarget = buildRoute();
-    let modelPatternReadCount = 0;
+    let routeGraphReadCount = 0;
     const route = new Proxy(routeTarget, {
       get(target, property, receiver) {
-        if (property === 'modelPattern') {
-          modelPatternReadCount += 1;
+        if (property === 'match') {
+          routeGraphReadCount += 1;
         }
         return Reflect.get(target, property, receiver);
       },
@@ -914,17 +910,17 @@ describe('RouteCard', () => {
       onRoutingStrategyChange: vi.fn(),
       onTokenDraftChange: vi.fn(),
       onSaveToken: vi.fn(),
-      onDeleteChannel: vi.fn(),
-      onToggleChannelEnabled: vi.fn(),
-      onChannelDragEnd: vi.fn(),
+      onDeleteTarget: vi.fn(),
+      onToggleTargetEnabled: vi.fn(),
+      onTargetDragEnd: vi.fn(),
       onCreateTokenForMissing: vi.fn(),
-      onAddChannel: vi.fn(),
+      onAddTarget: vi.fn(),
       onSiteBlockModel: vi.fn(),
       onToggleSourceGroup: vi.fn(),
     };
     const candidateView = { routeCandidates: [], accountOptions: [], tokenOptionsByAccountId: {} };
 
-    const renderCard = (channelTokenDraft: Record<number, number>, updatingChannel: Record<number, boolean>) => (
+    const renderCard = (targetTokenDraft: Record<number, number>, updatingTarget: Record<number, boolean>) => (
       <RouteCard
         route={route}
         brand={null}
@@ -937,23 +933,23 @@ describe('RouteCard', () => {
         clearingCooldown={false}
         onRoutingStrategyChange={callbacks.onRoutingStrategyChange}
         updatingRoutingStrategy={false}
-        channels={undefined}
-        loadingChannels={false}
+        targets={undefined}
+        loadingTargets={false}
         routeDecision={null}
         loadingDecision={false}
         candidateView={candidateView}
-        channelTokenDraft={channelTokenDraft}
-        updatingChannel={updatingChannel}
+        targetTokenDraft={targetTokenDraft}
+        updatingTarget={updatingTarget}
         savingPriority={false}
         onTokenDraftChange={callbacks.onTokenDraftChange}
         onSaveToken={callbacks.onSaveToken}
-        onDeleteChannel={callbacks.onDeleteChannel}
-        onToggleChannelEnabled={callbacks.onToggleChannelEnabled}
-        onChannelDragEnd={callbacks.onChannelDragEnd}
+        onDeleteTarget={callbacks.onDeleteTarget}
+        onToggleTargetEnabled={callbacks.onToggleTargetEnabled}
+        onTargetDragEnd={callbacks.onTargetDragEnd}
         missingTokenSiteItems={[]}
         missingTokenGroupItems={[]}
         onCreateTokenForMissing={callbacks.onCreateTokenForMissing}
-        onAddChannel={callbacks.onAddChannel}
+        onAddTarget={callbacks.onAddTarget}
         onSiteBlockModel={callbacks.onSiteBlockModel}
         expandedSourceGroupMap={{}}
         onToggleSourceGroup={callbacks.onToggleSourceGroup}
@@ -965,22 +961,22 @@ describe('RouteCard', () => {
       root = create(renderCard({}, {}));
     });
 
-    const initialReadCount = modelPatternReadCount;
+    const initialReadCount = routeGraphReadCount;
 
     act(() => {
       root.update(renderCard({ 11: 1001 }, { 11: true }));
     });
 
-    expect(modelPatternReadCount).toBe(initialReadCount);
+    expect(routeGraphReadCount).toBe(initialReadCount);
   });
 
   it('skips collapsed rerenders when only expanded-only callback identities change', () => {
     const routeTarget = buildRoute();
-    let modelPatternReadCount = 0;
+    let routeGraphReadCount = 0;
     const route = new Proxy(routeTarget, {
       get(target, property, receiver) {
-        if (property === 'modelPattern') {
-          modelPatternReadCount += 1;
+        if (property === 'match') {
+          routeGraphReadCount += 1;
         }
         return Reflect.get(target, property, receiver);
       },
@@ -994,11 +990,11 @@ describe('RouteCard', () => {
       onRoutingStrategyChange: vi.fn(),
       onTokenDraftChange: vi.fn(),
       onSaveToken: vi.fn(),
-      onDeleteChannel: vi.fn(),
-      onToggleChannelEnabled: vi.fn(),
-      onChannelDragEnd: vi.fn(),
+      onDeleteTarget: vi.fn(),
+      onToggleTargetEnabled: vi.fn(),
+      onTargetDragEnd: vi.fn(),
       onCreateTokenForMissing: vi.fn(),
-      onAddChannel: vi.fn(),
+      onAddTarget: vi.fn(),
       onSiteBlockModel: vi.fn(),
       onToggleSourceGroup: vi.fn(),
     };
@@ -1010,11 +1006,11 @@ describe('RouteCard', () => {
       onRoutingStrategyChange: vi.fn(),
       onTokenDraftChange: vi.fn(),
       onSaveToken: vi.fn(),
-      onDeleteChannel: vi.fn(),
-      onToggleChannelEnabled: vi.fn(),
-      onChannelDragEnd: vi.fn(),
+      onDeleteTarget: vi.fn(),
+      onToggleTargetEnabled: vi.fn(),
+      onTargetDragEnd: vi.fn(),
       onCreateTokenForMissing: vi.fn(),
-      onAddChannel: vi.fn(),
+      onAddTarget: vi.fn(),
       onSiteBlockModel: vi.fn(),
       onToggleSourceGroup: vi.fn(),
     };
@@ -1033,23 +1029,23 @@ describe('RouteCard', () => {
         clearingCooldown={false}
         onRoutingStrategyChange={callbacks.onRoutingStrategyChange}
         updatingRoutingStrategy={false}
-        channels={undefined}
-        loadingChannels={false}
+        targets={undefined}
+        loadingTargets={false}
         routeDecision={null}
         loadingDecision={false}
         candidateView={candidateView}
-        channelTokenDraft={{}}
-        updatingChannel={{}}
+        targetTokenDraft={{}}
+        updatingTarget={{}}
         savingPriority={false}
         onTokenDraftChange={callbacks.onTokenDraftChange}
         onSaveToken={callbacks.onSaveToken}
-        onDeleteChannel={callbacks.onDeleteChannel}
-        onToggleChannelEnabled={callbacks.onToggleChannelEnabled}
-        onChannelDragEnd={callbacks.onChannelDragEnd}
+        onDeleteTarget={callbacks.onDeleteTarget}
+        onToggleTargetEnabled={callbacks.onToggleTargetEnabled}
+        onTargetDragEnd={callbacks.onTargetDragEnd}
         missingTokenSiteItems={[]}
         missingTokenGroupItems={[]}
         onCreateTokenForMissing={callbacks.onCreateTokenForMissing}
-        onAddChannel={callbacks.onAddChannel}
+        onAddTarget={callbacks.onAddTarget}
         onSiteBlockModel={callbacks.onSiteBlockModel}
         expandedSourceGroupMap={{}}
         onToggleSourceGroup={callbacks.onToggleSourceGroup}
@@ -1057,12 +1053,12 @@ describe('RouteCard', () => {
     );
 
     const root = create(renderCard(callbacksA));
-    const initialReadCount = modelPatternReadCount;
+    const initialReadCount = routeGraphReadCount;
 
     act(() => {
       root.update(renderCard(callbacksB));
     });
 
-    expect(modelPatternReadCount).toBe(initialReadCount);
+    expect(routeGraphReadCount).toBe(initialReadCount);
   });
 });

@@ -24,4 +24,26 @@ describe('translateOnlyRectSortingStrategy', () => {
       scaleY: 1,
     });
   });
+
+  it('returns null when the previous or destination rect is missing', () => {
+    const rects = [
+      { top: 0, left: 0, width: 200, height: 80, right: 200, bottom: 80 },
+    ];
+
+    expect(translateOnlyRectSortingStrategy({
+      rects,
+      activeIndex: 0,
+      overIndex: 1,
+      index: 0,
+      activeNodeRect: rects[0],
+    })).toBeNull();
+
+    expect(translateOnlyRectSortingStrategy({
+      rects,
+      activeIndex: 0,
+      overIndex: 0,
+      index: 1,
+      activeNodeRect: rects[0],
+    })).toBeNull();
+  });
 });

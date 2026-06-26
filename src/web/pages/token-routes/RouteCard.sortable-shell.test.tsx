@@ -18,7 +18,7 @@ vi.mock('@dnd-kit/sortable', async () => {
 });
 
 import RouteCard from './RouteCard.js';
-import type { RouteChannel, RouteSummaryRow } from './types.js';
+import type { RouteEndpointTarget, RouteSummaryRow } from './types.js';
 
 function collectText(node: ReactTestInstance): string {
   return (node.children || []).map((child) => {
@@ -30,14 +30,14 @@ function collectText(node: ReactTestInstance): string {
 function buildRoute(overrides: Partial<RouteSummaryRow> = {}): RouteSummaryRow {
   return {
     id: 42,
-    modelPattern: 'gpt-5.4',
-    displayName: 'gpt-5.4',
-    displayIcon: null,
+    match: { kind: 'model', requestedModelPattern: 'gpt-5.4', displayName: 'gpt-5.4' },
+    backend: { kind: 'supply' },
+    presentation: { displayName: 'gpt-5.4', displayIcon: null },
     modelMapping: null,
     routingStrategy: 'weighted',
     enabled: true,
-    channelCount: 3,
-    enabledChannelCount: 3,
+    targetCount: 3,
+    enabledTargetCount: 3,
     siteNames: ['site-a'],
     decisionSnapshot: null,
     decisionRefreshedAt: null,
@@ -45,7 +45,7 @@ function buildRoute(overrides: Partial<RouteSummaryRow> = {}): RouteSummaryRow {
   };
 }
 
-function buildChannel(overrides: Partial<RouteChannel> = {}): RouteChannel {
+function buildTarget(overrides: Partial<RouteEndpointTarget> = {}): RouteEndpointTarget {
   return {
     id: 11,
     accountId: 101,
@@ -65,7 +65,7 @@ function buildChannel(overrides: Partial<RouteChannel> = {}): RouteChannel {
 }
 
 describe('RouteCard sortable shell', () => {
-  it('applies sortable transform to the outer channel shell instead of the inner row card', () => {
+  it('applies sortable transform to the outer target shell instead of the inner row card', () => {
     const root = create(
       <RouteCard
         route={buildRoute()}
@@ -79,26 +79,26 @@ describe('RouteCard sortable shell', () => {
         clearingCooldown={false}
         onRoutingStrategyChange={vi.fn()}
         updatingRoutingStrategy={false}
-        channels={[
-          buildChannel({ id: 11, priority: 0 }),
-          buildChannel({ id: 12, accountId: 102, tokenId: 1002, priority: 1 }),
+        targets={[
+          buildTarget({ id: 11, priority: 0 }),
+          buildTarget({ id: 12, accountId: 102, tokenId: 1002, priority: 1 }),
         ]}
-        loadingChannels={false}
+        loadingTargets={false}
         routeDecision={null}
         loadingDecision={false}
         candidateView={{ routeCandidates: [], accountOptions: [], tokenOptionsByAccountId: {} }}
-        channelTokenDraft={{}}
-        updatingChannel={{}}
+        targetTokenDraft={{}}
+        updatingTarget={{}}
         savingPriority={false}
         onTokenDraftChange={vi.fn()}
         onSaveToken={vi.fn()}
-        onDeleteChannel={vi.fn()}
-        onToggleChannelEnabled={vi.fn()}
-        onChannelDragEnd={vi.fn()}
+        onDeleteTarget={vi.fn()}
+        onToggleTargetEnabled={vi.fn()}
+        onTargetDragEnd={vi.fn()}
         missingTokenSiteItems={[]}
         missingTokenGroupItems={[]}
         onCreateTokenForMissing={vi.fn()}
-        onAddChannel={vi.fn()}
+        onAddTarget={vi.fn()}
         onSiteBlockModel={vi.fn()}
         expandedSourceGroupMap={{}}
         onToggleSourceGroup={vi.fn()}
@@ -107,19 +107,18 @@ describe('RouteCard sortable shell', () => {
 
     const shell = root.root.find((node) => (
       node.type === 'div'
-      && node.props['data-testid'] === 'route-channel-shell'
-      && node.props['data-channel-id'] === 11
+      && node.props['data-testid'] === 'route-target-shell'
+      && node.props['data-target-id'] === 11
     ));
     const innerRow = shell.find((node) => (
       node.type === 'div'
-      && node.props.style
-      && node.props.style.borderRadius === 14
+      && node.props['data-layer-root']
       && collectText(node).includes('user_a')
     ));
 
     expect(shell.props.style.transform).toContain('translate3d');
     expect(shell.props.style.transform).not.toContain('scale');
     expect(String(shell.props.style.transition || '')).toContain('transform');
-    expect(innerRow.props.style.transform).toBeUndefined();
+    expect(innerRow.props.style?.transform).toBeUndefined();
   });
 });

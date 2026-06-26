@@ -3,11 +3,33 @@ import { useNavigate } from 'react-router-dom';
 import type { DragEndEvent } from '@dnd-kit/core';
 import { api } from '../api.js';
 import { BrandGlyph, getBrand, InlineBrandIcon, type BrandInfo } from '../components/BrandIcon.js';
+import EmptyStateBlock from '../components/EmptyStateBlock.js';
 import { useToast } from '../components/Toast.js';
-import ModernSelect from '../components/ModernSelect.js';
 import { MobileCard, MobileField } from '../components/MobileCard.js';
 import ResponsiveFilterPanel from '../components/ResponsiveFilterPanel.js';
+import SegmentedTabBar from '../components/SegmentedTabBar.js';
+import { Badge } from '../components/ui/badge/index.js';
+import { Button } from '../components/ui/button/index.js';
+import { ButtonGroup } from '../components/ui/button-group/index.js';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card/index.js';
+import { Checkbox } from '../components/ui/checkbox/index.js';
+import * as Dialog from '../components/ui/dialog/index.js';
+import { Input } from '../components/ui/input/index.js';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select/index.js';
+import { Skeleton } from '../components/ui/skeleton/index.js';
+import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+  PaginationLink,
+  PaginationNext,
+  PaginationPrevious,
+} from '../components/ui/pagination/index.js';
+import * as Tabs from '../components/ui/tabs/index.js';
 import { useIsMobile } from '../components/useIsMobile.js';
+import PageHeader from '../components/workspace/PageHeader.js';
+import PageShell from '../components/workspace/PageShell.js';
+import { CreateActionButton, PageActionBar, SecondaryActionButton } from '../components/workspace/ActionBar.js';
 import { tr } from '../i18n.js';
 import { ROUTE_DECISION_REFRESH_TASK_TYPE } from '../../shared/tokenRouteContract.js';
 import {
@@ -15,7 +37,7 @@ import {
   type RouteCandidateView,
   type RouteModelCandidatesByModelName,
 } from './helpers/routeModelCandidatesIndex.js';
-import { getInitialVisibleCount, getNextVisibleCount } from './helpers/progressiveRender.js';
+import { getRouteListPageNumbers, getRouteListPageWindow } from './helpers/progressiveRender.js';
 import {
   buildRouteMissingTokenIndex,
   normalizeMissingTokenModels,
@@ -23,7 +45,7 @@ import {
   type RouteMissingTokenHint,
 } from './helpers/routeMissingTokenHints.js';
 import { buildVisibleRouteList } from './helpers/routeListVisibility.js';
-import { buildZeroChannelPlaceholderRoutes } from './helpers/zeroChannelRoutes.js';
+import { buildZeroTargetPlaceholderRoutes } from './helpers/zeroTargetRoutes.js';
 import {
   getRouteRoutingStrategyDescription,
   getRouteRoutingStrategyLabel,
@@ -36,9 +58,9 @@ import type {
   GroupFilter,
   RouteSummaryRow,
   RouteRoutingStrategy,
-  RouteMode,
   RouteDecision,
   RouteIconOption,
+  RouteEndpointCatalogItem,
   MissingTokenRouteSiteActionItem,
   MissingTokenGroupRouteSiteActionItem,
   GroupRouteItem,
@@ -49,7 +71,11 @@ import {
   isExactModelPattern,
   isRouteExactModel,
   matchesModelPattern,
-  normalizeRouteMode,
+  getRouteBackendRouteIds,
+  getRouteDisplayIcon,
+  getRouteDisplayName,
+  getRouteRequestedModelPattern,
+  isRouteBackendReferences,
   resolveRouteTitle,
   resolveRouteBrand,
   resolveRouteIcon,
@@ -59,42 +85,177 @@ import {
   getModelPatternError,
 } from './token-routes/utils.js';
 import { applyPriorityRailDrop, isPriorityRailNewLayerId } from './token-routes/priorityRail.js';
-import { useRouteChannels } from './token-routes/useRouteChannels.js';
+import {
+  buildRouteGraphNodeFromRoute,
+  buildCandidateSelectorMacro,
+  updateCandidateSelectorMacroFromEditor,
+  routeEndpointIdFromRouteId,
+  routeGraphEditorFormToRoutePayload,
+  type RouteGraphSnapshotMacro,
+} from './token-routes/routeGraphSnapshot.js';
+import type { RouteGraphMacro } from './token-routes/routeGraphTypes.js';
+import {
+  extractActiveRouteGraphSource,
+  resolveRouteMacroBinding,
+  type RouteMacroBindingGraph,
+} from './token-routes/routeMacroBinding.js';
+import { useRouteTargets } from './token-routes/useRouteTargets.js';
 import RouteFilterBar, { type EnabledFilter } from './token-routes/RouteFilterBar.js';
 import ManualRoutePanel from './token-routes/ManualRoutePanel.js';
 import RouteCard from './token-routes/RouteCard.js';
-import AddChannelModal from './token-routes/AddChannelModal.js';
+import AddRouteTargetModal from './token-routes/AddRouteTargetModal.js';
+import RouteGraphWorkbench, {
+  defaultGraph,
+  getMacroDisplayName,
+  getMacroGeneratedPreviewRows,
+  type MacroGeneratedPreviewRow,
+  type RouteGraphFocusIntent,
+  type RouteGraphSource,
+} from './token-routes/RouteGraphWorkbench.js';
+import {
+  ArrowRight,
+  Ban,
+  CheckCheck,
+  Code2,
+  Download,
+  Eraser,
+  FileJson,
+  GitBranch,
+  HeartPulse,
+  Info,
+  ListChecks,
+  LoaderCircle,
+  Network,
+  RefreshCw,
+  Search,
+  ArrowDownAZ,
+  ArrowUpAZ,
+  Boxes,
+  Crosshair,
+  GitCommitHorizontal,
+  Upload,
+  WandSparkles,
+  Waypoints,
+  Workflow,
+} from 'lucide-react';
 
 const EMPTY_ROUTE_CANDIDATE_VIEW: RouteCandidateView = {
   routeCandidates: [],
   accountOptions: [],
   tokenOptionsByAccountId: {},
 };
+const DEFAULT_ROUTE_PAGE_SIZE = 20;
+const ROUTE_PAGE_SIZES = [20, 40, 80, 120] as const;
 const EMPTY_MISSING_ITEMS: MissingTokenRouteSiteActionItem[] = [];
 const EMPTY_MISSING_GROUP_ITEMS: MissingTokenGroupRouteSiteActionItem[] = [];
 const ROUTE_ICON_OPTIONS: RouteIconOption[] = [
-  { value: '', label: '自动品牌图标', description: '按模型匹配规则自动识别品牌', iconText: '✦' },
+  { value: '', label: tr('pages.tokenRoutes.automaticbrands'), description: tr('pages.tokenRoutes.modelmatchrulesautomaticBrands'), iconText: '✦' },
 ];
 
 type RouteEditorForm = {
-  routeMode: RouteMode;
-  displayName: string;
-  displayIcon: string;
-  modelPattern: string;
-  sourceRouteIds: number[];
+  match: {
+    kind: 'model';
+    requestedModelPattern: string;
+    displayName: string | null;
+  };
+  backend:
+    | { kind: 'supply' }
+    | { kind: 'routes'; routeIds: number[] };
+  presentation: {
+    displayName: string;
+    displayIcon: string;
+  };
+  routingStrategy: RouteRoutingStrategy;
+  enabled: boolean;
+  modelMapping: string;
   advancedOpen: boolean;
+  visibility: 'public' | 'internal';
+  macro?: RouteGraphSnapshotMacro | null;
 };
+type TargetDeleteConfirmation = {
+  targetId: number;
+  routeId: number;
+  dontAskAgain: boolean;
+  resolve: (confirmed: boolean, dontAskAgain: boolean) => void;
+};
+type SiteBlockConfirmation = {
+  targetId: number;
+  routeId: number;
+  modelName: string;
+  siteName: string;
+  resolve: (confirmed: boolean) => void;
+};
+type RouteGroupListTab = 'public' | 'internal' | 'manual';
+type RouteWorkbenchTab = 'priority' | 'macro' | 'generated' | 'diagnostics' | 'json';
+type RouteBatchAction = 'enable' | 'disable' | 'set_internal' | 'set_public';
 
 const EMPTY_ROUTE_FORM: RouteEditorForm = {
-  routeMode: 'explicit_group',
-  displayName: '',
-  displayIcon: '',
-  modelPattern: '',
-  sourceRouteIds: [],
+  match: {
+    kind: 'model',
+    requestedModelPattern: '',
+    displayName: null,
+  },
+  backend: { kind: 'routes', routeIds: [] },
+  presentation: {
+    displayName: '',
+    displayIcon: '',
+  },
+  routingStrategy: 'weighted',
+  enabled: true,
+  modelMapping: '',
   advancedOpen: false,
+  visibility: 'public',
 };
 const DESKTOP_DETAIL_ENTER_MS = 260;
 const DESKTOP_DETAIL_COLLAPSE_MS = 200;
+
+function getGeneratedRouteRowLabel(row: MacroGeneratedPreviewRow): string {
+  if (row.routeId) return tr('pages.tokenRoutes.routeGraphWorkbench.routeNumber').replace('{id}', String(row.routeId));
+  if (row.groupLabel) return row.groupLabel;
+  return tr('pages.tokenRoutes.routeGraphWorkbench.candidateNumber').replace('{index}', String(row.index + 1));
+}
+
+function getGeneratedRoutePathNodes(row: MacroGeneratedPreviewRow): Array<{
+  key: 'entry' | 'dispatcher' | 'endpoint';
+  label: string;
+  nodeId: string;
+  detail: string;
+}> {
+  const nodes: Array<{ key: 'entry' | 'dispatcher' | 'endpoint'; label: string; nodeId: string; detail: string }> = [];
+  if (row.entryId) {
+    nodes.push({
+      key: 'entry',
+      label: tr('pages.tokenRoutes.routeGraphWorkbench.entry'),
+      nodeId: row.entryId,
+      detail: row.entryId,
+    });
+  }
+  if (row.dispatcherId) {
+    nodes.push({
+      key: 'dispatcher',
+      label: tr('pages.tokenRoutes.routeGraphWorkbench.dispatcher'),
+      nodeId: row.dispatcherId,
+      detail: row.dispatcherId,
+    });
+  }
+  const endpointNodeId = row.nodeIds.find((nodeId) => nodeId !== row.entryId && nodeId !== row.dispatcherId) || row.endpointId;
+  if (endpointNodeId) {
+    nodes.push({
+      key: 'endpoint',
+      label: tr('pages.tokenRoutes.routeGraphWorkbench.endpointSet'),
+      nodeId: endpointNodeId,
+      detail: endpointNodeId === row.endpointId ? endpointNodeId : row.endpointId,
+    });
+  }
+  return nodes;
+}
+
+function getGeneratedRoutePrimaryNodeId(row: MacroGeneratedPreviewRow | null | undefined): string {
+  if (!row) return '';
+  const pathNodes = getGeneratedRoutePathNodes(row);
+  const endpointNode = pathNodes.find((node) => node.key === 'endpoint');
+  return endpointNode?.nodeId || row.dispatcherId || row.entryId || row.endpointId || '';
+}
 
 function prefersReducedMotion(): boolean {
   return typeof globalThis.matchMedia === 'function'
@@ -102,13 +263,9 @@ function prefersReducedMotion(): boolean {
 }
 
 function getRouteRoutingStrategySuccessMessage(value: RouteRoutingStrategy): string {
-  if (value === 'round_robin') return '已切换为轮询策略';
-  if (value === 'stable_first') return '已切换为稳定优先策略';
-  return '已切换为权重随机策略';
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  if (value === 'round_robin') return tr('pages.tokenRoutes.switchedRoundRobinStrategy');
+  if (value === 'stable_first') return tr('pages.tokenRoutes.switchedStableFirstStrategy');
+  return tr('pages.tokenRoutes.switchedWeightedRandomStrategy');
 }
 
 export function DesktopDetailPanelPresence({
@@ -170,17 +327,136 @@ export function DesktopDetailPanelPresence({
   if (!shouldRender) return null;
   return (
     <div
-      className={`route-detail-panel-presence ${isOpen ? 'is-open' : ''} ${isEntering ? 'is-entering' : ''} ${isClosing ? 'is-closing' : ''}`.trim()}
-      style={{ gridColumn: '1 / -1' }}
+      className={`route-detail-panel-presence col-span-full ${isOpen ? 'is-open' : ''} ${isEntering ? 'is-entering' : ''} ${isClosing ? 'is-closing' : ''}`.trim()}
     >
       {children(isClosing)}
     </div>
   );
 }
 
+function RouteGroupListLoadingSkeleton({ isMobile }: { isMobile: boolean }) {
+  if (isMobile) {
+    return (
+      <div className="grid gap-2" aria-busy="true">
+        {Array.from({ length: 4 }).map((_, index) => (
+          <MobileCard
+            key={index}
+            title={<Skeleton className="h-5 w-44 max-w-full" />}
+            headerActions={<Skeleton className="h-5 w-16 rounded-full" />}
+          >
+            <div className="grid gap-3">
+              <Skeleton className="h-4 w-56 max-w-full" />
+              <div className="grid grid-cols-2 gap-2">
+                <Skeleton className="h-4 w-20" />
+                <Skeleton className="h-4 w-24" />
+                <Skeleton className="h-4 w-28" />
+                <Skeleton className="h-4 w-20" />
+              </div>
+              <div className="flex flex-wrap justify-end gap-2">
+                <Skeleton className="h-8 w-14" />
+                <Skeleton className="h-8 w-14" />
+                <Skeleton className="h-8 w-20" />
+              </div>
+            </div>
+          </MobileCard>
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid gap-2" aria-busy="true">
+      {Array.from({ length: 7 }).map((_, index) => (
+        <div key={index} className="rounded-md border bg-card p-3">
+          <div className="flex min-w-0 items-start justify-between gap-3">
+            <div className="grid min-w-0 flex-1 gap-2">
+              <div className="flex min-w-0 items-center gap-2">
+                <Skeleton className="h-5 w-48 max-w-full" />
+                <Skeleton className="h-5 w-14 rounded-full" />
+              </div>
+              <Skeleton className="h-3 w-64 max-w-full" />
+              <div className="flex flex-wrap gap-1.5">
+                <Skeleton className="h-5 w-20 rounded-full" />
+                <Skeleton className="h-5 w-24 rounded-full" />
+                <Skeleton className="h-5 w-16 rounded-full" />
+              </div>
+            </div>
+            <div className="flex shrink-0 gap-1">
+              <Skeleton className="h-8 w-16" />
+              <Skeleton className="size-8" />
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function RouteGroupBrowserLoadingSkeleton() {
+  return (
+    <div aria-busy="true">
+      <div className="flex flex-col gap-3 border-b bg-muted/30 p-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex max-w-full gap-0 overflow-hidden rounded-md">
+          <Skeleton className="h-8 w-24 rounded-r-none" />
+          <Skeleton className="h-8 w-24 rounded-none" />
+          <Skeleton className="h-8 w-24 rounded-l-none" />
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Skeleton className="h-5 w-24 rounded-full" />
+          <Skeleton className="h-5 w-28 rounded-full" />
+        </div>
+      </div>
+      <div className="flex flex-col gap-2 p-3 xl:flex-row xl:items-center">
+        <Skeleton className="h-9 min-w-0 flex-1" />
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Skeleton className="h-9 w-44" />
+          <Skeleton className="h-9 w-24" />
+          <Skeleton className="h-9 w-24" />
+          <Skeleton className="h-9 w-32" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RouteGroupDetailLoadingSkeleton() {
+  return (
+    <section className="route-workbench grid min-h-[520px] min-w-0 max-w-full content-start gap-3" aria-busy="true">
+      <div className="rounded-lg border bg-card p-3">
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div className="grid min-w-0 flex-1 gap-2">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <Skeleton className="h-5 w-48 max-w-full" />
+              <Skeleton className="h-5 w-16 rounded-full" />
+              <Skeleton className="h-5 w-20 rounded-full" />
+            </div>
+            <Skeleton className="h-3 w-64 max-w-full" />
+          </div>
+          <div className="flex shrink-0 gap-1">
+            <Skeleton className="h-8 w-20" />
+            <Skeleton className="h-8 w-24" />
+          </div>
+        </div>
+      </div>
+      <div className="rounded-lg border bg-card p-3">
+        <Skeleton className="mb-3 h-9 w-full max-w-sm" />
+        <div className="grid gap-3">
+          <Skeleton className="h-24 w-full" />
+          <Skeleton className="h-24 w-full" />
+          <Skeleton className="h-40 w-full" />
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export default function TokenRoutes() {
   const navigate = useNavigate();
+  const [routeEditorMode, setRouteEditorMode] = useState<'list' | 'graph' | 'json'>('list');
   const [routeSummaries, setRouteSummaries] = useState<RouteSummaryRow[]>([]);
+  const [routesLoading, setRoutesLoading] = useState(true);
+  const [routeEndpointCatalog, setRouteEndpointCatalog] = useState<RouteEndpointCatalogItem[]>([]);
+  const [activeRouteGraphSource, setActiveRouteGraphSource] = useState<RouteMacroBindingGraph>(null);
   const [modelCandidates, setModelCandidates] = useState<RouteModelCandidatesByModelName>({});
   const [missingTokenModelsByName, setMissingTokenModelsByName] = useState<MissingTokenModelsByName>({});
   const [missingTokenGroupModelsByName, setMissingTokenGroupModelsByName] = useState<MissingTokenModelsByName>({});
@@ -192,10 +468,11 @@ export default function TokenRoutes() {
   const [activeEndpointType, setActiveEndpointType] = useState<string | null>(null);
   const [activeGroupFilter, setActiveGroupFilter] = useState<GroupFilter>(null);
   const [enabledFilter, setEnabledFilter] = useState<EnabledFilter>('all');
+  const [routeGroupListTab, setRouteGroupListTab] = useState<RouteGroupListTab>('public');
   const [filterCollapsed, setFilterCollapsed] = useState(true);
   const [showFilters, setShowFilters] = useState(false);
-  const [showZeroChannelRoutes, setShowZeroChannelRoutes] = useState(false);
-  const [sortBy, setSortBy] = useState<RouteSortBy>('channelCount');
+  const [showZeroTargetRoutes, setShowZeroTargetRoutes] = useState(false);
+  const [sortBy, setSortBy] = useState<RouteSortBy>('targetCount');
   const [sortDir, setSortDir] = useState<RouteSortDir>('desc');
 
   const [showManual, setShowManual] = useState(false);
@@ -206,9 +483,13 @@ export default function TokenRoutes() {
   const [batchUpdatingRoutes, setBatchUpdatingRoutes] = useState(false);
   const [batchSelectMode, setBatchSelectMode] = useState(false);
   const [selectedRouteIds, setSelectedRouteIds] = useState<Set<number>>(new Set());
+  const [activeRouteId, setActiveRouteId] = useState<number | null>(null);
+  const [workbenchTab, setWorkbenchTab] = useState<RouteWorkbenchTab>('priority');
+  const [routeGraphFocusIntent, setRouteGraphFocusIntent] = useState<RouteGraphFocusIntent | null>(null);
+  const routeGraphFocusIntentSeqRef = useRef(0);
 
-  const [channelTokenDraft, setChannelTokenDraft] = useState<Record<number, number>>({});
-  const [updatingChannel, setUpdatingChannel] = useState<Record<number, boolean>>({});
+  const [targetTokenDraft, setTargetTokenDraft] = useState<Record<number, number>>({});
+  const [updatingTarget, setUpdatingTarget] = useState<Record<number, boolean>>({});
   const [savingPriorityByRoute, setSavingPriorityByRoute] = useState<Record<number, boolean>>({});
   const [updatingRoutingStrategyByRoute, setUpdatingRoutingStrategyByRoute] = useState<Record<number, boolean>>({});
   const [clearingCooldownByRoute, setClearingCooldownByRoute] = useState<Record<number, boolean>>({});
@@ -216,30 +497,118 @@ export default function TokenRoutes() {
   const [decisionByRoute, setDecisionByRoute] = useState<Record<number, RouteDecision | null>>({});
   const [loadingDecision, setLoadingDecision] = useState(false);
   const [decisionAutoSkipped, setDecisionAutoSkipped] = useState(false);
-  const [visibleRouteCount, setVisibleRouteCount] = useState(ROUTE_RENDER_CHUNK);
+  const [routePage, setRoutePage] = useState(1);
+  const [routePageSize, setRoutePageSize] = useState(DEFAULT_ROUTE_PAGE_SIZE);
   const [expandedSourceGroupMap, setExpandedSourceGroupMap] = useState<Record<string, boolean>>({});
   const [expandedRouteIds, setExpandedRouteIds] = useState<number[]>([]);
   const [closingDesktopDetailRouteIds, setClosingDesktopDetailRouteIds] = useState<number[]>([]);
-  const [addChannelModalRouteId, setAddChannelModalRouteId] = useState<number | null>(null);
+  const [addRouteTargetModalRouteId, setAddRouteTargetModalRouteId] = useState<number | null>(null);
+  const [targetDeleteConfirmation, setTargetDeleteConfirmation] = useState<TargetDeleteConfirmation | null>(null);
+  const [siteBlockConfirmation, setSiteBlockConfirmation] = useState<SiteBlockConfirmation | null>(null);
   const isMobile = useIsMobile();
   const desktopDetailCloseTimersRef = useRef<Record<number, ReturnType<typeof globalThis.setTimeout>>>({});
 
   const {
-    channelsByRouteId,
-    loadingChannelsByRouteId,
-    loadChannels,
-    invalidateChannels,
-    setChannels,
-  } = useRouteChannels();
+    targetsByRouteId,
+    loadingTargetsByRouteId,
+    loadTargets,
+    invalidateTargets,
+    setTargets,
+  } = useRouteTargets();
 
   const toast = useToast();
+
+  const confirmDeleteTarget = useCallback((targetId: number, routeId: number) => new Promise<{ confirmed: boolean; dontAskAgain: boolean }>((resolve) => {
+    setTargetDeleteConfirmation({
+      targetId,
+      routeId,
+      dontAskAgain: false,
+      resolve: (confirmed, dontAskAgain) => resolve({ confirmed, dontAskAgain }),
+    });
+  }), []);
+
+  const closeDeleteTargetConfirmation = useCallback((confirmed: boolean) => {
+    setTargetDeleteConfirmation((current) => {
+      current?.resolve(confirmed, current.dontAskAgain);
+      return null;
+    });
+  }, []);
+
+  const confirmSiteBlock = useCallback((input: Omit<SiteBlockConfirmation, 'resolve'>) => new Promise<boolean>((resolve) => {
+    setSiteBlockConfirmation({ ...input, resolve });
+  }), []);
+
+  const closeSiteBlockConfirmation = useCallback((confirmed: boolean) => {
+    setSiteBlockConfirmation((current) => {
+      current?.resolve(confirmed);
+      return null;
+    });
+  }, []);
 
   const candidatesLoadedRef = useRef(false);
   const candidatesPromiseRef = useRef<Promise<void> | null>(null);
   const candidatesVersionRef = useRef(0);
   const candidatesSeqRef = useRef(0);
+  const routeEndpointCatalogLoadedRef = useRef(false);
+  const routeEndpointCatalogPromiseRef = useRef<Promise<void> | null>(null);
+  const routeEndpointCatalogSeqRef = useRef(0);
+  const activeRouteGraphSourceLoadedRef = useRef(false);
+  const activeRouteGraphSourcePromiseRef = useRef<Promise<void> | null>(null);
+  const activeRouteGraphSourceSeqRef = useRef(0);
   const decisionRefreshWatchSeqRef = useRef(0);
   const mountedRef = useRef(true);
+
+  const loadRouteEndpointCatalog = useCallback((force?: boolean) => {
+    if (routeEndpointCatalogLoadedRef.current && !force) return;
+    if (routeEndpointCatalogPromiseRef.current && !force) return;
+    const endpointFetcher = (api as { getRouteEndpoints?: () => Promise<unknown> }).getRouteEndpoints;
+    if (typeof endpointFetcher !== 'function') return;
+    const seq = ++routeEndpointCatalogSeqRef.current;
+    routeEndpointCatalogLoadedRef.current = true;
+    let promise!: Promise<void>;
+    promise = (async () => {
+      try {
+        const endpointRows = await endpointFetcher();
+        if (routeEndpointCatalogSeqRef.current !== seq) return;
+        startTransition(() => {
+          setRouteEndpointCatalog((endpointRows || []) as RouteEndpointCatalogItem[]);
+        });
+      } catch {
+        if (routeEndpointCatalogSeqRef.current === seq) routeEndpointCatalogLoadedRef.current = false;
+      } finally {
+        if (routeEndpointCatalogPromiseRef.current === promise) {
+          routeEndpointCatalogPromiseRef.current = null;
+        }
+      }
+    })();
+    routeEndpointCatalogPromiseRef.current = promise;
+  }, []);
+
+  const loadActiveRouteGraphSource = useCallback((force?: boolean) => {
+    if (activeRouteGraphSourceLoadedRef.current && !force) return;
+    if (activeRouteGraphSourcePromiseRef.current && !force) return;
+    const graphFetcher = (api as { getRouteGraphActive?: () => Promise<unknown> }).getRouteGraphActive;
+    if (typeof graphFetcher !== 'function') return;
+    const seq = ++activeRouteGraphSourceSeqRef.current;
+    activeRouteGraphSourceLoadedRef.current = true;
+    let promise!: Promise<void>;
+    promise = (async () => {
+      try {
+        const activeGraph = await graphFetcher();
+        if (activeRouteGraphSourceSeqRef.current !== seq) return;
+        startTransition(() => {
+          setActiveRouteGraphSource(extractActiveRouteGraphSource(activeGraph));
+        });
+      } catch {
+        if (activeRouteGraphSourceSeqRef.current === seq) activeRouteGraphSourceLoadedRef.current = false;
+      } finally {
+        if (activeRouteGraphSourcePromiseRef.current === promise) {
+          activeRouteGraphSourcePromiseRef.current = null;
+        }
+      }
+    })();
+    activeRouteGraphSourcePromiseRef.current = promise;
+  }, []);
 
   const loadCandidates = (force?: boolean) => {
     if (candidatesLoadedRef.current && !force) return;
@@ -274,22 +643,33 @@ export default function TokenRoutes() {
   };
 
   const load = async () => {
-    const summaryRows = await api.getRoutesSummary();
+    setRoutesLoading((current) => current || routeSummaries.length === 0);
+    try {
+      const summaryRows = await api.getRoutesSummary();
 
-    const summaries = (summaryRows || []) as RouteSummaryRow[];
-    setRouteSummaries(summaries);
-    const decisionPlaceholder: Record<number, RouteDecision | null> = {};
-    for (const route of summaries) {
-      decisionPlaceholder[route.id] = route.decisionSnapshot || null;
-    }
-    setDecisionByRoute(decisionPlaceholder);
-    setDecisionAutoSkipped(
-      summaries.some((route) => isRouteExactModel(route) && !route.decisionSnapshot),
-    );
+      const summaries = (summaryRows || []) as RouteSummaryRow[];
+      setRouteSummaries(summaries);
+      const decisionPlaceholder: Record<number, RouteDecision | null> = {};
+      for (const route of summaries) {
+        decisionPlaceholder[route.id] = route.decisionSnapshot || null;
+      }
+      setDecisionByRoute(decisionPlaceholder);
+      setDecisionAutoSkipped(
+        summaries.some((route) => isRouteExactModel(route) && !route.decisionSnapshot),
+      );
 
-    // Silently refresh candidates in the background if already loaded
-    if (candidatesLoadedRef.current) {
-      loadCandidates(true);
+      // Silently refresh candidates in the background if already loaded
+      if (candidatesLoadedRef.current) {
+        loadCandidates(true);
+      }
+      if (routeEndpointCatalogLoadedRef.current) {
+        loadRouteEndpointCatalog(true);
+      }
+      if (activeRouteGraphSourceLoadedRef.current) {
+        loadActiveRouteGraphSource(true);
+      }
+    } finally {
+      setRoutesLoading(false);
     }
   };
 
@@ -321,7 +701,7 @@ export default function TokenRoutes() {
           };
           const task = taskResponse?.task;
           if (!task) {
-            throw new Error('路由选中概率任务不存在');
+            throw new Error(tr('pages.tokenRoutes.routeProbabilityTaskMissing'));
           }
 
           const status = String(task.status || '').trim();
@@ -336,15 +716,15 @@ export default function TokenRoutes() {
 
           setLoadingDecision(false);
           if (status === 'succeeded') {
-            toastRef.current.success('路由选择概率已刷新');
+            toastRef.current.success(tr('pages.tokenRoutes.routesRefresh'));
           } else {
-            toastRef.current.error(String(task.message || task.error || '刷新路由选择概率失败'));
+            toastRef.current.error(String(task.message || task.error || tr('pages.tokenRoutes.failedRefreshRoutingProbability')));
           }
           return;
         } catch (error: any) {
           if (!mountedRef.current || decisionRefreshWatchSeqRef.current !== watchSeq) return;
           setLoadingDecision(false);
-          toastRef.current.error(error?.message || '刷新路由选择概率失败');
+          toastRef.current.error(error?.message || tr('pages.tokenRoutes.failedRefreshRoutingProbability'));
           return;
         }
       }
@@ -386,7 +766,7 @@ export default function TokenRoutes() {
         await resumeRouteDecisionRefreshTask();
         await load();
       } catch {
-        toast.error('加载路由配置失败');
+        toast.error(tr('pages.tokenRoutes.failedLoadRoutingConfiguration'));
       }
       // Preload candidates in background after first paint
       const scheduleIdle = typeof requestIdleCallback === 'function' ? requestIdleCallback : (cb: () => void) => setTimeout(cb, 0);
@@ -398,23 +778,38 @@ export default function TokenRoutes() {
     };
   }, [resumeRouteDecisionRefreshTask, toast]);
 
+  useEffect(() => {
+    if (showManual) loadRouteEndpointCatalog();
+  }, [loadRouteEndpointCatalog, showManual]);
+
+  useEffect(() => {
+    if (routeEditorMode !== 'list') return;
+    if (!activeRouteId) return;
+    if (workbenchTab !== 'macro' && workbenchTab !== 'generated') return;
+    loadActiveRouteGraphSource();
+  }, [activeRouteId, loadActiveRouteGraphSource, routeEditorMode, workbenchTab]);
+
   const handleRebuild = async () => {
     try {
       setRebuilding(true);
       const res = await api.rebuildRoutes(true);
       if (res?.queued) {
-        toast.info(res.message || '已开始重建路由，请稍后查看日志');
-        invalidateChannels();
+        toast.info(res.message || tr('pages.tokenRoutes.routeReconstructionHasStartedPleaseCheckLog'));
+        invalidateTargets();
         await load();
         return;
       }
       const createdRoutes = res?.rebuild?.createdRoutes ?? 0;
-      const createdChannels = res?.rebuild?.createdChannels ?? 0;
-      toast.success(`自动重建完成（新增 ${createdRoutes} 条路由 / ${createdChannels} 个通道）`);
-      invalidateChannels();
+      const createdTargets = res?.rebuild?.createdTargets ?? 0;
+      toast.success(
+        tr('pages.tokenRoutes.rebuildComplete')
+          .replace('{routes}', String(createdRoutes))
+          .replace('{targets}', String(createdTargets)),
+      );
+      invalidateTargets();
       await load();
     } catch (e: any) {
-      toast.error(e.message || '重建路由失败');
+      toast.error(e.message || tr('pages.tokenRoutes.failedRebuildRoute'));
     } finally {
       setRebuilding(false);
     }
@@ -428,13 +823,13 @@ export default function TokenRoutes() {
       };
       const taskId = String(response?.jobId || '').trim();
       if (!taskId) {
-        throw new Error('刷新任务未返回 taskId');
+        throw new Error(tr('pages.tokenRoutes.missingRefreshTaskId'));
       }
 
-      toast.info(response?.message || '已开始后台刷新路由选中概率，可稍后返回查看');
+      toast.info(response?.message || tr('pages.tokenRoutes.routeProbabilityRefreshStarted'));
       monitorRouteDecisionRefreshTask(taskId);
     } catch (error: any) {
-      toast.error(error?.message || '刷新路由选择概率失败');
+      toast.error(error?.message || tr('pages.tokenRoutes.failedRefreshRoutingProbability'));
     }
   };
 
@@ -444,40 +839,64 @@ export default function TokenRoutes() {
     [routeSummaries],
   );
 
-  const zeroChannelPlaceholderRoutes = useMemo(
-    () => buildZeroChannelPlaceholderRoutes(routeSummaries, missingTokenModelsByName, missingTokenGroupModelsByName),
+  const zeroTargetPlaceholderRoutes = useMemo(
+    () => buildZeroTargetPlaceholderRoutes(routeSummaries, missingTokenModelsByName, missingTokenGroupModelsByName),
     [routeSummaries, missingTokenModelsByName, missingTokenGroupModelsByName],
   );
 
   const visibleRouteRows = useMemo(
-    () => (showZeroChannelRoutes ? [...routeSummaries, ...zeroChannelPlaceholderRoutes] : routeSummaries),
-    [routeSummaries, showZeroChannelRoutes, zeroChannelPlaceholderRoutes],
+    () => (showZeroTargetRoutes ? [...routeSummaries, ...zeroTargetPlaceholderRoutes] : routeSummaries),
+    [routeSummaries, showZeroTargetRoutes, zeroTargetPlaceholderRoutes],
   );
 
   const canSaveRoute = useMemo(() => {
     if (saving) return false;
-    if (form.routeMode === 'explicit_group') {
-      return !!form.displayName.trim() && form.sourceRouteIds.length > 0;
+    if (form.backend.kind === 'routes') {
+      return !!form.presentation.displayName.trim() && form.backend.routeIds.length > 0;
     }
-    return !!form.modelPattern.trim() && !getModelPatternError(form.modelPattern);
-  }, [form.displayName, form.modelPattern, form.routeMode, form.sourceRouteIds.length, saving]);
+    return !!form.match.requestedModelPattern.trim() && !getModelPatternError(form.match.requestedModelPattern);
+  }, [form.backend, form.match.requestedModelPattern, form.presentation.displayName, saving]);
 
-  const previewModelSamples = useMemo(() => {
+  const modelMatchPreviewEndpoints = useMemo<RouteEndpointCatalogItem[]>(() => {
     if (!showManual) return [];
-    const names = new Set<string>();
-    for (const modelName of Object.keys(modelCandidates || {})) {
-      const normalized = modelName.trim();
-      if (normalized) names.add(normalized);
-    }
-    for (const route of routeSummaries) {
-      if (!isRouteExactModel(route)) continue;
-      const normalized = route.modelPattern.trim();
-      if (normalized) names.add(normalized);
-    }
-    return Array.from(names)
-      .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
-      .slice(0, 800);
-  }, [showManual, modelCandidates, routeSummaries]);
+    const endpointCatalogItems = routeEndpointCatalog
+      .filter((endpoint) => (
+        endpoint.endpointKind === 'supply'
+        && endpoint.enabled !== false
+        && endpoint.resolutionStatus !== 'unresolved'
+      ))
+      .sort((left, right) => {
+        const leftLabel = left.label || left.modelPattern || left.endpointId;
+        const rightLabel = right.label || right.modelPattern || right.endpointId;
+        return leftLabel.localeCompare(rightLabel, undefined, { sensitivity: 'base' });
+      });
+    if (endpointCatalogItems.length > 0) return endpointCatalogItems;
+
+    return routeSummaries
+      .filter((route) => isRouteExactModel(route))
+      .map((route): RouteEndpointCatalogItem => ({
+        endpointId: routeEndpointIdFromRouteId(route.id),
+        nodeId: routeEndpointIdFromRouteId(route.id),
+        routeId: route.id,
+        label: resolveRouteTitle(route),
+        endpointKind: 'supply',
+        exposure: 'none',
+        resolutionStatus: 'resolved',
+        ownerKind: 'automatic_route',
+        sourceKind: 'upstream_model',
+        enabled: route.enabled,
+        displayIcon: getRouteDisplayIcon(route),
+        modelPattern: getRouteRequestedModelPattern(route),
+        publicModelName: null,
+        upstreamModels: [getRouteRequestedModelPattern(route)].filter(Boolean),
+        siteNames: route.siteNames || [],
+        targetCount: route.targetCount,
+        sourceRouteIds: [route.id],
+        tags: [],
+        metadata: {},
+      }))
+      .sort((left, right) => left.label.localeCompare(right.label, undefined, { sensitivity: 'base' }));
+  }, [showManual, routeEndpointCatalog, routeSummaries]);
 
   const exactSourceRouteOptions = useMemo(
     () => routeSummaries.filter((route) => isRouteExactModel(route)),
@@ -489,23 +908,47 @@ export default function TokenRoutes() {
     setEditingRouteId(null);
   };
 
+  const openRouteWizard = () => {
+    loadCandidates();
+    setEditingRouteId(null);
+    setForm({
+      ...EMPTY_ROUTE_FORM,
+      backend: { kind: 'routes', routeIds: [] },
+      advancedOpen: false,
+      macro: null,
+    });
+    setShowManual(true);
+  };
+
   const handleAddRoute = async () => {
-    const trimmedDisplayName = form.displayName.trim() ? form.displayName.trim() : undefined;
-    const trimmedDisplayIcon = form.displayIcon.trim() ? form.displayIcon.trim() : undefined;
-    const trimmedModelPattern = form.modelPattern.trim();
-    const routeMode = normalizeRouteMode(form.routeMode);
-    if (routeMode === 'explicit_group') {
-      if (!trimmedDisplayName) {
-        toast.error('请填写对外模型名');
+    const trimmedDisplayName = form.presentation.displayName.trim() ? form.presentation.displayName.trim() : null;
+    const trimmedDisplayIcon = form.presentation.displayIcon.trim() ? form.presentation.displayIcon.trim() : null;
+    const trimmedModelPattern = form.match.requestedModelPattern.trim();
+    const trimmedModelMapping = form.modelMapping.trim() ? form.modelMapping.trim() : undefined;
+    if (trimmedModelMapping) {
+      try {
+        const parsedMapping = JSON.parse(trimmedModelMapping);
+        if (!parsedMapping || typeof parsedMapping !== 'object' || Array.isArray(parsedMapping)) {
+          toast.error(tr('pages.tokenRoutes.modelJson'));
+          return;
+        }
+      } catch {
+        toast.error(tr('pages.tokenRoutes.modelJsonMistake'));
         return;
       }
-      if (form.sourceRouteIds.length === 0) {
-        toast.error('请至少选择一个来源模型');
+    }
+    if (form.backend.kind === 'routes') {
+      if (!trimmedDisplayName) {
+        toast.error(tr('pages.tokenRoutes.model'));
+        return;
+      }
+      if (form.backend.routeIds.length === 0) {
+        toast.error(tr('pages.tokenRoutes.selectModel'));
         return;
       }
     } else {
       if (!trimmedModelPattern) return;
-      const modelPatternError = getModelPatternError(form.modelPattern);
+      const modelPatternError = getModelPatternError(form.match.requestedModelPattern);
       if (modelPatternError) {
         toast.error(modelPatternError);
         return;
@@ -514,32 +957,46 @@ export default function TokenRoutes() {
 
     setSaving(true);
     try {
+      const payload = routeGraphEditorFormToRoutePayload({
+        ...form,
+        match: {
+          ...form.match,
+          requestedModelPattern: form.backend.kind === 'routes' ? '' : trimmedModelPattern,
+          displayName: trimmedDisplayName,
+        },
+        presentation: {
+          displayName: trimmedDisplayName || '',
+          displayIcon: trimmedDisplayIcon || '',
+        },
+        modelMapping: trimmedModelMapping ?? '',
+        macro: form.backend.kind === 'routes' && trimmedDisplayName
+          ? updateCandidateSelectorMacroFromEditor({
+            macro: form.macro,
+            id: editingRouteId || undefined,
+            stableId: editingRouteId ? `route:${editingRouteId}:model-group` : undefined,
+            displayName: trimmedDisplayName,
+            displayIcon: trimmedDisplayIcon,
+            visibility: form.visibility,
+            enabled: form.enabled,
+            routingStrategy: form.routingStrategy,
+            routeIds: form.backend.routeIds,
+          })
+          : null,
+      });
       if (editingRouteId) {
         const currentRoute = routeSummaries.find((route) => route.id === editingRouteId) || null;
-        const modelPatternChanged = routeMode === 'pattern' && !!currentRoute && currentRoute.modelPattern !== trimmedModelPattern;
-        await api.updateRoute(editingRouteId, {
-          routeMode,
-          ...(routeMode === 'pattern' ? { modelPattern: trimmedModelPattern } : {}),
-          displayName: trimmedDisplayName,
-          displayIcon: trimmedDisplayIcon,
-          ...(routeMode === 'explicit_group' ? { sourceRouteIds: form.sourceRouteIds } : {}),
-        });
-        toast.success(routeMode === 'pattern' && modelPatternChanged ? tr('群组已更新并重新匹配通道') : tr('群组已更新'));
+        const modelPatternChanged = form.backend.kind === 'supply' && !!currentRoute && getRouteRequestedModelPattern(currentRoute) !== trimmedModelPattern;
+        await api.updateRoute(editingRouteId, payload);
+        toast.success(form.backend.kind === 'supply' && modelPatternChanged ? tr('pages.tokenRoutes.groupsMatchtargets') : tr('pages.tokenRoutes.groups'));
       } else {
-        await api.addRoute({
-          routeMode,
-          ...(routeMode === 'pattern' ? { modelPattern: trimmedModelPattern } : {}),
-          displayName: trimmedDisplayName,
-          displayIcon: trimmedDisplayIcon,
-          ...(routeMode === 'explicit_group' ? { sourceRouteIds: form.sourceRouteIds } : {}),
-        });
-        toast.success(tr('群组已创建'));
+        await api.addRoute(payload);
+        toast.success(tr('pages.tokenRoutes.groupCreated'));
       }
       setShowManual(false);
       resetRouteForm();
       await load();
     } catch (e: any) {
-      toast.error(e.message || (editingRouteId ? tr('更新群组失败') : tr('创建群组失败')));
+      toast.error(e.message || (editingRouteId ? tr('pages.tokenRoutes.groupsfailed') : tr('pages.tokenRoutes.failedCreateGroup')));
     } finally {
       setSaving(false);
     }
@@ -548,14 +1005,25 @@ export default function TokenRoutes() {
   const handleEditRoute = (route: RouteSummaryRow) => {
     loadCandidates();
     setEditingRouteId(route.id);
-    const routeMode = normalizeRouteMode(route.routeMode);
     setForm({
-      routeMode,
-      modelPattern: route.modelPattern || '',
-      displayName: route.displayName || '',
-      displayIcon: normalizeRouteDisplayIconValue(route.displayIcon),
-      sourceRouteIds: routeMode === 'explicit_group' ? [...(route.sourceRouteIds || [])] : [],
-      advancedOpen: routeMode === 'pattern',
+      match: {
+        kind: 'model',
+        requestedModelPattern: getRouteRequestedModelPattern(route),
+        displayName: getRouteDisplayName(route),
+      },
+      backend: isRouteBackendReferences(route.backend)
+        ? { kind: 'routes', routeIds: getRouteBackendRouteIds(route.backend) }
+        : { kind: 'supply' },
+      presentation: {
+        displayName: getRouteDisplayName(route) || '',
+        displayIcon: normalizeRouteDisplayIconValue(getRouteDisplayIcon(route)),
+      },
+      routingStrategy: normalizeRouteRoutingStrategyValue(route.routingStrategy),
+      visibility: route.visibility === 'internal' ? 'internal' : 'public',
+      enabled: route.enabled,
+      modelMapping: route.modelMapping || '',
+      advancedOpen: !isRouteBackendReferences(route.backend),
+      macro: buildRouteGraphNodeFromRoute(route).macro || null,
     });
     setShowManual(true);
   };
@@ -568,10 +1036,10 @@ export default function TokenRoutes() {
   const handleDeleteRoute = async (routeId: number) => {
     try {
       await api.deleteRoute(routeId);
-      toast.success('路由已删除');
+      toast.success(tr('pages.tokenRoutes.routeDeleted'));
       await load();
     } catch (e: any) {
-      toast.error(e.message || '删除路由失败');
+      toast.error(e.message || tr('pages.tokenRoutes.failedDeleteRoute'));
     }
   };
 
@@ -582,12 +1050,37 @@ export default function TokenRoutes() {
     );
     try {
       await api.updateRoute(route.id, { enabled: newEnabled });
-      toast.success(newEnabled ? '路由已启用' : '路由已禁用');
+      toast.success(newEnabled ? tr('pages.tokenRoutes.routesenabled') : tr('pages.tokenRoutes.routesdisabled'));
     } catch (e: any) {
       setRouteSummaries((prev) =>
         prev.map((item) => (item.id === route.id ? { ...item, enabled: route.enabled } : item)),
       );
-      toast.error(e.message || '切换路由状态失败');
+      toast.error(e.message || tr('pages.tokenRoutes.routesstatusfailed'));
+    }
+  };
+
+  const handleRouteVisibilityChange = async (route: RouteSummaryRow, visibility: 'public' | 'internal') => {
+    if (route.visibility === visibility) return;
+    const previousVisibility = route.visibility === 'internal' ? 'internal' : 'public';
+    setRouteSummaries((prev) =>
+      prev.map((item) => (item.id === route.id ? { ...item, visibility } : item)),
+    );
+    try {
+      await api.updateRoute(route.id, { visibility });
+      toast.success(
+        visibility === 'internal'
+          ? tr('pages.tokenRoutes.routeSetInternal')
+          : tr('pages.tokenRoutes.routeSetPublic'),
+      );
+      if (!isExplicitGroupRoute(route)) {
+        setRouteGroupListTab(visibility === 'internal' ? 'internal' : 'public');
+      }
+      await load();
+    } catch (e: any) {
+      setRouteSummaries((prev) =>
+        prev.map((item) => (item.id === route.id ? { ...item, visibility: previousVisibility } : item)),
+      );
+      toast.error(e.message || tr('pages.tokenRoutes.routeVisibilityFailed'));
     }
   };
 
@@ -610,7 +1103,7 @@ export default function TokenRoutes() {
           ? { ...item, routingStrategy: currentStrategy }
           : item
       )));
-      toast.error(e.message || '更新路由策略失败');
+      toast.error(e.message || tr('pages.tokenRoutes.updateRoutingStrategyFailed'));
       return;
     } finally {
       setUpdatingRoutingStrategyByRoute((prev) => ({ ...prev, [route.id]: false }));
@@ -619,17 +1112,14 @@ export default function TokenRoutes() {
     try {
       await load();
     } catch (e: any) {
-      toast.error(e?.message || '路由策略已保存，但刷新列表失败');
+      toast.error(e?.message || tr('pages.tokenRoutes.routingStrategySavedRefreshFailed'));
     }
   };
 
-  // Stable derived value: only changes when route patterns change (not on enabled toggle)
-  const routePatternsKey = visibleRouteRows.map((r) => `${r.id}:${r.modelPattern}:${r.routeMode || 'pattern'}`).join(',');
-  const routePatterns = useMemo(
-    () => visibleRouteRows.map((r) => ({ id: r.id, modelPattern: r.modelPattern, routeMode: r.routeMode })),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [routePatternsKey],
-  );
+  // Stable derived value: only changes when graph match/backend selection changes (not on enabled toggle).
+  const routeGraphKey = visibleRouteRows
+    .map((route) => `${route.id}:${getRouteRequestedModelPattern(route)}:${route.backend.kind}:${getRouteBackendRouteIds(route.backend).join('.')}`)
+    .join(',');
 
   const routeBrandById = useMemo(() => {
     const next = new Map<number, BrandInfo | null>();
@@ -699,8 +1189,8 @@ export default function TokenRoutes() {
   const routeEndpointTypesByRouteId = useMemo(() => {
     const index: Record<number, Set<string>> = {};
     const entries = Object.entries(endpointTypesByModel || {});
-    for (const route of routePatterns) {
-      const pattern = (route.modelPattern || '').trim();
+    for (const route of visibleRouteRows) {
+      const pattern = getRouteRequestedModelPattern(route).trim();
       if (!pattern) {
         index[route.id] = new Set<string>();
         continue;
@@ -719,7 +1209,7 @@ export default function TokenRoutes() {
       index[route.id] = endpointTypes;
     }
     return index;
-  }, [routePatterns, endpointTypesByModel]);
+  }, [visibleRouteRows, endpointTypesByModel]);
 
   const endpointTypeList = useMemo(() => {
     const grouped = new Map<string, number>();
@@ -768,7 +1258,7 @@ export default function TokenRoutes() {
     ...routeBrandIconCandidates.map((brand) => ({
       value: toBrandIconValue(brand.icon),
       label: brand.name,
-      description: `${brand.name} 品牌图标`,
+      description: tr('pages.tokenRoutes.brandIconDescription').replace('{brand}', brand.name),
       iconNode: <BrandGlyph brand={brand} size={14} fallbackText={brand.name} />,
     })),
   ]), [routeBrandIconCandidates]);
@@ -781,13 +1271,13 @@ export default function TokenRoutes() {
         title: resolveRouteTitle(route),
         icon: resolveRouteIcon(route),
         brand: routeBrandById.get(route.id) || null,
-        modelPattern: route.modelPattern,
-        channelCount: route.channelCount,
-        sourceRouteCount: Array.isArray(route.sourceRouteIds) ? route.sourceRouteIds.length : 0,
+        modelPattern: getRouteRequestedModelPattern(route),
+        targetCount: route.targetCount,
+        sourceRouteCount: getRouteBackendRouteIds(route.backend).length,
       }))
       .sort((a, b) => {
-        if (a.channelCount === b.channelCount) return a.title.localeCompare(b.title, undefined, { sensitivity: 'base' });
-        return b.channelCount - a.channelCount;
+        if (a.targetCount === b.targetCount) return a.title.localeCompare(b.title, undefined, { sensitivity: 'base' });
+        return b.targetCount - a.targetCount;
       })
   ), [listVisibleRoutes, routeBrandById]);
 
@@ -798,19 +1288,39 @@ export default function TokenRoutes() {
 
   const sortedRoutes = useMemo(() => (
     [...listVisibleRoutes].sort((a, b) => {
-      if (sortBy === 'channelCount') {
-        const countCmp = a.channelCount - b.channelCount;
+      if (sortBy === 'targetCount') {
+        const countCmp = a.targetCount - b.targetCount;
         if (countCmp !== 0) return sortDir === 'asc' ? countCmp : -countCmp;
       }
 
-      const nameCmp = a.modelPattern.localeCompare(b.modelPattern, undefined, { sensitivity: 'base' });
+      const nameCmp = getRouteRequestedModelPattern(a).localeCompare(getRouteRequestedModelPattern(b), undefined, { sensitivity: 'base' });
       return sortDir === 'asc' ? nameCmp : -nameCmp;
     })
   ), [listVisibleRoutes, sortBy, sortDir]);
 
+  const routeGroupTabCounts = useMemo(() => {
+    let publicCount = 0;
+    let internal = 0;
+    let manual = 0;
+    for (const route of listVisibleRoutes) {
+      if (isExplicitGroupRoute(route)) {
+        manual++;
+      } else if (route.visibility === 'internal') {
+        internal++;
+      } else {
+        publicCount++;
+      }
+    }
+    return { public: publicCount, internal, manual };
+  }, [listVisibleRoutes]);
+
   // Shared base filter: all filters EXCEPT enabledFilter
   const baseFilteredRoutes = useMemo(() => {
-    let list = sortedRoutes;
+    let list = sortedRoutes.filter((route) => {
+      if (isExplicitGroupRoute(route)) return routeGroupListTab === 'manual';
+      if (route.visibility === 'internal') return routeGroupListTab === 'internal';
+      return routeGroupListTab === 'public';
+    });
 
     if (activeGroupFilter === '__all__') {
       list = list.filter((route) => !isRouteExactModel(route));
@@ -839,21 +1349,21 @@ export default function TokenRoutes() {
     if (search.trim()) {
       const q = search.trim().toLowerCase();
       list = list.filter((route) => {
-        const modelPattern = route.modelPattern.toLowerCase();
-        const displayName = (route.displayName || '').toLowerCase();
+        const modelPattern = getRouteRequestedModelPattern(route).toLowerCase();
+        const displayName = (getRouteDisplayName(route) || '').toLowerCase();
         const title = resolveRouteTitle(route).toLowerCase();
         return modelPattern.includes(q) || displayName.includes(q) || title.includes(q);
       });
     }
 
     return list;
-  }, [sortedRoutes, activeGroupFilter, activeBrand, activeSite, activeEndpointType, search, routeBrandById, routeEndpointTypesByRouteId]);
+  }, [sortedRoutes, routeGroupListTab, activeGroupFilter, activeBrand, activeSite, activeEndpointType, search, routeBrandById, routeEndpointTypesByRouteId]);
 
   const enabledCounts = useMemo(() => {
     let enabled = 0;
     let disabled = 0;
     for (const route of baseFilteredRoutes) {
-      if (route.kind === 'zero_channel' || route.readOnly === true || route.isVirtual === true) continue;
+      if (route.kind === 'zero_target' || route.readOnly === true || route.isVirtual === true) continue;
       if (route.enabled) enabled++;
       else disabled++;
     }
@@ -863,7 +1373,7 @@ export default function TokenRoutes() {
   const filteredRoutes = useMemo(() => {
     if (enabledFilter === 'all') return baseFilteredRoutes;
     return baseFilteredRoutes.filter((route) => {
-      if (route.kind === 'zero_channel' || route.readOnly === true || route.isVirtual === true) return false;
+      if (route.kind === 'zero_target' || route.readOnly === true || route.isVirtual === true) return false;
       return enabledFilter === 'enabled' ? route.enabled : !route.enabled;
     });
   }, [baseFilteredRoutes, enabledFilter]);
@@ -871,7 +1381,7 @@ export default function TokenRoutes() {
   const selectableRouteIds = useMemo(() => {
     return new Set(
       filteredRoutes
-        .filter((route) => route.kind !== 'zero_channel' && route.readOnly !== true && route.isVirtual !== true)
+        .filter((route) => route.kind !== 'zero_target' && route.readOnly !== true && route.isVirtual !== true)
         .map((route) => route.id),
     );
   }, [filteredRoutes]);
@@ -900,61 +1410,91 @@ export default function TokenRoutes() {
     setSelectedRouteIds(new Set());
   };
 
-  const handleBatchUpdateRoutes = async (action: 'enable' | 'disable') => {
+  const handleBatchUpdateRoutes = async (action: RouteBatchAction) => {
     const ids = Array.from(selectedRouteIds).filter((id) => selectableRouteIds.has(id));
     if (ids.length === 0) {
-      toast.info('请先选择要操作的路由');
+      toast.info(tr('pages.tokenRoutes.selectActionsRoutes'));
       return;
     }
-    const actionLabel = action === 'disable' ? '禁用' : '启用';
-    const confirmed = window.confirm(`确认批量${actionLabel} ${ids.length} 条路由？`);
+    const actionLabel = action === 'disable'
+      ? tr('pages.downstreamKeys.disabled')
+      : action === 'enable'
+        ? tr('pages.downstreamKeys.enabled')
+        : action === 'set_internal'
+          ? tr('pages.tokenRoutes.setInternal')
+          : tr('pages.tokenRoutes.setPublic');
+    const confirmed = window.confirm(
+      tr('pages.tokenRoutes.batchRoutesConfirm')
+        .replace('{action}', actionLabel)
+        .replace('{count}', String(ids.length)),
+    );
     if (!confirmed) return;
 
     setBatchUpdatingRoutes(true);
     try {
       await api.batchUpdateRoutes({ ids, action });
-      toast.success(`已批量${actionLabel} ${ids.length} 条路由`);
+      toast.success(
+        tr('pages.tokenRoutes.batchRoutesComplete')
+          .replace('{action}', actionLabel)
+          .replace('{count}', String(ids.length)),
+      );
       setSelectedRouteIds(new Set());
       setBatchSelectMode(false);
+      if (routeGroupListTab !== 'manual') {
+        if (action === 'set_internal') setRouteGroupListTab('internal');
+        if (action === 'set_public') setRouteGroupListTab('public');
+      }
       await load();
     } catch (e: any) {
-      toast.error(e.message || `批量${actionLabel}路由失败`);
+      toast.error(e.message || tr('pages.tokenRoutes.batchRoutesFailed').replace('{action}', actionLabel));
     } finally {
       setBatchUpdatingRoutes(false);
     }
   };
 
   useEffect(() => {
-    setVisibleRouteCount(getInitialVisibleCount(filteredRoutes.length, ROUTE_RENDER_CHUNK));
-  }, [filteredRoutes.length]);
+    setRoutePage(1);
+  }, [routeGroupListTab, search, activeBrand, activeSite, activeEndpointType, activeGroupFilter, enabledFilter, sortBy, sortDir, showZeroTargetRoutes, routePageSize]);
 
-  const handleLoadMoreRoutes = useCallback(() => {
-    setVisibleRouteCount((current) => getNextVisibleCount(current, filteredRoutes.length, ROUTE_RENDER_CHUNK));
-  }, [filteredRoutes.length]);
-
-  const loadMoreSentinelRef = useRef<HTMLDivElement>(null);
-
-  const shouldShowLoadMore = filteredRoutes.length > 0 && visibleRouteCount < filteredRoutes.length;
+  const routePageWindow = useMemo(() => getRouteListPageWindow({
+    page: routePage,
+    total: filteredRoutes.length,
+    pageSize: routePageSize,
+  }), [filteredRoutes.length, routePage, routePageSize]);
 
   useEffect(() => {
-    const el = loadMoreSentinelRef.current;
-    if (!el) return;
-    const observer = new IntersectionObserver(
-      (entries) => { if (entries[0]?.isIntersecting) handleLoadMoreRoutes(); },
-      { rootMargin: '200px' },
-    );
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [handleLoadMoreRoutes, shouldShowLoadMore]);
+    setRoutePage((current) => routePageWindow.safePage === current ? current : routePageWindow.safePage);
+  }, [routePageWindow.safePage]);
+
+  const routePageNumbers = useMemo(
+    () => getRouteListPageNumbers(routePageWindow.safePage, routePageWindow.totalPages),
+    [routePageWindow.safePage, routePageWindow.totalPages],
+  );
 
   const visibleRoutes = useMemo(
-    () => filteredRoutes.slice(0, visibleRouteCount),
-    [filteredRoutes, visibleRouteCount],
+    () => filteredRoutes.slice(routePageWindow.startIndex, routePageWindow.endIndex),
+    [filteredRoutes, routePageWindow.endIndex, routePageWindow.startIndex],
   );
+  const routeListSingleColumn = isMobile || (!routesLoading && filteredRoutes.length === 0);
+
+  const activeRoute = useMemo(() => (
+    activeRouteId == null ? null : filteredRoutes.find((route) => route.id === activeRouteId) || null
+  ), [activeRouteId, filteredRoutes]);
+
+  useEffect(() => {
+    if (isMobile) return;
+    if (filteredRoutes.length === 0) {
+      if (activeRouteId !== null) setActiveRouteId(null);
+      return;
+    }
+    if (activeRouteId == null || !visibleRoutes.some((route) => route.id === activeRouteId)) {
+      setActiveRouteId(visibleRoutes[0]?.id ?? filteredRoutes[0]!.id);
+    }
+  }, [activeRouteId, filteredRoutes, isMobile, visibleRoutes]);
 
   // Lazy per-route candidate index — only computes for routes actually accessed
   const candidateIndexCacheRef = useRef<{ key: string; cache: Map<number, RouteCandidateView> }>({ key: '', cache: new Map() });
-  const candidateIndexCacheKey = `${routePatternsKey}|${Object.keys(modelCandidates).length}|${candidatesVersionRef.current}`;
+  const candidateIndexCacheKey = `${routeGraphKey}|${Object.keys(modelCandidates).length}|${candidatesVersionRef.current}`;
   if (candidateIndexCacheRef.current.key !== candidateIndexCacheKey) {
     candidateIndexCacheRef.current = { key: candidateIndexCacheKey, cache: new Map() };
   }
@@ -963,7 +1503,7 @@ export default function TokenRoutes() {
     const cache = candidateIndexCacheRef.current.cache;
     const cached = cache.get(routeId);
     if (cached) return cached;
-    const route = routePatterns.find((r) => r.id === routeId);
+    const route = visibleRouteRows.find((r) => r.id === routeId);
     if (!route) return EMPTY_ROUTE_CANDIDATE_VIEW;
     const index = buildRouteModelCandidatesIndex([route], modelCandidates, matchesModelPattern);
     const view = index[routeId] || EMPTY_ROUTE_CANDIDATE_VIEW;
@@ -973,7 +1513,7 @@ export default function TokenRoutes() {
 
   // Lazy per-route missing token index
   const missingTokenCacheRef = useRef<{ key: string; cache: Map<number, RouteMissingTokenHint[]> }>({ key: '', cache: new Map() });
-  const missingTokenCacheKey = `${routePatternsKey}|${Object.keys(missingTokenModelsByName).length}|${candidatesVersionRef.current}`;
+  const missingTokenCacheKey = `${routeGraphKey}|${Object.keys(missingTokenModelsByName).length}|${candidatesVersionRef.current}`;
   if (missingTokenCacheRef.current.key !== missingTokenCacheKey) {
     missingTokenCacheRef.current = { key: missingTokenCacheKey, cache: new Map() };
   }
@@ -982,7 +1522,7 @@ export default function TokenRoutes() {
     const cache = missingTokenCacheRef.current.cache;
     const cached = cache.get(routeId);
     if (cached) return cached;
-    const route = routePatterns.find((r) => r.id === routeId);
+    const route = visibleRouteRows.find((r) => r.id === routeId);
     if (!route) return [];
     const index = buildRouteMissingTokenIndex([route], missingTokenModelsByName, matchesModelPattern);
     const hints = index[routeId] || [];
@@ -1000,7 +1540,7 @@ export default function TokenRoutes() {
 
   // Lazy per-route missing token group index
   const missingTokenGroupCacheRef = useRef<{ key: string; cache: Map<number, RouteMissingTokenHint[]> }>({ key: '', cache: new Map() });
-  const missingTokenGroupCacheKey = `${routePatternsKey}|${Object.keys(missingTokenGroupModelsByName).length}|${candidatesVersionRef.current}`;
+  const missingTokenGroupCacheKey = `${routeGraphKey}|${Object.keys(missingTokenGroupModelsByName).length}|${candidatesVersionRef.current}`;
   if (missingTokenGroupCacheRef.current.key !== missingTokenGroupCacheKey) {
     missingTokenGroupCacheRef.current = { key: missingTokenGroupCacheKey, cache: new Map() };
   }
@@ -1009,7 +1549,7 @@ export default function TokenRoutes() {
     const cache = missingTokenGroupCacheRef.current.cache;
     const cached = cache.get(routeId);
     if (cached) return cached;
-    const route = routePatterns.find((r) => r.id === routeId);
+    const route = visibleRouteRows.find((r) => r.id === routeId);
     if (!route) return [];
     const index = buildRouteMissingTokenIndex([route], missingTokenGroupModelsByName, matchesModelPattern);
     const hints = index[routeId] || [];
@@ -1030,6 +1570,12 @@ export default function TokenRoutes() {
     [visibleRouteRows],
   );
 
+  const editingRouteNodeJson = useMemo(() => {
+    if (!editingRouteId) return null;
+    const route = routeSummaries.find((item) => item.id === editingRouteId) || null;
+    return route ? buildRouteGraphNodeFromRoute(route) : null;
+  }, [editingRouteId, routeSummaries]);
+
   const handleCreateTokenForMissingAccount = (accountId: number, modelName: string) => {
     if (!Number.isFinite(accountId) || accountId <= 0) return;
     const params = new URLSearchParams();
@@ -1040,90 +1586,62 @@ export default function TokenRoutes() {
     navigate(`/tokens?${params.toString()}`);
   };
 
-  const handleDeleteChannel = async (channelId: number, routeId: number) => {
-    const dismissedKey = 'metapi:channel-delete-warning-dismissed';
+  const handleDeleteTarget = async (targetId: number, routeId: number) => {
+    const dismissedKey = 'metapi:target-delete-warning-dismissed';
     const dismissed = localStorage.getItem(dismissedKey) === 'true';
     if (!dismissed) {
-      const dontAskAgain = { checked: false };
-      const confirmed = await new Promise<boolean>((resolve) => {
-        const overlay = document.createElement('div');
-        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:9999;display:flex;align-items:center;justify-content:center';
-        const dialog = document.createElement('div');
-        dialog.style.cssText = 'background:var(--color-bg-card,#fff);border-radius:12px;padding:24px;max-width:420px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,0.2)';
-        dialog.innerHTML = `
-          <div style="font-weight:600;font-size:15px;margin-bottom:12px">确认移除通道</div>
-          <div style="font-size:13px;color:var(--color-text-secondary);line-height:1.6;margin-bottom:16px">
-            移除的通道会在定时模型刷新时被自动重建恢复。<br/>如果只是想临时停用通道，建议使用<b>禁用开关</b>。
-          </div>
-          <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--color-text-muted);margin-bottom:16px;cursor:pointer">
-            <input type="checkbox" id="__ch_del_dismiss" /> 以后不再提示
-          </label>
-          <div style="display:flex;justify-content:flex-end;gap:8px">
-            <button id="__ch_del_cancel" class="btn btn-ghost" style="padding:6px 16px">取消</button>
-            <button id="__ch_del_confirm" class="btn btn-danger" style="padding:6px 16px">确认移除</button>
-          </div>
-        `;
-        overlay.appendChild(dialog);
-        document.body.appendChild(overlay);
-        dialog.querySelector('#__ch_del_cancel')!.addEventListener('click', () => { document.body.removeChild(overlay); resolve(false); });
-        dialog.querySelector('#__ch_del_confirm')!.addEventListener('click', () => {
-          dontAskAgain.checked = (dialog.querySelector('#__ch_del_dismiss') as HTMLInputElement).checked;
-          document.body.removeChild(overlay);
-          resolve(true);
-        });
-        overlay.addEventListener('click', (e) => { if (e.target === overlay) { document.body.removeChild(overlay); resolve(false); } });
-      });
+      const { confirmed, dontAskAgain } = await confirmDeleteTarget(targetId, routeId);
       if (!confirmed) return;
-      if (dontAskAgain.checked) localStorage.setItem(dismissedKey, 'true');
+      if (dontAskAgain) localStorage.setItem(dismissedKey, 'true');
     }
     try {
-      await api.deleteChannel(channelId);
-      toast.success('通道已移除');
-      await loadChannels(routeId, true);
+      await api.deleteRouteTarget(targetId);
+      toast.success(tr('pages.tokenRoutes.targetRemoved'));
+      await loadTargets(routeId, true);
       setRouteSummaries((prev) =>
-        prev.map((r) => r.id === routeId ? { ...r, channelCount: Math.max(0, r.channelCount - 1) } : r),
+        prev.map((r) => r.id === routeId ? { ...r, targetCount: Math.max(0, r.targetCount - 1) } : r),
       );
     } catch (e: any) {
-      toast.error(e.message || '移除通道失败');
+      toast.error(e.message || tr('pages.tokenRoutes.failedRemoveTarget'));
     }
   };
 
-  const handleToggleChannelEnabled = async (channelId: number, routeId: number, enabled: boolean) => {
-    if (updatingChannel[channelId]) return;
-    setUpdatingChannel((prev) => ({ ...prev, [channelId]: true }));
+  const handleToggleTargetEnabled = async (targetId: number, routeId: number, enabled: boolean) => {
+    if (updatingTarget[targetId]) return;
+    setUpdatingTarget((prev) => ({ ...prev, [targetId]: true }));
     try {
-      await api.updateChannel(channelId, { enabled });
-      toast.success(enabled ? '通道已启用' : '通道已禁用');
-      await loadChannels(routeId, true);
+      await api.updateRouteTarget(targetId, { enabled });
+      toast.success(enabled ? tr('pages.tokenRoutes.targetsenabled') : tr('pages.tokenRoutes.targetsdisabled'));
+      await loadTargets(routeId, true);
     } catch (e: any) {
-      toast.error(e.message || '更新通道状态失败');
+      toast.error(e.message || tr('pages.tokenRoutes.targetsstatusfailed'));
     } finally {
-      setUpdatingChannel((prev) => ({ ...prev, [channelId]: false }));
+      setUpdatingTarget((prev) => ({ ...prev, [targetId]: false }));
     }
   };
 
-  const handleChannelTokenSave = async (routeId: number, channelId: number, accountId: number) => {
-    const tokenId = channelTokenDraft[channelId];
+  const handleTargetTokenSave = async (routeId: number, targetId: number, accountId: number) => {
+    const tokenId = targetTokenDraft[targetId];
     const tokenOptions = getRouteCandidateView(routeId).tokenOptionsByAccountId[accountId] || [];
 
     if (tokenId && tokenOptions.length > 0 && !tokenOptions.some((token) => token.id === tokenId)) {
-      toast.error('该令牌不支持当前模型');
+      toast.error(tr('pages.tokenRoutes.tokenNotSupportedCurrentModel'));
       return;
     }
 
-    setUpdatingChannel((prev) => ({ ...prev, [channelId]: true }));
+    setUpdatingTarget((prev) => ({ ...prev, [targetId]: true }));
     try {
-      await api.updateChannel(channelId, { tokenId: tokenId || null });
-      toast.success('通道令牌已更新');
-      await loadChannels(routeId, true);
+      await api.updateRouteTarget(targetId, { tokenId: tokenId || null });
+      toast.success(tr('pages.tokenRoutes.targetTokenUpdated'));
+      await loadTargets(routeId, true);
     } catch (e: any) {
-      toast.error(e.message || '更新令牌失败');
+      toast.error(e.message || tr('pages.tokenRoutes.updateTokenFailed'));
     } finally {
-      setUpdatingChannel((prev) => ({ ...prev, [channelId]: false }));
+      setUpdatingTarget((prev) => ({ ...prev, [targetId]: false }));
     }
   };
 
-  const handleChannelDragEnd = async (routeId: number, event: DragEndEvent) => {
+  const handleTargetDragEnd = async (routeId: number, event: DragEndEvent) => {
     if (savingPriorityByRoute[routeId]) return;
 
     const { active, over } = event;
@@ -1132,64 +1650,64 @@ export default function TokenRoutes() {
     const route = routeSummaries.find((item) => item.id === routeId);
     if (!route) return;
 
-    const channels = channelsByRouteId[routeId] || [];
-    const activeChannel = channels.find((channel) => channel.id === Number(active.id));
-    if (!activeChannel) return;
+    const targets = targetsByRouteId[routeId] || [];
+    const activeTarget = targets.find((target) => target.id === Number(active.id));
+    if (!activeTarget) return;
 
     const overIsNewLayer = isPriorityRailNewLayerId(over.id);
-    const targetChannel = overIsNewLayer
+    const overTarget = overIsNewLayer
       ? null
-      : channels.find((channel) => channel.id === Number(over.id));
+      : targets.find((target) => target.id === Number(over.id));
 
-    if (!overIsNewLayer && !targetChannel) return;
-    if (!overIsNewLayer && (targetChannel?.priority ?? 0) === (activeChannel.priority ?? 0)) return;
+    if (!overIsNewLayer && !overTarget) return;
+    if (!overIsNewLayer && (overTarget?.priority ?? 0) === (activeTarget.priority ?? 0)) return;
 
-    const reordered = applyPriorityRailDrop(channels, Number(active.id), over.id);
-    const changedChannels = reordered.filter((channel) => {
-      const previous = channels.find((item) => item.id === channel.id);
-      return (previous?.priority ?? 0) !== channel.priority;
+    const reordered = applyPriorityRailDrop(targets, Number(active.id), over.id);
+    const changedTargets = reordered.filter((target) => {
+      const previous = targets.find((item) => item.id === target.id);
+      return (previous?.priority ?? 0) !== target.priority;
     });
 
-    if (changedChannels.length === 0) return;
+    if (changedTargets.length === 0) return;
 
     if (isExplicitGroupRoute(route)) {
       const changedSourceRouteIds = Array.from(new Set(
-        changedChannels
-          .map((channel) => channel.routeId)
+        changedTargets
+          .map((target) => target.routeId)
           .filter((value): value is number => typeof value === 'number' && Number.isFinite(value) && value > 0),
       ));
       if (changedSourceRouteIds.length > 0) {
         const affectedGroups = routeSummaries.filter((candidate) => (
           candidate.id !== route.id
           && isExplicitGroupRoute(candidate)
-          && (candidate.sourceRouteIds || []).some((sourceRouteId) => changedSourceRouteIds.includes(sourceRouteId))
+          && getRouteBackendRouteIds(candidate.backend).some((sourceRouteId: number) => changedSourceRouteIds.includes(sourceRouteId))
         ));
         if (affectedGroups.length > 0) {
           const affectedNames = affectedGroups.map((candidate) => resolveRouteTitle(candidate));
           const confirmFn = typeof globalThis.confirm === 'function' ? globalThis.confirm : null;
           const confirmed = !confirmFn
-            || confirmFn(`当前群组的优先级桶会直接回写来源通道，并同步影响：${affectedNames.join('、')}。是否继续？`);
+            || confirmFn(tr('pages.tokenRoutes.priorityBucketAffectsGroupsConfirm').replace('{groups}', affectedNames.join(tr('pages.tokenRoutes.listSeparator'))));
           if (!confirmed) return;
         }
       }
     }
 
-    const previousChannels = channels.map((channel) => ({ ...channel }));
+    const previousTargets = targets.map((target) => ({ ...target }));
 
-    setChannels(routeId, reordered);
+    setTargets(routeId, reordered);
     setSavingPriorityByRoute((prev) => ({ ...prev, [routeId]: true }));
 
     try {
-      await api.batchUpdateChannels(
-        reordered.map((channel) => ({
-          id: channel.id,
-          priority: channel.priority,
+      await api.batchUpdateRouteTargets(
+        reordered.map((target) => ({
+          id: target.id,
+          priority: target.priority,
         })),
       );
 
       if (route && isRouteExactModel(route)) {
         try {
-          const res = await api.getRouteDecision(route.modelPattern);
+          const res = await api.getRouteDecision(getRouteRequestedModelPattern(route));
           setDecisionByRoute((prev) => ({
             ...prev,
             [routeId]: (res?.decision || null) as RouteDecision | null,
@@ -1199,65 +1717,54 @@ export default function TokenRoutes() {
         }
       }
     } catch (e: any) {
-      setChannels(routeId, previousChannels);
-      toast.error(e.message || '保存通道优先级失败，已回滚');
+      setTargets(routeId, previousTargets);
+      toast.error(e.message || tr('pages.tokenRoutes.failedSaveTargetPriorityRolledBack'));
     } finally {
       setSavingPriorityByRoute((prev) => ({ ...prev, [routeId]: false }));
     }
   };
 
-  const handleSiteBlockModel = async (channelId: number, routeId: number) => {
-    const channels = channelsByRouteId[routeId] || [];
-    const channel = channels.find((c) => c.id === channelId);
-    if (!channel?.site?.id) {
-      toast.error('找不到通道对应的站点信息');
+  const handleSiteBlockModel = async (targetId: number, routeId: number) => {
+    const targets = targetsByRouteId[routeId] || [];
+    const target = targets.find((c) => c.id === targetId);
+    if (!target?.site?.id) {
+      toast.error(tr('pages.tokenRoutes.targetsSitesinfo'));
       return;
     }
     const route = routeSummaries.find((r) => r.id === routeId);
-    const modelName = channel.sourceModel || (route && isExactModelPattern(route.modelPattern) ? route.modelPattern : '') || '';
+    const routePattern = route ? getRouteRequestedModelPattern(route) : '';
+    const modelName = target.sourceModel || (route && isExactModelPattern(routePattern) ? routePattern : '') || '';
     if (!modelName) {
-      toast.error('该通道没有精确模型名，无法使用站点屏蔽（通配符路由请在站点编辑中手动禁用）');
+      toast.error(tr('pages.tokenRoutes.targetMissingExactModelCannotUseSiteBlocklist'));
       return;
     }
-    const siteName = channel.site.name || '未知站点';
-    const confirmed = await new Promise<boolean>((resolve) => {
-      const overlay = document.createElement('div');
-      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:9999;display:flex;align-items:center;justify-content:center';
-      const dialog = document.createElement('div');
-      dialog.style.cssText = 'background:var(--color-bg-card,#fff);border-radius:12px;padding:24px;max-width:420px;width:90%;box-shadow:0 8px 32px rgba(0,0,0,0.2)';
-      dialog.innerHTML = `
-        <div style="font-weight:600;font-size:15px;margin-bottom:12px">确认站点屏蔽</div>
-        <div style="font-size:13px;color:var(--color-text-secondary);line-height:1.6;margin-bottom:16px">
-          将模型「<b>${escapeHtml(modelName)}</b>」加入站点「<b>${escapeHtml(siteName)}</b>」的禁用列表。<br/>执行后将自动触发路由重建，该站点下此模型的通道将不再生成。
-        </div>
-        <div style="display:flex;justify-content:flex-end;gap:8px">
-          <button id="__sb_cancel" class="btn btn-ghost" style="padding:6px 16px">取消</button>
-          <button id="__sb_confirm" class="btn btn-warning" style="padding:6px 16px">确认屏蔽</button>
-        </div>
-      `;
-      overlay.appendChild(dialog);
-      document.body.appendChild(overlay);
-      dialog.querySelector('#__sb_cancel')!.addEventListener('click', () => { document.body.removeChild(overlay); resolve(false); });
-      dialog.querySelector('#__sb_confirm')!.addEventListener('click', () => { document.body.removeChild(overlay); resolve(true); });
-      overlay.addEventListener('click', (e) => { if (e.target === overlay) { document.body.removeChild(overlay); resolve(false); } });
-    });
+    const siteName = target.site.name || tr('pages.proxyLogs.unknownSite');
+    const confirmed = await confirmSiteBlock({ targetId, routeId, modelName, siteName });
     if (!confirmed) return;
 
     try {
-      const siteId = channel.site.id;
+      const siteId = target.site.id;
       const existing = await api.getSiteDisabledModels(siteId);
       const currentModels: string[] = existing?.models || [];
       if (currentModels.includes(modelName)) {
-        toast.info(`模型「${modelName}」已在站点「${siteName}」的禁用列表中`);
+        toast.info(
+          tr('pages.tokenRoutes.modelAlreadyBlockedOnSite')
+            .replace('{model}', modelName)
+            .replace('{site}', siteName),
+        );
         return;
       }
       await api.updateSiteDisabledModels(siteId, [...currentModels, modelName]);
-      toast.success(`已将「${modelName}」加入站点「${siteName}」的禁用列表，正在重建路由...`);
+      toast.success(
+        tr('pages.tokenRoutes.modelBlockedOnSiteRebuilding')
+          .replace('{model}', modelName)
+          .replace('{site}', siteName),
+      );
       await api.rebuildRoutes(false);
-      invalidateChannels();
+      invalidateTargets();
       await load();
     } catch (e: any) {
-      toast.error(e.message || '站点屏蔽模型失败');
+      toast.error(e.message || tr('pages.tokenRoutes.sitesModelfailed'));
     }
   };
 
@@ -1266,14 +1773,14 @@ export default function TokenRoutes() {
     setClearingCooldownByRoute((prev) => ({ ...prev, [routeId]: true }));
     try {
       await api.clearRouteCooldown(routeId);
-      toast.success('路由冷却已清除');
+      toast.success(tr('pages.tokenRoutes.routescooldownClear'));
 
       try {
-        await loadChannels(routeId, true);
+        await loadTargets(routeId, true);
         const route = routeSummaries.find((item) => item.id === routeId);
         if (route) {
           if (isRouteExactModel(route)) {
-            const res = await api.getRouteDecision(route.modelPattern);
+            const res = await api.getRouteDecision(getRouteRequestedModelPattern(route));
             setDecisionByRoute((prev) => ({
               ...prev,
               [routeId]: (res?.decision || null) as RouteDecision | null,
@@ -1287,16 +1794,31 @@ export default function TokenRoutes() {
           }
         }
       } catch {
-        toast.error('已清除，但刷新失败');
+        toast.error(tr('pages.tokenRoutes.clearRefreshfailed'));
       }
     } catch (e: any) {
-      toast.error(e.message || '清除路由冷却失败');
+      toast.error(e.message || tr('pages.tokenRoutes.clearroutescooldownfailed'));
     } finally {
       setClearingCooldownByRoute((prev) => ({ ...prev, [routeId]: false }));
     }
   };
 
   const toggleExpand = async (routeId: number) => {
+    if (!isMobile) {
+      setActiveRouteId((current) => (current === routeId ? current : routeId));
+      loadCandidates();
+      const route = routeById.get(routeId) || null;
+      const isReadOnlyRoute = route?.kind === 'zero_target' || route?.readOnly === true || route?.isVirtual === true;
+      if (!targetsByRouteId[routeId] && !isReadOnlyRoute) {
+        try {
+          await loadTargets(routeId);
+        } catch {
+          toast.error(tr('pages.tokenRoutes.targetsfailed'));
+        }
+      }
+      return;
+    }
+
     const isCurrentlyExpanded = expandedRouteIds.includes(routeId);
     if (isCurrentlyExpanded) {
       if (!isMobile) {
@@ -1325,14 +1847,14 @@ export default function TokenRoutes() {
       setClosingDesktopDetailRouteIds((prev) => prev.filter((id) => id !== routeId));
       loadCandidates();
       setExpandedRouteIds((prev) => [...prev, routeId]);
-      // Load channels on demand
+      // Load targets on demand
       const route = routeById.get(routeId) || null;
-      const isReadOnlyRoute = route?.kind === 'zero_channel' || route?.readOnly === true || route?.isVirtual === true;
-      if (!channelsByRouteId[routeId] && !isReadOnlyRoute) {
+      const isReadOnlyRoute = route?.kind === 'zero_target' || route?.readOnly === true || route?.isVirtual === true;
+      if (!targetsByRouteId[routeId] && !isReadOnlyRoute) {
         try {
-          await loadChannels(routeId);
+          await loadTargets(routeId);
         } catch {
-          toast.error('加载通道失败');
+          toast.error(tr('pages.tokenRoutes.targetsfailed'));
         }
       }
     }
@@ -1345,6 +1867,17 @@ export default function TokenRoutes() {
     desktopDetailCloseTimersRef.current = {};
   }, []);
 
+  useEffect(() => {
+    if (isMobile || activeRouteId == null) return;
+    const route = routeById.get(activeRouteId) || null;
+    const isReadOnlyRoute = route?.kind === 'zero_target' || route?.readOnly === true || route?.isVirtual === true;
+    loadCandidates();
+    if (!route || isReadOnlyRoute || targetsByRouteId[activeRouteId] || loadingTargetsByRouteId[activeRouteId]) return;
+    void loadTargets(activeRouteId).catch(() => {
+      toast.error(tr('pages.tokenRoutes.targetsfailed'));
+    });
+  }, [activeRouteId, targetsByRouteId, isMobile, loadTargets, loadingTargetsByRouteId, routeById, toast]);
+
   const getMissingTokenSiteItems = (routeId: number): MissingTokenRouteSiteActionItem[] => {
     const cached = missingTokenSiteItemsCacheRef.current.cache.get(routeId);
     if (cached) return cached;
@@ -1354,7 +1887,7 @@ export default function TokenRoutes() {
     for (const hint of missingTokenHints) {
       for (const account of hint.accounts) {
         if (!Number.isFinite(account.accountId) || account.accountId <= 0) continue;
-        const siteName = (account.siteName || '').trim() || `site-${account.siteId || 'unknown'}`;
+        const siteName = (account.siteName || '').trim() || (account.siteId ? `site-${account.siteId}` : tr('pages.proxyLogs.unknownSite'));
         const key = `${account.siteId || 0}::${siteName.toLowerCase()}`;
         const accountLabel = account.username || `account-${account.accountId}`;
         const existing = siteMap.get(key);
@@ -1384,7 +1917,7 @@ export default function TokenRoutes() {
     for (const hint of missingGroupHints) {
       for (const account of hint.accounts) {
         if (!Number.isFinite(account.accountId) || account.accountId <= 0) continue;
-        const siteName = (account.siteName || '').trim() || `site-${account.siteId || 'unknown'}`;
+        const siteName = (account.siteName || '').trim() || (account.siteId ? `site-${account.siteId}` : tr('pages.proxyLogs.unknownSite'));
         const key = `${account.siteId || 0}::${siteName.toLowerCase()}`;
         const accountLabel = account.username || `account-${account.accountId}`;
         const missingGroups = Array.isArray(account.missingGroups) ? account.missingGroups : [];
@@ -1439,6 +1972,12 @@ export default function TokenRoutes() {
   const handleToggleEnabledRef = useRef(handleToggleRouteEnabled);
   handleToggleEnabledRef.current = handleToggleRouteEnabled;
   const stableToggleEnabled = useCallback((route: RouteSummaryRow) => { handleToggleEnabledRef.current(route); }, []);
+  const handleRouteVisibilityChangeRef = useRef(handleRouteVisibilityChange);
+  handleRouteVisibilityChangeRef.current = handleRouteVisibilityChange;
+  const stableRouteVisibilityChange = useCallback(
+    (route: RouteSummaryRow, visibility: 'public' | 'internal') => handleRouteVisibilityChangeRef.current(route, visibility),
+    [],
+  );
   const handleRoutingStrategyChangeRef = useRef(handleRoutingStrategyChange);
   handleRoutingStrategyChangeRef.current = handleRoutingStrategyChange;
   const stableRoutingStrategyChange = useCallback(
@@ -1446,39 +1985,39 @@ export default function TokenRoutes() {
     [],
   );
   const stableTokenDraftChange = useCallback(
-    (channelId: number, tokenId: number) => setChannelTokenDraft((prev) => ({ ...prev, [channelId]: tokenId })),
+    (targetId: number, tokenId: number) => setTargetTokenDraft((prev) => ({ ...prev, [targetId]: tokenId })),
     [],
   );
-  const stableAddChannel = useCallback((routeId: number) => {
+  const stableAddTarget = useCallback((routeId: number) => {
     loadCandidates();
-    setAddChannelModalRouteId(routeId);
+    setAddRouteTargetModalRouteId(routeId);
   }, []);
   const stableToggleSourceGroup = useCallback(
     (groupKey: string) => setExpandedSourceGroupMap((prev) => ({ ...prev, [groupKey]: !prev[groupKey] })),
     [],
   );
-  const handleChannelTokenSaveRef = useRef(handleChannelTokenSave);
-  handleChannelTokenSaveRef.current = handleChannelTokenSave;
-  const stableChannelTokenSave = useCallback(
-    (routeId: number, channelId: number, accountId: number) => handleChannelTokenSaveRef.current(routeId, channelId, accountId),
+  const handleTargetTokenSaveRef = useRef(handleTargetTokenSave);
+  handleTargetTokenSaveRef.current = handleTargetTokenSave;
+  const stableTargetTokenSave = useCallback(
+    (routeId: number, targetId: number, accountId: number) => handleTargetTokenSaveRef.current(routeId, targetId, accountId),
     [],
   );
-  const handleDeleteChannelRef = useRef(handleDeleteChannel);
-  handleDeleteChannelRef.current = handleDeleteChannel;
-  const stableDeleteChannel = useCallback(
-    (channelId: number, routeId: number) => handleDeleteChannelRef.current(channelId, routeId),
+  const handleDeleteTargetRef = useRef(handleDeleteTarget);
+  handleDeleteTargetRef.current = handleDeleteTarget;
+  const stableDeleteTarget = useCallback(
+    (targetId: number, routeId: number) => handleDeleteTargetRef.current(targetId, routeId),
     [],
   );
-  const handleToggleChannelEnabledRef = useRef(handleToggleChannelEnabled);
-  handleToggleChannelEnabledRef.current = handleToggleChannelEnabled;
-  const stableToggleChannelEnabled = useCallback(
-    (channelId: number, routeId: number, enabled: boolean) => handleToggleChannelEnabledRef.current(channelId, routeId, enabled),
+  const handleToggleTargetEnabledRef = useRef(handleToggleTargetEnabled);
+  handleToggleTargetEnabledRef.current = handleToggleTargetEnabled;
+  const stableToggleTargetEnabled = useCallback(
+    (targetId: number, routeId: number, enabled: boolean) => handleToggleTargetEnabledRef.current(targetId, routeId, enabled),
     [],
   );
-  const handleChannelDragEndRef = useRef(handleChannelDragEnd);
-  handleChannelDragEndRef.current = handleChannelDragEnd;
-  const stableChannelDragEnd = useCallback(
-    (routeId: number, event: DragEndEvent) => handleChannelDragEndRef.current(routeId, event),
+  const handleTargetDragEndRef = useRef(handleTargetDragEnd);
+  handleTargetDragEndRef.current = handleTargetDragEnd;
+  const stableTargetDragEnd = useCallback(
+    (routeId: number, event: DragEndEvent) => handleTargetDragEndRef.current(routeId, event),
     [],
   );
   const handleCreateTokenRef = useRef(handleCreateTokenForMissingAccount);
@@ -1490,7 +2029,7 @@ export default function TokenRoutes() {
   const handleSiteBlockModelRef = useRef(handleSiteBlockModel);
   handleSiteBlockModelRef.current = handleSiteBlockModel;
   const stableSiteBlockModel = useCallback(
-    (channelId: number, routeId: number) => handleSiteBlockModelRef.current(channelId, routeId),
+    (targetId: number, routeId: number) => handleSiteBlockModelRef.current(targetId, routeId),
     [],
   );
   const handleClearRouteCooldownRef = useRef(handleClearRouteCooldown);
@@ -1500,150 +2039,273 @@ export default function TokenRoutes() {
     [],
   );
 
-  const addChannelModalRoute = addChannelModalRouteId
-    ? routeSummaries.find((r) => r.id === addChannelModalRouteId) || null
+  const addRouteTargetModalRoute = addRouteTargetModalRouteId
+    ? routeSummaries.find((r) => r.id === addRouteTargetModalRouteId) || null
     : null;
 
-  const handleAddChannelSuccess = async () => {
-    if (!addChannelModalRouteId) return;
-    // Reload channels for this route
-    await loadChannels(addChannelModalRouteId, true);
-    // Refresh summary to update channel count
+  const activeRouteNode = activeRoute ? buildRouteGraphNodeFromRoute(activeRoute) : null;
+  const activeRouteMacro = resolveRouteMacroBinding(
+    activeRoute,
+    activeRouteGraphSource,
+    activeRouteNode?.macro || null,
+  );
+  const activeRouteGraphSourceForPreview = useMemo<RouteGraphSource>(() => ({
+    ...defaultGraph(),
+    nodes: (activeRouteGraphSource?.nodes || []) as RouteGraphSource['nodes'],
+    edges: (activeRouteGraphSource?.edges || []) as RouteGraphSource['edges'],
+    macros: (activeRouteGraphSource?.macros || []) as RouteGraphSource['macros'],
+  }), [activeRouteGraphSource]);
+  const activeRouteGraphMacro = activeRouteMacro ? activeRouteMacro as RouteGraphMacro : null;
+  const activeRouteGeneratedRows = useMemo<MacroGeneratedPreviewRow[]>(() => (
+    activeRouteGraphMacro
+      ? getMacroGeneratedPreviewRows(activeRouteGraphSourceForPreview, activeRouteGraphMacro)
+      : []
+  ), [activeRouteGraphMacro, activeRouteGraphSourceForPreview]);
+  const activeRouteSourceRouteIds = activeRoute ? getRouteBackendRouteIds(activeRoute.backend) : [];
+  const activeRouteGraphNodeId = activeRouteNode ? String(activeRouteNode.stableId || activeRouteNode.id || '') : '';
+  const activeRouteJson = activeRouteNode ? JSON.stringify({
+    ...activeRouteNode,
+    ...(activeRouteMacro ? { macro: activeRouteMacro } : {}),
+  }, null, 2) : '';
+
+  const focusRouteGraphMacro = useCallback((macroId: string | null | undefined) => {
+    const normalizedMacroId = String(macroId || '').trim();
+    if (!normalizedMacroId) {
+      setRouteEditorMode('graph');
+      return;
+    }
+    setRouteGraphFocusIntent({
+      id: ++routeGraphFocusIntentSeqRef.current,
+      kind: 'macro',
+      macroId: normalizedMacroId,
+    });
+    setRouteEditorMode('graph');
+  }, []);
+
+  const focusRouteGraphNode = useCallback((nodeId: string | null | undefined, macroId?: string | null) => {
+    const normalizedNodeId = String(nodeId || '').trim();
+    if (!normalizedNodeId) {
+      focusRouteGraphMacro(macroId);
+      return;
+    }
+    setRouteGraphFocusIntent({
+      id: ++routeGraphFocusIntentSeqRef.current,
+      kind: 'node',
+      nodeId: normalizedNodeId,
+      macroId: macroId || null,
+    });
+    setRouteEditorMode('graph');
+  }, [focusRouteGraphMacro]);
+
+  const handleAddTargetSuccess = async () => {
+    if (!addRouteTargetModalRouteId) return;
+    // Reload targets for this route
+    await loadTargets(addRouteTargetModalRouteId, true);
+    // Refresh summary to update target count
     await load();
   };
 
   return (
-    <div className="animate-fade-in" style={{ minHeight: 400 }}>
-      {/* Toolbar: search + sort + actions */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
-        <div className="toolbar-search" style={{ minWidth: 220, flex: 1, maxWidth: 360 }}>
-          <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-            />
-          </svg>
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder={tr('搜索模型路由...')}
+    <PageShell className="shadcn-default-scope min-h-[400px]">
+      <PageHeader
+        title={tr('app.routes')}
+        description={tr('pages.tokenRoutes.routesSubtitle')}
+        actions={(
+          <PageActionBar>
+            <SecondaryActionButton
+              type="button"
+              icon={RefreshCw}
+              loading={loadingDecision}
+              loadingLabel={tr('pages.downstreamKeys.refreshing')}
+              onClick={handleRefreshRouteDecisions}
+              disabled={loadingDecision}
+            >
+              {tr('pages.tokenRoutes.refreshSelectionProbability')}
+            </SecondaryActionButton>
+            <SecondaryActionButton
+              type="button"
+              icon={WandSparkles}
+              loading={rebuilding}
+              loadingLabel={tr('pages.tokenRoutes.rebuilding')}
+              onClick={handleRebuild}
+              disabled={rebuilding}
+            >
+              {tr('pages.tokenRoutes.autoRebuild')}
+            </SecondaryActionButton>
+          </PageActionBar>
+        )}
+      />
+      <Tabs.Tabs
+        value={routeEditorMode}
+        onValueChange={(value) => setRouteEditorMode(value as typeof routeEditorMode)}
+        className="grid min-w-0 max-w-full gap-3"
+      >
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <SegmentedTabBar
+            value={routeEditorMode}
+            onValueChange={(value) => setRouteEditorMode(value as typeof routeEditorMode)}
+            className="w-full sm:w-auto"
+            items={[
+              { value: 'list', label: tr('pages.tokenRoutes.wizard'), icon: <GitBranch className="size-3.5" /> },
+              { value: 'graph', label: tr('pages.tokenRoutes.edit'), icon: <Workflow className="size-3.5" /> },
+              { value: 'json', label: tr('pages.tokenRoutes.advancedJson'), icon: <Code2 className="size-3.5" /> },
+            ]}
           />
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <div style={{ minWidth: 128 }}>
-            <ModernSelect
-              size="sm"
-              value={sortBy}
-              onChange={(nextValue) => {
-                const nextSortBy = nextValue as RouteSortBy;
-                setSortBy(nextSortBy);
-                setSortDir(nextSortBy === 'modelPattern' ? 'asc' : 'desc');
-              }}
-              options={[
-                { value: 'modelPattern', label: tr('模型名称') },
-                { value: 'channelCount', label: tr('通道数量') },
-              ]}
-              placeholder={tr('排序字段')}
-            />
+          <div className="flex flex-wrap items-center gap-2 px-1 text-xs text-muted-foreground">
+            {routesLoading ? (
+              <>
+                <Skeleton className="h-5 w-20 rounded-full" />
+                <Skeleton className="h-5 w-20 rounded-full" />
+                <Skeleton className="h-5 w-20 rounded-full" />
+              </>
+            ) : (
+              <>
+                <Badge variant="secondary">{tr('pages.models.total')} {routeSummaries.length}</Badge>
+                <Badge variant="success">{tr('pages.downstreamKeys.enabled')} {enabledCounts.enabled}</Badge>
+                <Badge variant="secondary">{tr('pages.downstreamKeys.disabled')} {enabledCounts.disabled}</Badge>
+              </>
+            )}
           </div>
-          <button
-            className="btn btn-ghost"
-            style={{ border: '1px solid var(--color-border)', padding: '7px 11px', fontSize: 12 }}
-            onClick={() => setSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'))}
-            data-tooltip={tr('切换排序方向')}
-            aria-label={tr('切换排序方向')}
-          >
-            {sortDir === 'asc' ? tr('升序 ↑') : tr('降序 ↓')}
-          </button>
         </div>
+        <Tabs.TabsContent value="graph" className="min-w-0 max-w-full overflow-hidden">
+          {routeEditorMode === 'graph' && (
+            <RouteGraphWorkbench
+              mode="graph"
+              focusIntent={routeGraphFocusIntent}
+              onFocusIntentConsumed={(id) => {
+                setRouteGraphFocusIntent((current) => current?.id === id ? null : current);
+              }}
+            />
+          )}
+        </Tabs.TabsContent>
+        <Tabs.TabsContent value="json" className="min-w-0 max-w-full overflow-hidden">
+          {routeEditorMode === 'json' && <RouteGraphWorkbench mode="json" />}
+        </Tabs.TabsContent>
+        <Tabs.TabsContent value="list" className="grid min-w-0 max-w-full gap-3">
+          <section className="grid gap-3">
+            <div className="rounded-md border bg-card p-3">
+              <div className="min-w-0">
+                <div className="text-sm font-semibold text-foreground">{tr('pages.tokenRoutes.routeWizard.title')}</div>
+                <div className="mt-1 max-w-3xl text-xs text-muted-foreground">
+                  {routesLoading ? (
+                    <Skeleton className="h-4 w-72 max-w-full" />
+                  ) : (
+                    tr('pages.tokenRoutes.routeWizard.description')
+                      .replace('{exactRoutes}', String(exactSourceRouteOptions.length))
+                      .replace('{routeReferences}', String(routeSummaries.filter((route) => isExplicitGroupRoute(route)).length))
+                  )}
+                </div>
+              </div>
+            </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, borderLeft: '1px solid var(--color-border)', paddingLeft: 8 }}>
-          <button
-            onClick={handleRefreshRouteDecisions}
-            disabled={loadingDecision}
-            className="btn btn-ghost"
-            style={{ border: '1px solid var(--color-border)', padding: '7px 12px' }}
-          >
-            {loadingDecision ? (
-              <><span className="spinner spinner-sm" /> {tr('刷新中...')}</>
-            ) : (
-              tr('刷新选中概率')
-            )}
-          </button>
+            <div className="overflow-hidden rounded-md border bg-card">
+              {routesLoading ? (
+                <RouteGroupBrowserLoadingSkeleton />
+              ) : (
+                <>
+              <div className="flex flex-col gap-3 border-b bg-muted/30 p-3 lg:flex-row lg:items-center lg:justify-between">
+                <SegmentedTabBar<RouteGroupListTab>
+                  value={routeGroupListTab}
+                  onValueChange={setRouteGroupListTab}
+                  className="w-full lg:w-auto"
+                  items={[
+                    { value: 'public', label: tr('pages.tokenRoutes.routeGroupTabs.external'), count: routeGroupTabCounts.public },
+                    { value: 'internal', label: tr('pages.tokenRoutes.routeGroupTabs.internalGroup'), count: routeGroupTabCounts.internal },
+                    { value: 'manual', label: tr('pages.tokenRoutes.routeGroupTabs.manual'), count: routeGroupTabCounts.manual },
+                  ]}
+                />
+                <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                  <Badge variant="secondary">
+                    {tr('pages.tokenRoutes.routeBrowser.totalRoutes').replace('{count}', String(filteredRoutes.length))}
+                  </Badge>
+                  <Badge variant="secondary">
+                    {tr('pages.tokenRoutes.routeBrowser.baseRoutes').replace('{count}', String(baseFilteredRoutes.length))}
+                  </Badge>
+                </div>
+              </div>
 
-          <button
-            onClick={handleRebuild}
-            disabled={rebuilding}
-            className="btn btn-ghost"
-            style={{ border: '1px solid var(--color-border)', padding: '7px 12px' }}
-          >
-            {rebuilding ? (
-              <><span className="spinner spinner-sm" /> {tr('重建中...')}</>
-            ) : (
-              tr('自动重建')
-            )}
-          </button>
-
-          <button
-            onClick={() => {
-              loadCandidates();
-              resetRouteForm();
-              setShowManual(true);
-            }}
-            className="btn btn-ghost"
-            style={{ border: '1px solid var(--color-border)', padding: '7px 12px' }}
-          >
-            {tr('新建群组')}
-          </button>
-
-          <button
-            onClick={toggleBatchSelectMode}
-            className={`btn ${batchSelectMode ? 'btn-primary' : 'btn-ghost'}`}
-            style={{ border: '1px solid var(--color-border)', padding: '7px 12px' }}
-          >
-            {batchSelectMode ? tr('退出批量') : tr('批量操作')}
-          </button>
-
-          <button
-            type="button"
-            aria-pressed={showZeroChannelRoutes}
-            onClick={() => {
-              if (!showZeroChannelRoutes) loadCandidates();
-              setShowZeroChannelRoutes((prev) => !prev);
-            }}
-            className="btn btn-ghost"
-            style={{ border: '1px solid var(--color-border)', padding: '7px 12px' }}
-          >
-            {showZeroChannelRoutes ? tr('隐藏 0 通道路由') : tr('显示 0 通道路由')}
-          </button>
-        </div>
-
-        <span className="badge badge-info" style={{ fontSize: 12, fontWeight: 500, marginLeft: 'auto' }}>
-          {tr('共')} {filteredRoutes.length} {tr('条路由')}
-        </span>
-      </div>
+              <div className="flex flex-col gap-2 p-3 xl:flex-row xl:items-center">
+                <div className="relative min-w-0 flex-1">
+                  <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    placeholder={tr('pages.tokenRoutes.searchModelRoutes')}
+                    className="pr-9 pl-8"
+                  />
+                  {search.trim() ? (
+                    <Button
+                      type="button"
+                      variant="ghostMuted"
+                      size="icon"
+                      className="absolute right-0.5 top-1/2 -translate-y-1/2"
+                      aria-label={tr('pages.tokenRoutes.routeBrowser.clearSearch')}
+                      onClick={() => setSearch('')}
+                    >
+                      <Eraser className="size-4" />
+                    </Button>
+                  ) : null}
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <Select
+                    value={sortBy}
+                    onValueChange={(nextValue) => {
+                      const nextSortBy = nextValue as RouteSortBy;
+                      setSortBy(nextSortBy);
+                      setSortDir(nextSortBy === 'modelPattern' ? 'asc' : 'desc');
+                    }}
+                  >
+                    <SelectTrigger className="w-full sm:w-44">
+                      <SelectValue placeholder={tr('pages.tokenRoutes.sortField')} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="modelPattern">{tr('pages.tokenRoutes.modelName')}</SelectItem>
+                      <SelectItem value="targetCount">{tr('pages.tokenRoutes.targetCount')}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button type="button" variant="outline" onClick={() => setSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'))}>
+                    {sortDir === 'asc' ? <ArrowDownAZ className="size-4" /> : <ArrowUpAZ className="size-4" />}
+                    {sortDir === 'asc' ? tr('pages.tokenRoutes.ascending') : tr('pages.tokenRoutes.descending')}
+                  </Button>
+                  <Button type="button" variant={batchSelectMode ? 'default' : 'outline'} onClick={toggleBatchSelectMode}>
+                    <ListChecks className="size-4" />
+                    {batchSelectMode ? tr('pages.tokenRoutes.exitBatchMode') : tr('pages.tokenRoutes.actions')}
+                  </Button>
+                  <Button type="button" variant={showZeroTargetRoutes ? 'secondary' : 'outline'} aria-pressed={showZeroTargetRoutes} onClick={() => {
+                    if (!showZeroTargetRoutes) loadCandidates();
+                    setShowZeroTargetRoutes((prev) => !prev);
+                  }}>
+                    <Network className="size-4" />
+                    {showZeroTargetRoutes ? tr('pages.tokenRoutes.0Targetsroutes2') : tr('pages.tokenRoutes.0Targetsroutes')}
+                  </Button>
+                  {routeGroupListTab === 'manual' ? (
+                    <CreateActionButton type="button" label={tr('pages.tokenRoutes.newGroups')} onClick={() => openRouteWizard()} />
+                  ) : null}
+                </div>
+              </div>
+                </>
+              )}
+            </div>
+          </section>
 
       {/* Collapsible filter panel */}
       <ResponsiveFilterPanel
         isMobile={isMobile}
         mobileOpen={showFilters}
         onMobileClose={() => setShowFilters(false)}
-        mobileTitle={tr('筛选路由')}
+        mobileTitle={tr('pages.tokenRoutes.filterroutes')}
         mobileTriggerWrapperClassName=""
         mobileTrigger={(
-          <button
-            className="btn btn-ghost"
-            style={{ border: '1px solid var(--color-border)', padding: '7px 12px', marginBottom: 8 }}
+          <Button
+            type="button"
+            variant="outline"
             onClick={() => {
               loadCandidates();
               setShowFilters(true);
             }}
           >
-            {tr('筛选')}
-          </button>
+            {tr('components.mobileFilterSheet.filter')}
+          </Button>
         )}
         mobileContent={(
           <RouteFilterBar
@@ -1703,9 +2365,11 @@ export default function TokenRoutes() {
         saving={saving}
         canSave={canSaveRoute}
         routeIconSelectOptions={routeIconSelectOptions}
-        previewModelSamples={previewModelSamples}
+        modelMatchPreviewEndpoints={modelMatchPreviewEndpoints}
         exactSourceRouteOptions={exactSourceRouteOptions}
+        routeEndpointCatalog={routeEndpointCatalog}
         sourceEndpointTypesByRouteId={sourceEndpointTypesByRouteId}
+        currentRouteNodeJson={editingRouteNodeJson}
         onSave={handleAddRoute}
         onCancel={handleCancelEditRoute}
       />
@@ -1713,41 +2377,93 @@ export default function TokenRoutes() {
       {/* Route card grid */}
       {/* Batch selection floating bar */}
       {batchSelectMode && (
-        <div className="route-batch-bar">
-          <span style={{ fontSize: 13, fontWeight: 500 }}>
-            {tr('已选择')} <b>{selectedRouteIds.size}</b> / {selectableRouteIds.size} {tr('条路由')}
+        <Card className="sticky top-[calc(var(--topbar-height)+0.5rem)] z-50 mb-2 flex flex-wrap items-center gap-2 p-2.5">
+          <span className="text-sm font-medium">
+            <ListChecks className="mr-1 inline size-4 text-primary" />
+            {tr('pages.oAuthManagement.selected')} <b>{selectedRouteIds.size}</b> / {selectableRouteIds.size} {tr('pages.tokenRoutes.routes2')}
           </span>
-          <button className="btn btn-ghost" style={{ padding: '4px 12px', fontSize: 12 }} onClick={selectAllRoutes}>{tr('全选')}</button>
-          <button className="btn btn-ghost" style={{ padding: '4px 12px', fontSize: 12 }} onClick={deselectAllRoutes}>{tr('取消全选')}</button>
-          <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-            <button
-              className="btn btn-warning"
-              style={{ padding: '6px 16px', fontSize: 13 }}
+          <ButtonGroup>
+            <Button type="button" variant="outline" size="sm" onClick={selectAllRoutes}>{tr('pages.tokenRoutes.selectAll')}</Button>
+            <Button type="button" variant="outline" size="sm" onClick={deselectAllRoutes}>{tr('pages.accounts.cancelselectAll')}</Button>
+          </ButtonGroup>
+          <ButtonGroup className="ml-auto">
+            {routeGroupListTab === 'manual' ? (
+              <>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={selectedRouteIds.size === 0 || batchUpdatingRoutes}
+                  onClick={() => handleBatchUpdateRoutes('set_public')}
+                >
+                  {batchUpdatingRoutes ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.downstreamKeys.processing')}</> : <><Upload className="size-4" />{tr('pages.tokenRoutes.setPublic')}</>}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={selectedRouteIds.size === 0 || batchUpdatingRoutes}
+                  onClick={() => handleBatchUpdateRoutes('set_internal')}
+                >
+                  {batchUpdatingRoutes ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.downstreamKeys.processing')}</> : <><Download className="size-4" />{tr('pages.tokenRoutes.setInternal')}</>}
+                </Button>
+              </>
+            ) : (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={selectedRouteIds.size === 0 || batchUpdatingRoutes}
+                onClick={() => handleBatchUpdateRoutes(routeGroupListTab === 'internal' ? 'set_public' : 'set_internal')}
+              >
+                {batchUpdatingRoutes
+                  ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.downstreamKeys.processing')}</>
+                  : routeGroupListTab === 'internal'
+                    ? <><Upload className="size-4" />{tr('pages.tokenRoutes.setPublic')}</>
+                    : <><Download className="size-4" />{tr('pages.tokenRoutes.setInternal')}</>}
+              </Button>
+            )}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
               disabled={selectedRouteIds.size === 0 || batchUpdatingRoutes}
               onClick={() => handleBatchUpdateRoutes('disable')}
             >
-              {batchUpdatingRoutes ? <><span className="spinner spinner-sm" /> {tr('处理中...')}</> : tr('批量禁用')}
-            </button>
-            <button
-              className="btn btn-primary"
-              style={{ padding: '6px 16px', fontSize: 13 }}
+              {batchUpdatingRoutes ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.downstreamKeys.processing')}</> : <><Ban className="size-4" /><span className="sr-only">{tr('pages.tokenRoutes.batchDisable')}</span>{tr('pages.accounts.disabled')}</>}
+            </Button>
+            <Button
+              type="button"
+              size="sm"
               disabled={selectedRouteIds.size === 0 || batchUpdatingRoutes}
               onClick={() => handleBatchUpdateRoutes('enable')}
             >
-              {batchUpdatingRoutes ? <><span className="spinner spinner-sm" /> {tr('处理中...')}</> : tr('批量启用')}
-            </button>
-          </div>
-        </div>
+              {batchUpdatingRoutes ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.downstreamKeys.processing')}</> : <><CheckCheck className="size-4" /><span className="sr-only">{tr('pages.tokenRoutes.batchEnable')}</span>{tr('pages.accounts.enabled')}</>}
+            </Button>
+          </ButtonGroup>
+        </Card>
       )}
 
-      <div className={isMobile ? 'mobile-card-list' : 'route-card-grid'}>
-        {visibleRoutes.map((route) => {
+      <div className={routeListSingleColumn ? 'grid min-w-0 gap-3' : 'route-list-workbench-layout grid min-w-0 grid-cols-1 gap-3 xl:grid-cols-[minmax(280px,0.82fr)_minmax(0,1.18fr)]'}>
+        <div className={isMobile ? 'grid gap-2' : 'route-list-pane grid min-w-0 max-w-full content-start gap-2'}>
+        {routesLoading ? (
+          <RouteGroupListLoadingSkeleton isMobile={isMobile} />
+        ) : filteredRoutes.length === 0 ? (
+          <EmptyStateBlock
+            className="min-h-[360px] rounded-lg border bg-card"
+            icon={<Search className="size-5" />}
+            title={routeSummaries.length === 0 ? tr('pages.tokenRoutes.noRouteYet') : tr('pages.tokenRoutes.noMatchingRoute')}
+            description={routeSummaries.length === 0
+              ? tr('pages.tokenRoutes.autoRebuildModelavailableRoutes')
+              : tr('pages.tokenRoutes.pleaseAdjustYourBrandFiltersSearchTerms')}
+          />
+        ) : visibleRoutes.map((route, index) => {
           const isExpanded = expandedRouteIds.includes(route.id);
           const isDesktopDetailClosing = closingDesktopDetailRouteIds.includes(route.id);
-          const isReadOnlyRoute = route.kind === 'zero_channel' || route.readOnly === true || route.isVirtual === true;
+          const isReadOnlyRoute = route.kind === 'zero_target' || route.readOnly === true || route.isVirtual === true;
           const exactRoute = isRouteExactModel(route);
           const explicitGroupRoute = isExplicitGroupRoute(route);
-          const channelManagementDisabled = explicitGroupRoute;
+          const targetManagementDisabled = explicitGroupRoute;
           const routeTitle = resolveRouteTitle(route);
 
           const isSelectable = selectableRouteIds.has(route.id);
@@ -1755,79 +2471,79 @@ export default function TokenRoutes() {
 
           if (isMobile) {
             return (
-              <div key={route.id} style={{ display: 'grid', gap: 8 }}>
+              <div key={route.id} className={`grid gap-2 animate-slide-up stagger-${Math.min(index + 1, 5)}`}>
                 <MobileCard
                   title={routeTitle}
                   headerActions={(
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <div className="flex items-center gap-2">
                       {batchSelectMode && isSelectable && (
-                        <label
-                          style={{ display: 'inline-flex', alignItems: 'center', gap: 4, cursor: 'pointer', fontSize: 12 }}
-                        >
-                          <input
+                        <label className="inline-flex cursor-pointer items-center gap-1 text-xs">
+                          <Checkbox
                             data-testid={`route-select-${route.id}`}
-                            aria-label={`选择路由 ${routeTitle}`}
-                            type="checkbox"
+                            aria-label={tr('pages.tokenRoutes.selectRouteAria').replace('{route}', routeTitle)}
                             checked={isSelected}
-                            onChange={() => toggleRouteSelection(route.id)}
-                            style={{ width: 16, height: 16, cursor: 'pointer', accentColor: 'var(--color-primary, #4f46e5)' }}
+                            onCheckedChange={() => toggleRouteSelection(route.id)}
                           />
-                          <span>{tr('选择')}</span>
+                          <span>{tr('pages.tokenRoutes.select')}</span>
                         </label>
                       )}
-                      <span className={`badge ${isReadOnlyRoute ? 'badge-muted' : (route.enabled ? 'badge-success' : 'badge-muted')}`} style={{ fontSize: 10 }}>
-                        {isReadOnlyRoute ? tr('未生成') : (route.enabled ? tr('启用') : tr('禁用'))}
-                      </span>
+                      <Badge variant={isReadOnlyRoute || !route.enabled ? 'secondary' : 'default'}>
+                        {isReadOnlyRoute ? tr('pages.tokenRoutes.notGenerated') : (route.enabled ? tr('pages.downstreamKeys.enabled') : tr('pages.downstreamKeys.disabled'))}
+                      </Badge>
                     </div>
                   )}
                   footerActions={(
-                    <>
-                      <button
+                    <ButtonGroup>
+                      <Button
                         type="button"
-                        className="btn btn-link"
+                        variant="ghost"
+                        size="sm"
                         onClick={() => toggleExpand(route.id)}
                       >
-                        {isExpanded ? tr('收起') : tr('详情')}
-                      </button>
+                        {isExpanded ? tr('pages.accounts.collapse') : tr('pages.accounts.details')}
+                      </Button>
                       {!isReadOnlyRoute && (
-                        <button
+                        <Button
                           type="button"
-                          className="btn btn-link"
+                          variant="ghost"
+                          size="sm"
                           onClick={() => handleEditRoute(route)}
                         >
-                          {tr('编辑')}
-                        </button>
+                          {tr('pages.accounts.edit')}
+                        </Button>
                       )}
                       {!isReadOnlyRoute && (
-                        <button
+                        <Button
                           type="button"
-                          className="btn btn-link"
+                          variant="ghost"
+                          size="sm"
                           onClick={() => handleToggleRouteEnabled(route)}
                         >
-                          {route.enabled ? tr('禁用') : tr('启用')}
-                        </button>
+                          {route.enabled ? tr('pages.downstreamKeys.disabled') : tr('pages.downstreamKeys.enabled')}
+                        </Button>
                       )}
-                      {!isReadOnlyRoute && !channelManagementDisabled && (
-                        <button
+                      {!isReadOnlyRoute && !targetManagementDisabled && (
+                        <Button
                           type="button"
-                          className="btn btn-link"
-                          onClick={() => stableAddChannel(route.id)}
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => stableAddTarget(route.id)}
                         >
-                          {tr('添加通道')}
-                        </button>
+                          {tr('pages.tokenRoutes.addtargets')}
+                        </Button>
                       )}
-                    </>
+                    </ButtonGroup>
                   )}
                 >
-                  <MobileField label="模型" value={route.modelPattern} stacked />
-                  <MobileField label="通道" value={route.channelCount} />
-                  <MobileField label="策略" value={isReadOnlyRoute ? tr('未生成') : getRouteRoutingStrategyLabel(route.routingStrategy)} />
-                  <MobileField label="状态" value={isReadOnlyRoute ? tr('未生成') : (route.enabled ? tr('启用') : tr('禁用'))} />
+                  <MobileField label={tr('components.modelAnalysisPanel.model')} value={getRouteRequestedModelPattern(route) || resolveRouteTitle(route)} stacked />
+                  <MobileField label={tr('pages.tokenRoutes.targets')} value={route.targetCount} />
+                  <MobileField label={tr('pages.oAuthManagement.strategy')} value={isReadOnlyRoute ? tr('pages.tokenRoutes.notGenerated') : getRouteRoutingStrategyLabel(route.routingStrategy)} />
+                  <MobileField label={tr('components.notificationPanel.status')} value={isReadOnlyRoute ? tr('pages.tokenRoutes.notGenerated') : (route.enabled ? tr('pages.downstreamKeys.enabled') : tr('pages.downstreamKeys.disabled'))} />
                   {explicitGroupRoute && (
-                    <MobileField label="模式" value={tr('群组聚合')} />
+                    <MobileField label={tr('pages.modelTester.mode')} value={tr('pages.tokenRoutes.groups2')} />
                   )}
                   {!exactRoute && !explicitGroupRoute && (
-                    <MobileField label="模式" value={tr('通配符路由')} />
+                    <MobileField label={tr('pages.modelTester.mode')} value={tr('pages.tokenRoutes.routes')} />
                   )}
                 </MobileCard>
                 {isExpanded && (
@@ -1844,23 +2560,23 @@ export default function TokenRoutes() {
                     clearingCooldown={!!clearingCooldownByRoute[route.id]}
                     onRoutingStrategyChange={stableRoutingStrategyChange}
                     updatingRoutingStrategy={!!updatingRoutingStrategyByRoute[route.id]}
-                    channels={channelsByRouteId[route.id]}
-                    loadingChannels={!!loadingChannelsByRouteId[route.id]}
+                    targets={targetsByRouteId[route.id]}
+                    loadingTargets={!!loadingTargetsByRouteId[route.id]}
                     routeDecision={decisionByRoute[route.id] || null}
                     loadingDecision={loadingDecision}
                     candidateView={getRouteCandidateView(route.id)}
-                    channelTokenDraft={channelTokenDraft}
-                    updatingChannel={updatingChannel}
+                    targetTokenDraft={targetTokenDraft}
+                    updatingTarget={updatingTarget}
                     savingPriority={!!savingPriorityByRoute[route.id]}
                     onTokenDraftChange={stableTokenDraftChange}
-                    onSaveToken={stableChannelTokenSave}
-                    onDeleteChannel={stableDeleteChannel}
-                    onToggleChannelEnabled={stableToggleChannelEnabled}
-                    onChannelDragEnd={stableChannelDragEnd}
+                    onSaveToken={stableTargetTokenSave}
+                    onDeleteTarget={stableDeleteTarget}
+                    onToggleTargetEnabled={stableToggleTargetEnabled}
+                    onTargetDragEnd={stableTargetDragEnd}
                     missingTokenSiteItems={getMissingTokenSiteItems(route.id)}
                     missingTokenGroupItems={getMissingTokenGroupItems(route.id)}
                     onCreateTokenForMissing={stableCreateTokenForMissing}
-                    onAddChannel={stableAddChannel}
+                    onAddTarget={stableAddTarget}
                     onSiteBlockModel={stableSiteBlockModel}
                     expandedSourceGroupMap={expandedSourceGroupMap}
                     onToggleSourceGroup={stableToggleSourceGroup}
@@ -1875,7 +2591,7 @@ export default function TokenRoutes() {
               route={route}
               brand={routeBrandById.get(route.id) || null}
               expanded={false}
-              summaryExpanded={isExpanded || isDesktopDetailClosing}
+              summaryExpanded={activeRouteId === route.id}
               onToggleExpand={stableToggleExpand}
               onEdit={stableEditRoute}
               onDelete={stableDeleteRoute}
@@ -1884,158 +2600,503 @@ export default function TokenRoutes() {
               clearingCooldown={!!clearingCooldownByRoute[route.id]}
               onRoutingStrategyChange={stableRoutingStrategyChange}
               updatingRoutingStrategy={!!updatingRoutingStrategyByRoute[route.id]}
-              channels={channelsByRouteId[route.id]}
-              loadingChannels={!!loadingChannelsByRouteId[route.id]}
+              targets={targetsByRouteId[route.id]}
+              loadingTargets={!!loadingTargetsByRouteId[route.id]}
               routeDecision={decisionByRoute[route.id] || null}
               loadingDecision={loadingDecision}
               candidateView={EMPTY_ROUTE_CANDIDATE_VIEW}
-              channelTokenDraft={channelTokenDraft}
-              updatingChannel={updatingChannel}
+              targetTokenDraft={targetTokenDraft}
+              updatingTarget={updatingTarget}
               savingPriority={!!savingPriorityByRoute[route.id]}
               onTokenDraftChange={stableTokenDraftChange}
-              onSaveToken={stableChannelTokenSave}
-              onDeleteChannel={stableDeleteChannel}
-              onToggleChannelEnabled={stableToggleChannelEnabled}
-              onChannelDragEnd={stableChannelDragEnd}
+              onSaveToken={stableTargetTokenSave}
+              onDeleteTarget={stableDeleteTarget}
+              onToggleTargetEnabled={stableToggleTargetEnabled}
+              onTargetDragEnd={stableTargetDragEnd}
               missingTokenSiteItems={EMPTY_MISSING_ITEMS}
               missingTokenGroupItems={EMPTY_MISSING_GROUP_ITEMS}
               onCreateTokenForMissing={stableCreateTokenForMissing}
-              onAddChannel={stableAddChannel}
+              onAddTarget={stableAddTarget}
               onSiteBlockModel={stableSiteBlockModel}
               expandedSourceGroupMap={expandedSourceGroupMap}
               onToggleSourceGroup={stableToggleSourceGroup}
             />
           );
-          const detailPanel = (
-            <DesktopDetailPanelPresence open={isExpanded}>
-              {() => (
-                <RouteCard
-                  route={route}
-                  brand={routeBrandById.get(route.id) || null}
-                  expanded
-                  compact
-                  detailPanel
-                  onToggleExpand={stableToggleExpand}
-                  onEdit={stableEditRoute}
-                  onDelete={stableDeleteRoute}
-                  onToggleEnabled={stableToggleEnabled}
-                  onClearCooldown={stableClearRouteCooldown}
-                  clearingCooldown={!!clearingCooldownByRoute[route.id]}
-                  onRoutingStrategyChange={stableRoutingStrategyChange}
-                  updatingRoutingStrategy={!!updatingRoutingStrategyByRoute[route.id]}
-                  channels={channelsByRouteId[route.id]}
-                  loadingChannels={!!loadingChannelsByRouteId[route.id]}
-                  routeDecision={decisionByRoute[route.id] || null}
-                  loadingDecision={loadingDecision}
-                  candidateView={getRouteCandidateView(route.id)}
-                  channelTokenDraft={channelTokenDraft}
-                  updatingChannel={updatingChannel}
-                  savingPriority={!!savingPriorityByRoute[route.id]}
-                  onTokenDraftChange={stableTokenDraftChange}
-                  onSaveToken={stableChannelTokenSave}
-                  onDeleteChannel={stableDeleteChannel}
-                  onToggleChannelEnabled={stableToggleChannelEnabled}
-                  onChannelDragEnd={stableChannelDragEnd}
-                  missingTokenSiteItems={getMissingTokenSiteItems(route.id)}
-                  missingTokenGroupItems={getMissingTokenGroupItems(route.id)}
-                  onCreateTokenForMissing={stableCreateTokenForMissing}
-                  onAddChannel={stableAddChannel}
-                  onSiteBlockModel={stableSiteBlockModel}
-                  expandedSourceGroupMap={expandedSourceGroupMap}
-                  onToggleSourceGroup={stableToggleSourceGroup}
-                />
-              )}
-            </DesktopDetailPanelPresence>
-          );
 
           if (batchSelectMode && isSelectable) {
             return (
-              <Fragment key={route.id}>
-                <div style={{ display: 'flex', gap: 0, alignItems: 'stretch' }}>
+              <div key={route.id} className={`flex items-stretch animate-slide-up stagger-${Math.min(index + 1, 5)}`}>
+                <div className="flex items-stretch">
                   <div
                     onClick={() => toggleRouteSelection(route.id)}
-                    style={{
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      width: 36, minHeight: '100%', cursor: 'pointer',
-                      borderRadius: '8px 0 0 8px',
-                      background: isSelected ? 'var(--color-primary, #4f46e5)' : 'var(--color-bg-card, #fff)',
-                      border: '1px solid var(--color-border)',
-                      borderRight: 'none',
-                      transition: 'background 0.15s',
-                    }}
+                    className="flex min-h-full w-9 cursor-pointer items-center justify-center rounded-l-md border border-r-0"
                   >
-                    <input
+                    <Checkbox
                       data-testid={`route-select-${route.id}`}
-                      aria-label={`选择路由 ${routeTitle}`}
-                      type="checkbox"
+                      aria-label={tr('pages.tokenRoutes.selectRouteAria').replace('{route}', routeTitle)}
                       checked={isSelected}
-                      onChange={() => toggleRouteSelection(route.id)}
+                      onCheckedChange={() => toggleRouteSelection(route.id)}
                       onClick={(e) => e.stopPropagation()}
-                      style={{ width: 16, height: 16, cursor: 'pointer', accentColor: 'var(--color-primary, #4f46e5)' }}
                     />
                   </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
+                  <div className="min-w-0 flex-1">
                     {summaryCard}
                   </div>
                 </div>
-                {detailPanel}
-              </Fragment>
+              </div>
             );
           }
 
           return (
-            <Fragment key={route.id}>
+            <div key={route.id} className={`animate-slide-up stagger-${Math.min(index + 1, 5)}`}>
               {summaryCard}
-              {detailPanel}
-            </Fragment>
+            </div>
           );
         })}
+        </div>
+
+        {!isMobile && routesLoading ? (
+          <RouteGroupDetailLoadingSkeleton />
+        ) : !isMobile && filteredRoutes.length > 0 && (
+          <section className="route-workbench grid min-h-[520px] min-w-0 max-w-full content-start gap-3">
+            {activeRoute ? (
+              <>
+                <div className="rounded-lg border bg-card p-3">
+                  <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                    <div className="min-w-0">
+                      <div className="flex min-w-0 flex-wrap items-center gap-2">
+                        <strong className="min-w-0 truncate text-sm text-foreground">{resolveRouteTitle(activeRoute)}</strong>
+                        <Badge variant={activeRoute.enabled ? 'success' : 'secondary'}>
+                          {activeRoute.enabled ? tr('pages.downstreamKeys.enabled') : tr('pages.downstreamKeys.disabled')}
+                        </Badge>
+                        <Badge variant="secondary">{activeRoute.visibility === 'internal' ? tr('pages.tokenRoutes.routeGroupTabs.internal') : tr('pages.tokenRoutes.routeGroupTabs.external')}</Badge>
+                        {activeRouteMacro ? <Badge variant="info">{tr('pages.tokenRoutes.routeGraphWorkbench.macro')}</Badge> : null}
+                      </div>
+                      <div className="mt-1 truncate font-mono text-xs text-muted-foreground">
+                        {getRouteRequestedModelPattern(activeRoute) || resolveRouteTitle(activeRoute)}
+                      </div>
+                    </div>
+                    <ButtonGroup>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => (
+                          activeRouteGraphMacro
+                            ? focusRouteGraphMacro(activeRouteGraphMacro.id)
+                            : focusRouteGraphNode(activeRouteGraphNodeId, activeRouteMacro?.id || null)
+                        )}
+                      >
+                        <Crosshair className="size-4" />
+                        {tr('pages.tokenRoutes.routeGraphWorkbench.focus')}
+                      </Button>
+                      <Button type="button" variant="outline" size="sm" onClick={() => handleEditRoute(activeRoute)}>
+                        {tr('pages.accounts.edit')}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => stableRouteVisibilityChange(activeRoute, activeRoute.visibility === 'internal' ? 'public' : 'internal')}
+                      >
+                        {activeRoute.visibility === 'internal'
+                          ? tr('pages.tokenRoutes.setPublic')
+                          : tr('pages.tokenRoutes.setInternal')}
+                      </Button>
+                    </ButtonGroup>
+                  </div>
+                </div>
+
+                <Tabs.Tabs value={workbenchTab} onValueChange={(value) => setWorkbenchTab(value as RouteWorkbenchTab)} className="grid min-w-0 max-w-full gap-3">
+                  <SegmentedTabBar<RouteWorkbenchTab>
+                    value={workbenchTab}
+                    onValueChange={setWorkbenchTab}
+                    className="w-full"
+                    mouseDownActivation
+                    items={[
+                      { value: 'priority', label: tr('pages.tokenRoutes.routeGraphWorkbench.priority'), icon: <ListChecks className="size-3.5" /> },
+                      { value: 'macro', label: tr('pages.tokenRoutes.routeGraphWorkbench.macro'), icon: <Boxes className="size-3.5" /> },
+                      { value: 'generated', label: tr('pages.tokenRoutes.routeGraphWorkbench.generatedView'), icon: <Workflow className="size-3.5" /> },
+                      { value: 'diagnostics', label: tr('pages.tokenRoutes.routeWorkbench.diagnostics'), icon: <HeartPulse className="size-3.5" /> },
+                      { value: 'json', label: tr('pages.tokenRoutes.routeGraphWorkbench.json'), icon: <FileJson className="size-3.5" /> },
+                    ]}
+                  />
+
+                  <Tabs.TabsContent value="priority" className="min-w-0">
+                    <RouteCard
+                      route={activeRoute}
+                      brand={routeBrandById.get(activeRoute.id) || null}
+                      expanded
+                      compact
+                      detailPanel
+                      showCollapseAction={false}
+                      onToggleExpand={() => setActiveRouteId(null)}
+                      onEdit={stableEditRoute}
+                      onDelete={stableDeleteRoute}
+                      onToggleEnabled={stableToggleEnabled}
+                      onClearCooldown={stableClearRouteCooldown}
+                      clearingCooldown={!!clearingCooldownByRoute[activeRoute.id]}
+                      onRoutingStrategyChange={stableRoutingStrategyChange}
+                      updatingRoutingStrategy={!!updatingRoutingStrategyByRoute[activeRoute.id]}
+                      targets={targetsByRouteId[activeRoute.id]}
+                      loadingTargets={!!loadingTargetsByRouteId[activeRoute.id]}
+                      routeDecision={decisionByRoute[activeRoute.id] || null}
+                      loadingDecision={loadingDecision}
+                      candidateView={getRouteCandidateView(activeRoute.id)}
+                      targetTokenDraft={targetTokenDraft}
+                      updatingTarget={updatingTarget}
+                      savingPriority={!!savingPriorityByRoute[activeRoute.id]}
+                      onTokenDraftChange={stableTokenDraftChange}
+                      onSaveToken={stableTargetTokenSave}
+                      onDeleteTarget={stableDeleteTarget}
+                      onToggleTargetEnabled={stableToggleTargetEnabled}
+                      onTargetDragEnd={stableTargetDragEnd}
+                      missingTokenSiteItems={getMissingTokenSiteItems(activeRoute.id)}
+                      missingTokenGroupItems={getMissingTokenGroupItems(activeRoute.id)}
+                      onCreateTokenForMissing={stableCreateTokenForMissing}
+                      onAddTarget={stableAddTarget}
+                      onSiteBlockModel={stableSiteBlockModel}
+                      expandedSourceGroupMap={expandedSourceGroupMap}
+                      onToggleSourceGroup={stableToggleSourceGroup}
+                    />
+                  </Tabs.TabsContent>
+
+                  <Tabs.TabsContent value="macro" className="min-w-0 max-w-full overflow-hidden">
+                    <div className="rounded-lg border bg-card p-3">
+                      <div className="flex items-start gap-2">
+                        <Boxes className="mt-0.5 size-4 text-muted-foreground" />
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm font-semibold">{activeRouteMacro ? tr('pages.tokenRoutes.routeGraphWorkbench.macro') : tr('pages.tokenRoutes.routeWorkbench.noMacro')}</div>
+                          <div className="mt-1 text-xs text-muted-foreground">
+                            {activeRouteMacro
+                              ? tr('pages.tokenRoutes.routeWorkbench.macroDescription')
+                              : tr('pages.tokenRoutes.routeWorkbench.noMacroDescription')}
+                          </div>
+                          <div className="mt-3 grid gap-2 text-xs">
+                            <div className="flex justify-between gap-3">
+                              <span className="text-muted-foreground">{tr('pages.tokenRoutes.routeGraphWorkbench.label')}</span>
+                              <span className="min-w-0 truncate font-medium">{activeRouteGraphMacro ? getMacroDisplayName(activeRouteGraphMacro) : '-'}</span>
+                            </div>
+                            <div className="flex justify-between gap-3">
+                              <span className="text-muted-foreground">{tr('pages.tokenRoutes.routeGraphWorkbench.macroId')}</span>
+                              <code className="min-w-0 truncate">{activeRouteMacro?.id || '-'}</code>
+                            </div>
+                            <div className="flex justify-between gap-3">
+                              <span className="text-muted-foreground">{tr('pages.tokenRoutes.manualRoutePanel.visibility')}</span>
+                              <span>{activeRouteMacro?.visibility || activeRoute.visibility || 'public'}</span>
+                            </div>
+                            <div className="flex justify-between gap-3">
+                              <span className="text-muted-foreground">{tr('pages.oAuthManagement.strategy')}</span>
+                              <span>{getRouteRoutingStrategyLabel(activeRoute.routingStrategy)}</span>
+                            </div>
+                            <div className="flex justify-between gap-3">
+                              <span className="text-muted-foreground">{tr('pages.tokenRoutes.manualRoutePanel.sourceRoutes')}</span>
+                              <span>{activeRouteSourceRouteIds.length}</span>
+                            </div>
+                          </div>
+                          <div className="mt-3">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => focusRouteGraphMacro(activeRouteGraphMacro?.id || activeRouteMacro?.id)}
+                              disabled={!activeRouteMacro}
+                            >
+                              <Crosshair className="size-4" />
+                              {tr('pages.tokenRoutes.routeWorkbench.openGraph')}
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </Tabs.TabsContent>
+
+                  <Tabs.TabsContent value="generated" className="min-w-0 max-w-full overflow-hidden">
+                    <div className="rounded-lg border bg-card p-3">
+                      <div className="flex items-start gap-2">
+                        <Workflow className="mt-0.5 size-4 text-muted-foreground" />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                            <div className="min-w-0">
+                              <div className="text-sm font-semibold">{tr('pages.tokenRoutes.routeGraphWorkbench.generatedView')}</div>
+                            </div>
+                            <ButtonGroup className="shrink-0">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => focusRouteGraphMacro(activeRouteGraphMacro?.id || activeRouteMacro?.id)}
+                                disabled={!activeRouteMacro}
+                              >
+                                <Boxes className="size-4" />
+                                {tr('pages.tokenRoutes.routeGraphWorkbench.macro')}
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => focusRouteGraphNode(getGeneratedRoutePrimaryNodeId(activeRouteGeneratedRows[0]), activeRouteGraphMacro?.id || activeRouteMacro?.id || null)}
+                                disabled={!activeRouteGraphMacro || activeRouteGeneratedRows.length === 0}
+                              >
+                                <Workflow className="size-4" />
+                                {tr('pages.tokenRoutes.routeWorkbench.showGraph')}
+                              </Button>
+                            </ButtonGroup>
+                          </div>
+                          {!activeRouteGraphMacro ? (
+                            <EmptyStateBlock
+                              className="mt-3 rounded-md border border-dashed bg-background"
+                              icon={<Boxes className="size-5" />}
+                              title={tr('pages.tokenRoutes.routeWorkbench.noMacro')}
+                              description={tr('pages.tokenRoutes.routeWorkbench.noMacroDescription')}
+                            />
+                          ) : activeRouteGeneratedRows.length === 0 ? (
+                            <EmptyStateBlock
+                              className="mt-3 rounded-md border border-dashed bg-background"
+                              icon={<Workflow className="size-5" />}
+                              title={tr('pages.tokenRoutes.routeGraphWorkbench.noGeneratedPrimitiveRoutes')}
+                            />
+                          ) : (
+                            <div className="mt-3 grid min-w-0 gap-3">
+                              <div className="rounded-md border bg-background p-3">
+                                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                                  <Badge variant="info" className="max-w-full">
+                                    <Boxes className="size-3" />
+                                    <button
+                                      type="button"
+                                      className="min-w-0 truncate border-0 bg-transparent p-0 text-left text-current"
+                                      onClick={() => focusRouteGraphMacro(activeRouteGraphMacro.id)}
+                                    >
+                                      {getMacroDisplayName(activeRouteGraphMacro)}
+                                    </button>
+                                  </Badge>
+                                  <Badge variant="secondary">
+                                    <Waypoints className="size-3" />
+                                    {activeRouteGeneratedRows.length}
+                                  </Badge>
+                                  <Badge variant="secondary">
+                                    <GitCommitHorizontal className="size-3" />
+                                    {new Set(activeRouteGeneratedRows.map((row) => row.groupIndex)).size}
+                                  </Badge>
+                                </div>
+                                <div className="mt-2 break-words text-xs text-muted-foreground">
+                                  {tr('pages.tokenRoutes.routeGraphWorkbench.generatedViewSummary')
+                                    .replace('{name}', getMacroDisplayName(activeRouteGraphMacro))
+                                    .replace('{paths}', String(activeRouteGeneratedRows.length))
+                                    .replace('{groups}', String(new Set(activeRouteGeneratedRows.map((row) => row.groupIndex)).size))}
+                                </div>
+                              </div>
+                              <div className="grid min-w-0 gap-2">
+                                {activeRouteGeneratedRows.map((row) => {
+                                  const pathNodes = getGeneratedRoutePathNodes(row);
+                                  return (
+                                    <div key={row.id} className="grid min-w-0 gap-2 rounded-md border bg-background p-2.5 text-xs">
+                                      <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+                                        <div className="min-w-0">
+                                          <div className="truncate font-medium">{getGeneratedRouteRowLabel(row)}</div>
+                                          <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-1.5 text-muted-foreground">
+                                            <span>{row.groupLabel}</span>
+                                            <span className="text-muted-foreground/60">·</span>
+                                            <span>{tr('pages.tokenRoutes.routeGraphWorkbench.priorityValue').replace('{value}', String(row.priority))}</span>
+                                          </div>
+                                        </div>
+                                        <Badge variant="outline" className="shrink-0">{tr('pages.tokenRoutes.routeGraphWorkbench.readOnly')}</Badge>
+                                      </div>
+                                      <div className="grid min-w-0 gap-1.5 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_auto_minmax(0,1fr)] md:items-stretch">
+                                        {pathNodes.map((pathNode, index) => (
+                                          <Fragment key={`${row.id}:${pathNode.key}:${pathNode.nodeId}`}>
+                                            {index > 0 ? (
+                                              <div className="hidden items-center justify-center text-muted-foreground md:flex">
+                                                <ArrowRight className="size-4" />
+                                              </div>
+                                            ) : null}
+                                            <Button
+                                              type="button"
+                                              variant="outline"
+                                              size="sm"
+                                              className="h-auto min-w-0 justify-start gap-2 whitespace-normal px-2 py-1.5 text-left"
+                                              onClick={() => focusRouteGraphNode(pathNode.nodeId, activeRouteGraphMacro.id)}
+                                            >
+                                              <Crosshair className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+                                              <span className="min-w-0">
+                                                <span className="block text-xs font-medium uppercase tracking-wide text-muted-foreground">{pathNode.label}</span>
+                                                <span className="block break-all font-mono text-xs leading-snug">{pathNode.detail}</span>
+                                              </span>
+                                            </Button>
+                                          </Fragment>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </Tabs.TabsContent>
+
+                  <Tabs.TabsContent value="diagnostics" className="min-w-0 max-w-full overflow-hidden">
+                    <div className="rounded-lg border bg-card p-3">
+                      <div className="flex items-start gap-2">
+                        <HeartPulse className="mt-0.5 size-4 text-muted-foreground" />
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm font-semibold">{tr('pages.tokenRoutes.routeWorkbench.diagnostics')}</div>
+                          <div className="mt-3 grid gap-2 text-xs">
+                            <div className="flex justify-between gap-3"><span className="text-muted-foreground">{tr('pages.tokenRoutes.targets')}</span><span>{activeRoute.enabledTargetCount} / {activeRoute.targetCount}</span></div>
+                            <div className="flex justify-between gap-3"><span className="text-muted-foreground">{tr('pages.tokenRoutes.routeCard.cached')}</span><span>{activeRoute.decisionSnapshot ? tr('pages.tokenRoutes.routeWorkbench.yes') : tr('pages.tokenRoutes.routeWorkbench.no')}</span></div>
+                            <div className="flex justify-between gap-3"><span className="text-muted-foreground">{tr('pages.tokenRoutes.routeWorkbench.selectionCandidates')}</span><span>{decisionByRoute[activeRoute.id]?.candidates?.length || 0}</span></div>
+                            <div className="flex justify-between gap-3"><span className="text-muted-foreground">{tr('pages.tokenRoutes.routeWorkbench.missingTokens')}</span><span>{getMissingTokenSiteItems(activeRoute.id).length + getMissingTokenGroupItems(activeRoute.id).length}</span></div>
+                            <div className="flex justify-between gap-3"><span className="text-muted-foreground">{tr('pages.tokenRoutes.routeCard.lastRefreshed')}</span><span>{activeRoute.decisionRefreshedAt || '-'}</span></div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </Tabs.TabsContent>
+
+                  <Tabs.TabsContent value="json" className="min-w-0 max-w-full overflow-hidden">
+                    <div className="min-w-0 max-w-full overflow-hidden rounded-lg border bg-card p-3">
+                      <div className="mb-2 flex items-center justify-between gap-2">
+                        <div className="text-sm font-semibold">{tr('pages.tokenRoutes.routeGraphWorkbench.json')}</div>
+                        <Button type="button" variant="outline" size="sm" onClick={() => navigator.clipboard?.writeText(activeRouteJson)}>
+                          {tr('pages.tokenRoutes.routeGraphWorkbench.copy')}
+                        </Button>
+                      </div>
+                      <pre className="max-h-[420px] min-w-0 max-w-full overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted p-3 text-xs text-foreground">{activeRouteJson}</pre>
+                    </div>
+                  </Tabs.TabsContent>
+                </Tabs.Tabs>
+              </>
+            ) : (
+              <EmptyStateBlock
+                className="rounded-lg border bg-card"
+                icon={<Info className="size-5" />}
+                title={tr('pages.tokenRoutes.routeWorkbench.emptyTitle')}
+                description={tr('pages.tokenRoutes.routeWorkbench.emptyDescription')}
+              />
+            )}
+          </section>
+        )}
       </div>
 
-      {shouldShowLoadMore && (
-        <div
-          ref={loadMoreSentinelRef}
-          style={{ textAlign: 'center', padding: '12px 0', fontSize: 12, color: 'var(--color-text-muted)' }}
-        >
-          {tr('当前已加载路由')} {visibleRouteCount} / {filteredRoutes.length}
-        </div>
-      )}
-
-      {filteredRoutes.length === 0 && (
-        <div className="card">
-          <div className="empty-state">
-            <svg className="empty-state-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={1}
-                d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"
-              />
-            </svg>
-            <div className="empty-state-title">{routeSummaries.length === 0 ? '暂无路由' : '没有匹配的路由'}</div>
-            <div className="empty-state-desc">
-              {routeSummaries.length === 0
-                ? '点击"自动重建"可按当前模型可用性生成路由。'
-                : '请调整品牌筛选、搜索词或排序条件。'}
-            </div>
+      {!routesLoading && filteredRoutes.length > 0 && (
+        <div className="flex flex-wrap items-center gap-3 border-t pt-3">
+          <div className="mr-auto text-xs text-muted-foreground">
+            {tr('pages.tokenRoutes.routeBrowser.showingRoutes')
+              .replace('{start}', String(routePageWindow.displayedStart))
+              .replace('{end}', String(routePageWindow.displayedEnd))
+              .replace('{total}', String(filteredRoutes.length))}
+          </div>
+          <Pagination className="mx-0 w-auto">
+            <PaginationContent>
+              <PaginationItem>
+                <PaginationPrevious
+                  type="button"
+                  disabled={routePageWindow.safePage <= 1}
+                  onClick={() => setRoutePage((current) => Math.max(1, current - 1))}
+                  aria-label={tr('pages.models.previousPage')}
+                />
+              </PaginationItem>
+              {routePageNumbers.map((pageNumber) => (
+                <PaginationItem key={pageNumber}>
+                  <PaginationLink
+                    type="button"
+                    isActive={pageNumber === routePageWindow.safePage}
+                    onClick={() => setRoutePage(pageNumber)}
+                  >
+                    {pageNumber}
+                  </PaginationLink>
+                </PaginationItem>
+              ))}
+              <PaginationItem>
+                <PaginationNext
+                  type="button"
+                  disabled={routePageWindow.safePage >= routePageWindow.totalPages}
+                  onClick={() => setRoutePage((current) => Math.min(routePageWindow.totalPages, current + 1))}
+                  aria-label={tr('pages.models.nextPage')}
+                />
+              </PaginationItem>
+            </PaginationContent>
+          </Pagination>
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <span>{tr('pages.proxyLogs.rowsPerPageLabel')}</span>
+            <Select
+              value={String(routePageSize)}
+              onValueChange={(nextValue) => {
+                setRoutePageSize(Number(nextValue));
+                setRoutePage(1);
+              }}
+            >
+              <SelectTrigger className="w-24">
+                <SelectValue placeholder={String(routePageSize)} />
+              </SelectTrigger>
+              <SelectContent>
+                {ROUTE_PAGE_SIZES.map((size) => (
+                  <SelectItem key={size} value={String(size)}>{size}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
         </div>
       )}
 
-      {/* Add channel modal */}
-      {addChannelModalRoute && (
-        <AddChannelModal
-          open={!!addChannelModalRouteId}
-          onClose={() => setAddChannelModalRouteId(null)}
-          routeId={addChannelModalRoute.id}
-          routeTitle={resolveRouteTitle(addChannelModalRoute)}
-          candidateView={getRouteCandidateView(addChannelModalRoute.id)}
-          onSuccess={handleAddChannelSuccess}
-          missingTokenHints={getRouteMissingTokenHints(addChannelModalRoute.id)}
+      {/* Add target modal */}
+      {addRouteTargetModalRoute && (
+        <AddRouteTargetModal
+          open={!!addRouteTargetModalRouteId}
+          onClose={() => setAddRouteTargetModalRouteId(null)}
+          routeId={addRouteTargetModalRoute.id}
+          routeTitle={resolveRouteTitle(addRouteTargetModalRoute)}
+          candidateView={getRouteCandidateView(addRouteTargetModalRoute.id)}
+          onSuccess={handleAddTargetSuccess}
+          missingTokenHints={getRouteMissingTokenHints(addRouteTargetModalRoute.id)}
           onCreateTokenForMissing={handleCreateTokenForMissingAccount}
-          existingChannelAccountIds={new Set((channelsByRouteId[addChannelModalRoute.id] || []).map((c) => c.accountId))}
+          existingTargetAccountIds={new Set((targetsByRouteId[addRouteTargetModalRoute.id] || []).map((c) => c.accountId))}
         />
       )}
-    </div>
+          <Dialog.Root open={!!targetDeleteConfirmation} onOpenChange={(open) => { if (!open) closeDeleteTargetConfirmation(false); }}>
+            <Dialog.Content>
+              <Dialog.Header>
+                <Dialog.Title>{tr('pages.tokenRoutes.confirmRemovetargets')}</Dialog.Title>
+                <Dialog.Description>
+                  {tr('pages.tokenRoutes.removeTargetsModelrefreshAutoRebuildTargetsSuggestionusagedisabled')}
+                </Dialog.Description>
+              </Dialog.Header>
+              <label className="mt-4 flex items-center gap-2 text-sm">
+                <Checkbox
+                  checked={targetDeleteConfirmation?.dontAskAgain === true}
+                  onCheckedChange={(checked) => {
+                    setTargetDeleteConfirmation((current) => current ? { ...current, dontAskAgain: checked === true } : current);
+                  }}
+                />
+                {tr('pages.tokenRoutes.doNotShowAgain')}
+              </label>
+              <Dialog.Footer>
+                <Button type="button" variant="outline" onClick={() => closeDeleteTargetConfirmation(false)}>{tr('app.cancel')}</Button>
+                <Button type="button" variant="destructive" onClick={() => closeDeleteTargetConfirmation(true)}>{tr('pages.tokenRoutes.confirmRemove')}</Button>
+              </Dialog.Footer>
+            </Dialog.Content>
+          </Dialog.Root>
+
+          <Dialog.Root open={!!siteBlockConfirmation} onOpenChange={(open) => { if (!open) closeSiteBlockConfirmation(false); }}>
+            <Dialog.Content>
+              <Dialog.Header>
+                <Dialog.Title>{tr('pages.tokenRoutes.sites2')}</Dialog.Title>
+                <Dialog.Description>
+                  {tr('pages.tokenRoutes.disabledAutomaticRoutesSitesModelTargets')
+                    .replace('{model}', siteBlockConfirmation?.modelName || '')
+                    .replace('{site}', siteBlockConfirmation?.siteName || '')}
+                </Dialog.Description>
+              </Dialog.Header>
+              <Dialog.Footer>
+                <Button type="button" variant="outline" onClick={() => closeSiteBlockConfirmation(false)}>{tr('app.cancel')}</Button>
+                <Button type="button" onClick={() => closeSiteBlockConfirmation(true)}>{tr('pages.tokenRoutes.confirmBlock')}</Button>
+              </Dialog.Footer>
+            </Dialog.Content>
+          </Dialog.Root>
+        </Tabs.TabsContent>
+      </Tabs.Tabs>
+    </PageShell>
   );
 }

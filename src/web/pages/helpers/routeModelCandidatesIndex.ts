@@ -1,3 +1,6 @@
+import type { RouteSummaryRow } from '../token-routes/types.js';
+import { getRouteRequestedModelPattern, isRouteBackendReferences } from '../token-routes/utils.js';
+
 export type IndexedRouteModelCandidate = {
   modelName: string;
   accountId: number;
@@ -29,11 +32,7 @@ export type RouteCandidateView = {
   tokenOptionsByAccountId: Record<number, RouteTokenOption[]>;
 };
 
-export type RouteModelPatternLike = {
-  id: number;
-  modelPattern: string;
-  routeMode?: string | null;
-};
+export type RouteModelCandidateRoute = Pick<RouteSummaryRow, 'id' | 'match' | 'backend'>;
 
 const EMPTY_ROUTE_CANDIDATE_VIEW: RouteCandidateView = {
   routeCandidates: [],
@@ -42,18 +41,18 @@ const EMPTY_ROUTE_CANDIDATE_VIEW: RouteCandidateView = {
 };
 
 export function buildRouteModelCandidatesIndex(
-  routes: RouteModelPatternLike[],
+  routes: RouteModelCandidateRoute[],
   modelCandidates: RouteModelCandidatesByModelName,
   matchesModelPattern: (model: string, pattern: string) => boolean,
 ): Record<number, RouteCandidateView> {
   const index: Record<number, RouteCandidateView> = {};
 
   for (const route of routes || []) {
-    if (route.routeMode === 'explicit_group') {
+    if (isRouteBackendReferences(route.backend)) {
       index[route.id] = EMPTY_ROUTE_CANDIDATE_VIEW;
       continue;
     }
-    const modelPattern = (route.modelPattern || '').trim();
+    const modelPattern = getRouteRequestedModelPattern(route).trim();
     if (!modelPattern) {
       index[route.id] = EMPTY_ROUTE_CANDIDATE_VIEW;
       continue;

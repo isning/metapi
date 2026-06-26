@@ -3,7 +3,16 @@ import {
   buildRouteMissingTokenIndex,
   normalizeMissingTokenModels,
   type MissingTokenModelsByName,
+  type RouteMissingTokenRoute,
 } from './routeMissingTokenHints.js';
+
+function buildRoute(id: number, requestedModelPattern: string, backend: RouteMissingTokenRoute['backend'] = { kind: 'supply' }): RouteMissingTokenRoute {
+  return {
+    id,
+    match: { kind: 'model', requestedModelPattern, displayName: null },
+    backend,
+  };
+}
 
 function matchesModelPattern(model: string, pattern: string): boolean {
   if (!pattern) return false;
@@ -15,9 +24,9 @@ function matchesModelPattern(model: string, pattern: string): boolean {
 describe('buildRouteMissingTokenIndex', () => {
   it('matches missing-token models by route pattern and deduplicates accounts', () => {
     const routes = [
-      { id: 1, modelPattern: 'claude-*' },
-      { id: 2, modelPattern: 'gpt-4o-mini' },
-      { id: 3, modelPattern: '' },
+      buildRoute(1, 'claude-*'),
+      buildRoute(2, 'gpt-4o-mini'),
+      buildRoute(3, ''),
     ];
 
     const missingByModel: MissingTokenModelsByName = {
@@ -41,7 +50,7 @@ describe('buildRouteMissingTokenIndex', () => {
   });
 
   it('returns empty entries when missing model map is empty', () => {
-    const index = buildRouteMissingTokenIndex([{ id: 1, modelPattern: 'claude-*' }], {}, matchesModelPattern);
+    const index = buildRouteMissingTokenIndex([buildRoute(1, 'claude-*')], {}, matchesModelPattern);
     expect(index[1]).toEqual([]);
   });
 

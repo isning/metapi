@@ -8,7 +8,7 @@ import {
 } from './priorityRail.js';
 
 describe('priorityRail helpers', () => {
-  it('groups channels into visible priority sections and preserves in-layer order', () => {
+  it('groups targets into visible priority sections and preserves in-layer order', () => {
     const sections = buildPriorityRailSections([
       { id: 11, priority: 0 },
       { id: 12, priority: 0 },
@@ -16,8 +16,8 @@ describe('priorityRail helpers', () => {
     ]);
 
     expect(sections).toEqual([
-      { priority: 0, channelCount: 2, channelIds: [11, 12] },
-      { priority: 1, channelCount: 1, channelIds: [21] },
+      { priority: 0, targetCount: 2, targetIds: [11, 12] },
+      { priority: 1, targetCount: 1, targetIds: [21] },
     ]);
   });
 
@@ -29,7 +29,7 @@ describe('priorityRail helpers', () => {
 
     expect(
       buildPriorityRailDragTargets(sections, {
-        activeChannelId: 11,
+        activeTargetId: 11,
         hoveredPriority: 1,
         showNewLayerTarget: true,
       }),
@@ -40,7 +40,7 @@ describe('priorityRail helpers', () => {
     ]);
   });
 
-  it('moves a channel into an existing layer when dropped onto another channel', () => {
+  it('moves a target into an existing layer when dropped onto another target', () => {
     const reordered = applyPriorityRailDrop(
       [
         { id: 11, priority: 0 },

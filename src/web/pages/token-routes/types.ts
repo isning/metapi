@@ -1,35 +1,37 @@
 import type { ButtonHTMLAttributes, ReactNode, RefCallback } from 'react';
 import type { BrandInfo } from '../../components/BrandIcon.js';
 import type { RouteDecision, RouteDecisionCandidate, RouteMode } from '../../../shared/tokenRouteContract.js';
+import type { RouteGraphBackendSpec, RouteGraphMatchSpec } from '../../../shared/routeGraph.js';
+import type { RouteGraphVisibility } from '../../../shared/routeGraph.js';
 export type { RouteDecision, RouteDecisionCandidate, RouteMode } from '../../../shared/tokenRouteContract.js';
 
-export type RouteSortBy = 'modelPattern' | 'channelCount';
+export type RouteSortBy = 'modelPattern' | 'targetCount';
 export type RouteSortDir = 'asc' | 'desc';
 export type GroupFilter = null | '__all__' | number;
 export type RouteRoutingStrategy = 'weighted' | 'round_robin' | 'stable_first';
 export type OAuthRouteUnitStrategy = 'round_robin' | 'stick_until_unavailable';
-export type RouteRowKind = 'persisted' | 'zero_channel';
-export type RouteChannelDraft = {
+export type RouteRowKind = 'persisted' | 'zero_target';
+export type RouteEndpointTargetDraft = {
   accountId: number;
   tokenId: number;
   sourceModel: string;
 };
 
-export type RouteChannelRouteUnitMember = {
+export type RouteEndpointTargetRouteUnitMember = {
   accountId: number;
   username: string | null;
   siteName: string | null;
 };
 
-export type RouteChannelRouteUnit = {
+export type RouteEndpointTargetRouteUnit = {
   id: number | string;
   name: string | null;
   strategy: OAuthRouteUnitStrategy;
   memberCount: number;
-  members?: RouteChannelRouteUnitMember[];
+  members?: RouteEndpointTargetRouteUnitMember[];
 };
 
-export type RouteChannel = {
+export type RouteEndpointTarget = {
   id: number;
   routeId?: number;
   accountId: number;
@@ -61,45 +63,85 @@ export type RouteChannel = {
     isDefault: boolean;
   } | null;
   oauthRouteUnitId?: number | null;
-  routeUnit?: RouteChannelRouteUnit | null;
+  routeUnit?: RouteEndpointTargetRouteUnit | null;
+};
+
+export type RouteGroupMetadata = {
+  id: number;
+  kind: string;
+  groupKey: string;
+  upstreamModelName: string | null;
+  normalizedModelName: string | null;
+  publicModelName: string | null;
+  visibility: string;
+  sourceMode: string;
+  syncStatus: string;
 };
 
 export type RouteRow = {
   id: number;
-  modelPattern: string;
-  displayName?: string | null;
-  displayIcon?: string | null;
-  routeMode?: RouteMode | null;
-  sourceRouteIds?: number[];
+  match: RouteGraphMatchSpec;
+  backend: RouteGraphBackendSpec;
+  presentation: {
+    displayName: string | null;
+    displayIcon: string | null;
+  };
   modelMapping?: string | null;
   routingStrategy?: RouteRoutingStrategy | null;
+  visibility?: RouteGraphVisibility;
   decisionSnapshot?: RouteDecision | null;
   decisionRefreshedAt?: string | null;
   enabled: boolean;
-  channels: RouteChannel[];
+  routeGroup?: RouteGroupMetadata | null;
+  targets: RouteEndpointTarget[];
 };
 
 export type RouteSummaryRow = {
   id: number;
-  modelPattern: string;
-  displayName: string | null;
-  displayIcon: string | null;
-  routeMode?: RouteMode | null;
-  sourceRouteIds?: number[];
+  match: RouteGraphMatchSpec;
+  backend: RouteGraphBackendSpec;
+  presentation: {
+    displayName: string | null;
+    displayIcon: string | null;
+  };
   modelMapping: string | null;
   routingStrategy?: RouteRoutingStrategy | null;
+  visibility?: RouteGraphVisibility;
   enabled: boolean;
-  channelCount: number;
-  enabledChannelCount: number;
+  targetCount: number;
+  enabledTargetCount: number;
   siteNames: string[];
   decisionSnapshot: RouteDecision | null;
   decisionRefreshedAt: string | null;
+  routeGroup?: RouteGroupMetadata | null;
   kind?: RouteRowKind;
   readOnly?: boolean;
   isVirtual?: boolean;
 };
 
-export type ChannelDecisionState = {
+export type RouteEndpointCatalogItem = {
+  endpointId: string;
+  nodeId: string;
+  routeId: number | null;
+  label: string;
+  endpointKind: 'supply' | 'route_product';
+  exposure: 'none' | RouteGraphVisibility;
+  resolutionStatus: 'resolved' | 'degraded' | 'unresolved';
+  ownerKind: 'automatic_route' | 'manual_route' | 'macro';
+  sourceKind: 'upstream_model' | 'automatic_model_group' | 'manual_group' | 'synthetic' | 'inline';
+  enabled: boolean;
+  displayIcon: string | null;
+  modelPattern: string;
+  publicModelName: string | null;
+  upstreamModels: string[];
+  siteNames: string[];
+  targetCount?: number;
+  sourceRouteIds?: number[];
+  tags: string[];
+  metadata: Record<string, unknown>;
+};
+
+export type TargetDecisionState = {
   probability: number;
   showBar: boolean;
   reasonText: string;
@@ -140,8 +182,8 @@ export type MissingTokenGroupRouteSiteActionItem = {
   groupCoverageUncertain?: boolean;
 };
 
-export type SortableChannelRowProps = {
-  channel: RouteChannel;
+export type SortableRouteTargetRowProps = {
+  target: RouteEndpointTarget;
   displayPriority?: number;
   showPriorityBadge?: boolean;
   dragging?: boolean;
@@ -152,15 +194,15 @@ export type SortableChannelRowProps = {
   loadingDecision: boolean;
   isSavingPriority: boolean;
   readOnly?: boolean;
-  channelManagementDisabled?: boolean;
+  targetManagementDisabled?: boolean;
   dragInProgress?: boolean;
   mobile?: boolean;
   tokenOptions: RouteTokenOption[];
   activeTokenId: number;
   isUpdatingToken: boolean;
-  onTokenDraftChange: (channelId: number, tokenId: number) => void;
+  onTokenDraftChange: (targetId: number, tokenId: number) => void;
   onSaveToken: () => void;
-  onDeleteChannel: () => void;
+  onDeleteTarget: () => void;
   onToggleEnabled: (enabled: boolean) => void;
   onSiteBlockModel?: () => void;
 };
@@ -171,14 +213,14 @@ export type GroupRouteItem = {
   icon: { kind: 'auto' } | { kind: 'none' } | { kind: 'text'; value: string } | { kind: 'brand'; value: string };
   brand: BrandInfo | null;
   modelPattern: string;
-  channelCount: number;
+  targetCount: number;
   sourceRouteCount: number;
 };
 
 export type PriorityRailSection = {
   priority: number;
-  channelCount: number;
-  channelIds: number[];
+  targetCount: number;
+  targetIds: number[];
 };
 
 export type PriorityRailDragTarget =

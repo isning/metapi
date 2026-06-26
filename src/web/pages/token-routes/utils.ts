@@ -1,7 +1,8 @@
 import type { CSSProperties } from 'react';
 import { getBrand, normalizeBrandIconKey, type BrandInfo } from '../../components/BrandIcon.js';
-import { normalizeTokenRouteMode, type RouteDecisionCandidate, type RouteMode } from '../../../shared/tokenRouteContract.js';
-import type { RouteRow, RouteChannel, ChannelDecisionState, RouteSummaryRow } from './types.js';
+import type { RouteDecisionCandidate, RouteMode } from '../../../shared/tokenRouteContract.js';
+import type { RouteRow, RouteEndpointTarget, TargetDecisionState, RouteSummaryRow } from './types.js';
+import type { RouteGraphBackendSpec, RouteGraphMatchSpec } from '../../../shared/routeGraph.js';
 import {
   isExactTokenRouteModelPattern,
   isTokenRouteRegexPattern,
@@ -9,6 +10,7 @@ import {
   parseTokenRouteRegexPattern,
 } from '../../../shared/tokenRoutePatterns.js';
 
+import { tr } from '../../i18n.js';
 export const AUTO_ROUTE_DECISION_LIMIT = 80;
 export const ROUTE_RENDER_CHUNK = 40;
 export const ROUTE_BRAND_ICON_PREFIX = 'brand:';
@@ -53,16 +55,32 @@ export function isExactModelPattern(modelPattern: string): boolean {
   return isExactTokenRouteModelPattern(modelPattern);
 }
 
-export function normalizeRouteMode(routeMode: RouteMode | string | null | undefined): RouteMode {
-  return normalizeTokenRouteMode(routeMode);
+export function isRouteBackendReferences(backend: RouteGraphBackendSpec | null | undefined): boolean {
+  return backend?.kind === 'routes';
 }
 
-export function isExplicitGroupRoute(route: Pick<RouteRow | RouteSummaryRow, 'routeMode'>): boolean {
-  return normalizeRouteMode(route.routeMode) === 'explicit_group';
+export function getRouteBackendRouteIds(backend: RouteGraphBackendSpec | null | undefined): number[] {
+  return backend?.kind === 'routes' ? backend.routeIds : [];
 }
 
-export function isRouteExactModel(route: Pick<RouteRow | RouteSummaryRow, 'modelPattern' | 'routeMode'>): boolean {
-  return !isExplicitGroupRoute(route) && isExactModelPattern(route.modelPattern);
+export function getRouteRequestedModelPattern(route: Pick<RouteRow | RouteSummaryRow, 'match'>): string {
+  return route.match.requestedModelPattern || '';
+}
+
+export function getRouteDisplayName(route: Pick<RouteRow | RouteSummaryRow, 'presentation' | 'match'>): string | null {
+  return route.presentation.displayName || route.match.displayName || null;
+}
+
+export function getRouteDisplayIcon(route: Pick<RouteRow | RouteSummaryRow, 'presentation'>): string | null {
+  return route.presentation.displayIcon || null;
+}
+
+export function isExplicitGroupRoute(route: Pick<RouteRow | RouteSummaryRow, 'backend'>): boolean {
+  return isRouteBackendReferences(route.backend);
+}
+
+export function isRouteExactModel(route: Pick<RouteRow | RouteSummaryRow, 'match' | 'backend'>): boolean {
+  return !isRouteBackendReferences(route.backend) && isExactModelPattern(getRouteRequestedModelPattern(route));
 }
 
 export function parseRegexModelPattern(modelPattern: string): { regex: { test(value: string): boolean } | null; error: string | null } {
@@ -79,21 +97,21 @@ export function getModelPatternError(modelPattern: string): string | null {
   if (!isRegexModelPattern(normalized)) return null;
   const parsed = parseRegexModelPattern(normalized);
   if (!parsed.error) return null;
-  return `模型匹配正则错误：${parsed.error}`;
+  return tr('pages.tokenRoutes.modelPatternRegexError').replace('{message}', parsed.error);
 }
 
-export function resolveRouteTitle(route: Pick<RouteRow | RouteSummaryRow, 'displayName' | 'modelPattern'>): string {
-  const title = (route.displayName || '').trim();
-  return title || route.modelPattern;
+export function resolveRouteTitle(route: Pick<RouteRow | RouteSummaryRow, 'presentation' | 'match'>): string {
+  const title = (getRouteDisplayName(route) || '').trim();
+  return title || getRouteRequestedModelPattern(route);
 }
 
-export function resolveRouteBrand(route: Pick<RouteRow | RouteSummaryRow, 'displayName' | 'modelPattern'>): BrandInfo | null {
-  const displayName = (route.displayName || '').trim();
+export function resolveRouteBrand(route: Pick<RouteRow | RouteSummaryRow, 'presentation' | 'match'>): BrandInfo | null {
+  const displayName = (getRouteDisplayName(route) || '').trim();
   if (displayName) {
     const byDisplayName = getBrand(displayName);
     if (byDisplayName) return byDisplayName;
   }
-  return getBrand(route.modelPattern);
+  return getBrand(getRouteRequestedModelPattern(route));
 }
 
 export function toBrandIconValue(icon: string): string {
@@ -152,8 +170,8 @@ export function siteAvatarLetters(siteName: string): string {
   return compact.slice(0, 2).toUpperCase();
 }
 
-export function resolveRouteIcon(route: Pick<RouteRow | RouteSummaryRow, 'displayIcon'>): { kind: 'auto' } | { kind: 'none' } | { kind: 'text'; value: string } | { kind: 'brand'; value: string } {
-  const icon = (route.displayIcon || '').trim();
+export function resolveRouteIcon(route: Pick<RouteRow | RouteSummaryRow, 'presentation'>): { kind: 'auto' } | { kind: 'none' } | { kind: 'text'; value: string } | { kind: 'brand'; value: string } {
+  const icon = (route.presentation.displayIcon || '').trim();
   if (isRouteIconNoneValue(icon)) return { kind: 'none' };
   if (!icon) return { kind: 'auto' };
   const brandIcon = parseBrandIconValue(icon);
@@ -161,8 +179,8 @@ export function resolveRouteIcon(route: Pick<RouteRow | RouteSummaryRow, 'displa
   return { kind: 'text', value: icon };
 }
 
-export function normalizeChannels(channels: RouteChannel[]): RouteChannel[] {
-  return [...(channels || [])].sort((a, b) => {
+export function normalizeTargets(targets: RouteEndpointTarget[]): RouteEndpointTarget[] {
+  return [...(targets || [])].sort((a, b) => {
     const pa = a.priority ?? 0;
     const pb = b.priority ?? 0;
     if (pa === pb) return (a.id ?? 0) - (b.id ?? 0);
@@ -173,7 +191,7 @@ export function normalizeChannels(channels: RouteChannel[]): RouteChannel[] {
 export function normalizeRoutes(routeRows: any[]): RouteRow[] {
   return (routeRows || []).map((route) => ({
     ...(route as RouteRow),
-    channels: normalizeChannels(route.channels || []),
+    targets: normalizeTargets(route.targets || []),
   }));
 }
 
@@ -212,17 +230,17 @@ export function getProbabilityColor(probability: number): string {
   return 'var(--color-border)';
 }
 
-export function getChannelDecisionState(
+export function getTargetDecisionState(
   candidate: RouteDecisionCandidate | undefined,
-  channel: RouteChannel,
+  target: RouteEndpointTarget,
   isExactRoute: boolean,
   loadingDecision: boolean,
-): ChannelDecisionState {
+): TargetDecisionState {
   if (!isExactRoute && !candidate) {
     return {
       probability: 0,
       showBar: true,
-      reasonText: loadingDecision ? '计算中...' : '实时决策',
+      reasonText: loadingDecision ? tr('pages.tokenRoutes.utils.calculating') : tr('pages.tokenRoutes.utils.realTimeDecisionMaking'),
       reasonColor: 'var(--color-text-muted)',
     };
   }
@@ -231,7 +249,7 @@ export function getChannelDecisionState(
     return {
       probability: 0,
       showBar: true,
-      reasonText: loadingDecision ? '计算中...' : '无可用通道',
+      reasonText: loadingDecision ? tr('pages.tokenRoutes.utils.calculating') : tr('pages.tokenRoutes.utils.noTargetAvailable'),
       reasonColor: 'var(--color-text-muted)',
     };
   }
@@ -240,19 +258,19 @@ export function getChannelDecisionState(
     return {
       probability: 0,
       showBar: true,
-      reasonText: '失败避让',
+      reasonText: tr('pages.tokenRoutes.utils.failureAvoidance'),
       reasonColor: 'var(--color-warning)',
     };
   }
 
   if (!candidate.eligible) {
     const nowIso = new Date().toISOString();
-    const cooldownActive = !!channel.cooldownUntil && channel.cooldownUntil > nowIso;
-    if (cooldownActive || candidate.reason.includes('冷却中')) {
+    const cooldownActive = !!target.cooldownUntil && target.cooldownUntil > nowIso;
+    if (cooldownActive || candidate.reason.includes(tr('pages.tokenRoutes.utils.coolingDown'))) {
       return {
         probability: 0,
         showBar: true,
-        reasonText: '冷却中',
+        reasonText: tr('pages.tokenRoutes.utils.coolingDown'),
         reasonColor: 'var(--color-danger)',
       };
     }
@@ -260,7 +278,7 @@ export function getChannelDecisionState(
     return {
       probability: 0,
       showBar: true,
-      reasonText: candidate.reason || '不可用',
+      reasonText: candidate.reason || tr('pages.settings.updateCenterSection.notAvailable'),
       reasonColor: 'var(--color-text-muted)',
     };
   }
@@ -271,7 +289,7 @@ export function getChannelDecisionState(
       return {
         probability: 0,
         showBar: false,
-        reasonText: '近期失败',
+        reasonText: tr('pages.tokenRoutes.utils.recentFailure'),
         reasonColor: 'var(--color-warning)',
       };
     }
@@ -279,7 +297,7 @@ export function getChannelDecisionState(
     return {
       probability: 0,
       showBar: false,
-      reasonText: candidate.reason || '概率为 0%',
+      reasonText: candidate.reason || tr('pages.tokenRoutes.utils.probability0'),
       reasonColor: 'var(--color-text-muted)',
     };
   }
