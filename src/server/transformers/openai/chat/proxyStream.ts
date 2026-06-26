@@ -1,7 +1,12 @@
 import { anthropicMessagesTransformer } from '../../anthropic/messages/index.js';
 import { createProxyStreamLifecycle } from '../../shared/protocolLifecycle.js';
 import { type DownstreamFormat, type ParsedSseEvent } from '../../shared/normalized.js';
-import { createOpenAiChatAggregateState, applyOpenAiChatStreamEvent, finalizeOpenAiChatAggregate } from './aggregator.js';
+import {
+  createOpenAiChatAggregateState,
+  applyOpenAiChatStreamEvent,
+  finalizeOpenAiChatAggregate,
+  OpenAiChatStreamAggregateLimitError,
+} from './aggregator.js';
 import {
   buildNormalizedFinalToOpenAiChatChunks,
   normalizeOpenAiChatFinalToNormalized,
@@ -46,7 +51,12 @@ export function createChatProxyStreamSession(input: ChatProxyStreamSessionInput)
   const streamContext = downstreamTransformer.createStreamContext(input.modelName);
   const claudeContext = anthropicMessagesTransformer.createDownstreamContext();
   const chatAggregateState = input.downstreamFormat === 'openai'
-    ? createOpenAiChatAggregateState()
+    ? createOpenAiChatAggregateState({
+      maxReasoningBytes: config.proxyStreamMaxReasoningBytes,
+      maxContentBytes: config.proxyStreamMaxContentBytes,
+      maxToolArgumentBytes: config.proxyStreamMaxToolArgumentBytes,
+      maxAggregateBytes: config.proxyStreamMaxAggregateBytes,
+    })
     : null;
   let finalized = false;
   let terminalResult: ChatProxyStreamResult = {
@@ -272,7 +282,20 @@ export function createChatProxyStreamSession(input: ChatProxyStreamSessionInput)
       }
       const normalizedEvent = downstreamTransformer.transformStreamEvent(parsedPayload, streamContext, input.modelName);
       if (input.downstreamFormat === 'openai' && chatAggregateState) {
-        applyOpenAiChatStreamEvent(chatAggregateState, normalizedEvent);
+        try {
+          applyOpenAiChatStreamEvent(chatAggregateState, normalizedEvent);
+        } catch (error) {
+          if (error instanceof OpenAiChatStreamAggregateLimitError) {
+            markFailed({
+              error: {
+                message: error.message,
+                type: 'upstream_response_too_large',
+              },
+            }, error.message);
+            return true;
+          }
+          throw error;
+        }
       }
       emitLines(
         downstreamTransformer.serializeStreamEvent(normalizedEvent, streamContext, claudeContext),
@@ -342,6 +365,15 @@ export function createChatProxyStreamSession(input: ChatProxyStreamSessionInput)
         pullEvents: (buffer) => downstreamTransformer.pullSseEvents(buffer),
         handleEvent: handleEventBlock,
         onEof: finalize,
+        maxBufferBytes: config.proxyStreamMaxSseBufferBytes,
+        onLimitExceeded: (message) => {
+          markFailed({
+            error: {
+              message,
+              type: 'upstream_response_too_large',
+            },
+          }, message);
+        },
       });
       await lifecycle.run();
       return terminalResult;

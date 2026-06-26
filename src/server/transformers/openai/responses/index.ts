@@ -79,9 +79,9 @@ export const openAiResponsesTransformer = {
   },
   buildProtocolRequest(
     request: CanonicalRequestEnvelope,
-    _ctx?: ProtocolBuildContext,
+    ctx?: ProtocolBuildContext,
   ): Record<string, unknown> {
-    return buildCanonicalRequestToOpenAiResponsesBody(request);
+    return buildCanonicalRequestToOpenAiResponsesBody(request, ctx);
   },
   transformRequest(
     body: unknown,

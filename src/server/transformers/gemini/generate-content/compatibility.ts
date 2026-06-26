@@ -182,12 +182,14 @@ function buildGeminiMessages(body: GeminiRecord): Array<Record<string, unknown>>
       : [];
 
     const toolCalls = parts
-      .map((part, index) => {
+      .map((part) => {
         const functionCall = isRecord(part.functionCall) ? part.functionCall : null;
         const name = asTrimmedString(functionCall?.name);
         if (!functionCall || !name) return null;
+        const id = asTrimmedString(functionCall.id);
+        if (!id) return null;
         return {
-          id: asTrimmedString(functionCall.id) || `call_${index}`,
+          id,
           type: 'function',
           function: {
             name,
@@ -202,9 +204,9 @@ function buildGeminiMessages(body: GeminiRecord): Array<Record<string, unknown>>
       .filter((item): item is GeminiRecord => !!item);
 
     if (functionResponses.length > 0) {
-      for (let index = 0; index < functionResponses.length; index += 1) {
-        const functionResponse = functionResponses[index] as GeminiRecord;
-        const toolName = asTrimmedString(functionResponse.name) || `tool_${index}`;
+      for (const functionResponse of functionResponses) {
+        const toolName = asTrimmedString(functionResponse.name);
+        if (!toolName) continue;
         const toolResponse = functionResponse.response;
         messages.push({
           role: 'tool',

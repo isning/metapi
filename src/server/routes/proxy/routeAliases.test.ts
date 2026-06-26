@@ -1,30 +1,20 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const handleOpenAiResponsesSurfaceRequestMock = vi.fn(async (_request, reply, downstreamPath) => (
+const handleGenericSurfaceRequestMock = vi.fn(async (_request, reply, adapter, downstreamPath) => (
   reply.code(200).send({
     ok: true,
     downstreamPath,
-  })
-));
-const handleChatSurfaceRequestMock = vi.fn(async (_request, reply, downstreamFormat) => (
-  reply.code(200).send({
-    ok: true,
-    downstreamFormat,
+    downstreamFormat: adapter.format,
   })
 ));
 const ensureResponsesWebsocketTransportMock = vi.fn();
 
-vi.mock('../../proxy-core/surfaces/openAiResponsesSurface.js', () => ({
-  handleOpenAiResponsesSurfaceRequest: (...args: unknown[]) => handleOpenAiResponsesSurfaceRequestMock(...args),
+vi.mock('../../proxy-core/orchestration/genericProxyOrchestrator.js', () => ({
+  handleGenericSurfaceRequest: (...args: unknown[]) => handleGenericSurfaceRequestMock(...args),
 }));
 
-vi.mock('../../proxy-core/surfaces/chatSurface.js', () => ({
-  handleChatSurfaceRequest: (...args: unknown[]) => handleChatSurfaceRequestMock(...args),
-  handleClaudeCountTokensSurfaceRequest: vi.fn(),
-}));
-
-vi.mock('./responsesWebsocket.js', () => ({
+vi.mock('../responsesWebsocket.js', () => ({
   ensureResponsesWebsocketTransport: (...args: unknown[]) => ensureResponsesWebsocketTransportMock(...args),
 }));
 
@@ -32,16 +22,18 @@ describe('proxy route aliases', () => {
   let app: FastifyInstance;
 
   beforeAll(async () => {
+    const { registerDownstreamProtocolSurface } = await import('../../proxy-core/surfaces/downstreamProtocolSurface.js');
     const { responsesProxyRoute } = await import('./responses.js');
-    const { chatProxyRoute } = await import('./chat.js');
+    const { openaiChatProtocolAdapter } = await import('../../proxy-core/formats/openaiChat.js');
+    const { responsesProtocolAdapter } = await import('../../proxy-core/formats/responses.js');
     app = Fastify();
+    await registerDownstreamProtocolSurface(app, responsesProtocolAdapter);
     await app.register(responsesProxyRoute);
-    await app.register(chatProxyRoute);
+    await registerDownstreamProtocolSurface(app, openaiChatProtocolAdapter);
   });
 
   beforeEach(() => {
-    handleOpenAiResponsesSurfaceRequestMock.mockClear();
-    handleChatSurfaceRequestMock.mockClear();
+    handleGenericSurfaceRequestMock.mockClear();
     ensureResponsesWebsocketTransportMock.mockClear();
   });
 
@@ -57,10 +49,27 @@ describe('proxy route aliases', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(handleOpenAiResponsesSurfaceRequestMock).toHaveBeenCalledTimes(1);
+    expect(handleGenericSurfaceRequestMock).toHaveBeenCalledTimes(1);
     expect(response.json()).toEqual({
       ok: true,
       downstreamPath: '/v1/responses',
+      downstreamFormat: 'responses',
+    });
+  });
+
+  it('registers /v1/responses through the main proxy router without duplicating route-layer logic', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      payload: { model: 'gpt-5.2', input: 'hello' },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(handleGenericSurfaceRequestMock).toHaveBeenCalledTimes(1);
+    expect(response.json()).toEqual({
+      ok: true,
+      downstreamPath: '/v1/responses',
+      downstreamFormat: 'responses',
     });
   });
 
@@ -72,10 +81,11 @@ describe('proxy route aliases', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(handleOpenAiResponsesSurfaceRequestMock).toHaveBeenCalledTimes(1);
+    expect(handleGenericSurfaceRequestMock).toHaveBeenCalledTimes(1);
     expect(response.json()).toEqual({
       ok: true,
       downstreamPath: '/v1/responses/compact',
+      downstreamFormat: 'responses',
     });
   });
 
@@ -86,7 +96,7 @@ describe('proxy route aliases', () => {
     });
 
     expect(response.statusCode).toBe(426);
-    expect(handleOpenAiResponsesSurfaceRequestMock).not.toHaveBeenCalled();
+    expect(handleGenericSurfaceRequestMock).not.toHaveBeenCalled();
     expect(response.json()).toEqual({
       error: {
         message: 'WebSocket upgrade required for GET /v1/responses',
@@ -103,7 +113,7 @@ describe('proxy route aliases', () => {
     });
 
     expect(response.statusCode).toBe(404);
-    expect(handleOpenAiResponsesSurfaceRequestMock).not.toHaveBeenCalled();
+    expect(handleGenericSurfaceRequestMock).not.toHaveBeenCalled();
     expect(response.json()).toEqual({
       error: {
         message: 'Unknown /responses alias path',
@@ -119,7 +129,7 @@ describe('proxy route aliases', () => {
     });
 
     expect(response.statusCode).toBe(426);
-    expect(handleOpenAiResponsesSurfaceRequestMock).not.toHaveBeenCalled();
+    expect(handleGenericSurfaceRequestMock).not.toHaveBeenCalled();
     expect(response.json()).toEqual({
       error: {
         message: 'WebSocket upgrade required for GET /v1/responses/compact',
@@ -136,10 +146,11 @@ describe('proxy route aliases', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(handleChatSurfaceRequestMock).toHaveBeenCalledTimes(1);
+    expect(handleGenericSurfaceRequestMock).toHaveBeenCalledTimes(1);
     expect(response.json()).toEqual({
       ok: true,
-      downstreamFormat: 'openai',
+      downstreamPath: '/chat/completions',
+      downstreamFormat: 'openai/chat',
     });
   });
 });

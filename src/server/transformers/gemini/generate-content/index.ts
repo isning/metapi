@@ -28,9 +28,13 @@ export function parseGeminiProxyRequestPath(input: {
   requestedModel: string;
   isStreamAction: boolean;
 } {
-  const apiVersion = resolveGeminiProxyApiVersion(input.params);
   const rawUrl = asTrimmedString(input.rawUrl);
   const withoutQuery = rawUrl.split('?')[0] || rawUrl;
+  const explicitApiVersion = typeof input.params?.geminiApiVersion === 'string'
+    ? input.params.geminiApiVersion.trim()
+    : '';
+  const rawVersion = withoutQuery.match(/^\/(v1beta|v1)\//)?.[1] || '';
+  const apiVersion = explicitApiVersion || rawVersion || resolveGeminiProxyApiVersion(input.params);
   const normalizedVersion = apiVersion.replace(/^\/+/, '');
   const geminiPrefix = `/gemini/${normalizedVersion}/`;
   const aliasPrefix = `/${normalizedVersion}/`;
@@ -59,6 +63,7 @@ import { geminiGenerateContentUsage } from './usage.js';
 import { reasoningEffortToGeminiThinkingConfig, geminiThinkingConfigToReasoning } from './convert.js';
 import { buildOpenAiBodyFromGeminiRequest, serializeNormalizedFinalToGemini } from './compatibility.js';
 import {
+  applyGeminiGenerateContentReasoningHistoryTransport,
   buildCanonicalRequestToGeminiGenerateContentBody,
   parseGeminiGenerateContentRequestToCanonical,
 } from './requestBridge.js';
@@ -80,6 +85,7 @@ export const geminiGenerateContentTransformer = {
   compatibility: {
     buildOpenAiBodyFromGeminiRequest,
     serializeNormalizedFinalToGemini,
+    applyReasoningHistoryTransport: applyGeminiGenerateContentReasoningHistoryTransport,
   },
   parseProxyRequestPath: parseGeminiProxyRequestPath,
   resolveProxyApiVersion: resolveGeminiProxyApiVersion,
@@ -94,9 +100,9 @@ export const geminiGenerateContentTransformer = {
   },
   buildProtocolRequest(
     request: CanonicalRequestEnvelope,
-    _ctx?: ProtocolBuildContext,
+    ctx?: ProtocolBuildContext,
   ): Record<string, unknown> {
-    return buildCanonicalRequestToGeminiGenerateContentBody(request);
+    return buildCanonicalRequestToGeminiGenerateContentBody(request, ctx);
   },
 };
 
@@ -109,6 +115,7 @@ export {
   geminiGenerateContentUsage,
   reasoningEffortToGeminiThinkingConfig,
   geminiThinkingConfigToReasoning,
+  applyGeminiGenerateContentReasoningHistoryTransport,
   buildOpenAiBodyFromGeminiRequest,
   serializeNormalizedFinalToGemini,
 };

@@ -15,7 +15,13 @@ type ProxyStreamLifecycleInput<TEvent> = {
   pullEvents(buffer: string): PulledEventBatch<TEvent>;
   handleEvent(event: TEvent): Promise<boolean | void> | boolean | void;
   onEof?: () => Promise<void> | void;
+  maxBufferBytes?: number;
+  onLimitExceeded?: (message: string) => Promise<void> | void;
 };
+
+function byteLength(value: string): number {
+  return Buffer.byteLength(value, 'utf8');
+}
 
 export function createProxyStreamLifecycle<TEvent>(input: ProxyStreamLifecycleInput<TEvent>) {
   const flushBuffer = async (buffer: string): Promise<{ rest: string; stop: boolean }> => {
@@ -58,6 +64,12 @@ export function createProxyStreamLifecycle<TEvent>(input: ProxyStreamLifecycleIn
           if (!value) continue;
 
           sseBuffer += decoder.decode(value, { stream: true });
+          if (input.maxBufferBytes && byteLength(sseBuffer) > input.maxBufferBytes) {
+            shouldStop = true;
+            await input.onLimitExceeded?.(`upstream SSE buffer exceeded ${input.maxBufferBytes} bytes`);
+            await reader.cancel().catch(() => {});
+            break;
+          }
           const flushed = await flushBuffer(sseBuffer);
           sseBuffer = flushed.rest;
           if (!flushed.stop) continue;

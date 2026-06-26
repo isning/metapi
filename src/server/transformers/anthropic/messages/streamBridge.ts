@@ -27,6 +27,14 @@ type ExtendedToolBlockState = {
   sourceIndex: number | null;
 };
 
+type AnthropicRawUsagePatchState = {
+  inputTokens: number;
+  cacheReadInputTokens: number;
+  cacheCreationInputTokens: number;
+  ephemeral5mInputTokens: number;
+  ephemeral1hInputTokens: number;
+};
+
 type ExtendedClaudeDownstreamContext = ClaudeDownstreamContext & {
   toolBlocks: Record<number, ExtendedToolBlockState>;
   thinkingBlockIndex?: number | null;
@@ -36,6 +44,7 @@ type ExtendedClaudeDownstreamContext = ClaudeDownstreamContext & {
   textSourceIndex?: number | null;
   pendingSignature?: string | null;
   activeToolSlot?: number | null;
+  rawUsagePatch?: AnthropicRawUsagePatchState;
 };
 
 export const ANTHROPIC_RAW_SSE_EVENT_NAMES = new Set([
@@ -71,6 +80,12 @@ function cloneJsonValue<T>(value: T): T {
     ) as T;
   }
   return value;
+}
+
+function toPositiveInt(value: unknown): number {
+  const numberValue = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(numberValue)) return 0;
+  return Math.max(0, Math.trunc(numberValue));
 }
 
 function cleanAnthropicReasoningSignature(value: unknown): string | null {
@@ -126,10 +141,13 @@ function buildAnthropicFinalContentBlocks(
   if (Array.isArray(normalizedFinal.toolCalls)) {
     for (let index = 0; index < normalizedFinal.toolCalls.length; index += 1) {
       const toolCall = normalizedFinal.toolCalls[index];
+      const id = asTrimmedString(toolCall.id);
+      const name = asTrimmedString(toolCall.name);
+      if (!id || !name) continue;
       contentBlocks.push({
         type: 'tool_use',
-        id: toolCall.id || `toolu_${index}`,
-        name: toolCall.name || `tool_${index}`,
+        id,
+        name,
         input: (() => {
           const rawArguments = toolCall.arguments || '';
           try {
@@ -182,7 +200,75 @@ function ensureContext(context: ClaudeDownstreamContext): ExtendedClaudeDownstre
   if (extended.textSourceIndex === undefined) extended.textSourceIndex = null;
   if (extended.pendingSignature === undefined) extended.pendingSignature = null;
   if (extended.activeToolSlot === undefined) extended.activeToolSlot = null;
+  if (extended.rawUsagePatch === undefined) {
+    extended.rawUsagePatch = {
+      inputTokens: 0,
+      cacheReadInputTokens: 0,
+      cacheCreationInputTokens: 0,
+      ephemeral5mInputTokens: 0,
+      ephemeral1hInputTokens: 0,
+    };
+  }
   return extended;
+}
+
+function readAnthropicRawUsagePatchState(payload: unknown): AnthropicRawUsagePatchState | null {
+  if (!isRecord(payload)) return null;
+  const usage = isRecord(payload.usage)
+    ? payload.usage
+    : (isRecord(payload.message) && isRecord(payload.message.usage) ? payload.message.usage : null);
+  if (!usage) return null;
+  const cacheCreation = isRecord(usage.cache_creation) ? usage.cache_creation : null;
+
+  return {
+    inputTokens: toPositiveInt(usage.input_tokens),
+    cacheReadInputTokens: toPositiveInt(usage.cache_read_input_tokens),
+    cacheCreationInputTokens: toPositiveInt(usage.cache_creation_input_tokens),
+    ephemeral5mInputTokens: toPositiveInt(cacheCreation?.ephemeral_5m_input_tokens),
+    ephemeral1hInputTokens: toPositiveInt(cacheCreation?.ephemeral_1h_input_tokens),
+  };
+}
+
+function mergeAnthropicRawUsagePatchState(
+  target: AnthropicRawUsagePatchState,
+  incoming: AnthropicRawUsagePatchState | null,
+): void {
+  if (!incoming) return;
+  target.inputTokens = Math.max(target.inputTokens, incoming.inputTokens);
+  target.cacheReadInputTokens = Math.max(target.cacheReadInputTokens, incoming.cacheReadInputTokens);
+  target.cacheCreationInputTokens = Math.max(target.cacheCreationInputTokens, incoming.cacheCreationInputTokens);
+  target.ephemeral5mInputTokens = Math.max(target.ephemeral5mInputTokens, incoming.ephemeral5mInputTokens);
+  target.ephemeral1hInputTokens = Math.max(target.ephemeral1hInputTokens, incoming.ephemeral1hInputTokens);
+}
+
+function setMissingPositiveInt(record: Record<string, unknown>, key: string, value: number): void {
+  if (value <= 0) return;
+  if (toPositiveInt(record[key]) > 0) return;
+  record[key] = value;
+}
+
+function patchAnthropicRawMessageDeltaUsage(
+  payload: unknown,
+  patchState: AnthropicRawUsagePatchState,
+): unknown {
+  if (!isRecord(payload) || asTrimmedString(payload.type) !== 'message_delta') return payload;
+
+  const next = cloneJsonValue(payload);
+  const usage = isRecord(next.usage) ? next.usage : {};
+  next.usage = usage;
+
+  setMissingPositiveInt(usage, 'input_tokens', patchState.inputTokens);
+  setMissingPositiveInt(usage, 'cache_read_input_tokens', patchState.cacheReadInputTokens);
+  setMissingPositiveInt(usage, 'cache_creation_input_tokens', patchState.cacheCreationInputTokens);
+
+  if (patchState.ephemeral5mInputTokens > 0 || patchState.ephemeral1hInputTokens > 0) {
+    const cacheCreation = isRecord(usage.cache_creation) ? usage.cache_creation : {};
+    usage.cache_creation = cacheCreation;
+    setMissingPositiveInt(cacheCreation, 'ephemeral_5m_input_tokens', patchState.ephemeral5mInputTokens);
+    setMissingPositiveInt(cacheCreation, 'ephemeral_1h_input_tokens', patchState.ephemeral1hInputTokens);
+  }
+
+  return next;
 }
 
 export function syncAnthropicRawStreamStateFromEvent(
@@ -453,10 +539,13 @@ function ensureToolBlockStart(
   const toolSlot = Number.isFinite(toolDelta.index) ? Math.max(0, Math.trunc(toolDelta.index)) : 0;
   let state = context.toolBlocks[toolSlot];
   if (!state) {
+    if (!toolDelta.id || !toolDelta.name) {
+      return { events: [], contentIndex: -1 };
+    }
     state = {
       contentIndex: allocateContentIndex(context),
-      id: toolDelta.id || `toolu_${toolSlot}`,
-      name: toolDelta.name || `tool_${toolSlot}`,
+      id: toolDelta.id,
+      name: toolDelta.name,
       open: false,
       sourceIndex: toolSlot,
     };
@@ -929,9 +1018,13 @@ export function consumeAnthropicSseEvent(
         streamContext,
         context,
       );
+      mergeAnthropicRawUsagePatchState(context.rawUsagePatch!, readAnthropicRawUsagePatchState(parsedPayload));
+      const outgoingPayload = claudeEventName === 'message_delta'
+        ? patchAnthropicRawMessageDeltaUsage(parsedPayload, context.rawUsagePatch!)
+        : parsedPayload;
       return {
         handled: true,
-        lines: [serializeAnthropicRawSseEvent(claudeEventName, eventBlock.data)],
+        lines: [serializeAnthropicRawSseEvent(claudeEventName, JSON.stringify(outgoingPayload))],
         done: context.doneSent,
         parsedPayload,
       };
@@ -1031,6 +1124,7 @@ export const anthropicMessagesStream = {
           Number.isFinite(toolDelta.index) ? Math.max(0, Math.trunc(toolDelta.index)) : 0,
         ));
         const toolBlock = ensureToolBlockStart(context, toolDelta);
+        if (toolBlock.contentIndex < 0) continue;
         events.push(...toolBlock.events);
         if (toolDelta.argumentsDelta) {
           events.push(serializeSse('content_block_delta', {

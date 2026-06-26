@@ -1,1 +1,1 @@
-export { dispatchRuntimeRequest } from '../routes/proxy/runtimeExecutor.js';
+export { dispatchRuntimeRequest } from '../proxy-core/executors/dispatch.js';

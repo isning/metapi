@@ -1,12 +1,18 @@
 import { describe, expect, it } from 'vitest';
-
 import {
   buildClaudeCountTokensUpstreamRequest,
   buildUpstreamEndpointRequest,
 } from './upstreamRequestBuilder.js';
+import {
+  extractSafePassthroughHeaders,
+  extractResponsesPassthroughHeaders,
+} from '../proxy-core/formats/headerPassthrough.js';
+import type { RouteGraphPostBuildFilters } from './routeGraphRuntimeService.js';
+import { resolveUpstreamCompatibilityPolicy } from '../contracts/upstreamCompatibilityPolicy.js';
 
 describe('upstreamRequestBuilder', () => {
   it('normalizes single-message OpenAI requests to structured responses input', () => {
+    const downstreamHeaders = {};
     const request = buildUpstreamEndpointRequest({
       endpoint: 'responses',
       modelName: 'upstream-gpt',
@@ -19,6 +25,8 @@ describe('upstreamRequestBuilder', () => {
         messages: [{ role: 'user', content: 'hello' }],
       },
       downstreamFormat: 'openai',
+      downstreamHeaders,
+      passthroughHeaders: extractSafePassthroughHeaders(downstreamHeaders),
     });
 
     expect(request.path).toBe('/v1/responses');
@@ -34,6 +42,7 @@ describe('upstreamRequestBuilder', () => {
   });
 
   it('forces store=false for sub2api native responses passthrough bodies', () => {
+    const downstreamHeaders = {};
     const request = buildUpstreamEndpointRequest({
       endpoint: 'responses',
       modelName: 'upstream-gpt',
@@ -48,6 +57,8 @@ describe('upstreamRequestBuilder', () => {
         input: 'hello',
         store: true,
       },
+      downstreamHeaders,
+      passthroughHeaders: extractResponsesPassthroughHeaders(downstreamHeaders),
     });
 
     expect(request.path).toBe('/v1/responses');
@@ -64,6 +75,9 @@ describe('upstreamRequestBuilder', () => {
   });
 
   it('overrides downstream Accept so responses transport mode wins', () => {
+    const downstreamHeaders = {
+      accept: 'application/json',
+    };
     const request = buildUpstreamEndpointRequest({
       endpoint: 'responses',
       modelName: 'upstream-gpt',
@@ -76,15 +90,30 @@ describe('upstreamRequestBuilder', () => {
         messages: [{ role: 'user', content: 'hello' }],
       },
       downstreamFormat: 'openai',
-      downstreamHeaders: {
-        accept: 'application/json',
-      },
+      downstreamHeaders,
+      passthroughHeaders: extractSafePassthroughHeaders(downstreamHeaders),
     });
 
     expect(request.headers.accept).toBe('text/event-stream');
   });
 
   it('applies a sub2api-style allowlist to generic passthrough headers', () => {
+    const downstreamHeaders = {
+      accept: 'application/json',
+      'accept-language': 'zh-CN',
+      'user-agent': 'client-ua/1.0',
+      originator: 'codex_cli_rs',
+      session_id: 'session-123',
+      conversation_id: 'conversation-123',
+      'x-codex-turn-state': 'turn-state',
+      'x-codex-turn-metadata': 'turn-metadata',
+      origin: 'https://client.example',
+      referer: 'https://client.example/chat',
+      'x-forwarded-for': '203.0.113.1',
+      'x-real-ip': '203.0.113.2',
+      version: '0.202.0',
+      'x-test-header': 'drop-me',
+    };
     const request = buildUpstreamEndpointRequest({
       endpoint: 'chat',
       modelName: 'upstream-gpt',
@@ -97,22 +126,8 @@ describe('upstreamRequestBuilder', () => {
         messages: [{ role: 'user', content: 'hello' }],
       },
       downstreamFormat: 'openai',
-      downstreamHeaders: {
-        accept: 'application/json',
-        'accept-language': 'zh-CN',
-        'user-agent': 'client-ua/1.0',
-        originator: 'codex_cli_rs',
-        session_id: 'session-123',
-        conversation_id: 'conversation-123',
-        'x-codex-turn-state': 'turn-state',
-        'x-codex-turn-metadata': 'turn-metadata',
-        origin: 'https://client.example',
-        referer: 'https://client.example/chat',
-        'x-forwarded-for': '203.0.113.1',
-        'x-real-ip': '203.0.113.2',
-        version: '0.202.0',
-        'x-test-header': 'drop-me',
-      },
+      downstreamHeaders,
+      passthroughHeaders: extractSafePassthroughHeaders(downstreamHeaders),
     });
 
     expect(request.headers.accept).toBe('application/json');
@@ -173,5 +188,85 @@ describe('upstreamRequestBuilder', () => {
 
     expect(request.headers['anthropic-beta']).toContain('header-beta');
     expect(request.headers['anthropic-beta']).toContain('beta-from-body');
+  });
+
+  it('applies route graph payload and header filters exactly once after request preparation', () => {
+    const routeGraphFilters: RouteGraphPostBuildFilters = {
+      payload: [
+        {
+          type: 'set_payload',
+          path: 'reasoning_effort',
+          value: 'high',
+          mode: 'override',
+        },
+        {
+          type: 'set_payload',
+          path: 'metadata.trace_id',
+          value: 'trace-123',
+          mode: 'override',
+        },
+      ],
+      headers: [
+        {
+          type: 'set_header',
+          name: 'x-route-graph',
+          value: 'enabled',
+          mode: 'override',
+        },
+      ],
+    };
+
+    const request = buildUpstreamEndpointRequest({
+      endpoint: 'chat',
+      modelName: 'upstream-gpt',
+      stream: false,
+      tokenValue: 'sk-test',
+      sitePlatform: 'openai',
+      siteUrl: 'https://example.com',
+      openaiBody: {
+        model: 'gpt-5.2',
+        messages: [{ role: 'user', content: 'hello' }],
+      },
+      downstreamFormat: 'openai',
+      downstreamHeaders: {},
+      passthroughHeaders: {},
+      routeGraphFilters,
+    });
+
+    expect(request.body.reasoning_effort).toBe('high');
+    expect(request.body.metadata).toEqual({ trace_id: 'trace-123' });
+    expect(request.headers['x-route-graph']).toBe('enabled');
+  });
+
+  it('applies non-native reasoning transport before Responses upstream conversion', () => {
+    const request = buildUpstreamEndpointRequest({
+      endpoint: 'responses',
+      modelName: 'upstream-gpt',
+      stream: false,
+      tokenValue: 'sk-test',
+      sitePlatform: 'openai',
+      siteUrl: 'https://example.com',
+      openaiBody: {
+        model: 'gpt-5',
+        messages: [{
+          role: 'assistant',
+          content: '',
+          reasoning_content: 'plan quietly',
+        }],
+      },
+      downstreamFormat: 'openai',
+      downstreamHeaders: {},
+      passthroughHeaders: {},
+      compatibilityPolicy: resolveUpstreamCompatibilityPolicy({
+        reasoningHistory: {
+          transport: {
+            mode: 'content_think_tag',
+          },
+        },
+      }),
+    });
+
+    expect(JSON.stringify(request.body.input)).toContain('<think>\\nplan quietly\\n</think>');
+    expect(JSON.stringify(request.body.input)).not.toContain('reasoning_content');
   });
 });

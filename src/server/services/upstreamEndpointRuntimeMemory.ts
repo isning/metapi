@@ -1,16 +1,17 @@
 import { createHash } from 'node:crypto';
 import type { ConversationFileInputSummary } from '../proxy-core/capabilities/conversationFileCapabilities.js';
-import type { DownstreamFormat } from '../transformers/shared/normalized.js';
+import type { UpstreamEndpoint } from '../proxy-core/orchestration/upstreamRequest.js';
+import type { DownstreamFormat } from '../proxy-core/formats/protocolTypes.js';
 import {
   inferSuggestedEndpointFromUpstreamError,
   inferRequiredEndpointFromProtocolError,
   isEndpointDispatchDeniedError,
   isEndpointDowngradeError,
   isUnsupportedMediaTypeError,
-} from '../transformers/shared/endpointCompatibility.js';
+} from '../proxy-core/orchestration/endpointCompatibility.js';
 
 export type UpstreamEndpointRuntimeEndpoint = 'chat' | 'messages' | 'responses';
-export type UpstreamEndpointRuntimePreference = DownstreamFormat | 'responses';
+export type UpstreamEndpointRuntimePreference = DownstreamFormat | 'responses' | string;
 export type UpstreamEndpointRuntimeMemoryWrite =
   | {
     action: 'success';
@@ -53,6 +54,10 @@ export const MAX_ENDPOINT_RUNTIME_MODEL_KEY_LENGTH = 64;
 export const MODEL_KEY_HASH_SUFFIX_LENGTH = 8;
 
 const endpointRuntimeStates = new Map<string, EndpointRuntimeState>();
+
+function isUpstreamEndpointRuntimeEndpoint(endpoint: unknown): endpoint is UpstreamEndpointRuntimeEndpoint {
+  return endpoint === 'chat' || endpoint === 'messages' || endpoint === 'responses';
+}
 
 function asTrimmedString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
@@ -286,14 +291,14 @@ export function getUpstreamEndpointRuntimeStateSnapshot(input: {
 }
 
 export function applyUpstreamEndpointRuntimePreference(
-  candidates: UpstreamEndpointRuntimeEndpoint[],
+  candidates: UpstreamEndpoint[],
   input: {
     siteId: number;
     downstreamFormat: UpstreamEndpointRuntimePreference;
     capabilityProfile: EndpointCapabilityProfile;
   },
   nowMs = Date.now(),
-): UpstreamEndpointRuntimeEndpoint[] {
+): UpstreamEndpoint[] {
   if (!shouldUseEndpointRuntimeMemory(input.capabilityProfile)) {
     return candidates;
   }
@@ -309,13 +314,16 @@ export function applyUpstreamEndpointRuntimePreference(
 
   const blocked = new Set<UpstreamEndpointRuntimeEndpoint>();
   for (const endpoint of candidates) {
+    if (!isUpstreamEndpointRuntimeEndpoint(endpoint)) continue;
     const untilMs = state.blockedUntilMsByEndpoint[endpoint];
     if (typeof untilMs === 'number' && untilMs > nowMs) {
       blocked.add(endpoint);
     }
   }
 
-  let next = candidates.filter((endpoint) => !blocked.has(endpoint));
+  let next = candidates.filter((endpoint) => (
+    !isUpstreamEndpointRuntimeEndpoint(endpoint) || !blocked.has(endpoint)
+  ));
   if (next.length === 0) {
     next = [...candidates];
   }
@@ -341,7 +349,7 @@ export function resetUpstreamEndpointRuntimeState(): void {
 
 export function recordUpstreamEndpointSuccess(input: {
   siteId: number;
-  endpoint: UpstreamEndpointRuntimeEndpoint;
+  endpoint: UpstreamEndpoint;
   downstreamFormat: UpstreamEndpointRuntimePreference;
   modelName?: string;
   requestedModelHint?: string;
@@ -352,13 +360,18 @@ export function recordUpstreamEndpointSuccess(input: {
     wantsContinuationAwareResponses?: boolean;
   };
 }): UpstreamEndpointRuntimeMemoryWrite | null {
+  if (!isUpstreamEndpointRuntimeEndpoint(input.endpoint)) return null;
   const capabilityProfile = buildEndpointCapabilityProfile({
     modelName: input.modelName,
     requestedModelHint: input.requestedModelHint,
     requestCapabilities: input.requestCapabilities,
   });
   if (!shouldUseEndpointRuntimeMemory(capabilityProfile)) return null;
-  if (!shouldRememberSuccessfulEndpoint(input)) return null;
+  const runtimeInput = {
+    ...input,
+    endpoint: input.endpoint,
+  } as Omit<typeof input, 'endpoint'> & { endpoint: UpstreamEndpointRuntimeEndpoint };
+  if (!shouldRememberSuccessfulEndpoint(runtimeInput)) return null;
 
   const nowMs = Date.now();
   const key = buildEndpointRuntimeStateKey({
@@ -381,7 +394,7 @@ export function recordUpstreamEndpointSuccess(input: {
 
 export function recordUpstreamEndpointFailure(input: {
   siteId: number;
-  endpoint: UpstreamEndpointRuntimeEndpoint;
+  endpoint: UpstreamEndpoint;
   downstreamFormat: UpstreamEndpointRuntimePreference;
   status: number;
   errorText?: string | null;
@@ -394,6 +407,7 @@ export function recordUpstreamEndpointFailure(input: {
     wantsContinuationAwareResponses?: boolean;
   };
 }): UpstreamEndpointRuntimeMemoryWrite | null {
+  if (!isUpstreamEndpointRuntimeEndpoint(input.endpoint)) return null;
   const capabilityProfile = buildEndpointCapabilityProfile({
     modelName: input.modelName,
     requestedModelHint: input.requestedModelHint,

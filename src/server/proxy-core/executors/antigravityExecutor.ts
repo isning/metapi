@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { Response } from 'undici';
-import { geminiGenerateContentTransformer } from '../../transformers/gemini/generate-content/index.js';
+import { protocolAdapters } from '../formats/protocolAdapters.js';
 import type { RuntimeDispatchInput, RuntimeExecutor, RuntimeResponse } from './types.js';
 import {
   asTrimmedString,
@@ -161,22 +161,22 @@ async function materializeAntigravitySuccessResponse(
 
   const rawText = await readRuntimeResponseText(response);
   const contentType = response.headers.get('content-type');
-  const parsed = geminiGenerateContentTransformer.stream.parseGeminiStreamPayload(rawText, contentType);
-  const aggregateState = geminiGenerateContentTransformer.stream.createAggregateState();
+  const parsed = protocolAdapters.gemini.stream.parseGeminiStreamPayload(rawText, contentType);
+  const aggregateState = protocolAdapters.gemini.stream.createAggregateState();
 
   for (const event of parsed.events) {
-    geminiGenerateContentTransformer.stream.applyAggregate(
+    protocolAdapters.gemini.stream.applyAggregate(
       aggregateState,
       unwrapAntigravityAggregatePayload(event),
     );
   }
   if (parsed.rest.trim()) {
-    const trailingPayload = geminiGenerateContentTransformer.stream.parseGeminiStreamPayload(
+    const trailingPayload = protocolAdapters.gemini.stream.parseGeminiStreamPayload(
       `${parsed.rest}\n\n`,
       'text/event-stream',
     );
     for (const event of trailingPayload.events) {
-      geminiGenerateContentTransformer.stream.applyAggregate(
+      protocolAdapters.gemini.stream.applyAggregate(
         aggregateState,
         unwrapAntigravityAggregatePayload(event),
       );
@@ -189,7 +189,7 @@ async function materializeAntigravitySuccessResponse(
   headers.delete('content-length');
 
   return new Response(
-    JSON.stringify(geminiGenerateContentTransformer.stream.serializeAggregateJsonPayload(aggregateState)),
+    JSON.stringify(protocolAdapters.gemini.stream.serializeAggregateJsonPayload(aggregateState)),
     {
       status: response.status,
       headers,

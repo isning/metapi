@@ -7,7 +7,7 @@ function readSource(relativePath: string): string {
 
 describe('proxy route semantic ownership boundaries', () => {
   it('keeps chat stream closeout semantics out of the route', () => {
-    const source = readSource('./chat.ts');
+    const source = readSource('../../proxy-core/formats/openaiChat.ts');
 
     expect(source).not.toContain('const finalizeChatStream =');
     expect(source).not.toContain('openAiChatTransformer.buildSyntheticChunks(');

@@ -51,9 +51,9 @@ export const anthropicMessagesTransformer = {
   },
   buildProtocolRequest(
     request: CanonicalRequestEnvelope,
-    _ctx?: ProtocolBuildContext,
+    ctx?: ProtocolBuildContext,
   ): Record<string, unknown> {
-    return buildCanonicalRequestToAnthropicMessagesBody(request);
+    return buildCanonicalRequestToAnthropicMessagesBody(request, ctx);
   },
   transformRequest(body: unknown): ReturnType<typeof anthropicMessagesInbound.parse> {
     return anthropicMessagesInbound.parse(body);

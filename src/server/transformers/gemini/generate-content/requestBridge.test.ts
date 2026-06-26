@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  applyGeminiGenerateContentReasoningHistoryTransport,
   buildGeminiGenerateContentRequestFromOpenAi,
   buildCanonicalRequestToGeminiGenerateContentBody,
   parseGeminiGenerateContentRequestToCanonical,
 } from './requestBridge.js';
+import { resolveUpstreamCompatibilityPolicy } from '../../../contracts/upstreamCompatibilityPolicy.js';
 
 describe('gemini generate-content request bridge', () => {
   it('parses Gemini generateContent bodies into canonical envelopes', () => {
@@ -116,6 +118,38 @@ describe('gemini generate-content request bridge', () => {
 
     expect(functionCallParts).toHaveLength(1);
     expect(functionCallParts[0].thoughtSignature).toBe('real_sig_abc');
+  });
+
+  it('maps named OpenAI tool_choice objects to Gemini allowed function names', () => {
+    const result = buildGeminiGenerateContentRequestFromOpenAi({
+      modelName: 'gemini-2.5-pro',
+      body: {
+        model: 'gemini-2.5-pro',
+        messages: [{ role: 'user', content: 'lookup weather' }],
+        tools: [
+          {
+            type: 'function',
+            function: {
+              name: 'lookup_weather',
+              parameters: { type: 'object', properties: {} },
+            },
+          },
+        ],
+        tool_choice: {
+          type: 'function',
+          function: {
+            name: 'lookup_weather',
+          },
+        },
+      },
+    }) as Record<string, unknown>;
+
+    expect(result.toolConfig).toEqual({
+      functionCallingConfig: {
+        mode: 'ANY',
+        allowedFunctionNames: ['lookup_weather'],
+      },
+    });
   });
 
   it('splits text and signed functionCall parts into separate model messages', () => {
@@ -314,5 +348,172 @@ describe('gemini generate-content request bridge', () => {
         }],
       },
     ]);
+  });
+
+  it('drops Gemini functionResponse parts when tool call ids are missing from history', () => {
+    const body = buildCanonicalRequestToGeminiGenerateContentBody({
+      operation: 'generate',
+      surface: 'gemini-generate-content',
+      cliProfile: 'generic',
+      requestedModel: 'gemini-2.5-pro',
+      stream: false,
+      messages: [
+        {
+          role: 'tool',
+          parts: [{
+            type: 'tool_result',
+            toolCallId: 'missing_call',
+            resultJson: { temperature: '22C' },
+          }],
+        },
+      ],
+    });
+
+    expect(body.contents).toEqual([]);
+  });
+
+  it('drops OpenAI tool result messages that cannot be matched to a Gemini functionCall name', () => {
+    const result = buildGeminiGenerateContentRequestFromOpenAi({
+      modelName: 'gemini-2.5-pro',
+      body: {
+        model: 'gemini-2.5-pro',
+        messages: [
+          { role: 'tool', tool_call_id: 'missing_call', content: '{"ok":true}' },
+        ],
+      },
+    }) as Record<string, unknown>;
+
+    expect(result.contents).toEqual([]);
+  });
+
+  it('encodes native Gemini thought history according to resolved compatibility policy', () => {
+    const body = applyGeminiGenerateContentReasoningHistoryTransport({
+      contents: [
+        {
+          role: 'model',
+          parts: [
+            { text: 'plan quietly', thought: true, thoughtSignature: 'sig-hidden' },
+            { text: 'visible answer' },
+          ],
+        },
+      ],
+    }, resolveUpstreamCompatibilityPolicy({
+      reasoningHistory: {
+        transport: {
+          mode: 'content_think_tag',
+        },
+      },
+    }));
+
+    expect(body.contents).toEqual([
+      {
+        role: 'model',
+        parts: [
+          { text: '<think>\nplan quietly\n</think>\n\n' },
+          { text: 'visible answer' },
+        ],
+      },
+    ]);
+  });
+
+  it('drops or truncates native Gemini thought history through policy limits', () => {
+    const truncated = applyGeminiGenerateContentReasoningHistoryTransport({
+      contents: [
+        {
+          role: 'model',
+          parts: [
+            { text: 'abcdef', thought: true },
+            { text: 'visible' },
+          ],
+        },
+      ],
+    }, resolveUpstreamCompatibilityPolicy({
+      reasoningHistory: {
+        transport: {
+          mode: 'native',
+          maxReasoningBytes: 3,
+        },
+      },
+    }));
+
+    expect(truncated.contents).toEqual([
+      {
+        role: 'model',
+        parts: [
+          { text: 'abc', thought: true },
+          { text: 'visible' },
+        ],
+      },
+    ]);
+
+    const dropped = applyGeminiGenerateContentReasoningHistoryTransport({
+      contents: [
+        {
+          role: 'model',
+          parts: [
+            { text: 'abcdef', thought: true },
+            { text: 'visible' },
+          ],
+        },
+      ],
+    }, resolveUpstreamCompatibilityPolicy({
+      reasoningHistory: {
+        transport: {
+          mode: 'native',
+          maxReasoningBytes: 3,
+          overflow: 'drop',
+        },
+      },
+    }));
+
+    expect(dropped.contents).toEqual([
+      {
+        role: 'model',
+        parts: [{ text: 'visible' }],
+      },
+    ]);
+  });
+
+  it('does not synthesize OpenAI tool calls from Gemini functionCall parts without ids', () => {
+    const result = parseGeminiGenerateContentRequestToCanonical({
+      model: 'gemini-2.5-pro',
+      contents: [
+        {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                name: 'lookup_weather',
+                args: { city: 'Paris' },
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.value?.messages).toEqual([]);
+  });
+
+  it('does not synthesize OpenAI tool result ids from Gemini functionResponse names', () => {
+    const result = parseGeminiGenerateContentRequestToCanonical({
+      model: 'gemini-2.5-pro',
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            {
+              functionResponse: {
+                response: { result: { ok: true } },
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.value?.messages).toEqual([]);
   });
 });

@@ -93,13 +93,12 @@ function extractToolCallsFromUpstream(payload: unknown): ResponsesToolCall[] {
     const message = isRecord((choice as any)?.message) ? (choice as any).message : {};
     const toolCalls = Array.isArray((message as any).tool_calls) ? (message as any).tool_calls : [];
     return toolCalls
-      .map((item: unknown, index: number) => {
+      .map((item: unknown) => {
         if (!isRecord(item)) return null;
         const fn = isRecord(item.function) ? item.function : {};
-        const id = typeof item.id === 'string' && item.id.trim().length > 0
-          ? item.id
-          : `call_${index}`;
-        const name = typeof fn.name === 'string' ? fn.name : '';
+        const id = typeof item.id === 'string' ? item.id.trim() : '';
+        const name = typeof fn.name === 'string' ? fn.name.trim() : '';
+        if (!id || !name) return null;
         const args = typeof fn.arguments === 'string' ? fn.arguments : '';
         return {
           id: ensureFunctionCallId(id),
@@ -112,12 +111,11 @@ function extractToolCallsFromUpstream(payload: unknown): ResponsesToolCall[] {
 
   if (payload.type === 'message' && Array.isArray(payload.content)) {
     return payload.content
-      .map((item: unknown, index: number) => {
+      .map((item: unknown) => {
         if (!isRecord(item) || item.type !== 'tool_use') return null;
-        const id = typeof item.id === 'string' && item.id.trim().length > 0
-          ? item.id
-          : `call_${index}`;
-        const name = typeof item.name === 'string' ? item.name : '';
+        const id = typeof item.id === 'string' ? item.id.trim() : '';
+        const name = typeof item.name === 'string' ? item.name.trim() : '';
+        if (!id || !name) return null;
         const args = stringifyToolInput(item.input);
         return {
           id: ensureFunctionCallId(id),
@@ -198,23 +196,29 @@ function extractSyntheticOutputItemsFromUpstream(payload: unknown): ResponsesOut
       }
 
       if (itemType === 'function_call') {
+        const callId = asTrimmedString(rawItem.call_id) || asTrimmedString(rawItem.id);
+        const name = asTrimmedString(rawItem.name);
+        if (!callId || !name) return null;
         return {
-          id: asTrimmedString(rawItem.id) || ensureFunctionCallId(''),
+          id: asTrimmedString(rawItem.id) || toFunctionCallItemId(callId),
           type: 'function_call',
           status: asTrimmedString(rawItem.status) || 'completed',
-          call_id: asTrimmedString(rawItem.call_id) || ensureFunctionCallId(asTrimmedString(rawItem.id)),
-          name: asTrimmedString(rawItem.name),
+          call_id: callId,
+          name,
           arguments: typeof rawItem.arguments === 'string' ? rawItem.arguments : '',
         };
       }
 
       if (itemType === 'custom_tool_call') {
+        const callId = asTrimmedString(rawItem.call_id) || asTrimmedString(rawItem.id);
+        const name = asTrimmedString(rawItem.name);
+        if (!callId || !name) return null;
         return {
-          id: asTrimmedString(rawItem.id) || ensureFunctionCallId(''),
+          id: asTrimmedString(rawItem.id) || toFunctionCallItemId(callId),
           type: 'custom_tool_call',
           status: asTrimmedString(rawItem.status) || 'completed',
-          call_id: asTrimmedString(rawItem.call_id) || ensureFunctionCallId(asTrimmedString(rawItem.id)),
-          name: asTrimmedString(rawItem.name),
+          call_id: callId,
+          name,
           input: typeof rawItem.input === 'string' ? rawItem.input : '',
         };
       }

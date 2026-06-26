@@ -8,9 +8,9 @@ import {
   applyUpstreamEndpointRuntimePreference,
   buildEndpointCapabilityProfile,
 } from './upstreamEndpointRuntimeMemory.js';
-import type { DownstreamFormat } from '../transformers/shared/normalized.js';
+import type { DownstreamFormat } from '../proxy-core/formats/protocolTypes.js';
 
-export type EndpointPreference = DownstreamFormat | 'responses';
+export type EndpointPreference = DownstreamFormat | 'responses' | string;
 export type EndpointDerivationHints = {
   oauthProvider?: string | null;
   requestKind?: 'default' | 'responses-compact' | 'claude-count-tokens';
@@ -26,8 +26,10 @@ type ChannelContext = {
   };
   account: {
     id: number;
+    username?: string | null;
     accessToken?: string | null;
     apiToken?: string | null;
+    extraConfig?: string | Record<string, unknown> | null;
   };
 };
 
@@ -150,6 +152,25 @@ export async function resolveUpstreamEndpointCandidates(
   },
   hints?: EndpointDerivationHints,
 ): Promise<UpstreamEndpoint[]> {
+  if (downstreamFormat === 'openai/embeddings') {
+    return ['embeddings' as any];
+  }
+  if (downstreamFormat === 'openai/completions') {
+    return ['completions' as any];
+  }
+  if (downstreamFormat === 'openai/images') {
+    return ['images/generations' as any];
+  }
+  if (downstreamFormat.startsWith('openai/images/')) {
+    return [downstreamFormat.slice('openai/'.length) as any];
+  }
+  if (downstreamFormat === 'openai/videos') {
+    return ['videos/generations' as any];
+  }
+  if (downstreamFormat.startsWith('openai/videos/')) {
+    return [downstreamFormat.slice('openai/'.length) as any];
+  }
+
   const sitePlatform = normalizePlatformName(context.site.platform);
   if (hints?.requestKind === 'responses-compact') {
     return ['responses'];
@@ -254,11 +275,14 @@ export async function resolveUpstreamEndpointCandidates(
         id: context.site.id,
         url: context.site.url,
         platform: context.site.platform,
+        apiKey: context.site.apiKey ?? null,
       },
       account: {
         id: context.account.id,
+        username: context.account.username ?? null,
         accessToken: context.account.accessToken ?? null,
         apiToken: context.account.apiToken ?? null,
+        extraConfig: context.account.extraConfig ?? null,
       },
       modelName,
       totalTokens: 0,

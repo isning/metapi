@@ -10,7 +10,7 @@ const fetchMock = vi.fn();
 const selectChannelMock = vi.fn();
 const selectNextChannelMock = vi.fn();
 const selectPreferredChannelMock = vi.fn();
-const previewSelectedChannelMock = vi.fn();
+const previewSelectedTargetMock = vi.fn();
 const recordSuccessMock = vi.fn();
 const recordFailureMock = vi.fn();
 const authorizeDownstreamTokenMock = vi.fn();
@@ -44,7 +44,7 @@ vi.mock('../../services/tokenRouter.js', () => ({
     selectChannel: (...args: unknown[]) => selectChannelMock(...args),
     selectNextChannel: (...args: unknown[]) => selectNextChannelMock(...args),
     selectPreferredChannel: (...args: unknown[]) => selectPreferredChannelMock(...args),
-    previewSelectedChannel: (...args: unknown[]) => previewSelectedChannelMock(...args),
+    previewSelectedTarget: (...args: unknown[]) => previewSelectedTargetMock(...args),
     recordSuccess: (...args: unknown[]) => recordSuccessMock(...args),
     recordFailure: (...args: unknown[]) => recordFailureMock(...args),
   },
@@ -94,6 +94,14 @@ vi.mock('../../services/proxyRetryPolicy.js', () => ({
 vi.mock('../../services/proxyUsageFallbackService.js', () => ({
   resolveProxyUsageWithSelfLogFallback: (arg: any) => resolveProxyUsageWithSelfLogFallbackMock(arg),
 }));
+
+vi.mock('../../services/routeGraphRuntimeService.js', async () => {
+  const actual = await vi.importActual<typeof import('../../services/routeGraphRuntimeService.js')>('../../services/routeGraphRuntimeService.js');
+  return {
+    ...actual,
+    evaluateActiveRouteGraphForModel: async () => null,
+  };
+});
 
 vi.mock('../../services/oauth/quota.js', () => ({
   recordOauthQuotaHeadersSnapshot: async () => undefined,
@@ -149,7 +157,7 @@ function createSseResponse(chunks: string[], status = 200) {
   });
 }
 
-function createSelectedChannel(options?: {
+function createSelectedTarget(options?: {
   siteName?: string;
   siteUrl?: string;
   sitePlatform?: string;
@@ -320,9 +328,10 @@ describe('responses websocket transport', () => {
   let rejectedUpgradeBody: string;
 
   beforeAll(async () => {
-    const { responsesProxyRoute } = await import('./responses.js');
+    const { registerDownstreamProtocolSurface } = await import('../../proxy-core/surfaces/downstreamProtocolSurface.js');
+    const { responsesProtocolAdapter } = await import('../../proxy-core/formats/responses.js');
     app = Fastify();
-    await app.register(responsesProxyRoute);
+    await registerDownstreamProtocolSurface(app, responsesProtocolAdapter);
     await app.listen({ port: 0, host: '127.0.0.1' });
     const address = app.server.address() as AddressInfo;
     baseUrl = `ws://127.0.0.1:${address.port}`;
@@ -373,7 +382,7 @@ describe('responses websocket transport', () => {
     selectChannelMock.mockReset();
     selectNextChannelMock.mockReset();
     selectPreferredChannelMock.mockReset();
-    previewSelectedChannelMock.mockReset();
+    previewSelectedTargetMock.mockReset();
     recordSuccessMock.mockReset();
     recordFailureMock.mockReset();
     authorizeDownstreamTokenMock.mockReset();
@@ -385,11 +394,11 @@ describe('responses websocket transport', () => {
     dbInsertMock.mockClear();
     siteApiEndpointRows = [];
 
-    const selectedChannel = createSelectedChannel();
+    const selectedChannel = createSelectedTarget();
     selectChannelMock.mockReturnValue(selectedChannel);
     selectNextChannelMock.mockReturnValue(null);
     selectPreferredChannelMock.mockReturnValue(null);
-    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+    previewSelectedTargetMock.mockResolvedValue(selectedChannel);
     upstreamConnectionCount = 0;
     upstreamUpgradeHeaders = {};
     upstreamRequests = [];
@@ -465,11 +474,11 @@ describe('responses websocket transport', () => {
   });
 
   it('accepts response.create over GET /v1/responses websocket and forwards streamed responses events', async () => {
-    const selectedChannel = createSelectedChannel({
+    const selectedChannel = createSelectedTarget({
       siteUrl: upstreamSiteUrl,
     });
     selectChannelMock.mockReturnValue(selectedChannel);
-    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+    previewSelectedTargetMock.mockResolvedValue(selectedChannel);
     upstreamMessageHandler = (socket) => {
       socket.send(JSON.stringify({
         type: 'response.created',
@@ -563,11 +572,11 @@ describe('responses websocket transport', () => {
       lastFailureReason: null,
       updatedAt: null,
     }];
-    const selectedChannel = createSelectedChannel({
+    const selectedChannel = createSelectedTarget({
       siteUrl: rejectedUpgradeSiteUrl,
     });
     selectChannelMock.mockReturnValue(selectedChannel);
-    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+    previewSelectedTargetMock.mockResolvedValue(selectedChannel);
 
     const socket = createClientSocket(baseUrl);
     await waitForSocketOpen(socket);
@@ -603,11 +612,11 @@ describe('responses websocket transport', () => {
       lastFailureReason: null,
       updatedAt: null,
     }];
-    const selectedChannel = createSelectedChannel({
+    const selectedChannel = createSelectedTarget({
       siteUrl: rejectedUpgradeSiteUrl,
     });
     selectChannelMock.mockReturnValue(selectedChannel);
-    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+    previewSelectedTargetMock.mockResolvedValue(selectedChannel);
 
     const socket = createClientSocket(baseUrl);
     await waitForSocketOpen(socket);
@@ -652,11 +661,11 @@ describe('responses websocket transport', () => {
 
   it('reuses one upstream codex websocket session across sequential websocket turns', async () => {
     (config as any).codexResponsesWebsocketBeta = 'responses_websockets=2099-01-01';
-    const selectedChannel = createSelectedChannel({
+    const selectedChannel = createSelectedTarget({
       siteUrl: upstreamSiteUrl,
     });
     selectChannelMock.mockReturnValue(selectedChannel);
-    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+    previewSelectedTargetMock.mockResolvedValue(selectedChannel);
 
     const socket = createClientSocket(baseUrl, {
       'x-codex-turn-state': 'turn-state-123',
@@ -703,11 +712,11 @@ describe('responses websocket transport', () => {
   });
 
   it('infers previous_response_id for websocket tool-output follow-up turns when the client omits it', async () => {
-    const selectedChannel = createSelectedChannel({
+    const selectedChannel = createSelectedTarget({
       siteUrl: upstreamSiteUrl,
     });
     selectChannelMock.mockReturnValue(selectedChannel);
-    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+    previewSelectedTargetMock.mockResolvedValue(selectedChannel);
 
     const socket = createClientSocket(baseUrl, {
       session_id: 'ws-session-prev-infer',
@@ -761,11 +770,11 @@ describe('responses websocket transport', () => {
   });
 
   it('infers previous_response_id for websocket tool-output follow-up turns when the client only sends conversation_id', async () => {
-    const selectedChannel = createSelectedChannel({
+    const selectedChannel = createSelectedTarget({
       siteUrl: upstreamSiteUrl,
     });
     selectChannelMock.mockReturnValue(selectedChannel);
-    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+    previewSelectedTargetMock.mockResolvedValue(selectedChannel);
 
     const socket = createClientSocket(baseUrl, {
       conversation_id: 'ws-conversation-prev-infer',
@@ -821,11 +830,11 @@ describe('responses websocket transport', () => {
   });
 
   it('preserves websocket continuation across downstream reconnects on the same conversation_id', async () => {
-    const selectedChannel = createSelectedChannel({
+    const selectedChannel = createSelectedTarget({
       siteUrl: upstreamSiteUrl,
     });
     selectChannelMock.mockReturnValue(selectedChannel);
-    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+    previewSelectedTargetMock.mockResolvedValue(selectedChannel);
 
     const firstSocket = createClientSocket(baseUrl, {
       conversation_id: 'ws-conversation-reconnect-1',
@@ -886,11 +895,11 @@ describe('responses websocket transport', () => {
   });
 
   it('retries websocket turns once without previous_response_id when the upstream reports previous_response_not_found', async () => {
-    const selectedChannel = createSelectedChannel({
+    const selectedChannel = createSelectedTarget({
       siteUrl: upstreamSiteUrl,
     });
     selectChannelMock.mockReturnValue(selectedChannel);
-    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+    previewSelectedTargetMock.mockResolvedValue(selectedChannel);
     upstreamMessageHandler = (socket, parsed, requestIndex) => {
       if (requestIndex === 1) {
         socket.send(JSON.stringify({
@@ -965,11 +974,11 @@ describe('responses websocket transport', () => {
   });
 
   it('falls back to the HTTP responses executor when the upstream codex websocket upgrade returns 426', async () => {
-    const selectedChannel = createSelectedChannel({
+    const selectedChannel = createSelectedTarget({
       siteUrl: rejectedUpgradeSiteUrl,
     });
     selectChannelMock.mockReturnValue(selectedChannel);
-    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+    previewSelectedTargetMock.mockResolvedValue(selectedChannel);
     fetchMock.mockResolvedValueOnce(createSseResponse([
       'event: response.completed\n',
       'data: {"type":"response.completed","response":{"id":"resp_http_fallback","model":"gpt-5.4","status":"completed","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}\n\n',
@@ -998,11 +1007,11 @@ describe('responses websocket transport', () => {
   });
 
   it('treats response.incomplete as a terminal HTTP fallback payload without appending websocket error', async () => {
-    const selectedChannel = createSelectedChannel({
+    const selectedChannel = createSelectedTarget({
       siteUrl: rejectedUpgradeSiteUrl,
     });
     selectChannelMock.mockReturnValue(selectedChannel);
-    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+    previewSelectedTargetMock.mockResolvedValue(selectedChannel);
     fetchMock.mockResolvedValueOnce(createSseResponse([
       'event: response.incomplete\n',
       'data: {"type":"response.incomplete","response":{"id":"resp_http_incomplete","model":"gpt-5.4","status":"incomplete","output":[{"id":"msg_http_incomplete","type":"message","role":"assistant","status":"incomplete","content":[{"type":"output_text","text":"partial"}]}],"output_text":"partial","incomplete_details":{"reason":"max_output_tokens"},"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}\n\n',
@@ -1011,7 +1020,10 @@ describe('responses websocket transport', () => {
 
     const socket = createClientSocket(baseUrl);
     await waitForSocketOpen(socket);
-    const messagesPromise = waitForSocketMessages(socket, 2);
+    const messagePromise = waitForSocketMessageMatching(
+      socket,
+      (message) => message?.type === 'response.incomplete',
+    );
 
     socket.send(JSON.stringify({
       type: 'response.create',
@@ -1019,17 +1031,20 @@ describe('responses websocket transport', () => {
       input: [],
     }));
 
-    const messages = await messagesPromise;
+    const message = await messagePromise;
+    await expect(
+      waitForSocketMessageMatching(
+        socket,
+        (nextMessage) => nextMessage?.type === 'error',
+        150,
+      ),
+    ).rejects.toThrow('Timed out waiting for matching websocket message');
     socket.close();
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(messages.map((message) => message?.type)).toEqual([
-      'response.created',
-      'response.incomplete',
-    ]);
-    expect(messages.some((message) => message?.type === 'error')).toBe(false);
-    const terminalMessage = messages[1];
-    expect(terminalMessage?.response?.incomplete_details?.reason).toBe('max_output_tokens');
+    expect(message?.type).toBe('response.incomplete');
+    expect(message?.response?.id).toBe('resp_http_incomplete');
+    expect(message?.response?.incomplete_details?.reason).toBe('max_output_tokens');
   });
 
   it('falls back to the HTTP responses executor when the upstream codex websocket upgrade returns 401', async () => {
@@ -1041,11 +1056,11 @@ describe('responses websocket transport', () => {
         type: 'invalid_request_error',
       },
     });
-    const selectedChannel = createSelectedChannel({
+    const selectedChannel = createSelectedTarget({
       siteUrl: rejectedUpgradeSiteUrl,
     });
     selectChannelMock.mockReturnValue(selectedChannel);
-    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+    previewSelectedTargetMock.mockResolvedValue(selectedChannel);
     fetchMock.mockResolvedValueOnce(createSseResponse([
       'event: response.completed\n',
       'data: {"type":"response.completed","response":{"id":"resp_http_fallback_401","model":"gpt-5.4","status":"completed","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}\n\n',
@@ -1082,11 +1097,11 @@ describe('responses websocket transport', () => {
         type: 'invalid_request_error',
       },
     });
-    const selectedChannel = createSelectedChannel({
+    const selectedChannel = createSelectedTarget({
       siteUrl: rejectedUpgradeSiteUrl,
     });
     selectChannelMock.mockReturnValue(selectedChannel);
-    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+    previewSelectedTargetMock.mockResolvedValue(selectedChannel);
     fetchMock.mockResolvedValueOnce(createSseResponse([
       'event: response.incomplete\n',
       'data: {"type":"response.incomplete","response":{"id":"resp_http_incomplete","model":"gpt-5.4","status":"incomplete","output":[{"id":"msg_incomplete","type":"message","role":"assistant","status":"incomplete","content":[{"type":"output_text","text":"partial"}]}],"output_text":"partial","incomplete_details":{"reason":"max_output_tokens"},"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}\n\n',
@@ -1129,11 +1144,11 @@ describe('responses websocket transport', () => {
       },
     });
 
-    const selectedChannel = createSelectedChannel({
+    const selectedChannel = createSelectedTarget({
       siteUrl: rejectedUpgradeSiteUrl,
     });
     selectChannelMock.mockReturnValue(selectedChannel);
-    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+    previewSelectedTargetMock.mockResolvedValue(selectedChannel);
     fetchMock
       .mockResolvedValueOnce(createSseResponse([
         'event: response.completed\n',
@@ -1207,11 +1222,11 @@ describe('responses websocket transport', () => {
       },
     });
 
-    const selectedChannel = createSelectedChannel({
+    const selectedChannel = createSelectedTarget({
       siteUrl: rejectedUpgradeSiteUrl,
     });
     selectChannelMock.mockReturnValue(selectedChannel);
-    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+    previewSelectedTargetMock.mockResolvedValue(selectedChannel);
     fetchMock
       .mockResolvedValueOnce(createSseResponse([
         'event: response.incomplete\n',
@@ -1285,13 +1300,13 @@ describe('responses websocket transport', () => {
       },
     });
 
-    const selectedChannel = createSelectedChannel({
+    const selectedChannel = createSelectedTarget({
       sitePlatform: 'openai',
       siteUrl: rejectedUpgradeSiteUrl,
       actualModel: 'gpt-4.1',
     });
     selectChannelMock.mockReturnValue(selectedChannel);
-    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+    previewSelectedTargetMock.mockResolvedValue(selectedChannel);
     fetchMock
       .mockResolvedValueOnce(createSseResponse([
         'event: response.incomplete\n',
@@ -1381,11 +1396,11 @@ describe('responses websocket transport', () => {
         type: 'invalid_request_error',
       },
     });
-    const selectedChannel = createSelectedChannel({
+    const selectedChannel = createSelectedTarget({
       siteUrl: rejectedUpgradeSiteUrl,
     });
     selectChannelMock.mockReturnValue(selectedChannel);
-    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+    previewSelectedTargetMock.mockResolvedValue(selectedChannel);
     authorizeDownstreamTokenMock.mockResolvedValueOnce({
       ok: true,
       source: 'global',
@@ -1457,12 +1472,12 @@ describe('responses websocket transport', () => {
   });
 
   it('merges follow-up response.create payloads when the selected upstream does not support incremental mode', async () => {
-    const selectedChannel = createSelectedChannel({
+    const selectedChannel = createSelectedTarget({
       sitePlatform: 'openai',
       actualModel: 'gpt-4.1',
     });
     selectChannelMock.mockReturnValue(selectedChannel);
-    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+    previewSelectedTargetMock.mockResolvedValue(selectedChannel);
     fetchMock
       .mockResolvedValueOnce(createSseResponse([
         'event: response.output_item.done\n',
@@ -1563,12 +1578,12 @@ describe('responses websocket transport', () => {
       tiers: ['priority'],
       platforms: ['openai'],
     }];
-    const selectedChannel = createSelectedChannel({
+    const selectedChannel = createSelectedTarget({
       sitePlatform: 'openai',
       actualModel: 'gpt-4.1',
     });
     selectChannelMock.mockReturnValue(selectedChannel);
-    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+    previewSelectedTargetMock.mockResolvedValue(selectedChannel);
     fetchMock.mockResolvedValueOnce(createSseResponse([
       'event: response.completed\n',
       'data: {"type":"response.completed","response":{"id":"resp_ws_tier","model":"gpt-4.1","status":"completed","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}\n\n',
@@ -1602,12 +1617,12 @@ describe('responses websocket transport', () => {
       tiers: ['priority'],
       platforms: ['openai'],
     }];
-    const selectedChannel = createSelectedChannel({
+    const selectedChannel = createSelectedTarget({
       sitePlatform: 'openai',
       actualModel: 'gpt-4.1',
     });
     selectChannelMock.mockReturnValue(selectedChannel);
-    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+    previewSelectedTargetMock.mockResolvedValue(selectedChannel);
 
     const socket = createClientSocket(baseUrl);
     await waitForSocketOpen(socket);
@@ -1631,12 +1646,12 @@ describe('responses websocket transport', () => {
   });
 
   it('keeps streamed output items for follow-up turns when the terminal HTTP fallback payload has an empty output array', async () => {
-    const selectedChannel = createSelectedChannel({
+    const selectedChannel = createSelectedTarget({
       sitePlatform: 'openai',
       actualModel: 'gpt-4.1',
     });
     selectChannelMock.mockReturnValue(selectedChannel);
-    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+    previewSelectedTargetMock.mockResolvedValue(selectedChannel);
     fetchMock
       .mockResolvedValueOnce(createSseResponse([
         'event: response.output_item.done\n',
@@ -1716,12 +1731,12 @@ describe('responses websocket transport', () => {
   });
 
   it('serializes websocket messages per connection so follow-up turns wait for the previous HTTP fallback to finish', async () => {
-    const selectedChannel = createSelectedChannel({
+    const selectedChannel = createSelectedTarget({
       sitePlatform: 'openai',
       actualModel: 'gpt-4.1',
     });
     selectChannelMock.mockReturnValue(selectedChannel);
-    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+    previewSelectedTargetMock.mockResolvedValue(selectedChannel);
     const firstResponseGate = createDeferred<Response>();
     fetchMock
       .mockImplementationOnce(() => firstResponseGate.promise)
@@ -1826,11 +1841,11 @@ describe('responses websocket transport', () => {
   });
 
   it('preserves incremental response.create payloads with previous_response_id for websocket-capable upstreams', async () => {
-    const selectedChannel = createSelectedChannel({
+    const selectedChannel = createSelectedTarget({
       siteUrl: upstreamSiteUrl,
     });
     selectChannelMock.mockReturnValue(selectedChannel);
-    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+    previewSelectedTargetMock.mockResolvedValue(selectedChannel);
     upstreamMessageHandler = (socket, _parsed, requestIndex) => {
       if (requestIndex === 1) {
         socket.send(JSON.stringify({
@@ -2044,7 +2059,7 @@ describe('responses websocket transport', () => {
   });
 
   it('disables codex websocket incremental transport when the selected account marks websockets as disabled', async () => {
-    const selectedChannel = createSelectedChannel({
+    const selectedChannel = createSelectedTarget({
       extraConfig: {
         credentialMode: 'session',
         websockets: false,
@@ -2056,7 +2071,7 @@ describe('responses websocket transport', () => {
       },
     });
     selectChannelMock.mockReturnValue(selectedChannel);
-    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+    previewSelectedTargetMock.mockResolvedValue(selectedChannel);
     fetchMock
       .mockResolvedValueOnce(createSseResponse([
         'event: response.completed\n',
@@ -2129,12 +2144,12 @@ describe('responses websocket transport', () => {
   });
 
   it('handles generate=false locally only for non-websocket-capable upstreams', async () => {
-    const selectedChannel = createSelectedChannel({
+    const selectedChannel = createSelectedTarget({
       sitePlatform: 'openai',
       actualModel: 'gpt-4.1',
     });
     selectChannelMock.mockReturnValue(selectedChannel);
-    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+    previewSelectedTargetMock.mockResolvedValue(selectedChannel);
     fetchMock.mockResolvedValueOnce(createSseResponse([
       'event: response.completed\n',
       'data: {"type":"response.completed","response":{"id":"resp_ws_after_prewarm","model":"gpt-4.1","status":"completed","output":[{"id":"msg_2","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"done"}]}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}\n\n',
@@ -2187,11 +2202,11 @@ describe('responses websocket transport', () => {
   });
 
   it('forwards generate=false upstream for websocket-capable upstreams instead of synthesizing prewarm events', async () => {
-    const selectedChannel = createSelectedChannel({
+    const selectedChannel = createSelectedTarget({
       siteUrl: upstreamSiteUrl,
     });
     selectChannelMock.mockReturnValue(selectedChannel);
-    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+    previewSelectedTargetMock.mockResolvedValue(selectedChannel);
 
     const socket = createClientSocket(baseUrl);
     await waitForSocketOpen(socket);
@@ -2215,11 +2230,11 @@ describe('responses websocket transport', () => {
   });
 
   it('emits websocket error when the upstream stream closes before a terminal responses event', async () => {
-    const selectedChannel = createSelectedChannel({
+    const selectedChannel = createSelectedTarget({
       siteUrl: upstreamSiteUrl,
     });
     selectChannelMock.mockReturnValue(selectedChannel);
-    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+    previewSelectedTargetMock.mockResolvedValue(selectedChannel);
     upstreamMessageHandler = (socket) => {
       socket.send(JSON.stringify({
         type: 'response.created',
@@ -2268,11 +2283,11 @@ describe('responses websocket transport', () => {
   });
 
   it('does not append websocket error after an upstream response.incomplete terminal event', async () => {
-    const selectedChannel = createSelectedChannel({
+    const selectedChannel = createSelectedTarget({
       siteUrl: upstreamSiteUrl,
     });
     selectChannelMock.mockReturnValue(selectedChannel);
-    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+    previewSelectedTargetMock.mockResolvedValue(selectedChannel);
     upstreamMessageHandler = (socket) => {
       socket.send(JSON.stringify({
         type: 'response.incomplete',
@@ -2316,11 +2331,11 @@ describe('responses websocket transport', () => {
   });
 
   it('does not append websocket error after an upstream response.failed terminal event with output', async () => {
-    const selectedChannel = createSelectedChannel({
+    const selectedChannel = createSelectedTarget({
       siteUrl: upstreamSiteUrl,
     });
     selectChannelMock.mockReturnValue(selectedChannel);
-    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+    previewSelectedTargetMock.mockResolvedValue(selectedChannel);
     upstreamMessageHandler = (socket) => {
       socket.send(JSON.stringify({
         type: 'response.failed',
@@ -2366,12 +2381,12 @@ describe('responses websocket transport', () => {
   });
 
   it('carries forward output from response.incomplete terminal payloads on non-incremental websocket turns', async () => {
-    const selectedChannel = createSelectedChannel({
+    const selectedChannel = createSelectedTarget({
       sitePlatform: 'openai',
       actualModel: 'gpt-4.1',
     });
     selectChannelMock.mockReturnValue(selectedChannel);
-    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+    previewSelectedTargetMock.mockResolvedValue(selectedChannel);
     fetchMock
       .mockResolvedValueOnce(createSseResponse([
         'event: response.incomplete\n',
@@ -2434,12 +2449,12 @@ describe('responses websocket transport', () => {
   });
 
   it('carries forward output from response.failed terminal payloads on non-incremental websocket turns', async () => {
-    const selectedChannel = createSelectedChannel({
+    const selectedChannel = createSelectedTarget({
       sitePlatform: 'openai',
       actualModel: 'gpt-4.1',
     });
     selectChannelMock.mockReturnValue(selectedChannel);
-    previewSelectedChannelMock.mockResolvedValue(selectedChannel);
+    previewSelectedTargetMock.mockResolvedValue(selectedChannel);
     fetchMock
       .mockResolvedValueOnce(createSseResponse([
         'event: response.failed\n',

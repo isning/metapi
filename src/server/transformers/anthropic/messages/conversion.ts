@@ -923,12 +923,12 @@ export function convertOpenAiBodyToAnthropicMessagesBody(
       const toolCall = rawToolCalls[index];
       if (!isRecord(toolCall)) continue;
       const functionPart = isRecord(toolCall.function) ? toolCall.function : {};
-      const id = asTrimmedString(toolCall.id) || `toolu_${Date.now()}_${index}`;
+      const id = asTrimmedString(toolCall.id);
       const name = (
         asTrimmedString(functionPart.name)
         || asTrimmedString(toolCall.name)
-        || `tool_${index}`
       );
+      if (!id || !name) continue;
       contentBlocks.push({
         type: 'tool_use',
         id,

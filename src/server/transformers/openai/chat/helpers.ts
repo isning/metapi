@@ -112,7 +112,7 @@ function extractTextPart(value: unknown): string {
 }
 
 function joinNonEmpty(parts: string[]): string {
-  return parts.map((item) => item.trim()).filter((item) => item.length > 0).join('\n\n');
+  return parts.filter((item) => item.trim().length > 0).join('\n\n');
 }
 
 function extractTextAndReasoning(value: unknown): { content: string; reasoning: string } {
@@ -174,7 +174,8 @@ function collectToolCalls(value: unknown): OpenAiChatToolCall[] {
     const name = typeof functionPart.name === 'string' ? functionPart.name : '';
     const id = typeof item.id === 'string' ? item.id : '';
     const args = typeof functionPart.arguments === 'string' ? functionPart.arguments : '';
-    if (!id && !name && !args) continue;
+    if (!id) continue;
+    if (name.trim().length <= 0) continue;
     toolCalls.push({
       id,
       name,

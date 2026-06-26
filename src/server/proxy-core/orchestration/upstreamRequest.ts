@@ -1,4 +1,4 @@
-export type UpstreamEndpoint = 'chat' | 'messages' | 'responses';
+export type UpstreamEndpoint = 'chat' | 'messages' | 'responses' | 'embeddings' | 'completions' | 'images/generations' | 'images/edits' | 'videos/generations' | 'videos';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object';

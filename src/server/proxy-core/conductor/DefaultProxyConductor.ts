@@ -5,21 +5,21 @@ import {
   shouldRefreshAuth,
   shouldRetrySameChannel,
 } from './retryPolicy.js';
-import type { ExecuteInput, ExecuteResult, ProxyConductorDependencies, SelectedChannelLike } from './types.js';
+import type { ExecuteInput, ExecuteResult, ProxyConductorDependencies, SelectedTargetLike } from './types.js';
 import { recordFailedAttempt, recordSuccessfulAttempt } from './usageHooks.js';
 
 export class DefaultProxyConductor {
   constructor(private readonly deps: ProxyConductorDependencies) {}
 
-  async previewSelectedChannel(requestedModel: string, downstreamPolicy?: unknown): Promise<SelectedChannelLike | null> {
-    if (this.deps.previewSelectedChannel) {
-      return this.deps.previewSelectedChannel(requestedModel, downstreamPolicy);
+  async previewSelectedTarget(requestedModel: string, downstreamPolicy?: unknown): Promise<SelectedTargetLike | null> {
+    if (this.deps.previewSelectedTarget) {
+      return this.deps.previewSelectedTarget(requestedModel, downstreamPolicy);
     }
     return this.deps.selectChannel(requestedModel, downstreamPolicy);
   }
 
   async execute(input: ExecuteInput): Promise<ExecuteResult> {
-    const excludeChannelIds: number[] = [];
+    const excludeTargetIds: number[] = [];
     let attempts = 0;
     let selected = await this.deps.selectChannel(input.requestedModel, input.downstreamPolicy);
     if (!selected) {
@@ -34,12 +34,12 @@ export class DefaultProxyConductor {
       const result = await input.attempt({
         selected,
         attemptIndex: attempts,
-        excludeChannelIds: [...excludeChannelIds],
+        excludeTargetIds: [...excludeTargetIds],
       });
       attempts += 1;
 
       if (result.ok) {
-        await recordSuccessfulAttempt(this.deps, selected.channel.id, {
+        await recordSuccessfulAttempt(this.deps, selected.target.id, {
           latencyMs: result.latencyMs ?? null,
           cost: result.cost ?? null,
         });
@@ -52,7 +52,7 @@ export class DefaultProxyConductor {
       }
 
       const action = failureActionOf(result);
-      await recordFailedAttempt(this.deps, selected.channel.id, {
+      await recordFailedAttempt(this.deps, selected.target.id, {
         status: result.status,
         rawErrorText: result.rawErrorText,
       });
@@ -88,10 +88,10 @@ export class DefaultProxyConductor {
       }
 
       if (shouldFailover(action)) {
-        excludeChannelIds.push(selected.channel.id);
+        excludeTargetIds.push(selected.target.id);
         const next = await this.deps.selectNextChannel(
           input.requestedModel,
-          excludeChannelIds,
+          excludeTargetIds,
           input.downstreamPolicy,
         );
         if (!next) {

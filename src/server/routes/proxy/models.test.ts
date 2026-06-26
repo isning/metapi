@@ -3,6 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { tokenRouteFixture } from '../../test/routeGraphFixtures.js';
 
 type DbModule = typeof import('../../db/index.js');
 type ProxyRouterModule = typeof import('./router.js');
@@ -46,7 +47,7 @@ describe('/v1/models route', () => {
 
   beforeEach(async () => {
     invalidateTokenRouterCache();
-    await db.delete(schema.routeChannels).run();
+    await db.delete(schema.routeEndpointTargets).run();
     await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.tokenModelAvailability).run();
     await db.delete(schema.modelAvailability).run();
@@ -61,7 +62,7 @@ describe('/v1/models route', () => {
     delete process.env.DATA_DIR;
   });
 
-  it('hides models that have no routable channel even if model availability contains them', async () => {
+  it('hides models that have no routable target even if model availability contains them', async () => {
     const site = await db.insert(schema.sites).values({
       name: 'test-site',
       url: 'https://upstream.example.com',
@@ -96,12 +97,12 @@ describe('/v1/models route', () => {
       },
     ]).run();
 
-    const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'routable-model',
+    const route = await db.insert(schema.tokenRoutes).values( {
+      ...tokenRouteFixture({ modelPattern: 'routable-model' }),
       enabled: true,
     }).returning().get();
 
-    await db.insert(schema.routeChannels).values({
+    await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: account.id,
       tokenId: token.id,
@@ -163,12 +164,12 @@ describe('/v1/models route', () => {
       available: true,
     }).run();
 
-    const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'global-routable-model',
+    const route = await db.insert(schema.tokenRoutes).values( {
+      ...tokenRouteFixture({ modelPattern: 'global-routable-model' }),
       enabled: true,
     }).returning().get();
 
-    await db.insert(schema.routeChannels).values({
+    await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: account.id,
       tokenId: token.id,
@@ -228,16 +229,16 @@ describe('/v1/models route', () => {
       },
     ]).run();
 
-    const allowedRoute = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'allowed-model',
+    const allowedRoute = await db.insert(schema.tokenRoutes).values( {
+      ...tokenRouteFixture({ modelPattern: 'allowed-model' }),
       enabled: true,
     }).returning().get();
-    const blockedRoute = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'blocked-model',
+    const blockedRoute = await db.insert(schema.tokenRoutes).values( {
+      ...tokenRouteFixture({ modelPattern: 'blocked-model' }),
       enabled: true,
     }).returning().get();
 
-    await db.insert(schema.routeChannels).values([
+    await db.insert(schema.routeEndpointTargets).values([
       {
         routeId: allowedRoute.id,
         accountId: account.id,
@@ -314,13 +315,13 @@ describe('/v1/models route', () => {
       },
     ]).run();
 
-    const groupRoute = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 're:^claude-(opus|sonnet)-4-5$',
+    const groupRoute = await db.insert(schema.tokenRoutes).values( {
+      ...tokenRouteFixture({ modelPattern: 're:^claude-(opus|sonnet)-4-5$' }),
       displayName: 'claude-opus-4-6',
       enabled: true,
     }).returning().get();
 
-    await db.insert(schema.routeChannels).values({
+    await db.insert(schema.routeEndpointTargets).values({
       routeId: groupRoute.id,
       accountId: account.id,
       tokenId: token.id,
@@ -441,16 +442,16 @@ describe('/v1/models route', () => {
       },
     ]).run();
 
-    const sourceRouteA = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'claude-opus-4-5',
+    const sourceRouteA = await db.insert(schema.tokenRoutes).values( {
+      ...tokenRouteFixture({ modelPattern: 'claude-opus-4-5' }),
       enabled: true,
     }).returning().get();
-    const sourceRouteB = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'claude-sonnet-4-5',
+    const sourceRouteB = await db.insert(schema.tokenRoutes).values( {
+      ...tokenRouteFixture({ modelPattern: 'claude-sonnet-4-5' }),
       enabled: true,
     }).returning().get();
 
-    await db.insert(schema.routeChannels).values([
+    await db.insert(schema.routeEndpointTargets).values([
       {
         routeId: sourceRouteA.id,
         accountId: account.id,
@@ -546,17 +547,17 @@ describe('/v1/models route', () => {
       },
     ]).run();
 
-    const searchRoute = await db.insert(schema.tokenRoutes).values({
-      modelPattern: '__search',
+    const searchRoute = await db.insert(schema.tokenRoutes).values( {
+      ...tokenRouteFixture({ modelPattern: '__search' }),
       enabled: true,
     }).returning().get();
 
-    const llmRoute = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-4.1',
+    const llmRoute = await db.insert(schema.tokenRoutes).values( {
+      ...tokenRouteFixture({ modelPattern: 'gpt-4.1' }),
       enabled: true,
     }).returning().get();
 
-    await db.insert(schema.routeChannels).values([
+    await db.insert(schema.routeEndpointTargets).values([
       {
         routeId: searchRoute.id,
         accountId: account.id,
@@ -597,5 +598,125 @@ describe('/v1/models route', () => {
     expect(ids).toContain('gpt-4.1');
     expect(ids).not.toContain('__search');
     expect(ids).not.toContain('__tavily_search');
+  });
+
+  it('retrieves a single model through /v1/models/:model', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'single-model-site',
+      url: 'https://single-model.example.com',
+      platform: 'openai',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      accessToken: 'single-model-access-token',
+      status: 'active',
+    }).returning().get();
+
+    const token = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'default',
+      token: 'single-model-api-token',
+      enabled: true,
+      isDefault: true,
+    }).returning().get();
+
+    await db.insert(schema.modelAvailability).values({
+      accountId: account.id,
+      modelName: 'gpt-4.1',
+      available: true,
+    }).run();
+
+    const route = await db.insert(schema.tokenRoutes).values( {
+      ...tokenRouteFixture({ modelPattern: 'gpt-4.1' }),
+      enabled: true,
+    }).returning().get();
+
+    await db.insert(schema.routeEndpointTargets).values({
+      routeId: route.id,
+      accountId: account.id,
+      tokenId: token.id,
+      sourceModel: 'gpt-4.1',
+      enabled: true,
+    }).run();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/models/gpt-4.1',
+      headers: {
+        authorization: 'Bearer sk-global-proxy-token',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      id: 'gpt-4.1',
+      object: 'model',
+      owned_by: 'metapi',
+    });
+  });
+
+  it('exposes /v1beta/openai/models as an OpenAI model list alias', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'gemini-openai-models-site',
+      url: 'https://gemini-openai-models.example.com',
+      platform: 'openai',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      accessToken: 'gemini-openai-models-access-token',
+      status: 'active',
+    }).returning().get();
+
+    const token = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'default',
+      token: 'gemini-openai-models-api-token',
+      enabled: true,
+      isDefault: true,
+    }).returning().get();
+
+    await db.insert(schema.modelAvailability).values({
+      accountId: account.id,
+      modelName: 'gpt-4.1',
+      available: true,
+    }).run();
+
+    const route = await db.insert(schema.tokenRoutes).values( {
+      ...tokenRouteFixture({ modelPattern: 'gpt-4.1' }),
+      enabled: true,
+    }).returning().get();
+
+    await db.insert(schema.routeEndpointTargets).values({
+      routeId: route.id,
+      accountId: account.id,
+      tokenId: token.id,
+      sourceModel: 'gpt-4.1',
+      enabled: true,
+    }).run();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1beta/openai/models',
+      headers: {
+        authorization: 'Bearer sk-global-proxy-token',
+        'x-api-key': 'anthropic-style-header-must-not-change-format',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      object: 'list',
+      data: [
+        {
+          id: 'gpt-4.1',
+          object: 'model',
+          owned_by: 'metapi',
+        },
+      ],
+    });
   });
 });

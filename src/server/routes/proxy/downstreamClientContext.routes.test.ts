@@ -70,6 +70,14 @@ vi.mock('../../services/proxyUsageFallbackService.js', () => ({
   resolveProxyUsageWithSelfLogFallback: (arg: any) => resolveProxyUsageWithSelfLogFallbackMock(arg),
 }));
 
+vi.mock('../../services/routeGraphRuntimeService.js', async () => {
+  const actual = await vi.importActual<typeof import('../../services/routeGraphRuntimeService.js')>('../../services/routeGraphRuntimeService.js');
+  return {
+    ...actual,
+    evaluateActiveRouteGraphForModel: async () => null,
+  };
+});
+
 vi.mock('../../db/index.js', () => ({
   db: {
     insert: (arg: any) => dbInsertMock(arg),
@@ -108,11 +116,12 @@ describe('downstream client context route logging', () => {
   let app: FastifyInstance;
 
   beforeAll(async () => {
-    const { claudeMessagesProxyRoute } = await import('./chat.js');
-    const { responsesProxyRoute } = await import('./responses.js');
+    const { registerDownstreamProtocolSurface } = await import('../../proxy-core/surfaces/downstreamProtocolSurface.js');
+    const { claudeProtocolAdapter } = await import('../../proxy-core/formats/claude.js');
+    const { responsesProtocolAdapter } = await import('../../proxy-core/formats/responses.js');
     app = Fastify();
-    await app.register(claudeMessagesProxyRoute);
-    await app.register(responsesProxyRoute);
+    await registerDownstreamProtocolSurface(app, claudeProtocolAdapter);
+    await registerDownstreamProtocolSurface(app, responsesProtocolAdapter);
   });
 
   beforeEach(() => {

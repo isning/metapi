@@ -8,12 +8,21 @@ import {
 
 function buildDelayedResponse(bodyText: string, delayMs: number, status = 200): Response {
   const encoder = new TextEncoder();
+  let settled = false;
+  let timer: ReturnType<typeof setTimeout> | null = null;
   const body = new ReadableStream<Uint8Array>({
     start(controller) {
-      setTimeout(() => {
+      timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
         controller.enqueue(encoder.encode(bodyText));
         controller.close();
       }, delayMs);
+    },
+    cancel() {
+      settled = true;
+      if (timer) clearTimeout(timer);
+      return Promise.resolve();
     },
   });
   return new Response(body, {

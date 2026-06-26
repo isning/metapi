@@ -11,7 +11,7 @@ type SessionResponseEntry = {
 const codexSessionResponseIds = new Map<string, SessionResponseEntry>();
 
 const SCOPED_SESSION_SEGMENT_PREFIX = 'session:';
-const SCOPED_STORE_KEY_SEGMENT_PATTERN = /^(site|account|channel):\d+$/;
+const SCOPED_STORE_KEY_SEGMENT_PATTERN = /^(site|account|target):\d+$/;
 
 function buildScopedSessionSegment(sessionId: string): string {
   return `${SCOPED_SESSION_SEGMENT_PREFIX}${encodeURIComponent(sessionId)}`;
@@ -110,14 +110,14 @@ export function buildCodexSessionResponseStoreKey(input: {
   sessionId: string;
   siteId?: number | null;
   accountId?: number | null;
-  channelId?: number | null;
+  targetId?: number | null;
 }): string {
   const normalizedSessionId = normalizeSessionId(input.sessionId);
   if (!normalizedSessionId) return '';
   const parts = [
     Number.isFinite(input.siteId as number) && Number(input.siteId) > 0 ? `site:${Math.trunc(Number(input.siteId))}` : '',
     Number.isFinite(input.accountId as number) && Number(input.accountId) > 0 ? `account:${Math.trunc(Number(input.accountId))}` : '',
-    Number.isFinite(input.channelId as number) && Number(input.channelId) > 0 ? `channel:${Math.trunc(Number(input.channelId))}` : '',
+    Number.isFinite(input.targetId as number) && Number(input.targetId) > 0 ? `target:${Math.trunc(Number(input.targetId))}` : '',
     buildScopedSessionSegment(normalizedSessionId),
   ].filter(Boolean);
   return parts.join('|');

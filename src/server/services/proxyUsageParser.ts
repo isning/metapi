@@ -45,6 +45,8 @@ const USAGE_DIRECT_KEYS = [
   'promptCacheHitTokens',
   'cached_tokens',
   'cachedTokens',
+  'cache_n',
+  'cacheN',
   'cache_read_tokens',
   'cacheReadTokens',
   'cache_creation_input_tokens',
@@ -68,6 +70,7 @@ const USAGE_DETAIL_KEYS = [
   'outputTokensDetails',
   'cache_creation',
   'cacheCreation',
+  'timings',
 ] as const;
 
 function toPositiveInt(value: unknown): number {
@@ -190,16 +193,26 @@ function getCacheReadTokens(record: Record<string, unknown>): number {
     'promptCacheHitTokens',
     'cached_tokens',
     'cachedTokens',
+    'cache_n',
+    'cacheN',
     'cache_read_tokens',
     'cacheReadTokens',
   ]);
   if (direct > 0) return direct;
+
+  const timings = record.timings as Record<string, unknown> | undefined;
+  if (timings && isRecord(timings)) {
+    const timingCache = firstPositiveInt(timings, ['cache_n', 'cacheN']);
+    if (timingCache > 0) return timingCache;
+  }
 
   return Math.max(
     toPositiveInt((record.prompt_tokens_details as any)?.cached_tokens),
     toPositiveInt((record.promptTokensDetails as any)?.cachedTokens),
     toPositiveInt((record.input_tokens_details as any)?.cached_tokens),
     toPositiveInt((record.inputTokensDetails as any)?.cachedTokens),
+    toPositiveInt((record.timings as any)?.cache_n),
+    toPositiveInt((record.timings as any)?.cacheN),
   );
 }
 
@@ -309,17 +322,8 @@ export function parseProxyUsage(payload: unknown): ParsedProxyUsage {
   const candidates = collectUsageCandidates(payload);
 
   let best = { ...ZERO_USAGE };
-  let bestScore = -1;
-
   for (const candidate of candidates) {
-    const parsed = parseUsageRecord(candidate);
-    const score = parsed.totalTokens > 0
-      ? (parsed.totalTokens * 10_000 + parsed.promptTokens + parsed.completionTokens)
-      : (parsed.promptTokens + parsed.completionTokens);
-    if (score > bestScore) {
-      best = parsed;
-      bestScore = score;
-    }
+    best = mergeProxyUsage(best, parseUsageRecord(candidate));
   }
 
   return best;

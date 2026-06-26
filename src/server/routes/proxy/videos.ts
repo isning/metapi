@@ -5,11 +5,13 @@ import { reportProxyAllFailed, reportTokenExpired } from '../../services/alertSe
 import { isTokenExpiredError } from '../../services/alertRules.js';
 import { estimateProxyCost } from '../../services/modelPricingService.js';
 import { shouldRetryProxyRequest } from '../../services/proxyRetryPolicy.js';
-import { ensureModelAllowedForDownstreamKey, getDownstreamRoutingPolicy, recordDownstreamCostUsage } from './downstreamPolicy.js';
+import { ensureModelAllowedForDownstreamKey, getDownstreamRoutingPolicy, recordDownstreamCostUsage } from '../../proxy-core/downstreamPolicy.js';
 import { withSiteProxyRequestInit, withSiteRecordProxyRequestInit } from '../../services/siteProxy.js';
 import { getProxyUrlFromExtraConfig } from '../../services/accountExtraConfig.js';
-import { cloneFormDataWithOverrides, ensureMultipartBufferParser, parseMultipartFormData } from './multipart.js';
+import { cloneFormDataWithOverrides, ensureMultipartBufferParser, parseMultipartFormData } from '../../proxy-core/surfaces/multipart.js';
 import { buildUpstreamUrl } from './upstreamUrl.js';
+import { getProxyAuthContext } from '../../middleware/auth.js';
+import { detectDownstreamClientContext } from '../../proxy-core/downstreamClientContext.js';
 import {
   deleteProxyVideoTaskByPublicId,
   getProxyVideoTaskByPublicId,
@@ -17,13 +19,18 @@ import {
   resolveProxyVideoTaskSite,
   saveProxyVideoTask,
 } from '../../services/proxyVideoTaskStore.js';
-import { getProxyMaxChannelRetries } from '../../services/proxyChannelRetry.js';
+import { getProxyMaxTargetRetries } from '../../services/proxyTargetRetry.js';
 import {
-  buildForcedChannelUnavailableMessage,
-  canRetryChannelSelection,
-  getTesterForcedChannelId,
-  selectProxyChannelForAttempt,
-} from '../../proxy-core/channelSelection.js';
+  buildForcedTargetUnavailableMessage,
+  canRetryTargetSelection,
+  getTesterForcedTargetId,
+  selectProxyTargetForAttempt,
+} from '../../proxy-core/targetSelection.js';
+import {
+  bindSurfaceStickyChannel,
+  buildSurfaceStickySessionKey,
+  clearSurfaceStickyChannel,
+} from '../../proxy-core/orchestration/sharedProxyOrchestration.js';
 import { runWithSiteApiEndpointPool, SiteApiEndpointRequestError } from '../../services/siteApiEndpointService.js';
 
 function rewriteVideoResponsePublicId(payload: unknown, publicId: string): unknown {
@@ -54,34 +61,48 @@ export async function videosProxyRoute(app: FastifyInstance) {
     if (!await ensureModelAllowedForDownstreamKey(request, reply, requestedModel)) return;
 
     const downstreamPolicy = getDownstreamRoutingPolicy(request);
-    const forcedChannelId = getTesterForcedChannelId({
+    const forcedTargetId = getTesterForcedTargetId({
       headers: request.headers as Record<string, unknown>,
       clientIp: request.ip,
     });
-    const excludeChannelIds: number[] = [];
+    const downstreamApiKeyId = getProxyAuthContext(request)?.keyId ?? null;
+    const downstreamPath = '/v1/videos';
+    const clientContext = detectDownstreamClientContext({
+      downstreamPath,
+      headers: request.headers as Record<string, unknown>,
+      body: jsonBody || Object.fromEntries(multipartForm?.entries?.() || []),
+    });
+    const stickySessionKey = buildSurfaceStickySessionKey({
+      clientContext,
+      requestedModel,
+      downstreamPath,
+      downstreamApiKeyId,
+    });
+    const excludeTargetIds: number[] = [];
     let retryCount = 0;
 
-    while (retryCount <= getProxyMaxChannelRetries()) {
-      const selected = await selectProxyChannelForAttempt({
+    while (retryCount <= getProxyMaxTargetRetries()) {
+      const selected = await selectProxyTargetForAttempt({
         requestedModel,
         downstreamPolicy,
-        excludeChannelIds,
+        excludeTargetIds,
         retryCount,
-        forcedChannelId,
+        forcedTargetId,
+        stickySessionKey,
       });
 
       if (!selected) {
-        const noChannelMessage = buildForcedChannelUnavailableMessage(forcedChannelId);
+        const noChannelMessage = buildForcedTargetUnavailableMessage(forcedTargetId);
         await reportProxyAllFailed({
           model: requestedModel,
-          reason: forcedChannelId ? noChannelMessage : 'No available channels after retries',
+          reason: forcedTargetId ? noChannelMessage : 'No available targets after retries',
         });
         return reply.code(503).send({
           error: { message: noChannelMessage, type: 'server_error' },
         });
       }
 
-      excludeChannelIds.push(selected.channel.id);
+      excludeTargetIds.push(selected.target.id);
       const upstreamModel = selected.actualModel || requestedModel;
       const startTime = Date.now();
 
@@ -140,7 +161,7 @@ export async function videosProxyRoute(app: FastifyInstance) {
           tokenValue: selected.tokenValue,
           requestedModel,
           actualModel: upstreamModel,
-          channelId: typeof selected.channel.id === 'number' ? selected.channel.id : null,
+          targetId: typeof selected.target.id === 'number' ? selected.target.id : null,
           accountId: typeof selected.account.id === 'number' ? selected.account.id : null,
           statusSnapshot: data,
           upstreamResponseMeta: {
@@ -153,20 +174,23 @@ export async function videosProxyRoute(app: FastifyInstance) {
         const estimatedCost = await estimateProxyCost({
           site: selected.site,
           account: selected.account,
+          tokenId: selected.token?.id ?? selected.target.tokenId ?? null,
+          upstreamGroup: selected.token?.tokenGroup ?? null,
           modelName: upstreamModel,
           promptTokens: 0,
           completionTokens: 0,
           totalTokens: 0,
         });
-        await recordTokenRouterEventBestEffort('record channel success', () => (
-          tokenRouter.recordSuccess(selected.channel.id, latency, estimatedCost, upstreamModel)
+        await recordTokenRouterEventBestEffort('record target success', () => (
+          tokenRouter.recordSuccess(selected.target.id, latency, estimatedCost, upstreamModel)
         ));
+        bindSurfaceStickyChannel({ stickySessionKey, selected });
         recordDownstreamCostUsage(request, estimatedCost);
         return reply.code(upstream.status).send(rewriteVideoResponsePublicId(data, mapping.publicId));
       } catch (error: any) {
         const status = error instanceof SiteApiEndpointRequestError ? (error.status || 0) : 0;
         const errorText = error?.message || 'network failure';
-        await recordTokenRouterEventBestEffort('record channel failure', () => tokenRouter.recordFailure(selected.channel.id, {
+        await recordTokenRouterEventBestEffort('record target failure', () => tokenRouter.recordFailure(selected.target.id, {
           status,
           errorText,
           modelName: upstreamModel,
@@ -179,7 +203,8 @@ export async function videosProxyRoute(app: FastifyInstance) {
             detail: `HTTP ${status}`,
           });
         }
-        if ((status > 0 ? shouldRetryProxyRequest(status, errorText) : true) && canRetryChannelSelection(retryCount, forcedChannelId)) {
+        if ((status > 0 ? shouldRetryProxyRequest(status, errorText) : true) && canRetryTargetSelection(retryCount, forcedTargetId)) {
+          clearSurfaceStickyChannel({ stickySessionKey, selected });
           retryCount += 1;
           continue;
         }

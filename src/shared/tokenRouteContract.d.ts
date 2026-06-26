@@ -1,7 +1,7 @@
 export declare const ROUTE_DECISION_REFRESH_TASK_TYPE = "route-decision.refresh";
 export type RouteMode = 'pattern' | 'explicit_group';
 export type RouteDecisionCandidate = {
-    channelId: number;
+    targetId: number;
     accountId: number;
     username: string;
     siteName: string;
@@ -18,7 +18,7 @@ export type RouteDecision = {
     requestedModel: string;
     actualModel: string;
     matched: boolean;
-    selectedChannelId?: number;
+    selectedTargetId?: number;
     selectedLabel?: string;
     summary: string[];
     candidates: RouteDecisionCandidate[];

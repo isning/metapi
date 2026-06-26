@@ -9,13 +9,17 @@ type ModelsSurfaceInput = {
   responseFormat: 'openai' | 'claude';
   tokenRouter: {
     getAvailableModels(): Promise<string[]>;
-    explainSelection(modelName: string, excludeChannelIds: number[], downstreamPolicy: unknown): Promise<{
-      selectedChannelId?: number | null;
+    explainSelection(modelName: string, excludeTargetIds: number[], downstreamPolicy: unknown): Promise<{
+      selectedTargetId?: number | null;
     }>;
   };
   refreshModelsAndRebuildRoutes(): Promise<unknown>;
   isModelAllowed(modelName: string, downstreamPolicy: unknown): Promise<boolean>;
   now?: () => Date;
+};
+
+type RetrieveModelSurfaceInput = ModelsSurfaceInput & {
+  modelId: string;
 };
 
 async function readVisibleModels(input: ModelsSurfaceInput): Promise<string[]> {
@@ -28,7 +32,7 @@ async function readVisibleModels(input: ModelsSurfaceInput): Promise<string[]> {
       continue;
     }
     const decision = await input.tokenRouter.explainSelection(modelName, [], input.downstreamPolicy);
-    if (typeof decision.selectedChannelId === 'number') {
+    if (typeof decision.selectedTargetId === 'number') {
       allowed.push(modelName);
     }
   }
@@ -66,5 +70,73 @@ export async function listModelsSurface(input: ModelsSurfaceInput) {
       created: Math.floor(now.getTime() / 1000),
       owned_by: 'metapi',
     })),
+  };
+}
+
+function createModelPayload(id: string, responseFormat: 'openai' | 'claude', now: Date) {
+  if (responseFormat === 'claude') {
+    return {
+      id,
+      type: 'model' as const,
+      display_name: id,
+      created_at: now.toISOString(),
+    };
+  }
+
+  return {
+    id,
+    object: 'model' as const,
+    created: Math.floor(now.getTime() / 1000),
+    owned_by: 'metapi',
+  };
+}
+
+function modelNotFoundPayload(modelId: string) {
+  return {
+    error: {
+      message: `Model '${modelId}' not found`,
+      type: 'invalid_request_error',
+      code: 'model_not_found',
+    },
+  };
+}
+
+export async function retrieveModelSurface(input: RetrieveModelSurfaceInput) {
+  const modelId = input.modelId.trim();
+  if (!modelId) {
+    return {
+      statusCode: 400,
+      payload: {
+        error: {
+          message: 'model is required',
+          type: 'invalid_request_error',
+        },
+      },
+    };
+  }
+
+  if (isSearchPseudoModel(modelId) || !await input.isModelAllowed(modelId, input.downstreamPolicy)) {
+    return {
+      statusCode: 404,
+      payload: modelNotFoundPayload(modelId),
+    };
+  }
+
+  let decision = await input.tokenRouter.explainSelection(modelId, [], input.downstreamPolicy);
+  if (typeof decision.selectedTargetId !== 'number') {
+    await input.refreshModelsAndRebuildRoutes();
+    decision = await input.tokenRouter.explainSelection(modelId, [], input.downstreamPolicy);
+  }
+
+  if (typeof decision.selectedTargetId !== 'number') {
+    return {
+      statusCode: 404,
+      payload: modelNotFoundPayload(modelId),
+    };
+  }
+
+  return {
+    statusCode: 200,
+    payload: createModelPayload(modelId, input.responseFormat, input.now?.() ?? new Date()),
   };
 }

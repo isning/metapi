@@ -1339,6 +1339,35 @@ describe('convertResponsesBodyToOpenAiBody', () => {
     ]);
   });
 
+  it('drops Responses function_call items without stable call ids when converting to OpenAI-compatible history', () => {
+    const result = convertResponsesBodyToOpenAiBody(
+      {
+        model: 'gpt-5',
+        input: [
+          {
+            type: 'function_call',
+            name: 'lookup_weather',
+            arguments: '{"city":"Paris"}',
+          },
+          {
+            type: 'message',
+            role: 'user',
+            content: [{ type: 'input_text', text: 'continue' }],
+          },
+        ],
+      },
+      'gpt-5',
+      false,
+    );
+
+    expect(result.messages).toContainEqual({
+      role: 'user',
+      content: [{ type: 'text', text: 'continue' }],
+    });
+    expect(JSON.stringify(result.messages)).not.toContain('lookup_weather');
+    expect(JSON.stringify(result.messages)).not.toContain('call_');
+  });
+
   it('converts reasoning items back into assistant content instead of dropping them', () => {
     const result = convertResponsesBodyToOpenAiBody(
       {
@@ -1362,7 +1391,8 @@ describe('convertResponsesBodyToOpenAiBody', () => {
     expect(result.messages).toEqual([
       {
         role: 'assistant',
-        content: [
+        content: '',
+        reasoning_content: [
           {
             type: 'text',
             text: 'Think step by step',
@@ -1430,6 +1460,37 @@ describe('convertResponsesBodyToOpenAiBody', () => {
     );
 
     expect(roundTripped.input).toEqual(source.input);
+  });
+
+  it('drops MCP compatibility items without stable ids instead of synthesizing tool call ids', () => {
+    const openAiBody = convertResponsesBodyToOpenAiBody(
+      {
+        model: 'gpt-5',
+        input: [
+          {
+            type: 'mcp_call',
+            name: 'read_file',
+            server_label: 'filesystem',
+            arguments: {
+              path: '/tmp/demo.txt',
+            },
+          },
+          {
+            type: 'message',
+            role: 'user',
+            content: [{ type: 'input_text', text: 'continue' }],
+          },
+        ],
+      },
+      'gpt-5',
+      false,
+    );
+
+    expect(openAiBody.messages).toContainEqual({
+      role: 'user',
+      content: [{ type: 'text', text: 'continue' }],
+    });
+    expect(JSON.stringify(openAiBody.messages)).not.toContain('metapi_mcp_item__mcp_call');
   });
 
   it('preserves remaining request fields needed for OpenAI-compatible downstream fallback', () => {
@@ -2011,6 +2072,119 @@ describe('convertResponsesBodyToOpenAiBody', () => {
         arguments: '{"pattern":"README*"}',
       },
     ]);
+  });
+
+  it('converts Responses reasoning input into OpenAI-compatible reasoning_content history', () => {
+    const result = convertResponsesBodyToOpenAiBody(
+      {
+        model: 'gpt-5',
+        input: [{
+          type: 'reasoning',
+          summary: [{
+            type: 'summary_text',
+            text: 'plan quietly',
+          }],
+          encrypted_content: 'sig_1',
+        }],
+      },
+      'gpt-5',
+      false,
+    );
+
+    expect(result.messages).toEqual([{
+      role: 'assistant',
+      content: '',
+      reasoning_content: [{
+        type: 'text',
+        text: 'plan quietly',
+      }],
+      reasoning_signature: 'sig_1',
+    }]);
+  });
+
+  it('preserves reasoning whitespace when converting DeepSeek-style reasoning and tool calls to Responses input', () => {
+    const result = convertOpenAiBodyToResponsesBody(
+      {
+        model: 'deepseek-reasoner',
+        messages: [{
+          role: 'assistant',
+          content: '',
+          reasoning_content: ' step 1: inspect files\n step 2: call tool ',
+          tool_calls: [{
+            id: 'call_1',
+            type: 'function',
+            function: {
+              name: 'Glob',
+              arguments: '{"pattern":"README*"}',
+            },
+          }],
+        }],
+      },
+      'deepseek-reasoner',
+      false,
+    );
+
+    expect(result.input).toEqual([
+      {
+        type: 'reasoning',
+        summary: [{
+          type: 'summary_text',
+          text: ' step 1: inspect files\n step 2: call tool ',
+        }],
+      },
+      {
+        type: 'function_call',
+        call_id: 'call_1',
+        name: 'Glob',
+        arguments: '{"pattern":"README*"}',
+      },
+    ]);
+  });
+
+  it('does not fabricate Responses function calls from nameless OpenAI-compatible tool calls', () => {
+    const result = convertOpenAiBodyToResponsesBody(
+      {
+        model: 'deepseek-reasoner',
+        messages: [{
+          role: 'assistant',
+          content: '',
+          tool_calls: [{
+            id: 'call_missing_name',
+            type: 'function',
+            function: {
+              arguments: '{"pattern":"README*"}',
+            },
+          }],
+        }],
+      },
+      'deepseek-reasoner',
+      false,
+    );
+
+    expect(result.input).toEqual([]);
+  });
+
+  it('does not fabricate Responses function calls from idless OpenAI-compatible tool calls', () => {
+    const result = convertOpenAiBodyToResponsesBody(
+      {
+        model: 'deepseek-reasoner',
+        messages: [{
+          role: 'assistant',
+          content: '',
+          tool_calls: [{
+            type: 'function',
+            function: {
+              name: 'Glob',
+              arguments: '{"pattern":"README*"}',
+            },
+          }],
+        }],
+      },
+      'deepseek-reasoner',
+      false,
+    );
+
+    expect(result.input).toEqual([]);
   });
 
   it('preserves chat-native modalities and audio settings when converting to Responses bodies', () => {

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { anthropicMessagesTransformer } from '../transformers/anthropic/messages/index.js';
+import { protocolAdapters } from './formats/protocolAdapters.js';
 import {
   extractResponsesWebSearchQuery,
   hasResponsesWebSearchOnlyRequest,
@@ -210,9 +210,9 @@ async function sendAnthropicSearchSimulation(input: {
     searchPayload: search.payload,
   });
   if (input.body.stream === true) {
-    const streamContext = anthropicMessagesTransformer.createStreamContext(asTrimmedString(input.body.model) || 'unknown');
-    const claudeContext = anthropicMessagesTransformer.createDownstreamContext();
-    const lines = anthropicMessagesTransformer.serializeUpstreamFinalAsStream(
+    const streamContext = protocolAdapters.anthropic.createStreamContext(asTrimmedString(input.body.model) || 'unknown');
+    const claudeContext = protocolAdapters.anthropic.createDownstreamContext();
+    const lines = protocolAdapters.anthropic.serializeUpstreamFinalAsStream(
       responsesPayload,
       asTrimmedString(input.body.model) || 'unknown',
       '',
@@ -227,12 +227,12 @@ async function sendAnthropicSearchSimulation(input: {
     return true;
   }
 
-  const normalized = anthropicMessagesTransformer.transformFinalResponse(
+  const normalized = protocolAdapters.anthropic.transformFinalResponse(
     responsesPayload,
     asTrimmedString(input.body.model) || 'unknown',
     '',
   );
-  input.reply.code(200).send(anthropicMessagesTransformer.serializeFinalResponse(normalized, {
+  input.reply.code(200).send(protocolAdapters.anthropic.serializeFinalResponse(normalized, {
     promptTokens: 0,
     completionTokens: 0,
     totalTokens: 0,

@@ -1,5 +1,5 @@
-export type SelectedChannelLike = {
-  channel: { id: number; routeId?: number };
+export type SelectedTargetLike = {
+  target: { id: number; routeId?: number };
   site: Record<string, unknown>;
   account: Record<string, unknown>;
   tokenName?: string;
@@ -32,25 +32,25 @@ export type AttemptFailure = {
 export type AttemptResult = AttemptSuccess | AttemptFailure;
 
 export type ExecuteAttemptContext = {
-  selected: SelectedChannelLike;
+  selected: SelectedTargetLike;
   attemptIndex: number;
-  excludeChannelIds: number[];
+  excludeTargetIds: number[];
 };
 
 export type ProxyConductorDependencies = {
-  selectChannel: (requestedModel: string, downstreamPolicy?: unknown) => Promise<SelectedChannelLike | null>;
-  previewSelectedChannel?: (requestedModel: string, downstreamPolicy?: unknown) => Promise<SelectedChannelLike | null>;
+  selectChannel: (requestedModel: string, downstreamPolicy?: unknown) => Promise<SelectedTargetLike | null>;
+  previewSelectedTarget?: (requestedModel: string, downstreamPolicy?: unknown) => Promise<SelectedTargetLike | null>;
   selectNextChannel: (
     requestedModel: string,
-    excludeChannelIds: number[],
+    excludeTargetIds: number[],
     downstreamPolicy?: unknown,
-  ) => Promise<SelectedChannelLike | null>;
-  recordSuccess?: (channelId: number, metrics: { latencyMs: number | null; cost: number | null }) => Promise<void> | void;
-  recordFailure?: (channelId: number, failure: { status?: number; rawErrorText?: string }) => Promise<void> | void;
+  ) => Promise<SelectedTargetLike | null>;
+  recordSuccess?: (targetId: number, metrics: { latencyMs: number | null; cost: number | null }) => Promise<void> | void;
+  recordFailure?: (targetId: number, failure: { status?: number; rawErrorText?: string }) => Promise<void> | void;
   refreshAuth?: (
-    selected: SelectedChannelLike,
+    selected: SelectedTargetLike,
     failure: { status?: number; rawErrorText?: string },
-  ) => Promise<SelectedChannelLike | null>;
+  ) => Promise<SelectedTargetLike | null>;
 };
 
 export type ExecuteInput = {
@@ -58,7 +58,7 @@ export type ExecuteInput = {
   downstreamPolicy?: unknown;
   attempt: (context: ExecuteAttemptContext) => Promise<AttemptResult>;
   onTerminalFailure?: (
-    selected: SelectedChannelLike,
+    selected: SelectedTargetLike,
     failure: { status?: number; rawErrorText?: string },
   ) => Promise<void> | void;
 };
@@ -66,14 +66,14 @@ export type ExecuteInput = {
 export type ExecuteResult =
   | {
     ok: true;
-    selected: SelectedChannelLike;
+    selected: SelectedTargetLike;
     response: Response;
     attempts: number;
   }
   | {
     ok: false;
     reason: 'no_channel' | 'failed' | 'terminal';
-    selected?: SelectedChannelLike;
+    selected?: SelectedTargetLike;
     status?: number;
     rawErrorText?: string;
     attempts: number;

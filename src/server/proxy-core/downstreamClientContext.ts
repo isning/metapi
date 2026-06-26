@@ -257,6 +257,62 @@ function detectExplicitClientSelfReport(headers: NormalizedClientHeaders): Downs
   return null;
 }
 
+function normalizeSessionAffinityId(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  return trimmed.length <= 256 ? trimmed : trimmed.slice(0, 256);
+}
+
+function firstHeaderValue(headers: NormalizedClientHeaders, keys: string[]): string | null {
+  for (const key of keys) {
+    const value = normalizeSessionAffinityId(headers[key]?.[0]);
+    if (value) return value;
+  }
+  return null;
+}
+
+function firstRecordString(record: Record<string, unknown> | null, keys: string[]): string | null {
+  if (!record) return null;
+  for (const key of keys) {
+    const value = normalizeSessionAffinityId(record[key]);
+    if (value) return value;
+  }
+  return null;
+}
+
+function detectGenericSessionAffinityId(input: {
+  headers: NormalizedClientHeaders;
+  body?: unknown;
+}): string | null {
+  const headerSession = firstHeaderValue(input.headers, [
+    'x-metapi-affinity-key',
+    'x-metapi-session-id',
+    'session_id',
+    'session-id',
+    'conversation_id',
+    'conversation-id',
+  ]);
+  if (headerSession) return headerSession;
+
+  const body = isRecord(input.body) ? input.body : null;
+  const topLevelSession = firstRecordString(body, [
+    'session_id',
+    'sessionId',
+    'conversation_id',
+    'conversationId',
+  ]);
+  if (topLevelSession) return topLevelSession;
+
+  const metadata = body && isRecord(body.metadata) ? body.metadata : null;
+  return firstRecordString(metadata, [
+    'session_id',
+    'sessionId',
+    'conversation_id',
+    'conversationId',
+  ]);
+}
+
 export function detectDownstreamClientContext(input: {
   downstreamPath: string;
   headers?: Record<string, unknown>;
@@ -264,6 +320,11 @@ export function detectDownstreamClientContext(input: {
 }): DownstreamClientContext {
   const detected = detectCliProfile(input);
   const normalizedHeaders = normalizeHeaders(input.headers);
+  const sessionId = detected.sessionId || detectGenericSessionAffinityId({
+    headers: normalizedHeaders,
+    body: input.body,
+  }) || undefined;
+  const traceHint = detected.traceHint || sessionId;
   const explicitSelfReport = detectExplicitClientSelfReport(normalizedHeaders);
   const fingerprint = detectDownstreamClientFingerprint(input);
   const profileClientApp = fingerprint || explicitSelfReport
@@ -279,8 +340,8 @@ export function detectDownstreamClientContext(input: {
     );
   return {
     clientKind: detected.id,
-    ...(detected.sessionId ? { sessionId: detected.sessionId } : {}),
-    ...(detected.traceHint ? { traceHint: detected.traceHint } : {}),
+    ...(sessionId ? { sessionId } : {}),
+    ...(traceHint ? { traceHint } : {}),
     ...(explicitSelfReport || fingerprint || profileClientApp || {}),
   };
 }
