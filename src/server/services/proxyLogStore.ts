@@ -4,12 +4,13 @@ import {
   hasProxyLogBillingDetailsColumn,
   hasProxyLogClientColumns,
   hasProxyLogDownstreamApiKeyIdColumn,
+  hasProxyLogRouteDecisionSnapshotColumn,
   hasProxyLogStreamTimingColumns,
 } from '../db/index.js';
 
 export type ProxyLogInsertInput = {
   routeId?: number | null;
-  channelId?: number | null;
+  targetId?: number | null;
   accountId?: number | null;
   downstreamApiKeyId?: number | null;
   modelRequested?: string | null;
@@ -24,6 +25,7 @@ export type ProxyLogInsertInput = {
   totalTokens?: number | null;
   estimatedCost?: number | null;
   billingDetails?: unknown;
+  routeDecisionSnapshot?: unknown;
   clientFamily?: string | null;
   clientAppId?: string | null;
   clientAppName?: string | null;
@@ -37,7 +39,7 @@ function buildProxyLogCoreSelectFields() {
   return {
     id: schema.proxyLogs.id,
     routeId: schema.proxyLogs.routeId,
-    channelId: schema.proxyLogs.channelId,
+    targetId: schema.proxyLogs.targetId,
     accountId: schema.proxyLogs.accountId,
     downstreamApiKeyId: schema.proxyLogs.downstreamApiKeyId,
     modelRequested: schema.proxyLogs.modelRequested,
@@ -74,6 +76,7 @@ function buildProxyLogStreamTimingSelectFields() {
 function buildProxyLogSelectFields(options?: {
   includeBillingDetails?: boolean;
   includeClientFields?: boolean;
+  includeRouteDecisionSnapshot?: boolean;
   includeStreamTimingFields?: boolean;
 }) {
   return {
@@ -81,6 +84,7 @@ function buildProxyLogSelectFields(options?: {
     ...(options?.includeStreamTimingFields ? buildProxyLogStreamTimingSelectFields() : {}),
     ...(options?.includeClientFields ? buildProxyLogClientSelectFields() : {}),
     ...(options?.includeBillingDetails ? { billingDetails: schema.proxyLogs.billingDetails } : {}),
+    ...(options?.includeRouteDecisionSnapshot ? { routeDecisionSnapshot: schema.proxyLogs.routeDecisionSnapshot } : {}),
   };
 }
 
@@ -93,6 +97,7 @@ export type ProxyLogSelectFields = ReturnType<typeof buildProxyLogSelectFields>;
 export type ResolvedProxyLogSelectFields = {
   includeBillingDetails: boolean;
   includeClientFields: boolean;
+  includeRouteDecisionSnapshot: boolean;
   includeStreamTimingFields: boolean;
   fields: ProxyLogSelectFields;
 };
@@ -100,22 +105,27 @@ export type ResolvedProxyLogSelectFields = {
 export async function resolveProxyLogSelectFields(options?: {
   includeBillingDetails?: boolean;
   includeClientFields?: boolean;
+  includeRouteDecisionSnapshot?: boolean;
   includeStreamTimingFields?: boolean;
 }) {
   const includeBillingDetails = options?.includeBillingDetails === true
     && await hasProxyLogBillingDetailsColumn();
   const includeClientFields = options?.includeClientFields !== false
     && await hasProxyLogClientColumns();
+  const includeRouteDecisionSnapshot = options?.includeRouteDecisionSnapshot === true
+    && await hasProxyLogRouteDecisionSnapshotColumn();
   const includeStreamTimingFields = options?.includeStreamTimingFields !== false
     && await hasProxyLogStreamTimingColumns();
 
   return {
     includeBillingDetails,
     includeClientFields,
+    includeRouteDecisionSnapshot,
     includeStreamTimingFields,
     fields: buildProxyLogSelectFields({
       includeBillingDetails,
       includeClientFields,
+      includeRouteDecisionSnapshot,
       includeStreamTimingFields,
     }),
   };
@@ -123,7 +133,12 @@ export async function resolveProxyLogSelectFields(options?: {
 
 export async function withProxyLogSelectFields<T>(
   runner: (selection: ResolvedProxyLogSelectFields) => Promise<T>,
-  options?: { includeBillingDetails?: boolean; includeClientFields?: boolean; includeStreamTimingFields?: boolean },
+  options?: {
+    includeBillingDetails?: boolean;
+    includeClientFields?: boolean;
+    includeRouteDecisionSnapshot?: boolean;
+    includeStreamTimingFields?: boolean;
+  },
 ): Promise<T> {
   let selection = await resolveProxyLogSelectFields(options);
 
@@ -135,10 +150,12 @@ export async function withProxyLogSelectFields<T>(
         selection = {
           includeBillingDetails: false,
           includeClientFields: selection.includeClientFields,
+          includeRouteDecisionSnapshot: selection.includeRouteDecisionSnapshot,
           includeStreamTimingFields: selection.includeStreamTimingFields,
           fields: buildProxyLogSelectFields({
             includeBillingDetails: false,
             includeClientFields: selection.includeClientFields,
+            includeRouteDecisionSnapshot: selection.includeRouteDecisionSnapshot,
             includeStreamTimingFields: selection.includeStreamTimingFields,
           }),
         };
@@ -149,10 +166,12 @@ export async function withProxyLogSelectFields<T>(
         selection = {
           includeBillingDetails: selection.includeBillingDetails,
           includeClientFields: false,
+          includeRouteDecisionSnapshot: selection.includeRouteDecisionSnapshot,
           includeStreamTimingFields: selection.includeStreamTimingFields,
           fields: buildProxyLogSelectFields({
             includeBillingDetails: selection.includeBillingDetails,
             includeClientFields: false,
+            includeRouteDecisionSnapshot: selection.includeRouteDecisionSnapshot,
             includeStreamTimingFields: selection.includeStreamTimingFields,
           }),
         };
@@ -163,11 +182,29 @@ export async function withProxyLogSelectFields<T>(
         selection = {
           includeBillingDetails: selection.includeBillingDetails,
           includeClientFields: selection.includeClientFields,
+          includeRouteDecisionSnapshot: selection.includeRouteDecisionSnapshot,
           includeStreamTimingFields: false,
           fields: buildProxyLogSelectFields({
             includeBillingDetails: selection.includeBillingDetails,
             includeClientFields: selection.includeClientFields,
+            includeRouteDecisionSnapshot: selection.includeRouteDecisionSnapshot,
             includeStreamTimingFields: false,
+          }),
+        };
+        continue;
+      }
+
+      if (selection.includeRouteDecisionSnapshot && isMissingProxyLogRouteDecisionSnapshotColumnError(error)) {
+        selection = {
+          includeBillingDetails: selection.includeBillingDetails,
+          includeClientFields: selection.includeClientFields,
+          includeRouteDecisionSnapshot: false,
+          includeStreamTimingFields: selection.includeStreamTimingFields,
+          fields: buildProxyLogSelectFields({
+            includeBillingDetails: selection.includeBillingDetails,
+            includeClientFields: selection.includeClientFields,
+            includeRouteDecisionSnapshot: false,
+            includeStreamTimingFields: selection.includeStreamTimingFields,
           }),
         };
         continue;
@@ -256,10 +293,21 @@ export function isMissingProxyLogStreamTimingColumnsError(error: unknown): boole
     );
 }
 
+export function isMissingProxyLogRouteDecisionSnapshotColumnError(error: unknown): boolean {
+  const lowered = normalizeProxyLogStoreErrorMessage(error);
+  return lowered.includes('route_decision_snapshot')
+    && (
+      lowered.includes('does not exist')
+      || lowered.includes('unknown column')
+      || lowered.includes('no such column')
+      || lowered.includes('has no column named')
+    );
+}
+
 export async function insertProxyLog(input: ProxyLogInsertInput): Promise<void> {
   const baseValues = {
     routeId: input.routeId ?? null,
-    channelId: input.channelId ?? null,
+    targetId: input.targetId ?? null,
     accountId: input.accountId ?? null,
     modelRequested: input.modelRequested ?? null,
     modelActual: input.modelActual ?? null,
@@ -277,8 +325,13 @@ export async function insertProxyLog(input: ProxyLogInsertInput): Promise<void> 
   const serializedBillingDetails = input.billingDetails == null
     ? null
     : JSON.stringify(input.billingDetails);
+  const serializedRouteDecisionSnapshot = input.routeDecisionSnapshot == null
+    ? null
+    : JSON.stringify(input.routeDecisionSnapshot);
   const includeBillingDetails = serializedBillingDetails !== null
     && await hasProxyLogBillingDetailsColumn();
+  const includeRouteDecisionSnapshot = serializedRouteDecisionSnapshot !== null
+    && await hasProxyLogRouteDecisionSnapshotColumn();
   const includeDownstreamApiKeyId = input.downstreamApiKeyId != null
     && await hasProxyLogDownstreamApiKeyIdColumn();
   const requestedClientFields = [
@@ -294,6 +347,7 @@ export async function insertProxyLog(input: ProxyLogInsertInput): Promise<void> 
     && await hasProxyLogStreamTimingColumns();
 
   let allowBillingDetails = includeBillingDetails;
+  let allowRouteDecisionSnapshot = includeRouteDecisionSnapshot;
   let allowDownstreamApiKeyId = includeDownstreamApiKeyId;
   let allowClientFields = includeClientFields;
   let allowStreamTimingFields = includeStreamTimingFields;
@@ -308,6 +362,7 @@ export async function insertProxyLog(input: ProxyLogInsertInput): Promise<void> 
         }
         : {}),
       ...(allowBillingDetails ? { billingDetails: serializedBillingDetails } : {}),
+      ...(allowRouteDecisionSnapshot ? { routeDecisionSnapshot: serializedRouteDecisionSnapshot } : {}),
       ...(allowDownstreamApiKeyId ? { downstreamApiKeyId: input.downstreamApiKeyId } : {}),
       ...(allowClientFields
         ? {
@@ -330,6 +385,11 @@ export async function insertProxyLog(input: ProxyLogInsertInput): Promise<void> 
 
       if (allowDownstreamApiKeyId && isMissingDownstreamApiKeyIdColumnError(error)) {
         allowDownstreamApiKeyId = false;
+        continue;
+      }
+
+      if (allowRouteDecisionSnapshot && isMissingProxyLogRouteDecisionSnapshotColumnError(error)) {
+        allowRouteDecisionSnapshot = false;
         continue;
       }
 

@@ -21,6 +21,7 @@ import { testRoutes } from './routes/api/test.js';
 import { monitorRoutes } from './routes/api/monitor.js';
 import { downstreamApiKeysRoutes } from './routes/api/downstreamApiKeys.js';
 import { oauthRoutes } from './routes/api/oauth.js';
+import { upstreamCostPricingRoutes } from './routes/api/upstreamCostPricing.js';
 import { siteAnnouncementsRoutes } from './routes/api/siteAnnouncements.js';
 import { updateCenterRoutes } from './routes/api/updateCenter.js';
 import { proxyRoutes } from './routes/proxy/router.js';
@@ -32,6 +33,7 @@ import { buildStartupSummaryLines } from './services/startupInfo.js';
 import { repairStoredCreatedAtValues } from './services/storedTimestampRepairService.js';
 import { migrateSiteApiKeysToAccounts } from './services/siteApiKeyMigrationService.js';
 import { ensureDefaultSitesSeeded } from './services/defaultSiteSeedService.js';
+import { ensureCurrentConfigVersion } from './services/configMigrationService.js';
 import { ensureOauthIdentityBackfill } from './services/oauth/oauthIdentityBackfill.js';
 import { ensureOauthProviderSitesExist } from './services/oauth/oauthSiteRegistry.js';
 import { startOAuthLoopbackCallbackServers, stopOAuthLoopbackCallbackServers } from './services/oauth/localCallbackServer.js';
@@ -41,9 +43,9 @@ import {
   stopModelAvailabilityProbeScheduler,
 } from './services/modelAvailabilityProbeService.js';
 import {
-  startChannelRecoveryProbeScheduler,
-  stopChannelRecoveryProbeScheduler,
-} from './services/channelRecoveryProbeService.js';
+  startTargetRecoveryProbeScheduler,
+  stopTargetRecoveryProbeScheduler,
+} from './services/targetRecoveryProbeService.js';
 import {
   startSub2ApiManagedRefreshScheduler,
   stopSub2ApiManagedRefreshScheduler,
@@ -58,7 +60,12 @@ import {
   stopUsageAggregationProjectorScheduler,
 } from './services/usageAggregationService.js';
 import { reloadBackupWebdavScheduler } from './services/backupService.js';
+import {
+  reloadPricingReferenceCatalogScheduler,
+  stopPricingReferenceCatalogScheduler,
+} from './services/pricingReferenceCatalogService.js';
 import { ensureRuntimeDatabaseReady } from './runtimeDatabaseBootstrap.js';
+import { ensureActiveRouteGraphVersion } from './services/routeGraphService.js';
 import { isPublicApiRoute, registerDesktopRoutes } from './desktop.js';
 import { existsSync } from 'fs';
 import { fileURLToPath } from 'url';
@@ -187,10 +194,12 @@ try {
   }
   await ensureProxyLogBillingDetailsColumn();
   await repairStoredCreatedAtValues();
+  await ensureCurrentConfigVersion();
   await migrateSiteApiKeysToAccounts();
   await ensureDefaultSitesSeeded();
   await ensureOauthIdentityBackfill();
   await routeRefreshWorkflow.rebuildRoutesOnly();
+  await ensureActiveRouteGraphVersion();
 
   console.log('Loaded runtime settings overrides');
 } catch (error) {
@@ -229,6 +238,7 @@ await app.register(testRoutes);
 await app.register(monitorRoutes);
 await app.register(downstreamApiKeysRoutes);
 await app.register(oauthRoutes);
+await app.register(upstreamCostPricingRoutes);
 
 // Register OpenAI-compatible proxy routes
 await app.register(proxyRoutes);
@@ -263,9 +273,10 @@ if (existsSync(webDir)) {
 // Start scheduler
 await startScheduler();
 await reloadBackupWebdavScheduler();
+await reloadPricingReferenceCatalogScheduler();
 startSiteAnnouncementPolling();
 startModelAvailabilityProbeScheduler();
-startChannelRecoveryProbeScheduler();
+startTargetRecoveryProbeScheduler();
 startSub2ApiManagedRefreshScheduler();
 startUpdateCenterPolling();
 startUsageAggregationProjectorScheduler();
@@ -281,9 +292,10 @@ app.addHook('onClose', async () => {
   stopSiteAnnouncementPolling();
   stopUpdateCenterPolling();
   stopProxyFileRetentionService();
+  stopPricingReferenceCatalogScheduler();
   stopProxyLogRetentionService();
   stopModelAvailabilityProbeScheduler();
-  stopChannelRecoveryProbeScheduler();
+  stopTargetRecoveryProbeScheduler();
   await stopUsageAggregationProjectorScheduler();
   await stopAdminSnapshotWarmScheduler();
   await stopSub2ApiManagedRefreshScheduler();

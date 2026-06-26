@@ -353,6 +353,158 @@ describe('/v1/chat/completions relay with scenario upstreams', () => {
     expect(logs.some((log) => log.status === 'success' && log.targetId === blockedChannel.id)).toBe(false);
   });
 
+  it('executes published route graph filters before relaying chat requests upstream', async () => {
+    const { site, account, token, route, target, managedKey } = await harness.seedRoute({
+      model: 'deepseek-v4-pro',
+      siteUrl: 'https://deepseek-runtime.example.com',
+      tokenValue: 'sk-deepseek-runtime',
+    });
+    await harness.db.update(harness.schema.downstreamApiKeys).set({
+      supportedModels: JSON.stringify(['deepseek-v4-pro-max']),
+    }).run();
+
+    const { publishRouteGraphSource } = await import('../../services/routeGraphService.js');
+    const published = await publishRouteGraphSource({
+      createdBy: 'test',
+      sourceGraph: {
+        version: 1,
+        nodes: [
+          {
+            id: 'entry.deepseek-max',
+            type: 'entry',
+            enabled: true,
+            visibility: 'public',
+            ownership: 'manual',
+            match: {
+              requestedModelPattern: 'deepseek-v4-pro-max',
+              displayName: 'deepseek-v4-pro-max',
+            },
+          },
+          {
+            id: 'filter.deepseek-runtime',
+            type: 'filter',
+            enabled: true,
+            visibility: 'internal',
+            ownership: 'manual',
+            operations: [
+              { type: 'rewrite_model', source: 'current_model', operation: 'strip_suffix', suffix: '-max' },
+              { type: 'set_payload', path: 'reasoning_effort', mode: 'override', value: 'high' },
+              { type: 'set_payload', path: 'metadata.routeGraph', mode: 'override', value: 'filtered' },
+              { type: 'set_header', name: 'X-Route-Graph', mode: 'override', value: 'filtered' },
+              { type: 'set_endpoint_preference', endpoint: 'chat' },
+            ],
+          },
+          {
+            id: 'endpoint.deepseek-runtime',
+            type: 'route_endpoint',
+            enabled: true,
+            visibility: 'internal',
+            ownership: 'manual',
+            legacyRouteId: route.id,
+            config: {
+              targets: [{
+                targetId: String(target.id),
+                model: 'deepseek-v4-pro',
+                accountId: account.id,
+                siteId: site.id,
+                tokenId: token.id,
+                priority: 0,
+                weight: 10,
+              }],
+              targetSelection: { strategy: 'weighted' },
+            },
+          },
+        ],
+        edges: [
+          {
+            id: 'entry-filter-deepseek-runtime',
+            sourceNodeId: 'entry.deepseek-max',
+            sourcePortId: 'bidirect.out',
+            targetNodeId: 'filter.deepseek-runtime',
+            targetPortId: 'bidirect.in',
+            kind: 'bidirect_flow',
+            ownership: 'manual',
+          },
+          {
+            id: 'filter-endpoint-deepseek-runtime',
+            sourceNodeId: 'filter.deepseek-runtime',
+            sourcePortId: 'bidirect.out',
+            targetNodeId: 'endpoint.deepseek-runtime',
+            targetPortId: 'bidirect.in',
+            kind: 'bidirect_flow',
+            ownership: 'manual',
+          },
+        ],
+        macros: [],
+      },
+    });
+    expect(published.ok).toBe(true);
+
+    harness.upstream.add({
+      method: 'POST',
+      path: (request) => (
+        request.url.origin === 'https://deepseek-runtime.example.com'
+        && request.url.pathname === '/v1/chat/completions'
+      ),
+      respond: {
+        json: {
+          id: 'chatcmpl_route_graph_filtered',
+          object: 'chat.completion',
+          created: 0,
+          model: 'deepseek-v4-pro',
+          choices: [
+            {
+              index: 0,
+              message: { role: 'assistant', content: 'filtered route graph request' },
+              finish_reason: 'stop',
+            },
+          ],
+          usage: { prompt_tokens: 3, completion_tokens: 4, total_tokens: 7 },
+        },
+      },
+    });
+
+    const response = await harness.app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      headers: {
+        'x-api-key': managedKey.key,
+      },
+      payload: {
+        model: 'deepseek-v4-pro-max',
+        messages: [{ role: 'user', content: 'use the route graph filters' }],
+        reasoning_effort: 'medium',
+      },
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json().choices[0].message.content).toBe('filtered route graph request');
+
+    const call = harness.upstream.calls.find((entry) => entry.url.origin === 'https://deepseek-runtime.example.com');
+    expect(call?.url.pathname).toBe('/v1/chat/completions');
+    expect(call?.headers.get('authorization')).toBe('Bearer sk-deepseek-runtime');
+    expect(call?.headers.get('x-route-graph')).toBe('filtered');
+    expect(call?.json).toMatchObject({
+      model: 'deepseek-v4-pro',
+      reasoning_effort: 'high',
+      metadata: { routeGraph: 'filtered' },
+      messages: [{ role: 'user', content: 'use the route graph filters' }],
+    });
+
+    const logs = await harness.db.select().from(harness.schema.proxyLogs).all();
+    expect(logs).toEqual([
+      expect.objectContaining({
+        routeId: route.id,
+        targetId: target.id,
+        accountId: account.id,
+        downstreamApiKeyId: managedKey.id,
+        modelRequested: 'deepseek-v4-pro-max',
+        modelActual: 'deepseek-v4-pro',
+        status: 'success',
+      }),
+    ]);
+  });
+
   it('records a normalized failure log when every upstream chat candidate fails', async () => {
     const { managedKey, route, target, account } = await harness.seedRoute({ model: 'relay-failure-model' });
     harness.upstream.add({

@@ -138,8 +138,8 @@ export async function listOauthRouteUnitMembersByUnitIds(unitIds: number[]): Pro
 
 async function rollbackCreatedOauthRouteUnit(routeUnitId: number): Promise<void> {
   await db.transaction(async (tx) => {
-    await tx.delete(schema.routeChannels)
-      .where(eq(schema.routeChannels.oauthRouteUnitId, routeUnitId))
+    await tx.delete(schema.routeEndpointTargets)
+      .where(eq(schema.routeEndpointTargets.oauthRouteUnitId, routeUnitId))
       .run();
     await tx.delete(schema.oauthRouteUnitMembers)
       .where(eq(schema.oauthRouteUnitMembers.unitId, routeUnitId))
@@ -153,7 +153,7 @@ async function rollbackCreatedOauthRouteUnit(routeUnitId: number): Promise<void>
 async function restoreDeletedOauthRouteUnit(snapshot: {
   unit: typeof schema.oauthRouteUnits.$inferSelect;
   members: Array<typeof schema.oauthRouteUnitMembers.$inferSelect>;
-  channels: Array<typeof schema.routeChannels.$inferSelect>;
+  channels: Array<typeof schema.routeEndpointTargets.$inferSelect>;
 }): Promise<void> {
   await db.transaction(async (tx) => {
     await tx.insert(schema.oauthRouteUnits).values({
@@ -179,7 +179,7 @@ async function restoreDeletedOauthRouteUnit(snapshot: {
     }
 
     if (snapshot.channels.length > 0) {
-      await tx.insert(schema.routeChannels).values(snapshot.channels.map((channel) => ({
+      await tx.insert(schema.routeEndpointTargets).values(snapshot.channels.map((channel) => ({
         id: channel.id,
         routeId: channel.routeId,
         accountId: channel.accountId,
@@ -399,12 +399,12 @@ export async function deleteOauthRouteUnit(routeUnitId: number) {
   const existingMembers = await db.select().from(schema.oauthRouteUnitMembers)
     .where(eq(schema.oauthRouteUnitMembers.unitId, routeUnitId))
     .all();
-  const existingChannels = await db.select().from(schema.routeChannels)
-    .where(eq(schema.routeChannels.oauthRouteUnitId, routeUnitId))
+  const existingChannels = await db.select().from(schema.routeEndpointTargets)
+    .where(eq(schema.routeEndpointTargets.oauthRouteUnitId, routeUnitId))
     .all();
 
-  await db.delete(schema.routeChannels)
-    .where(eq(schema.routeChannels.oauthRouteUnitId, routeUnitId))
+  await db.delete(schema.routeEndpointTargets)
+    .where(eq(schema.routeEndpointTargets.oauthRouteUnitId, routeUnitId))
     .run();
   await db.delete(schema.oauthRouteUnitMembers)
     .where(eq(schema.oauthRouteUnitMembers.unitId, routeUnitId))

@@ -50,6 +50,7 @@ type LegacySiteRow = {
 };
 
 const VERIFIED_BOOTSTRAP_TAG = '0012_account_token_value_status';
+const GRAPH_NATIVE_BOOTSTRAP_TAG = '0027_route_graph_replacement';
 const SQLITE_MIGRATION_RECOVERY_RETRY_BUDGET = 64;
 const VERIFIED_SCHEMA_MARKERS: SchemaMarker[] = [
   { table: 'sites' },
@@ -59,7 +60,7 @@ const VERIFIED_SCHEMA_MARKERS: SchemaMarker[] = [
   { table: 'model_availability' },
   { table: 'proxy_logs' },
   { table: 'token_routes' },
-  { table: 'route_channels', column: 'token_id' },
+  { table: 'route_endpoint_targets', column: 'token_id' },
   { table: 'account_tokens' },
   { table: 'token_model_availability' },
   { table: 'events' },
@@ -115,6 +116,28 @@ function columnExists(sqlite: Database.Database, table: string, column: string):
   return rows.some((row) => row.name === column);
 }
 
+function ensureUpstreamModelCostPricingScopeKey(sqlite: Database.Database): boolean {
+  if (!tableExists(sqlite, 'upstream_model_cost_pricings')) return false;
+  if (columnExists(sqlite, 'upstream_model_cost_pricings', 'scope_key')) return false;
+
+  sqlite.exec('ALTER TABLE `upstream_model_cost_pricings` ADD COLUMN `scope_key` text');
+  sqlite.exec(`
+    UPDATE upstream_model_cost_pricings
+    SET scope_key = printf(
+      '%s|site:%s|account:%s|token:%s|group:%s|model:%s|row:%s',
+      COALESCE(scope, 'unknown'),
+      COALESCE(CAST(site_id AS TEXT), '-'),
+      COALESCE(CAST(account_id AS TEXT), '-'),
+      COALESCE(CAST(token_id AS TEXT), '-'),
+      COALESCE(token_group, '-'),
+      COALESCE(normalized_model_name, model_name, '-'),
+      CAST(id AS TEXT)
+    )
+    WHERE scope_key IS NULL OR scope_key = ''
+  `);
+  return true;
+}
+
 function hasRecordedDrizzleMigrations(sqlite: Database.Database): boolean {
   if (!tableExists(sqlite, '__drizzle_migrations')) return false;
   const row = sqlite.prepare('SELECT 1 FROM __drizzle_migrations LIMIT 1').get();
@@ -129,7 +152,122 @@ function hasVerifiedLegacySchema(sqlite: Database.Database): boolean {
   ));
 }
 
-function readVerifiedMigrationRecords(migrationsFolder: string): MigrationRecord[] {
+function hasGraphNativeTokenRoutesReplacement(sqlite: Database.Database): boolean {
+  return tableExists(sqlite, 'route_graph_versions')
+    && tableExists(sqlite, 'route_graph_drafts')
+    && tableExists(sqlite, 'route_graph_active_version')
+    && columnExists(sqlite, 'route_endpoint_targets', 'route_endpoint_id')
+    && columnExists(sqlite, 'token_routes', 'display_name')
+    && !columnExists(sqlite, 'token_routes', 'model_pattern')
+    && !columnExists(sqlite, 'token_routes', 'route_mode')
+    && !columnExists(sqlite, 'token_routes', 'match_spec')
+    && !columnExists(sqlite, 'token_routes', 'backend_spec');
+}
+
+function hasVerifiedGraphNativeSchema(sqlite: Database.Database): boolean {
+  return hasGraphNativeTokenRoutesReplacement(sqlite)
+    && columnExists(sqlite, 'proxy_logs', 'is_stream')
+    && columnExists(sqlite, 'proxy_logs', 'first_byte_latency_ms')
+    && columnExists(sqlite, 'sites', 'post_refresh_probe_latency_threshold_ms');
+}
+
+function hasAnyRouteGraphLegacyTokenRouteColumn(sqlite: Database.Database): boolean {
+  return columnExists(sqlite, 'token_routes', 'model_pattern')
+    || columnExists(sqlite, 'token_routes', 'route_mode')
+    || columnExists(sqlite, 'token_routes', 'match_spec')
+    || columnExists(sqlite, 'token_routes', 'backend_spec');
+}
+
+function hasRouteGraphScaffolding(sqlite: Database.Database): boolean {
+  return tableExists(sqlite, 'route_graph_versions')
+    || tableExists(sqlite, 'route_graph_drafts')
+    || tableExists(sqlite, 'route_graph_active_version')
+    || columnExists(sqlite, 'route_endpoint_targets', 'route_endpoint_id');
+}
+
+function selectExistingTokenRouteColumnExpression(
+  sqlite: Database.Database,
+  columnName: string,
+  fallback: string,
+): string {
+  return columnExists(sqlite, 'token_routes', columnName)
+    ? `"token_routes"."${columnName}"`
+    : fallback;
+}
+
+function buildSqliteTokenRouteRepairStatements(sqlite: Database.Database): string[] {
+  if (!tableExists(sqlite, 'token_routes') || !hasAnyRouteGraphLegacyTokenRouteColumn(sqlite)) {
+    return [];
+  }
+
+  const routeModeExpr = columnExists(sqlite, 'token_routes', 'route_mode')
+    ? `coalesce("token_routes"."route_mode", 'pattern')`
+    : `'pattern'`;
+  const displayNameExpr = columnExists(sqlite, 'token_routes', 'display_name')
+    ? `"token_routes"."display_name"`
+    : columnExists(sqlite, 'token_routes', 'match_spec')
+      ? `json_extract("token_routes"."match_spec", '$.displayName')`
+      : columnExists(sqlite, 'token_routes', 'model_pattern')
+        ? `CASE WHEN ${routeModeExpr} = 'explicit_group' THEN "token_routes"."model_pattern" ELSE NULL END`
+        : 'NULL';
+
+  return [
+    `CREATE TABLE "__new_token_routes" (
+      "id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+      "display_name" text,
+      "display_icon" text,
+      "model_mapping" text,
+      "decision_snapshot" text,
+      "decision_refreshed_at" text,
+      "routing_strategy" text DEFAULT 'weighted',
+      "enabled" integer DEFAULT true,
+      "created_at" text DEFAULT (datetime('now')),
+      "updated_at" text DEFAULT (datetime('now'))
+    )`,
+    `INSERT INTO "__new_token_routes" (
+      "id",
+      "display_name",
+      "display_icon",
+      "model_mapping",
+      "decision_snapshot",
+      "decision_refreshed_at",
+      "routing_strategy",
+      "enabled",
+      "created_at",
+      "updated_at"
+    )
+    SELECT
+      "token_routes"."id",
+      ${displayNameExpr},
+      ${selectExistingTokenRouteColumnExpression(sqlite, 'display_icon', 'NULL')},
+      ${selectExistingTokenRouteColumnExpression(sqlite, 'model_mapping', 'NULL')},
+      ${selectExistingTokenRouteColumnExpression(sqlite, 'decision_snapshot', 'NULL')},
+      ${selectExistingTokenRouteColumnExpression(sqlite, 'decision_refreshed_at', 'NULL')},
+      coalesce(${selectExistingTokenRouteColumnExpression(sqlite, 'routing_strategy', 'NULL')}, 'weighted'),
+      coalesce(${selectExistingTokenRouteColumnExpression(sqlite, 'enabled', 'NULL')}, true),
+      coalesce(${selectExistingTokenRouteColumnExpression(sqlite, 'created_at', 'NULL')}, datetime('now')),
+      coalesce(${selectExistingTokenRouteColumnExpression(sqlite, 'updated_at', 'NULL')}, datetime('now'))
+    FROM "token_routes"`,
+    'DROP TABLE "token_routes"',
+    'ALTER TABLE "__new_token_routes" RENAME TO "token_routes"',
+    'CREATE INDEX IF NOT EXISTS "token_routes_enabled_idx" ON "token_routes" ("enabled")',
+  ];
+}
+
+function repairSqliteRouteGraphTokenRoutesSchema(sqlite: Database.Database): boolean {
+  const statements = buildSqliteTokenRouteRepairStatements(sqlite);
+  if (statements.length === 0) return false;
+
+  sqlite.transaction(() => {
+    for (const statement of statements) {
+      sqlite.exec(statement);
+    }
+  })();
+  console.warn('[db] Repaired legacy token_routes graph columns.');
+  return true;
+}
+
+function readMigrationRecordsUntilTag(migrationsFolder: string, stopTag?: string): MigrationRecord[] {
   const journalPath = resolve(migrationsFolder, 'meta', '_journal.json');
   const journal = JSON.parse(readFileSync(journalPath, 'utf8')) as MigrationJournalFile;
   const records: MigrationRecord[] = [];
@@ -141,12 +279,16 @@ function readVerifiedMigrationRecords(migrationsFolder: string): MigrationRecord
       hash: createHash('sha256').update(migrationSql).digest('hex'),
     });
 
-    if (entry.tag === VERIFIED_BOOTSTRAP_TAG) {
+    if (stopTag && entry.tag === stopTag) {
       return records;
     }
   }
 
   return [];
+}
+
+function readVerifiedMigrationRecords(migrationsFolder: string): MigrationRecord[] {
+  return readMigrationRecordsUntilTag(migrationsFolder, VERIFIED_BOOTSTRAP_TAG);
 }
 
 function splitMigrationStatements(sqlText: string): string[] {
@@ -345,6 +487,103 @@ function isRecoverableSchemaConflictError(error: unknown): boolean {
     || lowered.includes('already exists');
 }
 
+function isReplacedRouteGraphLegacyTokenRoutesStatement(
+  sqlite: Database.Database,
+  statement: string,
+): boolean {
+  if (!hasGraphNativeTokenRoutesReplacement(sqlite) && !hasRouteGraphScaffolding(sqlite)) {
+    return false;
+  }
+
+  const normalized = normalizeSqlForMatch(statement);
+  return normalized.includes('token_routes')
+    && (
+      normalized.includes('model_pattern')
+      || normalized.includes('route_mode')
+      || normalized.includes('match_spec')
+      || normalized.includes('backend_spec')
+      || normalized.includes('token_routes_model_pattern_idx')
+      || normalized.includes('token_routes_match_spec_idx')
+    );
+}
+
+function isLegacyProxyTargetBackfillStatement(
+  sqlite: Database.Database,
+  statement: string,
+): boolean {
+  const normalized = normalizeSqlForMatch(statement);
+  if (
+    normalized.includes('update proxy_logs')
+    && normalized.includes('target_id = channel_id')
+  ) {
+    return !columnExists(sqlite, 'proxy_logs', 'channel_id');
+  }
+
+  if (
+    normalized.includes('update proxy_debug_traces')
+    && normalized.includes('sticky_hit_target_id = sticky_hit_channel_id')
+  ) {
+    return !columnExists(sqlite, 'proxy_debug_traces', 'sticky_hit_channel_id');
+  }
+
+  if (
+    normalized.includes('update proxy_debug_traces')
+    && normalized.includes('selected_target_id = selected_channel_id')
+  ) {
+    return !columnExists(sqlite, 'proxy_debug_traces', 'selected_channel_id');
+  }
+
+  if (
+    normalized.includes('update proxy_video_tasks')
+    && normalized.includes('target_id = channel_id')
+  ) {
+    return !columnExists(sqlite, 'proxy_video_tasks', 'channel_id');
+  }
+
+  return false;
+}
+
+function isReplayedDropMissingColumnStatement(
+  sqlite: Database.Database,
+  statement: string,
+): boolean {
+  const normalized = normalizeSqlForMatch(statement);
+  const match = /^alter table ([a-z0-9_]+) drop column ([a-z0-9_]+)$/.exec(normalized);
+  if (!match) {
+    return false;
+  }
+
+  const [, table, column] = match;
+  return !columnExists(sqlite, table, column);
+}
+
+function isReplayedWalletAcquisitionCurrencyRebuildStatement(
+  sqlite: Database.Database,
+  statement: string,
+): boolean {
+  if (!columnExists(sqlite, 'wallet_acquisition_profiles', 'wallet_unit')) {
+    return false;
+  }
+  if (columnExists(sqlite, 'wallet_acquisition_profiles', 'wallet_currency')) {
+    return false;
+  }
+
+  const normalized = normalizeSqlForMatch(statement);
+  if (!normalized.includes('wallet_acquisition_profiles')) {
+    return false;
+  }
+
+  return normalized.includes('wallet_acquisition_profiles_next')
+    || (
+      normalized.includes('drop table wallet_acquisition_profiles')
+      && !normalized.includes('wallet_acquisition_profiles_')
+    )
+    || (
+      normalized.includes('alter table wallet_acquisition_profiles_next')
+      && normalized.includes('rename to wallet_acquisition_profiles')
+    );
+}
+
 function isSitesPlatformUrlUniqueConflictError(error: unknown): boolean {
   const lowered = normalizeSchemaErrorMessage(error).toLowerCase();
   if (!lowered.includes('unique constraint failed: sites.platform, sites.url')) {
@@ -362,6 +601,14 @@ function isSitesPlatformUrlUniqueConflictError(error: unknown): boolean {
 
 function replayMigrationStatements(sqlite: Database.Database, statements: string[]): void {
   for (const statement of statements) {
+    if (
+      isReplacedRouteGraphLegacyTokenRoutesStatement(sqlite, statement)
+      || isLegacyProxyTargetBackfillStatement(sqlite, statement)
+      || isReplayedDropMissingColumnStatement(sqlite, statement)
+      || isReplayedWalletAcquisitionCurrencyRebuildStatement(sqlite, statement)
+    ) {
+      continue;
+    }
     try {
       sqlite.exec(statement);
     } catch (error) {
@@ -417,6 +664,8 @@ function recoverMigrationSequence(
 
 function backfillMissingRecordedMigrations(sqlite: Database.Database, migrationsFolder: string): number {
   if (!tableExists(sqlite, '__drizzle_migrations')) return 0;
+
+  ensureUpstreamModelCostPricingScopeKey(sqlite);
 
   let recoveredCount = 0;
   for (const migration of readRecoveryMigrations(migrationsFolder)) {
@@ -653,9 +902,17 @@ export const __migrateTestUtils = {
 
 function bootstrapLegacyDrizzleMigrations(sqlite: Database.Database, migrationsFolder: string): boolean {
   if (hasRecordedDrizzleMigrations(sqlite)) return false;
-  if (!hasVerifiedLegacySchema(sqlite)) return false;
 
-  const records = readVerifiedMigrationRecords(migrationsFolder);
+  const bootstrapTag = hasVerifiedGraphNativeSchema(sqlite)
+    ? GRAPH_NATIVE_BOOTSTRAP_TAG
+    : hasVerifiedLegacySchema(sqlite)
+      ? VERIFIED_BOOTSTRAP_TAG
+      : null;
+  if (!bootstrapTag) return false;
+
+  const records = bootstrapTag === GRAPH_NATIVE_BOOTSTRAP_TAG
+    ? readMigrationRecordsUntilTag(migrationsFolder, GRAPH_NATIVE_BOOTSTRAP_TAG)
+    : readVerifiedMigrationRecords(migrationsFolder);
   if (records.length === 0) return false;
 
   sqlite.exec(`
@@ -686,6 +943,9 @@ export function runSqliteMigrations(): void {
   }
 
   const sqlite = new Database(dbPath);
+  if (hasRouteGraphScaffolding(sqlite)) {
+    repairSqliteRouteGraphTokenRoutesSchema(sqlite);
+  }
   bootstrapLegacyDrizzleMigrations(sqlite, migrationsFolder);
   backfillMissingRecordedMigrations(sqlite, migrationsFolder);
 
@@ -701,6 +961,7 @@ export function runSqliteMigrations(): void {
     closeSqlite: () => sqlite.close(),
   });
 
+  repairSqliteRouteGraphTokenRoutesSchema(sqlite);
   sqlite.close();
   console.log('Migration complete.');
 }

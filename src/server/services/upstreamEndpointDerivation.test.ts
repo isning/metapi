@@ -161,4 +161,18 @@ describe('upstreamEndpointDerivation', () => {
 
     expect(order).toEqual([]);
   });
+
+  it('routes image and video generation surfaces to their fixed upstream endpoints', async () => {
+    await expect(resolveUpstreamEndpointCandidates(
+      baseContext,
+      'gpt-image-1',
+      'openai/images',
+    )).resolves.toEqual(['images/generations']);
+
+    await expect(resolveUpstreamEndpointCandidates(
+      baseContext,
+      'gpt-video-1',
+      'openai/videos',
+    )).resolves.toEqual(['videos/generations']);
+  });
 });

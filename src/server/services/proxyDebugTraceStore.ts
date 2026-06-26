@@ -238,8 +238,8 @@ export async function startProxyDebugTraceSession(input: {
 
 export async function updateProxyDebugTraceSelection(traceId: number, input: {
   stickySessionKey?: string | null;
-  stickyHitChannelId?: number | null;
-  selectedChannelId?: number | null;
+  stickyHitTargetId?: number | null;
+  selectedTargetId?: number | null;
   selectedRouteId?: number | null;
   selectedAccountId?: number | null;
   selectedSiteId?: number | null;
@@ -248,8 +248,8 @@ export async function updateProxyDebugTraceSelection(traceId: number, input: {
   const now = formatUtcSqlDateTime(new Date());
   await db.update(schema.proxyDebugTraces).set({
     stickySessionKey: input.stickySessionKey ?? null,
-    stickyHitChannelId: input.stickyHitChannelId ?? null,
-    selectedChannelId: input.selectedChannelId ?? null,
+    stickyHitTargetId: input.stickyHitTargetId ?? null,
+    selectedTargetId: input.selectedTargetId ?? null,
     selectedRouteId: input.selectedRouteId ?? null,
     selectedAccountId: input.selectedAccountId ?? null,
     selectedSiteId: input.selectedSiteId ?? null,
@@ -288,6 +288,8 @@ export async function insertProxyDebugAttempt(input: {
   recoverApplied?: boolean;
   downgradeDecision?: boolean;
   downgradeReason?: string | null;
+  fallbackScope?: string | null;
+  failureClass?: string | null;
   memoryWrite?: unknown;
   maxBodyBytes?: number;
 }) {
@@ -309,6 +311,8 @@ export async function insertProxyDebugAttempt(input: {
     recoverApplied: input.recoverApplied === true,
     downgradeDecision: input.downgradeDecision === true,
     downgradeReason: input.downgradeReason ?? null,
+    fallbackScope: input.fallbackScope ?? null,
+    failureClass: input.failureClass ?? null,
     memoryWriteJson: stringifyDebugValue(input.memoryWrite, maxBodyBytes),
     createdAt: now,
   }).run();
@@ -320,14 +324,34 @@ export async function insertProxyDebugAttempt(input: {
 }
 
 export async function updateProxyDebugAttempt(traceId: number, attemptIndex: number, input: {
+  requestHeaders?: HeadersLike;
+  requestBody?: unknown;
+  responseStatus?: number | null;
+  responseHeaders?: HeadersLike;
+  responseBody?: unknown;
+  recoverApplied?: boolean;
   downgradeDecision?: boolean;
   downgradeReason?: string | null;
+  fallbackScope?: string | null;
+  failureClass?: string | null;
   rawErrorText?: string | null;
+  memoryWrite?: unknown;
+  maxBodyBytes?: number;
 }) {
+  const maxBodyBytes = Math.max(1024, Math.trunc(input.maxBodyBytes || config.proxyDebugMaxBodyBytes || 262_144));
   await db.update(schema.proxyDebugAttempts).set({
+    ...(input.requestHeaders !== undefined ? { requestHeadersJson: serializeHeaders(input.requestHeaders, maxBodyBytes) } : {}),
+    ...(input.requestBody !== undefined ? { requestBodyJson: stringifyDebugValue(input.requestBody, maxBodyBytes) } : {}),
+    ...(input.responseStatus !== undefined ? { responseStatus: input.responseStatus } : {}),
+    ...(input.responseHeaders !== undefined ? { responseHeadersJson: serializeHeaders(input.responseHeaders, maxBodyBytes) } : {}),
+    ...(input.responseBody !== undefined ? { responseBodyJson: stringifyDebugValue(input.responseBody, maxBodyBytes) } : {}),
+    ...(input.recoverApplied !== undefined ? { recoverApplied: input.recoverApplied === true } : {}),
     ...(input.downgradeDecision !== undefined ? { downgradeDecision: input.downgradeDecision } : {}),
     ...(input.downgradeReason !== undefined ? { downgradeReason: input.downgradeReason } : {}),
+    ...(input.fallbackScope !== undefined ? { fallbackScope: input.fallbackScope } : {}),
+    ...(input.failureClass !== undefined ? { failureClass: input.failureClass } : {}),
     ...(input.rawErrorText !== undefined ? { rawErrorText: input.rawErrorText } : {}),
+    ...(input.memoryWrite !== undefined ? { memoryWriteJson: stringifyDebugValue(input.memoryWrite, maxBodyBytes) } : {}),
   }).where(and(
     eq(schema.proxyDebugAttempts.traceId, traceId),
     eq(schema.proxyDebugAttempts.attemptIndex, attemptIndex),
@@ -363,7 +387,7 @@ export async function listProxyDebugTraces(input: { limit?: number }) {
     clientKind: schema.proxyDebugTraces.clientKind,
     sessionId: schema.proxyDebugTraces.sessionId,
     requestedModel: schema.proxyDebugTraces.requestedModel,
-    selectedChannelId: schema.proxyDebugTraces.selectedChannelId,
+    selectedTargetId: schema.proxyDebugTraces.selectedTargetId,
     finalStatus: schema.proxyDebugTraces.finalStatus,
     finalHttpStatus: schema.proxyDebugTraces.finalHttpStatus,
     finalUpstreamPath: schema.proxyDebugTraces.finalUpstreamPath,
@@ -379,13 +403,84 @@ export async function getProxyDebugTraceDetail(traceId: number) {
     .get();
   if (!trace) return null;
 
+  const selectedRoute = trace.selectedRouteId
+    ? await db.select({
+      id: schema.tokenRoutes.id,
+      displayName: schema.tokenRoutes.displayName,
+      modelMapping: schema.tokenRoutes.modelMapping,
+      routingStrategy: schema.tokenRoutes.routingStrategy,
+    }).from(schema.tokenRoutes)
+      .where(eq(schema.tokenRoutes.id, trace.selectedRouteId))
+      .get()
+    : null;
+
+  const selectedTarget = trace.selectedTargetId
+    ? await db.select({
+      id: schema.routeEndpointTargets.id,
+      routeEndpointId: schema.routeEndpointTargets.routeEndpointId,
+      sourceModel: schema.routeEndpointTargets.sourceModel,
+      priority: schema.routeEndpointTargets.priority,
+      weight: schema.routeEndpointTargets.weight,
+      accountUsername: schema.accounts.username,
+      tokenName: schema.accountTokens.name,
+      tokenGroup: schema.accountTokens.tokenGroup,
+      siteId: schema.sites.id,
+      siteName: schema.sites.name,
+      sitePlatform: schema.sites.platform,
+    }).from(schema.routeEndpointTargets)
+      .leftJoin(schema.accounts, eq(schema.routeEndpointTargets.accountId, schema.accounts.id))
+      .leftJoin(schema.accountTokens, eq(schema.routeEndpointTargets.tokenId, schema.accountTokens.id))
+      .leftJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
+      .where(eq(schema.routeEndpointTargets.id, trace.selectedTargetId))
+      .get()
+    : null;
+
+  const selectedSite = trace.selectedSiteId
+    ? await db.select({
+      id: schema.sites.id,
+      name: schema.sites.name,
+      platform: schema.sites.platform,
+      url: schema.sites.url,
+    }).from(schema.sites)
+      .where(eq(schema.sites.id, trace.selectedSiteId))
+      .get()
+    : null;
+
   const attempts = await db.select().from(schema.proxyDebugAttempts)
     .where(eq(schema.proxyDebugAttempts.traceId, traceId))
     .orderBy(asc(schema.proxyDebugAttempts.attemptIndex), asc(schema.proxyDebugAttempts.id))
     .all();
 
   return {
-    trace,
+    trace: {
+      ...trace,
+      selectedRouteDisplay: selectedRoute ? {
+        id: selectedRoute.id,
+        label: selectedRoute.displayName || trace.requestedModel || null,
+        routingStrategy: selectedRoute.routingStrategy,
+      } : null,
+      selectedTargetDisplay: selectedTarget ? {
+        id: selectedTarget.id,
+        label: [
+          selectedTarget.accountUsername || null,
+          selectedTarget.siteName ? `@ ${selectedTarget.siteName}` : null,
+          selectedTarget.tokenName ? `/ ${selectedTarget.tokenName}` : null,
+        ].filter(Boolean).join(' ') || selectedTarget.sourceModel || selectedTarget.routeEndpointId || null,
+        sourceModel: selectedTarget.sourceModel,
+        routeEndpointId: selectedTarget.routeEndpointId,
+        tokenGroup: selectedTarget.tokenGroup,
+        priority: selectedTarget.priority,
+        weight: selectedTarget.weight,
+        siteName: selectedTarget.siteName,
+        sitePlatform: selectedTarget.sitePlatform,
+      } : null,
+      selectedSiteDisplay: selectedSite ? {
+        id: selectedSite.id,
+        label: selectedSite.name,
+        platform: selectedSite.platform,
+        url: selectedSite.url,
+      } : null,
+    },
     attempts,
   };
 }

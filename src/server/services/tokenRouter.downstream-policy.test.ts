@@ -27,7 +27,7 @@ describe('TokenRouter downstream policy', () => {
   });
 
   beforeEach(async () => {
-    await db.delete(schema.routeChannels).run();
+    await db.delete(schema.routeEndpointTargets).run();
     await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.accountTokens).run();
     await db.delete(schema.accounts).run();
@@ -57,16 +57,16 @@ describe('TokenRouter downstream policy', () => {
     }).returning().get();
 
     const routeAllowed = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'claude-opus-4-6',
+      displayName: 'claude-opus-4-6',
       enabled: true,
     }).returning().get();
 
     const routeBlocked = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-4o-mini',
+      displayName: 'gpt-4o-mini',
       enabled: true,
     }).returning().get();
 
-    await db.insert(schema.routeChannels).values({
+    await db.insert(schema.routeEndpointTargets).values({
       routeId: routeAllowed.id,
       accountId: account.id,
       tokenId: null,
@@ -75,7 +75,7 @@ describe('TokenRouter downstream policy', () => {
       enabled: true,
     }).run();
 
-    await db.insert(schema.routeChannels).values({
+    await db.insert(schema.routeEndpointTargets).values({
       routeId: routeBlocked.id,
       accountId: account.id,
       tokenId: null,
@@ -98,7 +98,7 @@ describe('TokenRouter downstream policy', () => {
     });
 
     expect(allowedPick).toBeTruthy();
-    expect(allowedPick?.channel.routeId).toBe(routeAllowed.id);
+    expect(allowedPick?.target.routeId).toBe(routeAllowed.id);
     expect(blockedPick).toBeNull();
   });
 
@@ -119,11 +119,11 @@ describe('TokenRouter downstream policy', () => {
     }).returning().get();
 
     const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-4o-mini',
+      displayName: 'gpt-4o-mini',
       enabled: true,
     }).returning().get();
 
-    await db.insert(schema.routeChannels).values({
+    await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: account.id,
       tokenId: null,
@@ -179,11 +179,11 @@ describe('TokenRouter downstream policy', () => {
     }).returning().get();
 
     const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'claude-sonnet-4-6',
+      displayName: 'claude-sonnet-4-6',
       enabled: true,
     }).returning().get();
 
-    const channelHigh = await db.insert(schema.routeChannels).values({
+    const channelHigh = await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: accountHigh.id,
       tokenId: null,
@@ -192,7 +192,7 @@ describe('TokenRouter downstream policy', () => {
       enabled: true,
     }).returning().get();
 
-    const channelLow = await db.insert(schema.routeChannels).values({
+    const channelLow = await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: accountLow.id,
       tokenId: null,
@@ -216,8 +216,8 @@ describe('TokenRouter downstream policy', () => {
       },
     );
 
-    const highCandidate = decision.candidates.find((candidate) => candidate.channelId === channelHigh.id);
-    const lowCandidate = decision.candidates.find((candidate) => candidate.channelId === channelLow.id);
+    const highCandidate = decision.candidates.find((candidate) => candidate.targetId === channelHigh.id);
+    const lowCandidate = decision.candidates.find((candidate) => candidate.targetId === channelLow.id);
 
     expect(highCandidate).toBeTruthy();
     expect(lowCandidate).toBeTruthy();
@@ -262,11 +262,11 @@ describe('TokenRouter downstream policy', () => {
     }).returning().get();
 
     const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-5-mini',
+      displayName: 'gpt-5-mini',
       enabled: true,
     }).returning().get();
 
-    const highChannel = await db.insert(schema.routeChannels).values({
+    const highChannel = await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: accountGlobalHigh.id,
       tokenId: null,
@@ -275,7 +275,7 @@ describe('TokenRouter downstream policy', () => {
       enabled: true,
     }).returning().get();
 
-    const lowChannel = await db.insert(schema.routeChannels).values({
+    const lowChannel = await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: accountGlobalLow.id,
       tokenId: null,
@@ -299,8 +299,8 @@ describe('TokenRouter downstream policy', () => {
       },
     );
 
-    const highCandidate = decision.candidates.find((candidate) => candidate.channelId === highChannel.id);
-    const lowCandidate = decision.candidates.find((candidate) => candidate.channelId === lowChannel.id);
+    const highCandidate = decision.candidates.find((candidate) => candidate.targetId === highChannel.id);
+    const lowCandidate = decision.candidates.find((candidate) => candidate.targetId === lowChannel.id);
 
     expect(highCandidate).toBeTruthy();
     expect(lowCandidate).toBeTruthy();
@@ -325,16 +325,16 @@ describe('TokenRouter downstream policy', () => {
     }).returning().get();
 
     const claudeGroupRoute = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 're:^claude-(opus|sonnet)-4-6$',
+      displayName: 're:^claude-(opus|sonnet)-4-6$',
       enabled: true,
     }).returning().get();
 
     const gptExactRoute = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-4o-mini',
+      displayName: 'gpt-4o-mini',
       enabled: true,
     }).returning().get();
 
-    await db.insert(schema.routeChannels).values({
+    await db.insert(schema.routeEndpointTargets).values({
       routeId: claudeGroupRoute.id,
       accountId: account.id,
       tokenId: null,
@@ -343,7 +343,7 @@ describe('TokenRouter downstream policy', () => {
       enabled: true,
     }).run();
 
-    await db.insert(schema.routeChannels).values({
+    await db.insert(schema.routeEndpointTargets).values({
       routeId: gptExactRoute.id,
       accountId: account.id,
       tokenId: null,
@@ -362,8 +362,8 @@ describe('TokenRouter downstream policy', () => {
     const claudePick = await router.selectChannel('claude-opus-4-6', policy);
     const gptPick = await router.selectChannel('gpt-4o-mini', policy);
 
-    expect(claudePick?.channel.routeId).toBe(claudeGroupRoute.id);
-    expect(gptPick?.channel.routeId).toBe(gptExactRoute.id);
+    expect(claudePick?.target.routeId).toBe(claudeGroupRoute.id);
+    expect(gptPick?.target.routeId).toBe(gptExactRoute.id);
   });
 
   it('excludes candidates from excluded sites before route selection', async () => {
@@ -383,11 +383,11 @@ describe('TokenRouter downstream policy', () => {
     }).returning().get();
 
     const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-4o-mini',
+      displayName: 'gpt-4o-mini',
       enabled: true,
     }).returning().get();
 
-    const channel = await db.insert(schema.routeChannels).values({
+    const channel = await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: account.id,
       tokenId: null,
@@ -407,7 +407,7 @@ describe('TokenRouter downstream policy', () => {
 
     const pick = await router.selectChannel('gpt-4o-mini', policy);
     const decision = await router.explainSelectionForRoute(route.id, 'gpt-4o-mini', [], policy);
-    const candidate = decision.candidates.find((item) => item.channelId === channel.id);
+    const candidate = decision.candidates.find((item) => item.targetId === channel.id);
 
     expect(pick).toBeNull();
     expect(candidate?.eligible).toBe(false);
@@ -455,11 +455,11 @@ describe('TokenRouter downstream policy', () => {
     }).returning().get();
 
     const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'claude-sonnet-4-6',
+      displayName: 'claude-sonnet-4-6',
       enabled: true,
     }).returning().get();
 
-    const blockedChannel = await db.insert(schema.routeChannels).values({
+    const blockedChannel = await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: blockedAccount.id,
       tokenId: blockedToken.id,
@@ -467,7 +467,7 @@ describe('TokenRouter downstream policy', () => {
       weight: 10,
       enabled: true,
     }).returning().get();
-    const allowedChannel = await db.insert(schema.routeChannels).values({
+    const allowedChannel = await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: allowedAccount.id,
       tokenId: allowedToken.id,
@@ -489,10 +489,10 @@ describe('TokenRouter downstream policy', () => {
 
     const pick = await router.selectChannel('claude-sonnet-4-6', policy);
     const decision = await router.explainSelectionForRoute(route.id, 'claude-sonnet-4-6', [], policy);
-    const blockedCandidate = decision.candidates.find((item) => item.channelId === blockedChannel.id);
-    const allowedCandidate = decision.candidates.find((item) => item.channelId === allowedChannel.id);
+    const blockedCandidate = decision.candidates.find((item) => item.targetId === blockedChannel.id);
+    const allowedCandidate = decision.candidates.find((item) => item.targetId === allowedChannel.id);
 
-    expect(pick?.channel.id).toBe(allowedChannel.id);
+    expect(pick?.target.id).toBe(allowedChannel.id);
     expect(blockedCandidate?.eligible).toBe(false);
     expect(blockedCandidate?.reason).toContain('API Key/令牌已被下游密钥排除');
     expect(allowedCandidate?.eligible).toBe(true);
@@ -522,11 +522,11 @@ describe('TokenRouter downstream policy', () => {
     }).returning().get();
 
     const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-5-mini',
+      displayName: 'gpt-5-mini',
       enabled: true,
     }).returning().get();
 
-    const blockedChannel = await db.insert(schema.routeChannels).values({
+    const blockedChannel = await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: blockedAccount.id,
       tokenId: null,
@@ -534,7 +534,7 @@ describe('TokenRouter downstream policy', () => {
       weight: 10,
       enabled: true,
     }).returning().get();
-    const allowedChannel = await db.insert(schema.routeChannels).values({
+    const allowedChannel = await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: allowedAccount.id,
       tokenId: null,
@@ -556,9 +556,9 @@ describe('TokenRouter downstream policy', () => {
 
     const pick = await router.selectChannel('gpt-5-mini', policy);
     const decision = await router.explainSelectionForRoute(route.id, 'gpt-5-mini', [], policy);
-    const blockedCandidate = decision.candidates.find((item) => item.channelId === blockedChannel.id);
+    const blockedCandidate = decision.candidates.find((item) => item.targetId === blockedChannel.id);
 
-    expect(pick?.channel.id).toBe(allowedChannel.id);
+    expect(pick?.target.id).toBe(allowedChannel.id);
     expect(blockedCandidate?.eligible).toBe(false);
     expect(blockedCandidate?.reason).toContain('API Key/令牌已被下游密钥排除');
   });

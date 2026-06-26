@@ -27,13 +27,13 @@ ALTER TABLE `token_routes` ADD `decision_refreshed_at` text;
 --> statement-breakpoint
 ALTER TABLE `token_routes` ADD `routing_strategy` text DEFAULT 'weighted';
 --> statement-breakpoint
-ALTER TABLE `route_channels` ADD `source_model` text;
+ALTER TABLE `route_endpoint_targets` ADD `source_model` text;
 --> statement-breakpoint
-ALTER TABLE `route_channels` ADD `last_selected_at` text;
+ALTER TABLE `route_endpoint_targets` ADD `last_selected_at` text;
 --> statement-breakpoint
-ALTER TABLE `route_channels` ADD `consecutive_fail_count` integer NOT NULL DEFAULT 0;
+ALTER TABLE `route_endpoint_targets` ADD `consecutive_fail_count` integer NOT NULL DEFAULT 0;
 --> statement-breakpoint
-ALTER TABLE `route_channels` ADD `cooldown_level` integer NOT NULL DEFAULT 0;
+ALTER TABLE `route_endpoint_targets` ADD `cooldown_level` integer NOT NULL DEFAULT 0;
 --> statement-breakpoint
 CREATE TABLE IF NOT EXISTS `downstream_api_keys` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
@@ -96,7 +96,7 @@ CREATE TABLE IF NOT EXISTS `proxy_video_tasks` (
 	`token_value` text NOT NULL,
 	`requested_model` text,
 	`actual_model` text,
-	`channel_id` integer,
+	`target_id` integer,
 	`account_id` integer,
 	`status_snapshot` text,
 	`upstream_response_meta` text,
@@ -120,7 +120,7 @@ ON `model_availability` (`account_id`, `model_name`);
 --> statement-breakpoint
 PRAGMA foreign_keys=OFF;
 --> statement-breakpoint
-CREATE TABLE `__new_route_channels` (
+CREATE TABLE `__new_route_endpoint_targets` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
 	`route_id` integer NOT NULL,
 	`account_id` integer NOT NULL,
@@ -145,7 +145,7 @@ CREATE TABLE `__new_route_channels` (
 	FOREIGN KEY (`token_id`) REFERENCES `account_tokens`(`id`) ON UPDATE no action ON DELETE set null
 );
 --> statement-breakpoint
-INSERT INTO `__new_route_channels` (
+INSERT INTO `__new_route_endpoint_targets` (
 	`id`,
 	`route_id`,
 	`account_id`,
@@ -172,7 +172,7 @@ SELECT
 	`account_id`,
 	CASE
 		WHEN `token_id` IS NULL THEN NULL
-		WHEN EXISTS (SELECT 1 FROM `account_tokens` WHERE `account_tokens`.`id` = `route_channels`.`token_id`) THEN `token_id`
+		WHEN EXISTS (SELECT 1 FROM `account_tokens` WHERE `account_tokens`.`id` = `route_endpoint_targets`.`token_id`) THEN `token_id`
 		ELSE NULL
 	END,
 	`source_model`,
@@ -190,25 +190,25 @@ SELECT
 	`consecutive_fail_count`,
 	`cooldown_level`,
 	`cooldown_until`
-FROM `route_channels`;
+FROM `route_endpoint_targets`;
 --> statement-breakpoint
-DROP TABLE `route_channels`;
+DROP TABLE `route_endpoint_targets`;
 --> statement-breakpoint
-ALTER TABLE `__new_route_channels` RENAME TO `route_channels`;
+ALTER TABLE `__new_route_endpoint_targets` RENAME TO `route_endpoint_targets`;
 --> statement-breakpoint
-CREATE INDEX IF NOT EXISTS `route_channels_route_id_idx`
-ON `route_channels` (`route_id`);
+CREATE INDEX IF NOT EXISTS `route_endpoint_targets_route_id_idx`
+ON `route_endpoint_targets` (`route_id`);
 --> statement-breakpoint
-CREATE INDEX IF NOT EXISTS `route_channels_account_id_idx`
-ON `route_channels` (`account_id`);
+CREATE INDEX IF NOT EXISTS `route_endpoint_targets_account_id_idx`
+ON `route_endpoint_targets` (`account_id`);
 --> statement-breakpoint
-CREATE INDEX IF NOT EXISTS `route_channels_token_id_idx`
-ON `route_channels` (`token_id`);
+CREATE INDEX IF NOT EXISTS `route_endpoint_targets_token_id_idx`
+ON `route_endpoint_targets` (`token_id`);
 --> statement-breakpoint
-CREATE INDEX IF NOT EXISTS `route_channels_route_enabled_idx`
-ON `route_channels` (`route_id`, `enabled`);
+CREATE INDEX IF NOT EXISTS `route_endpoint_targets_route_enabled_idx`
+ON `route_endpoint_targets` (`route_id`, `enabled`);
 --> statement-breakpoint
-CREATE INDEX IF NOT EXISTS `route_channels_route_token_idx`
-ON `route_channels` (`route_id`, `token_id`);
+CREATE INDEX IF NOT EXISTS `route_endpoint_targets_route_token_idx`
+ON `route_endpoint_targets` (`route_id`, `token_id`);
 --> statement-breakpoint
 PRAGMA foreign_keys=ON;

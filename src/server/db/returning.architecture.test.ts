@@ -15,6 +15,7 @@ function collectProductionServerFiles(rootDir: string): string[] {
     const absolutePath = join(rootDir, entry);
     const stats = statSync(absolutePath);
     if (stats.isDirectory()) {
+      if (entry === 'test') continue;
       files.push(...collectProductionServerFiles(absolutePath));
       continue;
     }

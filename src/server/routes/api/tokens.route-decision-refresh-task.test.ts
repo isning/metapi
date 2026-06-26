@@ -46,7 +46,7 @@ describe('POST /api/routes/decision/refresh', () => {
 
   beforeEach(async () => {
     resetBackgroundTasks();
-    await db.delete(schema.routeChannels).run();
+    await db.delete(schema.routeEndpointTargets).run();
     await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.accountTokens).run();
     await db.delete(schema.accounts).run();
@@ -109,7 +109,7 @@ describe('POST /api/routes/decision/refresh', () => {
       enabled: false,
     }).returning().get();
 
-    await db.insert(schema.routeChannels).values([
+    await db.insert(schema.routeEndpointTargets).values([
       {
         routeId: exactRoute.id,
         accountId: account.id,

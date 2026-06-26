@@ -50,6 +50,14 @@ export const SITE_COLUMN_COMPATIBILITY_SPECS: SiteColumnCompatibilitySpec[] = [
     },
   },
   {
+    column: 'compatibility_policy',
+    addSql: {
+      sqlite: 'ALTER TABLE sites ADD COLUMN compatibility_policy text;',
+      mysql: 'ALTER TABLE `sites` ADD COLUMN `compatibility_policy` TEXT NULL',
+      postgres: 'ALTER TABLE "sites" ADD COLUMN "compatibility_policy" TEXT',
+    },
+  },
+  {
     column: 'external_checkin_url',
     addSql: {
       sqlite: 'ALTER TABLE sites ADD COLUMN external_checkin_url text;',

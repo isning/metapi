@@ -25,6 +25,7 @@ vi.mock('undici', () => ({
 
 type DbModule = typeof import('../../db/index.js');
 type RouteRefreshWorkflowModule = typeof import('../../services/routeRefreshWorkflow.js');
+type RouteGraphServiceModule = typeof import('../../services/routeGraphService.js');
 
 function buildJwt(payload: Record<string, unknown>) {
   const encode = (value: unknown) => Buffer.from(JSON.stringify(value))
@@ -64,6 +65,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
   let db: DbModule['db'];
   let schema: DbModule['schema'];
   let rebuildRoutesOnly: RouteRefreshWorkflowModule['rebuildRoutesOnly'];
+  let routeGraphService: RouteGraphServiceModule;
   let config: typeof import('../../config.js').config;
   let dataDir = '';
 
@@ -76,6 +78,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     const dbModule = await import('../../db/index.js');
     const routesModule = await import('./oauth.js');
     const routeRefreshWorkflow = await import('../../services/routeRefreshWorkflow.js');
+    routeGraphService = await import('../../services/routeGraphService.js');
     const configModule = await import('../../config.js');
     db = dbModule.db;
     schema = dbModule.schema;
@@ -95,7 +98,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     const { resetOauthSensitiveRouteLimiterForTests } = await import('./oauth.js');
     resetRequestRateLimitStore();
     resetOauthSensitiveRouteLimiterForTests();
-    await db.delete(schema.routeChannels).run();
+    await db.delete(schema.routeEndpointTargets).run();
     await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.tokenModelAvailability).run();
     await db.delete(schema.modelAvailability).run();
@@ -996,7 +999,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
       }),
     ]));
 
-    const routeRows = await db.select().from(schema.routeChannels).all();
+    const routeRows = await db.select().from(schema.routeEndpointTargets).all();
     expect(routeRows).toHaveLength(1);
 
     const connectionsResponse = await app.inject({
@@ -1083,7 +1086,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     });
 
     const routes = await db.select().from(schema.tokenRoutes).all();
-    const channels = await db.select().from(schema.routeChannels).all();
+    const channels = await db.select().from(schema.routeEndpointTargets).all();
     expect(routes).toHaveLength(1);
     expect(channels).toHaveLength(1);
     expect(channels[0]).toMatchObject({
@@ -2080,7 +2083,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
       modelPattern: 'gpt-5.2-codex',
       enabled: true,
     }).returning().get();
-    await db.insert(schema.routeChannels).values({
+    await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: account.id,
       tokenId: null,
@@ -2599,7 +2602,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
         available: true,
       }),
     ]));
-    const routeRows = await db.select().from(schema.routeChannels).all();
+    const routeRows = await db.select().from(schema.routeEndpointTargets).all();
     expect(routeRows).toHaveLength(1);
     expect(routeRows[0]).toMatchObject({
       accountId: accounts[0]?.id,
@@ -2674,7 +2677,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
 
     const modelRows = await db.select().from(schema.modelAvailability).all();
     expect(modelRows).toHaveLength(2);
-    const routeRows = await db.select().from(schema.routeChannels).all();
+    const routeRows = await db.select().from(schema.routeEndpointTargets).all();
     expect(routeRows).toHaveLength(2);
   });
 
@@ -3012,7 +3015,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
 
     const { rebuildRoutesOnly } = await import('../../services/routeRefreshWorkflow.js');
     await rebuildRoutesOnly();
-    expect(await db.select().from(schema.routeChannels).all()).toHaveLength(2);
+    expect(await db.select().from(schema.routeEndpointTargets).all()).toHaveLength(2);
 
     const createResponse = await app.inject({
       method: 'POST',
@@ -3034,7 +3037,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
       }),
     });
 
-    const groupedChannels = await db.select().from(schema.routeChannels).all();
+    const groupedChannels = await db.select().from(schema.routeEndpointTargets).all();
     expect(groupedChannels).toHaveLength(1);
     expect(groupedChannels[0]).toMatchObject({
       oauthRouteUnitId: expect.any(Number),
@@ -3073,7 +3076,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     expect(deleteResponse.statusCode).toBe(200);
     expect(deleteResponse.json()).toMatchObject({ success: true });
 
-    const splitChannels = await db.select().from(schema.routeChannels).all();
+    const splitChannels = await db.select().from(schema.routeEndpointTargets).all();
     expect(splitChannels).toHaveLength(2);
     expect(splitChannels.every((row) => row.oauthRouteUnitId == null)).toBe(true);
   });
@@ -3150,9 +3153,9 @@ describe('oauth routes', { timeout: 15_000 }, () => {
       });
       expect(await db.select().from(schema.oauthRouteUnits).all()).toHaveLength(0);
       expect(await db.select().from(schema.oauthRouteUnitMembers).all()).toHaveLength(0);
-      const routeChannels = await db.select().from(schema.routeChannels).all();
-      expect(routeChannels).toHaveLength(2);
-      expect(routeChannels.every((row) => row.oauthRouteUnitId == null)).toBe(true);
+      const routeEndpointTargets = await db.select().from(schema.routeEndpointTargets).all();
+      expect(routeEndpointTargets).toHaveLength(2);
+      expect(routeEndpointTargets.every((row) => row.oauthRouteUnitId == null)).toBe(true);
     } finally {
       rebuildSpy.mockRestore();
     }
@@ -3241,9 +3244,9 @@ describe('oauth routes', { timeout: 15_000 }, () => {
       expect(routeUnits).toHaveLength(1);
       const members = await db.select().from(schema.oauthRouteUnitMembers).all();
       expect(members).toHaveLength(2);
-      const routeChannels = await db.select().from(schema.routeChannels).all();
-      expect(routeChannels).toHaveLength(1);
-      expect(routeChannels[0]?.oauthRouteUnitId).toBe(routeUnitId);
+      const routeEndpointTargets = await db.select().from(schema.routeEndpointTargets).all();
+      expect(routeEndpointTargets).toHaveLength(1);
+      expect(routeEndpointTargets[0]?.oauthRouteUnitId).toBe(routeUnitId);
     } finally {
       rebuildSpy.mockRestore();
     }
@@ -3332,9 +3335,9 @@ describe('oauth routes', { timeout: 15_000 }, () => {
       expect(routeUnits).toHaveLength(1);
       const members = await db.select().from(schema.oauthRouteUnitMembers).all();
       expect(members).toHaveLength(2);
-      const routeChannels = await db.select().from(schema.routeChannels).all();
-      expect(routeChannels).toHaveLength(1);
-      expect(routeChannels[0]?.oauthRouteUnitId).toBe(routeUnitId);
+      const routeEndpointTargets = await db.select().from(schema.routeEndpointTargets).all();
+      expect(routeEndpointTargets).toHaveLength(1);
+      expect(routeEndpointTargets[0]?.oauthRouteUnitId).toBe(routeUnitId);
     } finally {
       rebuildSpy.mockRestore();
     }
@@ -3461,7 +3464,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
       }),
     ]));
 
-    const routeRows = await db.select().from(schema.routeChannels).all();
+    const routeRows = await db.select().from(schema.routeEndpointTargets).all();
     expect(routeRows).toHaveLength(1);
   });
 
@@ -3522,7 +3525,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     const routeRefreshWorkflow = await import('../../services/routeRefreshWorkflow.js');
     await routeRefreshWorkflow.rebuildRoutesOnly();
 
-    expect(await db.select().from(schema.routeChannels).all()).toHaveLength(2);
+    expect(await db.select().from(schema.routeEndpointTargets).all()).toHaveLength(2);
 
     const createResponse = await app.inject({
       method: 'POST',
@@ -3544,7 +3547,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
       },
     });
 
-    const routeRows = await db.select().from(schema.routeChannels).all();
+    const routeRows = await db.select().from(schema.routeEndpointTargets).all();
     expect(routeRows).toHaveLength(1);
 
     const connectionsResponse = await app.inject({
@@ -3582,7 +3585,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     expect(deleteResponse.json()).toMatchObject({
       success: true,
     });
-    expect(await db.select().from(schema.routeChannels).all()).toHaveLength(2);
+    expect(await db.select().from(schema.routeEndpointTargets).all()).toHaveLength(2);
   });
 
   it('updates oauth account proxy settings without starting a new oauth session and refreshes routes', async () => {
@@ -3653,13 +3656,12 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     ]));
 
     const routeRows = await db.select().from(schema.tokenRoutes).all();
-    expect(routeRows).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        modelPattern: 'gpt-5.4',
-      }),
+    const routeBindings = await routeGraphService.loadRouteGraphRouteTableBindings();
+    expect(routeRows.map((row) => routeBindings.get(row.id)?.modelPattern)).toEqual(expect.arrayContaining([
+      'gpt-5.4',
     ]));
-    const routeChannels = await db.select().from(schema.routeChannels).all();
-    expect(routeChannels).toHaveLength(1);
+    const routeEndpointTargets = await db.select().from(schema.routeEndpointTargets).all();
+    expect(routeEndpointTargets).toHaveLength(1);
   });
 
   it('imports multiple native oauth json objects in one batch request and applies shared system proxy settings', async () => {
@@ -3733,9 +3735,10 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     ]));
 
     const routeRows = await db.select().from(schema.tokenRoutes).all();
-    expect(routeRows.map((row) => row.modelPattern).sort()).toEqual(['gpt-5.4', 'gpt-5.4-mini']);
-    const routeChannels = await db.select().from(schema.routeChannels).all();
-    expect(routeChannels).toHaveLength(2);
+    const routeBindings = await routeGraphService.loadRouteGraphRouteTableBindings();
+    expect(routeRows.map((row) => routeBindings.get(row.id)?.modelPattern).sort()).toEqual(['gpt-5.4', 'gpt-5.4-mini']);
+    const routeEndpointTargets = await db.select().from(schema.routeEndpointTargets).all();
+    expect(routeEndpointTargets).toHaveLength(2);
   });
 
   it('creates an oauth route unit and collapses multiple oauth accounts into one route channel', async () => {
@@ -3797,7 +3800,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     ]).run();
     await rebuildRoutesOnly();
 
-    expect(await db.select().from(schema.routeChannels).all()).toHaveLength(2);
+    expect(await db.select().from(schema.routeEndpointTargets).all()).toHaveLength(2);
 
     const response = await app.inject({
       method: 'POST',
@@ -3819,8 +3822,8 @@ describe('oauth routes', { timeout: 15_000 }, () => {
       },
     });
 
-    const routeChannels = await db.select().from(schema.routeChannels).all();
-    expect(routeChannels).toHaveLength(1);
+    const routeEndpointTargets = await db.select().from(schema.routeEndpointTargets).all();
+    expect(routeEndpointTargets).toHaveLength(1);
 
     const connectionsResponse = await app.inject({
       method: 'GET',
@@ -3933,8 +3936,8 @@ describe('oauth routes', { timeout: 15_000 }, () => {
       success: true,
     });
 
-    const routeChannels = await db.select().from(schema.routeChannels).all();
-    expect(routeChannels).toHaveLength(2);
+    const routeEndpointTargets = await db.select().from(schema.routeEndpointTargets).all();
+    expect(routeEndpointTargets).toHaveLength(2);
 
     const connectionsResponse = await app.inject({
       method: 'GET',

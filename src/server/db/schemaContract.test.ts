@@ -25,9 +25,9 @@ describe('schema contract generation', () => {
       primaryKey: false,
     });
     expect(contract.tables.proxy_video_tasks).toBeDefined();
-    expect(contract.tables.route_channels.columns.source_model).toBeDefined();
-    expect(contract.tables.route_channels.columns.last_selected_at).toBeDefined();
-    expect(contract.tables.route_channels.columns.consecutive_fail_count).toMatchObject({
+    expect(contract.tables.route_endpoint_targets.columns.source_model).toBeDefined();
+    expect(contract.tables.route_endpoint_targets.columns.last_selected_at).toBeDefined();
+    expect(contract.tables.route_endpoint_targets.columns.consecutive_fail_count).toMatchObject({
       logicalType: 'integer',
       notNull: true,
       defaultValue: '0',
@@ -67,7 +67,7 @@ describe('schema contract generation', () => {
     );
     expect(contract.foreignKeys).toContainEqual(
       expect.objectContaining({
-        table: 'route_channels',
+        table: 'route_endpoint_targets',
         columns: ['token_id'],
         referencedTable: 'account_tokens',
         referencedColumns: ['id'],

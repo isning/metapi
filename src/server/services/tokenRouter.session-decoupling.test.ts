@@ -27,7 +27,7 @@ describe('TokenRouter session decoupling', () => {
   });
 
   beforeEach(async () => {
-    await db.delete(schema.routeChannels).run();
+    await db.delete(schema.routeEndpointTargets).run();
     await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.tokenModelAvailability).run();
     await db.delete(schema.modelAvailability).run();
@@ -67,11 +67,11 @@ describe('TokenRouter session decoupling', () => {
     }).returning().get();
 
     const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-4o-mini',
+      displayName: 'gpt-4o-mini',
       enabled: true,
     }).returning().get();
 
-    const channel = await db.insert(schema.routeChannels).values({
+    const channel = await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: account.id,
       tokenId: token.id,
@@ -85,12 +85,12 @@ describe('TokenRouter session decoupling', () => {
     const selected = await router.selectChannel('gpt-4o-mini');
 
     expect(selected).not.toBeNull();
-    expect(selected?.channel.id).toBe(channel.id);
+    expect(selected?.target.id).toBe(channel.id);
     expect(selected?.tokenValue).toBe('sk-stable-token');
     expect(selected?.account.id).toBe(account.id);
 
     const decision = await router.explainSelection('gpt-4o-mini');
-    const candidate = decision.candidates.find((item) => item.channelId === channel.id);
+    const candidate = decision.candidates.find((item) => item.targetId === channel.id);
     expect(candidate?.eligible).toBe(true);
     expect(candidate?.reason).not.toContain('账号状态=expired');
   });
@@ -112,11 +112,11 @@ describe('TokenRouter session decoupling', () => {
     }).returning().get();
 
     const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-4.1-mini',
+      displayName: 'gpt-4.1-mini',
       enabled: true,
     }).returning().get();
 
-    const channel = await db.insert(schema.routeChannels).values({
+    const channel = await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: account.id,
       tokenId: null,
@@ -131,7 +131,7 @@ describe('TokenRouter session decoupling', () => {
     expect(selected).toBeNull();
 
     const decision = await router.explainSelection('gpt-4.1-mini');
-    const candidate = decision.candidates.find((item) => item.channelId === channel.id);
+    const candidate = decision.candidates.find((item) => item.targetId === channel.id);
     expect(candidate?.eligible).toBe(false);
     expect(candidate?.reason).toContain('账号状态=expired');
   });

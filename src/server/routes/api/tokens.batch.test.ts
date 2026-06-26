@@ -7,7 +7,7 @@ import { eq } from 'drizzle-orm';
 
 type DbModule = typeof import('../../db/index.js');
 
-describe('PUT /api/channels/batch', () => {
+describe('PUT /api/targets/batch', () => {
   let app: FastifyInstance;
   let db: DbModule['db'];
   let schema: DbModule['schema'];
@@ -36,7 +36,7 @@ describe('PUT /api/channels/batch', () => {
       enabled: true,
     }).returning().get();
 
-    return await db.insert(schema.routeChannels).values({
+    return await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: account.id,
       priority: options.priority,
@@ -60,7 +60,7 @@ describe('PUT /api/channels/batch', () => {
   });
 
   beforeEach(async () => {
-    await db.delete(schema.routeChannels).run();
+    await db.delete(schema.routeEndpointTargets).run();
     await db.delete(schema.accountTokens).run();
     await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.accounts).run();
@@ -74,7 +74,7 @@ describe('PUT /api/channels/batch', () => {
   it('returns 400 when updates is missing or empty', async () => {
     const missingRes = await app.inject({
       method: 'PUT',
-      url: '/api/channels/batch',
+      url: '/api/targets/batch',
       payload: {},
     });
     expect(missingRes.statusCode).toBe(400);
@@ -82,7 +82,7 @@ describe('PUT /api/channels/batch', () => {
 
     const emptyRes = await app.inject({
       method: 'PUT',
-      url: '/api/channels/batch',
+      url: '/api/targets/batch',
       payload: { updates: [] },
     });
     expect(emptyRes.statusCode).toBe(400);
@@ -92,7 +92,7 @@ describe('PUT /api/channels/batch', () => {
   it('returns 400 when an update item is invalid', async () => {
     const invalidIdRes = await app.inject({
       method: 'PUT',
-      url: '/api/channels/batch',
+      url: '/api/targets/batch',
       payload: {
         updates: [{ id: '1', priority: 1 }],
       },
@@ -102,7 +102,7 @@ describe('PUT /api/channels/batch', () => {
 
     const invalidPriorityRes = await app.inject({
       method: 'PUT',
-      url: '/api/channels/batch',
+      url: '/api/targets/batch',
       payload: {
         updates: [{ id: 1, priority: null }],
       },
@@ -117,7 +117,7 @@ describe('PUT /api/channels/batch', () => {
 
     const res = await app.inject({
       method: 'PUT',
-      url: '/api/channels/batch',
+      url: '/api/targets/batch',
       payload: {
         updates: [
           { id: channelA.id, priority: 3.8 },
@@ -145,8 +145,8 @@ describe('PUT /api/channels/batch', () => {
     expect(returnedA?.manualOverride).toBe(true);
     expect(returnedB?.manualOverride).toBe(true);
 
-    const dbA = await db.select().from(schema.routeChannels).where(eq(schema.routeChannels.id, channelA.id)).get();
-    const dbB = await db.select().from(schema.routeChannels).where(eq(schema.routeChannels.id, channelB.id)).get();
+    const dbA = await db.select().from(schema.routeEndpointTargets).where(eq(schema.routeEndpointTargets.id, channelA.id)).get();
+    const dbB = await db.select().from(schema.routeEndpointTargets).where(eq(schema.routeEndpointTargets.id, channelB.id)).get();
     expect(dbA?.priority).toBe(3);
     expect(dbB?.priority).toBe(0);
     expect(dbA?.weight).toBe(17);

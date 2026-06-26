@@ -46,7 +46,7 @@ const BOOTSTRAP_OWNED_LEGACY_TABLES = [
 
 const BOOTSTRAP_OWNED_LEGACY_COLUMNS = [
   'sites.status',
-  'route_channels.token_id',
+  'route_endpoint_targets.token_id',
   'proxy_video_tasks.status_snapshot',
   'proxy_video_tasks.upstream_response_meta',
   'proxy_video_tasks.last_upstream_status',

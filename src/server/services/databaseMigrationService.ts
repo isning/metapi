@@ -7,6 +7,11 @@ import {
   type RuntimeSchemaClient,
   type RuntimeSchemaDialect,
 } from '../db/runtimeSchemaBootstrap.js';
+import {
+  buildRouteGraphSourceFromLegacyRoutes,
+  compileRouteGraphSource,
+} from '../../shared/routeGraph.js';
+import { migratePreferenceSettingsToCurrentConfigVersion } from './configMigrationService.js';
 
 export type MigrationDialect = RuntimeSchemaDialect;
 
@@ -30,6 +35,10 @@ type BackupSnapshot = {
   accounts: {
     sites: Array<Record<string, unknown>>;
     siteApiEndpoints: Array<Record<string, unknown>>;
+    modelCatalogSources: Array<Record<string, unknown>>;
+    apiEndpointProfiles: Array<Record<string, unknown>>;
+    endpointModelObservations: Array<Record<string, unknown>>;
+    credentialEndpointBindings: Array<Record<string, unknown>>;
     siteAnnouncements: Array<Record<string, unknown>>;
     siteDisabledModels: Array<Record<string, unknown>>;
     accounts: Array<Record<string, unknown>>;
@@ -38,7 +47,7 @@ type BackupSnapshot = {
     modelAvailability: Array<Record<string, unknown>>;
     tokenModelAvailability: Array<Record<string, unknown>>;
     tokenRoutes: Array<Record<string, unknown>>;
-    routeChannels: Array<Record<string, unknown>>;
+    routeEndpointTargets: Array<Record<string, unknown>>;
     routeGroupSources: Array<Record<string, unknown>>;
     proxyLogs: Array<Record<string, unknown>>;
     proxyVideoTasks: Array<Record<string, unknown>>;
@@ -60,12 +69,16 @@ export interface DatabaseMigrationSummary {
   rows: {
     sites: number;
     siteApiEndpoints: number;
+    modelCatalogSources: number;
+    apiEndpointProfiles: number;
+    endpointModelObservations: number;
+    credentialEndpointBindings: number;
     siteAnnouncements: number;
     siteDisabledModels: number;
     accounts: number;
     accountTokens: number;
     tokenRoutes: number;
-    routeChannels: number;
+    routeEndpointTargets: number;
     routeGroupSources: number;
     checkinLogs: number;
     modelAvailability: number;
@@ -149,6 +162,28 @@ function serializeColumnValue(
     return serializeJsonColumnValue(value);
   }
   return asNullableString(value);
+}
+
+function normalizeRouteDecisionSnapshot(value: unknown): unknown {
+  if (value === null || value === undefined) return value;
+  let parsed = value;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return value;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      return value;
+    }
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return value;
+  const record = parsed as Record<string, unknown>;
+  if (!Array.isArray(record.channels) || record.targets !== undefined) return value;
+  const { channels: _channels, ...rest } = record;
+  return {
+    ...rest,
+    targets: record.channels,
+  };
 }
 
 function toJsonString(value: unknown): string {
@@ -254,6 +289,10 @@ async function toBackupSnapshot(): Promise<BackupSnapshot> {
     accounts: {
       sites: await db.select().from(schema.sites).all() as Array<Record<string, unknown>>,
       siteApiEndpoints: await db.select().from(schema.siteApiEndpoints).all() as Array<Record<string, unknown>>,
+      modelCatalogSources: await db.select().from(schema.modelCatalogSources).all() as Array<Record<string, unknown>>,
+      apiEndpointProfiles: await db.select().from(schema.apiEndpointProfiles).all() as Array<Record<string, unknown>>,
+      endpointModelObservations: await db.select().from(schema.endpointModelObservations).all() as Array<Record<string, unknown>>,
+      credentialEndpointBindings: await db.select().from(schema.credentialEndpointBindings).all() as Array<Record<string, unknown>>,
       siteAnnouncements: await db.select().from(schema.siteAnnouncements).all() as Array<Record<string, unknown>>,
       siteDisabledModels: await db.select().from(schema.siteDisabledModels).all() as Array<Record<string, unknown>>,
       accounts: await db.select().from(schema.accounts).all() as Array<Record<string, unknown>>,
@@ -262,7 +301,7 @@ async function toBackupSnapshot(): Promise<BackupSnapshot> {
       modelAvailability: await db.select().from(schema.modelAvailability).all() as Array<Record<string, unknown>>,
       tokenModelAvailability: await db.select().from(schema.tokenModelAvailability).all() as Array<Record<string, unknown>>,
       tokenRoutes: await db.select().from(schema.tokenRoutes).all() as Array<Record<string, unknown>>,
-      routeChannels: await db.select().from(schema.routeChannels).all() as Array<Record<string, unknown>>,
+      routeEndpointTargets: await db.select().from(schema.routeEndpointTargets).all() as Array<Record<string, unknown>>,
       routeGroupSources: await db.select().from(schema.routeGroupSources).all() as Array<Record<string, unknown>>,
       proxyLogs: await db.select().from(schema.proxyLogs).all() as Array<Record<string, unknown>>,
       proxyVideoTasks: await db.select().from(schema.proxyVideoTasks).all() as Array<Record<string, unknown>>,
@@ -290,7 +329,9 @@ async function ensureTargetState(client: SqlClient, overwrite: boolean): Promise
 
 async function clearTargetData(client: SqlClient): Promise<void> {
   const tables = [
-    'route_channels',
+    'endpoint_model_observations',
+    'credential_endpoint_bindings',
+    'route_endpoint_targets',
     'route_group_sources',
     'token_model_availability',
     'model_availability',
@@ -300,6 +341,8 @@ async function clearTargetData(client: SqlClient): Promise<void> {
     'proxy_files',
     'account_tokens',
     'accounts',
+    'api_endpoint_profiles',
+    'model_catalog_sources',
     'site_announcements',
     'site_disabled_models',
     'site_api_endpoints',
@@ -370,6 +413,92 @@ function buildStatements(
         asNullableString(row.lastSelectedAt),
         asNullableString(row.lastFailedAt),
         asNullableString(row.lastFailureReason),
+        asNullableString(row.createdAt),
+        asNullableString(row.updatedAt),
+      ],
+    });
+  }
+
+  for (const row of snapshot.accounts.modelCatalogSources || []) {
+    statements.push({
+      table: 'model_catalog_sources',
+      columns: [
+        'id',
+        'site_id',
+        'source_key',
+        'label',
+        'discovery_method',
+        'discovery_url',
+        'parser',
+        'credential_scope',
+        'refresh_policy_json',
+        'enabled',
+        'metadata_json',
+        'last_refresh_at',
+        'last_model_count',
+        'last_error',
+        'created_at',
+        'updated_at',
+      ],
+      values: [
+        asNumber(row.id, 0),
+        asNumber(row.siteId, 0),
+        asNullableString(row.sourceKey) ?? `catalog-${asNumber(row.id, 0) || 'unknown'}`,
+        asNullableString(row.label) ?? 'Model catalog',
+        asNullableString(row.discoveryMethod) ?? 'GET',
+        asNullableString(row.discoveryUrl),
+        asNullableString(row.parser) ?? 'openai_models',
+        asNullableString(row.credentialScope) ?? 'credential',
+        serializeColumnValue('model_catalog_sources', 'refresh_policy_json', row.refreshPolicyJson, contract),
+        asBoolean(row.enabled, true),
+        serializeColumnValue('model_catalog_sources', 'metadata_json', row.metadataJson, contract),
+        asNullableString(row.lastRefreshAt),
+        asNumber(row.lastModelCount, 0),
+        asNullableString(row.lastError),
+        asNullableString(row.createdAt),
+        asNullableString(row.updatedAt),
+      ],
+    });
+  }
+
+  for (const row of snapshot.accounts.apiEndpointProfiles || []) {
+    statements.push({
+      table: 'api_endpoint_profiles',
+      columns: [
+        'id',
+        'site_id',
+        'profile_key',
+        'api_type',
+        'label',
+        'request_method',
+        'request_url',
+        'default_headers_json',
+        'model_catalog_source_id',
+        'auth_mode',
+        'enabled',
+        'priority',
+        'capability_defaults_json',
+        'compatibility_policy_ref',
+        'metadata_json',
+        'created_at',
+        'updated_at',
+      ],
+      values: [
+        asNumber(row.id, 0),
+        asNumber(row.siteId, 0),
+        asNullableString(row.profileKey) ?? asNullableString(row.apiType) ?? `profile-${asNumber(row.id, 0) || 'unknown'}`,
+        asNullableString(row.apiType) ?? 'custom_http',
+        asNullableString(row.label) ?? asNullableString(row.apiType) ?? 'Endpoint',
+        asNullableString(row.requestMethod) ?? 'POST',
+        asNullableString(row.requestUrl),
+        serializeColumnValue('api_endpoint_profiles', 'default_headers_json', row.defaultHeadersJson, contract),
+        asNumber(row.modelCatalogSourceId, null),
+        asNullableString(row.authMode) ?? 'bearer',
+        asBoolean(row.enabled, true),
+        asNumber(row.priority, 0),
+        serializeColumnValue('api_endpoint_profiles', 'capability_defaults_json', row.capabilityDefaultsJson, contract),
+        asNullableString(row.compatibilityPolicyRef),
+        serializeColumnValue('api_endpoint_profiles', 'metadata_json', row.metadataJson, contract),
         asNullableString(row.createdAt),
         asNullableString(row.updatedAt),
       ],
@@ -481,6 +610,84 @@ function buildStatements(
     });
   }
 
+  for (const row of snapshot.accounts.credentialEndpointBindings || []) {
+    statements.push({
+      table: 'credential_endpoint_bindings',
+      columns: [
+        'id',
+        'site_id',
+        'account_id',
+        'token_id',
+        'credential_key',
+        'credential_kind',
+        'api_endpoint_profile_id',
+        'enabled',
+        'support',
+        'source',
+        'priority',
+        'capability_override_json',
+        'compatibility_policy_ref',
+        'pricing_policy_ref',
+        'measured_pricing_ref',
+        'metadata_json',
+        'created_at',
+        'updated_at',
+      ],
+      values: [
+        asNumber(row.id, 0),
+        asNumber(row.siteId, 0),
+        asNumber(row.accountId, null),
+        asNumber(row.tokenId, null),
+        asNullableString(row.credentialKey),
+        asNullableString(row.credentialKind) ?? 'account',
+        asNumber(row.apiEndpointProfileId, 0),
+        asBoolean(row.enabled, true),
+        asNullableString(row.support) ?? 'supported',
+        asNullableString(row.source) ?? 'manual',
+        asNumber(row.priority, 0),
+        serializeColumnValue('credential_endpoint_bindings', 'capability_override_json', row.capabilityOverrideJson, contract),
+        asNullableString(row.compatibilityPolicyRef),
+        asNullableString(row.pricingPolicyRef),
+        asNullableString(row.measuredPricingRef),
+        serializeColumnValue('credential_endpoint_bindings', 'metadata_json', row.metadataJson, contract),
+        asNullableString(row.createdAt),
+        asNullableString(row.updatedAt),
+      ],
+    });
+  }
+
+  for (const row of snapshot.accounts.endpointModelObservations || []) {
+    statements.push({
+      table: 'endpoint_model_observations',
+      columns: [
+        'id',
+        'site_id',
+        'credential_key',
+        'api_endpoint_profile_id',
+        'model_name',
+        'status',
+        'failure_class',
+        'source',
+        'observed_at',
+        'expires_at',
+        'metadata_json',
+      ],
+      values: [
+        asNumber(row.id, 0),
+        asNumber(row.siteId, 0),
+        asNullableString(row.credentialKey),
+        asNumber(row.apiEndpointProfileId, 0),
+        asNullableString(row.modelName),
+        asNullableString(row.status) ?? 'transient_failure',
+        asNullableString(row.failureClass),
+        asNullableString(row.source) ?? 'runtime',
+        asNullableString(row.observedAt),
+        asNullableString(row.expiresAt),
+        serializeColumnValue('endpoint_model_observations', 'metadata_json', row.metadataJson, contract),
+      ],
+    });
+  }
+
   for (const row of snapshot.accounts.checkinLogs) {
     statements.push({
       table: 'checkin_logs',
@@ -529,15 +736,13 @@ function buildStatements(
   for (const row of snapshot.accounts.tokenRoutes) {
     statements.push({
       table: 'token_routes',
-      columns: ['id', 'model_pattern', 'display_name', 'display_icon', 'model_mapping', 'route_mode', 'decision_snapshot', 'decision_refreshed_at', 'routing_strategy', 'enabled', 'created_at', 'updated_at'],
+      columns: ['id', 'display_name', 'display_icon', 'model_mapping', 'decision_snapshot', 'decision_refreshed_at', 'routing_strategy', 'enabled', 'created_at', 'updated_at'],
       values: [
         asNumber(row.id, 0),
-        asNullableString(row.modelPattern),
         asNullableString(row.displayName),
         asNullableString(row.displayIcon),
         serializeColumnValue('token_routes', 'model_mapping', row.modelMapping, contract),
-        asNullableString(row.routeMode) ?? 'pattern',
-        serializeColumnValue('token_routes', 'decision_snapshot', row.decisionSnapshot, contract),
+        serializeColumnValue('token_routes', 'decision_snapshot', normalizeRouteDecisionSnapshot(row.decisionSnapshot), contract),
         asNullableString(row.decisionRefreshedAt),
         asNullableString(row.routingStrategy),
         asBoolean(row.enabled, true),
@@ -547,13 +752,90 @@ function buildStatements(
     });
   }
 
-  for (const row of snapshot.accounts.routeChannels) {
+  const groupSourceRouteIdsByRouteId = new Map<number, number[]>();
+  for (const source of snapshot.accounts.routeGroupSources || []) {
+    const groupRouteId = asNumber(source.groupRouteId, 0);
+    const sourceRouteId = asNumber(source.sourceRouteId, 0);
+    if (!groupRouteId || !sourceRouteId) continue;
+    const existing = groupSourceRouteIdsByRouteId.get(groupRouteId) || [];
+    existing.push(sourceRouteId);
+    groupSourceRouteIdsByRouteId.set(groupRouteId, existing);
+  }
+  const supplyEndpointSpecsByRouteId = new Map<number, Array<Record<string, unknown>>>();
+  for (const target of snapshot.accounts.routeEndpointTargets || []) {
+    const routeId = asNumber(target.routeId, 0);
+    if (!routeId) continue;
+    const targetId = asNumber(target.id, 0);
+    const model = asNullableString(target.sourceModel) || '';
+    const executableTarget = {
+      targetId: targetId ? String(targetId) : `${routeId}:${model || 'request'}`,
+      model,
+      modelSource: model ? 'fixed' : 'request',
+      accountId: asNumber(target.accountId, null),
+      tokenId: asNumber(target.tokenId, null),
+      weight: asNumber(target.weight, 10),
+      priority: asNumber(target.priority, 0),
+      ...(target.enabled === false ? { enabled: false } : {}),
+    };
+    const endpointIdentity = {
+      kind: 'upstream_model',
+      provider: 'legacy',
+      credentialFingerprint: `account:${asNumber(target.accountId, 0)}:token:${asNumber(target.tokenId, 0) || 'default'}`,
+      model: model || 'request-model',
+    };
+    const existing = supplyEndpointSpecsByRouteId.get(routeId) || [];
+    existing.push({
+      endpointIdentity,
+      endpointLocalRefs: [{
+        localRouteId: routeId,
+        routeTargetId: targetId || null,
+        accountId: asNumber(target.accountId, null),
+        tokenId: asNumber(target.tokenId, null),
+      }],
+      targets: [executableTarget],
+    });
+    supplyEndpointSpecsByRouteId.set(routeId, existing);
+  }
+
+  const sourceGraph = buildRouteGraphSourceFromLegacyRoutes(snapshot.accounts.tokenRoutes.map((row) => {
+    const routeId = asNumber(row.id, 0) ?? 0;
+    const sourceRouteIds = groupSourceRouteIdsByRouteId.get(routeId) || [];
+    return {
+      ...row,
+      match: {
+        kind: 'model',
+        requestedModelPattern: String(row.modelPattern || ''),
+        displayName: row.displayName || row.modelPattern || null,
+        routeId,
+      },
+      backend: {
+        kind: sourceRouteIds.length > 0 ? 'routes' : 'supply',
+        routeIds: sourceRouteIds,
+      },
+      supplyEndpointSpecs: supplyEndpointSpecsByRouteId.get(routeId) || [],
+      sourceRouteIds,
+    };
+  }));
+  const compiledGraph = compileRouteGraphSource(sourceGraph).compiled;
+  statements.push({
+    table: 'route_graph_versions',
+    columns: ['id', 'version', 'source_graph_json', 'compiled_graph_json', 'status', 'created_by', 'created_at', 'activated_at'],
+    values: [1, 1, JSON.stringify(sourceGraph), JSON.stringify(compiledGraph), 'active', 'migration', new Date(snapshot.timestamp || Date.now()).toISOString(), new Date(snapshot.timestamp || Date.now()).toISOString()],
+  });
+  statements.push({
+    table: 'route_graph_active_version',
+    columns: ['id', 'version_id', 'updated_at'],
+    values: [1, 1, new Date(snapshot.timestamp || Date.now()).toISOString()],
+  });
+
+  for (const row of snapshot.accounts.routeEndpointTargets) {
     statements.push({
-      table: 'route_channels',
-      columns: ['id', 'route_id', 'account_id', 'token_id', 'source_model', 'priority', 'weight', 'enabled', 'manual_override', 'success_count', 'fail_count', 'total_latency_ms', 'total_cost', 'last_used_at', 'last_selected_at', 'last_fail_at', 'consecutive_fail_count', 'cooldown_level', 'cooldown_until'],
+      table: 'route_endpoint_targets',
+      columns: ['id', 'route_id', 'route_endpoint_id', 'account_id', 'token_id', 'source_model', 'priority', 'weight', 'enabled', 'manual_override', 'success_count', 'fail_count', 'total_latency_ms', 'total_cost', 'last_used_at', 'last_selected_at', 'last_fail_at', 'consecutive_fail_count', 'cooldown_level', 'cooldown_until'],
       values: [
         asNumber(row.id, 0),
         asNumber(row.routeId, 0),
+        asNullableString(row.routeEndpointId) || `entry:legacy:${asNumber(row.routeId, 0)}`,
         asNumber(row.accountId, 0),
         asNumber(row.tokenId, null),
         asNullableString(row.sourceModel),
@@ -590,11 +872,11 @@ function buildStatements(
   for (const row of snapshot.accounts.proxyLogs) {
     statements.push({
       table: 'proxy_logs',
-      columns: ['id', 'route_id', 'channel_id', 'account_id', 'downstream_api_key_id', 'model_requested', 'model_actual', 'status', 'http_status', 'latency_ms', 'prompt_tokens', 'completion_tokens', 'total_tokens', 'estimated_cost', 'billing_details', 'error_message', 'retry_count', 'created_at'],
+      columns: ['id', 'route_id', 'target_id', 'account_id', 'downstream_api_key_id', 'model_requested', 'model_actual', 'status', 'http_status', 'latency_ms', 'prompt_tokens', 'completion_tokens', 'total_tokens', 'estimated_cost', 'billing_details', 'error_message', 'retry_count', 'created_at'],
       values: [
         asNumber(row.id, 0),
         asNumber(row.routeId, null),
-        asNumber(row.channelId, null),
+        asNumber(row.targetId, null),
         asNumber(row.accountId, null),
         asNumber((row as any).downstreamApiKeyId ?? (row as any).downstream_api_key_id, null),
         asNullableString(row.modelRequested),
@@ -617,7 +899,7 @@ function buildStatements(
   for (const row of snapshot.accounts.proxyVideoTasks) {
     statements.push({
       table: 'proxy_video_tasks',
-      columns: ['id', 'public_id', 'upstream_video_id', 'site_url', 'token_value', 'requested_model', 'actual_model', 'channel_id', 'account_id', 'status_snapshot', 'upstream_response_meta', 'last_upstream_status', 'last_polled_at', 'created_at', 'updated_at'],
+      columns: ['id', 'public_id', 'upstream_video_id', 'site_url', 'token_value', 'requested_model', 'actual_model', 'target_id', 'account_id', 'status_snapshot', 'upstream_response_meta', 'last_upstream_status', 'last_polled_at', 'created_at', 'updated_at'],
       values: [
         asNumber(row.id, 0),
         asNullableString(row.publicId),
@@ -626,7 +908,7 @@ function buildStatements(
         asNullableString(row.tokenValue),
         asNullableString(row.requestedModel),
         asNullableString(row.actualModel),
-        asNumber(row.channelId, null),
+        asNumber(row.targetId, null),
         asNumber(row.accountId, null),
         serializeColumnValue('proxy_video_tasks', 'status_snapshot', row.statusSnapshot, contract),
         serializeColumnValue('proxy_video_tasks', 'upstream_response_meta', row.upstreamResponseMeta, contract),
@@ -705,7 +987,10 @@ function buildStatements(
     });
   }
 
-  for (const row of snapshot.preferences.settings) {
+  const migratedPreferences = migratePreferenceSettingsToCurrentConfigVersion(
+    snapshot.preferences.settings.filter((row) => !RUNTIME_DATABASE_SETTING_KEYS.has(row.key)),
+  );
+  for (const row of migratedPreferences.settings) {
     if (RUNTIME_DATABASE_SETTING_KEYS.has(row.key)) {
       continue;
     }
@@ -747,6 +1032,10 @@ async function syncPostgresSequences(client: SqlClient): Promise<void> {
   const tables = [
     'sites',
     'site_api_endpoints',
+    'model_catalog_sources',
+    'api_endpoint_profiles',
+    'endpoint_model_observations',
+    'credential_endpoint_bindings',
     'site_announcements',
     'site_disabled_models',
     'accounts',
@@ -755,7 +1044,7 @@ async function syncPostgresSequences(client: SqlClient): Promise<void> {
     'model_availability',
     'token_model_availability',
     'token_routes',
-    'route_channels',
+    'route_endpoint_targets',
     'route_group_sources',
     'proxy_logs',
     'proxy_video_tasks',
@@ -785,6 +1074,7 @@ export async function bootstrapRuntimeDatabaseSchema(input: Pick<NormalizedDatab
 export async function migrateCurrentDatabase(input: DatabaseMigrationInput): Promise<DatabaseMigrationSummary> {
   const normalized = normalizeMigrationInput(input);
   const snapshot = await toBackupSnapshot();
+  const statements = buildStatements(snapshot);
   const client = await createClient(normalized);
 
   try {
@@ -796,7 +1086,7 @@ export async function migrateCurrentDatabase(input: DatabaseMigrationInput): Pro
       if (normalized.overwrite) {
         await clearTargetData(client);
       }
-      await insertAllRows(client, buildStatements(snapshot));
+      await insertAllRows(client, statements);
       await syncPostgresSequences(client);
       await client.commit();
     } catch (error) {
@@ -816,12 +1106,16 @@ export async function migrateCurrentDatabase(input: DatabaseMigrationInput): Pro
     rows: {
       sites: snapshot.accounts.sites.length,
       siteApiEndpoints: snapshot.accounts.siteApiEndpoints.length,
+      modelCatalogSources: snapshot.accounts.modelCatalogSources.length,
+      apiEndpointProfiles: snapshot.accounts.apiEndpointProfiles.length,
+      endpointModelObservations: snapshot.accounts.endpointModelObservations.length,
+      credentialEndpointBindings: snapshot.accounts.credentialEndpointBindings.length,
       siteAnnouncements: snapshot.accounts.siteAnnouncements.length,
       siteDisabledModels: snapshot.accounts.siteDisabledModels.length,
       accounts: snapshot.accounts.accounts.length,
       accountTokens: snapshot.accounts.accountTokens.length,
       tokenRoutes: snapshot.accounts.tokenRoutes.length,
-      routeChannels: snapshot.accounts.routeChannels.length,
+      routeEndpointTargets: snapshot.accounts.routeEndpointTargets.length,
       checkinLogs: snapshot.accounts.checkinLogs.length,
       modelAvailability: snapshot.accounts.modelAvailability.length,
       tokenModelAvailability: snapshot.accounts.tokenModelAvailability.length,
@@ -830,7 +1124,7 @@ export async function migrateCurrentDatabase(input: DatabaseMigrationInput): Pro
       proxyFiles: snapshot.accounts.proxyFiles.length,
       downstreamApiKeys: snapshot.accounts.downstreamApiKeys.length,
       events: snapshot.accounts.events.length,
-      settings: snapshot.preferences.settings.length,
+      settings: statements.filter((statement) => statement.table === 'settings').length,
       routeGroupSources: snapshot.accounts.routeGroupSources.length,
     },
   };

@@ -28,7 +28,7 @@ describe('TokenRouter site status guard', () => {
   });
 
   beforeEach(async () => {
-    await db.delete(schema.routeChannels).run();
+    await db.delete(schema.routeEndpointTargets).run();
     await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.tokenModelAvailability).run();
     await db.delete(schema.modelAvailability).run();
@@ -60,11 +60,11 @@ describe('TokenRouter site status guard', () => {
     }).returning().get();
 
     const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-4o-mini',
+      displayName: 'gpt-4o-mini',
       enabled: true,
     }).returning().get();
 
-    const channel = await db.insert(schema.routeChannels).values({
+    const channel = await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: account.id,
       tokenId: null,
@@ -80,7 +80,7 @@ describe('TokenRouter site status guard', () => {
 
     const decision = await router.explainSelection('gpt-4o-mini');
     expect(decision.matched).toBe(true);
-    const candidate = decision.candidates.find((item) => item.channelId === channel.id);
+    const candidate = decision.candidates.find((item) => item.targetId === channel.id);
     expect(candidate?.eligible).toBe(false);
   });
 
@@ -102,11 +102,11 @@ describe('TokenRouter site status guard', () => {
     }).returning().get();
 
     const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-4.1-mini',
+      displayName: 'gpt-4.1-mini',
       enabled: true,
     }).returning().get();
 
-    await db.insert(schema.routeChannels).values({
+    await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: account.id,
       tokenId: null,
@@ -146,11 +146,11 @@ describe('TokenRouter site status guard', () => {
     }).returning().get();
 
     const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-5.2-codex',
+      displayName: 'gpt-5.2-codex',
       enabled: true,
     }).returning().get();
 
-    await db.insert(schema.routeChannels).values({
+    await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: account.id,
       tokenId: null,
@@ -191,11 +191,11 @@ describe('TokenRouter site status guard', () => {
     }).returning().get();
 
     const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-5.2-codex',
+      displayName: 'gpt-5.2-codex',
       enabled: true,
     }).returning().get();
 
-    await db.insert(schema.routeChannels).values({
+    await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: account.id,
       tokenId: null,
@@ -236,11 +236,11 @@ describe('TokenRouter site status guard', () => {
     }).returning().get();
 
     const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-5.2-codex',
+      displayName: 'gpt-5.2-codex',
       enabled: true,
     }).returning().get();
 
-    await db.insert(schema.routeChannels).values({
+    await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: account.id,
       tokenId: null,

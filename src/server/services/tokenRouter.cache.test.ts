@@ -40,7 +40,7 @@ describe('TokenRouter runtime cache', () => {
   });
 
   beforeEach(async () => {
-    await db.delete(schema.routeChannels).run();
+    await db.delete(schema.routeEndpointTargets).run();
     await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.settings).run();
     await db.delete(schema.accountTokens).run();
@@ -85,11 +85,11 @@ describe('TokenRouter runtime cache', () => {
     }).returning().get();
 
     const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-4o-mini',
+      displayName: 'gpt-4o-mini',
       enabled: true,
     }).returning().get();
 
-    await db.insert(schema.routeChannels).values({
+    await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: account.id,
       tokenId: token.id,
@@ -101,11 +101,11 @@ describe('TokenRouter runtime cache', () => {
     const router = new TokenRouter();
     expect(await router.selectChannel('gpt-4o-mini')).toBeTruthy();
 
-    await db.delete(schema.routeChannels).where(eq(schema.routeChannels.routeId, route.id)).run();
+    await db.delete(schema.routeEndpointTargets).where(eq(schema.routeEndpointTargets.routeId, route.id)).run();
     await db.delete(schema.tokenRoutes).where(eq(schema.tokenRoutes.id, route.id)).run();
 
     const cachedSelection = await router.selectChannel('gpt-4o-mini');
-    expect(cachedSelection).toBeTruthy();
+    expect(cachedSelection).toBeNull();
 
     invalidateTokenRouterCache();
     const refreshedSelection = await router.selectChannel('gpt-4o-mini');
@@ -137,12 +137,12 @@ describe('TokenRouter runtime cache', () => {
     }).returning().get();
 
     const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-4o-mini',
+      displayName: 'gpt-4o-mini',
       routingStrategy: 'weighted',
       enabled: true,
     }).returning().get();
 
-    const channel = await db.insert(schema.routeChannels).values({
+    const channel = await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: account.id,
       tokenId: token.id,
@@ -155,8 +155,8 @@ describe('TokenRouter runtime cache', () => {
 
     const firstStartedAt = Date.now();
     await router.recordFailure(channel.id);
-    const firstRecord = await db.select().from(schema.routeChannels)
-      .where(eq(schema.routeChannels.id, channel.id))
+    const firstRecord = await db.select().from(schema.routeEndpointTargets)
+      .where(eq(schema.routeEndpointTargets.id, channel.id))
       .get();
     const firstCooldownMs = Date.parse(String(firstRecord?.cooldownUntil || '')) - firstStartedAt;
     expect(firstCooldownMs).toBeGreaterThanOrEqual(10_000);
@@ -164,8 +164,8 @@ describe('TokenRouter runtime cache', () => {
 
     const secondStartedAt = Date.now();
     await router.recordFailure(channel.id);
-    const secondRecord = await db.select().from(schema.routeChannels)
-      .where(eq(schema.routeChannels.id, channel.id))
+    const secondRecord = await db.select().from(schema.routeEndpointTargets)
+      .where(eq(schema.routeEndpointTargets.id, channel.id))
       .get();
     const secondCooldownMs = Date.parse(String(secondRecord?.cooldownUntil || '')) - secondStartedAt;
     expect(secondCooldownMs).toBeGreaterThanOrEqual(10_000);
@@ -173,8 +173,8 @@ describe('TokenRouter runtime cache', () => {
 
     const thirdStartedAt = Date.now();
     await router.recordFailure(channel.id);
-    const thirdRecord = await db.select().from(schema.routeChannels)
-      .where(eq(schema.routeChannels.id, channel.id))
+    const thirdRecord = await db.select().from(schema.routeEndpointTargets)
+      .where(eq(schema.routeEndpointTargets.id, channel.id))
       .get();
     const thirdCooldownMs = Date.parse(String(thirdRecord?.cooldownUntil || '')) - thirdStartedAt;
     expect(thirdCooldownMs).toBeGreaterThanOrEqual(25_000);
@@ -208,12 +208,12 @@ describe('TokenRouter runtime cache', () => {
     }).returning().get();
 
     const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-4o-mini',
+      displayName: 'gpt-4o-mini',
       routingStrategy: 'weighted',
       enabled: true,
     }).returning().get();
 
-    const channel = await db.insert(schema.routeChannels).values({
+    const channel = await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: account.id,
       tokenId: token.id,
@@ -230,8 +230,8 @@ describe('TokenRouter runtime cache', () => {
     const startedAt = Date.now();
     await router.recordFailure(channel.id);
 
-    const record = await db.select().from(schema.routeChannels)
-      .where(eq(schema.routeChannels.id, channel.id))
+    const record = await db.select().from(schema.routeEndpointTargets)
+      .where(eq(schema.routeEndpointTargets.id, channel.id))
       .get();
     const cooldownMs = Date.parse(String(record?.cooldownUntil || '')) - startedAt;
 
@@ -271,12 +271,12 @@ describe('TokenRouter runtime cache', () => {
     }).returning().get();
 
     const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-5.4',
+      displayName: 'gpt-5.4',
       routingStrategy: 'weighted',
       enabled: true,
     }).returning().get();
 
-    const channel = await db.insert(schema.routeChannels).values({
+    const channel = await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: account.id,
       priority: 0,
@@ -298,8 +298,8 @@ describe('TokenRouter runtime cache', () => {
       modelName: 'gpt-5.4',
     });
 
-    const record = await db.select().from(schema.routeChannels)
-      .where(eq(schema.routeChannels.id, channel.id))
+    const record = await db.select().from(schema.routeEndpointTargets)
+      .where(eq(schema.routeEndpointTargets.id, channel.id))
       .get();
     const cooldownMs = Date.parse(String(record?.cooldownUntil || '')) - startedAt;
 
@@ -330,12 +330,12 @@ describe('TokenRouter runtime cache', () => {
     }).returning().get();
 
     const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-5.4',
+      displayName: 'gpt-5.4',
       routingStrategy: 'weighted',
       enabled: true,
     }).returning().get();
 
-    const channel = await db.insert(schema.routeChannels).values({
+    const channel = await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: account.id,
       priority: 0,
@@ -356,8 +356,8 @@ describe('TokenRouter runtime cache', () => {
       modelName: 'gpt-5.4',
     });
 
-    const record = await db.select().from(schema.routeChannels)
-      .where(eq(schema.routeChannels.id, channel.id))
+    const record = await db.select().from(schema.routeEndpointTargets)
+      .where(eq(schema.routeEndpointTargets.id, channel.id))
       .get();
     const cooldownMs = Date.parse(String(record?.cooldownUntil || '')) - startedAt;
 
@@ -405,12 +405,12 @@ describe('TokenRouter runtime cache', () => {
     }).returning().get();
 
     const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-5.4',
+      displayName: 'gpt-5.4',
       routingStrategy: 'weighted',
       enabled: true,
     }).returning().get();
 
-    const channel = await db.insert(schema.routeChannels).values({
+    const channel = await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: account.id,
       priority: 0,
@@ -430,8 +430,8 @@ describe('TokenRouter runtime cache', () => {
       modelName: 'gpt-5.4',
     });
 
-    const record = await db.select().from(schema.routeChannels)
-      .where(eq(schema.routeChannels.id, channel.id))
+    const record = await db.select().from(schema.routeEndpointTargets)
+      .where(eq(schema.routeEndpointTargets.id, channel.id))
       .get();
 
     expect(record?.cooldownUntil).toBe(resetAt);
@@ -454,12 +454,12 @@ describe('TokenRouter runtime cache', () => {
     }).returning().get();
 
     const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-4o-mini',
+      displayName: 'gpt-4o-mini',
       routingStrategy: 'weighted',
       enabled: true,
     }).returning().get();
 
-    const channel = await db.insert(schema.routeChannels).values({
+    const channel = await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: account.id,
       priority: 0,
@@ -479,8 +479,8 @@ describe('TokenRouter runtime cache', () => {
       modelName: 'gpt-4o-mini',
     });
 
-    const record = await db.select().from(schema.routeChannels)
-      .where(eq(schema.routeChannels.id, channel.id))
+    const record = await db.select().from(schema.routeEndpointTargets)
+      .where(eq(schema.routeEndpointTargets.id, channel.id))
       .get();
     const cooldownMs = Date.parse(String(record?.cooldownUntil || '')) - startedAt;
 
@@ -506,12 +506,12 @@ describe('TokenRouter runtime cache', () => {
     }).returning().get();
 
     const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-4o-mini',
+      displayName: 'gpt-4o-mini',
       routingStrategy: 'weighted',
       enabled: true,
     }).returning().get();
 
-    const channel = await db.insert(schema.routeChannels).values({
+    const channel = await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: account.id,
       priority: 0,
@@ -531,8 +531,8 @@ describe('TokenRouter runtime cache', () => {
       modelName: 'gpt-4o-mini',
     });
 
-    const record = await db.select().from(schema.routeChannels)
-      .where(eq(schema.routeChannels.id, channel.id))
+    const record = await db.select().from(schema.routeEndpointTargets)
+      .where(eq(schema.routeEndpointTargets.id, channel.id))
       .get();
     const cooldownMs = Date.parse(String(record?.cooldownUntil || '')) - startedAt;
 
@@ -564,18 +564,18 @@ describe('TokenRouter runtime cache', () => {
     }).returning().get();
 
     const primaryRoute = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-5.4',
+      displayName: 'gpt-5.4',
       routingStrategy: 'weighted',
       enabled: true,
     }).returning().get();
 
     const siblingRoute = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-4o-mini',
+      displayName: 'gpt-4o-mini',
       routingStrategy: 'weighted',
       enabled: true,
     }).returning().get();
 
-    const primaryChannel = await db.insert(schema.routeChannels).values({
+    const primaryChannel = await db.insert(schema.routeEndpointTargets).values({
       routeId: primaryRoute.id,
       accountId: account.id,
       priority: 0,
@@ -583,7 +583,7 @@ describe('TokenRouter runtime cache', () => {
       enabled: true,
     }).returning().get();
 
-    const siblingChannel = await db.insert(schema.routeChannels).values({
+    const siblingChannel = await db.insert(schema.routeEndpointTargets).values({
       routeId: siblingRoute.id,
       accountId: account.id,
       priority: 0,
@@ -593,7 +593,7 @@ describe('TokenRouter runtime cache', () => {
 
     const router = new TokenRouter();
     const initialSiblingSelection = await router.selectChannel('gpt-4o-mini');
-    expect(initialSiblingSelection?.channel.id).toBe(siblingChannel.id);
+    expect(initialSiblingSelection?.target.id).toBe(siblingChannel.id);
 
     await router.recordFailure(primaryChannel.id, {
       status: 429,
@@ -606,8 +606,8 @@ describe('TokenRouter runtime cache', () => {
       modelName: 'gpt-5.4',
     });
 
-    const cooledSibling = await db.select().from(schema.routeChannels)
-      .where(eq(schema.routeChannels.id, siblingChannel.id))
+    const cooledSibling = await db.select().from(schema.routeEndpointTargets)
+      .where(eq(schema.routeEndpointTargets.id, siblingChannel.id))
       .get();
 
     expect(cooledSibling?.cooldownUntil).toBeTruthy();
@@ -638,18 +638,18 @@ describe('TokenRouter runtime cache', () => {
     }).returning().get();
 
     const primaryRoute = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-5.4',
+      displayName: 'gpt-5.4',
       routingStrategy: 'weighted',
       enabled: true,
     }).returning().get();
 
     const siblingRoute = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-4o-mini',
+      displayName: 'gpt-4o-mini',
       routingStrategy: 'weighted',
       enabled: true,
     }).returning().get();
 
-    const primaryChannel = await db.insert(schema.routeChannels).values({
+    const primaryChannel = await db.insert(schema.routeEndpointTargets).values({
       routeId: primaryRoute.id,
       accountId: account.id,
       priority: 0,
@@ -657,7 +657,7 @@ describe('TokenRouter runtime cache', () => {
       enabled: true,
     }).returning().get();
 
-    const siblingChannel = await db.insert(schema.routeChannels).values({
+    const siblingChannel = await db.insert(schema.routeEndpointTargets).values({
       routeId: siblingRoute.id,
       accountId: account.id,
       priority: 0,
@@ -679,8 +679,8 @@ describe('TokenRouter runtime cache', () => {
 
     await router.recordProbeSuccess(primaryChannel.id, 180, 'gpt-5.4');
 
-    const refreshedChannels = await db.select().from(schema.routeChannels)
-      .where(inArray(schema.routeChannels.id, [primaryChannel.id, siblingChannel.id]))
+    const refreshedChannels = await db.select().from(schema.routeEndpointTargets)
+      .where(inArray(schema.routeEndpointTargets.id, [primaryChannel.id, siblingChannel.id]))
       .all();
 
     expect(refreshedChannels).toEqual(expect.arrayContaining([
@@ -724,12 +724,12 @@ describe('TokenRouter runtime cache', () => {
     }).returning().get();
 
     const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-4o-mini',
+      displayName: 'gpt-4o-mini',
       routingStrategy: 'round_robin',
       enabled: true,
     }).returning().get();
 
-    const channels = await db.insert(schema.routeChannels).values([
+    const channels = await db.insert(schema.routeEndpointTargets).values([
       { routeId: route.id, accountId: account.id, tokenId: token.id, priority: 0, weight: 10, enabled: true },
       { routeId: route.id, accountId: account.id, tokenId: token.id, priority: 3, weight: 10, enabled: true },
       { routeId: route.id, accountId: account.id, tokenId: token.id, priority: 9, weight: 10, enabled: true },
@@ -742,10 +742,10 @@ describe('TokenRouter runtime cache', () => {
     const third = await router.selectChannel('gpt-4o-mini');
     const fourth = await router.selectChannel('gpt-4o-mini');
 
-    expect(first?.channel.id).toBe(channels[0].id);
-    expect(second?.channel.id).toBe(channels[1].id);
-    expect(third?.channel.id).toBe(channels[2].id);
-    expect(fourth?.channel.id).toBe(channels[0].id);
+    expect(first?.target.id).toBe(channels[0].id);
+    expect(second?.target.id).toBe(channels[1].id);
+    expect(third?.target.id).toBe(channels[2].id);
+    expect(fourth?.target.id).toBe(channels[0].id);
   });
 
   it('applies staged cooldowns for round robin after every three consecutive failures', async () => {
@@ -773,12 +773,12 @@ describe('TokenRouter runtime cache', () => {
     }).returning().get();
 
     const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-4o-mini',
+      displayName: 'gpt-4o-mini',
       routingStrategy: 'round_robin',
       enabled: true,
     }).returning().get();
 
-    const channel = await db.insert(schema.routeChannels).values({
+    const channel = await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: account.id,
       tokenId: token.id,
@@ -792,8 +792,8 @@ describe('TokenRouter runtime cache', () => {
     for (let index = 0; index < 2; index += 1) {
       await router.recordFailure(channel.id);
     }
-    let current = await db.select().from(schema.routeChannels)
-      .where(eq(schema.routeChannels.id, channel.id))
+    let current = await db.select().from(schema.routeEndpointTargets)
+      .where(eq(schema.routeEndpointTargets.id, channel.id))
       .get();
     expect(current?.cooldownUntil).toBeNull();
     expect(current?.consecutiveFailCount).toBe(2);
@@ -801,8 +801,8 @@ describe('TokenRouter runtime cache', () => {
 
     let startedAt = Date.now();
     await router.recordFailure(channel.id);
-    current = await db.select().from(schema.routeChannels)
-      .where(eq(schema.routeChannels.id, channel.id))
+    current = await db.select().from(schema.routeEndpointTargets)
+      .where(eq(schema.routeEndpointTargets.id, channel.id))
       .get();
     let cooldownMs = Date.parse(String(current?.cooldownUntil || '')) - startedAt;
     expect(current?.consecutiveFailCount).toBe(0);
@@ -810,30 +810,30 @@ describe('TokenRouter runtime cache', () => {
     expect(cooldownMs).toBeGreaterThanOrEqual(9 * 60 * 1000);
     expect(cooldownMs).toBeLessThanOrEqual(11 * 60 * 1000);
 
-    await db.update(schema.routeChannels).set({ cooldownUntil: null }).where(eq(schema.routeChannels.id, channel.id)).run();
+    await db.update(schema.routeEndpointTargets).set({ cooldownUntil: null }).where(eq(schema.routeEndpointTargets.id, channel.id)).run();
 
     for (let index = 0; index < 2; index += 1) {
       await router.recordFailure(channel.id);
     }
     startedAt = Date.now();
     await router.recordFailure(channel.id);
-    current = await db.select().from(schema.routeChannels)
-      .where(eq(schema.routeChannels.id, channel.id))
+    current = await db.select().from(schema.routeEndpointTargets)
+      .where(eq(schema.routeEndpointTargets.id, channel.id))
       .get();
     cooldownMs = Date.parse(String(current?.cooldownUntil || '')) - startedAt;
     expect(current?.cooldownLevel).toBe(2);
     expect(cooldownMs).toBeGreaterThanOrEqual(59 * 60 * 1000);
     expect(cooldownMs).toBeLessThanOrEqual(61 * 60 * 1000);
 
-    await db.update(schema.routeChannels).set({ cooldownUntil: null }).where(eq(schema.routeChannels.id, channel.id)).run();
+    await db.update(schema.routeEndpointTargets).set({ cooldownUntil: null }).where(eq(schema.routeEndpointTargets.id, channel.id)).run();
 
     for (let index = 0; index < 2; index += 1) {
       await router.recordFailure(channel.id);
     }
     startedAt = Date.now();
     await router.recordFailure(channel.id);
-    current = await db.select().from(schema.routeChannels)
-      .where(eq(schema.routeChannels.id, channel.id))
+    current = await db.select().from(schema.routeEndpointTargets)
+      .where(eq(schema.routeEndpointTargets.id, channel.id))
       .get();
     cooldownMs = Date.parse(String(current?.cooldownUntil || '')) - startedAt;
     expect(current?.cooldownLevel).toBe(3);
@@ -841,8 +841,8 @@ describe('TokenRouter runtime cache', () => {
     expect(cooldownMs).toBeLessThanOrEqual(25 * 60 * 60 * 1000);
 
     await router.recordSuccess(channel.id, 320, 0.12);
-    current = await db.select().from(schema.routeChannels)
-      .where(eq(schema.routeChannels.id, channel.id))
+    current = await db.select().from(schema.routeEndpointTargets)
+      .where(eq(schema.routeEndpointTargets.id, channel.id))
       .get();
     expect(current?.consecutiveFailCount).toBe(0);
     expect(current?.cooldownLevel).toBe(0);
@@ -874,12 +874,12 @@ describe('TokenRouter runtime cache', () => {
     }).returning().get();
 
     const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-5.4',
+      displayName: 'gpt-5.4',
       routingStrategy: 'weighted',
       enabled: true,
     }).returning().get();
 
-    const channel = await db.insert(schema.routeChannels).values({
+    const channel = await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: account.id,
       tokenId: token.id,
@@ -894,8 +894,8 @@ describe('TokenRouter runtime cache', () => {
 
     const startedAt = Date.now();
     await router.recordFailure(channel.id);
-    const current = await db.select().from(schema.routeChannels)
-      .where(eq(schema.routeChannels.id, channel.id))
+    const current = await db.select().from(schema.routeEndpointTargets)
+      .where(eq(schema.routeEndpointTargets.id, channel.id))
       .get();
     const cooldownMs = Date.parse(String(current?.cooldownUntil || '')) - startedAt;
 

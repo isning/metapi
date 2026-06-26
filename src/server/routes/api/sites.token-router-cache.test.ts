@@ -3,6 +3,11 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import {
+  createGraphNativeTokenRouteFixture,
+  publishCurrentGraphNativeTokenRouteFixtures,
+  resetGraphNativeTokenRouteFixtures,
+} from '../../test/graphNativeRouteFixtures.js';
 
 type DbModule = typeof import('../../db/index.js');
 type TokenRouterModule = typeof import('../../services/tokenRouter.js');
@@ -40,12 +45,16 @@ describe('sites token-router cache invalidation', () => {
   });
 
   beforeEach(async () => {
-    await db.delete(schema.routeChannels).run();
+    await db.delete(schema.routeEndpointTargets).run();
     await db.delete(schema.tokenRoutes).run();
+    await db.delete(schema.routeGraphActiveVersion).run();
+    await db.delete(schema.routeGraphDrafts).run();
+    await db.delete(schema.routeGraphVersions).run();
     await db.delete(schema.accountTokens).run();
     await db.delete(schema.accounts).run();
     await db.delete(schema.sites).run();
     config.tokenRouterCacheTtlMs = 60_000;
+    resetGraphNativeTokenRouteFixtures();
     invalidateTokenRouterCache();
   });
 
@@ -93,12 +102,12 @@ describe('sites token-router cache invalidation', () => {
       balance: 0,
     }).returning().get();
 
-    const route = await db.insert(schema.tokenRoutes).values({
+    const route = await createGraphNativeTokenRouteFixture({
       modelPattern: 'gpt-4o-mini',
       enabled: true,
-    }).returning().get();
+    });
 
-    await db.insert(schema.routeChannels).values([
+    await db.insert(schema.routeEndpointTargets).values([
       {
         routeId: route.id,
         accountId: targetAccount.id,
@@ -116,6 +125,8 @@ describe('sites token-router cache invalidation', () => {
         enabled: true,
       },
     ]).run();
+    await publishCurrentGraphNativeTokenRouteFixtures();
+    invalidateTokenRouterCache();
 
     const before = await tokenRouter.explainSelection('gpt-4o-mini');
     const beforeTarget = before.candidates.find((candidate) => candidate.accountId === targetAccount.id);

@@ -24,6 +24,7 @@ type SqlDialect = 'sqlite' | Dialect;
 type SqlGenerationOptions = {
   mysqlIndexPrefixRequirements?: MysqlIndexPrefixRequirementMap;
 };
+type ControlledReplacement = 'route-graph-token-routes';
 
 function resolveDbDir(): string {
   return dirname(fileURLToPath(import.meta.url));
@@ -35,6 +36,10 @@ export function resolveGeneratedArtifactPath(filename: string): string {
 
 function quoteIdentifier(dialect: SqlDialect, identifier: string): string {
   return dialect === 'mysql' ? `\`${identifier}\`` : `"${identifier}"`;
+}
+
+function quoteQualifiedIdentifier(dialect: SqlDialect, tableName: string, columnName: string): string {
+  return `${quoteIdentifier(dialect, tableName)}.${quoteIdentifier(dialect, columnName)}`;
 }
 
 function escapeMysqlTextPrefix(columnType: LogicalColumnType): string {
@@ -261,8 +266,34 @@ function serializeForeignKey(foreignKey: SchemaContractForeignKey): string {
   ].join('|');
 }
 
-function assertAdditiveSchemaDiff(currentContract: SchemaContract, previousContract: SchemaContract): void {
+function isRouteGraphTokenRoutesReplacement(currentContract: SchemaContract, previousContract: SchemaContract): boolean {
+  const previousTokenRoutes = previousContract.tables.token_routes;
+  return !!previousTokenRoutes
+    && !!previousTokenRoutes.columns.model_pattern
+    && !!currentContract.tables.route_graph_versions
+    && !!currentContract.tables.route_graph_drafts
+    && !!currentContract.tables.route_graph_active_version
+    && !!currentContract.tables.route_endpoint_targets?.columns.route_endpoint_id;
+}
+
+function isAllowedRouteGraphReplacementColumnRemoval(tableName: string, columnName: string): boolean {
+  return tableName === 'token_routes' && (columnName === 'model_pattern' || columnName === 'route_mode' || columnName === 'match_spec' || columnName === 'backend_spec');
+}
+
+function isAllowedRouteGraphReplacementIndexRemoval(indexName: string): boolean {
+  return indexName === 'token_routes_model_pattern_idx' || indexName === 'token_routes_match_spec_idx';
+}
+
+function assertAdditiveSchemaDiff(
+  currentContract: SchemaContract,
+  previousContract: SchemaContract,
+): ControlledReplacement[] {
   const violations: string[] = [];
+  const controlledReplacements: ControlledReplacement[] = [];
+  const allowRouteGraphReplacement = isRouteGraphTokenRoutesReplacement(currentContract, previousContract);
+  if (allowRouteGraphReplacement) {
+    controlledReplacements.push('route-graph-token-routes');
+  }
 
   for (const [tableName, previousTable] of Object.entries(previousContract.tables)) {
     const currentTable = currentContract.tables[tableName];
@@ -274,6 +305,9 @@ function assertAdditiveSchemaDiff(currentContract: SchemaContract, previousContr
     for (const [columnName, previousColumn] of Object.entries(previousTable.columns)) {
       const currentColumn = currentTable.columns[columnName];
       if (!currentColumn) {
+        if (allowRouteGraphReplacement && isAllowedRouteGraphReplacementColumnRemoval(tableName, columnName)) {
+          continue;
+        }
         violations.push(`removed column ${tableName}.${columnName}`);
         continue;
       }
@@ -288,6 +322,9 @@ function assertAdditiveSchemaDiff(currentContract: SchemaContract, previousContr
   for (const previousIndex of previousContract.indexes) {
     const currentIndex = currentIndexes.get(previousIndex.name);
     if (!currentIndex) {
+      if (allowRouteGraphReplacement && isAllowedRouteGraphReplacementIndexRemoval(previousIndex.name)) {
+        continue;
+      }
       violations.push(`removed index ${previousIndex.name}`);
       continue;
     }
@@ -318,6 +355,8 @@ function assertAdditiveSchemaDiff(currentContract: SchemaContract, previousContr
   if (violations.length > 0) {
     throw new Error(`Non-additive schema diff detected:\n- ${violations.join('\n- ')}`);
   }
+
+  return controlledReplacements;
 }
 
 export function generateBootstrapSql(dialect: SqlDialect, contract: SchemaContract): string {
@@ -348,6 +387,192 @@ function buildAddColumnStatement(
   return `ALTER TABLE ${quoteIdentifier(dialect, tableName)} ADD COLUMN ${buildColumnDefinition(dialect, columnName, column)}`;
 }
 
+function buildRouteGraphMatchSpecExpression(dialect: Dialect, hasDisplayName: boolean): string {
+  const modelPattern = quoteQualifiedIdentifier(dialect, 'token_routes', 'model_pattern');
+  if (dialect === 'mysql') {
+    const displayName = hasDisplayName
+      ? quoteQualifiedIdentifier(dialect, 'token_routes', 'display_name')
+      : 'NULL';
+    return `JSON_OBJECT('kind', 'model', 'requestedModelPattern', COALESCE(${modelPattern}, ''), 'displayName', ${displayName})`;
+  }
+
+  const displayName = hasDisplayName
+    ? quoteQualifiedIdentifier(dialect, 'token_routes', 'display_name')
+    : 'NULL::text';
+  return `jsonb_build_object('kind', 'model', 'requestedModelPattern', COALESCE(${modelPattern}, ''), 'displayName', ${displayName})::text`;
+}
+
+function buildRouteGraphBackendSpecExpression(
+  dialect: Dialect,
+  hasRouteMode: boolean,
+  hasRouteGroupSources: boolean,
+): string {
+  if (!hasRouteMode) {
+    return dialect === 'mysql'
+      ? `JSON_OBJECT('kind', 'supply')`
+      : `'{"kind":"supply"}'`;
+  }
+
+  const routeMode = quoteQualifiedIdentifier(dialect, 'token_routes', 'route_mode');
+  if (dialect === 'mysql') {
+    const routeIds = hasRouteGroupSources
+      ? `(SELECT COALESCE(JSON_ARRAYAGG(${quoteIdentifier(dialect, 'source_route_id')}), JSON_ARRAY()) FROM ${quoteIdentifier(dialect, 'route_group_sources')} WHERE ${quoteQualifiedIdentifier(dialect, 'route_group_sources', 'group_route_id')} = ${quoteQualifiedIdentifier(dialect, 'token_routes', 'id')})`
+      : 'JSON_ARRAY()';
+    return `CASE WHEN ${routeMode} = 'explicit_group' THEN JSON_OBJECT('kind', 'routes', 'routeIds', ${routeIds}) ELSE JSON_OBJECT('kind', 'supply') END`;
+  }
+
+  const routeIds = hasRouteGroupSources
+    ? `(SELECT COALESCE(jsonb_agg(${quoteQualifiedIdentifier(dialect, 'route_group_sources', 'source_route_id')} ORDER BY ${quoteQualifiedIdentifier(dialect, 'route_group_sources', 'source_route_id')}), '[]'::jsonb) FROM ${quoteIdentifier(dialect, 'route_group_sources')} WHERE ${quoteQualifiedIdentifier(dialect, 'route_group_sources', 'group_route_id')} = ${quoteQualifiedIdentifier(dialect, 'token_routes', 'id')})`
+    : `'[]'::jsonb`;
+  return `CASE WHEN ${routeMode} = 'explicit_group' THEN jsonb_build_object('kind', 'routes', 'routeIds', ${routeIds})::text ELSE '{"kind":"supply"}' END`;
+}
+
+function buildSqliteRouteGraphMatchSpecExpression(previousColumns: Record<string, SchemaContractColumn>): string {
+  const hasRouteMode = !!previousColumns.route_mode;
+  const hasDisplayName = !!previousColumns.display_name;
+  const requestedModelPattern = hasRouteMode
+    ? `CASE WHEN coalesce("token_routes"."route_mode", 'pattern') = 'explicit_group' THEN '' ELSE coalesce("token_routes"."model_pattern", '') END`
+    : `coalesce("token_routes"."model_pattern", '')`;
+  const displayName = hasDisplayName
+    ? `CASE WHEN nullif(trim(coalesce("token_routes"."display_name", '')), '') IS NOT NULL THEN trim("token_routes"."display_name")${hasRouteMode ? ` WHEN coalesce("token_routes"."route_mode", 'pattern') = 'explicit_group' THEN coalesce("token_routes"."model_pattern", '')` : ''} ELSE NULL END`
+    : hasRouteMode
+      ? `CASE WHEN coalesce("token_routes"."route_mode", 'pattern') = 'explicit_group' THEN coalesce("token_routes"."model_pattern", '') ELSE NULL END`
+      : 'NULL';
+  return `json_object('kind', 'model', 'requestedModelPattern', ${requestedModelPattern}, 'displayName', ${displayName})`;
+}
+
+function buildSqliteRouteGraphBackendSpecExpression(
+  previousColumns: Record<string, SchemaContractColumn>,
+  hasRouteGroupSources: boolean,
+): string {
+  if (!previousColumns.route_mode) {
+    return `json_object('kind', 'supply')`;
+  }
+  const routeIds = hasRouteGroupSources
+    ? `coalesce(json((SELECT json_group_array("route_group_sources"."source_route_id") FROM "route_group_sources" WHERE "route_group_sources"."group_route_id" = "token_routes"."id" ORDER BY "route_group_sources"."source_route_id")), json('[]'))`
+    : `json('[]')`;
+  return `CASE WHEN coalesce("token_routes"."route_mode", 'pattern') = 'explicit_group' THEN json_object('kind', 'routes', 'routeIds', ${routeIds}) ELSE json_object('kind', 'supply') END`;
+}
+
+function buildSqliteTokenRouteValueExpression(
+  columnName: string,
+  previousColumns: Record<string, SchemaContractColumn>,
+  hasRouteGroupSources: boolean,
+): string {
+  if (columnName === 'match_spec') {
+    return buildSqliteRouteGraphMatchSpecExpression(previousColumns);
+  }
+  if (columnName === 'backend_spec') {
+    return buildSqliteRouteGraphBackendSpecExpression(previousColumns, hasRouteGroupSources);
+  }
+  if (previousColumns[columnName]) {
+    return `"token_routes"."${columnName}"`;
+  }
+  if (columnName === 'routing_strategy') {
+    return `'weighted'`;
+  }
+  return 'NULL';
+}
+
+function buildSqliteRouteGraphTokenRoutesReplacementStatements(
+  currentContract: SchemaContract,
+  previousContract: SchemaContract,
+): string[] {
+  const currentTokenRoutes = currentContract.tables.token_routes;
+  const previousTokenRoutes = previousContract.tables.token_routes;
+  if (!currentTokenRoutes || !previousTokenRoutes?.columns.model_pattern) {
+    return [];
+  }
+
+  const createTable = buildCreateTableStatement('sqlite', '__new_token_routes', {
+    ...currentContract,
+    tables: {
+      __new_token_routes: currentTokenRoutes,
+    },
+    foreignKeys: currentContract.foreignKeys
+      .filter((foreignKey) => foreignKey.table === 'token_routes')
+      .map((foreignKey) => ({ ...foreignKey, table: '__new_token_routes' })),
+  });
+  const columnNames = Object.keys(currentTokenRoutes.columns);
+  const quotedColumns = columnNames.map((columnName) => `"${columnName}"`).join(', ');
+  const expressions = columnNames
+    .map((columnName) => buildSqliteTokenRouteValueExpression(
+      columnName,
+      previousTokenRoutes.columns,
+      !!previousContract.tables.route_group_sources,
+    ))
+    .join(', ');
+
+  const statements = [
+    createTable.replace('CREATE TABLE IF NOT EXISTS', 'CREATE TABLE'),
+    `INSERT INTO "__new_token_routes" (${quotedColumns}) SELECT ${expressions} FROM "token_routes"`,
+    'DROP TABLE "token_routes"',
+    'ALTER TABLE "__new_token_routes" RENAME TO "token_routes"',
+  ];
+
+  for (const index of currentContract.indexes
+    .filter((item) => item.table === 'token_routes')
+    .sort((left, right) => left.name.localeCompare(right.name, 'en'))) {
+    statements.push(buildIndexStatement('sqlite', index, currentContract));
+  }
+  for (const unique of currentContract.uniques
+    .filter((item) => item.table === 'token_routes')
+    .sort((left, right) => left.name.localeCompare(right.name, 'en'))) {
+    statements.push(buildUniqueIndexStatement('sqlite', unique, currentContract));
+  }
+
+  return statements;
+}
+
+function buildRouteGraphTokenRoutesReplacementStatements(
+  dialect: SqlDialect,
+  currentContract: SchemaContract,
+  previousContract: SchemaContract,
+  options?: SqlGenerationOptions,
+): string[] {
+  if (dialect === 'sqlite') {
+    return buildSqliteRouteGraphTokenRoutesReplacementStatements(currentContract, previousContract);
+  }
+
+  const previousTokenRoutes = previousContract.tables.token_routes;
+  if (!previousTokenRoutes?.columns.model_pattern) {
+    return [];
+  }
+
+  const statements: string[] = [];
+  if (dialect === 'mysql') {
+    if (previousContract.indexes.some((index) => index.name === 'token_routes_model_pattern_idx')) {
+      statements.push('DROP INDEX `token_routes_model_pattern_idx` ON `token_routes`');
+    }
+    statements.push('ALTER TABLE `token_routes` DROP COLUMN `model_pattern`');
+    if (previousTokenRoutes.columns.route_mode) {
+      statements.push('ALTER TABLE `token_routes` DROP COLUMN `route_mode`');
+    }
+    if (previousTokenRoutes.columns.match_spec) {
+      statements.push('ALTER TABLE `token_routes` DROP COLUMN `match_spec`');
+    }
+    if (previousTokenRoutes.columns.backend_spec) {
+      statements.push('ALTER TABLE `token_routes` DROP COLUMN `backend_spec`');
+    }
+  } else {
+    if (previousContract.indexes.some((index) => index.name === 'token_routes_model_pattern_idx')) {
+      statements.push('DROP INDEX IF EXISTS "token_routes_model_pattern_idx"');
+    }
+    statements.push('ALTER TABLE "token_routes" DROP COLUMN "model_pattern"');
+    if (previousTokenRoutes.columns.route_mode) {
+      statements.push('ALTER TABLE "token_routes" DROP COLUMN "route_mode"');
+    }
+    if (previousTokenRoutes.columns.match_spec) {
+      statements.push('ALTER TABLE "token_routes" DROP COLUMN "match_spec"');
+    }
+    if (previousTokenRoutes.columns.backend_spec) {
+      statements.push('ALTER TABLE "token_routes" DROP COLUMN "backend_spec"');
+    }
+  }
+
+  return statements;
+}
+
 export function generateUpgradeSql(
   dialect: SqlDialect,
   currentContract: SchemaContract,
@@ -358,7 +583,8 @@ export function generateUpgradeSql(
     return `-- no previous schema contract available for ${dialect} additive upgrade generation\n`;
   }
 
-  assertAdditiveSchemaDiff(currentContract, previousContract);
+  const controlledReplacements = assertAdditiveSchemaDiff(currentContract, previousContract);
+  const hasRouteGraphReplacement = controlledReplacements.includes('route-graph-token-routes');
 
   const previousTableNames = new Set(Object.keys(previousContract.tables));
   const currentTableNames = Object.keys(currentContract.tables).sort((left, right) => left.localeCompare(right, 'en'));
@@ -384,6 +610,13 @@ export function generateUpgradeSql(
       if (previousColumns[columnName]) {
         continue;
       }
+      if (
+        hasRouteGraphReplacement
+        && tableName === 'token_routes'
+        && (columnName === 'match_spec' || columnName === 'backend_spec')
+      ) {
+        continue;
+      }
       addColumnStatements.push(buildAddColumnStatement(dialect, tableName, columnName, column));
     }
   }
@@ -400,11 +633,15 @@ export function generateUpgradeSql(
   const indexStatements = currentContract.indexes
     .filter((index) => !currentUniqueNames.has(index.name))
     .filter((index) => !previousIndexNames.has(index.name))
+    .filter((index) => !(hasRouteGraphReplacement && index.name === 'token_routes_match_spec_idx'))
     .slice()
     .sort((left, right) => left.name.localeCompare(right.name, 'en'))
     .map((index) => buildIndexStatement(dialect, index, currentContract, options));
 
-  const statements = [...addedTableStatements, ...addColumnStatements, ...uniqueStatements, ...indexStatements];
+  const replacementStatements = hasRouteGraphReplacement
+    ? buildRouteGraphTokenRoutesReplacementStatements(dialect, currentContract, previousContract, options)
+    : [];
+  const statements = [...addedTableStatements, ...addColumnStatements, ...replacementStatements, ...uniqueStatements, ...indexStatements];
   if (statements.length === 0) {
     return `-- no schema changes detected for ${dialect}\n`;
   }

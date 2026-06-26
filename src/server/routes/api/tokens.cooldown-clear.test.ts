@@ -4,6 +4,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
+import { tokenRouteFixture } from '../../test/routeGraphFixtures.js';
 
 type DbModule = typeof import('../../db/index.js');
 
@@ -63,7 +64,7 @@ describe('POST /api/routes/:id/cooldown/clear', () => {
 
   beforeEach(async () => {
     await db.delete(schema.routeGroupSources).run();
-    await db.delete(schema.routeChannels).run();
+    await db.delete(schema.routeEndpointTargets).run();
     await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.accountTokens).run();
     await db.delete(schema.accounts).run();
@@ -78,12 +79,12 @@ describe('POST /api/routes/:id/cooldown/clear', () => {
 
   it('clears cooldown and failure counters for a direct route', async () => {
     const seeded = await seedAccountWithToken();
-    const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-4o-mini',
+    const route = await db.insert(schema.tokenRoutes).values( {
+      ...tokenRouteFixture({ modelPattern: 'gpt-4o-mini' }),
       enabled: true,
     }).returning().get();
 
-    const channel = await db.insert(schema.routeChannels).values({
+    const channel = await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
       accountId: seeded.account.id,
       tokenId: seeded.token.id,
@@ -108,8 +109,8 @@ describe('POST /api/routes/:id/cooldown/clear', () => {
       clearedChannels: 1,
     });
 
-    const refreshed = await db.select().from(schema.routeChannels)
-      .where(eq(schema.routeChannels.id, channel.id))
+    const refreshed = await db.select().from(schema.routeEndpointTargets)
+      .where(eq(schema.routeEndpointTargets.id, channel.id))
       .get();
 
     expect(refreshed).toMatchObject({
@@ -123,13 +124,13 @@ describe('POST /api/routes/:id/cooldown/clear', () => {
 
   it('clears cooldown for source-route channels exposed by explicit groups', async () => {
     const seeded = await seedAccountWithToken();
-    const sourceRoute = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'claude-sonnet-4-5',
+    const sourceRoute = await db.insert(schema.tokenRoutes).values( {
+      ...tokenRouteFixture({ modelPattern: 'claude-sonnet-4-5' }),
       enabled: true,
     }).returning().get();
 
-    const groupRoute = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'claude-opus-4-6',
+    const groupRoute = await db.insert(schema.tokenRoutes).values( {
+      ...tokenRouteFixture({ modelPattern: 'claude-opus-4-6', routeMode: 'explicit_group', sourceRouteIds: [sourceRoute.id] }),
       displayName: 'claude-opus-4-6',
       routeMode: 'explicit_group',
       enabled: true,
@@ -140,7 +141,7 @@ describe('POST /api/routes/:id/cooldown/clear', () => {
       sourceRouteId: sourceRoute.id,
     }).run();
 
-    const channel = await db.insert(schema.routeChannels).values({
+    const channel = await db.insert(schema.routeEndpointTargets).values({
       routeId: sourceRoute.id,
       accountId: seeded.account.id,
       tokenId: seeded.token.id,
@@ -166,8 +167,8 @@ describe('POST /api/routes/:id/cooldown/clear', () => {
       clearedChannels: 1,
     });
 
-    const refreshed = await db.select().from(schema.routeChannels)
-      .where(eq(schema.routeChannels.id, channel.id))
+    const refreshed = await db.select().from(schema.routeEndpointTargets)
+      .where(eq(schema.routeEndpointTargets.id, channel.id))
       .get();
 
     expect(refreshed).toMatchObject({
@@ -181,21 +182,21 @@ describe('POST /api/routes/:id/cooldown/clear', () => {
 
   it('only clears cooldown for explicit-group source routes that are enabled exact routes', async () => {
     const seeded = await seedAccountWithToken();
-    const visibleSourceRoute = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-5.4',
+    const visibleSourceRoute = await db.insert(schema.tokenRoutes).values( {
+      ...tokenRouteFixture({ modelPattern: 'gpt-5.4' }),
       enabled: true,
     }).returning().get();
-    const disabledSourceRoute = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-4.1',
+    const disabledSourceRoute = await db.insert(schema.tokenRoutes).values( {
+      ...tokenRouteFixture({ modelPattern: 'gpt-4.1' }),
       enabled: false,
     }).returning().get();
-    const wildcardSourceRoute = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-*',
+    const wildcardSourceRoute = await db.insert(schema.tokenRoutes).values( {
+      ...tokenRouteFixture({ modelPattern: 'gpt-*' }),
       enabled: true,
     }).returning().get();
 
-    const groupRoute = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-clear-group',
+    const groupRoute = await db.insert(schema.tokenRoutes).values( {
+      ...tokenRouteFixture({ modelPattern: 'gpt-clear-group', routeMode: 'explicit_group', sourceRouteIds: [visibleSourceRoute.id, disabledSourceRoute.id, wildcardSourceRoute.id] }),
       displayName: 'gpt-clear-group',
       routeMode: 'explicit_group',
       enabled: true,
@@ -207,7 +208,7 @@ describe('POST /api/routes/:id/cooldown/clear', () => {
       { groupRouteId: groupRoute.id, sourceRouteId: wildcardSourceRoute.id },
     ]).run();
 
-    const visibleChannel = await db.insert(schema.routeChannels).values({
+    const visibleChannel = await db.insert(schema.routeEndpointTargets).values({
       routeId: visibleSourceRoute.id,
       accountId: seeded.account.id,
       tokenId: seeded.token.id,
@@ -220,7 +221,7 @@ describe('POST /api/routes/:id/cooldown/clear', () => {
       cooldownLevel: 2,
       cooldownUntil: '2099-01-01T00:00:00.000Z',
     }).returning().get();
-    const disabledChannel = await db.insert(schema.routeChannels).values({
+    const disabledChannel = await db.insert(schema.routeEndpointTargets).values({
       routeId: disabledSourceRoute.id,
       accountId: seeded.account.id,
       tokenId: seeded.token.id,
@@ -233,7 +234,7 @@ describe('POST /api/routes/:id/cooldown/clear', () => {
       cooldownLevel: 3,
       cooldownUntil: '2099-01-01T00:00:00.000Z',
     }).returning().get();
-    const wildcardChannel = await db.insert(schema.routeChannels).values({
+    const wildcardChannel = await db.insert(schema.routeEndpointTargets).values({
       routeId: wildcardSourceRoute.id,
       accountId: seeded.account.id,
       tokenId: seeded.token.id,
@@ -258,14 +259,14 @@ describe('POST /api/routes/:id/cooldown/clear', () => {
       clearedChannels: 1,
     });
 
-    const refreshedVisible = await db.select().from(schema.routeChannels)
-      .where(eq(schema.routeChannels.id, visibleChannel.id))
+    const refreshedVisible = await db.select().from(schema.routeEndpointTargets)
+      .where(eq(schema.routeEndpointTargets.id, visibleChannel.id))
       .get();
-    const refreshedDisabled = await db.select().from(schema.routeChannels)
-      .where(eq(schema.routeChannels.id, disabledChannel.id))
+    const refreshedDisabled = await db.select().from(schema.routeEndpointTargets)
+      .where(eq(schema.routeEndpointTargets.id, disabledChannel.id))
       .get();
-    const refreshedWildcard = await db.select().from(schema.routeChannels)
-      .where(eq(schema.routeChannels.id, wildcardChannel.id))
+    const refreshedWildcard = await db.select().from(schema.routeEndpointTargets)
+      .where(eq(schema.routeEndpointTargets.id, wildcardChannel.id))
       .get();
 
     expect(refreshedVisible).toMatchObject({

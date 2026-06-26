@@ -30,6 +30,59 @@ function applyMigrationSql(sqlite: Database.Database, sqlText: string) {
   }
 }
 
+function applyMigrationSqlToleratingExistingSchema(sqlite: Database.Database, sqlText: string) {
+  const statements = sqlText
+    .split('--> statement-breakpoint')
+    .map((statement) => statement.trim())
+    .filter((statement) => statement.length > 0);
+
+  for (const statement of statements) {
+    const normalizedStatement = statement.replace(/[\n\r\t]+/g, ' ').replace(/["`]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+    if (
+      normalizedStatement.includes('update proxy_logs')
+      && normalizedStatement.includes('target_id = channel_id')
+      && !sqlite.prepare("SELECT 1 FROM pragma_table_info('proxy_logs') WHERE name = 'channel_id'").get()
+    ) {
+      continue;
+    }
+    if (
+      normalizedStatement.includes('update proxy_debug_traces')
+      && normalizedStatement.includes('sticky_hit_target_id = sticky_hit_channel_id')
+      && !sqlite.prepare("SELECT 1 FROM pragma_table_info('proxy_debug_traces') WHERE name = 'sticky_hit_channel_id'").get()
+    ) {
+      continue;
+    }
+    if (
+      normalizedStatement.includes('update proxy_debug_traces')
+      && normalizedStatement.includes('selected_target_id = selected_channel_id')
+      && !sqlite.prepare("SELECT 1 FROM pragma_table_info('proxy_debug_traces') WHERE name = 'selected_channel_id'").get()
+    ) {
+      continue;
+    }
+    if (
+      normalizedStatement.includes('update proxy_video_tasks')
+      && normalizedStatement.includes('target_id = channel_id')
+      && !sqlite.prepare("SELECT 1 FROM pragma_table_info('proxy_video_tasks') WHERE name = 'channel_id'").get()
+    ) {
+      continue;
+    }
+
+    try {
+      sqlite.exec(statement);
+    } catch (error) {
+      const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+      if (
+        message.includes('duplicate column')
+        || message.includes('duplicate column name')
+        || message.includes('already exists')
+      ) {
+        continue;
+      }
+      throw error;
+    }
+  }
+}
+
 function recordAppliedMigrations(
   sqlite: Database.Database,
   journalEntries: MigrationJournalEntry[],
@@ -59,6 +112,30 @@ describe('sqlite migrate bootstrap', () => {
     vi.resetModules();
   });
 
+  it('does not use non-constant datetime defaults when adding sqlite columns', () => {
+    const offenders: string[] = [];
+    for (const entry of readMigrationJournalEntries()) {
+      const sqlText = readFileSync(join(migrationsDir, `${entry.tag}.sql`), 'utf8');
+      const statements = sqlText
+        .split('--> statement-breakpoint')
+        .map((statement) => statement.trim())
+        .filter(Boolean);
+
+      for (const statement of statements) {
+        const normalized = statement.replace(/\s+/g, ' ').toLowerCase();
+        if (
+          normalized.startsWith('alter table')
+          && normalized.includes(' add column ')
+          && normalized.includes("default (datetime('now'))")
+        ) {
+          offenders.push(`${entry.tag}: ${statement}`);
+        }
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
+
   it('accepts an already-synced sqlite schema with an empty drizzle journal', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'metapi-migrate-'));
     const dbPath = join(dataDir, 'hub.db');
@@ -67,7 +144,7 @@ describe('sqlite migrate bootstrap', () => {
 
     for (const entry of journalEntries) {
       const sqlText = readFileSync(join(migrationsDir, `${entry.tag}.sql`), 'utf8');
-      applyMigrationSql(sqlite, sqlText);
+      applyMigrationSqlToleratingExistingSchema(sqlite, sqlText);
     }
 
     sqlite.close();
@@ -375,24 +452,11 @@ describe('sqlite migrate bootstrap', () => {
     const dbPath = join(dataDir, 'hub.db');
     const sqlite = new Database(dbPath);
     const journalEntries = readMigrationJournalEntries();
-    const missingTags = new Set([
-      '0006_site_disabled_models',
-      '0007_account_token_group',
-      '0008_sqlite_schema_backfill',
-      '0009_model_availability_is_manual',
-      '0010_proxy_logs_downstream_api_key',
-      '0011_downstream_api_key_metadata',
-      '0012_account_token_value_status',
-      '0013_oauth_multi_provider',
-      // 0008 creates downstream_api_keys, so later table-dependent migrations
-      // must stay missing in this partial-journal fixture too.
-      '0020_downstream_api_key_exclusions',
-    ]);
-    const appliedEntries = journalEntries.filter((entry) => !missingTags.has(entry.tag));
+    const appliedEntries = journalEntries.filter((entry) => entry.idx <= 4);
 
     for (const entry of appliedEntries) {
       const sqlText = readFileSync(join(migrationsDir, `${entry.tag}.sql`), 'utf8');
-      applyMigrationSql(sqlite, sqlText);
+      applyMigrationSqlToleratingExistingSchema(sqlite, sqlText);
     }
     recordAppliedMigrations(sqlite, appliedEntries);
 
@@ -432,11 +496,11 @@ describe('sqlite migrate bootstrap', () => {
     const dbPath = join(dataDir, 'hub.db');
     const sqlite = new Database(dbPath);
     const journalEntries = readMigrationJournalEntries();
-    const appliedEntries = journalEntries.filter((entry) => entry.tag !== '0019_proxy_logs_stream_timing');
+    const appliedEntries = journalEntries.filter((entry) => entry.idx <= 17);
 
     for (const entry of appliedEntries) {
       const sqlText = readFileSync(join(migrationsDir, `${entry.tag}.sql`), 'utf8');
-      applyMigrationSql(sqlite, sqlText);
+      applyMigrationSqlToleratingExistingSchema(sqlite, sqlText);
     }
 
     // Simulate SQLite legacy compatibility code partially adding the latest proxy log columns
@@ -468,6 +532,81 @@ describe('sqlite migrate bootstrap', () => {
     verified.close();
   });
 
+  it('runs the proxy target backfill migration for legacy channel columns', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'metapi-migrate-proxy-target-backfill-'));
+    const dbPath = join(dataDir, 'hub.db');
+    const sqlite = new Database(dbPath);
+    const journalEntries = readMigrationJournalEntries();
+    const appliedEntries = journalEntries.filter((entry) => entry.tag !== '0031_proxy_target_column_backfill');
+
+    for (const entry of appliedEntries) {
+      const sqlText = readFileSync(join(migrationsDir, `${entry.tag}.sql`), 'utf8');
+      applyMigrationSqlToleratingExistingSchema(sqlite, sqlText);
+    }
+    recordAppliedMigrations(sqlite, appliedEntries);
+
+    sqlite.exec(`
+      ALTER TABLE proxy_logs ADD COLUMN channel_id integer;
+      INSERT INTO proxy_logs (route_id, channel_id, account_id, model_requested)
+      VALUES (1, 77, 2, 'gpt-5');
+
+      ALTER TABLE proxy_debug_traces ADD COLUMN sticky_hit_channel_id integer;
+      ALTER TABLE proxy_debug_traces ADD COLUMN selected_channel_id integer;
+      INSERT INTO proxy_debug_traces (
+        downstream_path,
+        sticky_hit_channel_id,
+        selected_channel_id,
+        created_at,
+        updated_at
+      )
+      VALUES ('/v1/responses', 88, 99, datetime('now'), datetime('now'));
+
+      ALTER TABLE proxy_video_tasks ADD COLUMN channel_id integer;
+      INSERT INTO proxy_video_tasks (
+        public_id,
+        upstream_video_id,
+        site_url,
+        token_value,
+        channel_id
+      )
+      VALUES ('video_legacy', 'upstream_legacy', 'https://example.com', 'token', 66);
+    `);
+    sqlite.close();
+
+    process.env.DATA_DIR = dataDir;
+    vi.resetModules();
+
+    await expect(import('./migrate.js')).resolves.toMatchObject({
+      runSqliteMigrations: expect.any(Function),
+    });
+
+    const verified = new Database(dbPath, { readonly: true });
+    const appliedRows = verified
+      .prepare('SELECT created_at FROM __drizzle_migrations ORDER BY created_at ASC')
+      .all() as Array<{ created_at: number }>;
+    const proxyLog = verified
+      .prepare('SELECT target_id FROM proxy_logs WHERE channel_id = 77 LIMIT 1')
+      .get() as { target_id: number | null } | undefined;
+    const proxyDebugTrace = verified
+      .prepare('SELECT sticky_hit_target_id, selected_target_id FROM proxy_debug_traces WHERE selected_channel_id = 99 LIMIT 1')
+      .get() as { sticky_hit_target_id: number | null; selected_target_id: number | null } | undefined;
+    const proxyVideoTask = verified
+      .prepare("SELECT target_id FROM proxy_video_tasks WHERE public_id = 'video_legacy'")
+      .get() as { target_id: number | null } | undefined;
+
+    expect(appliedRows.map((row) => Number(row.created_at))).toEqual(
+      journalEntries.map((entry) => entry.when),
+    );
+    expect(proxyLog?.target_id).toBe(77);
+    expect(proxyDebugTrace).toMatchObject({
+      sticky_hit_target_id: 88,
+      selected_target_id: 99,
+    });
+    expect(proxyVideoTask?.target_id).toBe(66);
+
+    verified.close();
+  });
+
   it('reconciles stale migration timestamps when the latest migration hash already exists', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'metapi-migrate-stale-timestamp-'));
     const dbPath = join(dataDir, 'hub.db');
@@ -476,7 +615,7 @@ describe('sqlite migrate bootstrap', () => {
 
     for (const entry of journalEntries) {
       const sqlText = readFileSync(join(migrationsDir, `${entry.tag}.sql`), 'utf8');
-      applyMigrationSql(sqlite, sqlText);
+      applyMigrationSqlToleratingExistingSchema(sqlite, sqlText);
     }
     recordAppliedMigrations(sqlite, journalEntries);
 
@@ -508,6 +647,134 @@ describe('sqlite migrate bootstrap', () => {
     verified.close();
   });
 
+  it('repairs token_routes schemas left with obsolete graph columns', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'metapi-migrate-token-routes-repair-'));
+    const dbPath = join(dataDir, 'hub.db');
+    const sqlite = new Database(dbPath);
+    const journalEntries = readMigrationJournalEntries();
+
+    sqlite.exec(`
+      CREATE TABLE "token_routes" (
+        "id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+        "match_spec" TEXT NOT NULL,
+        "backend_spec" TEXT NOT NULL,
+        "display_name" TEXT,
+        "display_icon" TEXT,
+        "model_mapping" TEXT,
+        "decision_snapshot" TEXT,
+        "decision_refreshed_at" TEXT,
+        "routing_strategy" TEXT DEFAULT 'weighted',
+        "enabled" INTEGER DEFAULT true,
+        "created_at" TEXT DEFAULT (datetime('now')),
+        "updated_at" TEXT DEFAULT (datetime('now')),
+        "route_mode" TEXT DEFAULT 'pattern'
+      );
+
+      INSERT INTO token_routes (
+        id,
+        match_spec,
+        backend_spec,
+        display_name,
+        routing_strategy,
+        enabled,
+        created_at,
+        updated_at
+      )
+      VALUES (
+        127,
+        '{"kind":"model","requestedModelPattern":"gpt-legacy-*","displayName":null}',
+        '{"kind":"supply"}',
+        NULL,
+        'weighted',
+        1,
+        '2026-03-20T00:00:00.000Z',
+        '2026-03-20T00:00:00.000Z'
+      );
+
+      CREATE TABLE route_graph_versions (
+        id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+        version integer NOT NULL,
+        source_graph_json text NOT NULL,
+        compiled_graph_json text NOT NULL,
+        status text DEFAULT 'archived' NOT NULL,
+        created_by text DEFAULT 'system',
+        created_at text DEFAULT (datetime('now')),
+        activated_at text
+      );
+      CREATE TABLE route_graph_drafts (
+        id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+        base_version integer,
+        working_graph_json text NOT NULL,
+        status text DEFAULT 'active' NOT NULL,
+        diagnostics_json text,
+        updated_at text DEFAULT (datetime('now'))
+      );
+      CREATE TABLE route_graph_active_version (
+        id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+        version_id integer NOT NULL,
+        updated_at text DEFAULT (datetime('now'))
+      );
+      CREATE TABLE route_endpoint_targets (
+        id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+        route_id integer NOT NULL,
+        route_endpoint_id text,
+        account_id integer NOT NULL,
+        priority integer DEFAULT 0,
+        weight integer DEFAULT 10,
+        enabled integer DEFAULT true,
+        manual_override integer DEFAULT false
+      );
+    `);
+    recordAppliedMigrations(sqlite, journalEntries);
+    sqlite.close();
+
+    process.env.DATA_DIR = dataDir;
+    vi.resetModules();
+
+    await expect(import('./migrate.js')).resolves.toMatchObject({
+      runSqliteMigrations: expect.any(Function),
+    });
+
+    const verified = new Database(dbPath);
+    const tokenRouteColumns = verified
+      .prepare('PRAGMA table_info("token_routes")')
+      .all() as Array<{ name: string; notnull: number }>;
+    const columnNames = tokenRouteColumns.map((column) => column.name);
+
+    expect(columnNames).toContain('display_name');
+    expect(columnNames).not.toContain('match_spec');
+    expect(columnNames).not.toContain('backend_spec');
+    expect(columnNames).not.toContain('route_mode');
+
+    expect(() => {
+      verified.prepare(`
+        INSERT INTO "token_routes" (
+          "id",
+          "display_name",
+          "display_icon",
+          "model_mapping",
+          "decision_snapshot",
+          "decision_refreshed_at",
+          "routing_strategy",
+          "enabled",
+          "created_at",
+          "updated_at"
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(128, null, null, null, null, null, 'weighted', 1, '2026-03-20T00:00:00.000Z', '2026-03-20T00:00:00.000Z');
+    }).not.toThrow();
+
+    const rows = verified
+      .prepare('SELECT id, display_name, routing_strategy FROM token_routes ORDER BY id ASC')
+      .all();
+    expect(rows).toEqual([
+      { id: 127, display_name: null, routing_strategy: 'weighted' },
+      { id: 128, display_name: null, routing_strategy: 'weighted' },
+    ]);
+
+    verified.close();
+  });
+
   it('deduplicates legacy duplicate sites before applying the oauth site unique index', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'metapi-migrate-duplicate-sites-'));
     const dbPath = join(dataDir, 'hub.db');
@@ -517,7 +784,7 @@ describe('sqlite migrate bootstrap', () => {
 
     for (const entry of appliedEntries) {
       const sqlText = readFileSync(join(migrationsDir, `${entry.tag}.sql`), 'utf8');
-      applyMigrationSql(sqlite, sqlText);
+      applyMigrationSqlToleratingExistingSchema(sqlite, sqlText);
     }
     recordAppliedMigrations(sqlite, appliedEntries);
 

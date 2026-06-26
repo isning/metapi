@@ -8,7 +8,7 @@ export interface RouteGroupingSchemaInspector {
 }
 
 export type RouteGroupingColumnCompatibilitySpec = {
-  table: 'token_routes' | 'route_channels';
+  table: 'token_routes' | 'route_endpoint_targets';
   column: string;
   addSql: Record<RouteGroupingSchemaDialect, string>;
 };
@@ -39,15 +39,6 @@ export const ROUTE_GROUPING_COLUMN_COMPATIBILITY_SPECS: RouteGroupingColumnCompa
   },
   {
     table: 'token_routes',
-    column: 'route_mode',
-    addSql: {
-      sqlite: 'ALTER TABLE token_routes ADD COLUMN route_mode text DEFAULT \'pattern\';',
-      mysql: 'ALTER TABLE `token_routes` ADD COLUMN `route_mode` VARCHAR(32) NULL DEFAULT \'pattern\'',
-      postgres: 'ALTER TABLE "token_routes" ADD COLUMN "route_mode" TEXT DEFAULT \'pattern\'',
-    },
-  },
-  {
-    table: 'token_routes',
     column: 'decision_snapshot',
     addSql: {
       sqlite: 'ALTER TABLE token_routes ADD COLUMN decision_snapshot text;',
@@ -74,39 +65,39 @@ export const ROUTE_GROUPING_COLUMN_COMPATIBILITY_SPECS: RouteGroupingColumnCompa
     },
   },
   {
-    table: 'route_channels',
+    table: 'route_endpoint_targets',
     column: 'source_model',
     addSql: {
-      sqlite: 'ALTER TABLE route_channels ADD COLUMN source_model text;',
-      mysql: 'ALTER TABLE `route_channels` ADD COLUMN `source_model` TEXT NULL',
-      postgres: 'ALTER TABLE "route_channels" ADD COLUMN "source_model" TEXT',
+      sqlite: 'ALTER TABLE route_endpoint_targets ADD COLUMN source_model text;',
+      mysql: 'ALTER TABLE `route_endpoint_targets` ADD COLUMN `source_model` TEXT NULL',
+      postgres: 'ALTER TABLE "route_endpoint_targets" ADD COLUMN "source_model" TEXT',
     },
   },
   {
-    table: 'route_channels',
+    table: 'route_endpoint_targets',
     column: 'last_selected_at',
     addSql: {
-      sqlite: 'ALTER TABLE route_channels ADD COLUMN last_selected_at text;',
-      mysql: 'ALTER TABLE `route_channels` ADD COLUMN `last_selected_at` TEXT NULL',
-      postgres: 'ALTER TABLE "route_channels" ADD COLUMN "last_selected_at" TEXT',
+      sqlite: 'ALTER TABLE route_endpoint_targets ADD COLUMN last_selected_at text;',
+      mysql: 'ALTER TABLE `route_endpoint_targets` ADD COLUMN `last_selected_at` TEXT NULL',
+      postgres: 'ALTER TABLE "route_endpoint_targets" ADD COLUMN "last_selected_at" TEXT',
     },
   },
   {
-    table: 'route_channels',
+    table: 'route_endpoint_targets',
     column: 'consecutive_fail_count',
     addSql: {
-      sqlite: 'ALTER TABLE route_channels ADD COLUMN consecutive_fail_count integer NOT NULL DEFAULT 0;',
-      mysql: 'ALTER TABLE `route_channels` ADD COLUMN `consecutive_fail_count` INT NOT NULL DEFAULT 0',
-      postgres: 'ALTER TABLE "route_channels" ADD COLUMN "consecutive_fail_count" INTEGER NOT NULL DEFAULT 0',
+      sqlite: 'ALTER TABLE route_endpoint_targets ADD COLUMN consecutive_fail_count integer NOT NULL DEFAULT 0;',
+      mysql: 'ALTER TABLE `route_endpoint_targets` ADD COLUMN `consecutive_fail_count` INT NOT NULL DEFAULT 0',
+      postgres: 'ALTER TABLE "route_endpoint_targets" ADD COLUMN "consecutive_fail_count" INTEGER NOT NULL DEFAULT 0',
     },
   },
   {
-    table: 'route_channels',
+    table: 'route_endpoint_targets',
     column: 'cooldown_level',
     addSql: {
-      sqlite: 'ALTER TABLE route_channels ADD COLUMN cooldown_level integer NOT NULL DEFAULT 0;',
-      mysql: 'ALTER TABLE `route_channels` ADD COLUMN `cooldown_level` INT NOT NULL DEFAULT 0',
-      postgres: 'ALTER TABLE "route_channels" ADD COLUMN "cooldown_level" INTEGER NOT NULL DEFAULT 0',
+      sqlite: 'ALTER TABLE route_endpoint_targets ADD COLUMN cooldown_level integer NOT NULL DEFAULT 0;',
+      mysql: 'ALTER TABLE `route_endpoint_targets` ADD COLUMN `cooldown_level` INT NOT NULL DEFAULT 0',
+      postgres: 'ALTER TABLE "route_endpoint_targets" ADD COLUMN "cooldown_level" INTEGER NOT NULL DEFAULT 0',
     },
   },
 ];

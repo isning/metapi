@@ -11,7 +11,7 @@
 	FOREIGN KEY (`account_id`) REFERENCES `accounts`(`id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint
-ALTER TABLE `route_channels` ADD COLUMN `token_id` integer;
+ALTER TABLE `route_endpoint_targets` ADD COLUMN `token_id` integer;
 --> statement-breakpoint
 INSERT INTO `account_tokens` (`account_id`, `name`, `token`, `source`, `enabled`, `is_default`, `created_at`, `updated_at`)
 SELECT

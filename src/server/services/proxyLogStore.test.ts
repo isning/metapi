@@ -20,7 +20,7 @@ const {
   proxyLogsSchema: {
     id: 'id',
     routeId: 'route_id',
-    channelId: 'channel_id',
+    targetId: 'target_id',
     accountId: 'account_id',
     modelRequested: 'model_requested',
     modelActual: 'model_actual',
