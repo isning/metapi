@@ -804,6 +804,64 @@
         }
       }
     },
+    "fx_rate_snapshots": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "from_currency": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "to_currency": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "rate": {
+          "logicalType": "real",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "source": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'manual'",
+          "primaryKey": false
+        },
+        "captured_at": {
+          "logicalType": "datetime",
+          "notNull": true,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "notes": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
     "model_availability": {
       "columns": {
         "id": {
@@ -3021,6 +3079,230 @@
           "primaryKey": false
         }
       }
+    },
+    "upstream_model_cost_pricings": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "scope": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "scope_key": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "site_id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "account_id": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "token_id": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "token_group": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "model_name": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "normalized_model_name": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "display_name": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "enabled": {
+          "logicalType": "boolean",
+          "notNull": true,
+          "defaultValue": "true",
+          "primaryKey": false
+        },
+        "plan_json": {
+          "logicalType": "json",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "plan_fingerprint": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "source_type": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'user'",
+          "primaryKey": false
+        },
+        "metadata_json": {
+          "logicalType": "json",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "notes": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
+    "wallet_acquisition_profiles": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "scope": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "scope_key": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "site_id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "account_id": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "token_id": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "inheritance": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'inherit'",
+          "primaryKey": false
+        },
+        "wallet_unit": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'USD'",
+          "primaryKey": false
+        },
+        "face_value_price": {
+          "logicalType": "real",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "recharge_discount": {
+          "logicalType": "real",
+          "notNull": true,
+          "defaultValue": "1",
+          "primaryKey": false
+        },
+        "daily_earned_balance": {
+          "logicalType": "real",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "daily_earned_balance_source": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'observed_checkin'",
+          "primaryKey": false
+        },
+        "observed_window_days": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "confidence": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'incomplete'",
+          "primaryKey": false
+        },
+        "enabled": {
+          "logicalType": "boolean",
+          "notNull": true,
+          "defaultValue": "true",
+          "primaryKey": false
+        },
+        "notes": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
     }
   },
   "indexes": [
@@ -3275,6 +3557,26 @@
       "columns": [
         "type",
         "created_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "fx_rate_snapshots_currency_captured_idx",
+      "table": "fx_rate_snapshots",
+      "columns": [
+        "from_currency",
+        "to_currency",
+        "captured_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "fx_rate_snapshots_currency_source_idx",
+      "table": "fx_rate_snapshots",
+      "columns": [
+        "from_currency",
+        "to_currency",
+        "source"
       ],
       "unique": false
     },
@@ -3990,6 +4292,91 @@
         "enabled"
       ],
       "unique": false
+    },
+    {
+      "name": "upstream_model_cost_pricings_account_model_idx",
+      "table": "upstream_model_cost_pricings",
+      "columns": [
+        "account_id",
+        "normalized_model_name",
+        "enabled"
+      ],
+      "unique": false
+    },
+    {
+      "name": "upstream_model_cost_pricings_scope_key_unique",
+      "table": "upstream_model_cost_pricings",
+      "columns": [
+        "scope_key"
+      ],
+      "unique": true
+    },
+    {
+      "name": "upstream_model_cost_pricings_site_model_idx",
+      "table": "upstream_model_cost_pricings",
+      "columns": [
+        "site_id",
+        "normalized_model_name",
+        "enabled"
+      ],
+      "unique": false
+    },
+    {
+      "name": "upstream_model_cost_pricings_token_group_model_idx",
+      "table": "upstream_model_cost_pricings",
+      "columns": [
+        "token_id",
+        "token_group",
+        "normalized_model_name",
+        "enabled"
+      ],
+      "unique": false
+    },
+    {
+      "name": "upstream_model_cost_pricings_token_model_idx",
+      "table": "upstream_model_cost_pricings",
+      "columns": [
+        "token_id",
+        "normalized_model_name",
+        "enabled"
+      ],
+      "unique": false
+    },
+    {
+      "name": "wallet_acquisition_profiles_account_idx",
+      "table": "wallet_acquisition_profiles",
+      "columns": [
+        "account_id",
+        "enabled"
+      ],
+      "unique": false
+    },
+    {
+      "name": "wallet_acquisition_profiles_scope_key_unique",
+      "table": "wallet_acquisition_profiles",
+      "columns": [
+        "scope_key"
+      ],
+      "unique": true
+    },
+    {
+      "name": "wallet_acquisition_profiles_site_scope_idx",
+      "table": "wallet_acquisition_profiles",
+      "columns": [
+        "site_id",
+        "scope",
+        "enabled"
+      ],
+      "unique": false
+    },
+    {
+      "name": "wallet_acquisition_profiles_token_idx",
+      "table": "wallet_acquisition_profiles",
+      "columns": [
+        "token_id",
+        "enabled"
+      ],
+      "unique": false
     }
   ],
   "uniques": [
@@ -4194,6 +4581,20 @@
       "columns": [
         "token_id",
         "model_name"
+      ]
+    },
+    {
+      "name": "upstream_model_cost_pricings_scope_key_unique",
+      "table": "upstream_model_cost_pricings",
+      "columns": [
+        "scope_key"
+      ]
+    },
+    {
+      "name": "wallet_acquisition_profiles_scope_key_unique",
+      "table": "wallet_acquisition_profiles",
+      "columns": [
+        "scope_key"
       ]
     }
   ],
@@ -4640,6 +5041,72 @@
     },
     {
       "table": "token_model_availability",
+      "columns": [
+        "token_id"
+      ],
+      "referencedTable": "account_tokens",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "upstream_model_cost_pricings",
+      "columns": [
+        "account_id"
+      ],
+      "referencedTable": "accounts",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "upstream_model_cost_pricings",
+      "columns": [
+        "site_id"
+      ],
+      "referencedTable": "sites",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "upstream_model_cost_pricings",
+      "columns": [
+        "token_id"
+      ],
+      "referencedTable": "account_tokens",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "wallet_acquisition_profiles",
+      "columns": [
+        "account_id"
+      ],
+      "referencedTable": "accounts",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "wallet_acquisition_profiles",
+      "columns": [
+        "site_id"
+      ],
+      "referencedTable": "sites",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "wallet_acquisition_profiles",
       "columns": [
         "token_id"
       ],

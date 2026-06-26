@@ -33,9 +33,13 @@ interface ResolveProxyLogBillingInput {
   };
   account: {
     id: number;
+    username?: string | null;
     accessToken?: string | null;
     apiToken?: string | null;
+    extraConfig?: string | Record<string, unknown> | null;
   };
+  tokenId?: number | null;
+  upstreamGroup?: string | null;
   modelName: string;
   parsedUsage: ProxyBillingUsageSummary;
   resolvedUsage: ResolvedProxyUsageSummary;
@@ -65,6 +69,8 @@ export async function resolveProxyLogBilling(
   const billingInput = {
     site: input.site,
     account: input.account,
+    tokenId: input.tokenId ?? null,
+    upstreamGroup: input.upstreamGroup ?? null,
     modelName: input.modelName,
     promptTokens: input.resolvedUsage.promptTokens,
     completionTokens: input.resolvedUsage.completionTokens,

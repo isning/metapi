@@ -1,17 +1,43 @@
-import React from 'react';
+import React, { useState } from 'react';
 import CenteredModal from '../../components/CenteredModal.js';
+import { Button } from '../../components/ui/button/index.js';
+import { Coins, LoaderCircle } from 'lucide-react';
+import ToneBadge from '../../components/ToneBadge.js';
+import { Input } from '../../components/ui/input/index.js';
+import { Checkbox } from '../../components/ui/checkbox/index.js';
+import EmptyStateBlock from '../../components/EmptyStateBlock.js';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../components/ui/card/index.js';
+import { ScrollArea } from '../../components/ui/scroll-area/index.js';
+import * as Dialog from '../../components/ui/dialog/index.js';
+import { UpstreamCostPricingEditor } from '../../components/UpstreamCostPricingEditor.js';
+import { useToast } from '../../components/Toast.js';
 
+import { tr } from '../../i18n.js';
 type AccountModelRow = {
   name: string;
   latencyMs: number | null;
   disabled: boolean;
   isManual?: boolean;
+  costPricing?: {
+    configured: boolean;
+    matchedScope: string | null;
+    pricingId: number | null;
+    totalCostUsd: number | null;
+  } | null;
 };
 
 type AccountModelModalState = {
   open: boolean;
   account: any | null;
   models: AccountModelRow[];
+  accountTokens?: Array<{
+    id: number;
+    name: string;
+    tokenGroup?: string | null;
+    enabled?: boolean;
+    isDefault?: boolean;
+    valueStatus?: string | null;
+  }>;
   pendingDisabled: Set<string>;
   loading: boolean;
   saving: boolean;
@@ -22,10 +48,10 @@ type AccountModelModalState = {
 
 type AccountModelsModalProps = {
   modelModal: AccountModelModalState;
-  inputStyle: React.CSSProperties;
   onClose: () => void;
   onSave: () => void;
   onRefresh: () => Promise<void> | void;
+  onReload: () => Promise<void> | void;
   onToggleModelDisabled: (modelName: string) => void;
   onSetPendingDisabled: (pendingDisabled: Set<string>) => void;
   onManualInputChange: (value: string) => void;
@@ -34,87 +60,106 @@ type AccountModelsModalProps = {
 
 export default function AccountModelsModal({
   modelModal,
-  inputStyle,
   onClose,
   onSave,
   onRefresh,
+  onReload,
   onToggleModelDisabled,
   onSetPendingDisabled,
   onManualInputChange,
   onAddManualModels,
 }: AccountModelsModalProps) {
+  const toast = useToast();
+  const [costModelName, setCostModelName] = useState<string | null>(null);
+  const account = modelModal.account;
+  const siteId = Number(account?.siteId || account?.site?.id || 0);
+  const accountId = Number(account?.id || 0);
+  const accountTokens = modelModal.accountTokens || account?.accountTokens || account?.tokens || [];
+
+  const formatCostSummary = (value: number | null | undefined) => {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+    return `$${value.toFixed(6).replace(/\.?0+$/, '')}`;
+  };
+
+  const scopeLabel = (scope: string | null | undefined) => {
+    if (scope === 'site_model') return tr('components.searchModal.sites2');
+    if (scope === 'account_model') return tr('components.searchModal.accounts2');
+    if (scope === 'token_model') return 'Token';
+    if (scope === 'token_model_group') return tr('pages.accounts.accountModelsModal.tokenGroup');
+    if (scope === 'provider_catalog') return tr('upstreamCostPricing.source.providerCatalog');
+    return tr('pages.settings.notConfigured');
+  };
+
   return (
-    <CenteredModal
-      open={modelModal.open}
-      onClose={onClose}
-      title={modelModal.siteName ? `模型管理 · ${modelModal.siteName}` : '模型管理'}
-      maxWidth={600}
-      footer={(
-        <>
-          <button onClick={onClose} className="btn btn-ghost">取消</button>
-          <button
-            onClick={onSave}
-            disabled={modelModal.saving || modelModal.loading}
-            className="btn btn-primary"
-          >
-            {modelModal.saving ? <><span className="spinner spinner-sm" />保存中...</> : '保存'}
-          </button>
-        </>
-      )}
-    >
+    <>
+      <CenteredModal
+        open={modelModal.open}
+        onClose={onClose}
+        title={modelModal.siteName ? `模型管理 · ${modelModal.siteName}` : tr('pages.accounts.accountModelsModal.modelManagement')}
+        maxWidth={720}
+        footer={(
+          <>
+            <Button type="button" variant="outline" onClick={onClose}>{tr('app.cancel')}</Button>
+            <Button type="button"
+              onClick={onSave}
+              disabled={modelModal.saving || modelModal.loading}
+            >
+              {modelModal.saving ? <><LoaderCircle className="size-4 animate-spin" />{tr('pages.accounts.saving')}</> : tr('app.save')}
+            </Button>
+          </>
+        )}
+      >
       {modelModal.loading ? (
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '48px 0', gap: 10 }}>
-          <span className="spinner" />
-          <span style={{ color: 'var(--color-text-muted)', fontSize: 14 }}>加载模型列表...</span>
+        <div className="flex items-center justify-center gap-2 py-12">
+          <LoaderCircle className="size-5 animate-spin" />
+          <span className="text-sm text-muted-foreground">{tr('pages.accounts.accountModelsModal.loadingModelList')}</span>
         </div>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div className="grid gap-3">
           {modelModal.models.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: '32px 0' }}>
-              <div style={{ fontSize: 32, marginBottom: 8 }}>🤖</div>
-              <div style={{ fontSize: 14, color: 'var(--color-text-muted)', marginBottom: 8 }}>暂无可用模型</div>
-              <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 16 }}>请先点击账号操作栏中的「刷新」或「模型」按钮获取模型</div>
-              <button
+            <div className="grid justify-items-center gap-3 py-4">
+              <EmptyStateBlock
+                title={tr('pages.accounts.accountModelsModal.noAvailableModels')}
+                description={tr('pages.accounts.accountModelsModal.useRefreshModelAccountActionBarFetch')}
+                className="p-0"
+              />
+              <Button type="button"
                 onClick={() => void onRefresh()}
-                className="btn btn-soft-primary"
+               
               >
-                立即获取模型
-              </button>
+                {tr('pages.accounts.accountModelsModal.fetchModelsNow')}
+              </Button>
             </div>
           ) : (
             <>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', userSelect: 'none' }}>
-                  <input
-                    type="checkbox"
-                    checked={modelModal.pendingDisabled.size === 0}
-                    ref={(el) => {
-                      if (el) {
-                        const total = modelModal.models.length;
-                        const disabled = modelModal.pendingDisabled.size;
-                        el.indeterminate = disabled > 0 && disabled < total;
-                      }
-                    }}
-                    onChange={() => {
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <label className="flex cursor-pointer select-none items-center gap-2">
+                  <Checkbox
+                   
+                    checked={
+                      modelModal.pendingDisabled.size > 0 && modelModal.pendingDisabled.size < modelModal.models.length
+                        ? 'indeterminate'
+                        : modelModal.pendingDisabled.size === 0
+                    }
+                    onCheckedChange={() => {
                       const allEnabled = modelModal.pendingDisabled.size === 0;
                       onSetPendingDisabled(allEnabled ? new Set(modelModal.models.map((model) => model.name)) : new Set());
                     }}
-                    style={{ accentColor: 'var(--color-primary)', width: 15, height: 15 }}
                   />
-                  <span style={{ fontSize: 13, color: 'var(--color-text-muted)' }}>
-                    已启用 <strong style={{ color: 'var(--color-text-primary)' }}>{modelModal.models.length - modelModal.pendingDisabled.size}</strong> / {modelModal.models.length} 个模型
+                  <span className="text-sm text-muted-foreground">
+                    {tr('pages.settings.enabled2')} <strong className="text-foreground">{modelModal.models.length - modelModal.pendingDisabled.size}</strong> / {modelModal.models.length} {tr('pages.models.models2')}
                   </span>
                 </label>
-                <div style={{ display: 'flex', gap: 6 }}>
-                  <button
+                <div className="flex flex-wrap gap-2">
+                  <Button type="button" variant="outline"
                     onClick={() => void onRefresh()}
                     disabled={modelModal.saving}
-                    className="btn btn-ghost"
-                    style={{ fontSize: 12, padding: '4px 10px' }}
+                   
+                   
                   >
-                    刷新模型
-                  </button>
-                  <button
+                    {tr('pages.accounts.accountModelsModal.refreshModels')}
+                  </Button>
+                  <Button type="button" variant="outline"
                     onClick={() => {
                       const next = new Set<string>();
                       for (const model of modelModal.models) {
@@ -122,110 +167,161 @@ export default function AccountModelsModal({
                       }
                       onSetPendingDisabled(next);
                     }}
-                    className="btn btn-ghost"
-                    style={{ fontSize: 12, padding: '4px 10px' }}
+                   
+                   
                   >
-                    反选
-                  </button>
-                  <button
+                    {tr('pages.accounts.accountModelsModal.invert')}
+                  </Button>
+                  <Button type="button" variant="outline"
                     onClick={() => onSetPendingDisabled(new Set(modelModal.models.map((model) => model.name)))}
-                    className="btn btn-ghost"
-                    style={{ fontSize: 12, padding: '4px 10px' }}
+                   
+                   
                   >
-                    全部禁用
-                  </button>
-                  <button
+                    {tr('pages.accounts.accountModelsModal.disableAll')}
+                  </Button>
+                  <Button type="button" variant="outline"
                     onClick={() => onSetPendingDisabled(new Set())}
-                    className="btn btn-ghost"
-                    style={{ fontSize: 12, padding: '4px 10px' }}
+                   
+                   
                   >
-                    全部启用
-                  </button>
+                    {tr('pages.accounts.accountModelsModal.enableAll')}
+                  </Button>
                 </div>
               </div>
 
-              <div style={{
-                maxHeight: 280,
-                overflowY: 'auto',
-                border: '1px solid var(--color-border-light)',
-                borderRadius: 'var(--radius-sm)',
-              }}>
+              <ScrollArea className="h-72 rounded-md border">
                 {modelModal.models.map((model, idx) => {
                   const isDisabled = modelModal.pendingDisabled.has(model.name);
                   return (
-                    <label
+                    <div
                       key={model.name}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 10,
-                        padding: '9px 14px',
-                        cursor: 'pointer',
-                        background: isDisabled ? 'var(--color-bg)' : undefined,
-                        borderBottom: idx < modelModal.models.length - 1 ? '1px solid var(--color-border-light)' : undefined,
-                        opacity: isDisabled ? 0.55 : 1,
-                        transition: 'opacity 0.15s, background 0.15s',
-                      }}
+                      className={`flex items-center gap-3 px-3 py-2 transition-opacity ${idx < modelModal.models.length - 1 ? 'border-b' : ''} ${isDisabled ? 'bg-muted/50 opacity-60' : ''}`.trim()}
                     >
-                      <input
-                        type="checkbox"
+                      <Checkbox
                         checked={!isDisabled}
-                        onChange={() => onToggleModelDisabled(model.name)}
-                        style={{ accentColor: 'var(--color-primary)', width: 15, height: 15, flexShrink: 0 }}
+                        onCheckedChange={() => onToggleModelDisabled(model.name)}
+                        className="shrink-0"
+                        aria-label={`切换 ${model.name}`}
                       />
-                      <span style={{ flex: 1, fontSize: 13, fontFamily: 'var(--font-mono)', wordBreak: 'break-all' }}>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        className="min-w-0 flex-1 break-all text-left font-mono text-sm"
+                        onClick={() => onToggleModelDisabled(model.name)}
+                      >
                         {model.name}
-                      </span>
+                      </Button>
                       {model.latencyMs != null ? (
-                        <span style={{ fontSize: 11, color: 'var(--color-text-muted)', flexShrink: 0 }}>
+                        <span className="shrink-0 text-xs text-muted-foreground">
                           {model.latencyMs}ms
                         </span>
                       ) : null}
                       {model.isManual ? (
-                        <span className="badge badge-info" style={{ fontSize: 10, flexShrink: 0, padding: '0 4px' }}>手动</span>
+                        <ToneBadge tone="-info">{tr('pages.accounts.accountModelsModal.manual')}</ToneBadge>
                       ) : null}
                       {isDisabled ? (
-                        <span className="badge badge-error" style={{ fontSize: 10, flexShrink: 0 }}>禁用</span>
+                        <ToneBadge tone="-error">{tr('pages.downstreamKeys.disabled')}</ToneBadge>
                       ) : null}
-                    </label>
+                      <div className="flex shrink-0 items-center gap-1">
+                        {model.costPricing?.configured ? (
+                          <>
+                            <ToneBadge tone="-success">{scopeLabel(model.costPricing.matchedScope)}</ToneBadge>
+                            {formatCostSummary(model.costPricing.totalCostUsd) ? (
+                              <span className="font-mono text-xs text-muted-foreground">
+                                {formatCostSummary(model.costPricing.totalCostUsd)}
+                              </span>
+                            ) : null}
+                          </>
+                        ) : (
+                          <ToneBadge tone="-muted">{tr('pages.accounts.accountModelsModal.noCostPricing')}</ToneBadge>
+                        )}
+                      </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setCostModelName(model.name)}
+                      >
+                        <Coins className="size-4" />
+                        {tr('components.charts.downstreamKeyTrendChart.cost')}
+                      </Button>
+                    </div>
                   );
                 })}
-              </div>
-              <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 4 }}>
-                💡 禁用的模型将对整个站点生效，该站点下所有连接都不会使用这些模型进行代理。
+              </ScrollArea>
+              <div className="text-xs text-muted-foreground">
+                {tr('pages.accounts.accountModelsModal.disabledModelsApplyWholeSiteNoConnection')}
               </div>
             </>
           )}
 
-          <div style={{ marginTop: 16, padding: '12px', background: 'var(--color-bg)', border: '1px solid var(--color-border-light)', borderRadius: 'var(--radius-sm)' }}>
-            <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8, color: 'var(--color-text-primary)' }}>手动添加可用模型</div>
-            <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 8 }}>
-              如果您的账号支持某些未在上方列表中显示的模型，可以在此手动添加（多个以英文逗号分隔）。
-            </div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <input
-                placeholder="例如: gpt-4-custom, claude-3-5-sonnet-20241022"
+          <Card>
+            <CardHeader>
+              <CardTitle>{tr('pages.accounts.accountModelsModal.addAvailableModelsManually')}</CardTitle>
+              <CardDescription>
+                {tr('pages.accounts.accountModelsModal.ifAccountSupportsModelsMissingFromList')}
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+            <div className="flex gap-2">
+              <Input
+                placeholder={tr('pages.accounts.accountModelsModal.exampleGpt4CustomClaude35')}
                 value={modelModal.manualModelsInput}
                 onChange={(e) => onManualInputChange(e.target.value)}
-                style={{ ...inputStyle, flex: 1, fontFamily: 'var(--font-mono)' }}
+                className="flex-1 font-mono"
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !modelModal.addingManualModels) {
                     void onAddManualModels();
                   }
                 }}
               />
-              <button
+              <Button type="button" size="sm"
                 disabled={!modelModal.manualModelsInput.trim() || modelModal.addingManualModels}
                 onClick={() => void onAddManualModels()}
-                className="btn btn-primary btn-sm"
-                style={{ whiteSpace: 'nowrap' }}
+               
+               
               >
-                {modelModal.addingManualModels ? <span className="spinner spinner-sm" /> : '添加'}
-              </button>
+                {modelModal.addingManualModels ? <LoaderCircle className="size-4 animate-spin" /> : tr('pages.oAuthManagement.add')}
+              </Button>
             </div>
-          </div>
+            </CardContent>
+          </Card>
         </div>
       )}
-    </CenteredModal>
+      </CenteredModal>
+
+      <Dialog.Root open={!!costModelName} onOpenChange={(open) => {
+        if (!open) setCostModelName(null);
+      }}>
+        <Dialog.Content className="w-[min(94vw,980px)] overflow-hidden p-0" onClose={() => setCostModelName(null)}>
+          <Dialog.Header className="shrink-0 border-b px-5 py-4">
+            <Dialog.Title>{tr('pages.accounts.accountModelsModal.upstreamCostPricing')}</Dialog.Title>
+            <Dialog.Description>
+              {tr('pages.accounts.accountModelsModal.configureCostMetapiPaysWhenAccountModel')}
+            </Dialog.Description>
+          </Dialog.Header>
+          {costModelName && siteId > 0 && accountId > 0 ? (
+            <div className="min-h-0 overflow-y-auto px-5 py-4">
+              <UpstreamCostPricingEditor
+                open={!!costModelName}
+                siteId={siteId}
+                accountId={accountId}
+                modelName={costModelName}
+                siteName={modelModal.siteName || account?.site?.name}
+                accountName={account?.username}
+                tokens={accountTokens}
+                onOpenChange={(open) => {
+                  if (!open) setCostModelName(null);
+                }}
+                onSaved={() => {
+                  void onReload();
+                }}
+                toast={toast}
+              />
+            </div>
+          ) : null}
+        </Dialog.Content>
+      </Dialog.Root>
+    </>
   );
 }

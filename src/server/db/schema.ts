@@ -194,6 +194,74 @@ export const tokenModelAvailability = sqliteTable('token_model_availability', {
   availableIdx: index('token_model_availability_available_idx').on(table.available),
 }));
 
+export const upstreamModelCostPricings = sqliteTable('upstream_model_cost_pricings', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  scope: text('scope').notNull(), // 'site_model' | 'account_model' | 'token_model' | 'token_model_group'
+  scopeKey: text('scope_key').notNull(),
+  siteId: integer('site_id').notNull().references(() => sites.id, { onDelete: 'cascade' }),
+  accountId: integer('account_id').references(() => accounts.id, { onDelete: 'cascade' }),
+  tokenId: integer('token_id').references(() => accountTokens.id, { onDelete: 'cascade' }),
+  tokenGroup: text('token_group'),
+  modelName: text('model_name').notNull(),
+  normalizedModelName: text('normalized_model_name').notNull(),
+  displayName: text('display_name'),
+  enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+  planJson: text('plan_json').notNull(),
+  planFingerprint: text('plan_fingerprint').notNull(),
+  sourceType: text('source_type').notNull().default('user'),
+  metadataJson: text('metadata_json'),
+  notes: text('notes'),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  siteModelIdx: index('upstream_model_cost_pricings_site_model_idx').on(table.siteId, table.normalizedModelName, table.enabled),
+  accountModelIdx: index('upstream_model_cost_pricings_account_model_idx').on(table.accountId, table.normalizedModelName, table.enabled),
+  tokenModelIdx: index('upstream_model_cost_pricings_token_model_idx').on(table.tokenId, table.normalizedModelName, table.enabled),
+  tokenGroupModelIdx: index('upstream_model_cost_pricings_token_group_model_idx').on(table.tokenId, table.tokenGroup, table.normalizedModelName, table.enabled),
+  scopeKeyUnique: uniqueIndex('upstream_model_cost_pricings_scope_key_unique').on(table.scopeKey),
+}));
+
+export const walletAcquisitionProfiles = sqliteTable('wallet_acquisition_profiles', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  scope: text('scope').notNull(), // 'site' | 'account' | 'token'
+  scopeKey: text('scope_key').notNull(),
+  siteId: integer('site_id').notNull().references(() => sites.id, { onDelete: 'cascade' }),
+  accountId: integer('account_id').references(() => accounts.id, { onDelete: 'cascade' }),
+  tokenId: integer('token_id').references(() => accountTokens.id, { onDelete: 'cascade' }),
+  inheritance: text('inheritance').notNull().default('inherit'), // 'inherit' | 'override' | 'disabled'
+  walletUnit: text('wallet_unit').notNull().default('USD'),
+  faceValuePrice: real('face_value_price'),
+  rechargeDiscount: real('recharge_discount').notNull().default(1),
+  dailyEarnedBalance: real('daily_earned_balance'),
+  dailyEarnedBalanceSource: text('daily_earned_balance_source').notNull().default('observed_checkin'),
+  observedWindowDays: integer('observed_window_days'),
+  confidence: text('confidence').notNull().default('incomplete'),
+  enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+  notes: text('notes'),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  scopeKeyUnique: uniqueIndex('wallet_acquisition_profiles_scope_key_unique').on(table.scopeKey),
+  siteScopeIdx: index('wallet_acquisition_profiles_site_scope_idx').on(table.siteId, table.scope, table.enabled),
+  accountIdx: index('wallet_acquisition_profiles_account_idx').on(table.accountId, table.enabled),
+  tokenIdx: index('wallet_acquisition_profiles_token_idx').on(table.tokenId, table.enabled),
+}));
+
+export const fxRateSnapshots = sqliteTable('fx_rate_snapshots', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  fromCurrency: text('from_currency').notNull(),
+  toCurrency: text('to_currency').notNull(),
+  rate: real('rate').notNull(),
+  source: text('source').notNull().default('manual'), // 'manual' | 'provider' | 'system_default'
+  capturedAt: text('captured_at').notNull().default(sql`(datetime('now'))`),
+  notes: text('notes'),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  currencyCapturedIdx: index('fx_rate_snapshots_currency_captured_idx').on(table.fromCurrency, table.toCurrency, table.capturedAt),
+  currencySourceIdx: index('fx_rate_snapshots_currency_source_idx').on(table.fromCurrency, table.toCurrency, table.source),
+}));
+
 export const tokenRoutes = sqliteTable('token_routes', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   displayName: text('display_name'),

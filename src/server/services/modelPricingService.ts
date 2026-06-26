@@ -1,13 +1,15 @@
-import type { RequestInit as UndiciRequestInit } from 'undici';
-import { withSiteProxyRequestInit } from './siteProxy.js';
-import {
-  buildNewApiCookieCandidates,
-  fetchJsonWithShieldCookieRetry,
-} from './platforms/newApiShield.js';
+import { shouldUseProviderCatalogPricing } from './upstreamCostPricingService.js';
+import { fetchUpstreamPricingCatalog } from './upstreamPricingCatalogService.js';
+import type { PricingEvaluation } from '../pricing-core/index.js';
+import { resolveEndpointPricing } from './endpointPricingService.js';
+import type { PricingResolution } from './pricingQuoteTypes.js';
+import type {
+  UpstreamPricingCatalog as PricingData,
+  UpstreamPricingModel as PricingModel,
+} from './upstreamPricingCatalog.js';
 
 const PRICE_CACHE_TTL_MS = 10 * 60 * 1000;
 const PRICE_CACHE_FAILURE_TTL_MS = 60 * 1000;
-const PRICING_FETCH_TIMEOUT_MS = 8_000;
 const DEFAULT_GROUP = 'default';
 const ONE_HUB_PER_CALL_RATIO = 0.002;
 const MIN_ROUTING_REFERENCE_COST = 1e-6;
@@ -17,25 +19,7 @@ const ROUTING_REFERENCE_USAGE = {
   totalTokens: 1_000_000,
 };
 
-export interface PricingModel {
-  modelName: string;
-  quotaType: number;
-  modelRatio: number;
-  completionRatio: number;
-  cacheRatio?: number;
-  cacheCreationRatio?: number;
-  modelPrice: number | { input: number; output: number } | null;
-  enableGroups: string[];
-  modelDescription?: string | null;
-  tags?: string[];
-  supportedEndpointTypes?: string[];
-  ownerBy?: string | null;
-}
-
-interface PricingData {
-  models: Map<string, PricingModel>;
-  groupRatio: Record<string, number>;
-}
+export type { PricingModel };
 
 export interface ProxyBillingPricingOverride {
   modelRatio: number;
@@ -66,9 +50,13 @@ export interface EstimateProxyCostInput {
   };
   account: {
     id: number;
+    username?: string | null;
     accessToken?: string | null;
     apiToken?: string | null;
+    extraConfig?: string | Record<string, unknown> | null;
   };
+  tokenId?: number | null;
+  upstreamGroup?: string | null;
   modelName: string;
   promptTokens?: number;
   completionTokens?: number;
@@ -107,6 +95,12 @@ interface ModelPricingCatalog {
 }
 
 export interface ProxyBillingDetails {
+  source?: 'upstream_catalog' | 'billing_override' | 'upstream_cost_pricing';
+  upstreamCostPricingId?: number;
+  upstreamCostPricingScope?: string;
+  planFingerprint?: string;
+  estimateLevel?: string;
+  diagnostics?: unknown[];
   quotaType: number;
   usage: {
     promptTokens: number;
@@ -125,10 +119,10 @@ export interface ProxyBillingDetails {
     groupRatio: number;
   };
   breakdown: {
-    inputPerMillion: number;
-    outputPerMillion: number;
-    cacheReadPerMillion: number;
-    cacheCreationPerMillion: number;
+    inputPerMillion: number | null;
+    outputPerMillion: number | null;
+    cacheReadPerMillion: number | null;
+    cacheCreationPerMillion: number | null;
     inputCost: number;
     outputCost: number;
     cacheReadCost: number;
@@ -154,265 +148,10 @@ function roundCost(value: number): number {
   return Math.round(Math.max(0, value) * 1_000_000) / 1_000_000;
 }
 
-function normalizeModelPrice(value: unknown): number | { input: number; output: number } | null {
-  if (typeof value === 'number' && Number.isFinite(value)) return value;
-  if (!value || typeof value !== 'object') return null;
-
-  const input = toNumber((value as any).input, Number.NaN);
-  const output = toNumber((value as any).output, Number.NaN);
-  if (Number.isNaN(input) && Number.isNaN(output)) return null;
-
-  return {
-    input: Number.isNaN(input) ? 0 : input,
-    output: Number.isNaN(output) ? 0 : output,
-  };
-}
-
-function normalizeGroupRatio(raw: unknown): Record<string, number> {
-  const result: Record<string, number> = {};
-  if (raw && typeof raw === 'object') {
-    for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
-      const ratio = toNumber(value, 1);
-      if (ratio > 0) result[key] = ratio;
-    }
-  }
-
-  if (Object.keys(result).length === 0) {
-    result[DEFAULT_GROUP] = 1;
-  } else if (!(DEFAULT_GROUP in result)) {
-    result[DEFAULT_GROUP] = 1;
-  }
-
-  return result;
-}
-
-function normalizeStringArray(raw: unknown): string[] {
-  if (Array.isArray(raw)) {
-    return raw.map((item) => String(item || '').trim()).filter(Boolean);
-  }
-
-  if (typeof raw === 'string') {
-    return raw
-      .split(',')
-      .map((item) => item.trim())
-      .filter(Boolean);
-  }
-
-  return [];
-}
-
 function normalizeRatio(value: unknown, fallback: number): number {
   const ratio = toNumber(value, Number.NaN);
   if (Number.isFinite(ratio) && ratio >= 0) return ratio;
   return fallback;
-}
-
-function normalizePricingModels(rawModels: unknown[]): Map<string, PricingModel> {
-  const models = new Map<string, PricingModel>();
-
-  for (const raw of rawModels) {
-    if (!raw || typeof raw !== 'object') continue;
-
-    const modelName = String((raw as any).model_name || '').trim();
-    if (!modelName) continue;
-
-    const quotaType = toPositiveInt((raw as any).quota_type);
-    const modelRatio = toNumber((raw as any).model_ratio, 1);
-    const completionRatio = toNumber((raw as any).completion_ratio, 1);
-    const cacheRatio = normalizeRatio(
-      (raw as any).cache_ratio ?? (raw as any).cacheRatio,
-      1,
-    );
-    const cacheCreationRatio = normalizeRatio(
-      (raw as any).cache_creation_ratio
-        ?? (raw as any).cacheCreationRatio
-        ?? (raw as any).create_cache_ratio
-        ?? (raw as any).createCacheRatio,
-      1,
-    );
-    const enableGroupsRaw = (raw as any).enable_groups;
-    const enableGroups = Array.isArray(enableGroupsRaw)
-      ? enableGroupsRaw.map((item: unknown) => String(item || '').trim()).filter(Boolean)
-      : [DEFAULT_GROUP];
-    const modelDescriptionRaw = (raw as any).model_description;
-    const modelDescription = typeof modelDescriptionRaw === 'string'
-      ? (modelDescriptionRaw.trim() || null)
-      : null;
-    const tags = normalizeStringArray((raw as any).tags);
-    const supportedEndpointTypes = normalizeStringArray((raw as any).supported_endpoint_types);
-    const ownerByRaw = (raw as any).owner_by;
-    const ownerBy = typeof ownerByRaw === 'string' ? (ownerByRaw.trim() || null) : null;
-
-    models.set(modelName, {
-      modelName,
-      quotaType,
-      modelRatio: modelRatio > 0 ? modelRatio : 1,
-      completionRatio: completionRatio > 0 ? completionRatio : 1,
-      cacheRatio,
-      cacheCreationRatio,
-      modelPrice: normalizeModelPrice((raw as any).model_price),
-      enableGroups: enableGroups.length > 0 ? enableGroups : [DEFAULT_GROUP],
-      modelDescription,
-      tags,
-      supportedEndpointTypes,
-      ownerBy,
-    });
-  }
-
-  return models;
-}
-
-function unwrapPayload(payload: unknown): unknown {
-  if (!payload || typeof payload !== 'object') return payload;
-  if ('data' in (payload as any)) return (payload as any).data;
-  return payload;
-}
-
-function normalizeCommonPricingPayload(payload: unknown): PricingData | null {
-  const maybeData = unwrapPayload(payload);
-  if (!Array.isArray(maybeData)) return null;
-
-  const models = normalizePricingModels(maybeData);
-  if (models.size === 0) return null;
-
-  const groupRatio = normalizeGroupRatio((payload as any)?.group_ratio);
-  return { models, groupRatio };
-}
-
-function normalizeOneHubPricingPayload(availablePayload: unknown, groupPayload: unknown): PricingData | null {
-  const available = unwrapPayload(availablePayload);
-  if (!available || typeof available !== 'object') return null;
-
-  const transformed: unknown[] = [];
-  for (const [modelName, rawValue] of Object.entries(available as Record<string, unknown>)) {
-    const item = rawValue as any;
-    const price = item?.price || {};
-    const input = toNumber(price.input, 0);
-    const output = toNumber(price.output, input);
-    const cacheRead = toNumber(
-      price.input_cache_read ?? price.inputCacheRead ?? price.cache_read ?? price.cacheRead,
-      Number.NaN,
-    );
-    const cacheWrite = toNumber(
-      price.input_cache_write ?? price.inputCacheWrite ?? price.cache_write ?? price.cacheWrite,
-      Number.NaN,
-    );
-    const isTokenType = String(price.type || '').toLowerCase() === 'tokens';
-
-    transformed.push({
-      model_name: modelName,
-      model_description: item?.description || item?.desc || '',
-      quota_type: isTokenType ? 0 : 1,
-      model_ratio: 1,
-      completion_ratio: input > 0 ? output / input : 1,
-      cache_ratio: input > 0 && Number.isFinite(cacheRead) && cacheRead >= 0 ? (cacheRead / input) : 1,
-      cache_creation_ratio: input > 0 && Number.isFinite(cacheWrite) && cacheWrite >= 0 ? (cacheWrite / input) : 1,
-      model_price: { input, output },
-      enable_groups: Array.isArray(item?.groups) && item.groups.length > 0 ? item.groups : [DEFAULT_GROUP],
-      supported_endpoint_types: Array.isArray(item?.supported_endpoint_types) ? item.supported_endpoint_types : [],
-      tags: Array.isArray(item?.tags) ? item.tags : [],
-      owner_by: item?.owned_by || item?.provider || null,
-    });
-  }
-
-  const models = normalizePricingModels(transformed);
-  if (models.size === 0) return null;
-
-  const groupMap = unwrapPayload(groupPayload);
-  const groupRatioSource: Record<string, number> = {};
-  if (groupMap && typeof groupMap === 'object') {
-    for (const [key, group] of Object.entries(groupMap as Record<string, any>)) {
-      groupRatioSource[key] = toNumber(group?.ratio, 1);
-    }
-  }
-
-  const groupRatio = normalizeGroupRatio(groupRatioSource);
-  return { models, groupRatio };
-}
-
-async function fetchJson(url: string, options?: UndiciRequestInit): Promise<unknown> {
-  const { fetch } = await import('undici');
-  const controller = new AbortController();
-  let timeoutHandle: ReturnType<typeof setTimeout> | null = setTimeout(() => {
-    controller.abort();
-  }, PRICING_FETCH_TIMEOUT_MS);
-
-  try {
-    const response = await fetch(url, {
-      ...(await withSiteProxyRequestInit(url, {
-        ...options,
-        signal: controller.signal,
-        body: options?.body ?? undefined,
-        headers: {
-          'Content-Type': 'application/json',
-          ...options?.headers,
-        },
-      })),
-    });
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-
-    const text = await response.text();
-    if (!text) return null;
-
-    try {
-      return JSON.parse(text);
-    } catch {
-      return null;
-    }
-  } catch (error: any) {
-    if (error?.name === 'AbortError') {
-      throw new Error(`pricing fetch timeout (${Math.round(PRICING_FETCH_TIMEOUT_MS / 1000)}s)`);
-    }
-    throw error;
-  } finally {
-    if (timeoutHandle) {
-      clearTimeout(timeoutHandle);
-      timeoutHandle = null;
-    }
-  }
-}
-
-function normalizeUrl(baseUrl: string): string {
-  return baseUrl.replace(/\/+$/, '');
-}
-
-function buildTokenCandidates(input: EstimateProxyCostInput): string[] {
-  const candidates = [
-    input.account.accessToken,
-    input.account.apiToken,
-  ].filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
-
-  return Array.from(new Set(candidates));
-}
-
-async function fetchCommonPricing(baseUrl: string, token?: string, sitePlatform?: string): Promise<PricingData | null> {
-  const normalizedPlatform = (sitePlatform || '').trim().toLowerCase();
-  const shouldTryShieldCookie = !!token && (normalizedPlatform === 'anyrouter' || token.includes('='));
-  if (shouldTryShieldCookie) {
-    const payload = await fetchJsonViaNewApiShield(`${baseUrl}/api/pricing`, token!);
-    const data = normalizeCommonPricingPayload(payload);
-    if (data) return data;
-  }
-
-  const headers: Record<string, string> = {};
-  if (token) headers.Authorization = `Bearer ${token}`;
-  const payload = await fetchJson(`${baseUrl}/api/pricing`, { headers });
-  return normalizeCommonPricingPayload(payload);
-}
-
-async function fetchOneHubPricing(baseUrl: string, token?: string): Promise<PricingData | null> {
-  const headers: Record<string, string> = {};
-  if (token) headers.Authorization = `Bearer ${token}`;
-
-  const [availablePayload, groupPayload] = await Promise.all([
-    fetchJson(`${baseUrl}/api/available_model`, { headers }),
-    fetchJson(`${baseUrl}/api/user_group_map`, { headers }),
-  ]);
-
-  return normalizeOneHubPricingPayload(availablePayload, groupPayload);
 }
 
 function getCacheKey(input: EstimateProxyCostInput): string {
@@ -452,27 +191,7 @@ function syncRoutingReferenceCostCache(
 }
 
 async function fetchPricingData(input: EstimateProxyCostInput): Promise<PricingData | null> {
-  const baseUrl = normalizeUrl(input.site.url);
-  const tokenCandidates = buildTokenCandidates(input);
-
-  const fetcher = input.site.platform === 'one-hub' || input.site.platform === 'done-hub'
-    ? (baseUrl: string, token?: string) => fetchOneHubPricing(baseUrl, token)
-    : (baseUrl: string, token?: string) => fetchCommonPricing(baseUrl, token, input.site.platform);
-
-  for (const token of tokenCandidates) {
-    try {
-      const data = await fetcher(baseUrl, token);
-      if (data && data.models.size > 0) return data;
-    } catch {}
-  }
-
-  // Some sites expose pricing publicly.
-  try {
-    const data = await fetcher(baseUrl, undefined);
-    if (data && data.models.size > 0) return data;
-  } catch {}
-
-  return null;
+  return fetchUpstreamPricingCatalog(input);
 }
 
 async function getPricingDataCached(input: EstimateProxyCostInput): Promise<PricingData | null> {
@@ -558,7 +277,7 @@ function resolveGroupMultiplier(model: PricingModel, groupRatio: Record<string, 
 }
 
 function calculatePerCallCost(
-  modelPrice: number | { input: number; output: number } | null,
+  modelPrice: number | { input?: number; output?: number } | null,
   multiplier: number,
 ): number {
   if (typeof modelPrice === 'number') {
@@ -574,7 +293,7 @@ function calculatePerCallCost(
 }
 
 function calculatePerCallPricing(
-  modelPrice: number | { input: number; output: number } | null,
+  modelPrice: number | { input?: number; output?: number } | null,
   multiplier: number,
 ): { input?: number; output?: number; total: number } {
   if (typeof modelPrice === 'number') {
@@ -583,12 +302,16 @@ function calculatePerCallPricing(
   }
 
   if (modelPrice && typeof modelPrice === 'object') {
-    const input = roundCost(toNumber(modelPrice.input, 0) * multiplier * ONE_HUB_PER_CALL_RATIO);
-    const output = roundCost(toNumber(modelPrice.output, 0) * multiplier * ONE_HUB_PER_CALL_RATIO);
+    const input = modelPrice.input == null
+      ? undefined
+      : roundCost(toNumber(modelPrice.input, 0) * multiplier * ONE_HUB_PER_CALL_RATIO);
+    const output = modelPrice.output == null
+      ? undefined
+      : roundCost(toNumber(modelPrice.output, 0) * multiplier * ONE_HUB_PER_CALL_RATIO);
     return {
       input,
       output,
-      total: input,
+      total: input ?? 0,
     };
   }
 
@@ -722,6 +445,89 @@ export function calculateModelUsageCost(
   return calculateModelUsageBreakdown(model, usage, groupRatio)?.breakdown.totalCost ?? 0;
 }
 
+async function evaluateEffectiveEndpointCost(
+  input: EstimateProxyCostInput,
+  usage: {
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+    cacheReadTokens?: number;
+    cacheCreationTokens?: number;
+    promptTokensIncludeCache?: boolean | null;
+  },
+) {
+  return await resolveEndpointPricing({
+    supply: {
+      siteId: input.site.id,
+      accountId: input.account.id,
+      tokenId: input.tokenId ?? null,
+      tokenGroup: input.upstreamGroup ?? null,
+      provider: input.site.platform,
+      modelName: input.modelName,
+    },
+    usage: {
+      inputTokens: usage.promptTokens,
+      outputTokens: usage.completionTokens,
+      totalTokens: usage.totalTokens,
+      cacheReadTokens: usage.cacheReadTokens ?? 0,
+      cacheWriteTokens: usage.cacheCreationTokens ?? 0,
+      requestCount: 1,
+    },
+  });
+}
+
+function pricingEvaluationToProxyBillingDetails(
+  resolved: PricingResolution,
+  usage: {
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+    cacheReadTokens?: number;
+    cacheCreationTokens?: number;
+    promptTokensIncludeCache?: boolean | null;
+  },
+): ProxyBillingDetails {
+  const normalizedUsage = normalizeUsageBreakdownInput(usage);
+  const evaluation = resolved.evaluation as PricingEvaluation;
+  const componentCost = (kind: string) => evaluation.components
+    .filter((component) => component.kind === kind)
+    .reduce((sum, component) => sum + component.costUsd, 0);
+  const componentUnitPrice = (kind: string) => {
+    const component = evaluation.components.find((item) => item.kind === kind);
+    if (!component) return null;
+    return roundCost(component.unitPriceUsd);
+  };
+
+  return {
+    source: resolved.source === 'provider_catalog' ? 'upstream_catalog' : 'upstream_cost_pricing',
+    upstreamCostPricingId: typeof resolved.sourceId === 'number' ? resolved.sourceId : undefined,
+    upstreamCostPricingScope: resolved.matchedScope ?? undefined,
+    planFingerprint: evaluation.planFingerprint,
+    estimateLevel: evaluation.estimateLevel,
+    diagnostics: evaluation.diagnostics,
+    quotaType: 0,
+    usage: normalizedUsage,
+    pricing: {
+      modelRatio: 0,
+      completionRatio: 0,
+      cacheRatio: 0,
+      cacheCreationRatio: 0,
+      groupRatio: 1,
+    },
+    breakdown: {
+      inputPerMillion: componentUnitPrice('input_tokens'),
+      outputPerMillion: componentUnitPrice('output_tokens'),
+      cacheReadPerMillion: componentUnitPrice('cache_read_tokens'),
+      cacheCreationPerMillion: componentUnitPrice('cache_write_tokens'),
+      inputCost: roundCost(componentCost('input_tokens')),
+      outputCost: roundCost(componentCost('output_tokens')),
+      cacheReadCost: roundCost(componentCost('cache_read_tokens')),
+      cacheCreationCost: roundCost(componentCost('cache_write_tokens')),
+      totalCost: roundCost(evaluation.totalCostUsd),
+    },
+  };
+}
+
 function buildModelPricingCatalogFromData(pricingData: PricingData): ModelPricingCatalog {
   const groups = Array.from(new Set([DEFAULT_GROUP, ...Object.keys(pricingData.groupRatio)]));
   const defaultMultiplier = pricingData.groupRatio[DEFAULT_GROUP] || 1;
@@ -810,31 +616,15 @@ export async function estimateProxyCost(input: EstimateProxyCostInput): Promise<
       return calculateModelUsageCost(pricingOverride.model, usage, pricingOverride.groupRatio);
     }
 
-    const pricingData = await getPricingDataCached(input);
-    if (!pricingData) {
-      return fallbackTokenCost(totalTokens, input.site.platform);
+    const endpoint = await evaluateEffectiveEndpointCost(input, usage);
+    if (endpoint?.summary.totalCostUsd != null) {
+      return roundCost(endpoint.summary.totalCostUsd);
     }
 
-    const model = resolveModel(input.modelName, pricingData);
-    if (!model) {
-      return fallbackTokenCost(totalTokens, input.site.platform);
-    }
-
-    return calculateModelUsageCost(model, usage, pricingData.groupRatio);
+    return fallbackTokenCost(totalTokens, input.site.platform);
   } catch {
     return fallbackTokenCost(totalTokens, input.site.platform);
   }
-}
-
-async function fetchJsonViaNewApiShield(url: string, token: string): Promise<unknown> {
-  for (const cookie of buildNewApiCookieCandidates(token)) {
-    const result = await fetchJsonWithShieldCookieRetry(url, {
-      headers: { Cookie: cookie },
-    });
-    if (result.data) return result.data;
-  }
-
-  return null;
 }
 
 export async function buildProxyBillingDetails(input: EstimateProxyCostInput): Promise<ProxyBillingDetails | null> {
@@ -853,16 +643,16 @@ export async function buildProxyBillingDetails(input: EstimateProxyCostInput): P
   try {
     if (input.billingPricingOverride) {
       const pricingOverride = buildPricingOverrideModel(input.modelName, input.billingPricingOverride);
-      return calculateModelUsageBreakdown(pricingOverride.model, usage, pricingOverride.groupRatio);
+      const details = calculateModelUsageBreakdown(pricingOverride.model, usage, pricingOverride.groupRatio);
+      return details ? { ...details, source: 'billing_override' } : null;
     }
 
-    const pricingData = await getPricingDataCached(input);
-    if (!pricingData) return null;
+    const endpoint = await evaluateEffectiveEndpointCost(input, usage);
+    if (endpoint?.evaluation) {
+      return pricingEvaluationToProxyBillingDetails(endpoint, usage);
+    }
 
-    const model = resolveModel(input.modelName, pricingData);
-    if (!model || model.quotaType === 1) return null;
-
-    return calculateModelUsageBreakdown(model, usage, pricingData.groupRatio);
+    return null;
   } catch {
     return null;
   }
