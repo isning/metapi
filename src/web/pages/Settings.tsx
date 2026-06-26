@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api.js';
 import { useToast } from '../components/Toast.js';
 import { useIsMobile } from '../components/useIsMobile.js';
@@ -8,18 +8,17 @@ import ModernSelect from '../components/ModernSelect.js';
 import ResponsiveFormGrid from '../components/ResponsiveFormGrid.js';
 import FactoryResetModal from './settings/FactoryResetModal.js';
 import ModelAvailabilityProbeConfirmModal from './settings/ModelAvailabilityProbeConfirmModal.js';
-import {
-  createCodexDefaultHighReasoningVisualPreset,
-  createVisualPayloadRule,
-  isVisualPayloadRuleBlank,
-  payloadRulesToVisualRules,
-  type PayloadRuleAction,
-  type VisualPayloadRule,
-  type VisualPayloadRuleValueMode,
-  visualRulesToPayloadRules,
-} from './settings/payloadRulesVisual.js';
-import { PAYLOAD_RULE_PROTOCOL_OPTIONS } from './settings/payloadRuleProtocolOptions.js';
 import UpdateCenterSection from './settings/UpdateCenterSection.js';
+import CostPolicySettingsSection from './settings/CostPolicySettingsSection.js';
+import {
+  SettingsCard,
+  SettingsCode,
+  SettingsField,
+  SettingsQuickLink,
+  SettingsSection,
+  SettingsSubsection,
+  SettingsToggleRow,
+} from './settings/SettingsLayout.js';
 import {
   applyRoutingProfilePreset,
   resolveRoutingProfilePreset,
@@ -29,21 +28,32 @@ import { clearAuthSession } from '../authSession.js';
 import { clearAppInstallationState } from '../appLocalState.js';
 import { tr } from '../i18n.js';
 import { generateDownstreamSkKey } from './helpers/generateDownstreamSkKey.js';
+import { Button } from '../components/ui/button/index.js';
+import { Database, KeyRound, LoaderCircle, RotateCcw, ShieldCheck, SlidersHorizontal, Timer, Wrench } from 'lucide-react';
+import { Skeleton } from '../components/ui/skeleton/index.js';
+import ToneBadge from '../components/ToneBadge.js';
+import { Alert, AlertDescription, AlertTitle } from '../components/ui/alert/index.js';
+import { Input } from '../components/ui/input/index.js';
+import { Label } from '../components/ui/label/index.js';
+import { Textarea } from '../components/ui/textarea/index.js';
+import PageHeader from '../components/workspace/PageHeader.js';
+import PageShell from '../components/workspace/PageShell.js';
+import { cn } from '../lib/utils.js';
 
 const PROXY_TOKEN_PREFIX = 'sk-';
 const FACTORY_RESET_ADMIN_TOKEN = 'change-me-admin-token';
 const FACTORY_RESET_CONFIRM_SECONDS = 3;
-const MODEL_AVAILABILITY_PROBE_CONFIRM_TEXT = '我确认我使用的中转站全部允许批量测活，如因开启此功能被中转站封号，自行负责。';
+const MODEL_AVAILABILITY_PROBE_CONFIRM_TEXT = tr('pages.settings.batchHealthCheckConfirmationPhrase');
 const SECONDS_PER_DAY = 24 * 60 * 60;
 const ROUTE_COOLDOWN_UNIT_OPTIONS = [
-  { value: 'second', label: '秒', multiplierSec: 1 },
-  { value: 'minute', label: '分钟', multiplierSec: 60 },
-  { value: 'hour', label: '小时', multiplierSec: 60 * 60 },
-  { value: 'day', label: '天', multiplierSec: SECONDS_PER_DAY },
+  { value: 'second', label: tr('pages.settings.seconds'), multiplierSec: 1 },
+  { value: 'minute', label: tr('pages.settings.minutes'), multiplierSec: 60 },
+  { value: 'hour', label: tr('pages.settings.hours'), multiplierSec: 60 * 60 },
+  { value: 'day', label: tr('pages.dashboard.days'), multiplierSec: SECONDS_PER_DAY },
 ] as const;
 const CHECKIN_SCHEDULE_MODE_OPTIONS = [
   { value: 'cron', label: 'Cron' },
-  { value: 'interval', label: '间隔签到' },
+  { value: 'interval', label: tr('pages.settings.sign4') },
 ] as const;
 const CHECKIN_INTERVAL_OPTIONS = Array.from({ length: 24 }, (_, index) => {
   const hour = index + 1;
@@ -52,11 +62,11 @@ const CHECKIN_INTERVAL_OPTIONS = Array.from({ length: 24 }, (_, index) => {
     label: `${hour} 小时`,
   };
 });
+const SETTINGS_NAV_SECTION_IDS = ['settings-runtime', 'settings-routing', 'settings-access', 'settings-maintenance'] as const;
 type DbDialect = 'sqlite' | 'mysql' | 'postgres';
 type RouteCooldownUnit = typeof ROUTE_COOLDOWN_UNIT_OPTIONS[number]['value'];
+type SettingsNavSectionId = typeof SETTINGS_NAV_SECTION_IDS[number];
 type SettingsPillTone = 'neutral' | 'primary' | 'danger' | 'warning';
-type PayloadRulesEditorSectionKey = PayloadRuleAction;
-type PayloadRulesEditorDrafts = Record<PayloadRulesEditorSectionKey, string>;
 
 type RuntimeSettings = {
   checkinCron: string;
@@ -71,9 +81,8 @@ type RuntimeSettings = {
   codexUpstreamWebsocketEnabled: boolean;
   responsesCompactFallbackToResponsesEnabled: boolean;
   disableCrossProtocolFallback: boolean;
-  proxySessionChannelConcurrencyLimit: number;
-  proxySessionChannelQueueWaitMs: number;
-  routingFallbackUnitCost: number;
+  proxySessionTargetConcurrencyLimit: number;
+  proxySessionTargetQueueWaitMs: number;
   proxyFirstByteTimeoutSec: number;
   routeFailureCooldownMaxValue: number;
   routeFailureCooldownMaxUnit: RouteCooldownUnit;
@@ -101,10 +110,24 @@ type DatabaseMigrationSummary = {
   timestamp: number;
   rows: {
     sites: number;
+    siteApiEndpoints?: number;
+    apiEndpointProfiles?: number;
+    credentialEndpointBindings?: number;
+    siteAnnouncements?: number;
+    siteDisabledModels?: number;
     accounts: number;
     accountTokens: number;
     tokenRoutes: number;
-    routeChannels: number;
+    routeEndpointTargets: number;
+    routeGroupSources?: number;
+    checkinLogs?: number;
+    modelAvailability?: number;
+    tokenModelAvailability?: number;
+    proxyLogs?: number;
+    proxyVideoTasks?: number;
+    proxyFiles?: number;
+    downstreamApiKeys?: number;
+    events?: number;
     settings: number;
   };
 };
@@ -130,145 +153,6 @@ type ShorthandConnection = {
   port: string;
   database: string;
 };
-
-const PAYLOAD_RULES_EDITOR_SECTIONS = [
-  {
-    key: 'default',
-    title: 'default',
-    description: '字段缺失时才注入，适合补默认参数。',
-    placeholder: `[
-  {
-    "models": [{ "name": "gpt-*", "protocol": "codex" }],
-    "params": {
-      "reasoning.effort": "high"
-    }
-  }
-]`,
-  },
-  {
-    key: 'default-raw',
-    title: 'default-raw',
-    description: '字段缺失时注入原始 JSON，适合 schema、复杂对象等值。',
-    placeholder: `[
-  {
-    "models": [{ "name": "gpt-*", "protocol": "codex" }],
-    "params": {
-      "response_format": "{\"type\":\"json_schema\"}"
-    }
-  }
-]`,
-  },
-  {
-    key: 'override',
-    title: 'override',
-    description: '无论原请求是否已有该字段，都强制覆盖。',
-    placeholder: `[
-  {
-    "models": [{ "name": "gpt-*", "protocol": "codex" }],
-    "params": {
-      "text.verbosity": "low"
-    }
-  }
-]`,
-  },
-  {
-    key: 'override-raw',
-    title: 'override-raw',
-    description: '无论原请求是否已有该字段，都强制覆盖为原始 JSON。',
-    placeholder: `[
-  {
-    "models": [{ "name": "gemini-*", "protocol": "gemini" }],
-    "params": {
-      "generationConfig.responseJsonSchema": "{\"type\":\"object\"}"
-    }
-  }
-]`,
-  },
-  {
-    key: 'filter',
-    title: 'filter',
-    description: '删除匹配请求中的字段。',
-    placeholder: `[
-  {
-    "models": [{ "name": "gpt-*", "protocol": "codex" }],
-    "params": ["safety_identifier"]
-  }
-]`,
-  },
-] as const satisfies ReadonlyArray<{
-  key: PayloadRulesEditorSectionKey;
-  title: string;
-  description: string;
-  placeholder: string;
-}>;
-
-const PAYLOAD_RULE_ACTION_OPTIONS: Array<{ value: PayloadRuleAction; label: string }> = [
-  { value: 'default', label: '默认注入' },
-  { value: 'default-raw', label: '默认注入 JSON' },
-  { value: 'override', label: '强制覆盖' },
-  { value: 'override-raw', label: '强制覆盖 JSON' },
-  { value: 'filter', label: '删除字段' },
-];
-
-const PAYLOAD_RULE_VALUE_MODE_OPTIONS: Array<{ value: VisualPayloadRuleValueMode; label: string }> = [
-  { value: 'text', label: '文本' },
-  { value: 'json', label: 'JSON' },
-];
-
-function createEmptyPayloadRuleDrafts(): PayloadRulesEditorDrafts {
-  return {
-    default: '',
-    'default-raw': '',
-    override: '',
-    'override-raw': '',
-    filter: '',
-  };
-}
-
-function formatPayloadRuleSectionForEditor(value: unknown): string {
-  if (value == null) return '';
-  if (Array.isArray(value) && value.length <= 0) return '';
-  return JSON.stringify(value, null, 2);
-}
-
-function normalizePayloadRulesForEditor(value: unknown): PayloadRulesEditorDrafts {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return createEmptyPayloadRuleDrafts();
-  }
-
-  const record = value as Record<string, unknown>;
-  return {
-    default: formatPayloadRuleSectionForEditor(record.default),
-    'default-raw': formatPayloadRuleSectionForEditor(record.defaultRaw ?? record['default-raw']),
-    override: formatPayloadRuleSectionForEditor(record.override),
-    'override-raw': formatPayloadRuleSectionForEditor(record.overrideRaw ?? record['override-raw']),
-    filter: formatPayloadRuleSectionForEditor(record.filter),
-  };
-}
-
-function parsePayloadRulesFromDrafts(
-  drafts: PayloadRulesEditorDrafts,
-): { success: true; value: Record<string, unknown> } | { success: false; message: string } {
-  const next: Record<string, unknown> = {};
-
-  for (const section of PAYLOAD_RULES_EDITOR_SECTIONS) {
-    const raw = drafts[section.key].trim();
-    if (!raw) continue;
-    try {
-      next[section.key] = JSON.parse(raw);
-    } catch (error: any) {
-      return {
-        success: false,
-        message: `Payload 规则 ${section.title} 不是合法 JSON：${error?.message || '解析失败'}`,
-      };
-    }
-  }
-
-  return {
-    success: true,
-    value: next,
-  };
-}
 
 const defaultWeights: RoutingWeights = {
   baseWeightFactor: 0.5,
@@ -353,9 +237,8 @@ export default function Settings() {
     codexUpstreamWebsocketEnabled: false,
     responsesCompactFallbackToResponsesEnabled: false,
     disableCrossProtocolFallback: false,
-    proxySessionChannelConcurrencyLimit: 2,
-    proxySessionChannelQueueWaitMs: 1500,
-    routingFallbackUnitCost: 1,
+    proxySessionTargetConcurrencyLimit: 2,
+    proxySessionTargetQueueWaitMs: 1500,
     proxyFirstByteTimeoutSec: 0,
     routeFailureCooldownMaxValue: 30,
     routeFailureCooldownMaxUnit: 'day',
@@ -377,11 +260,6 @@ export default function Settings() {
   const [testingSystemProxy, setTestingSystemProxy] = useState(false);
   const [systemProxyTestState, setSystemProxyTestState] = useState<SystemProxyTestState>(null);
   const [savingProxyFailureRules, setSavingProxyFailureRules] = useState(false);
-  const [payloadVisualRules, setPayloadVisualRules] = useState<VisualPayloadRule[]>([]);
-  const [payloadRuleDrafts, setPayloadRuleDrafts] = useState<PayloadRulesEditorDrafts>(createEmptyPayloadRuleDrafts());
-  const [payloadAdvancedDirty, setPayloadAdvancedDirty] = useState(false);
-  const [savingPayloadRules, setSavingPayloadRules] = useState(false);
-  const [showPayloadRulesEditor, setShowPayloadRulesEditor] = useState(false);
   const [savingRouting, setSavingRouting] = useState(false);
   const [showAdvancedRouting, setShowAdvancedRouting] = useState(false);
   const [allBrandNames, setAllBrandNames] = useState<string[] | null>(null);
@@ -422,16 +300,12 @@ export default function Settings() {
   const factoryResetPresence = useAnimatedVisibility(factoryResetOpen, 220);
   const [factoryResetting, setFactoryResetting] = useState(false);
   const [factoryResetSecondsLeft, setFactoryResetSecondsLeft] = useState(FACTORY_RESET_CONFIRM_SECONDS);
+  const [activeSettingsSection, setActiveSettingsSection] = useState<SettingsNavSectionId>('settings-runtime');
   const toast = useToast();
 
   const activeRoutingProfile = useMemo(
     () => resolveRoutingProfilePreset(runtime.routingWeights),
     [runtime.routingWeights],
-  );
-
-  const configuredPayloadRuleCount = useMemo(
-    () => payloadVisualRules.filter((rule) => !isVisualPayloadRuleBlank(rule)).length,
-    [payloadVisualRules],
   );
 
   const generatedConnectionString = useMemo(() => (
@@ -475,146 +349,8 @@ export default function Settings() {
     return () => globalThis.clearInterval(timer);
   }, [factoryResetOpen]);
 
-  const inputStyle: React.CSSProperties = {
-    width: '100%',
-    padding: '10px 14px',
-    border: '1px solid var(--color-border)',
-    borderRadius: 'var(--radius-sm)',
-    fontSize: 13,
-    outline: 'none',
-    background: 'var(--color-bg)',
-    color: 'var(--color-text-primary)',
-  };
-  const settingsModernCardStyle: React.CSSProperties = {
-    padding: isMobile ? 20 : 24,
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 16,
-  };
-  const settingsModernDangerCardStyle: React.CSSProperties = {
-    ...settingsModernCardStyle,
-    borderColor: 'color-mix(in srgb, var(--color-danger) 22%, var(--color-border))',
-    background: 'linear-gradient(180deg, color-mix(in srgb, var(--color-danger-soft) 18%, var(--color-bg-card)) 0%, var(--color-bg-card) 100%)',
-  };
-  const settingsModernHeaderStyle: React.CSSProperties = {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    gap: 12,
-    flexWrap: 'wrap',
-  };
-  const settingsModernTitleBlockStyle: React.CSSProperties = {
-    display: 'grid',
-    gap: 6,
-    minWidth: 0,
-  };
-  const settingsModernTitleStyle: React.CSSProperties = {
-    fontSize: 15,
-    fontWeight: 600,
-    lineHeight: 1.35,
-    color: 'var(--color-text-primary)',
-  };
-  const settingsModernDescriptionStyle: React.CSSProperties = {
-    fontSize: 12,
-    lineHeight: 1.75,
-    color: 'var(--color-text-muted)',
-  };
-  const settingsModernPillRowStyle: React.CSSProperties = {
-    display: 'flex',
-    flexWrap: 'wrap',
-    gap: 8,
-  };
-  const settingsModernCalloutStyle: React.CSSProperties = {
-    display: 'grid',
-    gap: 6,
-    padding: '14px 16px',
-    borderRadius: 'var(--radius-md)',
-    border: '1px solid var(--color-border-light)',
-    background: 'color-mix(in srgb, var(--color-bg) 82%, var(--color-bg-card))',
-  };
-  const settingsModernToggleStyle: React.CSSProperties = {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    gap: isMobile ? 12 : 16,
-    padding: '14px 16px',
-    borderRadius: 'var(--radius-md)',
-    border: '1px solid var(--color-border-light)',
-    background: 'color-mix(in srgb, var(--color-bg) 78%, var(--color-bg-card))',
-    cursor: 'pointer',
-  };
-  const settingsModernToggleCopyStyle: React.CSSProperties = {
-    display: 'grid',
-    gap: 6,
-    minWidth: 0,
-  };
-  const settingsModernFieldCardStyle: React.CSSProperties = {
-    display: 'grid',
-    gap: 10,
-    padding: '14px 16px',
-    borderRadius: 'var(--radius-md)',
-    border: '1px solid var(--color-border-light)',
-    background: 'color-mix(in srgb, var(--color-bg) 82%, var(--color-bg-card))',
-  };
-  const settingsModernFieldLabelStyle: React.CSSProperties = {
-    fontSize: 12,
-    fontWeight: 600,
-    color: 'var(--color-text-secondary)',
-  };
-  const settingsModernFieldHintStyle: React.CSSProperties = {
-    fontSize: 12,
-    lineHeight: 1.7,
-    color: 'var(--color-text-muted)',
-    marginTop: -2,
-  };
-  const settingsModernActionsStyle: React.CSSProperties = {
-    display: 'flex',
-    flexWrap: 'wrap',
-    alignItems: 'center',
-    gap: 10,
-  };
-
-  const getSettingsPillStyle = (tone: SettingsPillTone): React.CSSProperties => {
-    const toneStyles: Record<SettingsPillTone, React.CSSProperties> = {
-      neutral: {
-        borderColor: 'color-mix(in srgb, var(--color-text-muted) 12%, var(--color-border-light))',
-        background: 'color-mix(in srgb, var(--color-text-muted) 8%, var(--color-bg-card))',
-        color: 'var(--color-text-secondary)',
-      },
-      primary: {
-        borderColor: 'color-mix(in srgb, var(--color-primary) 20%, var(--color-border-light))',
-        background: 'color-mix(in srgb, var(--color-primary-light) 64%, var(--color-bg-card))',
-        color: 'var(--color-primary)',
-      },
-      warning: {
-        borderColor: 'color-mix(in srgb, var(--color-warning) 20%, var(--color-border-light))',
-        background: 'color-mix(in srgb, var(--color-warning-soft) 68%, var(--color-bg-card))',
-        color: 'var(--color-warning)',
-      },
-      danger: {
-        borderColor: 'color-mix(in srgb, var(--color-danger) 20%, var(--color-border-light))',
-        background: 'color-mix(in srgb, var(--color-danger-soft) 66%, var(--color-bg-card))',
-        color: 'var(--color-danger)',
-      },
-    };
-
-    return {
-      display: 'inline-flex',
-      alignItems: 'center',
-      gap: 6,
-      padding: '5px 10px',
-      borderRadius: 999,
-      border: '1px solid var(--color-border-light)',
-      fontSize: 12,
-      fontWeight: 600,
-      lineHeight: 1.2,
-      whiteSpace: 'nowrap',
-      ...toneStyles[tone],
-    };
-  };
-
-  const proxyTransportModeLabel = runtime.codexUpstreamWebsocketEnabled ? '上游 WebSocket 已启用' : 'HTTP 优先';
-  const proxyTransportQueueLabel = `会话池 ${runtime.proxySessionChannelConcurrencyLimit} 并发 / ${runtime.proxySessionChannelQueueWaitMs}ms`;
+  const proxyTransportModeLabel = runtime.codexUpstreamWebsocketEnabled ? tr('pages.settings.upstreamWebSocketEnabled') : tr('pages.settings.http');
+  const proxyTransportQueueLabel = `会话池 ${runtime.proxySessionTargetConcurrencyLimit} 并发 / ${runtime.proxySessionTargetQueueWaitMs}ms`;
   const modelAvailabilityProbeDirty = runtime.modelAvailabilityProbeEnabled !== savedModelAvailabilityProbeEnabled;
   const modelAvailabilityProbeStatusTone: SettingsPillTone = modelAvailabilityProbeDirty
     ? 'warning'
@@ -622,34 +358,10 @@ export default function Settings() {
       ? 'danger'
       : 'neutral';
   const modelAvailabilityProbeStatusLabel = modelAvailabilityProbeDirty
-    ? '待保存'
+    ? tr('pages.settings.save5')
     : savedModelAvailabilityProbeEnabled
-      ? '已启用'
-      : '已关闭';
-
-  const syncPayloadRuleDraftsFromObject = (value: unknown) => {
-    setPayloadRuleDrafts(normalizePayloadRulesForEditor(value));
-    setPayloadAdvancedDirty(false);
-  };
-
-  const syncPayloadVisualRulesFromObject = (value: unknown) => {
-    setPayloadVisualRules(payloadRulesToVisualRules(value));
-  };
-
-  const applyVisualPayloadRules = (
-    nextRulesOrUpdater: VisualPayloadRule[] | ((current: VisualPayloadRule[]) => VisualPayloadRule[]),
-  ) => {
-    setPayloadVisualRules((currentRules) => {
-      const nextRules = typeof nextRulesOrUpdater === 'function'
-        ? nextRulesOrUpdater(currentRules)
-        : nextRulesOrUpdater;
-      const serialized = visualRulesToPayloadRules(nextRules);
-      if (serialized.success) {
-        syncPayloadRuleDraftsFromObject(serialized.value);
-      }
-      return nextRules;
-    });
-  };
+      ? tr('pages.settings.enabled2')
+      : tr('pages.settings.close');
 
   const loadSettings = async () => {
     setLoading(true);
@@ -678,15 +390,12 @@ export default function Settings() {
         codexUpstreamWebsocketEnabled: !!runtimeInfo.codexUpstreamWebsocketEnabled,
         responsesCompactFallbackToResponsesEnabled: !!runtimeInfo.responsesCompactFallbackToResponsesEnabled,
         disableCrossProtocolFallback: !!runtimeInfo.disableCrossProtocolFallback,
-        proxySessionChannelConcurrencyLimit: Number(runtimeInfo.proxySessionChannelConcurrencyLimit) >= 0
-          ? Math.trunc(Number(runtimeInfo.proxySessionChannelConcurrencyLimit))
+        proxySessionTargetConcurrencyLimit: Number(runtimeInfo.proxySessionTargetConcurrencyLimit) >= 0
+          ? Math.trunc(Number(runtimeInfo.proxySessionTargetConcurrencyLimit))
           : 2,
-        proxySessionChannelQueueWaitMs: Number(runtimeInfo.proxySessionChannelQueueWaitMs) >= 0
-          ? Math.trunc(Number(runtimeInfo.proxySessionChannelQueueWaitMs))
+        proxySessionTargetQueueWaitMs: Number(runtimeInfo.proxySessionTargetQueueWaitMs) >= 0
+          ? Math.trunc(Number(runtimeInfo.proxySessionTargetQueueWaitMs))
           : 1500,
-        routingFallbackUnitCost: Number(runtimeInfo.routingFallbackUnitCost) > 0
-          ? Number(runtimeInfo.routingFallbackUnitCost)
-          : 1,
         proxyFirstByteTimeoutSec: Number(runtimeInfo.proxyFirstByteTimeoutSec) >= 0
           ? Math.trunc(Number(runtimeInfo.proxyFirstByteTimeoutSec))
           : 0,
@@ -717,8 +426,6 @@ export default function Settings() {
           ? runtimeInfo.proxyErrorKeywords.filter((item: unknown) => typeof item === 'string').join('\n')
           : '',
       );
-      syncPayloadRuleDraftsFromObject(runtimeInfo.payloadRules);
-      syncPayloadVisualRulesFromObject(runtimeInfo.payloadRules);
       setAdminIpAllowlistText(
         Array.isArray(runtimeInfo.adminIpAllowlist)
           ? runtimeInfo.adminIpAllowlist.join('\n')
@@ -744,7 +451,7 @@ export default function Settings() {
         restartRequired: !!runtimeDatabaseInfo?.restartRequired,
       });
     } catch (err: any) {
-      toast.error(err?.message || '加载设置失败');
+      toast.error(err?.message || tr('pages.settings.failedLoadSettings'));
     } finally {
       setLoading(false);
     }
@@ -765,6 +472,30 @@ export default function Settings() {
   useEffect(() => {
     loadSettings();
   }, []);
+
+  useEffect(() => {
+    if (loading || typeof IntersectionObserver === 'undefined') return;
+    const sections = SETTINGS_NAV_SECTION_IDS
+      .map((id) => document.getElementById(id))
+      .filter((section): section is HTMLElement => section !== null);
+    if (!sections.length) return;
+
+    const observer = new IntersectionObserver((entries) => {
+      const visible = entries
+        .filter((entry) => entry.isIntersecting)
+        .sort((left, right) => right.intersectionRatio - left.intersectionRatio)[0];
+      const nextId = visible?.target.id;
+      if (SETTINGS_NAV_SECTION_IDS.includes(nextId as SettingsNavSectionId)) {
+        setActiveSettingsSection(nextId as SettingsNavSectionId);
+      }
+    }, {
+      rootMargin: '-18% 0px -65% 0px',
+      threshold: [0.1, 0.35, 0.6, 0.85],
+    });
+
+    sections.forEach((section) => observer.observe(section));
+    return () => observer.disconnect();
+  }, [loading]);
 
   const normalizeProxyTokenSuffix = (raw: string) => {
     const compact = raw.replace(/\s+/g, '');
@@ -792,9 +523,9 @@ export default function Settings() {
         logCleanupProgramLogsEnabled: runtime.logCleanupProgramLogsEnabled,
         logCleanupRetentionDays: runtime.logCleanupRetentionDays,
       });
-      toast.success('定时任务设置已保存');
+      toast.success(tr('pages.settings.scheduledTaskSettingsHaveBeenSaved'));
     } catch (err: any) {
-      toast.error(err?.message || '保存失败');
+      toast.error(err?.message || tr('pages.accounts.saveFailed'));
     } finally {
       setSavingSchedule(false);
     }
@@ -804,9 +535,9 @@ export default function Settings() {
     setTestingCheckin(true);
     try {
       await api.triggerCheckinAll();
-      toast.success('已开始全部签到，请稍后查看签到日志');
+      toast.success(tr('pages.settings.allSignInsHaveStartedPleaseCheck'));
     } catch (err: any) {
-      toast.error(err?.message || '触发签到失败');
+      toast.error(err?.message || tr('pages.checkinLog.failedTriggerSign'));
     } finally {
       setTestingCheckin(false);
     }
@@ -815,7 +546,7 @@ export default function Settings() {
   const saveProxyToken = async () => {
     const suffix = proxyTokenSuffix.trim();
     if (!suffix) {
-      toast.info('请输入 sk- 后的令牌内容');
+      toast.info(tr('pages.settings.enterTokenContentAfterSk'));
       return;
     }
     setSavingToken(true);
@@ -825,7 +556,7 @@ export default function Settings() {
       setProxyTokenSuffix('');
       toast.success('Proxy token updated');
     } catch (err: any) {
-      toast.error(err?.message || '保存失败');
+      toast.error(err?.message || tr('pages.accounts.saveFailed'));
     } finally {
       setSavingToken(false);
     }
@@ -843,9 +574,9 @@ export default function Settings() {
           ? res.systemProxyUrl
           : prev.systemProxyUrl,
       }));
-      toast.success('系统代理已保存');
+      toast.success(tr('pages.settings.systemProxySaved'));
     } catch (err: any) {
-      toast.error(err?.message || '保存失败');
+      toast.error(err?.message || tr('pages.accounts.saveFailed'));
     } finally {
       setSavingSystemProxy(false);
     }
@@ -867,9 +598,9 @@ export default function Settings() {
       setSavedModelAvailabilityProbeEnabled(nextEnabled);
       setModelAvailabilityProbeConfirmOpen(false);
       setModelAvailabilityProbeConfirmationInput('');
-      toast.success(nextEnabled ? '批量测活已开启' : '批量测活已关闭');
+      toast.success(nextEnabled ? tr('pages.settings.batchHealthCheckTurn') : tr('pages.settings.batchHealthCheckClose'));
     } catch (err: any) {
-      toast.error(err?.message || '保存失败');
+      toast.error(err?.message || tr('pages.accounts.saveFailed'));
     } finally {
       setSavingModelAvailabilityProbe(false);
     }
@@ -877,7 +608,7 @@ export default function Settings() {
 
   const saveModelAvailabilityProbeSettings = async () => {
     if (runtime.modelAvailabilityProbeEnabled === savedModelAvailabilityProbeEnabled) {
-      toast.info('批量测活设置未变化');
+      toast.info(tr('pages.settings.batchHealthCheckSettingsUnchanged'));
       return;
     }
     if (runtime.modelAvailabilityProbeEnabled) {
@@ -893,8 +624,8 @@ export default function Settings() {
       const res = await api.updateRuntimeSettings({
         codexUpstreamWebsocketEnabled: runtime.codexUpstreamWebsocketEnabled,
         responsesCompactFallbackToResponsesEnabled: runtime.responsesCompactFallbackToResponsesEnabled,
-        proxySessionChannelConcurrencyLimit: runtime.proxySessionChannelConcurrencyLimit,
-        proxySessionChannelQueueWaitMs: runtime.proxySessionChannelQueueWaitMs,
+        proxySessionTargetConcurrencyLimit: runtime.proxySessionTargetConcurrencyLimit,
+        proxySessionTargetQueueWaitMs: runtime.proxySessionTargetQueueWaitMs,
       });
       setRuntime((prev) => ({
         ...prev,
@@ -904,16 +635,16 @@ export default function Settings() {
         responsesCompactFallbackToResponsesEnabled: typeof res?.responsesCompactFallbackToResponsesEnabled === 'boolean'
           ? res.responsesCompactFallbackToResponsesEnabled
           : prev.responsesCompactFallbackToResponsesEnabled,
-        proxySessionChannelConcurrencyLimit: Number(res?.proxySessionChannelConcurrencyLimit) >= 0
-          ? Math.trunc(Number(res.proxySessionChannelConcurrencyLimit))
-          : prev.proxySessionChannelConcurrencyLimit,
-        proxySessionChannelQueueWaitMs: Number(res?.proxySessionChannelQueueWaitMs) >= 0
-          ? Math.trunc(Number(res.proxySessionChannelQueueWaitMs))
-          : prev.proxySessionChannelQueueWaitMs,
+        proxySessionTargetConcurrencyLimit: Number(res?.proxySessionTargetConcurrencyLimit) >= 0
+          ? Math.trunc(Number(res.proxySessionTargetConcurrencyLimit))
+          : prev.proxySessionTargetConcurrencyLimit,
+        proxySessionTargetQueueWaitMs: Number(res?.proxySessionTargetQueueWaitMs) >= 0
+          ? Math.trunc(Number(res.proxySessionTargetQueueWaitMs))
+          : prev.proxySessionTargetQueueWaitMs,
       }));
-      toast.success('传输与会话并发设置已保存');
+      toast.success(tr('pages.settings.settingsSave'));
     } catch (err: any) {
-      toast.error(err?.message || '保存失败');
+      toast.error(err?.message || tr('pages.accounts.saveFailed'));
     } finally {
       setSavingProxyTransport(false);
     }
@@ -922,7 +653,7 @@ export default function Settings() {
   const testSystemProxy = async () => {
     const proxyUrl = runtime.systemProxyUrl.trim();
     if (!proxyUrl) {
-      const message = '请先填写系统代理地址';
+      const message = tr('pages.settings.systemProxyUrlRequired');
       setSystemProxyTestState({ kind: 'error', text: message });
       toast.info(message);
       return;
@@ -936,7 +667,7 @@ export default function Settings() {
       setSystemProxyTestState({ kind: 'success', text: summary });
       toast.success(`系统代理测试成功（${res.latencyMs} ms）`);
     } catch (err: any) {
-      const message = err?.message || '系统代理测试失败';
+      const message = err?.message || tr('pages.settings.systemProxyTestFailed');
       setSystemProxyTestState({ kind: 'error', text: message });
       toast.error(message);
     } finally {
@@ -963,86 +694,12 @@ export default function Settings() {
           : prev.proxyEmptyContentFailEnabled,
       }));
       setProxyErrorKeywordsText(nextKeywords.join('\n'));
-      toast.success('代理失败规则已保存');
+      toast.success(tr('pages.settings.proxyFailureRulesSaved'));
     } catch (err: any) {
-      toast.error(err?.message || '保存失败');
+      toast.error(err?.message || tr('pages.accounts.saveFailed'));
     } finally {
       setSavingProxyFailureRules(false);
     }
-  };
-
-  const savePayloadRules = async () => {
-    const nextPayloadRules = payloadAdvancedDirty
-      ? parsePayloadRulesFromDrafts(payloadRuleDrafts)
-      : visualRulesToPayloadRules(payloadVisualRules);
-    if (!nextPayloadRules.success) {
-      toast.error(nextPayloadRules.message);
-      return;
-    }
-
-    setSavingPayloadRules(true);
-    try {
-      const res = await api.updateRuntimeSettings({
-        payloadRules: nextPayloadRules.value,
-      });
-      syncPayloadRuleDraftsFromObject(res?.payloadRules);
-      syncPayloadVisualRulesFromObject(res?.payloadRules);
-      toast.success('Payload 规则已保存');
-    } catch (err: any) {
-      toast.error(err?.message || '保存 Payload 规则失败');
-    } finally {
-      setSavingPayloadRules(false);
-    }
-  };
-
-  const applyCodexDefaultHighReasoningPreset = () => {
-    applyVisualPayloadRules((currentRules) => [
-      ...currentRules.filter((rule) => !isVisualPayloadRuleBlank(rule)),
-      ...createCodexDefaultHighReasoningVisualPreset(),
-    ]);
-    setShowPayloadRulesEditor(true);
-    toast.success('已填入 Codex 默认高推理预设');
-  };
-
-  const addPayloadVisualRule = () => {
-    applyVisualPayloadRules((currentRules) => [
-      ...currentRules,
-      createVisualPayloadRule(),
-    ]);
-  };
-
-  const updatePayloadVisualRule = (ruleId: string, patch: Partial<VisualPayloadRule>) => {
-    applyVisualPayloadRules((currentRules) => currentRules.map((rule) => {
-      if (rule.id !== ruleId) return rule;
-      const nextAction = (patch.action ?? rule.action) as PayloadRuleAction;
-      const nextValueMode = patch.valueMode ?? (
-        nextAction === 'default-raw' || nextAction === 'override-raw'
-          ? 'json'
-          : rule.valueMode
-      );
-      return {
-        ...rule,
-        ...patch,
-        action: nextAction,
-        valueMode: nextAction === 'filter' ? 'text' : nextValueMode,
-        value: nextAction === 'filter' ? '' : (patch.value ?? rule.value),
-      };
-    }));
-  };
-
-  const removePayloadVisualRule = (ruleId: string) => {
-    applyVisualPayloadRules((currentRules) => currentRules.filter((rule) => rule.id !== ruleId));
-  };
-
-  const syncVisualRulesFromAdvancedJson = () => {
-    const parsedPayloadRules = parsePayloadRulesFromDrafts(payloadRuleDrafts);
-    if (!parsedPayloadRules.success) {
-      toast.error(parsedPayloadRules.message);
-      return;
-    }
-    syncPayloadVisualRulesFromObject(parsedPayloadRules.value);
-    setPayloadAdvancedDirty(false);
-    toast.success('已将高级 JSON 同步到可视化规则');
   };
 
   const saveRouting = async () => {
@@ -1050,7 +707,6 @@ export default function Settings() {
     try {
       await api.updateRuntimeSettings({
         routingWeights: runtime.routingWeights,
-        routingFallbackUnitCost: runtime.routingFallbackUnitCost,
         proxyFirstByteTimeoutSec: Number.isFinite(runtime.proxyFirstByteTimeoutSec)
           ? Math.max(0, Math.trunc(runtime.proxyFirstByteTimeoutSec))
           : 0,
@@ -1062,7 +718,7 @@ export default function Settings() {
       });
       toast.success('Routing weights saved');
     } catch (err: any) {
-      toast.error(err?.message || '保存失败');
+      toast.error(err?.message || tr('pages.accounts.saveFailed'));
     } finally {
       setSavingRouting(false);
     }
@@ -1082,15 +738,15 @@ export default function Settings() {
       const resolved = Array.isArray(res?.globalBlockedBrands) ? res.globalBlockedBrands : blockedBrands;
       setRuntime((prev) => ({ ...prev, globalBlockedBrands: resolved }));
       setBlockedBrands(resolved);
-      toast.success('品牌屏蔽设置已保存');
+      toast.success(tr('pages.settings.brandsSettingsSave'));
       try {
         await api.rebuildRoutes(false);
-        toast.success('路由已重建');
+        toast.success(tr('pages.settings.routes'));
       } catch {
-        toast.error('品牌屏蔽已保存，但路由重建失败，请手动重建');
+        toast.error(tr('pages.settings.brandsSaveRoutesFailedManual'));
       }
     } catch (err: any) {
-      toast.error(err?.message || '保存品牌屏蔽设置失败');
+      toast.error(err?.message || tr('pages.settings.saveBlockedBrandSettingsFailed'));
     } finally {
       setSavingBrandFilter(false);
     }
@@ -1103,15 +759,15 @@ export default function Settings() {
       const resolved = Array.isArray(res?.globalAllowedModels) ? res.globalAllowedModels : allowedModels;
       setRuntime((prev) => ({ ...prev, globalAllowedModels: resolved }));
       setAllowedModels(resolved);
-      toast.success('模型白名单设置已保存');
+      toast.success(tr('pages.settings.modelSettingsSave'));
       try {
         await api.rebuildRoutes(false);
-        toast.success('路由已重建');
+        toast.success(tr('pages.settings.routes'));
       } catch {
-        toast.error('模型白名单已保存，但路由重建失败，请手动重建');
+        toast.error(tr('pages.settings.modelSaveRoutesFailedManual'));
       }
     } catch (err: any) {
-      toast.error(err?.message || '保存模型白名单设置失败');
+      toast.error(err?.message || tr('pages.settings.saveModelWhitelistSettingsFailed'));
     } finally {
       setSavingAllowedModels(false);
     }
@@ -1136,7 +792,7 @@ export default function Settings() {
       }));
       toast.success('Security settings saved');
     } catch (err: any) {
-      toast.error(err?.message || '保存失败');
+      toast.error(err?.message || tr('pages.accounts.saveFailed'));
     } finally {
       setSavingSecurity(false);
     }
@@ -1144,26 +800,26 @@ export default function Settings() {
 
 
   const handleClearCache = async () => {
-    if (!window.confirm('确认清理模型缓存并重建路由？')) return;
+    if (!window.confirm(tr('pages.settings.youSureYouWantClearModelCache'))) return;
     setClearingCache(true);
     try {
       const res = await api.clearRuntimeCache();
       toast.success(`缓存已清理（模型缓存 ${res.deletedModelAvailability || 0} 条）`);
     } catch (err: any) {
-      toast.error(err?.message || '清理缓存失败');
+      toast.error(err?.message || tr('pages.settings.failedClearCache'));
     } finally {
       setClearingCache(false);
     }
   };
 
   const handleClearUsage = async () => {
-    if (!window.confirm('确认清理占用统计与使用日志？')) return;
+    if (!window.confirm(tr('pages.settings.youSureYouWantClearUsageStatistics'))) return;
     setClearingUsage(true);
     try {
       const res = await api.clearUsageData();
       toast.success(`占用统计已清理（日志 ${res.deletedProxyLogs || 0} 条）`);
     } catch (err: any) {
-      toast.error(err?.message || '清理占用失败');
+      toast.error(err?.message || tr('pages.settings.failedClearOccupation'));
     } finally {
       setClearingUsage(false);
     }
@@ -1192,7 +848,7 @@ export default function Settings() {
       clearAppInstallationState(localStorage);
       window.location.reload();
     } catch (err: any) {
-      toast.error(err?.message || '重新初始化系统失败');
+      toast.error(err?.message || tr('pages.settings.systemReinitializationFailed'));
       setFactoryResetting(false);
     }
   };
@@ -1302,26 +958,114 @@ export default function Settings() {
 
   if (loading) {
     return (
-      <div className="animate-fade-in">
-        <div className="skeleton" style={{ width: 220, height: 28, marginBottom: 20 }} />
-        <div className="skeleton" style={{ width: '100%', height: 320, borderRadius: 'var(--radius-sm)' }} />
-      </div>
+      <PageShell>
+        <Skeleton className="h-8 w-56" />
+        <div className="grid gap-3 lg:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, index) => (
+            <Skeleton key={index} className="h-24 w-full" />
+          ))}
+        </div>
+        <Skeleton className="h-96 w-full" />
+      </PageShell>
     );
   }
 
+  const settingsNavItems = [
+    {
+      id: 'settings-runtime' as const,
+      href: '#settings-runtime',
+      icon: Timer,
+      title: tr('pages.settings.runtimeOperations'),
+      description: tr('pages.settings.runtimeOperationsDescription'),
+    },
+    {
+      id: 'settings-routing' as const,
+      href: '#settings-routing',
+      icon: SlidersHorizontal,
+      title: tr('pages.settings.routingAndPricing'),
+      description: tr('pages.settings.routingAndPricingDescription'),
+    },
+    {
+      id: 'settings-access' as const,
+      href: '#settings-access',
+      icon: ShieldCheck,
+      title: tr('pages.settings.accessAndSecurity'),
+      description: tr('pages.settings.accessAndSecurityDescription'),
+    },
+    {
+      id: 'settings-maintenance' as const,
+      href: '#settings-maintenance',
+      icon: Wrench,
+      title: tr('pages.settings.maintenanceAndData'),
+      description: tr('pages.settings.maintenanceAndDataDescription'),
+    },
+  ];
+  const settingsStatusItems = [
+    {
+      icon: <Timer className="size-3.5" />,
+      label: tr('pages.settings.sign3'),
+      tone: runtime.checkinScheduleMode === 'interval' ? '-info' : '-muted',
+      value: runtime.checkinScheduleMode === 'interval' ? tr('pages.settings.sign4') : 'Cron',
+    },
+    {
+      icon: <RotateCcw className="size-3.5" />,
+      label: tr('pages.settings.systemProxy'),
+      tone: runtime.systemProxyUrl ? '-success' : '-muted',
+      value: runtime.systemProxyUrl ? tr('pages.settings.enabled2') : tr('pages.settings.close'),
+    },
+    {
+      icon: <SlidersHorizontal className="size-3.5" />,
+      label: tr('pages.settings.batchHealthCheck'),
+      tone: runtime.modelAvailabilityProbeEnabled ? '-warning' : '-muted',
+      value: runtime.modelAvailabilityProbeEnabled ? tr('pages.settings.enabled2') : tr('pages.settings.close'),
+    },
+    {
+      icon: <Database className="size-3.5" />,
+      label: tr('pages.settings.runtimeDatabase'),
+      tone: runtimeDatabaseState?.restartRequired ? '-warning' : '-muted',
+      value: runtimeDatabaseState?.active?.dialect || 'sqlite',
+    },
+  ];
+
   return (
-    <div className="animate-fade-in">
-      <div className="page-header">
-        <h2 className="page-title">系统设置</h2>
+    <PageShell>
+      <PageHeader
+        title={tr('pages.importExport.systemSettings')}
+        description={tr('pages.settings.systemSettingsPageDescription')}
+        actions={runtimeDatabaseState?.restartRequired ? (
+          <ToneBadge tone={runtimeDatabaseState?.restartRequired ? '-warning' : '-muted'}>
+            {tr('pages.settings.restartRequired')}
+          </ToneBadge>
+        ) : undefined}
+      />
+
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        {settingsNavItems.map((item) => {
+          const Icon = item.icon;
+          return (
+            <SettingsQuickLink
+              key={item.href}
+              href={item.href}
+              icon={<Icon className="size-4" />}
+              title={item.title}
+              description={item.description}
+            />
+          );
+        })}
       </div>
 
-      <div style={{ maxWidth: 720, display: 'flex', flexDirection: 'column', gap: 16 }}>
-        <div className="card animate-slide-up stagger-1" style={{ padding: 20 }}>
-          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 12 }}>管理员登录令牌</div>
-          <code style={{ display: 'block', padding: '10px 14px', background: 'var(--color-bg)', borderRadius: 'var(--radius-sm)', fontSize: 13, fontFamily: 'var(--font-mono)', color: 'var(--color-text-secondary)', border: '1px solid var(--color-border-light)', marginBottom: 12 }}>
+      <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_320px] 2xl:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="grid min-w-0 gap-6">
+          <SettingsSection
+            id="settings-runtime"
+            title={tr('pages.settings.runtimeOperations')}
+            description={tr('pages.settings.runtimeOperationsDescription')}
+          >
+        <SettingsCard title={tr('pages.settings.adminSignInToken')}>
+          <SettingsCode>
             {maskedToken || '****'}
-          </code>
-          <button onClick={() => setShowChangeKey(true)} className="btn btn-primary">修改登录令牌</button>
+          </SettingsCode>
+          <Button type="button" onClick={() => setShowChangeKey(true)}>{tr('pages.settings.changeSignInToken')}</Button>
           <ChangeKeyModal
             open={showChangeKey}
             onClose={() => {
@@ -1329,84 +1073,79 @@ export default function Settings() {
               api.getAuthInfo().then((r: any) => setMaskedToken(r.masked || '****')).catch(() => { });
             }}
           />
-        </div>
+        </SettingsCard>
 
-        <div className="card animate-slide-up stagger-2" style={{ padding: 20 }}>
-          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 12 }}>定时任务</div>
-          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '180px 180px auto', gap: 12, alignItems: 'end', marginBottom: 12 }}>
-            <div>
-              <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>签到方式</div>
-              <ModernSelect
-                value={runtime.checkinScheduleMode}
-                onChange={(value) => setRuntime((prev) => ({
-                  ...prev,
-                  checkinScheduleMode: value === 'interval' ? 'interval' : 'cron',
-                }))}
-                options={CHECKIN_SCHEDULE_MODE_OPTIONS.map((item) => ({ ...item }))}
-              />
+        <SettingsCard title={tr('pages.settings.scheduledTasks')}>
+          <SettingsSubsection
+            title={tr('pages.settings.scheduledCheckin')}
+            description={tr('pages.settings.scheduledCheckinDescription')}
+          >
+            <div className="grid items-end gap-3 md:grid-cols-[180px_180px_auto]">
+              <SettingsField label={tr('pages.settings.sign3')}>
+                <ModernSelect
+                  value={runtime.checkinScheduleMode}
+                  onChange={(value) => setRuntime((prev) => ({
+                    ...prev,
+                    checkinScheduleMode: value === 'interval' ? 'interval' : 'cron',
+                  }))}
+                  options={CHECKIN_SCHEDULE_MODE_OPTIONS.map((item) => ({ ...item }))}
+                />
+              </SettingsField>
+              <SettingsField label={tr('pages.settings.sign')}>
+                <ModernSelect
+                  value={String(runtime.checkinIntervalHours)}
+                  onChange={(value) => setRuntime((prev) => ({
+                    ...prev,
+                    checkinIntervalHours: Math.min(24, Math.max(1, Math.trunc(Number(value) || 1))),
+                  }))}
+                  disabled={runtime.checkinScheduleMode !== 'interval'}
+                  options={CHECKIN_INTERVAL_OPTIONS}
+                />
+              </SettingsField>
+              <Button type="button" variant="outline"
+                onClick={triggerScheduleCheckin}
+                disabled={testingCheckin}
+              >
+                {testingCheckin ? tr('pages.checkinLog.triggering') : tr('pages.settings.sign2')}
+              </Button>
             </div>
-            <div>
-              <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>签到间隔</div>
-              <ModernSelect
-                value={String(runtime.checkinIntervalHours)}
-                onChange={(value) => setRuntime((prev) => ({
-                  ...prev,
-                  checkinIntervalHours: Math.min(24, Math.max(1, Math.trunc(Number(value) || 1))),
-                }))}
-                disabled={runtime.checkinScheduleMode !== 'interval'}
-                options={CHECKIN_INTERVAL_OPTIONS}
-              />
-            </div>
-            <button
-              onClick={triggerScheduleCheckin}
-              disabled={testingCheckin}
-              className="btn btn-ghost"
-              style={{ border: '1px solid var(--color-border)', whiteSpace: 'nowrap' }}
-            >
-              {testingCheckin ? '触发中...' : '测试一次签到'}
-            </button>
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 12 }}>
-            <div>
-              <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>签到 Cron</div>
-              <input
+            <SettingsField label={tr('pages.settings.signCron')}>
+              <Input
+                className="font-mono"
                 value={runtime.checkinCron}
                 onChange={(e) => setRuntime((prev) => ({ ...prev, checkinCron: e.target.value }))}
-                style={{ ...inputStyle, fontFamily: 'var(--font-mono)' }}
                 disabled={runtime.checkinScheduleMode !== 'cron'}
               />
-            </div>
-            <div>
-              <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>余额刷新 Cron</div>
-              <input
+            </SettingsField>
+          </SettingsSubsection>
+
+          <SettingsSubsection
+            title={tr('pages.settings.balanceRefreshSchedule')}
+            description={tr('pages.settings.balanceRefreshScheduleDescription')}
+          >
+            <SettingsField label={tr('pages.settings.balanceRefreshCron')}>
+              <Input
+                className="font-mono"
                 value={runtime.balanceRefreshCron}
                 onChange={(e) => setRuntime((prev) => ({ ...prev, balanceRefreshCron: e.target.value }))}
-                style={{ ...inputStyle, fontFamily: 'var(--font-mono)' }}
               />
-            </div>
-          </div>
-          <div
-            style={{
-              marginTop: 16,
-              paddingTop: 16,
-              borderTop: '1px solid var(--color-border-light)',
-              display: 'grid',
-              gap: 12,
-            }}
+            </SettingsField>
+          </SettingsSubsection>
+
+          <SettingsSubsection
+            title={tr('pages.settings.logCleanupSchedule')}
+            description={tr('pages.settings.logCleanupScheduleDescription')}
           >
-            <div style={{ fontWeight: 600, fontSize: 13 }}>自动清理日志</div>
-            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 160px', gap: 12 }}>
-              <div>
-                <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>清理 Cron</div>
-                <input
+            <div className="grid gap-3 md:grid-cols-[1fr_160px]">
+              <SettingsField label={tr('pages.settings.cron')}>
+                <Input
+                  className="font-mono"
                   value={runtime.logCleanupCron}
                   onChange={(e) => setRuntime((prev) => ({ ...prev, logCleanupCron: e.target.value }))}
-                  style={{ ...inputStyle, fontFamily: 'var(--font-mono)' }}
                 />
-              </div>
-              <div>
-                <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>保留天数</div>
-                <input
+              </SettingsField>
+              <SettingsField label={tr('pages.settings.retentionDays')}>
+                <Input
                   type="number"
                   min={1}
                   value={runtime.logCleanupRetentionDays}
@@ -1419,656 +1158,227 @@ export default function Settings() {
                         : prev.logCleanupRetentionDays,
                     };
                   })}
-                  style={inputStyle}
                 />
-              </div>
+              </SettingsField>
             </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16 }}>
-              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--color-text-secondary)' }}>
-                <input
-                  type="checkbox"
-                  checked={runtime.logCleanupUsageLogsEnabled}
-                  onChange={(e) => setRuntime((prev) => ({ ...prev, logCleanupUsageLogsEnabled: e.target.checked }))}
-                />
-                清理使用日志
-              </label>
-              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--color-text-secondary)' }}>
-                <input
-                  type="checkbox"
-                  checked={runtime.logCleanupProgramLogsEnabled}
-                  onChange={(e) => setRuntime((prev) => ({ ...prev, logCleanupProgramLogsEnabled: e.target.checked }))}
-                />
-                清理程序日志
-              </label>
+            <div className="grid gap-2 md:grid-cols-2">
+              <SettingsToggleRow
+                title={tr('pages.settings.usageLogs')}
+                checked={runtime.logCleanupUsageLogsEnabled}
+                onCheckedChange={(checked) => setRuntime((prev) => ({ ...prev, logCleanupUsageLogsEnabled: checked }))}
+                className="p-3"
+              />
+              <SettingsToggleRow
+                title={tr('pages.settings.systemLogs')}
+                checked={runtime.logCleanupProgramLogsEnabled}
+                onCheckedChange={(checked) => setRuntime((prev) => ({ ...prev, logCleanupProgramLogsEnabled: checked }))}
+                className="p-3"
+              />
             </div>
-            <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.6 }}>
-              默认每天早上 6 点执行。按每次定时任务执行时间，清理早于“保留天数”的日志；两个选项都不勾选时不会实际删除日志。
+            <div className="text-xs text-muted-foreground">
+              {tr('pages.settings.defaultDays6ScheduledTasksTimeRetention')}
             </div>
+          </SettingsSubsection>
+          <div>
+            <Button type="button" onClick={saveSchedule} disabled={savingSchedule}>
+              {savingSchedule ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.accounts.saving')}</> : tr('pages.settings.saveScheduledTasks')}
+            </Button>
           </div>
-          <div style={{ marginTop: 12 }}>
-            <button onClick={saveSchedule} disabled={savingSchedule} className="btn btn-primary">
-              {savingSchedule ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 保存中...</> : '保存定时任务'}
-            </button>
-          </div>
-        </div>
+        </SettingsCard>
 
-        <div className="card animate-slide-up stagger-3" style={{ padding: 20 }}>
-          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 8 }}>系统代理</div>
-          <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 12 }}>
-            配置一个全局出站代理地址，站点页可按站点决定是否启用系统代理。
-          </div>
-          <input
+        <SettingsCard
+          title={tr('pages.settings.systemProxy')}
+          description={tr('pages.settings.systemProxyDescription')}
+        >
+          <Input
+            className="font-mono"
             value={runtime.systemProxyUrl}
             onChange={(e) => {
               setRuntime((prev) => ({ ...prev, systemProxyUrl: e.target.value }));
               setSystemProxyTestState(null);
             }}
-            placeholder="系统代理 URL（可选，如 http://127.0.0.1:7890 或 socks5://127.0.0.1:1080）"
-            style={{ ...inputStyle, fontFamily: 'var(--font-mono)', marginBottom: 10 }}
+            placeholder={tr('pages.settings.systemProxyUrlPlaceholder')}
           />
-          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
-            <button onClick={saveSystemProxy} disabled={savingSystemProxy} className="btn btn-primary">
-              {savingSystemProxy ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 保存中...</> : '保存系统代理'}
-            </button>
-            <button
+          <div className="flex flex-wrap items-center gap-2">
+            <Button type="button" onClick={saveSystemProxy} disabled={savingSystemProxy}>
+              {savingSystemProxy ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.accounts.saving')}</> : tr('pages.settings.saveSystemProxy')}
+            </Button>
+            <Button type="button" variant="outline"
               onClick={testSystemProxy}
               disabled={testingSystemProxy}
-              className="btn btn-ghost"
-              style={{ border: '1px solid var(--color-border)' }}
+             
+             
             >
-              {testingSystemProxy ? <><span className="spinner spinner-sm" /> 测试中...</> : '测试系统代理'}
-            </button>
+              {testingSystemProxy ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.settings.testing')}</> : tr('pages.settings.testSystemProxy')}
+            </Button>
           </div>
           {systemProxyTestState && (
-            <div
-              style={{
-                fontSize: 12,
-                marginTop: 10,
-                color: systemProxyTestState.kind === 'success'
-                  ? 'var(--color-success)'
-                  : 'var(--color-danger)',
-              }}
-            >
+            <div className={systemProxyTestState.kind === 'success' ? 'text-sm text-muted-foreground' : 'text-sm text-destructive'}>
               {systemProxyTestState.text}
             </div>
           )}
-        </div>
+        </SettingsCard>
 
-        <div className="card animate-slide-up stagger-4" style={{ padding: 20 }}>
-          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 8 }}>代理失败判定</div>
-          <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 12 }}>
-            命中任一关键词或空内容时判定失败，可触发重试。
-          </div>
-          <textarea
+        <SettingsCard title={tr('pages.settings.proxyFailureDetection')} description={tr('pages.settings.failureKeywordRetryDescription')}>
+          <Textarea
+            className="min-h-24 font-mono"
             value={proxyErrorKeywordsText}
             onChange={(e) => setProxyErrorKeywordsText(e.target.value)}
-            placeholder="一行一个关键词，或逗号分隔"
-            style={{
-              ...inputStyle,
-              fontFamily: 'var(--font-mono)',
-              minHeight: 96,
-              resize: 'vertical',
-              marginBottom: 12,
-            }}
+            placeholder={tr('pages.settings.oneKeywordPerLineCommaSeparated')}
           />
-          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--color-text-secondary)', marginBottom: 12 }}>
-            <input
-              type="checkbox"
-              checked={runtime.proxyEmptyContentFailEnabled}
-              onChange={(e) => setRuntime((prev) => ({ ...prev, proxyEmptyContentFailEnabled: e.target.checked }))}
-            />
-            空内容（completion=0，即使 prompt 有 token 也算）判定失败
-          </label>
+          <SettingsToggleRow
+            title={tr('pages.settings.contentCompletion0PromptTokenFailed')}
+            checked={runtime.proxyEmptyContentFailEnabled}
+            onCheckedChange={(checked) => setRuntime((prev) => ({ ...prev, proxyEmptyContentFailEnabled: checked }))}
+          />
           <div>
-            <button onClick={saveProxyFailureRules} disabled={savingProxyFailureRules} className="btn btn-primary">
-              {savingProxyFailureRules ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 保存中...</> : '保存失败规则'}
-            </button>
+            <Button type="button" onClick={saveProxyFailureRules} disabled={savingProxyFailureRules}>
+              {savingProxyFailureRules ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.accounts.saving')}</> : tr('pages.settings.saveFailedrules')}
+            </Button>
           </div>
-        </div>
+        </SettingsCard>
+          </SettingsSection>
 
-        <div className="card animate-slide-up stagger-4" style={settingsModernCardStyle} data-settings-card="payload-rules">
-          <div style={settingsModernHeaderStyle}>
-            <div style={settingsModernTitleBlockStyle}>
-              <div style={settingsModernTitleStyle}>Payload 规则</div>
-              <div style={settingsModernDescriptionStyle}>
-                对匹配模型的上游请求做默认注入、强制覆盖或字段过滤。规则结构参考 CPA 的 payload 配置，常见场景可直接注入
-                {' '}
-                <code style={{ fontFamily: 'var(--font-mono)' }}>reasoning.effort</code>
-                {' '}
-                之类的参数。
-              </div>
-            </div>
-            <div style={settingsModernPillRowStyle}>
-              <span style={getSettingsPillStyle(configuredPayloadRuleCount > 0 ? 'primary' : 'neutral')}>
-                {configuredPayloadRuleCount > 0 ? `已配置 ${configuredPayloadRuleCount} 条` : '未配置'}
-              </span>
-              <span style={getSettingsPillStyle(payloadAdvancedDirty ? 'warning' : 'neutral')}>
-                {payloadAdvancedDirty ? '高级 JSON 待同步/保存' : '保存后立即生效'}
-              </span>
-            </div>
-          </div>
-          <div style={settingsModernFieldCardStyle}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
-              <div style={{ display: 'grid', gap: 6, minWidth: 0 }}>
-                <div style={settingsModernFieldLabelStyle}>常用预设</div>
-                <div style={settingsModernFieldHintStyle}>
-                  先用预设快速填充，再通过下面的可视化规则编辑器细调。复杂场景仍可回退到高级 JSON。
-                </div>
-              </div>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <button
-                  type="button"
-                  className="btn btn-ghost"
-                  style={{ border: '1px solid var(--color-border)' }}
-                  onClick={applyCodexDefaultHighReasoningPreset}
-                >
-                  Codex 默认高推理
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-ghost"
-                  style={{ border: '1px solid var(--color-border)' }}
-                  onClick={addPayloadVisualRule}
-                >
-                  新增规则
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-ghost"
-                  style={{ border: '1px solid var(--color-border)' }}
-                  onClick={() => setShowPayloadRulesEditor((prev) => !prev)}
-                >
-                  {showPayloadRulesEditor ? '收起高级 JSON 编辑' : '展开高级 JSON 编辑'}
-                </button>
-              </div>
-            </div>
-          </div>
-          {payloadVisualRules.length <= 0 ? (
-            <div style={settingsModernFieldCardStyle}>
-              <div style={settingsModernFieldLabelStyle}>还没有可视化规则</div>
-              <div style={settingsModernFieldHintStyle}>
-                可以先点上面的预设，也可以直接新增一条规则：选择动作、协议、模型匹配、字段路径和值即可。
-              </div>
-            </div>
-          ) : (
-            <div style={{ display: 'grid', gap: 12 }}>
-              {payloadVisualRules.map((rule, index) => (
-                <div
-                  key={rule.id}
-                  style={settingsModernFieldCardStyle}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
-                    <div style={settingsModernFieldLabelStyle}>规则 {index + 1}</div>
-                    <button
-                      type="button"
-                      className="btn btn-ghost"
-                      style={{ border: '1px solid var(--color-border)', color: 'var(--color-danger)' }}
-                      onClick={() => removePayloadVisualRule(rule.id)}
-                    >
-                      删除
-                    </button>
-                  </div>
-                  <ResponsiveFormGrid columns={2}>
-                    <div>
-                      <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>动作</div>
-                      <ModernSelect
-                        size="sm"
-                        data-testid={`payload-rule-action-${index + 1}`}
-                        value={rule.action}
-                        onChange={(value) => updatePayloadVisualRule(rule.id, { action: value as PayloadRuleAction })}
-                        options={PAYLOAD_RULE_ACTION_OPTIONS}
-                        placeholder="选择动作"
-                      />
-                    </div>
-                    <div>
-                      <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>协议</div>
-                      <ModernSelect
-                        size="sm"
-                        data-testid={`payload-rule-protocol-${index + 1}`}
-                        value={rule.protocol}
-                        onChange={(value) => updatePayloadVisualRule(rule.id, { protocol: String(value || '') })}
-                        options={PAYLOAD_RULE_PROTOCOL_OPTIONS}
-                        placeholder="全部协议"
-                      />
-                    </div>
-                    <div>
-                      <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>模型匹配</div>
-                      <input
-                        type="text"
-                        aria-label={`Payload 规则可视化模型 ${index + 1}`}
-                        value={rule.modelPattern}
-                        onChange={(e) => updatePayloadVisualRule(rule.id, { modelPattern: e.target.value })}
-                        placeholder="例如 gpt-*"
-                        style={inputStyle}
-                      />
-                    </div>
-                    <div>
-                      <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>字段路径</div>
-                      <input
-                        type="text"
-                        aria-label={`Payload 规则可视化路径 ${index + 1}`}
-                        value={rule.path}
-                        onChange={(e) => updatePayloadVisualRule(rule.id, { path: e.target.value })}
-                        placeholder="例如 reasoning.effort"
-                        style={{ ...inputStyle, fontFamily: 'var(--font-mono)' }}
-                      />
-                    </div>
-                  </ResponsiveFormGrid>
-                  {rule.action === 'filter' ? (
-                    <div style={settingsModernFieldHintStyle}>
-                      删除字段规则不需要填写值，命中后会从请求中移除这条路径。
-                    </div>
-                  ) : (
-                    <div style={{ display: 'grid', gap: 8 }}>
-                      {(rule.action === 'default' || rule.action === 'override') && (
-                        <div style={{ width: isMobile ? '100%' : 180 }}>
-                          <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>值类型</div>
-                          <ModernSelect
-                            size="sm"
-                            data-testid={`payload-rule-value-mode-${index + 1}`}
-                            value={rule.valueMode}
-                            onChange={(value) => updatePayloadVisualRule(rule.id, {
-                              valueMode: value as VisualPayloadRuleValueMode,
-                              value: value === 'json' && rule.valueMode !== 'json'
-                                ? (rule.value ? JSON.stringify(rule.value) : '')
-                                : rule.value,
-                            })}
-                            options={PAYLOAD_RULE_VALUE_MODE_OPTIONS}
-                            placeholder="值类型"
-                          />
-                        </div>
-                      )}
-                      <div>
-                        <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>
-                          {rule.action === 'default-raw' || rule.action === 'override-raw'
-                            ? '原始 JSON 值'
-                            : (rule.valueMode === 'json' ? 'JSON 值' : '文本值')}
-                        </div>
-                        {(rule.action === 'default-raw' || rule.action === 'override-raw' || rule.valueMode === 'json') ? (
-                          <textarea
-                            aria-label={`Payload 规则可视化值 ${index + 1}`}
-                            value={rule.value}
-                            onChange={(e) => updatePayloadVisualRule(rule.id, { value: e.target.value })}
-                            placeholder={rule.action === 'default-raw' || rule.action === 'override-raw'
-                              ? '{"type":"json_schema"}'
-                              : '{"effort":"high"}'}
-                            rows={3}
-                            style={{
-                              ...inputStyle,
-                              minHeight: 88,
-                              fontFamily: 'var(--font-mono)',
-                              lineHeight: 1.6,
-                              resize: 'vertical',
-                            }}
-                          />
-                        ) : (
-                          <input
-                            type="text"
-                            aria-label={`Payload 规则可视化值 ${index + 1}`}
-                            value={rule.value}
-                            onChange={(e) => updatePayloadVisualRule(rule.id, { value: e.target.value })}
-                            placeholder="例如 high"
-                            style={inputStyle}
-                          />
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-          <div className={`anim-collapse ${showPayloadRulesEditor ? 'is-open' : ''}`.trim()}>
-            <div className="anim-collapse-inner" style={{ paddingTop: 2 }}>
-              <div style={settingsModernFieldCardStyle}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-                  <div style={{ display: 'grid', gap: 6 }}>
-                    <div style={settingsModernFieldLabelStyle}>高级 JSON 编辑</div>
-                    <div style={settingsModernFieldHintStyle}>
-                      适合直接粘贴 CPA 风格规则。手动改完后，可点击“同步到可视化规则”回到上面的低门槛编辑器。
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    className="btn btn-ghost"
-                    style={{ border: '1px solid var(--color-border)' }}
-                    onClick={syncVisualRulesFromAdvancedJson}
-                  >
-                    同步到可视化规则
-                  </button>
-                </div>
-              </div>
-              <ResponsiveFormGrid columns={2}>
-                {PAYLOAD_RULES_EDITOR_SECTIONS.map((section) => (
-                  <div key={section.key} style={settingsModernFieldCardStyle}>
-                    <div style={settingsModernFieldLabelStyle}>{section.title}</div>
-                    <div style={settingsModernFieldHintStyle}>{section.description}</div>
-                    <textarea
-                      aria-label={`Payload 规则 ${section.key}`}
-                      value={payloadRuleDrafts[section.key]}
-                      onChange={(e) => {
-                        const nextValue = e.target.value;
-                        setPayloadRuleDrafts((prev) => ({
-                          ...prev,
-                          [section.key]: nextValue,
-                        }));
-                        setPayloadAdvancedDirty(true);
-                      }}
-                      placeholder={section.placeholder}
-                      rows={6}
-                      style={{
-                        ...inputStyle,
-                        minHeight: 144,
-                        fontFamily: 'var(--font-mono)',
-                        lineHeight: 1.6,
-                        resize: 'vertical',
-                      }}
-                    />
-                  </div>
-                ))}
-              </ResponsiveFormGrid>
-            </div>
-          </div>
-          <div style={settingsModernActionsStyle}>
-            <button onClick={savePayloadRules} disabled={savingPayloadRules} className="btn btn-primary">
-              {savingPayloadRules ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 保存中...</> : '保存 Payload 规则'}
-            </button>
-          </div>
-        </div>
+          <SettingsSection
+            id="settings-routing"
+            title={tr('pages.settings.routingAndPricing')}
+            description={tr('pages.settings.routingAndPricingDescription')}
+          >
+        <CostPolicySettingsSection />
 
-        <div className="card animate-slide-up stagger-4" style={settingsModernCardStyle} data-settings-card="proxy-transport">
-          <div style={settingsModernHeaderStyle}>
-            <div style={settingsModernTitleBlockStyle}>
-              <div style={settingsModernTitleStyle}>Codex 上游传输与会话并发</div>
-              <div style={settingsModernDescriptionStyle}>
-                默认采用 HTTP 优先。只有这里开启后，metapi 才会在 Codex 请求上尝试把上游升级为 WebSocket。下游 Codex 客户端也必须同时启用 `/v1/responses` websocket，单开这里不会生效。
-              </div>
-            </div>
-            <div style={settingsModernPillRowStyle}>
-              <span style={getSettingsPillStyle(runtime.codexUpstreamWebsocketEnabled ? 'primary' : 'neutral')}>
+        <SettingsCard
+          dataSettingsCard="proxy-transport"
+          title={tr('pages.settings.codex')}
+          description={tr('pages.settings.defaultHttpTurnMetapiCodexRequestWebsocket')}
+          actions={(
+            <>
+              <ToneBadge tone={runtime.codexUpstreamWebsocketEnabled ? 'primary' : 'muted'}>
                 {proxyTransportModeLabel}
-              </span>
-              <span style={getSettingsPillStyle('neutral')}>
+              </ToneBadge>
+              <ToneBadge tone="muted">
                 {proxyTransportQueueLabel}
-              </span>
-            </div>
-          </div>
-          <label style={settingsModernToggleStyle}>
-            <div style={settingsModernToggleCopyStyle}>
-              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-secondary)' }}>允许 metapi 到 Codex 上游使用 WebSocket</span>
-              <span style={{ fontSize: 12, lineHeight: 1.7, color: 'var(--color-text-muted)' }}>
-                仅在下游 Codex 客户端已同步开启 `/v1/responses` websocket 时启用；否则仍按 HTTP 优先执行。
-              </span>
-            </div>
-            <input
-              type="checkbox"
-              checked={runtime.codexUpstreamWebsocketEnabled}
-              onChange={(e) => setRuntime((prev) => ({ ...prev, codexUpstreamWebsocketEnabled: e.target.checked }))}
-              style={{ width: 16, height: 16, marginTop: 2, flexShrink: 0 }}
-            />
-          </label>
-          <label style={settingsModernToggleStyle}>
-            <div style={settingsModernToggleCopyStyle}>
-              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-secondary)' }}>Compact 明确不支持时回退到普通 Responses</span>
-              <span style={{ fontSize: 12, lineHeight: 1.7, color: 'var(--color-text-muted)' }}>
-                仅对 `/v1/responses/compact` 生效。当上游明确返回 compact 不支持时，允许自动回退到普通 `/responses`。
-              </span>
-            </div>
-            <input
-              type="checkbox"
-              checked={runtime.responsesCompactFallbackToResponsesEnabled}
-              onChange={(e) => setRuntime((prev) => ({ ...prev, responsesCompactFallbackToResponsesEnabled: e.target.checked }))}
-              style={{ width: 16, height: 16, marginTop: 2, flexShrink: 0 }}
-            />
-          </label>
+              </ToneBadge>
+            </>
+          )}
+        >
+          <SettingsToggleRow
+            title={tr('pages.settings.metapiCodexUsageWebsocket')}
+            description={tr('pages.settings.codexClientSyncturnV1ResponsesWebsocketEnabled')}
+            checked={runtime.codexUpstreamWebsocketEnabled}
+            onCheckedChange={(checked) => setRuntime((prev) => ({ ...prev, codexUpstreamWebsocketEnabled: checked }))}
+          />
+          <SettingsToggleRow
+            title={tr('pages.settings.compactUnsupportedResponses')}
+            description={tr('pages.settings.compactUnsupportedFallbackDescription')}
+            checked={runtime.responsesCompactFallbackToResponsesEnabled}
+            onCheckedChange={(checked) => setRuntime((prev) => ({ ...prev, responsesCompactFallbackToResponsesEnabled: checked }))}
+          />
           <ResponsiveFormGrid columns={2}>
-            <div style={settingsModernFieldCardStyle}>
-              <div style={settingsModernFieldLabelStyle}>会话通道并发上限</div>
-              <input
+            <SettingsField
+              label={tr('pages.settings.targets')}
+              hint={tr('pages.settings.stableSessionIdRequestRequestLease')}
+            >
+              <Input
                 type="number"
                 min={0}
-                value={runtime.proxySessionChannelConcurrencyLimit}
+                value={runtime.proxySessionTargetConcurrencyLimit}
                 onChange={(e) => {
                   const nextValue = Number(e.target.value);
                   setRuntime((prev) => ({
                     ...prev,
-                    proxySessionChannelConcurrencyLimit: Number.isFinite(nextValue) && nextValue >= 0
+                    proxySessionTargetConcurrencyLimit: Number.isFinite(nextValue) && nextValue >= 0
                       ? Math.trunc(nextValue)
-                      : prev.proxySessionChannelConcurrencyLimit,
+                      : prev.proxySessionTargetConcurrencyLimit,
                   }));
                 }}
-                style={inputStyle}
               />
-              <div style={settingsModernFieldHintStyle}>
-                只作用于能识别稳定 `session_id` 的会话型请求；普通请求不会进入这组 lease 池。
-              </div>
-            </div>
-            <div style={settingsModernFieldCardStyle}>
-              <div style={settingsModernFieldLabelStyle}>排队等待时间（毫秒）</div>
-              <input
+            </SettingsField>
+            <SettingsField
+              label={tr('pages.settings.timeSeconds')}
+              hint={tr('pages.settings.timeTargetsRequest')}
+            >
+              <Input
                 type="number"
                 min={0}
                 step={100}
-                value={runtime.proxySessionChannelQueueWaitMs}
+                value={runtime.proxySessionTargetQueueWaitMs}
                 onChange={(e) => {
                   const nextValue = Number(e.target.value);
                   setRuntime((prev) => ({
                     ...prev,
-                    proxySessionChannelQueueWaitMs: Number.isFinite(nextValue) && nextValue >= 0
+                    proxySessionTargetQueueWaitMs: Number.isFinite(nextValue) && nextValue >= 0
                       ? Math.trunc(nextValue)
-                      : prev.proxySessionChannelQueueWaitMs,
+                      : prev.proxySessionTargetQueueWaitMs,
                   }));
                 }}
-                style={inputStyle}
               />
-              <div style={settingsModernFieldHintStyle}>
-                超过该时间仍拿不到会话通道时，本次请求会直接放弃排队，避免长期挂起。
-              </div>
-            </div>
+            </SettingsField>
           </ResponsiveFormGrid>
-          <div style={settingsModernActionsStyle}>
-            <button onClick={saveProxyTransportSettings} disabled={savingProxyTransport} className="btn btn-primary">
-              {savingProxyTransport ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 保存中...</> : '保存传输与并发'}
-            </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button type="button" onClick={saveProxyTransportSettings} disabled={savingProxyTransport}>
+              {savingProxyTransport ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.accounts.saving')}</> : tr('pages.settings.save')}
+            </Button>
           </div>
-        </div>
+        </SettingsCard>
 
-        <div className="card animate-slide-up stagger-4" style={settingsModernDangerCardStyle} data-settings-card="model-availability-probe">
-          <div style={settingsModernHeaderStyle}>
-            <div style={settingsModernTitleBlockStyle}>
-              <div style={{ ...settingsModernTitleStyle, color: 'var(--color-danger)' }}>批量测活</div>
-              <div style={settingsModernDescriptionStyle}>
-                默认关闭。开启后，metapi 会在后台定时对活跃账号模型发送最小化探测请求，用来校正“/models 能看到但实际不可用”的假阳性。
-              </div>
-            </div>
-            <div style={settingsModernPillRowStyle}>
-              <span style={getSettingsPillStyle(modelAvailabilityProbeStatusTone)}>
+        <SettingsCard
+          dataSettingsCard="model-availability-probe"
+          title={tr('pages.settings.batchHealthCheck')}
+          description={tr('pages.settings.defaultcloseTurnMetapiAccountModelsendRequestModels')}
+          actions={(
+            <>
+              <ToneBadge tone={modelAvailabilityProbeStatusTone === "danger" ? "danger" : modelAvailabilityProbeStatusTone === "warning" ? "warning" : "muted"}>
                 {modelAvailabilityProbeStatusLabel}
-              </span>
-              <span style={getSettingsPillStyle('danger')}>
-                高风险操作
-              </span>
+              </ToneBadge>
+              <ToneBadge tone="danger">
+                {tr('pages.settings.highRiskActions')}
+              </ToneBadge>
+            </>
+          )}
+        >
+          <Alert variant="destructive">
+            <AlertTitle>{tr('pages.settings.riskWarning')}</AlertTitle>
+            <AlertDescription>
+              {tr('pages.settings.batchHealthCheckRiskWarning')}
+            </AlertDescription>
+          </Alert>
+          <SettingsToggleRow
+            title={tr('pages.settings.metapiBatchHealthCheck')}
+            description={tr('pages.settings.closeTurnManualinputCloseSave')}
+            checked={runtime.modelAvailabilityProbeEnabled}
+            onCheckedChange={(checked) => setRuntime((prev) => ({ ...prev, modelAvailabilityProbeEnabled: checked }))}
+            tone="destructive"
+          />
+          <div className="grid gap-3 rounded-md border p-4">
+            <div className="text-xs font-semibold text-muted-foreground">{tr('pages.settings.status')}</div>
+            <div className="flex flex-wrap gap-2">
+              <ToneBadge tone={modelAvailabilityProbeStatusTone === "danger" ? "danger" : modelAvailabilityProbeStatusTone === "warning" ? "warning" : "muted"}>
+                {modelAvailabilityProbeStatusLabel}
+              </ToneBadge>
+            </div>
+            <div className="text-xs leading-relaxed text-muted-foreground">
+              {savedModelAvailabilityProbeEnabled
+                ? tr('pages.settings.requestModelavailable')
+                : tr('pages.settings.modelavailableRequest')}
             </div>
           </div>
-          <div
-            style={{
-              ...settingsModernCalloutStyle,
-              borderColor: 'color-mix(in srgb, var(--color-danger) 18%, var(--color-border-light))',
-              background: 'color-mix(in srgb, var(--color-danger-soft) 38%, var(--color-bg-card))',
-            }}
-          >
-            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-danger)' }}>风险提示</div>
-            <div style={{ fontSize: 12, lineHeight: 1.75, color: 'var(--color-text-secondary)' }}>
-              只有在你确认自己使用的中转站明确允许批量测活时才应该开启。若上游不允许，这类探测可能带来封号或风控风险。
-            </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button type="button" onClick={saveModelAvailabilityProbeSettings} disabled={savingModelAvailabilityProbe}>
+              {savingModelAvailabilityProbe ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.accounts.saving')}</> : tr('pages.settings.saveBatchHealthCheckSettings')}
+            </Button>
           </div>
-          <label style={settingsModernToggleStyle}>
-            <div style={settingsModernToggleCopyStyle}>
-              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-secondary)' }}>允许 metapi 后台主动批量测活</span>
-              <span style={{ fontSize: 12, lineHeight: 1.7, color: 'var(--color-text-muted)' }}>
-                首次从关闭切换到开启时，需要手动输入确认语句；关闭时可直接保存。
-              </span>
-            </div>
-            <input
-              type="checkbox"
-              checked={runtime.modelAvailabilityProbeEnabled}
-              onChange={(e) => setRuntime((prev) => ({ ...prev, modelAvailabilityProbeEnabled: e.target.checked }))}
-              style={{ width: 16, height: 16, marginTop: 2, flexShrink: 0 }}
-            />
-          </label>
-          <ResponsiveFormGrid columns={2}>
-            <div style={settingsModernFieldCardStyle}>
-              <div style={settingsModernFieldLabelStyle}>当前生效状态</div>
-              <div style={settingsModernPillRowStyle}>
-                <span style={getSettingsPillStyle(modelAvailabilityProbeStatusTone)}>
-                  {modelAvailabilityProbeStatusLabel}
-                </span>
-              </div>
-              <div style={settingsModernFieldHintStyle}>
-                {savedModelAvailabilityProbeEnabled
-                  ? '后台会定时执行最小化探测请求，用于校正模型可用性。'
-                  : '后台不会主动发起模型可用性探测请求。'}
-              </div>
-            </div>
-            <div style={settingsModernFieldCardStyle}>
-              <div style={settingsModernFieldLabelStyle}>启用门槛</div>
-              <div style={{ ...settingsModernFieldHintStyle, marginTop: 0 }}>
-                首次开启必须手动输入确认语句，避免误把高风险探测当成普通开关。
-              </div>
-            </div>
-          </ResponsiveFormGrid>
-          <div style={settingsModernActionsStyle}>
-            <button onClick={saveModelAvailabilityProbeSettings} disabled={savingModelAvailabilityProbe} className="btn btn-primary">
-              {savingModelAvailabilityProbe ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 保存中...</> : '保存批量测活设置'}
-            </button>
-          </div>
-        </div>
+        </SettingsCard>
 
-        <div className="card animate-slide-up stagger-4" style={{ padding: 20 }}>
-          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 8 }}>下游访问令牌（PROXY_TOKEN）</div>
-          <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 12 }}>
-            用于下游站点或客户端访问本服务代理接口。前缀 sk- 固定不可修改，只需填写后缀。
-          </div>
-          <code style={{ display: 'block', padding: '10px 14px', background: 'var(--color-bg)', borderRadius: 'var(--radius-sm)', fontSize: 13, fontFamily: 'var(--font-mono)', color: 'var(--color-text-secondary)', border: '1px solid var(--color-border-light)', marginBottom: 10 }}>
-            当前：{runtime.proxyTokenMasked || '未设置'}
-          </code>
-          <div
-            style={{
-              display: 'flex',
-              gap: 10,
-              alignItems: 'stretch',
-              marginBottom: 10,
-              minWidth: 0,
-              flexWrap: 'wrap',
-            }}
+        <SettingsCard title={tr('pages.settings.routingStrategy')} description={tr('pages.settings.selectStrategyExpandAdvancedParameters')}>
+          <SettingsField
+            label={tr('pages.settings.failedcooldown')}
+            hint={tr('pages.settings.supportedsecondsMinutesHoursDaysFailedRoundRobin')}
           >
-            <div
-              style={{
-                ...inputStyle,
-                flex: 1,
-                minWidth: 200,
-                marginBottom: 0,
-                padding: 0,
-                display: 'flex',
-                alignItems: 'center',
-                overflow: 'hidden',
-              }}
-            >
-              <span
-                style={{
-                  padding: '10px 12px',
-                  borderRight: '1px solid var(--color-border-light)',
-                  fontFamily: 'var(--font-mono)',
-                  fontSize: 13,
-                  color: 'var(--color-text-secondary)',
-                  userSelect: 'none',
-                  background: 'color-mix(in srgb, var(--color-text-muted) 6%, transparent)',
-                }}
-              >
-                {PROXY_TOKEN_PREFIX}
-              </span>
-              <input
-                type="text"
-                value={proxyTokenSuffix}
-                onChange={(e) => setProxyTokenSuffix(normalizeProxyTokenSuffix(e.target.value))}
-                placeholder="请输入 sk- 后的令牌内容"
-                style={{
-                  flex: 1,
-                  minWidth: 0,
-                  border: 'none',
-                  outline: 'none',
-                  background: 'transparent',
-                  color: 'var(--color-text-primary)',
-                  fontFamily: 'var(--font-mono)',
-                  fontSize: 13,
-                  padding: '10px 12px',
-                }}
-              />
-            </div>
-            <button
-              type="button"
-              className="btn btn-soft-primary"
-              aria-label="随机生成访问令牌后缀"
-              title="生成高熵随机后缀（不会自动保存）"
-              style={{
-                flexShrink: 0,
-                padding: '10px 18px',
-                fontSize: 13,
-                gap: 8,
-                alignSelf: 'stretch',
-              }}
-              onClick={() => {
-                const full = generateDownstreamSkKey(PROXY_TOKEN_PREFIX);
-                setProxyTokenSuffix(full.slice(PROXY_TOKEN_PREFIX.length));
-              }}
-            >
-              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} aria-hidden>
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456zM16.894 20.567L16.5 21.75l-.394-1.183a2.25 2.25 0 00-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 001.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 001.423 1.423l1.183.394-1.183.394a2.25 2.25 0 00-1.423 1.423z"
-                />
-              </svg>
-              随机生成
-            </button>
-          </div>
-          <button onClick={saveProxyToken} disabled={savingToken} className="btn btn-primary">
-            {savingToken ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 保存中...</> : '更新下游访问令牌'}
-          </button>
-        </div>
-
-        <div className="card animate-slide-up stagger-5" style={{ padding: 20 }}>
-          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 10 }}>路由策略</div>
-          <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 12 }}>
-            先选择预设策略，只有需要精调时再展开高级参数。
-          </div>
-          <div style={{ marginBottom: 12, maxWidth: 280 }}>
-            <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>
-                无实测/配置/目录价时默认单价
-            </div>
-            <input
-              type="number"
-              min={0.000001}
-              step={0.000001}
-              value={runtime.routingFallbackUnitCost}
-              onChange={(e) => {
-                const nextValue = Number(e.target.value);
-                setRuntime((prev) => ({
-                  ...prev,
-                  routingFallbackUnitCost: Number.isFinite(nextValue) && nextValue > 0 ? nextValue : prev.routingFallbackUnitCost,
-                }));
-              }}
-              style={inputStyle}
-            />
-          </div>
-          <div style={{ marginBottom: 12, maxWidth: 420 }}>
-            <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>
-              普通失败冷却上限
-            </div>
-            <div style={{ display: 'flex', gap: 10, alignItems: 'stretch', flexWrap: 'wrap' }}>
-              <input
+            <div className="flex flex-wrap items-center gap-2">
+              <Input
+                className="min-w-44 flex-1"
                 type="number"
-                aria-label="路由失败冷却上限数值"
+                aria-label={tr('pages.settings.routeFailureCooldownCap')}
                 min={1}
                 step={1}
                 value={runtime.routeFailureCooldownMaxValue}
@@ -2079,11 +1389,10 @@ export default function Settings() {
                     routeFailureCooldownMaxValue: Number.isFinite(nextValue) && nextValue > 0
                       ? Math.max(1, Math.trunc(nextValue))
                       : prev.routeFailureCooldownMaxValue,
-                  }));
-                }}
-                style={{ ...inputStyle, flex: '1 1 180px', marginBottom: 0 }}
+                    }));
+                  }}
               />
-              <div style={{ width: 132, minWidth: 132 }}>
+              <div className="w-36">
                 <ModernSelect
                   size="sm"
                   value={runtime.routeFailureCooldownMaxUnit}
@@ -2097,83 +1406,61 @@ export default function Settings() {
                     value: option.value,
                     label: option.label,
                   }))}
-                  placeholder="选择单位"
+                  placeholder={tr('pages.settings.selectUnit')}
                 />
               </div>
             </div>
-            <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 6, lineHeight: 1.6 }}>
-              支持秒、分钟、小时、天。只封顶普通失败与轮询分级冷却；429 限额类冷却仍优先遵循上游 reset 提示，避免过早重试。
-            </div>
-          </div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
-            <button
+          </SettingsField>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant="outline"
               onClick={() => applyRoutingPreset('balanced')}
-              className="btn btn-ghost"
-              style={{
-                border: activeRoutingProfile === 'balanced' ? '1px solid var(--color-primary)' : '1px solid var(--color-border)',
-                color: activeRoutingProfile === 'balanced' ? 'var(--color-primary)' : undefined,
-              }}
+             
+             
             >
-              均衡
-            </button>
-            <button
+              {tr('pages.settings.balanced')}
+            </Button>
+            <Button type="button" variant="outline"
               onClick={() => applyRoutingPreset('stable')}
-              className="btn btn-ghost"
-              style={{
-                border: activeRoutingProfile === 'stable' ? '1px solid var(--color-primary)' : '1px solid var(--color-border)',
-                color: activeRoutingProfile === 'stable' ? 'var(--color-primary)' : undefined,
-              }}
+             
+             
             >
-              稳定优先
-            </button>
-            <button
+              {tr('pages.settings.stableFirst')}
+            </Button>
+            <Button type="button" variant="outline"
               onClick={() => applyRoutingPreset('cost')}
-              className="btn btn-ghost"
-              style={{
-                border: activeRoutingProfile === 'cost' ? '1px solid var(--color-primary)' : '1px solid var(--color-border)',
-                color: activeRoutingProfile === 'cost' ? 'var(--color-primary)' : undefined,
-              }}
+             
+             
             >
-              成本优先
-            </button>
-            <button
+              {tr('pages.settings.cost')}
+            </Button>
+            <Button type="button" variant="outline"
               onClick={() => setShowAdvancedRouting((prev) => !prev)}
-              className="btn btn-ghost"
-              style={{ border: '1px solid var(--color-border)' }}
+             
+             
             >
-              {showAdvancedRouting ? '收起高级参数' : '展开高级参数'}
-            </button>
+              {showAdvancedRouting ? tr('pages.settings.closeAdvancedParameters') : tr('pages.settings.expandAdvancedParameters')}
+            </Button>
           </div>
 
-          <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 12, cursor: 'pointer' }}>
-            <input
-              type="checkbox"
-              checked={runtime.disableCrossProtocolFallback}
-              onChange={(e) => setRuntime((prev) => ({
-                ...prev,
-                disableCrossProtocolFallback: e.target.checked,
-              }))}
-              style={{ marginTop: 2 }}
-            />
-            <span>
-              <span style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>
-                失败时不尝试其他协议
-              </span>
-              <span style={{ display: 'block', fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.7 }}>
-                仅影响 chat / messages / responses 之间的协议切换；不会关闭同协议兼容重试、OAuth 刷新或通道级重试。
-              </span>
-            </span>
-          </label>
+          <SettingsToggleRow
+            title={tr('pages.settings.failedOtherprotocol')}
+            description={tr('pages.settings.chatMessagesResponsesProtocolCloseProtocolRetry')}
+            checked={runtime.disableCrossProtocolFallback}
+            onCheckedChange={(checked) => setRuntime((prev) => ({
+              ...prev,
+              disableCrossProtocolFallback: checked,
+            }))}
+          />
 
-          <div style={{ marginBottom: 12 }}>
-            <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>
-              首字超时（无首包 / 首 token）
-            </div>
-            <input
+          <SettingsField
+            label={tr('pages.settings.ttfttimeOutNoneToken')}
+            hint={tr('pages.settings.ttftTimeoutDescription')}
+          >
+            <Input
               type="number"
               min={0}
               step={1}
-              aria-label="首字超时秒数"
+              aria-label={tr('pages.settings.ttfttimeOutseconds')}
               value={runtime.proxyFirstByteTimeoutSec}
               onChange={(e) => {
                 const nextValue = Number(e.target.value);
@@ -2184,26 +1471,21 @@ export default function Settings() {
                     : prev.proxyFirstByteTimeoutSec,
                 }));
               }}
-              style={inputStyle}
             />
-            <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.7, marginTop: 6 }}>
-              `0` 表示关闭。只有在指定时间内完全没有任何首包 / 首 token 返回时才切换，已经开始输出的请求不会被这项超时打断。
-            </div>
-          </div>
+          </SettingsField>
 
           <div className={`anim-collapse ${showAdvancedRouting ? 'is-open' : ''}`.trim()}>
-            <div className="anim-collapse-inner" style={{ paddingTop: 2 }}>
-              <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 12 }}>
+            <div className="anim-collapse-inner pt-0.5">
+              <div className="grid gap-3 md:grid-cols-2">
               {([
-                ['baseWeightFactor', '基础权重因子'],
-                ['valueScoreFactor', '价值分因子'],
-                ['costWeight', '成本权重'],
-                ['balanceWeight', '余额权重'],
-                ['usageWeight', '使用频次权重'],
+                ['baseWeightFactor', tr('pages.settings.basicWeightFactor')],
+                ['valueScoreFactor', tr('pages.settings.valueFactor')],
+                ['costWeight', tr('pages.settings.costWeight')],
+                ['balanceWeight', tr('pages.settings.balanceWeight')],
+                ['usageWeight', tr('pages.settings.useFrequencyWeight')],
               ] as Array<[keyof RoutingWeights, string]>).map(([key, label]) => (
-                <div key={key}>
-                  <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>{label}</div>
-                  <input
+                <SettingsField key={key} label={label}>
+                  <Input
                     type="number"
                     min={0}
                     step={0.1}
@@ -2218,32 +1500,71 @@ export default function Settings() {
                         },
                       }));
                     }}
-                    style={inputStyle}
                   />
-                </div>
+                </SettingsField>
               ))}
               </div>
             </div>
           </div>
 
-          <div style={{ marginTop: 12 }}>
-            <button onClick={saveRouting} disabled={savingRouting} className="btn btn-primary">
-              {savingRouting ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 保存中...</> : '保存路由策略'}
-            </button>
+          <div>
+            <Button type="button" onClick={saveRouting} disabled={savingRouting}>
+              {savingRouting ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.accounts.saving')}</> : tr('pages.settings.saveRoutingPolicy')}
+            </Button>
           </div>
-        </div>
+        </SettingsCard>
+          </SettingsSection>
+
+          <SettingsSection
+            id="settings-access"
+            title={tr('pages.settings.accessAndSecurity')}
+            description={tr('pages.settings.accessAndSecurityDescription')}
+          >
+        <SettingsCard
+          title={tr('pages.settings.downstreamAccessTokenProxyToken')}
+          description={tr('pages.settings.usedDownstreamSitesClientsAccessServiceProxy')}
+        >
+          <SettingsCode>
+            {tr('pages.settings.current')}{runtime.proxyTokenMasked || tr('pages.notificationSettings.notSet')}
+          </SettingsCode>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex min-w-0 flex-1 items-center rounded-md border">
+              <span className="border-r px-3 py-2 font-mono text-sm text-muted-foreground">
+                {PROXY_TOKEN_PREFIX}
+              </span>
+              <Input
+                type="text"
+                value={proxyTokenSuffix}
+                onChange={(e) => setProxyTokenSuffix(normalizeProxyTokenSuffix(e.target.value))}
+                placeholder={tr('pages.settings.enterTokenContentAfterSk')}
+                className="min-w-0 flex-1 border-0 font-mono shadow-none focus-visible:ring-0"
+              />
+            </div>
+            <Button
+              type="button"
+              aria-label={tr('pages.settings.generateRandomlyaccessToken')}
+              title={tr('pages.settings.highRandomAutomaticsave')}
+              onClick={() => {
+                const full = generateDownstreamSkKey(PROXY_TOKEN_PREFIX);
+                setProxyTokenSuffix(full.slice(PROXY_TOKEN_PREFIX.length));
+              }}
+            >
+              <KeyRound className="size-4" />
+              {tr('pages.settings.generateRandomly')}
+            </Button>
+          </div>
+          <Button type="button" onClick={saveProxyToken} disabled={savingToken}>
+            {savingToken ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.accounts.saving')}</> : tr('pages.settings.updateDownstreamAccessToken')}
+          </Button>
+        </SettingsCard>
 
         {/* Global Brand Filter */}
-        <div className="card animate-slide-up stagger-6" style={{ padding: 20 }}>
-          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 8 }}>全局品牌屏蔽</div>
-          <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 12, lineHeight: 1.6 }}>
-            屏蔽选定品牌后，路由重建时将自动跳过匹配该品牌的所有模型。点击品牌切换屏蔽状态，保存后自动触发路由重建。
-          </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
+        <SettingsCard title={tr('pages.settings.brands2')} description={tr('pages.settings.blockedBrandsDescription')}>
+          <div className="flex flex-wrap gap-2">
             {(allBrandNames || []).map((brand) => {
               const isBlocked = blockedBrands.includes(brand);
               return (
-                <button
+                <Button
                   key={brand}
                   type="button"
                   role="switch"
@@ -2255,44 +1576,38 @@ export default function Settings() {
                       setBlockedBrands((prev) => [...prev, brand]);
                     }
                   }}
-                  className={`badge ${isBlocked ? 'badge-warning' : 'badge-muted'}`}
-                  style={{
-                    fontSize: 12, cursor: 'pointer', border: 'none', padding: '5px 12px',
-                    transition: 'all 0.15s ease',
-                  }}
+                  className="h-auto"
+                  variant={isBlocked ? 'secondary' : 'outline'}
+                  size="sm"
                 >
                   {brand}
-                </button>
+                </Button>
               );
             })}
             {allBrandNames === null && (
-              <span style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>加载品牌列表中...</span>
+              <span className="text-sm text-muted-foreground">{tr('pages.settings.loadingBrands')}</span>
             )}
             {allBrandNames !== null && allBrandNames.length === 0 && (
-              <span style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>暂无可用品牌</span>
+              <span className="text-sm text-muted-foreground">{tr('pages.settings.noneavailablebrands')}</span>
             )}
           </div>
           {blockedBrands.length > 0 && (
-            <div style={{ fontSize: 12, color: 'var(--color-warning)', marginBottom: 10 }}>
-              已屏蔽 {blockedBrands.length} 个品牌：{blockedBrands.join('、')}
+            <div className="text-sm text-muted-foreground">
+              {tr('pages.settings.blocked')} {blockedBrands.length} {tr('pages.settings.brands')}{blockedBrands.join('、')}
             </div>
           )}
-          <button onClick={handleSaveBrandFilter} disabled={savingBrandFilter} className="btn btn-primary" style={{ fontSize: 12, padding: '6px 16px' }}>
-            {savingBrandFilter ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 保存中...</> : '保存品牌屏蔽'}
-          </button>
-        </div>
+          <Button type="button" onClick={handleSaveBrandFilter} disabled={savingBrandFilter}>
+            {savingBrandFilter ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.accounts.saving')}</> : tr('pages.settings.saveBlockedBrands')}
+          </Button>
+        </SettingsCard>
 
         {/* Global Allowed Models Whitelist */}
-        <div className="card animate-slide-up stagger-7" style={{ padding: 20 }}>
-          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 8 }}>全局模型白名单</div>
-          <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 12, lineHeight: 1.6 }}>
-            配置白名单后，路由重建和候选生成将只针对白名单中的模型。留空表示允许所有模型（向后兼容）。保存后自动触发路由重建。
-          </div>
-          <div style={{ marginBottom: 12 }}>
-            <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-              <input
+        <SettingsCard title={tr('pages.settings.model')} description={tr('pages.settings.modelWhitelistDescription')}>
+          <div className="grid gap-3">
+            <div className="flex gap-2">
+              <Input
                 type="text"
-                placeholder="输入模型名称，如：gpt-4"
+                placeholder={tr('pages.settings.inputmodelNameGpt4')}
                 value={allowedModelsInput}
                 onChange={(e) => setAllowedModelsInput(e.target.value)}
                 onKeyDown={(e) => {
@@ -2304,9 +1619,9 @@ export default function Settings() {
                     setAllowedModelsInput('');
                   }
                 }}
-                style={{ flex: 1, ...inputStyle }}
+                className="flex-1"
               />
-              <button
+              <Button type="button" variant="outline"
                 onClick={() => {
                   if (allowedModelsInput.trim()) {
                     const model = allowedModelsInput.trim();
@@ -2316,22 +1631,22 @@ export default function Settings() {
                     setAllowedModelsInput('');
                   }
                 }}
-                className="btn btn-ghost"
-                style={{ border: '1px solid var(--color-border)', fontSize: 12, padding: '6px 12px' }}
+               
+               
               >
-                添加
-              </button>
+                {tr('pages.oAuthManagement.add')}
+              </Button>
             </div>
             {availableModels && availableModels.length > 0 && (
-              <div style={{ marginBottom: 12 }}>
-                <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>
-                  或从当前可用模型中选择：
+              <div className="grid gap-2">
+                <div className="text-xs text-muted-foreground">
+                  {tr('pages.settings.availableModelSelectHint')}
                 </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, maxHeight: 120, overflowY: 'auto', border: '1px solid var(--color-border)', padding: 8, borderRadius: 4 }}>
+                <div className="flex max-h-32 flex-wrap gap-2 overflow-y-auto rounded-md border p-2">
                   {availableModels.map((model) => {
                     const isAllowed = allowedModels.includes(model);
                     return (
-                      <button
+                      <Button
                         key={model}
                         type="button"
                         onClick={() => {
@@ -2341,65 +1656,92 @@ export default function Settings() {
                             setAllowedModels((prev) => [...prev, model]);
                           }
                         }}
-                        className={`badge ${isAllowed ? 'badge-success' : 'badge-muted'}`}
-                        style={{
-                          fontSize: 11, cursor: 'pointer', border: 'none', padding: '4px 10px',
-                          transition: 'all 0.15s ease',
-                        }}
+                        className="h-auto"
+                        variant={isAllowed ? 'secondary' : 'outline'}
+                        size="sm"
                       >
                         {model}
-                      </button>
+                      </Button>
                     );
                   })}
                 </div>
               </div>
             )}
             {allowedModels.length > 0 && (
-              <div>
-                <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>
-                  已选择 {allowedModels.length} 个模型：
+              <div className="grid gap-2">
+                <div className="text-xs text-muted-foreground">
+                  {tr('pages.oAuthManagement.selected')} {allowedModels.length} {tr('pages.settings.models')}
                 </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                <div className="flex flex-wrap gap-2">
                   {allowedModels.map((model) => (
-                    <div
-                      key={model}
-                      className="badge badge-success"
-                      style={{ fontSize: 11, padding: '4px 10px', display: 'flex', alignItems: 'center', gap: 4 }}
-                    >
+                    <ToneBadge key={model} tone="success">
                       {model}
-                      <button
+                      <Button
+                        type="button"
                         onClick={() => setAllowedModels((prev) => prev.filter((m) => m !== model))}
-                        style={{
-                          background: 'none',
-                          border: 'none',
-                          color: 'inherit',
-                          cursor: 'pointer',
-                          padding: 0,
-                          fontSize: 14,
-                          lineHeight: 1,
-                        }}
-                        title="移除"
+                        variant="ghost"
+                        size="icon"
+                        title={tr('pages.settings.remove')}
                       >
                         ×
-                      </button>
-                    </div>
+                      </Button>
+                    </ToneBadge>
                   ))}
                 </div>
               </div>
             )}
           </div>
-          <button onClick={handleSaveAllowedModels} disabled={savingAllowedModels} className="btn btn-primary" style={{ fontSize: 12, padding: '6px 16px' }}>
-            {savingAllowedModels ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 保存中...</> : '保存模型白名单'}
-          </button>
-        </div>
+          <Button type="button" onClick={handleSaveAllowedModels} disabled={savingAllowedModels}>
+            {savingAllowedModels ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.accounts.saving')}</> : tr('pages.settings.saveModelWhitelist')}
+          </Button>
+        </SettingsCard>
 
-        <div className="card animate-slide-up stagger-8" style={{ padding: 20 }}>
-          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 10 }}>数据库迁移（SQLite / MySQL / PostgreSQL）</div>
-          <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 12 }}>
-            可先测试连接，再迁移数据；迁移完成后可保存为运行数据库配置（重启容器后生效）。
+        <SettingsCard
+          title={tr('pages.settings.sessionSecurity')}
+          description={tr('pages.settings.signDefault12HoursautomaticexpiredConfigurationmanagementIpWhitelist')}
+        >
+          <SettingsField label={tr('pages.settings.ip')}>
+          <SettingsCode>
+            {runtime.currentAdminIp || tr('pages.accounts.unknown2')}
+          </SettingsCode>
+          </SettingsField>
+          <SettingsField label={tr('pages.settings.managementIpWhitelist')}>
+          <Textarea
+            className="font-mono"
+            value={adminIpAllowlistText}
+            onChange={(e) => setAdminIpAllowlistText(e.target.value)}
+            placeholder={tr('pages.settings.cidrIp1921681024')}
+            rows={4}
+          />
+          </SettingsField>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" onClick={saveSecuritySettings} disabled={savingSecurity}>
+              {savingSecurity ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.accounts.saving')}</> : tr('pages.settings.saveSecuritySettings')}
+            </Button>
+            <Button type="button" variant="destructive"
+              onClick={() => {
+                clearAuthSession(localStorage);
+                window.location.reload();
+              }}
+            >
+              {tr('app.signOut')}
+            </Button>
           </div>
+        </SettingsCard>
+          </SettingsSection>
 
-          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '180px 1fr', gap: 10, marginBottom: 10, alignItems: 'center' }}>
+          <SettingsSection
+            id="settings-maintenance"
+            title={tr('pages.settings.maintenanceAndData')}
+            description={tr('pages.settings.maintenanceAndDataDescription')}
+          >
+
+        <SettingsCard
+          title={tr('pages.settings.sqliteMysqlPostgresql')}
+          description={tr('pages.settings.testConnectionSaveConfiguration')}
+        >
+
+          <div className="grid items-center gap-3 md:grid-cols-[180px_1fr]">
             <ModernSelect
               value={migrationDialect}
               onChange={(value) => setMigrationDialect(value as DbDialect)}
@@ -2409,221 +1751,260 @@ export default function Settings() {
                 { value: 'sqlite', label: 'SQLite' },
               ]}
             />
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8 }}>
+            <div className="flex justify-end gap-2">
               {migrationDialect !== 'sqlite' && (
-                <button
-                  className="btn btn-ghost"
-                  style={{ border: '1px solid var(--color-border)' }}
+                <Button type="button" variant="outline"
+                 
+                 
                   onClick={() => setConnectionMode((prev) => (prev === 'shorthand' ? 'advanced' : 'shorthand'))}
                 >
-                  {connectionMode === 'shorthand' ? '高级输入连接串' : '使用半自动简写'}
-                </button>
+                  {connectionMode === 'shorthand' ? tr('pages.settings.advancedInputConnectionString') : tr('pages.settings.usageAutomatic')}
+                </Button>
               )}
             </div>
           </div>
 
           {migrationDialect === 'sqlite' ? (
-            <input
+            <Input
+              className="font-mono"
               value={migrationConnectionString}
               onChange={(e) => setMigrationConnectionString(e.target.value)}
               placeholder="./data/target.db or file:///abs/path.db"
-              style={{ ...inputStyle, fontFamily: 'var(--font-mono)', marginBottom: 10 }}
             />
           ) : connectionMode === 'advanced' ? (
-            <input
+            <Input
+              className="font-mono"
               value={migrationConnectionString}
               onChange={(e) => setMigrationConnectionString(e.target.value)}
               placeholder={migrationDialect === 'mysql'
                 ? 'mysql://user:pass@host:3306/db'
                 : 'postgres://user:pass@host:5432/db'}
-              style={{ ...inputStyle, fontFamily: 'var(--font-mono)', marginBottom: 10 }}
             />
           ) : (
-            <div style={{ marginBottom: 10 }}>
-              <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr 1fr', gap: 10, marginBottom: 8 }}>
-                <input
+            <div className="grid gap-3">
+              <div className="grid gap-3 md:grid-cols-3">
+                <Input
                   value={shorthandConnection.host}
                   onChange={(e) => setShorthandConnection((prev) => ({ ...prev, host: e.target.value }))}
                   placeholder="Host (required)"
-                  style={inputStyle}
                 />
-                <input
+                <Input
                   value={shorthandConnection.user}
                   onChange={(e) => setShorthandConnection((prev) => ({ ...prev, user: e.target.value }))}
                   placeholder="User (required)"
-                  style={inputStyle}
                 />
-                <input
+                <Input
                   value={shorthandConnection.password}
                   onChange={(e) => setShorthandConnection((prev) => ({ ...prev, password: e.target.value }))}
                   placeholder="Password (required)"
                   type="password"
-                  style={inputStyle}
                 />
               </div>
-              <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-                <button
-                  className="btn btn-ghost"
-                  style={{ border: '1px solid var(--color-border)' }}
+              <div className="flex gap-2">
+                <Button type="button" variant="outline"
+                 
+                 
                   onClick={() => setShowShorthandOptional((prev) => !prev)}
                 >
-                  {showShorthandOptional ? '收起端口/库名' : '展开端口/库名'}
-                </button>
+                  {showShorthandOptional ? tr('pages.settings.collapseport') : tr('pages.settings.expandport')}
+                </Button>
               </div>
               {showShorthandOptional && (
-                <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 10, marginBottom: 8 }}>
-                  <input
+                <div className="grid gap-3 md:grid-cols-2">
+                  <Input
                     value={shorthandConnection.port}
                     onChange={(e) => setShorthandConnection((prev) => ({ ...prev, port: e.target.value }))}
                     placeholder={getDialectDefaults(migrationDialect).port}
-                    style={inputStyle}
                   />
-                  <input
+                  <Input
                     value={shorthandConnection.database}
                     onChange={(e) => setShorthandConnection((prev) => ({ ...prev, database: e.target.value }))}
                     placeholder={getDialectDefaults(migrationDialect).database}
-                    style={inputStyle}
                   />
                 </div>
               )}
-              <code style={{ display: 'block', padding: '10px 14px', background: 'var(--color-bg)', borderRadius: 'var(--radius-sm)', fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--color-text-secondary)', border: '1px solid var(--color-border-light)' }}>
+              <SettingsCode>
                 {generatedConnectionString || 'Fill host/user/password to generate connection string'}
-              </code>
+              </SettingsCode>
             </div>
           )}
 
-          {migrationDialect !== 'sqlite' && (
-            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, marginBottom: 12, fontSize: 12, color: 'var(--color-text-secondary)' }}>
-              <input
-                type="checkbox"
+          <div className="grid gap-2 md:grid-cols-2">
+            {migrationDialect !== 'sqlite' && (
+              <SettingsToggleRow
+                title={tr('pages.settings.enableSslTlsEncryptedConnection')}
                 checked={migrationSsl}
-                onChange={(e) => setMigrationSsl(e.target.checked)}
-                style={{ width: 14, height: 14, accentColor: 'var(--color-primary)' }}
+                onCheckedChange={setMigrationSsl}
+                className="p-3"
               />
-              启用 SSL/TLS 加密连接
-            </label>
-          )}
-
-          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, marginBottom: 12, fontSize: 12, color: 'var(--color-text-secondary)' }}>
-            <input
-              type="checkbox"
+            )}
+            <SettingsToggleRow
+              title={tr('pages.settings.allowOverwritingExistingDataTargetDatabase')}
               checked={migrationOverwrite}
-              onChange={(e) => setMigrationOverwrite(e.target.checked)}
-              style={{ width: 14, height: 14, accentColor: 'var(--color-primary)' }}
+              onCheckedChange={setMigrationOverwrite}
+              className="p-3"
             />
-            允许覆盖目标数据库现有数据
-          </label>
+          </div>
 
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
-            <button
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant="outline"
               onClick={handleTestExternalDatabaseConnection}
               disabled={testingMigrationConnection || migratingDatabase || savingRuntimeDatabase}
-              className="btn btn-ghost"
-              style={{ border: '1px solid var(--color-border)' }}
+             
+             
             >
-              {testingMigrationConnection ? <><span className="spinner spinner-sm" /> 测试中...</> : '测试连接'}
-            </button>
-            <button
+              {testingMigrationConnection ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.settings.testing')}</> : tr('pages.settings.testConnection')}
+            </Button>
+            <Button type="button"
               onClick={handleMigrateToExternalDatabase}
               disabled={migratingDatabase || testingMigrationConnection || savingRuntimeDatabase}
-              className="btn btn-primary"
+             
             >
-              {migratingDatabase ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 迁移中...</> : '开始迁移'}
-            </button>
-            <button
+              {migratingDatabase ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.settings.migrating')}</> : tr('pages.settings.startMigration')}
+            </Button>
+            <Button type="button" variant="outline"
               onClick={handleSaveRuntimeDatabaseConfig}
               disabled={savingRuntimeDatabase || migratingDatabase || testingMigrationConnection}
-              className="btn btn-ghost"
-              style={{ border: '1px solid var(--color-border)' }}
+             
+             
             >
-              {savingRuntimeDatabase ? <><span className="spinner spinner-sm" /> 保存中...</> : '保存为运行数据库（重启后生效）'}
-            </button>
+              {savingRuntimeDatabase ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.accounts.saving')}</> : tr('pages.settings.save6')}
+            </Button>
           </div>
 
           {runtimeDatabaseState && (
-            <div style={{ border: '1px solid var(--color-border-light)', borderRadius: 'var(--radius-sm)', padding: 10, fontSize: 12, color: 'var(--color-text-secondary)', lineHeight: 1.8, marginBottom: migrationSummary ? 12 : 0 }}>
-              <div>当前运行：{runtimeDatabaseState.active.dialect}（{runtimeDatabaseState.active.connection || '(empty)' }）{runtimeDatabaseState.active.ssl && ' [SSL]'}</div>
+            <div className="grid gap-1 rounded-md border p-3 text-sm text-muted-foreground">
+              <div>{tr('pages.settings.currentlyRunning')}{runtimeDatabaseState.active.dialect}（{runtimeDatabaseState.active.connection || '(empty)' }）{runtimeDatabaseState.active.ssl && ' [SSL]'}</div>
               <div>
-                已保存待生效：
+                {tr('pages.settings.save2')}
                 {runtimeDatabaseState.saved
                   ? ` ${runtimeDatabaseState.saved.dialect}（${runtimeDatabaseState.saved.connection}）${runtimeDatabaseState.saved.ssl ? ' [SSL]' : ''}`
-                  : ' 未保存'}
+                  : tr('pages.settings.save4')}
               </div>
               {runtimeDatabaseState.restartRequired && (
-                <div style={{ color: 'var(--color-warning)' }}>检测到待生效数据库配置，请重启容器使其生效。</div>
+                <div>{tr('pages.settings.configuration')}</div>
               )}
             </div>
           )}
 
           {migrationSummary && (
-            <div style={{ border: '1px solid var(--color-border-light)', borderRadius: 'var(--radius-sm)', padding: 10, fontSize: 12, color: 'var(--color-text-secondary)', lineHeight: 1.8 }}>
-              <div>目标：{migrationSummary.dialect}（{migrationSummary.connection}）</div>
-              <div>版本：{migrationSummary.version}，时间：{new Date(migrationSummary.timestamp).toLocaleString()}</div>
-              <div>迁移结果：站点 {migrationSummary.rows.sites} / 账号 {migrationSummary.rows.accounts} / 令牌 {migrationSummary.rows.accountTokens} / 路由 {migrationSummary.rows.tokenRoutes} / 通道 {migrationSummary.rows.routeChannels} / 设置 {migrationSummary.rows.settings}</div>
+            <div className="grid gap-1 rounded-md border p-3 text-sm text-muted-foreground">
+              <div>{tr('pages.settings.target')}{migrationSummary.dialect}（{migrationSummary.connection}）</div>
+              <div>{tr('pages.importExport.version')}{migrationSummary.version}{tr('pages.importExport.time')}{new Date(migrationSummary.timestamp).toLocaleString()}</div>
+              <div>{tr('pages.settings.sites')} {migrationSummary.rows.sites} {tr('pages.importExport.accounts')} {migrationSummary.rows.accounts} {tr('pages.importExport.token')} {migrationSummary.rows.accountTokens} {tr('pages.importExport.routes')} {migrationSummary.rows.tokenRoutes} {tr('pages.importExport.targets')} {migrationSummary.rows.routeEndpointTargets} {tr('pages.importExport.settings')} {migrationSummary.rows.settings}</div>
             </div>
           )}
-        </div>
+        </SettingsCard>
 
         <UpdateCenterSection />
 
-        <div className="card animate-slide-up stagger-6" style={{ padding: 20 }}>
-          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 12 }}>维护工具</div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <button onClick={handleClearCache} disabled={clearingCache} className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }}>
-              {clearingCache ? <><span className="spinner spinner-sm" /> 清理中...</> : '清除缓存并重建路由'}
-            </button>
-            <button onClick={handleClearUsage} disabled={clearingUsage} className="btn btn-link btn-link-warning">
-              {clearingUsage ? <><span className="spinner spinner-sm" /> 清理中...</> : '清除占用与使用日志'}
-            </button>
+        <SettingsCard title={tr('pages.settings.maintenanceTools')}>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant="outline" onClick={handleClearCache} disabled={clearingCache}>
+              {clearingCache ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.settings.clearing')}</> : tr('pages.settings.clearCacheRebuildRoutes')}
+            </Button>
+            <Button type="button" variant="secondary" size="sm" onClick={handleClearUsage} disabled={clearingUsage}>
+              {clearingUsage ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.settings.clearing')}</> : tr('pages.settings.clearOccupancyUsageLogs')}
+            </Button>
           </div>
+        </SettingsCard>
+
+        <SettingsCard title={tr('pages.settings.actions')}>
+          <Alert variant="destructive">
+            <AlertTitle>{tr('pages.settings.riskWarning')}</AlertTitle>
+            <AlertDescription>
+              {tr('pages.settings.factoryResetDescription')}
+            </AlertDescription>
+          </Alert>
+          <div className="text-sm text-muted-foreground">
+            {tr('pages.settings.adminTokenReset')} <code className="font-mono">{FACTORY_RESET_ADMIN_TOKEN}</code>{tr('pages.settings.refresh')}
+          </div>
+          <Button type="button" variant="destructive" onClick={() => setFactoryResetOpen(true)}>
+            {tr('pages.settings.system')}
+          </Button>
+        </SettingsCard>
+
+          </SettingsSection>
         </div>
 
-        <div className="card animate-slide-up stagger-7" style={{ padding: 20, border: '1px solid color-mix(in srgb, var(--color-danger) 30%, var(--color-border))' }}>
-          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 10, color: 'var(--color-danger)' }}>危险操作</div>
-          <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.8, marginBottom: 12 }}>
-            重新初始化系统会清空当前 metapi 使用中的全部数据库内容；若当前运行在外部 MySQL/Postgres，也会先清空该外部库中的 metapi 数据，然后切回默认 SQLite。
-          </div>
-          <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.8, marginBottom: 14 }}>
-            完成后管理员 Token 会重置为 <code style={{ fontFamily: 'var(--font-mono)' }}>{FACTORY_RESET_ADMIN_TOKEN}</code>，当前会话会立即退出并刷新页面。
-          </div>
-          <button onClick={() => setFactoryResetOpen(true)} className="btn btn-danger">
-            重新初始化系统
-          </button>
-        </div>
+        <aside className="sticky top-[calc(var(--topbar-height)+1rem)] hidden max-h-[calc(100dvh-var(--topbar-height)-2rem)] overflow-y-auto xl:block">
+          <div className="pl-1">
+            <div className="mb-3 grid gap-1">
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-sm font-semibold">{tr('pages.settings.settingsMap')}</div>
+                <ToneBadge tone="-muted" className="shrink-0 tabular-nums">
+                  {settingsNavItems.length}
+                </ToneBadge>
+              </div>
+              <p className="text-xs leading-relaxed text-muted-foreground">{tr('pages.settings.settingsMapDescription')}</p>
+            </div>
 
-        <div className="card animate-slide-up stagger-7" style={{ padding: 20 }}>
-          <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 10 }}>会话与安全</div>
-          <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 12 }}>
-            登录会话默认 12 小时自动过期。可选配置管理端 IP 白名单，支持每行一个 IP 或 IPv4 CIDR 网段。
-          </div>
-          <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 6 }}>
-            当前识别到的管理端 IP（由服务端判定）：
-          </div>
-          <code style={{ display: 'block', padding: '10px 14px', background: 'var(--color-bg)', borderRadius: 'var(--radius-sm)', fontSize: 13, fontFamily: 'var(--font-mono)', color: 'var(--color-text-secondary)', border: '1px solid var(--color-border-light)', marginBottom: 10 }}>
-            {runtime.currentAdminIp || '未知'}
-          </code>
-          <textarea
-            value={adminIpAllowlistText}
-            onChange={(e) => setAdminIpAllowlistText(e.target.value)}
-            placeholder={'例如：\n127.0.0.1\n192.168.1.10\n192.168.1.0/24'}
-            rows={4}
-            style={{ ...inputStyle, fontFamily: 'var(--font-mono)', resize: 'vertical', marginBottom: 10 }}
-          />
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <button onClick={saveSecuritySettings} disabled={savingSecurity} className="btn btn-primary">
-              {savingSecurity ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 保存中...</> : '保存安全设置'}
-            </button>
-            <button
-              onClick={() => {
-                clearAuthSession(localStorage);
-                window.location.reload();
-              }}
-              className="btn btn-danger"
+            <nav
+              className="relative grid gap-1"
+              aria-label={tr('pages.settings.settingsMap')}
             >
-              退出登录
-            </button>
+              {settingsNavItems.map((item) => {
+                const active = item.id === activeSettingsSection;
+                const Icon = item.icon;
+                return (
+                  <a
+                    key={item.href}
+                    href={item.href}
+                    aria-current={active ? 'location' : undefined}
+                    onClick={() => setActiveSettingsSection(item.id)}
+                    className={cn(
+                      'group grid grid-cols-[1.75rem_minmax(0,1fr)] gap-2 rounded-md px-2 py-2 transition-colors',
+                      active
+                        ? 'bg-accent text-accent-foreground'
+                        : 'text-muted-foreground hover:bg-accent/60 hover:text-accent-foreground',
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        'grid size-7 place-items-center rounded-md border transition-colors',
+                        active
+                          ? 'border-primary/40 bg-primary text-primary-foreground'
+                          : 'bg-background text-muted-foreground group-hover:text-foreground',
+                      )}
+                    >
+                      <Icon className="size-4" />
+                    </span>
+                    <span className="grid min-w-0 gap-0.5">
+                      <span className={cn('truncate text-sm font-medium', active && 'font-semibold')}>
+                        {item.title}
+                      </span>
+                      <span className="line-clamp-2 text-xs leading-relaxed text-muted-foreground">{item.description}</span>
+                    </span>
+                  </a>
+                );
+              })}
+            </nav>
+
+            <div className="mt-5 border-t pt-4">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <div className="text-sm font-medium">{tr('pages.settings.status')}</div>
+                {runtimeDatabaseState?.restartRequired ? (
+                  <ToneBadge tone="-warning" className="shrink-0">
+                    {tr('pages.settings.restartRequired')}
+                  </ToneBadge>
+                ) : null}
+              </div>
+              <div className="grid gap-1 text-xs">
+                {settingsStatusItems.map((item) => (
+                  <div key={item.label} className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-md px-2 py-1.5">
+                    <span className="grid size-6 place-items-center rounded-md border bg-background text-muted-foreground">
+                      {item.icon}
+                    </span>
+                    <span className="min-w-0 truncate text-muted-foreground">{item.label}</span>
+                    <ToneBadge tone={item.tone} className="max-w-28 shrink-0 truncate">
+                      {item.value}
+                    </ToneBadge>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
-        </div>
+        </aside>
       </div>
       <FactoryResetModal
         presence={factoryResetPresence}
@@ -2642,6 +2023,6 @@ export default function Settings() {
         onClose={closeModelAvailabilityProbeConfirmModal}
         onConfirm={handleConfirmModelAvailabilityProbe}
       />
-    </div>
+    </PageShell>
   );
 }

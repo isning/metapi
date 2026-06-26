@@ -82,7 +82,7 @@ describe('ProgramLogs mobile layout', () => {
       });
       await flushMicrotasks();
 
-      const cards = root!.root.findAll((node) => node.props?.className === 'mobile-card');
+      const cards = root!.root.findAll((node) => node.type === 'div' && node.props?.['data-mobile-list-item'] === 'true');
       expect(cards.length).toBeGreaterThan(0);
       expect(collectText(root!.root)).toContain('同步完成');
       expect(collectText(root!.root)).toContain('筛选');

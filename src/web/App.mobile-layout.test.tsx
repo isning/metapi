@@ -52,12 +52,24 @@ vi.mock('./components/useAnimatedVisibility.js', () => ({
   }),
 }));
 
+const { translate } = vi.hoisted(() => {
+  const i18nLabels: Record<string, string> = {
+    'app.opennavigate': '打开导航',
+    'app.closenavigate': '关闭导航',
+    'app.navigate': '导航菜单',
+  };
+  return {
+    translate: (text: string) => i18nLabels[text] || text,
+  };
+});
+
 vi.mock('./i18n.js', () => ({
+  tr: translate,
   I18nProvider: ({ children }: { children: ReactNode }) => children,
   useI18n: () => ({
     language: 'zh',
     toggleLanguage: vi.fn(),
-    t: (text: string) => text,
+    t: translate,
   }),
 }));
 

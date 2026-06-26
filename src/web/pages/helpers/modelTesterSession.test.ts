@@ -13,7 +13,7 @@ import {
   buildGeminiNativeConversationProxyEnvelope,
   buildRawProxyRequestEnvelope,
   buildSearchRequestEnvelope,
-  attachForcedChannelToEnvelope,
+  attachForcedTargetToEnvelope,
   collectModelTesterModelNames,
   countConversationTurns,
   createConversationUserMessage,
@@ -75,11 +75,11 @@ describe('modelTesterSession', () => {
         stream: false,
         jobMode: false,
         rawMode: false,
-        forcedChannelId: 44,
+        forcedTargetId: 44,
         jsonBody: { model: '__search', query: 'hello', max_results: 7 },
       },
       pendingJobId: 'job-1',
-      forcedChannelId: 44,
+      forcedTargetId: 44,
       customRequestMode: true,
       customRequestBody: '{"model":"gemini-2.5-pro","contents":[]}',
       showDebugPanel: true,
@@ -197,7 +197,7 @@ describe('modelTesterSession', () => {
       model: 'text-embedding-3-small',
     });
 
-    const payload = attachForcedChannelToEnvelope(base, 42);
+    const payload = attachForcedTargetToEnvelope(base, 42);
 
     expect(payload).toEqual({
       method: 'POST',
@@ -206,7 +206,7 @@ describe('modelTesterSession', () => {
       stream: false,
       jobMode: false,
       rawMode: false,
-      forcedChannelId: 42,
+      forcedTargetId: 42,
       jsonBody: {
         model: 'text-embedding-3-small',
         input: 'hello',
@@ -897,7 +897,7 @@ describe('modelTesterSession', () => {
     });
   });
 
-  it('merges marketplace models with exact enabled route models for tester options', () => {
+  it('merges marketplace models with exact enabled graph route models for tester options', () => {
     const modelNames = collectModelTesterModelNames(
       {
         models: [
@@ -909,6 +909,40 @@ describe('modelTesterSession', () => {
         { modelPattern: 'BAAI/bge-large-en-v1.5', enabled: true },
         { modelPattern: 'claude-*', enabled: true },
         { modelPattern: 'gemini-2.5-pro', enabled: false },
+        {
+          enabled: true,
+          visibility: 'public',
+          match: {
+            requestedModelPattern: 'graph-exact-model',
+            displayName: 'Graph Match Alias',
+          },
+          presentation: {
+            displayName: 'Public Alias',
+          },
+        },
+        {
+          enabled: true,
+          visibility: 'public',
+          match: {
+            requestedModelPattern: 'private-*',
+            displayName: 'Wildcard Alias',
+          },
+        },
+        {
+          enabled: true,
+          visibility: 'internal',
+          match: {
+            requestedModelPattern: 'internal-exact-model',
+            displayName: 'Internal Alias',
+          },
+        },
+        {
+          enabled: false,
+          visibility: 'public',
+          presentation: {
+            displayName: 'Disabled Alias',
+          },
+        },
       ],
     );
 
@@ -916,6 +950,10 @@ describe('modelTesterSession', () => {
       'gpt-4o-mini',
       'bge-large-en-v1.5',
       'BAAI/bge-large-en-v1.5',
+      'Public Alias',
+      'Graph Match Alias',
+      'graph-exact-model',
+      'Wildcard Alias',
     ]);
   });
 

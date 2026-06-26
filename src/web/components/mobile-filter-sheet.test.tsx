@@ -1,40 +1,56 @@
+// @vitest-environment jsdom
+
+import { act } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
 import { describe, expect, it, vi } from 'vitest';
-import { create } from 'react-test-renderer';
 import MobileFilterSheet from './MobileFilterSheet.js';
 
-vi.mock('react-dom', () => ({
-  createPortal: (node: unknown) => node,
-}));
-
 describe('MobileFilterSheet', () => {
-  it('wraps content with the shared filter panel shell', () => {
-    vi.stubGlobal('document', {
-      body: {
-        style: {
-          overflow: '',
-        },
-      },
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-    });
+  async function renderSheet(onClose = vi.fn()) {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    let root: Root | undefined;
 
-    try {
-      const root = create(
-        <MobileFilterSheet open onClose={() => {}} title="筛选条件">
+    await act(async () => {
+      root = createRoot(host);
+      root.render(
+        <MobileFilterSheet open onClose={onClose} title="筛选条件">
           <div>FilterContent</div>
         </MobileFilterSheet>,
       );
+    });
 
-      const text = root.root.findAll(() => true)
-        .flatMap((instance) => instance.children)
-        .filter((child): child is string => typeof child === 'string')
-        .join('');
+    return {
+      onClose,
+      cleanup: async () => {
+        await act(async () => {
+          root!.unmount();
+        });
+        host.remove();
+      },
+    };
+  }
 
-      expect(text).toContain('筛选条件');
-      expect(text).toContain('FilterContent');
-      expect(root.root.find((node) => node.props?.className === 'mobile-filter-panel')).toBeTruthy();
-    } finally {
-      vi.unstubAllGlobals();
-    }
+  it('renders content with the shadcn sheet shell instead of the legacy mobile drawer skin', async () => {
+    const rendered = await renderSheet();
+
+    expect(document.body.querySelector('[role="dialog"]')).not.toBeNull();
+    expect(document.body.querySelector('[data-slot="sheet-content"]')).not.toBeNull();
+    expect(document.body.textContent).toContain('筛选条件');
+    expect(document.body.textContent).toContain('FilterContent');
+
+    await rendered.cleanup();
+  });
+
+  it('closes through the sheet close control', async () => {
+    const onClose = vi.fn();
+    const rendered = await renderSheet(onClose);
+
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('button[data-slot="sheet-close"]')!.click();
+    });
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    await rendered.cleanup();
   });
 });

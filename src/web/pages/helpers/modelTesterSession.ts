@@ -93,7 +93,7 @@ export type TesterProxyEnvelope = {
   stream: boolean;
   jobMode: boolean;
   rawMode: boolean;
-  forcedChannelId?: number | null;
+  forcedTargetId?: number | null;
   jsonBody?: unknown;
   rawJsonText?: string;
   multipartFields?: Record<string, string>;
@@ -147,7 +147,7 @@ export type ModelTesterSessionState = {
   conversationFiles: ConversationDraftFile[];
   pendingPayload: TesterProxyEnvelope | null;
   pendingJobId?: string | null;
-  forcedChannelId?: number | null;
+  forcedTargetId?: number | null;
   customRequestMode: boolean;
   customRequestBody: string;
   showDebugPanel: boolean;
@@ -847,8 +847,8 @@ const parsePendingPayload = (
 
     if ('jsonBody' in value) pending.jsonBody = value.jsonBody;
     if (typeof value.rawJsonText === 'string') pending.rawJsonText = value.rawJsonText;
-    const forcedChannelId = toPositiveInteger(value.forcedChannelId);
-    if (forcedChannelId !== null) pending.forcedChannelId = forcedChannelId;
+    const forcedTargetId = toPositiveInteger(value.forcedTargetId);
+    if (forcedTargetId !== null) pending.forcedTargetId = forcedTargetId;
     if (isRecord(value.multipartFields)) {
       pending.multipartFields = Object.fromEntries(
         Object.entries(value.multipartFields)
@@ -897,7 +897,18 @@ const parsePendingPayload = (
 
 export const collectModelTesterModelNames = (
   marketplace: { models?: Array<{ name?: unknown }>; } | null | undefined,
-  routes: Array<{ modelPattern?: unknown; enabled?: unknown; }> | null | undefined,
+  routes: Array<{
+    modelPattern?: unknown;
+    enabled?: unknown;
+    visibility?: unknown;
+    match?: {
+      requestedModelPattern?: unknown;
+      displayName?: unknown;
+    } | null;
+    presentation?: {
+      displayName?: unknown;
+    } | null;
+  }> | null | undefined,
 ): string[] => {
   const result: string[] = [];
   const seen = new Set<string>();
@@ -916,10 +927,20 @@ export const collectModelTesterModelNames = (
 
   for (const route of routes || []) {
     if (!route || route.enabled === false) continue;
-    if (typeof route.modelPattern !== 'string') continue;
-    const modelPattern = route.modelPattern.trim();
-    if (!modelPattern || !isExactModelPattern(modelPattern)) continue;
-    appendModel(modelPattern);
+    if (route.visibility === 'internal') continue;
+
+    appendModel(route.presentation?.displayName);
+    appendModel(route.match?.displayName);
+
+    const graphPattern = typeof route.match?.requestedModelPattern === 'string'
+      ? route.match.requestedModelPattern.trim()
+      : '';
+    if (graphPattern && isExactModelPattern(graphPattern)) appendModel(graphPattern);
+
+    const legacyPattern = typeof route.modelPattern === 'string'
+      ? route.modelPattern.trim()
+      : '';
+    if (legacyPattern && isExactModelPattern(legacyPattern)) appendModel(legacyPattern);
   }
 
   return result;
@@ -1163,7 +1184,7 @@ export const parseModelTesterSession = (raw: string | null): ModelTesterSessionS
     pendingPayload: parsePendingPayload(parsed.pendingPayload, inputs, parameterEnabled),
     customRequestMode: toBoolean(parsed.customRequestMode, false),
     customRequestBody: typeof parsed.customRequestBody === 'string' ? parsed.customRequestBody : '',
-    forcedChannelId: toPositiveInteger(parsed.forcedChannelId),
+    forcedTargetId: toPositiveInteger(parsed.forcedTargetId),
     showDebugPanel: toBoolean(parsed.showDebugPanel, false),
     activeDebugTab: typeof parsed.activeDebugTab === 'string' && VALID_DEBUG_TABS.has(parsed.activeDebugTab)
       ? parsed.activeDebugTab as DebugTab
@@ -1353,20 +1374,20 @@ export const buildApiPayload = (
 ): TesterProxyEnvelope =>
   buildConversationRequestEnvelope(messages, inputs, parameterEnabled);
 
-export const attachForcedChannelToEnvelope = (
+export const attachForcedTargetToEnvelope = (
   envelope: TesterProxyEnvelope,
-  forcedChannelId?: number | null,
+  forcedTargetId?: number | null,
 ): TesterProxyEnvelope => {
-  const normalizedForcedChannelId = toPositiveInteger(forcedChannelId);
-  if (normalizedForcedChannelId === null) {
-    if (!('forcedChannelId' in envelope)) return envelope;
-    const { forcedChannelId: _forcedChannelId, ...rest } = envelope;
+  const normalizedForcedTargetId = toPositiveInteger(forcedTargetId);
+  if (normalizedForcedTargetId === null) {
+    if (!('forcedTargetId' in envelope)) return envelope;
+    const { forcedTargetId: _forcedTargetId, ...rest } = envelope;
     return rest;
   }
 
   return {
     ...envelope,
-    forcedChannelId: normalizedForcedChannelId,
+    forcedTargetId: normalizedForcedTargetId,
   };
 };
 

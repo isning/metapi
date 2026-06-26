@@ -152,7 +152,13 @@ describe('DownstreamKeys mobile layout', () => {
       items: [buildRawItem(1), buildRawItem(2)],
     });
     apiMock.getRoutesLite.mockResolvedValue([
-      { id: 11, modelPattern: 'claude-*', displayName: '默认群组', enabled: true },
+      {
+        id: 11,
+        match: { kind: 'model', requestedModelPattern: 'claude-*', displayName: '默认群组' },
+        backend: { kind: 'supply' },
+        presentation: { displayName: '默认群组', displayIcon: null },
+        enabled: true,
+      },
     ]);
     apiMock.getDownstreamApiKeyOverview.mockResolvedValue({
       success: true,
@@ -197,7 +203,7 @@ describe('DownstreamKeys mobile layout', () => {
       expect(collectText(root!.root)).toContain('筛选');
       expect(collectText(root!.root)).toContain('全选可见');
 
-      const mobileCards = root!.root.findAll((node) => node.props?.className === 'mobile-card');
+      const mobileCards = root!.root.findAll((node) => node.type === 'div' && node.props?.['data-mobile-list-item'] === 'true');
       expect(mobileCards).toHaveLength(2);
 
       const selectAllButton = findButtonByText(root!.root, '全选可见');

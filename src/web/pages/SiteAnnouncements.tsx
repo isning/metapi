@@ -10,6 +10,14 @@ import {
   SiteAnnouncementContent,
 } from './helpers/siteAnnouncementPresentation.js';
 import { tr } from '../i18n.js';
+import { Button } from '../components/ui/button/index.js';
+import { LoaderCircle } from 'lucide-react';
+import ToneBadge from '../components/ToneBadge.js';
+import { Card, CardContent } from '../components/ui/card/index.js';
+import { Skeleton } from '../components/ui/skeleton/index.js';
+import EmptyStateBlock from '../components/EmptyStateBlock.js';
+import PageHeader from '../components/workspace/PageHeader.js';
+import PageShell from '../components/workspace/PageShell.js';
 
 type SiteAnnouncementRow = {
   id: number;
@@ -29,6 +37,34 @@ type SiteRow = {
   name: string;
   platform?: string | null;
 };
+
+function SiteAnnouncementsLoadingSkeleton() {
+  return (
+    <Card className="overflow-hidden" aria-busy="true">
+      {Array.from({ length: 4 }).map((_, index) => (
+        <CardContent key={index} className="border-b p-4 last:border-b-0">
+          <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+            <div className="grid min-w-0 flex-1 gap-2">
+              <Skeleton className="h-5 w-64 max-w-full" />
+              <Skeleton className="h-3 w-40" />
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Skeleton className="h-5 w-20 rounded-full" />
+              <Skeleton className="h-5 w-16 rounded-full" />
+              <Skeleton className="h-5 w-14 rounded-full" />
+            </div>
+          </div>
+          <div className="grid gap-2">
+            <Skeleton className="h-4 w-full" />
+            <Skeleton className="h-4 w-11/12" />
+            <Skeleton className="h-4 w-2/3" />
+          </div>
+          <Skeleton className="mt-3 h-3 w-48" />
+        </CardContent>
+      ))}
+    </Card>
+  );
+}
 
 export default function SiteAnnouncements() {
   const location = useLocation();
@@ -71,7 +107,7 @@ export default function SiteAnnouncements() {
         : '';
       setServerTimeZone(nextServerTimeZone || undefined);
     } catch (error: any) {
-      toast.error(error?.message || '加载站点公告失败');
+      toast.error(error?.message || tr('pages.siteAnnouncements.sitesFailed'));
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -121,9 +157,9 @@ export default function SiteAnnouncements() {
     try {
       await api.clearSiteAnnouncements();
       setRows([]);
-      toast.success('公告已清空');
+      toast.success(tr('pages.siteAnnouncements.clear'));
     } catch (error: any) {
-      toast.error(error?.message || '清空公告失败');
+      toast.error(error?.message || tr('pages.siteAnnouncements.clearFailed'));
     } finally {
       setClearing(false);
     }
@@ -137,9 +173,9 @@ export default function SiteAnnouncements() {
         ...row,
         readAt: row.readAt || new Date().toISOString(),
       })));
-      toast.success('已标记全部为已读');
+      toast.success(tr('pages.programLogs.markedAllRead'));
     } catch (error: any) {
-      toast.error(error?.message || '标记失败');
+      toast.error(error?.message || tr('pages.programLogs.markingFailed'));
     } finally {
       setMarkingAll(false);
     }
@@ -148,93 +184,89 @@ export default function SiteAnnouncements() {
   const triggerSync = async () => {
     try {
       await api.syncSiteAnnouncements();
-      toast.success('公告同步任务已启动');
+      toast.success(tr('pages.siteAnnouncements.sync'));
     } catch (error: any) {
-      toast.error(error?.message || '启动同步失败');
+      toast.error(error?.message || tr('pages.siteAnnouncements.syncFailed'));
     }
   };
 
   return (
-    <div className="animate-fade-in">
-      <div className="page-header">
-        <h2 className="page-title">{tr('站点公告')}</h2>
-        <div className="page-actions">
-          <button
+    <PageShell>
+      <PageHeader
+        title={tr('app.sites')}
+        description={tr('pages.siteAnnouncements.siteAnnouncementsSubtitle')}
+        actions={(
+          <>
+          <Button type="button" variant="outline"
             onClick={() => load(true)}
             disabled={refreshing}
-            className="btn btn-ghost"
-            style={{ border: '1px solid var(--color-border)', padding: '8px 14px' }}
+           
+           
           >
-            {refreshing ? <><span className="spinner spinner-sm" /> 刷新中...</> : '刷新'}
-          </button>
-          <button
+            {refreshing ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.downstreamKeys.refreshing')}</> : tr('pages.accounts.refresh')}
+          </Button>
+          <Button type="button" variant="outline"
             onClick={markAllRead}
             disabled={markingAll}
-            className="btn btn-ghost"
-            style={{ border: '1px solid var(--color-border)', padding: '8px 14px' }}
+           
+           
           >
-            {markingAll ? <><span className="spinner spinner-sm" /> 标记中...</> : '全部已读'}
-          </button>
-          <button
+            {markingAll ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.programLogs.marking')}</> : tr('pages.programLogs.markAllRead')}
+          </Button>
+          <Button type="button" variant="outline"
             onClick={triggerSync}
-            className="btn btn-ghost"
-            style={{ border: '1px solid var(--color-border)', padding: '8px 14px' }}
+           
+           
           >
-            手动同步
-          </button>
-          <button
+            {tr('pages.siteAnnouncements.manualsync')}
+          </Button>
+          <Button type="button" variant="destructive" size="sm"
             onClick={clearAll}
             disabled={clearing}
-            className="btn btn-link btn-link-danger"
+           
           >
-            {clearing ? <><span className="spinner spinner-sm" /> 清空中...</> : '清空公告'}
-          </button>
-        </div>
-      </div>
+            {clearing ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.programLogs.clearing')}</> : tr('pages.siteAnnouncements.clear2')}
+          </Button>
+          </>
+        )}
+      />
 
-      <div className="card" style={{ padding: 0 }}>
-        {loading ? (
-          <div style={{ padding: 24, textAlign: 'center' }}>
-            <span className="spinner spinner-sm" />
-          </div>
-        ) : rows.length === 0 ? (
-          <div style={{ padding: 32, textAlign: 'center' }}>
-            <div className="empty-state-title">暂无公告</div>
-            <div className="empty-state-desc">当前没有可显示的站点公告。</div>
-          </div>
-        ) : (
-          rows.map((row, index) => (
-            <div
-              key={row.id}
-              ref={(node) => {
-                if (node) rowRefs.current.set(row.id, node);
-                else rowRefs.current.delete(row.id);
-              }}
-              className={`animate-slide-up stagger-${Math.min(index + 1, 5)} ${highlightAnnouncementId === row.id ? 'row-focus-highlight' : ''}`.trim()}
-              style={{
-                padding: '16px 18px',
-                borderBottom: index === rows.length - 1 ? 'none' : '1px solid var(--color-border-light)',
-              }}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: 6 }}>
-                <div style={{ fontSize: 15, fontWeight: 600 }}>{row.title}</div>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <span className="badge badge-muted">{siteNameById.get(row.siteId) || `站点 #${row.siteId}`}</span>
-                  <span className="badge badge-info">{row.platform}</span>
-                  <span className={`badge ${row.readAt ? 'badge-muted' : 'badge-warning'}`}>{row.readAt ? '已读' : '未读'}</span>
+      {loading ? (
+        <SiteAnnouncementsLoadingSkeleton />
+      ) : (
+        <Card className="overflow-hidden">
+          {rows.length === 0 ? (
+            <EmptyStateBlock title={tr('pages.siteAnnouncements.noAnnouncements')} description={tr('pages.siteAnnouncements.sites')} />
+          ) : (
+            rows.map((row, index) => (
+              <div
+                key={row.id}
+                ref={(node) => {
+                  if (node) rowRefs.current.set(row.id, node);
+                  else rowRefs.current.delete(row.id);
+                }}
+                className={`border-b p-4 last:border-b-0 ${highlightAnnouncementId === row.id ? 'bg-muted' : ''}`.trim()}
+              >
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
+                  <div className="text-base font-semibold">{row.title}</div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <ToneBadge tone="-muted">{siteNameById.get(row.siteId) || `站点 #${row.siteId}`}</ToneBadge>
+                    <ToneBadge tone="-info">{row.platform}</ToneBadge>
+                    <ToneBadge tone={row.readAt ? 'muted' : 'warning'}>{row.readAt ? tr('pages.programLogs.read') : tr('pages.programLogs.unread')}</ToneBadge>
+                  </div>
+                </div>
+                <SiteAnnouncementContent content={row.content} />
+                <div
+                  className="mt-2 text-xs text-muted-foreground"
+                  title={displayTimeZone ? `本地时区：${displayTimeZone}` : undefined}
+                >
+                  {tr('pages.siteAnnouncements.firstFound')}{formatSiteAnnouncementSeenAt(row.firstSeenAt || row.lastSeenAt || '', displayTimeZone)}
                 </div>
               </div>
-              <SiteAnnouncementContent content={row.content} />
-              <div
-                style={{ marginTop: 8, fontSize: 12, color: 'var(--color-text-muted)' }}
-                title={displayTimeZone ? `本地时区：${displayTimeZone}` : undefined}
-              >
-                首次发现：{formatSiteAnnouncementSeenAt(row.firstSeenAt || row.lastSeenAt || '', displayTimeZone)}
-              </div>
-            </div>
-          ))
-        )}
-      </div>
-    </div>
+            ))
+          )}
+        </Card>
+      )}
+    </PageShell>
   );
 }

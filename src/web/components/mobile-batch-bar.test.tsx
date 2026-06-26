@@ -17,6 +17,6 @@ describe('MobileBatchBar', () => {
 
     expect(text).toContain('已选 2 项');
     expect(text).toContain('批量删除');
-    expect(root.root.find((node) => node.props?.className === 'mobile-actions-bar mobile-batch-bar')).toBeTruthy();
+    expect(root.root.find((node) => node.props?.['data-slot'] === 'card')).toBeTruthy();
   });
 });

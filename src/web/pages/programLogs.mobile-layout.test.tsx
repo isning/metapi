@@ -10,7 +10,7 @@ describe('ProgramLogs mobile layout', () => {
     expect(source).toContain("import { MobileCard, MobileField } from '../components/MobileCard.js'");
     expect(source).toContain("import { useIsMobile } from '../components/useIsMobile.js'");
     expect(source).toContain('const isMobile = useIsMobile()');
-    expect(source).toContain('mobile-card-list');
+    expect(source).toContain('className="grid gap-3"');
     expect(source).toContain('<ResponsiveFilterPanel');
   });
 });

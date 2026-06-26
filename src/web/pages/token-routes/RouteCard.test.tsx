@@ -669,12 +669,12 @@ describe('RouteCard', () => {
     ));
 
     expect(bucketHeaders.map((node) => collectText(node))).toEqual([
-      'P0 · 2 通道',
-      'P1 · 1 通道',
+      'P0 · 2 目标',
+      'P1 · 1 目标',
     ]);
     expect(shells).toHaveLength(3);
-    expect(collectText(shells[0]!)).not.toContain('P0 · 2 通道');
-    expect(collectText(shells[2]!)).not.toContain('P1 · 1 通道');
+    expect(collectText(shells[0]!)).not.toContain('P0 · 2 目标');
+    expect(collectText(shells[2]!)).not.toContain('P1 · 1 目标');
   });
 
   it('renders desktop target rows in sortable shell order within a single sortable list', () => {
@@ -826,13 +826,13 @@ describe('RouteCard', () => {
     ));
     const addRouteTargetButton = compactActionRow.find((node) => (
       node.type === 'button'
-      && collectText(node).includes('添加通道')
+      && collectText(node).includes('添加目标')
     ));
 
     expect(compactActionRow.props.className).toContain('flex');
     expect(compactActionRow.props.className).toContain('justify-start');
     expect(collectText(compactActionRow)).toContain('路由策略');
-    expect(collectText(compactActionRow)).toContain('添加通道');
+    expect(collectText(compactActionRow)).toContain('添加目标');
     expect(strategySelectWrap.props.style.flex).toBe('0 0 168px');
     expect(strategySelectWrap.props.style.flex).toBe('0 0 168px');
   });
@@ -887,7 +887,7 @@ describe('RouteCard', () => {
     expect(compactHeaderMain.props.className).toContain('flex-row');
     expect(collectText(compactHeaderMain)).toContain('gpt-5.2-codex');
     expect(collectText(compactHeaderMain)).toContain('启用');
-    expect(collectText(compactHeaderMain)).toContain('16 通道');
+    expect(collectText(compactHeaderMain)).toContain('16 目标');
   });
 
   it('skips collapsed rerenders when only expanded-target state changes', () => {

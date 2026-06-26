@@ -3,11 +3,12 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 describe('Mobile layout utilities', () => {
-  it('allows page actions and pagination controls to wrap on narrow screens', () => {
+  it('keeps mobile layout off legacy global pagination classes', () => {
     const css = readFileSync(resolve(process.cwd(), 'src/web/index.css'), 'utf8');
 
-    expect(css).toMatch(/\.page-actions\s*\{[^}]*flex-wrap:\s*wrap/s);
-    expect(css).toMatch(/\.pagination\s*\{[^}]*flex-wrap:\s*wrap/s);
-    expect(css).toMatch(/\.pagination-size\s*\{[^}]*flex-wrap:\s*wrap/s);
+    expect(css).not.toContain('.page-actions');
+    expect(css).not.toMatch(/\.pagination(?:\s|,|\{)/);
+    expect(css).not.toContain('.pagination-size');
+    expect(css).not.toContain('.pagination-btn');
   });
 });

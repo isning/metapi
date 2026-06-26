@@ -64,20 +64,20 @@ function collectText(node: ReactTestInstance): string {
 }
 
 function findButtonByText(root: ReactTestInstance, text: string): ReactTestInstance {
-  return root.find((node) => (
+  const buttons = root.findAll((node) => (
     node.type === 'button'
     && typeof node.props.onClick === 'function'
     && collectText(node) === text
   ));
+  const activeButton = buttons.find((button) => !button.props.disabled);
+  if (!activeButton) {
+    throw new Error(`No active button found for text: ${text}`);
+  }
+  return activeButton;
 }
 
 function findGhostButtonByText(root: ReactTestInstance, text: string): ReactTestInstance {
-  return root.find((node) => (
-    node.type === 'button'
-    && typeof node.props.onClick === 'function'
-    && collectText(node) === text
-    && String(node.props.className || '').includes('btn btn-ghost')
-  ));
+  return findButtonByText(root, text);
 }
 
 async function flushMicrotasks() {
@@ -160,7 +160,13 @@ describe('DownstreamKeys mobile layout', () => {
       items: [buildRawItem(1), buildRawItem(2)],
     });
     apiMock.getRoutesLite.mockResolvedValue([
-      { id: 11, modelPattern: 'gpt-4.1-mini', displayName: 'GPT 4.1 Mini', enabled: true },
+      {
+        id: 11,
+        match: { kind: 'model', requestedModelPattern: 'gpt-4.1-mini', displayName: 'GPT 4.1 Mini' },
+        backend: { kind: 'supply' },
+        presentation: { displayName: 'GPT 4.1 Mini', displayIcon: null },
+        enabled: true,
+      },
     ]);
     apiMock.getDownstreamApiKeyOverview.mockResolvedValue({
       success: true,
@@ -204,7 +210,7 @@ describe('DownstreamKeys mobile layout', () => {
       });
       await flushMicrotasks();
 
-      const cards = root!.root.findAll((node) => node.props?.className === 'mobile-card');
+      const cards = root!.root.findAll((node) => node.type === 'div' && node.props?.['data-mobile-list-item'] === 'true');
       expect(cards.length).toBe(2);
       expect(collectText(root!.root)).toContain('全选可见');
 

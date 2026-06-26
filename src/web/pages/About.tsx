@@ -5,33 +5,42 @@ import { api } from '../api.js';
 import { tr } from '../i18n.js';
 import { SITE_DOCS_URL } from '../docsLink.js';
 import { buildUpdateReminder } from './helpers/updateCenterPresentation.js';
+import ToneBadge from '../components/ToneBadge.js';
+import { Button } from '../components/ui/button/index.js';
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '../components/ui/card/index.js';
 
 const VERSION = '1.3.0';
 
 const FEATURES = [
-  { icon: '🌐', title: '统一代理网关', desc: '一个 Key、一个入口，兼容 OpenAI / Claude 下游格式' },
-  { icon: '🧠', title: '智能路由引擎', desc: '按成本、延迟、成功率自动选择最优通道，故障自动转移' },
-  { icon: '📡', title: '多站点聚合', desc: '集中管理 New API / One API / OneHub / DoneHub / Veloera 等' },
-  { icon: '🔍', title: '自动模型发现', desc: '上游新增模型自动出现在模型列表，零配置路由生成' },
-  { icon: '🏪', title: '模型广场', desc: '跨站模型覆盖、定价对比、延迟与成功率实测数据' },
-  { icon: '✅', title: '自动签到', desc: '定时签到 + 余额刷新，不再手动操心' },
-  { icon: '🔔', title: '多渠道告警', desc: 'Webhook / Bark / Server酱 / 邮件，余额不足及时提醒' },
-  { icon: '📦', title: '轻量部署', desc: '单 Docker 容器，内置 SQLite，无外部依赖' },
+  { icon: '🌐', title: tr('app.unifiedProxyGateway'), desc: tr('app.oneKeyOneEndpointCompatibleOpenaiClaude') },
+  { icon: '🧠', title: tr('app.smartRoutingEngine'), desc: tr('app.autoSelectsOptimalRouteCostLatencySuccess') },
+  { icon: '📡', title: tr('pages.about.multiSiteAggregation'), desc: tr('pages.about.centrallyManageNewApiOneApiOnehub') },
+  { icon: '🔍', title: tr('app.autoModelDiscovery'), desc: tr('app.newUpstreamModelsAppearAutomaticallyZeroConfig') },
+  { icon: '🏪', title: tr('app.modelMarketplace'), desc: tr('pages.about.crossSiteModelCoveragePricingComparisonLatency') },
+  { icon: '✅', title: tr('pages.about.autoCheck'), desc: tr('pages.about.scheduledCheckBalanceRefreshNeverMissOne') },
+  { icon: '🔔', title: tr('pages.about.multiTargetAlerts'), desc: tr('pages.about.webhookBarkServerchanEmailGetNotifiedWhen') },
+  { icon: '📦', title: tr('pages.about.lightweightDeployment'), desc: tr('pages.about.singleDockerContainerBuiltSqliteNoExternal') },
 ];
 
 const TECH_STACK = [
-  { name: 'Fastify', desc: '高性能 Node.js 后端框架' },
-  { name: 'React', desc: '用户界面库' },
-  { name: 'TypeScript', desc: '端到端类型安全' },
-  { name: 'Tailwind CSS v4', desc: '原子化样式框架' },
-  { name: 'Drizzle ORM', desc: '轻量 TypeScript ORM' },
-  { name: 'SQLite', desc: '零配置嵌入式数据库' },
+  { name: 'Fastify', desc: tr('pages.about.highPerformanceNodeJsBackendFramework') },
+  { name: 'React', desc: tr('pages.about.userInterfaceLibrary') },
+  { name: 'TypeScript', desc: tr('pages.about.endEndTypeSafety') },
+  { name: 'Tailwind CSS v4', desc: tr('pages.about.utilityFirstCssFramework') },
+  { name: 'Drizzle ORM', desc: tr('pages.about.lightweightTypescriptOrm') },
+  { name: 'SQLite', desc: tr('pages.about.zeroConfigEmbeddedDatabase') },
 ];
 
 const LINKS = [
   { label: 'GitHub', href: 'https://github.com/cita-777/metapi', icon: '📂' },
   { label: 'Docker Hub', href: 'https://hub.docker.com/r/1467078763/metapi', icon: '🐳' },
-  { label: '站点文档', href: SITE_DOCS_URL, icon: '📚' },
+  { label: tr('pages.about.siteDocs'), href: SITE_DOCS_URL, icon: '📚' },
 ];
 
 export default function About() {
@@ -79,136 +88,116 @@ export default function About() {
   }, []);
 
   return (
-    <div className="animate-fade-in" style={{ maxWidth: 860 }}>
-      {/* Header */}
-      <div className="page-header" style={{ marginBottom: 14 }}>
-        <h2 className="page-title">{tr('关于 Metapi')}</h2>
+    <div className="grid max-w-4xl gap-4">
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-2xl font-semibold tracking-tight">{tr('pages.about.aboutMetapi')}</h2>
       </div>
 
-      {/* Hero card */}
-      <div className="card animate-slide-up stagger-1" style={{ padding: 22, marginBottom: 14 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 14 }}>
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-3">
           <img
             src="/logo.png"
             alt="Metapi"
-            style={{ width: 48, height: 48, borderRadius: 12, flexShrink: 0 }}
+              className="h-12 w-12 shrink-0 rounded-lg"
           />
-          <div>
-            <div style={{ fontSize: 18, fontWeight: 700 }}>Metapi</div>
-            <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginTop: 2 }}>{currentVersion}</div>
+            <div>
+              <CardTitle>Metapi</CardTitle>
+              <CardDescription>{currentVersion}</CardDescription>
+            </div>
           </div>
-        </div>
-        <div style={{ fontSize: 14, color: 'var(--color-text-secondary)', lineHeight: 1.8 }}>
-          {tr('中转站的中转站 — 将你在各处注册的 New API / One API / OneHub 等 AI 中转站聚合为一个统一网关。一个 API Key、一个入口，自动发现模型、智能路由、成本最优。')}
-        </div>
-      </div>
+        </CardHeader>
+        <CardContent className="text-sm leading-7 text-muted-foreground">
+          {tr('pages.about.hubHubsAggregateAllYourNewApi')}
+        </CardContent>
+      </Card>
 
-      <div className="card animate-slide-up stagger-1" style={{ padding: 22, marginBottom: 14 }}>
-        <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 12 }}>更新提醒</h3>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
-          <span className={`${updateReminder.badgeClassName} ${updateReminder.highlight ? 'stat-value-glow' : ''}`.trim()}>
+      <Card>
+        <CardHeader>
+          <CardTitle>{tr('pages.about.updateReminders')}</CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-3 text-sm">
+          <div className="flex flex-wrap items-center gap-2">
+          <ToneBadge tone={updateReminder.badgeTone} className={updateReminder.highlight ? 'stat-value-glow' : undefined}>
             {updateReminder.label}
-          </span>
-          <span className={updateReminder.highlight ? 'stat-value-glow' : ''} style={{ fontSize: 13, color: 'var(--color-text-primary)', fontWeight: 600 }}>
+          </ToneBadge>
+            <span className={updateReminder.highlight ? 'stat-value-glow font-semibold' : 'font-semibold'}>
             {updateReminder.detail}
           </span>
-        </div>
-        <div style={{ display: 'grid', gap: 8, fontSize: 13 }}>
-          <div>GitHub 稳定版：{latestGitHubVersion || '暂无数据'}</div>
-          <div>Docker Hub：{latestDockerHubVersion || '暂无数据'}</div>
+          </div>
+          <div className="grid gap-2">
+          <div>{tr('pages.about.githubStable')}{latestGitHubVersion || tr('pages.about.noData')}</div>
+          <div>Docker Hub：{latestDockerHubVersion || tr('pages.about.noData')}</div>
           <div>
-            <Link to="/settings" style={{ color: 'var(--color-primary)', textDecoration: 'none', fontWeight: 600 }}>
-              前往更新中心
+              <Button asChild variant="ghostPrimary" className="h-auto p-0">
+                <Link to="/settings">
+              {tr('pages.about.openUpdateCenter')}
             </Link>
+              </Button>
           </div>
         </div>
-      </div>
+        </CardContent>
+      </Card>
 
-      {/* Features */}
-      <div className="card animate-slide-up stagger-2" style={{ padding: 22, marginBottom: 14 }}>
-        <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 14 }}>{tr('核心特色')}</h3>
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))',
-          gap: 10,
-        }}>
+      <Card>
+        <CardHeader>
+          <CardTitle>{tr('pages.about.keyFeatures')}</CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-3 sm:grid-cols-2">
           {FEATURES.map((f) => (
-            <div key={f.title} style={{
-              display: 'flex', gap: 10, padding: '8px 0',
-              borderBottom: '1px solid var(--color-border-light)',
-            }}>
-              <span style={{ fontSize: 18, lineHeight: '24px', flexShrink: 0 }}>{f.icon}</span>
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 600 }}>{tr(f.title)}</div>
-                <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginTop: 2, lineHeight: 1.5 }}>
+            <div key={f.title} className="flex gap-3 rounded-md border p-3">
+              <span className="shrink-0 text-lg leading-6">{f.icon}</span>
+              <div className="min-w-0">
+                <div className="text-sm font-semibold">{tr(f.title)}</div>
+                <div className="mt-1 text-xs leading-5 text-muted-foreground">
                   {tr(f.desc)}
                 </div>
               </div>
             </div>
           ))}
-        </div>
-      </div>
+        </CardContent>
+      </Card>
 
-      {/* Tech Stack */}
-      <div className="card animate-slide-up stagger-3" style={{ padding: 22, marginBottom: 14 }}>
-        <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 14 }}>{tr('技术栈')}</h3>
-        <div style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
-          gap: 10,
-        }}>
+      <Card>
+        <CardHeader>
+          <CardTitle>{tr('pages.about.techStack')}</CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {TECH_STACK.map((t) => (
-            <div key={t.name} style={{
-              padding: '10px 14px',
-              borderRadius: 8,
-              border: '1px solid var(--color-border-light)',
-              background: 'var(--color-bg-secondary)',
-            }}>
-              <div style={{ fontSize: 13, fontWeight: 600 }}>{t.name}</div>
-              <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginTop: 2 }}>
+            <div key={t.name} className="rounded-md border p-3">
+              <div className="text-sm font-semibold">{t.name}</div>
+              <div className="mt-1 text-xs text-muted-foreground">
                 {tr(t.desc)}
               </div>
             </div>
           ))}
-        </div>
-      </div>
+        </CardContent>
+      </Card>
 
-      {/* Links */}
-      <div className="card animate-slide-up stagger-4" style={{ padding: 22, marginBottom: 14 }}>
-        <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 14 }}>{tr('项目链接')}</h3>
-        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+      <Card>
+        <CardHeader>
+          <CardTitle>{tr('pages.about.projectLinks')}</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-wrap gap-2">
           {LINKS.map((l) => (
-            <a
-              key={l.label}
-              href={l.href}
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{
-                display: 'inline-flex', alignItems: 'center', gap: 6,
-                padding: '8px 16px', borderRadius: 8,
-                border: '1px solid var(--color-border-light)',
-                background: 'var(--color-bg-secondary)',
-                color: 'var(--color-text-primary)',
-                textDecoration: 'none', fontSize: 13, fontWeight: 500,
-                transition: 'border-color 0.15s',
-              }}
-              onMouseEnter={(e) => (e.currentTarget.style.borderColor = 'var(--color-primary)')}
-              onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'var(--color-border-light)')}
-            >
-              <span>{l.icon}</span>
-              <span>{tr(l.label)}</span>
-            </a>
+            <Button key={l.label} asChild variant="outline">
+              <a href={l.href} target="_blank" rel="noopener noreferrer">
+                <span>{l.icon}</span>
+                <span>{tr(l.label)}</span>
+              </a>
+            </Button>
           ))}
-        </div>
-      </div>
+        </CardContent>
+      </Card>
 
-      {/* Privacy */}
-      <div className="card animate-slide-up stagger-5" style={{ padding: 22 }}>
-        <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 10 }}>{tr('数据与隐私')}</h3>
-        <div style={{ fontSize: 13, color: 'var(--color-text-secondary)', lineHeight: 1.8 }}>
-          {tr('Metapi 完全自托管，所有数据（账号、令牌、路由、日志）均存储在本地 SQLite 数据库中，不会向任何第三方发送数据。代理请求仅在你的服务器与上游站点之间直连传输。')}
-        </div>
-      </div>
+      <Card>
+        <CardHeader>
+          <CardTitle>{tr('pages.about.dataPrivacy')}</CardTitle>
+        </CardHeader>
+        <CardContent className="text-sm leading-7 text-muted-foreground">
+          {tr('pages.about.metapiFullySelfHostedAllDataAccounts')}
+        </CardContent>
+      </Card>
     </div>
   );
 }

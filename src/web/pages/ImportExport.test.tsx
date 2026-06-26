@@ -127,6 +127,84 @@ const allApiHubV2Payload = JSON.stringify({
 });
 
 const nativeMetapiPayload = JSON.stringify({
+  version: '2.2',
+  timestamp: 1735689600000,
+  accounts: {
+    sites: [
+      {
+        id: 1,
+        name: 'Native Site',
+        url: 'https://native.example.com',
+        platform: 'new-api',
+      },
+    ],
+    accounts: [
+      {
+        id: 1,
+        siteId: 1,
+        username: 'native-user',
+        accessToken: 'session-token',
+        apiToken: 'api-token',
+        status: 'active',
+      },
+    ],
+    accountTokens: [
+      {
+        id: 1,
+        accountId: 1,
+        name: 'default',
+        token: 'sk-native',
+        enabled: true,
+        isDefault: true,
+      },
+    ],
+    tokenRoutes: [
+      {
+        id: 1,
+        modelPattern: 'gpt-5-nano',
+        enabled: true,
+      },
+    ],
+    routeEndpointTargets: [
+      {
+        id: 1,
+        routeId: 1,
+        accountId: 1,
+        tokenId: 1,
+        enabled: true,
+        manualOverride: false,
+      },
+    ],
+    routeGroupSources: [],
+    siteDisabledModels: [
+      {
+        siteId: 1,
+        modelName: 'gpt-hidden',
+      },
+    ],
+    manualModels: [
+      {
+        accountId: 1,
+        modelName: 'gpt-manual',
+      },
+    ],
+    downstreamApiKeys: [
+      {
+        name: 'Shared Key',
+        key: 'downstream-native',
+        enabled: true,
+        supportedModels: '["gpt-5-nano"]',
+      },
+    ],
+  },
+  preferences: {
+    settings: [
+      { key: 'locale', value: 'zh-CN' },
+    ],
+  },
+});
+
+const nativeMetapiLegacyChannelsPayload = JSON.stringify({
   version: '2.1',
   timestamp: 1735689600000,
   accounts: {
@@ -176,26 +254,6 @@ const nativeMetapiPayload = JSON.stringify({
       },
     ],
     routeGroupSources: [],
-    siteDisabledModels: [
-      {
-        siteId: 1,
-        modelName: 'gpt-hidden',
-      },
-    ],
-    manualModels: [
-      {
-        accountId: 1,
-        modelName: 'gpt-manual',
-      },
-    ],
-    downstreamApiKeys: [
-      {
-        name: 'Shared Key',
-        key: 'downstream-native',
-        enabled: true,
-        supportedModels: '["gpt-5-nano"]',
-      },
-    ],
   },
   preferences: {
     settings: [
@@ -209,6 +267,10 @@ describe('ImportExport', () => {
     vi.clearAllMocks();
     vi.stubGlobal('window', {
       confirm: vi.fn(() => true),
+      setTimeout: globalThis.setTimeout.bind(globalThis),
+      clearTimeout: globalThis.clearTimeout.bind(globalThis),
+      requestAnimationFrame: (callback: FrameRequestCallback) => globalThis.setTimeout(() => callback(Date.now()), 0) as unknown as number,
+      cancelAnimationFrame: (id: number) => globalThis.clearTimeout(id),
     });
     apiMock.getBackupWebdavConfig.mockResolvedValue({
       success: true,
@@ -327,7 +389,33 @@ describe('ImportExport', () => {
 
       const rendered = collectText(root!.root);
       expect(rendered).not.toContain('ALL-API-Hub V2');
-      expect(rendered).toContain('统计：站点 1 / 账号 1 / 令牌 1 / 路由 1 / 通道 1 / 站点禁用模型 1 / 手工模型 1 / 下游 Key 1 / 设置 1');
+      expect(rendered).toContain('统计：站点 1 / 账号 1 / 令牌 1 / 路由 1 / 目标 1 / 站点禁用模型 1 / 手工模型 1 / 下游 Key 1 / 设置 1');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('shows native v2.1 routeChannels backups as account imports', async () => {
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter>
+            <ImportExport />
+          </MemoryRouter>,
+        );
+      });
+
+      const textarea = root!.root.findByType('textarea');
+      await act(async () => {
+        textarea.props.onChange({ target: { value: nativeMetapiLegacyChannelsPayload } });
+      });
+      await flushMicrotasks();
+
+      const rendered = collectText(root!.root);
+      expect(rendered).not.toContain('ALL-API-Hub V2');
+      expect(rendered).toContain('包含分区：连接与路由策略 + 系统设置');
+      expect(rendered).toContain('统计：站点 1 / 账号 1 / 令牌 1 / 路由 1 / 目标 1');
     } finally {
       root?.unmount();
     }
@@ -421,7 +509,7 @@ describe('ImportExport', () => {
     }
   });
 
-  it('shows v2.1 config-backup wording and local-state notice', async () => {
+  it('shows v2.3 config-backup wording and local-state notice', async () => {
     let root!: WebTestRenderer;
 
     try {
@@ -435,7 +523,7 @@ describe('ImportExport', () => {
       await flushMicrotasks();
 
       const rendered = collectText(root!.root);
-      expect(rendered).toContain('Schema v2.1');
+      expect(rendered).toContain('Schema v2.3');
       expect(rendered).toContain('导出全部（连接 + 路由 + 策略 + 设置）');
       expect(rendered).toContain('仅导出连接与路由策略');
       expect(rendered).toContain('覆盖备份中的连接/路由/策略配置，但会保留本机日志、公告、缓存和统计。');
@@ -468,25 +556,14 @@ describe('ImportExport', () => {
       const selects = root!.root.findAllByType(ModernSelect);
       const exportTypeSelect = selects.at(-1);
 
-      expect(fileUrlInput?.props.style).toEqual(expect.objectContaining({
-        width: '100%',
-        padding: '10px 14px',
-        border: '1px solid var(--color-border)',
-        borderRadius: 'var(--radius-sm)',
-        fontSize: 13,
-        background: 'var(--color-bg)',
-        color: 'var(--color-text-primary)',
-      }));
-      expect(root!.root.findAll((node) => node.type === 'select')).toHaveLength(0);
+      expect(fileUrlInput?.props.className).toContain('border-input');
       expect(exportTypeSelect?.props.value).toBe('all');
       expect(exportTypeSelect?.props.options).toEqual([
         { value: 'all', label: '全部' },
         { value: 'accounts', label: '连接与路由策略' },
         { value: 'preferences', label: '系统设置' },
       ]);
-      expect(cronInput?.props.style).toEqual(expect.objectContaining({
-        fontFamily: 'var(--font-mono)',
-      }));
+      expect(cronInput?.props.className).toContain('font-mono');
     } finally {
       root?.unmount();
     }
@@ -571,9 +648,13 @@ describe('ImportExport', () => {
 
       expect(clearPasswordToggle).toBeTruthy();
 
-      const checkbox = clearPasswordToggle!.findByType('input');
+      const checkbox = clearPasswordToggle!.find((node) => (
+        node.type === 'button'
+        && node.props.role === 'switch'
+        && node.props['aria-label'] === '清空已保存密码'
+      ));
       await act(async () => {
-        checkbox.props.onChange({ target: { checked: true } });
+        checkbox.props.onClick();
       });
       await flushMicrotasks();
 

@@ -220,29 +220,31 @@ export function Login({ onLogin, t }: { onLogin: (token: string) => void; t: (te
             ))}
           </div>
           <div className="login-brand-footer">
-            <a
-              href={SITE_GITHUB_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="login-icon-link"
-              aria-label="GitHub"
-              title="GitHub"
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true" className="login-icon-link-svg">
-                <path
-                  fill="currentColor"
-                  d="M12 2C6.48 2 2 6.59 2 12.25c0 4.53 2.87 8.38 6.84 9.73.5.1.68-.22.68-.49 0-.24-.01-1.04-.01-1.88-2.78.62-3.37-1.22-3.37-1.22-.45-1.2-1.11-1.52-1.11-1.52-.91-.64.07-.63.07-.63 1 .07 1.53 1.06 1.53 1.06.9 1.57 2.35 1.12 2.92.85.09-.67.35-1.12.64-1.38-2.22-.26-4.55-1.15-4.55-5.13 0-1.13.39-2.05 1.03-2.77-.1-.26-.45-1.31.1-2.73 0 0 .84-.28 2.75 1.06A9.3 9.3 0 0 1 12 6.91c.85 0 1.71.12 2.51.35 1.91-1.34 2.75-1.06 2.75-1.06.55 1.42.2 2.47.1 2.73.64.72 1.03 1.64 1.03 2.77 0 3.99-2.34 4.86-4.57 5.12.36.33.68.97.68 1.96 0 1.42-.01 2.56-.01 2.91 0 .27.18.59.69.49A10.27 10.27 0 0 0 22 12.25C22 6.59 17.52 2 12 2Z"
-                />
-              </svg>
-            </a>
-            <a
-              href={SITE_DOCS_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="login-doc-link"
-            >
-              {t('app.deploymentDocs')}
-            </a>
+            <Button asChild variant="outline" size="icon" className="rounded-full">
+              <a
+                href={SITE_GITHUB_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="GitHub"
+                title="GitHub"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true" className="size-4">
+                  <path
+                    fill="currentColor"
+                    d="M12 2C6.48 2 2 6.59 2 12.25c0 4.53 2.87 8.38 6.84 9.73.5.1.68-.22.68-.49 0-.24-.01-1.04-.01-1.88-2.78.62-3.37-1.22-3.37-1.22-.45-1.2-1.11-1.52-1.11-1.52-.91-.64.07-.63.07-.63 1 .07 1.53 1.06 1.53 1.06.9 1.57 2.35 1.12 2.92.85.09-.67.35-1.12.64-1.38-2.22-.26-4.55-1.15-4.55-5.13 0-1.13.39-2.05 1.03-2.77-.1-.26-.45-1.31.1-2.73 0 0 .84-.28 2.75 1.06A9.3 9.3 0 0 1 12 6.91c.85 0 1.71.12 2.51.35 1.91-1.34 2.75-1.06 2.75-1.06.55 1.42.2 2.47.1 2.73.64.72 1.03 1.64 1.03 2.77 0 3.99-2.34 4.86-4.57 5.12.36.33.68.97.68 1.96 0 1.42-.01 2.56-.01 2.91 0 .27.18.59.69.49A10.27 10.27 0 0 0 22 12.25C22 6.59 17.52 2 12 2Z"
+                  />
+                </svg>
+              </a>
+            </Button>
+            <Button asChild variant="outline" size="sm" className="rounded-full">
+              <a
+                href={SITE_DOCS_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                {t('app.deploymentDocs')}
+              </a>
+            </Button>
           </div>
         </section>
 
@@ -251,31 +253,40 @@ export function Login({ onLogin, t }: { onLogin: (token: string) => void; t: (te
             <div className="login-auth-eyebrow">{t('app.adminAccess')}</div>
             <h2 className="login-auth-title">{t('app.sign')}</h2>
             <p className="login-auth-copy">{t('app.enterAdminTokenContinue')}</p>
-            <label className="login-auth-label" htmlFor="admin-token-input">{t('app.adminToken')}</label>
-            <Input
-              id="admin-token-input"
-              type="password"
-              placeholder={t('app.adminToken')}
-              value={token}
-              onChange={(e) => {
-                setToken(e.target.value);
-                setError('');
+            <form
+              className="login-auth-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void handleLogin();
               }}
-              onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
-            />
-            {error && (
-              <Alert variant="destructive" className="mb-3 animate-shake">
-                <AlertDescription>{error}</AlertDescription>
-              </Alert>
-            )}
-            <Button
-              type="button"
-              onClick={handleLogin}
-              disabled={loading || !token}
-              className="w-full py-[13px]"
             >
-              {loading ? t('app.verifying') : t('app.sign')}
-            </Button>
+              <div className="login-auth-field">
+                <label className="login-auth-label" htmlFor="admin-token-input">{t('app.adminToken')}</label>
+                <Input
+                  id="admin-token-input"
+                  type="password"
+                  placeholder={t('app.adminToken')}
+                  value={token}
+                  onChange={(e) => {
+                    setToken(e.target.value);
+                    setError('');
+                  }}
+                  className="login-auth-control"
+                />
+              </div>
+              {error && (
+                <Alert variant="destructive" className="animate-shake">
+                  <AlertDescription>{error}</AlertDescription>
+                </Alert>
+              )}
+              <Button
+                type="submit"
+                disabled={loading || !token}
+                className="login-auth-submit"
+              >
+                {loading ? t('app.verifying') : t('app.sign')}
+              </Button>
+            </form>
             <div className="login-auth-note">{t('app.onlyChecksLocalServiceAccessNeverSends')}</div>
             <div className="login-auth-footer">
               <span>{t('app.continueAdminSign')}</span>

@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import { create, type ReactTestInstance } from 'react-test-renderer';
+import { readFileSync } from 'node:fs';
 import { Login } from './App.js';
 import { SITE_DOCS_URL, SITE_GITHUB_URL } from './docsLink.js';
+import { tr } from './i18n.js';
 
 function collectText(node: ReactTestInstance): string {
   return (node.children || []).map((child) => {
@@ -21,7 +23,7 @@ describe('Login surface', () => {
 
   it('renders a poster-style hero with a floating admin login panel', () => {
     const root = create(
-      <Login onLogin={vi.fn()} t={(text) => text} />,
+      <Login onLogin={vi.fn()} t={tr} />,
     );
 
     try {
@@ -71,6 +73,35 @@ describe('Login surface', () => {
       expect(githubLink.props['aria-label']).toBe('GitHub');
       expect(githubLink.props.target).toBe('_blank');
       expect(tokenInput.props.type).toBe('password');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('keeps the auth form spaced and dark-theme aware', () => {
+    const root = create(
+      <Login onLogin={vi.fn()} t={tr} />,
+    );
+    const css = readFileSync(new URL('./index.css', import.meta.url), 'utf8');
+
+    try {
+      const form = root.root.find((node) => (
+        node.type === 'form'
+        && typeof node.props.className === 'string'
+        && node.props.className.includes('login-auth-form')
+      ));
+      const submit = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.className === 'string'
+        && node.props.className.includes('login-auth-submit')
+      ));
+
+      expect(form).toBeTruthy();
+      expect(submit.props.type).toBe('submit');
+      expect(css).toContain('.login-auth-form');
+      expect(css).toContain('gap: 14px;');
+      expect(css).toContain('[data-theme="dark"] .login-auth-panel');
+      expect(css).not.toContain('[data-theme="dark"] .login-shell,\n[data-theme="dark"] .login-surface');
     } finally {
       root?.unmount();
     }

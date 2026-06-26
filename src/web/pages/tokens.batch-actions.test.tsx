@@ -26,6 +26,20 @@ async function flushMicrotasks() {
   });
 }
 
+function toggleCheckbox(node: { props: Record<string, any> }, checked = true) {
+  if (typeof node.props.onCheckedChange === 'function') {
+    node.props.onCheckedChange(checked);
+    return;
+  }
+  if (typeof node.props.onChange === 'function') {
+    node.props.onChange({ target: { checked } });
+    return;
+  }
+  if (typeof node.props.onClick === 'function') {
+    node.props.onClick({ stopPropagation: vi.fn(), target: { checked } });
+  }
+}
+
 describe('Tokens batch actions', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -90,8 +104,8 @@ describe('Tokens batch actions', () => {
       const checkboxA = root.root.find((node) => node.props['data-testid'] === 'token-select-1');
       const checkboxB = root.root.find((node) => node.props['data-testid'] === 'token-select-2');
       await act(async () => {
-        checkboxA.props.onChange({ target: { checked: true } });
-        checkboxB.props.onChange({ target: { checked: true } });
+        toggleCheckbox(checkboxA);
+        toggleCheckbox(checkboxB);
       });
 
       const batchButton = root.root.find((node) => node.props['data-testid'] === 'tokens-batch-delete');

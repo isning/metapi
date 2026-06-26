@@ -3,15 +3,16 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 describe('Tokens actions layout', () => {
-  it('reuses a wrapping actions cell layout so token row actions do not overflow', () => {
+  it('keeps common token actions inline and moves secondary actions into the overflow menu', () => {
     const source = readFileSync(resolve(process.cwd(), 'src/web/pages/Tokens.tsx'), 'utf8');
-    const css = readFileSync(resolve(process.cwd(), 'src/web/index.css'), 'utf8');
 
-    expect(source).toContain('className="token-actions-cell"');
-    expect(css).toContain('.token-actions-cell');
-    expect(css).toContain('.token-table-actions {');
-    expect(css).toContain('flex-wrap: wrap;');
-    expect(css).toContain('.token-table {');
-    expect(css).toContain('table-layout: fixed;');
+    expect(source).toContain("import * as DropdownMenu from '../components/ui/dropdown-menu/index.js'");
+    expect(source).toContain('Ellipsis');
+    expect(source).toContain('TableHead className="min-w-36 text-right"');
+    expect(source).toContain('TableCell className="min-w-36 text-right"');
+    expect(source).toContain('ButtonGroup className="justify-end"');
+    expect(source).not.toContain('ButtonGroup className="flex-wrap justify-end"');
+    expect(source).toContain('<DropdownMenu.Content align="end" className="min-w-48">');
+    expect(source).toContain('variant="destructive"');
   });
 });

@@ -74,3 +74,37 @@ export function buildCustomReorderUpdates<T extends SortableBase>(
 
   return updates;
 }
+
+export function buildCustomReorderToTargetUpdates<T extends SortableBase>(
+  items: T[],
+  activeId: number,
+  overId: number,
+): Array<{ id: number; sortOrder: number }> {
+  if (activeId === overId) return [];
+
+  const sorted = sortItemsForDisplay(items, 'custom', () => 0);
+  const active = sorted.find((item) => item.id === activeId);
+  const over = sorted.find((item) => item.id === overId);
+  if (!active || !over) return [];
+  if (!!active.isPinned !== !!over.isPinned) return [];
+
+  const group = sorted.filter((item) => !!item.isPinned === !!active.isPinned);
+  const activeIndex = group.findIndex((item) => item.id === activeId);
+  const overIndex = group.findIndex((item) => item.id === overId);
+  if (activeIndex < 0 || overIndex < 0 || activeIndex === overIndex) return [];
+
+  const next = [...group];
+  const [moved] = next.splice(activeIndex, 1);
+  if (!moved) return [];
+  next.splice(overIndex, 0, moved);
+
+  const updates: Array<{ id: number; sortOrder: number }> = [];
+  next.forEach((item, idx) => {
+    const prev = Number.isFinite(item.sortOrder as number) ? Number(item.sortOrder) : Number.MAX_SAFE_INTEGER;
+    if (prev !== idx) {
+      updates.push({ id: item.id, sortOrder: idx });
+    }
+  });
+
+  return updates;
+}

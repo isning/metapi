@@ -2,8 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
 import { MemoryRouter } from 'react-router-dom';
 import { ToastProvider } from '../../components/Toast.js';
+import ModernSelect from '../../components/ModernSelect.js';
 
 import UpdateCenterSection from './UpdateCenterSection.js';
+import UpdateCenterHistoryModal from './UpdateCenterHistoryModal.js';
 
 const { apiMock } = vi.hoisted(() => ({
   apiMock: {
@@ -265,25 +267,8 @@ describe('UpdateCenterSection', () => {
         checkboxInputs[2].props.onChange({ target: { checked: false } });
       });
 
-      const defaultSourceTrigger = root.root.find((node) => (
-        node.type === 'button'
-        && typeof node.props.className === 'string'
-        && node.props.className.includes('modern-select-trigger')
-      ));
-
       await act(async () => {
-        defaultSourceTrigger.props.onClick();
-      });
-
-      const dockerHubOption = root.root.find((node) => (
-        node.type === 'button'
-        && typeof node.props.className === 'string'
-        && node.props.className.includes('modern-select-option')
-        && collectText(node).includes('Docker Hub Tags')
-      ));
-
-      await act(async () => {
-        dockerHubOption.props.onClick();
+        root.root.findByType(ModernSelect).props.onChange('docker-hub-tag');
       });
 
       const saveButton = root.root.find((node) => (
@@ -381,14 +366,12 @@ describe('UpdateCenterSection', () => {
 
       const githubDeployButton = root.root.find((node) => (
         node.type === 'button'
-        && typeof node.props.className === 'string'
-        && node.props.className.includes('btn')
+        && typeof node.props.onClick === 'function'
         && collectText(node).includes('部署 GitHub 稳定版')
       ));
       const dockerDeployButton = root.root.find((node) => (
         node.type === 'button'
-        && typeof node.props.className === 'string'
-        && node.props.className.includes('btn')
+        && typeof node.props.onClick === 'function'
         && collectText(node).includes('部署 Docker Hub 标签')
       ));
 
@@ -635,18 +618,14 @@ describe('UpdateCenterSection', () => {
       ));
 
       await act(async () => {
-        await openHistoryButton.props.onClick();
+        openHistoryButton.props.onClick();
       });
       await flushMicrotasks();
 
-      const modal = root.root.find((node) => (
-        typeof node.props.className === 'string'
-        && node.props.className.includes('modal-content')
-        && collectText(node).includes('全部 revision')
-      ));
-
-      expect(collectText(modal)).toContain('Earlier stable release');
-      expect(collectText(modal)).toContain('回退到 revision 15');
+      const historyModal = root.root.findByType(UpdateCenterHistoryModal);
+      expect(historyModal.props.open).toBe(true);
+      expect(historyModal.props.history).toHaveLength(3);
+      expect(JSON.stringify(historyModal.props.history)).toContain('Earlier stable release');
     } finally {
       root?.unmount();
     }
@@ -702,8 +681,7 @@ describe('UpdateCenterSection', () => {
 
       const dockerDeployButton = root.root.find((node) => (
         node.type === 'button'
-        && typeof node.props.className === 'string'
-        && node.props.className.includes('btn')
+        && typeof node.props.onClick === 'function'
         && collectText(node).includes('部署 Docker Hub 标签')
       ));
 

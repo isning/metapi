@@ -7,6 +7,7 @@ import Models from './Models.js';
 const { apiMock } = vi.hoisted(() => ({
   apiMock: {
     getModelsMarketplace: vi.fn(),
+    getModelRouteFlow: vi.fn(),
   },
 }));
 
@@ -19,6 +20,14 @@ function collectText(node: ReactTestInstance): string {
     if (typeof child === 'string') return child;
     return collectText(child);
   }).join('');
+}
+
+function findButtonByText(root: ReactTestInstance, text: string): ReactTestInstance {
+  return root.find((node) => (
+    node.type === 'button'
+    && typeof node.props.onClick === 'function'
+    && collectText(node).includes(text)
+  ));
 }
 
 async function flushMicrotasks() {
@@ -36,6 +45,7 @@ describe('Models mobile layout', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    apiMock.getModelRouteFlow.mockResolvedValue({ flow: null });
     globalThis.document = {
       documentElement: {
         getAttribute: () => 'light',
@@ -129,7 +139,7 @@ describe('Models mobile layout', () => {
     }
   });
 
-  it('renders stacked account detail cards instead of tables when a mobile card expands', async () => {
+  it('renders stacked account detail cards instead of tables when a mobile model opens', async () => {
     let root!: WebTestRenderer;
 
     try {
@@ -144,12 +154,7 @@ describe('Models mobile layout', () => {
       });
       await flushMicrotasks();
 
-      const modelCard = root!.root.find((node) => (
-        node.type === 'div'
-        && typeof node.props.className === 'string'
-        && node.props.className.includes('model-card')
-        && typeof node.props.onClick === 'function'
-      ));
+      const modelCard = findButtonByText(root!.root, 'gpt-4o');
 
       await act(async () => {
         modelCard.props.onClick();

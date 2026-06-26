@@ -143,15 +143,16 @@ export function ReferencePricingPanel({
               {catalog.entries.length > 0 ? (
                 <div className="max-h-80 divide-y overflow-auto">
                   {catalog.entries.map((entry) => (
-                    <button
+                    <Button
                       key={entry.id}
                       type="button"
-                      className={`grid w-full gap-1 px-3 py-2 text-left hover:bg-accent ${entry.id === selectedEntryId ? 'bg-accent' : ''}`}
+                      variant="ghost"
+                      className={`grid h-auto w-full justify-start gap-1 rounded-none px-3 py-2 text-left hover:bg-accent ${entry.id === selectedEntryId ? 'bg-accent' : ''}`}
                       onClick={() => onSelectEntry(entry)}
                     >
                       <span className="truncate text-sm font-medium">{entry.displayName || entry.modelName}</span>
                       <span className="truncate text-xs text-muted-foreground">{entry.provider || 'global'} · {entry.sourceType}</span>
-                    </button>
+                    </Button>
                   ))}
                 </div>
               ) : (

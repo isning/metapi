@@ -17,6 +17,11 @@ const { apiMock, toastMock } = vi.hoisted(() => ({
     refreshAccountHealth: vi.fn(),
     checkModels: vi.fn(),
     getAccountModels: vi.fn(),
+    listUpstreamCostPricings: vi.fn(),
+    createUpstreamCostPricing: vi.fn(),
+    updateUpstreamCostPricing: vi.fn(),
+    deleteUpstreamCostPricing: vi.fn(),
+    previewUpstreamCostPricing: vi.fn(),
   },
   toastMock: {
     success: vi.fn(),
@@ -84,11 +89,34 @@ describe('Accounts edit panel', () => {
       siteId: 1,
       siteName: 'Site A',
       models: [
-        { name: 'gpt-4', latencyMs: 120, disabled: false },
-        { name: 'gpt-3.5', latencyMs: 80, disabled: false },
+        { name: 'gpt-4', latencyMs: 120, disabled: false, costPricing: { configured: false } },
+        { name: 'gpt-3.5', latencyMs: 80, disabled: false, costPricing: { configured: false } },
+      ],
+      accountTokens: [
+        { id: 10, name: 'default token', tokenGroup: 'default', enabled: true, isDefault: true },
       ],
       totalCount: 2,
       disabledCount: 0,
+    });
+    apiMock.listUpstreamCostPricings.mockResolvedValue([]);
+    apiMock.createUpstreamCostPricing.mockResolvedValue({
+      id: 99,
+      scope: 'account_model',
+      siteId: 1,
+      accountId: 1,
+      tokenId: null,
+      tokenGroup: null,
+      modelName: 'gpt-4',
+      normalizedModelName: 'gpt-4',
+      enabled: true,
+      plan: { components: [] },
+      planFingerprint: 'fingerprint',
+      sourceType: 'user',
+      metadata: {},
+    });
+    apiMock.previewUpstreamCostPricing.mockResolvedValue({
+      pricing: null,
+      evaluation: { totalCostUsd: 10 },
     });
   });
 
@@ -136,8 +164,8 @@ describe('Accounts edit panel', () => {
       siteId: 1,
       siteName: 'Site A',
       models: [
-        { name: 'gpt-4', latencyMs: 120, disabled: false },
-        { name: 'gpt-3.5', latencyMs: 80, disabled: false },
+        { name: 'gpt-4', latencyMs: 120, disabled: false, costPricing: { configured: false } },
+        { name: 'gpt-3.5', latencyMs: 80, disabled: false, costPricing: { configured: false } },
       ],
       totalCount: 2,
       disabledCount: 0,
@@ -159,8 +187,6 @@ describe('Accounts edit panel', () => {
       const modelButtons = root.root.findAll((node) => (
         node.type === 'button'
         && typeof node.props.onClick === 'function'
-        && typeof node.props.className === 'string'
-        && node.props.className.includes('btn-link-info')
         && collectText(node).trim() === '模型'
       ));
       expect(modelButtons.length).toBeGreaterThan(0);
@@ -172,6 +198,89 @@ describe('Accounts edit panel', () => {
 
       // Should call getAccountModels to open the model management modal
       expect(apiMock.getAccountModels).toHaveBeenCalledWith(1);
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('opens upstream cost editor from model modal and saves pricing', async () => {
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/accounts']}>
+            <ToastProvider>
+              <Accounts />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const modelButton = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && collectText(node).trim() === '模型'
+      ));
+
+      await act(async () => {
+        await modelButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      const costButton = root.root.findAll((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && collectText(node).trim() === '成本'
+      ))[0]!;
+
+      await act(async () => {
+        costButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.listUpstreamCostPricings).toHaveBeenCalledWith({
+        siteId: 1,
+        modelName: 'gpt-4',
+      });
+
+      const priceInputs = root.root.findAll((node) => (
+        node.type === 'input'
+        && node.props.placeholder === '0'
+        && typeof node.props.onChange === 'function'
+      ));
+      expect(priceInputs.length).toBeGreaterThanOrEqual(2);
+
+      await act(async () => {
+        priceInputs[0]!.props.onChange({ target: { value: '2' } });
+        priceInputs[1]!.props.onChange({ target: { value: '8' } });
+      });
+
+      const saveCostButton = root.root.findAll((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && collectText(node).trim() === '保存'
+      )).at(-1)!;
+
+      await act(async () => {
+        await saveCostButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.createUpstreamCostPricing).toHaveBeenCalledWith(
+        expect.objectContaining({
+          scope: 'token_model',
+          siteId: 1,
+          accountId: 1,
+          tokenId: 10,
+          modelName: 'gpt-4',
+          simpleTokenPricing: expect.objectContaining({
+            inputPerMillion: 2,
+            outputPerMillion: 8,
+          }),
+        }),
+      );
+      expect(apiMock.getAccountModels).toHaveBeenCalledTimes(2);
     } finally {
       root?.unmount();
     }
@@ -224,8 +333,6 @@ describe('Accounts edit panel', () => {
       const modelButtons = root.root.findAll((node) => (
         node.type === 'button'
         && typeof node.props.onClick === 'function'
-        && typeof node.props.className === 'string'
-        && node.props.className.includes('btn-link-info')
         && collectText(node).trim() === '模型'
       ));
 
@@ -288,8 +395,6 @@ describe('Accounts edit panel', () => {
       const modelButton = root.root.find((node) => (
         node.type === 'button'
         && typeof node.props.onClick === 'function'
-        && typeof node.props.className === 'string'
-        && node.props.className.includes('btn-link-info')
         && collectText(node).trim() === '模型'
       ));
 
@@ -318,5 +423,3 @@ describe('Accounts edit panel', () => {
     }
   });
 });
-
-

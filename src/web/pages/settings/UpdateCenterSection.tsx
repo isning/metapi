@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, type CSSProperties } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 
 import { api } from '../../api.js';
 import ModernSelect from '../../components/ModernSelect.js';
@@ -11,7 +11,13 @@ import {
 } from '../helpers/updateCenterPresentation.js';
 import UpdateCenterHistoryModal from './UpdateCenterHistoryModal.js';
 import UpdateCenterHistoryEntryCard from './UpdateCenterHistoryEntryCard.js';
+import { Button } from '../../components/ui/button/index.js';
+import ToneBadge from '../../components/ToneBadge.js';
+import { Input } from '../../components/ui/input/index.js';
+import { cn } from '../../lib/utils.js';
+import { SettingsCard, SettingsToggleRow } from './SettingsLayout.js';
 
+import { tr } from '../../i18n.js';
 type UpdateCenterStatus = {
   currentVersion?: string;
   config?: {
@@ -99,60 +105,23 @@ const DEPLOY_SOURCE_OPTIONS = [
   {
     value: 'github-release',
     label: 'GitHub Releases',
-    description: '优先跟踪仓库稳定版 release。',
+    description: tr('pages.settings.updateCenterSection.stableRelease'),
   },
   {
     value: 'docker-hub-tag',
     label: 'Docker Hub Tags',
-    description: '适合直接跟随镜像标签推进部署。',
+    description: tr('pages.settings.updateCenterSection.suitableDeployingDirectlyFollowingImageTag'),
   },
 ] as const;
 
-const inputStyle: CSSProperties = {
-  width: '100%',
-  padding: '10px 14px',
-  border: '1px solid var(--color-border)',
-  borderRadius: 'var(--radius-sm)',
-  fontSize: 13,
-  outline: 'none',
-  background: 'var(--color-bg)',
-  color: 'var(--color-text-primary)',
-};
-
-const sectionPanelStyle: CSSProperties = {
-  border: '1px solid var(--color-border-light)',
-  borderRadius: 'var(--radius-md)',
-  padding: 14,
-  background: 'var(--color-bg)',
-};
-
-const summaryLabelStyle: CSSProperties = {
-  fontSize: 12,
-  color: 'var(--color-text-muted)',
-  marginBottom: 6,
-};
-
-const summaryValueStyle: CSSProperties = {
-  fontSize: 14,
-  fontWeight: 600,
-  color: 'var(--color-text-primary)',
-  lineHeight: 1.4,
-};
-
-const fieldLabelStyle: CSSProperties = {
-  fontSize: 12,
-  color: 'var(--color-text-muted)',
-  marginBottom: 6,
-};
-
-const fieldHintStyle: CSSProperties = {
-  fontSize: 12,
-  color: 'var(--color-text-muted)',
-  lineHeight: 1.5,
-};
+const sectionPanelClassName = 'rounded-lg border bg-muted p-3.5';
+const summaryLabelClassName = 'mb-1.5 text-xs text-muted-foreground';
+const summaryValueClassName = 'text-sm font-semibold leading-snug text-foreground';
+const fieldLabelClassName = 'mb-1.5 text-xs text-muted-foreground';
+const fieldHintClassName = 'text-xs leading-normal text-muted-foreground';
 
 function formatTaskTime(value?: string | null) {
-  if (!value) return '暂无完成记录';
+  if (!value) return tr('pages.settings.updateCenterSection.noCompletedRecords');
   const normalizedValue = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(value)
     ? `${value.replace(' ', 'T')}Z`
     : value;
@@ -169,39 +138,39 @@ function formatTaskTime(value?: string | null) {
 function getTaskBadge(status?: string | null) {
   switch (status) {
     case 'running':
-      return { className: 'badge badge-info', label: '进行中' };
+      return { tone: 'info', label: tr('pages.programLogs.progress') };
     case 'pending':
-      return { className: 'badge badge-warning', label: '排队中' };
+      return { tone: 'warning', label: tr('pages.settings.updateCenterSection.queued') };
     case 'succeeded':
-      return { className: 'badge badge-success', label: '已完成' };
+      return { tone: 'success', label: tr('pages.programLogs.completed') };
     case 'failed':
-      return { className: 'badge badge-error', label: '失败' };
+      return { tone: 'error', label: tr('pages.checkinLog.failed') };
     default:
-      return { className: 'badge badge-muted', label: '空闲' };
+      return { tone: 'muted', label: tr('pages.settings.updateCenterSection.idle') };
   }
 }
 
 function getHelperBadge(helper?: UpdateCenterStatus['helper'] | null, helperBaseUrl?: string) {
   if (!helperBaseUrl) {
-    return { className: 'badge badge-muted', label: '未配置' };
+    return { tone: 'muted', label: tr('pages.settings.notConfigured') };
   }
   if (helper?.healthy) {
-    return { className: 'badge badge-success', label: 'Healthy' };
+    return { tone: 'success', label: 'Healthy' };
   }
   if (helper?.ok) {
-    return { className: 'badge badge-warning', label: '可达但未就绪' };
+    return { tone: 'warning', label: tr('pages.settings.updateCenterSection.ready') };
   }
-  return { className: 'badge badge-error', label: '不可用' };
+  return { tone: 'error', label: tr('pages.settings.updateCenterSection.notAvailable') };
 }
 
 function getSourceBadge(enabled: boolean, version?: string) {
   if (!enabled) {
-    return { className: 'badge badge-muted', label: '已停用' };
+    return { tone: 'muted', label: tr('pages.helpers.updateCenterPresentation.stopped') };
   }
   if (version) {
-    return { className: 'badge badge-success', label: '可部署' };
+    return { tone: 'success', label: tr('pages.helpers.updateCenterPresentation.deployable') };
   }
-  return { className: 'badge badge-warning', label: '未发现版本' };
+  return { tone: 'warning', label: tr('pages.helpers.updateCenterPresentation.noVersionFound') };
 }
 
 function formatShortDigest(digest?: string | null) {
@@ -261,7 +230,7 @@ export default function UpdateCenterSection() {
       const next = await api.getUpdateCenterStatus() as UpdateCenterStatus;
       applyStatus(next);
     } catch (error: any) {
-      toast.error(error?.message || '加载更新中心失败');
+      toast.error(error?.message || tr('pages.settings.updateCenterSection.loadFailed'));
     } finally {
       setLoading(false);
     }
@@ -274,7 +243,7 @@ export default function UpdateCenterSection() {
       return next;
     } catch (error: any) {
       if (showErrorToast) {
-        toast.error(error?.message || '检查更新失败');
+        toast.error(error?.message || tr('pages.settings.updateCenterSection.checkupdateFailed'));
       }
       throw error;
     }
@@ -297,9 +266,9 @@ export default function UpdateCenterSection() {
         ...(prev || {}),
         config: nextConfig,
       }));
-      toast.success('更新中心配置已保存');
+      toast.success(tr('pages.settings.updateCenterSection.configurationSaved'));
     } catch (error: any) {
-      toast.error(error?.message || '保存更新中心配置失败');
+      toast.error(error?.message || tr('pages.settings.updateCenterSection.saveConfigurationFailed'));
     } finally {
       setSaving(false);
     }
@@ -309,7 +278,7 @@ export default function UpdateCenterSection() {
     setChecking(true);
     try {
       await refreshStatus(true);
-      toast.success('已刷新更新信息');
+      toast.success(tr('pages.settings.updateCenterSection.refreshInfo'));
     } catch {
       // refreshStatus already handled the toast
     } finally {
@@ -337,7 +306,7 @@ export default function UpdateCenterSection() {
     if (!task) return false;
     setTaskStatus(String(task.status || 'unknown'));
     setLogs(Array.isArray(task.logs) ? task.logs.map((entry) => String(entry?.message || '')).filter(Boolean) : []);
-    toast.info('实时日志流已断开，已回退到任务详情快照');
+    toast.info(tr('pages.settings.updateCenterSection.liveLogStreamDisconnectedFallingBackTask'));
     return true;
   };
 
@@ -362,7 +331,7 @@ export default function UpdateCenterSection() {
       }) as { task?: { id: string } };
       taskId = response.task?.id || '';
       if (!taskId) {
-        throw new Error('部署任务未返回 taskId');
+        throw new Error(tr('pages.settings.updateCenterSection.missingDeployTaskId'));
       }
 
       await streamTaskLogs(taskId);
@@ -377,7 +346,7 @@ export default function UpdateCenterSection() {
         }
       }
       setTaskStatus('failed');
-      toast.error(error?.message || '部署失败');
+      toast.error(error?.message || tr('pages.settings.updateCenterSection.deployfailed'));
     } finally {
       setDeploying(false);
       void refreshStatus(false).catch(() => {});
@@ -397,7 +366,7 @@ export default function UpdateCenterSection() {
       const response = await api.rollbackUpdateCenter({ targetRevision }) as { task?: { id: string } };
       taskId = response.task?.id || '';
       if (!taskId) {
-        throw new Error('回退任务未返回 taskId');
+        throw new Error(tr('pages.settings.updateCenterSection.missingRollbackTaskId'));
       }
 
       await streamTaskLogs(taskId);
@@ -412,7 +381,7 @@ export default function UpdateCenterSection() {
         }
       }
       setTaskStatus('failed');
-      toast.error(error?.message || '回退失败');
+      toast.error(error?.message || tr('pages.settings.updateCenterSection.failed'));
     } finally {
       setDeploying(false);
       void refreshStatus(false).catch(() => {});
@@ -463,162 +432,123 @@ export default function UpdateCenterSection() {
 
   if (loading) {
     return (
-      <div className="card" style={{ padding: 20 }}>
-        <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 6 }}>更新中心</div>
-        <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
-          正在加载部署来源、版本状态和 helper 健康检查...
-        </div>
-      </div>
+      <SettingsCard
+        title={tr('pages.settings.updateCenterSection.title')}
+        description={tr('pages.settings.updateCenterSection.deployStatusHelperHealthycheck')}
+      />
     );
   }
 
   return (
-    <div className="card" style={{ padding: 20 }}>
-      <div style={{ marginBottom: 14 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
-          <div style={{ fontWeight: 600, fontSize: 14 }}>更新中心</div>
-          <span className={`${updateReminder.badgeClassName} ${updateReminder.highlight ? 'stat-value-glow' : ''}`.trim()}>
-            {updateReminder.label}
-          </span>
-        </div>
-        <div style={{ fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.55 }}>
-          在设置页里统一查看 GitHub Releases、Docker Hub 版本和 K3s helper 状态，避免部署信息散落在多个入口。
-        </div>
-        <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', lineHeight: 1.5, marginTop: 6 }}>
+    <SettingsCard
+      title={tr('pages.settings.updateCenterSection.title')}
+      description={tr('pages.settings.updateCenterSection.settingsViewingGithubReleasesDockerHubK3s')}
+      actions={(
+        <ToneBadge tone={updateReminder.badgeTone} className={updateReminder.highlight ? 'stat-value-glow' : undefined}>
+          {updateReminder.label}
+        </ToneBadge>
+      )}
+    >
+      <div className="mb-3.5">
+        <div className="mt-1.5 text-xs leading-normal text-muted-foreground">
           {updateReminder.detail}
         </div>
       </div>
 
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, minmax(0, 1fr))',
-          gap: 12,
-          marginBottom: 12,
-        }}
-      >
-        <div style={sectionPanelStyle}>
-          <div style={summaryLabelStyle}>当前运行版本</div>
-          <div style={{ ...summaryValueStyle, fontFamily: 'var(--font-mono)' }}>
+      <div className={`mb-3 grid gap-3 ${isMobile ? 'grid-cols-1' : 'grid-cols-2'}`}>
+        <div className={sectionPanelClassName}>
+          <div className={summaryLabelClassName}>{tr('pages.settings.updateCenterSection.currentRunningVersion')}</div>
+          <div className={cn(summaryValueClassName, 'font-mono')}>
             {status?.currentVersion || '-'}
           </div>
-          <div style={fieldHintStyle}>以当前容器内运行版本为准。</div>
+          <div className={fieldHintClassName}>{tr('pages.settings.updateCenterSection.useVersionCurrentlyRunningContainer')}</div>
         </div>
-        <div style={sectionPanelStyle}>
-          <div style={summaryLabelStyle}>Deploy Helper</div>
-          <div style={{ marginBottom: 6 }}>
-            <span className={helperBadge.className}>{helperBadge.label}</span>
+        <div className={sectionPanelClassName}>
+          <div className={summaryLabelClassName}>Deploy Helper</div>
+          <div className="mb-1.5">
+            <ToneBadge tone={helperBadge.tone}>{helperBadge.label}</ToneBadge>
           </div>
-          <div style={{ ...fieldHintStyle, fontFamily: config.helperBaseUrl ? 'var(--font-mono)' : 'inherit' }}>
-            {config.helperBaseUrl || '尚未配置 Helper URL'}
+          <div className={cn(fieldHintClassName, config.helperBaseUrl && 'font-mono')}>
+            {config.helperBaseUrl || tr('pages.settings.updateCenterSection.notConfiguredHelperUrl')}
           </div>
         </div>
-        <div style={sectionPanelStyle}>
-          <div style={summaryLabelStyle}>默认部署来源</div>
-          <div style={summaryValueStyle}>
+        <div className={sectionPanelClassName}>
+          <div className={summaryLabelClassName}>{tr('pages.settings.updateCenterSection.defaultdeploy')}</div>
+          <div className={summaryValueClassName}>
             {DEPLOY_SOURCE_OPTIONS.find((item) => item.value === config.defaultDeploySource)?.label || 'GitHub Releases'}
           </div>
-          <div style={fieldHintStyle}>保存配置后，手动部署默认优先使用这里的来源。</div>
+          <div className={fieldHintClassName}>{tr('pages.settings.updateCenterSection.saveconfigurationManualdeploydefaultUsage')}</div>
         </div>
-        <div style={sectionPanelStyle}>
-          <div style={summaryLabelStyle}>最近任务</div>
-          <div style={{ marginBottom: 6 }}>
-            <span className={status?.runningTask ? runningTaskBadge.className : lastFinishedTaskBadge.className}>
+        <div className={sectionPanelClassName}>
+          <div className={summaryLabelClassName}>{tr('pages.settings.updateCenterSection.recentTasks')}</div>
+          <div className="mb-1.5">
+            <ToneBadge tone={status?.runningTask ? runningTaskBadge.tone : lastFinishedTaskBadge.tone}>
               {status?.runningTask ? `运行中 · ${runningTaskBadge.label}` : lastFinishedTaskBadge.label}
-            </span>
+            </ToneBadge>
           </div>
-          <div style={fieldHintStyle}>
+          <div className={fieldHintClassName}>
             {status?.runningTask?.id
               ? `任务 ID: ${status.runningTask.id}`
               : formatTaskTime(status?.lastFinishedTask?.finishedAt)}
           </div>
         </div>
-        <div style={sectionPanelStyle}>
-          <div style={summaryLabelStyle}>后台检查</div>
-          <div style={summaryValueStyle}>
-            {runtimeStatus?.lastCheckedAt ? formatTaskTime(runtimeStatus.lastCheckedAt) : '尚无检查记录'}
+        <div className={sectionPanelClassName}>
+          <div className={summaryLabelClassName}>{tr('pages.settings.updateCenterSection.backgroundCheck')}</div>
+          <div className={summaryValueClassName}>
+            {runtimeStatus?.lastCheckedAt ? formatTaskTime(runtimeStatus.lastCheckedAt) : tr('pages.settings.updateCenterSection.noCheckRecordsYet')}
           </div>
-          <div style={fieldHintStyle}>
+          <div className={fieldHintClassName}>
             {runtimeStatus?.lastCheckError
               ? `最近错误：${runtimeStatus.lastCheckError}`
               : runtimeStatus?.lastResolvedDisplayVersion
                 ? `最近发现：${runtimeStatus.lastResolvedDisplayVersion}`
-                : '后台会定时检查新版本，并在首次发现时提醒一次。'}
+                : tr('pages.settings.updateCenterSection.backgroundTaskChecksNewVersionsPeriodicallyReminds')}
           </div>
         </div>
       </div>
 
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, minmax(0, 1fr))',
-          gap: 12,
-          marginBottom: 12,
-        }}
-      >
-        <label style={{ ...sectionPanelStyle, display: 'flex', gap: 10, alignItems: 'flex-start', cursor: 'pointer' }}>
-          <input
-            type="checkbox"
-            checked={config.enabled}
-            onChange={(e) => setConfig((prev) => ({ ...prev, enabled: e.target.checked }))}
-            style={{ width: 16, height: 16, marginTop: 2, accentColor: 'var(--color-primary)' }}
-          />
-          <span style={{ display: 'grid', gap: 4 }}>
-            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>启用更新中心</span>
-            <span style={fieldHintStyle}>允许通过本页触发 K3s 部署。后台版本提醒会按已启用来源持续检查。</span>
-          </span>
-        </label>
-        <label style={{ ...sectionPanelStyle, display: 'flex', gap: 10, alignItems: 'flex-start', cursor: 'pointer' }}>
-          <input
-            type="checkbox"
-            checked={config.githubReleasesEnabled}
-            onChange={(e) => setConfig((prev) => ({ ...prev, githubReleasesEnabled: e.target.checked }))}
-            style={{ width: 16, height: 16, marginTop: 2, accentColor: 'var(--color-primary)' }}
-          />
-          <span style={{ display: 'grid', gap: 4 }}>
-            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>GitHub Releases</span>
-            <span style={fieldHintStyle}>从仓库稳定版 release 提取 SemVer 版本号并提供部署入口。</span>
-          </span>
-        </label>
-        <label style={{ ...sectionPanelStyle, display: 'flex', gap: 10, alignItems: 'flex-start', cursor: 'pointer' }}>
-          <input
-            type="checkbox"
-            checked={config.dockerHubTagsEnabled}
-            onChange={(e) => setConfig((prev) => ({ ...prev, dockerHubTagsEnabled: e.target.checked }))}
-            style={{ width: 16, height: 16, marginTop: 2, accentColor: 'var(--color-primary)' }}
-          />
-          <span style={{ display: 'grid', gap: 4 }}>
-            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>Docker Hub</span>
-            <span style={fieldHintStyle}>自动发现会保留稳定主候选，并额外列出最近的 dev / 分支 / sha 标签。</span>
-          </span>
-        </label>
+      <div className={`mb-3 grid gap-3 ${isMobile ? 'grid-cols-1' : 'grid-cols-3'}`}>
+        <SettingsToggleRow
+          title={tr('pages.settings.updateCenterSection.enableUpdateCenter')}
+          description={tr('pages.settings.updateCenterSection.k3sDeployEnabledCheck')}
+          checked={config.enabled}
+          onCheckedChange={(enabled) => setConfig((prev) => ({ ...prev, enabled }))}
+          className={sectionPanelClassName}
+        />
+        <SettingsToggleRow
+          title="GitHub Releases"
+          description={tr('pages.settings.updateCenterSection.stableReleaseSemverDeploy')}
+          checked={config.githubReleasesEnabled}
+          onCheckedChange={(githubReleasesEnabled) => setConfig((prev) => ({ ...prev, githubReleasesEnabled }))}
+          className={sectionPanelClassName}
+        />
+        <SettingsToggleRow
+          title="Docker Hub"
+          description={tr('pages.settings.updateCenterSection.automaticStableDevShaTags')}
+          checked={config.dockerHubTagsEnabled}
+          onCheckedChange={(dockerHubTagsEnabled) => setConfig((prev) => ({ ...prev, dockerHubTagsEnabled }))}
+          className={sectionPanelClassName}
+        />
       </div>
 
-      <div style={{ ...sectionPanelStyle, marginBottom: 12 }}>
-        <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>部署配置</div>
-        <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 12 }}>
-          和现有 Settings 区块保持同一套表单密度。这里保存的是 helper 和目标 release 的持久化配置。
+      <div className={cn(sectionPanelClassName, 'mb-3')}>
+        <div className="mb-1.5 text-sm font-semibold">{tr('pages.settings.updateCenterSection.deployconfiguration')}</div>
+        <div className="mb-3 text-xs text-muted-foreground">
+          {tr('pages.settings.updateCenterSection.settingsFormSaveHelperTargetReleaseConfiguration')}
         </div>
 
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, minmax(0, 1fr))',
-            gap: 12,
-            marginBottom: 12,
-          }}
-        >
+        <div className={`mb-3 grid gap-3 ${isMobile ? 'grid-cols-1' : 'grid-cols-2'}`}>
           <label>
-            <div style={fieldLabelStyle}>Deploy Helper URL</div>
-            <input
+            <div className={fieldLabelClassName}>Deploy Helper URL</div>
+            <Input
               value={config.helperBaseUrl}
               onChange={(e) => setConfig((prev) => ({ ...prev, helperBaseUrl: e.target.value }))}
-              style={{ ...inputStyle, fontFamily: 'var(--font-mono)' }}
+              className="font-mono"
               placeholder="http://metapi-deploy-helper.namespace.svc.cluster.local:9850"
             />
           </label>
           <label>
-            <div style={fieldLabelStyle}>默认部署来源</div>
+            <div className={fieldLabelClassName}>{tr('pages.settings.updateCenterSection.defaultdeploy')}</div>
             <ModernSelect
               value={config.defaultDeploySource}
               onChange={(value) => setConfig((prev) => ({
@@ -629,96 +559,89 @@ export default function UpdateCenterSection() {
             />
           </label>
           <label>
-            <div style={fieldLabelStyle}>Namespace</div>
-            <input
+            <div className={fieldLabelClassName}>Namespace</div>
+            <Input
               value={config.namespace}
               onChange={(e) => setConfig((prev) => ({ ...prev, namespace: e.target.value }))}
-              style={inputStyle}
+              
               placeholder="default"
             />
           </label>
           <label>
-            <div style={fieldLabelStyle}>Release Name</div>
-            <input
+            <div className={fieldLabelClassName}>Release Name</div>
+            <Input
               value={config.releaseName}
               onChange={(e) => setConfig((prev) => ({ ...prev, releaseName: e.target.value }))}
-              style={inputStyle}
+              
               placeholder="metapi"
             />
           </label>
           <label>
-            <div style={fieldLabelStyle}>Chart Ref</div>
-            <input
+            <div className={fieldLabelClassName}>Chart Ref</div>
+            <Input
               value={config.chartRef}
               onChange={(e) => setConfig((prev) => ({ ...prev, chartRef: e.target.value }))}
-              style={{ ...inputStyle, fontFamily: 'var(--font-mono)' }}
+              className="font-mono"
               placeholder="oci://ghcr.io/cita-777/charts/metapi"
             />
           </label>
           <label>
-            <div style={fieldLabelStyle}>Image Repository</div>
-            <input
+            <div className={fieldLabelClassName}>Image Repository</div>
+            <Input
               value={config.imageRepository}
               onChange={(e) => setConfig((prev) => ({ ...prev, imageRepository: e.target.value }))}
-              style={{ ...inputStyle, fontFamily: 'var(--font-mono)' }}
+              className="font-mono"
               placeholder="1467078763/metapi"
             />
           </label>
         </div>
 
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button type="button" onClick={saveConfig} disabled={saving} className="btn btn-primary">
-            {saving ? '保存中...' : '保存更新中心配置'}
-          </button>
-          <button
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" onClick={saveConfig} disabled={saving}>
+            {saving ? tr('pages.accounts.saving') : tr('pages.settings.updateCenterSection.saveConfiguration')}
+          </Button>
+          <Button variant="outline"
             type="button"
             onClick={checkNow}
             disabled={checking}
-            className="btn btn-ghost"
-            style={{ border: '1px solid var(--color-border)' }}
+           
+           
           >
-            {checking ? '检查中...' : '检查更新'}
-          </button>
+            {checking ? tr('pages.settings.updateCenterSection.checking') : tr('pages.settings.updateCenterSection.checkUpdates')}
+          </Button>
         </div>
       </div>
 
-      <div style={{ ...sectionPanelStyle, marginBottom: 12 }}>
-        <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>可部署版本</div>
-        <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 12 }}>
-          默认来源会用主按钮强调。Helper 未就绪时，部署入口会自动禁用，避免触发无效任务。
+      <div className={cn(sectionPanelClassName, 'mb-3')}>
+        <div className="mb-1.5 text-sm font-semibold">{tr('pages.settings.updateCenterSection.deployableVersion')}</div>
+        <div className="mb-3 text-xs text-muted-foreground">
+          {tr('pages.settings.updateCenterSection.defaultHelperReadyDeployAutomaticdisabledInvalid')}
         </div>
 
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, minmax(0, 1fr))',
-            gap: 12,
-            marginBottom: 12,
-          }}
-        >
-          <div style={sectionPanelStyle}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
-              <div style={{ fontSize: 13, fontWeight: 600 }}>GitHub Releases</div>
-              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                <span className={getSourceBadge(config.githubReleasesEnabled, status?.githubRelease?.normalizedVersion).className}>
+        <div className={`mb-3 grid gap-3 ${isMobile ? 'grid-cols-1' : 'grid-cols-2'}`}>
+          <div className={sectionPanelClassName}>
+            <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
+              <div className="text-sm font-semibold">GitHub Releases</div>
+              <div className="flex flex-wrap gap-1.5">
+                <ToneBadge tone={getSourceBadge(config.githubReleasesEnabled, status?.githubRelease?.normalizedVersion).tone}>
                   {getSourceBadge(config.githubReleasesEnabled, status?.githubRelease?.normalizedVersion).label}
-                </span>
-                <span className={`${githubDeployState.badgeClassName} ${githubDeployState.highlight ? 'stat-value-glow' : ''}`.trim()}>
+                </ToneBadge>
+                <ToneBadge tone={githubDeployState.badgeTone} className={githubDeployState.highlight ? 'stat-value-glow' : undefined}>
                   {githubDeployState.badgeLabel}
-                </span>
+                </ToneBadge>
                 {config.defaultDeploySource === 'github-release' ? (
-                  <span className="badge badge-info">默认来源</span>
+                  <ToneBadge tone="-info">{tr('pages.settings.updateCenterSection.default')}</ToneBadge>
                 ) : null}
               </div>
             </div>
-            <div style={{ ...fieldHintStyle, marginBottom: 10 }}>优先使用仓库稳定版 release，适合保留语义化版本节奏。</div>
-            <div className={githubDeployState.highlight ? 'stat-value-glow' : ''} style={{ ...summaryValueStyle, fontFamily: 'var(--font-mono)', marginBottom: 8 }}>
-              {status?.githubRelease?.displayVersion || status?.githubRelease?.normalizedVersion || '未发现'}
+            <div className="mb-2.5 text-xs text-muted-foreground">{tr('pages.settings.updateCenterSection.usageStableRelease')}</div>
+            <div className={cn(summaryValueClassName, 'mb-2 font-mono', githubDeployState.highlight && 'stat-value-glow')}>
+              {status?.githubRelease?.displayVersion || status?.githubRelease?.normalizedVersion || tr('pages.settings.updateCenterSection.notFound')}
             </div>
-            <div style={{ ...fieldHintStyle, marginBottom: 12 }}>
+            <div className="mb-3 text-xs text-muted-foreground">
               {githubDeployState.reason}
             </div>
-            <button
+            <Button
               type="button"
               onClick={() => {
                 if (!helperHealthy) return;
@@ -728,40 +651,40 @@ export default function UpdateCenterSection() {
                 });
               }}
               disabled={!canDeployGithub}
-              className={config.defaultDeploySource === 'github-release' ? 'btn btn-primary' : 'btn btn-ghost'}
-              style={config.defaultDeploySource === 'github-release' ? undefined : { border: '1px solid var(--color-border)' }}
+             
+             
             >
-              部署 GitHub 稳定版
-            </button>
+              {tr('pages.settings.updateCenterSection.deployGitHubStableRelease')}
+            </Button>
           </div>
 
-          <div style={sectionPanelStyle}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
-              <div style={{ fontSize: 13, fontWeight: 600 }}>Docker Hub</div>
-              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                <span className={getSourceBadge(config.dockerHubTagsEnabled, status?.dockerHubTag?.normalizedVersion).className}>
+          <div className={sectionPanelClassName}>
+            <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
+              <div className="text-sm font-semibold">Docker Hub</div>
+              <div className="flex flex-wrap gap-1.5">
+                <ToneBadge tone={getSourceBadge(config.dockerHubTagsEnabled, status?.dockerHubTag?.normalizedVersion).tone}>
                   {getSourceBadge(config.dockerHubTagsEnabled, status?.dockerHubTag?.normalizedVersion).label}
-                </span>
-                <span className={`${dockerDeployState.badgeClassName} ${dockerDeployState.highlight ? 'stat-value-glow' : ''}`.trim()}>
+                </ToneBadge>
+                <ToneBadge tone={dockerDeployState.badgeTone} className={dockerDeployState.highlight ? 'stat-value-glow' : undefined}>
                   {dockerDeployState.badgeLabel}
-                </span>
+                </ToneBadge>
                 {config.defaultDeploySource === 'docker-hub-tag' ? (
-                  <span className="badge badge-info">默认来源</span>
+                  <ToneBadge tone="-info">{tr('pages.settings.updateCenterSection.default')}</ToneBadge>
                 ) : null}
               </div>
             </div>
-            <div style={{ ...fieldHintStyle, marginBottom: 10 }}>主候选优先 latest / main / 稳定 SemVer；下方还会自动列出最近的 dev / 分支 / sha 标签。</div>
-            <div className={dockerDeployState.highlight ? 'stat-value-glow' : ''} style={{ ...summaryValueStyle, fontFamily: 'var(--font-mono)', marginBottom: 8 }}>
-              {status?.dockerHubTag?.displayVersion || status?.dockerHubTag?.normalizedVersion || '未发现'}
+            <div className="mb-2.5 text-xs text-muted-foreground">{tr('pages.settings.updateCenterSection.latestMainStableSemverAutomaticDevSha')}</div>
+            <div className={cn(summaryValueClassName, 'mb-2 font-mono', dockerDeployState.highlight && 'stat-value-glow')}>
+              {status?.dockerHubTag?.displayVersion || status?.dockerHubTag?.normalizedVersion || tr('pages.settings.updateCenterSection.notFound')}
             </div>
-            <div style={{ ...fieldHintStyle, marginBottom: 12 }}>
+            <div className="mb-3 text-xs text-muted-foreground">
               {dockerDeployState.reason}
             </div>
-            <div style={{ ...fieldHintStyle, marginBottom: 12 }}>
-              最近推送：{formatTaskTime(status?.dockerHubTag?.publishedAt)}
+            <div className="mb-3 text-xs text-muted-foreground">
+              {tr('pages.settings.updateCenterSection.lastPushed')}{formatTaskTime(status?.dockerHubTag?.publishedAt)}
             </div>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
-              <button
+            <div className="mb-3 flex flex-wrap gap-2">
+              <Button
                 type="button"
                 onClick={() => {
                   if (!helperHealthy) return;
@@ -771,16 +694,16 @@ export default function UpdateCenterSection() {
                   });
                 }}
                 disabled={!canDeployDocker}
-                className={config.defaultDeploySource === 'docker-hub-tag' ? 'btn btn-primary' : 'btn btn-ghost'}
-                style={config.defaultDeploySource === 'docker-hub-tag' ? undefined : { border: '1px solid var(--color-border)' }}
+               
+               
               >
-                部署 Docker Hub 标签
-              </button>
+                {tr('pages.settings.updateCenterSection.deployDockerHubTags')}
+              </Button>
               {status?.dockerHubTag?.tagName ? (
-                <button
+                <Button variant="outline"
                   type="button"
-                  className="btn btn-ghost"
-                  style={{ border: '1px solid var(--color-border)' }}
+                 
+                 
                   onClick={() => {
                     setManualDockerTarget({
                       tag: status?.dockerHubTag?.tagName || '',
@@ -788,19 +711,19 @@ export default function UpdateCenterSection() {
                     });
                   }}
                 >
-                  填入当前候选
-                </button>
+                  {tr('pages.settings.updateCenterSection.fillCurrentCandidate')}
+                </Button>
               ) : null}
             </div>
-            <div style={{ borderTop: '1px dashed var(--color-border-light)', marginTop: 4, paddingTop: 12, marginBottom: 12 }}>
-              <div style={{ fontSize: 12, color: 'var(--color-text-primary)', fontWeight: 600, marginBottom: 6 }}>
-                最近非稳定 Docker 标签
+            <div className="mb-3 mt-1 border-t border-dashed pt-3">
+              <div className="mb-1.5 text-xs font-semibold text-foreground">
+                {tr('pages.settings.updateCenterSection.stableDockerTags')}
               </div>
-              <div style={{ ...fieldHintStyle, marginBottom: 10 }}>
-                自动列出最近推送的 dev / 分支 / sha 标签；点部署即可直接使用，不必手动输入 tag 和 digest。
+              <div className="mb-2.5 text-xs text-muted-foreground">
+                {tr('pages.settings.updateCenterSection.automaticDevShaTagsDeployUsageManualinput')}
               </div>
               {recentDockerCandidates.length ? (
-                <div style={{ display: 'grid', gap: 8 }}>
+                <div className="grid gap-2">
                   {recentDockerCandidates.map((candidate) => {
                     const candidateTag = String(candidate.tagName || '').trim();
                     const candidateDigest = String(candidate.digest || '').trim();
@@ -817,30 +740,24 @@ export default function UpdateCenterSection() {
                     return (
                       <div
                         key={`${candidateTag}:${candidateDigest || 'no-digest'}`}
-                        style={{
-                          border: '1px solid var(--color-border-light)',
-                          borderRadius: 'var(--radius-sm)',
-                          padding: 10,
-                          display: 'grid',
-                          gap: 8,
-                        }}
+                        className="grid gap-2 rounded-lg border p-2.5"
                       >
-                        <div style={{ ...summaryValueStyle, fontFamily: 'var(--font-mono)', marginBottom: 0 }}>
+                        <div className={cn(summaryValueClassName, 'font-mono')}>
                           {candidateLabel}
                         </div>
-                        <div style={fieldHintStyle}>
-                          最近推送：{formatTaskTime(candidate.publishedAt)}
+                        <div className={fieldHintClassName}>
+                          {tr('pages.settings.updateCenterSection.lastPushed')}{formatTaskTime(candidate.publishedAt)}
                         </div>
                         {candidateDigest ? (
-                          <div style={{ ...fieldHintStyle, fontFamily: 'var(--font-mono)' }} title={candidateDigest}>
+                          <div className={cn(fieldHintClassName, 'font-mono')} title={candidateDigest}>
                             Digest：{formatShortDigest(candidateDigest)}
                           </div>
                         ) : null}
-                        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                          <button
+                        <div className="flex flex-wrap gap-2">
+                          <Button variant="outline"
                             type="button"
-                            className="btn btn-ghost"
-                            style={{ border: '1px solid var(--color-border)' }}
+                           
+                           
                             disabled={!canDeployCandidate || !candidateTag}
                             title={candidateDeployState.reason}
                             onClick={() => {
@@ -851,12 +768,12 @@ export default function UpdateCenterSection() {
                               });
                             }}
                           >
-                            部署 {candidateTag}
-                          </button>
-                          <button
+                            {tr('pages.settings.updateCenterSection.deploy')} {candidateTag}
+                          </Button>
+                          <Button variant="outline"
                             type="button"
-                            className="btn btn-ghost"
-                            style={{ border: '1px solid var(--color-border)' }}
+                           
+                           
                             onClick={() => {
                               setManualDockerTarget({
                                 tag: candidateTag,
@@ -864,52 +781,45 @@ export default function UpdateCenterSection() {
                               });
                             }}
                           >
-                            填入手动区
-                          </button>
+                            {tr('pages.settings.updateCenterSection.manual')}
+                          </Button>
                         </div>
                       </div>
                     );
                   })}
                 </div>
               ) : (
-                <div style={fieldHintStyle}>
-                  暂未发现最近的 dev / 分支 / sha 标签；仍可在下方手动填写任意 Docker 标签。
+                <div className={fieldHintClassName}>
+                  {tr('pages.settings.updateCenterSection.notFoundDevShaTagsManualDocker')}
                 </div>
               )}
             </div>
-            <div style={{ borderTop: '1px dashed var(--color-border-light)', marginTop: 4, paddingTop: 12 }}>
-              <div style={{ fontSize: 12, color: 'var(--color-text-primary)', fontWeight: 600, marginBottom: 6 }}>
-                手动部署 Docker Hub 标签
+            <div className="mt-1 border-t border-dashed pt-3">
+              <div className="mb-1.5 text-xs font-semibold text-foreground">
+                {tr('pages.settings.updateCenterSection.manualdeployDockerHubTags')}
               </div>
-              <div style={{ ...fieldHintStyle, marginBottom: 10 }}>
-                自动发现已经覆盖最近的非稳定标签；如果你要部署更老或更特殊的 tag，仍可直接在这里填写。
+              <div className="mb-2.5 text-xs text-muted-foreground">
+                {tr('pages.settings.updateCenterSection.automaticStabletagsDeployTag')}
               </div>
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, minmax(0, 1fr))',
-                  gap: 8,
-                  marginBottom: 8,
-                }}
-              >
-                <input
+              <div className={`mb-2 grid gap-2 ${isMobile ? 'grid-cols-1' : 'grid-cols-2'}`}>
+                <Input
                   value={manualDockerTarget.tag}
                   onChange={(e) => setManualDockerTarget((prev) => ({ ...prev, tag: e.target.value }))}
-                  style={{ ...inputStyle, fontFamily: 'var(--font-mono)' }}
+                  className="font-mono"
                   placeholder="dev / dev-20260417-f67ade2 / sha-f67ade2"
                 />
-                <input
+                <Input
                   value={manualDockerTarget.digest}
                   onChange={(e) => setManualDockerTarget((prev) => ({ ...prev, digest: e.target.value }))}
-                  style={{ ...inputStyle, fontFamily: 'var(--font-mono)' }}
-                  placeholder="可选 digest：sha256:..."
+                  className="font-mono"
+                  placeholder={tr('pages.settings.updateCenterSection.digestSha256')}
                 />
               </div>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                <button
+              <div className="flex flex-wrap items-center gap-2">
+                <Button variant="outline"
                   type="button"
-                  className="btn btn-ghost"
-                  style={{ border: '1px solid var(--color-border)' }}
+                 
+                 
                   disabled={!canDeployManualDocker}
                   onClick={() => {
                     if (!canDeployManualDocker) return;
@@ -919,84 +829,77 @@ export default function UpdateCenterSection() {
                     });
                   }}
                 >
-                  部署自定义 Docker 标签
-                </button>
-                <span style={fieldHintStyle}>
-                  digest 选填；如果 chart 当前锁定了旧 digest，建议把 tag 和 digest 一起填写。
+                  {tr('pages.settings.updateCenterSection.deployDockerTags')}
+                </Button>
+                <span className={fieldHintClassName}>
+                  {tr('pages.settings.updateCenterSection.digestChartDigestSuggestionTagDigest')}
                 </span>
               </div>
             </div>
           </div>
         </div>
 
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, minmax(0, 1fr))',
-            gap: 12,
-          }}
-        >
-          <div style={sectionPanelStyle}>
-            <div style={fieldLabelStyle}>Helper 健康摘要</div>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 6 }}>
-              <span className={helperBadge.className}>{helperBadge.label}</span>
-              <span className={runningTaskBadge.className}>当前任务 · {runningTaskBadge.label}</span>
+        <div className={`grid gap-3 ${isMobile ? 'grid-cols-1' : 'grid-cols-2'}`}>
+          <div className={sectionPanelClassName}>
+            <div className={fieldLabelClassName}>{tr('pages.settings.updateCenterSection.helperHealthy')}</div>
+            <div className="mb-1.5 flex flex-wrap items-center gap-2">
+              <ToneBadge tone={helperBadge.tone}>{helperBadge.label}</ToneBadge>
+              <ToneBadge tone={runningTaskBadge.tone}>{tr('pages.settings.updateCenterSection.currentTask')} {runningTaskBadge.label}</ToneBadge>
             </div>
-            <div style={fieldHintStyle}>
-              {status?.helper?.error || 'Helper 正常时会先执行 helm upgrade，再等待 kubectl rollout status。'}
+            <div className={fieldHintClassName}>
+              {status?.helper?.error || tr('pages.settings.updateCenterSection.helperNormalHelmUpgradeKubectlRolloutStatus')}
             </div>
-            <div style={{ ...fieldHintStyle, marginTop: 6 }}>
-              当前镜像：{formatImageTarget(status?.helper?.imageTag, status?.helper?.imageDigest) || '等待 helper 返回运行中镜像'}
+            <div className="mt-1.5 text-xs text-muted-foreground">
+              {tr('pages.settings.updateCenterSection.currentImage')}{formatImageTarget(status?.helper?.imageTag, status?.helper?.imageDigest) || tr('pages.settings.updateCenterSection.waitingForHelperImage')}
             </div>
           </div>
 
-          <div style={sectionPanelStyle}>
-            <div style={fieldLabelStyle}>任务快照</div>
-            <div style={{ display: 'grid', gap: 6, fontSize: 13, color: 'var(--color-text-primary)' }}>
+          <div className={sectionPanelClassName}>
+            <div className={fieldLabelClassName}>{tr('pages.settings.updateCenterSection.taskSnapshot')}</div>
+            <div className="grid gap-1.5 text-sm text-foreground">
               <div>
-                运行中任务：
-                <span style={{ marginLeft: 6, color: 'var(--color-text-secondary)' }}>
-                  {status?.runningTask?.id ? `${status.runningTask.id} · ${status.runningTask.status || '-'}` : '无'}
+                {tr('pages.settings.updateCenterSection.runningTask')}
+                <span className="ml-1.5 text-muted-foreground">
+                  {status?.runningTask?.id ? `${status.runningTask.id} · ${status.runningTask.status || '-'}` : tr('pages.importExport.none')}
                 </span>
               </div>
               <div>
-                最近完成：
-                <span style={{ marginLeft: 6, color: 'var(--color-text-secondary)' }}>
+                {tr('pages.settings.updateCenterSection.lastCompleted')}
+                <span className="ml-1.5 text-muted-foreground">
                   {status?.lastFinishedTask?.id
                     ? `${status.lastFinishedTask.id} · ${status.lastFinishedTask.status || '-'}`
-                    : '无'}
+                    : tr('pages.importExport.none')}
                 </span>
               </div>
-              <div style={fieldHintStyle}>
-                完成时间：{formatTaskTime(status?.lastFinishedTask?.finishedAt)}
+              <div className={fieldHintClassName}>
+                {tr('pages.settings.updateCenterSection.time')}{formatTaskTime(status?.lastFinishedTask?.finishedAt)}
               </div>
             </div>
           </div>
         </div>
       </div>
 
-      <div style={{ ...sectionPanelStyle, marginBottom: 12 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
-          <div style={{ fontWeight: 600, fontSize: 13 }}>回退历史</div>
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            <span className="badge badge-muted">最近 revision</span>
+      <div className={cn(sectionPanelClassName, 'mb-3')}>
+        <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
+          <div className="text-sm font-semibold">{tr('pages.settings.updateCenterSection.rollbackHistory')}</div>
+          <div className="flex flex-wrap gap-1.5">
+            <ToneBadge tone="-muted">{tr('pages.settings.updateCenterSection.revision')}</ToneBadge>
             {helperHistory.length > historyPreview.length ? (
-              <button
+              <Button
+                variant="outline"
                 type="button"
-                className="btn btn-ghost"
-                style={{ border: '1px solid var(--color-border)', padding: '4px 10px', minHeight: 0 }}
                 onClick={() => setHistoryModalOpen(true)}
               >
-                展开全部 {helperHistory.length} 条
-              </button>
+                {tr('pages.settings.updateCenterSection.expandall')} {helperHistory.length} {tr('pages.programLogs.items')}
+              </Button>
             ) : null}
           </div>
         </div>
-        <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 10 }}>
-          页面里默认只保留最近 revision 预览，完整历史放进弹窗，避免设置页被长回退列表拖得过长。
+        <div className="mb-2.5 text-xs text-muted-foreground">
+          {tr('pages.settings.updateCenterSection.defaultRevisionPreviewSettings')}
         </div>
         {helperHistory.length > 0 ? (
-          <div style={{ display: 'grid', gap: 10 }}>
+          <div className="grid gap-2.5">
             {historyPreview.map((entry) => {
               const revision = String(entry?.revision || '').trim();
               return (
@@ -1017,59 +920,41 @@ export default function UpdateCenterSection() {
             })}
           </div>
         ) : (
-          <div style={fieldHintStyle}>
-            Helper 还没有返回可回退的 revision 历史。至少成功部署过一次后，这里才会稳定显示历史记录。
+          <div className={fieldHintClassName}>
+            {tr('pages.settings.updateCenterSection.helperRevisionSuccessdeployStable')}
           </div>
         )}
       </div>
 
-      <div style={sectionPanelStyle}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
-          <div style={{ fontWeight: 600, fontSize: 13 }}>部署日志</div>
-          <span className={getTaskBadge(visibleTaskStatus).className}>
-            任务状态 · {getTaskBadge(visibleTaskStatus).label}
-          </span>
+      <div className={sectionPanelClassName}>
+        <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
+          <div className="text-sm font-semibold">{tr('pages.settings.updateCenterSection.deploymentLogs')}</div>
+          <ToneBadge tone={getTaskBadge(visibleTaskStatus).tone}>
+            {tr('pages.settings.updateCenterSection.status2')} {getTaskBadge(visibleTaskStatus).label}
+          </ToneBadge>
         </div>
-        <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginBottom: 10 }}>
-          日志流断开时会自动回退到任务快照。这里只保留最近 200 条输出，方便直接判断 Helm 与 rollout 卡在哪一步。
+        <div className="mb-2.5 text-xs text-muted-foreground">
+          {tr('pages.settings.updateCenterSection.automaticTaskSnapshot200ItemsoutputHelmRollout')}
         </div>
-        <div
-          style={{
-            border: '1px solid var(--color-border-light)',
-            borderRadius: 'var(--radius-sm)',
-            background: 'var(--color-bg-card)',
-            padding: 12,
-            minHeight: 120,
-          }}
-        >
+        <div className="min-h-30 rounded-lg border bg-card p-3">
           {logs.length > 0 ? (
-            <pre
-              style={{
-                margin: 0,
-                whiteSpace: 'pre-wrap',
-                wordBreak: 'break-word',
-                fontSize: 12,
-                lineHeight: 1.65,
-                color: 'var(--color-text-secondary)',
-                fontFamily: 'var(--font-mono)',
-              }}
-            >
+            <pre className="m-0 whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-muted-foreground">
               {logs.join('\n')}
             </pre>
           ) : (
-            <div style={{ ...fieldHintStyle, minHeight: 94, display: 'flex', alignItems: 'center' }}>
-              部署开始后，这里会实时显示 helm upgrade、kubectl rollout status 和回滚日志。
+            <div className="flex min-h-24 items-center text-xs text-muted-foreground">
+              {tr('pages.settings.updateCenterSection.deploystartHelmUpgradeKubectlRolloutStatus')}
             </div>
           )}
         </div>
       </div>
       {status?.helper?.error ? (
-        <div style={{ fontSize: 12, color: 'var(--color-danger)', marginTop: 10 }}>
-          Helper 错误：{status.helper.error}
+        <div className="mt-2.5 text-xs text-destructive">
+          {tr('pages.settings.updateCenterSection.helperMistake')}{status.helper.error}
         </div>
       ) : null}
-      <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 10 }}>
-        最近状态：{visibleTaskStatus}
+      <div className="mt-2.5 text-xs text-muted-foreground">
+        {tr('pages.settings.updateCenterSection.status')}{visibleTaskStatus}
       </div>
       <UpdateCenterHistoryModal
         open={historyModalOpen}
@@ -1085,6 +970,6 @@ export default function UpdateCenterSection() {
           void runRollback(revision);
         }}
       />
-    </div>
+    </SettingsCard>
   );
 }

@@ -9,9 +9,10 @@ describe('ModelTester mobile layout', () => {
     expect(source).toContain("import { useIsMobile } from '../components/useIsMobile.js'");
     expect(source).toContain('const isMobile = useIsMobile()');
     expect(source).toContain("const layoutColumns = isMobile");
-    expect(source).toContain("gridTemplateColumns: isMobile ? '1fr' : '1fr 160px'");
-    expect(source).toContain("flexDirection: isMobile ? 'column' : 'row'");
-    expect(source).toContain("order: isMobile ? 1 : 0");
-    expect(source).toContain("order: isMobile ? 2 : 0");
+    expect(source).toContain("gridTemplateColumns: layoutColumns");
+    expect(source).toContain("isMobile ? 'grid-cols-2' : 'grid-cols-4'");
+    expect(source).toContain("isMobile ? 'flex-col' : 'flex-row'");
+    expect(source).toContain("isMobile ? 'order-1'");
+    expect(source).toContain("isMobile ? 'order-2'");
   });
 });

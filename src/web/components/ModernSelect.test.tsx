@@ -55,8 +55,7 @@ describe('ModernSelect', () => {
 
     const trigger = root.root.find((node) => (
       node.type === 'button'
-      && typeof node.props.className === 'string'
-      && node.props.className.includes('modern-select-trigger')
+      && node.props.role === 'combobox'
     ));
 
     await act(async () => {
@@ -72,22 +71,20 @@ describe('ModernSelect', () => {
       searchInput.props.onChange({ target: { value: 'codex' } });
     });
 
-    let optionButtons = root.root.findAll((node) => (
+    let optionRows = root.root.findAll((node) => (
       node.type === 'button'
-      && typeof node.props.className === 'string'
-      && node.props.className.includes('modern-select-option')
+      && node.props.role === 'option'
     ));
-    expect(optionButtons.map((node) => collectInstanceText(node))).toEqual(['Beta Relay (codex)https://beta.example.com']);
+    expect(optionRows.map((node) => collectInstanceText(node))).toEqual(['Beta Relay (codex)https://beta.example.com']);
 
     await act(async () => {
       searchInput.props.onChange({ target: { value: 'third.example.com' } });
     });
 
-    optionButtons = root.root.findAll((node) => (
+    optionRows = root.root.findAll((node) => (
       node.type === 'button'
-      && typeof node.props.className === 'string'
-      && node.props.className.includes('modern-select-option')
+      && node.props.role === 'option'
     ));
-    expect(optionButtons.map((node) => collectInstanceText(node))).toEqual(['Gamma APIhttps://third.example.com']);
+    expect(optionRows.map((node) => collectInstanceText(node))).toEqual(['Gamma APIhttps://third.example.com']);
   });
 });

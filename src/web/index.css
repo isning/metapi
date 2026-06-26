@@ -1432,6 +1432,13 @@ textarea {
     linear-gradient(160deg, #f8fbff 0%, #edf4ff 52%, #e9f0fa 100%);
 }
 
+[data-theme="dark"] .login-brand-panel-light {
+  background:
+    radial-gradient(circle at top left, color-mix(in srgb, var(--primary) 24%, transparent), transparent 28%),
+    radial-gradient(circle at right 20%, rgba(34, 211, 238, 0.12), transparent 24%),
+    linear-gradient(160deg, #101826 0%, #0b1320 54%, #09111c 100%);
+}
+
 .login-brand-panel::before {
   content: '';
   position: absolute;
@@ -1602,51 +1609,6 @@ textarea {
   gap: 12px;
 }
 
-.login-icon-link {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 42px;
-  height: 42px;
-  border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--primary) 16%, transparent);
-  background: rgba(255, 255, 255, 0.76);
-  color: #0f172a;
-  text-decoration: none;
-  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
-}
-
-.login-icon-link:hover {
-  transform: translateY(-1px);
-  border-color: color-mix(in srgb, var(--primary) 28%, transparent);
-  box-shadow: 0 10px 18px rgba(37, 99, 235, 0.12);
-}
-
-.login-icon-link-svg {
-  width: 18px;
-  height: 18px;
-}
-
-.login-doc-link {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 10px 15px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.76);
-  color: var(--color-primary);
-  border: 1px solid color-mix(in srgb, var(--primary) 20%, transparent);
-  font-size: 12px;
-  font-weight: 700;
-  text-decoration: none;
-  transition: transform 0.18s ease, box-shadow 0.18s ease;
-}
-
-.login-doc-link:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 10px 18px rgba(37, 99, 235, 0.12);
-}
-
 .login-auth-stage {
   display: flex;
   align-items: center;
@@ -1656,6 +1618,12 @@ textarea {
   background:
     radial-gradient(circle at top, rgba(125, 211, 252, 0.16), transparent 34%),
     linear-gradient(180deg, rgba(255, 255, 255, 0.44), rgba(241, 245, 249, 0.58));
+}
+
+[data-theme="dark"] .login-auth-stage {
+  background:
+    radial-gradient(circle at top, color-mix(in srgb, var(--primary) 16%, transparent), transparent 36%),
+    linear-gradient(180deg, color-mix(in srgb, var(--card) 70%, transparent), color-mix(in srgb, var(--background) 82%, transparent));
 }
 
 .login-auth-panel {
@@ -1668,6 +1636,14 @@ textarea {
     0 28px 50px rgba(148, 163, 184, 0.22),
     inset 0 1px 0 rgba(255, 255, 255, 0.94);
   backdrop-filter: blur(10px);
+}
+
+[data-theme="dark"] .login-auth-panel {
+  border-color: color-mix(in srgb, var(--border) 78%, transparent);
+  background: color-mix(in srgb, var(--card) 92%, transparent);
+  box-shadow:
+    0 28px 56px rgba(0, 0, 0, 0.38),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .login-auth-eyebrow {
@@ -1695,30 +1671,32 @@ textarea {
   color: var(--color-text-secondary);
 }
 
+.login-auth-form {
+  display: grid;
+  gap: 14px;
+}
+
+.login-auth-field {
+  display: grid;
+  gap: 8px;
+}
+
 .login-auth-label {
-  margin-bottom: 8px;
+  display: block;
   font-size: 12px;
   font-weight: 700;
   color: var(--color-text-secondary);
 }
 
-.login-auth-input {
-  width: 100%;
-  padding: 14px 16px;
-  border: 1px solid color-mix(in srgb, var(--color-primary) 18%, var(--color-border));
-  border-radius: 16px;
-  font-size: 14px;
-  outline: none;
-  background: rgba(248, 250, 252, 0.92);
-  color: var(--color-text-primary);
-  margin-bottom: 14px;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
+.login-auth-control {
+  height: 44px;
+  background: color-mix(in srgb, var(--background) 88%, transparent);
 }
 
-.login-auth-input:focus {
-  border-color: color-mix(in srgb, var(--color-primary) 56%, transparent);
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-primary) 12%, transparent);
-  background: var(--color-bg-card);
+.login-auth-submit {
+  width: 100%;
+  min-height: 44px;
+  margin-top: 2px;
 }
 
 .login-auth-note {
@@ -1744,19 +1722,14 @@ textarea {
   border-color: color-mix(in srgb, var(--color-border) 86%, transparent);
 }
 
-[data-theme="dark"] .login-shell,
-[data-theme="dark"] .login-surface,
 [data-theme="dark"] .brand-mark-frame,
-[data-theme="dark"] .brand-mark-canvas,
-[data-theme="dark"] .login-auth-stage,
-[data-theme="dark"] .login-auth-panel {
+[data-theme="dark"] .brand-mark-canvas {
   background: color-mix(in srgb, var(--color-bg-card) 92%, #0f172a);
 }
 
 [data-theme="dark"] .login-brand-kicker,
 [data-theme="dark"] .login-compat-line,
 [data-theme="dark"] .login-capability-index,
-[data-theme="dark"] .login-icon-link,
 [data-theme="dark"] .login-auth-note,
 [data-theme="dark"] .login-auth-footer {
   color: #cbd5e1;
@@ -2107,7 +2080,7 @@ textarea {
   gap: 12px;
 }
 
-.proxy-log-page-header,
+.proxy-log-summary-header,
 .proxy-log-list-header,
 .proxy-debug-summary-header {
   display: flex;
@@ -3204,7 +3177,7 @@ textarea {
     min-width: 0;
   }
 
-  .proxy-log-page-header,
+  .proxy-log-summary-header,
   .proxy-log-list-header,
   .proxy-debug-summary-header,
   .proxy-log-detail-panel-header,
@@ -3783,7 +3756,7 @@ textarea {
   font-size: 12px;
 }
 
-.route-graph-switch-field {
+.route-blueprint-toggle-field {
   display: flex;
   align-items: center;
   justify-content: space-between;

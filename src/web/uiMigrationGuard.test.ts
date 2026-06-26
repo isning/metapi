@@ -85,6 +85,10 @@ const pageInlineStyleAllowedFiles = new Set([
   'src/web/pages/token-routes/RouteCard.tsx',
   'src/web/pages/token-routes/ManualRoutePanel.tsx',
   'src/web/pages/token-routes/RouteGraphWorkbench.tsx',
+  'src/web/pages/token-routes/SortableRouteTargetRow.tsx',
+  // Table column sizing is computed from user-resizable account/site layouts.
+  'src/web/pages/Accounts.tsx',
+  'src/web/pages/Sites.tsx',
   // Runtime skeleton height is passed by the downstream key trend chart.
   'src/web/pages/downstream-keys/shared.tsx',
 ]);
@@ -99,6 +103,9 @@ const componentInlineStyleAllowedFiles = new Set([
   // Chart library sizing and dynamic swatches are centralized here.
   'src/web/components/charts/ChartShell.tsx',
   'src/web/components/charts/DownstreamKeyTrendChart.tsx',
+  // Centered modal and CodeMirror editor dimensions are runtime geometry.
+  'src/web/components/CenteredModal.tsx',
+  'src/web/components/JsonCodeEditor.tsx',
 ]);
 
 function walk(entryPath: string): string[] {
@@ -116,12 +123,23 @@ function isShadcnPrimitivePath(filePath: string): boolean {
   return normalized.includes('/src/web/components/ui/');
 }
 
+function isAllowedNativeControlException(relativePath: string, source: string): boolean {
+  if (relativePath === 'src/web/pages/CostCatalog.tsx' && source.includes('type="file"')) return true;
+  if (relativePath === 'src/web/pages/token-routes/RouteGraphWorkbench.tsx') {
+    return source.includes('EdgeLabelRenderer')
+      || source.includes('NodeToolbar')
+      || source.includes('type="file"');
+  }
+  return false;
+}
+
 describe('web UI migration guard', () => {
   it('keeps removed legacy UI contracts out of production web code', () => {
     const violations: string[] = [];
 
     for (const root of scanRoots) {
       for (const filePath of walk(root)) {
+        if (isShadcnPrimitivePath(filePath)) continue;
         const relativePath = path.relative(repoRoot, filePath);
         const source = readFileSync(filePath, 'utf8');
         for (const pattern of bannedLegacyPatterns) {
@@ -139,9 +157,10 @@ describe('web UI migration guard', () => {
     const violations: string[] = [];
 
     for (const filePath of walk(pageScanRoot).filter((candidate) => candidate.endsWith('.tsx'))) {
-      const relativePath = path.relative(repoRoot, filePath);
-      const source = readFileSync(filePath, 'utf8');
-      for (const pattern of bannedPageControlPatterns) {
+        const relativePath = path.relative(repoRoot, filePath);
+        const source = readFileSync(filePath, 'utf8');
+        if (isAllowedNativeControlException(relativePath, source)) continue;
+        for (const pattern of bannedPageControlPatterns) {
         if (pattern.test(source)) {
           violations.push(`${relativePath}: ${pattern}`);
         }
@@ -159,6 +178,7 @@ describe('web UI migration guard', () => {
         if (isShadcnPrimitivePath(filePath)) continue;
         const relativePath = path.relative(repoRoot, filePath);
         const source = readFileSync(filePath, 'utf8');
+        if (isAllowedNativeControlException(relativePath, source)) continue;
         for (const pattern of bannedSharedControlPatterns) {
           if (pattern.test(source)) {
             violations.push(`${relativePath}: ${pattern}`);

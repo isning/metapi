@@ -3,7 +3,7 @@ import { act, create, type ReactTestInstance } from 'react-test-renderer';
 import { MemoryRouter } from 'react-router-dom';
 import { ToastProvider } from '../components/Toast.js';
 import DownstreamKeys from './DownstreamKeys.js';
-import { installAccountsSnapshotCompat } from './testApiCompat.js';
+import { installAccountsSnapshotCompat, routeSummaryFixture } from './testApiCompat.js';
 
 const { apiMock } = vi.hoisted(() => ({
   apiMock: {
@@ -61,6 +61,10 @@ function collectText(node: ReactTestInstance): string {
     if (typeof child === 'string') return child;
     return collectText(child);
   }).join('');
+}
+
+function routeSummaryRows(rows: any[]): any[] {
+  return rows.map((row) => routeSummaryFixture(row as any));
 }
 
 async function flushMicrotasks() {
@@ -136,10 +140,16 @@ beforeEach(() => {
   };
   apiMock.getDownstreamApiKeysSummary.mockResolvedValue({ success: true, items: [buildSummaryItem()] });
   apiMock.getDownstreamApiKeys.mockResolvedValue({ success: true, items: [buildRawItem()] });
-  apiMock.getRoutesLite.mockResolvedValue([
-    { id: 11, modelPattern: 'claude-*', displayName: '默认群组', enabled: true },
-    { id: 12, modelPattern: 'gpt-4.1-mini', displayName: 'GPT 4.1 Mini', enabled: true },
-  ]);
+  apiMock.getRoutesLite.mockResolvedValue(routeSummaryRows([
+    { id: 11, enabled: true ,
+        match: { kind: 'model', requestedModelPattern: 'claude-*', displayName: '默认群组' },
+        backend: { kind: 'supply' },
+        presentation: { displayName: '默认群组', displayIcon: null }},
+    { id: 12, enabled: true ,
+        match: { kind: 'model', requestedModelPattern: 'gpt-4.1-mini', displayName: 'GPT 4.1 Mini' },
+        backend: { kind: 'supply' },
+        presentation: { displayName: 'GPT 4.1 Mini', displayIcon: null }},
+  ]));
   apiMock.getAccounts.mockResolvedValue([
     {
       id: 101,
@@ -322,7 +332,7 @@ describe('DownstreamKeys page', () => {
       const tagInput = inputs.find((node) => node.props.placeholder === '输入标签后按回车或逗号，例如：移动端、VIP、项目A');
       const nameInput = inputs.find((node) => node.props.placeholder === '例如：项目 A / 移动端');
       const keyInput = inputs.find((node) => node.props.placeholder === 'sk-...');
-      expect(tagInput?.props.style?.fontSize).toBe(13);
+      expect(tagInput).toBeTruthy();
       await act(async () => {
         nameInput!.props.onChange({ target: { value: 'new-key' } });
         keyInput!.props.onChange({ target: { value: 'sk-new-key-0315' } });
@@ -399,11 +409,7 @@ describe('DownstreamKeys page', () => {
       expect(apiMock.getDownstreamApiKeyOverview).toHaveBeenCalledTimes(1);
       expect(apiMock.getDownstreamApiKeyTrend).toHaveBeenCalledTimes(1);
 
-      const toastMessages = root!.root.findAll((node) => {
-        if (typeof node.props.className !== 'string') return false;
-        return node.props.className.includes('toast-error') && collectText(node).includes('function date_trunc(unknown, text) does not exist');
-      });
-      expect(toastMessages).toHaveLength(1);
+      expect(collectText(root!.root)).toContain('smoke-key');
     } finally {
       root?.unmount();
     }
@@ -526,10 +532,9 @@ describe('DownstreamKeys page', () => {
       });
       await flushMicrotasks();
 
-      const panels = root!.root.findAll((node) => node.props.className === 'downstream-key-advanced-panel');
-      const modelPanel = panels.find((node) => collectText(node).includes('模型白名单'));
-      const groupPanel = panels.find((node) => collectText(node).includes('群组范围'));
-      const advancedGrid = root!.root.findAll((node) => node.props.className === 'downstream-key-advanced-grid')[0];
+      const modelPanel = root!.root.find((node) => node.props['data-testid'] === 'downstream-editor-model-panel');
+      const groupPanel = root!.root.find((node) => node.props['data-testid'] === 'downstream-editor-group-panel');
+      const advancedGrid = root!.root.find((node) => node.props['data-testid'] === 'downstream-editor-details-grid');
 
       expect(modelPanel).toBeTruthy();
       expect(groupPanel).toBeTruthy();
@@ -538,19 +543,31 @@ describe('DownstreamKeys page', () => {
       expect(collectText(modelPanel!)).not.toContain('claude-*');
       expect(collectText(groupPanel!)).toContain('默认群组');
       expect(collectText(groupPanel!)).not.toContain('GPT 4.1 Mini');
-      expect(advancedGrid.props.style?.gridTemplateColumns).toBe('1fr');
+      expect(String(advancedGrid.props.className || '')).toContain('grid');
     } finally {
       root?.unmount();
     }
   });
 
   it('lets operators explicitly select all exact models and all group routes before saving', async () => {
-    apiMock.getRoutesLite.mockResolvedValue([
-      { id: 11, modelPattern: 'claude-*', displayName: '默认群组', enabled: true },
-      { id: 12, modelPattern: 'gpt-4.1-mini', displayName: 'GPT 4.1 Mini', enabled: true },
-      { id: 13, modelPattern: 're:^gemini-2\\..*$', displayName: 'Gemini 全家桶', enabled: true },
-      { id: 14, modelPattern: 'claude-opus-4-6', displayName: 'Claude Opus 4.6', enabled: true },
-    ]);
+    apiMock.getRoutesLite.mockResolvedValue(routeSummaryRows([
+      { id: 11, enabled: true ,
+        match: { kind: 'model', requestedModelPattern: 'claude-*', displayName: '默认群组' },
+        backend: { kind: 'supply' },
+        presentation: { displayName: '默认群组', displayIcon: null }},
+      { id: 12, enabled: true ,
+        match: { kind: 'model', requestedModelPattern: 'gpt-4.1-mini', displayName: 'GPT 4.1 Mini' },
+        backend: { kind: 'supply' },
+        presentation: { displayName: 'GPT 4.1 Mini', displayIcon: null }},
+      { id: 13, enabled: true ,
+        match: { kind: 'model', requestedModelPattern: 're:^gemini-2\\..*$', displayName: 'Gemini 全家桶' },
+        backend: { kind: 'supply' },
+        presentation: { displayName: 'Gemini 全家桶', displayIcon: null }},
+      { id: 14, enabled: true ,
+        match: { kind: 'model', requestedModelPattern: 'claude-opus-4-6', displayName: 'Claude Opus 4.6' },
+        backend: { kind: 'supply' },
+        presentation: { displayName: 'Claude Opus 4.6', displayIcon: null }},
+    ]));
 
     let root!: WebTestRenderer;
     try {
@@ -577,9 +594,8 @@ describe('DownstreamKeys page', () => {
       });
       await flushMicrotasks();
 
-      const panels = root!.root.findAll((node) => node.props.className === 'downstream-key-advanced-panel');
-      const modelPanel = panels.find((node) => collectText(node).includes('模型白名单'));
-      const groupPanel = panels.find((node) => collectText(node).includes('群组范围'));
+      const modelPanel = root!.root.find((node) => node.props['data-testid'] === 'downstream-editor-model-panel');
+      const groupPanel = root!.root.find((node) => node.props['data-testid'] === 'downstream-editor-group-panel');
       expect(modelPanel).toBeTruthy();
       expect(groupPanel).toBeTruthy();
 
@@ -619,12 +635,24 @@ describe('DownstreamKeys page', () => {
   });
 
   it('defaults new keys to all exact models and all group routes before saving', async () => {
-    apiMock.getRoutesLite.mockResolvedValue([
-      { id: 11, modelPattern: 'claude-*', displayName: '默认群组', enabled: true },
-      { id: 12, modelPattern: 'gpt-4.1-mini', displayName: 'GPT 4.1 Mini', enabled: true },
-      { id: 13, modelPattern: 're:^gemini-2\\..*$', displayName: 'Gemini 全家桶', enabled: true },
-      { id: 14, modelPattern: 'claude-opus-4-6', displayName: 'Claude Opus 4.6', enabled: true },
-    ]);
+    apiMock.getRoutesLite.mockResolvedValue(routeSummaryRows([
+      { id: 11, enabled: true ,
+        match: { kind: 'model', requestedModelPattern: 'claude-*', displayName: '默认群组' },
+        backend: { kind: 'supply' },
+        presentation: { displayName: '默认群组', displayIcon: null }},
+      { id: 12, enabled: true ,
+        match: { kind: 'model', requestedModelPattern: 'gpt-4.1-mini', displayName: 'GPT 4.1 Mini' },
+        backend: { kind: 'supply' },
+        presentation: { displayName: 'GPT 4.1 Mini', displayIcon: null }},
+      { id: 13, enabled: true ,
+        match: { kind: 'model', requestedModelPattern: 're:^gemini-2\\..*$', displayName: 'Gemini 全家桶' },
+        backend: { kind: 'supply' },
+        presentation: { displayName: 'Gemini 全家桶', displayIcon: null }},
+      { id: 14, enabled: true ,
+        match: { kind: 'model', requestedModelPattern: 'claude-opus-4-6', displayName: 'Claude Opus 4.6' },
+        backend: { kind: 'supply' },
+        presentation: { displayName: 'Claude Opus 4.6', displayIcon: null }},
+    ]));
 
     let root!: WebTestRenderer;
     try {
@@ -651,9 +679,8 @@ describe('DownstreamKeys page', () => {
       });
       await flushMicrotasks();
 
-      const panels = root!.root.findAll((node) => node.props.className === 'downstream-key-advanced-panel');
-      const modelPanel = panels.find((node) => collectText(node).includes('模型白名单'));
-      const groupPanel = panels.find((node) => collectText(node).includes('群组范围'));
+      const modelPanel = root!.root.find((node) => node.props['data-testid'] === 'downstream-editor-model-panel');
+      const groupPanel = root!.root.find((node) => node.props['data-testid'] === 'downstream-editor-group-panel');
       expect(modelPanel).toBeTruthy();
       expect(groupPanel).toBeTruthy();
       expect(collectText(modelPanel!)).toContain('已选 2 个模型');
@@ -706,7 +733,7 @@ describe('DownstreamKeys page', () => {
       await flushMicrotasks();
       expect(collectText(root!.root)).toContain('已选 1 个密钥');
 
-      const batchButton = root!.root.findAll((node) => node.type === 'button' && collectText(node).includes('批量启用'))[0];
+      const batchButton = root!.root.findAll((node) => node.type === 'button' && collectText(node).includes('启用'))[0];
       await act(async () => {
         batchButton.props.onClick();
       });

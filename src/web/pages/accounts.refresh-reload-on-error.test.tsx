@@ -18,6 +18,10 @@ vi.mock('../api.js', () => ({
   api: apiMock,
 }));
 
+vi.mock('../components/useIsMobile.js', () => ({
+  useIsMobile: () => true,
+}));
+
 function collectText(node: ReactTestInstance): string {
   const children = node.children || [];
   return children.map((child) => {
@@ -31,6 +35,13 @@ async function flushMicrotasks() {
     await Promise.resolve();
     await Promise.resolve();
   });
+}
+
+async function waitForRenderedText(root: WebTestRenderer, text: string) {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    await flushMicrotasks();
+    if (collectText(root.root).includes(text)) return;
+  }
 }
 
 describe('Accounts refresh action', () => {
@@ -89,13 +100,21 @@ describe('Accounts refresh action', () => {
           </MemoryRouter>,
         );
       });
-      await flushMicrotasks();
+      await waitForRenderedText(root, 'tester');
+
+      const detailsButton = root.root.find((node) => (
+        node.type === 'button'
+        && typeof node.props.onClick === 'function'
+        && collectText(node).trim() === '详情'
+      ));
+      await act(async () => {
+        detailsButton.props.onClick();
+      });
+      await waitForRenderedText(root, '刷新');
 
       const refreshButtons = root.root.findAll((node) => (
         node.type === 'button'
         && typeof node.props.onClick === 'function'
-        && typeof node.props.className === 'string'
-        && node.props.className.includes('btn-link-primary')
         && collectText(node).trim() === '刷新'
       ));
       expect(refreshButtons.length).toBeGreaterThan(0);
