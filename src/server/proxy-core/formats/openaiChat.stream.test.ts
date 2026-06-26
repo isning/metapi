@@ -159,13 +159,6 @@ describe('chat proxy stream behavior', () => {
       userAgent: '',
       betaFeatures: '',
     };
-    (config as any).payloadRules = {
-      default: [],
-      defaultRaw: [],
-      override: [],
-      overrideRaw: [],
-      filter: [],
-    };
     (config as any).disableCrossProtocolFallback = false;
     (config as any).openAiServiceTierRules = undefined;
     config.proxyEmptyContentFailEnabled = false;

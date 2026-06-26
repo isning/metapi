@@ -1,4 +1,5 @@
 import * as Tooltip from '../ui/tooltip/index.js';
+import { tr } from '../../i18n.js';
 
 export type HealthBucket = {
   id?: string;
@@ -38,7 +39,7 @@ type HealthStripProps = {
 
 export default function HealthStrip({ buckets, ariaLabel }: HealthStripProps) {
   if (buckets.length === 0) {
-    return <div className="text-xs text-muted-foreground">No history</div>;
+    return <div className="text-xs text-muted-foreground">{tr('components.metrics.healthStrip.noHistory')}</div>;
   }
 
   return (
@@ -56,7 +57,7 @@ export default function HealthStrip({ buckets, ariaLabel }: HealthStripProps) {
                 </span>
               </Tooltip.Trigger>
               <Tooltip.Content>
-                {bucket.label}: {bucket.value == null ? 'unknown' : `${bucket.value.toFixed(1)}%`}
+                {bucket.label}: {bucket.value == null ? tr('common.notAvailable') : `${bucket.value.toFixed(1)}%`}
               </Tooltip.Content>
             </Tooltip.Root>
           );

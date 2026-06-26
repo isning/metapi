@@ -801,6 +801,190 @@
           "notNull": false,
           "defaultValue": "datetime('now')",
           "primaryKey": false
+        },
+        "summary": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "description": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "severity": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'info'",
+          "primaryKey": false
+        },
+        "scope": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'activity'",
+          "primaryKey": false
+        },
+        "category": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "state": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'open'",
+          "primaryKey": false
+        },
+        "read_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "acknowledged_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "snoozed_until": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "resolved_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "subject_type": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "subject_id": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "subject_label": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "details_json": {
+          "logicalType": "json",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "actions_json": {
+          "logicalType": "json",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "dedupe_key": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "occurrence_count": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "1",
+          "primaryKey": false
+        },
+        "first_seen_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "last_seen_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "source": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        }
+      }
+    },
+    "fx_rate_snapshots": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "from_currency": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "to_currency": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "rate": {
+          "logicalType": "real",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "source": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'manual'",
+          "primaryKey": false
+        },
+        "captured_at": {
+          "logicalType": "datetime",
+          "notNull": true,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "notes": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
         }
       }
     },
@@ -865,6 +1049,12 @@
           "primaryKey": false
         },
         "site_id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "account_id": {
           "logicalType": "integer",
           "notNull": true,
           "defaultValue": null,
@@ -1942,6 +2132,152 @@
         }
       }
     },
+    "route_group_buckets": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "group_id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "bucket_key": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "priority": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "label": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "strategy": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'weighted'",
+          "primaryKey": false
+        },
+        "enabled": {
+          "logicalType": "boolean",
+          "notNull": true,
+          "defaultValue": "true",
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
+    "route_group_candidates": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "group_id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "bucket_id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "candidate_key": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "candidate_kind": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "supply_endpoint_id": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "child_group_id": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "weight": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "10",
+          "primaryKey": false
+        },
+        "sort_order": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "enabled": {
+          "logicalType": "boolean",
+          "notNull": true,
+          "defaultValue": "true",
+          "primaryKey": false
+        },
+        "source": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'availability_rebuild'",
+          "primaryKey": false
+        },
+        "manual_override": {
+          "logicalType": "boolean",
+          "notNull": true,
+          "defaultValue": "false",
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
     "route_group_sources": {
       "columns": {
         "id": {
@@ -1960,6 +2296,306 @@
           "logicalType": "integer",
           "notNull": true,
           "defaultValue": null,
+          "primaryKey": false
+        }
+      }
+    },
+    "route_groups": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "kind": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "group_key": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "upstream_model_name": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "normalized_model_name": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "public_model_name": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "display_name": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "display_icon": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "visibility": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'public'",
+          "primaryKey": false
+        },
+        "enabled": {
+          "logicalType": "boolean",
+          "notNull": true,
+          "defaultValue": "true",
+          "primaryKey": false
+        },
+        "routing_strategy": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'weighted'",
+          "primaryKey": false
+        },
+        "source_mode": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'auto'",
+          "primaryKey": false
+        },
+        "legacy_route_id": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "config_json": {
+          "logicalType": "json",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "user_override_json": {
+          "logicalType": "json",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "sync_status": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'active'",
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
+    "route_supply_endpoint_state": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "supply_endpoint_id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "success_count": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "fail_count": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "total_latency_ms": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "total_cost": {
+          "logicalType": "real",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "last_used_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "last_selected_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "last_fail_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "consecutive_fail_count": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "cooldown_level": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "cooldown_until": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
+    "route_supply_endpoints": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "supply_key": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "site_id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "account_id": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "token_id": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "oauth_route_unit_id": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "credential_binding_id": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "endpoint_profile_id": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "legacy_target_id": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "upstream_model_name": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "normalized_model_name": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "enabled": {
+          "logicalType": "boolean",
+          "notNull": true,
+          "defaultValue": "true",
+          "primaryKey": false
+        },
+        "discovered": {
+          "logicalType": "boolean",
+          "notNull": true,
+          "defaultValue": "true",
+          "primaryKey": false
+        },
+        "source": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'availability_rebuild'",
+          "primaryKey": false
+        },
+        "metadata_json": {
+          "logicalType": "json",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
           "primaryKey": false
         }
       }
@@ -2687,6 +3323,118 @@
           "primaryKey": false
         }
       }
+    },
+    "wallet_acquisition_profiles": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "scope": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "scope_key": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "site_id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "account_id": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "token_id": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "inheritance": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'inherit'",
+          "primaryKey": false
+        },
+        "wallet_unit": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'USD'",
+          "primaryKey": false
+        },
+        "face_value_price": {
+          "logicalType": "real",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "recharge_discount": {
+          "logicalType": "real",
+          "notNull": true,
+          "defaultValue": "1",
+          "primaryKey": false
+        },
+        "daily_earned_balance": {
+          "logicalType": "real",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "daily_earned_balance_source": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'observed_checkin'",
+          "primaryKey": false
+        },
+        "observed_window_days": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "confidence": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'incomplete'",
+          "primaryKey": false
+        },
+        "enabled": {
+          "logicalType": "boolean",
+          "notNull": true,
+          "defaultValue": "true",
+          "primaryKey": false
+        },
+        "notes": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
     }
   },
   "indexes": [
@@ -2919,10 +3667,27 @@
       "unique": false
     },
     {
+      "name": "events_category_created_at_idx",
+      "table": "events",
+      "columns": [
+        "category",
+        "created_at"
+      ],
+      "unique": false
+    },
+    {
       "name": "events_created_at_idx",
       "table": "events",
       "columns": [
         "created_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "events_dedupe_key_idx",
+      "table": "events",
+      "columns": [
+        "dedupe_key"
       ],
       "unique": false
     },
@@ -2936,11 +3701,50 @@
       "unique": false
     },
     {
+      "name": "events_scope_state_created_at_idx",
+      "table": "events",
+      "columns": [
+        "scope",
+        "state",
+        "created_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "events_subject_idx",
+      "table": "events",
+      "columns": [
+        "subject_type",
+        "subject_id"
+      ],
+      "unique": false
+    },
+    {
       "name": "events_type_created_at_idx",
       "table": "events",
       "columns": [
         "type",
         "created_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "fx_rate_snapshots_currency_captured_idx",
+      "table": "fx_rate_snapshots",
+      "columns": [
+        "from_currency",
+        "to_currency",
+        "captured_at"
+      ],
+      "unique": false
+    },
+    {
+      "name": "fx_rate_snapshots_currency_source_idx",
+      "table": "fx_rate_snapshots",
+      "columns": [
+        "from_currency",
+        "to_currency",
+        "source"
       ],
       "unique": false
     },
@@ -2971,6 +3775,14 @@
       "unique": false
     },
     {
+      "name": "model_day_usage_account_id_idx",
+      "table": "model_day_usage",
+      "columns": [
+        "account_id"
+      ],
+      "unique": false
+    },
+    {
       "name": "model_day_usage_day_idx",
       "table": "model_day_usage",
       "columns": [
@@ -2979,11 +3791,12 @@
       "unique": false
     },
     {
-      "name": "model_day_usage_day_site_model_unique",
+      "name": "model_day_usage_day_site_account_model_unique",
       "table": "model_day_usage",
       "columns": [
         "local_day",
         "site_id",
+        "account_id",
         "model"
       ],
       "unique": true
@@ -3304,6 +4117,60 @@
       "unique": true
     },
     {
+      "name": "route_group_buckets_group_bucket_unique",
+      "table": "route_group_buckets",
+      "columns": [
+        "group_id",
+        "bucket_key"
+      ],
+      "unique": true
+    },
+    {
+      "name": "route_group_buckets_group_priority_idx",
+      "table": "route_group_buckets",
+      "columns": [
+        "group_id",
+        "priority"
+      ],
+      "unique": false
+    },
+    {
+      "name": "route_group_candidates_child_group_idx",
+      "table": "route_group_candidates",
+      "columns": [
+        "child_group_id"
+      ],
+      "unique": false
+    },
+    {
+      "name": "route_group_candidates_group_candidate_unique",
+      "table": "route_group_candidates",
+      "columns": [
+        "group_id",
+        "bucket_id",
+        "candidate_key"
+      ],
+      "unique": true
+    },
+    {
+      "name": "route_group_candidates_group_sort_idx",
+      "table": "route_group_candidates",
+      "columns": [
+        "group_id",
+        "bucket_id",
+        "sort_order"
+      ],
+      "unique": false
+    },
+    {
+      "name": "route_group_candidates_supply_endpoint_idx",
+      "table": "route_group_candidates",
+      "columns": [
+        "supply_endpoint_id"
+      ],
+      "unique": false
+    },
+    {
       "name": "route_group_sources_group_source_unique",
       "table": "route_group_sources",
       "columns": [
@@ -3317,6 +4184,109 @@
       "table": "route_group_sources",
       "columns": [
         "source_route_id"
+      ],
+      "unique": false
+    },
+    {
+      "name": "route_groups_kind_group_key_unique",
+      "table": "route_groups",
+      "columns": [
+        "kind",
+        "group_key"
+      ],
+      "unique": true
+    },
+    {
+      "name": "route_groups_kind_status_idx",
+      "table": "route_groups",
+      "columns": [
+        "kind",
+        "sync_status"
+      ],
+      "unique": false
+    },
+    {
+      "name": "route_groups_legacy_route_idx",
+      "table": "route_groups",
+      "columns": [
+        "legacy_route_id"
+      ],
+      "unique": false
+    },
+    {
+      "name": "route_groups_normalized_model_idx",
+      "table": "route_groups",
+      "columns": [
+        "normalized_model_name"
+      ],
+      "unique": false
+    },
+    {
+      "name": "route_supply_endpoint_state_cooldown_idx",
+      "table": "route_supply_endpoint_state",
+      "columns": [
+        "cooldown_until"
+      ],
+      "unique": false
+    },
+    {
+      "name": "route_supply_endpoint_state_supply_endpoint_unique",
+      "table": "route_supply_endpoint_state",
+      "columns": [
+        "supply_endpoint_id"
+      ],
+      "unique": true
+    },
+    {
+      "name": "route_supply_endpoints_account_idx",
+      "table": "route_supply_endpoints",
+      "columns": [
+        "account_id",
+        "enabled"
+      ],
+      "unique": false
+    },
+    {
+      "name": "route_supply_endpoints_legacy_target_idx",
+      "table": "route_supply_endpoints",
+      "columns": [
+        "legacy_target_id"
+      ],
+      "unique": false
+    },
+    {
+      "name": "route_supply_endpoints_route_unit_idx",
+      "table": "route_supply_endpoints",
+      "columns": [
+        "oauth_route_unit_id",
+        "enabled"
+      ],
+      "unique": false
+    },
+    {
+      "name": "route_supply_endpoints_site_model_idx",
+      "table": "route_supply_endpoints",
+      "columns": [
+        "site_id",
+        "normalized_model_name",
+        "enabled"
+      ],
+      "unique": false
+    },
+    {
+      "name": "route_supply_endpoints_supply_key_unique",
+      "table": "route_supply_endpoints",
+      "columns": [
+        "supply_key"
+      ],
+      "unique": true
+    },
+    {
+      "name": "route_supply_endpoints_token_idx",
+      "table": "route_supply_endpoints",
+      "columns": [
+        "token_id",
+        "enabled"
       ],
       "unique": false
     },
@@ -3548,6 +4518,42 @@
         "enabled"
       ],
       "unique": false
+    },
+    {
+      "name": "wallet_acquisition_profiles_account_idx",
+      "table": "wallet_acquisition_profiles",
+      "columns": [
+        "account_id",
+        "enabled"
+      ],
+      "unique": false
+    },
+    {
+      "name": "wallet_acquisition_profiles_scope_key_unique",
+      "table": "wallet_acquisition_profiles",
+      "columns": [
+        "scope_key"
+      ],
+      "unique": true
+    },
+    {
+      "name": "wallet_acquisition_profiles_site_scope_idx",
+      "table": "wallet_acquisition_profiles",
+      "columns": [
+        "site_id",
+        "scope",
+        "enabled"
+      ],
+      "unique": false
+    },
+    {
+      "name": "wallet_acquisition_profiles_token_idx",
+      "table": "wallet_acquisition_profiles",
+      "columns": [
+        "token_id",
+        "enabled"
+      ],
+      "unique": false
     }
   ],
   "uniques": [
@@ -3592,11 +4598,12 @@
       ]
     },
     {
-      "name": "model_day_usage_day_site_model_unique",
+      "name": "model_day_usage_day_site_account_model_unique",
       "table": "model_day_usage",
       "columns": [
         "local_day",
         "site_id",
+        "account_id",
         "model"
       ]
     },
@@ -3652,11 +4659,50 @@
       ]
     },
     {
+      "name": "route_group_buckets_group_bucket_unique",
+      "table": "route_group_buckets",
+      "columns": [
+        "group_id",
+        "bucket_key"
+      ]
+    },
+    {
+      "name": "route_group_candidates_group_candidate_unique",
+      "table": "route_group_candidates",
+      "columns": [
+        "group_id",
+        "bucket_id",
+        "candidate_key"
+      ]
+    },
+    {
       "name": "route_group_sources_group_source_unique",
       "table": "route_group_sources",
       "columns": [
         "group_route_id",
         "source_route_id"
+      ]
+    },
+    {
+      "name": "route_groups_kind_group_key_unique",
+      "table": "route_groups",
+      "columns": [
+        "kind",
+        "group_key"
+      ]
+    },
+    {
+      "name": "route_supply_endpoint_state_supply_endpoint_unique",
+      "table": "route_supply_endpoint_state",
+      "columns": [
+        "supply_endpoint_id"
+      ]
+    },
+    {
+      "name": "route_supply_endpoints_supply_key_unique",
+      "table": "route_supply_endpoints",
+      "columns": [
+        "supply_key"
       ]
     },
     {
@@ -3718,6 +4764,13 @@
     {
       "name": "upstream_model_cost_pricings_scope_key_unique",
       "table": "upstream_model_cost_pricings",
+      "columns": [
+        "scope_key"
+      ]
+    },
+    {
+      "name": "wallet_acquisition_profiles_scope_key_unique",
+      "table": "wallet_acquisition_profiles",
       "columns": [
         "scope_key"
       ]
@@ -3814,6 +4867,17 @@
     },
     {
       "table": "model_availability",
+      "columns": [
+        "account_id"
+      ],
+      "referencedTable": "accounts",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "model_day_usage",
       "columns": [
         "account_id"
       ],
@@ -3934,6 +4998,61 @@
       "onDelete": "SET NULL"
     },
     {
+      "table": "route_group_buckets",
+      "columns": [
+        "group_id"
+      ],
+      "referencedTable": "route_groups",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "route_group_candidates",
+      "columns": [
+        "bucket_id"
+      ],
+      "referencedTable": "route_group_buckets",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "route_group_candidates",
+      "columns": [
+        "child_group_id"
+      ],
+      "referencedTable": "route_groups",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "route_group_candidates",
+      "columns": [
+        "group_id"
+      ],
+      "referencedTable": "route_groups",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "route_group_candidates",
+      "columns": [
+        "supply_endpoint_id"
+      ],
+      "referencedTable": "route_supply_endpoints",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
       "table": "route_group_sources",
       "columns": [
         "group_route_id"
@@ -3954,6 +5073,105 @@
         "id"
       ],
       "onDelete": "CASCADE"
+    },
+    {
+      "table": "route_groups",
+      "columns": [
+        "legacy_route_id"
+      ],
+      "referencedTable": "token_routes",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "SET NULL"
+    },
+    {
+      "table": "route_supply_endpoint_state",
+      "columns": [
+        "supply_endpoint_id"
+      ],
+      "referencedTable": "route_supply_endpoints",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "route_supply_endpoints",
+      "columns": [
+        "account_id"
+      ],
+      "referencedTable": "accounts",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "route_supply_endpoints",
+      "columns": [
+        "credential_binding_id"
+      ],
+      "referencedTable": "credential_endpoint_bindings",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "SET NULL"
+    },
+    {
+      "table": "route_supply_endpoints",
+      "columns": [
+        "endpoint_profile_id"
+      ],
+      "referencedTable": "api_endpoint_profiles",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "SET NULL"
+    },
+    {
+      "table": "route_supply_endpoints",
+      "columns": [
+        "legacy_target_id"
+      ],
+      "referencedTable": "route_endpoint_targets",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "SET NULL"
+    },
+    {
+      "table": "route_supply_endpoints",
+      "columns": [
+        "oauth_route_unit_id"
+      ],
+      "referencedTable": "oauth_route_units",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "SET NULL"
+    },
+    {
+      "table": "route_supply_endpoints",
+      "columns": [
+        "site_id"
+      ],
+      "referencedTable": "sites",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "route_supply_endpoints",
+      "columns": [
+        "token_id"
+      ],
+      "referencedTable": "account_tokens",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "SET NULL"
     },
     {
       "table": "site_announcements",
@@ -4045,6 +5263,39 @@
     },
     {
       "table": "upstream_model_cost_pricings",
+      "columns": [
+        "token_id"
+      ],
+      "referencedTable": "account_tokens",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "wallet_acquisition_profiles",
+      "columns": [
+        "account_id"
+      ],
+      "referencedTable": "accounts",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "wallet_acquisition_profiles",
+      "columns": [
+        "site_id"
+      ],
+      "referencedTable": "sites",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "wallet_acquisition_profiles",
       "columns": [
         "token_id"
       ],

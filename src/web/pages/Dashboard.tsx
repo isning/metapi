@@ -1,6 +1,6 @@
 import { Suspense, lazy, useEffect, useState, useCallback, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { Activity, AlertTriangle, Building2, Clock3, ExternalLink, Gauge, RefreshCw, Server, Zap } from "lucide-react";
+import { Activity, AlertTriangle, Building2, Check, Clock3, ExternalLink, Gauge, RefreshCw, Server, Zap } from "lucide-react";
 import { api } from "../api.js";
 import { useToast } from "../components/Toast.js";
 import { useIsMobile } from "../components/useIsMobile.js";
@@ -10,6 +10,7 @@ import { Skeleton } from '../components/ui/skeleton/index.js';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card/index.js';
 import ToneBadge from '../components/ToneBadge.js';
 import { cn } from "../lib/utils.js";
+import type { InboxItem } from "../../shared/inbox.js";
 
 import { tr } from '../i18n.js';
 const ModelAnalysisPanel = lazy(
@@ -104,6 +105,30 @@ function LatencyBadge({ ms }: { ms: number | null | undefined }) {
   if (ms <= 800) return <ToneBadge tone="success">{ms}ms</ToneBadge>;
   if (ms <= 1800) return <ToneBadge tone="warning">{ms}ms</ToneBadge>;
   return <ToneBadge tone="danger">{ms}ms</ToneBadge>;
+}
+
+function attentionTone(severity?: string | null) {
+  if (severity === "critical") return "error";
+  if (severity === "warning") return "warning";
+  if (severity === "success") return "success";
+  return "info";
+}
+
+const ATTENTION_SEVERITY_RANK: Record<InboxItem['severity'], number> = {
+  critical: 4,
+  warning: 3,
+  info: 2,
+  success: 1,
+};
+
+function getHighestAttentionSeverity(items: InboxItem[]): InboxItem['severity'] | null {
+  let highest: InboxItem['severity'] | null = null;
+  for (const item of items) {
+    if (!highest || ATTENTION_SEVERITY_RANK[item.severity] > ATTENTION_SEVERITY_RANK[highest]) {
+      highest = item.severity;
+    }
+  }
+  return highest;
 }
 
 function AvailabilityCell({
@@ -297,6 +322,8 @@ export default function Dashboard({
   const [siteSpeedStates, setSiteSpeedStates] = useState<
     Record<string, SiteSpeedState>
   >({});
+  const [attentionItems, setAttentionItems] = useState<InboxItem[]>([]);
+  const [attentionLoading, setAttentionLoading] = useState(true);
   const [trendDays, setTrendDays] = useState(7);
   const [showInactiveSites, setShowInactiveSites] = useState(false);
   const toast = useToast();
@@ -367,6 +394,22 @@ export default function Dashboard({
     [trendDays],
   );
 
+  const loadAttentionItems = useCallback(async () => {
+    setAttentionLoading(true);
+    try {
+      const params = new URLSearchParams();
+      params.set("scope", "attention");
+      params.set("state", "open");
+      params.set("limit", "5");
+      const rows = await api.getEvents(params.toString());
+      setAttentionItems(rows);
+    } catch (err) {
+      console.error("Failed to load attention items:", err);
+    } finally {
+      setAttentionLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     load();
   }, [load]);
@@ -378,6 +421,10 @@ export default function Dashboard({
   useEffect(() => {
     loadSiteStats();
   }, [loadSiteStats]);
+
+  useEffect(() => {
+    void loadAttentionItems();
+  }, [loadAttentionItems]);
 
   useEffect(() => {
     let timer: ReturnType<typeof setInterval> | null = null;
@@ -481,6 +528,10 @@ export default function Dashboard({
   }
 
   const totalBalance = safeNumber(data?.totalBalance);
+  const rawBalance = safeNumber(data?.rawBalance);
+  const baseCostUnit = String(data?.baseCostUnit || "USD");
+  const valuedAccountCount = safeNumber(data?.valuedAccountCount);
+  const balanceValuationWarningCount = safeNumber(data?.balanceValuationWarningCount);
   const totalUsed = safeNumber(data?.totalUsed || 0);
   const todaySpend = safeNumber(data?.todaySpend || 0);
   const todayReward = safeNumber(data?.todayReward || 0);
@@ -511,6 +562,14 @@ export default function Dashboard({
   const siteAvailability = showInactiveSites
     ? [...activeSites, ...inactiveSites]
     : activeSites;
+  const highestAttentionSeverity = getHighestAttentionSeverity(attentionItems);
+  const attentionSummary = attentionLoading
+    ? tr('pages.dashboard.checkingAttentionItems')
+    : highestAttentionSeverity
+      ? tr('pages.dashboard.activeAttentionSummary')
+        .replace('{count}', String(attentionItems.length))
+        .replace('{severity}', tr(`pages.programLogs.severity.${highestAttentionSeverity}`))
+      : '';
 
   const renderSiteSpeedLabel = (site: any, idx: number) => {
     const siteKey = getSiteSpeedKey(site, idx);
@@ -542,6 +601,7 @@ export default function Dashboard({
               void load(true);
               void loadInsights(true);
               void loadSiteStats(true);
+              void loadAttentionItems();
             }}
             disabled={refreshing}
            
@@ -556,14 +616,14 @@ export default function Dashboard({
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
         <StatCard title={tr('pages.dashboard.accountData')}>
           <StatRow
-            label={tr('pages.dashboard.balance')}
-            value={`$${totalBalance.toFixed(2)}`}
-            note={`今日 +${todayReward.toFixed(2)}`}
+            label={tr('pages.dashboard.normalizedBalance')}
+            value={`${totalBalance.toFixed(2)} ${baseCostUnit}`}
+            note={`${tr('pages.dashboard.rawBalance')}: ${rawBalance.toFixed(2)} · ${tr('pages.dashboard.valuationCoverage')} ${Math.round(valuedAccountCount)}/${Math.round(totalAccounts)}${balanceValuationWarningCount > 0 ? ` · ${tr('pages.dashboard.incompleteValuation')}` : ''}`}
           />
           <StatRow
             label={tr('pages.dashboard.totalSpend')}
-            value={`$${totalUsed.toFixed(2)}`}
-            note={`今日 -${todaySpend.toFixed(2)}`}
+            value={`${totalUsed.toFixed(2)} ${baseCostUnit}`}
+            note={`${tr('pages.dashboard.today')}: -${todaySpend.toFixed(2)} / +${todayReward.toFixed(2)} ${baseCostUnit}`}
           />
         </StatCard>
 
@@ -599,6 +659,75 @@ export default function Dashboard({
         </StatCard>
       </div>
 
+      <Card>
+        <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3">
+          <div className="grid gap-1">
+            <CardTitle className="flex items-center gap-2">
+              <AlertTriangle className="size-4" />
+              {tr('pages.dashboard.needsAttention')}
+              {attentionItems.length > 0 && <ToneBadge tone="warning">{attentionItems.length}</ToneBadge>}
+            </CardTitle>
+            {attentionSummary && <CardDescription>{attentionSummary}</CardDescription>}
+          </div>
+          <Button asChild variant="outline" size="sm">
+            <Link to="/events?scope=attention&state=open">
+              {tr('pages.dashboard.viewAll')}
+            </Link>
+          </Button>
+        </CardHeader>
+        <CardContent>
+          {attentionLoading ? (
+            <div className="grid gap-2">
+              <Skeleton className="h-12 w-full" />
+              <Skeleton className="h-12 w-full" />
+            </div>
+          ) : attentionItems.length > 0 ? (
+            <div className="grid gap-2">
+              {attentionItems.map((item) => {
+                const primaryAction = item.actions.find((action) => action.kind === 'navigate' && action.href);
+                const targetHref = primaryAction?.href || '/events';
+                const resolveAction = item.actions.find((action) => action.kind === 'invoke' && action.command === 'resolve');
+                return (
+                  <div key={item.id} className="flex flex-wrap items-start justify-between gap-3 rounded-md border px-3 py-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <ToneBadge tone={attentionTone(item.severity)}>{tr(`pages.programLogs.severity.${item.severity}`)}</ToneBadge>
+                        <div className="truncate text-sm font-medium">{item.title}</div>
+                      </div>
+                      <div className="mt-1 line-clamp-2 text-sm text-muted-foreground">{item.summary}</div>
+                    </div>
+                    <div className="flex shrink-0 gap-2">
+                      {resolveAction && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={async () => {
+                            await api.applyEventAction(item.id, { command: 'resolve' });
+                            await loadAttentionItems();
+                          }}
+                        >
+                          <Check className="size-4" />
+                          {resolveAction.label || tr('pages.programLogs.state.resolved')}
+                        </Button>
+                      )}
+                      <Button asChild variant="outline" size="sm">
+                        <Link to={targetHref}>{tr('pages.dashboard.open')}</Link>
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 rounded-md border px-3 py-3 text-sm text-muted-foreground">
+              <Check className="size-4 text-success" />
+              {tr('pages.dashboard.noAttentionItems')}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
         <div className="flex items-center gap-2 text-sm font-semibold">
           <Building2 className="size-4" />
@@ -630,7 +759,7 @@ export default function Dashboard({
         </div>
         <div>
           <Suspense fallback={<ChartFallback height={320} />}>
-            <SiteTrendChart data={siteTrend} loading={siteLoading} />
+            <SiteTrendChart data={siteTrend} loading={siteLoading} baseCostUnit={baseCostUnit} />
           </Suspense>
         </div>
       </div>
@@ -735,7 +864,7 @@ export default function Dashboard({
               {tr('pages.dashboard.noSites')}
               </div>
               <div className="text-sm text-muted-foreground">
-              {tr('pages.dashboard.actingrequestAutomaticSitesAvailableItemsResponse')}
+              {tr('pages.dashboard.noSiteAvailabilityData')}
               </div>
             </div>
           </CardContent>

@@ -172,7 +172,7 @@ describe('TokenRoutes mobile actions', () => {
       expect(collectText(root!.root)).toContain('筛选');
       expect(collectText(root!.root)).toContain('详情');
       expect(collectText(root!.root)).toContain('编辑');
-      expect(collectText(root!.root)).toContain('添加通道');
+      expect(collectText(root!.root)).toContain('添加目标');
 
       const disableButton = findButtonByText(root!.root, '禁用');
       await act(async () => {

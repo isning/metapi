@@ -29,7 +29,7 @@ export default function FactoryResetModal({
   if (!presence.shouldRender) return null;
 
   const confirmLabel = factoryResetting
-    ? tr('pages.settings.factoryResetModal.zh')
+    ? tr('pages.settings.factoryResetModal.reinitializing')
     : (factoryResetSecondsLeft > 0
       ? `确认重新初始化系统（${factoryResetSecondsLeft}s）`
       : tr('pages.settings.factoryResetModal.system'));
@@ -52,11 +52,11 @@ export default function FactoryResetModal({
     >
       <Alert variant="destructive">
         <AlertDescription>
-          {tr('pages.settings.factoryResetModal.actionsSystemClearMetapiUsagezhAllContent')}
+          {tr('pages.settings.factoryResetModal.irreversibleDescription')}
         </AlertDescription>
       </Alert>
       <div className="grid gap-1 text-sm text-muted-foreground">
-        <div>{tr('pages.settings.factoryResetModal.usageMysqlPostgresClearZhMetapi')}</div>
+        <div>{tr('pages.settings.factoryResetModal.externalDatabaseClearedWarning')}</div>
         <div>{tr('pages.settings.factoryResetModal.systemDefaultSqlite')}</div>
         <div>{tr('pages.settings.factoryResetModal.adminTokenReset')} <code className="font-mono">{adminToken}</code>。</div>
         <div>{tr('pages.settings.factoryResetModal.signOutRefreshStatus')}</div>

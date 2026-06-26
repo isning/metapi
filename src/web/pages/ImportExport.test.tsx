@@ -509,7 +509,7 @@ describe('ImportExport', () => {
     }
   });
 
-  it('shows v2.2 config-backup wording and local-state notice', async () => {
+  it('shows v2.3 config-backup wording and local-state notice', async () => {
     let root!: WebTestRenderer;
 
     try {
@@ -523,7 +523,7 @@ describe('ImportExport', () => {
       await flushMicrotasks();
 
       const rendered = collectText(root!.root);
-      expect(rendered).toContain('Schema v2.2');
+      expect(rendered).toContain('Schema v2.3');
       expect(rendered).toContain('导出全部（连接 + 路由 + 策略 + 设置）');
       expect(rendered).toContain('仅导出连接与路由策略');
       expect(rendered).toContain('覆盖备份中的连接/路由/策略配置，但会保留本机日志、公告、缓存和统计。');

@@ -51,6 +51,16 @@ function routeFlowWithTheoreticalPricing(): ModelRouteFlowData {
         inputMultiplier: 4,
         outputMultiplier: 8,
         totalMultiplier: 3,
+        reference: {
+          inputPerMillion: 2,
+          outputPerMillion: 2,
+          cacheReadPerMillion: null,
+          cacheWritePerMillion: null,
+          reasoningPerMillion: null,
+          requestUsd: null,
+          totalCostUsd: 4,
+        },
+        effectiveCost: null,
         sourceCount: 2,
         estimateLevel: 'exact',
         strategy: 'weighted',
@@ -68,6 +78,10 @@ describe('modelDetailsView pricing', () => {
         measuredEntryPricing: {
           inputPerMillion: 0.7,
           outputPerMillion: 1.4,
+          totalCostUsd: 2.1,
+          inputMultiplier: 0.2,
+          outputMultiplier: 0.4,
+          totalMultiplier: 0.3,
           sampleCount: 1,
           lastMeasuredAt: '2026-06-23T00:00:00.000Z',
         },
@@ -83,9 +97,9 @@ describe('modelDetailsView pricing', () => {
       inputPerMillion: 0.7,
       outputPerMillion: 1.4,
       totalCostUsd: 2.1,
-      inputMultiplier: 0.35,
-      outputMultiplier: 0.7,
-      totalMultiplier: 0.525,
+      inputMultiplier: 0.2,
+      outputMultiplier: 0.4,
+      totalMultiplier: 0.3,
       sampleCount: 1,
     });
   });
@@ -136,8 +150,8 @@ describe('modelDetailsView pricing', () => {
     expect(details.pricing.theoretical).toMatchObject({
       inputPerMillion: 1,
       outputPerMillion: 2,
-      inputMultiplier: 0.5,
-      outputMultiplier: 1,
+      inputMultiplier: null,
+      outputMultiplier: null,
       sourceCount: 1,
     });
   });

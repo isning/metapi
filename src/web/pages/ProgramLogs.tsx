@@ -1,14 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../api.js';
 import { MobileCard, MobileField } from '../components/MobileCard.js';
 import ResponsiveFilterPanel from '../components/ResponsiveFilterPanel.js';
 import { useToast } from '../components/Toast.js';
 import { useIsMobile } from '../components/useIsMobile.js';
 import { formatDateTimeLocal } from './helpers/checkinLogTime.js';
+import { buildEventNavigationPath } from './helpers/navigationFocus.js';
 import ModernSelect from '../components/ModernSelect.js';
 import { tr } from '../i18n.js';
 import { Button } from '../components/ui/button/index.js';
-import { LoaderCircle } from 'lucide-react';
+import { Check, Copy, ExternalLink, LoaderCircle, MoveUpRight } from 'lucide-react';
 import { Skeleton } from '../components/ui/skeleton/index.js';
 import ToneBadge from '../components/ToneBadge.js';
 import EmptyStateBlock from '../components/EmptyStateBlock.js';
@@ -23,18 +25,11 @@ import {
   TableHeader,
   TableRow,
 } from '../components/ui/table/index.js';
+import * as Sheet from '../components/ui/sheet/index.js';
+import { Badge } from '../components/ui/badge/index.js';
+import type { InboxAction, InboxDetailBlock, InboxItem } from '../../shared/inbox.js';
 
-type ProgramEvent = {
-  id: number;
-  type: string;
-  title: string;
-  message?: string | null;
-  level: 'info' | 'warning' | 'error';
-  read: boolean;
-  relatedId?: number | null;
-  relatedType?: string | null;
-  createdAt?: string | null;
-};
+type ProgramEvent = InboxItem;
 
 const PAGE_SIZE = 50;
 
@@ -43,10 +38,46 @@ const TYPE_OPTIONS = [
   { value: 'checkin', label: tr('components.notificationPanel.sign') },
   { value: 'balance', label: tr('components.notificationPanel.balance') },
   { value: 'token', label: tr('components.notificationPanel.token') },
-  { value: 'proxy', label: tr('components.notificationPanel.acting') },
+  { value: 'proxy', label: tr('components.notificationPanel.proxy') },
   { value: 'status', label: tr('components.notificationPanel.status') },
   { value: 'site_notice', label: tr('app.sites') },
 ];
+
+const SCOPE_OPTIONS = [
+  { value: '', label: tr('pages.programLogs.allScopes') },
+  { value: 'notification', label: tr('pages.programLogs.scope.notification') },
+  { value: 'attention', label: tr('pages.programLogs.scope.attention') },
+  { value: 'activity', label: tr('pages.programLogs.scope.activity') },
+  { value: 'announcement', label: tr('pages.programLogs.scope.announcement') },
+];
+
+const STATE_OPTIONS = [
+  { value: '', label: tr('pages.programLogs.allStates') },
+  { value: 'open', label: tr('pages.programLogs.state.open') },
+  { value: 'read', label: tr('pages.programLogs.state.read') },
+  { value: 'acknowledged', label: tr('pages.programLogs.state.acknowledged') },
+  { value: 'snoozed', label: tr('pages.programLogs.state.snoozed') },
+  { value: 'resolved', label: tr('pages.programLogs.state.resolved') },
+];
+
+function readUrlFilters(search: string) {
+  const params = new URLSearchParams(search);
+  return {
+    type: params.get('type') || '',
+    scope: params.get('scope') || '',
+    state: params.get('state') || '',
+    unread: params.get('read') === 'false',
+  };
+}
+
+function buildEventFilterParams(filters: { type?: string; scope?: string; state?: string; unread?: boolean }, includeRead = true) {
+  const params = new URLSearchParams();
+  if (filters.type) params.set('type', filters.type);
+  if (filters.scope) params.set('scope', filters.scope);
+  if (filters.state) params.set('state', filters.state);
+  if (includeRead && filters.unread) params.set('read', 'false');
+  return params;
+}
 
 function levelLabel(level: string) {
   if (level === 'error') return { label: tr('pages.programLogs.mistake'), cls: 'error' };
@@ -55,7 +86,10 @@ function levelLabel(level: string) {
 }
 
 function eventStatusLabel(row: ProgramEvent) {
-  const text = `${row.title || ''} ${row.message || ''}`.toLowerCase();
+  if (row.state === 'resolved') return { label: tr('pages.programLogs.state.resolved'), cls: 'success' };
+  if (row.state === 'acknowledged') return { label: tr('pages.programLogs.state.acknowledged'), cls: 'info' };
+  if (row.state === 'snoozed') return { label: tr('pages.programLogs.state.snoozed'), cls: 'warning' };
+  const text = `${row.title || ''} ${row.summary || ''} ${row.message || ''}`.toLowerCase();
 
   const parseCount = (pattern: RegExp): number | undefined => {
     const match = text.match(pattern);
@@ -101,12 +135,105 @@ function eventStatusLabel(row: ProgramEvent) {
   return { label: tr('pages.checkinLog.info'), cls: 'info' };
 }
 
+function severityTone(severity?: string | null) {
+  if (severity === 'critical') return 'error';
+  if (severity === 'warning') return 'warning';
+  if (severity === 'success') return 'success';
+  return 'info';
+}
+
+function scopeLabel(scope?: string | null) {
+  return tr(`pages.programLogs.scope.${scope || 'activity'}`);
+}
+
+function renderDetailBlock(block: InboxDetailBlock, index: number) {
+  const title = block.title ? <div className="mb-2 font-medium">{block.title}</div> : null;
+  if (block.type === 'text') {
+    return <div key={index} className="rounded-md border p-3 text-sm">{title}<p className="whitespace-pre-wrap text-muted-foreground">{block.text}</p></div>;
+  }
+  if (block.type === 'kv') {
+    return (
+      <div key={index} className="rounded-md border p-3 text-sm">
+        {title}
+        <dl className="grid gap-2">
+          {block.rows.map((row, rowIndex) => (
+            <div key={`${row.label}-${rowIndex}`} className="grid grid-cols-[minmax(7rem,0.4fr)_1fr] gap-3">
+              <dt className="text-muted-foreground">{row.label}</dt>
+              <dd className="min-w-0 break-words font-medium">{row.value}</dd>
+            </div>
+          ))}
+        </dl>
+      </div>
+    );
+  }
+  if (block.type === 'metrics') {
+    return (
+      <div key={index} className="rounded-md border p-3 text-sm">
+        {title}
+        <div className="grid gap-2 sm:grid-cols-2">
+          {block.items.map((item, itemIndex) => (
+            <div key={`${item.label}-${itemIndex}`} className="rounded-md bg-muted/40 px-3 py-2">
+              <div className="text-xs text-muted-foreground">{item.label}</div>
+              <div className="font-medium">{item.value}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+  if (block.type === 'list') {
+    return (
+      <div key={index} className="rounded-md border p-3 text-sm">
+        {title}
+        <ul className="grid gap-1 text-muted-foreground">
+          {block.items.map((item, itemIndex) => <li key={itemIndex}>{item}</li>)}
+        </ul>
+      </div>
+    );
+  }
+  if (block.type === 'code') {
+    return (
+      <div key={index} className="rounded-md border p-3 text-sm">
+        {title}
+        <pre className="max-h-80 overflow-auto rounded-md bg-muted p-3 text-xs"><code>{block.value}</code></pre>
+      </div>
+    );
+  }
+  if (block.type === 'table') {
+    return (
+      <div key={index} className="overflow-hidden rounded-md border text-sm">
+        {block.title ? <div className="border-b px-3 py-2 font-medium">{block.title}</div> : null}
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>{block.columns.map((column) => <TableHead key={column}>{column}</TableHead>)}</TableRow>
+            </TableHeader>
+            <TableBody>
+              {block.rows.map((row, rowIndex) => (
+                <TableRow key={rowIndex}>
+                  {row.map((cell, cellIndex) => <TableCell key={cellIndex}>{cell}</TableCell>)}
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      </div>
+    );
+  }
+  return null;
+}
+
 export default function ProgramLogs() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const initialFilters = useMemo(() => readUrlFilters(location.search), []);
   const [events, setEvents] = useState<ProgramEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [filterType, setFilterType] = useState('');
-  const [onlyUnread, setOnlyUnread] = useState(false);
+  const [filterType, setFilterType] = useState(initialFilters.type);
+  const [filterScope, setFilterScope] = useState(initialFilters.scope);
+  const [filterState, setFilterState] = useState(initialFilters.state);
+  const [onlyUnread, setOnlyUnread] = useState(initialFilters.unread);
   const [offset, setOffset] = useState(0);
   const [hasMore, setHasMore] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -114,8 +241,19 @@ export default function ProgramLogs() {
   const [clearing, setClearing] = useState(false);
   const [rowLoading, setRowLoading] = useState<Record<number, boolean>>({});
   const [showFilters, setShowFilters] = useState(false);
+  const [selectedEvent, setSelectedEvent] = useState<ProgramEvent | null>(null);
   const isMobile = useIsMobile();
   const toast = useToast();
+
+  useEffect(() => {
+    const next = readUrlFilters(location.search);
+    setFilterType(next.type);
+    setFilterScope(next.scope);
+    setFilterState(next.state);
+    setOnlyUnread(next.unread);
+    setOffset(0);
+    setHasMore(true);
+  }, [location.search]);
 
   const load = async (silent = false, append = false) => {
     if (append) setLoadingMore(true);
@@ -124,11 +262,14 @@ export default function ProgramLogs() {
 
     try {
       const nextOffset = append ? offset : 0;
-      const params = new URLSearchParams();
+      const params = buildEventFilterParams({
+        type: filterType,
+        scope: filterScope,
+        state: filterState,
+        unread: onlyUnread,
+      });
       params.set('limit', String(PAGE_SIZE));
       params.set('offset', String(nextOffset));
-      if (filterType) params.set('type', filterType);
-      if (onlyUnread) params.set('read', 'false');
       const rows = await api.getEvents(params.toString());
       const safeRows = Array.isArray(rows) ? rows : [];
       setEvents((prev) => (append ? [...prev, ...safeRows] : safeRows));
@@ -146,7 +287,21 @@ export default function ProgramLogs() {
 
   useEffect(() => {
     load();
-  }, [filterType, onlyUnread]);
+  }, [filterType, filterScope, filterState, onlyUnread]);
+
+  const updateFilters = (next: { type?: string; scope?: string; state?: string; unread?: boolean }) => {
+    const type = next.type ?? filterType;
+    const scope = next.scope ?? filterScope;
+    const state = next.state ?? filterState;
+    const unread = next.unread ?? onlyUnread;
+    const params = new URLSearchParams(location.search);
+    if (type) params.set('type', type); else params.delete('type');
+    if (scope) params.set('scope', scope); else params.delete('scope');
+    if (state) params.set('state', state); else params.delete('state');
+    if (unread) params.set('read', 'false'); else params.delete('read');
+    const nextSearch = params.toString();
+    navigate(nextSearch ? `/events?${nextSearch}` : '/events', { replace: true });
+  };
 
   const visibleRows = useMemo(() => events, [events]);
 
@@ -164,7 +319,16 @@ export default function ProgramLogs() {
       await api.markEventRead(id);
       setEvents((prev) => {
         if (onlyUnread) return prev.filter((item) => item.id !== id);
-        return prev.map((item) => (item.id === id ? { ...item, read: true } : item));
+        return prev.flatMap((item) => {
+          if (item.id !== id) return [item];
+          const nextItem = {
+            ...item,
+            read: true,
+            state: item.scope === 'attention' ? item.state : 'read',
+          } satisfies ProgramEvent;
+          if (filterState && nextItem.state !== filterState) return [];
+          return [nextItem];
+        });
       });
     });
   };
@@ -172,9 +336,14 @@ export default function ProgramLogs() {
   const markAllRead = async () => {
     setMarkingAll(true);
     try {
-      await api.markAllEventsRead();
+      const params = buildEventFilterParams({
+        type: filterType,
+        scope: filterScope,
+        state: filterState,
+      }, false);
+      await api.markAllEventsRead(params.toString());
       if (onlyUnread) setEvents([]);
-      else setEvents((prev) => prev.map((item) => ({ ...item, read: true })));
+      else await load(true);
       toast.success(tr('pages.programLogs.markedAllRead'));
     } catch (e: any) {
       toast.error(e.message || tr('pages.programLogs.markingFailed'));
@@ -186,7 +355,13 @@ export default function ProgramLogs() {
   const clearAll = async () => {
     setClearing(true);
     try {
-      await api.clearEvents();
+      const params = buildEventFilterParams({
+        type: filterType,
+        scope: filterScope,
+        state: filterState,
+        unread: onlyUnread,
+      });
+      await api.clearEvents(params.toString());
       setEvents([]);
       setOffset(0);
       setHasMore(false);
@@ -195,6 +370,37 @@ export default function ProgramLogs() {
       toast.error(e.message || tr('pages.programLogs.clearingFailed'));
     } finally {
       setClearing(false);
+    }
+  };
+
+  const openEventTarget = (row: ProgramEvent) => {
+    const navigateAction = row.actions?.find((action) => action.kind === 'navigate' && action.href);
+    navigate(navigateAction?.href || buildEventNavigationPath(row));
+  };
+
+  const runAction = async (row: ProgramEvent, action: InboxAction) => {
+    try {
+      if (action.kind === 'navigate' && action.href) {
+        navigate(action.href);
+        return;
+      }
+      if (action.kind === 'external' && action.href) {
+        window.open(action.href, '_blank', 'noopener,noreferrer');
+        return;
+      }
+      if (action.kind === 'copy' && action.value) {
+        await navigator.clipboard?.writeText(action.value);
+        toast.success(tr('pages.programLogs.copied'));
+        return;
+      }
+      if (action.kind === 'invoke' && action.command) {
+        const response = await api.applyEventAction(row.id, { command: action.command as any });
+        setEvents((prev) => prev.map((item) => (item.id === row.id ? response.item : item)));
+        setSelectedEvent(response.item);
+        toast.success(tr('pages.programLogs.actionApplied'));
+      }
+    } catch (e: any) {
+      toast.error(e.message || tr('pages.programLogs.actionFailed'));
     }
   };
 
@@ -209,7 +415,7 @@ export default function ProgramLogs() {
            
            
           >
-            {refreshing ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.downstreamKeys.refreshzh')}</> : tr('pages.accounts.refresh')}
+            {refreshing ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.downstreamKeys.refreshing')}</> : tr('pages.accounts.refresh')}
           </Button>
           <Button type="button" variant="outline"
             onClick={markAllRead}
@@ -240,12 +446,26 @@ export default function ProgramLogs() {
             <ModernSelect
               size="sm"
               value={filterType}
-              onChange={(nextValue) => setFilterType(nextValue)}
+              onChange={(nextValue) => updateFilters({ type: nextValue })}
               options={TYPE_OPTIONS.map((item) => ({
                 value: item.value,
                 label: item.label,
               }))}
               placeholder={tr('pages.programLogs.allTypes')}
+            />
+            <ModernSelect
+              size="sm"
+              value={filterScope}
+              onChange={(nextValue) => updateFilters({ scope: nextValue })}
+              options={SCOPE_OPTIONS}
+              placeholder={tr('pages.programLogs.allScopes')}
+            />
+            <ModernSelect
+              size="sm"
+              value={filterState}
+              onChange={(nextValue) => updateFilters({ state: nextValue })}
+              options={STATE_OPTIONS}
+              placeholder={tr('pages.programLogs.allStates')}
             />
             <label className="flex items-center gap-2 text-sm">
               <Switch
@@ -254,7 +474,7 @@ export default function ProgramLogs() {
                 onCheckedChange={(checked) => {
                   setOffset(0);
                   setHasMore(true);
-                  setOnlyUnread(checked);
+                  updateFilters({ unread: checked });
                 }}
               />
               {tr('pages.programLogs.unreadOnly')}
@@ -271,12 +491,30 @@ export default function ProgramLogs() {
               <ModernSelect
                 size="sm"
                 value={filterType}
-                onChange={(nextValue) => setFilterType(nextValue)}
+                onChange={(nextValue) => updateFilters({ type: nextValue })}
                 options={TYPE_OPTIONS.map((item) => ({
                   value: item.value,
                   label: item.label,
                 }))}
                 placeholder={tr('pages.programLogs.allTypes')}
+              />
+            </div>
+            <div className="min-w-44">
+              <ModernSelect
+                size="sm"
+                value={filterScope}
+                onChange={(nextValue) => updateFilters({ scope: nextValue })}
+                options={SCOPE_OPTIONS}
+                placeholder={tr('pages.programLogs.allScopes')}
+              />
+            </div>
+            <div className="min-w-44">
+              <ModernSelect
+                size="sm"
+                value={filterState}
+                onChange={(nextValue) => updateFilters({ state: nextValue })}
+                options={STATE_OPTIONS}
+                placeholder={tr('pages.programLogs.allStates')}
               />
             </div>
 
@@ -287,7 +525,7 @@ export default function ProgramLogs() {
                 onCheckedChange={(checked) => {
                   setOffset(0);
                   setHasMore(true);
-                  setOnlyUnread(checked);
+                  updateFilters({ unread: checked });
                 }}
               />
               {tr('pages.programLogs.unreadOnly')}
@@ -342,7 +580,16 @@ export default function ProgramLogs() {
                   <MobileField label={tr('pages.programLogs.type')} value={<ToneBadge tone="-muted">{row.type || '-'}</ToneBadge>} />
                   <MobileField label={tr('pages.programLogs.level')} value={<ToneBadge tone={level.cls}>{level.label}</ToneBadge>} />
                   <MobileField label={tr('components.notificationPanel.status')} value={<ToneBadge tone={eventStatus.cls}>{eventStatus.label}</ToneBadge>} />
-                  <MobileField label={tr('pages.programLogs.content')} value={row.message || '-'} stacked />
+                  <MobileField label={tr('pages.programLogs.content')} value={row.summary || row.message || '-'} stacked />
+                  <div className="flex flex-wrap justify-end gap-2 pt-2">
+                    <Button type="button" variant="outline" size="sm" onClick={() => setSelectedEvent(row)}>
+                      {tr('pages.programLogs.details')}
+                    </Button>
+                    <Button type="button" variant="ghost" size="sm" onClick={() => openEventTarget(row)}>
+                      <MoveUpRight className="size-4" />
+                      {tr('pages.programLogs.openTarget')}
+                    </Button>
+                  </div>
                 </MobileCard>
               );
             }) : (
@@ -386,7 +633,7 @@ export default function ProgramLogs() {
                       {row.title || '-'}
                     </TableCell>
                     <TableCell className="max-w-md truncate text-muted-foreground">
-                      {row.message || '-'}
+                      {row.summary || row.message || '-'}
                     </TableCell>
                     <TableCell>
                       <ToneBadge tone={eventStatus.cls}>
@@ -409,6 +656,9 @@ export default function ProgramLogs() {
                             {rowLoading[row.id] ? <LoaderCircle className="size-4 animate-spin" /> : tr('pages.programLogs.markRead')}
                           </Button>
                         )}
+                        <Button type="button" variant="ghost" size="sm" onClick={() => setSelectedEvent(row)}>
+                          {tr('pages.programLogs.details')}
+                        </Button>
                       </div>
                     </TableCell>
                   </TableRow>
@@ -433,6 +683,110 @@ export default function ProgramLogs() {
           </Button>
         </div>
       )}
+
+      <Sheet.Root open={!!selectedEvent} onOpenChange={(nextOpen) => { if (!nextOpen) setSelectedEvent(null); }}>
+        <Sheet.Content side="right" className="flex h-full w-[min(92vw,680px)] max-w-none flex-col p-0" onClose={() => setSelectedEvent(null)}>
+          {selectedEvent && (
+            <>
+              <Sheet.Header className="border-b px-5 py-4">
+                <div className="flex flex-wrap items-start justify-between gap-3 pr-8">
+                  <div className="min-w-0">
+                    <Sheet.Title className="truncate">{selectedEvent.title}</Sheet.Title>
+                    <Sheet.Description className="mt-1">
+                      {selectedEvent.summary || selectedEvent.message || tr('pages.programLogs.noDetails')}
+                    </Sheet.Description>
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    <ToneBadge tone={severityTone(selectedEvent.severity)}>
+                      {tr(`pages.programLogs.severity.${selectedEvent.severity}`)}
+                    </ToneBadge>
+                    <Badge variant="outline">{scopeLabel(selectedEvent.scope)}</Badge>
+                    <Badge variant="outline">{selectedEvent.category || selectedEvent.type || 'system'}</Badge>
+                  </div>
+                </div>
+              </Sheet.Header>
+              <div className="flex-1 overflow-y-auto px-5 py-4">
+                <div className="grid gap-4">
+                  <div className="grid gap-2 rounded-md border p-3 text-sm">
+                    <div className="grid grid-cols-[8rem_1fr] gap-3">
+                      <span className="text-muted-foreground">{tr('pages.checkinLog.time')}</span>
+                      <span>{formatDateTimeLocal(selectedEvent.createdAt)}</span>
+                    </div>
+                    <div className="grid grid-cols-[8rem_1fr] gap-3">
+                      <span className="text-muted-foreground">{tr('pages.programLogs.lastSeen')}</span>
+                      <span>{formatDateTimeLocal(selectedEvent.lastSeenAt || selectedEvent.createdAt)}</span>
+                    </div>
+                    {selectedEvent.subject && (
+                      <div className="grid grid-cols-[8rem_1fr] gap-3">
+                        <span className="text-muted-foreground">{tr('pages.programLogs.subject')}</span>
+                        <span className="min-w-0 break-words">{selectedEvent.subject.label || selectedEvent.subject.id || selectedEvent.subject.type}</span>
+                      </div>
+                    )}
+                    <div className="grid grid-cols-[8rem_1fr] gap-3">
+                      <span className="text-muted-foreground">{tr('pages.programLogs.state')}</span>
+                      <span>{tr(`pages.programLogs.state.${selectedEvent.state}`)}</span>
+                    </div>
+                  </div>
+
+                  {selectedEvent.description && selectedEvent.description !== selectedEvent.summary && (
+                    <div className="rounded-md border p-3 text-sm">
+                      <div className="mb-2 font-medium">{tr('pages.programLogs.description')}</div>
+                      <p className="whitespace-pre-wrap text-muted-foreground">{selectedEvent.description}</p>
+                    </div>
+                  )}
+
+                  {selectedEvent.details.length > 0 ? (
+                    <div className="grid gap-3">
+                      <div className="text-sm font-medium">{tr('pages.programLogs.details')}</div>
+                      {selectedEvent.details.map(renderDetailBlock)}
+                    </div>
+                  ) : (
+                    <EmptyStateBlock
+                      className="rounded-md border"
+                      title={tr('pages.programLogs.noDetails')}
+                      description={tr('pages.programLogs.noDetailsDescription')}
+                    />
+                  )}
+                </div>
+              </div>
+              <Sheet.Footer className="border-t px-5 py-3">
+                <div className="flex w-full flex-wrap justify-between gap-2">
+                  <Button type="button" variant="outline" onClick={() => openEventTarget(selectedEvent)}>
+                    <MoveUpRight className="size-4" />
+                    {tr('pages.programLogs.openTarget')}
+                  </Button>
+                  <div className="flex flex-wrap justify-end gap-2">
+                    <Button type="button" variant="outline" onClick={() => navigator.clipboard?.writeText(JSON.stringify(selectedEvent, null, 2))}>
+                      <Copy className="size-4" />
+                      {tr('pages.programLogs.copyJson')}
+                    </Button>
+                    {selectedEvent.actions.map((action) => {
+                      const Icon = action.kind === 'copy'
+                        ? Copy
+                        : action.kind === 'external'
+                          ? ExternalLink
+                          : action.command === 'resolve'
+                            ? Check
+                            : MoveUpRight;
+                      return (
+                        <Button
+                          key={action.id}
+                          type="button"
+                          variant={action.variant || 'outline'}
+                          onClick={() => runAction(selectedEvent, action)}
+                        >
+                          <Icon className="size-4" />
+                          {action.label}
+                        </Button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </Sheet.Footer>
+            </>
+          )}
+        </Sheet.Content>
+      </Sheet.Root>
     </div>
   );
 }

@@ -877,13 +877,18 @@ export default function ModelTester() {
           : [];
         const nextOptions = candidates
           .filter((candidate) => candidate?.eligible === true && typeof candidate?.targetId === 'number')
-          .map((candidate) => ({
-            value: String(candidate.targetId),
-            label: `${candidate.username || `account-${candidate.accountId || 'unknown'}`} @ ${candidate.siteName || 'unknown'} / ${candidate.tokenName || 'default'} (P${candidate.priority ?? 0})`,
-            description: typeof candidate.reason === 'string' && candidate.reason.trim().length > 0
-              ? candidate.reason
-              : undefined,
-          }));
+          .map((candidate) => {
+            const accountLabel = candidate.username || (candidate.accountId ? `account-${candidate.accountId}` : tr('pages.proxyLogs.unknownAccount'));
+            const siteLabel = candidate.siteName || tr('pages.proxyLogs.unknownSite');
+            const tokenLabel = candidate.tokenName || tr('pages.tokens.default');
+            return {
+              value: String(candidate.targetId),
+              label: `${accountLabel} @ ${siteLabel} / ${tokenLabel} (P${candidate.priority ?? 0})`,
+              description: typeof candidate.reason === 'string' && candidate.reason.trim().length > 0
+                ? candidate.reason
+                : undefined,
+            };
+          });
         setForcedTargetOptions(nextOptions);
         if (nextOptions.length === 0) {
           setForcedTargetHint(tr('pages.modelTester.modelnoneTargets2'));
@@ -1829,12 +1834,12 @@ export default function ModelTester() {
       if (emptyOutput) {
         const message = tr('pages.modelTester.upstreamResponseContent');
         setError(message);
-        pushDebug('error', tr('pages.modelTester.actingstreamingContent'));
+        pushDebug('error', tr('pages.modelTester.proxyStreamingEmptyContent'));
       } else {
         setError('');
         pushDebug(doneReceived ? 'info' : 'warn', doneReceived
-          ? tr('pages.modelTester.actingstreamingCompletedSuccessfully')
-          : tr('pages.modelTester.actingstreamingDidNotReceiveDoneSignalWas'));
+          ? tr('pages.modelTester.proxyStreamingCompleted')
+          : tr('pages.modelTester.proxyStreamingCompletedWithoutDoneSignal'));
       }
     } catch (streamError: any) {
       const abortedByUser = controller.signal.aborted && streamStopRequestedRef.current;
@@ -2532,7 +2537,7 @@ export default function ModelTester() {
                 setForcedTargetId(Number.isFinite(parsed) && parsed > 0 ? parsed : null);
               }}
               options={forcedTargetSelectOptions}
-              placeholder={loadingForcedTargets ? tr('pages.modelTester.targetszh') : tr('pages.modelTester.automaticDefault')}
+              placeholder={loadingForcedTargets ? tr('pages.modelTester.loadingTargets') : tr('pages.modelTester.automaticDefault')}
               disabled={customRequestMode || inputs.mode === 'videos.inspect' || loadingForcedTargets}
               emptyLabel={tr('pages.modelTester.modelnoneTargets')}
               menuMaxHeight={300}

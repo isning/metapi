@@ -13,10 +13,9 @@ import UpdateCenterHistoryModal from './UpdateCenterHistoryModal.js';
 import UpdateCenterHistoryEntryCard from './UpdateCenterHistoryEntryCard.js';
 import { Button } from '../../components/ui/button/index.js';
 import ToneBadge from '../../components/ToneBadge.js';
-import { Card } from '../../components/ui/card/index.js';
 import { Input } from '../../components/ui/input/index.js';
-import { Checkbox } from '../../components/ui/checkbox/index.js';
 import { cn } from '../../lib/utils.js';
+import { SettingsCard, SettingsToggleRow } from './SettingsLayout.js';
 
 import { tr } from '../../i18n.js';
 type UpdateCenterStatus = {
@@ -141,7 +140,7 @@ function getTaskBadge(status?: string | null) {
     case 'running':
       return { tone: 'info', label: tr('pages.programLogs.progress') };
     case 'pending':
-      return { tone: 'warning', label: tr('pages.settings.updateCenterSection.zh') };
+      return { tone: 'warning', label: tr('pages.settings.updateCenterSection.queued') };
     case 'succeeded':
       return { tone: 'success', label: tr('pages.programLogs.completed') };
     case 'failed':
@@ -231,7 +230,7 @@ export default function UpdateCenterSection() {
       const next = await api.getUpdateCenterStatus() as UpdateCenterStatus;
       applyStatus(next);
     } catch (error: any) {
-      toast.error(error?.message || tr('pages.settings.updateCenterSection.zhFailed'));
+      toast.error(error?.message || tr('pages.settings.updateCenterSection.loadFailed'));
     } finally {
       setLoading(false);
     }
@@ -267,9 +266,9 @@ export default function UpdateCenterSection() {
         ...(prev || {}),
         config: nextConfig,
       }));
-      toast.success(tr('pages.settings.updateCenterSection.zhConfigurationSave'));
+      toast.success(tr('pages.settings.updateCenterSection.configurationSaved'));
     } catch (error: any) {
-      toast.error(error?.message || tr('pages.settings.updateCenterSection.saveZhConfigurationfailed'));
+      toast.error(error?.message || tr('pages.settings.updateCenterSection.saveConfigurationFailed'));
     } finally {
       setSaving(false);
     }
@@ -332,7 +331,7 @@ export default function UpdateCenterSection() {
       }) as { task?: { id: string } };
       taskId = response.task?.id || '';
       if (!taskId) {
-        throw new Error(tr('pages.settings.updateCenterSection.deployTaskid'));
+        throw new Error(tr('pages.settings.updateCenterSection.missingDeployTaskId'));
       }
 
       await streamTaskLogs(taskId);
@@ -367,7 +366,7 @@ export default function UpdateCenterSection() {
       const response = await api.rollbackUpdateCenter({ targetRevision }) as { task?: { id: string } };
       taskId = response.task?.id || '';
       if (!taskId) {
-        throw new Error(tr('pages.settings.updateCenterSection.taskid'));
+        throw new Error(tr('pages.settings.updateCenterSection.missingRollbackTaskId'));
       }
 
       await streamTaskLogs(taskId);
@@ -433,27 +432,24 @@ export default function UpdateCenterSection() {
 
   if (loading) {
     return (
-      <Card className="p-5">
-        <div className="mb-1.5 text-sm font-semibold">{tr('pages.settings.updateCenterSection.zh3')}</div>
-        <div className={fieldHintClassName}>
-          {tr('pages.settings.updateCenterSection.deployStatusHelperHealthycheck')}
-        </div>
-      </Card>
+      <SettingsCard
+        title={tr('pages.settings.updateCenterSection.title')}
+        description={tr('pages.settings.updateCenterSection.deployStatusHelperHealthycheck')}
+      />
     );
   }
 
   return (
-    <Card className="p-5">
+    <SettingsCard
+      title={tr('pages.settings.updateCenterSection.title')}
+      description={tr('pages.settings.updateCenterSection.settingsViewingGithubReleasesDockerHubK3s')}
+      actions={(
+        <ToneBadge tone={updateReminder.badgeTone} className={updateReminder.highlight ? 'stat-value-glow' : undefined}>
+          {updateReminder.label}
+        </ToneBadge>
+      )}
+    >
       <div className="mb-3.5">
-        <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2.5">
-          <div className="text-sm font-semibold">{tr('pages.settings.updateCenterSection.zh3')}</div>
-          <ToneBadge tone={updateReminder.badgeTone} className={updateReminder.highlight ? 'stat-value-glow' : undefined}>
-            {updateReminder.label}
-          </ToneBadge>
-        </div>
-        <div className="text-xs leading-relaxed text-muted-foreground">
-          {tr('pages.settings.updateCenterSection.settingsViewingGithubReleasesDockerHubK3s')}
-        </div>
         <div className="mt-1.5 text-xs leading-normal text-muted-foreground">
           {updateReminder.detail}
         </div>
@@ -512,36 +508,27 @@ export default function UpdateCenterSection() {
       </div>
 
       <div className={`mb-3 grid gap-3 ${isMobile ? 'grid-cols-1' : 'grid-cols-3'}`}>
-        <label className={cn(sectionPanelClassName, 'flex cursor-pointer items-start gap-2.5')}>
-          <Checkbox
-            checked={config.enabled}
-            onCheckedChange={(checked) => setConfig((prev) => ({ ...prev, enabled: checked === true }))}
-          />
-          <span className="grid gap-1">
-            <span className="text-sm font-semibold text-foreground">{tr('pages.settings.updateCenterSection.enabledZh')}</span>
-            <span className={fieldHintClassName}>{tr('pages.settings.updateCenterSection.k3sDeployEnabledCheck')}</span>
-          </span>
-        </label>
-        <label className={cn(sectionPanelClassName, 'flex cursor-pointer items-start gap-2.5')}>
-          <Checkbox
-            checked={config.githubReleasesEnabled}
-            onCheckedChange={(checked) => setConfig((prev) => ({ ...prev, githubReleasesEnabled: checked === true }))}
-          />
-          <span className="grid gap-1">
-            <span className="text-sm font-semibold text-foreground">GitHub Releases</span>
-            <span className={fieldHintClassName}>{tr('pages.settings.updateCenterSection.stableReleaseSemverDeploy')}</span>
-          </span>
-        </label>
-        <label className={cn(sectionPanelClassName, 'flex cursor-pointer items-start gap-2.5')}>
-          <Checkbox
-            checked={config.dockerHubTagsEnabled}
-            onCheckedChange={(checked) => setConfig((prev) => ({ ...prev, dockerHubTagsEnabled: checked === true }))}
-          />
-          <span className="grid gap-1">
-            <span className="text-sm font-semibold text-foreground">Docker Hub</span>
-            <span className={fieldHintClassName}>{tr('pages.settings.updateCenterSection.automaticStableDevShaTags')}</span>
-          </span>
-        </label>
+        <SettingsToggleRow
+          title={tr('pages.settings.updateCenterSection.enableUpdateCenter')}
+          description={tr('pages.settings.updateCenterSection.k3sDeployEnabledCheck')}
+          checked={config.enabled}
+          onCheckedChange={(enabled) => setConfig((prev) => ({ ...prev, enabled }))}
+          className={sectionPanelClassName}
+        />
+        <SettingsToggleRow
+          title="GitHub Releases"
+          description={tr('pages.settings.updateCenterSection.stableReleaseSemverDeploy')}
+          checked={config.githubReleasesEnabled}
+          onCheckedChange={(githubReleasesEnabled) => setConfig((prev) => ({ ...prev, githubReleasesEnabled }))}
+          className={sectionPanelClassName}
+        />
+        <SettingsToggleRow
+          title="Docker Hub"
+          description={tr('pages.settings.updateCenterSection.automaticStableDevShaTags')}
+          checked={config.dockerHubTagsEnabled}
+          onCheckedChange={(dockerHubTagsEnabled) => setConfig((prev) => ({ ...prev, dockerHubTagsEnabled }))}
+          className={sectionPanelClassName}
+        />
       </div>
 
       <div className={cn(sectionPanelClassName, 'mb-3')}>
@@ -611,7 +598,7 @@ export default function UpdateCenterSection() {
 
         <div className="flex flex-wrap gap-2">
           <Button type="button" onClick={saveConfig} disabled={saving}>
-            {saving ? tr('pages.accounts.saving') : tr('pages.settings.updateCenterSection.saveZhConfiguration')}
+            {saving ? tr('pages.accounts.saving') : tr('pages.settings.updateCenterSection.saveConfiguration')}
           </Button>
           <Button variant="outline"
             type="button"
@@ -620,7 +607,7 @@ export default function UpdateCenterSection() {
            
            
           >
-            {checking ? tr('pages.settings.updateCenterSection.checkzh') : tr('pages.settings.updateCenterSection.checkUpdates')}
+            {checking ? tr('pages.settings.updateCenterSection.checking') : tr('pages.settings.updateCenterSection.checkUpdates')}
           </Button>
         </div>
       </div>
@@ -667,7 +654,7 @@ export default function UpdateCenterSection() {
              
              
             >
-              {tr('pages.settings.updateCenterSection.deployGithubStable')}
+              {tr('pages.settings.updateCenterSection.deployGitHubStableRelease')}
             </Button>
           </div>
 
@@ -863,7 +850,7 @@ export default function UpdateCenterSection() {
               {status?.helper?.error || tr('pages.settings.updateCenterSection.helperNormalHelmUpgradeKubectlRolloutStatus')}
             </div>
             <div className="mt-1.5 text-xs text-muted-foreground">
-              {tr('pages.settings.updateCenterSection.currentImage')}{formatImageTarget(status?.helper?.imageTag, status?.helper?.imageDigest) || tr('pages.settings.updateCenterSection.helperZh')}
+              {tr('pages.settings.updateCenterSection.currentImage')}{formatImageTarget(status?.helper?.imageTag, status?.helper?.imageDigest) || tr('pages.settings.updateCenterSection.waitingForHelperImage')}
             </div>
           </div>
 
@@ -871,7 +858,7 @@ export default function UpdateCenterSection() {
             <div className={fieldLabelClassName}>{tr('pages.settings.updateCenterSection.taskSnapshot')}</div>
             <div className="grid gap-1.5 text-sm text-foreground">
               <div>
-                {tr('pages.settings.updateCenterSection.zh2')}
+                {tr('pages.settings.updateCenterSection.runningTask')}
                 <span className="ml-1.5 text-muted-foreground">
                   {status?.runningTask?.id ? `${status.runningTask.id} · ${status.runningTask.status || '-'}` : tr('pages.importExport.none')}
                 </span>
@@ -983,6 +970,6 @@ export default function UpdateCenterSection() {
           void runRollback(revision);
         }}
       />
-    </Card>
+    </SettingsCard>
   );
 }

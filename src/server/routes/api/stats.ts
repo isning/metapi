@@ -10,9 +10,15 @@ import {
 } from "../../services/modelPricingService.js";
 import {
   quoteEndpointPricing,
+  quoteReferencePricing,
   type PricingResolution,
 } from "../../services/pricingQuoteService.js";
+import { comparePricingSummaries } from "../../services/pricingComparisonService.js";
 import { compileModelRouteFlow } from "../../services/routeFlowService.js";
+import {
+  ensureActiveRouteGraphVersion,
+  listRouteEndpointCatalog,
+} from "../../services/routeGraphService.js";
 import {
   buildModelAvailabilityProbeTaskDedupeKey,
   queueModelAvailabilityProbeTask,
@@ -41,7 +47,10 @@ import {
   listProxyDebugTraces,
 } from "../../services/proxyDebugTraceStore.js";
 import { parseProxyLogMessageMeta } from "../../services/proxyLogMessage.js";
-import { requiresManagedAccountTokens } from "../../services/accountExtraConfig.js";
+import {
+  requiresManagedAccountTokens,
+  supportsDirectAccountRoutingConnection,
+} from "../../services/accountExtraConfig.js";
 import { ACCOUNT_TOKEN_VALUE_STATUS_READY } from "../../services/accountTokenService.js";
 import {
   formatLocalDateTime,
@@ -99,6 +108,11 @@ function readRecordNumber(
   return Number.isFinite(numberValue) ? numberValue : null;
 }
 
+function roundPricingValue(value: number | null): number | null {
+  if (value == null || !Number.isFinite(value)) return null;
+  return Math.round(value * 1_000_000) / 1_000_000;
+}
+
 const MODELS_MARKETPLACE_BASE_TTL_MS = 15_000;
 const MODELS_MARKETPLACE_PRICING_TTL_MS = 90_000;
 const limitModelTokenCandidatesRead = createRateLimitGuard({
@@ -117,6 +131,17 @@ type MeasuredEntryPricingAggregate = {
   inputWeight: number;
   outputWeightedTotal: number;
   outputWeight: number;
+  sampleCount: number;
+  lastMeasuredAt: string | null;
+};
+
+type MeasuredEntryPricingSummary = {
+  inputPerMillion: number | null;
+  outputPerMillion: number | null;
+  totalCostUsd: number | null;
+  inputMultiplier: number | null;
+  outputMultiplier: number | null;
+  totalMultiplier: number | null;
   sampleCount: number;
   lastMeasuredAt: string | null;
 };
@@ -1602,10 +1627,83 @@ export async function statsRoutes(app: FastifyInstance) {
               unitCost: number | null;
               balance: number;
               tokens: Array<{ id: number; name: string; isDefault: boolean }>;
+              credentialKeys: Set<string>;
             }
           >;
         }
       > = {};
+
+      const ensureModelAccount = (
+        modelName: string,
+        account: typeof schema.accounts.$inferSelect,
+        site: typeof schema.sites.$inferSelect,
+        latencyMs: number | null | undefined,
+      ) => {
+        if (!modelMap[modelName]) {
+          modelMap[modelName] = {
+            name: modelName,
+            accountsById: new Map(),
+          };
+        }
+
+        const existingAccount = modelMap[modelName].accountsById.get(account.id);
+        if (!existingAccount) {
+          const nextAccount = {
+            id: account.id,
+            site: site.name,
+            username: account.username,
+            latency: latencyMs ?? null,
+            unitCost: account.unitCost,
+            balance: account.balance || 0,
+            tokens: [] as Array<{ id: number; name: string; isDefault: boolean }>,
+            credentialKeys: new Set<string>(),
+          };
+          modelMap[modelName].accountsById.set(account.id, nextAccount);
+          return nextAccount;
+        }
+
+        if (existingAccount.latency == null) {
+          existingAccount.latency = latencyMs ?? null;
+        } else if (latencyMs != null) {
+          existingAccount.latency = Math.min(existingAccount.latency, latencyMs);
+        }
+        return existingAccount;
+      };
+
+      const addManagedTokenInfo = (
+        account: ReturnType<typeof ensureModelAccount>,
+        token: typeof schema.accountTokens.$inferSelect,
+      ) => {
+        if (!account.tokens.some((item) => item.id === token.id)) {
+          account.tokens.push({
+            id: token.id,
+            name: token.name,
+            isDefault: !!token.isDefault,
+          });
+        }
+      };
+
+      const addManagedTokenCredential = (
+        account: ReturnType<typeof ensureModelAccount>,
+        token: typeof schema.accountTokens.$inferSelect,
+      ) => {
+        addManagedTokenInfo(account, token);
+        account.credentialKeys.add(`token:${token.id}`);
+      };
+
+      const addDirectAccountCredential = (
+        account: ReturnType<typeof ensureModelAccount>,
+        key: string,
+      ) => {
+        account.credentialKeys.add(key);
+      };
+      const hasAccountCredentialValue = (account: {
+        accessToken?: string | null;
+        apiToken?: string | null;
+      }) => (
+        String(account.accessToken || "").trim().length > 0 ||
+        String(account.apiToken || "").trim().length > 0
+      );
 
       for (const row of availability) {
         const m = row.token_model_availability;
@@ -1615,44 +1713,14 @@ export async function statsRoutes(app: FastifyInstance) {
         if (
           !m.available ||
           !t.enabled ||
+          t.valueStatus !== ACCOUNT_TOKEN_VALUE_STATUS_READY ||
           a.status !== "active" ||
           s.status !== "active"
         )
           continue;
 
-        if (!modelMap[m.modelName]) {
-          modelMap[m.modelName] = {
-            name: m.modelName,
-            accountsById: new Map(),
-          };
-        }
-
-        const existingAccount = modelMap[m.modelName].accountsById.get(a.id);
-        if (!existingAccount) {
-          modelMap[m.modelName].accountsById.set(a.id, {
-            id: a.id,
-            site: s.name,
-            username: a.username,
-            latency: m.latencyMs,
-            unitCost: a.unitCost,
-            balance: a.balance || 0,
-            tokens: [{ id: t.id, name: t.name, isDefault: !!t.isDefault }],
-          });
-        } else {
-          const nextLatency = (() => {
-            if (existingAccount.latency == null) return m.latencyMs;
-            if (m.latencyMs == null) return existingAccount.latency;
-            return Math.min(existingAccount.latency, m.latencyMs);
-          })();
-          existingAccount.latency = nextLatency;
-          if (!existingAccount.tokens.some((token) => token.id === t.id)) {
-            existingAccount.tokens.push({
-              id: t.id,
-              name: t.name,
-              isDefault: !!t.isDefault,
-            });
-          }
-        }
+        const account = ensureModelAccount(m.modelName, a, s, m.latencyMs);
+        addManagedTokenCredential(account, t);
       }
 
       for (const row of accountAvailability) {
@@ -1662,33 +1730,167 @@ export async function statsRoutes(app: FastifyInstance) {
         if (!m.available || a.status !== "active" || s.status !== "active")
           continue;
 
-        if (!modelMap[m.modelName]) {
-          modelMap[m.modelName] = {
-            name: m.modelName,
-            accountsById: new Map(),
-          };
+        const account = ensureModelAccount(m.modelName, a, s, m.latencyMs);
+        if (supportsDirectAccountRoutingConnection(a) || hasAccountCredentialValue(a)) {
+          addDirectAccountCredential(account, `account:${a.id}`);
+        }
+      }
+
+      try {
+        const activeGraph = await ensureActiveRouteGraphVersion();
+        const routeEndpointCatalog = await listRouteEndpointCatalog();
+        const publicRouteIdsByModel = new Map<string, Set<number>>();
+        const addPublicModelRouteId = (modelName: string, routeIdInput: unknown) => {
+          const routeId = Number(routeIdInput);
+          if (!modelName || !Number.isFinite(routeId) || routeId <= 0) return;
+          const normalizedRouteId = Math.trunc(routeId);
+          const routeIds = publicRouteIdsByModel.get(modelName) || new Set<number>();
+          routeIds.add(normalizedRouteId);
+          publicRouteIdsByModel.set(modelName, routeIds);
+        };
+        const recordRouteIdsFromArray = (modelName: string, values: unknown) => {
+          if (!Array.isArray(values)) return;
+          for (const routeId of values) addPublicModelRouteId(modelName, routeId);
+        };
+        const readRecordValue = (value: unknown): Record<string, unknown> | null => (
+          value && typeof value === "object" && !Array.isArray(value)
+            ? value as Record<string, unknown>
+            : null
+        );
+        const collectCompiledMacroRouteIds = (modelName: string, entryNodeId: string) => {
+          const nodesById = activeGraph.compiledGraph.nodesById || {};
+          const entryNode = readRecordValue(nodesById[entryNodeId]);
+          const provenance = readRecordValue(entryNode?.provenance);
+          const macroId = typeof provenance?.macroId === "string" ? provenance.macroId : "";
+          if (!macroId) return;
+          for (const node of Object.values(nodesById)) {
+            const nodeRecord = readRecordValue(node);
+            if (!nodeRecord) continue;
+            const nodeProvenance = readRecordValue(nodeRecord.provenance);
+            const metadata = readRecordValue(nodeRecord.metadata);
+            const macroCandidate = readRecordValue(metadata?.macroCandidate);
+            const belongsToMacro = nodeProvenance?.macroId === macroId || macroCandidate?.macroId === macroId;
+            if (!belongsToMacro) continue;
+            addPublicModelRouteId(modelName, nodeRecord.routeId);
+            addPublicModelRouteId(modelName, nodeRecord.legacyRouteId);
+            addPublicModelRouteId(modelName, macroCandidate?.routeId);
+            addPublicModelRouteId(modelName, macroCandidate?.localRouteId);
+            recordRouteIdsFromArray(modelName, metadata?.sourceRouteIds);
+            recordRouteIdsFromArray(modelName, metadata?.localRouteIds);
+            const configRecord = readRecordValue(nodeRecord.config);
+            const targets = Array.isArray(configRecord?.targets) ? configRecord.targets : [];
+            for (const target of targets) {
+              const targetRecord = readRecordValue(target);
+              const targetMetadata = readRecordValue(targetRecord?.metadata);
+              addPublicModelRouteId(modelName, targetMetadata?.localRouteId);
+              addPublicModelRouteId(modelName, targetMetadata?.routeId);
+            }
+          }
+        };
+        for (const publicModel of activeGraph.compiledGraph.publicModels || []) {
+          const modelName = String(publicModel.model || "").trim();
+          if (!modelName) continue;
+          if (!modelMap[modelName]) {
+            modelMap[modelName] = {
+              name: modelName,
+              accountsById: new Map(),
+            };
+          }
+          collectCompiledMacroRouteIds(modelName, publicModel.nodeId);
+        }
+        const publicRouteProducts = routeEndpointCatalog.filter((endpoint) => (
+          endpoint.enabled !== false
+          && endpoint.endpointKind === "route_product"
+          && endpoint.exposure === "public"
+          && endpoint.resolutionStatus !== "unresolved"
+          && String(endpoint.publicModelName || endpoint.modelPattern || endpoint.label || "").trim()
+        ));
+        const publicSourceRouteIds = new Set<number>();
+        for (const endpoint of publicRouteProducts) {
+          const modelName = String(
+            endpoint.publicModelName ||
+            endpoint.modelPattern ||
+            endpoint.label ||
+            "",
+          ).trim();
+          for (const routeId of endpoint.sourceRouteIds || []) {
+            if (Number.isFinite(Number(routeId)) && Number(routeId) > 0) {
+              const normalizedRouteId = Math.trunc(Number(routeId));
+              publicSourceRouteIds.add(normalizedRouteId);
+              addPublicModelRouteId(modelName, normalizedRouteId);
+            }
+          }
+        }
+        for (const routeIds of publicRouteIdsByModel.values()) {
+          for (const routeId of routeIds) publicSourceRouteIds.add(routeId);
         }
 
-        const existingAccount = modelMap[m.modelName].accountsById.get(a.id);
-        if (!existingAccount) {
-          modelMap[m.modelName].accountsById.set(a.id, {
-            id: a.id,
-            site: s.name,
-            username: a.username,
-            latency: m.latencyMs,
-            unitCost: a.unitCost,
-            balance: a.balance || 0,
-            tokens: [],
-          });
-          continue;
-        }
+        if (publicSourceRouteIds.size > 0) {
+          const targetRows = await db
+            .select()
+            .from(schema.routeEndpointTargets)
+            .innerJoin(
+              schema.accounts,
+              eq(schema.routeEndpointTargets.accountId, schema.accounts.id),
+            )
+            .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
+            .leftJoin(
+              schema.accountTokens,
+              eq(schema.routeEndpointTargets.tokenId, schema.accountTokens.id),
+            )
+            .where(
+              and(
+                eq(schema.routeEndpointTargets.enabled, true),
+                eq(schema.accounts.status, "active"),
+                eq(schema.sites.status, "active"),
+              ),
+            )
+            .all();
+          const targetsByRouteId = new Map<number, typeof targetRows>();
+          for (const row of targetRows) {
+            const routeId = Number(row.route_endpoint_targets.routeId);
+            if (!publicSourceRouteIds.has(routeId)) continue;
+            const token = row.account_tokens;
+            if (
+              token &&
+              (
+                !token.enabled ||
+                token.valueStatus !== ACCOUNT_TOKEN_VALUE_STATUS_READY
+              )
+            ) continue;
+            const rows = targetsByRouteId.get(routeId) || [];
+            rows.push(row);
+            targetsByRouteId.set(routeId, rows);
+          }
 
-        const nextLatency = (() => {
-          if (existingAccount.latency == null) return m.latencyMs;
-          if (m.latencyMs == null) return existingAccount.latency;
-          return Math.min(existingAccount.latency, m.latencyMs);
-        })();
-        existingAccount.latency = nextLatency;
+          for (const [modelName, sourceRouteIdSet] of publicRouteIdsByModel.entries()) {
+            if (!modelName) continue;
+            const sourceRouteIds = Array.from(sourceRouteIdSet);
+            for (const routeId of sourceRouteIds) {
+              for (const row of targetsByRouteId.get(routeId) || []) {
+                const target = row.route_endpoint_targets;
+                const account = ensureModelAccount(
+                  modelName,
+                  row.accounts,
+                  row.sites,
+                  null,
+                );
+                if (row.account_tokens) {
+                  addManagedTokenInfo(account, row.account_tokens);
+                }
+                addDirectAccountCredential(account, `route-target:${target.id}`);
+              }
+            }
+            if (!modelMap[modelName]) {
+              modelMap[modelName] = {
+                name: modelName,
+                accountsById: new Map(),
+              };
+            }
+          }
+        }
+      } catch (error) {
+        console.warn("[models/marketplace] failed to include public route graph models", error);
       }
 
       const pricingSourcesByModel = new Map<string, MarketplacePricingSource[]>();
@@ -1818,25 +2020,80 @@ export async function statsRoutes(app: FastifyInstance) {
         }
       }
 
+      const measuredEntryPricingByModel = new Map<string, MeasuredEntryPricingSummary>();
+      await Promise.all(Object.entries(measuredPricingStats).map(async ([modelName, measuredPricing]) => {
+        const inputPerMillion = measuredPricing.inputWeight > 0
+          ? roundPricingValue(measuredPricing.inputWeightedTotal / measuredPricing.inputWeight)
+          : null;
+        const outputPerMillion = measuredPricing.outputWeight > 0
+          ? roundPricingValue(measuredPricing.outputWeightedTotal / measuredPricing.outputWeight)
+          : null;
+        const totalCostUsd = inputPerMillion != null && outputPerMillion != null
+          ? roundPricingValue(inputPerMillion + outputPerMillion)
+          : null;
+        const referenceQuote = await quoteReferencePricing({
+          subject: {
+            modelName,
+          },
+          usageProfile: 'preview_1m_io',
+        });
+        const reference = referenceQuote.reference?.summary ?? null;
+        const comparison = comparePricingSummaries(
+          { inputPerMillion, outputPerMillion, totalCostUsd },
+          reference,
+        );
+        measuredEntryPricingByModel.set(modelName, {
+          inputPerMillion,
+          outputPerMillion,
+          totalCostUsd,
+          inputMultiplier: comparison.inputMultiplier,
+          outputMultiplier: comparison.outputMultiplier,
+          totalMultiplier: comparison.totalMultiplier,
+          sampleCount: measuredPricing.sampleCount,
+          lastMeasuredAt: measuredPricing.lastMeasuredAt,
+        });
+      }));
+
       const models = Object.values(modelMap).map((m) => {
         const logStats = modelLogStats[m.name];
-        const accounts = Array.from(m.accountsById.values());
-        const avgLatency =
-          accounts.reduce((sum, a) => sum + (a.latency || 0), 0) /
-          (accounts.length || 1);
+        const accounts = Array.from(m.accountsById.values()).map((account) => ({
+          id: account.id,
+          site: account.site,
+          username: account.username,
+          latency: account.latency,
+          unitCost: account.unitCost,
+          balance: account.balance,
+          tokens: account.tokens,
+          managedTokenCount: account.tokens.length,
+          credentialCount: account.credentialKeys.size,
+        }));
+        const latencyValues = accounts
+          .map((account) => account.latency)
+          .filter((latency): latency is number => typeof latency === "number" && Number.isFinite(latency));
+        const avgLatency = latencyValues.length > 0
+          ? latencyValues.reduce((sum, latency) => sum + latency, 0) / latencyValues.length
+          : null;
         const metadata = modelMetadataMap.get(m.name.toLowerCase());
-        const measuredPricing = measuredPricingStats[m.name];
+        const measuredPricing = measuredEntryPricingByModel.get(m.name) || null;
         const fallbackDescription = metadata?.description
           ? null
           : upstreamDescriptionMap.get(m.name.toLowerCase()) || null;
+        const managedTokenCount = accounts.reduce(
+          (sum, account) => sum + account.managedTokenCount,
+          0,
+        );
+        const credentialCount = accounts.reduce(
+          (sum, account) => sum + account.credentialCount,
+          0,
+        );
         return {
           name: m.name,
           accountCount: accounts.length,
-          tokenCount: accounts.reduce(
-            (sum, account) => sum + account.tokens.length,
-            0,
-          ),
-          avgLatency: Math.round(avgLatency),
+          tokenCount: managedTokenCount,
+          managedTokenCount,
+          credentialCount,
+          endpointCount: credentialCount,
+          avgLatency: avgLatency == null ? null : Math.round(avgLatency),
           successRate: logStats
             ? Math.round((logStats.success / logStats.total) * 1000) / 10
             : null,
@@ -1851,16 +2108,7 @@ export async function statsRoutes(app: FastifyInstance) {
             : [],
           pricingSources: pricingSourcesByModel.get(m.name.toLowerCase()) || [],
           measuredEntryPricing: measuredPricing
-            ? {
-                inputPerMillion: measuredPricing.inputWeight > 0
-                  ? Math.round((measuredPricing.inputWeightedTotal / measuredPricing.inputWeight) * 1_000_000) / 1_000_000
-                  : null,
-                outputPerMillion: measuredPricing.outputWeight > 0
-                  ? Math.round((measuredPricing.outputWeightedTotal / measuredPricing.outputWeight) * 1_000_000) / 1_000_000
-                  : null,
-                sampleCount: measuredPricing.sampleCount,
-                lastMeasuredAt: measuredPricing.lastMeasuredAt,
-              }
+            ? measuredPricing
             : null,
           accounts,
         };

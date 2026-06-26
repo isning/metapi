@@ -782,6 +782,10 @@ function normalizeCandidateSelectorConfig(input) {
     ? raw.groups.map((group, index) => normalizeCandidateSelectorGroup(group, index))
     : [];
   const candidateOverrides = normalizeCandidateOverrides(raw.candidateOverrides);
+  const rawFilters = isPlainObject(raw.filters) ? raw.filters : {};
+  const filterOperations = Array.isArray(rawFilters.operations)
+    ? rawFilters.operations.map(normalizeRouteFilter)
+    : [];
   return {
     surface: {
       entry,
@@ -792,6 +796,7 @@ function normalizeCandidateSelectorConfig(input) {
       strategy: normalizeEnum(rawPolicy.strategy, ROUTE_GRAPH_CANDIDATE_SELECTOR_STRATEGIES, 'priority_order'),
       ...(normalizeString(rawPolicy.cel) ? { cel: normalizeString(rawPolicy.cel) } : {}),
     },
+    ...(filterOperations.length > 0 ? { filters: { operations: filterOperations } } : {}),
     groups,
     ...(Object.keys(candidateOverrides).length > 0 ? { candidateOverrides } : {}),
     ...(isPlainObject(raw.presentation) ? {
@@ -827,6 +832,35 @@ export function buildCandidateSelectorMacroFromRouteBinding(input) {
   const endpointIds = Array.isArray(input?.endpointIds)
     ? Array.from(new Set(input.endpointIds.map((value) => normalizeString(value)).filter(Boolean)))
     : [];
+  const rawCandidateBands = Array.isArray(input?.candidateBands)
+    ? input.candidateBands
+    : [];
+  const candidateBands = rawCandidateBands.length > 0
+    ? rawCandidateBands.map((band, index) => {
+      const bandEndpointIds = Array.isArray(band?.endpointIds)
+        ? Array.from(new Set(band.endpointIds.map((value) => normalizeString(value)).filter(Boolean)))
+        : [];
+      const priority = Number.isFinite(Number(band?.priority)) ? Math.trunc(Number(band.priority)) : index;
+      return {
+        id: normalizeString(band?.id) || `priority:${priority}`,
+        label: normalizeNullableString(band?.label) || `Priority ${priority}`,
+        enabled: band?.enabled !== false,
+        priority,
+        weight: Number.isFinite(Number(band?.weight)) ? Number(band.weight) : 10,
+        endpointIds: bandEndpointIds,
+      };
+    }).filter((band) => band.endpointIds.length > 0)
+    : [];
+  const candidateGroups = candidateBands.length > 0
+    ? candidateBands
+    : endpointIds.map((endpointId, index) => ({
+      id: `source:${macroSafeId(endpointId)}`,
+      label: `Endpoint ${endpointId}`,
+      enabled: true,
+      priority: index,
+      weight: 10,
+      endpointIds: [endpointId],
+    }));
   const displayName = normalizeNullableString(input?.displayName) || null;
   const match = normalizeRouteGraphMatchSpec(input?.match);
   const stableId = normalizeNullableString(input?.stableId) || null;
@@ -863,16 +897,16 @@ export function buildCandidateSelectorMacroFromRouteBinding(input) {
       policy: {
         strategy: normalizeEnum(input?.routingStrategy, ROUTE_GRAPH_CANDIDATE_SELECTOR_STRATEGIES, 'weighted'),
       },
-      groups: endpointIds.map((endpointId, index) => ({
-        id: `source:${macroSafeId(endpointId)}`,
-        label: `Endpoint ${endpointId}`,
-        enabled: true,
-        priority: index,
-        input: { kind: 'route_endpoints', endpointIds: [endpointId] },
+      groups: candidateGroups.map((group) => ({
+        id: group.id,
+        label: group.label,
+        enabled: group.enabled,
+        priority: group.priority,
+        input: { kind: 'route_endpoints', endpointIds: group.endpointIds },
         defaults: {
           enabled: true,
-          weight: 10,
-          priority: index,
+          weight: group.weight,
+          priority: group.priority,
         },
       })),
       ...(normalizeNullableString(input?.displayIcon) ? { presentation: { displayIcon: normalizeNullableString(input.displayIcon) } } : {}),
@@ -883,10 +917,11 @@ export function buildCandidateSelectorMacroFromRouteBinding(input) {
 
 export function normalizeRouteGraphSource(input) {
   const raw = isPlainObject(input) ? input : {};
+  const edges = Array.isArray(raw.edges) ? raw.edges.map(normalizeRouteGraphEdge) : [];
   return {
     version: ROUTE_GRAPH_SCHEMA_VERSION,
     nodes: Array.isArray(raw.nodes) ? raw.nodes.map(normalizeRouteGraphNode) : [],
-    edges: Array.isArray(raw.edges) ? raw.edges.map(normalizeRouteGraphEdge) : [],
+    edges: Array.from(new Map(edges.map((edge) => [edge.id, edge])).values()),
     macros: Array.isArray(raw.macros) ? raw.macros.map(normalizeRouteGraphMacro).filter((macro) => macro.id) : [],
     metadata: isPlainObject(raw.metadata) ? raw.metadata : {},
   };
@@ -2370,12 +2405,15 @@ function lowerCandidateSelectorMacro(macro, source) {
   const edges = [];
   const candidateNodeIds = [];
   const config = normalizeCandidateSelectorConfig(macro.config);
+  const filterOperations = Array.isArray(config.filters?.operations) ? config.filters.operations : [];
   const macroId = macroSafeId(macro.id);
   const semanticNodeId = macroSemanticNodeId(macro);
-  if (macro.enabled === false) return { macro, nodes, edges, diagnostics, semanticNodeId, entryId: null, dispatcherId: null, candidateNodeIds };
+  if (macro.enabled === false) return { macro, nodes, edges, diagnostics, semanticNodeId, entryId: null, entryTargetId: null, dispatcherId: null, candidateNodeIds };
 
   const entryId = config.surface.entry.kind === 'external' ? `macro:${macroId}:entry` : null;
+  const filterId = filterOperations.length > 0 ? `macro:${macroId}:filter` : null;
   const dispatcherId = `macro:${macroId}:dispatcher`;
+  const entryTargetId = filterId || entryId || dispatcherId;
   const dispatcherMode = config.surface.output === 'bidirect' ? 'flow' : 'route';
   const dispatcherPolicyStrategy = config.policy.strategy === 'cel_select'
     ? 'direct'
@@ -2391,6 +2429,18 @@ function lowerCandidateSelectorMacro(macro, source) {
       match: config.surface.entry.match,
       selectionStrategy: config.policy.strategy === 'cel_select' || config.policy.strategy === 'cel_score' ? 'weighted' : config.policy.strategy,
       provenance: macroProvenance(macro, 'entry'),
+    }));
+  }
+  if (filterId) {
+    nodes.push(normalizeRouteGraphNode({
+      id: filterId,
+      type: 'filter',
+      name: `${macro.name || macro.id} filter`,
+      enabled: macro.enabled !== false,
+      visibility: 'internal',
+      ownership: 'derived',
+      operations: filterOperations,
+      provenance: macroProvenance(macro, 'filter'),
     }));
   }
   nodes.push(normalizeRouteGraphNode({
@@ -2409,7 +2459,30 @@ function lowerCandidateSelectorMacro(macro, source) {
     },
     provenance: macroProvenance(macro, 'dispatcher'),
   }));
-  if (entryId) {
+  if (entryId && filterId) {
+    edges.push(normalizeRouteGraphEdge({
+      id: `macro:${macroId}:edge:entry-filter`,
+      sourceNodeId: entryId,
+      sourcePortId: 'bidirect.out',
+      targetNodeId: filterId,
+      targetPortId: 'bidirect.in',
+      kind: 'bidirect_flow',
+      ownership: 'derived',
+      metadata: { provenance: macroProvenance(macro, 'entry_filter_edge') },
+    }));
+  }
+  if (filterId) {
+    edges.push(normalizeRouteGraphEdge({
+      id: `macro:${macroId}:edge:filter-dispatcher`,
+      sourceNodeId: filterId,
+      sourcePortId: 'bidirect.out',
+      targetNodeId: dispatcherId,
+      targetPortId: 'bidirect.in',
+      kind: 'bidirect_flow',
+      ownership: 'derived',
+      metadata: { provenance: macroProvenance(macro, 'filter_dispatcher_edge') },
+    }));
+  } else if (entryId) {
     edges.push(normalizeRouteGraphEdge({
       id: `macro:${macroId}:edge:entry-dispatcher`,
       sourceNodeId: entryId,
@@ -2572,7 +2645,7 @@ function lowerCandidateSelectorMacro(macro, source) {
     }
     addDiagnostic(diagnostics, 'error', 'macro.resolver_unsupported', `candidate_selector ${macro.id} input ${group.input.kind} is not implemented yet.`);
   }
-  return { macro, nodes, edges, diagnostics, semanticNodeId, entryId, dispatcherId, candidateNodeIds };
+  return { macro, nodes, edges, diagnostics, semanticNodeId, entryId, entryTargetId, dispatcherId, candidateNodeIds };
 }
 
 export function lowerRouteGraphSource(sourceInput) {
@@ -2641,11 +2714,11 @@ export function lowerRouteGraphSource(sourceInput) {
     }
     if (targetMacro) {
       const targetSurfacePort = getRouteGraphMacroPort(targetMacro.macro, edge.targetPortId);
-      if (targetSurfacePort?.direction === 'input' && targetSurfacePort.kind === 'bidirect' && (targetMacro.entryId || targetMacro.dispatcherId)) {
+      if (targetSurfacePort?.direction === 'input' && targetSurfacePort.kind === 'bidirect' && (targetMacro.entryTargetId || targetMacro.entryId || targetMacro.dispatcherId)) {
         semanticEdges.push(normalizeRouteGraphEdge({
           ...edge,
           id: `macro-semantic:${edge.id}:bidirect-in`,
-          targetNodeId: targetMacro.entryId || targetMacro.dispatcherId,
+          targetNodeId: targetMacro.entryTargetId || targetMacro.entryId || targetMacro.dispatcherId,
           targetPortId: 'bidirect.in',
           ownership: 'derived',
           metadata: { ...(isPlainObject(edge.metadata) ? edge.metadata : {}), provenance: { source: 'macro_semantic_edge', semanticEdgeId: edge.id } },
@@ -3262,6 +3335,12 @@ export function buildRouteGraphSourceFromLegacyRoutes(routesInput) {
         enabled: route.enabled !== false,
         routingStrategy: route.routingStrategy || 'weighted',
         endpointIds: candidateEndpointIds,
+        candidateBands: [{
+          id: 'priority:0',
+          label: 'Default',
+          priority: 0,
+          endpointIds: candidateEndpointIds,
+        }],
         ownership,
         match,
         metadata: {
@@ -3289,7 +3368,7 @@ export function buildRouteGraphSourceFromLegacyRoutes(routesInput) {
             },
             candidate: {
               routeEndpointId: endpointId,
-              priority: index,
+              priority: 0,
             },
           },
         }));
@@ -3389,6 +3468,12 @@ export function buildRouteGraphSourceFromLegacyRoutes(routesInput) {
       enabled: group.enabled,
       routingStrategy: group.routingStrategy,
       endpointIds: group.supplyEndpointIds,
+      candidateBands: [{
+        id: 'priority:0',
+        label: 'Default',
+        priority: 0,
+        endpointIds: group.supplyEndpointIds,
+      }],
       ownership: 'auto_generated',
       match: group.match,
       metadata: {
@@ -3420,7 +3505,7 @@ export function buildRouteGraphSourceFromLegacyRoutes(routesInput) {
           candidate: {
             routeEndpointId: endpointId,
             endpointKind: 'supply',
-            priority: index,
+            priority: 0,
           },
         },
       }));

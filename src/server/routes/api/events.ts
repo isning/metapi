@@ -1,60 +1,104 @@
 import { FastifyInstance } from 'fastify';
-import { db, schema } from '../../db/index.js';
-import { and, desc, eq, sql } from 'drizzle-orm';
+
+import {
+  applyInboxAction,
+  clearInboxItems,
+  countUnreadInboxItems,
+  listInboxItems,
+  markAllInboxItemsRead,
+  markInboxItemRead,
+} from '../../services/inboxService.js';
+import type { InboxActionRequest, InboxListQuery } from '../../../shared/inbox.js';
+
+type EventsQuery = {
+  limit?: string;
+  offset?: string;
+  type?: string;
+  read?: string;
+  scope?: string;
+  category?: string;
+  state?: string;
+  subjectType?: string;
+  includeSnoozed?: string;
+};
+
+function parseBooleanQuery(value: string | undefined): boolean | undefined {
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  return undefined;
+}
+
+function toInboxQuery(query: EventsQuery): InboxListQuery & { includeSnoozed?: boolean } {
+  return {
+    limit: query.limit ? Number.parseInt(query.limit, 10) : undefined,
+    offset: query.offset ? Number.parseInt(query.offset, 10) : undefined,
+    type: query.type,
+    read: parseBooleanQuery(query.read),
+    scope: query.scope as InboxListQuery['scope'],
+    category: query.category as InboxListQuery['category'],
+    state: query.state as InboxListQuery['state'],
+    subjectType: query.subjectType,
+    includeSnoozed: parseBooleanQuery(query.includeSnoozed),
+  };
+}
 
 export async function eventsRoutes(app: FastifyInstance) {
-  // List events
-  app.get<{ Querystring: { limit?: string; offset?: string; type?: string; read?: string } }>('/api/events', async (request) => {
-    const limit = Math.max(1, Math.min(500, parseInt(request.query.limit || '30', 10)));
-    const offset = Math.max(0, parseInt(request.query.offset || '0', 10));
-    const type = request.query.type;
-    const readQuery = request.query.read;
+  app.get<{ Querystring: EventsQuery }>('/api/events', async (request) => {
+    return await listInboxItems(toInboxQuery(request.query));
+  });
 
-    const filters: any[] = [];
-    if (type) filters.push(eq(schema.events.type, type));
-    if (readQuery === 'true') filters.push(eq(schema.events.read, true));
-    if (readQuery === 'false') filters.push(eq(schema.events.read, false));
+  app.get<{ Querystring: Pick<EventsQuery, 'scope' | 'category' | 'state' | 'subjectType'> }>('/api/events/count', async (request) => {
+    const count = await countUnreadInboxItems({
+      scope: request.query.scope as InboxListQuery['scope'],
+      category: request.query.category as InboxListQuery['category'],
+      state: request.query.state as InboxListQuery['state'],
+      subjectType: request.query.subjectType,
+    });
+    return { count };
+  });
 
-    const base = db.select().from(schema.events);
-    if (filters.length > 0) {
-      return await base
-        .where(and(...filters))
-        .orderBy(desc(schema.events.createdAt))
-        .limit(limit)
-        .offset(offset)
-        .all();
+  app.post<{ Params: { id: string } }>('/api/events/:id/read', async (request) => {
+    const id = Number.parseInt(request.params.id, 10);
+    await markInboxItemRead(id);
+    return { success: true };
+  });
+
+  app.post<{ Params: { id: string }; Body: InboxActionRequest }>('/api/events/:id/action', async (request, reply) => {
+    const id = Number.parseInt(request.params.id, 10);
+    const command = request.body?.command;
+    if (!command) {
+      reply.code(400);
+      return { error: 'command is required' };
     }
 
-    return await base
-      .orderBy(desc(schema.events.createdAt))
-      .limit(limit)
-      .offset(offset)
-      .all();
+    const item = await applyInboxAction(id, command, { snoozeUntil: request.body?.snoozeUntil });
+    if (!item) {
+      reply.code(404);
+      return { error: 'event not found' };
+    }
+    return { success: true, item };
   });
 
-  // Unread count
-  app.get('/api/events/count', async () => {
-    const result = await db.select({ count: sql<number>`count(*)` }).from(schema.events)
-      .where(eq(schema.events.read, false)).get();
-    return { count: result?.count || 0 };
-  });
-
-  // Mark one as read
-  app.post<{ Params: { id: string } }>('/api/events/:id/read', async (request) => {
-    const id = parseInt(request.params.id);
-    await db.update(schema.events).set({ read: true }).where(eq(schema.events.id, id)).run();
+  app.post<{ Querystring: Pick<EventsQuery, 'scope' | 'category' | 'type' | 'state' | 'subjectType'> }>('/api/events/read-all', async (request) => {
+    await markAllInboxItemsRead({
+      scope: request.query.scope as InboxListQuery['scope'],
+      category: request.query.category as InboxListQuery['category'],
+      type: request.query.type,
+      state: request.query.state as InboxListQuery['state'],
+      subjectType: request.query.subjectType,
+    });
     return { success: true };
   });
 
-  // Mark all as read
-  app.post('/api/events/read-all', async () => {
-    await db.update(schema.events).set({ read: true }).where(eq(schema.events.read, false)).run();
-    return { success: true };
-  });
-
-  // Clear all events
-  app.delete('/api/events', async () => {
-    await db.delete(schema.events).run();
+  app.delete<{ Querystring: Pick<EventsQuery, 'scope' | 'category' | 'type' | 'state' | 'subjectType' | 'read'> }>('/api/events', async (request) => {
+    await clearInboxItems({
+      scope: request.query.scope as InboxListQuery['scope'],
+      category: request.query.category as InboxListQuery['category'],
+      type: request.query.type,
+      state: request.query.state as InboxListQuery['state'],
+      subjectType: request.query.subjectType,
+      read: parseBooleanQuery(request.query.read),
+    });
     return { success: true };
   });
 }

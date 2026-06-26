@@ -22,6 +22,13 @@ interface ModelAnalysisResult {
     end: string;
     days: number;
   };
+  costUnit: string;
+  valuation: {
+    source: 'raw' | 'wallet_valuation';
+    valuedRows: number;
+    totalRows: number;
+    warningCount: number;
+  };
   totals: {
     calls: number;
     tokens: number;
@@ -55,6 +62,8 @@ interface BuildOptions {
   now?: Date;
   days?: number;
   maxModels?: number;
+  costUnit?: string;
+  valuation?: Partial<ModelAnalysisResult['valuation']>;
 }
 
 export interface ModelAnalysisDailyUsageRow {
@@ -101,6 +110,11 @@ function toPositiveInt(value: unknown): number {
   return Math.max(0, Math.round(toSafeNumber(value)));
 }
 
+function normalizeCostUnit(value: unknown): string {
+  const text = String(value || '').trim();
+  return text ? text.toUpperCase() : 'USD';
+}
+
 function round(value: number, digits = 2): number {
   const factor = 10 ** digits;
   return Math.round(value * factor) / factor;
@@ -126,6 +140,7 @@ function finalizeModelAnalysis(
   dayKeys: string[],
   spendTrendMap: Map<string, number>,
   maxModels: number,
+  options: Pick<BuildOptions, 'costUnit' | 'valuation'> = {},
 ): ModelAnalysisResult {
   const totalCalls = stats.reduce((sum, item) => sum + item.calls, 0);
   const totalTokens = stats.reduce((sum, item) => sum + item.tokens, 0);
@@ -171,6 +186,13 @@ function finalizeModelAnalysis(
       start: dayKeys[0],
       end: dayKeys[dayKeys.length - 1],
       days: dayKeys.length,
+    },
+    costUnit: normalizeCostUnit(options.costUnit),
+    valuation: {
+      source: options.valuation?.source === 'wallet_valuation' ? 'wallet_valuation' : 'raw',
+      valuedRows: toPositiveInt(options.valuation?.valuedRows),
+      totalRows: toPositiveInt(options.valuation?.totalRows),
+      warningCount: toPositiveInt(options.valuation?.warningCount),
     },
     totals: {
       calls: totalCalls,
@@ -236,7 +258,15 @@ export function buildModelAnalysis(
     spendTrendMap.set(createdAtDay, (spendTrendMap.get(createdAtDay) ?? 0) + spend);
   }
 
-  return finalizeModelAnalysis(Array.from(modelMap.values()), dayKeys, spendTrendMap, maxModels);
+  return finalizeModelAnalysis(Array.from(modelMap.values()), dayKeys, spendTrendMap, maxModels, {
+    costUnit: options.costUnit,
+    valuation: {
+      source: options.valuation?.source ?? 'raw',
+      valuedRows: options.valuation?.valuedRows ?? logs.length,
+      totalRows: options.valuation?.totalRows ?? logs.length,
+      warningCount: options.valuation?.warningCount ?? 0,
+    },
+  });
 }
 
 export function buildModelAnalysisFromDailyUsage(
@@ -288,5 +318,13 @@ export function buildModelAnalysisFromDailyUsage(
     spendTrendMap.set(aggregateDay, (spendTrendMap.get(aggregateDay) ?? 0) + spend);
   }
 
-  return finalizeModelAnalysis(Array.from(modelMap.values()), dayKeys, spendTrendMap, maxModels);
+  return finalizeModelAnalysis(Array.from(modelMap.values()), dayKeys, spendTrendMap, maxModels, {
+    costUnit: options.costUnit,
+    valuation: {
+      source: options.valuation?.source ?? 'raw',
+      valuedRows: options.valuation?.valuedRows ?? rows.length,
+      totalRows: options.valuation?.totalRows ?? rows.length,
+      warningCount: options.valuation?.warningCount ?? 0,
+    },
+  });
 }

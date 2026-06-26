@@ -58,7 +58,6 @@ describe('Settings model availability probe confirmation', () => {
       logCleanupProgramLogsEnabled: true,
       logCleanupRetentionDays: 14,
       modelAvailabilityProbeEnabled: false,
-      routingFallbackUnitCost: 1,
       routingWeights: {},
       adminIpAllowlist: [],
       systemProxyUrl: '',

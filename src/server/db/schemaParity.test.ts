@@ -125,4 +125,23 @@ describe('database schema parity', () => {
     expect(postgresBootstrap).toContain('"plan_json" JSONB NOT NULL');
     expect(postgresBootstrap).toContain('"upstream_model_cost_pricings_scope_key_unique"');
   });
+
+  it('keeps wallet acquisition profiles on cost-unit schema in generated artifacts', () => {
+    const contract = JSON.parse(readFileSync(schemaContractPath, 'utf8')) as SchemaContract;
+    const mysqlBootstrap = readFileSync(resolve(generatedDir, 'mysql.bootstrap.sql'), 'utf8');
+    const postgresBootstrap = readFileSync(resolve(generatedDir, 'postgres.bootstrap.sql'), 'utf8');
+
+    expect(contract.tables.wallet_acquisition_profiles?.columns.wallet_unit?.logicalType).toBe('text');
+    expect(contract.tables.wallet_acquisition_profiles?.columns.wallet_currency).toBeUndefined();
+    expect(contract.tables.wallet_acquisition_profiles?.columns.base_currency).toBeUndefined();
+    expect(contract.tables.wallet_acquisition_profiles?.columns.face_value_currency).toBeUndefined();
+    expect(mysqlBootstrap).toContain('`wallet_unit`');
+    expect(mysqlBootstrap).not.toContain('`wallet_currency`');
+    expect(mysqlBootstrap).not.toContain('`base_currency`');
+    expect(mysqlBootstrap).not.toContain('`face_value_currency`');
+    expect(postgresBootstrap).toContain('"wallet_unit"');
+    expect(postgresBootstrap).not.toContain('"wallet_currency"');
+    expect(postgresBootstrap).not.toContain('"base_currency"');
+    expect(postgresBootstrap).not.toContain('"face_value_currency"');
+  });
 });

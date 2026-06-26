@@ -54,6 +54,7 @@ describe('configMigrationService', () => {
       appliedSettings: expect.arrayContaining([
         'metapi_config_version',
         'pricing_reference_config_v1',
+        'platform_pricing_config_v1',
       ]),
     });
 
@@ -63,21 +64,37 @@ describe('configMigrationService', () => {
     const pricing = await db.select().from(schema.settings)
       .where(eq(schema.settings.key, 'pricing_reference_config_v1'))
       .get();
+    const platformPricing = await db.select().from(schema.settings)
+      .where(eq(schema.settings.key, 'platform_pricing_config_v1'))
+      .get();
 
-    expect(JSON.parse(version?.value || 'null')).toBe('2.2');
+    expect(JSON.parse(version?.value || 'null')).toBe('2.4');
     expect(JSON.parse(pricing?.value || '{}')).toMatchObject({
       schemaVersion: 1,
-      defaultReferenceMode: 'auto',
-      fallbackProfile: 'system_default',
+      sync: {
+        enabled: false,
+        replaceOnSync: true,
+      },
+    });
+    expect(JSON.parse(pricing?.value || '{}')).not.toHaveProperty('defaultReferenceMode');
+    expect(JSON.parse(pricing?.value || '{}')).not.toHaveProperty('fallbackProfile');
+    expect(JSON.parse(pricing?.value || '{}')).not.toHaveProperty('driftCheck');
+    expect(JSON.parse(platformPricing?.value || '{}')).toMatchObject({
+      baseCostUnit: 'USD',
+      upstreamDefaultPricing: {
+        inputPerMillion: 1,
+        outputPerMillion: 1,
+      },
       driftCheck: {
         enabled: false,
       },
     });
   });
 
-  it('normalizes existing pricing config while preserving explicit operator choices', async () => {
+  it('normalizes existing pricing config while dropping obsolete strategy choices', async () => {
     await db.insert(schema.settings).values([
       { key: 'metapi_config_version', value: JSON.stringify('2.1') },
+      { key: 'routing_fallback_unit_cost', value: JSON.stringify(0.25) },
       {
         key: 'pricing_reference_config_v1',
         value: JSON.stringify({
@@ -98,21 +115,35 @@ describe('configMigrationService', () => {
     const summary = await ensureCurrentConfigVersion();
 
     expect(summary.fromVersion).toBe('2.1');
-    expect(summary.toVersion).toBe('2.2');
+    expect(summary.toVersion).toBe('2.4');
     expect(summary.appliedSettings).toEqual(expect.arrayContaining([
       'metapi_config_version',
       'pricing_reference_config_v1',
+      'platform_pricing_config_v1',
+      'routing_fallback_unit_cost',
     ]));
 
     const pricing = await db.select().from(schema.settings)
       .where(eq(schema.settings.key, 'pricing_reference_config_v1'))
       .get();
     expect(JSON.parse(pricing?.value || '{}')).toMatchObject({
-      defaultReferenceMode: 'manual',
-      fallbackProfile: 'unknown',
-      catalog: {
-        builtInCatalogEnabled: false,
-        providerCatalogSuggestionsEnabled: true,
+      sync: {
+        enabled: false,
+        replaceOnSync: true,
+      },
+    });
+    expect(JSON.parse(pricing?.value || '{}')).not.toHaveProperty('catalog');
+    expect(JSON.parse(pricing?.value || '{}')).not.toHaveProperty('defaultReferenceMode');
+    expect(JSON.parse(pricing?.value || '{}')).not.toHaveProperty('fallbackProfile');
+    expect(JSON.parse(pricing?.value || '{}')).not.toHaveProperty('driftCheck');
+    const platformPricing = await db.select().from(schema.settings)
+      .where(eq(schema.settings.key, 'platform_pricing_config_v1'))
+      .get();
+    expect(JSON.parse(platformPricing?.value || '{}')).toMatchObject({
+      baseCostUnit: 'USD',
+      upstreamDefaultPricing: {
+        inputPerMillion: 1,
+        outputPerMillion: 1,
       },
       driftCheck: {
         enabled: true,

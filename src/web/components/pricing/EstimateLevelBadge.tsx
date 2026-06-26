@@ -28,6 +28,13 @@ type EstimateLevelBadgeProps = {
   strategy?: string | null;
 };
 
+function formatEstimateLevel(level: EstimateLevel): string {
+  if (level === 'exact') return tr('components.modelRouteFlow.estimateExact');
+  if (level === 'static_estimate') return tr('components.modelRouteFlow.estimateStatic');
+  if (level === 'incomplete') return tr('components.modelRouteFlow.estimateIncomplete');
+  return level;
+}
+
 export default function EstimateLevelBadge({
   level,
   compact = false,
@@ -43,7 +50,7 @@ export default function EstimateLevelBadge({
       title={level}
       className={className}
     >
-      {level}
+      {formatEstimateLevel(level)}
     </ToneBadge>
   );
 

@@ -8,7 +8,7 @@ import MetricTile from '../../components/metrics/MetricTile.js';
 import EstimateLevelBadge from '../../components/pricing/EstimateLevelBadge.js';
 import { Card, CardContent } from '../../components/ui/card/index.js';
 import type { ModelDetailsView, ModelEntryPricing } from './modelDetailsView.js';
-import { formatLatencyValue, formatSuccessRate } from './modelDetailsView.js';
+import { formatLatencyValue, formatSuccessRate, getAccountCredentialCount, getModelCredentialCount } from './modelDetailsView.js';
 import { renderGroupPricingValue } from './modelFormatting.js';
 
 import { tr } from '../../i18n.js';
@@ -19,18 +19,47 @@ type ModelOverviewTabProps = {
 };
 
 function formatEntryPrice(value: number | null): string {
-  if (value == null || !Number.isFinite(value)) return 'unknown';
+  if (value == null || !Number.isFinite(value)) return tr('components.modelRouteFlow.priceUnavailable');
   return `$${value.toFixed(6).replace(/\.?0+$/, '')} / 1M`;
 }
 
 function formatMultiplier(value: number | null): string {
-  if (value == null || !Number.isFinite(value)) return 'unknown';
+  if (value == null || !Number.isFinite(value)) return tr('components.modelRouteFlow.referenceUnavailable');
   return `${value.toFixed(4).replace(/\.?0+$/, '')}x`;
 }
 
 function formatEntryTotal(value: number | null | undefined): string {
-  if (value == null || !Number.isFinite(value)) return 'unknown';
+  if (value == null || !Number.isFinite(value)) return tr('components.modelRouteFlow.totalUnavailable');
   return `$${value.toFixed(6).replace(/\.?0+$/, '')} / preview`;
+}
+
+function formatWalletCost(value: number | null | undefined, currency: string | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return tr('components.modelRouteFlow.walletCostUnavailable');
+  return `${currency || 'USD'} ${value.toFixed(6).replace(/\.?0+$/, '')} / preview`;
+}
+
+function formatQuotaDays(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return tr('components.modelRouteFlow.freeQuotaUnavailable');
+  return `${value.toFixed(4).replace(/\.?0+$/, '')} d / preview`;
+}
+
+function formatBalanceBurn(buckets: Array<{ unit: string; amount: number }> | null | undefined): string {
+  if (!buckets || buckets.length === 0) return tr('components.modelRouteFlow.balanceCostUnavailable');
+  return buckets
+    .map((bucket) => `${bucket.amount.toFixed(6).replace(/\.?0+$/, '')} ${bucket.unit}`)
+    .join(' + ');
+}
+
+function formatEstimateLevel(level: string | null | undefined): string {
+  if (level === 'exact') return tr('components.modelRouteFlow.estimateExact');
+  if (level === 'static_estimate') return tr('components.modelRouteFlow.estimateStatic');
+  if (level === 'estimated') return tr('components.modelRouteFlow.estimateEstimated');
+  if (level === 'incomplete') return tr('components.modelRouteFlow.estimateIncomplete');
+  return level || tr('common.notAvailable');
+}
+
+function formatModelStatus(status: ModelDetailsView['status']): string {
+  return tr(`pages.models.modelDetailsView.status.${status}`);
 }
 
 function PricingSummaryCard({
@@ -73,19 +102,38 @@ function PricingSummaryCard({
             <div>
               <div className="text-xs text-muted-foreground">输入 entry</div>
               <div className="font-mono text-sm font-semibold">{formatEntryPrice(pricing.inputPerMillion)}</div>
-              <div className="text-xs text-muted-foreground">{tr('pages.downstreamKeys.multiplier2')} {formatMultiplier(pricing.inputMultiplier)}</div>
+              <div className="text-xs text-muted-foreground">{tr('components.modelRouteFlow.inputMultiplier')} {formatMultiplier(pricing.inputMultiplier)}</div>
             </div>
             <div>
               <div className="text-xs text-muted-foreground">输出 entry</div>
               <div className="font-mono text-sm font-semibold">{formatEntryPrice(pricing.outputPerMillion)}</div>
-              <div className="text-xs text-muted-foreground">{tr('pages.downstreamKeys.multiplier2')} {formatMultiplier(pricing.outputMultiplier)}</div>
+              <div className="text-xs text-muted-foreground">{tr('components.modelRouteFlow.outputMultiplier')} {formatMultiplier(pricing.outputMultiplier)}</div>
             </div>
             <div>
               <div className="text-xs text-muted-foreground">Total</div>
               <div className="font-mono text-sm font-semibold">{formatEntryTotal(pricing.totalCostUsd)}</div>
-              <div className="text-xs text-muted-foreground">{tr('pages.downstreamKeys.multiplier2')} {formatMultiplier(pricing.totalMultiplier ?? null)}</div>
+              <div className="text-xs text-muted-foreground">{tr('components.modelRouteFlow.totalMultiplier')} {formatMultiplier(pricing.totalMultiplier ?? null)}</div>
             </div>
           </div>
+          {pricing.effectiveCost ? (
+            <div className="grid gap-2 border-t pt-2 sm:grid-cols-3">
+              <div>
+                <div className="text-xs text-muted-foreground">{tr('components.modelRouteFlow.cashCost')}</div>
+                <div className="font-mono text-sm font-semibold">{formatWalletCost(pricing.effectiveCost.walletCostBaseCurrency, pricing.effectiveCost.baseCostUnit)}</div>
+                <div className="text-xs text-muted-foreground">{formatEstimateLevel(pricing.effectiveCost.estimateLevel)}</div>
+              </div>
+              <div>
+                <div className="text-xs text-muted-foreground">{tr('components.modelRouteFlow.freeQuotaCost')}</div>
+                <div className="font-mono text-sm font-semibold">{formatQuotaDays(pricing.effectiveCost.freeQuotaDaysCost)}</div>
+                <div className="text-xs text-muted-foreground">{tr('components.modelRouteFlow.freeQuotaCostDescription')}</div>
+              </div>
+              <div>
+                <div className="text-xs text-muted-foreground">{tr('components.modelRouteFlow.upstreamBalanceCost')}</div>
+                <div className="font-mono text-sm font-semibold">{formatBalanceBurn(pricing.effectiveCost.balanceBurn)}</div>
+                <div className="text-xs text-muted-foreground">{tr('components.modelRouteFlow.upstreamBalanceCostDescription')}</div>
+              </div>
+            </div>
+          ) : null}
         </div>
       ) : (
         <div className="mt-3 text-sm text-muted-foreground">{emptyText}</div>
@@ -105,12 +153,12 @@ export default function ModelOverviewTab({
   return (
     <div className="grid gap-4">
       <MetricGrid>
-        <MetricTile label={tr('components.notificationPanel.status')} value={details.status} icon={<Activity className="size-4" />} tone={details.status === 'healthy' ? 'success' : details.status === 'unknown' ? 'muted' : 'warning'} />
+        <MetricTile label={tr('components.notificationPanel.status')} value={formatModelStatus(details.status)} icon={<Activity className="size-4" />} tone={details.status === 'healthy' ? 'success' : details.status === 'unknown' ? 'muted' : 'warning'} />
         <MetricTile label={tr('components.modelAnalysisPanel.successRate')} value={formatSuccessRate(model.successRate)} icon={<Activity className="size-4" />} tone={model.successRate == null ? 'muted' : model.successRate >= 90 ? 'success' : 'warning'} />
         <MetricTile label={tr('pages.sites.latency')} value={formatLatencyValue(model.avgLatency)} icon={<Timer className="size-4" />} tone={model.avgLatency == null ? 'muted' : model.avgLatency >= 3000 ? 'destructive' : model.avgLatency >= 1000 ? 'warning' : 'success'} />
         <MetricTile label={tr('components.searchModal.accounts2')} value={model.accountCount} icon={<Users className="size-4" />} />
-        <MetricTile label="Tokens" value={model.tokenCount} icon={<KeyRound className="size-4" />} />
-        <MetricTile label="Endpoints" value={model.supportedEndpointTypes.length || 'unknown'} icon={<Server className="size-4" />} tone={model.supportedEndpointTypes.length > 0 ? 'default' : 'muted'} />
+        <MetricTile label={tr('pages.models.credentials')} value={getModelCredentialCount(model)} icon={<KeyRound className="size-4" />} />
+        <MetricTile label={tr('pages.models.modelOverviewTab.endpoints')} value={model.supportedEndpointTypes.length || tr('common.notAvailable')} icon={<Server className="size-4" />} tone={model.supportedEndpointTypes.length > 0 ? 'default' : 'muted'} />
       </MetricGrid>
 
       <Card>
@@ -133,6 +181,10 @@ export default function ModelOverviewTab({
                       </div>
                       <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
                         <span className="inline-flex items-center gap-1"><Wallet className="size-3" />{tr('components.notificationPanel.balance')} {account.balance}</span>
+                        <ToneBadge tone="-muted">{tr('pages.models.credentials')} {getAccountCredentialCount(account)}</ToneBadge>
+                        {(account.managedTokenCount ?? account.tokens.length) > 0 ? (
+                          <ToneBadge tone="-muted">{tr('pages.models.managedTokens')} {account.managedTokenCount ?? account.tokens.length}</ToneBadge>
+                        ) : null}
                         {account.tokens.map((token) => (
                           <ToneBadge key={token.id} tone={token.isDefault ? '-success' : '-muted'}>{token.name}</ToneBadge>
                         ))}
@@ -186,7 +238,7 @@ export default function ModelOverviewTab({
           <div className="mb-3 grid gap-2 lg:grid-cols-2">
             <PricingSummaryCard
               title={tr('pages.models.modelOverviewTab.measuredEntryPricing')}
-              description={tr('pages.models.modelOverviewTab.acting')}
+              description={tr('pages.models.modelOverviewTab.measuredProxyBillingAverage')}
               pricing={details.pricing.measured}
               emptyText={tr('pages.models.modelOverviewTab.noMeasuredEntryPricing')}
             />

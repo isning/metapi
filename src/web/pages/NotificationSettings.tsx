@@ -240,7 +240,7 @@ export default function NotificationSettings() {
                         </div>
                         <div className="flex flex-wrap gap-4">
                             {toggleRow(tr('pages.notificationSettings.enabledWebhook'), runtime.webhookEnabled, (checked) => setRuntime((prev) => ({ ...prev, webhookEnabled: checked })))}
-                            {toggleRow(tr('pages.notificationSettings.enabledBark'), runtime.barkEnabled, (checked) => setRuntime((prev) => ({ ...prev, barkEnabled: checked })))}
+                            {toggleRow(tr('pages.notificationSettings.enableBark'), runtime.barkEnabled, (checked) => setRuntime((prev) => ({ ...prev, barkEnabled: checked })))}
                         </div>
                     </div>
                 </CardHeader>
@@ -273,7 +273,7 @@ export default function NotificationSettings() {
                             <CardTitle>{tr('pages.notificationSettings.serverSendkey')}</CardTitle>
                             <CardDescription>{tr('pages.notificationSettings.supportedConfiguration')}{runtime.serverChanKeyMasked || tr('pages.notificationSettings.notSet')}</CardDescription>
                         </div>
-                        {toggleRow(tr('pages.notificationSettings.enabledServer'), runtime.serverChanEnabled, (checked) => setRuntime((prev) => ({ ...prev, serverChanEnabled: checked })))}
+                        {toggleRow(tr('pages.notificationSettings.enableServerChan'), runtime.serverChanEnabled, (checked) => setRuntime((prev) => ({ ...prev, serverChanEnabled: checked })))}
                     </div>
                 </CardHeader>
                 <CardContent>
@@ -298,7 +298,7 @@ export default function NotificationSettings() {
                             <CardDescription>{tr('pages.notificationSettings.telegramNotifications')}</CardDescription>
                         </div>
                         <div className="flex flex-wrap gap-4">
-                            {toggleRow(tr('pages.notificationSettings.usagesystemacting'), runtime.telegramUseSystemProxy, (checked) => setRuntime((prev) => ({ ...prev, telegramUseSystemProxy: checked })))}
+                            {toggleRow(tr('pages.notificationSettings.useSystemProxy'), runtime.telegramUseSystemProxy, (checked) => setRuntime((prev) => ({ ...prev, telegramUseSystemProxy: checked })))}
                             {toggleRow(tr('pages.notificationSettings.enabledTelegram'), runtime.telegramEnabled, (checked) => setRuntime((prev) => ({ ...prev, telegramEnabled: checked })))}
                         </div>
                     </div>
@@ -354,7 +354,7 @@ export default function NotificationSettings() {
                             <CardTitle>{tr('pages.notificationSettings.smtp2')}</CardTitle>
                             <CardDescription>{tr('pages.notificationSettings.sendRemindersEmail')}</CardDescription>
                         </div>
-                        {toggleRow(tr('pages.notificationSettings.enabledSmtp'), runtime.smtpEnabled, (checked) => setRuntime((prev) => ({ ...prev, smtpEnabled: checked })))}
+                        {toggleRow(tr('pages.notificationSettings.enableSmtp'), runtime.smtpEnabled, (checked) => setRuntime((prev) => ({ ...prev, smtpEnabled: checked })))}
                     </div>
                 </CardHeader>
                 <CardContent className="grid gap-4 md:grid-cols-2">

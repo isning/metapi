@@ -16,6 +16,12 @@ import { MobileCard, MobileField } from '../components/MobileCard.js';
 import ModernSelect from '../components/ModernSelect.js';
 import PageHeader from '../components/workspace/PageHeader.js';
 import PageShell from '../components/workspace/PageShell.js';
+import {
+  CreateActionButton,
+  PageActionBar,
+  SecondaryActionButton,
+  TableActionBar,
+} from '../components/workspace/ActionBar.js';
 import { useToast } from '../components/Toast.js';
 import { useIsMobile } from '../components/useIsMobile.js';
 import OAuthModelsModal, { type OAuthModelItem } from './oauth/OAuthModelsModal.js';
@@ -29,6 +35,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../co
 import { Checkbox } from '../components/ui/checkbox/index.js';
 import { Label } from '../components/ui/label/index.js';
 import { DataTable, DataTableToolbar } from '../components/ui/data-table/index.js';
+import { Skeleton } from '../components/ui/skeleton/index.js';
 import {
   Table,
   TableBody,
@@ -143,7 +150,7 @@ const COLUMN_OPTIONS: Array<{ key: ColumnKey; label: string }> = [
   { key: 'site', label: tr('components.searchModal.sites2') },
   { key: 'status', label: tr('pages.oAuthManagement.status') },
   { key: 'quota', label: 'Usage / Quota' },
-  { key: 'proxy', label: tr('pages.oAuthManagement.acting') },
+  { key: 'proxy', label: tr('pages.oAuthManagement.proxyProjectColumn') },
 ];
 
 function openOAuthPopup(provider: string, authorizationUrl: string) {
@@ -481,9 +488,9 @@ function resolveProxyProjectSummary(connection: OAuthConnectionInfo): string {
 }
 
 function resolveProxyDisplayText(connection: OAuthConnectionInfo): string {
-  if (connection.useSystemProxy) return tr('pages.oAuthManagement.systemActing');
+  if (connection.useSystemProxy) return tr('pages.oAuthManagement.systemProxy');
   if (connection.proxyUrl) return redactProxyUrl(connection.proxyUrl);
-  return tr('pages.oAuthManagement.notSetacting');
+  return tr('pages.oAuthManagement.noProxySet');
 }
 
 function hasOauthProxySelection(connection: OAuthConnectionInfo): boolean {
@@ -563,7 +570,7 @@ function QuotaWindowRow({
   return (
     <div className="flex flex-wrap items-center gap-2 text-xs">
         <ToneBadge tone="muted">{label}</ToneBadge>
-        <span className="font-medium">{percent == null ? 'N/A' : `${percent}%`}</span>
+        <span className="font-medium">{percent == null ? tr('common.notAvailable') : `${percent}%`}</span>
         {summary ? <span className="text-muted-foreground">{summary}</span> : null}
         {window?.resetAt ? (
           <span className="text-muted-foreground">{tr('pages.models.reset')} {formatResetLabel(window.resetAt)}</span>
@@ -594,6 +601,113 @@ function SideDrawer({
         </div>
       </Sheet.Content>
     </Sheet.Root>
+  );
+}
+
+function OAuthManagementLoadingSkeleton({ isMobile }: { isMobile: boolean }) {
+  if (isMobile) {
+    return (
+      <div className="grid gap-3" aria-busy="true">
+        {Array.from({ length: 4 }).map((_, index) => (
+          <MobileCard
+            key={index}
+            className={`animate-slide-up stagger-${Math.min(index + 1, 5)}`}
+            title={<Skeleton className="h-5 w-44" />}
+            headerActions={<Skeleton className="h-5 w-16 rounded-full" />}
+          >
+            <div className="grid gap-3">
+              <Skeleton className="h-4 w-56 max-w-full" />
+              <div className="grid gap-2">
+                <Skeleton className="h-4 w-40" />
+                <Skeleton className="h-4 w-48" />
+                <Skeleton className="h-4 w-36" />
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Skeleton className="h-5 w-20 rounded-full" />
+                <Skeleton className="h-5 w-24 rounded-full" />
+                <Skeleton className="h-5 w-16 rounded-full" />
+              </div>
+              <div className="flex flex-wrap justify-end gap-2">
+                <Skeleton className="h-8 w-16" />
+                <Skeleton className="h-8 w-20" />
+              </div>
+            </div>
+          </MobileCard>
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <DataTable minWidth={1080} density="compact" aria-busy="true">
+      <DataTableToolbar className="border-b bg-muted/30 px-4">
+        <div className="grid gap-1">
+          <Skeleton className="h-4 w-36" />
+          <Skeleton className="h-3 w-64" />
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Skeleton className="h-8 w-24" />
+          <Skeleton className="h-8 w-24" />
+          <Skeleton className="h-8 w-20" />
+        </div>
+      </DataTableToolbar>
+      <Table className="w-full text-sm">
+        <TableHeader>
+          <TableRow>
+            <TableHead className="w-[42px]" />
+            <TableHead>{tr('pages.oAuthManagement.accountsProvider')}</TableHead>
+            <TableHead>{tr('components.searchModal.sites2')}</TableHead>
+            <TableHead>{tr('pages.oAuthManagement.status')}</TableHead>
+            <TableHead>Usage / Quota</TableHead>
+            <TableHead>{tr('pages.oAuthManagement.proxyProjectColumn')}</TableHead>
+            <TableHead className="text-right">{tr('pages.accounts.actions2')}</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {Array.from({ length: 6 }).map((_, index) => (
+            <TableRow key={index} className={`animate-slide-up stagger-${Math.min(index + 1, 5)}`}>
+              <TableCell><Skeleton className="size-4" /></TableCell>
+              <TableCell>
+                <div className="grid gap-2">
+                  <Skeleton className="h-4 w-40" />
+                  <Skeleton className="h-3 w-56" />
+                  <div className="flex gap-2">
+                    <Skeleton className="h-5 w-16 rounded-full" />
+                    <Skeleton className="h-5 w-20 rounded-full" />
+                  </div>
+                </div>
+              </TableCell>
+              <TableCell>
+                <div className="grid gap-2">
+                  <Skeleton className="h-4 w-32" />
+                  <Skeleton className="h-3 w-44" />
+                </div>
+              </TableCell>
+              <TableCell>
+                <div className="grid gap-2">
+                  <Skeleton className="h-5 w-20 rounded-full" />
+                  <Skeleton className="h-3 w-28" />
+                </div>
+              </TableCell>
+              <TableCell>
+                <div className="grid gap-2">
+                  <Skeleton className="h-3 w-44" />
+                  <Skeleton className="h-3 w-36" />
+                  <Skeleton className="h-3 w-28" />
+                </div>
+              </TableCell>
+              <TableCell><Skeleton className="h-5 w-36" /></TableCell>
+              <TableCell>
+                <div className="flex justify-end gap-1">
+                  <Skeleton className="h-8 w-20" />
+                  <Skeleton className="size-8" />
+                </div>
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </DataTable>
   );
 }
 
@@ -825,7 +939,7 @@ export default function OAuthManagement() {
           return;
         }
 
-        setSessionError(`授权失败：${session.error || tr('pages.oAuthManagement.unknownError')}`);
+        setSessionError(`授权失败：${session.error || tr('pages.oAuthManagement.unknownErrorMessage')}`);
         setActiveSession(null);
       } catch (error: any) {
         if (cancelled) return;
@@ -988,7 +1102,7 @@ export default function OAuthManagement() {
     setOauthProxyUrl(connection.useSystemProxy ? '' : asTrimmedString(connection.proxyUrl));
     setDrawerOpen(true);
     setShowColumnMenu(false);
-    setSessionInfo(tr('pages.oAuthManagement.openOauthActingsettingsSaveactingSaveReauthorize'));
+    setSessionInfo(tr('pages.oAuthManagement.proxySettingsOpened'));
   };
 
   const openRouteUnitModal = () => {
@@ -1057,7 +1171,7 @@ export default function OAuthManagement() {
     if (drawerIntent.mode !== 'proxy') return;
     const customProxyUrl = asTrimmedString(oauthProxyUrl);
     if (oauthCustomProxyEnabled && !customProxyUrl) {
-      setSessionError(tr('pages.oAuthManagement.turnOnactingInputActing'));
+      setSessionError(tr('pages.oAuthManagement.proxyEnabledRequiresUrl'));
       return;
     }
 
@@ -1076,9 +1190,9 @@ export default function OAuthManagement() {
       await loadConnections();
       setDrawerOpen(false);
       resetOauthProxySettings();
-      setSessionSuccess(tr('pages.oAuthManagement.actingSave'));
+      setSessionSuccess(tr('pages.oAuthManagement.proxyProjectColumnSave'));
     } catch (error: any) {
-      setSessionError(error?.message || tr('pages.oAuthManagement.saveactingfailed'));
+      setSessionError(error?.message || tr('pages.oAuthManagement.saveProxyFailed'));
     } finally {
       setActionLoadingKey('');
     }
@@ -1104,7 +1218,7 @@ export default function OAuthManagement() {
     const accountId = rebindAccount?.accountId;
     const customProxyUrl = asTrimmedString(oauthProxyUrl);
     if (oauthCustomProxyEnabled && !customProxyUrl) {
-      setSessionError(tr('pages.oAuthManagement.turnOnactingInputActing'));
+      setSessionError(tr('pages.oAuthManagement.proxyEnabledRequiresUrl'));
       return;
     }
 
@@ -1162,7 +1276,7 @@ export default function OAuthManagement() {
       await api.submitOAuthManualCallback(activeSession.state, callbackUrl);
       setSessionInfo(tr('pages.oAuthManagement.callbackSubmittedWaitingAuthorization'));
     } catch (error: any) {
-      setSessionError(error?.message || tr('pages.oAuthManagement.urlFailed'));
+      setSessionError(error?.message || tr('pages.oAuthManagement.submitCallbackUrlFailed'));
     } finally {
       setManualCallbackSubmitting(false);
     }
@@ -1386,7 +1500,7 @@ export default function OAuthManagement() {
       return;
     }
     if (importCustomProxyEnabled && !asTrimmedString(importProxyUrl)) {
-      setSessionError(tr('pages.oAuthManagement.turnOnactingInputActing'));
+      setSessionError(tr('pages.oAuthManagement.proxyEnabledRequiresUrl'));
       return;
     }
 
@@ -1542,9 +1656,8 @@ export default function OAuthManagement() {
   };
 
   const filterBar = (
-    <Card>
-      <CardContent className="grid gap-3 p-4">
-        <div className="flex flex-wrap items-center gap-3">
+    <div className="grid gap-3">
+        <div className="flex flex-wrap items-center gap-2">
             <SearchInput
               className="min-w-64 flex-1"
               value={searchQuery}
@@ -1624,11 +1737,10 @@ export default function OAuthManagement() {
               </DropdownMenu.Content>
             </DropdownMenu.Root>
         </div>
-        <div className="text-sm text-muted-foreground">
+        <div className="text-xs text-muted-foreground">
           {tr('pages.oAuthManagement.oauthAccountsConnectionManagementDefaultSessionApi')}
         </div>
-      </CardContent>
-    </Card>
+    </div>
   );
 
   const mobileFilterContent = (
@@ -1684,12 +1796,19 @@ export default function OAuthManagement() {
   );
 
   const desktopTable = (
-    <DataTable minWidth={1180}>
-      <DataTableToolbar className="border-b bg-muted/30">
-        <div className="text-sm text-muted-foreground">
-          已选 <span className="font-medium text-foreground">{selectedConnectionIds.length}</span> / {filteredConnections.length} 个 OAuth 连接
+    <DataTable minWidth={1180} density="compact">
+      <DataTableToolbar className="border-b bg-muted/30 px-4">
+        <div className="min-w-0">
+          <div className="text-sm font-semibold text-foreground">
+            {selectedConnectionIds.length > 0
+              ? `已选 ${selectedConnectionIds.length} 个 OAuth 连接 / 共 ${filteredConnections.length} 个`
+              : `${filteredConnections.length} 个 OAuth 连接`}
+          </div>
+          <div className="text-xs text-muted-foreground">
+            {tr('pages.oAuthManagement.oauthAccountsConnectionManagementDefaultSessionApi')}
+          </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        <TableActionBar>
           {selectedConnectionIds.length > 0 ? (
             <>
               <Button
@@ -1701,7 +1820,7 @@ export default function OAuthManagement() {
               >
                 <RefreshCcw className="size-4" />
                 <span className="sr-only">{tr('pages.oAuthManagement.refreshquota3')}</span>
-                {actionLoadingKey === 'quota:selected' ? tr('pages.downstreamKeys.refreshzh') : tr('pages.oAuthManagement.refreshquota')}
+                {actionLoadingKey === 'quota:selected' ? tr('pages.downstreamKeys.refreshing') : tr('pages.oAuthManagement.refreshquota')}
               </Button>
               {canMergeSelectedIntoRouteUnit ? (
                 <Button variant="outline" size="sm" type="button" onClick={openRouteUnitModal}>
@@ -1718,7 +1837,7 @@ export default function OAuthManagement() {
                   disabled={actionLoadingKey === 'route-unit:delete'}
                 >
                   <RotateCcw className="size-4" />
-                  {actionLoadingKey === 'route-unit:delete' ? tr('pages.oAuthManagement.zh3') : tr('pages.oAuthManagement.splitStandalone')}
+                  {actionLoadingKey === 'route-unit:delete' ? tr('pages.oAuthManagement.splitting') : tr('pages.oAuthManagement.splitStandalone')}
                 </Button>
               ) : null}
               <Button variant="ghost" size="sm" type="button" onClick={() => setSelectedConnectionIds([])} disabled={!!actionLoadingKey}>
@@ -1732,7 +1851,7 @@ export default function OAuthManagement() {
                 disabled={actionLoadingKey === 'delete:selected'}
               >
                 <Trash2 className="size-4" />
-                {actionLoadingKey === 'delete:selected' ? tr('components.deleteConfirmModal.deletezh') : tr('pages.accounts.delete2')}
+                {actionLoadingKey === 'delete:selected' ? tr('components.deleteConfirmModal.deleting') : tr('pages.accounts.delete2')}
               </Button>
             </>
           ) : (
@@ -1740,9 +1859,9 @@ export default function OAuthManagement() {
               {tr('pages.downstreamKeys.selectVisible')}
             </Button>
           )}
-        </div>
+        </TableActionBar>
       </DataTableToolbar>
-      <Table>
+      <Table className="w-full text-sm">
       <TableHeader>
         <TableRow>
           <TableHead className="w-10">
@@ -1756,12 +1875,12 @@ export default function OAuthManagement() {
           {visibleColumns.site ? <TableHead>{tr('components.searchModal.sites2')}</TableHead> : null}
           {visibleColumns.status ? <TableHead>{tr('components.notificationPanel.status')}</TableHead> : null}
           {visibleColumns.quota ? <TableHead>{tr('pages.downstreamKeys.quota')}</TableHead> : null}
-          {visibleColumns.proxy ? <TableHead>{tr('pages.oAuthManagement.acting2')}</TableHead> : null}
+          {visibleColumns.proxy ? <TableHead>{tr('pages.oAuthManagement.proxyProjectColumn2')}</TableHead> : null}
           <TableHead>{tr('pages.accounts.actions2')}</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
-        {filteredConnections.map((connection) => {
+        {filteredConnections.map((connection, index) => {
           const quota = connection.quota;
           const emailLabel = resolveConnectionEmailLabel(connection);
           const primaryTitle = resolveConnectionPrimaryTitle(connection);
@@ -1771,6 +1890,7 @@ export default function OAuthManagement() {
           return (
             <TableRow
               key={connection.accountId}
+              className={`animate-slide-up stagger-${Math.min(index + 1, 5)} row-selectable ${selectedConnectionIds.includes(connection.accountId) ? 'row-selected' : ''}`.trim()}
               data-state={selectedConnectionIds.includes(connection.accountId) ? 'selected' : undefined}
             >
               <TableCell>
@@ -1883,7 +2003,7 @@ export default function OAuthManagement() {
                       onClick={() => openProxySettingsDrawer(connection)}
                     >
                       <Settings2 className="size-4" />
-                      {hasOauthProxySelection(connection) ? tr('pages.oAuthManagement.actingsettings') : tr('pages.oAuthManagement.settingsacting')}
+                      {hasOauthProxySelection(connection) ? tr('pages.oAuthManagement.proxyProjectColumnsettings') : tr('pages.oAuthManagement.configureProxy')}
                     </Button>
                   </div>
                 </TableCell>
@@ -1903,7 +2023,7 @@ export default function OAuthManagement() {
                     disabled={actionLoadingKey === `quota:${connection.accountId}`}
                   >
                     <RefreshCcw className="size-4" />
-                    {actionLoadingKey === `quota:${connection.accountId}` ? tr('pages.downstreamKeys.refreshzh') : tr('pages.oAuthManagement.refreshquota')}
+                    {actionLoadingKey === `quota:${connection.accountId}` ? tr('pages.downstreamKeys.refreshing') : tr('pages.oAuthManagement.refreshquota')}
                   </Button>
                   <Button variant="ghost" size="sm"
                     type="button"
@@ -1921,7 +2041,7 @@ export default function OAuthManagement() {
                     <DropdownMenu.Content align="end">
                       <DropdownMenu.Item onSelect={() => openProxySettingsDrawer(connection)}>
                         <Settings2 className="size-4" />
-                        {hasOauthProxySelection(connection) ? tr('pages.oAuthManagement.actingsettings') : tr('pages.oAuthManagement.settingsacting')}
+                        {hasOauthProxySelection(connection) ? tr('pages.oAuthManagement.proxyProjectColumnsettings') : tr('pages.oAuthManagement.configureProxy')}
                       </DropdownMenu.Item>
                     </DropdownMenu.Content>
                   </DropdownMenu.Root>
@@ -1931,7 +2051,7 @@ export default function OAuthManagement() {
                     disabled={actionLoadingKey === `delete:${connection.accountId}`}
                   >
                     <Trash2 className="size-4" />
-                    {actionLoadingKey === `delete:${connection.accountId}` ? tr('components.deleteConfirmModal.deletezh') : tr('pages.oAuthManagement.delete')}
+                    {actionLoadingKey === `delete:${connection.accountId}` ? tr('components.deleteConfirmModal.deleting') : tr('pages.oAuthManagement.delete')}
                   </Button>
                 </div>
               </TableCell>
@@ -1945,11 +2065,12 @@ export default function OAuthManagement() {
 
   const mobileList = (
     <div className="grid gap-3">
-      {filteredConnections.map((connection) => {
+      {filteredConnections.map((connection, index) => {
         const quota = connection.quota;
         return (
           <MobileCard
             key={connection.accountId}
+            className={`animate-slide-up stagger-${Math.min(index + 1, 5)}`}
             title={resolveConnectionPrimaryTitle(connection)}
             subtitle={`${connection.provider} · ${resolveConnectionStatusLabel(connection.status)}`}
             headerActions={(
@@ -1969,7 +2090,7 @@ export default function OAuthManagement() {
             <MobileField label={tr('pages.oAuthManagement.planProject')} value={connection.projectId ? `${connection.planType || '--'} · ${connection.projectId}` : (connection.planType || '--')} />
             <MobileField label={tr('pages.oAuthManagement.routes4')} value={resolveRouteParticipationSummary(connection)} />
             <MobileField
-              label={tr('pages.oAuthManagement.accountsacting')}
+              label={tr('pages.oAuthManagement.accountProxy')}
               value={(
                 <div className="grid gap-2">
                   <div className="text-xs text-muted-foreground">{resolveProxyDisplayText(connection)}</div>
@@ -1977,7 +2098,7 @@ export default function OAuthManagement() {
                     type="button"
                     onClick={() => openProxySettingsDrawer(connection)}
                   >
-                    {hasOauthProxySelection(connection) ? tr('pages.oAuthManagement.actingsettings') : tr('pages.oAuthManagement.settingsacting')}
+                    {hasOauthProxySelection(connection) ? tr('pages.oAuthManagement.proxyProjectColumnsettings') : tr('pages.oAuthManagement.configureProxy')}
                   </Button>
                 </div>
               )}
@@ -2034,7 +2155,7 @@ export default function OAuthManagement() {
                 {tr('pages.oAuthManagement.refreshquota')}
               </Button>
               <Button variant="ghost" size="sm" type="button" onClick={() => openProxySettingsDrawer(connection)}>
-                {tr('pages.oAuthManagement.actingsettings')}
+                {tr('pages.oAuthManagement.proxyProjectColumnsettings')}
               </Button>
               <Button variant="ghost" size="sm" type="button" onClick={() => openRebindDrawer(connection)}>
                 {tr('pages.oAuthManagement.reauthorize')}
@@ -2055,14 +2176,16 @@ export default function OAuthManagement() {
         title={tr('app.oauth')}
         description={tr('pages.oAuthManagement.officialOauthAccountsConnectionManagement')}
         actions={!isMobile ? (
-          <>
-            <Button variant="outline" type="button" onClick={openImportModal}>
+          <PageActionBar>
+            <SecondaryActionButton type="button" onClick={openImportModal}>
               {tr('pages.oAuthManagement.importJson2')}
-            </Button>
-            <Button type="button" onClick={() => openCreateDrawer()}>
-              {tr('pages.oAuthManagement.newOauth')}
-            </Button>
-          </>
+            </SecondaryActionButton>
+            <CreateActionButton
+              type="button"
+              label={tr('pages.oAuthManagement.newOauth')}
+              onClick={() => openCreateDrawer()}
+            />
+          </PageActionBar>
         ) : null}
       />
 
@@ -2082,7 +2205,7 @@ export default function OAuthManagement() {
               <ToneBadge tone="-muted">{resolveRouteUnitStrategyLabel(sessionFeedback.routeUnit.strategy)}</ToneBadge>
               <div className="text-muted-foreground">
                 {sessionFeedback.routeUnit.action === 'created'
-                  ? tr('pages.oAuthManagement.zhOauthAccountsRoutesRoutesRoutes')
+                  ? tr('pages.oAuthManagement.oauthAccountsMergedIntoRoutePool')
                   : tr('pages.oAuthManagement.routesStandaloneaccountsRoutes')}
               </div>
             </div>
@@ -2115,15 +2238,6 @@ export default function OAuthManagement() {
       />
 
       <div className="grid gap-3">
-        <div className="flex flex-wrap items-end justify-between gap-2">
-          <div className="grid gap-1">
-            <div className="text-sm font-semibold text-foreground">{tr('pages.oAuthManagement.oauth2')}</div>
-            <div className="text-sm text-muted-foreground">
-              {tr('pages.oAuthManagement.connected')} {connections.length} {tr('pages.oAuthManagement.oauthAccountsFilter')} {filteredConnections.length} {tr('pages.oAuthManagement.items')}
-            </div>
-          </div>
-        </div>
-
         {isMobile && selectedConnectionIds.length > 0 ? (
           <ResponsiveBatchActionBar isMobile={isMobile} info={`已选 ${selectedConnectionIds.length} 项`}>
             <Button variant="outline"
@@ -2131,7 +2245,7 @@ export default function OAuthManagement() {
               onClick={handleRefreshSelected}
               disabled={actionLoadingKey === 'quota:selected'}
             >
-              {actionLoadingKey === 'quota:selected' ? tr('pages.downstreamKeys.refreshzh') : tr('pages.oAuthManagement.refreshquota3')}
+              {actionLoadingKey === 'quota:selected' ? tr('pages.downstreamKeys.refreshing') : tr('pages.oAuthManagement.refreshquota3')}
             </Button>
             {canMergeSelectedIntoRouteUnit ? (
               <Button variant="outline"
@@ -2147,7 +2261,7 @@ export default function OAuthManagement() {
                 onClick={handleDeleteSelectedRouteUnit}
                 disabled={actionLoadingKey === 'route-unit:delete'}
               >
-                {actionLoadingKey === 'route-unit:delete' ? tr('pages.oAuthManagement.zh3') : tr('pages.oAuthManagement.splitStandalone')}
+                {actionLoadingKey === 'route-unit:delete' ? tr('pages.oAuthManagement.splitting') : tr('pages.oAuthManagement.splitStandalone')}
               </Button>
             ) : null}
             <Button variant="destructive" size="sm"
@@ -2155,13 +2269,13 @@ export default function OAuthManagement() {
               onClick={handleDeleteSelected}
               disabled={actionLoadingKey === 'delete:selected'}
             >
-              {actionLoadingKey === 'delete:selected' ? tr('components.deleteConfirmModal.deletezh') : tr('pages.accounts.delete2')}
+              {actionLoadingKey === 'delete:selected' ? tr('components.deleteConfirmModal.deleting') : tr('pages.accounts.delete2')}
             </Button>
           </ResponsiveBatchActionBar>
         ) : null}
 
         {!loaded ? (
-          <EmptyStateBlock title={tr('pages.oAuthManagement.loading')} description={tr('pages.oAuthManagement.oauthQuotainfo')} />
+          <OAuthManagementLoadingSkeleton isMobile={isMobile} />
         ) : filteredConnections.length === 0 ? (
           <EmptyStateBlock
             title={tr('pages.oAuthManagement.noneOauth2')}
@@ -2224,8 +2338,8 @@ export default function OAuthManagement() {
 
               <div className="text-sm text-muted-foreground">
                 {drawerIntent.mode === 'proxy'
-                  ? tr('pages.oAuthManagement.accountsOauthActingSaveactingRefreshSaveReauthorize')
-                  : tr('pages.oAuthManagement.settingsReauthorizeActingOauthTokenAccountsAccounts')}
+                  ? tr('pages.oAuthManagement.accountProxyDescription')
+                  : tr('pages.oAuthManagement.proxyAppliesToNextAuthorizationDescription')}
               </div>
 
               <div className="grid gap-3">
@@ -2242,7 +2356,7 @@ export default function OAuthManagement() {
                       }
                     }}
                   />
-                  <span>{tr('pages.oAuthManagement.usagesystemActing')}</span>
+                  <span>{tr('pages.oAuthManagement.useSystemProxy')}</span>
                 </Label>
                 <Label className="flex items-center gap-2">
                   <Checkbox
@@ -2254,12 +2368,12 @@ export default function OAuthManagement() {
                       if (checked) setOauthSystemProxyEnabled(false);
                     }}
                   />
-                  <span>{tr('pages.oAuthManagement.usageActing')}</span>
+                  <span>{tr('pages.oAuthManagement.useCustomProxy')}</span>
                 </Label>
               </div>
 
               <div className="grid gap-2">
-                <Label>{tr('pages.oAuthManagement.acting3')}</Label>
+                <Label>{tr('pages.oAuthManagement.proxyProjectColumn3')}</Label>
                 <Input
                   type="text"
                   value={oauthProxyUrl}
@@ -2280,7 +2394,7 @@ export default function OAuthManagement() {
                       || actionLoadingKey.startsWith('start:')
                     }
                   >
-                    {actionLoadingKey === `save-proxy:${drawerIntent.account.accountId}` ? tr('pages.accounts.saving') : tr('pages.oAuthManagement.saveacting')}
+                    {actionLoadingKey === `save-proxy:${drawerIntent.account.accountId}` ? tr('pages.accounts.saving') : tr('pages.oAuthManagement.saveProxy')}
                   </Button>
                   <Button variant="outline"
                     type="button"
@@ -2292,7 +2406,7 @@ export default function OAuthManagement() {
                       || actionLoadingKey === `save-proxy:${drawerIntent.account.accountId}`
                     }
                   >
-                    {actionLoadingKey.startsWith('start:') ? tr('pages.oAuthManagement.zh') : tr('pages.oAuthManagement.saveReauthorize')}
+                    {actionLoadingKey.startsWith('start:') ? tr('pages.oAuthManagement.starting') : tr('pages.oAuthManagement.saveReauthorize')}
                   </Button>
                 </div>
               ) : (
@@ -2302,7 +2416,7 @@ export default function OAuthManagement() {
                   disabled={!selectedProvider || !selectedProvider.enabled || actionLoadingKey.startsWith('start:')}
                 >
                   {actionLoadingKey.startsWith('start:')
-                    ? tr('pages.oAuthManagement.zh')
+                    ? tr('pages.oAuthManagement.starting')
                     : drawerIntent.mode === 'rebind'
                       ? `重新授权 ${selectedProvider?.label || ''}`.trim()
                       : `连接 ${selectedProvider?.label || ''}`.trim()}
@@ -2370,7 +2484,7 @@ export default function OAuthManagement() {
                           onClick={handleSubmitManualCallback}
                           disabled={manualCallbackSubmitting}
                         >
-                          {manualCallbackSubmitting ? tr('pages.oAuthManagement.zh2') : tr('pages.oAuthManagement.url')}
+                          {manualCallbackSubmitting ? tr('pages.oAuthManagement.submitting') : tr('pages.oAuthManagement.url')}
                         </Button>
                         <Button variant="outline"
                           type="button"
@@ -2444,7 +2558,7 @@ export default function OAuthManagement() {
           {importDrafts.length > 0 ? (
             <>
               <div className="font-medium">{tr('pages.oAuthManagement.selected')} {importDrafts.length} {tr('pages.oAuthManagement.jsonSelect')}</div>
-              <div className="text-sm text-muted-foreground">{tr('pages.oAuthManagement.supportedImportZhOauthAccounts')}</div>
+              <div className="text-sm text-muted-foreground">{tr('pages.oAuthManagement.importSelectedOauthAccountsOnly')}</div>
               <div className="grid gap-2 text-left">
                 {importDrafts.map((draft) => (
                   <div key={draft.sourceName} className="rounded-md border p-2 text-sm">
@@ -2466,7 +2580,7 @@ export default function OAuthManagement() {
           )}
         </div>
         <div className="text-sm text-muted-foreground">
-          {tr('pages.oAuthManagement.importAccountsactingCurrentlyRunningConfiguredsystemactingDefaultUsagesystem')}
+          {tr('pages.oAuthManagement.importProxyDefaultDescription')}
         </div>
         <div className="grid gap-3">
           <Label className="flex items-center gap-2">
@@ -2482,7 +2596,7 @@ export default function OAuthManagement() {
                 }
               }}
             />
-            <span>{tr('pages.oAuthManagement.usagesystemActing')}</span>
+            <span>{tr('pages.oAuthManagement.useSystemProxy')}</span>
           </Label>
           <Label className="flex items-center gap-2">
             <Checkbox
@@ -2494,11 +2608,11 @@ export default function OAuthManagement() {
                 if (checked) setImportSystemProxyEnabled(false);
               }}
             />
-            <span>{tr('pages.oAuthManagement.usageActing')}</span>
+            <span>{tr('pages.oAuthManagement.useCustomProxy')}</span>
           </Label>
         </div>
         <div className="grid gap-2">
-          <Label>{tr('pages.oAuthManagement.acting3')}</Label>
+          <Label>{tr('pages.oAuthManagement.proxyProjectColumn3')}</Label>
           <Input
             type="text"
             value={importProxyUrl}
@@ -2543,7 +2657,7 @@ export default function OAuthManagement() {
                       {item.email ? <span>{tr('pages.oAuthManagement.email2')}{item.email}</span> : null}
                       {item.accountKey ? <span>{tr('pages.oAuthManagement.accounts')}{item.accountKey}</span> : null}
                       {item.expiresLabel ? <span>{tr('pages.oAuthManagement.expires')}{item.expiresLabel}</span> : null}
-                      <span>{item.disabled ? tr('pages.oAuthManagement.statusImportDisabled') : tr('pages.oAuthManagement.statusImportEnabled')}</span>
+                      <span>{item.disabled ? tr('pages.oAuthManagement.importStatusDisabled') : tr('pages.oAuthManagement.importStatusEnabled')}</span>
                     </div>
                   ) : (
                     <div className="text-sm text-destructive">{item.error || tr('pages.oAuthManagement.jsonInvalid')}</div>

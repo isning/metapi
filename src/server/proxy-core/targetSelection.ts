@@ -182,12 +182,5 @@ export async function selectProxyTargetForAttempt(input: {
     selected = await tokenRouter.selectTarget(input.requestedModel, input.downstreamPolicy);
   }
 
-  console.log('SELECT_PROXY_TARGET RESULT:', {
-    requestedModel: input.requestedModel,
-    retryCount: input.retryCount,
-    stickySessionKey: input.stickySessionKey,
-    selectedId: selected?.target?.id,
-  });
-
   return selected;
 }

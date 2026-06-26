@@ -80,11 +80,16 @@ describe('refreshModelsForAccount credential discovery', () => {
     proxyAgentCtorMock.mockReset();
     refreshOauthAccessTokenSingleflightMock.mockReset();
 
-    await db.delete(schema.routeEndpointTargets).run();
-    await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.routeGraphDrafts).run();
     await db.delete(schema.routeGraphActiveVersion).run();
     await db.delete(schema.routeGraphVersions).run();
+    await db.delete(schema.routeGroupCandidates).run();
+    await db.delete(schema.routeGroupBuckets).run();
+    await db.delete(schema.routeSupplyEndpointState).run();
+    await db.delete(schema.routeSupplyEndpoints).run();
+    await db.delete(schema.routeGroups).run();
+    await db.delete(schema.routeEndpointTargets).run();
+    await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.tokenModelAvailability).run();
     await db.delete(schema.modelAvailability).run();
     await db.delete(schema.accountTokens).run();
@@ -2326,11 +2331,6 @@ describe('refreshModelsForAccount credential discovery', () => {
         exposure: 'none',
         ownership: 'auto_generated',
       }),
-      expect.objectContaining({
-        id: `route-endpoint:route:${generatedRoute!.id}`,
-        type: 'route_endpoint',
-        ownership: 'auto_generated',
-      }),
     ]));
     expect(activeGraph.sourceGraph.macros).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -2354,17 +2354,11 @@ describe('refreshModelsForAccount credential discovery', () => {
     expect(selection).toMatchObject({
       selectedRouteId: generatedRoute!.id,
       terminalKind: 'route_endpoint',
-      selectedEndpointTarget: expect.objectContaining({
-        targetId: String(channels[0].id),
-        accountId: channels[0].accountId,
-        model: 'gpt-5.4',
-        priority: channels[0].priority,
-        weight: channels[0].weight,
-        metadata: expect.objectContaining({
-          routeChannelId: channels[0].id,
-          oauthRouteUnitId: routeUnit.id,
-        }),
-      }),
+    });
+    expect(channels[0]).toMatchObject({
+      routeId: generatedRoute!.id,
+      oauthRouteUnitId: routeUnit.id,
+      sourceModel: 'gpt-5.4',
     });
   });
 });

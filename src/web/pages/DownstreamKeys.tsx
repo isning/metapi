@@ -37,6 +37,12 @@ import InfoNote from '../components/InfoNote.js';
 import SearchInput from '../components/SearchInput.js';
 import PageHeader from '../components/workspace/PageHeader.js';
 import PageShell from '../components/workspace/PageShell.js';
+import {
+  CreateActionButton,
+  PageActionBar,
+  SecondaryActionButton,
+  TableActionBar,
+} from '../components/workspace/ActionBar.js';
 import { Card } from '../components/ui/card/index.js';
 import { Badge } from '../components/ui/badge/index.js';
 import EmptyStateBlock from '../components/EmptyStateBlock.js';
@@ -392,6 +398,105 @@ function SummaryMetric({
       <span className="text-xs text-muted-foreground">{label}</span>
       <strong className="text-sm font-bold text-foreground">{value}</strong>
     </div>
+  );
+}
+
+function DownstreamKeysLoadingSkeleton({ isMobile }: { isMobile: boolean }) {
+  if (isMobile) {
+    return (
+      <div className="grid gap-3" aria-busy="true">
+        {Array.from({ length: 4 }).map((_, index) => (
+          <MobileCard
+            key={index}
+            className={`animate-slide-up stagger-${Math.min(index + 1, 5)}`}
+            title={<Skeleton className="h-5 w-40" />}
+            headerActions={<Skeleton className="h-5 w-16 rounded-full" />}
+          >
+            <div className="grid gap-3">
+              <Skeleton className="h-4 w-48" />
+              <Skeleton className="h-4 w-36" />
+              <Skeleton className="h-4 w-56 max-w-full" />
+              <div className="flex flex-wrap gap-2">
+                <Skeleton className="h-5 w-20 rounded-full" />
+                <Skeleton className="h-5 w-24 rounded-full" />
+                <Skeleton className="h-5 w-16 rounded-full" />
+              </div>
+              <div className="flex flex-wrap justify-end gap-2">
+                <Skeleton className="h-8 w-14" />
+                <Skeleton className="h-8 w-14" />
+                <Skeleton className="h-8 w-20" />
+              </div>
+            </div>
+          </MobileCard>
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <DataTable minWidth={1120} density="compact" aria-busy="true">
+      <DataTableToolbar className="border-b bg-muted/30 px-4">
+        <div className="grid gap-1">
+          <Skeleton className="h-4 w-32" />
+          <Skeleton className="h-3 w-56" />
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Skeleton className="h-8 w-24" />
+          <Skeleton className="h-8 w-20" />
+          <Skeleton className="h-8 w-20" />
+        </div>
+      </DataTableToolbar>
+      <Table className="w-full text-sm">
+        <TableHeader>
+          <TableRow>
+            <TableHead className="w-[42px]" />
+            <TableHead>{tr('pages.downstreamKeys.keyinfo')}</TableHead>
+            <TableHead>{tr('pages.downstreamKeys.authorizationScope')}</TableHead>
+            <TableHead className="text-right">{tr('pages.downstreamKeys.quota')}</TableHead>
+            <TableHead className="text-right">{tr('pages.downstreamKeys.usage')}</TableHead>
+            <TableHead>{tr('pages.downstreamKeys.recentUsage')}</TableHead>
+            <TableHead className="text-right">{tr('pages.accounts.actions2')}</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {Array.from({ length: 6 }).map((_, index) => (
+            <TableRow key={index} className={`animate-slide-up stagger-${Math.min(index + 1, 5)}`}>
+              <TableCell><Skeleton className="size-4" /></TableCell>
+              <TableCell>
+                <div className="grid gap-2">
+                  <div className="flex items-center gap-2">
+                    <Skeleton className="h-4 w-36" />
+                    <Skeleton className="h-5 w-14 rounded-full" />
+                  </div>
+                  <Skeleton className="h-3 w-44" />
+                  <div className="flex flex-wrap gap-2">
+                    <Skeleton className="h-5 w-24 rounded-full" />
+                    <Skeleton className="h-5 w-16 rounded-full" />
+                  </div>
+                </div>
+              </TableCell>
+              <TableCell>
+                <div className="grid gap-2">
+                  <Skeleton className="h-3 w-48" />
+                  <Skeleton className="h-3 w-40" />
+                  <Skeleton className="h-3 w-32" />
+                </div>
+              </TableCell>
+              <TableCell><Skeleton className="ml-auto h-5 w-20" /></TableCell>
+              <TableCell><Skeleton className="ml-auto h-5 w-20" /></TableCell>
+              <TableCell><Skeleton className="h-4 w-28" /></TableCell>
+              <TableCell>
+                <div className="flex justify-end gap-1">
+                  <Skeleton className="h-8 w-16" />
+                  <Skeleton className="h-8 w-14" />
+                  <Skeleton className="size-8" />
+                </div>
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </DataTable>
   );
 }
 
@@ -1009,13 +1114,24 @@ export default function DownstreamKeys() {
         title={tr('app.downstreamKeys')}
         description={tr('pages.downstreamKeys.keyPrimaryGroupTagsQuotaModelGroups')}
         actions={(
-          <>
-          <RangeToggle range={range} onChange={setRange} />
-          <Button type="button" variant="outline" onClick={() => void load()} disabled={loading}>
-            {loading ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.downstreamKeys.refreshzh')}</> : tr('pages.accounts.refresh')}
-          </Button>
-          <Button type="button" onClick={openCreate}>{tr('pages.downstreamKeys.newDownstreamKey')}</Button>
-          </>
+          <PageActionBar>
+            <RangeToggle range={range} onChange={setRange} />
+            <SecondaryActionButton
+              type="button"
+              icon={RotateCcw}
+              loading={loading}
+              loadingLabel={tr('pages.downstreamKeys.refreshing')}
+              onClick={() => void load()}
+              disabled={loading}
+            >
+              {tr('pages.accounts.refresh')}
+            </SecondaryActionButton>
+            <CreateActionButton
+              type="button"
+              label={tr('pages.downstreamKeys.newDownstreamKey')}
+              onClick={openCreate}
+            />
+          </PageActionBar>
         )}
       />
 
@@ -1039,8 +1155,8 @@ export default function DownstreamKeys() {
         </div>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
           <SummaryMetric label={tr('pages.downstreamKeys.visibleKey')} value={String(visibleItems.length)} />
-          <SummaryMetric label={tr('pages.downstreamKeys.enabledzh')} value={String(totals.enabled)} />
-          <SummaryMetric label={tr('pages.downstreamKeys.selectedzh')} value={String(selectedIds.length)} />
+          <SummaryMetric label={tr('pages.downstreamKeys.enabledCount')} value={String(totals.enabled)} />
+          <SummaryMetric label={tr('pages.downstreamKeys.selectedCount')} value={String(selectedIds.length)} />
           <SummaryMetric label={tr('components.charts.downstreamKeyTrendChart.requests')} value={totals.requests.toLocaleString()} />
           <SummaryMetric label={tr('pages.downstreamKeys.cost')} value={formatMoney(totals.cost)} />
           <SummaryMetric label={tr('pages.downstreamKeys.filterstatus')} value={statusOptions.find((item) => item.value === status)?.label || tr('pages.downstreamKeys.allstatus')} />
@@ -1060,7 +1176,7 @@ export default function DownstreamKeys() {
         </ResponsiveBatchActionBar>
       ) : null}
 
-      <Card className="flex flex-col gap-3 p-3">
+      <section className="grid gap-3">
         <div className="flex flex-col gap-2.5">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
@@ -1093,12 +1209,12 @@ export default function DownstreamKeys() {
         </div>
 
         {loading ? (
-          <Skeleton className="h-[280px] w-full" />
+          <DownstreamKeysLoadingSkeleton isMobile={isMobile} />
         ) : empty ? (
           <EmptyStateBlock title={tr('pages.downstreamKeys.noDownstreamKeys')} description={tr('pages.downstreamKeys.itemskeyFilteritemsViewing')} />
         ) : isMobile ? (
           <div className="grid gap-3">
-            {visibleItems.map((row) => {
+            {visibleItems.map((row, index) => {
               const loadingToggle = !!rowLoading[`toggle-${row.id}`];
               const loadingReset = !!rowLoading[`reset-${row.id}`];
               const loadingDelete = !!rowLoading[`delete-${row.id}`];
@@ -1106,6 +1222,7 @@ export default function DownstreamKeys() {
               return (
                 <MobileCard
                   key={row.id}
+                  className={`animate-slide-up stagger-${Math.min(index + 1, 5)}`}
                   title={row.name}
                   headerActions={(
                     <div className="flex items-center gap-2">
@@ -1121,9 +1238,9 @@ export default function DownstreamKeys() {
                     <>
                       <Button type="button" variant="ghost" size="sm" onClick={() => { setSelectedId(row.id); setDrawerOpen(true); }}>{tr('pages.downstreamKeys.viewing')}</Button>
                       <Button type="button" variant="ghost" size="sm" onClick={() => openEdit(row)}>{tr('pages.accounts.edit')}</Button>
-                      <Button type="button" variant="ghost" size="sm" onClick={() => void toggleEnabled(row)} disabled={loadingToggle}>{loadingToggle ? tr('pages.downstreamKeys.zh') : (row.enabled ? tr('pages.downstreamKeys.disabled') : tr('pages.downstreamKeys.enabled'))}</Button>
-                      <Button type="button" variant="ghost" size="sm" onClick={() => void resetUsage(row)} disabled={loadingReset}>{loadingReset ? tr('pages.downstreamKeys.zh') : tr('pages.downstreamKeys.clearUsage')}</Button>
-                      <Button type="button" variant="destructive" size="sm" onClick={() => setDeleteConfirm({ mode: 'single', item: row })} disabled={loadingDelete}>{loadingDelete ? tr('pages.downstreamKeys.zh') : tr('pages.accounts.delete3')}</Button>
+                      <Button type="button" variant="ghost" size="sm" onClick={() => void toggleEnabled(row)} disabled={loadingToggle}>{loadingToggle ? tr('pages.downstreamKeys.processing') : (row.enabled ? tr('pages.downstreamKeys.disabled') : tr('pages.downstreamKeys.enabled'))}</Button>
+                      <Button type="button" variant="ghost" size="sm" onClick={() => void resetUsage(row)} disabled={loadingReset}>{loadingReset ? tr('pages.downstreamKeys.processing') : tr('pages.downstreamKeys.clearUsage')}</Button>
+                      <Button type="button" variant="destructive" size="sm" onClick={() => setDeleteConfirm({ mode: 'single', item: row })} disabled={loadingDelete}>{loadingDelete ? tr('pages.downstreamKeys.processing') : tr('pages.accounts.delete3')}</Button>
                     </>
                   )}
                 >
@@ -1151,13 +1268,19 @@ export default function DownstreamKeys() {
             })}
           </div>
         ) : (
-          <DataTable minWidth={1080}>
-            <DataTableToolbar className="border-b bg-muted/30">
-              <div className="text-sm text-muted-foreground">
-                <span className="sr-only">已选 {selectedIds.length} 个密钥</span>
-                已选 <span className="font-medium text-foreground">{selectedIds.length}</span> / {visibleItems.length} 个密钥
+          <DataTable minWidth={1120} density="compact">
+            <DataTableToolbar className="border-b bg-muted/30 px-4">
+              <div className="min-w-0">
+                <div className="text-sm font-semibold text-foreground">
+                  {selectedIds.length > 0
+                    ? `已选 ${selectedIds.length} 个密钥 / 共 ${visibleItems.length} 个`
+                    : `${visibleItems.length} 个密钥`}
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  {tr('pages.downstreamKeys.nameStatusPrimaryGroupTagsDownstreamKeys')}
+                </div>
               </div>
-              <div className="flex flex-wrap items-center gap-2">
+              <TableActionBar>
                 {selectedIds.length > 0 ? (
                   <>
                     <Button type="button" variant="outline" size="sm" onClick={openBatchMetadata} disabled={batchActionLoading}>
@@ -1190,7 +1313,7 @@ export default function DownstreamKeys() {
                     {tr('pages.downstreamKeys.selectVisible')}
                   </Button>
                 )}
-              </div>
+              </TableActionBar>
             </DataTableToolbar>
             <Table className="w-full text-sm">
               <TableHeader>
@@ -1207,13 +1330,18 @@ export default function DownstreamKeys() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {visibleItems.map((row) => {
+                {visibleItems.map((row, index) => {
                   const loadingToggle = !!rowLoading[`toggle-${row.id}`];
                   const loadingReset = !!rowLoading[`reset-${row.id}`];
                   const loadingDelete = !!rowLoading[`delete-${row.id}`];
                   const checked = selectedIds.includes(row.id);
                   return (
-                    <TableRow key={row.id} className="row-selectable" data-state={checked ? 'selected' : undefined} onClick={() => { setSelectedId(row.id); setDrawerOpen(true); }}>
+                    <TableRow
+                      key={row.id}
+                      className={`animate-slide-up stagger-${Math.min(index + 1, 5)} row-selectable ${checked ? 'row-selected' : ''}`.trim()}
+                      data-state={checked ? 'selected' : undefined}
+                      onClick={() => { setSelectedId(row.id); setDrawerOpen(true); }}
+                    >
                       <TableCell onClick={(e) => e.stopPropagation()}>
                         <Checkbox checked={checked} onCheckedChange={(checked) => toggleSelection(row.id, checked === true)} />
                       </TableCell>
@@ -1272,16 +1400,16 @@ export default function DownstreamKeys() {
                             <DropdownMenu.Content align="end">
                               <DropdownMenu.Item onSelect={() => void toggleEnabled(row)} disabled={loadingToggle}>
                                 {row.enabled ? <PowerOff className="size-4" /> : <Power className="size-4" />}
-                                {loadingToggle ? tr('pages.downstreamKeys.zh') : (row.enabled ? tr('pages.downstreamKeys.disabled') : tr('pages.downstreamKeys.enabled'))}
+                                {loadingToggle ? tr('pages.downstreamKeys.processing') : (row.enabled ? tr('pages.downstreamKeys.disabled') : tr('pages.downstreamKeys.enabled'))}
                               </DropdownMenu.Item>
                               <DropdownMenu.Item onSelect={() => void resetUsage(row)} disabled={loadingReset}>
                                 <RotateCcw className="size-4" />
-                                {loadingReset ? tr('pages.downstreamKeys.zh') : tr('pages.downstreamKeys.clearUsage')}
+                                {loadingReset ? tr('pages.downstreamKeys.processing') : tr('pages.downstreamKeys.clearUsage')}
                               </DropdownMenu.Item>
                               <DropdownMenu.Separator />
                               <DropdownMenu.Item variant="destructive" onSelect={() => setDeleteConfirm({ mode: 'single', item: row })} disabled={loadingDelete}>
                                 <Trash2 className="size-4" />
-                                {loadingDelete ? tr('pages.downstreamKeys.zh') : tr('pages.accounts.delete3')}
+                                {loadingDelete ? tr('pages.downstreamKeys.processing') : tr('pages.accounts.delete3')}
                               </DropdownMenu.Item>
                             </DropdownMenu.Content>
                           </DropdownMenu.Root>
@@ -1294,7 +1422,7 @@ export default function DownstreamKeys() {
             </Table>
           </DataTable>
         )}
-      </Card>
+      </section>
 
       <DownstreamKeyEditorModal
         open={editorOpen}
@@ -1328,7 +1456,7 @@ export default function DownstreamKeys() {
         )}
       >
         <InfoNote>
-          {tr('pages.downstreamKeys.selectedzh2')} {selectedIds.length} {tr('pages.downstreamKeys.keySettingsprimaryGroupAppendTagsModelGroups')}
+          {tr('pages.downstreamKeys.selectedActionPrefix')} {selectedIds.length} {tr('pages.downstreamKeys.keySettingsprimaryGroupAppendTagsModelGroups')}
         </InfoNote>
         <div className="grid grid-cols-2 gap-3">
           <div className="flex flex-col gap-2">
@@ -1381,7 +1509,7 @@ export default function DownstreamKeys() {
         loading={batchActionLoading || (deleteConfirm?.mode === 'single' && !!rowLoading[`delete-${deleteConfirm.item.id}`])}
         description={deleteConfirm?.mode === 'single'
           ? <>{tr('pages.downstreamKeys.deletekey')} <strong>{deleteConfirm.item.name}</strong> {tr('pages.accounts.textqcmnqj')}</>
-          : <>{tr('pages.accounts.deleteZh')} <strong>{deleteConfirm?.ids.length || 0}</strong> {tr('pages.downstreamKeys.keys')}</>}
+          : <>{tr('pages.accounts.confirmDeleteSelectedPrefix')} <strong>{deleteConfirm?.ids.length || 0}</strong> {tr('pages.downstreamKeys.keys')}</>}
       />
 
       <DownstreamKeyDrawer

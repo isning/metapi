@@ -74,6 +74,11 @@ describe('routeGraphService ownership guards', () => {
     await db.delete(schema.routeGraphDrafts).run();
     await db.delete(schema.routeGraphActiveVersion).run();
     await db.delete(schema.routeGraphVersions).run();
+    await db.delete(schema.routeGroupCandidates).run();
+    await db.delete(schema.routeGroupBuckets).run();
+    await db.delete(schema.routeSupplyEndpointState).run();
+    await db.delete(schema.routeSupplyEndpoints).run();
+    await db.delete(schema.routeGroups).run();
     await db.delete(schema.routeGroupSources).run();
     await db.delete(schema.routeEndpointTargets).run();
     await db.delete(schema.accountTokens).run();
@@ -782,24 +787,38 @@ describe('routeGraphService ownership guards', () => {
       enabled: true,
     });
     const routeId = Number(routeInsert.lastInsertRowid || routeInsert.insertId);
-    const { accountId, tokenId } = await seedAccountToken('auto-native');
-    await db.insert(schema.routeEndpointTargets).values({
-      routeId,
-      accountId,
-      tokenId,
-      sourceModel: 'gpt-auto-native',
-      priority: 0,
-      weight: 10,
-      enabled: true,
-    });
+    const first = await seedAccountToken('auto-native');
+    const second = await seedAccountToken('auto-native-alt');
+    await db.insert(schema.routeEndpointTargets).values([
+      {
+        routeId,
+        accountId: first.accountId,
+        tokenId: first.tokenId,
+        sourceModel: 'gpt-auto-native',
+        priority: 0,
+        weight: 10,
+        enabled: true,
+      },
+      {
+        routeId,
+        accountId: second.accountId,
+        tokenId: second.tokenId,
+        sourceModel: 'gpt-auto-native',
+        priority: 0,
+        weight: 10,
+        enabled: true,
+      },
+    ]);
 
     const graph = await buildRouteGraphSourceFromRouteTable();
-    const supplyEndpoint = graph.nodes.find((node) => (
+    const supplyEndpoints = graph.nodes.filter((node) => (
       node.type === 'route_endpoint'
       && node.endpointKind === 'supply'
       && node.routeId === routeId
     ));
-    expect(supplyEndpoint?.id).toEqual(expect.stringMatching(/^route-endpoint:supply:upstream-model:/));
+    expect(supplyEndpoints).toHaveLength(2);
+    const supplyEndpointIds = supplyEndpoints.map((node) => node.id).sort();
+    expect(supplyEndpointIds[0]).toEqual(expect.stringMatching(/^route-endpoint:supply:upstream-model:/));
     expect(graph.macros).toEqual(expect.arrayContaining([
       expect.objectContaining({
         id: 'auto-model:gpt-auto-native',
@@ -820,12 +839,15 @@ describe('routeGraphService ownership guards', () => {
           }),
           groups: [
             expect.objectContaining({
-              input: { kind: 'route_endpoints', endpointIds: [supplyEndpoint?.id] },
+              priority: 0,
+              input: { kind: 'route_endpoints', endpointIds: expect.arrayContaining(supplyEndpointIds) },
             }),
           ],
         }),
       }),
     ]));
+    const autoMacro = graph.macros?.find((macro) => macro.id === 'auto-model:gpt-auto-native');
+    expect(autoMacro?.config.groups).toHaveLength(1);
     expect(graph.nodes).toEqual(expect.arrayContaining([
       expect.objectContaining({
         id: `route-endpoint:product:auto-model:gpt-auto-native`,
@@ -834,7 +856,7 @@ describe('routeGraphService ownership guards', () => {
         endpointKind: 'route_product',
       }),
       expect.objectContaining({
-        id: supplyEndpoint?.id,
+        id: supplyEndpointIds[0],
         type: 'route_endpoint',
         ownership: 'auto_generated',
         endpointKind: 'supply',

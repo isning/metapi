@@ -68,13 +68,6 @@ describe('settings and auth events', () => {
     (config as any).proxyFirstByteTimeoutSec = 0;
     (config as any).tokenRouterFailureCooldownMaxSec = 30 * 24 * 60 * 60;
     (config as any).disableCrossProtocolFallback = false;
-    (config as any).payloadRules = {
-      default: [],
-      defaultRaw: [],
-      override: [],
-      overrideRaw: [],
-      filter: [],
-    };
     (config as any).telegramEnabled = false;
     (config as any).telegramApiBaseUrl = 'https://api.telegram.org';
     (config as any).telegramBotToken = '';
@@ -226,101 +219,6 @@ describe('settings and auth events', () => {
     expect(savedTargetModel?.value).toBe(JSON.stringify('gpt-4o'));
     expect(savedRetentionHours?.value).toBe(JSON.stringify(12));
     expect(savedMaxBodyBytes?.value).toBe(JSON.stringify(131072));
-  });
-
-  it('persists payload rules and returns the normalized runtime value', async () => {
-    const response = await app.inject({
-      method: 'PUT',
-      url: '/api/settings/runtime',
-      payload: {
-        payloadRules: {
-          override: [
-            {
-              models: [{ name: 'gpt-*', protocol: 'codex' }],
-              params: {
-                'reasoning.effort': 'high',
-              },
-            },
-          ],
-          'override-raw': [
-            {
-              models: [{ name: 'gpt-*', protocol: 'codex' }],
-              params: {
-                response_format: '{"type":"json_schema"}',
-              },
-            },
-          ],
-        },
-      },
-    });
-
-    expect(response.statusCode).toBe(200);
-    const payload = response.json() as {
-      payloadRules?: {
-        default?: unknown[];
-        defaultRaw?: unknown[];
-        override?: Array<{ params?: Record<string, unknown> }>;
-        overrideRaw?: Array<{ params?: Record<string, unknown> }>;
-        filter?: unknown[];
-      };
-    };
-    expect(payload.payloadRules).toEqual({
-      default: [],
-      defaultRaw: [],
-      override: [
-        {
-          models: [{ name: 'gpt-*', protocol: 'codex' }],
-          params: {
-            'reasoning.effort': 'high',
-          },
-        },
-      ],
-      overrideRaw: [
-        {
-          models: [{ name: 'gpt-*', protocol: 'codex' }],
-          params: {
-            response_format: '{"type":"json_schema"}',
-          },
-        },
-      ],
-      filter: [],
-    });
-
-    const saved = await db.select().from(schema.settings).where(eq(schema.settings.key, 'payload_rules')).get();
-    expect(saved).toBeTruthy();
-    expect(JSON.parse(String(saved?.value))).toEqual(payload.payloadRules);
-    expect(config.payloadRules).toEqual(payload.payloadRules);
-
-    const events = await db.select().from(schema.events).all();
-    expect(events.some((event) => (event.message || '').includes('Payload 规则'))).toBe(true);
-  });
-
-  it('rejects invalid payload raw rules with a clear message', async () => {
-    const response = await app.inject({
-      method: 'PUT',
-      url: '/api/settings/runtime',
-      payload: {
-        payloadRules: {
-          'override-raw': [
-            {
-              models: [{ name: 'gpt-*', protocol: 'codex' }],
-              params: {
-                response_format: '{broken-json',
-              },
-            },
-          ],
-        },
-      },
-    });
-
-    expect(response.statusCode).toBe(400);
-    expect(response.json()).toMatchObject({
-      success: false,
-      message: 'Payload 规则 override-raw 第 1 条的 response_format 不是合法 JSON',
-    });
-
-    const saved = await db.select().from(schema.settings).where(eq(schema.settings.key, 'payload_rules')).get();
-    expect(saved).toBeFalsy();
   });
 
   it('returns current recognized admin IP in runtime settings response', async () => {
@@ -538,33 +436,6 @@ describe('settings and auth events', () => {
     expect(response.statusCode).toBe(400);
     expect((response.json() as { message?: string }).message).toContain('Telegram 使用系统代理');
     expect((config as any).telegramUseSystemProxy).toBe(false);
-  });
-
-  it('persists and returns routing fallback unit cost from runtime settings', async () => {
-    const updateResponse = await app.inject({
-      method: 'PUT',
-      url: '/api/settings/runtime',
-      payload: {
-        routingFallbackUnitCost: 0.25,
-      },
-    });
-
-    expect(updateResponse.statusCode).toBe(200);
-    const updated = updateResponse.json() as { routingFallbackUnitCost?: number };
-    expect(updated.routingFallbackUnitCost).toBe(0.25);
-    expect(config.routingFallbackUnitCost).toBe(0.25);
-
-    const saved = await db.select().from(schema.settings).where(eq(schema.settings.key, 'routing_fallback_unit_cost')).get();
-    expect(saved).toBeTruthy();
-    expect(saved?.value).toBe(JSON.stringify(0.25));
-
-    const getResponse = await app.inject({
-      method: 'GET',
-      url: '/api/settings/runtime',
-    });
-    expect(getResponse.statusCode).toBe(200);
-    const runtime = getResponse.json() as { routingFallbackUnitCost?: number };
-    expect(runtime.routingFallbackUnitCost).toBe(0.25);
   });
 
   it('persists and returns token router failure cooldown cap from runtime settings', async () => {

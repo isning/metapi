@@ -2,9 +2,9 @@ import { FastifyInstance } from 'fastify';
 import { db, schema } from '../../db/index.js';
 import { config } from '../../config.js';
 import { eq } from 'drizzle-orm';
-import { formatUtcSqlDateTime } from '../../services/localTimeService.js';
 import { createRateLimitGuard } from '../../middleware/requestRateLimit.js';
 import { parseAuthChangePayload } from '../../contracts/supportRoutePayloads.js';
+import { emitInboxItem } from '../../services/inboxService.js';
 
 const limitAdminTokenChange = createRateLimitGuard({
   bucket: 'auth-change',
@@ -49,15 +49,19 @@ export async function authRoutes(app: FastifyInstance) {
     config.authToken = newToken;
 
     try {
-      const createdAt = formatUtcSqlDateTime(new Date());
-      await db.insert(schema.events).values({
+      await emitInboxItem({
+        scope: 'notification',
+        category: 'auth',
+        severity: 'warning',
         type: 'token',
         title: '管理员登录令牌已更新',
+        summary: '管理员登录 Token 已被修改。',
         message: '管理员登录 Token 已被修改，请使用新 Token 登录。',
         level: 'warning',
+        subject: { type: 'settings', label: 'auth_token' },
+        source: 'auth',
         relatedType: 'settings',
-        createdAt,
-      }).run();
+      });
     } catch {}
 
     return { success: true, message: 'Token 已更新' };

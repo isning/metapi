@@ -112,6 +112,30 @@ describe('sqlite migrate bootstrap', () => {
     vi.resetModules();
   });
 
+  it('does not use non-constant datetime defaults when adding sqlite columns', () => {
+    const offenders: string[] = [];
+    for (const entry of readMigrationJournalEntries()) {
+      const sqlText = readFileSync(join(migrationsDir, `${entry.tag}.sql`), 'utf8');
+      const statements = sqlText
+        .split('--> statement-breakpoint')
+        .map((statement) => statement.trim())
+        .filter(Boolean);
+
+      for (const statement of statements) {
+        const normalized = statement.replace(/\s+/g, ' ').toLowerCase();
+        if (
+          normalized.startsWith('alter table')
+          && normalized.includes(' add column ')
+          && normalized.includes("default (datetime('now'))")
+        ) {
+          offenders.push(`${entry.tag}: ${statement}`);
+        }
+      }
+    }
+
+    expect(offenders).toEqual([]);
+  });
+
   it('accepts an already-synced sqlite schema with an empty drizzle journal', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'metapi-migrate-'));
     const dbPath = join(dataDir, 'hub.db');

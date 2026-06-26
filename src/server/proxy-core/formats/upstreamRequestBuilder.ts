@@ -1,7 +1,5 @@
 import type { UpstreamEndpoint } from '../orchestration/upstreamRequest.js';
 import { resolvePlatformProfile } from '../platforms/registry.js';
-import { config } from '../../config.js';
-import { applyPayloadRules } from '../../services/payloadRules.js';
 import {
   applyRouteGraphPostBuildFilters,
   type RouteGraphPostBuildFilters,
@@ -40,20 +38,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function asTrimmedString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
-}
-
-function resolveRequestedModelForPayloadRules(input: {
-  modelName: string;
-  openaiBody: Record<string, unknown>;
-  claudeOriginalBody?: Record<string, unknown>;
-  responsesOriginalBody?: Record<string, unknown>;
-}): string {
-  return (
-    asTrimmedString(input.responsesOriginalBody?.model)
-    || asTrimmedString(input.claudeOriginalBody?.model)
-    || asTrimmedString(input.openaiBody.model)
-    || asTrimmedString(input.modelName)
-  );
 }
 
 function normalizePlatformName(platform: unknown): string {
@@ -339,18 +323,6 @@ export function buildUpstreamEndpointRequest(input: {
     ? applyOpenAiChatReasoningHistoryTransport(input.openaiBody, input.compatibilityPolicy)
     : input.openaiBody;
   const cleanOpenaiBody = stripGeminiUnsupportedFields(policyOpenAiBody);
-  const requestedModelForPayloadRules = resolveRequestedModelForPayloadRules(input);
-
-  const applyConfiguredPayloadRules = <T extends Record<string, unknown>>(bodyContent: T): T => {
-    return applyPayloadRules({
-      rules: config.payloadRules,
-      payload: bodyContent,
-      modelName: input.modelName,
-      requestedModel: requestedModelForPayloadRules,
-      protocol: sitePlatform,
-    }) as T;
-  };
-
   let targetPath = '';
   if (input.endpoint === 'messages') {
     targetPath = '/v1/messages';
@@ -399,7 +371,7 @@ export function buildUpstreamEndpointRequest(input: {
       modelName: input.modelName,
       instructions,
     });
-    resolvedBody = applyConfiguredPayloadRules(geminiRequest);
+    resolvedBody = geminiRequest;
   } else if (input.endpoint === 'messages') {
     const nativeClaudeBody = (
       input.downstreamFormat === 'claude'
@@ -429,7 +401,7 @@ export function buildUpstreamEndpointRequest(input: {
       ?? sanitizeAnthropicMessagesBody(
         convertOpenAiBodyToAnthropicMessagesBody(cleanOpenaiBody, input.modelName, input.stream),
       );
-    resolvedBody = applyConfiguredPayloadRules(sanitizedBody);
+    resolvedBody = sanitizedBody;
   } else if (input.endpoint === 'responses') {
     const responsesWebsocketTransport = getInputHeader(
       input.downstreamHeaders,
@@ -458,7 +430,7 @@ export function buildUpstreamEndpointRequest(input: {
     );
     resolvedBody = normalizeCodexResponsesBodyForProxy(
       normalizeSub2ApiResponsesBodyForProxy(
-        applyConfiguredPayloadRules(tempBody),
+        tempBody,
         sitePlatform,
       ),
       sitePlatform,
@@ -474,10 +446,10 @@ export function buildUpstreamEndpointRequest(input: {
     input.endpoint.startsWith('images/') ||
     input.endpoint.startsWith('videos/')
   ) {
-    resolvedBody = applyConfiguredPayloadRules({
+    resolvedBody = {
       ...cleanOpenaiBody,
       model: input.modelName,
-    });
+    };
   } else {
     headers = ensureStreamAcceptHeader(commonHeaders, input.stream);
     const chatBody = {
@@ -485,11 +457,9 @@ export function buildUpstreamEndpointRequest(input: {
       model: input.modelName,
       stream: input.stream,
     };
-    resolvedBody = applyConfiguredPayloadRules(
-      input.downstreamFormat === 'responses'
-        ? sanitizeResponsesFallbackChatBody(chatBody)
-        : chatBody,
-    );
+    resolvedBody = input.downstreamFormat === 'responses'
+      ? sanitizeResponsesFallbackChatBody(chatBody)
+      : chatBody;
   }
 
   if (platformProfile) {

@@ -28,6 +28,7 @@ import ResponsiveFormGrid from "../components/ResponsiveFormGrid.js";
 import SiteBadgeLink from "../components/SiteBadgeLink.js";
 import { MobileCard, MobileField } from "../components/MobileCard.js";
 import ResponsiveFilterPanel from "../components/ResponsiveFilterPanel.js";
+import SegmentedTabBar from "../components/SegmentedTabBar.js";
 import { useIsMobile } from "../components/useIsMobile.js";
 import { formatDateTimeLocal } from "./helpers/checkinLogTime.js";
 import { parseProxyLogPathMeta } from "./helpers/proxyLogPathMeta.js";
@@ -64,6 +65,7 @@ import {
   TableHeader,
   TableRow,
 } from '../components/ui/table/index.js';
+import { DataTable, DataTableEmpty, DataTableToolbar } from '../components/ui/data-table/index.js';
 import { Alert, AlertDescription } from '../components/ui/alert/index.js';
 import {
   Activity,
@@ -663,7 +665,7 @@ function formatProxyDebugTargetSummary(settings: ProxyDebugSettingsState) {
       ? `模型 ${settings.proxyDebugTargetModel}`
       : null,
   ].filter(Boolean);
-  return parts.length > 0 ? parts.join("，") : tr('pages.proxyLogs.zhRequest');
+  return parts.length > 0 ? parts.join("，") : tr('pages.proxyLogs.recordAllMatchingRequests');
 }
 
 function stringifyStoredDebugValue(value: unknown): string | null {
@@ -1669,7 +1671,7 @@ export default function ProxyLogs() {
         });
       } catch (error: any) {
         if (!options?.suppressToast) {
-          toast.error(error?.message || tr('pages.proxyLogs.actingdebugFailed2'));
+          toast.error(error?.message || tr('pages.proxyLogs.proxyDebugTraceFailed2'));
         }
       } finally {
         if (!options?.silent) setDebugPanelLoading(false);
@@ -1694,7 +1696,7 @@ export default function ProxyLogs() {
           : [];
         await syncDebugTraceItems(items, { refreshSelectedDetail: true });
       } catch (error: any) {
-        toast.error(error?.message || tr('pages.proxyLogs.actingdebugFailed'));
+        toast.error(error?.message || tr('pages.proxyLogs.proxyDebugTraceFailed'));
       } finally {
         if (!silent) setDebugPanelLoading(false);
       }
@@ -1755,7 +1757,7 @@ export default function ProxyLogs() {
         });
         return normalized;
       } catch (error: any) {
-        toast.error(error?.message || tr('pages.proxyLogs.saveactingdebugsettingsfailed'));
+        toast.error(error?.message || tr('pages.proxyLogs.saveProxyDebugSettingsFailed'));
         return null;
       } finally {
         setDebugPanelSaving(false);
@@ -1766,7 +1768,7 @@ export default function ProxyLogs() {
 
   const handleSaveDebugSettings = useCallback(async () => {
     await persistDebugSettings(debugDraftSettings, {
-      successMessage: tr('pages.proxyLogs.actingdebugsettingsSave'),
+      successMessage: tr('pages.proxyLogs.proxyDebugTracesettingsSave'),
       closeAfterSave: true,
     });
   }, [debugDraftSettings, persistDebugSettings]);
@@ -1779,8 +1781,8 @@ export default function ProxyLogs() {
       },
       {
         successMessage: debugSettings.proxyDebugTraceEnabled
-          ? tr('pages.proxyLogs.actingdebugClose')
-          : tr('pages.proxyLogs.actingdebugTurn'),
+          ? tr('pages.proxyLogs.proxyDebugTraceClose')
+          : tr('pages.proxyLogs.proxyDebugTraceTurn'),
       },
     );
   }, [debugSettings, persistDebugSettings]);
@@ -1970,7 +1972,7 @@ export default function ProxyLogs() {
     if (selectedDebugTraceDetail?.loading) {
       return (
         <div className="text-sm text-muted-foreground">
-          {tr('pages.proxyLogs.traceDetailszh')}
+          {tr('pages.proxyLogs.loadingTraceDetails')}
         </div>
       );
     }
@@ -2097,7 +2099,7 @@ export default function ProxyLogs() {
           </div>
           {attempts.length === 0 ? (
             <div className="text-sm text-muted-foreground">
-              {tr('pages.proxyLogs.noneAttempt')}
+              {tr('pages.proxyLogs.noAttemptRecords')}
             </div>
           ) : (
             <div className="proxy-trace-timeline">
@@ -2110,42 +2112,21 @@ export default function ProxyLogs() {
   }
 
   const filterControls = (
-    <Card className="proxy-log-filter-card">
-      <CardContent className="p-3">
+    <div className="grid gap-3">
         <div className="proxy-log-filter-grid">
           <div className="proxy-log-filter-status">
-            <ButtonGroup>
-              {[
-                {
-                  key: "all" as ProxyLogStatusFilter,
-                  label: tr('components.notificationPanel.all'),
-                  count: summary.totalCount,
-                },
-                {
-                  key: "success" as ProxyLogStatusFilter,
-                  label: tr('pages.checkinLog.success'),
-                  count: summary.successCount,
-                },
-                {
-                  key: "failed" as ProxyLogStatusFilter,
-                  label: tr('pages.checkinLog.failed'),
-                  count: summary.failedCount,
-                },
-              ].map((tab) => (
-                <Button
-                  type="button"
-                  key={tab.key}
-                  variant={statusFilter === tab.key ? "secondary" : "outline"}
-                  onClick={() => {
-                    setStatusFilter(tab.key);
-                    setPage(1);
-                  }}
-                >
-                  {tab.label}{" "}
-                  <ToneBadge tone="-muted">{tab.count}</ToneBadge>
-                </Button>
-              ))}
-            </ButtonGroup>
+            <SegmentedTabBar<ProxyLogStatusFilter>
+              value={statusFilter}
+              onValueChange={(nextValue) => {
+                setStatusFilter(nextValue);
+                setPage(1);
+              }}
+              items={[
+                { value: "all", label: tr('components.notificationPanel.all'), count: summary.totalCount },
+                { value: "success", label: tr('pages.checkinLog.success'), count: summary.successCount },
+                { value: "failed", label: tr('pages.checkinLog.failed'), count: summary.failedCount },
+              ]}
+            />
           </div>
           <SearchInput
             className="proxy-log-filter-search"
@@ -2251,8 +2232,7 @@ export default function ProxyLogs() {
             <AppliedFilterPill label={tr('pages.proxyLogs.keyword')} value={activeSearchText} />
           ) : null}
         </div>
-      </CardContent>
-    </Card>
+    </div>
   );
 
   const latestDebugTrace = debugTraces[0] || null;
@@ -2305,7 +2285,7 @@ export default function ProxyLogs() {
   const debugSettingsForm = (
     <div className="grid gap-3">
       <InfoNote>
-        {tr('pages.proxyLogs.turnRequestSessionClientModeltargetedFilter')}
+        {tr('pages.proxyLogs.debugTraceTargetFilterDescription')}
       </InfoNote>
 
       <Card>
@@ -2313,10 +2293,10 @@ export default function ProxyLogs() {
           <CardTitle>{tr('pages.proxyLogs.content2')}</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-3">
-          {renderDebugCheckbox("proxyDebugTraceEnabled", tr('pages.proxyLogs.turnOndebug2'), tr('pages.proxyLogs.newRequestsWillWrittenDebugTracesOld'), "trace-enabled")}
+          {renderDebugCheckbox("proxyDebugTraceEnabled", tr('pages.proxyLogs.enableDebugTrace'), tr('pages.proxyLogs.newRequestsWillWrittenDebugTracesOld'), "trace-enabled")}
           {renderDebugCheckbox("proxyDebugCaptureHeaders", tr('pages.proxyLogs.captureRawRequestResponseHeaders'), tr('pages.proxyLogs.keepRawDownstreamHeadersUpstreamResponseHeaders'), "capture-headers")}
           {renderDebugCheckbox("proxyDebugCaptureBodies", tr('pages.proxyLogs.captureRequestResponseBodies'), tr('pages.proxyLogs.defaultBodyTurn'), "capture-bodies")}
-          {renderDebugCheckbox("proxyDebugCaptureStreamChunks", tr('pages.proxyLogs.streaming2'), tr('pages.proxyLogs.sseStreamingZh'), "capture-stream-chunks")}
+          {renderDebugCheckbox("proxyDebugCaptureStreamChunks", tr('pages.proxyLogs.streaming2'), tr('pages.proxyLogs.sseStreamingCompatibilityHint'), "capture-stream-chunks")}
         </CardContent>
       </Card>
 
@@ -2426,7 +2406,7 @@ export default function ProxyLogs() {
             <h2 className="truncate text-xl font-semibold">{tr('app.usageLogs')}</h2>
           </div>
           <div className="mt-1 text-sm text-muted-foreground">
-            {tr('pages.proxyLogs.sitesClientTimefilteractingrequestViewingrecentDebugTraces')}
+            {tr('pages.proxyLogs.filterProxyRequestsDescription')}
           </div>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
@@ -2434,10 +2414,10 @@ export default function ProxyLogs() {
             type="button"
             variant={autoRefresh ? "secondary" : "outline"}
             onClick={() => setAutoRefresh((v) => !v)}
-            title={autoRefresh ? tr('pages.proxyLogs.closeautomaticrefresh') : tr('pages.proxyLogs.turnOnautomaticrefresh2seconds')}
+            title={autoRefresh ? tr('pages.proxyLogs.closeautomaticrefresh') : tr('pages.proxyLogs.enableAutoRefreshEvery2Seconds')}
           >
             <RefreshCw className={autoRefresh ? "animate-spin" : undefined} />
-            {autoRefresh ? tr('pages.proxyLogs.automaticrefreshzh') : tr('pages.oAuthManagement.automaticrefresh')}
+            {autoRefresh ? tr('pages.proxyLogs.autoRefreshing') : tr('pages.oAuthManagement.automaticrefresh')}
           </Button>
           <Button
             type="button"
@@ -2512,13 +2492,13 @@ export default function ProxyLogs() {
           <div className="min-w-0">
             <div className="flex min-w-0 items-center gap-2">
               <Bug className="size-4 text-primary" />
-              <CardTitle>{tr('pages.proxyLogs.actingdebug')}</CardTitle>
+              <CardTitle>{tr('pages.proxyLogs.proxyDebugTrace')}</CardTitle>
               <ToneBadge tone={debugSettings.proxyDebugTraceEnabled ? "-success" : "-muted"}>
-                {debugSettings.proxyDebugTraceEnabled ? tr('pages.proxyLogs.turn3') : tr('pages.proxyLogs.turn2')}
+                {debugSettings.proxyDebugTraceEnabled ? tr('common.enabled') : tr('common.disabled')}
               </ToneBadge>
             </div>
             <CardDescription>
-              {tr('pages.proxyLogs.turnTraceDetailsViewing')}
+              {tr('pages.proxyLogs.debugTraceDetailsDescription')}
             </CardDescription>
           </div>
           <div className="flex flex-wrap justify-end gap-2">
@@ -2539,7 +2519,7 @@ export default function ProxyLogs() {
               onClick={() => void handleQuickToggleDebugTrace()}
               disabled={debugPanelSaving}
             >
-              {debugSettings.proxyDebugTraceEnabled ? tr('pages.proxyLogs.closedebug') : tr('pages.proxyLogs.turnOndebug')}
+              {debugSettings.proxyDebugTraceEnabled ? tr('pages.proxyLogs.closedebug') : tr('pages.proxyLogs.enableDebug')}
             </Button>
             <Button variant="outline"
               type="button"
@@ -2559,7 +2539,7 @@ export default function ProxyLogs() {
               onClick={() => void loadDebugState()}
               disabled={debugPanelLoading}
             >
-              {debugPanelLoading ? tr('pages.downstreamKeys.refreshzh') : tr('pages.proxyLogs.refresh')}
+              {debugPanelLoading ? tr('pages.downstreamKeys.refreshing') : tr('pages.proxyLogs.refresh')}
             </Button>
           </div>
         </CardHeader>
@@ -2568,7 +2548,7 @@ export default function ProxyLogs() {
         <div className="proxy-debug-summary-metrics">
           <CompactSummaryMetric
             label={tr('components.notificationPanel.status')}
-            value={debugSettings.proxyDebugTraceEnabled ? tr('pages.proxyLogs.turn3') : tr('pages.proxyLogs.turn2')}
+            value={debugSettings.proxyDebugTraceEnabled ? tr('common.enabled') : tr('common.disabled')}
           />
           <CompactSummaryMetric
             label={tr('pages.proxyLogs.recentTraces')}
@@ -2610,22 +2590,22 @@ export default function ProxyLogs() {
               </div>
               <div className="text-xs text-muted-foreground">
                 {debugSettings.proxyDebugTraceEnabled
-                  ? tr('pages.proxyLogs.turnOnzhAutomaticrefresh')
-                  : tr('pages.proxyLogs.turn')}
+                  ? tr('pages.proxyLogs.autoRefreshEnabledNotice')
+                  : tr('pages.proxyLogs.debugTraceNotEnabled')}
               </div>
             </CardHeader>
             <CardContent>
 
             {debugPanelLoading && debugTraces.length === 0 ? (
               <div className="pb-3 text-sm text-muted-foreground">
-                {tr('pages.proxyLogs.debugZh')}
+                {tr('pages.proxyLogs.loadingDebugTraces')}
               </div>
             ) : debugTraces.length === 0 ? (
               <Alert>
                 <AlertDescription>
                 {debugSettings.proxyDebugTraceEnabled
-                  ? tr('pages.proxyLogs.turnRequestActingrequestNow')
-                  : tr('pages.proxyLogs.debugTurnTurnOndebugDebugsettingsActingrequestNow')}
+                  ? tr('pages.proxyLogs.noNewDebugTracesDescription')
+                  : tr('pages.proxyLogs.debugTraceDisabledDescription')}
                 </AlertDescription>
               </Alert>
             ) : isMobile ? (
@@ -2826,13 +2806,13 @@ export default function ProxyLogs() {
         </Alert>
       )}
 
-      <Card className="proxy-log-list-card">
-        <CardHeader className="proxy-log-list-header">
+      <DataTable minWidth={1180} density="compact" className="proxy-log-list-card">
+        <DataTableToolbar className="proxy-log-list-header border-b bg-muted/30 px-4">
           <div className="min-w-0">
-            <CardTitle>{tr('pages.proxyLogs.requestHistory')}</CardTitle>
-            <CardDescription>
+            <div className="text-sm font-semibold text-foreground">{tr('pages.proxyLogs.requestHistory')}</div>
+            <div className="text-xs text-muted-foreground">
               {tr('pages.proxyLogs.showing')} {displayedStart} - {displayedEnd} {tr('pages.proxyLogs.itemsTotal')} {total} {tr('pages.programLogs.items')}
-            </CardDescription>
+            </div>
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2">
             <ToneBadge tone={activeFilterCount > 0 ? "-primary" : "-muted"}>
@@ -2841,12 +2821,12 @@ export default function ProxyLogs() {
                 : tr('pages.proxyLogs.noActiveFilters')}
             </ToneBadge>
             <ToneBadge tone="-muted">
-              {tr('pages.proxyLogs.rowsPerPage')} {pageSize}
+              {tr('pages.proxyLogs.rowsPerPageLabel')} {pageSize}
             </ToneBadge>
           </div>
-        </CardHeader>
+        </DataTableToolbar>
         {loading ? (
-          <CardContent className="grid gap-3 p-6">
+          <div className="grid gap-3 p-6">
             {[...Array(8)].map((_, i) => (
               <div key={i} className="flex gap-4">
                 <Skeleton className="h-4 w-36" />
@@ -2857,7 +2837,7 @@ export default function ProxyLogs() {
                 <Skeleton className="h-4 w-20" />
               </div>
             ))}
-          </CardContent>
+          </div>
         ) : isMobile ? (
           <div className="grid gap-3">
             {logs.map((log) => {
@@ -2887,7 +2867,7 @@ export default function ProxyLogs() {
               return (
                 <MobileCard
                   key={log.id}
-                  title={detailLog.modelRequested || "unknown"}
+                  title={detailLog.modelRequested || tr('common.notAvailable')}
                   subtitle={formatDateTimeLocal(log.createdAt)}
                   compact
                   headerActions={
@@ -3018,7 +2998,7 @@ export default function ProxyLogs() {
                       />
                       {detailState?.loading && (
                         <div className="text-muted-foreground">
-                          {tr('pages.proxyLogs.detailszh')}
+                          {tr('pages.proxyLogs.loadingDetails')}
                         </div>
                       )}
                       {detailState?.error && (
@@ -3063,7 +3043,7 @@ export default function ProxyLogs() {
             })}
           </div>
         ) : (
-          <Table className="proxy-log-table">
+          <Table className="proxy-log-table w-full text-sm">
             <TableHeader>
               <TableRow>
                 <TableHead className="w-8" />
@@ -3115,7 +3095,7 @@ export default function ProxyLogs() {
                     <TableRow
                       data-testid={`proxy-log-row-${log.id}`}
                       onClick={() => handleToggleExpand(log.id)}
-                      className="proxy-log-table-row cursor-pointer"
+                      className={`proxy-log-table-row row-selectable cursor-pointer ${expanded === log.id ? "row-selected" : ""}`.trim()}
                       data-state={expanded === log.id ? "selected" : undefined}
                     >
                       <TableCell className="text-muted-foreground">
@@ -3264,7 +3244,7 @@ export default function ProxyLogs() {
 
                                 {detailState?.loading && (
                                   <div className="text-xs text-muted-foreground">
-                                    {tr('pages.proxyLogs.detailszh')}
+                                    {tr('pages.proxyLogs.loadingDetails')}
                                   </div>
                                 )}
                                 {detailState?.error && (
@@ -3323,7 +3303,7 @@ export default function ProxyLogs() {
                                   {routeDecisionTarget ? (
                                     <div className="flex flex-wrap gap-1.5">
                                       <ToneBadge tone={routeDecisionTarget.enabled === false ? "-error" : "-success"}>
-                                        {routeDecisionTarget.enabled === false ? tr('pages.proxyLogs.turn2') : tr('pages.proxyLogs.turn3')}
+                                        {routeDecisionTarget.enabled === false ? tr('common.disabled') : tr('common.enabled')}
                                       </ToneBadge>
                                       {routeDecisionTarget.cooldownUntil ? (
                                         <ToneBadge tone="-warning">
@@ -3460,9 +3440,12 @@ export default function ProxyLogs() {
           </Table>
         )}
         {!loading && logs.length === 0 && (
-          <EmptyStateBlock title={tr('pages.proxyLogs.noUsageLogs')} description={tr('pages.proxyLogs.requestActing')} />
+          <DataTableEmpty
+            title={tr('pages.proxyLogs.noUsageLogs')}
+            description={tr('pages.proxyLogs.proxyRequestEmptyDescription')}
+          />
         )}
-      </Card>
+      </DataTable>
 
       {total > 0 && (
         <div className="proxy-log-pagination-bar">
@@ -3497,7 +3480,7 @@ export default function ProxyLogs() {
             </PaginationContent>
           </Pagination>
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <span>{tr('pages.proxyLogs.rowsPerPage')}</span>
+            <span>{tr('pages.proxyLogs.rowsPerPageLabel')}</span>
               <Select
                 value={String(pageSize)}
                 onValueChange={(nextValue) => {

@@ -39,6 +39,7 @@ type ProxyLogProjectionRow = {
   estimatedCost: number | null;
   modelActual: string | null;
   modelRequested: string | null;
+  accountId: number | null;
   siteId: number | null;
   sitePlatform: string | null;
 };
@@ -72,6 +73,7 @@ type SiteHourUsageDeltaRow = {
 type ModelDayUsageDeltaRow = {
   localDay: string;
   siteId: number;
+  accountId: number;
   model: string;
   totalCalls: number;
   successCalls: number;
@@ -394,6 +396,7 @@ async function fetchProjectionBatch(afterId: number, limit: number) {
       estimatedCost: schema.proxyLogs.estimatedCost,
       modelActual: schema.proxyLogs.modelActual,
       modelRequested: schema.proxyLogs.modelRequested,
+      accountId: schema.accounts.id,
       siteId: schema.sites.id,
       sitePlatform: schema.sites.platform,
     })
@@ -415,7 +418,8 @@ function buildProjectionBatchDelta(rows: ProxyLogProjectionRow[]): ProjectionBat
 
   for (const row of rows) {
     const siteId = typeof row.siteId === 'number' && row.siteId > 0 ? row.siteId : null;
-    if (!siteId) continue;
+    const accountId = typeof row.accountId === 'number' && row.accountId > 0 ? row.accountId : null;
+    if (!siteId || !accountId) continue;
 
     const localDay = toLocalDayKeyFromStoredUtc(row.createdAt);
     const bucketStartUtc = toLocalHourStartUtcFromStoredUtc(row.createdAt);
@@ -488,10 +492,11 @@ function buildProjectionBatchDelta(rows: ProxyLogProjectionRow[]): ProjectionBat
     siteHour.latencyCount += latencyCount;
     siteHourMap.set(siteHourKey, siteHour);
 
-    const modelDayKey = `${localDay}:${siteId}:${model}`;
+    const modelDayKey = `${localDay}:${siteId}:${accountId}:${model}`;
     const modelDay = modelDayMap.get(modelDayKey) || {
       localDay,
       siteId,
+      accountId,
       model,
       totalCalls: 0,
       successCalls: 0,
@@ -626,6 +631,7 @@ async function upsertModelDayUsage(tx: typeof db, row: ModelDayUsageDeltaRow, up
   const values = {
     localDay: row.localDay,
     siteId: row.siteId,
+    accountId: row.accountId,
     model: row.model,
     totalCalls: row.totalCalls,
     successCalls: row.successCalls,
@@ -657,7 +663,12 @@ async function upsertModelDayUsage(tx: typeof db, row: ModelDayUsageDeltaRow, up
 
   await (tx.insert(schema.modelDayUsage).values(values) as any)
     .onConflictDoUpdate({
-      target: [schema.modelDayUsage.localDay, schema.modelDayUsage.siteId, schema.modelDayUsage.model],
+      target: [
+        schema.modelDayUsage.localDay,
+        schema.modelDayUsage.siteId,
+        schema.modelDayUsage.accountId,
+        schema.modelDayUsage.model,
+      ],
       set: {
         totalCalls: sql`${schema.modelDayUsage.totalCalls} + ${row.totalCalls}`,
         successCalls: sql`${schema.modelDayUsage.successCalls} + ${row.successCalls}`,

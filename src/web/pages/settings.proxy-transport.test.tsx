@@ -59,7 +59,6 @@ describe('Settings proxy transport', () => {
       responsesCompactFallbackToResponsesEnabled: false,
       proxySessionTargetConcurrencyLimit: 4,
       proxySessionTargetQueueWaitMs: 3200,
-      routingFallbackUnitCost: 1,
       routingWeights: {},
       adminIpAllowlist: [],
       systemProxyUrl: '',

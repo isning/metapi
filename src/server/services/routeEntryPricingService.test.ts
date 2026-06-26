@@ -2,12 +2,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RouteProgramBundleV3 } from '../../shared/routeGraph.js';
 
 const quoteEndpointPricingMock = vi.hoisted(() => vi.fn());
+const quoteReferencePricingMock = vi.hoisted(() => vi.fn());
 
 vi.mock('./pricingQuoteService.js', () => ({
   quoteEndpointPricing: quoteEndpointPricingMock,
+  quoteReferencePricing: quoteReferencePricingMock,
 }));
 
 function mockEndpointQuotes() {
+  quoteReferencePricingMock.mockResolvedValue({
+    reference: null,
+  });
   quoteEndpointPricingMock.mockImplementation(async ({ supply }: { supply: { modelName: string } }) => {
     const isA = supply.modelName === 'upstream-a';
     return {
@@ -26,6 +31,7 @@ function mockEndpointQuotes() {
           totalCostUsd: isA ? 6 : 14,
         },
       },
+      effectiveCost: null,
       reference: null,
       comparison: {
         inputMultiplier: null,
@@ -238,6 +244,7 @@ function bundleWithDynamicDispatchPolicy(): RouteProgramBundleV3 {
 describe('routeEntryPricingService', () => {
   beforeEach(() => {
     quoteEndpointPricingMock.mockReset();
+    quoteReferencePricingMock.mockReset();
   });
 
   it('calculates theoretical entry pricing from route selection probabilities', async () => {
@@ -253,6 +260,10 @@ describe('routeEntryPricingService', () => {
       inputPerMillion: 8,
       outputPerMillion: 16,
       totalCostUsd: 12,
+      inputMultiplier: null,
+      outputMultiplier: null,
+      totalMultiplier: null,
+      reference: null,
       sourceCount: 2,
       strategy: 'weighted',
       estimateLevel: 'exact',
@@ -264,6 +275,44 @@ describe('routeEntryPricingService', () => {
       { modelName: 'upstream-a', probability: 0.25 },
       { modelName: 'upstream-b', probability: 0.75 },
     ]);
+  });
+
+  it('calculates entry multipliers against the public model reference price', async () => {
+    mockEndpointQuotes();
+    quoteReferencePricingMock.mockResolvedValue({
+      reference: {
+        source: 'official_reference',
+        summary: {
+          inputPerMillion: 4,
+          outputPerMillion: 8,
+          cacheReadPerMillion: null,
+          cacheWritePerMillion: null,
+          reasoningPerMillion: null,
+          requestUsd: null,
+          totalCostUsd: 6,
+        },
+      },
+    });
+
+    const { estimateRouteEntryPricing } = await import('./routeEntryPricingService.js');
+    const estimate = await estimateRouteEntryPricing({
+      bundle: bundleWithWeightedTargets(),
+      requestedModel: 'public-model',
+    });
+
+    expect(estimate).toMatchObject({
+      inputPerMillion: 8,
+      outputPerMillion: 16,
+      totalCostUsd: 12,
+      inputMultiplier: 2,
+      outputMultiplier: 2,
+      totalMultiplier: 2,
+      reference: {
+        inputPerMillion: 4,
+        outputPerMillion: 8,
+        totalCostUsd: 6,
+      },
+    });
   });
 
   it('recalculates theoretical entry pricing from runtime probability overrides', async () => {
@@ -289,6 +338,9 @@ describe('routeEntryPricingService', () => {
       inputPerMillion: 2.8,
       outputPerMillion: 5.6,
       totalCostUsd: 6.8,
+      inputMultiplier: null,
+      outputMultiplier: null,
+      totalMultiplier: null,
       sourceCount: 2,
       estimateLevel: 'exact',
     });
@@ -299,6 +351,49 @@ describe('routeEntryPricingService', () => {
       { modelName: 'upstream-a', probability: 0.9 },
       { modelName: 'upstream-b', probability: 0.1 },
     ]);
+  });
+
+  it('recalculates reference multipliers when runtime probabilities override static estimates', async () => {
+    mockEndpointQuotes();
+    quoteReferencePricingMock.mockResolvedValue({
+      reference: {
+        source: 'official_reference',
+        summary: {
+          inputPerMillion: 4,
+          outputPerMillion: 8,
+          cacheReadPerMillion: null,
+          cacheWritePerMillion: null,
+          reasoningPerMillion: null,
+          requestUsd: null,
+          totalCostUsd: 4,
+        },
+      },
+    });
+
+    const {
+      applyRuntimeEntryPricingProbabilities,
+      estimateRouteEntryPricing,
+    } = await import('./routeEntryPricingService.js');
+    const estimate = await estimateRouteEntryPricing({
+      bundle: bundleWithWeightedTargets(),
+      requestedModel: 'public-model',
+    });
+    const runtimeEstimate = applyRuntimeEntryPricingProbabilities({
+      estimate,
+      overrides: [
+        { targetId: 101, probability: 0.9 },
+        { targetId: 102, probability: 0.1 },
+      ],
+    });
+
+    expect(runtimeEstimate).toMatchObject({
+      inputPerMillion: 2.8,
+      outputPerMillion: 5.6,
+      totalCostUsd: 6.8,
+      inputMultiplier: 0.7,
+      outputMultiplier: 0.7,
+      totalMultiplier: 1.7,
+    });
   });
 
   it('uses static metadata CEL score policies for probability estimates', async () => {

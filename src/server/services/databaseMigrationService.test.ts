@@ -1127,7 +1127,17 @@ describe('databaseMigrationService', () => {
       .filter((statement) => statement.table === 'settings')
       .map((statement) => statement.values[0]);
 
-    expect(migratedSettingKeys).toContain('routing_fallback_unit_cost');
+    expect(migratedSettingKeys).not.toContain('routing_fallback_unit_cost');
+    expect(migratedSettingKeys).toContain('platform_pricing_config_v1');
+    const platformPricingStatement = statements.find((statement) => (
+      statement.table === 'settings' && statement.values[0] === 'platform_pricing_config_v1'
+    ));
+    expect(JSON.parse(String(platformPricingStatement?.values[1] || '{}'))).toMatchObject({
+      upstreamDefaultPricing: {
+        inputPerMillion: 1,
+        outputPerMillion: 1,
+      },
+    });
     expect(migratedSettingKeys).not.toContain('db_type');
     expect(migratedSettingKeys).not.toContain('db_url');
     expect(migratedSettingKeys).not.toContain('db_ssl');

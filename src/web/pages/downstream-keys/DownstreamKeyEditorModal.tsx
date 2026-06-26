@@ -551,7 +551,7 @@ export default function DownstreamKeyEditorModal({
                 <div className="flex items-center justify-between gap-2">
                   <div>
                     <div className="text-sm font-semibold text-foreground">{tr('pages.downstreamKeys.downstreamKeyEditorModal.sites')}</div>
-                    <div className="text-xs text-muted-foreground">{tr('pages.downstreamKeys.downstreamKeyEditorModal.zhSitesJumpOverDownstreamKeysChannelsroutes')}</div>
+                    <div className="text-xs text-muted-foreground">{tr('pages.downstreamKeys.downstreamKeyEditorModal.excludedSitesSkipChannelRouting')}</div>
                   </div>
                   <Button variant="outline" type="button" onClick={() => onChange((prev) => ({ ...prev, excludedSiteIds: [] }))}>{tr('components.notificationPanel.clear')}</Button>
                 </div>
@@ -559,7 +559,7 @@ export default function DownstreamKeyEditorModal({
                 <SearchInput value={siteSearch} onChange={(e) => setSiteSearch(e.target.value)} placeholder={tr('pages.downstreamKeys.downstreamKeyEditorModal.searchsites')} />
                 <div className="flex max-h-60 flex-col gap-2 overflow-y-auto">
                   {exclusionSourceLoading ? (
-                    <div className="text-xs text-muted-foreground">{tr('pages.downstreamKeys.downstreamKeyEditorModal.sitesTokenzh')}</div>
+                    <div className="text-xs text-muted-foreground">{tr('pages.downstreamKeys.downstreamKeyEditorModal.loadingSitesAndTokens')}</div>
                   ) : filteredSites.length === 0 ? (
                     <div className="text-xs text-muted-foreground">{tr('pages.downstreamKeys.downstreamKeyEditorModal.noneSites')}</div>
                   ) : filteredSites.map((site) => {
@@ -592,7 +592,7 @@ export default function DownstreamKeyEditorModal({
                 <div className="flex items-center justify-between gap-2">
                   <div>
                     <div className="text-sm font-semibold text-foreground">{tr('pages.downstreamKeys.downstreamKeyEditorModal.apiKeyToken')}</div>
-                    <div className="text-xs text-muted-foreground">{tr('pages.downstreamKeys.downstreamKeyEditorModal.supportedTokenTokenidUsageDefaultApiKey')}</div>
+                    <div className="text-xs text-muted-foreground">{tr('pages.downstreamKeys.downstreamKeyEditorModal.excludedCredentialsDescription')}</div>
                   </div>
                   <Button variant="outline" type="button" onClick={() => onChange((prev) => ({ ...prev, excludedCredentialRefs: [] }))}>{tr('components.notificationPanel.clear')}</Button>
                 </div>
@@ -600,7 +600,7 @@ export default function DownstreamKeyEditorModal({
                 <SearchInput value={credentialSearch} onChange={(e) => setCredentialSearch(e.target.value)} placeholder={tr('pages.downstreamKeys.downstreamKeyEditorModal.searchsitesAccountsToken')} />
                 <div className="flex max-h-70 flex-col gap-2 overflow-y-auto">
                   {exclusionSourceLoading ? (
-                    <div className="text-xs text-muted-foreground">{tr('pages.downstreamKeys.downstreamKeyEditorModal.sitesTokenzh')}</div>
+                    <div className="text-xs text-muted-foreground">{tr('pages.downstreamKeys.downstreamKeyEditorModal.loadingSitesAndTokens')}</div>
                   ) : filteredCredentials.length === 0 ? (
                     <div className="text-xs text-muted-foreground">{tr('pages.downstreamKeys.downstreamKeyEditorModal.noneApiKeyToken')}</div>
                   ) : filteredCredentials.map((item) => {

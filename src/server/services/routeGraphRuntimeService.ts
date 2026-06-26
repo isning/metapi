@@ -20,10 +20,10 @@ import {
 } from '../../shared/tokenRoutePatterns.js';
 import {
   cloneJsonValue,
-  deletePayloadPath,
-  hasPayloadPath,
-  setPayloadPath,
-} from './payloadRules.js';
+  deleteJsonPath,
+  hasJsonPath,
+  setJsonPath,
+} from './jsonPathMutation.js';
 import {
   normalizeUpstreamCompatibilityPolicy,
   type UpstreamCompatibilityPolicy,
@@ -1163,12 +1163,12 @@ export function applyRouteGraphPostBuildFilters(input: {
     if (operation.type === 'set_payload') {
       const path = asTrimmedString(operation.path);
       if (!path) continue;
-      if (operation.mode !== 'override' && hasPayloadPath(outputPayload, path)) continue;
-      setPayloadPath(outputPayload, path, operation.value);
+      if (operation.mode !== 'override' && hasJsonPath(outputPayload, path)) continue;
+      setJsonPath(outputPayload, path, operation.value);
     } else if (operation.type === 'remove_payload') {
       const path = asTrimmedString(operation.path);
       if (!path) continue;
-      deletePayloadPath(outputPayload, path);
+      deleteJsonPath(outputPayload, path);
     }
   }
 

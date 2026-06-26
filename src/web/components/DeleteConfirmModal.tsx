@@ -39,7 +39,7 @@ export default function DeleteConfirmModal({
         <AlertDialog.Footer>
           <AlertDialog.CancelButton disabled={loading}>{cancelText}</AlertDialog.CancelButton>
           <Button type="button" variant="destructive" disabled={loading} onClick={onConfirm}>
-            {loading ? tr('components.deleteConfirmModal.deletezh') : confirmText}
+            {loading ? tr('components.deleteConfirmModal.deleting') : confirmText}
           </Button>
         </AlertDialog.Footer>
       </AlertDialog.Content>

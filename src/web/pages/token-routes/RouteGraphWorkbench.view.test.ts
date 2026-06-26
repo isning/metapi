@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { macroFlowNodeId } from './routeGraphConnections.js';
-import { DEFAULT_ROUTE_GRAPH_VIEW_STATE, canReplaceRouteGraphMacro, canReplaceRouteGraphNode, computeRouteGraphInspectorAnchor, filterGraphForView, filterRouteGraphFlowNodeChanges, getMacroGeneratedPreviewRows, getMacroHiddenSupplyByPort, getMacroPriorityGroupCount, isRouteGraphFlowNodeDraggable, preservesGeneratedRouteGraphArtifacts } from './RouteGraphWorkbench.js';
+import { DEFAULT_ROUTE_GRAPH_VIEW_STATE, canReplaceRouteGraphMacro, canReplaceRouteGraphNode, computeRouteGraphInspectorAnchor, filterGraphForView, filterRouteGraphFlowNodeChanges, getMacroFocusContextForEdgeNode, getMacroGeneratedFocusPlan, getMacroGeneratedPreviewRows, getMacroHiddenSupplyByPort, getMacroPriorityBandCount, getRouteGraphConnectedFocusTarget, getRouteGraphNodeFocusPlan, isRouteGraphFlowNodeDraggable, preservesGeneratedRouteGraphArtifacts } from './RouteGraphWorkbench.js';
 import type { RouteGraphSource } from './RouteGraphWorkbench.js';
 import type { RouteGraphEdge, RouteGraphMacro, RouteGraphNode } from './routeGraphTypes.js';
 
@@ -67,6 +67,12 @@ const otherMacro: RouteGraphMacro = {
   config: {
     groups: [{ input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:product:route:128'] } }],
   },
+};
+
+const sharedSupplyMacro: RouteGraphMacro = {
+  ...generatedMacro,
+  id: 'route:auto:model-group:shared',
+  position: { x: 820, y: 320 },
 };
 
 const edges: RouteGraphEdge[] = [
@@ -401,6 +407,76 @@ describe('RouteGraphWorkbench view filtering', () => {
     ]);
   });
 
+  it('focuses supply candidates through supply reveal instead of macro reveal', () => {
+    const plan = getMacroGeneratedFocusPlan(graph, generatedMacro.id, generatedSupplyEndpoint.id);
+
+    expect(plan.reveal).toBe('supply');
+    expect(plan.fallbackPosition).toEqual(expect.objectContaining({
+      x: expect.any(Number),
+      y: expect.any(Number),
+    }));
+  });
+
+  it('resolves hidden generated focus targets through the unified node focus planner', () => {
+    const visibleGraph = filterGraphForView(graph, DEFAULT_ROUTE_GRAPH_VIEW_STATE);
+    const plan = getRouteGraphNodeFocusPlan(graph, visibleGraph, generatedSupplyEndpoint.id);
+
+    expect(plan).toEqual(expect.objectContaining({
+      kind: 'generated_node',
+      macroId: generatedMacro.id,
+      nodeId: generatedSupplyEndpoint.id,
+      reveal: 'supply',
+    }));
+  });
+
+  it('uses the peer-specific macro context when focusing a shared supply edge', () => {
+    const sharedEdge: RouteGraphEdge = {
+      id: 'supply-macro-candidates-shared',
+      sourceNodeId: generatedSupplyEndpoint.id,
+      sourcePortId: 'route.out',
+      targetNodeId: macroFlowNodeId(sharedSupplyMacro.id),
+      targetPortId: 'candidates.in',
+      kind: 'route_flow',
+      ownership: 'auto_generated',
+    };
+    const sharedGraph = {
+      ...graph,
+      macros: [generatedMacro, sharedSupplyMacro],
+      edges: [...edges, sharedEdge],
+    };
+
+    expect(getMacroFocusContextForEdgeNode(sharedGraph, sharedEdge, generatedSupplyEndpoint.id)).toBe(sharedSupplyMacro.id);
+  });
+
+  it('prefers the expanded shared macro when selecting a connected path from a shared supply', () => {
+    const sharedEdge: RouteGraphEdge = {
+      id: 'supply-macro-candidates-shared',
+      sourceNodeId: generatedSupplyEndpoint.id,
+      sourcePortId: 'route.out',
+      targetNodeId: macroFlowNodeId(sharedSupplyMacro.id),
+      targetPortId: 'candidates.in',
+      kind: 'route_flow',
+      ownership: 'auto_generated',
+    };
+    const sharedGraph = {
+      ...graph,
+      macros: [generatedMacro, sharedSupplyMacro],
+      edges: [...edges, sharedEdge],
+    };
+
+    const target = getRouteGraphConnectedFocusTarget(
+      sharedGraph,
+      sharedGraph,
+      generatedSupplyEndpoint.id,
+      'downstream',
+      { ...DEFAULT_ROUTE_GRAPH_VIEW_STATE, expandedSupplyMacroIds: [sharedSupplyMacro.id] },
+    );
+
+    expect(target.edge?.id).toBe(sharedEdge.id);
+    expect(target.peerNodeId).toBe(macroFlowNodeId(sharedSupplyMacro.id));
+    expect(target.macroId).toBe(sharedSupplyMacro.id);
+  });
+
   it('falls back to macro endpoint groups when lowered candidate edges are unavailable', () => {
     const rows = getMacroGeneratedPreviewRows({
       version: 2,
@@ -425,7 +501,7 @@ describe('RouteGraphWorkbench view filtering', () => {
     ]);
   });
 
-  it('counts generated priority groups by distinct priority instead of candidate row count', () => {
+  it('counts generated priority bands by distinct macro priority instead of candidate row count', () => {
     const macroWithSharedPriority: RouteGraphMacro = {
       ...generatedMacro,
       config: {
@@ -445,7 +521,7 @@ describe('RouteGraphWorkbench view filtering', () => {
     }, macroWithSharedPriority);
 
     expect(rows).toHaveLength(4);
-    expect(getMacroPriorityGroupCount(macroWithSharedPriority, rows)).toBe(1);
+    expect(getMacroPriorityBandCount(macroWithSharedPriority, rows)).toBe(1);
   });
 
   it('anchors expanded primitives at the laid-out macro position when the macro has no saved position', () => {
@@ -528,12 +604,21 @@ describe('RouteGraphWorkbench view filtering', () => {
       endpointKind: 'supply',
       routeEndpointId: 'route-endpoint:supply:route:130:openai:gpt-test',
     };
+    const inputColumnProbe: RouteGraphNode = {
+      id: 'filter:input-column-probe',
+      type: 'filter',
+      enabled: true,
+      visibility: 'internal',
+      ownership: 'manual',
+      position: { x: 128, y: 96 },
+    };
     const multiEndpointGraph: RouteGraphSource = {
       ...graph,
       nodes: [
         ...graph.nodes,
         secondSupplyEndpoint,
         thirdSupplyEndpoint,
+        inputColumnProbe,
       ],
       edges: [
         ...graph.edges,
@@ -556,30 +641,35 @@ describe('RouteGraphWorkbench view filtering', () => {
           ownership: 'auto_generated',
         },
       ],
-      macros: [{
-        ...generatedMacro,
-        config: {
-          groups: [{
-            input: {
-              kind: 'route_endpoints',
-              endpointIds: [
-                generatedSupplyEndpoint.id,
-                secondSupplyEndpoint.id,
-                thirdSupplyEndpoint.id,
-              ],
-            },
-          }],
+      macros: [
+        {
+          ...generatedMacro,
+          config: {
+            groups: [{
+              input: {
+                kind: 'route_endpoints',
+                endpointIds: [
+                  generatedSupplyEndpoint.id,
+                  secondSupplyEndpoint.id,
+                  thirdSupplyEndpoint.id,
+                ],
+              },
+            }],
+          },
         },
-      }],
+        otherMacro,
+      ],
     };
     const expanded = filterGraphForView(multiEndpointGraph, { ...DEFAULT_ROUTE_GRAPH_VIEW_STATE, expandedSupplyMacroIds: [generatedMacro.id] });
     const endpoints = expanded.nodes
       .filter((node) => node.type === 'route_endpoint' && node.endpointKind === 'supply')
       .sort((left, right) => left.position!.y - right.position!.y);
+    const probe = expanded.nodes.find((node) => node.id === inputColumnProbe.id)!;
 
     expect(endpoints).toHaveLength(3);
     expect(endpoints[1]!.position!.y - endpoints[0]!.position!.y).toBeGreaterThanOrEqual(96);
     expect(endpoints[2]!.position!.y - endpoints[1]!.position!.y).toBeGreaterThanOrEqual(96);
+    expect(probe.position!.y).toBeGreaterThanOrEqual(endpoints[2]!.position!.y + 96);
   });
 
   it('packs expanded macro entry and multiple supply endpoints into one input column', () => {

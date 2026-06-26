@@ -39,7 +39,9 @@ describe('RouteFilterBar', () => {
     const root = create(renderBar(false));
 
     const content = root.root.find((node) => (
-      node.props['data-slot'] === 'card-content'
+      node.type === 'div'
+      && String(node.props.className || '').includes('px-3')
+      && String(node.props.className || '').includes('pb-3')
     ));
     const filterLayout = content.find((node) => (
       node.type === 'div'
@@ -63,7 +65,9 @@ describe('RouteFilterBar', () => {
       String(node.props.className || '').includes('route-filter-collapsible')
     ));
     const expandedPanel = root.root.find((node) => (
-      node.props['data-slot'] === 'card-content'
+      node.type === 'div'
+      && String(node.props.className || '').includes('px-3')
+      && String(node.props.className || '').includes('pb-3')
     ));
 
     expect(String(content.props.className)).toContain('route-filter-collapsible');

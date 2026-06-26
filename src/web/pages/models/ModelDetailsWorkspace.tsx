@@ -6,12 +6,13 @@ import EntityHeader from '../../components/workspace/EntityHeader.js';
 import { Button } from '../../components/ui/button/index.js';
 import * as Tabs from '../../components/ui/tabs/index.js';
 import type { ModelDetailsTab, ModelDetailsView, ModelMetricsRange } from './modelDetailsView.js';
-import { formatLatencyValue, formatSuccessRate } from './modelDetailsView.js';
+import { formatLatencyValue, formatSuccessRate, getModelCredentialCount } from './modelDetailsView.js';
 import ModelOverviewTab from './ModelOverviewTab.js';
 import ModelRoutingTab from './ModelRoutingTab.js';
 import ModelPerformanceTab from './ModelPerformanceTab.js';
 import ModelApiTab from './ModelApiTab.js';
 import ModelDiagnosticsTab from './ModelDiagnosticsTab.js';
+import { tr } from '../../i18n.js';
 
 type RoutingViewMode = 'effective' | 'candidates' | 'compiled' | 'diagnostics';
 
@@ -31,16 +32,16 @@ type ModelDetailsWorkspaceProps = {
 };
 
 const tabItems: Array<{ value: ModelDetailsTab; label: string; icon: JSX.Element }> = [
-  { value: 'overview', label: 'Overview', icon: <Info className="size-4" /> },
-  { value: 'routing', label: 'Routing', icon: <GitBranch className="size-4" /> },
-  { value: 'performance', label: 'Performance', icon: <Activity className="size-4" /> },
+  { value: 'overview', label: tr('pages.models.modelDetailsView.overview'), icon: <Info className="size-4" /> },
+  { value: 'routing', label: tr('pages.models.modelDetailsView.routing'), icon: <GitBranch className="size-4" /> },
+  { value: 'performance', label: tr('pages.models.modelDetailsView.performance'), icon: <Activity className="size-4" /> },
   { value: 'api', label: 'API', icon: <Code2 className="size-4" /> },
-  { value: 'diagnostics', label: 'Diagnostics', icon: <TriangleAlert className="size-4" /> },
+  { value: 'diagnostics', label: tr('pages.models.modelDetailsView.diagnostics'), icon: <TriangleAlert className="size-4" /> },
 ];
 
 function StatusBadge({ status }: { status: ModelDetailsView['status'] }) {
   const tone = status === 'healthy' ? '-success' : status === 'unknown' ? '-muted' : status === 'unavailable' ? 'error' : 'warning';
-  return <ToneBadge tone={tone}>{status}</ToneBadge>;
+  return <ToneBadge tone={tone}>{tr(`pages.models.modelDetailsView.status.${status}`)}</ToneBadge>;
 }
 
 export default function ModelDetailsWorkspace({
@@ -60,7 +61,10 @@ export default function ModelDetailsWorkspace({
   if (!details) {
     return (
       <div className="p-4">
-        <EmptyStateBlock title="Select a model" description="Choose a public model to inspect its route graph, runtime evidence, and API compatibility." />
+        <EmptyStateBlock
+          title={tr('pages.models.modelDetailsView.selectModel')}
+          description={tr('pages.models.modelDetailsView.selectModelDescription')}
+        />
       </div>
     );
   }
@@ -80,10 +84,10 @@ export default function ModelDetailsWorkspace({
 
   const headerMetrics = (
     <>
-      <span>Success <span className="font-mono text-foreground">{formatSuccessRate(model.successRate)}</span></span>
-      <span>Latency <span className="font-mono text-foreground">{formatLatencyValue(model.avgLatency)}</span></span>
-      <span>Accounts <span className="font-mono text-foreground">{model.accountCount}</span></span>
-      <span>Tokens <span className="font-mono text-foreground">{model.tokenCount}</span></span>
+      <span>{tr('pages.models.modelDetailsView.success')} <span className="font-mono text-foreground">{formatSuccessRate(model.successRate)}</span></span>
+      <span>{tr('pages.models.modelDetailsView.latency')} <span className="font-mono text-foreground">{formatLatencyValue(model.avgLatency)}</span></span>
+      <span>{tr('pages.models.modelDetailsView.accounts')} <span className="font-mono text-foreground">{model.accountCount}</span></span>
+      <span>{tr('pages.models.credentials')} <span className="font-mono text-foreground">{getModelCredentialCount(model)}</span></span>
       <span>{details.freshnessLabel}</span>
     </>
   );
@@ -93,15 +97,15 @@ export default function ModelDetailsWorkspace({
       <EntityHeader
         icon={<BrandIcon model={model.name} size={40} />}
         title={model.name}
-        meta={<><span>{details.brandName || 'Unknown provider'}</span><span>·</span><span>graph-native partial view</span></>}
+        meta={<><span>{details.brandName || tr('pages.models.modelDetailsView.providerUnknown')}</span><span>·</span><span>{details.freshnessLabel}</span></>}
         badges={headerBadges}
         metrics={headerMetrics}
         actions={(
           <div className="flex items-center gap-2">
-            <Button type="button" variant="outline" size="icon" aria-label="Copy model name" onClick={() => onCopyModel(model.name)}>
+            <Button type="button" variant="outline" size="icon" aria-label={tr('pages.models.modelDetailsView.copyModelName')} onClick={() => onCopyModel(model.name)}>
               <Copy className="size-4" />
             </Button>
-            <Button type="button" variant="outline" size="icon" aria-label="Refresh models" onClick={onRefresh}>
+            <Button type="button" variant="outline" size="icon" aria-label={tr('pages.models.modelDetailsView.refreshModels')} onClick={onRefresh}>
               <RefreshCw className="size-4" />
             </Button>
           </div>

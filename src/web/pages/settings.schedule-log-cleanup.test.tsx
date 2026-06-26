@@ -57,7 +57,6 @@ describe('Settings log cleanup schedule', () => {
       logCleanupUsageLogsEnabled: true,
       logCleanupProgramLogsEnabled: true,
       logCleanupRetentionDays: 14,
-      routingFallbackUnitCost: 1,
       routingWeights: {},
       adminIpAllowlist: [],
       systemProxyUrl: '',
@@ -95,7 +94,7 @@ describe('Settings log cleanup schedule', () => {
       const saveButton = root.root.find((node) => (
         node.type === 'button'
         && typeof node.props.onClick === 'function'
-        && collectText(node).trim() === '保存定时任务'
+        && collectText(node).trim() === '保存自动任务设置'
       ));
 
       await act(async () => {
@@ -173,7 +172,7 @@ describe('Settings log cleanup schedule', () => {
       const scheduleCard = root.root.find((node) => (
         node.type === 'div'
         && String(node.props.className || '').includes('card')
-        && collectText(node).includes('定时任务')
+        && collectText(node).includes('自动任务')
       ));
 
       expect(scheduleCard.findAllByType('select')).toHaveLength(0);

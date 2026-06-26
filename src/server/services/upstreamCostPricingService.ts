@@ -12,10 +12,10 @@ import {
 } from '../pricing-core/index.js';
 import { DEFAULT_PRICING_GROUP, type UpstreamPricingCatalog, type UpstreamPricingModel } from './upstreamPricingCatalog.js';
 import { fetchUpstreamPricingCatalog } from './upstreamPricingCatalogService.js';
-import { loadPricingReferenceConfig } from './pricingReferenceConfigService.js';
+import { loadPlatformPricingConfig } from './platformPricingConfigService.js';
 
 export type UpstreamCostPricingScope = 'site_model' | 'account_model' | 'token_model' | 'token_model_group';
-export type UpstreamCostMatchedScope = UpstreamCostPricingScope | 'provider_catalog';
+export type UpstreamCostMatchedScope = UpstreamCostPricingScope | 'provider_catalog' | 'system_default';
 
 export interface UpstreamCostPricingPayload {
   scope: UpstreamCostPricingScope;
@@ -352,7 +352,7 @@ export async function resolveUpstreamCostPricing(input: UpstreamCostResolveInput
     };
   }
 
-  return await resolveProviderCatalogCostPricing(input);
+  return await resolveProviderCatalogCostPricing(input) ?? await resolveDefaultUpstreamCostPricing(input);
 }
 
 export async function evaluateUpstreamCostPricing(input: UpstreamCostEvaluationInput): Promise<UpstreamCostEvaluationResult | null> {
@@ -362,7 +362,9 @@ export async function evaluateUpstreamCostPricing(input: UpstreamCostEvaluationI
   const evaluation = evaluatePricingPlan({
     plan: resolved.pricing.plan,
     usage,
-    source: resolved.pricing.sourceType === 'provider_catalog' ? 'upstream_catalog' : 'user_override',
+    source: resolved.pricing.sourceType === 'provider_catalog'
+      ? 'upstream_catalog'
+      : (resolved.pricing.sourceType === 'system_default' ? 'default' : 'user_override'),
     context: {
       model: input.modelName,
       provider: input.context?.provider,
@@ -383,8 +385,7 @@ export async function evaluateUpstreamCostPricing(input: UpstreamCostEvaluationI
 }
 
 export async function shouldUseProviderCatalogPricing(): Promise<boolean> {
-  const config = await loadPricingReferenceConfig();
-  return config.catalog.providerCatalogSuggestionsEnabled;
+  return true;
 }
 
 async function resolveProviderCatalogCostPricing(
@@ -452,6 +453,58 @@ async function resolveProviderCatalogCostPricing(
     pricing,
     matchedScope: 'provider_catalog',
     priority: 10,
+  };
+}
+
+async function resolveDefaultUpstreamCostPricing(
+  input: UpstreamCostResolveInput,
+): Promise<UpstreamCostResolveResult | null> {
+  const normalizedModelName = normalizeUpstreamModelName(input.modelName);
+  if (!normalizedModelName) return null;
+  const config = await loadPlatformPricingConfig();
+  const plan = createSimpleTokenPricingPlan({
+    inputPerMillion: config.upstreamDefaultPricing.inputPerMillion,
+    outputPerMillion: config.upstreamDefaultPricing.outputPerMillion,
+    cacheReadPerMillion: config.upstreamDefaultPricing.cacheReadPerMillion ?? undefined,
+    cacheWritePerMillion: config.upstreamDefaultPricing.cacheWritePerMillion ?? undefined,
+    reasoningPerMillion: config.upstreamDefaultPricing.reasoningPerMillion ?? undefined,
+    requestUsd: config.upstreamDefaultPricing.requestUsd ?? undefined,
+  });
+  const pricing: UpstreamCostPricingRecord = {
+    id: 0,
+    scope: input.accountId ? 'account_model' : 'site_model',
+    scopeKey: [
+      'system_default',
+      `site:${input.siteId}`,
+      `account:${input.accountId ?? '-'}`,
+      `token:${input.tokenId ?? '-'}`,
+      `group:${input.tokenGroup || '-'}`,
+      `model:${normalizedModelName}`,
+    ].join('|'),
+    siteId: input.siteId,
+    accountId: input.accountId ?? null,
+    tokenId: input.tokenId ?? null,
+    tokenGroup: input.tokenGroup ?? null,
+    modelName: input.modelName,
+    normalizedModelName,
+    displayName: input.modelName,
+    enabled: true,
+    plan,
+    planFingerprint: stableSha256(plan),
+    sourceType: 'system_default',
+    metadata: {
+      source: 'system_default',
+      baseCostUnit: config.baseCostUnit,
+    },
+    notes: null,
+    createdAt: null,
+    updatedAt: null,
+  };
+
+  return {
+    pricing,
+    matchedScope: 'system_default',
+    priority: 1,
   };
 }
 

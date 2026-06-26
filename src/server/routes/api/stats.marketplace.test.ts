@@ -7,12 +7,15 @@ import { and, eq } from 'drizzle-orm';
 
 type DbModule = typeof import('../../db/index.js');
 type StatsRoutesModule = typeof import('./stats.js');
+type RouteGraphServiceModule = typeof import('../../services/routeGraphService.js');
 
 describe('/api/models/marketplace', () => {
   let app: FastifyInstance;
   let db: DbModule['db'];
   let schema: DbModule['schema'];
   let resetModelsMarketplaceCacheForTests: StatsRoutesModule['__resetModelsMarketplaceCacheForTests'];
+  let buildRouteGraphSourceFromRouteTable: RouteGraphServiceModule['buildRouteGraphSourceFromRouteTable'];
+  let publishRouteGraphSource: RouteGraphServiceModule['publishRouteGraphSource'];
   let dataDir = '';
 
   beforeAll(async () => {
@@ -23,9 +26,12 @@ describe('/api/models/marketplace', () => {
     await import('../../db/migrate.js');
     const dbModule = await import('../../db/index.js');
     const routesModule = await import('./stats.js');
+    const routeGraphServiceModule = await import('../../services/routeGraphService.js');
     db = dbModule.db;
     schema = dbModule.schema;
     resetModelsMarketplaceCacheForTests = routesModule.__resetModelsMarketplaceCacheForTests;
+    buildRouteGraphSourceFromRouteTable = routeGraphServiceModule.buildRouteGraphSourceFromRouteTable;
+    publishRouteGraphSource = routeGraphServiceModule.publishRouteGraphSource;
 
     app = Fastify();
     await app.register(routesModule.statsRoutes);
@@ -34,6 +40,9 @@ describe('/api/models/marketplace', () => {
   beforeEach(async () => {
     resetModelsMarketplaceCacheForTests();
     await db.delete(schema.proxyLogs).run();
+    await db.delete(schema.routeGraphDrafts).run();
+    await db.delete(schema.routeGraphActiveVersion).run();
+    await db.delete(schema.routeGraphVersions).run();
     await db.delete(schema.routeEndpointTargets).run();
     await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.tokenModelAvailability).run();
@@ -97,10 +106,13 @@ describe('/api/models/marketplace', () => {
         name: string;
         accountCount: number;
         tokenCount: number;
+        managedTokenCount: number;
+        credentialCount: number;
         accounts: Array<{
           id: number;
           site: string;
           username: string | null;
+          credentialCount: number;
           tokens: Array<{ id: number; name: string; isDefault: boolean }>;
         }>;
       }>;
@@ -109,11 +121,14 @@ describe('/api/models/marketplace', () => {
     expect(model).toBeDefined();
     expect(model?.accountCount).toBe(1);
     expect(model?.tokenCount).toBe(0);
+    expect(model?.managedTokenCount).toBe(0);
+    expect(model?.credentialCount).toBe(1);
     expect(model?.accounts).toHaveLength(1);
     expect(model?.accounts[0]).toMatchObject({
       id: account.id,
       site: 'site-no-token',
       username: 'alice',
+      credentialCount: 1,
       tokens: [],
     });
   });
@@ -277,6 +292,7 @@ describe('/api/models/marketplace', () => {
         name: string;
         accountCount: number;
         tokenCount: number;
+        credentialCount: number;
         avgLatency: number;
         successRate: number | null;
         accounts: Array<{
@@ -285,6 +301,7 @@ describe('/api/models/marketplace', () => {
           username: string | null;
           unitCost: number | null;
           balance: number;
+          credentialCount: number;
           tokens: Array<{ id: number; name: string; isDefault: boolean }>;
         }>;
         measuredEntryPricing: {
@@ -335,10 +352,134 @@ describe('/api/models/marketplace', () => {
     expect(accountOnly).toMatchObject({
       accountCount: 1,
       tokenCount: 0,
+      credentialCount: 1,
       avgLatency: 80,
       successRate: null,
     });
     expect(body.meta.includePricing).toBe(false);
+  });
+
+  it('includes compiled public macro route products in marketplace inventory', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'deepseek-site',
+      url: 'https://deepseek-site.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'deepseek-user',
+      accessToken: 'deepseek-access',
+      apiToken: 'deepseek-api',
+      status: 'active',
+    }).returning().get();
+    const token = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'deepseek-token',
+      token: 'sk-deepseek',
+      valueStatus: 'ready',
+      enabled: true,
+      isDefault: true,
+    }).returning().get();
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'deepseek-v4-flash',
+      enabled: true,
+      routingStrategy: 'weighted',
+    }).returning().get();
+    await db.insert(schema.routeEndpointTargets).values({
+      routeId: route.id,
+      accountId: account.id,
+      tokenId: token.id,
+      sourceModel: 'deepseek-v4-flash',
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).run();
+
+    const routeTableGraph = await buildRouteGraphSourceFromRouteTable();
+    const published = await publishRouteGraphSource({
+      createdBy: 'test',
+      sourceGraph: {
+        ...routeTableGraph,
+        macros: [
+          ...(routeTableGraph.macros || []),
+          {
+            id: 'deepseek-v4-flash-reroute',
+            kind: 'candidate_selector',
+            enabled: true,
+            visibility: 'public',
+            ownership: 'manual',
+            config: {
+              surface: {
+                entry: {
+                  kind: 'external',
+                  visibility: 'public',
+                  match: {
+                    requestedModelPattern: 'deepseek-v4-flash-reroute',
+                    displayName: 'deepseek-v4-flash-reroute',
+                  },
+                },
+                output: 'route',
+              },
+              policy: { strategy: 'priority_order' },
+              groups: [
+                {
+                  id: 'primary',
+                  enabled: true,
+                  priority: 0,
+                  input: {
+                    kind: 'model_pattern',
+                    pattern: 'deepseek-v4-flash',
+                  },
+                  materialization: { sort: 'model_name', dedupeBy: 'route_id' },
+                },
+              ],
+            },
+          },
+        ],
+      },
+    });
+    if (!published.ok) {
+      throw new Error(JSON.stringify(published.diagnostics, null, 2));
+    }
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/models/marketplace',
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as {
+      models: Array<{
+        name: string;
+        accountCount: number;
+        tokenCount: number;
+        credentialCount: number;
+        accounts: Array<{ id: number; site: string; credentialCount: number; tokens: Array<{ id: number }> }>;
+      }>;
+    };
+    const macroModel = body.models.find((model) => model.name === 'deepseek-v4-flash-reroute');
+    if (!macroModel) {
+      throw new Error(JSON.stringify(body.models.map((model) => ({
+        name: model.name,
+        accountCount: model.accountCount,
+        tokenCount: model.tokenCount,
+        credentialCount: model.credentialCount,
+      })), null, 2));
+    }
+    expect(macroModel).toMatchObject({
+      accountCount: 1,
+      tokenCount: 1,
+      credentialCount: 1,
+    });
+    expect(macroModel?.accounts).toEqual([
+      expect.objectContaining({
+        id: account.id,
+        site: 'deepseek-site',
+        credentialCount: 1,
+        tokens: [expect.objectContaining({ id: token.id })],
+      }),
+    ]);
   });
 
   it('serves repeated marketplace reads from the matching pricing cache', async () => {

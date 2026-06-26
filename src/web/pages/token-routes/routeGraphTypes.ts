@@ -73,10 +73,10 @@ export type RouteGraphMacro = {
 
 export type AddTemplate = {
   id: string;
-  category: 'Core' | 'Transform' | 'Fallback';
-  title: string;
-  kicker: string;
-  detail: string;
+  category: 'Core' | 'Transform' | 'Synthetic';
+  titleKey: string;
+  kickerKey: string;
+  detailKey: string;
   primitiveType?: RouteGraphNodeType;
   create: (index: number, position?: { x: number; y: number }) => RouteGraphNode;
 };

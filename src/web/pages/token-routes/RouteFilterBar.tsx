@@ -5,7 +5,6 @@ import type { GroupFilter, GroupRouteItem } from './types.js';
 import { resolveEndpointTypeIconModel } from './utils.js';
 import { Button } from '../../components/ui/button/index.js';
 import ToneBadge from '../../components/ToneBadge.js';
-import { Card, CardContent } from '../../components/ui/card/index.js';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../../components/ui/collapsible/index.js';
 import { CheckCircle2, ChevronDown, ChevronUp, CircleSlash2, Layers3, RotateCcw, Server, SlidersHorizontal, Tags, Workflow, X } from 'lucide-react';
 
@@ -259,7 +258,7 @@ export default function RouteFilterBar(props: RouteFilterBarProps) {
       }}
       asChild
     >
-      <Card className="overflow-hidden">
+      <section className="overflow-hidden rounded-md border bg-background">
         <div className="flex flex-col gap-3 p-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0 flex-1">
             <Button
@@ -326,7 +325,7 @@ export default function RouteFilterBar(props: RouteFilterBarProps) {
         </div>
 
         <CollapsibleContent className="route-filter-collapsible overflow-hidden">
-          <CardContent className="pt-0">
+          <div className="px-3 pb-3">
             <div className="grid gap-4 border-t pt-3">
               <div className="grid gap-3 lg:grid-cols-[minmax(220px,max-content)_minmax(260px,1fr)]">
                 <FilterRow compact label={tr('components.notificationPanel.status')}>
@@ -470,9 +469,9 @@ export default function RouteFilterBar(props: RouteFilterBarProps) {
                 </CollapsibleTrigger>
               </div>
             </div>
-          </CardContent>
+          </div>
         </CollapsibleContent>
-      </Card>
+      </section>
     </Collapsible>
   );
 }

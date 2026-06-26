@@ -57,13 +57,6 @@ describe('resolveUpstreamEndpointCandidates', () => {
       userAgent: '',
       betaFeatures: '',
     };
-    (config as any).payloadRules = {
-      default: [],
-      defaultRaw: [],
-      override: [],
-      overrideRaw: [],
-      filter: [],
-    };
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -1213,67 +1206,6 @@ describe('buildUpstreamEndpointRequest', () => {
     expect(request.headers['x-codex-beta-features']).toBe('multi_agent');
     expect(request.headers['x-metapi-responses-websocket-transport']).toBeUndefined();
     expect(request.headers['x-metapi-tester-forced-target-id']).toBeUndefined();
-  });
-
-  it('applies configured payload rules before preparing codex responses requests while forcing store false', () => {
-    (config as any).payloadRules = {
-      default: [
-        {
-          models: [{ name: 'gpt-*', protocol: 'codex' }],
-          params: {
-            'reasoning.effort': 'high',
-          },
-        },
-      ],
-      defaultRaw: [],
-      override: [
-        {
-          models: [{ name: 'gpt-5.4', protocol: 'codex' }],
-          params: {
-            'text.verbosity': 'low',
-            max_completion_tokens: 48,
-            max_tokens: 32,
-            max_output_tokens: 64,
-            store: true,
-          },
-        },
-      ],
-      overrideRaw: [],
-      filter: [
-        {
-          models: [{ name: 'gpt-5.4', protocol: 'codex' }],
-          params: ['safety_identifier'],
-        },
-      ],
-    };
-
-    const request = buildUpstreamEndpointRequest({
-      endpoint: 'responses',
-      modelName: 'gpt-5.4',
-      stream: false,
-      tokenValue: 'oauth-access-token',
-      oauthProvider: 'codex',
-      sitePlatform: 'codex',
-      siteUrl: 'https://chatgpt.com/backend-api/codex',
-      openaiBody: {
-        model: 'gpt-5.4',
-        messages: [{ role: 'user', content: 'hello codex' }],
-        verbosity: 'high',
-        safety_identifier: 'drop-me',
-      },
-      downstreamFormat: 'openai',
-      platformHeaders: {
-        Originator: 'codex_cli_rs',
-      },
-    } as any);
-
-    expect(request.body.reasoning).toEqual({ effort: 'high' });
-    expect(request.body.text).toEqual({ verbosity: 'low' });
-    expect(request.body.safety_identifier).toBeUndefined();
-    expect(request.body.max_completion_tokens).toBeUndefined();
-    expect(request.body.max_tokens).toBeUndefined();
-    expect(request.body.max_output_tokens).toBeUndefined();
-    expect(request.body.store).toBe(false);
   });
 
   it('builds gemini-cli native requests with project envelope and bearer headers', () => {

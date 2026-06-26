@@ -84,7 +84,7 @@ export default function ConversationComposer({
             <div className="mt-3 flex flex-wrap gap-2">
               {conversationFiles.map((file) => {
                 const statusText = file.status === 'uploading'
-                  ? tr('pages.modelTester.conversationComposer.zh')
+                  ? tr('pages.modelTester.conversationComposer.uploading')
                   : file.status === 'uploaded'
                     ? tr('pages.modelTester.conversationComposer.uploaded')
                     : file.status === 'error'

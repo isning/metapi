@@ -32,6 +32,7 @@ import {
   parseAccountTokenUpdatePayload,
 } from '../../contracts/accountTokensRoutePayloads.js';
 import { normalizeCompatibilityPolicyStorageInput } from '../../services/upstreamCompatibilityPolicyStorage.js';
+import { emitInboxItem } from '../../services/inboxService.js';
 
 type AccountWithSiteRow = {
   accounts: typeof schema.accounts.$inferSelect;
@@ -411,15 +412,22 @@ async function appendTokenSyncEvent(result: SyncExecutionResult) {
     : (result.message || result.reason || 'sync skipped');
 
   try {
-    await db.insert(schema.events).values({
+    await emitInboxItem({
+      scope: result.status === 'synced' ? 'activity' : 'notification',
+      category: 'auth',
       type: 'token',
       title,
+      summary: `${result.accountName} @ ${result.siteName}: ${detail}`,
       message: `${result.accountName} @ ${result.siteName}: ${detail}`,
       level,
+      subject: { type: 'account', id: result.accountId, label: `${result.accountName} @ ${result.siteName}` },
+      actions: result.status === 'synced' ? [] : [
+        { id: 'open-account', label: '打开账号', kind: 'navigate', href: `/accounts?focusAccountId=${result.accountId}&segment=tokens`, placement: 'primary' },
+      ],
+      source: 'account_tokens',
       relatedId: result.accountId,
       relatedType: 'account',
-      createdAt: new Date().toISOString(),
-    }).run();
+    });
   } catch {}
 }
 

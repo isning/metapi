@@ -123,7 +123,7 @@ describe('settings database migration api', () => {
     expect(body.rows?.sites).toBe(1);
     expect(body.rows?.accounts).toBe(1);
     expect(body.rows?.accountTokens).toBe(1);
-    expect(body.rows?.settings).toBe(1);
+    expect(body.rows?.settings).toBe(3);
 
     const targetDb = new Database(targetPath);
     try {
@@ -133,7 +133,20 @@ describe('settings database migration api', () => {
 
       expect(targetSites.cnt).toBe(1);
       expect(targetAccounts.cnt).toBe(1);
-      expect(targetSettings.cnt).toBe(1);
+      expect(targetSettings.cnt).toBe(3);
+      const legacyFallback = targetDb
+        .prepare("SELECT value FROM settings WHERE key = 'routing_fallback_unit_cost'")
+        .get();
+      const platformPricing = targetDb
+        .prepare("SELECT value FROM settings WHERE key = 'platform_pricing_config_v1'")
+        .get() as { value: string } | undefined;
+      expect(legacyFallback).toBeUndefined();
+      expect(JSON.parse(platformPricing?.value || '{}')).toMatchObject({
+        upstreamDefaultPricing: {
+          inputPerMillion: 1,
+          outputPerMillion: 1,
+        },
+      });
     } finally {
       targetDb.close();
     }

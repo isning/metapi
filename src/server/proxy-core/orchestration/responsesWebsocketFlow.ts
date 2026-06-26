@@ -21,6 +21,11 @@ import { buildUpstreamEndpointRequest } from '../formats/upstreamRequestBuilder.
 import { config } from '../../config.js';
 import { applyOpenAiServiceTierPolicy } from '../serviceTierPolicy.js';
 import { resolvePlatformProfile } from '../platforms/registry.js';
+import { selectProxyTargetForAttempt } from '../targetSelection.js';
+import {
+  bindSurfaceStickyChannel,
+  buildSurfaceStickySessionKey,
+} from './sharedProxyOrchestration.js';
 
 const installedApps = new WeakSet<FastifyInstance>();
 const WS_TURN_STATE_HEADER = 'x-codex-turn-state';
@@ -209,7 +214,6 @@ async function forwardResponsesRequestViaHttp(input: {
     headers: injectHeaders,
     payload: input.payload,
   });
-  console.log('HTTP Injection Fallback Result:', response.statusCode, response.body);
 
   if (response.statusCode < 200 || response.statusCode >= 300) {
     let payload: unknown = null;
@@ -424,9 +428,33 @@ async function handleResponsesWebsocketConnection(
           }
 
           if (!shouldReuseSelectedTarget(selectedChannel, requestModel)) {
-            selectedChannel = requestModel
-              ? await tokenRouter.selectTarget(requestModel, authContext.policy)
+            const stickySessionKey = requestModel
+              ? buildSurfaceStickySessionKey({
+                clientContext: {
+                  clientKind: 'codex',
+                  sessionId: websocketSessionId,
+                  traceHint: websocketSessionId,
+                },
+                requestedModel: requestModel,
+                downstreamPath: '/v1/responses:websocket',
+                downstreamApiKeyId: authContext.key?.id ?? null,
+              })
               : null;
+            selectedChannel = requestModel
+              ? await selectProxyTargetForAttempt({
+                requestedModel: requestModel,
+                downstreamPolicy: authContext.policy,
+                excludeTargetIds: [],
+                retryCount: 0,
+                stickySessionKey,
+              })
+              : null;
+            if (selectedChannel) {
+              bindSurfaceStickyChannel({
+                stickySessionKey,
+                selected: selectedChannel,
+              });
+            }
           }
 
           const selectedServiceTierPolicy = applyOpenAiServiceTierPolicy({

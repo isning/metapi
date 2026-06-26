@@ -58,7 +58,7 @@ export default function OAuthModelsModal({
             onClick={() => void onRefresh()}
             disabled={loading || refreshing}
           >
-            {refreshing ? <><LoaderCircle className="size-4 animate-spin" />{tr('pages.downstreamKeys.refreshzh')}</> : tr('pages.accounts.accountModelsModal.refreshModels')}
+            {refreshing ? <><LoaderCircle className="size-4 animate-spin" />{tr('pages.downstreamKeys.refreshing')}</> : tr('pages.accounts.accountModelsModal.refreshModels')}
           </Button>
         </>
       )}

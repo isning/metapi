@@ -36,6 +36,7 @@ import {
   resolveRouteEndpointSourceRouteIds,
   RouteGraphSyncValidationError,
   saveRouteGraphDraft,
+  synchronizeActiveRouteGraphVersion,
   validateRouteGraphDraft,
 } from '../../services/routeGraphService.js';
 import {
@@ -118,6 +119,7 @@ type RouteRow = typeof schema.tokenRoutes.$inferSelect & {
   backend: RouteGraphBackendSpec;
   visibility: RouteGraphVisibility;
   sourceRouteIds: number[];
+  routeGroup: RouteGroupResponse | null;
 };
 
 type GraphRoutePresentation = {
@@ -134,6 +136,19 @@ type GraphRouteResponseBase = {
   routingStrategy: RouteRoutingStrategy;
   visibility: RouteGraphVisibility;
   enabled: boolean;
+  routeGroup: RouteGroupResponse | null;
+};
+
+type RouteGroupResponse = {
+  id: number;
+  kind: string;
+  groupKey: string;
+  upstreamModelName: string | null;
+  normalizedModelName: string | null;
+  publicModelName: string | null;
+  visibility: string;
+  sourceMode: string;
+  syncStatus: string;
 };
 
 function isExplicitGroupRoute(route: Pick<RouteRow, 'backend'> | Pick<RouteRow, 'routeMode'>): boolean {
@@ -161,6 +176,23 @@ async function decorateRoutesWithSources(
   routes: Array<typeof schema.tokenRoutes.$inferSelect>,
 ): Promise<RouteRow[]> {
   const bindings = await loadRouteGraphRouteTableBindings();
+  const routeGroups = await db.select().from(schema.routeGroups).all();
+  const routeGroupByLegacyRouteId = new Map<number, RouteGroupResponse>();
+  for (const group of routeGroups) {
+    const legacyRouteId = Number(group.legacyRouteId || 0);
+    if (!Number.isFinite(legacyRouteId) || legacyRouteId <= 0) continue;
+    routeGroupByLegacyRouteId.set(legacyRouteId, {
+      id: group.id,
+      kind: group.kind,
+      groupKey: group.groupKey,
+      upstreamModelName: group.upstreamModelName ?? null,
+      normalizedModelName: group.normalizedModelName ?? null,
+      publicModelName: group.publicModelName ?? null,
+      visibility: group.visibility,
+      sourceMode: group.sourceMode,
+      syncStatus: group.syncStatus,
+    });
+  }
   return routes.map((route) => {
     const binding = bindings.get(route.id);
     const fallbackPattern = route.displayName || '';
@@ -178,6 +210,7 @@ async function decorateRoutesWithSources(
       routeMode: binding?.routeMode ?? deriveLegacyRouteModeFromBackendSpec(backend),
       modelPattern: binding?.modelPattern ?? fallbackPattern,
       sourceRouteIds: binding?.sourceRouteIds ?? deriveLegacySourceRouteIdsFromBackendSpec(backend),
+      routeGroup: routeGroupByLegacyRouteId.get(route.id) ?? null,
     };
   });
 }
@@ -206,6 +239,7 @@ function routeToGraphResponseBase(route: RouteRow): GraphRouteResponseBase {
     routingStrategy: normalizeRouteRoutingStrategy(route.routingStrategy),
     visibility: route.visibility,
     enabled: route.enabled !== false,
+    routeGroup: route.routeGroup,
   };
 }
 
@@ -379,22 +413,29 @@ async function syncRouteGraphRouteBinding(input: {
   visibility?: RouteGraphVisibility;
   enabled: boolean;
 }): Promise<void> {
-  const active = await getActiveRouteGraphVersion() ?? await ensureActiveRouteGraphVersion();
-  await reconcileActiveGraphWithRouteTable(active, new Map([
-    [input.routeId, {
-      match: normalizeRouteGraphMatchSpec({
-        ...input.match,
-        displayName: input.displayName,
-        routeId: input.routeId,
-      }),
-      backend: input.backend,
-      visibility: input.visibility ?? 'public',
-    }],
-  ]));
   if (input.backend.kind === 'routes') {
     await replaceRouteSourceRouteIds(input.routeId, input.backend.routeIds);
   } else {
     await replaceRouteSourceRouteIds(input.routeId, []);
+  }
+  const active = await getActiveRouteGraphVersion() ?? await ensureActiveRouteGraphVersion();
+  try {
+    await reconcileActiveGraphWithRouteTable(active, new Map([
+      [input.routeId, {
+        match: normalizeRouteGraphMatchSpec({
+          ...input.match,
+          displayName: input.displayName,
+          routeId: input.routeId,
+        }),
+        backend: input.backend,
+        visibility: input.visibility ?? 'public',
+      }],
+    ]));
+  } catch (error) {
+    if (input.backend.kind === 'routes') {
+      await replaceRouteSourceRouteIds(input.routeId, []);
+    }
+    throw error;
   }
 }
 
@@ -1001,7 +1042,7 @@ async function buildRouteEndpointTargetSummaryMap(routes: RouteRow[]): Promise<M
 
 export async function tokensRoutes(app: FastifyInstance) {
   app.get('/api/route-graph/active', async () => {
-    const active = await ensureActiveRouteGraphVersion();
+    const active = await synchronizeActiveRouteGraphVersion();
     return {
       version: {
         id: active.id,
@@ -1016,7 +1057,7 @@ export async function tokensRoutes(app: FastifyInstance) {
   });
 
   app.get('/api/route-graph/draft', async () => {
-    const active = await ensureActiveRouteGraphVersion();
+    const active = await synchronizeActiveRouteGraphVersion();
     const currentDraft = await getRouteGraphDraft();
     const draft = currentDraft.stale ? await rebaseRouteGraphDraft() : currentDraft;
     const history = await listRouteGraphVersions(20);
@@ -1080,6 +1121,7 @@ export async function tokensRoutes(app: FastifyInstance) {
   });
 
   app.post('/api/route-graph/draft/rebase', async () => {
+    await synchronizeActiveRouteGraphVersion();
     const draft = await rebaseRouteGraphDraft();
     return { success: true, draft };
   });

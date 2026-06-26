@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, create, type ReactTestInstance } from 'react-test-renderer';
+import { MemoryRouter } from 'react-router-dom';
 import { ToastProvider } from '../components/Toast.js';
 import Dashboard from './Dashboard.js';
 import { installDashboardSnapshotCompat } from './testApiCompat.js';
@@ -13,6 +14,7 @@ const { apiMock } = vi.hoisted(() => ({
     getSiteDistribution: vi.fn(),
     getSiteTrend: vi.fn(),
     getSites: vi.fn(),
+    getEvents: vi.fn(),
   },
 }));
 
@@ -61,6 +63,7 @@ describe('Dashboard performance stat card', () => {
     apiMock.getSiteDistribution.mockResolvedValue({ distribution: [] });
     apiMock.getSiteTrend.mockResolvedValue({ trend: [] });
     apiMock.getSites.mockResolvedValue([]);
+    apiMock.getEvents.mockResolvedValue([]);
     globalThis.document = {
       visibilityState: 'visible',
       addEventListener: vi.fn(),
@@ -97,9 +100,11 @@ describe('Dashboard performance stat card', () => {
     try {
       await act(async () => {
         root = create(
-          <ToastProvider>
-            <Dashboard />
-          </ToastProvider>,
+          <MemoryRouter initialEntries={['/']}>
+            <ToastProvider>
+              <Dashboard />
+            </ToastProvider>
+          </MemoryRouter>,
         );
       });
       await flushMicrotasks();
@@ -133,9 +138,11 @@ describe('Dashboard performance stat card', () => {
     try {
       await act(async () => {
         root = create(
-          <ToastProvider>
-            <Dashboard />
-          </ToastProvider>,
+          <MemoryRouter initialEntries={['/']}>
+            <ToastProvider>
+              <Dashboard />
+            </ToastProvider>
+          </MemoryRouter>,
         );
       });
 

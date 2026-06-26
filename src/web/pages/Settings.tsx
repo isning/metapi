@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api.js';
 import { useToast } from '../components/Toast.js';
 import { useIsMobile } from '../components/useIsMobile.js';
@@ -8,18 +8,17 @@ import ModernSelect from '../components/ModernSelect.js';
 import ResponsiveFormGrid from '../components/ResponsiveFormGrid.js';
 import FactoryResetModal from './settings/FactoryResetModal.js';
 import ModelAvailabilityProbeConfirmModal from './settings/ModelAvailabilityProbeConfirmModal.js';
-import {
-  createCodexDefaultHighReasoningVisualPreset,
-  createVisualPayloadRule,
-  isVisualPayloadRuleBlank,
-  payloadRulesToVisualRules,
-  type PayloadRuleAction,
-  type VisualPayloadRule,
-  type VisualPayloadRuleValueMode,
-  visualRulesToPayloadRules,
-} from './settings/payloadRulesVisual.js';
-import { PAYLOAD_RULE_PROTOCOL_OPTIONS } from './settings/payloadRuleProtocolOptions.js';
 import UpdateCenterSection from './settings/UpdateCenterSection.js';
+import CostPolicySettingsSection from './settings/CostPolicySettingsSection.js';
+import {
+  SettingsCard,
+  SettingsCode,
+  SettingsField,
+  SettingsQuickLink,
+  SettingsSection,
+  SettingsSubsection,
+  SettingsToggleRow,
+} from './settings/SettingsLayout.js';
 import {
   applyRoutingProfilePreset,
   resolveRoutingProfilePreset,
@@ -30,20 +29,21 @@ import { clearAppInstallationState } from '../appLocalState.js';
 import { tr } from '../i18n.js';
 import { generateDownstreamSkKey } from './helpers/generateDownstreamSkKey.js';
 import { Button } from '../components/ui/button/index.js';
-import { LoaderCircle } from 'lucide-react';
+import { Database, KeyRound, LoaderCircle, RotateCcw, ShieldCheck, SlidersHorizontal, Timer, Wrench } from 'lucide-react';
 import { Skeleton } from '../components/ui/skeleton/index.js';
 import ToneBadge from '../components/ToneBadge.js';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card/index.js';
-import { Checkbox } from '../components/ui/checkbox/index.js';
+import { Alert, AlertDescription, AlertTitle } from '../components/ui/alert/index.js';
 import { Input } from '../components/ui/input/index.js';
 import { Label } from '../components/ui/label/index.js';
 import { Textarea } from '../components/ui/textarea/index.js';
-import JsonCodeEditor from '../components/JsonCodeEditor.js';
+import PageHeader from '../components/workspace/PageHeader.js';
+import PageShell from '../components/workspace/PageShell.js';
+import { cn } from '../lib/utils.js';
 
 const PROXY_TOKEN_PREFIX = 'sk-';
 const FACTORY_RESET_ADMIN_TOKEN = 'change-me-admin-token';
 const FACTORY_RESET_CONFIRM_SECONDS = 3;
-const MODEL_AVAILABILITY_PROBE_CONFIRM_TEXT = tr('pages.settings.usageZhAllBatchHealthCheckTurn');
+const MODEL_AVAILABILITY_PROBE_CONFIRM_TEXT = tr('pages.settings.batchHealthCheckConfirmationPhrase');
 const SECONDS_PER_DAY = 24 * 60 * 60;
 const ROUTE_COOLDOWN_UNIT_OPTIONS = [
   { value: 'second', label: tr('pages.settings.seconds'), multiplierSec: 1 },
@@ -62,11 +62,11 @@ const CHECKIN_INTERVAL_OPTIONS = Array.from({ length: 24 }, (_, index) => {
     label: `${hour} 小时`,
   };
 });
+const SETTINGS_NAV_SECTION_IDS = ['settings-runtime', 'settings-routing', 'settings-access', 'settings-maintenance'] as const;
 type DbDialect = 'sqlite' | 'mysql' | 'postgres';
 type RouteCooldownUnit = typeof ROUTE_COOLDOWN_UNIT_OPTIONS[number]['value'];
+type SettingsNavSectionId = typeof SETTINGS_NAV_SECTION_IDS[number];
 type SettingsPillTone = 'neutral' | 'primary' | 'danger' | 'warning';
-type PayloadRulesEditorSectionKey = PayloadRuleAction;
-type PayloadRulesEditorDrafts = Record<PayloadRulesEditorSectionKey, string>;
 
 type RuntimeSettings = {
   checkinCron: string;
@@ -83,7 +83,6 @@ type RuntimeSettings = {
   disableCrossProtocolFallback: boolean;
   proxySessionTargetConcurrencyLimit: number;
   proxySessionTargetQueueWaitMs: number;
-  routingFallbackUnitCost: number;
   proxyFirstByteTimeoutSec: number;
   routeFailureCooldownMaxValue: number;
   routeFailureCooldownMaxUnit: RouteCooldownUnit;
@@ -155,145 +154,6 @@ type ShorthandConnection = {
   database: string;
 };
 
-const PAYLOAD_RULES_EDITOR_SECTIONS = [
-  {
-    key: 'default',
-    title: 'default',
-    description: tr('pages.settings.default2'),
-    placeholder: `[
-  {
-    "models": [{ "name": "gpt-*", "protocol": "codex" }],
-    "params": {
-      "reasoning.effort": "high"
-    }
-  }
-]`,
-  },
-  {
-    key: 'default-raw',
-    title: 'default-raw',
-    description: tr('pages.settings.jsonSchema'),
-    placeholder: `[
-  {
-    "models": [{ "name": "gpt-*", "protocol": "codex" }],
-    "params": {
-      "response_format": "{\"type\":\"json_schema\"}"
-    }
-  }
-]`,
-  },
-  {
-    key: 'override',
-    title: 'override',
-    description: tr('pages.settings.alwaysOverrideFieldEvenIfOriginalRequest'),
-    placeholder: `[
-  {
-    "models": [{ "name": "gpt-*", "protocol": "codex" }],
-    "params": {
-      "text.verbosity": "low"
-    }
-  }
-]`,
-  },
-  {
-    key: 'override-raw',
-    title: 'override-raw',
-    description: tr('pages.settings.noneRequestForceOverrideJson'),
-    placeholder: `[
-  {
-    "models": [{ "name": "gemini-*", "protocol": "gemini" }],
-    "params": {
-      "generationConfig.responseJsonSchema": "{\"type\":\"object\"}"
-    }
-  }
-]`,
-  },
-  {
-    key: 'filter',
-    title: 'filter',
-    description: tr('pages.settings.deletematchrequestzh'),
-    placeholder: `[
-  {
-    "models": [{ "name": "gpt-*", "protocol": "codex" }],
-    "params": ["safety_identifier"]
-  }
-]`,
-  },
-] as const satisfies ReadonlyArray<{
-  key: PayloadRulesEditorSectionKey;
-  title: string;
-  description: string;
-  placeholder: string;
-}>;
-
-const PAYLOAD_RULE_ACTION_OPTIONS: Array<{ value: PayloadRuleAction; label: string }> = [
-  { value: 'default', label: tr('pages.settings.default') },
-  { value: 'default-raw', label: tr('pages.settings.defaultJson') },
-  { value: 'override', label: tr('pages.settings.forceOverride') },
-  { value: 'override-raw', label: tr('pages.settings.forceOverrideJson') },
-  { value: 'filter', label: tr('pages.settings.delete') },
-];
-
-const PAYLOAD_RULE_VALUE_MODE_OPTIONS: Array<{ value: VisualPayloadRuleValueMode; label: string }> = [
-  { value: 'text', label: tr('pages.settings.text') },
-  { value: 'json', label: 'JSON' },
-];
-
-function createEmptyPayloadRuleDrafts(): PayloadRulesEditorDrafts {
-  return {
-    default: '',
-    'default-raw': '',
-    override: '',
-    'override-raw': '',
-    filter: '',
-  };
-}
-
-function formatPayloadRuleSectionForEditor(value: unknown): string {
-  if (value == null) return '';
-  if (Array.isArray(value) && value.length <= 0) return '';
-  return JSON.stringify(value, null, 2);
-}
-
-function normalizePayloadRulesForEditor(value: unknown): PayloadRulesEditorDrafts {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return createEmptyPayloadRuleDrafts();
-  }
-
-  const record = value as Record<string, unknown>;
-  return {
-    default: formatPayloadRuleSectionForEditor(record.default),
-    'default-raw': formatPayloadRuleSectionForEditor(record.defaultRaw ?? record['default-raw']),
-    override: formatPayloadRuleSectionForEditor(record.override),
-    'override-raw': formatPayloadRuleSectionForEditor(record.overrideRaw ?? record['override-raw']),
-    filter: formatPayloadRuleSectionForEditor(record.filter),
-  };
-}
-
-function parsePayloadRulesFromDrafts(
-  drafts: PayloadRulesEditorDrafts,
-): { success: true; value: Record<string, unknown> } | { success: false; message: string } {
-  const next: Record<string, unknown> = {};
-
-  for (const section of PAYLOAD_RULES_EDITOR_SECTIONS) {
-    const raw = drafts[section.key].trim();
-    if (!raw) continue;
-    try {
-      next[section.key] = JSON.parse(raw);
-    } catch (error: any) {
-      return {
-        success: false,
-        message: `Payload 规则 ${section.title} 不是合法 JSON：${error?.message || tr('pages.settings.failed')}`,
-      };
-    }
-  }
-
-  return {
-    success: true,
-    value: next,
-  };
-}
-
 const defaultWeights: RoutingWeights = {
   baseWeightFactor: 0.5,
   valueScoreFactor: 0.5,
@@ -362,55 +222,6 @@ function toRouteCooldownSeconds(value: number, unit: RouteCooldownUnit): number 
   return normalizedValue * unitConfig.multiplierSec;
 }
 
-function SettingsCard({
-  title,
-  description,
-  children,
-  footer,
-}: {
-  title: React.ReactNode;
-  description?: React.ReactNode;
-  children?: React.ReactNode;
-  footer?: React.ReactNode;
-}) {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>{title}</CardTitle>
-        {description ? <CardDescription>{description}</CardDescription> : null}
-      </CardHeader>
-      {children ? <CardContent className="grid gap-4">{children}</CardContent> : null}
-      {footer ? <CardContent className="flex flex-wrap gap-2 pt-0">{footer}</CardContent> : null}
-    </Card>
-  );
-}
-
-function SettingsField({
-  label,
-  hint,
-  children,
-}: {
-  label: React.ReactNode;
-  hint?: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="grid gap-2">
-      <Label>{label}</Label>
-      {children}
-      {hint ? <div className="text-xs text-muted-foreground">{hint}</div> : null}
-    </div>
-  );
-}
-
-function SettingsCode({ children }: { children: React.ReactNode }) {
-  return (
-    <code className="block overflow-x-auto rounded-md bg-muted px-3 py-2 font-mono text-sm text-muted-foreground">
-      {children}
-    </code>
-  );
-}
-
 export default function Settings() {
   const isMobile = useIsMobile();
   const [runtime, setRuntime] = useState<RuntimeSettings>({
@@ -428,7 +239,6 @@ export default function Settings() {
     disableCrossProtocolFallback: false,
     proxySessionTargetConcurrencyLimit: 2,
     proxySessionTargetQueueWaitMs: 1500,
-    routingFallbackUnitCost: 1,
     proxyFirstByteTimeoutSec: 0,
     routeFailureCooldownMaxValue: 30,
     routeFailureCooldownMaxUnit: 'day',
@@ -450,11 +260,6 @@ export default function Settings() {
   const [testingSystemProxy, setTestingSystemProxy] = useState(false);
   const [systemProxyTestState, setSystemProxyTestState] = useState<SystemProxyTestState>(null);
   const [savingProxyFailureRules, setSavingProxyFailureRules] = useState(false);
-  const [payloadVisualRules, setPayloadVisualRules] = useState<VisualPayloadRule[]>([]);
-  const [payloadRuleDrafts, setPayloadRuleDrafts] = useState<PayloadRulesEditorDrafts>(createEmptyPayloadRuleDrafts());
-  const [payloadAdvancedDirty, setPayloadAdvancedDirty] = useState(false);
-  const [savingPayloadRules, setSavingPayloadRules] = useState(false);
-  const [showPayloadRulesEditor, setShowPayloadRulesEditor] = useState(false);
   const [savingRouting, setSavingRouting] = useState(false);
   const [showAdvancedRouting, setShowAdvancedRouting] = useState(false);
   const [allBrandNames, setAllBrandNames] = useState<string[] | null>(null);
@@ -495,16 +300,12 @@ export default function Settings() {
   const factoryResetPresence = useAnimatedVisibility(factoryResetOpen, 220);
   const [factoryResetting, setFactoryResetting] = useState(false);
   const [factoryResetSecondsLeft, setFactoryResetSecondsLeft] = useState(FACTORY_RESET_CONFIRM_SECONDS);
+  const [activeSettingsSection, setActiveSettingsSection] = useState<SettingsNavSectionId>('settings-runtime');
   const toast = useToast();
 
   const activeRoutingProfile = useMemo(
     () => resolveRoutingProfilePreset(runtime.routingWeights),
     [runtime.routingWeights],
-  );
-
-  const configuredPayloadRuleCount = useMemo(
-    () => payloadVisualRules.filter((rule) => !isVisualPayloadRuleBlank(rule)).length,
-    [payloadVisualRules],
   );
 
   const generatedConnectionString = useMemo(() => (
@@ -548,7 +349,7 @@ export default function Settings() {
     return () => globalThis.clearInterval(timer);
   }, [factoryResetOpen]);
 
-  const proxyTransportModeLabel = runtime.codexUpstreamWebsocketEnabled ? tr('pages.settings.websocketEnabled') : tr('pages.settings.http');
+  const proxyTransportModeLabel = runtime.codexUpstreamWebsocketEnabled ? tr('pages.settings.upstreamWebSocketEnabled') : tr('pages.settings.http');
   const proxyTransportQueueLabel = `会话池 ${runtime.proxySessionTargetConcurrencyLimit} 并发 / ${runtime.proxySessionTargetQueueWaitMs}ms`;
   const modelAvailabilityProbeDirty = runtime.modelAvailabilityProbeEnabled !== savedModelAvailabilityProbeEnabled;
   const modelAvailabilityProbeStatusTone: SettingsPillTone = modelAvailabilityProbeDirty
@@ -561,30 +362,6 @@ export default function Settings() {
     : savedModelAvailabilityProbeEnabled
       ? tr('pages.settings.enabled2')
       : tr('pages.settings.close');
-
-  const syncPayloadRuleDraftsFromObject = (value: unknown) => {
-    setPayloadRuleDrafts(normalizePayloadRulesForEditor(value));
-    setPayloadAdvancedDirty(false);
-  };
-
-  const syncPayloadVisualRulesFromObject = (value: unknown) => {
-    setPayloadVisualRules(payloadRulesToVisualRules(value));
-  };
-
-  const applyVisualPayloadRules = (
-    nextRulesOrUpdater: VisualPayloadRule[] | ((current: VisualPayloadRule[]) => VisualPayloadRule[]),
-  ) => {
-    setPayloadVisualRules((currentRules) => {
-      const nextRules = typeof nextRulesOrUpdater === 'function'
-        ? nextRulesOrUpdater(currentRules)
-        : nextRulesOrUpdater;
-      const serialized = visualRulesToPayloadRules(nextRules);
-      if (serialized.success) {
-        syncPayloadRuleDraftsFromObject(serialized.value);
-      }
-      return nextRules;
-    });
-  };
 
   const loadSettings = async () => {
     setLoading(true);
@@ -619,9 +396,6 @@ export default function Settings() {
         proxySessionTargetQueueWaitMs: Number(runtimeInfo.proxySessionTargetQueueWaitMs) >= 0
           ? Math.trunc(Number(runtimeInfo.proxySessionTargetQueueWaitMs))
           : 1500,
-        routingFallbackUnitCost: Number(runtimeInfo.routingFallbackUnitCost) > 0
-          ? Number(runtimeInfo.routingFallbackUnitCost)
-          : 1,
         proxyFirstByteTimeoutSec: Number(runtimeInfo.proxyFirstByteTimeoutSec) >= 0
           ? Math.trunc(Number(runtimeInfo.proxyFirstByteTimeoutSec))
           : 0,
@@ -652,8 +426,6 @@ export default function Settings() {
           ? runtimeInfo.proxyErrorKeywords.filter((item: unknown) => typeof item === 'string').join('\n')
           : '',
       );
-      syncPayloadRuleDraftsFromObject(runtimeInfo.payloadRules);
-      syncPayloadVisualRulesFromObject(runtimeInfo.payloadRules);
       setAdminIpAllowlistText(
         Array.isArray(runtimeInfo.adminIpAllowlist)
           ? runtimeInfo.adminIpAllowlist.join('\n')
@@ -700,6 +472,30 @@ export default function Settings() {
   useEffect(() => {
     loadSettings();
   }, []);
+
+  useEffect(() => {
+    if (loading || typeof IntersectionObserver === 'undefined') return;
+    const sections = SETTINGS_NAV_SECTION_IDS
+      .map((id) => document.getElementById(id))
+      .filter((section): section is HTMLElement => section !== null);
+    if (!sections.length) return;
+
+    const observer = new IntersectionObserver((entries) => {
+      const visible = entries
+        .filter((entry) => entry.isIntersecting)
+        .sort((left, right) => right.intersectionRatio - left.intersectionRatio)[0];
+      const nextId = visible?.target.id;
+      if (SETTINGS_NAV_SECTION_IDS.includes(nextId as SettingsNavSectionId)) {
+        setActiveSettingsSection(nextId as SettingsNavSectionId);
+      }
+    }, {
+      rootMargin: '-18% 0px -65% 0px',
+      threshold: [0.1, 0.35, 0.6, 0.85],
+    });
+
+    sections.forEach((section) => observer.observe(section));
+    return () => observer.disconnect();
+  }, [loading]);
 
   const normalizeProxyTokenSuffix = (raw: string) => {
     const compact = raw.replace(/\s+/g, '');
@@ -778,7 +574,7 @@ export default function Settings() {
           ? res.systemProxyUrl
           : prev.systemProxyUrl,
       }));
-      toast.success(tr('pages.settings.systemactingSave'));
+      toast.success(tr('pages.settings.systemProxySaved'));
     } catch (err: any) {
       toast.error(err?.message || tr('pages.accounts.saveFailed'));
     } finally {
@@ -812,7 +608,7 @@ export default function Settings() {
 
   const saveModelAvailabilityProbeSettings = async () => {
     if (runtime.modelAvailabilityProbeEnabled === savedModelAvailabilityProbeEnabled) {
-      toast.info(tr('pages.settings.batchHealthChecksettings'));
+      toast.info(tr('pages.settings.batchHealthCheckSettingsUnchanged'));
       return;
     }
     if (runtime.modelAvailabilityProbeEnabled) {
@@ -857,7 +653,7 @@ export default function Settings() {
   const testSystemProxy = async () => {
     const proxyUrl = runtime.systemProxyUrl.trim();
     if (!proxyUrl) {
-      const message = tr('pages.settings.systemacting');
+      const message = tr('pages.settings.systemProxyUrlRequired');
       setSystemProxyTestState({ kind: 'error', text: message });
       toast.info(message);
       return;
@@ -871,7 +667,7 @@ export default function Settings() {
       setSystemProxyTestState({ kind: 'success', text: summary });
       toast.success(`系统代理测试成功（${res.latencyMs} ms）`);
     } catch (err: any) {
-      const message = err?.message || tr('pages.settings.systemactingFailed');
+      const message = err?.message || tr('pages.settings.systemProxyTestFailed');
       setSystemProxyTestState({ kind: 'error', text: message });
       toast.error(message);
     } finally {
@@ -898,7 +694,7 @@ export default function Settings() {
           : prev.proxyEmptyContentFailEnabled,
       }));
       setProxyErrorKeywordsText(nextKeywords.join('\n'));
-      toast.success(tr('pages.settings.actingfailedrulesSave'));
+      toast.success(tr('pages.settings.proxyFailureRulesSaved'));
     } catch (err: any) {
       toast.error(err?.message || tr('pages.accounts.saveFailed'));
     } finally {
@@ -906,86 +702,11 @@ export default function Settings() {
     }
   };
 
-  const savePayloadRules = async () => {
-    const nextPayloadRules = payloadAdvancedDirty
-      ? parsePayloadRulesFromDrafts(payloadRuleDrafts)
-      : visualRulesToPayloadRules(payloadVisualRules);
-    if (!nextPayloadRules.success) {
-      toast.error(nextPayloadRules.message);
-      return;
-    }
-
-    setSavingPayloadRules(true);
-    try {
-      const res = await api.updateRuntimeSettings({
-        payloadRules: nextPayloadRules.value,
-      });
-      syncPayloadRuleDraftsFromObject(res?.payloadRules);
-      syncPayloadVisualRulesFromObject(res?.payloadRules);
-      toast.success(tr('pages.settings.payloadRulesSave'));
-    } catch (err: any) {
-      toast.error(err?.message || tr('pages.settings.savePayloadRulesfailed'));
-    } finally {
-      setSavingPayloadRules(false);
-    }
-  };
-
-  const applyCodexDefaultHighReasoningPreset = () => {
-    applyVisualPayloadRules((currentRules) => [
-      ...currentRules.filter((rule) => !isVisualPayloadRuleBlank(rule)),
-      ...createCodexDefaultHighReasoningVisualPreset(),
-    ]);
-    setShowPayloadRulesEditor(true);
-    toast.success(tr('pages.settings.codexDefaulthigh2'));
-  };
-
-  const addPayloadVisualRule = () => {
-    applyVisualPayloadRules((currentRules) => [
-      ...currentRules,
-      createVisualPayloadRule(),
-    ]);
-  };
-
-  const updatePayloadVisualRule = (ruleId: string, patch: Partial<VisualPayloadRule>) => {
-    applyVisualPayloadRules((currentRules) => currentRules.map((rule) => {
-      if (rule.id !== ruleId) return rule;
-      const nextAction = (patch.action ?? rule.action) as PayloadRuleAction;
-      const nextValueMode = patch.valueMode ?? (
-        nextAction === 'default-raw' || nextAction === 'override-raw'
-          ? 'json'
-          : rule.valueMode
-      );
-      return {
-        ...rule,
-        ...patch,
-        action: nextAction,
-        valueMode: nextAction === 'filter' ? 'text' : nextValueMode,
-        value: nextAction === 'filter' ? '' : (patch.value ?? rule.value),
-      };
-    }));
-  };
-
-  const removePayloadVisualRule = (ruleId: string) => {
-    applyVisualPayloadRules((currentRules) => currentRules.filter((rule) => rule.id !== ruleId));
-  };
-
-  const syncVisualRulesFromAdvancedJson = () => {
-    const parsedPayloadRules = parsePayloadRulesFromDrafts(payloadRuleDrafts);
-    if (!parsedPayloadRules.success) {
-      toast.error(parsedPayloadRules.message);
-      return;
-    }
-    syncPayloadVisualRulesFromObject(parsedPayloadRules.value);
-    setPayloadAdvancedDirty(false);
-    toast.success(tr('pages.settings.advancedJsonSyncRules'));
-  };
-
   const saveRouting = async () => {
     setSavingRouting(true);
     try {
       await api.updateRuntimeSettings({
         routingWeights: runtime.routingWeights,
-        routingFallbackUnitCost: runtime.routingFallbackUnitCost,
         proxyFirstByteTimeoutSec: Number.isFinite(runtime.proxyFirstByteTimeoutSec)
           ? Math.max(0, Math.trunc(runtime.proxyFirstByteTimeoutSec))
           : 0,
@@ -1025,7 +746,7 @@ export default function Settings() {
         toast.error(tr('pages.settings.brandsSaveRoutesFailedManual'));
       }
     } catch (err: any) {
-      toast.error(err?.message || tr('pages.settings.savebrandsSettingsfailed'));
+      toast.error(err?.message || tr('pages.settings.saveBlockedBrandSettingsFailed'));
     } finally {
       setSavingBrandFilter(false);
     }
@@ -1046,7 +767,7 @@ export default function Settings() {
         toast.error(tr('pages.settings.modelSaveRoutesFailedManual'));
       }
     } catch (err: any) {
-      toast.error(err?.message || tr('pages.settings.savemodelSettingsfailed'));
+      toast.error(err?.message || tr('pages.settings.saveModelWhitelistSettingsFailed'));
     } finally {
       setSavingAllowedModels(false);
     }
@@ -1127,7 +848,7 @@ export default function Settings() {
       clearAppInstallationState(localStorage);
       window.location.reload();
     } catch (err: any) {
-      toast.error(err?.message || tr('pages.settings.systemfailed'));
+      toast.error(err?.message || tr('pages.settings.systemReinitializationFailed'));
       setFactoryResetting(false);
     }
   };
@@ -1237,25 +958,114 @@ export default function Settings() {
 
   if (loading) {
     return (
-      <div className="grid gap-3">
-        <Skeleton className="h-7 w-56" />
-        <Skeleton className="h-80 w-full" />
-      </div>
+      <PageShell>
+        <Skeleton className="h-8 w-56" />
+        <div className="grid gap-3 lg:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, index) => (
+            <Skeleton key={index} className="h-24 w-full" />
+          ))}
+        </div>
+        <Skeleton className="h-96 w-full" />
+      </PageShell>
     );
   }
 
+  const settingsNavItems = [
+    {
+      id: 'settings-runtime' as const,
+      href: '#settings-runtime',
+      icon: Timer,
+      title: tr('pages.settings.runtimeOperations'),
+      description: tr('pages.settings.runtimeOperationsDescription'),
+    },
+    {
+      id: 'settings-routing' as const,
+      href: '#settings-routing',
+      icon: SlidersHorizontal,
+      title: tr('pages.settings.routingAndPricing'),
+      description: tr('pages.settings.routingAndPricingDescription'),
+    },
+    {
+      id: 'settings-access' as const,
+      href: '#settings-access',
+      icon: ShieldCheck,
+      title: tr('pages.settings.accessAndSecurity'),
+      description: tr('pages.settings.accessAndSecurityDescription'),
+    },
+    {
+      id: 'settings-maintenance' as const,
+      href: '#settings-maintenance',
+      icon: Wrench,
+      title: tr('pages.settings.maintenanceAndData'),
+      description: tr('pages.settings.maintenanceAndDataDescription'),
+    },
+  ];
+  const settingsStatusItems = [
+    {
+      icon: <Timer className="size-3.5" />,
+      label: tr('pages.settings.sign3'),
+      tone: runtime.checkinScheduleMode === 'interval' ? '-info' : '-muted',
+      value: runtime.checkinScheduleMode === 'interval' ? tr('pages.settings.sign4') : 'Cron',
+    },
+    {
+      icon: <RotateCcw className="size-3.5" />,
+      label: tr('pages.settings.systemProxy'),
+      tone: runtime.systemProxyUrl ? '-success' : '-muted',
+      value: runtime.systemProxyUrl ? tr('pages.settings.enabled2') : tr('pages.settings.close'),
+    },
+    {
+      icon: <SlidersHorizontal className="size-3.5" />,
+      label: tr('pages.settings.batchHealthCheck'),
+      tone: runtime.modelAvailabilityProbeEnabled ? '-warning' : '-muted',
+      value: runtime.modelAvailabilityProbeEnabled ? tr('pages.settings.enabled2') : tr('pages.settings.close'),
+    },
+    {
+      icon: <Database className="size-3.5" />,
+      label: tr('pages.settings.runtimeDatabase'),
+      tone: runtimeDatabaseState?.restartRequired ? '-warning' : '-muted',
+      value: runtimeDatabaseState?.active?.dialect || 'sqlite',
+    },
+  ];
+
   return (
-    <div className="grid gap-4">
-      <div>
-        <h2 className="text-2xl font-semibold tracking-tight">{tr('pages.importExport.systemSettings')}</h2>
+    <PageShell>
+      <PageHeader
+        title={tr('pages.importExport.systemSettings')}
+        description={tr('pages.settings.systemSettingsPageDescription')}
+        actions={runtimeDatabaseState?.restartRequired ? (
+          <ToneBadge tone={runtimeDatabaseState?.restartRequired ? '-warning' : '-muted'}>
+            {tr('pages.settings.restartRequired')}
+          </ToneBadge>
+        ) : undefined}
+      />
+
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        {settingsNavItems.map((item) => {
+          const Icon = item.icon;
+          return (
+            <SettingsQuickLink
+              key={item.href}
+              href={item.href}
+              icon={<Icon className="size-4" />}
+              title={item.title}
+              description={item.description}
+            />
+          );
+        })}
       </div>
 
-      <div className="grid max-w-3xl gap-4">
-        <SettingsCard title={tr('pages.settings.adminsignIntoken')}>
+      <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_320px] 2xl:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="grid min-w-0 gap-6">
+          <SettingsSection
+            id="settings-runtime"
+            title={tr('pages.settings.runtimeOperations')}
+            description={tr('pages.settings.runtimeOperationsDescription')}
+          >
+        <SettingsCard title={tr('pages.settings.adminSignInToken')}>
           <SettingsCode>
             {maskedToken || '****'}
           </SettingsCode>
-          <Button type="button" onClick={() => setShowChangeKey(true)}>{tr('pages.settings.signIntoken')}</Button>
+          <Button type="button" onClick={() => setShowChangeKey(true)}>{tr('pages.settings.changeSignInToken')}</Button>
           <ChangeKeyModal
             open={showChangeKey}
             onClose={() => {
@@ -1266,36 +1076,39 @@ export default function Settings() {
         </SettingsCard>
 
         <SettingsCard title={tr('pages.settings.scheduledTasks')}>
-          <div className="grid items-end gap-3 md:grid-cols-[180px_180px_auto]">
-            <SettingsField label={tr('pages.settings.sign3')}>
-              <ModernSelect
-                value={runtime.checkinScheduleMode}
-                onChange={(value) => setRuntime((prev) => ({
-                  ...prev,
-                  checkinScheduleMode: value === 'interval' ? 'interval' : 'cron',
-                }))}
-                options={CHECKIN_SCHEDULE_MODE_OPTIONS.map((item) => ({ ...item }))}
-              />
-            </SettingsField>
-            <SettingsField label={tr('pages.settings.sign')}>
-              <ModernSelect
-                value={String(runtime.checkinIntervalHours)}
-                onChange={(value) => setRuntime((prev) => ({
-                  ...prev,
-                  checkinIntervalHours: Math.min(24, Math.max(1, Math.trunc(Number(value) || 1))),
-                }))}
-                disabled={runtime.checkinScheduleMode !== 'interval'}
-                options={CHECKIN_INTERVAL_OPTIONS}
-              />
-            </SettingsField>
-            <Button type="button" variant="outline"
-              onClick={triggerScheduleCheckin}
-              disabled={testingCheckin}
-            >
-              {testingCheckin ? tr('pages.checkinLog.zh') : tr('pages.settings.sign2')}
-            </Button>
-          </div>
-          <div className="grid gap-3 md:grid-cols-2">
+          <SettingsSubsection
+            title={tr('pages.settings.scheduledCheckin')}
+            description={tr('pages.settings.scheduledCheckinDescription')}
+          >
+            <div className="grid items-end gap-3 md:grid-cols-[180px_180px_auto]">
+              <SettingsField label={tr('pages.settings.sign3')}>
+                <ModernSelect
+                  value={runtime.checkinScheduleMode}
+                  onChange={(value) => setRuntime((prev) => ({
+                    ...prev,
+                    checkinScheduleMode: value === 'interval' ? 'interval' : 'cron',
+                  }))}
+                  options={CHECKIN_SCHEDULE_MODE_OPTIONS.map((item) => ({ ...item }))}
+                />
+              </SettingsField>
+              <SettingsField label={tr('pages.settings.sign')}>
+                <ModernSelect
+                  value={String(runtime.checkinIntervalHours)}
+                  onChange={(value) => setRuntime((prev) => ({
+                    ...prev,
+                    checkinIntervalHours: Math.min(24, Math.max(1, Math.trunc(Number(value) || 1))),
+                  }))}
+                  disabled={runtime.checkinScheduleMode !== 'interval'}
+                  options={CHECKIN_INTERVAL_OPTIONS}
+                />
+              </SettingsField>
+              <Button type="button" variant="outline"
+                onClick={triggerScheduleCheckin}
+                disabled={testingCheckin}
+              >
+                {testingCheckin ? tr('pages.checkinLog.triggering') : tr('pages.settings.sign2')}
+              </Button>
+            </div>
             <SettingsField label={tr('pages.settings.signCron')}>
               <Input
                 className="font-mono"
@@ -1304,6 +1117,12 @@ export default function Settings() {
                 disabled={runtime.checkinScheduleMode !== 'cron'}
               />
             </SettingsField>
+          </SettingsSubsection>
+
+          <SettingsSubsection
+            title={tr('pages.settings.balanceRefreshSchedule')}
+            description={tr('pages.settings.balanceRefreshScheduleDescription')}
+          >
             <SettingsField label={tr('pages.settings.balanceRefreshCron')}>
               <Input
                 className="font-mono"
@@ -1311,9 +1130,12 @@ export default function Settings() {
                 onChange={(e) => setRuntime((prev) => ({ ...prev, balanceRefreshCron: e.target.value }))}
               />
             </SettingsField>
-          </div>
-          <div className="grid gap-3 border-t pt-4">
-            <div className="text-sm font-semibold">{tr('pages.settings.automatic')}</div>
+          </SettingsSubsection>
+
+          <SettingsSubsection
+            title={tr('pages.settings.logCleanupSchedule')}
+            description={tr('pages.settings.logCleanupScheduleDescription')}
+          >
             <div className="grid gap-3 md:grid-cols-[1fr_160px]">
               <SettingsField label={tr('pages.settings.cron')}>
                 <Input
@@ -1339,26 +1161,24 @@ export default function Settings() {
                 />
               </SettingsField>
             </div>
-            <div className="flex flex-wrap gap-4">
-              <Label className="flex items-center gap-2">
-                <Checkbox
-                  checked={runtime.logCleanupUsageLogsEnabled}
-                  onCheckedChange={(checked) => setRuntime((prev) => ({ ...prev, logCleanupUsageLogsEnabled: checked === true }))}
-                />
-                {tr('pages.settings.usageLogs')}
-              </Label>
-              <Label className="flex items-center gap-2">
-                <Checkbox
-                  checked={runtime.logCleanupProgramLogsEnabled}
-                  onCheckedChange={(checked) => setRuntime((prev) => ({ ...prev, logCleanupProgramLogsEnabled: checked === true }))}
-                />
-                {tr('pages.settings.systemLogs')}
-              </Label>
+            <div className="grid gap-2 md:grid-cols-2">
+              <SettingsToggleRow
+                title={tr('pages.settings.usageLogs')}
+                checked={runtime.logCleanupUsageLogsEnabled}
+                onCheckedChange={(checked) => setRuntime((prev) => ({ ...prev, logCleanupUsageLogsEnabled: checked }))}
+                className="p-3"
+              />
+              <SettingsToggleRow
+                title={tr('pages.settings.systemLogs')}
+                checked={runtime.logCleanupProgramLogsEnabled}
+                onCheckedChange={(checked) => setRuntime((prev) => ({ ...prev, logCleanupProgramLogsEnabled: checked }))}
+                className="p-3"
+              />
             </div>
             <div className="text-xs text-muted-foreground">
               {tr('pages.settings.defaultDays6ScheduledTasksTimeRetention')}
             </div>
-          </div>
+          </SettingsSubsection>
           <div>
             <Button type="button" onClick={saveSchedule} disabled={savingSchedule}>
               {savingSchedule ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.accounts.saving')}</> : tr('pages.settings.saveScheduledTasks')}
@@ -1367,8 +1187,8 @@ export default function Settings() {
         </SettingsCard>
 
         <SettingsCard
-          title={tr('pages.settings.systemacting3')}
-          description={tr('pages.settings.configurationActingSitesSitesEnabledsystemacting')}
+          title={tr('pages.settings.systemProxy')}
+          description={tr('pages.settings.systemProxyDescription')}
         >
           <Input
             className="font-mono"
@@ -1377,11 +1197,11 @@ export default function Settings() {
               setRuntime((prev) => ({ ...prev, systemProxyUrl: e.target.value }));
               setSystemProxyTestState(null);
             }}
-            placeholder={tr('pages.settings.systemactingUrlHttp127001')}
+            placeholder={tr('pages.settings.systemProxyUrlPlaceholder')}
           />
           <div className="flex flex-wrap items-center gap-2">
             <Button type="button" onClick={saveSystemProxy} disabled={savingSystemProxy}>
-              {savingSystemProxy ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.accounts.saving')}</> : tr('pages.settings.savesystemacting')}
+              {savingSystemProxy ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.accounts.saving')}</> : tr('pages.settings.saveSystemProxy')}
             </Button>
             <Button type="button" variant="outline"
               onClick={testSystemProxy}
@@ -1389,7 +1209,7 @@ export default function Settings() {
              
              
             >
-              {testingSystemProxy ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.settings.zh')}</> : tr('pages.settings.systemacting2')}
+              {testingSystemProxy ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.settings.testing')}</> : tr('pages.settings.testSystemProxy')}
             </Button>
           </div>
           {systemProxyTestState && (
@@ -1399,278 +1219,60 @@ export default function Settings() {
           )}
         </SettingsCard>
 
-        <SettingsCard title={tr('pages.settings.actingfailed')} description={tr('pages.settings.zhContentFailedRetry')}>
+        <SettingsCard title={tr('pages.settings.proxyFailureDetection')} description={tr('pages.settings.failureKeywordRetryDescription')}>
           <Textarea
             className="min-h-24 font-mono"
             value={proxyErrorKeywordsText}
             onChange={(e) => setProxyErrorKeywordsText(e.target.value)}
             placeholder={tr('pages.settings.oneKeywordPerLineCommaSeparated')}
           />
-          <Label className="flex items-center gap-2">
-            <Checkbox
-              checked={runtime.proxyEmptyContentFailEnabled}
-              onCheckedChange={(checked) => setRuntime((prev) => ({ ...prev, proxyEmptyContentFailEnabled: checked === true }))}
-            />
-            {tr('pages.settings.contentCompletion0PromptTokenFailed')}
-          </Label>
+          <SettingsToggleRow
+            title={tr('pages.settings.contentCompletion0PromptTokenFailed')}
+            checked={runtime.proxyEmptyContentFailEnabled}
+            onCheckedChange={(checked) => setRuntime((prev) => ({ ...prev, proxyEmptyContentFailEnabled: checked }))}
+          />
           <div>
             <Button type="button" onClick={saveProxyFailureRules} disabled={savingProxyFailureRules}>
               {savingProxyFailureRules ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.accounts.saving')}</> : tr('pages.settings.saveFailedrules')}
             </Button>
           </div>
         </SettingsCard>
+          </SettingsSection>
 
-        <Card data-settings-card="payload-rules">
-          <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3">
-            <div className="grid min-w-0 gap-1">
-              <CardTitle>{tr('pages.settings.payloadRules')}</CardTitle>
-              <CardDescription>
-                {tr('pages.settings.matchmodelRequestDefaultForceOverrideRulesCpa')}
-                {' '}
-                <code className="font-mono">reasoning.effort</code>
-                {' '}
-                {tr('pages.settings.similarParameters')}
-              </CardDescription>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <ToneBadge tone={configuredPayloadRuleCount > 0 ? 'primary' : 'muted'}>
-                {configuredPayloadRuleCount > 0 ? `已配置 ${configuredPayloadRuleCount} 条` : tr('pages.settings.notConfigured')}
-              </ToneBadge>
-              <ToneBadge tone={payloadAdvancedDirty ? 'warning' : 'muted'}>
-                {payloadAdvancedDirty ? tr('pages.settings.advancedJsonSyncSave') : tr('pages.settings.save3')}
-              </ToneBadge>
-            </div>
-          </CardHeader>
-          <CardContent className="grid gap-4">
-          <div className="grid gap-3 rounded-md border p-4">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div className="grid min-w-0 gap-1">
-                <div className="text-xs font-semibold text-muted-foreground">{tr('pages.settings.commonPresets')}</div>
-                <div className="text-xs leading-relaxed text-muted-foreground">
-                  {tr('pages.settings.ruleseditAdvancedJson')}
-                </div>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <Button variant="outline" type="button" onClick={applyCodexDefaultHighReasoningPreset}>
-                  {tr('pages.settings.codexDefaulthigh')}
-                </Button>
-                <Button variant="outline" type="button" onClick={addPayloadVisualRule}>
-                  {tr('pages.settings.newRule')}
-                </Button>
-                <Button variant="outline" type="button" onClick={() => setShowPayloadRulesEditor((prev) => !prev)}>
-                  {showPayloadRulesEditor ? tr('pages.settings.collapseadvancedJsonEdit') : tr('pages.settings.expandadvancedJsonEdit')}
-                </Button>
-              </div>
-            </div>
-          </div>
-          {payloadVisualRules.length <= 0 ? (
-            <div className="grid gap-3 rounded-md border p-4">
-              <div className="text-xs font-semibold text-muted-foreground">{tr('pages.settings.noVisualRulesYet')}</div>
-              <div className="text-xs leading-relaxed text-muted-foreground">
-                {tr('pages.settings.itemsrulesSelectActionProtocolModelmatchFieldPath')}
-              </div>
-            </div>
-          ) : (
-            <div className="grid gap-3">
-              {payloadVisualRules.map((rule, index) => (
-                <div
-                  key={rule.id}
-                  className="grid gap-3 rounded-md border p-4"
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="text-xs font-semibold text-muted-foreground">{tr('pages.settings.rules')} {index + 1}</div>
-                    <Button variant="outline" type="button" onClick={() => removePayloadVisualRule(rule.id)}>
-                      {tr('pages.accounts.delete3')}
-                    </Button>
-                  </div>
-                  <ResponsiveFormGrid columns={2}>
-                    <SettingsField label={tr('pages.settings.action')}>
-                      <ModernSelect
-                        size="sm"
-                        data-testid={`payload-rule-action-${index + 1}`}
-                        value={rule.action}
-                        onChange={(value) => updatePayloadVisualRule(rule.id, { action: value as PayloadRuleAction })}
-                        options={PAYLOAD_RULE_ACTION_OPTIONS}
-                        placeholder={tr('pages.settings.selectAction')}
-                      />
-                    </SettingsField>
-                    <SettingsField label={tr('pages.settings.protocol')}>
-                      <ModernSelect
-                        size="sm"
-                        data-testid={`payload-rule-protocol-${index + 1}`}
-                        value={rule.protocol}
-                        onChange={(value) => updatePayloadVisualRule(rule.id, { protocol: String(value || '') })}
-                        options={PAYLOAD_RULE_PROTOCOL_OPTIONS}
-                        placeholder={tr('pages.settings.allprotocol')}
-                      />
-                    </SettingsField>
-                    <SettingsField label={tr('pages.settings.modelmatch')}>
-                      <Input
-                        type="text"
-                        aria-label={`Payload 规则可视化模型 ${index + 1}`}
-                        value={rule.modelPattern}
-                        onChange={(e) => updatePayloadVisualRule(rule.id, { modelPattern: e.target.value })}
-                        placeholder={tr('pages.settings.gpt')}
-                      />
-                    </SettingsField>
-                    <SettingsField label={tr('pages.settings.fieldPath')}>
-                      <Input
-                        className="font-mono"
-                        type="text"
-                        aria-label={`Payload 规则可视化路径 ${index + 1}`}
-                        value={rule.path}
-                        onChange={(e) => updatePayloadVisualRule(rule.id, { path: e.target.value })}
-                        placeholder={tr('pages.settings.reasoningEffort')}
-                      />
-                    </SettingsField>
-                  </ResponsiveFormGrid>
-                  {rule.action === 'filter' ? (
-                    <div className="text-xs leading-relaxed text-muted-foreground">
-                      {tr('pages.settings.deleteRulesZhRequestzhremoveItems')}
-                    </div>
-                  ) : (
-                    <div className="grid gap-3">
-                      {(rule.action === 'default' || rule.action === 'override') && (
-                        <div className="w-full md:w-44">
-                          <Label>{tr('pages.settings.type')}</Label>
-                          <ModernSelect
-                            size="sm"
-                            data-testid={`payload-rule-value-mode-${index + 1}`}
-                            value={rule.valueMode}
-                            onChange={(value) => updatePayloadVisualRule(rule.id, {
-                              valueMode: value as VisualPayloadRuleValueMode,
-                              value: value === 'json' && rule.valueMode !== 'json'
-                                ? (rule.value ? JSON.stringify(rule.value) : '')
-                                : rule.value,
-                            })}
-                            options={PAYLOAD_RULE_VALUE_MODE_OPTIONS}
-                            placeholder={tr('pages.settings.type')}
-                          />
-                        </div>
-                      )}
-                      <SettingsField
-                        label={
-                          rule.action === 'default-raw' || rule.action === 'override-raw'
-                            ? tr('pages.settings.json2')
-                            : (rule.valueMode === 'json' ? tr('pages.settings.json') : tr('pages.settings.textValue'))
-                        }
-                      >
-                        {(rule.action === 'default-raw' || rule.action === 'override-raw' || rule.valueMode === 'json') ? (
-                          <JsonCodeEditor
-                            aria-label={`Payload 规则可视化值 ${index + 1}`}
-                            value={rule.value}
-                            onChange={(value) => updatePayloadVisualRule(rule.id, { value })}
-                            placeholder={rule.action === 'default-raw' || rule.action === 'override-raw'
-                              ? '{"type":"json_schema"}'
-                              : '{"effort":"high"}'}
-                            minHeight={160}
-                            maxHeight={320}
-                          />
-                        ) : (
-                          <Input
-                            type="text"
-                            aria-label={`Payload 规则可视化值 ${index + 1}`}
-                            value={rule.value}
-                            onChange={(e) => updatePayloadVisualRule(rule.id, { value: e.target.value })}
-                            placeholder={tr('pages.settings.high')}
-                          />
-                        )}
-                      </SettingsField>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-          <div className={`anim-collapse ${showPayloadRulesEditor ? 'is-open' : ''}`.trim()}>
-            <div className="anim-collapse-inner pt-0.5">
-              <div className="grid gap-3 rounded-md border p-4">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div className="grid gap-1">
-                    <div className="text-xs font-semibold text-muted-foreground">{tr('pages.settings.advancedJsonEdit')}</div>
-                    <div className="text-xs leading-relaxed text-muted-foreground">
-                      {tr('pages.settings.cpaRulesManualSyncRulesLowEdit')}
-                    </div>
-                  </div>
-                  <Button variant="outline" type="button" onClick={syncVisualRulesFromAdvancedJson}>
-                    {tr('pages.settings.syncRules')}
-                  </Button>
-                </div>
-              </div>
-              <ResponsiveFormGrid columns={2}>
-                {PAYLOAD_RULES_EDITOR_SECTIONS.map((section) => (
-                  <div key={section.key} className="grid gap-3 rounded-md border p-4">
-                    <div className="text-xs font-semibold text-muted-foreground">{section.title}</div>
-                    <div className="text-xs leading-relaxed text-muted-foreground">{section.description}</div>
-                    <JsonCodeEditor
-                      aria-label={`Payload 规则 ${section.key}`}
-                      value={payloadRuleDrafts[section.key]}
-                      onChange={(nextValue) => {
-                        setPayloadRuleDrafts((prev) => ({
-                          ...prev,
-                          [section.key]: nextValue,
-                        }));
-                        setPayloadAdvancedDirty(true);
-                      }}
-                      placeholder={section.placeholder}
-                      minHeight={240}
-                      maxHeight={520}
-                    />
-                  </div>
-                ))}
-              </ResponsiveFormGrid>
-            </div>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Button type="button" onClick={savePayloadRules} disabled={savingPayloadRules}>
-              {savingPayloadRules ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.accounts.saving')}</> : tr('pages.settings.savePayloadRules')}
-            </Button>
-          </div>
-          </CardContent>
-        </Card>
+          <SettingsSection
+            id="settings-routing"
+            title={tr('pages.settings.routingAndPricing')}
+            description={tr('pages.settings.routingAndPricingDescription')}
+          >
+        <CostPolicySettingsSection />
 
-        <Card data-settings-card="proxy-transport">
-          <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3">
-            <div className="grid min-w-0 gap-1">
-              <CardTitle>{tr('pages.settings.codex')}</CardTitle>
-              <CardDescription>
-                {tr('pages.settings.defaultHttpTurnMetapiCodexRequestWebsocket')}
-              </CardDescription>
-            </div>
-            <div className="flex flex-wrap gap-2">
+        <SettingsCard
+          dataSettingsCard="proxy-transport"
+          title={tr('pages.settings.codex')}
+          description={tr('pages.settings.defaultHttpTurnMetapiCodexRequestWebsocket')}
+          actions={(
+            <>
               <ToneBadge tone={runtime.codexUpstreamWebsocketEnabled ? 'primary' : 'muted'}>
                 {proxyTransportModeLabel}
               </ToneBadge>
               <ToneBadge tone="muted">
                 {proxyTransportQueueLabel}
               </ToneBadge>
-            </div>
-          </CardHeader>
-          <CardContent className="grid gap-4">
-          <label className="flex cursor-pointer items-start justify-between gap-3 rounded-md border p-4">
-            <div className="grid min-w-0 gap-1">
-              <span className="text-sm font-semibold">{tr('pages.settings.metapiCodexUsageWebsocket')}</span>
-              <span className="text-xs leading-relaxed text-muted-foreground">
-                {tr('pages.settings.codexClientSyncturnV1ResponsesWebsocketEnabled')}
-              </span>
-            </div>
-            <Checkbox
-              checked={runtime.codexUpstreamWebsocketEnabled}
-              onCheckedChange={(checked) => setRuntime((prev) => ({ ...prev, codexUpstreamWebsocketEnabled: checked === true }))}
-            />
-          </label>
-          <label className="flex cursor-pointer items-start justify-between gap-3 rounded-md border p-4">
-            <div className="grid min-w-0 gap-1">
-              <span className="text-sm font-semibold">{tr('pages.settings.compactUnsupportedResponses')}</span>
-              <span className="text-xs leading-relaxed text-muted-foreground">
-                {tr('pages.settings.v1ResponsesCompactCompactUnsupportedAutomaticResponses')}
-              </span>
-            </div>
-            <Checkbox
-              checked={runtime.responsesCompactFallbackToResponsesEnabled}
-              onCheckedChange={(checked) => setRuntime((prev) => ({ ...prev, responsesCompactFallbackToResponsesEnabled: checked === true }))}
-            />
-          </label>
+            </>
+          )}
+        >
+          <SettingsToggleRow
+            title={tr('pages.settings.metapiCodexUsageWebsocket')}
+            description={tr('pages.settings.codexClientSyncturnV1ResponsesWebsocketEnabled')}
+            checked={runtime.codexUpstreamWebsocketEnabled}
+            onCheckedChange={(checked) => setRuntime((prev) => ({ ...prev, codexUpstreamWebsocketEnabled: checked }))}
+          />
+          <SettingsToggleRow
+            title={tr('pages.settings.compactUnsupportedResponses')}
+            description={tr('pages.settings.compactUnsupportedFallbackDescription')}
+            checked={runtime.responsesCompactFallbackToResponsesEnabled}
+            onCheckedChange={(checked) => setRuntime((prev) => ({ ...prev, responsesCompactFallbackToResponsesEnabled: checked }))}
+          />
           <ResponsiveFormGrid columns={2}>
             <SettingsField
               label={tr('pages.settings.targets')}
@@ -1717,138 +1319,57 @@ export default function Settings() {
               {savingProxyTransport ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.accounts.saving')}</> : tr('pages.settings.save')}
             </Button>
           </div>
-          </CardContent>
-        </Card>
+        </SettingsCard>
 
-        <Card data-settings-card="model-availability-probe">
-          <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3">
-            <div className="grid min-w-0 gap-1">
-              <CardTitle>{tr('pages.settings.batchHealthCheck')}</CardTitle>
-              <CardDescription>
-                {tr('pages.settings.defaultcloseTurnMetapiAccountModelsendRequestModels')}
-              </CardDescription>
-            </div>
-            <div className="flex flex-wrap gap-2">
+        <SettingsCard
+          dataSettingsCard="model-availability-probe"
+          title={tr('pages.settings.batchHealthCheck')}
+          description={tr('pages.settings.defaultcloseTurnMetapiAccountModelsendRequestModels')}
+          actions={(
+            <>
               <ToneBadge tone={modelAvailabilityProbeStatusTone === "danger" ? "danger" : modelAvailabilityProbeStatusTone === "warning" ? "warning" : "muted"}>
                 {modelAvailabilityProbeStatusLabel}
               </ToneBadge>
               <ToneBadge tone="danger">
-                {tr('pages.settings.highriskactions')}
+                {tr('pages.settings.highRiskActions')}
+              </ToneBadge>
+            </>
+          )}
+        >
+          <Alert variant="destructive">
+            <AlertTitle>{tr('pages.settings.riskWarning')}</AlertTitle>
+            <AlertDescription>
+              {tr('pages.settings.batchHealthCheckRiskWarning')}
+            </AlertDescription>
+          </Alert>
+          <SettingsToggleRow
+            title={tr('pages.settings.metapiBatchHealthCheck')}
+            description={tr('pages.settings.closeTurnManualinputCloseSave')}
+            checked={runtime.modelAvailabilityProbeEnabled}
+            onCheckedChange={(checked) => setRuntime((prev) => ({ ...prev, modelAvailabilityProbeEnabled: checked }))}
+            tone="destructive"
+          />
+          <div className="grid gap-3 rounded-md border p-4">
+            <div className="text-xs font-semibold text-muted-foreground">{tr('pages.settings.status')}</div>
+            <div className="flex flex-wrap gap-2">
+              <ToneBadge tone={modelAvailabilityProbeStatusTone === "danger" ? "danger" : modelAvailabilityProbeStatusTone === "warning" ? "warning" : "muted"}>
+                {modelAvailabilityProbeStatusLabel}
               </ToneBadge>
             </div>
-          </CardHeader>
-          <CardContent className="grid gap-4">
-          <div className="grid gap-2 rounded-md border p-4">
-            <div className="text-xs font-semibold">{tr('pages.settings.risktip')}</div>
             <div className="text-xs leading-relaxed text-muted-foreground">
-              {tr('pages.settings.usageZhBatchHealthCheckTurnRisk')}
+              {savedModelAvailabilityProbeEnabled
+                ? tr('pages.settings.requestModelavailable')
+                : tr('pages.settings.modelavailableRequest')}
             </div>
           </div>
-          <label className="flex cursor-pointer items-start justify-between gap-3 rounded-md border p-4">
-            <div className="grid min-w-0 gap-1">
-              <span className="text-sm font-semibold">{tr('pages.settings.metapiBatchHealthCheck')}</span>
-              <span className="text-xs leading-relaxed text-muted-foreground">
-                {tr('pages.settings.closeTurnManualinputCloseSave')}
-              </span>
-            </div>
-            <Checkbox
-              checked={runtime.modelAvailabilityProbeEnabled}
-              onCheckedChange={(checked) => setRuntime((prev) => ({ ...prev, modelAvailabilityProbeEnabled: checked === true }))}
-            />
-          </label>
-          <ResponsiveFormGrid columns={2}>
-            <div className="grid gap-3 rounded-md border p-4">
-              <div className="text-xs font-semibold text-muted-foreground">{tr('pages.settings.status')}</div>
-              <div className="flex flex-wrap gap-2">
-                <ToneBadge tone={modelAvailabilityProbeStatusTone === "danger" ? "danger" : modelAvailabilityProbeStatusTone === "warning" ? "warning" : "muted"}>
-                  {modelAvailabilityProbeStatusLabel}
-                </ToneBadge>
-              </div>
-              <div className="text-xs leading-relaxed text-muted-foreground">
-                {savedModelAvailabilityProbeEnabled
-                  ? tr('pages.settings.requestModelavailable')
-                  : tr('pages.settings.modelavailableRequest')}
-              </div>
-            </div>
-            <div className="grid gap-3 rounded-md border p-4">
-              <div className="text-xs font-semibold text-muted-foreground">{tr('pages.settings.enabled')}</div>
-              <div className="text-xs leading-relaxed text-muted-foreground">
-                {tr('pages.settings.turnManualinputHighrisk')}
-              </div>
-            </div>
-          </ResponsiveFormGrid>
           <div className="flex flex-wrap items-center gap-2">
             <Button type="button" onClick={saveModelAvailabilityProbeSettings} disabled={savingModelAvailabilityProbe}>
-              {savingModelAvailabilityProbe ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.accounts.saving')}</> : tr('pages.settings.savebatchHealthChecksettings')}
+              {savingModelAvailabilityProbe ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.accounts.saving')}</> : tr('pages.settings.saveBatchHealthCheckSettings')}
             </Button>
           </div>
-          </CardContent>
-        </Card>
-
-        <SettingsCard
-          title={tr('pages.settings.downstreamAccessTokenProxyToken')}
-          description={tr('pages.settings.usedDownstreamSitesClientsAccessServiceProxy')}
-        >
-          <SettingsCode>
-            {tr('pages.settings.current')}{runtime.proxyTokenMasked || tr('pages.notificationSettings.notSet')}
-          </SettingsCode>
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="flex min-w-0 flex-1 items-center rounded-md border">
-              <span className="border-r px-3 py-2 font-mono text-sm text-muted-foreground">
-                {PROXY_TOKEN_PREFIX}
-              </span>
-              <Input
-                type="text"
-                value={proxyTokenSuffix}
-                onChange={(e) => setProxyTokenSuffix(normalizeProxyTokenSuffix(e.target.value))}
-                placeholder={tr('pages.settings.enterTokenContentAfterSk')}
-                className="min-w-0 flex-1 border-0 font-mono shadow-none focus-visible:ring-0"
-              />
-            </div>
-            <Button
-              type="button"
-             
-              aria-label={tr('pages.settings.generateRandomlyaccessToken')}
-              title={tr('pages.settings.highRandomAutomaticsave')}
-             
-              onClick={() => {
-                const full = generateDownstreamSkKey(PROXY_TOKEN_PREFIX);
-                setProxyTokenSuffix(full.slice(PROXY_TOKEN_PREFIX.length));
-              }}
-            >
-              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} aria-hidden>
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456zM16.894 20.567L16.5 21.75l-.394-1.183a2.25 2.25 0 00-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 001.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 001.423 1.423l1.183.394-1.183.394a2.25 2.25 0 00-1.423 1.423z"
-                />
-              </svg>
-              {tr('pages.settings.generateRandomly')}
-            </Button>
-          </div>
-          <Button type="button" onClick={saveProxyToken} disabled={savingToken}>
-            {savingToken ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.accounts.saving')}</> : tr('pages.settings.updateDownstreamAccessToken')}
-          </Button>
         </SettingsCard>
 
-        <SettingsCard title={tr('pages.settings.routesstrategy')} description={tr('pages.settings.selectStrategyExpandAdvancedParameters')}>
-          <div className="grid max-w-sm gap-3">
-            <SettingsField label={tr('pages.settings.noneactualMeasurementConfigurationTableContentsDefault')}>
-            <Input
-              type="number"
-              min={0.000001}
-              step={0.000001}
-              value={runtime.routingFallbackUnitCost}
-              onChange={(e) => {
-                const nextValue = Number(e.target.value);
-                setRuntime((prev) => ({
-                  ...prev,
-                  routingFallbackUnitCost: Number.isFinite(nextValue) && nextValue > 0 ? nextValue : prev.routingFallbackUnitCost,
-                }));
-              }}
-            />
-            </SettingsField>
-          </div>
+        <SettingsCard title={tr('pages.settings.routingStrategy')} description={tr('pages.settings.selectStrategyExpandAdvancedParameters')}>
           <SettingsField
             label={tr('pages.settings.failedcooldown')}
             hint={tr('pages.settings.supportedsecondsMinutesHoursDaysFailedRoundRobin')}
@@ -1857,7 +1378,7 @@ export default function Settings() {
               <Input
                 className="min-w-44 flex-1"
                 type="number"
-                aria-label={tr('pages.settings.routesfailedcooldown')}
+                aria-label={tr('pages.settings.routeFailureCooldownCap')}
                 min={1}
                 step={1}
                 value={runtime.routeFailureCooldownMaxValue}
@@ -1921,27 +1442,19 @@ export default function Settings() {
             </Button>
           </div>
 
-          <label className="flex cursor-pointer items-start gap-3 rounded-md border p-4">
-            <Checkbox
-              checked={runtime.disableCrossProtocolFallback}
-              onCheckedChange={(checked) => setRuntime((prev) => ({
-                ...prev,
-                disableCrossProtocolFallback: checked === true,
-              }))}
-            />
-            <span className="grid gap-1">
-              <span className="text-sm font-semibold">
-                {tr('pages.settings.failedOtherprotocol')}
-              </span>
-              <span className="text-xs leading-relaxed text-muted-foreground">
-                {tr('pages.settings.chatMessagesResponsesProtocolCloseProtocolRetry')}
-              </span>
-            </span>
-          </label>
+          <SettingsToggleRow
+            title={tr('pages.settings.failedOtherprotocol')}
+            description={tr('pages.settings.chatMessagesResponsesProtocolCloseProtocolRetry')}
+            checked={runtime.disableCrossProtocolFallback}
+            onCheckedChange={(checked) => setRuntime((prev) => ({
+              ...prev,
+              disableCrossProtocolFallback: checked,
+            }))}
+          />
 
           <SettingsField
             label={tr('pages.settings.ttfttimeOutNoneToken')}
-            hint={tr('pages.settings.0CloseTimeTokenStartoutputRequestTime')}
+            hint={tr('pages.settings.ttftTimeoutDescription')}
           >
             <Input
               type="number"
@@ -2000,9 +1513,53 @@ export default function Settings() {
             </Button>
           </div>
         </SettingsCard>
+          </SettingsSection>
+
+          <SettingsSection
+            id="settings-access"
+            title={tr('pages.settings.accessAndSecurity')}
+            description={tr('pages.settings.accessAndSecurityDescription')}
+          >
+        <SettingsCard
+          title={tr('pages.settings.downstreamAccessTokenProxyToken')}
+          description={tr('pages.settings.usedDownstreamSitesClientsAccessServiceProxy')}
+        >
+          <SettingsCode>
+            {tr('pages.settings.current')}{runtime.proxyTokenMasked || tr('pages.notificationSettings.notSet')}
+          </SettingsCode>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex min-w-0 flex-1 items-center rounded-md border">
+              <span className="border-r px-3 py-2 font-mono text-sm text-muted-foreground">
+                {PROXY_TOKEN_PREFIX}
+              </span>
+              <Input
+                type="text"
+                value={proxyTokenSuffix}
+                onChange={(e) => setProxyTokenSuffix(normalizeProxyTokenSuffix(e.target.value))}
+                placeholder={tr('pages.settings.enterTokenContentAfterSk')}
+                className="min-w-0 flex-1 border-0 font-mono shadow-none focus-visible:ring-0"
+              />
+            </div>
+            <Button
+              type="button"
+              aria-label={tr('pages.settings.generateRandomlyaccessToken')}
+              title={tr('pages.settings.highRandomAutomaticsave')}
+              onClick={() => {
+                const full = generateDownstreamSkKey(PROXY_TOKEN_PREFIX);
+                setProxyTokenSuffix(full.slice(PROXY_TOKEN_PREFIX.length));
+              }}
+            >
+              <KeyRound className="size-4" />
+              {tr('pages.settings.generateRandomly')}
+            </Button>
+          </div>
+          <Button type="button" onClick={saveProxyToken} disabled={savingToken}>
+            {savingToken ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.accounts.saving')}</> : tr('pages.settings.updateDownstreamAccessToken')}
+          </Button>
+        </SettingsCard>
 
         {/* Global Brand Filter */}
-        <SettingsCard title={tr('pages.settings.brands2')} description={tr('pages.settings.brandsRoutesAutomaticjumpOvermatchBrandModelsBrands')}>
+        <SettingsCard title={tr('pages.settings.brands2')} description={tr('pages.settings.blockedBrandsDescription')}>
           <div className="flex flex-wrap gap-2">
             {(allBrandNames || []).map((brand) => {
               const isBlocked = blockedBrands.includes(brand);
@@ -2028,7 +1585,7 @@ export default function Settings() {
               );
             })}
             {allBrandNames === null && (
-              <span className="text-sm text-muted-foreground">{tr('pages.settings.brandsZh')}</span>
+              <span className="text-sm text-muted-foreground">{tr('pages.settings.loadingBrands')}</span>
             )}
             {allBrandNames !== null && allBrandNames.length === 0 && (
               <span className="text-sm text-muted-foreground">{tr('pages.settings.noneavailablebrands')}</span>
@@ -2040,12 +1597,12 @@ export default function Settings() {
             </div>
           )}
           <Button type="button" onClick={handleSaveBrandFilter} disabled={savingBrandFilter}>
-            {savingBrandFilter ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.accounts.saving')}</> : tr('pages.settings.savebrands')}
+            {savingBrandFilter ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.accounts.saving')}</> : tr('pages.settings.saveBlockedBrands')}
           </Button>
         </SettingsCard>
 
         {/* Global Allowed Models Whitelist */}
-        <SettingsCard title={tr('pages.settings.model')} description={tr('pages.settings.configurationRoutesZhmodelsModelSaveAutomaticRoutes')}>
+        <SettingsCard title={tr('pages.settings.model')} description={tr('pages.settings.modelWhitelistDescription')}>
           <div className="grid gap-3">
             <div className="flex gap-2">
               <Input
@@ -2083,7 +1640,7 @@ export default function Settings() {
             {availableModels && availableModels.length > 0 && (
               <div className="grid gap-2">
                 <div className="text-xs text-muted-foreground">
-                  {tr('pages.settings.availablemodelzhselect')}
+                  {tr('pages.settings.availableModelSelectHint')}
                 </div>
                 <div className="flex max-h-32 flex-wrap gap-2 overflow-y-auto rounded-md border p-2">
                   {availableModels.map((model) => {
@@ -2135,9 +1692,49 @@ export default function Settings() {
             )}
           </div>
           <Button type="button" onClick={handleSaveAllowedModels} disabled={savingAllowedModels}>
-            {savingAllowedModels ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.accounts.saving')}</> : tr('pages.settings.savemodel')}
+            {savingAllowedModels ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.accounts.saving')}</> : tr('pages.settings.saveModelWhitelist')}
           </Button>
         </SettingsCard>
+
+        <SettingsCard
+          title={tr('pages.settings.sessionSecurity')}
+          description={tr('pages.settings.signDefault12HoursautomaticexpiredConfigurationmanagementIpWhitelist')}
+        >
+          <SettingsField label={tr('pages.settings.ip')}>
+          <SettingsCode>
+            {runtime.currentAdminIp || tr('pages.accounts.unknown2')}
+          </SettingsCode>
+          </SettingsField>
+          <SettingsField label={tr('pages.settings.managementIpWhitelist')}>
+          <Textarea
+            className="font-mono"
+            value={adminIpAllowlistText}
+            onChange={(e) => setAdminIpAllowlistText(e.target.value)}
+            placeholder={tr('pages.settings.cidrIp1921681024')}
+            rows={4}
+          />
+          </SettingsField>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" onClick={saveSecuritySettings} disabled={savingSecurity}>
+              {savingSecurity ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.accounts.saving')}</> : tr('pages.settings.saveSecuritySettings')}
+            </Button>
+            <Button type="button" variant="destructive"
+              onClick={() => {
+                clearAuthSession(localStorage);
+                window.location.reload();
+              }}
+            >
+              {tr('app.signOut')}
+            </Button>
+          </div>
+        </SettingsCard>
+          </SettingsSection>
+
+          <SettingsSection
+            id="settings-maintenance"
+            title={tr('pages.settings.maintenanceAndData')}
+            description={tr('pages.settings.maintenanceAndDataDescription')}
+          >
 
         <SettingsCard
           title={tr('pages.settings.sqliteMysqlPostgresql')}
@@ -2232,23 +1829,22 @@ export default function Settings() {
             </div>
           )}
 
-          {migrationDialect !== 'sqlite' && (
-            <Label className="mb-3 flex items-center gap-2">
-              <Checkbox
+          <div className="grid gap-2 md:grid-cols-2">
+            {migrationDialect !== 'sqlite' && (
+              <SettingsToggleRow
+                title={tr('pages.settings.enableSslTlsEncryptedConnection')}
                 checked={migrationSsl}
-                onCheckedChange={(checked) => setMigrationSsl(checked === true)}
+                onCheckedChange={setMigrationSsl}
+                className="p-3"
               />
-              {tr('pages.settings.enableSslTlsEncryptedConnection')}
-            </Label>
-          )}
-
-          <Label className="mb-3 flex items-center gap-2">
-              <Checkbox
-                checked={migrationOverwrite}
-                onCheckedChange={(checked) => setMigrationOverwrite(checked === true)}
-              />
-            {tr('pages.settings.allowOverwritingExistingDataTargetDatabase')}
-          </Label>
+            )}
+            <SettingsToggleRow
+              title={tr('pages.settings.allowOverwritingExistingDataTargetDatabase')}
+              checked={migrationOverwrite}
+              onCheckedChange={setMigrationOverwrite}
+              className="p-3"
+            />
+          </div>
 
           <div className="flex flex-wrap gap-2">
             <Button type="button" variant="outline"
@@ -2257,14 +1853,14 @@ export default function Settings() {
              
              
             >
-              {testingMigrationConnection ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.settings.zh')}</> : tr('pages.settings.testConnection')}
+              {testingMigrationConnection ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.settings.testing')}</> : tr('pages.settings.testConnection')}
             </Button>
             <Button type="button"
               onClick={handleMigrateToExternalDatabase}
               disabled={migratingDatabase || testingMigrationConnection || savingRuntimeDatabase}
              
             >
-              {migratingDatabase ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.settings.zh2')}</> : tr('pages.settings.startMigration')}
+              {migratingDatabase ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.settings.migrating')}</> : tr('pages.settings.startMigration')}
             </Button>
             <Button type="button" variant="outline"
               onClick={handleSaveRuntimeDatabaseConfig}
@@ -2305,18 +1901,21 @@ export default function Settings() {
         <SettingsCard title={tr('pages.settings.maintenanceTools')}>
           <div className="flex flex-wrap gap-2">
             <Button type="button" variant="outline" onClick={handleClearCache} disabled={clearingCache}>
-              {clearingCache ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.settings.zh3')}</> : tr('pages.settings.clearCacheRebuildRoutes')}
+              {clearingCache ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.settings.clearing')}</> : tr('pages.settings.clearCacheRebuildRoutes')}
             </Button>
             <Button type="button" variant="secondary" size="sm" onClick={handleClearUsage} disabled={clearingUsage}>
-              {clearingUsage ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.settings.zh3')}</> : tr('pages.settings.clearOccupancyUsageLogs')}
+              {clearingUsage ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.settings.clearing')}</> : tr('pages.settings.clearOccupancyUsageLogs')}
             </Button>
           </div>
         </SettingsCard>
 
         <SettingsCard title={tr('pages.settings.actions')}>
-          <div className="text-sm text-muted-foreground">
-            {tr('pages.settings.systemClearMetapiUsagezhAllContentCurrently')}
-          </div>
+          <Alert variant="destructive">
+            <AlertTitle>{tr('pages.settings.riskWarning')}</AlertTitle>
+            <AlertDescription>
+              {tr('pages.settings.factoryResetDescription')}
+            </AlertDescription>
+          </Alert>
           <div className="text-sm text-muted-foreground">
             {tr('pages.settings.adminTokenReset')} <code className="font-mono">{FACTORY_RESET_ADMIN_TOKEN}</code>{tr('pages.settings.refresh')}
           </div>
@@ -2325,39 +1924,87 @@ export default function Settings() {
           </Button>
         </SettingsCard>
 
-        <SettingsCard
-          title={tr('pages.settings.sessionSecurity')}
-          description={tr('pages.settings.signDefault12HoursautomaticexpiredConfigurationmanagementIpWhitelist')}
-        >
-          <SettingsField label={tr('pages.settings.ip')}>
-          <SettingsCode>
-            {runtime.currentAdminIp || tr('pages.accounts.unknown2')}
-          </SettingsCode>
-          </SettingsField>
-          <SettingsField label={tr('pages.settings.managementIpWhitelist')}>
-          <Textarea
-            className="font-mono"
-            value={adminIpAllowlistText}
-            onChange={(e) => setAdminIpAllowlistText(e.target.value)}
-            placeholder={tr('pages.settings.cidrIp1921681024')}
-            rows={4}
-          />
-          </SettingsField>
-          <div className="flex flex-wrap gap-2">
-            <Button type="button" onClick={saveSecuritySettings} disabled={savingSecurity}>
-              {savingSecurity ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.accounts.saving')}</> : tr('pages.settings.saveSecuritySettings')}
-            </Button>
-            <Button type="button" variant="destructive"
-              onClick={() => {
-                clearAuthSession(localStorage);
-                window.location.reload();
-              }}
-             
+          </SettingsSection>
+        </div>
+
+        <aside className="sticky top-[calc(var(--topbar-height)+1rem)] hidden max-h-[calc(100dvh-var(--topbar-height)-2rem)] overflow-y-auto xl:block">
+          <div className="pl-1">
+            <div className="mb-3 grid gap-1">
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-sm font-semibold">{tr('pages.settings.settingsMap')}</div>
+                <ToneBadge tone="-muted" className="shrink-0 tabular-nums">
+                  {settingsNavItems.length}
+                </ToneBadge>
+              </div>
+              <p className="text-xs leading-relaxed text-muted-foreground">{tr('pages.settings.settingsMapDescription')}</p>
+            </div>
+
+            <nav
+              className="relative grid gap-1"
+              aria-label={tr('pages.settings.settingsMap')}
             >
-              {tr('app.signOut')}
-            </Button>
+              {settingsNavItems.map((item) => {
+                const active = item.id === activeSettingsSection;
+                const Icon = item.icon;
+                return (
+                  <a
+                    key={item.href}
+                    href={item.href}
+                    aria-current={active ? 'location' : undefined}
+                    onClick={() => setActiveSettingsSection(item.id)}
+                    className={cn(
+                      'group grid grid-cols-[1.75rem_minmax(0,1fr)] gap-2 rounded-md px-2 py-2 transition-colors',
+                      active
+                        ? 'bg-accent text-accent-foreground'
+                        : 'text-muted-foreground hover:bg-accent/60 hover:text-accent-foreground',
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        'grid size-7 place-items-center rounded-md border transition-colors',
+                        active
+                          ? 'border-primary/40 bg-primary text-primary-foreground'
+                          : 'bg-background text-muted-foreground group-hover:text-foreground',
+                      )}
+                    >
+                      <Icon className="size-4" />
+                    </span>
+                    <span className="grid min-w-0 gap-0.5">
+                      <span className={cn('truncate text-sm font-medium', active && 'font-semibold')}>
+                        {item.title}
+                      </span>
+                      <span className="line-clamp-2 text-xs leading-relaxed text-muted-foreground">{item.description}</span>
+                    </span>
+                  </a>
+                );
+              })}
+            </nav>
+
+            <div className="mt-5 border-t pt-4">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <div className="text-sm font-medium">{tr('pages.settings.status')}</div>
+                {runtimeDatabaseState?.restartRequired ? (
+                  <ToneBadge tone="-warning" className="shrink-0">
+                    {tr('pages.settings.restartRequired')}
+                  </ToneBadge>
+                ) : null}
+              </div>
+              <div className="grid gap-1 text-xs">
+                {settingsStatusItems.map((item) => (
+                  <div key={item.label} className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-md px-2 py-1.5">
+                    <span className="grid size-6 place-items-center rounded-md border bg-background text-muted-foreground">
+                      {item.icon}
+                    </span>
+                    <span className="min-w-0 truncate text-muted-foreground">{item.label}</span>
+                    <ToneBadge tone={item.tone} className="max-w-28 shrink-0 truncate">
+                      {item.value}
+                    </ToneBadge>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
-        </SettingsCard>
+        </aside>
       </div>
       <FactoryResetModal
         presence={factoryResetPresence}
@@ -2376,6 +2023,6 @@ export default function Settings() {
         onClose={closeModelAvailabilityProbeConfirmModal}
         onConfirm={handleConfirmModelAvailabilityProbe}
       />
-    </div>
+    </PageShell>
   );
 }

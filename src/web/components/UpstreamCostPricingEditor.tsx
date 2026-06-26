@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Calculator, Coins, Database, LoaderCircle, Plus, RotateCcw, Save, Trash2 } from 'lucide-react';
-import { api, type PricingReferenceConfig, type UpstreamCostMatchedScope, type UpstreamCostPricingPayload, type UpstreamCostPricingRecord, type UpstreamCostPricingScope } from '../api.js';
+import { Link } from 'react-router-dom';
+import { Calculator, Coins, LoaderCircle, Plus, RotateCcw, Save, Trash2 } from 'lucide-react';
+import { api, type UpstreamCostMatchedScope, type UpstreamCostPricingPayload, type UpstreamCostPricingRecord, type UpstreamCostPricingScope } from '../api.js';
 import ToneBadge from './ToneBadge.js';
 import { Button } from './ui/button/index.js';
 import { ButtonGroup } from './ui/button-group/index.js';
@@ -76,22 +77,9 @@ const PREVIEW_USAGE = {
   requestCount: 1,
 };
 
-const REFERENCE_MODE_OPTIONS: Array<{ value: PricingReferenceConfig['defaultReferenceMode']; label: string; description: string }> = [
-  { value: 'auto', label: tr('upstreamCostPricing.reference.mode.auto'), description: tr('upstreamCostPricing.reference.mode.autoDescription') },
-  { value: 'manual', label: tr('upstreamCostPricing.reference.mode.manual'), description: tr('upstreamCostPricing.reference.mode.manualDescription') },
-  { value: 'default', label: tr('upstreamCostPricing.reference.mode.default'), description: tr('upstreamCostPricing.reference.mode.defaultDescription') },
-  { value: 'override', label: tr('upstreamCostPricing.reference.mode.override'), description: tr('upstreamCostPricing.reference.mode.overrideDescription') },
-];
-
-const FALLBACK_PROFILE_OPTIONS: Array<{ value: PricingReferenceConfig['fallbackProfile']; label: string }> = [
-  { value: 'system_default', label: tr('upstreamCostPricing.reference.fallback.systemDefault') },
-  { value: 'free', label: tr('upstreamCostPricing.reference.fallback.free') },
-  { value: 'unknown', label: tr('upstreamCostPricing.reference.fallback.unknown') },
-];
-
 function formatMoney(value: unknown) {
   const numeric = Number(value);
-  if (!Number.isFinite(numeric)) return 'unknown';
+  if (!Number.isFinite(numeric)) return tr('upstreamCostPricing.previewUnavailable');
   return `$${numeric.toFixed(6).replace(/\.?0+$/, '')}`;
 }
 
@@ -108,6 +96,21 @@ function scopeDescription(scope: UpstreamCostPricingScope) {
   if (scope === 'account_model') return tr('upstreamCostPricing.scope.accountModelDescription');
   if (scope === 'token_model') return tr('upstreamCostPricing.scope.tokenModelDescription');
   return tr('upstreamCostPricing.scope.tokenGroupModelDescription');
+}
+
+function sourceTypeLabel(sourceType: UpstreamCostPricingRecord['sourceType'] | string | null | undefined) {
+  if (sourceType === 'user') return tr('upstreamCostPricing.source.user');
+  if (sourceType === 'official') return tr('upstreamCostPricing.source.official');
+  if (sourceType === 'provider_catalog') return tr('upstreamCostPricing.source.providerCatalog');
+  if (sourceType === 'system_default') return tr('upstreamCostPricing.source.systemDefault');
+  return tr('common.notAvailable');
+}
+
+function recordScopeDetail(record: UpstreamCostPricingRecord): string {
+  if (record.tokenGroup) return `${tr('upstreamCostPricing.tokenGroup')}: ${record.tokenGroup}`;
+  if (record.tokenId) return `${tr('components.notificationPanel.token')} ${record.tokenId}`;
+  if (record.accountId) return `${tr('common.account')} ${record.accountId}`;
+  return `${tr('common.site')} ${record.siteId}`;
 }
 
 function parseOptionalNumber(value: string): number | undefined {
@@ -243,9 +246,6 @@ export function UpstreamCostPricingEditor({
   const [saving, setSaving] = useState(false);
   const [preview, setPreview] = useState<any>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
-  const [referenceConfig, setReferenceConfig] = useState<PricingReferenceConfig | null>(null);
-  const [referenceLoading, setReferenceLoading] = useState(false);
-  const [referenceSaving, setReferenceSaving] = useState(false);
 
   const selectedRecord = useMemo(
     () => records.find((record) => record.id === selectedRecordId) || null,
@@ -290,22 +290,6 @@ export function UpstreamCostPricingEditor({
   useEffect(() => {
     void loadRecords();
   }, [loadRecords]);
-
-  const loadReferenceConfig = useCallback(async () => {
-    if (!open) return;
-    setReferenceLoading(true);
-    try {
-      setReferenceConfig(await api.getPricingReferenceConfig());
-    } catch (error: any) {
-      toast?.error?.(error?.message || tr('upstreamCostPricing.reference.errors.loadFailed'));
-    } finally {
-      setReferenceLoading(false);
-    }
-  }, [open, toast]);
-
-  useEffect(() => {
-    void loadReferenceConfig();
-  }, [loadReferenceConfig]);
 
   useEffect(() => {
     if (!open || !siteId || !accountId || !modelName) return;
@@ -424,32 +408,6 @@ export function UpstreamCostPricingEditor({
     }
   };
 
-  const updateReferenceConfig = (patch: Partial<PricingReferenceConfig>) => {
-    setReferenceConfig((current) => {
-      if (!current) return current;
-      return {
-        ...current,
-        ...patch,
-        catalog: patch.catalog ? { ...current.catalog, ...patch.catalog } : current.catalog,
-        driftCheck: patch.driftCheck ? { ...current.driftCheck, ...patch.driftCheck } : current.driftCheck,
-      };
-    });
-  };
-
-  const handleSaveReferenceConfig = async () => {
-    if (!referenceConfig) return;
-    setReferenceSaving(true);
-    try {
-      const saved = await api.updatePricingReferenceConfig(referenceConfig);
-      setReferenceConfig(saved);
-      toast?.success?.(tr('upstreamCostPricing.reference.saved'));
-    } catch (error: any) {
-      toast?.error?.(error?.message || tr('upstreamCostPricing.reference.errors.saveFailed'));
-    } finally {
-      setReferenceSaving(false);
-    }
-  };
-
   const canUseTokenScope = availableTokens.length > 0;
   const selectedToken = availableTokens.find((token) => String(token.id) === form.tokenId) || null;
 
@@ -482,23 +440,17 @@ export function UpstreamCostPricingEditor({
         </ButtonGroup>
       </div>
 
-      <ReferencePricingPanel
-        config={referenceConfig}
-        loading={referenceLoading}
-        saving={referenceSaving}
-        onReload={() => void loadReferenceConfig()}
-        onSave={() => void handleSaveReferenceConfig()}
-        onChange={updateReferenceConfig}
-      />
-
-      <ProviderCatalogPricingPanel
-        config={referenceConfig}
-        loading={referenceLoading}
-        saving={referenceSaving}
-        onReload={() => void loadReferenceConfig()}
-        onSave={() => void handleSaveReferenceConfig()}
-        onChange={updateReferenceConfig}
-      />
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border bg-muted/25 p-3">
+        <div className="min-w-0">
+          <div className="text-sm font-medium">{tr('upstreamCostPricing.editorManualOnlyTitle')}</div>
+          <div className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+            {tr('upstreamCostPricing.editorManualOnlyDescription')}
+          </div>
+        </div>
+        <Button type="button" variant="outline" size="sm" asChild>
+          <Link to="/costs">{tr('upstreamCostPricing.costCatalog.open')}</Link>
+        </Button>
+      </div>
 
       <div className="grid gap-3 lg:grid-cols-[minmax(200px,260px)_1fr]">
         <Card>
@@ -527,11 +479,12 @@ export function UpstreamCostPricingEditor({
                   }}
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <span className="font-medium">{record.scope}</span>
+                    <span className="font-medium">{scopeLabel(record.scope)}</span>
                     <ToneBadge tone={record.enabled ? '-success' : '-muted'}>{record.enabled ? tr('common.enabled') : tr('common.disabled')}</ToneBadge>
                   </div>
-                  <div className="truncate text-xs text-muted-foreground">
-                    {record.tokenGroup || (record.tokenId ? `token ${record.tokenId}` : record.accountId ? `account ${record.accountId}` : `site ${record.siteId}`)}
+                  <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                    <span className="truncate">{recordScopeDetail(record)}</span>
+                    <ToneBadge tone={record.sourceType === 'provider_catalog' ? '-info' : '-muted'}>{sourceTypeLabel(record.sourceType)}</ToneBadge>
                   </div>
                 </Button>
               ))
@@ -626,7 +579,7 @@ export function UpstreamCostPricingEditor({
               <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                 <ToneBadge tone="-muted">{tr('upstreamCostPricing.previewSummary')}</ToneBadge>
                 {preview?.matchedScope ? <ToneBadge tone={preview.matchedScope === 'provider_catalog' ? '-info' : '-muted'}>{scopeLabel(preview.matchedScope as UpstreamCostMatchedScope)}</ToneBadge> : <ToneBadge tone="-muted">{scopeLabel(form.scope)}</ToneBadge>}
-                {preview?.pricingSourceType ? <ToneBadge tone={preview.pricingSourceType === 'provider_catalog' ? '-info' : '-muted'}>{String(preview.pricingSourceType)}</ToneBadge> : null}
+                {preview?.pricingSourceType ? <ToneBadge tone={preview.pricingSourceType === 'provider_catalog' ? '-info' : '-muted'}>{sourceTypeLabel(String(preview.pricingSourceType))}</ToneBadge> : null}
                 {preview ? <ToneBadge tone="-info">{formatMoney(previewTotal(preview))}</ToneBadge> : null}
               </div>
               <ButtonGroup>
@@ -647,231 +600,6 @@ export function UpstreamCostPricingEditor({
           </CardContent>
         </Card>
       </div>
-    </div>
-  );
-}
-
-function ReferencePricingPanel({
-  config,
-  loading,
-  saving,
-  onReload,
-  onSave,
-  onChange,
-}: {
-  config: PricingReferenceConfig | null;
-  loading: boolean;
-  saving: boolean;
-  onReload: () => void;
-  onSave: () => void;
-  onChange: (patch: Partial<PricingReferenceConfig>) => void;
-}) {
-  const selectedMode = REFERENCE_MODE_OPTIONS.find((option) => option.value === config?.defaultReferenceMode);
-  return (
-    <section className="rounded-lg border bg-card text-card-foreground">
-      <div className="grid gap-3 p-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <Database className="size-4 text-muted-foreground" />
-            <h3 className="text-sm font-semibold">{tr('upstreamCostPricing.reference.title')}</h3>
-            {loading ? (
-              <ToneBadge tone="-muted">
-                <LoaderCircle className="size-3 animate-spin" />
-                {tr('common.loading')}
-              </ToneBadge>
-            ) : null}
-            {config?.catalog.builtInCatalogEnabled ? <ToneBadge tone="-success">{tr('upstreamCostPricing.reference.builtInCatalog')}</ToneBadge> : <ToneBadge tone="-muted">{tr('upstreamCostPricing.reference.builtInCatalogOff')}</ToneBadge>}
-            {config?.driftCheck.enabled ? <ToneBadge tone="-warning">{tr('upstreamCostPricing.reference.driftCheckOn')}</ToneBadge> : <ToneBadge tone="-muted">{tr('upstreamCostPricing.reference.driftCheckOff')}</ToneBadge>}
-          </div>
-          <p className="mt-1 max-w-4xl text-xs leading-relaxed text-muted-foreground">
-            {tr('upstreamCostPricing.reference.description')}
-          </p>
-        </div>
-        <ButtonGroup className="justify-start sm:justify-end">
-          <Button type="button" variant="outline" size="sm" onClick={onReload} disabled={loading || saving}>
-            {loading ? <LoaderCircle className="size-4 animate-spin" /> : <RotateCcw className="size-4" />}
-            {tr('common.refresh')}
-          </Button>
-          <Button type="button" variant="default" size="sm" onClick={onSave} disabled={!config || saving}>
-            {saving ? <LoaderCircle className="size-4 animate-spin" /> : <Save className="size-4" />}
-            {tr('common.save')}
-          </Button>
-        </ButtonGroup>
-      </div>
-
-      {config ? (
-        <div className="grid gap-3 border-t p-3 lg:grid-cols-[minmax(220px,1fr)_minmax(220px,1fr)_minmax(220px,1fr)]">
-          <div className="grid gap-2">
-            <Label className="grid gap-1.5 text-xs text-muted-foreground">
-              {tr('upstreamCostPricing.reference.defaultMode')}
-              <Select
-                value={config.defaultReferenceMode}
-                onValueChange={(defaultReferenceMode) => onChange({ defaultReferenceMode: defaultReferenceMode as PricingReferenceConfig['defaultReferenceMode'] })}
-              >
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {REFERENCE_MODE_OPTIONS.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <span>{selectedMode?.description || tr('upstreamCostPricing.reference.mode.autoDescription')}</span>
-            </Label>
-            <Label className="grid gap-1.5 text-xs text-muted-foreground">
-              {tr('upstreamCostPricing.reference.fallbackProfile')}
-              <Select
-                value={config.fallbackProfile}
-                onValueChange={(fallbackProfile) => onChange({ fallbackProfile: fallbackProfile as PricingReferenceConfig['fallbackProfile'] })}
-              >
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {FALLBACK_PROFILE_OPTIONS.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Label>
-          </div>
-
-          <div className="grid gap-2">
-            <SwitchRow
-              title={tr('upstreamCostPricing.reference.builtInCatalogTitle')}
-              description={tr('upstreamCostPricing.reference.builtInCatalogDescription')}
-              checked={config.catalog.builtInCatalogEnabled}
-              onCheckedChange={(builtInCatalogEnabled) => onChange({ catalog: { ...config.catalog, builtInCatalogEnabled } })}
-            />
-          </div>
-
-          <div className="grid gap-2">
-            <SwitchRow
-              title={tr('upstreamCostPricing.reference.driftCheckTitle')}
-              description={tr('upstreamCostPricing.reference.driftCheckDescription')}
-              checked={config.driftCheck.enabled}
-              onCheckedChange={(enabled) => onChange({ driftCheck: { ...config.driftCheck, enabled } })}
-            />
-            <div className="grid grid-cols-2 gap-2">
-              <Label className="grid gap-1.5 text-xs text-muted-foreground">
-                {tr('upstreamCostPricing.reference.windowHours')}
-                <Input
-                  value={String(config.driftCheck.windowHours)}
-                  inputMode="numeric"
-                  onChange={(event) => onChange({ driftCheck: { ...config.driftCheck, windowHours: Number(event.target.value) || 1 } })}
-                />
-              </Label>
-              <Label className="grid gap-1.5 text-xs text-muted-foreground">
-                {tr('upstreamCostPricing.reference.minSamples')}
-                <Input
-                  value={String(config.driftCheck.minSampleSize)}
-                  inputMode="numeric"
-                  onChange={(event) => onChange({ driftCheck: { ...config.driftCheck, minSampleSize: Number(event.target.value) || 1 } })}
-                />
-              </Label>
-            </div>
-          </div>
-        </div>
-      ) : (
-        <div className="border-t p-3">
-          <Empty className="p-4">
-            <EmptyHeader>
-              <EmptyTitle>{tr('upstreamCostPricing.reference.emptyTitle')}</EmptyTitle>
-              <EmptyDescription>{tr('upstreamCostPricing.reference.emptyDescription')}</EmptyDescription>
-            </EmptyHeader>
-          </Empty>
-        </div>
-      )}
-    </section>
-  );
-}
-
-function ProviderCatalogPricingPanel({
-  config,
-  loading,
-  saving,
-  onReload,
-  onSave,
-  onChange,
-}: {
-  config: PricingReferenceConfig | null;
-  loading: boolean;
-  saving: boolean;
-  onReload: () => void;
-  onSave: () => void;
-  onChange: (patch: Partial<PricingReferenceConfig>) => void;
-}) {
-  return (
-    <section className="rounded-lg border bg-card text-card-foreground">
-      <div className="grid gap-3 p-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <Coins className="size-4 text-muted-foreground" />
-            <h3 className="text-sm font-semibold">{tr('upstreamCostPricing.providerCatalog.title')}</h3>
-            {loading ? (
-              <ToneBadge tone="-muted">
-                <LoaderCircle className="size-3 animate-spin" />
-                {tr('common.loading')}
-              </ToneBadge>
-            ) : null}
-            {config?.catalog.providerCatalogSuggestionsEnabled
-              ? <ToneBadge tone="-info">{tr('upstreamCostPricing.providerCatalog.enabled')}</ToneBadge>
-              : <ToneBadge tone="-muted">{tr('upstreamCostPricing.providerCatalog.disabled')}</ToneBadge>}
-          </div>
-          <p className="mt-1 max-w-4xl text-xs leading-relaxed text-muted-foreground">
-            {tr('upstreamCostPricing.providerCatalog.description')}
-          </p>
-        </div>
-        <ButtonGroup className="justify-start sm:justify-end">
-          <Button type="button" variant="outline" size="sm" onClick={onReload} disabled={loading || saving}>
-            {loading ? <LoaderCircle className="size-4 animate-spin" /> : <RotateCcw className="size-4" />}
-            {tr('common.refresh')}
-          </Button>
-          <Button type="button" variant="default" size="sm" onClick={onSave} disabled={!config || saving}>
-            {saving ? <LoaderCircle className="size-4 animate-spin" /> : <Save className="size-4" />}
-            {tr('common.save')}
-          </Button>
-        </ButtonGroup>
-      </div>
-
-      {config ? (
-        <div className="border-t p-3">
-          <SwitchRow
-            title={tr('upstreamCostPricing.providerCatalog.useSuggestionsTitle')}
-            description={tr('upstreamCostPricing.providerCatalog.useSuggestionsDescription')}
-            checked={config.catalog.providerCatalogSuggestionsEnabled}
-            onCheckedChange={(providerCatalogSuggestionsEnabled) => onChange({ catalog: { ...config.catalog, providerCatalogSuggestionsEnabled } })}
-          />
-        </div>
-      ) : (
-        <div className="border-t p-3">
-          <Empty className="p-4">
-            <EmptyHeader>
-              <EmptyTitle>{tr('upstreamCostPricing.providerCatalog.emptyTitle')}</EmptyTitle>
-              <EmptyDescription>{tr('upstreamCostPricing.providerCatalog.emptyDescription')}</EmptyDescription>
-            </EmptyHeader>
-          </Empty>
-        </div>
-      )}
-    </section>
-  );
-}
-
-function SwitchRow({
-  title,
-  description,
-  checked,
-  onCheckedChange,
-}: {
-  title: string;
-  description: string;
-  checked: boolean;
-  onCheckedChange: (checked: boolean) => void;
-}) {
-  return (
-    <div className="flex items-center justify-between gap-3 rounded-md border px-3 py-2">
-      <div className="min-w-0">
-        <div className="text-sm font-medium">{title}</div>
-        <div className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{description}</div>
-      </div>
-      <Switch checked={checked} onCheckedChange={onCheckedChange} aria-label={title} />
     </div>
   );
 }

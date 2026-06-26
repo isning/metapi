@@ -17,6 +17,7 @@ interface SiteTrendData {
 interface SiteTrendChartProps {
   data: SiteTrendData[];
   loading?: boolean;
+  baseCostUnit?: string;
 }
 
 /* ------------------------------------------------------------------ */
@@ -34,7 +35,7 @@ const METRIC_OPTIONS: { key: Metric; label: string }[] = [
 /*  Component                                                          */
 /* ------------------------------------------------------------------ */
 
-export default function SiteTrendChart({ data, loading }: SiteTrendChartProps) {
+export default function SiteTrendChart({ data, loading, baseCostUnit = 'USD' }: SiteTrendChartProps) {
   const [metric, setMetric] = useState<Metric>('spend');
   const chartPalette = useThemeChartPalette();
 
@@ -103,7 +104,7 @@ export default function SiteTrendChart({ data, loading }: SiteTrendChartProps) {
             key: (datum: Record<string, unknown>) => datum?.site ?? '',
             value: (datum: Record<string, unknown>) => {
               const v = Number(datum?.value ?? 0);
-              return metric === 'spend' ? `$${v.toFixed(4)}` : String(v);
+              return metric === 'spend' ? `${v.toFixed(4)} ${baseCostUnit}` : String(v);
             },
           },
         ],
@@ -115,7 +116,7 @@ export default function SiteTrendChart({ data, loading }: SiteTrendChartProps) {
             key: (datum: Record<string, unknown>) => datum?.site ?? '',
             value: (datum: Record<string, unknown>) => {
               const v = Number(datum?.value ?? 0);
-              return metric === 'spend' ? `$${v.toFixed(4)}` : String(v);
+              return metric === 'spend' ? `${v.toFixed(4)} ${baseCostUnit}` : String(v);
             },
           },
         ],

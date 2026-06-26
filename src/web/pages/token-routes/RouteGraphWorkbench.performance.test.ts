@@ -23,6 +23,27 @@ describe('RouteGraphWorkbench large graph performance guardrails', () => {
     expect(text).toContain('{minimapEnabled && <MiniMap');
   });
 
+  it('keeps route endpoint catalog and JSON serialization behind explicit demand', () => {
+    const text = source();
+    const refreshBlock = text.slice(text.indexOf('const refresh = useCallback'), text.indexOf('const expandMacroOnCanvas'));
+    const applyGraphBlock = text.slice(text.indexOf('const applyGraph = useCallback'), text.indexOf('const updateMacro = useCallback'));
+
+    expect(text).toContain('routeEndpointCatalogLoadedRef');
+    expect(text).toContain('loadRouteEndpointCatalog');
+    expect(refreshBlock).not.toContain('api.getRouteEndpoints');
+    expect(refreshBlock).toContain("if (mode === 'json') syncWholeJsonFromGraph(nextGraph)");
+    expect(applyGraphBlock).toContain("if (mode === 'json') syncWholeJsonFromGraph(normalized)");
+  });
+
+  it('limits large sidebar DOM output while search still uses full collections', () => {
+    const text = source();
+
+    expect(text).toContain('ROUTE_GRAPH_SIDEBAR_RENDER_LIMIT');
+    expect(text).toContain('visibleSidebarItems(filteredNodes)');
+    expect(text).toContain('visibleSidebarItems(sortedMacros)');
+    expect(text).toContain('visibleSidebarItems(nodes)');
+  });
+
   it('renders generated compact ports without per-port tooltip providers', () => {
     const text = source();
     const portRowBlock = text.slice(text.indexOf('const PortRow = memo'), text.indexOf('const RouteGraphEdgeView = memo'));

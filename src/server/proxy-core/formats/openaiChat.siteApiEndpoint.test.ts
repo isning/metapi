@@ -129,13 +129,6 @@ describe('chat proxy site api endpoint rotation', () => {
       userAgent: '',
       betaFeatures: '',
     };
-    (config as any).payloadRules = {
-      default: [],
-      defaultRaw: [],
-      override: [],
-      overrideRaw: [],
-      filter: [],
-    };
     (config as any).disableCrossProtocolFallback = false;
     config.proxyEmptyContentFailEnabled = false;
     config.proxyErrorKeywords = [];

@@ -14,4 +14,12 @@ describe('JsonCodeEditor theme contract', () => {
     expect(source).not.toContain('@codemirror/theme-one-dark');
     expect(source).not.toContain('oneDark');
   });
+
+  it('disables live JSON linting for very large documents', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/web/components/JsonCodeEditor.tsx'), 'utf8');
+
+    expect(source).toContain('JSON_LIVE_LINT_MAX_CHARS');
+    expect(source).toContain('value.length > JSON_LIVE_LINT_MAX_CHARS');
+    expect(source).toContain('linter(jsonParseLinter())');
+  });
 });

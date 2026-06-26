@@ -41,24 +41,24 @@ export default function ModelAvailabilityProbeConfirmModal({
     <CenteredModal
       open={presence.shouldRender}
       onClose={handleRequestClose}
-      title={tr('pages.settings.modelAvailabilityProbeConfirmModal.turnOnbatchHealthCheck')}
+      title={tr('pages.settings.modelAvailabilityProbeConfirmModal.confirmBatchHealthCheck')}
       maxWidth={760}
       closeOnBackdrop
       footer={(
         <>
           <Button type="button" variant="outline" onClick={handleRequestClose} disabled={saving}>{tr('app.cancel')}</Button>
           <Button type="button" variant="destructive" onClick={onConfirm} disabled={saving || !canConfirm}>
-            {saving ? tr('pages.settings.modelAvailabilityProbeConfirmModal.turnOnzh') : tr('pages.settings.modelAvailabilityProbeConfirmModal.turnOnbatchHealthCheck')}
+            {saving ? tr('pages.settings.modelAvailabilityProbeConfirmModal.enabling') : tr('pages.settings.modelAvailabilityProbeConfirmModal.confirmBatchHealthCheck')}
           </Button>
         </>
       )}
     >
       <Alert variant="destructive">
         <AlertDescription>
-          {tr('pages.settings.modelAvailabilityProbeConfirmModal.turnMetapiAccountModelRequestZhBatch')}
+          {tr('pages.settings.modelAvailabilityProbeConfirmModal.probeRiskDescription')}
         </AlertDescription>
       </Alert>
-      <div className="text-sm text-muted-foreground">{tr('pages.settings.modelAvailabilityProbeConfirmModal.manualinputTurn')}</div>
+      <div className="text-sm text-muted-foreground">{tr('pages.settings.modelAvailabilityProbeConfirmModal.confirmationInputHint')}</div>
       <div className="rounded-md border bg-background p-3 text-sm text-foreground">
         {confirmText}
       </div>

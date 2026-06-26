@@ -51,7 +51,7 @@ export function SortableBucketSeparator({
         data-tooltip={label}
       >
         <span>{`P${beforePriority}`}</span>
-        <span className="text-[10px]">||</span>
+        <span className="text-xs">||</span>
         <span>{`P${afterPriority}`}</span>
       </DragHandleButton>
       <div className="h-px flex-1 bg-border" />

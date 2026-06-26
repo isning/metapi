@@ -14,6 +14,7 @@ import { Button } from '../components/ui/button/index.js';
 import { LoaderCircle } from 'lucide-react';
 import ToneBadge from '../components/ToneBadge.js';
 import { Card, CardContent } from '../components/ui/card/index.js';
+import { Skeleton } from '../components/ui/skeleton/index.js';
 import EmptyStateBlock from '../components/EmptyStateBlock.js';
 import PageHeader from '../components/workspace/PageHeader.js';
 import PageShell from '../components/workspace/PageShell.js';
@@ -36,6 +37,34 @@ type SiteRow = {
   name: string;
   platform?: string | null;
 };
+
+function SiteAnnouncementsLoadingSkeleton() {
+  return (
+    <Card className="overflow-hidden" aria-busy="true">
+      {Array.from({ length: 4 }).map((_, index) => (
+        <CardContent key={index} className="border-b p-4 last:border-b-0">
+          <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+            <div className="grid min-w-0 flex-1 gap-2">
+              <Skeleton className="h-5 w-64 max-w-full" />
+              <Skeleton className="h-3 w-40" />
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Skeleton className="h-5 w-20 rounded-full" />
+              <Skeleton className="h-5 w-16 rounded-full" />
+              <Skeleton className="h-5 w-14 rounded-full" />
+            </div>
+          </div>
+          <div className="grid gap-2">
+            <Skeleton className="h-4 w-full" />
+            <Skeleton className="h-4 w-11/12" />
+            <Skeleton className="h-4 w-2/3" />
+          </div>
+          <Skeleton className="mt-3 h-3 w-48" />
+        </CardContent>
+      ))}
+    </Card>
+  );
+}
 
 export default function SiteAnnouncements() {
   const location = useLocation();
@@ -174,7 +203,7 @@ export default function SiteAnnouncements() {
            
            
           >
-            {refreshing ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.downstreamKeys.refreshzh')}</> : tr('pages.accounts.refresh')}
+            {refreshing ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.downstreamKeys.refreshing')}</> : tr('pages.accounts.refresh')}
           </Button>
           <Button type="button" variant="outline"
             onClick={markAllRead}
@@ -202,42 +231,42 @@ export default function SiteAnnouncements() {
         )}
       />
 
-      <Card className="overflow-hidden">
-        {loading ? (
-          <CardContent className="flex items-center justify-center py-8">
-            <LoaderCircle className="size-4 animate-spin" />
-          </CardContent>
-        ) : rows.length === 0 ? (
-          <EmptyStateBlock title={tr('pages.siteAnnouncements.noAnnouncements')} description={tr('pages.siteAnnouncements.sites')} />
-        ) : (
-          rows.map((row, index) => (
-            <div
-              key={row.id}
-              ref={(node) => {
-                if (node) rowRefs.current.set(row.id, node);
-                else rowRefs.current.delete(row.id);
-              }}
-              className={`border-b p-4 last:border-b-0 ${highlightAnnouncementId === row.id ? 'bg-muted' : ''}`.trim()}
-            >
-              <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
-                <div className="text-base font-semibold">{row.title}</div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <ToneBadge tone="-muted">{siteNameById.get(row.siteId) || `站点 #${row.siteId}`}</ToneBadge>
-                  <ToneBadge tone="-info">{row.platform}</ToneBadge>
-                  <ToneBadge tone={row.readAt ? 'muted' : 'warning'}>{row.readAt ? tr('pages.programLogs.read') : tr('pages.programLogs.unread')}</ToneBadge>
+      {loading ? (
+        <SiteAnnouncementsLoadingSkeleton />
+      ) : (
+        <Card className="overflow-hidden">
+          {rows.length === 0 ? (
+            <EmptyStateBlock title={tr('pages.siteAnnouncements.noAnnouncements')} description={tr('pages.siteAnnouncements.sites')} />
+          ) : (
+            rows.map((row, index) => (
+              <div
+                key={row.id}
+                ref={(node) => {
+                  if (node) rowRefs.current.set(row.id, node);
+                  else rowRefs.current.delete(row.id);
+                }}
+                className={`border-b p-4 last:border-b-0 ${highlightAnnouncementId === row.id ? 'bg-muted' : ''}`.trim()}
+              >
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
+                  <div className="text-base font-semibold">{row.title}</div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <ToneBadge tone="-muted">{siteNameById.get(row.siteId) || `站点 #${row.siteId}`}</ToneBadge>
+                    <ToneBadge tone="-info">{row.platform}</ToneBadge>
+                    <ToneBadge tone={row.readAt ? 'muted' : 'warning'}>{row.readAt ? tr('pages.programLogs.read') : tr('pages.programLogs.unread')}</ToneBadge>
+                  </div>
+                </div>
+                <SiteAnnouncementContent content={row.content} />
+                <div
+                  className="mt-2 text-xs text-muted-foreground"
+                  title={displayTimeZone ? `本地时区：${displayTimeZone}` : undefined}
+                >
+                  {tr('pages.siteAnnouncements.firstFound')}{formatSiteAnnouncementSeenAt(row.firstSeenAt || row.lastSeenAt || '', displayTimeZone)}
                 </div>
               </div>
-              <SiteAnnouncementContent content={row.content} />
-              <div
-                className="mt-2 text-xs text-muted-foreground"
-                title={displayTimeZone ? `本地时区：${displayTimeZone}` : undefined}
-              >
-                {tr('pages.siteAnnouncements.firstFound')}{formatSiteAnnouncementSeenAt(row.firstSeenAt || row.lastSeenAt || '', displayTimeZone)}
-              </div>
-            </div>
-          ))
-        )}
-      </Card>
+            ))
+          )}
+        </Card>
+      )}
     </PageShell>
   );
 }

@@ -30,6 +30,7 @@ describe('upstream cost pricing routes', () => {
 
   beforeEach(async () => {
     await db.delete(schema.settings).run();
+    await db.delete(schema.fxRateSnapshots).run();
     await db.delete(schema.upstreamModelCostPricings).run();
     await db.delete(schema.accountTokens).run();
     await db.delete(schema.accounts).run();
@@ -145,12 +146,12 @@ describe('upstream cost pricing routes', () => {
     expect(initial.statusCode).toBe(200);
     expect(initial.json()).toMatchObject({
       schemaVersion: 1,
-      defaultReferenceMode: 'auto',
-      catalog: {
-        builtInCatalogEnabled: true,
-        providerCatalogSuggestionsEnabled: true,
+      sync: {
+        enabled: false,
+        replaceOnSync: true,
       },
     });
+    expect(initial.json()).not.toHaveProperty('defaultReferenceMode');
 
     const update = await app.inject({
       method: 'PUT',
@@ -159,10 +160,182 @@ describe('upstream cost pricing routes', () => {
       payload: {
         defaultReferenceMode: 'manual',
         fallbackProfile: 'unknown',
-        catalog: {
-          builtInCatalogEnabled: false,
-          providerCatalogSuggestionsEnabled: true,
+        sync: {
+          enabled: true,
+          url: 'https://example.com/reference.json',
+          cron: '0 4 * * *',
+          replaceOnSync: false,
         },
+      },
+    });
+    expect(update.statusCode).toBe(200);
+    expect(update.json()).toMatchObject({
+      schemaVersion: 1,
+      sync: {
+        enabled: true,
+        url: 'https://example.com/reference.json',
+        cron: '0 4 * * *',
+        replaceOnSync: false,
+      },
+    });
+    expect(update.json()).not.toHaveProperty('defaultReferenceMode');
+    expect(update.json()).not.toHaveProperty('fallbackProfile');
+
+    const loaded = await app.inject({
+      method: 'GET',
+      url: '/api/pricing/reference-config',
+      headers: app.adminHeaders(),
+    });
+    expect(loaded.json()).toMatchObject(update.json());
+  });
+
+  it('manages reference pricing catalog entries and resolves imported reference prices', async () => {
+    const initial = await app.inject({
+      method: 'GET',
+      url: '/api/pricing/reference-catalog',
+      headers: app.adminHeaders(),
+    });
+    expect(initial.statusCode).toBe(200);
+    expect(initial.json()).toMatchObject({
+      schemaVersion: 1,
+      entries: [],
+      updatedAt: null,
+    });
+
+    const imported = await app.inject({
+      method: 'POST',
+      url: '/api/pricing/reference-catalog/import',
+      headers: app.adminHeaders(),
+      payload: {
+        replace: true,
+        data: [
+          {
+            provider: 'OpenAI',
+            modelName: 'gpt-4o',
+            aliases: ['gpt-4o-2024-08-06'],
+            inputPerMillion: 3,
+            outputPerMillion: 7,
+            cacheReadPerMillion: 1,
+          },
+        ],
+      },
+    });
+    expect(imported.statusCode).toBe(200);
+    expect(imported.json()).toMatchObject({
+      imported: 1,
+      replaced: 0,
+      catalog: {
+        entries: [
+          {
+            id: 'openai:gpt-4o',
+            provider: 'openai',
+            modelName: 'gpt-4o',
+            normalizedModelName: 'gpt-4o',
+            sourceType: 'imported',
+            aliases: ['gpt-4o-2024-08-06'],
+          },
+        ],
+      },
+    });
+
+    const saved = await app.inject({
+      method: 'PUT',
+      url: '/api/pricing/reference-catalog',
+      headers: app.adminHeaders(),
+      payload: {
+        entries: [
+          {
+            provider: 'openai',
+            modelName: 'gpt-4o-mini',
+            displayName: 'GPT-4o mini',
+            inputPerMillion: 0.15,
+            outputPerMillion: 0.6,
+            notes: 'manual estimate',
+          },
+        ],
+      },
+    });
+    expect(saved.statusCode).toBe(200);
+    expect(saved.json()).toMatchObject({
+      schemaVersion: 1,
+      entries: [
+        {
+          id: 'openai:gpt-4o-mini',
+          sourceType: 'manual',
+          notes: 'manual estimate',
+        },
+      ],
+    });
+
+    const reimported = await app.inject({
+      method: 'POST',
+      url: '/api/pricing/reference-catalog/import',
+      headers: app.adminHeaders(),
+      payload: {
+        replace: false,
+        data: [
+          {
+            provider: 'openai',
+            modelName: 'gpt-4o',
+            aliases: ['gpt-4o-2024-08-06'],
+            inputPerMillion: 3,
+            outputPerMillion: 7,
+          },
+        ],
+      },
+    });
+    expect(reimported.statusCode).toBe(200);
+    expect(reimported.json()).toMatchObject({
+      imported: 1,
+      replaced: 0,
+    });
+
+    const { resolveReferencePricing } = await import('../../services/referencePricingService.js');
+    const resolved = await resolveReferencePricing({
+      subject: {
+        provider: 'openai',
+        modelName: 'gpt-4o-2024-08-06',
+      },
+      usage: {
+        inputTokens: 1_000_000,
+        outputTokens: 2_000_000,
+        requestCount: 1,
+      },
+    });
+    expect(resolved).toMatchObject({
+      source: 'official_reference',
+      sourceId: 'openai:gpt-4o',
+      matchedScope: 'provider:openai',
+      sourceType: 'imported',
+      evaluation: {
+        totalCostUsd: 17,
+      },
+    });
+  });
+
+  it('reads and updates platform pricing drift config separately from reference pricing', async () => {
+    const initial = await app.inject({
+      method: 'GET',
+      url: '/api/pricing/platform-config',
+      headers: app.adminHeaders(),
+    });
+    expect(initial.statusCode).toBe(200);
+    expect(initial.json()).toMatchObject({
+      schemaVersion: 1,
+      baseCostUnit: 'USD',
+      driftCheck: {
+        enabled: false,
+        windowHours: 24,
+        minSampleSize: 20,
+      },
+    });
+
+    const update = await app.inject({
+      method: 'PUT',
+      url: '/api/pricing/platform-config',
+      headers: app.adminHeaders(),
+      payload: {
+        baseCostUnit: 'CNY',
         driftCheck: {
           enabled: true,
           windowHours: 12,
@@ -176,25 +349,85 @@ describe('upstream cost pricing routes', () => {
     expect(update.statusCode).toBe(200);
     expect(update.json()).toMatchObject({
       schemaVersion: 1,
-      defaultReferenceMode: 'manual',
-      fallbackProfile: 'unknown',
-      catalog: {
-        builtInCatalogEnabled: false,
-        providerCatalogSuggestionsEnabled: true,
-      },
+      baseCostUnit: 'CNY',
       driftCheck: {
         enabled: true,
         windowHours: 12,
         minSampleSize: 5,
+        relativeTolerance: 0.2,
+        absoluteToleranceUsd: 0.000002,
+        notifyOnWarning: false,
       },
     });
+  });
 
-    const loaded = await app.inject({
-      method: 'GET',
-      url: '/api/pricing/reference-config',
+  it('rejects invalid or duplicate unit conversions', async () => {
+    const identity = await app.inject({
+      method: 'POST',
+      url: '/api/pricing/fx-rates',
       headers: app.adminHeaders(),
+      payload: {
+        fromCurrency: 'USD',
+        toCurrency: 'usd',
+        rate: 1,
+      },
     });
-    expect(loaded.json()).toMatchObject(update.json());
+    expect(identity.statusCode).toBe(400);
+    expect(identity.json().error).toContain('must use different units');
+
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/pricing/fx-rates',
+      headers: app.adminHeaders(),
+      payload: {
+        fromCurrency: 'usd',
+        toCurrency: 'cny',
+        rate: 7.2,
+      },
+    });
+    expect(created.statusCode).toBe(201);
+    expect(created.json()).toMatchObject({
+      fromCurrency: 'CNY',
+      toCurrency: 'USD',
+      rate: 1 / 7.2,
+    });
+
+    const duplicate = await app.inject({
+      method: 'POST',
+      url: '/api/pricing/fx-rates',
+      headers: app.adminHeaders(),
+      payload: {
+        fromCurrency: 'USD',
+        toCurrency: 'CNY',
+        rate: 7.3,
+      },
+    });
+    expect(duplicate.statusCode).toBe(400);
+    expect(duplicate.json().error).toContain('already exists');
+
+    const second = await app.inject({
+      method: 'POST',
+      url: '/api/pricing/fx-rates',
+      headers: app.adminHeaders(),
+      payload: {
+        fromCurrency: 'EUR',
+        toCurrency: 'USD',
+        rate: 1.1,
+      },
+    });
+    expect(second.statusCode).toBe(201);
+
+    const conflictingUpdate = await app.inject({
+      method: 'PATCH',
+      url: `/api/pricing/fx-rates/${second.json().id}`,
+      headers: app.adminHeaders(),
+      payload: {
+        fromCurrency: 'USD',
+        toCurrency: 'CNY',
+      },
+    });
+    expect(conflictingUpdate.statusCode).toBe(400);
+    expect(conflictingUpdate.json().error).toContain('already exists');
   });
 });
 

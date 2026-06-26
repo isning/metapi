@@ -7,11 +7,12 @@ import type {
   RouteGraphPort,
   RouteGraphPortKind,
 } from './routeGraphTypes.js';
+import { tr } from '../../i18n.js';
 
 type NodeDefinition = {
-  title: string;
-  detail: string;
-  kicker: string;
+  titleKey: string;
+  detailKey: string;
+  kickerKey: string;
   accent: string;
   primitive: boolean;
   defaultPorts: RouteGraphPort[];
@@ -21,7 +22,7 @@ type NodeDefinition = {
 const templateCategoryAccent = {
   Core: '#2563eb',
   Transform: '#7c3aed',
-  Fallback: '#dc2626',
+  Synthetic: '#dc2626',
 } satisfies Record<AddTemplate['category'], string>;
 
 function baseNode(type: RouteGraphNodeType, index: number, position?: { x: number; y: number }): RouteGraphNode {
@@ -63,9 +64,9 @@ function makeFilterNode(
 
 export const routeGraphNodeDefinitions = {
   entry: {
-    kicker: 'Primitive',
-    title: 'Entry',
-    detail: 'Public or internal flow entry with model matching.',
+    kickerKey: 'pages.tokenRoutes.routeGraphRegistry.node.entry.kicker',
+    titleKey: 'pages.tokenRoutes.routeGraphRegistry.node.entry.title',
+    detailKey: 'pages.tokenRoutes.routeGraphRegistry.node.entry.detail',
     accent: '#2563eb',
     primitive: true,
     defaultPorts: [
@@ -79,9 +80,9 @@ export const routeGraphNodeDefinitions = {
     }),
   },
   filter: {
-    kicker: 'Primitive',
-    title: 'Filter',
-    detail: 'Empty request/bidirect mutation node.',
+    kickerKey: 'pages.tokenRoutes.routeGraphRegistry.node.filter.kicker',
+    titleKey: 'pages.tokenRoutes.routeGraphRegistry.node.filter.title',
+    detailKey: 'pages.tokenRoutes.routeGraphRegistry.node.filter.detail',
     accent: '#7c3aed',
     primitive: true,
     defaultPorts: [
@@ -93,9 +94,9 @@ export const routeGraphNodeDefinitions = {
     createDefaultNode: (index, position) => ({ ...baseNode('filter', index, position), operations: [] }),
   },
   dispatcher: {
-    kicker: 'Primitive',
-    title: 'Dispatcher',
-    detail: 'Route or flow load balancing primitive.',
+    kickerKey: 'pages.tokenRoutes.routeGraphRegistry.node.dispatcher.kicker',
+    titleKey: 'pages.tokenRoutes.routeGraphRegistry.node.dispatcher.title',
+    detailKey: 'pages.tokenRoutes.routeGraphRegistry.node.dispatcher.detail',
     accent: '#2563eb',
     primitive: true,
     defaultPorts: [
@@ -106,9 +107,9 @@ export const routeGraphNodeDefinitions = {
     createDefaultNode: (index, position) => ({ ...baseNode('dispatcher', index, position), mode: 'route', ordering: 'explicit', policy: { strategy: 'weighted' } }),
   },
   route_endpoint: {
-    kicker: 'Endpoint',
-    title: 'Route Endpoint',
-    detail: 'Semantic route endpoint exposed by route products or upstream supply.',
+    kickerKey: 'pages.tokenRoutes.routeGraphRegistry.node.routeEndpoint.kicker',
+    titleKey: 'pages.tokenRoutes.routeGraphRegistry.node.routeEndpoint.title',
+    detailKey: 'pages.tokenRoutes.routeGraphRegistry.node.routeEndpoint.detail',
     accent: '#16a34a',
     primitive: true,
     defaultPorts: [
@@ -130,9 +131,9 @@ export const routeGraphNodeDefinitions = {
     },
   },
   synthetic_endpoint: {
-    kicker: 'Primitive',
-    title: 'Synthetic Endpoint',
-    detail: 'Terminal dummy response backend.',
+    kickerKey: 'pages.tokenRoutes.routeGraphRegistry.node.syntheticEndpoint.kicker',
+    titleKey: 'pages.tokenRoutes.routeGraphRegistry.node.syntheticEndpoint.title',
+    detailKey: 'pages.tokenRoutes.routeGraphRegistry.node.syntheticEndpoint.detail',
     accent: '#dc2626',
     primitive: true,
     defaultPorts: [
@@ -142,9 +143,9 @@ export const routeGraphNodeDefinitions = {
     createDefaultNode: (index, position) => ({ ...baseNode('synthetic_endpoint', index, position), statusCode: 503, message: 'Route unavailable' }),
   },
   auto_node: {
-    kicker: 'Primitive',
-    title: 'Auto Node',
-    detail: 'Generated compatibility node; not normally created manually.',
+    kickerKey: 'pages.tokenRoutes.routeGraphRegistry.node.autoNode.kicker',
+    titleKey: 'pages.tokenRoutes.routeGraphRegistry.node.autoNode.title',
+    detailKey: 'pages.tokenRoutes.routeGraphRegistry.node.autoNode.detail',
     accent: '#64748b',
     primitive: false,
     defaultPorts: [
@@ -195,6 +196,30 @@ export function templateAccent(template: AddTemplate): string {
   return templateCategoryAccent[template.category];
 }
 
+export function getNodeDefinitionTitle(type: RouteGraphNodeType): string {
+  return tr(routeGraphNodeDefinitions[type].titleKey);
+}
+
+export function getNodeDefinitionDetail(type: RouteGraphNodeType): string {
+  return tr(routeGraphNodeDefinitions[type].detailKey);
+}
+
+export function getNodeDefinitionKicker(type: RouteGraphNodeType): string {
+  return tr(routeGraphNodeDefinitions[type].kickerKey);
+}
+
+export function getTemplateTitle(template: AddTemplate): string {
+  return tr(template.titleKey);
+}
+
+export function getTemplateDetail(template: AddTemplate): string {
+  return tr(template.detailKey);
+}
+
+export function getTemplateKicker(template: AddTemplate): string {
+  return tr(template.kickerKey);
+}
+
 export function getNodePorts(node: RouteGraphNode): RouteGraphPort[] {
   const portsById = new Map<string, RouteGraphPort>();
   for (const port of routeGraphNodeDefinitions[node.type]?.defaultPorts || []) portsById.set(port.id, port);
@@ -214,27 +239,27 @@ export function buildAddTemplates(): AddTemplate[] {
     {
       id: 'entry',
       category: 'Core',
-      kicker: 'Entry',
-      title: 'Public Model Entry',
-      detail: 'Expose a downstream model name and start a route flow.',
+      kickerKey: 'pages.tokenRoutes.routeGraphRegistry.template.entry.kicker',
+      titleKey: 'pages.tokenRoutes.routeGraphRegistry.template.entry.title',
+      detailKey: 'pages.tokenRoutes.routeGraphRegistry.template.entry.detail',
       primitiveType: 'entry',
       create: (index, position) => makeNode('entry', index, position),
     },
     {
       id: 'dispatcher-route',
       category: 'Core',
-      kicker: 'Route',
-      title: 'Route Dispatcher',
-      detail: 'Load balance route candidates by policy and metadata.',
+      kickerKey: 'pages.tokenRoutes.routeGraphRegistry.template.dispatcherRoute.kicker',
+      titleKey: 'pages.tokenRoutes.routeGraphRegistry.template.dispatcherRoute.title',
+      detailKey: 'pages.tokenRoutes.routeGraphRegistry.template.dispatcherRoute.detail',
       primitiveType: 'dispatcher',
       create: (index, position) => ({ ...makeNode('dispatcher', index, position), mode: 'route', policy: { strategy: 'weighted' } }),
     },
     {
       id: 'reasoning_effort',
       category: 'Transform',
-      kicker: 'Payload',
-      title: 'Reasoning Effort Injection',
-      detail: 'Inject reasoning_effort without hardcoding provider/model names.',
+      kickerKey: 'pages.tokenRoutes.routeGraphRegistry.template.reasoningEffort.kicker',
+      titleKey: 'pages.tokenRoutes.routeGraphRegistry.template.reasoningEffort.title',
+      detailKey: 'pages.tokenRoutes.routeGraphRegistry.template.reasoningEffort.detail',
       create: (index, position) => makeFilterNode(index, {
         idPrefix: 'reasoning-effort',
         name: 'Inject reasoning effort',
@@ -247,9 +272,9 @@ export function buildAddTemplates(): AddTemplate[] {
     {
       id: 'thinking',
       category: 'Transform',
-      kicker: 'Payload',
-      title: 'Thinking Payload Injection',
-      detail: 'Set a generic thinking payload field for compatible upstreams.',
+      kickerKey: 'pages.tokenRoutes.routeGraphRegistry.template.thinking.kicker',
+      titleKey: 'pages.tokenRoutes.routeGraphRegistry.template.thinking.title',
+      detailKey: 'pages.tokenRoutes.routeGraphRegistry.template.thinking.detail',
       create: (index, position) => makeFilterNode(index, {
         idPrefix: 'thinking',
         name: 'Inject thinking payload',
@@ -262,9 +287,9 @@ export function buildAddTemplates(): AddTemplate[] {
     {
       id: 'model_rewrite',
       category: 'Transform',
-      kicker: 'Model',
-      title: 'Strip Model Suffix',
-      detail: 'Rewrite current_model before selecting an inner route.',
+      kickerKey: 'pages.tokenRoutes.routeGraphRegistry.template.modelRewrite.kicker',
+      titleKey: 'pages.tokenRoutes.routeGraphRegistry.template.modelRewrite.title',
+      detailKey: 'pages.tokenRoutes.routeGraphRegistry.template.modelRewrite.detail',
       create: (index, position) => makeFilterNode(index, {
         idPrefix: 'model-rewrite',
         name: 'Strip model suffix',
@@ -277,9 +302,9 @@ export function buildAddTemplates(): AddTemplate[] {
     {
       id: 'endpoint_preference',
       category: 'Transform',
-      kicker: 'Endpoint',
-      title: 'Prefer Responses Endpoint',
-      detail: 'Move a compatible endpoint to the front of the endpoint list.',
+      kickerKey: 'pages.tokenRoutes.routeGraphRegistry.template.endpointPreference.kicker',
+      titleKey: 'pages.tokenRoutes.routeGraphRegistry.template.endpointPreference.title',
+      detailKey: 'pages.tokenRoutes.routeGraphRegistry.template.endpointPreference.detail',
       create: (index, position) => makeFilterNode(index, {
         idPrefix: 'endpoint-preference',
         name: 'Prefer responses',
@@ -292,9 +317,9 @@ export function buildAddTemplates(): AddTemplate[] {
     {
       id: 'header_injection',
       category: 'Transform',
-      kicker: 'Header',
-      title: 'Header Injection',
-      detail: 'Set a request header after protocol request preparation.',
+      kickerKey: 'pages.tokenRoutes.routeGraphRegistry.template.headerInjection.kicker',
+      titleKey: 'pages.tokenRoutes.routeGraphRegistry.template.headerInjection.title',
+      detailKey: 'pages.tokenRoutes.routeGraphRegistry.template.headerInjection.detail',
       create: (index, position) => makeFilterNode(index, {
         idPrefix: 'header',
         name: 'Set upstream header',
@@ -307,36 +332,36 @@ export function buildAddTemplates(): AddTemplate[] {
     {
       id: 'dispatcher',
       category: 'Core',
-      kicker: 'Flow',
-      title: 'Flow Dispatcher',
-      detail: 'Emit an ordered bidirect output array for flow composition.',
+      kickerKey: 'pages.tokenRoutes.routeGraphRegistry.template.dispatcherFlow.kicker',
+      titleKey: 'pages.tokenRoutes.routeGraphRegistry.template.dispatcherFlow.title',
+      detailKey: 'pages.tokenRoutes.routeGraphRegistry.template.dispatcherFlow.detail',
       primitiveType: 'dispatcher',
       create: (index, position) => ({ ...makeNode('dispatcher', index, position), mode: 'flow', policy: { strategy: 'weighted' } }),
     },
     {
       id: 'route_endpoint',
       category: 'Core',
-      kicker: 'Endpoint',
-      title: 'Supply Route Endpoint',
-      detail: 'Declare executable upstream model targets with custom metadata.',
+      kickerKey: 'pages.tokenRoutes.routeGraphRegistry.template.routeEndpoint.kicker',
+      titleKey: 'pages.tokenRoutes.routeGraphRegistry.template.routeEndpoint.title',
+      detailKey: 'pages.tokenRoutes.routeGraphRegistry.template.routeEndpoint.detail',
       primitiveType: 'route_endpoint',
       create: (index, position) => makeNode('route_endpoint', index, position),
     },
     {
       id: 'dummy_503',
-      category: 'Fallback',
-      kicker: 'Fallback',
-      title: '503 Dummy Backend',
-      detail: 'Return a configured terminal response when no backend is allowed.',
+      category: 'Synthetic',
+      kickerKey: 'pages.tokenRoutes.routeGraphRegistry.template.dummy503.kicker',
+      titleKey: 'pages.tokenRoutes.routeGraphRegistry.template.dummy503.title',
+      detailKey: 'pages.tokenRoutes.routeGraphRegistry.template.dummy503.detail',
       primitiveType: 'synthetic_endpoint',
       create: (index, position) => ({ ...makeNode('synthetic_endpoint', index, position), statusCode: 503, message: 'No backend for this model' }),
     },
     {
       id: 'dummy_429',
-      category: 'Fallback',
-      kicker: 'Fallback',
-      title: '429 Dummy Backend',
-      detail: 'Return a configured rate-limit terminal response.',
+      category: 'Synthetic',
+      kickerKey: 'pages.tokenRoutes.routeGraphRegistry.template.dummy429.kicker',
+      titleKey: 'pages.tokenRoutes.routeGraphRegistry.template.dummy429.title',
+      detailKey: 'pages.tokenRoutes.routeGraphRegistry.template.dummy429.detail',
       primitiveType: 'synthetic_endpoint',
       create: (index, position) => ({ ...makeNode('synthetic_endpoint', index, position), statusCode: 429, message: 'Route is rate limited' }),
     },

@@ -2,7 +2,11 @@ import {
   config,
   normalizeTokenRouterFailureCooldownMaxSec,
 } from './config.js';
-import { normalizePayloadRulesConfig } from './services/payloadRules.js';
+import {
+  calculateRoutingFallbackUnitCostFromPlatformPricingConfig,
+  normalizePlatformPricingConfig,
+  PLATFORM_PRICING_CONFIG_SETTING_KEY,
+} from './services/platformPricingConfigContract.js';
 import { normalizeLogCleanupRetentionDays } from './shared/logCleanupRetentionDays.js';
 
 export function parseSettingFromMap<T>(settingsMap: Map<string, string>, key: string): T | undefined {
@@ -99,10 +103,6 @@ export function applyRuntimeSettings(settingsMap: Map<string, string>) {
         ? next.betaFeatures.trim()
         : (typeof next['beta-features'] === 'string' ? next['beta-features'].trim() : config.codexHeaderDefaults.betaFeatures),
     };
-  }
-
-  if (settingsMap.has('payload_rules')) {
-    config.payloadRules = normalizePayloadRulesConfig(parseSettingFromMap<unknown>(settingsMap, 'payload_rules'));
   }
 
   const checkinCron = parseSettingFromMap<string>(settingsMap, 'checkin_cron');
@@ -210,9 +210,11 @@ export function applyRuntimeSettings(settingsMap: Map<string, string>) {
     };
   }
 
-  const routingFallbackUnitCost = parseSettingFromMap<number>(settingsMap, 'routing_fallback_unit_cost');
-  if (typeof routingFallbackUnitCost === 'number' && Number.isFinite(routingFallbackUnitCost) && routingFallbackUnitCost > 0) {
-    config.routingFallbackUnitCost = Math.max(1e-6, routingFallbackUnitCost);
+  if (settingsMap.has(PLATFORM_PRICING_CONFIG_SETTING_KEY)) {
+    const platformPricingConfig = normalizePlatformPricingConfig(
+      parseSettingFromMap<unknown>(settingsMap, PLATFORM_PRICING_CONFIG_SETTING_KEY),
+    );
+    config.routingFallbackUnitCost = calculateRoutingFallbackUnitCostFromPlatformPricingConfig(platformPricingConfig);
   }
 
   const proxyFirstByteTimeoutSec = parseSettingFromMap<number>(settingsMap, 'proxy_first_byte_timeout_sec');

@@ -33,6 +33,11 @@ import { refreshOauthAccessTokenSingleflight } from './oauth/refreshSingleflight
 import { listEnabledOauthRouteUnitsWithMembers } from './oauth/routeUnitService.js';
 import { requireSiteApiBaseUrl } from './siteApiEndpointService.js';
 import {
+  ensureAutomaticRouteGroupBridges,
+  syncAutomaticRouteGroupCandidates,
+  type AutomaticRouteGroupCandidateMap,
+} from './routeGroupPersistenceService.js';
+import {
   discoverAntigravityModelsFromCloud,
   discoverClaudeModelsFromCloud,
   discoverCodexModelsFromCloud,
@@ -1445,11 +1450,7 @@ export async function rebuildTokenRoutesFromAvailability() {
     }
   }
 
-  const modelCandidates = new Map<string, Map<string, {
-    accountId: number;
-    tokenId: number | null;
-    oauthRouteUnitId: number | null;
-  }>>();
+  const modelCandidates: AutomaticRouteGroupCandidateMap = new Map();
   const buildCandidateKey = (input: {
     accountId: number;
     tokenId: number | null;
@@ -1477,7 +1478,7 @@ export async function rebuildTokenRoutesFromAvailability() {
     if (isModelDisabledForSite(siteId, modelName)) return;
     if (blockedBrandRules.length > 0 && isModelBlockedByBrand(modelName, blockedBrandRules)) return;
     if (!modelCandidates.has(modelName)) modelCandidates.set(modelName, new Map());
-    const candidate = { accountId, tokenId, oauthRouteUnitId };
+    const candidate = { accountId, tokenId, oauthRouteUnitId, siteId };
     modelCandidates.get(modelName)!.set(buildCandidateKey(candidate), candidate);
   };
 
@@ -1502,32 +1503,56 @@ export async function rebuildTokenRoutesFromAvailability() {
     addModelCandidate(row.token_model_availability.modelName, row.accounts.id, row.account_tokens.id, row.accounts.siteId);
   }
 
+  const groupBridgeSync = await ensureAutomaticRouteGroupBridges(modelCandidates);
+  const autoRouteIds = new Set(Array.from(groupBridgeSync.bridgesByModelName.values()).map((bridge) => bridge.routeId));
+
   const bindings = await loadRouteGraphRouteTableBindings();
   const routes = (await db.select().from(schema.tokenRoutes).all()).map((row) => compileTokenRoute(row, bindings.get(row.id)));
   const targets = await db.select().from(schema.routeEndpointTargets).all();
 
-  let createdRoutes = 0;
+  let createdRoutes = groupBridgeSync.createdLegacyRoutes;
   let createdTargets = 0;
   let removedTargets = 0;
   let removedRoutes = 0;
 
   for (const [modelName, candidateMap] of modelCandidates.entries()) {
-    let route = routes.find((r) => r.routeMode !== 'explicit_group' && r.modelPattern === modelName);
+    const persistedBridge = groupBridgeSync.bridgesByModelName.get(modelName);
+    let route = persistedBridge
+      ? routes.find((r) => r.id === persistedBridge.routeId)
+      : undefined;
     if (!route) {
-      const inserted = await db.insert(schema.tokenRoutes).values({
-        displayName: modelName,
-        enabled: true,
-      }).run();
-      const insertedId = getInsertedRowId(inserted);
-      route = insertedId != null
-        ? ((row) => (row ? compileTokenRoute(row, undefined) : undefined))(await db.select().from(schema.tokenRoutes).where(eq(schema.tokenRoutes.id, insertedId)).get())
-        : undefined;
+      route = routes.find((r) => r.routeMode !== 'explicit_group' && r.modelPattern === modelName && autoRouteIds.has(r.id));
       if (!route) continue;
+    }
+
+    if (route.modelPattern !== modelName || route.displayName !== modelName) {
+      await db.update(schema.tokenRoutes)
+        .set({
+          displayName: modelName,
+          updatedAt: new Date().toISOString(),
+        })
+        .where(eq(schema.tokenRoutes.id, route.id))
+        .run();
+      route.displayName = modelName;
+      route.modelPattern = modelName;
+    }
+
+    if (!routes.some((item) => item.id === route!.id)) {
       routes.push(route);
-      createdRoutes++;
     }
 
     const routeEndpointTargets = targets.filter((target) => target.routeId === route.id);
+    const targetsMissingSourceModel = routeEndpointTargets.filter((target) => !(target.sourceModel || '').trim());
+    if (targetsMissingSourceModel.length > 0) {
+      for (const target of targetsMissingSourceModel) {
+        await db.update(schema.routeEndpointTargets)
+          .set({ sourceModel: modelName })
+          .where(eq(schema.routeEndpointTargets.id, target.id))
+          .run();
+        target.sourceModel = modelName;
+      }
+    }
+
     const desiredKeys = new Set(Array.from(candidateMap.keys()));
 
     for (const [candidateKey, candidate] of candidateMap.entries()) {
@@ -1539,6 +1564,7 @@ export async function rebuildTokenRoutesFromAvailability() {
         accountId: candidate.accountId,
         tokenId: candidate.tokenId,
         oauthRouteUnitId: candidate.oauthRouteUnitId,
+        sourceModel: modelName,
         priority: 0,
         weight: 10,
         enabled: true,
@@ -1564,9 +1590,11 @@ export async function rebuildTokenRoutesFromAvailability() {
         const preferred = await getPreferredAccountToken(target.accountId);
         if (preferred && desiredKeys.has(`${target.accountId}:${preferred.id}`)) {
           await db.update(schema.routeEndpointTargets)
-            .set({ tokenId: preferred.id })
+            .set({ tokenId: preferred.id, sourceModel: target.sourceModel || modelName })
             .where(eq(schema.routeEndpointTargets.id, target.id))
             .run();
+          target.tokenId = preferred.id;
+          if (!target.sourceModel) target.sourceModel = modelName;
           continue;
         }
       }
@@ -1583,8 +1611,52 @@ export async function rebuildTokenRoutesFromAvailability() {
   }
 
   const latestModelNames = new Set<string>(Array.from(modelCandidates.keys()));
+  const automaticRouteGroups = await db.select().from(schema.routeGroups)
+    .where(eq(schema.routeGroups.kind, 'automatic'))
+    .all();
+  const allRouteGroups = await db.select().from(schema.routeGroups).all();
+  const routeGroupBridgeRouteIds = new Set(
+    allRouteGroups
+      .map((group) => Number(group.legacyRouteId || 0))
+      .filter((routeId) => Number.isFinite(routeId) && routeId > 0),
+  );
+  const automaticBridgeRouteIds = new Set(
+    automaticRouteGroups
+      .map((group) => Number(group.legacyRouteId || 0))
+      .filter((routeId) => Number.isFinite(routeId) && routeId > 0),
+  );
+  for (const group of automaticRouteGroups) {
+    const routeId = Number(group.legacyRouteId || 0);
+    if (!Number.isFinite(routeId) || routeId <= 0) continue;
+    const upstreamModelName = (group.upstreamModelName || group.publicModelName || group.displayName || '').trim();
+    if (!upstreamModelName || latestModelNames.has(upstreamModelName)) continue;
+
+    for (const target of [...targets.filter((item) => item.routeId === routeId)]) {
+      if (target.manualOverride) continue;
+      await db.delete(schema.routeEndpointTargets)
+        .where(eq(schema.routeEndpointTargets.id, target.id))
+        .run();
+      const targetIndex = targets.findIndex((item) => item.id === target.id);
+      if (targetIndex >= 0) targets.splice(targetIndex, 1);
+      removedTargets++;
+    }
+
+    const staleCandidates = await db.select().from(schema.routeGroupCandidates)
+      .where(eq(schema.routeGroupCandidates.groupId, group.id))
+      .all();
+    for (const candidate of staleCandidates) {
+      if (candidate.manualOverride) continue;
+      await db.delete(schema.routeGroupCandidates)
+        .where(eq(schema.routeGroupCandidates.id, candidate.id))
+        .run();
+    }
+  }
+
   for (const route of routes) {
     if (route.routeMode === 'explicit_group') {
+      continue;
+    }
+    if (autoRouteIds.has(route.id) || routeGroupBridgeRouteIds.has(route.id)) {
       continue;
     }
     const modelPattern = (route.modelPattern || '').trim();
@@ -1603,9 +1675,24 @@ export async function rebuildTokenRoutesFromAvailability() {
     }
   }
 
+  const candidateSync = await syncAutomaticRouteGroupCandidates({
+    modelCandidates,
+    bridgesByModelName: groupBridgeSync.bridgesByModelName,
+  });
+
   await ensureActiveRouteGraphVersion();
 
-  if (createdRoutes > 0 || createdTargets > 0 || removedTargets > 0 || removedRoutes > 0) {
+  if (
+    createdRoutes > 0
+    || createdTargets > 0
+    || removedTargets > 0
+    || removedRoutes > 0
+    || groupBridgeSync.createdRouteGroups > 0
+    || groupBridgeSync.updatedRouteGroups > 0
+    || candidateSync.createdSupplyEndpoints > 0
+    || candidateSync.createdCandidates > 0
+    || candidateSync.removedCandidates > 0
+  ) {
     await clearAllRouteDecisionSnapshots();
   }
 
@@ -1619,6 +1706,14 @@ export async function rebuildTokenRoutesFromAvailability() {
     createdChannels: createdTargets,
     removedChannels: removedTargets,
     removedRoutes,
+    createdRouteGroups: groupBridgeSync.createdRouteGroups,
+    updatedRouteGroups: groupBridgeSync.updatedRouteGroups,
+    createdRouteGroupBuckets: groupBridgeSync.createdBuckets,
+    createdSupplyEndpoints: candidateSync.createdSupplyEndpoints,
+    updatedSupplyEndpoints: candidateSync.updatedSupplyEndpoints,
+    createdRouteGroupCandidates: candidateSync.createdCandidates,
+    updatedRouteGroupCandidates: candidateSync.updatedCandidates,
+    removedRouteGroupCandidates: candidateSync.removedCandidates,
   };
 }
 

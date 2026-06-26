@@ -220,7 +220,7 @@ describe('/api/route-graph lifecycle', () => {
           ownership: 'manual',
           legacyRouteId: seeded.route.id,
           config: {
-            targets: [{ targetId: String(seeded.target.id), model: 'manual-api-model' }],
+            targets: [{ targetId: String(seeded.channel.id), model: 'manual-api-model' }],
             targetSelection: { strategy: 'defer_to_router' },
           },
         },
@@ -328,6 +328,75 @@ describe('/api/route-graph lifecycle', () => {
         siteNames: expect.arrayContaining([seeded.site.name]),
       }),
     ]));
+  });
+
+  it('keeps supply endpoint catalog site names scoped to the upstream endpoint', async () => {
+    const seeded = await seedRoutableRoute('multi-site-catalog-model');
+    const secondSite = await db.insert(schema.sites).values({
+      name: 'multi-site-catalog-second-site',
+      url: 'https://multi-site-catalog-second.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+    const secondAccount = await db.insert(schema.accounts).values({
+      siteId: secondSite.id,
+      username: 'multi-site-catalog-second-account',
+      accessToken: 'multi-site-catalog-second-access',
+      apiToken: 'multi-site-catalog-second-api',
+      status: 'active',
+    }).returning().get();
+    const secondToken = await db.insert(schema.accountTokens).values({
+      accountId: secondAccount.id,
+      name: 'multi-site-catalog-second-token',
+      token: 'sk-multi-site-catalog-second',
+      enabled: true,
+      isDefault: true,
+    }).returning().get();
+    await db.insert(schema.routeEndpointTargets).values({
+      routeId: seeded.route.id,
+      accountId: secondAccount.id,
+      tokenId: secondToken.id,
+      sourceModel: 'multi-site-catalog-model',
+      priority: 1,
+      weight: 10,
+      enabled: true,
+    }).returning().get();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/route-endpoints',
+      headers: app.adminHeaders(),
+    });
+
+    expect(response.statusCode).toBe(200);
+    const endpoints = response.json() as Array<{ endpointKind: string; routeId: number | null; siteNames: string[]; upstreamModels: string[]; targetCount?: number }>;
+    const productEndpoint = endpoints.find((endpoint) => (
+      endpoint.endpointKind === 'route_product'
+      && endpoint.routeId === seeded.route.id
+    ));
+    expect(productEndpoint?.siteNames).toEqual(expect.arrayContaining([seeded.site.name, secondSite.name]));
+    expect(productEndpoint?.targetCount).toBe(2);
+
+    const supplyEndpoints = endpoints.filter((endpoint) => (
+      endpoint.endpointKind === 'supply'
+      && endpoint.routeId === seeded.route.id
+    ));
+    expect(supplyEndpoints.length).toBeGreaterThanOrEqual(2);
+    expect(supplyEndpoints).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        siteNames: [seeded.site.name],
+        upstreamModels: ['multi-site-catalog-model'],
+        targetCount: 1,
+      }),
+      expect.objectContaining({
+        siteNames: [secondSite.name],
+        upstreamModels: ['multi-site-catalog-model'],
+        targetCount: 1,
+      }),
+    ]));
+    for (const endpoint of supplyEndpoints) {
+      expect(endpoint.siteNames).toHaveLength(1);
+    }
   });
 
   it('rebases a stale draft with newly generated model-group macros', async () => {

@@ -10,6 +10,20 @@ import {
 } from './routeGraph.js';
 
 describe('routeGraph port-native source', () => {
+  it('normalizes route graph sources with unique edge ids', () => {
+    const source = normalizeRouteGraphSource({
+      version: 2,
+      nodes: [],
+      macros: [],
+      edges: [
+        { id: 'edge:duplicate', sourceNodeId: 'a', sourcePortId: 'route.out', targetNodeId: 'b', targetPortId: 'route.in', kind: 'route_flow' },
+        { id: 'edge:duplicate', sourceNodeId: 'a', sourcePortId: 'route.out', targetNodeId: 'b', targetPortId: 'route.in', kind: 'route_flow' },
+      ],
+    });
+
+    expect(source.edges).toHaveLength(1);
+  });
+
   it('builds direct legacy routes as entry-dispatcher graphs', () => {
     const source = buildRouteGraphSourceFromLegacyRoutes([
         {
@@ -99,7 +113,11 @@ describe('routeGraph port-native source', () => {
                       endpointId: 'route-endpoint:supply:route:11',
                       routeId: 11,
                       targets: [
-                        expect.objectContaining({ targetId: '11', model: 'gpt-4o' }),
+                        expect.objectContaining({
+                          endpointId: 'route-endpoint:supply:route:11',
+                          routeId: 11,
+                          model: 'gpt-4o',
+                        }),
                       ],
                     }),
                   }),
@@ -226,13 +244,30 @@ describe('routeGraph port-native source', () => {
         ownership: 'auto_generated',
         config: expect.objectContaining({
           groups: [
-            expect.objectContaining({ input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:supply:route:11'] } }),
-            expect.objectContaining({ input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:supply:route:22'] } }),
+            expect.objectContaining({
+              priority: 0,
+              input: {
+                kind: 'route_endpoints',
+                endpointIds: ['route-endpoint:supply:route:11', 'route-endpoint:supply:route:22'],
+              },
+            }),
           ],
         }),
       }),
     ]);
     expect(source.edges).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        sourceNodeId: 'route-endpoint:supply:route:11',
+        targetNodeId: 'macro:auto-model:glm-5.1',
+        targetPortId: 'candidates.in',
+        metadata: expect.objectContaining({ candidate: expect.objectContaining({ priority: 0 }) }),
+      }),
+      expect.objectContaining({
+        sourceNodeId: 'route-endpoint:supply:route:22',
+        targetNodeId: 'macro:auto-model:glm-5.1',
+        targetPortId: 'candidates.in',
+        metadata: expect.objectContaining({ candidate: expect.objectContaining({ priority: 0 }) }),
+      }),
       expect.objectContaining({
         sourceNodeId: 'route-endpoint:supply:route:11',
         sourcePortId: 'route.out',
@@ -266,7 +301,6 @@ describe('routeGraph port-native source', () => {
       expect.objectContaining({
         endpointId: 'route-endpoint:supply:route:11',
         nodeId: 'route-endpoint:supply:route:11',
-        targetId: '11',
         model: 'GLM-5.1',
         routeId: 11,
       }),
@@ -290,7 +324,14 @@ describe('routeGraph port-native source', () => {
           expect.objectContaining({
             nodeId: 'route-endpoint:supply:route:11',
             endpointId: 'route-endpoint:supply:route:11',
+            priority: 0,
             targetOpId: 'program:macro:auto-model:glm-5.1:entry:op:route-endpoint:supply:route:11:select-supply',
+          }),
+          expect.objectContaining({
+            nodeId: 'route-endpoint:supply:route:22',
+            endpointId: 'route-endpoint:supply:route:22',
+            priority: 0,
+            targetOpId: 'program:macro:auto-model:glm-5.1:entry:op:route-endpoint:supply:route:22:select-supply',
           }),
         ]),
       }),
@@ -301,7 +342,7 @@ describe('routeGraph port-native source', () => {
         nodeId: 'route-endpoint:supply:route:11',
         routeId: 11,
         targets: expect.arrayContaining([
-          expect.objectContaining({ nodeId: 'route-endpoint:supply:route:11', targetId: '11', model: 'GLM-5.1' }),
+          expect.objectContaining({ nodeId: 'route-endpoint:supply:route:11', model: 'GLM-5.1' }),
         ]),
       }),
     ]));
@@ -1187,6 +1228,12 @@ describe('routeGraph port-native source', () => {
               output: 'route',
             },
             policy: { strategy: 'priority_order' },
+            filters: {
+              operations: [
+                { type: 'rewrite_model', source: 'current_model', operation: 'strip_suffix', suffix: '-debug' },
+                { type: 'set_payload', path: 'reasoning_effort', value: 'high', mode: 'default' },
+              ],
+            },
             groups: [
               {
                 id: 'p0',
@@ -1205,11 +1252,21 @@ describe('routeGraph port-native source', () => {
     expect(result.source.macros).toHaveLength(1);
     expect(result.primitiveSource.nodes).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 'macro:model-group:public:entry', type: 'entry', visibility: 'public', ownership: 'derived' }),
+      expect.objectContaining({
+        id: 'macro:model-group:public:filter',
+        type: 'filter',
+        ownership: 'derived',
+        operations: [
+          expect.objectContaining({ type: 'rewrite_model', suffix: '-debug' }),
+          expect.objectContaining({ type: 'set_payload', path: 'reasoning_effort', value: 'high' }),
+        ],
+      }),
       expect.objectContaining({ id: 'macro:model-group:public:dispatcher', type: 'dispatcher', mode: 'route', ownership: 'derived' }),
       expect.objectContaining({ id: 'route-endpoint:product:route:11', type: 'route_endpoint', endpointKind: 'route_product' }),
     ]));
     expect(result.primitiveSource.edges).toEqual(expect.arrayContaining([
-      expect.objectContaining({ sourceNodeId: 'macro:model-group:public:entry', targetNodeId: 'macro:model-group:public:dispatcher', kind: 'bidirect_flow' }),
+      expect.objectContaining({ sourceNodeId: 'macro:model-group:public:entry', targetNodeId: 'macro:model-group:public:filter', kind: 'bidirect_flow' }),
+      expect.objectContaining({ sourceNodeId: 'macro:model-group:public:filter', targetNodeId: 'macro:model-group:public:dispatcher', kind: 'bidirect_flow' }),
       expect.objectContaining({
         sourceNodeId: 'route-endpoint:supply:route:11',
         targetNodeId: 'macro:model-group:public:dispatcher',
@@ -1222,6 +1279,19 @@ describe('routeGraph port-native source', () => {
     expect(result.compiled.publicModels).toEqual(expect.arrayContaining([
       expect.objectContaining({ model: 'public-group' }),
     ]));
+    const program = result.compiled.flatProgramBundle.programs.find((item) => item.id === 'program:macro:model-group:public:entry');
+    expect(program?.start.filterStages).toEqual([
+      expect.objectContaining({
+        nodeId: 'macro:model-group:public:filter',
+        phase: 'pre_selection',
+        operations: [expect.objectContaining({ type: 'rewrite_model' })],
+      }),
+      expect.objectContaining({
+        nodeId: 'macro:model-group:public:filter',
+        phase: 'post_build',
+        operations: [expect.objectContaining({ type: 'set_payload' })],
+      }),
+    ]);
   });
 
   it('lowers semantic macro-node edges into primitive candidate and dispatcher edges', () => {

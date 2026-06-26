@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../api.js";
 import { MobileCard, MobileField } from "../components/MobileCard.js";
 import ResponsiveFilterPanel from "../components/ResponsiveFilterPanel.js";
+import SegmentedTabBar from "../components/SegmentedTabBar.js";
 import { useToast } from "../components/Toast.js";
 import { useIsMobile } from "../components/useIsMobile.js";
 import {
@@ -17,8 +18,7 @@ import EmptyStateBlock from '../components/EmptyStateBlock.js';
 import { Alert, AlertDescription } from '../components/ui/alert/index.js';
 import { Card, CardContent } from '../components/ui/card/index.js';
 import { Input } from '../components/ui/input/index.js';
-import { Tabs, TabsList, TabsTrigger } from '../components/ui/tabs/index.js';
-import { DataTable } from '../components/ui/data-table/index.js';
+import { DataTable, DataTableEmpty, DataTableToolbar } from '../components/ui/data-table/index.js';
 import PageHeader from '../components/workspace/PageHeader.js';
 import PageShell from '../components/workspace/PageShell.js';
 import {
@@ -240,27 +240,16 @@ export default function CheckinLog() {
   );
 
   const filterTabs = (
-    <Tabs value={filter} onValueChange={(value) => setFilter(value as LogFilter)}>
-      <TabsList className="flex h-auto flex-wrap">
-      {[
-        { key: "all" as const, label: tr('components.notificationPanel.all'), count: timeFilteredLogs.length },
-        { key: "success" as const, label: tr('pages.checkinLog.success'), count: countBy("success") },
-        { key: "failed" as const, label: tr('pages.checkinLog.failed'), count: countBy("failed") },
-        { key: "skipped" as const, label: tr('pages.checkinLog.jumpOver'), count: countBy("skipped") },
-      ].map((tab) => (
-        <TabsTrigger
-          key={tab.key}
-          value={tab.key}
-          className="gap-1"
-        >
-          {tab.label}{" "}
-          <span className="tabular-nums opacity-70">
-            {tab.count}
-          </span>
-        </TabsTrigger>
-      ))}
-      </TabsList>
-    </Tabs>
+    <SegmentedTabBar<LogFilter>
+      value={filter}
+      onValueChange={setFilter}
+      items={[
+        { value: "all", label: tr('components.notificationPanel.all'), count: timeFilteredLogs.length },
+        { value: "success", label: tr('pages.checkinLog.success'), count: countBy("success") },
+        { value: "failed", label: tr('pages.checkinLog.failed'), count: countBy("failed") },
+        { value: "skipped", label: tr('pages.checkinLog.jumpOver'), count: countBy("skipped") },
+      ]}
+    />
   );
 
   return (
@@ -277,7 +266,7 @@ export default function CheckinLog() {
           {triggering ? (
             <>
               <LoaderCircle className="size-4 animate-spin" />
-              {tr('pages.checkinLog.zh')}
+              {tr('pages.checkinLog.triggering')}
             </>
           ) : (
             tr('pages.checkinLog.runAllCheckIns')
@@ -304,8 +293,7 @@ export default function CheckinLog() {
           </div>
         )}
         desktopContent={(
-          <Card className="mb-3">
-            <CardContent className="flex flex-wrap items-center gap-3 p-3">
+          <div className="flex flex-wrap items-center gap-3">
             <div className="min-w-72">{filterTabs}</div>
             <div className="flex flex-wrap items-center gap-3">
               {timeRangeControls}
@@ -315,8 +303,7 @@ export default function CheckinLog() {
                 {tr('pages.checkinLog.endtimeStarttime')}
               </div>
             )}
-            </CardContent>
-          </Card>
+          </div>
         )}
       />
 
@@ -336,7 +323,12 @@ export default function CheckinLog() {
           </CardContent>
         </Card>
       ) : filtered.length === 0 ? (
-        <EmptyStateBlock title={tr('pages.checkinLog.nonecheckLogs')} description={tr('pages.checkinLog.runAllCheckInsStart')} />
+        <DataTable>
+          <DataTableEmpty
+            title={tr('pages.checkinLog.nonecheckLogs')}
+            description={tr('pages.checkinLog.runAllCheckInsStart')}
+          />
+        </DataTable>
       ) : isMobile ? (
           <div className="grid gap-3">
             {filtered.map((log: any) => {
@@ -441,7 +433,20 @@ export default function CheckinLog() {
           </div>
         ) : (
           <DataTable minWidth={1120} density="compact">
-            <Table>
+            <DataTableToolbar className="border-b bg-muted/30 px-4">
+              <div className="min-w-0">
+                <div className="text-sm font-semibold text-foreground">
+                  {filtered.length} {tr('pages.programLogs.items')}
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  {tr('pages.checkinLog.checkLogsSubtitle')}
+                </div>
+              </div>
+              <ToneBadge tone={hasInvalidTimeRange ? "-error" : "-muted"}>
+                {filter === 'all' ? tr('components.notificationPanel.all') : statusLabel(filter)}
+              </ToneBadge>
+            </DataTableToolbar>
+            <Table className="w-full text-sm">
             <TableHeader>
               <TableRow>
                 <TableHead>{tr('pages.checkinLog.time')}</TableHead>
@@ -459,7 +464,7 @@ export default function CheckinLog() {
                 const status = getStatus(log);
                 const reason = getFailureReason(log);
                 return (
-                  <TableRow key={log.checkin_logs?.id || log.id}>
+                  <TableRow key={log.checkin_logs?.id || log.id} className="row-selectable">
                     <TableCell className="whitespace-nowrap text-xs">
                       {formatCheckinLogTime(
                         log.checkin_logs?.createdAt || log.createdAt,

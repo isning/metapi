@@ -72,7 +72,6 @@ describe('Settings factory reset', () => {
       logCleanupUsageLogsEnabled: false,
       logCleanupProgramLogsEnabled: false,
       logCleanupRetentionDays: 30,
-      routingFallbackUnitCost: 1,
       routingWeights: {},
       adminIpAllowlist: [],
       systemProxyUrl: '',

@@ -1,6 +1,7 @@
 export const commonResources = {
   zh: {
     'common.account': '账号',
+    'common.cancel': '取消',
     'common.close': '关闭',
     'common.delete': '删除',
     'common.disabled': '禁用',
@@ -8,12 +9,15 @@ export const commonResources = {
     'common.inherit': '继承',
     'common.loading': '加载中',
     'common.new': '新建',
+    'common.notAvailable': '不可用',
     'common.refresh': '刷新',
     'common.save': '保存',
     'common.site': '站点',
+    'common.unknown': '未知',
   },
   en: {
     'common.account': 'Account',
+    'common.cancel': 'Cancel',
     'common.close': 'Close',
     'common.delete': 'Delete',
     'common.disabled': 'Disabled',
@@ -21,8 +25,10 @@ export const commonResources = {
     'common.inherit': 'Inherit',
     'common.loading': 'Loading',
     'common.new': 'New',
+    'common.notAvailable': 'Not available',
     'common.refresh': 'Refresh',
     'common.save': 'Save',
     'common.site': 'Site',
+    'common.unknown': 'Unknown',
   },
 } as const;

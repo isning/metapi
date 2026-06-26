@@ -1,5 +1,5 @@
 import type { RouteRoutingStrategy, RouteSummaryRow } from './types.js';
-import type { RouteGraphOwnership } from './routeGraphTypes.js';
+import type { RouteFilter, RouteGraphOwnership } from './routeGraphTypes.js';
 import {
   getModelPatternError,
   getRouteBackendRouteIds,
@@ -57,6 +57,9 @@ export type RouteGraphSnapshotMacro = {
     };
     policy: {
       strategy: RouteRoutingStrategy;
+    };
+    filters?: {
+      operations: RouteFilter[];
     };
     groups: Array<{
       id: string;
@@ -178,12 +181,12 @@ function normalizeRouteIdArray(value: unknown): number[] {
   return Array.from(new Set(routeIds));
 }
 
-function routeEndpointIdFromRouteId(routeId: number): string {
+export function routeEndpointIdFromRouteId(routeId: number): string {
   return `route-endpoint:product:route:${Math.trunc(routeId)}`;
 }
 
 function routeIdFromRouteEndpointId(endpointId: unknown): number | null {
-  const match = /^route-endpoint:product:route:(\d+)$/.exec(String(endpointId || ''));
+  const match = /^route-endpoint:(?:product|supply):route:(\d+)(?::|$)/.exec(String(endpointId || ''));
   if (!match) return null;
   const routeId = Number(match[1]);
   return Number.isFinite(routeId) && routeId > 0 ? Math.trunc(routeId) : null;
@@ -193,6 +196,61 @@ function normalizeEndpointIdArray(value: unknown): string[] {
   return Array.from(new Set((Array.isArray(value) ? value : [])
     .map((endpointId) => String(endpointId || '').trim())
     .filter(Boolean)));
+}
+
+function normalizeRouteFilterArray(value: unknown): RouteFilter[] {
+  return (Array.isArray(value) ? value : [])
+    .map((item): RouteFilter | null => {
+      if (!isRecord(item)) return null;
+      const type = normalizeStringOrNull(item.type);
+      if (type === 'rewrite_model') {
+        const operation = item.operation === 'set' ? 'set' : 'strip_suffix';
+        return {
+          type,
+          source: item.source === 'upstream_model' ? 'upstream_model' : 'current_model',
+          operation,
+          ...(operation === 'set'
+            ? { value: normalizeStringOrNull(item.value) || '' }
+            : { suffix: normalizeStringOrNull(item.suffix) || '' }),
+        } satisfies RouteFilter;
+      }
+      if (type === 'set_payload') {
+        return {
+          type,
+          path: normalizeStringOrNull(item.path) || '',
+          value: item.value,
+          mode: item.mode === 'override' ? 'override' : 'default',
+        } satisfies RouteFilter;
+      }
+      if (type === 'remove_payload') {
+        return { type, path: normalizeStringOrNull(item.path) || '' } satisfies RouteFilter;
+      }
+      if (type === 'set_header') {
+        return {
+          type,
+          name: normalizeStringOrNull(item.name) || '',
+          value: normalizeStringOrNull(item.value) || '',
+          mode: item.mode === 'override' ? 'override' : 'default',
+        } satisfies RouteFilter;
+      }
+      if (type === 'remove_header') {
+        return { type, name: normalizeStringOrNull(item.name) || '' } satisfies RouteFilter;
+      }
+      if (type === 'set_endpoint_preference') {
+        return {
+          type,
+          endpoint: item.endpoint === 'messages' ? 'messages' : item.endpoint === 'responses' ? 'responses' : 'chat',
+        } satisfies RouteFilter;
+      }
+      return null;
+    })
+    .filter((item): item is RouteFilter => !!item);
+}
+
+function normalizeMacroFilters(value: unknown): { operations: RouteFilter[] } | undefined {
+  const record = isRecord(value) ? value : {};
+  const operations = normalizeRouteFilterArray(record.operations);
+  return operations.length > 0 ? { operations } : undefined;
 }
 
 export function buildCandidateSelectorMacro(input: {
@@ -258,10 +316,21 @@ export function updateCandidateSelectorMacroFromEditor(input: {
   enabled: boolean;
   routingStrategy?: RouteRoutingStrategy | null;
   routeIds: number[];
+  endpointIds?: string[];
 }): RouteGraphSnapshotMacro {
   const existing = input.macro ? normalizeCandidateSelectorMacro(input.macro) : null;
   const nextBase = existing || buildCandidateSelectorMacro(input);
-  const routeIds = normalizeRouteIdArray(input.routeIds);
+  const explicitEndpointIds = normalizeEndpointIdArray(input.endpointIds);
+  const existingEndpointIds = getCandidateSelectorEndpointIds(existing);
+  const requestedRouteIds = normalizeRouteIdArray(input.routeIds);
+  const endpointIds = explicitEndpointIds.length > 0
+    ? explicitEndpointIds
+    : existingEndpointIds.length > 0
+      ? requestedRouteIds.map((routeId) => (
+        existingEndpointIds.find((endpointId) => routeIdFromRouteEndpointId(endpointId) === routeId)
+        || routeEndpointIdFromRouteId(routeId)
+      ))
+      : requestedRouteIds.map(routeEndpointIdFromRouteId);
   return {
     ...nextBase,
     id: nextBase.id || input.stableId || (input.id ? `route:${input.id}:model-group` : `model-group:${input.displayName}`),
@@ -289,13 +358,13 @@ export function updateCandidateSelectorMacroFromEditor(input: {
         ...nextBase.config.policy,
         strategy: normalizeRouteRoutingStrategyValue(input.routingStrategy),
       },
-      groups: routeIds.map((routeId, index) => {
-        const endpointId = routeEndpointIdFromRouteId(routeId);
+      groups: endpointIds.map((endpointId, index) => {
+        const routeId = routeIdFromRouteEndpointId(endpointId);
         const existingGroup = nextBase.config.groups.find((group) => group.input.endpointIds.includes(endpointId));
         return {
           ...(existingGroup || {
-            id: `source:${routeId}`,
-            label: `Route ${routeId}`,
+            id: routeId ? `source:${routeId}` : `source:${index}`,
+            label: routeId ? `Route ${routeId}` : endpointId,
             enabled: true,
             input: { kind: 'route_endpoints' as const, endpointIds: [endpointId] },
             defaults: { enabled: true, weight: 10, priority: index },
@@ -314,6 +383,22 @@ export function updateCandidateSelectorMacroFromEditor(input: {
       },
     },
   };
+}
+
+export function getCandidateSelectorEndpointIds(macro: RouteGraphSnapshotMacro | null | undefined): string[] {
+  const pairs: Array<{ priority: number; endpointId: string }> = [];
+  for (const group of macro?.config.groups || []) {
+    if (!group.enabled || group.input.kind !== 'route_endpoints') continue;
+    for (const endpointId of group.input.endpointIds) {
+      const normalized = String(endpointId || '').trim();
+      if (normalized) pairs.push({ priority: group.priority, endpointId: normalized });
+    }
+  }
+  return Array.from(new Set(
+    pairs
+      .sort((left, right) => left.priority === right.priority ? left.endpointId.localeCompare(right.endpointId) : left.priority - right.priority)
+      .map((item) => item.endpointId),
+  ));
 }
 
 function getCandidateSelectorRouteIds(macro: RouteGraphSnapshotMacro): number[] {
@@ -365,6 +450,7 @@ function normalizeCandidateSelectorMacro(input: unknown): RouteGraphSnapshotMacr
   if (!displayName || groups.length === 0) return null;
   const policy = isRecord(config.policy) ? config.policy : {};
   const presentation = isRecord(config.presentation) ? config.presentation : {};
+  const normalizedFilters = normalizeMacroFilters(config.filters);
   return {
     id: normalizeStringOrNull(input.id) || `model-group:${displayName}`,
     kind: 'candidate_selector',
@@ -388,6 +474,7 @@ function normalizeCandidateSelectorMacro(input: unknown): RouteGraphSnapshotMacr
       policy: {
         strategy: normalizeRouteRoutingStrategyValue(policy.strategy as RouteRoutingStrategy | undefined),
       },
+      ...(normalizedFilters ? { filters: normalizedFilters } : {}),
       groups,
       presentation: {
         displayIcon: normalizeStringOrNull(presentation.displayIcon),

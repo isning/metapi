@@ -71,21 +71,30 @@ describe('settings backup import/export api', () => {
       preferences: { settings: Array<{ key: string; value: unknown }> };
     };
     expect(body).toMatchObject({
-      version: '2.2',
+      version: '2.4',
       type: 'preferences',
     });
     expect(body.preferences.settings).toEqual(expect.arrayContaining([
-      { key: 'routing_fallback_unit_cost', value: 0.42 },
-      { key: 'metapi_config_version', value: '2.2' },
+      { key: 'metapi_config_version', value: '2.4' },
       {
         key: 'pricing_reference_config_v1',
         value: expect.objectContaining({
           schemaVersion: 1,
-          defaultReferenceMode: 'auto',
+        }),
+      },
+      {
+        key: 'platform_pricing_config_v1',
+        value: expect.objectContaining({
+          schemaVersion: 1,
+          upstreamDefaultPricing: expect.objectContaining({
+            inputPerMillion: 1,
+            outputPerMillion: 1,
+          }),
         }),
       },
     ]));
     expect(body.preferences.settings.map((item) => item.key)).not.toEqual(expect.arrayContaining([
+      'routing_fallback_unit_cost',
       'db_type',
       'db_url',
     ]));
@@ -133,15 +142,22 @@ describe('settings backup import/export api', () => {
       allImported: true,
       sections: { preferences: true },
       appliedSettings: expect.arrayContaining([
-        { key: 'routing_fallback_unit_cost', value: 0.73 },
         { key: 'proxy_debug_trace_enabled', value: true },
-        { key: 'metapi_config_version', value: '2.2' },
+        { key: 'metapi_config_version', value: '2.4' },
         {
           key: 'pricing_reference_config_v1',
           value: expect.objectContaining({
             schemaVersion: 1,
-            defaultReferenceMode: 'auto',
-            fallbackProfile: 'system_default',
+          }),
+        },
+        {
+          key: 'platform_pricing_config_v1',
+          value: expect.objectContaining({
+            schemaVersion: 1,
+            upstreamDefaultPricing: expect.objectContaining({
+              inputPerMillion: 1,
+              outputPerMillion: 1,
+            }),
           }),
         },
       ]),
@@ -163,13 +179,14 @@ describe('settings backup import/export api', () => {
       .where(eq(schema.settings.key, 'pricing_reference_config_v1'))
       .get();
 
-    expect(fallbackCost?.value).toBe('0.73');
+    expect(fallbackCost).toBeUndefined();
     expect(debugEnabled?.value).toBe('true');
-    expect(JSON.parse(configVersion?.value || 'null')).toBe('2.2');
+    expect(JSON.parse(configVersion?.value || 'null')).toBe('2.4');
     expect(JSON.parse(pricingReference?.value || '{}')).toMatchObject({
-      defaultReferenceMode: 'auto',
-      fallbackProfile: 'system_default',
+      schemaVersion: 1,
     });
+    expect(JSON.parse(pricingReference?.value || '{}')).not.toHaveProperty('defaultReferenceMode');
+    expect(JSON.parse(pricingReference?.value || '{}')).not.toHaveProperty('fallbackProfile');
     expect(dbUrl).toBeUndefined();
   });
 

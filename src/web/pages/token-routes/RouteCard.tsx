@@ -243,7 +243,7 @@ function PriorityDragPreview({
           {target.account?.username || `account-${target.accountId}`}
         </span>
         <ToneBadge tone="-muted">
-          {target.site?.name || 'unknown'}
+          {target.site?.name || tr('pages.proxyLogs.unknownSite')}
         </ToneBadge>
         <ToneBadge tone="">
           {tr('pages.tokenRoutes.routeCard.currentlyEffective')}{effectiveTokenName}
@@ -567,7 +567,7 @@ function RouteCardInner({
     if (readOnlyRoute) return null;
     return (
       <Button type="button" variant="ghost" size="sm" onClick={() => onClearCooldown(route.id)} disabled={clearingCooldown}>
-        {clearingCooldown ? tr('pages.tokenRoutes.routeCard.clearzh') : tr('pages.tokenRoutes.routeCard.clearCooldown')}
+        {clearingCooldown ? tr('pages.tokenRoutes.routeCard.clearing') : tr('pages.tokenRoutes.routeCard.clearCooldown')}
       </Button>
     );
   };
@@ -621,7 +621,7 @@ function RouteCardInner({
             className="flex min-w-0 flex-[1_1_180px] items-center gap-1.5"
           >
             <code
-              className="min-w-0 flex-[1_1_180px] truncate text-[13px] font-semibold text-foreground"
+              className="min-w-0 flex-[1_1_180px] truncate text-sm font-semibold text-foreground"
             >
               {title}
             </code>
@@ -911,7 +911,7 @@ function RouteCardInner({
                 data-tooltip={`${routingStrategyDescription} ${routingStrategyHint}`}
               >
                 <div className="shrink-0 text-xs text-muted-foreground">
-                  {tr('pages.settings.routesstrategy')}
+                  {tr('pages.settings.routingStrategy')}
                 </div>
                 <div
                   data-testid="compact-route-strategy-select"
@@ -927,7 +927,7 @@ function RouteCardInner({
                     disabled={updatingRoutingStrategy}
                     onChange={(nextValue) => onRoutingStrategyChange(route, nextValue as RouteRoutingStrategy)}
                     options={routingStrategyOptions.map((option) => ({ value: option.value, label: option.label }))}
-                    placeholder={tr('pages.tokenRoutes.manualRoutePanel.selectroutesstrategy')}
+                    placeholder={tr('pages.tokenRoutes.manualRoutePanel.selectRoutingStrategy')}
                     emptyLabel={tr('pages.tokenRoutes.routeCard.noAvailableStrategies')}
                   />
                 </div>
@@ -937,7 +937,7 @@ function RouteCardInner({
           ) : (
             <>
               <div className="text-xs text-muted-foreground" data-tooltip={undefined}>
-                {tr('pages.settings.routesstrategy')}
+                {tr('pages.settings.routingStrategy')}
               </div>
               <div
                 style={{
@@ -952,7 +952,7 @@ function RouteCardInner({
                   disabled={updatingRoutingStrategy}
                   onChange={(nextValue) => onRoutingStrategyChange(route, nextValue as RouteRoutingStrategy)}
                   options={routingStrategyOptions.map((option) => ({ ...option }))}
-                  placeholder={tr('pages.tokenRoutes.manualRoutePanel.selectroutesstrategy')}
+                  placeholder={tr('pages.tokenRoutes.manualRoutePanel.selectRoutingStrategy')}
                   emptyLabel={tr('pages.tokenRoutes.routeCard.noAvailableStrategies')}
                 />
                 <div className="mt-1.5 flex flex-col gap-0.5">
@@ -1024,7 +1024,7 @@ function RouteCardInner({
       {loadingTargets ? (
         <div className="flex items-center gap-2 py-2">
           <LoaderCircle className="size-4 animate-spin" />
-          <span className="text-sm text-muted-foreground">{tr('pages.modelTester.targetszh')}</span>
+          <span className="text-sm text-muted-foreground">{tr('pages.modelTester.loadingTargets')}</span>
         </div>
       ) : targets && targets.length > 0 ? (
         <div className="flex flex-col gap-1">

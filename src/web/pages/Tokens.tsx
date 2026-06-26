@@ -20,9 +20,10 @@ import { clearFocusParams, readFocusTokenId } from './helpers/navigationFocus.js
 import { shouldIgnoreRowSelectionClick } from './helpers/rowSelection.js';
 import { tr } from '../i18n.js';
 import { UpstreamCompatibilityPolicyEditor } from '../components/UpstreamCompatibilityPolicyEditor.js';
+import WalletAcquisitionEditor, { type WalletAcquisitionEditorSubject } from '../components/WalletAcquisitionEditor.js';
 import { Button } from '../components/ui/button/index.js';
 import { ButtonGroup } from '../components/ui/button-group/index.js';
-import { LoaderCircle, Waypoints } from 'lucide-react';
+import { Ellipsis, LoaderCircle, Wallet, Waypoints } from 'lucide-react';
 import { Skeleton } from '../components/ui/skeleton/index.js';
 import ToneBadge from '../components/ToneBadge.js';
 import InfoNote from '../components/InfoNote.js';
@@ -33,6 +34,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { Checkbox } from '../components/ui/checkbox/index.js';
 import { Textarea } from '../components/ui/textarea/index.js';
 import { Input } from '../components/ui/input/index.js';
+import * as DropdownMenu from '../components/ui/dropdown-menu/index.js';
 import {
   emptyUpstreamCompatibilityPolicyForm,
   policyFormFromStoredValue,
@@ -175,6 +177,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange, onConfi
     tokenName?: string;
     count?: number;
   }>(null);
+  const [walletEditorSubject, setWalletEditorSubject] = useState<WalletAcquisitionEditorSubject | null>(null);
   const [form, setForm] = useState(initialCreateForm);
   const [createCompatibilityPolicyForm, setCreateCompatibilityPolicyForm] = useState(() => emptyUpstreamCompatibilityPolicyForm());
   const [editForm, setEditForm] = useState({
@@ -541,6 +544,28 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange, onConfi
         if (editingTokenIdRef.current !== token.id) return;
         setEditingTokenValueLoading(false);
       });
+  }, [toast]);
+
+  const openTokenWalletCost = useCallback((token: any) => {
+    const siteId = Number(token?.siteId ?? token?.site?.id ?? token?.account?.siteId ?? token?.account?.site?.id);
+    const accountId = Number(token?.accountId ?? token?.account?.id);
+    if (!Number.isFinite(siteId) || siteId <= 0 || !Number.isFinite(accountId) || accountId <= 0) {
+      toast.error(tr('pages.tokens.checkaccountstokenSitesstatus'));
+      return;
+    }
+    const tokenName = token?.name || `Token ${token?.id}`;
+    const accountName = token?.account?.username || `${tr('common.account')} ${Math.trunc(accountId)}`;
+    setWalletEditorSubject({
+      scope: 'token',
+      siteId: Math.trunc(siteId),
+      accountId: Math.trunc(accountId),
+      tokenId: Number(token.id),
+      title: tokenName,
+      subtitle: tr('upstreamCostPricing.walletEditor.openTokenDescription'),
+      siteLabel: token?.site?.name || `${tr('common.site')} ${Math.trunc(siteId)}`,
+      accountLabel: accountName,
+      tokenLabel: tokenName,
+    });
   }, [toast]);
 
   const closeEditPanel = useCallback(() => {
@@ -912,7 +937,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange, onConfi
         loading={batchActionLoading || (deleteConfirm?.mode === 'single' && !!rowLoading[`token-${deleteConfirm?.tokenId}-delete`])}
         description={deleteConfirm?.mode === 'single'
           ? <>{tr('pages.tokens.deletetoken')} <strong>{deleteConfirm.tokenName || `#${deleteConfirm.tokenId}`}</strong> {tr('pages.accounts.textqcmnqj')}</>
-          : <>{tr('pages.accounts.deleteZh')} <strong>{deleteConfirm?.count || 0}</strong> {tr('pages.tokens.tokens')}</>}
+          : <>{tr('pages.accounts.confirmDeleteSelectedPrefix')} <strong>{deleteConfirm?.count || 0}</strong> {tr('pages.tokens.tokens')}</>}
       />
 
       <CenteredModal
@@ -1128,7 +1153,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange, onConfi
             />
           </div>
           <div className="col-span-full flex items-center text-xs text-muted-foreground">
-            {tr('pages.tokens.zhaccountsSitesKey')}
+            {tr('pages.tokens.createKeyOnSelectedAccountSite')}
           </div>
         </ResponsiveFormGrid>
         <UpstreamCompatibilityPolicyEditor
@@ -1200,6 +1225,10 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange, onConfi
                         >
                           {isPending ? tr('pages.tokens.edit') : tr('pages.accounts.edit')}
                         </Button>
+                        <Button type="button" variant="ghost" size="sm" onClick={() => openTokenWalletCost(token)}>
+                          <Wallet className="size-4" />
+                          {tr('upstreamCostPricing.walletEditor.configureAction')}
+                        </Button>
                         {onConfigureEndpointBindings ? (
                           <Button
                             type="button"
@@ -1215,7 +1244,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange, onConfi
                     )}
                   >
                     <MobileField label={tr('components.searchModal.accounts2')} value={token.account?.username || `account-${token.accountId}`} />
-                    <MobileField label={tr('pages.tokens.group')} value={token.tokenGroup || 'default'} />
+                    <MobileField label={tr('pages.tokens.group')} value={token.tokenGroup || tr('pages.tokens.default')} />
                     <MobileField
                       label={tr('components.notificationPanel.status')}
                       value={(
@@ -1241,12 +1270,12 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange, onConfi
                               className="inline-flex"
                             >
                               <ToneBadge tone="-muted">
-                                {token.site?.name || 'unknown'}
+                                {token.site?.name || tr('pages.proxyLogs.unknownSite')}
                               </ToneBadge>
                             </a>
                           ) : (
                             <ToneBadge tone="-muted">
-                              {token.site?.name || 'unknown'}
+                              {token.site?.name || tr('pages.proxyLogs.unknownSite')}
                             </ToneBadge>
                           )}
                         />
@@ -1315,7 +1344,7 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange, onConfi
                 <TableHead>{tr('components.notificationPanel.status')}</TableHead>
                 <TableHead>{tr('pages.tokens.default')}</TableHead>
                 <TableHead>{tr('pages.tokens.time')}</TableHead>
-                <TableHead className="min-w-56 text-right">{tr('pages.accounts.actions2')}</TableHead>
+                <TableHead className="min-w-36 text-right">{tr('pages.accounts.actions2')}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -1353,17 +1382,17 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange, onConfi
                           onClick={(e) => e.stopPropagation()}
                         >
                           <ToneBadge tone="-muted">
-                            {token.site?.name || 'unknown'}
+                            {token.site?.name || tr('pages.proxyLogs.unknownSite')}
                           </ToneBadge>
                         </a>
                       ) : (
                         <ToneBadge tone="-muted">
-                          {token.site?.name || 'unknown'}
+                          {token.site?.name || tr('pages.proxyLogs.unknownSite')}
                         </ToneBadge>
                       )}
                     </TableCell>
                     <TableCell>{token.account?.username || `account-${token.accountId}`}</TableCell>
-                    <TableCell>{token.tokenGroup || 'default'}</TableCell>
+                    <TableCell>{token.tokenGroup || tr('pages.tokens.default')}</TableCell>
                     <TableCell>
                       {isPending ? (
                         <ToneBadge tone="-warning">{tr('pages.tokens.incomplete')}</ToneBadge>
@@ -1375,21 +1404,8 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange, onConfi
                     </TableCell>
                     <TableCell>{token.isDefault ? <ToneBadge tone="-warning">{tr('pages.tokens.default')}</ToneBadge> : '-'}</TableCell>
                     <TableCell className="text-xs text-muted-foreground">{formatDateTimeLocal(token.updatedAt)}</TableCell>
-                    <TableCell className="min-w-56 text-right">
-                      <ButtonGroup className="flex-wrap justify-end">
-                        {!isPending && !token.isDefault && (
-                          <Button type="button" variant="ghost" size="sm"
-                            onClick={() => withRowLoading(`${loadingPrefix}-default`, async () => {
-                              await api.setDefaultAccountToken(token.id);
-                              toast.success(tr('pages.tokens.defaultTokenUpdated'));
-                              await load();
-                            })}
-                            disabled={!!rowLoading[`${loadingPrefix}-default`]}
-                           
-                          >
-                            {rowLoading[`${loadingPrefix}-default`] ? <LoaderCircle className="size-4 animate-spin" /> : tr('pages.tokens.setDefault')}
-                          </Button>
-                        )}
+                    <TableCell className="min-w-36 text-right" onClick={(event) => event.stopPropagation()}>
+                      <ButtonGroup className="justify-end">
                         {!isPending ? (
                           <Button type="button" variant="ghost" size="sm"
                             onClick={() => handleCopyToken(token.id, token.name || '')}
@@ -1406,45 +1422,68 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange, onConfi
                         >
                           {isPending ? tr('pages.tokens.edit') : tr('pages.accounts.edit')}
                         </Button>
-                        {onConfigureEndpointBindings ? (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => onConfigureEndpointBindings(token)}
-                          >
-                            <Waypoints className="size-4" />
-                            {tr('pages.accounts.endpointBindings.action')}
-                          </Button>
-                        ) : null}
-                        {!isPending ? (
-                          <Button type="button" variant="secondary" size="sm"
-                            onClick={() => withRowLoading(`${loadingPrefix}-toggle`, async () => {
-                              await api.updateAccountToken(token.id, { enabled: !token.enabled });
-                              toast.success(token.enabled ? tr('pages.tokens.tokenDisabled') : tr('pages.tokens.tokenEnabled'));
-                              await load();
-                            })}
-                            disabled={!!rowLoading[`${loadingPrefix}-toggle`]}
-                           
-                          >
-                            {rowLoading[`${loadingPrefix}-toggle`] ? <LoaderCircle className="size-4 animate-spin" /> : (token.enabled ? tr('pages.downstreamKeys.disabled') : tr('pages.downstreamKeys.enabled'))}
-                          </Button>
-                        ) : null}
-                        <Button type="button" variant="destructive" size="sm"
-                          onClick={() => setDeleteConfirm({ mode: 'single', tokenId: token.id, tokenName: token.name || '' })}
-                          disabled={!!rowLoading[`${loadingPrefix}-delete`]}
-                         
-                        >
-                          {rowLoading[`${loadingPrefix}-delete`] ? <LoaderCircle className="size-4 animate-spin" /> : tr('pages.accounts.delete3')}
-                        </Button>
+                        <DropdownMenu.Root>
+                          <DropdownMenu.Trigger asChild>
+                            <Button type="button" variant="ghost" size="icon" aria-label={tr('pages.accounts.actions2')}>
+                              <Ellipsis className="size-4" />
+                            </Button>
+                          </DropdownMenu.Trigger>
+                          <DropdownMenu.Content align="end" className="min-w-48">
+                            {!isPending && !token.isDefault ? (
+                              <DropdownMenu.Item
+                                onSelect={() => void withRowLoading(`${loadingPrefix}-default`, async () => {
+                                  await api.setDefaultAccountToken(token.id);
+                                  toast.success(tr('pages.tokens.defaultTokenUpdated'));
+                                  await load();
+                                })}
+                                disabled={!!rowLoading[`${loadingPrefix}-default`]}
+                              >
+                                {rowLoading[`${loadingPrefix}-default`] ? <LoaderCircle className="size-4 animate-spin" /> : null}
+                                {tr('pages.tokens.setDefault')}
+                              </DropdownMenu.Item>
+                            ) : null}
+                            <DropdownMenu.Item onSelect={() => openTokenWalletCost(token)}>
+                              <Wallet className="size-4" />
+                              {tr('upstreamCostPricing.walletEditor.configureAction')}
+                            </DropdownMenu.Item>
+                            {onConfigureEndpointBindings ? (
+                              <DropdownMenu.Item onSelect={() => onConfigureEndpointBindings(token)}>
+                                <Waypoints className="size-4" />
+                                {tr('pages.accounts.endpointBindings.action')}
+                              </DropdownMenu.Item>
+                            ) : null}
+                            {!isPending ? (
+                              <DropdownMenu.Item
+                                onSelect={() => void withRowLoading(`${loadingPrefix}-toggle`, async () => {
+                                  await api.updateAccountToken(token.id, { enabled: !token.enabled });
+                                  toast.success(token.enabled ? tr('pages.tokens.tokenDisabled') : tr('pages.tokens.tokenEnabled'));
+                                  await load();
+                                })}
+                                disabled={!!rowLoading[`${loadingPrefix}-toggle`]}
+                              >
+                                {rowLoading[`${loadingPrefix}-toggle`] ? <LoaderCircle className="size-4 animate-spin" /> : null}
+                                {token.enabled ? tr('pages.downstreamKeys.disabled') : tr('pages.downstreamKeys.enabled')}
+                              </DropdownMenu.Item>
+                            ) : null}
+                            <DropdownMenu.Separator />
+                            <DropdownMenu.Item
+                              variant="destructive"
+                              onSelect={() => setDeleteConfirm({ mode: 'single', tokenId: token.id, tokenName: token.name || '' })}
+                              disabled={!!rowLoading[`${loadingPrefix}-delete`]}
+                            >
+                              {rowLoading[`${loadingPrefix}-delete`] ? <LoaderCircle className="size-4 animate-spin" /> : null}
+                              {tr('pages.accounts.delete3')}
+                            </DropdownMenu.Item>
+                          </DropdownMenu.Content>
+                        </DropdownMenu.Root>
                       </ButtonGroup>
                     </TableCell>
                   </TableRow>
                 );
               })}
             </TableBody>
-              </Table>
-            </DataTable>
+          </Table>
+        </DataTable>
           )
         ) : (
           <EmptyStateBlock
@@ -1453,6 +1492,14 @@ export function TokensPanel({ embedded = false, onEmbeddedActionsChange, onConfi
           />
         )}
       </>
+      <WalletAcquisitionEditor
+        open={walletEditorSubject !== null}
+        subject={walletEditorSubject}
+        onOpenChange={(open) => {
+          if (!open) setWalletEditorSubject(null);
+        }}
+        toast={toast}
+      />
     </div>
   );
 }

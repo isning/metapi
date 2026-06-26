@@ -61,12 +61,44 @@ export type PricingQuoteDiagnostic = {
   message: string;
 };
 
+export type EffectiveCostBalanceBurnBucket = {
+  unit: string;
+  amount: number;
+};
+
+export type EffectiveCostQuote = {
+  estimateLevel: 'exact' | 'estimated' | 'incomplete';
+  walletCostBaseCurrency: number | null;
+  baseCostUnit: string;
+  freeQuotaDaysCost: number | null;
+  balanceBurn: EffectiveCostBalanceBurnBucket[];
+  walletUnit: string | null;
+  faceValuePrice: number | null;
+  rechargeDiscount: number | null;
+  dailyEarnedBalance: number | null;
+  unitConversionRate: {
+    fromCurrency: string;
+    toCurrency: string;
+    rate: number;
+    source: 'manual' | 'provider' | 'system_default' | 'identity';
+    snapshotId: number | null;
+    capturedAt: string | null;
+  } | null;
+  acquisitionProfile: {
+    id: number;
+    scope: 'site' | 'account' | 'token';
+    confidence: 'exact' | 'estimated' | 'incomplete';
+  } | null;
+  diagnostics: PricingQuoteDiagnostic[];
+};
+
 export type PricingQuote = {
   subject: PricingQuoteSubject;
   usageProfile: PricingUsageProfile;
   usage: Partial<CanonicalUsage>;
   endpoint: PricingResolution | null;
   reference: PricingResolution | null;
+  effectiveCost: EffectiveCostQuote | null;
   comparison: PricingQuoteComparison;
   diagnostics: PricingQuoteDiagnostic[];
 };

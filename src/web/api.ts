@@ -1,6 +1,7 @@
 import { clearAuthSession, getAuthToken } from "./authSession.js";
 
 import { tr } from './i18n.js';
+import type { InboxActionRequest, InboxItem } from '../shared/inbox.js';
 type BufferLike = {
   from(data: ArrayBuffer): { toString(encoding: "base64"): string };
 };
@@ -407,7 +408,6 @@ export type RuntimeRoutingWeightsPayload = {
 export type RuntimeSettingsPayload = {
   proxyToken?: string;
   systemProxyUrl?: string;
-  payloadRules?: Record<string, unknown> | null;
   modelAvailabilityProbeEnabled?: boolean;
   codexUpstreamWebsocketEnabled?: boolean;
   responsesCompactFallbackToResponsesEnabled?: boolean;
@@ -453,7 +453,6 @@ export type RuntimeSettingsPayload = {
   smtpTo?: string;
   notifyCooldownSec?: number;
   adminIpAllowlist?: string[] | string;
-  routingFallbackUnitCost?: number;
   proxyFirstByteTimeoutSec?: number;
   tokenRouterFailureCooldownMaxSec?: number;
   routingWeights?: RuntimeRoutingWeightsPayload;
@@ -558,11 +557,84 @@ export type UpstreamCostPricingPayload = {
 
 export type PricingReferenceConfig = {
   schemaVersion: 1;
-  defaultReferenceMode: "auto" | "manual" | "default" | "override";
-  fallbackProfile: "system_default" | "free" | "unknown";
-  catalog: {
-    builtInCatalogEnabled: boolean;
-    providerCatalogSuggestionsEnabled: boolean;
+  sync: {
+    enabled: boolean;
+    url: string;
+    cron: string;
+    replaceOnSync: boolean;
+    lastSyncedAt: string | null;
+    lastError: string | null;
+  };
+};
+
+export type PricingReferenceCatalogEntry = {
+  id: string;
+  provider: string | null;
+  modelName: string;
+  normalizedModelName: string;
+  displayName: string | null;
+  aliases: string[];
+  plan: Record<string, unknown>;
+  planFingerprint: string;
+  sourceUrl: string | null;
+  sourceType: "manual" | "imported" | "remote";
+  updatedAt: string;
+  notes: string | null;
+};
+
+export type PricingReferenceCatalogEntryInput = Partial<PricingReferenceCatalogEntry> & {
+  modelName: string;
+  model?: string;
+  modelKey?: string;
+  simpleTokenPricing?: {
+    inputPerMillion?: number;
+    outputPerMillion?: number;
+    cacheReadPerMillion?: number;
+    cacheWritePerMillion?: number;
+    reasoningPerMillion?: number;
+    requestUsd?: number;
+  };
+  inputPerMillion?: number;
+  outputPerMillion?: number;
+  cacheReadPerMillion?: number;
+  cacheWritePerMillion?: number;
+  reasoningPerMillion?: number;
+  requestUsd?: number;
+};
+
+export type PricingReferenceCatalog = {
+  schemaVersion: 1;
+  entries: PricingReferenceCatalogEntry[];
+  updatedAt: string | null;
+};
+
+export type PricingReferenceCatalogPayload = Omit<PricingReferenceCatalog, "entries"> & {
+  entries: Array<PricingReferenceCatalogEntry | PricingReferenceCatalogEntryInput>;
+};
+
+export type PricingReferenceCatalogImportResult = {
+  catalog: PricingReferenceCatalog;
+  imported: number;
+  replaced: number;
+};
+
+export type PlatformPricingConfig = {
+  schemaVersion: 1;
+  baseCostUnit: string;
+  walletDefaultValuation: {
+    enabled: boolean;
+    walletUnit: string | null;
+    faceValuePrice: number;
+    rechargeDiscount: number;
+    confidence: "exact" | "estimated" | "incomplete";
+  };
+  upstreamDefaultPricing: {
+    inputPerMillion: number;
+    outputPerMillion: number;
+    cacheReadPerMillion: number | null;
+    cacheWritePerMillion: number | null;
+    reasoningPerMillion: number | null;
+    requestUsd: number | null;
   };
   driftCheck: {
     enabled: boolean;
@@ -572,6 +644,68 @@ export type PricingReferenceConfig = {
     absoluteToleranceUsd: number;
     notifyOnWarning: boolean;
   };
+};
+
+export type WalletAcquisitionScope = "site" | "account" | "token";
+export type WalletAcquisitionInheritance = "inherit" | "override" | "disabled";
+export type DailyEarnedBalanceSource = "manual" | "observed_checkin" | "mixed" | "none";
+export type WalletAcquisitionConfidence = "exact" | "estimated" | "incomplete";
+
+export type WalletAcquisitionProfile = {
+  id: number;
+  scope: WalletAcquisitionScope;
+  scopeKey: string;
+  siteId: number;
+  accountId: number | null;
+  tokenId: number | null;
+  inheritance: WalletAcquisitionInheritance;
+  walletUnit: string;
+  faceValuePrice: number | null;
+  rechargeDiscount: number;
+  dailyEarnedBalance: number | null;
+  dailyEarnedBalanceSource: DailyEarnedBalanceSource;
+  observedWindowDays: number | null;
+  confidence: WalletAcquisitionConfidence;
+  enabled: boolean;
+  notes: string | null;
+};
+
+export type WalletAcquisitionProfilePayload = {
+  scope: WalletAcquisitionScope;
+  siteId: number;
+  accountId?: number | null;
+  tokenId?: number | null;
+  inheritance?: WalletAcquisitionInheritance;
+  walletUnit?: string | null;
+  faceValuePrice?: number | null;
+  rechargeDiscount?: number | null;
+  dailyEarnedBalance?: number | null;
+  dailyEarnedBalanceSource?: DailyEarnedBalanceSource;
+  observedWindowDays?: number | null;
+  confidence?: WalletAcquisitionConfidence;
+  enabled?: boolean;
+  notes?: string | null;
+};
+
+export type FxRateSnapshot = {
+  id: number;
+  fromCurrency: string;
+  toCurrency: string;
+  rate: number;
+  source: "manual" | "provider" | "system_default";
+  capturedAt: string;
+  notes: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+};
+
+export type FxRateSnapshotPayload = {
+  fromCurrency: string;
+  toCurrency: string;
+  rate: number;
+  source?: FxRateSnapshot["source"];
+  capturedAt?: string | null;
+  notes?: string | null;
 };
 
 export type ProxyLogListItem = {
@@ -1444,12 +1578,20 @@ export const api = {
 
   // Events
   getEvents: (params?: string) =>
-    request(`/api/events${params ? "?" + params : ""}`),
-  getEventCount: () => request("/api/events/count"),
+    request(`/api/events${params ? "?" + params : ""}`) as Promise<InboxItem[]>,
+  getEventCount: (params?: string) =>
+    request(`/api/events/count${params ? "?" + params : ""}`) as Promise<{ count: number }>,
   markEventRead: (id: number) =>
-    request(`/api/events/${id}/read`, { method: "POST" }),
-  markAllEventsRead: () => request("/api/events/read-all", { method: "POST" }),
-  clearEvents: () => request("/api/events", { method: "DELETE" }),
+    request(`/api/events/${id}/read`, { method: "POST" }) as Promise<{ success: true }>,
+  applyEventAction: (id: number, data: InboxActionRequest) =>
+    request(`/api/events/${id}/action`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }) as Promise<{ success: true; item: InboxItem }>,
+  markAllEventsRead: (params?: string) =>
+    request(`/api/events/read-all${params ? "?" + params : ""}`, { method: "POST" }) as Promise<{ success: true }>,
+  clearEvents: (params?: string) =>
+    request(`/api/events${params ? "?" + params : ""}`, { method: "DELETE" }) as Promise<{ success: true }>,
   getSiteAnnouncements: (params?: string) =>
     request(`/api/site-announcements${params ? "?" + params : ""}`),
   markSiteAnnouncementRead: (id: number) =>
@@ -1677,6 +1819,80 @@ export const api = {
     request<PricingReferenceConfig>("/api/pricing/reference-config", {
       method: "PUT",
       body: JSON.stringify(data),
+    }),
+  getPricingReferenceCatalog: () =>
+    request<PricingReferenceCatalog>("/api/pricing/reference-catalog"),
+  updatePricingReferenceCatalog: (data: PricingReferenceCatalogPayload) =>
+    request<PricingReferenceCatalog>("/api/pricing/reference-catalog", {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+  importPricingReferenceCatalog: (data: unknown, replace = false) =>
+    request<PricingReferenceCatalogImportResult>("/api/pricing/reference-catalog/import", {
+      method: "POST",
+      body: JSON.stringify({ data, replace }),
+    }),
+  syncPricingReferenceCatalog: () =>
+    request<PricingReferenceCatalogImportResult | { skipped: true }>("/api/pricing/reference-catalog/sync", {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
+  getPlatformPricingConfig: () =>
+    request<PlatformPricingConfig>("/api/pricing/platform-config"),
+  updatePlatformPricingConfig: (data: PlatformPricingConfig) =>
+    request<PlatformPricingConfig>("/api/pricing/platform-config", {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+  listWalletAcquisitionProfiles: (params?: {
+    siteId?: number;
+    accountId?: number;
+    tokenId?: number;
+    enabled?: boolean;
+  }) =>
+    request<WalletAcquisitionProfile[]>(
+      `/api/pricing/wallet-acquisition${buildQueryString(params)}`,
+    ),
+  createWalletAcquisitionProfile: (data: WalletAcquisitionProfilePayload) =>
+    request<WalletAcquisitionProfile>("/api/pricing/wallet-acquisition", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  updateWalletAcquisitionProfile: (
+    id: number,
+    data: Partial<WalletAcquisitionProfilePayload>,
+  ) =>
+    request<WalletAcquisitionProfile>(`/api/pricing/wallet-acquisition/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  deleteWalletAcquisitionProfile: (id: number) =>
+    request<{ success: boolean }>(`/api/pricing/wallet-acquisition/${id}`, {
+      method: "DELETE",
+    }),
+  listFxRateSnapshots: (params?: {
+    fromCurrency?: string;
+    toCurrency?: string;
+  }) =>
+    request<FxRateSnapshot[]>(
+      `/api/pricing/fx-rates${buildQueryString(params)}`,
+    ),
+  createFxRateSnapshot: (data: FxRateSnapshotPayload) =>
+    request<FxRateSnapshot>("/api/pricing/fx-rates", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  updateFxRateSnapshot: (
+    id: number,
+    data: Partial<FxRateSnapshotPayload>,
+  ) =>
+    request<FxRateSnapshot>(`/api/pricing/fx-rates/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+  deleteFxRateSnapshot: (id: number) =>
+    request<{ success: boolean }>(`/api/pricing/fx-rates/${id}`, {
+      method: "DELETE",
     }),
   listUpstreamCostPricings: (params?: {
     siteId?: number;

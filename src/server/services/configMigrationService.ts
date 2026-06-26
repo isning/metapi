@@ -7,8 +7,14 @@ import {
   normalizePricingReferenceConfig,
   PRICING_REFERENCE_CONFIG_SETTING_KEY,
 } from './pricingReferenceConfigService.js';
+import {
+  extractLegacyPlatformPricingConfig,
+  getDefaultPlatformPricingConfig,
+  normalizePlatformPricingConfig,
+  PLATFORM_PRICING_CONFIG_SETTING_KEY,
+} from './platformPricingConfigContract.js';
 
-export const CURRENT_CONFIG_VERSION = '2.2';
+export const CURRENT_CONFIG_VERSION = '2.4';
 export const CONFIG_VERSION_SETTING_KEY = 'metapi_config_version';
 
 export type ConfigMigrationSetting = {
@@ -47,13 +53,34 @@ export function migratePreferenceSettingsToCurrentConfigVersion(
 ): { settings: ConfigMigrationSetting[]; appliedSettings: string[] } {
   const nextSettings: ConfigMigrationSetting[] = [];
   const appliedSettings: string[] = [];
+  let legacyPlatformPricingConfig: ConfigMigrationSetting | null = null;
   let sawPricingReferenceConfig = false;
+  let sawPlatformPricingConfig = false;
   let sawConfigVersion = false;
 
   for (const row of settings) {
+    if (row.key === 'routing_fallback_unit_cost') {
+      appliedSettings.push(row.key);
+      continue;
+    }
+
     if (row.key === PRICING_REFERENCE_CONFIG_SETTING_KEY) {
       sawPricingReferenceConfig = true;
       const normalized = normalizePricingReferenceConfig(row.value);
+      nextSettings.push({ key: row.key, value: normalized });
+      legacyPlatformPricingConfig = {
+        key: PLATFORM_PRICING_CONFIG_SETTING_KEY,
+        value: extractLegacyPlatformPricingConfig(row.value),
+      };
+      if (!sameJson(row.value, normalized)) {
+        appliedSettings.push(row.key);
+      }
+      continue;
+    }
+
+    if (row.key === PLATFORM_PRICING_CONFIG_SETTING_KEY) {
+      sawPlatformPricingConfig = true;
+      const normalized = normalizePlatformPricingConfig(row.value);
       nextSettings.push({ key: row.key, value: normalized });
       if (!sameJson(row.value, normalized)) {
         appliedSettings.push(row.key);
@@ -79,6 +106,14 @@ export function migratePreferenceSettingsToCurrentConfigVersion(
       value: getDefaultPricingReferenceConfig(),
     });
     appliedSettings.push(PRICING_REFERENCE_CONFIG_SETTING_KEY);
+  }
+
+  if (!sawPlatformPricingConfig) {
+    nextSettings.push({
+      key: PLATFORM_PRICING_CONFIG_SETTING_KEY,
+      value: legacyPlatformPricingConfig?.value ?? getDefaultPlatformPricingConfig(),
+    });
+    appliedSettings.push(PLATFORM_PRICING_CONFIG_SETTING_KEY);
   }
 
   if (!sawConfigVersion) {
@@ -113,7 +148,13 @@ export async function ensureCurrentConfigVersion(): Promise<ConfigMigrationSumma
 
   for (const key of migrated.appliedSettings) {
     const row = migrated.settings.find((item) => item.key === key);
-    if (!row) continue;
+    if (!row) {
+      await db.delete(schema.settings)
+        .where(eq(schema.settings.key, key))
+        .run();
+      appliedSettings.push(key);
+      continue;
+    }
     await upsertSetting(row.key, row.value);
     appliedSettings.push(row.key);
   }

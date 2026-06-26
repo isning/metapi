@@ -51,7 +51,7 @@ describe('proxyTargetCoordinator', () => {
     expect(proxyTargetCoordinator.getStickyTargetId(key)).toBeNull();
   });
 
-  it('does not store sticky bindings for apikey-only channels', () => {
+  it('stores sticky bindings for apikey channels without making them session-scoped leases', async () => {
     const key = proxyTargetCoordinator.buildStickySessionKey({
       clientKind: 'codex',
       sessionId: 'turn-456',
@@ -61,7 +61,16 @@ describe('proxyTargetCoordinator', () => {
     });
 
     proxyTargetCoordinator.bindStickyTarget(key, 42, JSON.stringify({ credentialMode: 'apikey' }));
-    expect(proxyTargetCoordinator.getStickyTargetId(key)).toBeNull();
+    expect(proxyTargetCoordinator.getStickyTargetId(key)).toBe(42);
+
+    const lease = await proxyTargetCoordinator.acquireTargetLease({
+      targetId: 42,
+      accountExtraConfig: JSON.stringify({ credentialMode: 'apikey' }),
+    });
+    expect(lease.status).toBe('acquired');
+    if (lease.status === 'acquired') {
+      expect(lease.lease.isActive()).toBe(false);
+    }
   });
 
   it('treats structured oauth providers as session-scoped even when extraConfig omits oauth.provider', () => {

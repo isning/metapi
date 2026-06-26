@@ -213,7 +213,9 @@ describe('detectDownstreamClientContext', () => {
     })).toEqual({
       clientKind: 'generic',
     });
+  });
 
+  it('uses explicit generic session fields as affinity keys without changing client kind', () => {
     expect(detectDownstreamClientContext({
       downstreamPath: '/v1/messages',
       body: {
@@ -223,6 +225,22 @@ describe('detectDownstreamClientContext', () => {
       },
     })).toEqual({
       clientKind: 'generic',
+      sessionId: 'abc123',
+      traceHint: 'abc123',
+    });
+
+    expect(detectDownstreamClientContext({
+      downstreamPath: '/v1/chat/completions',
+      headers: {
+        'x-metapi-affinity-key': 'chat-session-1',
+      },
+      body: {
+        model: 'gpt-4o',
+      },
+    })).toEqual({
+      clientKind: 'generic',
+      sessionId: 'chat-session-1',
+      traceHint: 'chat-session-1',
     });
   });
 

@@ -10,6 +10,10 @@ interface SiteDistributionData {
   siteName: string;
   platform: string;
   totalBalance: number;
+  rawBalance?: number;
+  baseCostUnit?: string;
+  valuedAccountCount?: number;
+  valuationWarningCount?: number;
   totalSpend: number;
   accountCount: number;
 }
@@ -88,6 +92,10 @@ export default function SiteDistributionChart({ data, loading }: SiteDistributio
       siteName: item.siteName,
       platform: item.platform,
       value: safeNumber(viewMode === 'balance' ? item.totalBalance : item.totalSpend),
+      rawBalance: safeNumber(item.rawBalance),
+      baseCostUnit: item.baseCostUnit || 'USD',
+      valuedAccountCount: safeNumber(item.valuedAccountCount),
+      valuationWarningCount: safeNumber(item.valuationWarningCount),
       accountCount: safeNumber(item.accountCount),
     }));
   }, [data, viewMode]);
@@ -118,11 +126,12 @@ export default function SiteDistributionChart({ data, loading }: SiteDistributio
               value: (datum: unknown) => {
                 const item = coerceDatumRecord(datum);
                 const val = safeNumber(item.value);
-                return `$${val.toFixed(2)}`;
+                const unit = String(item.baseCostUnit || 'USD');
+                return viewMode === 'balance' ? `${formatValue(val)} ${unit}` : formatValue(val);
               },
             },
             {
-              key: tr('components.charts.siteDistributionChart.sites'),
+              key: tr('components.charts.siteDistributionChart.share'),
               value: (datum: unknown) => {
                 const item = coerceDatumRecord(datum);
                 const pct = safeNumber(item._percent_);
@@ -130,10 +139,21 @@ export default function SiteDistributionChart({ data, loading }: SiteDistributio
               },
             },
             {
-              key: tr('components.charts.siteDistributionChart.share'),
+              key: viewMode === 'balance' ? tr('components.charts.siteDistributionChart.rawBalance') : tr('components.charts.siteDistributionChart.sites'),
               value: (datum: unknown) => {
                 const item = coerceDatumRecord(datum);
-                return String(item.accountCount || 0);
+                if (viewMode !== 'balance') return String(item.accountCount || 0);
+                return `${formatValue(safeNumber(item.rawBalance))} raw`;
+              },
+            },
+            {
+              key: tr('components.charts.siteDistributionChart.valuationCoverage'),
+              value: (datum: unknown) => {
+                const item = coerceDatumRecord(datum);
+                const accountCount = safeNumber(item.accountCount);
+                const valuedAccountCount = safeNumber(item.valuedAccountCount);
+                if (viewMode !== 'balance') return '-';
+                return `${valuedAccountCount}/${accountCount}`;
               },
             },
           ] as any,
@@ -143,7 +163,7 @@ export default function SiteDistributionChart({ data, loading }: SiteDistributio
       animation: true,
       background: 'transparent',
     };
-  }, [chartData, chartPalette, hasData, labelColor]);
+  }, [chartData, chartPalette, hasData, labelColor, viewMode]);
 
   const formatValue = (value: number): string => {
     if (value >= 1000) return `$${value.toFixed(2)}`;
@@ -181,7 +201,7 @@ export default function SiteDistributionChart({ data, loading }: SiteDistributio
         <ChartMetricToggle
           value={viewMode}
           options={[
-            { key: 'balance', label: tr('components.charts.siteDistributionChart.balance') },
+            { key: 'balance', label: tr('components.charts.siteDistributionChart.normalizedBalance') },
             { key: 'spend', label: tr('components.modelAnalysisPanel.consumptionDistribution') },
           ]}
           onChange={setViewMode}
@@ -201,8 +221,13 @@ export default function SiteDistributionChart({ data, loading }: SiteDistributio
                 <ChartLegendSwatch color={chartPalette[idx % chartPalette.length] || chartPalette[0] || '#2563eb'} />
                 <span className="max-w-[120px] truncate">{d.siteName}</span>
                 <span className="font-semibold tabular-nums text-foreground">
-                  {formatValue(d.value)}
+                  {viewMode === 'balance'
+                    ? `${formatValue(d.value)} ${d.baseCostUnit}`
+                    : formatValue(d.value)}
                 </span>
+                {viewMode === 'balance' && d.valuationWarningCount > 0 ? (
+                  <span className="text-warning">!</span>
+                ) : null}
               </span>
             ))}
           </div>

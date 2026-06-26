@@ -293,6 +293,8 @@ describe('TokenRoutes desktop detail panel', () => {
       });
       await flushMicrotasks();
 
+      expect(apiMock.getRouteGraphActive).not.toHaveBeenCalled();
+
       const listWorkbenchLayout = root.root.find((node) => (
         node.type === 'div'
         && String(node.props.className || '').includes('route-list-workbench-layout')
@@ -531,6 +533,13 @@ describe('TokenRoutes desktop detail panel', () => {
       });
       await flushMicrotasks();
 
+      expect(apiMock.getRouteGraphActive).not.toHaveBeenCalled();
+
+      await switchDesktopWorkbenchTab(root, 'macro');
+      await flushMicrotasks();
+
+      expect(apiMock.getRouteGraphActive).toHaveBeenCalledTimes(1);
+
       const routeWorkbench = root.root.find((node) => (
         node.type === 'section'
         && String(node.props.className || '').includes('route-workbench')
@@ -615,8 +624,12 @@ describe('TokenRoutes desktop detail panel', () => {
       });
       await flushMicrotasks();
 
+      expect(apiMock.getRouteGraphActive).not.toHaveBeenCalled();
+
       await switchDesktopWorkbenchTab(root, 'generated');
       await flushMicrotasks();
+
+      expect(apiMock.getRouteGraphActive).toHaveBeenCalledTimes(1);
 
       const routeWorkbench = findRouteWorkbench(root);
       const workbenchText = collectText(routeWorkbench);

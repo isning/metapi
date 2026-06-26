@@ -170,9 +170,8 @@ class ProxyTargetCoordinator {
     return entry.targetId;
   }
 
-  bindStickyTarget(stickySessionKey: string | null | undefined, targetId: number, accountIdentity?: SessionScopedTargetInput): void {
+  bindStickyTarget(stickySessionKey: string | null | undefined, targetId: number, _accountIdentity?: SessionScopedTargetInput): void {
     if (!config.proxyStickySessionEnabled) return;
-    if (!isSessionScopedTarget(accountIdentity)) return;
     const normalizedKey = String(stickySessionKey || '').trim();
     if (!normalizedKey || !Number.isFinite(targetId) || targetId <= 0) return;
     cleanupExpiredStickyBindings();

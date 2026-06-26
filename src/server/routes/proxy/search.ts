@@ -24,6 +24,11 @@ import {
   getTesterForcedTargetId,
   selectProxyTargetForAttempt,
 } from '../../proxy-core/targetSelection.js';
+import {
+  bindSurfaceStickyChannel,
+  buildSurfaceStickySessionKey,
+  clearSurfaceStickyChannel,
+} from '../../proxy-core/orchestration/sharedProxyOrchestration.js';
 const DEFAULT_SEARCH_MODEL = '__search';
 const DEFAULT_MAX_RESULTS = 10;
 const MAX_MAX_RESULTS = 20;
@@ -74,6 +79,12 @@ export async function searchProxyRoute(app: FastifyInstance) {
       headers: request.headers as Record<string, unknown>,
       body,
     });
+    const stickySessionKey = buildSurfaceStickySessionKey({
+      clientContext,
+      requestedModel,
+      downstreamPath,
+      downstreamApiKeyId,
+    });
     const firstByteTimeoutMs = Math.max(0, Math.trunc((config.proxyFirstByteTimeoutSec || 0) * 1000));
     const excludeTargetIds: number[] = [];
     let retryCount = 0;
@@ -85,6 +96,7 @@ export async function searchProxyRoute(app: FastifyInstance) {
         excludeTargetIds,
         retryCount,
         forcedTargetId,
+        stickySessionKey,
       });
 
       if (!selected) {
@@ -149,6 +161,7 @@ export async function searchProxyRoute(app: FastifyInstance) {
         await recordTokenRouterEventBestEffort('record target success', () => (
           tokenRouter.recordSuccess(selected.target.id, latency, 0, upstreamModel)
         ));
+        bindSurfaceStickyChannel({ stickySessionKey, selected });
         recordDownstreamCostUsage(request, 0);
         logProxy(
           selected,
@@ -197,6 +210,7 @@ export async function searchProxyRoute(app: FastifyInstance) {
           });
         }
         if ((status > 0 ? shouldRetryProxyRequest(status, errorText) : true) && canRetryTargetSelection(retryCount, forcedTargetId)) {
+          clearSurfaceStickyChannel({ stickySessionKey, selected });
           retryCount += 1;
           continue;
         }

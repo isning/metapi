@@ -34,7 +34,7 @@ import {
   parseBackupWebdavConfigPayload,
   parseBackupWebdavExportPayload,
 } from '../../contracts/settingsRoutePayloads.js';
-import { formatUtcSqlDateTime, getResolvedTimeZone } from '../../services/localTimeService.js';
+import { getResolvedTimeZone } from '../../services/localTimeService.js';
 import { extractClientIp, findInvalidIpAllowlistEntries, isIpAllowed } from '../../middleware/auth.js';
 import { invalidateSiteProxyCache, normalizeSiteProxyUrl, withExplicitProxyRequestInit } from '../../services/siteProxy.js';
 import { performFactoryReset } from '../../services/factoryResetService.js';
@@ -44,14 +44,13 @@ import {
   startModelAvailabilityProbeScheduler,
   stopModelAvailabilityProbeScheduler,
 } from '../../services/modelAvailabilityProbeService.js';
-import { parsePayloadRulesConfigInput } from '../../services/payloadRules.js';
+import { emitInboxItem } from '../../services/inboxService.js';
 
 type RoutingWeights = typeof config.routingWeights;
 
 interface RuntimeSettingsBody {
   proxyToken?: string;
   systemProxyUrl?: string;
-  payloadRules?: unknown;
   modelAvailabilityProbeEnabled?: boolean;
   codexUpstreamWebsocketEnabled?: boolean;
   responsesCompactFallbackToResponsesEnabled?: boolean;
@@ -97,7 +96,6 @@ interface RuntimeSettingsBody {
   smtpTo?: string;
   notifyCooldownSec?: number;
   adminIpAllowlist?: string[] | string;
-  routingFallbackUnitCost?: number;
   proxyFirstByteTimeoutSec?: number;
   tokenRouterFailureCooldownMaxSec?: number;
   routingWeights?: Partial<RoutingWeights>;
@@ -161,15 +159,18 @@ async function appendSettingsEvent(input: {
   level?: 'info' | 'warning' | 'error';
 }) {
   try {
-    const createdAt = formatUtcSqlDateTime(new Date());
-    await db.insert(schema.events).values({
+    await emitInboxItem({
+      scope: 'activity',
+      category: 'settings',
       type: input.type,
       title: input.title,
+      summary: input.message,
       message: input.message,
       level: input.level || 'info',
+      subject: { type: 'settings', label: input.title },
+      source: 'settings',
       relatedType: 'settings',
-      createdAt,
-    }).run();
+    });
   } catch { }
 }
 
@@ -684,12 +685,6 @@ function applyImportedSettingToRuntime(key: string, value: unknown) {
       };
       return;
     }
-    case 'routing_fallback_unit_cost': {
-      const n = Number(value);
-      if (!Number.isFinite(n) || n <= 0) return;
-      config.routingFallbackUnitCost = Math.max(1e-6, n);
-      return;
-    }
     case 'proxy_first_byte_timeout_sec': {
       const n = Number(value);
       if (!Number.isFinite(n) || n < 0) return;
@@ -736,7 +731,6 @@ function getRuntimeSettingsResponse(currentAdminIp = '') {
     proxyDebugTargetModel: config.proxyDebugTargetModel,
     proxyDebugRetentionHours: config.proxyDebugRetentionHours,
     proxyDebugMaxBodyBytes: config.proxyDebugMaxBodyBytes,
-    routingFallbackUnitCost: config.routingFallbackUnitCost,
     proxyFirstByteTimeoutSec: config.proxyFirstByteTimeoutSec,
     tokenRouterFailureCooldownMaxSec: config.tokenRouterFailureCooldownMaxSec,
     routingWeights: config.routingWeights,
@@ -765,7 +759,6 @@ function getRuntimeSettingsResponse(currentAdminIp = '') {
     currentAdminIp,
     serverTimeZone: getResolvedTimeZone(),
     systemProxyUrl: config.systemProxyUrl,
-    payloadRules: config.payloadRules,
     proxyErrorKeywords: config.proxyErrorKeywords,
     proxyEmptyContentFailEnabled: config.proxyEmptyContentFailEnabled,
     proxyTokenMasked: maskSecret(config.proxyToken),
@@ -909,8 +902,6 @@ export async function settingsRoutes(app: FastifyInstance) {
     const body = parsedBody.data as RuntimeSettingsBody;
     const changedLabels: string[] = [];
     const currentRequestIp = extractClientIp(request.ip, request.headers['x-forwarded-for']);
-    let pendingPayloadRules: typeof config.payloadRules | undefined;
-
     const webhookTouched = body.webhookUrl !== undefined || body.webhookEnabled !== undefined;
     const nextWebhookUrl = body.webhookUrl !== undefined
       ? String(body.webhookUrl || '').trim()
@@ -1138,23 +1129,6 @@ export async function settingsRoutes(app: FastifyInstance) {
       config.systemProxyUrl = normalizedSystemProxyUrl || '';
       upsertSetting('system_proxy_url', config.systemProxyUrl);
       invalidateSiteProxyCache();
-    }
-
-    if (body.payloadRules !== undefined) {
-      const parsedPayloadRules = parsePayloadRulesConfigInput(body.payloadRules);
-      if (!parsedPayloadRules.success) {
-        return reply.code(400).send({
-          success: false,
-          message: parsedPayloadRules.message,
-        });
-      }
-
-      const previousRules = JSON.stringify(config.payloadRules);
-      const nextRules = JSON.stringify(parsedPayloadRules.normalized);
-      if (previousRules !== nextRules) {
-        changedLabels.push('Payload 规则');
-      }
-      pendingPayloadRules = parsedPayloadRules.normalized;
     }
 
     if (body.modelAvailabilityProbeEnabled !== undefined) {
@@ -1684,19 +1658,6 @@ export async function settingsRoutes(app: FastifyInstance) {
       upsertSetting('routing_weights', nextWeights);
     }
 
-    if (body.routingFallbackUnitCost !== undefined) {
-      const nextRoutingFallbackUnitCost = Number(body.routingFallbackUnitCost);
-      if (!Number.isFinite(nextRoutingFallbackUnitCost) || nextRoutingFallbackUnitCost <= 0) {
-        return reply.code(400).send({ success: false, message: '无价模型默认单价必须是大于 0 的数字' });
-      }
-      const normalized = Math.max(1e-6, nextRoutingFallbackUnitCost);
-      if (Math.abs(normalized - config.routingFallbackUnitCost) > 1e-12) {
-        changedLabels.push(`无价模型默认单价（${config.routingFallbackUnitCost} -> ${normalized}）`);
-      }
-      config.routingFallbackUnitCost = normalized;
-      upsertSetting('routing_fallback_unit_cost', normalized);
-    }
-
     if (body.proxyFirstByteTimeoutSec !== undefined) {
       const nextProxyFirstByteTimeoutSec = Number(body.proxyFirstByteTimeoutSec);
       if (!Number.isFinite(nextProxyFirstByteTimeoutSec) || nextProxyFirstByteTimeoutSec < 0) {
@@ -1720,11 +1681,6 @@ export async function settingsRoutes(app: FastifyInstance) {
       }
       config.tokenRouterFailureCooldownMaxSec = normalized;
       upsertSetting('token_router_failure_cooldown_max_sec', normalized);
-    }
-
-    if (pendingPayloadRules !== undefined) {
-      config.payloadRules = pendingPayloadRules;
-      await upsertSetting('payload_rules', pendingPayloadRules);
     }
 
     if (changedLabels.length > 0) {

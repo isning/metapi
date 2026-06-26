@@ -60,6 +60,10 @@ import {
   stopUsageAggregationProjectorScheduler,
 } from './services/usageAggregationService.js';
 import { reloadBackupWebdavScheduler } from './services/backupService.js';
+import {
+  reloadPricingReferenceCatalogScheduler,
+  stopPricingReferenceCatalogScheduler,
+} from './services/pricingReferenceCatalogService.js';
 import { ensureRuntimeDatabaseReady } from './runtimeDatabaseBootstrap.js';
 import { ensureActiveRouteGraphVersion } from './services/routeGraphService.js';
 import { isPublicApiRoute, registerDesktopRoutes } from './desktop.js';
@@ -269,6 +273,7 @@ if (existsSync(webDir)) {
 // Start scheduler
 await startScheduler();
 await reloadBackupWebdavScheduler();
+await reloadPricingReferenceCatalogScheduler();
 startSiteAnnouncementPolling();
 startModelAvailabilityProbeScheduler();
 startTargetRecoveryProbeScheduler();
@@ -287,6 +292,7 @@ app.addHook('onClose', async () => {
   stopSiteAnnouncementPolling();
   stopUpdateCenterPolling();
   stopProxyFileRetentionService();
+  stopPricingReferenceCatalogScheduler();
   stopProxyLogRetentionService();
   stopModelAvailabilityProbeScheduler();
   stopTargetRecoveryProbeScheduler();

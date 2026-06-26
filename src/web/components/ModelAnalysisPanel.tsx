@@ -26,6 +26,13 @@ interface CallsDistributionItem { model: string; calls: number; share: number; }
 interface CallRankingItem { model: string; calls: number; successRate: number; avgLatencyMs: number; spend: number; tokens: number; }
 
 interface ModelAnalysisData {
+  costUnit?: string;
+  valuation?: {
+    source?: 'raw' | 'wallet_valuation';
+    valuedRows?: number;
+    totalRows?: number;
+    warningCount?: number;
+  };
   totals?: { spend?: number; calls?: number; tokens?: number };
   spendDistribution?: SpendDistributionItem[];
   spendTrend?: SpendTrendItem[];
@@ -49,11 +56,16 @@ function toSafeNumber(value: unknown): number {
   return value;
 }
 
-function formatCurrency(value: number): string {
+function normalizeCostUnit(value: unknown): string {
+  const text = String(value || '').trim();
+  return text ? text.toUpperCase() : 'USD';
+}
+
+function formatCurrency(value: number, unit: string): string {
   const n = toSafeNumber(value);
-  if (n >= 1000) return `$${n.toFixed(2)}`;
-  if (n >= 1) return `$${n.toFixed(3)}`;
-  return `$${n.toFixed(6)}`;
+  if (n >= 1000) return `${n.toFixed(2)} ${unit}`;
+  if (n >= 1) return `${n.toFixed(3)} ${unit}`;
+  return `${n.toFixed(6)} ${unit}`;
 }
 
 function formatPercent(value: number): string {
@@ -64,7 +76,7 @@ function EmptyBlock() {
   return (
     <EmptyStateBlock
       title={tr('components.modelAnalysisPanel.noModelYetcalls')}
-      description={tr('components.modelAnalysisPanel.actingAutomatic')}
+      description={tr('components.modelAnalysisPanel.proxyTrafficEmptyDescription')}
     />
   );
 }
@@ -75,6 +87,16 @@ export default function ModelAnalysisPanel({ data }: ModelAnalysisPanelProps) {
   const primaryColor = useThemeToken('--primary', '#2563eb');
   const primaryHoverColor = useThemeToken('--color-primary-hover', '#1d4ed8');
   const chartPalette = useThemeChartPalette();
+  const costUnit = normalizeCostUnit(data?.costUnit);
+  const valuation = {
+    source: data?.valuation?.source || 'raw',
+    valuedRows: toSafeNumber(data?.valuation?.valuedRows),
+    totalRows: toSafeNumber(data?.valuation?.totalRows),
+    warningCount: toSafeNumber(data?.valuation?.warningCount),
+  };
+  const hasValuationWarnings = valuation.source === 'wallet_valuation'
+    && valuation.totalRows > 0
+    && (valuation.valuedRows < valuation.totalRows || valuation.warningCount > 0);
 
   const totals = {
     spend: toSafeNumber(data?.totals?.spend),
@@ -93,13 +115,25 @@ export default function ModelAnalysisPanel({ data }: ModelAnalysisPanelProps) {
 
   const spendBarSpec = useMemo(() => ({
     type: 'bar' as const,
-    data: [{ id: 'data', values: spendDistribution.map(d => ({ model: d.model.length > 25 ? d.model.slice(0, 25) + '...' : d.model, value: toSafeNumber(d.spend) })).reverse() }],
+    data: [{
+      id: 'data',
+      values: spendDistribution.map(d => ({
+        model: d.model.length > 25 ? `${d.model.slice(0, 25)}...` : d.model,
+        value: toSafeNumber(d.spend),
+        displayValue: formatCurrency(d.spend, costUnit),
+      })).reverse(),
+    }],
     xField: 'value', yField: 'model', direction: 'horizontal' as const,
     bar: { style: { cornerRadius: [0, 6, 6, 0], fill: { gradient: 'linear' as const, x0: 0, y0: 0, x1: 1, y1: 0, stops: [{ offset: 0, color: primaryColor }, { offset: 1, color: primaryHoverColor }] } } },
-    label: { visible: true, position: 'right', formatter: '{value}', style: { fontSize: 11, fill: labelColor, stroke: 'transparent' } },
+    label: {
+      visible: true,
+      position: 'right',
+      formatter: '{displayValue}',
+      style: { fontSize: 11, fill: labelColor, stroke: 'transparent' },
+    },
     axes: [{ orient: 'left', label: { style: { fontSize: 11, fill: labelColor } } }, { orient: 'bottom', visible: false }],
     animation: true, background: 'transparent',
-  }), [labelColor, primaryColor, primaryHoverColor, spendDistribution]);
+  }), [costUnit, labelColor, primaryColor, primaryHoverColor, spendDistribution]);
 
   const trendSpec = useMemo(() => ({
     type: 'area' as const,
@@ -109,9 +143,9 @@ export default function ModelAnalysisPanel({ data }: ModelAnalysisPanelProps) {
     area: { style: { fill: { gradient: 'linear' as const, x0: 0, y0: 0, x1: 0, y1: 1, stops: [{ offset: 0, color: primaryColor }, { offset: 1, color: 'transparent' }] }, fillOpacity: 0.22, curveType: 'monotone' as const } },
     point: { visible: true, style: { size: 7, fill: primaryColor, stroke: '#fff', lineWidth: 2 } },
     axes: [{ orient: 'bottom' as const, label: { style: { fontSize: 11, fill: labelColor } } }, { orient: 'left' as const, label: { style: { fontSize: 11, fill: labelColor } } }],
-    tooltip: { mark: { content: [{ key: () => tr('components.modelAnalysisPanel.spend'), value: (datum: any) => formatCurrency(datum?.spend ?? 0) }] } },
+    tooltip: { mark: { content: [{ key: () => tr('components.modelAnalysisPanel.spend'), value: (datum: any) => formatCurrency(datum?.spend ?? 0, costUnit) }] } },
     animation: true, background: 'transparent',
-  }), [labelColor, primaryColor, spendTrend]);
+  }), [costUnit, labelColor, primaryColor, spendTrend]);
 
   const callsPieSpec = useMemo(() => ({
     type: 'pie' as const,
@@ -135,7 +169,7 @@ export default function ModelAnalysisPanel({ data }: ModelAnalysisPanelProps) {
         <Card>
           <CardContent className="pt-3">
             <div className="text-xs text-muted-foreground">{tr('components.modelAnalysisPanel.totalSpend')}</div>
-            <div className="mt-1 text-2xl font-semibold">{formatCurrency(totals.spend)}</div>
+            <div className="mt-1 text-2xl font-semibold">{formatCurrency(totals.spend, costUnit)}</div>
           </CardContent>
         </Card>
         <Card>
@@ -166,6 +200,20 @@ export default function ModelAnalysisPanel({ data }: ModelAnalysisPanelProps) {
             </Button>
           ))}
         </ButtonGroup>
+        {valuation.source === 'wallet_valuation' ? (
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+            <ToneBadge tone={hasValuationWarnings ? 'warning' : 'success'}>
+              {hasValuationWarnings
+                ? tr('components.modelAnalysisPanel.valuationPartial')
+                : tr('components.modelAnalysisPanel.valuationApplied')}
+            </ToneBadge>
+            <span>
+              {tr('components.modelAnalysisPanel.valuationCoverage')
+                .replace('{valued}', String(Math.round(valuation.valuedRows)))
+                .replace('{total}', String(Math.round(valuation.totalRows)))}
+            </span>
+          </div>
+        ) : null}
       </div>
 
       {/* Chart Content */}
@@ -177,7 +225,7 @@ export default function ModelAnalysisPanel({ data }: ModelAnalysisPanelProps) {
               <span key={d.model} className="inline-flex items-center gap-1 text-xs text-muted-foreground">
                 <InlineBrandIcon model={d.model} size={13} />
                 <span className="max-w-[150px] truncate">{d.model}</span>
-                <span className="font-semibold tabular-nums text-foreground">{formatCurrency(d.spend)}</span>
+                <span className="font-semibold tabular-nums text-foreground">{formatCurrency(d.spend, costUnit)}</span>
               </span>
             ))}
           </div>
@@ -238,7 +286,7 @@ export default function ModelAnalysisPanel({ data }: ModelAnalysisPanelProps) {
                     </ToneBadge>
                   </TableCell>
                   <TableCell className="text-center"><ToneBadge tone="-muted">{latText}</ToneBadge></TableCell>
-                  <TableCell className="text-right font-mono text-sm font-medium">{formatCurrency(item.spend)}</TableCell>
+                  <TableCell className="text-right font-mono text-sm font-medium">{formatCurrency(item.spend, costUnit)}</TableCell>
                 </TableRow>
               );
             })}

@@ -14,6 +14,7 @@ const { apiMock } = vi.hoisted(() => ({
     getSiteDistribution: vi.fn(),
     getSiteTrend: vi.fn(),
     getSites: vi.fn(),
+    getEvents: vi.fn(),
   },
 }));
 
@@ -76,6 +77,7 @@ describe('Dashboard site observability panel', () => {
     apiMock.getSiteDistribution.mockResolvedValue({ distribution: [] });
     apiMock.getSiteTrend.mockResolvedValue({ trend: [] });
     apiMock.getSites.mockResolvedValue([]);
+    apiMock.getEvents.mockResolvedValue([]);
     globalThis.document = {
       visibilityState: 'visible',
       addEventListener: vi.fn(),

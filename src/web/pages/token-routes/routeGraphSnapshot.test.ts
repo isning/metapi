@@ -331,6 +331,44 @@ describe('routeGraphSnapshot', () => {
     expect(macro.config.groups.map((group) => group.priority)).toEqual([0, 1]);
   });
 
+  it('preserves explicit supply endpoint inputs when updating Model Group macros', () => {
+    const macro = updateCandidateSelectorMacroFromEditor({
+      displayName: 'public-model',
+      displayIcon: null,
+      visibility: 'public',
+      enabled: true,
+      routingStrategy: 'weighted',
+      routeIds: [12],
+      endpointIds: ['route-endpoint:supply:route:12:site-b:claude-sonnet-4-5'],
+    });
+
+    expect(macro.config.groups.map((group) => group.input.endpointIds[0])).toEqual([
+      'route-endpoint:supply:route:12:site-b:claude-sonnet-4-5',
+    ]);
+    expect(routeGraphEditorFormToRoutePayload({
+      match: { kind: 'model', requestedModelPattern: '', displayName: 'public-model' },
+      backend: { kind: 'routes', routeIds: [12] },
+      macro,
+      presentation: { displayName: 'public-model', displayIcon: '' },
+      routingStrategy: 'weighted',
+      visibility: 'public',
+      enabled: true,
+      modelMapping: '',
+      advancedOpen: false,
+    })).toEqual(expect.objectContaining({
+      backend: { kind: 'routes', routeIds: [12] },
+      macro: expect.objectContaining({
+        config: expect.objectContaining({
+          groups: [
+            expect.objectContaining({
+              input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:supply:route:12:site-b:claude-sonnet-4-5'] },
+            }),
+          ],
+        }),
+      }),
+    }));
+  });
+
   it('omits disabled macro groups from generated route backend payloads', () => {
     const validation = validateRouteGraphNodeDraft({
       id: 12,

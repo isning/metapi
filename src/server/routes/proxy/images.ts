@@ -26,6 +26,11 @@ import {
   getTesterForcedTargetId,
   selectProxyTargetForAttempt,
 } from '../../proxy-core/targetSelection.js';
+import {
+  bindSurfaceStickyChannel,
+  buildSurfaceStickySessionKey,
+  clearSurfaceStickyChannel,
+} from '../../proxy-core/orchestration/sharedProxyOrchestration.js';
 
 export async function imagesProxyRoute(app: FastifyInstance) {
   ensureMultipartBufferParser(app);
@@ -54,6 +59,12 @@ export async function imagesProxyRoute(app: FastifyInstance) {
       headers: request.headers as Record<string, unknown>,
       body: jsonBody || Object.fromEntries(multipartForm?.entries?.() || []),
     });
+    const stickySessionKey = buildSurfaceStickySessionKey({
+      clientContext,
+      requestedModel,
+      downstreamPath,
+      downstreamApiKeyId,
+    });
     const firstByteTimeoutMs = Math.max(0, Math.trunc((config.proxyFirstByteTimeoutSec || 0) * 1000));
     const excludeTargetIds: number[] = [];
     let retryCount = 0;
@@ -65,6 +76,7 @@ export async function imagesProxyRoute(app: FastifyInstance) {
         excludeTargetIds,
         retryCount,
         forcedTargetId,
+        stickySessionKey,
       });
 
       if (!selected) {
@@ -156,6 +168,7 @@ export async function imagesProxyRoute(app: FastifyInstance) {
             firstByteLatencyMs,
           );
           if (canRetryTargetSelection(retryCount, forcedTargetId)) {
+            clearSurfaceStickyChannel({ stickySessionKey, selected });
             retryCount++;
             continue;
           }
@@ -185,6 +198,7 @@ export async function imagesProxyRoute(app: FastifyInstance) {
         await recordTokenRouterEventBestEffort('record target success', () => (
           tokenRouter.recordSuccess(selected.target.id, latency, estimatedCost, upstreamModel)
         ));
+        bindSurfaceStickyChannel({ stickySessionKey, selected });
         await recordTokenRouterEventBestEffort('record downstream cost usage', () => (
           recordDownstreamCostUsage(request, estimatedCost)
         ));
@@ -237,6 +251,7 @@ export async function imagesProxyRoute(app: FastifyInstance) {
           });
         }
         if ((status > 0 ? shouldRetryProxyRequest(status, errorText) : true) && canRetryTargetSelection(retryCount, forcedTargetId)) {
+          clearSurfaceStickyChannel({ stickySessionKey, selected });
           retryCount++;
           continue;
         }

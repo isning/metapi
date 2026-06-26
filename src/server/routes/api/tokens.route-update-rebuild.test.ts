@@ -111,6 +111,11 @@ describe('PUT /api/routes/:id route rebuild', () => {
 
   beforeEach(async () => {
     resetTokenRouteReadLimitersForTests();
+    await db.delete(schema.routeGroupCandidates).run();
+    await db.delete(schema.routeGroupBuckets).run();
+    await db.delete(schema.routeSupplyEndpointState).run();
+    await db.delete(schema.routeSupplyEndpoints).run();
+    await db.delete(schema.routeGroups).run();
     await db.delete(schema.routeEndpointTargets).run();
     await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.tokenModelAvailability).run();
@@ -224,6 +229,27 @@ describe('PUT /api/routes/:id route rebuild', () => {
     expect(secondRoutes.statusCode).toBe(429);
   });
 
+  it('exposes persisted automatic route group metadata in route summary', async () => {
+    const model = 'deepseek-v4-flash';
+    await seedAccountWithToken(model);
+
+    const workflow = await import('../../services/routeRefreshWorkflow.js');
+    const rebuild = await workflow.rebuildRoutesOnly();
+    expect(rebuild.models).toBe(1);
+
+    const summary = await app.inject({ method: 'GET', url: '/api/routes/summary' });
+    expect(summary.statusCode).toBe(200);
+    const rows = summary.json() as Array<Record<string, any>>;
+    const row = rows.find((item) => item.match?.requestedModelPattern === model || item.presentation?.displayName === model);
+    expect(row).toBeDefined();
+    expect(row?.routeGroup).toMatchObject({
+      kind: 'automatic',
+      groupKey: `upstream:${model}`,
+      upstreamModelName: model,
+      syncStatus: 'active',
+    });
+  });
+
   it('creates explicit-group routes with sourceRouteIds and aggregates source channels', async () => {
     const sourceA = await seedAccountWithToken('claude-opus-4-5');
     const sourceB = await seedAccountWithToken('claude-sonnet-4-5');
@@ -295,8 +321,8 @@ describe('PUT /api/routes/:id route rebuild', () => {
     expect(summaryResponse.json()).toContainEqual(expect.objectContaining({
       id: createdRouteId,
       backend: { kind: 'routes', routeIds: [exactRouteA.id, exactRouteB.id] },
-      channelCount: 2,
-      enabledChannelCount: 2,
+      targetCount: 2,
+      enabledTargetCount: 2,
       siteNames: expect.arrayContaining([sourceA.site.name, sourceB.site.name]),
     }));
 
@@ -365,8 +391,8 @@ describe('PUT /api/routes/:id route rebuild', () => {
   });
 
   it('syncs explicit-group routing strategy to unique source routes', async () => {
-    await seedAccountWithToken('claude-opus-4-5');
-    await seedAccountWithToken('claude-sonnet-4-5');
+    const sourceA = await seedAccountWithToken('claude-opus-4-5');
+    const sourceB = await seedAccountWithToken('claude-sonnet-4-5');
 
     const exactRouteA = await db.insert(schema.tokenRoutes).values({
       ...tokenRouteFixture({ modelPattern: 'claude-opus-4-5', routingStrategy: 'weighted' }),
@@ -378,6 +404,28 @@ describe('PUT /api/routes/:id route rebuild', () => {
       enabled: true,
       routingStrategy: 'weighted',
     }).returning().get();
+    await db.insert(schema.routeEndpointTargets).values([
+      {
+        routeId: exactRouteA.id,
+        accountId: sourceA.account.id,
+        tokenId: sourceA.token.id,
+        sourceModel: 'claude-opus-4-5',
+        priority: 0,
+        weight: 10,
+        enabled: true,
+        manualOverride: false,
+      },
+      {
+        routeId: exactRouteB.id,
+        accountId: sourceB.account.id,
+        tokenId: sourceB.token.id,
+        sourceModel: 'claude-sonnet-4-5',
+        priority: 0,
+        weight: 10,
+        enabled: true,
+        manualOverride: false,
+      },
+    ]).run();
 
     const createResponse = await app.inject({
       method: 'POST',
@@ -420,13 +468,23 @@ describe('PUT /api/routes/:id route rebuild', () => {
   });
 
   it('does not overwrite source routes shared by another explicit-group', async () => {
-    await seedAccountWithToken('claude-opus-4-5');
+    const source = await seedAccountWithToken('claude-opus-4-5');
 
     const sharedSourceRoute = await db.insert(schema.tokenRoutes).values({
       ...tokenRouteFixture({ modelPattern: 'claude-opus-4-5', routingStrategy: 'weighted' }),
       enabled: true,
       routingStrategy: 'weighted',
     }).returning().get();
+    await db.insert(schema.routeEndpointTargets).values({
+      routeId: sharedSourceRoute.id,
+      accountId: source.account.id,
+      tokenId: source.token.id,
+      sourceModel: 'claude-opus-4-5',
+      priority: 0,
+      weight: 10,
+      enabled: true,
+      manualOverride: false,
+    }).run();
 
     const firstGroupResponse = await app.inject({
       method: 'POST',
@@ -671,7 +729,7 @@ describe('PUT /api/routes/:id route rebuild', () => {
     expect(response.statusCode).toBe(400);
     expect(response.json()).toMatchObject({
       success: false,
-      message: 'Invalid channels[].accountId. Expected positive number.',
+      message: 'Invalid targets. Expected target array.',
     });
   });
 

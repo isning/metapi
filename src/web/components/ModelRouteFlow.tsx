@@ -110,6 +110,23 @@ export type ModelRouteFlowData = {
       inputMultiplier: number | null;
       outputMultiplier: number | null;
       totalMultiplier: number | null;
+      reference: {
+        inputPerMillion: number | null;
+        outputPerMillion: number | null;
+        cacheReadPerMillion: number | null;
+        cacheWritePerMillion: number | null;
+        reasoningPerMillion: number | null;
+        requestUsd: number | null;
+        totalCostUsd: number | null;
+      } | null;
+      effectiveCost: {
+        walletCostBaseCurrency: number | null;
+        baseCostUnit: string | null;
+        freeQuotaDaysCost: number | null;
+        balanceBurn: Array<{ unit: string; amount: number }>;
+        estimateLevel: 'exact' | 'static_estimate' | 'incomplete';
+        diagnostics: Array<{ level: 'info' | 'warn' | 'error'; message: string }>;
+      } | null;
       sourceCount: number;
       estimateLevel: 'exact' | 'static_estimate' | 'incomplete';
       strategy: string | null;
@@ -128,6 +145,13 @@ export type ModelRouteFlowData = {
         inputPerMillion: number | null;
         outputPerMillion: number | null;
         totalCostUsd: number | null;
+        effectiveCost: {
+          walletCostBaseCurrency: number | null;
+          baseCostUnit: string;
+          freeQuotaDaysCost: number | null;
+          balanceBurn: Array<{ unit: string; amount: number }>;
+          estimateLevel: 'exact' | 'estimated' | 'incomplete';
+        } | null;
         pricingId: number | null;
         matchedScope: string | null;
         sourceRef: {
@@ -240,35 +264,60 @@ type NodeSize = {
 };
 
 function formatPercent(value?: number | null): string {
-  if (value == null || !Number.isFinite(value)) return 'n/a';
+  if (value == null || !Number.isFinite(value)) return tr('common.notAvailable');
   return `${Math.round(value * 10) / 10}%`;
 }
 
 function formatProbabilityRatio(value?: number | null): string {
-  if (value == null || !Number.isFinite(value)) return 'n/a';
+  if (value == null || !Number.isFinite(value)) return tr('common.notAvailable');
   return `${Math.round(value * 1000) / 10}%`;
 }
 
 function formatDateTime(value?: string | null): string {
-  if (!value) return 'n/a';
+  if (!value) return tr('common.notAvailable');
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return value;
   return parsed.toLocaleString();
 }
 
 function formatMoney(value?: number | null): string {
-  if (value == null || !Number.isFinite(value)) return 'n/a';
+  if (value == null || !Number.isFinite(value)) return tr('components.modelRouteFlow.priceUnavailable');
   return `$${value.toFixed(6).replace(/\.?0+$/, '')}`;
 }
 
+function formatWalletCost(value?: number | null, currency?: string | null): string {
+  if (value == null || !Number.isFinite(value)) return tr('components.modelRouteFlow.walletCostUnavailable');
+  return `${currency || 'USD'} ${value.toFixed(6).replace(/\.?0+$/, '')}`;
+}
+
+function formatQuotaDays(value?: number | null): string {
+  if (value == null || !Number.isFinite(value)) return tr('components.modelRouteFlow.freeQuotaUnavailable');
+  return `${value.toFixed(4).replace(/\.?0+$/, '')} d`;
+}
+
+function formatBalanceBurn(buckets?: Array<{ unit: string; amount: number }> | null): string {
+  if (!buckets || buckets.length === 0) return tr('components.modelRouteFlow.balanceCostUnavailable');
+  return buckets
+    .map((bucket) => `${bucket.amount.toFixed(6).replace(/\.?0+$/, '')} ${bucket.unit}`)
+    .join(' + ');
+}
+
 function formatMultiplier(value?: number | null): string {
-  if (value == null || !Number.isFinite(value)) return 'n/a';
+  if (value == null || !Number.isFinite(value)) return tr('components.modelRouteFlow.referenceUnavailable');
   return `${value.toFixed(4).replace(/\.?0+$/, '')}x`;
 }
 
 function formatNumber(value?: number | null, suffix = ''): string {
-  if (value == null || !Number.isFinite(value)) return 'n/a';
+  if (value == null || !Number.isFinite(value)) return tr('common.notAvailable');
   return `${Math.round(value * 100) / 100}${suffix}`;
+}
+
+function formatEstimateLevel(level?: string | null): string {
+  if (level === 'exact') return tr('components.modelRouteFlow.estimateExact');
+  if (level === 'static_estimate') return tr('components.modelRouteFlow.estimateStatic');
+  if (level === 'estimated') return tr('components.modelRouteFlow.estimateEstimated');
+  if (level === 'incomplete') return tr('components.modelRouteFlow.estimateIncomplete');
+  return level || tr('common.notAvailable');
 }
 
 function nodeIcon(kind: RouteFlowNodeKind): JSX.Element {
@@ -746,7 +795,7 @@ function FlowHeader({ flow }: { flow: ModelRouteFlowData }) {
           ) : null}
         </div>
       </div>
-      <div className="grid gap-2 md:grid-cols-3">
+      <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
         <SummaryMetric
           icon={<GitBranch className="size-4" />}
           label={tr('components.modelRouteFlow.candidateEndpoints')}
@@ -758,8 +807,15 @@ function FlowHeader({ flow }: { flow: ModelRouteFlowData }) {
           icon={<Cpu className="size-4" />}
           label={tr('components.modelRouteFlow.entryCost')}
           value={formatMoney(stats.pricing?.totalCostUsd)}
-          description={stats.pricing ? `${stats.pricing.sourceCount} ${tr('components.modelRouteFlow.sources')} · ${stats.pricing.estimateLevel}` : tr('components.modelRouteFlow.noPricingEstimate')}
+          description={stats.pricing ? `${stats.pricing.sourceCount} ${tr('components.modelRouteFlow.sources')} · ${formatEstimateLevel(stats.pricing.estimateLevel)}` : tr('components.modelRouteFlow.noPricingEstimate')}
           tone={stats.pricing ? 'default' : 'muted'}
+        />
+        <SummaryMetric
+          icon={<Cpu className="size-4" />}
+          label={tr('components.modelRouteFlow.cashCost')}
+          value={formatWalletCost(stats.pricing?.effectiveCost?.walletCostBaseCurrency, stats.pricing?.effectiveCost?.baseCostUnit)}
+          description={`${tr('components.modelRouteFlow.freeQuotaCost')} ${formatQuotaDays(stats.pricing?.effectiveCost?.freeQuotaDaysCost)}`}
+          tone={stats.pricing?.effectiveCost ? 'default' : 'muted'}
         />
         <SummaryMetric
           icon={<AlertTriangle className="size-4" />}
@@ -861,6 +917,9 @@ function CandidateList({ flow, dense = false }: { flow: ModelRouteFlowData; dens
                   <span>{tr('components.modelRouteFlow.input')}: <span className="font-mono text-foreground">{formatMoney(pricing.inputPerMillion)}</span></span>
                   <span>{tr('components.modelRouteFlow.output')}: <span className="font-mono text-foreground">{formatMoney(pricing.outputPerMillion)}</span></span>
                   <span>{tr('components.modelRouteFlow.cost')}: <span className="font-mono text-foreground">{formatMoney(pricing.totalCostUsd)}</span></span>
+                  <span>{tr('components.modelRouteFlow.cashCost')}: <span className="font-mono text-foreground">{formatWalletCost(pricing.effectiveCost?.walletCostBaseCurrency, pricing.effectiveCost?.baseCostUnit)}</span></span>
+                  <span>{tr('components.modelRouteFlow.freeQuotaCost')}: <span className="font-mono text-foreground">{formatQuotaDays(pricing.effectiveCost?.freeQuotaDaysCost)}</span></span>
+                  <span>{tr('components.modelRouteFlow.upstreamBalanceCost')}: <span className="font-mono text-foreground">{formatBalanceBurn(pricing.effectiveCost?.balanceBurn)}</span></span>
                   <span>{tr('components.modelRouteFlow.probability')}: <span className="font-mono text-foreground">{formatProbabilityRatio(pricing.probability)}</span></span>
                 </div>
               ) : null}
@@ -943,7 +1002,7 @@ function CompiledDetails({ flow }: { flow: ModelRouteFlowData }) {
             <MiniMetric label={tr('components.modelRouteFlow.endpoints')} value={String(shape.endpoints)} />
           </div>
           <div className="grid gap-2 text-sm">
-            <KeyValue label={tr('components.modelRouteFlow.selectedRoute')} value={flow.selectedRouteId == null ? 'n/a' : `ID #${flow.selectedRouteId}`} />
+            <KeyValue label={tr('components.modelRouteFlow.selectedRoute')} value={flow.selectedRouteId == null ? tr('common.notAvailable') : `ID #${flow.selectedRouteId}`} />
             <KeyValue label={tr('components.modelRouteFlow.syntheticResponses')} value={String(shape.synthetic)} />
             <KeyValue label={tr('components.modelRouteFlow.compiledAt')} value={formatDateTime(flow.compiledAt)} />
           </div>
@@ -961,6 +1020,11 @@ function CompiledDetails({ flow }: { flow: ModelRouteFlowData }) {
                 <MiniMetric label={tr('components.modelRouteFlow.input')} value={formatMoney(pricing.inputPerMillion)} />
                 <MiniMetric label={tr('components.modelRouteFlow.output')} value={formatMoney(pricing.outputPerMillion)} />
                 <MiniMetric label={tr('components.modelRouteFlow.cost')} value={formatMoney(pricing.totalCostUsd)} />
+              </div>
+              <div className="grid gap-2 sm:grid-cols-3">
+                <MiniMetric label={tr('components.modelRouteFlow.cashCost')} value={formatWalletCost(pricing.effectiveCost?.walletCostBaseCurrency, pricing.effectiveCost?.baseCostUnit)} />
+                <MiniMetric label={tr('components.modelRouteFlow.freeQuotaCost')} value={formatQuotaDays(pricing.effectiveCost?.freeQuotaDaysCost)} />
+                <MiniMetric label={tr('components.modelRouteFlow.upstreamBalanceCost')} value={formatBalanceBurn(pricing.effectiveCost?.balanceBurn)} />
               </div>
               <div className="grid gap-2 sm:grid-cols-3">
                 <MiniMetric label={tr('components.modelRouteFlow.inputMultiplier')} value={formatMultiplier(pricing.inputMultiplier)} />
@@ -1119,7 +1183,7 @@ function CompactModelLine({
         )}
         title={value}
       >
-        {value || 'n/a'}
+        {value || tr('common.notAvailable')}
       </div>
     </div>
   );
@@ -1246,7 +1310,7 @@ function CompactRouteFlow({ flow }: { flow: ModelRouteFlowData }) {
           ) : null}
           {stats.pricing?.estimateLevel ? (
             <span className="max-w-full truncate">
-              {stats.pricing.estimateLevel}
+              {formatEstimateLevel(stats.pricing.estimateLevel)}
             </span>
           ) : null}
           <span className={cn(

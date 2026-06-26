@@ -36,6 +36,14 @@ export type ModelEntryPricing = {
   inputMultiplier: number | null;
   outputMultiplier: number | null;
   totalMultiplier?: number | null;
+  effectiveCost?: {
+    walletCostBaseCurrency: number | null;
+    baseCostUnit: string | null;
+    freeQuotaDaysCost: number | null;
+    balanceBurn: Array<{ unit: string; amount: number }>;
+    estimateLevel: 'exact' | 'static_estimate' | 'incomplete';
+    diagnostics: Array<{ level: 'info' | 'warn' | 'error'; message: string }>;
+  } | null;
   sourceCount: number;
   estimateLevel?: 'exact' | 'static_estimate' | 'incomplete';
   strategy?: string | null;
@@ -52,12 +60,17 @@ export type ModelAccountInfo = {
   latency: number | null;
   balance: number;
   tokens: ModelTokenInfo[];
+  managedTokenCount?: number;
+  credentialCount?: number;
 };
 
 export type ModelRow = {
   name: string;
   accountCount: number;
   tokenCount: number;
+  managedTokenCount?: number;
+  credentialCount?: number;
+  endpointCount?: number;
   avgLatency: number | null;
   successRate: number | null;
   description: string | null;
@@ -67,6 +80,10 @@ export type ModelRow = {
   measuredEntryPricing?: {
     inputPerMillion: number | null;
     outputPerMillion: number | null;
+    totalCostUsd?: number | null;
+    inputMultiplier?: number | null;
+    outputMultiplier?: number | null;
+    totalMultiplier?: number | null;
     sampleCount: number;
     lastMeasuredAt: string | null;
   } | null;
@@ -92,23 +109,10 @@ export type ModelDetailsView = {
   };
 };
 
-const ENTRY_PRICE_MULTIPLIER_BASE_PER_MILLION = 2;
-const ENTRY_TOTAL_MULTIPLIER_BASE = ENTRY_PRICE_MULTIPLIER_BASE_PER_MILLION * 2;
-
 function normalizeFiniteNumber(value: unknown): number | null {
   if (value == null) return null;
   const numberValue = typeof value === 'number' ? value : Number(value);
   return Number.isFinite(numberValue) ? numberValue : null;
-}
-
-function toEntryMultiplier(price: number | null): number | null {
-  if (price == null) return null;
-  return Math.round((price / ENTRY_PRICE_MULTIPLIER_BASE_PER_MILLION) * 1_000_000) / 1_000_000;
-}
-
-function toTotalMultiplier(totalCostUsd: number | null): number | null {
-  if (totalCostUsd == null) return null;
-  return Math.round((totalCostUsd / ENTRY_TOTAL_MULTIPLIER_BASE) * 1_000_000) / 1_000_000;
 }
 
 export function buildMeasuredEntryPricing(model: ModelRow): ModelEntryPricing | null {
@@ -117,16 +121,14 @@ export function buildMeasuredEntryPricing(model: ModelRow): ModelEntryPricing | 
   const inputPerMillion = normalizeFiniteNumber(measured.inputPerMillion);
   const outputPerMillion = normalizeFiniteNumber(measured.outputPerMillion);
   if (inputPerMillion == null && outputPerMillion == null) return null;
-  const totalCostUsd = inputPerMillion != null && outputPerMillion != null
-    ? Math.round((inputPerMillion + outputPerMillion) * 1_000_000) / 1_000_000
-    : null;
+  const totalCostUsd = normalizeFiniteNumber(measured.totalCostUsd);
   return {
     inputPerMillion,
     outputPerMillion,
     totalCostUsd,
-    inputMultiplier: toEntryMultiplier(inputPerMillion),
-    outputMultiplier: toEntryMultiplier(outputPerMillion),
-    totalMultiplier: toTotalMultiplier(totalCostUsd),
+    inputMultiplier: normalizeFiniteNumber(measured.inputMultiplier),
+    outputMultiplier: normalizeFiniteNumber(measured.outputMultiplier),
+    totalMultiplier: normalizeFiniteNumber(measured.totalMultiplier),
     sourceCount: 1,
     sampleCount: measured.sampleCount,
     lastMeasuredAt: measured.lastMeasuredAt,
@@ -155,8 +157,8 @@ export function buildTheoreticalEntryPricing(model: ModelRow): ModelEntryPricing
   return {
     inputPerMillion,
     outputPerMillion,
-    inputMultiplier: toEntryMultiplier(inputPerMillion),
-    outputMultiplier: toEntryMultiplier(outputPerMillion),
+    inputMultiplier: null,
+    outputMultiplier: null,
     sourceCount,
   };
 }
@@ -175,6 +177,7 @@ export function buildRouteFlowTheoreticalEntryPricing(routeFlow: ModelRouteFlowD
     inputMultiplier: normalizeFiniteNumber(pricing.inputMultiplier),
     outputMultiplier: normalizeFiniteNumber(pricing.outputMultiplier),
     totalMultiplier: normalizeFiniteNumber(pricing.totalMultiplier),
+    effectiveCost: pricing.effectiveCost ?? null,
     sourceCount: pricing.sourceCount,
     estimateLevel: pricing.estimateLevel,
     strategy: pricing.strategy,
@@ -211,7 +214,9 @@ export function buildModelDetailsView(input: {
     routeFlowLoading: input.routeFlowLoading,
     routeFlowError: input.routeFlowError,
     diagnostics: input.routeFlow?.diagnostics ?? [],
-    freshnessLabel: input.metadataHydrating ? 'metadata updating' : 'partial view',
+    freshnessLabel: input.metadataHydrating
+      ? tr('pages.models.modelDetailsView.updating')
+      : tr('pages.models.modelDetailsView.partialView'),
     descriptionText: input.model.description?.trim()
       || (input.metadataHydrating
         ? tr('pages.models.modelDetailsView.loadingModelMetadata')
@@ -225,10 +230,28 @@ export function buildModelDetailsView(input: {
   };
 }
 
+export function getModelManagedTokenCount(model: ModelRow): number {
+  const explicit = normalizeFiniteNumber(model.managedTokenCount);
+  if (explicit != null) return explicit;
+  return normalizeFiniteNumber(model.tokenCount) ?? 0;
+}
+
+export function getAccountCredentialCount(account: ModelAccountInfo): number {
+  const explicit = normalizeFiniteNumber(account.credentialCount);
+  if (explicit != null) return explicit;
+  return account.tokens.length;
+}
+
+export function getModelCredentialCount(model: ModelRow): number {
+  const explicit = normalizeFiniteNumber(model.credentialCount);
+  if (explicit != null) return explicit;
+  return model.accounts.reduce((sum, account) => sum + getAccountCredentialCount(account), 0);
+}
+
 export function formatLatencyValue(latency: number | null): string {
-  return typeof latency === 'number' && Number.isFinite(latency) ? `${latency}ms` : 'unknown';
+  return typeof latency === 'number' && Number.isFinite(latency) ? `${latency}ms` : tr('common.notAvailable');
 }
 
 export function formatSuccessRate(value: number | null): string {
-  return typeof value === 'number' && Number.isFinite(value) ? `${value}%` : 'unknown';
+  return typeof value === 'number' && Number.isFinite(value) ? `${value}%` : tr('common.notAvailable');
 }

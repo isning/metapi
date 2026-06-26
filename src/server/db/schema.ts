@@ -221,6 +221,47 @@ export const upstreamModelCostPricings = sqliteTable('upstream_model_cost_pricin
   scopeKeyUnique: uniqueIndex('upstream_model_cost_pricings_scope_key_unique').on(table.scopeKey),
 }));
 
+export const walletAcquisitionProfiles = sqliteTable('wallet_acquisition_profiles', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  scope: text('scope').notNull(), // 'site' | 'account' | 'token'
+  scopeKey: text('scope_key').notNull(),
+  siteId: integer('site_id').notNull().references(() => sites.id, { onDelete: 'cascade' }),
+  accountId: integer('account_id').references(() => accounts.id, { onDelete: 'cascade' }),
+  tokenId: integer('token_id').references(() => accountTokens.id, { onDelete: 'cascade' }),
+  inheritance: text('inheritance').notNull().default('inherit'), // 'inherit' | 'override' | 'disabled'
+  walletUnit: text('wallet_unit').notNull().default('USD'),
+  faceValuePrice: real('face_value_price'),
+  rechargeDiscount: real('recharge_discount').notNull().default(1),
+  dailyEarnedBalance: real('daily_earned_balance'),
+  dailyEarnedBalanceSource: text('daily_earned_balance_source').notNull().default('observed_checkin'),
+  observedWindowDays: integer('observed_window_days'),
+  confidence: text('confidence').notNull().default('incomplete'),
+  enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+  notes: text('notes'),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  scopeKeyUnique: uniqueIndex('wallet_acquisition_profiles_scope_key_unique').on(table.scopeKey),
+  siteScopeIdx: index('wallet_acquisition_profiles_site_scope_idx').on(table.siteId, table.scope, table.enabled),
+  accountIdx: index('wallet_acquisition_profiles_account_idx').on(table.accountId, table.enabled),
+  tokenIdx: index('wallet_acquisition_profiles_token_idx').on(table.tokenId, table.enabled),
+}));
+
+export const fxRateSnapshots = sqliteTable('fx_rate_snapshots', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  fromCurrency: text('from_currency').notNull(),
+  toCurrency: text('to_currency').notNull(),
+  rate: real('rate').notNull(),
+  source: text('source').notNull().default('manual'), // 'manual' | 'provider' | 'system_default'
+  capturedAt: text('captured_at').notNull().default(sql`(datetime('now'))`),
+  notes: text('notes'),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  currencyCapturedIdx: index('fx_rate_snapshots_currency_captured_idx').on(table.fromCurrency, table.toCurrency, table.capturedAt),
+  currencySourceIdx: index('fx_rate_snapshots_currency_source_idx').on(table.fromCurrency, table.toCurrency, table.source),
+}));
+
 export const tokenRoutes = sqliteTable('token_routes', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   displayName: text('display_name'),
@@ -346,6 +387,115 @@ export const routeEndpointTargets = sqliteTable('route_endpoint_targets', {
   oauthRouteUnitIdx: index('route_endpoint_targets_oauth_route_unit_id_idx').on(table.oauthRouteUnitId),
   routeEnabledIdx: index('route_endpoint_targets_route_enabled_idx').on(table.routeId, table.enabled),
   routeTokenIdx: index('route_endpoint_targets_route_token_idx').on(table.routeId, table.tokenId),
+}));
+
+export const routeGroups = sqliteTable('route_groups', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  kind: text('kind').notNull(), // 'automatic' | 'manual'
+  groupKey: text('group_key').notNull(),
+  upstreamModelName: text('upstream_model_name'),
+  normalizedModelName: text('normalized_model_name'),
+  publicModelName: text('public_model_name'),
+  displayName: text('display_name'),
+  displayIcon: text('display_icon'),
+  visibility: text('visibility').notNull().default('public'), // 'public' | 'internal'
+  enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+  routingStrategy: text('routing_strategy').notNull().default('weighted'),
+  sourceMode: text('source_mode').notNull().default('auto'), // 'auto' | 'manual' | 'mixed'
+  legacyRouteId: integer('legacy_route_id').references(() => tokenRoutes.id, { onDelete: 'set null' }),
+  configJson: text('config_json'),
+  userOverrideJson: text('user_override_json'),
+  syncStatus: text('sync_status').notNull().default('active'), // 'active' | 'stale' | 'unresolved'
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  kindGroupKeyUnique: uniqueIndex('route_groups_kind_group_key_unique').on(table.kind, table.groupKey),
+  kindStatusIdx: index('route_groups_kind_status_idx').on(table.kind, table.syncStatus),
+  normalizedModelIdx: index('route_groups_normalized_model_idx').on(table.normalizedModelName),
+  legacyRouteIdx: index('route_groups_legacy_route_idx').on(table.legacyRouteId),
+}));
+
+export const routeSupplyEndpoints = sqliteTable('route_supply_endpoints', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  supplyKey: text('supply_key').notNull(),
+  siteId: integer('site_id').notNull().references(() => sites.id, { onDelete: 'cascade' }),
+  accountId: integer('account_id').references(() => accounts.id, { onDelete: 'cascade' }),
+  tokenId: integer('token_id').references(() => accountTokens.id, { onDelete: 'set null' }),
+  oauthRouteUnitId: integer('oauth_route_unit_id').references(() => oauthRouteUnits.id, { onDelete: 'set null' }),
+  credentialBindingId: integer('credential_binding_id').references(() => credentialEndpointBindings.id, { onDelete: 'set null' }),
+  endpointProfileId: integer('endpoint_profile_id').references(() => apiEndpointProfiles.id, { onDelete: 'set null' }),
+  legacyTargetId: integer('legacy_target_id').references(() => routeEndpointTargets.id, { onDelete: 'set null' }),
+  upstreamModelName: text('upstream_model_name').notNull(),
+  normalizedModelName: text('normalized_model_name').notNull(),
+  enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+  discovered: integer('discovered', { mode: 'boolean' }).notNull().default(true),
+  source: text('source').notNull().default('availability_rebuild'),
+  metadataJson: text('metadata_json'),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  supplyKeyUnique: uniqueIndex('route_supply_endpoints_supply_key_unique').on(table.supplyKey),
+  siteModelIdx: index('route_supply_endpoints_site_model_idx').on(table.siteId, table.normalizedModelName, table.enabled),
+  accountIdx: index('route_supply_endpoints_account_idx').on(table.accountId, table.enabled),
+  tokenIdx: index('route_supply_endpoints_token_idx').on(table.tokenId, table.enabled),
+  routeUnitIdx: index('route_supply_endpoints_route_unit_idx').on(table.oauthRouteUnitId, table.enabled),
+  legacyTargetIdx: index('route_supply_endpoints_legacy_target_idx').on(table.legacyTargetId),
+}));
+
+export const routeGroupBuckets = sqliteTable('route_group_buckets', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  groupId: integer('group_id').notNull().references(() => routeGroups.id, { onDelete: 'cascade' }),
+  bucketKey: text('bucket_key').notNull(),
+  priority: integer('priority').notNull().default(0),
+  label: text('label'),
+  strategy: text('strategy').notNull().default('weighted'),
+  enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  groupBucketUnique: uniqueIndex('route_group_buckets_group_bucket_unique').on(table.groupId, table.bucketKey),
+  groupPriorityIdx: index('route_group_buckets_group_priority_idx').on(table.groupId, table.priority),
+}));
+
+export const routeGroupCandidates = sqliteTable('route_group_candidates', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  groupId: integer('group_id').notNull().references(() => routeGroups.id, { onDelete: 'cascade' }),
+  bucketId: integer('bucket_id').notNull().references(() => routeGroupBuckets.id, { onDelete: 'cascade' }),
+  candidateKey: text('candidate_key').notNull(),
+  candidateKind: text('candidate_kind').notNull(), // 'supply_endpoint' | 'route_group'
+  supplyEndpointId: integer('supply_endpoint_id').references(() => routeSupplyEndpoints.id, { onDelete: 'cascade' }),
+  childGroupId: integer('child_group_id').references(() => routeGroups.id, { onDelete: 'cascade' }),
+  weight: integer('weight').notNull().default(10),
+  sortOrder: integer('sort_order').notNull().default(0),
+  enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+  source: text('source').notNull().default('availability_rebuild'),
+  manualOverride: integer('manual_override', { mode: 'boolean' }).notNull().default(false),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  groupCandidateUnique: uniqueIndex('route_group_candidates_group_candidate_unique').on(table.groupId, table.bucketId, table.candidateKey),
+  groupSortIdx: index('route_group_candidates_group_sort_idx').on(table.groupId, table.bucketId, table.sortOrder),
+  supplyEndpointIdx: index('route_group_candidates_supply_endpoint_idx').on(table.supplyEndpointId),
+  childGroupIdx: index('route_group_candidates_child_group_idx').on(table.childGroupId),
+}));
+
+export const routeSupplyEndpointState = sqliteTable('route_supply_endpoint_state', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  supplyEndpointId: integer('supply_endpoint_id').notNull().references(() => routeSupplyEndpoints.id, { onDelete: 'cascade' }),
+  successCount: integer('success_count').notNull().default(0),
+  failCount: integer('fail_count').notNull().default(0),
+  totalLatencyMs: integer('total_latency_ms').notNull().default(0),
+  totalCost: real('total_cost').notNull().default(0),
+  lastUsedAt: text('last_used_at'),
+  lastSelectedAt: text('last_selected_at'),
+  lastFailAt: text('last_fail_at'),
+  consecutiveFailCount: integer('consecutive_fail_count').notNull().default(0),
+  cooldownLevel: integer('cooldown_level').notNull().default(0),
+  cooldownUntil: text('cooldown_until'),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  supplyEndpointUnique: uniqueIndex('route_supply_endpoint_state_supply_endpoint_unique').on(table.supplyEndpointId),
+  cooldownIdx: index('route_supply_endpoint_state_cooldown_idx').on(table.cooldownUntil),
 }));
 
 export const proxyLogs = sqliteTable('proxy_logs', {
@@ -581,6 +731,7 @@ export const modelDayUsage = sqliteTable('model_day_usage', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   localDay: text('local_day').notNull(),
   siteId: integer('site_id').notNull().references(() => sites.id, { onDelete: 'cascade' }),
+  accountId: integer('account_id').notNull().references(() => accounts.id, { onDelete: 'cascade' }),
   model: text('model').notNull(),
   totalCalls: integer('total_calls').notNull().default(0),
   successCalls: integer('success_calls').notNull().default(0),
@@ -592,9 +743,10 @@ export const modelDayUsage = sqliteTable('model_day_usage', {
   createdAt: text('created_at').default(sql`(datetime('now'))`),
   updatedAt: text('updated_at').default(sql`(datetime('now'))`),
 }, (table) => ({
-  daySiteModelUnique: uniqueIndex('model_day_usage_day_site_model_unique').on(table.localDay, table.siteId, table.model),
+  daySiteAccountModelUnique: uniqueIndex('model_day_usage_day_site_account_model_unique').on(table.localDay, table.siteId, table.accountId, table.model),
   dayIdx: index('model_day_usage_day_idx').on(table.localDay),
   siteIdx: index('model_day_usage_site_id_idx').on(table.siteId),
+  accountIdx: index('model_day_usage_account_id_idx').on(table.accountId),
   modelIdx: index('model_day_usage_model_idx').on(table.model),
   nonNegative: check(
     'model_day_usage_non_negative',
@@ -658,14 +810,39 @@ export const events = sqliteTable('events', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   type: text('type').notNull(), // 'checkin' | 'balance' | 'token' | 'proxy' | 'status'
   title: text('title').notNull(),
+  summary: text('summary'),
+  description: text('description'),
   message: text('message'),
   level: text('level').notNull().default('info'), // 'info' | 'warning' | 'error'
+  severity: text('severity').notNull().default('info'), // 'critical' | 'warning' | 'info' | 'success'
+  scope: text('scope').notNull().default('activity'), // 'notification' | 'attention' | 'activity' | 'announcement'
+  category: text('category'),
+  state: text('state').notNull().default('open'), // 'open' | 'read' | 'acknowledged' | 'snoozed' | 'resolved'
   read: integer('read', { mode: 'boolean' }).default(false),
+  readAt: text('read_at'),
+  acknowledgedAt: text('acknowledged_at'),
+  snoozedUntil: text('snoozed_until'),
+  resolvedAt: text('resolved_at'),
+  subjectType: text('subject_type'),
+  subjectId: text('subject_id'),
+  subjectLabel: text('subject_label'),
+  detailsJson: text('details_json'),
+  actionsJson: text('actions_json'),
+  dedupeKey: text('dedupe_key'),
+  occurrenceCount: integer('occurrence_count').notNull().default(1),
+  firstSeenAt: text('first_seen_at'),
+  lastSeenAt: text('last_seen_at'),
+  source: text('source'),
   relatedId: integer('related_id'),
   relatedType: text('related_type'), // 'account' | 'site' | 'route'
   createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
 }, (table) => ({
   readCreatedIdx: index('events_read_created_at_idx').on(table.read, table.createdAt),
   typeCreatedIdx: index('events_type_created_at_idx').on(table.type, table.createdAt),
+  scopeStateCreatedIdx: index('events_scope_state_created_at_idx').on(table.scope, table.state, table.createdAt),
+  categoryCreatedIdx: index('events_category_created_at_idx').on(table.category, table.createdAt),
+  subjectIdx: index('events_subject_idx').on(table.subjectType, table.subjectId),
+  dedupeKeyIdx: index('events_dedupe_key_idx').on(table.dedupeKey),
   createdAtIdx: index('events_created_at_idx').on(table.createdAt),
 }));

@@ -1,9 +1,11 @@
 import type { ReactNode } from 'react';
 import { Button } from '../../components/ui/button/index.js';
-import { ButtonGroup } from '../../components/ui/button-group/index.js';
 import { Input } from '../../components/ui/input/index.js';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select/index.js';
 import { Switch } from '../../components/ui/switch/index.js';
+import { Badge } from '../../components/ui/badge/index.js';
+import * as DropdownMenu from '../../components/ui/dropdown-menu/index.js';
+import { Braces, ChevronDown, GitBranch, Heading, Plus, RotateCcw, Trash2, Wand2 } from 'lucide-react';
 import JsonCodeEditor from '../../components/JsonCodeEditor.js';
 import type { RouteFilter, RouteGraphNode, RouteGraphNodeType } from './routeGraphTypes.js';
 import { UpstreamCompatibilityPolicyEditor } from '../../components/UpstreamCompatibilityPolicyEditor.js';
@@ -178,6 +180,112 @@ function stringifyJsonInput(value: unknown): string {
   return JSON.stringify(value, null, 2);
 }
 
+type FilterOperationTemplate = {
+  type: RouteFilter['type'];
+  title: string;
+  description: string;
+  stage: 'pre_selection' | 'post_build';
+  icon: ReactNode;
+};
+
+const FILTER_OPERATION_TEMPLATES: FilterOperationTemplate[] = [
+  {
+    type: 'rewrite_model',
+    title: tr('pages.tokenRoutes.nodeForm.filterRewriteModel'),
+    description: tr('pages.tokenRoutes.nodeForm.filterRewriteModelDescription'),
+    stage: 'pre_selection',
+    icon: <GitBranch className="size-3.5" />,
+  },
+  {
+    type: 'set_payload',
+    title: tr('pages.tokenRoutes.nodeForm.filterSetPayload'),
+    description: tr('pages.tokenRoutes.nodeForm.filterSetPayloadDescription'),
+    stage: 'post_build',
+    icon: <Braces className="size-3.5" />,
+  },
+  {
+    type: 'remove_payload',
+    title: tr('pages.tokenRoutes.nodeForm.filterRemovePayload'),
+    description: tr('pages.tokenRoutes.nodeForm.filterRemovePayloadDescription'),
+    stage: 'post_build',
+    icon: <Trash2 className="size-3.5" />,
+  },
+  {
+    type: 'set_header',
+    title: tr('pages.tokenRoutes.nodeForm.filterSetHeader'),
+    description: tr('pages.tokenRoutes.nodeForm.filterSetHeaderDescription'),
+    stage: 'post_build',
+    icon: <Heading className="size-3.5" />,
+  },
+  {
+    type: 'remove_header',
+    title: tr('pages.tokenRoutes.nodeForm.filterRemoveHeader'),
+    description: tr('pages.tokenRoutes.nodeForm.filterRemoveHeaderDescription'),
+    stage: 'post_build',
+    icon: <Trash2 className="size-3.5" />,
+  },
+  {
+    type: 'set_endpoint_preference',
+    title: tr('pages.tokenRoutes.nodeForm.filterEndpointPreference'),
+    description: tr('pages.tokenRoutes.nodeForm.filterEndpointPreferenceDescription'),
+    stage: 'post_build',
+    icon: <Wand2 className="size-3.5" />,
+  },
+];
+
+function getFilterOperationTemplate(type: RouteFilter['type']): FilterOperationTemplate {
+  return FILTER_OPERATION_TEMPLATES.find((item) => item.type === type) || FILTER_OPERATION_TEMPLATES[1]!;
+}
+
+function getFilterOperationStage(operation: RouteFilter): 'pre_selection' | 'post_build' {
+  return operation.type === 'rewrite_model' ? 'pre_selection' : 'post_build';
+}
+
+function getFilterOperationSummary(operation: RouteFilter): string {
+  if (operation.type === 'rewrite_model') {
+    const source = operation.source === 'upstream_model'
+      ? tr('pages.tokenRoutes.nodeForm.upstreamModel')
+      : tr('pages.tokenRoutes.nodeForm.currentModel');
+    if (operation.operation === 'set') {
+      return tr('pages.tokenRoutes.nodeForm.filterSummarySetModel')
+        .replace('{source}', source)
+        .replace('{value}', String(operation.value || '-'));
+    }
+    return tr('pages.tokenRoutes.nodeForm.filterSummaryStripSuffix')
+      .replace('{source}', source)
+      .replace('{suffix}', String(operation.suffix || '-'));
+  }
+  if (operation.type === 'set_payload') {
+    return tr('pages.tokenRoutes.nodeForm.filterSummarySetPayload')
+      .replace('{path}', operation.path || '-')
+      .replace('{mode}', operation.mode || 'default');
+  }
+  if (operation.type === 'remove_payload') {
+    return tr('pages.tokenRoutes.nodeForm.filterSummaryRemovePayload')
+      .replace('{path}', operation.path || '-');
+  }
+  if (operation.type === 'set_header') {
+    return tr('pages.tokenRoutes.nodeForm.filterSummarySetHeader')
+      .replace('{name}', operation.name || '-')
+      .replace('{mode}', operation.mode || 'default');
+  }
+  if (operation.type === 'remove_header') {
+    return tr('pages.tokenRoutes.nodeForm.filterSummaryRemoveHeader')
+      .replace('{name}', operation.name || '-');
+  }
+  return tr('pages.tokenRoutes.nodeForm.filterSummaryEndpointPreference')
+    .replace('{endpoint}', operation.endpoint || '-');
+}
+
+function FilterField({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
+      <span>{label}</span>
+      {children}
+    </label>
+  );
+}
+
 function DispatcherEditor({ readonly, node, onChange }: NodeEditorProps) {
   const mode = node.mode === 'flow' ? 'flow' : 'route';
   const policy = (node.policy && typeof node.policy === 'object' ? node.policy : { strategy: 'weighted' }) as Record<string, unknown>;
@@ -282,7 +390,7 @@ function RouteEndpointEditor({ readonly, node, onChange }: NodeEditorProps) {
   );
 }
 
-function FilterOperationsEditor({
+export function FilterOperationsEditor({
   readonly,
   operations,
   onChange,
@@ -294,104 +402,170 @@ function FilterOperationsEditor({
   const updateOperation = (index: number, operation: RouteFilter) => {
     onChange(operations.map((item, itemIndex) => (itemIndex === index ? operation : item)));
   };
+  const addOperation = (type: RouteFilter['type']) => onChange([...operations, defaultOperation(type)]);
   return (
-    <div className="grid gap-3">
-      <div className="text-sm font-medium">{tr('pages.tokenRoutes.nodeForm.operations')}</div>
-      {operations.map((operation, index) => (
-        <div key={`${operation.type}-${index}`} className="grid gap-3 rounded-lg border p-3">
-          <label>
-            {tr('pages.tokenRoutes.nodeForm.type')}
-            <SelectField
+    <div className="grid gap-3 min-w-0">
+      <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="route-graph-config-title">{tr('pages.tokenRoutes.nodeForm.requestFilterRules')}</div>
+          <div className="route-graph-config-description mt-0.5">
+            {tr('pages.tokenRoutes.nodeForm.requestFilterRulesDescription')}
+          </div>
+        </div>
+        <DropdownMenu.Root>
+          <DropdownMenu.Trigger asChild>
+            <Button type="button" variant="outline" size="sm" disabled={readonly}>
+              <Plus className="size-4" />
+              {tr('pages.tokenRoutes.nodeForm.addFilter')}
+              <ChevronDown className="size-3.5 opacity-70" />
+            </Button>
+          </DropdownMenu.Trigger>
+          <DropdownMenu.Content align="end" className="w-80">
+            <DropdownMenu.Label>{tr('pages.tokenRoutes.nodeForm.preSelectionStage')}</DropdownMenu.Label>
+            {FILTER_OPERATION_TEMPLATES.filter((item) => item.stage === 'pre_selection').map((item) => (
+              <DropdownMenu.Item key={item.type} onSelect={() => addOperation(item.type)} className="items-start gap-2">
+                <span className="mt-0.5 text-muted-foreground">{item.icon}</span>
+                <span className="grid gap-0.5">
+                  <span className="font-medium">{item.title}</span>
+                  <span className="text-xs text-muted-foreground">{item.description}</span>
+                </span>
+              </DropdownMenu.Item>
+            ))}
+            <DropdownMenu.Separator />
+            <DropdownMenu.Label>{tr('pages.tokenRoutes.nodeForm.postBuildStage')}</DropdownMenu.Label>
+            {FILTER_OPERATION_TEMPLATES.filter((item) => item.stage === 'post_build').map((item) => (
+              <DropdownMenu.Item key={item.type} onSelect={() => addOperation(item.type)} className="items-start gap-2">
+                <span className="mt-0.5 text-muted-foreground">{item.icon}</span>
+                <span className="grid gap-0.5">
+                  <span className="font-medium">{item.title}</span>
+                  <span className="text-xs text-muted-foreground">{item.description}</span>
+                </span>
+              </DropdownMenu.Item>
+            ))}
+          </DropdownMenu.Content>
+        </DropdownMenu.Root>
+      </div>
+
+      {operations.length === 0 ? (
+        <div className="grid gap-2 rounded-md border border-dashed bg-muted/20 p-4 text-xs">
+          <div className="font-medium text-foreground">{tr('pages.tokenRoutes.nodeForm.noFiltersConfigured')}</div>
+          <div className="leading-relaxed text-muted-foreground">
+            {tr('pages.tokenRoutes.nodeForm.noFiltersConfiguredDescription')}
+          </div>
+        </div>
+      ) : null}
+
+      {operations.map((operation, index) => {
+        const template = getFilterOperationTemplate(operation.type);
+        const stage = getFilterOperationStage(operation);
+        return (
+        <div key={`${operation.type}-${index}`} className="grid min-w-0 gap-3 rounded-md border bg-card p-3">
+          <div className="flex min-w-0 items-start justify-between gap-3">
+            <div className="flex min-w-0 gap-2">
+              <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md border bg-muted text-muted-foreground">
+                {template.icon}
+              </div>
+              <div className="min-w-0">
+                <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                  <span className="truncate text-xs font-semibold text-foreground">{template.title}</span>
+                  <Badge variant="outline" className="shrink-0">
+                    {stage === 'pre_selection' ? tr('pages.tokenRoutes.nodeForm.preSelectionStageShort') : tr('pages.tokenRoutes.nodeForm.postBuildStageShort')}
+                  </Badge>
+                </div>
+                <div className="mt-1 break-words text-xs leading-relaxed text-muted-foreground">
+                  {getFilterOperationSummary(operation)}
+                </div>
+              </div>
+            </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              type="button"
               disabled={readonly}
-              value={operation.type}
-              options={[
-                { value: 'rewrite_model', label: 'rewrite_model' },
-                { value: 'set_payload', label: 'set_payload' },
-                { value: 'remove_payload', label: 'remove_payload' },
-                { value: 'set_header', label: 'set_header' },
-                { value: 'remove_header', label: 'remove_header' },
-                { value: 'set_endpoint_preference', label: 'set_endpoint_preference' },
-              ]}
-              onChange={(type) => updateOperation(index, defaultOperation(type))}
-            />
-          </label>
+              aria-label={tr('pages.tokenRoutes.nodeForm.removeOperation')}
+              onClick={() => onChange(operations.filter((_, itemIndex) => itemIndex !== index))}
+            >
+              <Trash2 className="size-4" />
+            </Button>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <FilterField label={tr('pages.tokenRoutes.nodeForm.type')}>
+              <SelectField
+                disabled={readonly}
+                value={operation.type}
+                options={FILTER_OPERATION_TEMPLATES.map((item) => ({ value: item.type, label: item.title }))}
+                onChange={(type) => updateOperation(index, defaultOperation(type))}
+              />
+            </FilterField>
           {operation.type === 'rewrite_model' && (
             <>
-              <label>
-                {tr('pages.tokenRoutes.nodeForm.source')}
+              <FilterField label={tr('pages.tokenRoutes.nodeForm.source')}>
                 <SelectField
                   disabled={readonly}
                   value={operation.source}
                   options={[
-                    { value: 'current_model', label: 'current_model' },
-                    { value: 'upstream_model', label: 'upstream_model' },
+                    { value: 'current_model', label: tr('pages.tokenRoutes.nodeForm.currentModel') },
+                    { value: 'upstream_model', label: tr('pages.tokenRoutes.nodeForm.upstreamModel') },
                   ]}
                   onChange={(source) => updateOperation(index, { ...operation, source })}
                 />
-              </label>
-              <label>
-                {tr('pages.tokenRoutes.nodeForm.operation')}
+              </FilterField>
+              <FilterField label={tr('pages.tokenRoutes.nodeForm.operation')}>
                 <SelectField
                   disabled={readonly}
                   value={operation.operation}
                   options={[
-                    { value: 'strip_suffix', label: 'strip_suffix' },
-                    { value: 'set', label: 'set' },
+                    { value: 'strip_suffix', label: tr('pages.tokenRoutes.nodeForm.stripSuffix') },
+                    { value: 'set', label: tr('pages.tokenRoutes.nodeForm.setModel') },
                   ]}
                   onChange={(operationValue) => updateOperation(index, { ...operation, operation: operationValue })}
                 />
-              </label>
-              <label>
-                {tr('pages.tokenRoutes.nodeForm.valueOrSuffix')}
+              </FilterField>
+              <FilterField label={operation.operation === 'set' ? tr('pages.tokenRoutes.nodeForm.modelValue') : tr('pages.tokenRoutes.nodeForm.suffix')}>
                 <Input disabled={readonly} value={operation.operation === 'set' ? String(operation.value || '') : String(operation.suffix || '')} onChange={(event) => updateOperation(index, operation.operation === 'set' ? { ...operation, value: event.target.value } : { ...operation, suffix: event.target.value })} />
-              </label>
+              </FilterField>
             </>
           )}
           {(operation.type === 'set_payload' || operation.type === 'remove_payload') && (
             <>
-              <label>
-                {tr('pages.tokenRoutes.nodeForm.payloadPath')}
+              <FilterField label={tr('pages.tokenRoutes.nodeForm.payloadPath')}>
                 <Input disabled={readonly} value={operation.path} onChange={(event) => updateOperation(index, { ...operation, path: event.target.value } as RouteFilter)} />
-              </label>
+              </FilterField>
               {operation.type === 'set_payload' && (
                 <>
-                  <label>
-                    {tr('pages.tokenRoutes.nodeForm.mode')}
+                  <FilterField label={tr('pages.tokenRoutes.nodeForm.mode')}>
                     <SelectField
                       disabled={readonly}
                       value={operation.mode || 'default'}
                       options={[
-                        { value: 'default', label: 'default' },
-                        { value: 'override', label: 'override' },
+                        { value: 'default', label: tr('pages.tokenRoutes.nodeForm.defaultMode') },
+                        { value: 'override', label: tr('pages.tokenRoutes.nodeForm.overrideMode') },
                       ]}
                       onChange={(mode) => updateOperation(index, { ...operation, mode })}
                     />
-                  </label>
-                  <label>
-                    {tr('pages.tokenRoutes.nodeForm.valueJson')}
+                  </FilterField>
+                  <FilterField label={tr('pages.tokenRoutes.nodeForm.valueJson')}>
                     <Input disabled={readonly} value={typeof operation.value === 'string' ? operation.value : JSON.stringify(operation.value)} onChange={(event) => updateOperation(index, { ...operation, value: parseJsonField(event.target.value) })} />
-                  </label>
+                  </FilterField>
                 </>
               )}
             </>
           )}
           {(operation.type === 'set_header' || operation.type === 'remove_header') && (
             <>
-              <label>
-                {tr('pages.tokenRoutes.nodeForm.headerName')}
+              <FilterField label={tr('pages.tokenRoutes.nodeForm.headerName')}>
                 <Input disabled={readonly} value={operation.name} onChange={(event) => updateOperation(index, { ...operation, name: event.target.value } as RouteFilter)} />
-              </label>
+              </FilterField>
               {operation.type === 'set_header' && (
-                <label>
-                  {tr('pages.tokenRoutes.nodeForm.headerValue')}
+                <FilterField label={tr('pages.tokenRoutes.nodeForm.headerValue')}>
                   <Input disabled={readonly} value={operation.value} onChange={(event) => updateOperation(index, { ...operation, value: event.target.value })} />
-                </label>
+                </FilterField>
               )}
             </>
           )}
           {operation.type === 'set_endpoint_preference' && (
-            <label>
-              {tr('pages.tokenRoutes.nodeForm.endpoint')}
+            <FilterField label={tr('pages.tokenRoutes.nodeForm.endpoint')}>
               <SelectField
                 disabled={readonly}
                 value={operation.endpoint}
@@ -402,16 +576,11 @@ function FilterOperationsEditor({
                 ]}
                 onChange={(endpoint) => updateOperation(index, { ...operation, endpoint })}
               />
-            </label>
+            </FilterField>
           )}
-          <Button variant="secondary" size="sm" type="button" disabled={readonly} onClick={() => onChange(operations.filter((_, itemIndex) => itemIndex !== index))}>{tr('pages.tokenRoutes.nodeForm.removeOperation')}</Button>
+          </div>
         </div>
-      ))}
-      <div className="flex flex-wrap gap-2">
-        {(['rewrite_model', 'set_payload', 'set_header', 'set_endpoint_preference'] as RouteFilter['type'][]).map((type) => (
-          <Button key={type} variant="outline" size="sm" type="button" disabled={readonly} onClick={() => onChange([...operations, defaultOperation(type)])}>{type}</Button>
-        ))}
-      </div>
+      );})}
     </div>
   );
 }

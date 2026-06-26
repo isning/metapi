@@ -77,6 +77,24 @@ describe("stats snapshot v2 routes", () => {
       .returning()
       .get();
 
+    await db.insert(schema.walletAcquisitionProfiles).values({
+      scope: 'site',
+      scopeKey: `site|site:${site.id}|account:-|token:-`,
+      siteId: site.id,
+      inheritance: 'override',
+      walletUnit: 'POINTS',
+      faceValuePrice: 1,
+      rechargeDiscount: 0.5,
+      confidence: 'estimated',
+    }).run();
+    await db.insert(schema.fxRateSnapshots).values({
+      fromCurrency: 'POINTS',
+      toCurrency: 'USD',
+      rate: 0.01,
+      source: 'manual',
+      capturedAt: new Date().toISOString(),
+    }).run();
+
     await db
       .insert(schema.proxyLogs)
       .values([
@@ -124,10 +142,16 @@ describe("stats snapshot v2 routes", () => {
     const summary = summaryResponse.json() as {
       generatedAt: string;
       totalBalance: number;
+      rawBalance: number;
+      baseCostUnit: string;
+      valuedAccountCount: number;
       proxy24h: { total: number };
     };
     expect(Date.parse(summary.generatedAt)).not.toBeNaN();
-    expect(summary.totalBalance).toBe(42);
+    expect(summary.totalBalance).toBe(0.21);
+    expect(summary.rawBalance).toBe(42);
+    expect(summary.baseCostUnit).toBe('USD');
+    expect(summary.valuedAccountCount).toBe(1);
     expect(summary.proxy24h.total).toBe(2);
 
     const insightsResponse = await app.inject({
@@ -152,10 +176,22 @@ describe("stats snapshot v2 routes", () => {
     });
     expect(siteDistributionResponse.statusCode).toBe(200);
     const siteDistribution = siteDistributionResponse.json() as {
-      distribution: Array<{ siteId: number; totalSpend: number }>;
+      distribution: Array<{
+        siteId: number;
+        totalBalance: number;
+        rawBalance: number;
+        totalSpend: number;
+        valuedAccountCount: number;
+      }>;
     };
     expect(siteDistribution.distribution).toEqual([
-      expect.objectContaining({ siteId: site.id, totalSpend: 0.85 }),
+      expect.objectContaining({
+        siteId: site.id,
+        totalBalance: 0.21,
+        rawBalance: 42,
+        totalSpend: 0.85,
+        valuedAccountCount: 1,
+      }),
     ]);
 
     const siteTrendResponse = await app.inject({

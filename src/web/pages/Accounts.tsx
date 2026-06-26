@@ -18,8 +18,17 @@ import SiteBadgeLink from "../components/SiteBadgeLink.js";
 import InfoNote from "../components/InfoNote.js";
 import PageHeader from "../components/workspace/PageHeader.js";
 import PageShell from "../components/workspace/PageShell.js";
+import {
+  CreateActionButton,
+  DragHandleButton,
+  PageActionBar,
+  SecondaryActionButton,
+  SortModeControl,
+  TableActionBar,
+} from "../components/workspace/ActionBar.js";
 import AccountModelsModal from "./accounts/AccountModelsModal.js";
 import EndpointBindingsModal from "./accounts/EndpointBindingsModal.js";
+import WalletAcquisitionEditor, { type WalletAcquisitionEditorSubject } from "../components/WalletAcquisitionEditor.js";
 import {
   buildAddAccountPrereqHint,
   buildVerifyFailureHint,
@@ -92,7 +101,7 @@ const ACCOUNT_SEGMENTS: Array<{
   {
     value: "apikey",
     label: tr('pages.accounts.apiKey2'),
-    tooltip: tr('pages.accounts.baseUrlKeyUsageActingcalls'),
+    tooltip: tr('pages.accounts.baseUrlKeyProxyOnlyTooltip'),
     tooltipSide: "bottom",
     tooltipAlign: "center",
   },
@@ -425,6 +434,7 @@ export default function Accounts() {
     credentialKey: string;
     titleContext: string;
   } | null>(null);
+  const [walletEditorSubject, setWalletEditorSubject] = useState<WalletAcquisitionEditorSubject | null>(null);
   const rowRefs = useRef<Map<number, HTMLTableRowElement>>(new Map());
   const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastRebindTargetRef = useRef<any | null>(null);
@@ -520,6 +530,24 @@ export default function Accounts() {
     return resolveAccountCredentialMode(account) === "apikey"
       ? tr('components.searchModal.apiKey')
       : tr('components.searchModal.unnamed');
+  };
+
+  const openAccountWalletCost = (account: any) => {
+    const siteId = Number(account?.siteId ?? account?.site?.id);
+    if (!Number.isFinite(siteId) || siteId <= 0) {
+      toast.error(tr('pages.accounts.selectSite'));
+      return;
+    }
+    const accountName = resolveAccountDisplayName(account);
+    setWalletEditorSubject({
+      scope: 'account',
+      siteId: Math.trunc(siteId),
+      accountId: Number(account.id),
+      title: accountName,
+      subtitle: tr('upstreamCostPricing.walletEditor.openAccountDescription'),
+      siteLabel: account?.site?.name || `${tr('common.site')} ${Math.trunc(siteId)}`,
+      accountLabel: accountName,
+    });
   };
 
   const sortedAccounts = useMemo(
@@ -1440,7 +1468,7 @@ export default function Accounts() {
       });
       setRebindVerifyResult(result);
       if (result.success && result.tokenType === "session") {
-        toast.success(tr('pages.accounts.sessionTokenVerifysuccessRebind'));
+        toast.success(tr('pages.accounts.sessionTokenVerifiedCanRebind'));
       } else if (result.success && result.tokenType !== "session") {
         toast.error(tr('pages.accounts.apiKeySessionToken'));
       } else {
@@ -1563,46 +1591,42 @@ export default function Accounts() {
         title={tr('app.connectionManagement')}
         description={tr('pages.accounts.connectionManagementSubtitle')}
         actions={activeSegment !== "tokens" ? (
-          <>
+          <PageActionBar>
             {isMobile ? (
               <>
-                <Button variant="outline"
+                <SecondaryActionButton
                   type="button"
                   onClick={() => setShowMobileTools(true)}
-                 
-                 
                 >
                   {tr('pages.accounts.actions3')}
-                </Button>
-                <Button variant="outline"
+                </SecondaryActionButton>
+                <SecondaryActionButton
                   type="button"
                   data-testid="accounts-mobile-select-all"
                   onClick={() =>
                     toggleSelectAllVisibleAccounts(!allVisibleAccountsSelected)
                   }
-                 
-                 
                 >
                   {allVisibleAccountsSelected ? tr('pages.accounts.cancelselectAll') : tr('pages.accounts.selectVisibleItems')}
-                </Button>
+                </SecondaryActionButton>
               </>
             ) : (
               <>
-                <div className="relative min-w-40">
-                  <ModernSelect
-                    size="sm"
-                    value={sortMode}
-                    onChange={(nextValue) => setSortMode(nextValue as SortMode)}
-                    options={[
-                      { value: "custom", label: tr('pages.accounts.customOrder') },
-                      { value: "balance-desc", label: tr('pages.accounts.balancehighLow') },
-                      { value: "balance-asc", label: tr('pages.accounts.balancelowHigh') },
-                    ]}
-                    placeholder={tr('pages.accounts.customOrder')}
-                  />
-                </div>
+                <SortModeControl
+                  value={sortMode}
+                  onChange={(nextValue) => setSortMode(nextValue as SortMode)}
+                  options={[
+                    { value: "custom", label: tr('pages.accounts.customOrder') },
+                    { value: "balance-desc", label: tr('pages.accounts.balancehighLow') },
+                    { value: "balance-asc", label: tr('pages.accounts.balancelowHigh') },
+                  ]}
+                  placeholder={tr('pages.accounts.customOrder')}
+                />
                 {activeSegment === "session" && (
-                  <Button type="button"
+                  <SecondaryActionButton
+                    type="button"
+                    loading={!!actionLoading["checkin-all"]}
+                    loadingLabel={tr('pages.accounts.checking')}
                     onClick={() =>
                       withLoading(
                         "checkin-all",
@@ -1611,35 +1635,26 @@ export default function Accounts() {
                       )
                     }
                     disabled={actionLoading["checkin-all"]}
-                   
                   >
-                    {actionLoading["checkin-all"] ? (
-                      <>
-                        <LoaderCircle className="size-4 animate-spin" />
-                        {tr('pages.accounts.checking')}
-                      </>
-                    ) : (
-                      tr('pages.accounts.checkAll')
-                    )}
-                  </Button>
+                    {tr('pages.accounts.checkInAll')}
+                  </SecondaryActionButton>
                 )}
-                <Button type="button"
+                <SecondaryActionButton
+                  type="button"
+                  loading={!!actionLoading["health-refresh"]}
+                  loadingLabel={tr('pages.accounts.refreshing')}
                   onClick={handleRefreshRuntimeHealth}
                   disabled={actionLoading["health-refresh"]}
-                 
                 >
-                  {actionLoading["health-refresh"] ? (
-                    <>
-                      <LoaderCircle className="size-4 animate-spin" />
-                      {tr('pages.accounts.refreshing')}
-                    </>
-                  ) : (
-                    tr('pages.accounts.refreshAccountStatus')
-                  )}
-                </Button>
+                  {tr('pages.accounts.refreshAccountStatus')}
+                </SecondaryActionButton>
               </>
             )}
-            <Button type="button"
+            <CreateActionButton
+              type="button"
+              active={showAdd}
+              label={tr('pages.accounts.add2')}
+              activeLabel={tr('app.cancel')}
               onClick={() => {
                 const nextOpen = !showAdd;
                 if (!nextOpen) {
@@ -1651,11 +1666,8 @@ export default function Accounts() {
                 setShowAdd(true);
                 resetAddForms(activeAddCredentialMode);
               }}
-             
-            >
-              {showAdd ? tr('app.cancel') : tr('pages.accounts.add2')}
-            </Button>
-          </>
+            />
+          </PageActionBar>
         ) : embeddedTokenActions}
       />
 
@@ -1701,7 +1713,7 @@ export default function Accounts() {
                     {tr('pages.accounts.checking')}
                   </>
                 ) : (
-                  tr('pages.accounts.checkAll')
+                  tr('pages.accounts.checkInAll')
                 )}
               </Button>
             )}
@@ -1765,7 +1777,7 @@ export default function Accounts() {
             </>
           ) : (
             <>
-              {tr('pages.accounts.deleteZh')} <strong>{deleteConfirm?.count || 0}</strong>{" "}
+              {tr('pages.accounts.confirmDeleteSelectedPrefix')} <strong>{deleteConfirm?.count || 0}</strong>{" "}
               {tr('pages.accounts.connections')}
             </>
           )
@@ -2189,7 +2201,7 @@ export default function Accounts() {
             ) : (
               <div className="flex flex-col gap-3">
                 <InfoNote>
-                  {tr('pages.accounts.apiKeyActingAutomaticAccountstokenSystemSitesplatformcapabilitiesautomatic')}
+                  {tr('pages.accounts.apiKeyProxyOnlyDescription')}
                 </InfoNote>
                 {createIntentPreset && (
                   <Alert className="animate-scale-in">
@@ -2325,7 +2337,7 @@ export default function Accounts() {
                             d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"
                           />
                         </svg>
-                        {tr('pages.accounts.apiKeyVerifysuccess')}
+                        {tr('pages.accounts.apiKeyVerified')}
                       </AlertTitle>
                       <AlertDescription className="leading-relaxed">
                         <div>
@@ -2445,7 +2457,7 @@ export default function Accounts() {
                 <>
                   <div className="mb-3 text-xs text-muted-foreground">
                     {tr('pages.accounts.connection')} {resolveAccountDisplayName(activeRebindTarget)} @{" "}
-                    {activeRebindTarget.site?.name || "-"}{tr('pages.accounts.sessionTokenVerifysuccess')}
+                    {activeRebindTarget.site?.name || "-"}{tr('pages.accounts.sessionTokenVerifyBeforeBind')}
                   </div>
 
                   <div className="mb-2.5 grid grid-cols-[minmax(0,1fr)_220px] gap-2.5">
@@ -2561,7 +2573,7 @@ export default function Accounts() {
                       {rebindSaving ? (
                         <>
                           <LoaderCircle className="size-4 animate-spin" />
-                          {tr('pages.accounts.zh')}
+                          {tr('pages.accounts.binding')}
                         </>
                       ) : (
                         tr('pages.accounts.confirmRebinding')
@@ -2668,7 +2680,7 @@ export default function Accounts() {
                   className="font-mono"
                 />
                 <Input
-                  placeholder={tr('pages.accounts.actingHttp1270017890')}
+                  placeholder={tr('pages.accounts.proxyUrlPlaceholder')}
                   value={editForm.proxyUrl}
                   onChange={(e) =>
                     setEditForm((prev) => ({
@@ -2678,7 +2690,7 @@ export default function Accounts() {
                   }
                 />
                 <div className="-mt-1 text-xs text-muted-foreground">
-                  {tr('pages.accounts.sitesSystemactingUsagesitessettingsSupportedHttpHttpsSocks5')}
+                  {tr('pages.accounts.proxyOverrideDescription')}
                 </div>
                 {(editingAccount?.site?.platform || "").toLowerCase() ===
                   "sub2api" && (
@@ -2752,7 +2764,7 @@ export default function Accounts() {
                                
                                
                               >
-                                {tr('components.notificationPanel.acting')}
+                                {tr('components.notificationPanel.proxy')}
                               </ToneBadge>
                             )}
                           </div>
@@ -2869,18 +2881,18 @@ export default function Accounts() {
                                     data-tooltip={
                                       a.checkinEnabled
                                         ? tr('pages.accounts.clickCloseSignAllSignInsWill')
-                                        : tr('pages.accounts.clickOpenSign')
+                                        : tr('pages.accounts.clickEnableCheckIn')
                                     }
                                     aria-label={
                                       a.checkinEnabled
                                         ? tr('pages.accounts.clickCloseSignAllSignInsWill')
-                                        : tr('pages.accounts.clickOpenSign')
+                                        : tr('pages.accounts.clickEnableCheckIn')
                                     }
                                   >
                                     {actionLoading[`checkin-toggle-${a.id}`] ? (
                                       <LoaderCircle className="size-4 animate-spin" />
                                     ) : a.checkinEnabled ? (
-                                      tr('pages.accounts.turn')
+                                      tr('common.enabled')
                                     ) : (
                                       tr('pages.accounts.close')
                                     )}
@@ -3037,7 +3049,7 @@ export default function Accounts() {
                         </div>
                       </div>
                     </div>
-                    <div className="flex flex-wrap items-center justify-end gap-2">
+                    <TableActionBar>
                       <Button
                         type="button"
                         variant="outline"
@@ -3088,7 +3100,7 @@ export default function Accounts() {
                         <Trash2 className="size-4" />
                         {tr('pages.accounts.delete2')}
                       </Button>
-                    </div>
+                    </TableActionBar>
                   </DataTableToolbar>
                   <DndContext
                     sensors={accountReorderSensors}
@@ -3138,24 +3150,16 @@ export default function Accounts() {
                               <>
                             <TableCell>
                               {sortMode === "custom" && (
-                                <Button
+                                <DragHandleButton
                                   ref={dragHandle.setActivatorNodeRef}
-                                  type="button"
-                                  variant="ghostMuted"
-                                  size="icon"
                                   aria-label={tr('pages.accounts.reorder')}
                                   className={dragHandle.isDragging ? "cursor-grabbing" : "cursor-grab"}
                                   disabled={!!actionLoading[`reorder-${a.id}`]}
+                                  loading={!!actionLoading[`reorder-${a.id}`]}
                                   onClick={(event) => event.stopPropagation()}
                                   {...dragHandle.attributes}
                                   {...dragHandle.listeners}
-                                >
-                                  {actionLoading[`reorder-${a.id}`] ? (
-                                    <LoaderCircle className="size-4 animate-spin" />
-                                  ) : (
-                                    <GripVertical className="size-4" />
-                                  )}
-                                </Button>
+                                />
                               )}
                             </TableCell>
                             <TableCell>
@@ -3177,7 +3181,7 @@ export default function Accounts() {
                                   </ToneBadge>
                                   {parseAccountExtraConfig(a)?.proxyUrl && (
                                     <ToneBadge tone="-purple">
-                                      {tr('components.notificationPanel.acting')}
+                                      {tr('components.notificationPanel.proxy')}
                                     </ToneBadge>
                                   )}
                                   {a.isPinned ? <ToneBadge tone="-info">{tr('pages.accounts.pinTop')}</ToneBadge> : null}
@@ -3231,18 +3235,18 @@ export default function Accounts() {
                                   data-tooltip={
                                     a.checkinEnabled
                                       ? tr('pages.accounts.clickCloseSignAllSignInsWill')
-                                      : tr('pages.accounts.clickOpenSign')
+                                      : tr('pages.accounts.clickEnableCheckIn')
                                   }
                                   aria-label={
                                     a.checkinEnabled
                                       ? tr('pages.accounts.clickCloseSignAllSignInsWill')
-                                      : tr('pages.accounts.clickOpenSign')
+                                      : tr('pages.accounts.clickEnableCheckIn')
                                   }
                                 >
                                   {actionLoading[`checkin-toggle-${a.id}`] ? (
                                     <LoaderCircle className="size-4 animate-spin" />
                                   ) : a.checkinEnabled ? (
-                                    tr('pages.accounts.turn')
+                                    tr('common.enabled')
                                   ) : (
                                     tr('pages.accounts.close')
                                   )}
@@ -3350,6 +3354,10 @@ export default function Accounts() {
                                         {tr('pages.accounts.rebind')}
                                       </DropdownMenu.Item>
                                     )}
+                                    <DropdownMenu.Item onSelect={() => openAccountWalletCost(a)}>
+                                      <Wallet className="size-4" />
+                                      {tr('upstreamCostPricing.walletEditor.configureAction')}
+                                    </DropdownMenu.Item>
                                     <DropdownMenu.Separator />
                                     <DropdownMenu.Item
                                       variant="destructive"
@@ -3435,6 +3443,14 @@ export default function Accounts() {
           setModelModal((state) => ({ ...state, manualModelsInput: value }))
         }
         onAddManualModels={handleAddManualModels}
+      />
+      <WalletAcquisitionEditor
+        open={walletEditorSubject !== null}
+        subject={walletEditorSubject}
+        onOpenChange={(open) => {
+          if (!open) setWalletEditorSubject(null);
+        }}
+        toast={toast}
       />
     </PageShell>
   );

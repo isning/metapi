@@ -217,6 +217,9 @@ export type CandidateSelectorMacroConfig = {
     strategy: RouteGraphSelectionStrategy | 'cel_select' | 'cel_score';
     cel?: string;
   };
+  filters?: {
+    operations: RouteFilter[];
+  };
   groups: Array<{
     id: string;
     label?: string;
@@ -654,6 +657,14 @@ export function buildCandidateSelectorMacroFromRouteBinding(input: {
   routingStrategy?: RouteGraphSelectionStrategy;
   match?: RouteGraphMatchSpec;
   endpointIds?: string[];
+  candidateBands?: Array<{
+    id?: string;
+    label?: string | null;
+    enabled?: boolean;
+    priority?: number;
+    weight?: number;
+    endpointIds?: string[];
+  }>;
   ownership?: RouteGraphOwnership;
   metadata?: Record<string, unknown>;
 }): RouteGraphMacro;

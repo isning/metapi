@@ -1,6 +1,7 @@
 import ModelRouteFlow, { type ModelRouteFlowViewMode } from '../../components/ModelRouteFlow.js';
 import EmptyStateBlock from '../../components/EmptyStateBlock.js';
 import type { ModelDetailsView } from './modelDetailsView.js';
+import { tr } from '../../i18n.js';
 
 type ModelRoutingTabProps = {
   details: ModelDetailsView;
@@ -24,7 +25,7 @@ export default function ModelRoutingTab({
           onViewModeChange={onViewModeChange}
         />
       ) : (
-        <EmptyStateBlock title="No route flow" description="This model does not have compiled route-flow data yet." />
+        <EmptyStateBlock title={tr('pages.models.modelRoutingTab.noRouteFlow')} description={tr('pages.models.modelRoutingTab.noRouteFlowDescription')} />
       )}
     </div>
   );

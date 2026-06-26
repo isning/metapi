@@ -11,6 +11,7 @@ import {
   buildRouteGraphSourceFromLegacyRoutes,
   compileRouteGraphSource,
 } from '../../shared/routeGraph.js';
+import { migratePreferenceSettingsToCurrentConfigVersion } from './configMigrationService.js';
 
 export type MigrationDialect = RuntimeSchemaDialect;
 
@@ -837,7 +838,10 @@ function buildStatements(
     });
   }
 
-  for (const row of snapshot.preferences.settings) {
+  const migratedPreferences = migratePreferenceSettingsToCurrentConfigVersion(
+    snapshot.preferences.settings.filter((row) => !RUNTIME_DATABASE_SETTING_KEYS.has(row.key)),
+  );
+  for (const row of migratedPreferences.settings) {
     if (RUNTIME_DATABASE_SETTING_KEYS.has(row.key)) {
       continue;
     }
@@ -919,6 +923,7 @@ export async function bootstrapRuntimeDatabaseSchema(input: Pick<NormalizedDatab
 export async function migrateCurrentDatabase(input: DatabaseMigrationInput): Promise<DatabaseMigrationSummary> {
   const normalized = normalizeMigrationInput(input);
   const snapshot = await toBackupSnapshot();
+  const statements = buildStatements(snapshot);
   const client = await createClient(normalized);
 
   try {
@@ -930,7 +935,7 @@ export async function migrateCurrentDatabase(input: DatabaseMigrationInput): Pro
       if (normalized.overwrite) {
         await clearTargetData(client);
       }
-      await insertAllRows(client, buildStatements(snapshot));
+      await insertAllRows(client, statements);
       await syncPostgresSequences(client);
       await client.commit();
     } catch (error) {
@@ -966,7 +971,7 @@ export async function migrateCurrentDatabase(input: DatabaseMigrationInput): Pro
       proxyFiles: snapshot.accounts.proxyFiles.length,
       downstreamApiKeys: snapshot.accounts.downstreamApiKeys.length,
       events: snapshot.accounts.events.length,
-      settings: snapshot.preferences.settings.length,
+      settings: statements.filter((statement) => statement.table === 'settings').length,
       routeGroupSources: snapshot.accounts.routeGroupSources.length,
     },
   };

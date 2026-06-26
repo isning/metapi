@@ -543,6 +543,33 @@ function isLegacyProxyTargetBackfillStatement(
   return false;
 }
 
+function isReplayedWalletAcquisitionCurrencyRebuildStatement(
+  sqlite: Database.Database,
+  statement: string,
+): boolean {
+  if (!columnExists(sqlite, 'wallet_acquisition_profiles', 'wallet_unit')) {
+    return false;
+  }
+  if (columnExists(sqlite, 'wallet_acquisition_profiles', 'wallet_currency')) {
+    return false;
+  }
+
+  const normalized = normalizeSqlForMatch(statement);
+  if (!normalized.includes('wallet_acquisition_profiles')) {
+    return false;
+  }
+
+  return normalized.includes('wallet_acquisition_profiles_next')
+    || (
+      normalized.includes('drop table wallet_acquisition_profiles')
+      && !normalized.includes('wallet_acquisition_profiles_')
+    )
+    || (
+      normalized.includes('alter table wallet_acquisition_profiles_next')
+      && normalized.includes('rename to wallet_acquisition_profiles')
+    );
+}
+
 function isSitesPlatformUrlUniqueConflictError(error: unknown): boolean {
   const lowered = normalizeSchemaErrorMessage(error).toLowerCase();
   if (!lowered.includes('unique constraint failed: sites.platform, sites.url')) {
@@ -563,6 +590,7 @@ function replayMigrationStatements(sqlite: Database.Database, statements: string
     if (
       isReplacedRouteGraphLegacyTokenRoutesStatement(sqlite, statement)
       || isLegacyProxyTargetBackfillStatement(sqlite, statement)
+      || isReplayedWalletAcquisitionCurrencyRebuildStatement(sqlite, statement)
     ) {
       continue;
     }

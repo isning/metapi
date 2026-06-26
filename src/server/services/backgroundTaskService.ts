@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { db, schema } from '../db/index.js';
 import { sendNotification } from './notifyService.js';
+import { emitInboxItem } from './inboxService.js';
 
 export type BackgroundTaskStatus = 'pending' | 'running' | 'succeeded' | 'failed';
 
@@ -153,18 +153,27 @@ export function subscribeToBackgroundTaskLogs(
   };
 }
 
-async function appendTaskEvent(level: 'info' | 'warning' | 'error', title: string, message: string, taskId: string) {
+async function appendTaskEvent(
+  level: 'info' | 'warning' | 'error',
+  title: string,
+  message: string,
+  taskId: string,
+  options: { scope?: 'notification' | 'activity' } = {},
+) {
   try {
-    await db.insert(schema.events).values({
+    await emitInboxItem({
+      scope: options.scope || 'notification',
+      category: 'system',
       type: 'status',
       title,
+      summary: message,
       message,
       level,
+      subject: { type: 'task', id: taskId, label: title },
       relatedType: 'task',
-      createdAt: nowIso(),
-    }).run();
+      source: 'background_task',
+    });
   } catch {}
-  void taskId;
 }
 
 async function runTask(taskId: string, options: BackgroundTaskStartOptions, runner: () => Promise<unknown>) {
@@ -276,7 +285,7 @@ export function startBackgroundTask(
   taskLogSeq.set(task.id, 0);
   if (dedupeKey) dedupeTaskIds.set(dedupeKey, task.id);
 
-  appendTaskEvent('info', `${task.title}已开始`, `${task.title} 已开始执行`, task.id);
+  appendTaskEvent('info', `${task.title}已开始`, `${task.title} 已开始执行`, task.id, { scope: 'activity' });
   void runTask(task.id, options, runner);
   return { task, reused: false };
 }

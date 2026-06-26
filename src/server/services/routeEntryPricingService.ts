@@ -13,7 +13,9 @@ import {
   matchesTokenRouteModelPattern,
   parseTokenRouteRegexPattern,
 } from '../../shared/tokenRoutePatterns.js';
-import { quoteEndpointPricing, type PricingResolution } from './pricingQuoteService.js';
+import { comparePricingSummaries } from './pricingComparisonService.js';
+import { quoteEndpointPricing, quoteReferencePricing, type EffectiveCostQuote, type PricingResolution } from './pricingQuoteService.js';
+import type { PricingResolutionSummary } from './pricingQuoteTypes.js';
 import {
   estimateRuntimeSelectorProbabilities,
   type RuntimeSelectorCandidate,
@@ -35,9 +37,19 @@ export type EntryPricingCandidate = {
   inputPerMillion: number | null;
   outputPerMillion: number | null;
   totalCostUsd: number | null;
+  effectiveCost: EffectiveCostQuote | null;
   pricingId: number | null;
   matchedScope: string | null;
   sourceRef: RouteProgramSourceRef;
+};
+
+export type EntryEffectiveCostEstimate = {
+  walletCostBaseCurrency: number | null;
+  baseCostUnit: string | null;
+  freeQuotaDaysCost: number | null;
+  balanceBurn: Array<{ unit: string; amount: number }>;
+  estimateLevel: EntryPricingEstimateLevel;
+  diagnostics: Array<{ level: 'info' | 'warn' | 'error'; message: string }>;
 };
 
 export type EntryPricingEstimate = {
@@ -47,6 +59,8 @@ export type EntryPricingEstimate = {
   inputMultiplier: number | null;
   outputMultiplier: number | null;
   totalMultiplier: number | null;
+  effectiveCost: EntryEffectiveCostEstimate | null;
+  reference: PricingResolutionSummary | null;
   sourceCount: number;
   estimateLevel: EntryPricingEstimateLevel;
   strategy: string | null;
@@ -58,9 +72,6 @@ export type EntryPricingProbabilityOverride = {
   targetId: string | number | null | undefined;
   probability: number | null | undefined;
 };
-
-const ENTRY_PRICE_MULTIPLIER_BASE_PER_MILLION = 2;
-const TOTAL_MULTIPLIER_BASE = ENTRY_PRICE_MULTIPLIER_BASE_PER_MILLION * 2;
 
 type WeightedTarget = {
   target: CompiledEndpointTarget;
@@ -108,14 +119,84 @@ function roundPrice(value: number | null): number | null {
   return Math.round(value * 1_000_000) / 1_000_000;
 }
 
-function toMultiplier(price: number | null): number | null {
-  if (price == null) return null;
-  return roundPrice(price / ENTRY_PRICE_MULTIPLIER_BASE_PER_MILLION);
+function mergeEstimateLevel(
+  current: EntryPricingEstimateLevel,
+  next: EffectiveCostQuote['estimateLevel'] | EntryPricingEstimateLevel,
+): EntryPricingEstimateLevel {
+  if (current === 'incomplete' || next === 'incomplete') return 'incomplete';
+  if (current === 'static_estimate' || next === 'estimated') return 'static_estimate';
+  return 'exact';
 }
 
-function totalMultiplier(total: number | null): number | null {
-  if (total == null) return null;
-  return roundPrice(total / TOTAL_MULTIPLIER_BASE);
+function aggregateBalanceBurn(
+  buckets: Array<{ unit: string; amount: number }>,
+): Array<{ unit: string; amount: number }> {
+  const byUnit = new Map<string, number>();
+  for (const bucket of buckets) {
+    const unit = String(bucket.unit || '').trim().toUpperCase();
+    const amount = Number(bucket.amount);
+    if (!unit || !Number.isFinite(amount)) continue;
+    byUnit.set(unit, (byUnit.get(unit) || 0) + amount);
+  }
+  return [...byUnit.entries()]
+    .map(([unit, amount]) => ({ unit, amount: roundPrice(amount) ?? amount }))
+    .sort((a, b) => a.unit.localeCompare(b.unit));
+}
+
+function aggregateEffectiveCost(
+  candidates: EntryPricingCandidate[],
+  fallbackProbabilityByTargetId: Map<string, number>,
+): EntryEffectiveCostEstimate | null {
+  let weightedWallet = 0;
+  let walletWeight = 0;
+  let weightedFreeDays = 0;
+  let freeDaysWeight = 0;
+  let estimateLevel: EntryPricingEstimateLevel = 'exact';
+  const baseCostUnits = new Set<string>();
+  const balanceBurnBuckets: Array<{ unit: string; amount: number }> = [];
+  const diagnostics: EntryEffectiveCostEstimate['diagnostics'] = [];
+
+  for (const candidate of candidates) {
+    const effective = candidate.effectiveCost;
+    if (!effective) continue;
+    const probability = candidate.probability ?? fallbackProbabilityByTargetId.get(candidate.targetId) ?? null;
+    if (probability == null) {
+      estimateLevel = 'incomplete';
+      continue;
+    }
+    estimateLevel = mergeEstimateLevel(estimateLevel, effective.estimateLevel);
+    if (effective.baseCostUnit) baseCostUnits.add(effective.baseCostUnit);
+    if (effective.walletCostBaseCurrency != null) {
+      weightedWallet += effective.walletCostBaseCurrency * probability;
+      walletWeight += probability;
+    }
+    if (effective.freeQuotaDaysCost != null) {
+      weightedFreeDays += effective.freeQuotaDaysCost * probability;
+      freeDaysWeight += probability;
+    }
+    for (const bucket of effective.balanceBurn) {
+      balanceBurnBuckets.push({
+        unit: bucket.unit,
+        amount: bucket.amount * probability,
+      });
+    }
+    diagnostics.push(...effective.diagnostics);
+  }
+
+  if (walletWeight <= 0 && freeDaysWeight <= 0 && balanceBurnBuckets.length === 0) return null;
+  if (baseCostUnits.size > 1) {
+    diagnostics.push({ level: 'warn', message: 'Mixed base cost units prevent a single wallet cost total.' });
+    estimateLevel = 'incomplete';
+  }
+
+  return {
+    walletCostBaseCurrency: walletWeight > 0 && baseCostUnits.size <= 1 ? roundPrice(weightedWallet / walletWeight) : null,
+    baseCostUnit: baseCostUnits.size === 1 ? [...baseCostUnits][0] : null,
+    freeQuotaDaysCost: freeDaysWeight > 0 ? roundPrice(weightedFreeDays / freeDaysWeight) : null,
+    balanceBurn: aggregateBalanceBurn(balanceBurnBuckets),
+    estimateLevel,
+    diagnostics,
+  };
 }
 
 function normalizeProbabilityRatio(value: unknown): number | null {
@@ -160,6 +241,10 @@ function recalculateEntryPricingEstimate(
   const inputPerMillion = inputWeight > 0 ? roundPrice(weightedInput / inputWeight) : null;
   const outputPerMillion = outputWeight > 0 ? roundPrice(weightedOutput / outputWeight) : null;
   const totalCostUsd = totalWeight > 0 ? roundPrice(weightedTotal / totalWeight) : null;
+  const comparison = comparePricingSummaries(
+    { inputPerMillion, outputPerMillion, totalCostUsd },
+    estimate.reference,
+  );
   const estimateLevel: EntryPricingEstimateLevel = hasUnknownProbability
     ? 'incomplete'
     : (estimate.diagnostics.length > 0 ? 'static_estimate' : 'exact');
@@ -169,9 +254,10 @@ function recalculateEntryPricingEstimate(
     inputPerMillion,
     outputPerMillion,
     totalCostUsd,
-    inputMultiplier: toMultiplier(inputPerMillion),
-    outputMultiplier: toMultiplier(outputPerMillion),
-    totalMultiplier: totalMultiplier(totalCostUsd),
+    inputMultiplier: comparison.inputMultiplier,
+    outputMultiplier: comparison.outputMultiplier,
+    totalMultiplier: comparison.totalMultiplier,
+    effectiveCost: aggregateEffectiveCost(candidates, fallbackProbabilityByTargetId),
     sourceCount: candidates.filter((candidate) => (
       candidate.totalCostUsd != null
       || candidate.inputPerMillion != null
@@ -492,6 +578,13 @@ export async function estimateRouteEntryPricing(input: {
     })();
   if (!collected) return null;
   const diagnostics: EntryPricingEstimate['diagnostics'] = [];
+  const referenceQuote = await quoteReferencePricing({
+    subject: {
+      modelName: input.requestedModel,
+    },
+    usageProfile: 'preview_1m_io',
+  });
+  const reference = referenceQuote.reference?.summary ?? null;
   let weightedInput = 0;
   let inputWeight = 0;
   let weightedOutput = 0;
@@ -529,6 +622,7 @@ export async function estimateRouteEntryPricing(input: {
         inputPerMillion: null,
         outputPerMillion: null,
         totalCostUsd: null,
+        effectiveCost: null,
         pricingId: null,
         matchedScope: null,
         sourceRef: target.sourceRef || {},
@@ -584,6 +678,7 @@ export async function estimateRouteEntryPricing(input: {
       inputPerMillion,
       outputPerMillion,
       totalCostUsd,
+      effectiveCost: quote.effectiveCost,
       pricingId: typeof evaluated?.sourceId === 'number' ? evaluated.sourceId : null,
       matchedScope: evaluated?.matchedScope ?? null,
       sourceRef: target.sourceRef || {},
@@ -637,6 +732,7 @@ export async function estimateRouteEntryPricing(input: {
   const inputPerMillion = inputWeight > 0 ? roundPrice(weightedInput / inputWeight) : null;
   const outputPerMillion = outputWeight > 0 ? roundPrice(weightedOutput / outputWeight) : null;
   const totalCostUsd = totalWeight > 0 ? roundPrice(weightedTotal / totalWeight) : null;
+  const comparison = comparePricingSummaries({ inputPerMillion, outputPerMillion, totalCostUsd }, reference);
   const displayCandidates = collected.incomplete
     ? applyFallbackCandidateProbabilities(candidates, displayFallbackProbabilityByTargetId)
     : candidates;
@@ -648,9 +744,11 @@ export async function estimateRouteEntryPricing(input: {
     inputPerMillion,
     outputPerMillion,
     totalCostUsd,
-    inputMultiplier: toMultiplier(inputPerMillion),
-    outputMultiplier: toMultiplier(outputPerMillion),
-    totalMultiplier: totalMultiplier(totalCostUsd),
+    inputMultiplier: comparison.inputMultiplier,
+    outputMultiplier: comparison.outputMultiplier,
+    totalMultiplier: comparison.totalMultiplier,
+    effectiveCost: aggregateEffectiveCost(displayCandidates, aggregateFallbackProbabilityByTargetId),
+    reference,
     sourceCount: candidates.filter((candidate) => candidate.totalCostUsd != null || candidate.inputPerMillion != null || candidate.outputPerMillion != null).length,
     estimateLevel,
     strategy: collected.strategies.size === 1 ? [...collected.strategies][0] : (collected.strategies.size > 1 ? 'mixed' : null),

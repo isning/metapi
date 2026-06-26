@@ -37,13 +37,15 @@ import EntityWorkspaceLayout from '../components/workspace/EntityWorkspaceLayout
 import ModelDetailsWorkspace from './models/ModelDetailsWorkspace.js';
 import {
   buildModelDetailsView,
+  getAccountCredentialCount,
+  getModelCredentialCount,
   type ModelDetailsTab,
   type ModelMetricsRange,
   type ModelRow,
 } from './models/modelDetailsView.js';
 import type { ModelRouteFlowData } from '../components/ModelRouteFlow.js';
 
-type SortColumn = 'name' | 'accountCount' | 'tokenCount' | 'avgLatency' | 'successRate';
+type SortColumn = 'name' | 'accountCount' | 'credentialCount' | 'avgLatency' | 'successRate';
 
 interface ModelsMarketplaceResponse {
   models: ModelRow[];
@@ -67,7 +69,7 @@ function formatLatency(latency: number | null): string {
 const PAGE_SIZES = [10, 20, 50];
 const SORT_OPTIONS: Array<{ key: SortColumn; label: string }> = [
   { key: 'accountCount', label: tr('pages.models.accounts') },
-  { key: 'tokenCount', label: tr('pages.models.tokens') },
+  { key: 'credentialCount', label: tr('pages.models.credentials') },
   { key: 'avgLatency', label: tr('components.modelRouteFlow.latency') },
   { key: 'successRate', label: tr('components.modelAnalysisPanel.successRate') },
   { key: 'name', label: tr('pages.models.name') },
@@ -87,6 +89,7 @@ function compareModels(a: ModelRow, b: ModelRow, sortBy: SortColumn, sortDir: 'a
       }
       return model.avgLatency;
     }
+    if (sortBy === 'credentialCount') return getModelCredentialCount(model);
     return model[sortBy] ?? 0;
   };
 
@@ -372,6 +375,9 @@ export default function Models() {
         pricingSources,
         accountCount: accounts.length,
         tokenCount: accounts.reduce((sum, account) => sum + account.tokens.length, 0),
+        managedTokenCount: accounts.reduce((sum, account) => sum + (account.managedTokenCount ?? account.tokens.length), 0),
+        credentialCount: accounts.reduce((sum, account) => sum + getAccountCredentialCount(account), 0),
+        endpointCount: accounts.reduce((sum, account) => sum + getAccountCredentialCount(account), 0),
         avgLatency: latencyValues.length > 0
           ? Math.round(latencyValues.reduce((sum, latency) => sum + latency, 0) / latencyValues.length)
           : null,
@@ -415,6 +421,7 @@ export default function Models() {
 
   /* ---- stats ---- */
   const totalCoverageSlots = detailModels.reduce((s, m) => s + m.accountCount, 0);
+  const totalCredentialSlots = detailModels.reduce((sum, model) => sum + getModelCredentialCount(model), 0);
   const uniqueAccountCount = (() => {
     const ids = new Set<number>();
     for (const model of detailModels) {
@@ -542,6 +549,7 @@ export default function Models() {
       <div className="flex flex-wrap items-center gap-2">
         <ToneBadge tone="-info">{tr('pages.models.total')} {filteredModels.length} {tr('pages.models.models2')}</ToneBadge>
         <ToneBadge tone="-muted">{tr('pages.models.coverageTier')} {totalCoverageSlots}</ToneBadge>
+        <ToneBadge tone="-muted">{tr('pages.models.credentials')} {totalCredentialSlots}</ToneBadge>
         <ToneBadge tone="-muted">{tr('pages.models.uniqueAccounts')} {uniqueAccountCount}</ToneBadge>
       </div>
       {filterControls}
@@ -564,11 +572,11 @@ export default function Models() {
                 <div className="min-w-0 flex-1">
                   <div className="truncate font-mono text-sm font-semibold">{model.name}</div>
                   <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-                    <span>{getBrand(model.name)?.name || 'unknown'}</span>
+                    <span>{getBrand(model.name)?.name || tr('pages.models.modelDetailsView.providerUnknown')}</span>
                     <span>·</span>
                     <span>{formatLatency(model.avgLatency)}</span>
                     <span>·</span>
-                    <span>{model.successRate == null ? 'unknown' : `${model.successRate}%`}</span>
+                    <span>{model.successRate == null ? tr('common.notAvailable') : `${model.successRate}%`}</span>
                   </div>
                   <div className="mt-2">
                     <ModelTags model={model} sites={sites.slice(0, 2)} />

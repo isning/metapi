@@ -60,7 +60,7 @@ describe('backupService', () => {
     delete process.env.DATA_DIR;
   });
 
-  it('exports backup-owned config in v2.2 backups and still roundtrips core connection fields', async () => {
+  it('exports backup-owned config in v2.4 backups and still roundtrips core connection fields', async () => {
     const now = new Date().toISOString();
     const site = await db.insert(schema.sites).values({
       name: 'roundtrip-site',
@@ -306,7 +306,7 @@ describe('backupService', () => {
     }).run();
 
     const exported = await backupService.exportBackup('all') as any;
-    expect(exported.version).toBe('2.2');
+    expect(exported.version).toBe('2.4');
     expect(exported.accounts.routeGraph.versions).toEqual(expect.arrayContaining([
       expect.objectContaining({
         sourceGraphJson: expect.stringContaining('entry:manual:roundtrip'),
@@ -460,14 +460,25 @@ describe('backupService', () => {
     const exported = await backupService.exportBackup('preferences') as any;
     const exportedSettingKeys = exported.preferences.settings.map((row: { key: string }) => row.key);
 
-    expect(exportedSettingKeys).toContain('routing_fallback_unit_cost');
+    expect(exportedSettingKeys).not.toContain('routing_fallback_unit_cost');
     expect(exported.preferences.settings).toEqual(expect.arrayContaining([
-      { key: 'metapi_config_version', value: '2.2' },
+      { key: 'metapi_config_version', value: '2.4' },
       {
         key: 'pricing_reference_config_v1',
         value: expect.objectContaining({
           schemaVersion: 1,
-          defaultReferenceMode: 'auto',
+        }),
+      },
+      {
+        key: 'platform_pricing_config_v1',
+        value: expect.objectContaining({
+          schemaVersion: 1,
+          baseCostUnit: 'USD',
+          upstreamDefaultPricing: expect.objectContaining({
+            inputPerMillion: 1,
+            outputPerMillion: 1,
+          }),
+          driftCheck: expect.objectContaining({ enabled: false }),
         }),
       },
     ]));
@@ -493,14 +504,23 @@ describe('backupService', () => {
 
     expect(result.sections.preferences).toBe(true);
     expect(result.appliedSettings).toEqual(expect.arrayContaining([
-      { key: 'routing_fallback_unit_cost', value: 0.25 },
-      { key: 'metapi_config_version', value: '2.2' },
+      { key: 'metapi_config_version', value: '2.4' },
       {
         key: 'pricing_reference_config_v1',
         value: expect.objectContaining({
           schemaVersion: 1,
-          defaultReferenceMode: 'auto',
-          fallbackProfile: 'system_default',
+        }),
+      },
+      {
+        key: 'platform_pricing_config_v1',
+        value: expect.objectContaining({
+          schemaVersion: 1,
+          baseCostUnit: 'USD',
+          upstreamDefaultPricing: expect.objectContaining({
+            inputPerMillion: 1,
+            outputPerMillion: 1,
+          }),
+          driftCheck: expect.objectContaining({ enabled: false }),
         }),
       },
     ]));
@@ -508,15 +528,16 @@ describe('backupService', () => {
     const settingsRows = await db.select().from(schema.settings).all();
     const savedKeys = settingsRows.map((row) => row.key);
 
-    expect(savedKeys).toContain('routing_fallback_unit_cost');
+    expect(savedKeys).not.toContain('routing_fallback_unit_cost');
     expect(savedKeys).toContain('metapi_config_version');
     expect(savedKeys).toContain('pricing_reference_config_v1');
+    expect(savedKeys).toContain('platform_pricing_config_v1');
     expect(savedKeys).not.toContain('db_type');
     expect(savedKeys).not.toContain('db_url');
     expect(savedKeys).not.toContain('db_ssl');
   });
 
-  it('migrates older preference backups to the current config version without overwriting pricing choices', async () => {
+  it('migrates older preference backups to the current config version while dropping obsolete reference strategy choices', async () => {
     const result = await backupService.importBackup({
       version: '2.1',
       timestamp: Date.now(),
@@ -549,16 +570,20 @@ describe('backupService', () => {
 
     expect(result.sections.preferences).toBe(true);
     expect(result.appliedSettings).toEqual(expect.arrayContaining([
-      { key: 'metapi_config_version', value: '2.2' },
+      { key: 'metapi_config_version', value: '2.4' },
       {
         key: 'pricing_reference_config_v1',
         value: expect.objectContaining({
-          defaultReferenceMode: 'manual',
-          fallbackProfile: 'free',
-          catalog: expect.objectContaining({
-            builtInCatalogEnabled: false,
-            providerCatalogSuggestionsEnabled: true,
+          sync: expect.objectContaining({
+            enabled: false,
+            replaceOnSync: true,
           }),
+        }),
+      },
+      {
+        key: 'platform_pricing_config_v1',
+        value: expect.objectContaining({
+          baseCostUnit: 'USD',
           driftCheck: expect.objectContaining({
             enabled: true,
             windowHours: 72,
@@ -575,11 +600,23 @@ describe('backupService', () => {
       .where(eq(schema.settings.key, 'pricing_reference_config_v1'))
       .get();
     expect(JSON.parse(pricingConfigRow?.value || '{}')).toMatchObject({
-      defaultReferenceMode: 'manual',
-      fallbackProfile: 'free',
-      catalog: {
-        builtInCatalogEnabled: false,
-        providerCatalogSuggestionsEnabled: true,
+      sync: {
+        enabled: false,
+        replaceOnSync: true,
+      },
+    });
+    expect(JSON.parse(pricingConfigRow?.value || '{}')).not.toHaveProperty('catalog');
+    expect(JSON.parse(pricingConfigRow?.value || '{}')).not.toHaveProperty('defaultReferenceMode');
+    expect(JSON.parse(pricingConfigRow?.value || '{}')).not.toHaveProperty('fallbackProfile');
+    expect(JSON.parse(pricingConfigRow?.value || '{}')).not.toHaveProperty('driftCheck');
+    const platformPricingConfigRow = await db.select().from(schema.settings)
+      .where(eq(schema.settings.key, 'platform_pricing_config_v1'))
+      .get();
+    expect(JSON.parse(platformPricingConfigRow?.value || '{}')).toMatchObject({
+      driftCheck: {
+        enabled: true,
+        windowHours: 72,
+        minSampleSize: 99,
       },
     });
   });
@@ -928,7 +965,7 @@ describe('backupService', () => {
     }).returning().get();
 
     const exported = await backupService.exportBackup('accounts') as any;
-    expect(exported.version).toBe('2.2');
+    expect(exported.version).toBe('2.4');
 
     await db.insert(schema.events).values({
       type: 'status',

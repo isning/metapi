@@ -151,7 +151,7 @@ export function SortableRouteTargetRow({
               </span>
 
               <ToneBadge tone="-muted">
-                {target.site?.name || 'unknown'}
+                {target.site?.name || tr('pages.proxyLogs.unknownSite')}
               </ToneBadge>
 
               <SuccessFailStat className="ml-auto" successCount={target.successCount} failCount={target.failCount} />
@@ -215,7 +215,7 @@ export function SortableRouteTargetRow({
             ) : null}
 
             <div className="flex flex-wrap items-center gap-1.5">
-              <span className="whitespace-nowrap text-xs text-muted-foreground">{tr('pages.tokenRoutes.sortableTargetRow.zhprobability')}</span>
+              <span className="whitespace-nowrap text-xs text-muted-foreground">{tr('pages.tokenRoutes.sortableTargetRow.selectionProbability')}</span>
               <ProbabilityIndicator
                 probability={decisionState.probability}
                 tooltip={suppressTooltips ? undefined : (decisionState.probability <= 0 ? decisionState.reasonText : undefined)}
@@ -337,7 +337,7 @@ export function SortableRouteTargetRow({
         </span>
 
         <ToneBadge tone="-muted">
-          {target.site?.name || 'unknown'}
+          {target.site?.name || tr('pages.proxyLogs.unknownSite')}
         </ToneBadge>
 
         <ToneBadge tone="">
@@ -399,7 +399,7 @@ export function SortableRouteTargetRow({
         ) : null}
 
         <div className="flex w-full flex-wrap items-center gap-1.5">
-          <span className="whitespace-nowrap text-xs text-muted-foreground">{tr('pages.tokenRoutes.sortableTargetRow.zhprobability')}</span>
+          <span className="whitespace-nowrap text-xs text-muted-foreground">{tr('pages.tokenRoutes.sortableTargetRow.selectionProbability')}</span>
           <ProbabilityIndicator
             probability={decisionState.probability}
             tooltip={suppressTooltips ? undefined : (decisionState.probability <= 0 ? decisionState.reasonText : undefined)}

@@ -1,6 +1,5 @@
 import 'dotenv/config';
 import type { FastifyServerOptions } from 'fastify';
-import { normalizePayloadRulesConfig } from './services/payloadRules.js';
 
 const DEFAULT_REQUEST_BODY_LIMIT = 20 * 1024 * 1024;
 const DEFAULT_PROXY_STREAM_MAX_SSE_BUFFER_BYTES = 16 * 1024 * 1024;
@@ -176,7 +175,6 @@ export function buildConfig(env: NodeJS.ProcessEnv) {
       userAgent: parseOptionalSecret(env.CODEX_HEADER_DEFAULTS_USER_AGENT),
       betaFeatures: parseOptionalSecret(env.CODEX_HEADER_DEFAULTS_BETA_FEATURES),
     },
-    payloadRules: normalizePayloadRulesConfig(parseJsonValue(env.PAYLOAD_RULES_JSON || env.PAYLOAD_RULES)),
     routingWeights: {
       baseWeightFactor: parseNumber(env.BASE_WEIGHT_FACTOR, 0.5),
       valueScoreFactor: parseNumber(env.VALUE_SCORE_FACTOR, 0.5),

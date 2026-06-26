@@ -232,6 +232,41 @@
       "when": 1782224453154,
       "tag": "0032_naive_violations",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "6",
+      "when": 1782241413042,
+      "tag": "0033_woozy_wild_pack",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "6",
+      "when": 1782280840665,
+      "tag": "0034_bright_ender_wiggin",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "6",
+      "when": 1782341525000,
+      "tag": "0035_cost_unit_wallet_acquisition",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "6",
+      "when": 1782403200000,
+      "tag": "0036_inbox_attention_events",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "6",
+      "when": 1782464400000,
+      "tag": "0037_model_day_usage_account",
+      "breakpoints": true
     }
   ]
 }

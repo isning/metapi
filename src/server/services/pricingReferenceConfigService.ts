@@ -5,43 +5,28 @@ import { upsertSetting } from '../db/upsertSetting.js';
 
 export const PRICING_REFERENCE_CONFIG_SETTING_KEY = 'pricing_reference_config_v1';
 
-export type PricingReferenceMode = 'auto' | 'manual' | 'default' | 'override';
-export type PricingFallbackProfile = 'system_default' | 'free' | 'unknown';
-
 export type PricingReferenceConfig = {
   schemaVersion: 1;
-  defaultReferenceMode: PricingReferenceMode;
-  fallbackProfile: PricingFallbackProfile;
-  catalog: {
-    builtInCatalogEnabled: boolean;
-    providerCatalogSuggestionsEnabled: boolean;
-  };
-  driftCheck: {
+  sync: {
     enabled: boolean;
-    windowHours: number;
-    minSampleSize: number;
-    relativeTolerance: number;
-    absoluteToleranceUsd: number;
-    notifyOnWarning: boolean;
+    url: string;
+    cron: string;
+    replaceOnSync: boolean;
+    lastSyncedAt: string | null;
+    lastError: string | null;
   };
 };
 
 export function getDefaultPricingReferenceConfig(): PricingReferenceConfig {
   return {
     schemaVersion: 1,
-    defaultReferenceMode: 'auto',
-    fallbackProfile: 'system_default',
-    catalog: {
-      builtInCatalogEnabled: true,
-      providerCatalogSuggestionsEnabled: true,
-    },
-    driftCheck: {
+    sync: {
       enabled: false,
-      windowHours: 24,
-      minSampleSize: 20,
-      relativeTolerance: 0.1,
-      absoluteToleranceUsd: 0.000001,
-      notifyOnWarning: true,
+      url: '',
+      cron: '0 3 * * *',
+      replaceOnSync: true,
+      lastSyncedAt: null,
+      lastError: null,
     },
   };
 }
@@ -54,58 +39,30 @@ function normalizeBoolean(value: unknown, fallback: boolean): boolean {
   return typeof value === 'boolean' ? value : fallback;
 }
 
-function normalizePositiveNumber(value: unknown, fallback: number): number {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+function normalizeString(value: unknown, fallback: string): string {
+  return typeof value === 'string' ? value.trim() : fallback;
 }
 
-function normalizeNonNegativeNumber(value: unknown, fallback: number): number {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
-}
-
-function normalizeReferenceMode(value: unknown, fallback: PricingReferenceMode): PricingReferenceMode {
-  return value === 'auto' || value === 'manual' || value === 'default' || value === 'override'
-    ? value
-    : fallback;
-}
-
-function normalizeFallbackProfile(value: unknown, fallback: PricingFallbackProfile): PricingFallbackProfile {
-  return value === 'system_default' || value === 'free' || value === 'unknown'
-    ? value
-    : fallback;
+function normalizeNullableString(value: unknown): string | null {
+  if (value == null) return null;
+  const text = String(value).trim();
+  return text || null;
 }
 
 export function normalizePricingReferenceConfig(input: unknown): PricingReferenceConfig {
   const defaults = getDefaultPricingReferenceConfig();
   const source = isRecord(input) ? input : {};
-  const catalog = isRecord(source.catalog) ? source.catalog : {};
-  const driftCheck = isRecord(source.driftCheck) ? source.driftCheck : {};
+  const sync = isRecord(source.sync) ? source.sync : {};
 
   return {
     schemaVersion: 1,
-    defaultReferenceMode: normalizeReferenceMode(source.defaultReferenceMode, defaults.defaultReferenceMode),
-    fallbackProfile: normalizeFallbackProfile(source.fallbackProfile, defaults.fallbackProfile),
-    catalog: {
-      builtInCatalogEnabled: normalizeBoolean(
-        catalog.builtInCatalogEnabled,
-        defaults.catalog.builtInCatalogEnabled,
-      ),
-      providerCatalogSuggestionsEnabled: normalizeBoolean(
-        catalog.providerCatalogSuggestionsEnabled,
-        defaults.catalog.providerCatalogSuggestionsEnabled,
-      ),
-    },
-    driftCheck: {
-      enabled: normalizeBoolean(driftCheck.enabled, defaults.driftCheck.enabled),
-      windowHours: Math.trunc(normalizePositiveNumber(driftCheck.windowHours, defaults.driftCheck.windowHours)),
-      minSampleSize: Math.trunc(normalizePositiveNumber(driftCheck.minSampleSize, defaults.driftCheck.minSampleSize)),
-      relativeTolerance: normalizeNonNegativeNumber(driftCheck.relativeTolerance, defaults.driftCheck.relativeTolerance),
-      absoluteToleranceUsd: normalizeNonNegativeNumber(
-        driftCheck.absoluteToleranceUsd,
-        defaults.driftCheck.absoluteToleranceUsd,
-      ),
-      notifyOnWarning: normalizeBoolean(driftCheck.notifyOnWarning, defaults.driftCheck.notifyOnWarning),
+    sync: {
+      enabled: normalizeBoolean(sync.enabled, defaults.sync.enabled),
+      url: normalizeString(sync.url, defaults.sync.url),
+      cron: normalizeString(sync.cron, defaults.sync.cron) || defaults.sync.cron,
+      replaceOnSync: normalizeBoolean(sync.replaceOnSync, defaults.sync.replaceOnSync),
+      lastSyncedAt: normalizeNullableString(sync.lastSyncedAt),
+      lastError: normalizeNullableString(sync.lastError),
     },
   };
 }

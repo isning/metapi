@@ -24,10 +24,12 @@ import {
   type OnReconnect,
 } from '@xyflow/react';
 import {
+  Braces,
   Boxes,
   ChevronDown,
   Check,
   Command as CommandIcon,
+  Download,
   Eye,
   GitBranch,
   GitFork,
@@ -36,6 +38,8 @@ import {
   ListTree,
   MoreHorizontal,
   Plus,
+  Rocket,
+  Save,
   Search,
   Settings2,
   Sparkles,
@@ -44,6 +48,7 @@ import {
   MousePointer2,
   Power,
   Trash2,
+  Upload,
   Wand2,
   Workflow,
   X,
@@ -69,10 +74,11 @@ import * as Tabs from '../../components/ui/tabs/index.js';
 import * as Tooltip from '../../components/ui/tooltip/index.js';
 import { DragHandleButton } from './DragHandleButton.js';
 import JsonCodeEditor from '../../components/JsonCodeEditor.js';
-import { NodeForm } from './NodeForm.js';
+import { FilterOperationsEditor, NodeForm } from './NodeForm.js';
 import type {
   AddTemplate,
   RouteGraphEdge,
+  RouteFilter,
   RouteGraphMacro,
   RouteGraphNode,
   RouteGraphNodeType,
@@ -84,14 +90,18 @@ import {
   ROUTE_GRAPH_NODE_TYPES,
   ROUTE_GRAPH_VISUAL_COLORS,
   buildAddTemplates,
+  getNodeDefinitionDetail,
+  getNodeDefinitionKicker,
+  getNodeDefinitionTitle,
   getNodePorts,
+  getTemplateDetail,
+  getTemplateKicker,
+  getTemplateTitle,
   makeNode,
-  routeGraphNodeDefinitions,
   templateAccent,
 } from './routeGraphRegistry.js';
 import {
   getGraphFacts,
-  getModelListSubtitle,
   getNodeCardMetrics,
   getNodeCardSubtitle,
   getNodeConnections,
@@ -101,13 +111,15 @@ import {
   getNodeSubtitle,
   getNodeTitle,
   getOutlineSubtitle,
+  filterPublicModelEntryRows,
   getPortCollectionKind,
   getPortConnectionCount,
   getPortDisplayLabel,
   getPortModeNote,
   getPortSummary,
   getPortTypeSignature,
-  getPublicEntryNodes,
+  getPublicModelEntryRows,
+  type PublicModelEntryRow,
 } from './routeGraphViewModel.js';
 import {
   macroFlowNodeId,
@@ -237,6 +249,7 @@ const INSPECTOR_TABS = ['Overview', 'Config', 'Ports', 'Connections', 'JSON'] as
 const BOTTOM_TABS = ['Diagnostics', 'Diff', 'History'] as const;
 const QUICK_TEMPLATE_IDS = ['entry', 'dispatcher', 'route_endpoint', 'reasoning_effort'] as const;
 const ROUTE_GRAPH_MINIMAP_NODE_LIMIT = 240;
+const ROUTE_GRAPH_SIDEBAR_RENDER_LIMIT = 180;
 export const DEFAULT_ROUTE_GRAPH_VIEW_STATE: ViewState = {
   showGeneratedPrimitives: false,
   expandedMacroIds: [],
@@ -250,6 +263,30 @@ function normalizeEndpointId(value: unknown): string {
 
 function routeGraphAccentStyle(color: string): CSSProperties {
   return { '--route-graph-accent': color } as CSSProperties;
+}
+
+function isSelectionEqual(left: SelectionState, right: SelectionState): boolean {
+  if (left.kind !== right.kind) return false;
+  if (left.kind === 'graph') return true;
+  if (left.kind === 'node' && right.kind === 'node') return left.nodeId === right.nodeId;
+  if (left.kind === 'edge' && right.kind === 'edge') return left.edgeId === right.edgeId;
+  if (left.kind === 'macro' && right.kind === 'macro') return left.macroId === right.macroId;
+  return left.kind === 'port'
+    && right.kind === 'port'
+    && left.nodeId === right.nodeId
+    && left.portId === right.portId;
+}
+
+function isGraphSelectionEqual(left: GraphSelectionState, right: GraphSelectionState): boolean {
+  if (left.nodeIds.length !== right.nodeIds.length || left.edgeIds.length !== right.edgeIds.length) return false;
+  return left.nodeIds.every((nodeId, index) => nodeId === right.nodeIds[index])
+    && left.edgeIds.every((edgeId, index) => edgeId === right.edgeIds[index]);
+}
+
+function visibleSidebarItems<T>(items: T[]): T[] {
+  return items.length > ROUTE_GRAPH_SIDEBAR_RENDER_LIMIT
+    ? items.slice(0, ROUTE_GRAPH_SIDEBAR_RENDER_LIMIT)
+    : items;
 }
 
 function hiddenSupplyAnchorNodeId(macroId: string): string {
@@ -462,14 +499,30 @@ function normalizeGraph(input: unknown): RouteGraphSource {
 }
 
 export function filterGraphForView(graph: RouteGraphSource, view: ViewState): RouteGraphSource {
-  const semanticGraph = layoutRouteGraph({
+  const expandedMacroIds = new Set(view.expandedMacroIds);
+  const expandedSupplyMacroIds = new Set(view.expandedSupplyMacroIds || []);
+  const needsGeneratedNodes = view.showGeneratedPrimitives || expandedMacroIds.size > 0 || expandedSupplyMacroIds.size > 0;
+  const macroLayoutInput = {
     ...graph,
+    nodes: graph.nodes.filter((node) => node.ownership !== 'auto_generated' && node.ownership !== 'derived'),
     macros: graph.macros.map((macro) => (
       macro.ownership === 'manual' ? macro : { ...macro, position: undefined }
     )),
-  }, { preserveExistingPositions: true });
-  const expandedMacroIds = new Set(view.expandedMacroIds);
-  const expandedSupplyMacroIds = new Set(view.expandedSupplyMacroIds || []);
+  };
+  const macroLayoutGraph = layoutRouteGraph(macroLayoutInput, { preserveExistingPositions: true });
+  const macroPositionById = new Map(macroLayoutGraph.macros.map((macro) => [macro.id, macro.position]));
+  const semanticGraph = needsGeneratedNodes
+    ? {
+      ...layoutRouteGraph({
+        ...graph,
+        macros: macroLayoutInput.macros,
+      }, { preserveExistingPositions: true }),
+      macros: macroLayoutGraph.macros.map((macro) => ({
+        ...macro,
+        position: macroPositionById.get(macro.id) || macro.position,
+      })),
+    }
+    : macroLayoutGraph;
   const usePrimitiveGraph = view.showGeneratedPrimitives || expandedMacroIds.size > 0;
   const primitiveGraph = usePrimitiveGraph ? getPrimitiveGraphForView(semanticGraph) : semanticGraph;
   const expandedPrimitiveNodeIds = new Set<string>();
@@ -517,9 +570,17 @@ export function filterGraphForView(graph: RouteGraphSource, view: ViewState): Ro
           .filter((position) => Math.abs(position.x - ((macro.position?.x || 120) + EXPANDED_MACRO_INPUT_X_OFFSET)) < 1)
         : [];
       for (const node of supplyNodes) expandedSupplyNodeIds.add(node.id);
-      for (const [nodeId, position] of getAnchoredMacroSupplyPositions(macro, supplyNodes, occupiedInputPositions)) {
+      const supplyPositions = getAnchoredMacroSupplyPositions(macro, supplyNodes, occupiedInputPositions);
+      for (const [nodeId, position] of supplyPositions) {
         expandedSupplyPositions.set(nodeId, position);
       }
+      expandedReservations.push(...getExpandedPositionReservations(
+        macro.id,
+        [
+          ...supplyPositions.map(([, position]) => position),
+          ...supplyPositions.map(([, position]) => ({ ...position, x: macro.position?.x || 120 })),
+        ],
+      ));
     }
   }
   const visibleNodeIds = new Set<string>();
@@ -647,12 +708,30 @@ export type MacroGeneratedPreviewGraph = {
   edges: RouteGraphEdge[];
 };
 
+export type MacroGeneratedFocusPlan = {
+  reveal: 'macro' | 'supply';
+  fallbackPosition: { x: number; y: number } | null;
+};
+
+export type RouteGraphNodeFocusPlan =
+  | { kind: 'visible_node'; nodeId: string }
+  | { kind: 'macro'; macroId: string }
+  | ({ kind: 'generated_node'; macroId: string; nodeId: string } & MacroGeneratedFocusPlan)
+  | { kind: 'missing'; nodeId: string };
+
+export type RouteGraphConnectedFocusTarget = {
+  edge: RouteGraphEdge | null;
+  peerNodeId: string;
+  macroId: string | null;
+};
+
 const EXPANDED_MACRO_INPUT_X_OFFSET = -276;
 const EXPANDED_MACRO_OUTPUT_X_OFFSET = 276;
 const EXPANDED_MACRO_STACK_Y_GAP = 96;
 const EXPANDED_MACRO_ESTIMATED_NODE_HEIGHT = 96;
 const EXPANDED_MACRO_RESERVED_GAP = 32;
 const EXPANDED_MACRO_COLLISION_COLUMN_WIDTH = 172;
+const EXPANDED_MACRO_RESERVATION_MIN_Y = 96;
 const HIDDEN_SUPPLY_CONTROL_LENGTH = 72;
 const HIDDEN_SUPPLY_DISPATCHER_CONTROL_LENGTH = 38;
 const HIDDEN_SUPPLY_CONTROL_PORT_ROW_HEIGHT = 15;
@@ -704,6 +783,137 @@ function getPrimitiveEdgeMacroRole(edge: RouteGraphEdge): string {
   return typeof provenance?.role === 'string' ? provenance.role : '';
 }
 
+export function getMacroGeneratedFocusPlan(
+  graph: RouteGraphSource,
+  macroId: string,
+  nodeId: string,
+  view: ViewState = DEFAULT_ROUTE_GRAPH_VIEW_STATE,
+): MacroGeneratedFocusPlan {
+  const macro = graph.macros.find((item) => item.id === macroId) || null;
+  if (!macro) return { reveal: 'macro', fallbackPosition: null };
+
+  const semanticCandidateEdges = getMacroSemanticCandidateEdges(graph, macro);
+  const semanticCandidateNode = graph.nodes.find((node) => node.id === nodeId) || null;
+  const isSupplyCandidate = semanticCandidateNode?.type === 'route_endpoint'
+    && semanticCandidateNode.endpointKind === 'supply'
+    && semanticCandidateEdges.some((edge) => edge.sourceNodeId === nodeId);
+
+  if (isSupplyCandidate) {
+    const primitiveGraph = getPrimitiveGraphForView(graph);
+    const supplyNodes = getSupplyNodesForSemanticCandidateEdges(graph, semanticCandidateEdges);
+    const candidateNodeIds = new Set(getMacroCandidateNodeIdsFromEdges(primitiveGraph, macro.id));
+    const occupiedInputPositions = view.expandedMacroIds.includes(macro.id)
+      ? getAnchoredMacroPrimitivePositions(primitiveGraph, macro, supplyNodes.length, candidateNodeIds)
+        .map(([, position]) => position)
+        .filter((position) => Math.abs(position.x - ((macro.position?.x || 120) + EXPANDED_MACRO_INPUT_X_OFFSET)) < 1)
+      : [];
+    return {
+      reveal: 'supply',
+      fallbackPosition: getAnchoredMacroSupplyPositions(macro, supplyNodes, occupiedInputPositions)
+        .find(([id]) => id === nodeId)?.[1] || null,
+    };
+  }
+
+  const primitiveGraph = getPrimitiveGraphForView(graph);
+  return {
+    reveal: 'macro',
+    fallbackPosition: getAnchoredMacroPrimitivePositions(primitiveGraph, macro)
+      .find(([id]) => id === nodeId)?.[1] || null,
+  };
+}
+
+export function getRouteGraphNodeFocusPlan(
+  graph: RouteGraphSource,
+  visibleGraph: RouteGraphSource,
+  nodeId: string,
+  view: ViewState = DEFAULT_ROUTE_GRAPH_VIEW_STATE,
+  macroId?: string | null,
+): RouteGraphNodeFocusPlan {
+  if (visibleGraph.nodes.some((node) => node.id === nodeId)) {
+    return { kind: 'visible_node', nodeId };
+  }
+
+  const directMacro = findMacroByIdOrFlowNodeId(graph, nodeId);
+  if (directMacro) return { kind: 'macro', macroId: directMacro.id };
+
+  const ownerMacro = macroId
+    ? findMacroByIdOrFlowNodeId(graph, macroId) || findMacroForGeneratedPrimitive(graph, nodeId)
+    : findMacroForGeneratedPrimitive(graph, nodeId);
+  if (!ownerMacro) return { kind: 'missing', nodeId };
+
+  return {
+    kind: 'generated_node',
+    macroId: ownerMacro.id,
+    nodeId,
+    ...getMacroGeneratedFocusPlan(graph, ownerMacro.id, nodeId, view),
+  };
+}
+
+function getRouteGraphEdgeMacroCandidates(graph: RouteGraphSource, edge: RouteGraphEdge, peerNodeId: string): string[] {
+  const candidates = new Set<string>();
+  const focusContext = getMacroFocusContextForEdgeNode(graph, edge, peerNodeId);
+  if (focusContext) candidates.add(focusContext);
+  const sourceMacro = findMacroByIdOrFlowNodeId(graph, edge.sourceNodeId);
+  const targetMacro = findMacroByIdOrFlowNodeId(graph, edge.targetNodeId);
+  if (sourceMacro) candidates.add(sourceMacro.id);
+  if (targetMacro) candidates.add(targetMacro.id);
+  const primitiveMacroId = getPrimitiveEdgeMacroId(edge);
+  if (primitiveMacroId) candidates.add(primitiveMacroId);
+  const sourceOwner = findMacroForGeneratedPrimitive(graph, edge.sourceNodeId);
+  const targetOwner = findMacroForGeneratedPrimitive(graph, edge.targetNodeId);
+  if (sourceOwner) candidates.add(sourceOwner.id);
+  if (targetOwner) candidates.add(targetOwner.id);
+  return [...candidates];
+}
+
+export function getRouteGraphConnectedFocusTarget(
+  graph: RouteGraphSource,
+  visibleGraph: RouteGraphSource,
+  nodeId: string,
+  direction: 'upstream' | 'downstream',
+  view: ViewState = DEFAULT_ROUTE_GRAPH_VIEW_STATE,
+): RouteGraphConnectedFocusTarget {
+  const expectedDirection = direction === 'downstream' ? 'outbound' : 'inbound';
+  const seen = new Set<string>();
+  const candidates: Array<{ edge: RouteGraphEdge; peerNodeId: string; visible: boolean; index: number }> = [];
+
+  const addEdge = (edge: RouteGraphEdge, visible: boolean) => {
+    if (direction === 'downstream' ? edge.sourceNodeId !== nodeId : edge.targetNodeId !== nodeId) return;
+    if (seen.has(edge.id)) return;
+    seen.add(edge.id);
+    candidates.push({
+      edge,
+      peerNodeId: direction === 'downstream' ? edge.targetNodeId : edge.sourceNodeId,
+      visible,
+      index: candidates.length,
+    });
+  };
+
+  for (const connection of getNodeConnections(graph, nodeId)) {
+    if (connection.direction === expectedDirection) addEdge(connection.edge, false);
+  }
+  for (const edge of visibleGraph.edges) addEdge(edge, true);
+
+  if (candidates.length === 0) return { edge: null, peerNodeId: nodeId, macroId: null };
+
+  const expandedSupplyMacroIds = new Set(view.expandedSupplyMacroIds || []);
+  const expandedMacroIds = new Set(view.expandedMacroIds || []);
+  const scored = candidates.map((candidate) => {
+    const macroIds = getRouteGraphEdgeMacroCandidates(graph, candidate.edge, candidate.peerNodeId);
+    let score = candidate.visible ? 10 : 0;
+    if (macroIds.some((macroId) => expandedSupplyMacroIds.has(macroId))) score += 40;
+    if (macroIds.some((macroId) => expandedMacroIds.has(macroId))) score += 30;
+    return { ...candidate, score };
+  }).sort((left, right) => right.score - left.score || left.index - right.index);
+
+  const selected = scored[0]!;
+  return {
+    edge: selected.edge,
+    peerNodeId: selected.peerNodeId,
+    macroId: getMacroFocusContextForEdgeNode(graph, selected.edge, selected.peerNodeId),
+  };
+}
+
 function getMacroCandidateNodeIdsFromEdges(primitiveGraph: RouteGraphSource, macroId: string): string[] {
   const candidateNodeIds = new Set<string>();
   const generatedNodeIds = new Set(
@@ -735,6 +945,20 @@ function getMacroSemanticCandidateEdges(graph: RouteGraphSource, macro: RouteGra
     && edge.targetPortId === 'candidates.in'
     && edge.sourcePortId === 'route.out'
   ));
+}
+
+function getMacroSemanticCandidateEdgesByMacroId(graph: RouteGraphSource): Map<string, RouteGraphEdge[]> {
+  const macroIdsByFlowNodeId = new Map(graph.macros.map((macro) => [macroFlowNodeId(macro.id), macro.id]));
+  const edgesByMacroId = new Map<string, RouteGraphEdge[]>();
+  for (const edge of graph.edges) {
+    if (edge.targetPortId !== 'candidates.in' || edge.sourcePortId !== 'route.out') continue;
+    const macroId = macroIdsByFlowNodeId.get(edge.targetNodeId);
+    if (!macroId) continue;
+    const existing = edgesByMacroId.get(macroId) || [];
+    existing.push(edge);
+    edgesByMacroId.set(macroId, existing);
+  }
+  return edgesByMacroId;
 }
 
 export function getMacroGeneratedPreviewGraph(graph: RouteGraphSource, macro: RouteGraphMacro): MacroGeneratedPreviewGraph {
@@ -902,7 +1126,15 @@ export function getMacroGeneratedPreviewRows(graph: RouteGraphSource, macro: Rou
   });
 }
 
-export function getMacroPriorityGroupCount(macro: RouteGraphMacro, generatedRows: MacroGeneratedPreviewRow[] = []): number {
+export function getMacroPriorityBandCount(macro: RouteGraphMacro, generatedRows: MacroGeneratedPreviewRow[] = []): number {
+  const groupPriorities = new Set<number>();
+  for (const group of getMacroGroupPreviews(macro)) {
+    if (!group.enabled) continue;
+    const priority = Number(group.priority);
+    if (Number.isFinite(priority)) groupPriorities.add(Math.trunc(priority));
+  }
+  if (groupPriorities.size > 0) return groupPriorities.size;
+
   const rowPriorities = new Set<number>();
   for (const row of generatedRows) {
     const priority = Number(row.priority);
@@ -910,12 +1142,6 @@ export function getMacroPriorityGroupCount(macro: RouteGraphMacro, generatedRows
   }
   if (rowPriorities.size > 0) return rowPriorities.size;
 
-  const groupPriorities = new Set<number>();
-  for (const group of getMacroGroupPreviews(macro)) {
-    if (!group.enabled) continue;
-    const priority = Number(group.priority);
-    if (Number.isFinite(priority)) groupPriorities.add(Math.trunc(priority));
-  }
   return groupPriorities.size;
 }
 
@@ -983,10 +1209,20 @@ function getExpandedMacroReservations(
   extraInputSlotCount = 0,
   excludedInputNodeIds: ReadonlySet<string> = new Set(),
 ): ExpandedMacroReservation[] {
-  const positions = getAnchoredMacroPrimitivePositions(primitiveGraph, macro, extraInputSlotCount, excludedInputNodeIds);
   const anchor = macro.position || { x: 120, y: 120 };
+  const positions = getAnchoredMacroPrimitivePositions(primitiveGraph, macro, extraInputSlotCount, excludedInputNodeIds);
+  return getExpandedPositionReservations(macro.id, positions.length > 0
+    ? positions.map(([, position]) => position)
+    : [anchor]);
+}
+
+function getExpandedPositionReservations(
+  macroId: string,
+  positions: Array<{ x: number; y: number }>,
+): ExpandedMacroReservation[] {
+  if (positions.length === 0) return [];
   const byColumn = new Map<number, { top: number; bottom: number }>();
-  for (const [, position] of positions.length > 0 ? positions : [[macroFlowNodeId(macro.id), anchor] as const]) {
+  for (const position of positions) {
     const current = byColumn.get(position.x);
     const bottom = position.y + EXPANDED_MACRO_ESTIMATED_NODE_HEIGHT;
     byColumn.set(position.x, current
@@ -994,9 +1230,9 @@ function getExpandedMacroReservations(
       : { top: position.y, bottom });
   }
   return [...byColumn.entries()].map(([x, range]) => ({
-    macroId: macro.id,
+    macroId,
     x,
-    top: range.top,
+    top: Math.min(range.top, EXPANDED_MACRO_RESERVATION_MIN_Y),
     reservedBottom: range.bottom + EXPANDED_MACRO_RESERVED_GAP,
   }));
 }
@@ -1032,7 +1268,10 @@ function stackVisibleMacrosAfterExpandedReservations(
   const positionByMacroId = new Map<string, { x: number; y: number }>();
 
   for (const macro of sorted) {
-    const shiftedPosition = shiftPositionForExpandedMacroReservations(macro.position, reservations);
+    const shiftedPosition = shiftPositionForExpandedMacroReservations(
+      macro.position,
+      reservations.filter((reservation) => reservation.macroId !== macro.id),
+    );
     if (!shiftedPosition) continue;
     const column = Math.round(shiftedPosition.x / EXPANDED_MACRO_COLLISION_COLUMN_WIDTH);
     const nextY = nextYByColumn.get(column);
@@ -1166,6 +1405,17 @@ function graphToFlowNodes(
   actions: { onToggleSupply?: (macroId: string) => void; onExpandGenerated?: (macroId: string) => void } = {},
 ): RouteFlowNode[] {
   const positionedGraph = layoutRouteGraph(graph, { preserveExistingPositions: true });
+  const hiddenSupplyNodeIds = getSupplyNodeIds(hiddenSupplyGraph);
+  const hiddenSupplyCandidateEdgesByMacroId = getMacroSemanticCandidateEdgesByMacroId(hiddenSupplyGraph);
+  const hiddenSupplyByMacroId = new Map(hiddenSupplyGraph.macros.map((macro) => [
+    macro.id,
+    getMacroHiddenSupplyByPortWithSupplyIds(
+      hiddenSupplyGraph,
+      macro,
+      hiddenSupplyNodeIds,
+      hiddenSupplyCandidateEdgesByMacroId.get(macro.id) || [],
+    ),
+  ]));
   const primitiveNodes: RouteFlowNode[] = positionedGraph.nodes.map((node) => ({
     id: node.id,
     type: node.type,
@@ -1180,9 +1430,9 @@ function graphToFlowNodes(
       ...macro,
       __isMacroNode: true,
       __cardMetrics: getMacroCardMetrics(macro),
-      __hiddenSupplyByPort: getMacroHiddenSupplyByPort(hiddenSupplyGraph, macro),
+      __hiddenSupplyByPort: hiddenSupplyByMacroId.get(macro.id) || {},
       __expandedSupply: (view.expandedSupplyMacroIds || []).includes(macro.id),
-      __hiddenSupplyCount: getMacroHiddenSupplyByPort(hiddenSupplyGraph, macro)['candidates.in'] || 0,
+      __hiddenSupplyCount: (hiddenSupplyByMacroId.get(macro.id) || {})['candidates.in'] || 0,
       __onToggleSupply: actions.onToggleSupply,
       __onExpandGenerated: actions.onExpandGenerated,
     },
@@ -1194,7 +1444,7 @@ function graphToFlowNodes(
   const visibleNodeIds = new Set(positionedGraph.nodes.map((node) => node.id));
   const visibleMacroIds = new Set(positionedGraph.macros.flatMap((macro) => [macro.id, macroFlowNodeId(macro.id)]));
   const hiddenSupplyAnchorNodes = hiddenSupplyGraph.macros
-    .filter((macro) => (getMacroHiddenSupplyByPort(hiddenSupplyGraph, macro)['candidates.in'] || 0) > 0)
+    .filter((macro) => ((hiddenSupplyByMacroId.get(macro.id) || {})['candidates.in'] || 0) > 0)
     .filter((macro) => !view.showGeneratedPrimitives && !(view.expandedSupplyMacroIds || []).includes(macro.id))
     .map((macro): RouteFlowNode | null => {
       const target = getVisibleMacroSupplyTarget({ macro, visibleNodeIds, visibleMacroIds });
@@ -1268,17 +1518,20 @@ function getHiddenSupplyControlEdges(input: {
   const visibleNodeIds = new Set(input.visibleGraph.nodes.map((node) => node.id));
   const visibleMacroIds = new Set(input.visibleGraph.macros.map((macro) => macroFlowNodeId(macro.id)));
   const expandedSupplyMacroIds = new Set(input.view.expandedSupplyMacroIds || []);
+  const supplyNodeIds = getSupplyNodeIds(input.graph);
+  const candidateEdgesByMacroId = getMacroSemanticCandidateEdgesByMacroId(input.graph);
   const edges: RouteGraphEdge[] = [];
   const controls = new Map<string, RouteFlowEdgeData['__hiddenSupplyControl']>();
   for (const macro of input.graph.macros) {
-    const count = getMacroHiddenSupplyByPort(input.graph, macro)['candidates.in'] || 0;
+    const semanticCandidateEdges = candidateEdgesByMacroId.get(macro.id) || [];
+    const count = getMacroHiddenSupplyByPortWithSupplyIds(input.graph, macro, supplyNodeIds, semanticCandidateEdges)['candidates.in'] || 0;
     if (count <= 0) continue;
     const expanded = expandedSupplyMacroIds.has(macro.id);
     const target = getVisibleMacroSupplyTarget({ macro, visibleNodeIds, visibleMacroIds });
     if (!target) continue;
     const id = expanded ? `hidden-supply-control:${macro.id}:${target.kind}:expanded` : `hidden-supply-control:${macro.id}:${target.kind}:collapsed`;
     const sourceNodeId = expanded
-      ? (getMacroSemanticCandidateEdges(input.graph, macro).find((edge) => visibleNodeIds.has(edge.sourceNodeId))?.sourceNodeId || hiddenSupplyAnchorNodeId(macro.id))
+      ? (semanticCandidateEdges.find((edge) => visibleNodeIds.has(edge.sourceNodeId))?.sourceNodeId || hiddenSupplyAnchorNodeId(macro.id))
       : hiddenSupplyAnchorNodeId(macro.id);
     if (!visibleNodeIds.has(sourceNodeId) && sourceNodeId !== hiddenSupplyAnchorNodeId(macro.id)) continue;
     edges.push({
@@ -1312,14 +1565,26 @@ function getMacroCardMetrics(macro: RouteGraphMacro): string[] {
 }
 
 export function getMacroHiddenSupplyByPort(graph: RouteGraphSource, macro: RouteGraphMacro): Record<string, number> {
-  const counts: Record<string, number> = {};
-  const endpointIds = new Set<string>();
-  const supplyNodeIds = new Set(
+  return getMacroHiddenSupplyByPortWithSupplyIds(graph, macro, getSupplyNodeIds(graph));
+}
+
+function getSupplyNodeIds(graph: RouteGraphSource): Set<string> {
+  return new Set(
     graph.nodes
       .filter((node) => node.type === 'route_endpoint' && node.endpointKind === 'supply')
       .flatMap((node) => [node.id, node.routeEndpointId, node.endpointId].filter((value): value is string => typeof value === 'string' && value.trim().length > 0)),
   );
-  for (const edge of getMacroSemanticCandidateEdges(graph, macro)) {
+}
+
+function getMacroHiddenSupplyByPortWithSupplyIds(
+  graph: RouteGraphSource,
+  macro: RouteGraphMacro,
+  supplyNodeIds: Set<string>,
+  semanticCandidateEdges = getMacroSemanticCandidateEdges(graph, macro),
+): Record<string, number> {
+  const counts: Record<string, number> = {};
+  const endpointIds = new Set<string>();
+  for (const edge of semanticCandidateEdges) {
     if (supplyNodeIds.has(edge.sourceNodeId)) endpointIds.add(edge.sourceNodeId);
   }
   const groups = Array.isArray(macro.config?.groups) ? macro.config.groups : [];
@@ -1644,6 +1909,7 @@ function RouteGraphWorkbenchInner({ mode = 'graph', focusIntent = null, onFocusI
   const workbenchRef = useRef<HTMLDivElement | null>(null);
   const canvasPanelRef = useRef<HTMLDivElement | null>(null);
   const inspectorPanelRef = useRef<HTMLElement | null>(null);
+  const jsonImportInputRef = useRef<HTMLInputElement | null>(null);
   const suppressSelectionRef = useRef(false);
   const [loading, setLoading] = useState(true);
   const [graph, setGraph] = useState<RouteGraphSource>(defaultGraph());
@@ -1662,10 +1928,14 @@ function RouteGraphWorkbenchInner({ mode = 'graph', focusIntent = null, onFocusI
   const [inspectorTab, setInspectorTab] = useState<typeof INSPECTOR_TABS[number]>('Overview');
   const [bottomTab, setBottomTab] = useState<typeof BOTTOM_TABS[number]>('Diagnostics');
   const [viewState, setViewState] = useState<ViewState>(DEFAULT_ROUTE_GRAPH_VIEW_STATE);
+  const viewStateRef = useRef<ViewState>(DEFAULT_ROUTE_GRAPH_VIEW_STATE);
   const [jsonText, setJsonText] = useState('');
   const [nodeJsonText, setNodeJsonText] = useState('');
   const [saving, setSaving] = useState(false);
   const [routeEndpointCatalog, setRouteEndpointCatalog] = useState<RouteEndpointCatalogItem[]>([]);
+  const routeEndpointCatalogLoadedRef = useRef(false);
+  const routeEndpointCatalogPromiseRef = useRef<Promise<void> | null>(null);
+  const routeEndpointCatalogSeqRef = useRef(0);
   const [dragTemplateId, setDragTemplateId] = useState<string | null>(null);
   const [commandOpen, setCommandOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<GraphContextMenuState>({
@@ -1698,11 +1968,40 @@ function RouteGraphWorkbenchInner({ mode = 'graph', focusIntent = null, onFocusI
   const templateById = useMemo(() => new Map(templates.map((template) => [template.id, template])), [templates]);
   const quickTemplates = useMemo(() => QUICK_TEMPLATE_IDS.map((id) => templateById.get(id)).filter(Boolean) as AddTemplate[], [templateById]);
   const paletteTemplates = useMemo(() => templates.slice(0, 6), [templates]);
+  const syncWholeJsonFromGraph = useCallback((nextGraph: RouteGraphSource) => {
+    setJsonText(JSON.stringify(nextGraph, null, 2));
+  }, []);
+  const loadRouteEndpointCatalog = useCallback((force?: boolean) => {
+    if (routeEndpointCatalogLoadedRef.current && !force) return;
+    if (routeEndpointCatalogPromiseRef.current && !force) return;
+    const seq = ++routeEndpointCatalogSeqRef.current;
+    routeEndpointCatalogLoadedRef.current = true;
+    let promise!: Promise<void>;
+    promise = (async () => {
+      try {
+        const items = await api.getRouteEndpoints();
+        if (routeEndpointCatalogSeqRef.current !== seq) return;
+        setRouteEndpointCatalog(Array.isArray(items) ? items as RouteEndpointCatalogItem[] : []);
+      } catch (error) {
+        if (routeEndpointCatalogSeqRef.current === seq) routeEndpointCatalogLoadedRef.current = false;
+        toast.error((error as Error).message || tr('pages.tokenRoutes.routeGraphWorkbench.check'));
+      } finally {
+        if (routeEndpointCatalogPromiseRef.current === promise) {
+          routeEndpointCatalogPromiseRef.current = null;
+        }
+      }
+    })();
+    routeEndpointCatalogPromiseRef.current = promise;
+  }, [toast]);
   const inspectorNodeId = getSelectionNodeId(inspectorTarget);
   const inspectorPortId = getSelectionPortId(inspectorTarget);
   const inspectorMacroId = getSelectionMacroId(inspectorTarget);
   const visibleGraph = useMemo(() => filterGraphForView(graph, viewState), [graph, viewState]);
   const interactiveGraph = useMemo(() => ({ ...visibleGraph, macros: graph.macros }), [graph.macros, visibleGraph]);
+
+  useEffect(() => {
+    viewStateRef.current = viewState;
+  }, [viewState]);
 
   const selectedNode = inspectorNodeId ? interactiveGraph.nodes.find((node) => node.id === inspectorNodeId) || null : null;
   const selectedPort = selectedNode && inspectorPortId ? getNodePort(selectedNode, inspectorPortId) : null;
@@ -1795,30 +2094,23 @@ function RouteGraphWorkbenchInner({ mode = 'graph', focusIntent = null, onFocusI
       graphRef.current = nextGraph;
       setUndoStack([]);
       setRedoStack([]);
-      setJsonText(JSON.stringify(nextGraph, null, 2));
+      if (mode === 'json') syncWholeJsonFromGraph(nextGraph);
+      else setJsonText('');
       setDiagnostics(response?.draft?.diagnostics || []);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [mode, syncWholeJsonFromGraph]);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
 
   useEffect(() => {
-    let cancelled = false;
-    api.getRouteEndpoints()
-      .then((items) => {
-        if (!cancelled) setRouteEndpointCatalog(Array.isArray(items) ? items as RouteEndpointCatalogItem[] : []);
-      })
-      .catch((error) => {
-        if (!cancelled) toast.error((error as Error).message || tr('pages.tokenRoutes.routeGraphWorkbench.check'));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [toast]);
+    if (mode !== 'graph') return;
+    if (!selectedMacro || inspectorTab !== 'Config') return;
+    loadRouteEndpointCatalog();
+  }, [inspectorTab, loadRouteEndpointCatalog, mode, selectedMacro]);
 
   const expandMacroOnCanvas = useCallback((macroId: string) => {
     setViewState((current) => {
@@ -1890,12 +2182,14 @@ function RouteGraphWorkbenchInner({ mode = 'graph', focusIntent = null, onFocusI
   }, [expandMacroOnCanvas, graph, graphSelection.edgeIds, selection, setFlowEdges, toggleMacroSupplyOnCanvas, viewState, visibleGraph]);
 
   useEffect(() => {
+    if (inspectorTab !== 'JSON') return;
     setNodeJsonText(selectedNode ? JSON.stringify(selectedNode, null, 2) : '');
-  }, [selectedNode]);
+  }, [inspectorTab, selectedNode]);
 
   useEffect(() => {
+    if (inspectorTab !== 'JSON') return;
     if (selectedMacro) setNodeJsonText(JSON.stringify(selectedMacro, null, 2));
-  }, [selectedMacro]);
+  }, [inspectorTab, selectedMacro]);
 
   useEffect(() => {
     if (!selectedNode) return;
@@ -1928,8 +2222,8 @@ function RouteGraphWorkbenchInner({ mode = 'graph', focusIntent = null, onFocusI
     }
     graphRef.current = normalized;
     setGraph(normalized);
-    setJsonText(JSON.stringify(normalized, null, 2));
-  }, []);
+    if (mode === 'json') syncWholeJsonFromGraph(normalized);
+  }, [mode, syncWholeJsonFromGraph]);
 
   const updateMacro = useCallback((macro: RouteGraphMacro) => {
     const currentGraph = graphRef.current;
@@ -2087,11 +2381,11 @@ function RouteGraphWorkbenchInner({ mode = 'graph', focusIntent = null, onFocusI
       setRedoStack((redoItems) => [...redoItems.slice(-49), graphRef.current]);
       graphRef.current = previous;
       setGraph(previous);
-      setJsonText(JSON.stringify(previous, null, 2));
+      if (mode === 'json') syncWholeJsonFromGraph(previous);
       clearGraphSelection();
       return items.slice(0, -1);
     });
-  }, [clearGraphSelection]);
+  }, [clearGraphSelection, mode, syncWholeJsonFromGraph]);
 
   const redo = useCallback(() => {
     setRedoStack((items) => {
@@ -2100,11 +2394,11 @@ function RouteGraphWorkbenchInner({ mode = 'graph', focusIntent = null, onFocusI
       setUndoStack((undoItems) => [...undoItems.slice(-49), graphRef.current]);
       graphRef.current = next;
       setGraph(next);
-      setJsonText(JSON.stringify(next, null, 2));
+      if (mode === 'json') syncWholeJsonFromGraph(next);
       clearGraphSelection();
       return items.slice(0, -1);
     });
-  }, [clearGraphSelection]);
+  }, [clearGraphSelection, mode, syncWholeJsonFromGraph]);
 
   const autoLayout = useCallback(() => {
     applyGraph(layoutRouteGraph(graphRef.current, { preserveExistingPositions: false }));
@@ -2149,11 +2443,69 @@ function RouteGraphWorkbenchInner({ mode = 'graph', focusIntent = null, onFocusI
     addTemplate(template, contextMenu.position);
   }, [addTemplate, contextMenu.position]);
 
-  const focusNode = useCallback((nodeId: string, options: { moveInspector?: boolean } = {}) => {
+  const selectAndCenterRenderedNode = useCallback((nodeId: string, fallbackPosition?: { x: number; y: number } | null, options: { moveInspector?: boolean } = {}) => {
     const moveInspector = options.moveInspector !== false;
-    const node = interactiveGraph.nodes.find((item) => item.id === nodeId);
-    if (!node) {
-      const macro = graph.macros.find((item) => macroFlowNodeId(item.id) === nodeId || item.id === nodeId);
+    let attempts = 0;
+    const apply = () => {
+      attempts += 1;
+      const flowNode = reactFlow.getNode(nodeId);
+      const position = flowNode?.position || fallbackPosition || null;
+      if (!flowNode && attempts < 8) {
+        window.setTimeout(apply, attempts < 3 ? 32 : 80);
+        return;
+      }
+      setSelection({ kind: 'node', nodeId });
+      setInspectorTarget({ kind: 'node', nodeId });
+      applyGraphSelection({ nodeIds: [nodeId], edgeIds: [] });
+      if (position) {
+        const measured = (flowNode as any)?.measured;
+        const width = Number((flowNode as any)?.width || measured?.width || ROUTE_GRAPH_NODE_WIDTH);
+        const height = Number((flowNode as any)?.height || measured?.height || ROUTE_GRAPH_NODE_HEIGHT_ESTIMATE);
+        reactFlow.setCenter(position.x + width / 2, position.y + height / 2, { zoom: reactFlow.getZoom(), duration: 220 });
+      }
+      if (moveInspector) anchorInspectorAtRenderedNode(nodeId);
+    };
+    window.requestAnimationFrame(() => window.requestAnimationFrame(apply));
+    window.setTimeout(apply, 180);
+  }, [anchorInspectorAtRenderedNode, applyGraphSelection, reactFlow]);
+
+  const focusGeneratedPrimitive = useCallback((macroId: string, nodeId: string, options: { moveInspector?: boolean } = {}) => {
+    const focusPlan = getMacroGeneratedFocusPlan(graphRef.current, macroId, nodeId, viewStateRef.current || DEFAULT_ROUTE_GRAPH_VIEW_STATE);
+    if (focusPlan.reveal === 'supply') {
+      setViewState((current) => {
+        const expandedSupplyMacroIds = current.expandedSupplyMacroIds || [];
+        if (expandedSupplyMacroIds.includes(macroId)) return current;
+        return {
+          ...current,
+          showGeneratedPrimitives: false,
+          expandedSupplyMacroIds: [...expandedSupplyMacroIds.filter((id) => id !== macroId), macroId],
+        };
+      });
+    } else {
+      expandMacroOnCanvas(macroId);
+    }
+    setInspectorTarget({ kind: 'node', nodeId });
+    setInspectorTab('Overview');
+    selectAndCenterRenderedNode(nodeId, focusPlan.fallbackPosition, options);
+  }, [expandMacroOnCanvas, selectAndCenterRenderedNode]);
+
+  const focusNode = useCallback((nodeId: string, options: { moveInspector?: boolean; macroId?: string | null } = {}) => {
+    const moveInspector = options.moveInspector !== false;
+    const focusPlan = getRouteGraphNodeFocusPlan(
+      graphRef.current,
+      interactiveGraph,
+      nodeId,
+      viewStateRef.current || DEFAULT_ROUTE_GRAPH_VIEW_STATE,
+      options.macroId,
+    );
+
+    if (focusPlan.kind === 'generated_node') {
+      focusGeneratedPrimitive(focusPlan.macroId, focusPlan.nodeId, { moveInspector });
+      return;
+    }
+
+    if (focusPlan.kind === 'macro') {
+      const macro = findMacroByIdOrFlowNodeId(graphRef.current, focusPlan.macroId);
       if (!macro) return;
       const flowNodeId = macroFlowNodeId(macro.id);
       setSelection({ kind: 'macro', macroId: macro.id });
@@ -2176,6 +2528,11 @@ function RouteGraphWorkbenchInner({ mode = 'graph', focusIntent = null, onFocusI
       reactFlow.setCenter(center.x, center.y, { zoom: reactFlow.getZoom(), duration: 220 });
       return;
     }
+
+    if (focusPlan.kind !== 'visible_node') return;
+
+    const node = interactiveGraph.nodes.find((item) => item.id === focusPlan.nodeId);
+    if (!node) return;
     setSelection({ kind: 'node', nodeId });
     setInspectorTarget({ kind: 'node', nodeId });
     setInspectorTab('Overview');
@@ -2185,7 +2542,7 @@ function RouteGraphWorkbenchInner({ mode = 'graph', focusIntent = null, onFocusI
       anchorInspectorAtRenderedNode(nodeId);
     }
     reactFlow.setCenter((node.position?.x || 120) + ROUTE_GRAPH_NODE_WIDTH / 2, (node.position?.y || 120) + ROUTE_GRAPH_NODE_HEIGHT_ESTIMATE / 2, { zoom: reactFlow.getZoom(), duration: 220 });
-  }, [anchorInspectorAtFlowNode, anchorInspectorAtMacro, anchorInspectorAtRenderedNode, applyGraphSelection, graph.macros, interactiveGraph.nodes, reactFlow]);
+  }, [anchorInspectorAtFlowNode, anchorInspectorAtMacro, anchorInspectorAtRenderedNode, applyGraphSelection, focusGeneratedPrimitive, interactiveGraph, reactFlow]);
 
   const focusEdge = useCallback((edgeId: string, options: { moveInspector?: boolean } = {}) => {
     const moveInspector = options.moveInspector !== false;
@@ -2233,42 +2590,6 @@ function RouteGraphWorkbenchInner({ mode = 'graph', focusIntent = null, onFocusI
     }
   }, [anchorInspectorAtViewportRect, applyGraphSelection, graph.macros, interactiveGraph.edges, interactiveGraph.nodes, reactFlow]);
 
-  const selectAndCenterRenderedNode = useCallback((nodeId: string, fallbackPosition?: { x: number; y: number } | null) => {
-    let attempts = 0;
-    const apply = () => {
-      attempts += 1;
-      const flowNode = reactFlow.getNode(nodeId);
-      const position = flowNode?.position || fallbackPosition || null;
-      if (!flowNode && attempts < 8) {
-        window.setTimeout(apply, attempts < 3 ? 32 : 80);
-        return;
-      }
-      setSelection({ kind: 'node', nodeId });
-      setInspectorTarget({ kind: 'node', nodeId });
-      applyGraphSelection({ nodeIds: [nodeId], edgeIds: [] });
-      if (position) {
-        const measured = (flowNode as any)?.measured;
-        const width = Number((flowNode as any)?.width || measured?.width || ROUTE_GRAPH_NODE_WIDTH);
-        const height = Number((flowNode as any)?.height || measured?.height || ROUTE_GRAPH_NODE_HEIGHT_ESTIMATE);
-        reactFlow.setCenter(position.x + width / 2, position.y + height / 2, { zoom: reactFlow.getZoom(), duration: 220 });
-      }
-      anchorInspectorAtRenderedNode(nodeId);
-    };
-    window.requestAnimationFrame(() => window.requestAnimationFrame(apply));
-    window.setTimeout(apply, 180);
-  }, [anchorInspectorAtRenderedNode, applyGraphSelection, reactFlow]);
-
-  const focusGeneratedPrimitive = useCallback((macroId: string, nodeId: string) => {
-    expandMacroOnCanvas(macroId);
-    setInspectorTarget({ kind: 'node', nodeId });
-    setInspectorTab('Overview');
-    const macro = graphRef.current.macros.find((item) => item.id === macroId);
-    const fallbackPosition = macro
-      ? getAnchoredMacroPrimitivePositions(getPrimitiveGraphForView(graphRef.current), macro).find(([id]) => id === nodeId)?.[1] || null
-      : null;
-    selectAndCenterRenderedNode(nodeId, fallbackPosition);
-  }, [expandMacroOnCanvas, selectAndCenterRenderedNode]);
-
   useEffect(() => {
     if (mode !== 'graph' || loading || !focusIntent) return;
     if (consumedFocusIntentIdRef.current === focusIntent.id) return;
@@ -2276,14 +2597,12 @@ function RouteGraphWorkbenchInner({ mode = 'graph', focusIntent = null, onFocusI
 
     if (focusIntent.kind === 'macro') {
       focusNode(focusIntent.macroId);
-    } else if (focusIntent.macroId) {
-      focusGeneratedPrimitive(focusIntent.macroId, focusIntent.nodeId);
     } else {
-      focusNode(focusIntent.nodeId);
+      focusNode(focusIntent.nodeId, { macroId: focusIntent.macroId || null });
     }
 
     onFocusIntentConsumed?.(focusIntent.id);
-  }, [focusGeneratedPrimitive, focusIntent, focusNode, loading, mode, onFocusIntentConsumed]);
+  }, [focusIntent, focusNode, loading, mode, onFocusIntentConsumed]);
 
   const copyText = useCallback((text: string, label: string) => {
     void navigator.clipboard?.writeText(text);
@@ -2318,11 +2637,20 @@ function RouteGraphWorkbenchInner({ mode = 'graph', focusIntent = null, onFocusI
     anchorInspectorAtRenderedNode(duplicate.id);
   }, [anchorInspectorAtFlowNode, anchorInspectorAtRenderedNode, applyGraph, applyGraphSelection]);
 
-  const selectConnectedPath = useCallback((nodeId: string, direction: 'upstream' | 'downstream') => {
-    const edge = interactiveGraph.edges.find((item) => direction === 'downstream' ? item.sourceNodeId === nodeId : item.targetNodeId === nodeId);
-    const peerNodeId = edge ? (direction === 'downstream' ? edge.targetNodeId : edge.sourceNodeId) : nodeId;
-    focusNode(peerNodeId);
-  }, [focusNode, interactiveGraph.edges]);
+  const selectConnectedPath = useCallback((nodeId: string, direction: 'upstream' | 'downstream', options: { moveInspector?: boolean } = {}) => {
+    const target = getRouteGraphConnectedFocusTarget(
+      graphRef.current,
+      interactiveGraph,
+      nodeId,
+      direction,
+      viewStateRef.current || DEFAULT_ROUTE_GRAPH_VIEW_STATE,
+    );
+    const peerNodeId = target.edge ? target.peerNodeId : nodeId;
+    focusNode(peerNodeId, {
+      moveInspector: options.moveInspector,
+      macroId: target.macroId,
+    });
+  }, [focusNode, interactiveGraph]);
 
   const disconnectPort = useCallback((nodeId: string, portId: string) => {
     const node = graph.nodes.find((item) => item.id === nodeId);
@@ -2565,7 +2893,7 @@ function RouteGraphWorkbenchInner({ mode = 'graph', focusIntent = null, onFocusI
       current: graphSelectionRef.current,
       target: menuTarget,
     });
-    if (nextGraphSelection !== graphSelectionRef.current) applyGraphSelection(nextGraphSelection);
+    if (!isGraphSelectionEqual(nextGraphSelection, graphSelectionRef.current)) applyGraphSelection(nextGraphSelection);
     setContextMenu((current) => ({
       ...current,
       instance: current.instance + 1,
@@ -2665,6 +2993,22 @@ function RouteGraphWorkbenchInner({ mode = 'graph', focusIntent = null, onFocusI
     URL.revokeObjectURL(url);
   };
 
+  const importWholeJsonFile = async (file: File | null) => {
+    if (!file) return;
+    try {
+      const parsed = JSON.parse(await file.text());
+      const normalized = normalizeGraph(parsed);
+      if (!preservesGeneratedRouteGraphArtifacts(graphRef.current, normalized)) {
+        toast.error(tr('pages.tokenRoutes.routeGraphWorkbench.jsonManual'));
+        return;
+      }
+      applyGraph(normalized);
+      toast.success(tr('pages.tokenRoutes.routeGraphWorkbench.jsonImportDraft'));
+    } catch (error) {
+      toast.error(tr('pages.tokenRoutes.routeGraphWorkbench.jsonParseFailed').replace('{message}', (error as Error).message));
+    }
+  };
+
   const applyNodeJson = useCallback(() => {
     try {
       if (selectedMacro) {
@@ -2708,9 +3052,18 @@ function RouteGraphWorkbenchInner({ mode = 'graph', focusIntent = null, onFocusI
     }
   }, [anchorInspectorAtFlowNode, applyGraph, graph, nodeJsonText, selectedMacro, selectedNode, toast]);
 
-  const publicEntries = getPublicEntryNodes(graph);
-  const errorCount = diagnostics.filter((item) => item.severity === 'error').length;
-  const warningCount = diagnostics.filter((item) => item.severity === 'warning').length;
+  const publicModelRows = useMemo(
+    () => getPublicModelEntryRows(graph, routeEndpointCatalog),
+    [graph, routeEndpointCatalog],
+  );
+  const publicModelCount = useMemo(() => Math.max(
+    publicModelRows.length,
+    activeVersion?.sourceSummary?.publicModels ?? 0,
+  ), [activeVersion?.sourceSummary?.publicModels, publicModelRows.length]);
+  const { errorCount, warningCount } = useMemo(() => ({
+    errorCount: diagnostics.filter((item) => item.severity === 'error').length,
+    warningCount: diagnostics.filter((item) => item.severity === 'warning').length,
+  }), [diagnostics]);
   const minimapEnabled = flowNodes.length <= ROUTE_GRAPH_MINIMAP_NODE_LIMIT;
   const contextMenuNode = (
     <RouteGraphPointMenu
@@ -2778,7 +3131,7 @@ function RouteGraphWorkbenchInner({ mode = 'graph', focusIntent = null, onFocusI
               ? selectionFromFlowNodeId(nodeIds[0]!, items.nodes?.[0]?.type)
               : selectionFromFlowSelection({ nodeIds, edgeIds });
             if (nextSelection) {
-              setSelection((current) => JSON.stringify(current) === JSON.stringify(nextSelection) ? current : nextSelection);
+              setSelection((current) => isSelectionEqual(current, nextSelection) ? current : nextSelection);
             }
           }}
           onConnect={onConnect}
@@ -2879,7 +3232,7 @@ function RouteGraphWorkbenchInner({ mode = 'graph', focusIntent = null, onFocusI
                 <DropdownMenu.Label>{tr('pages.tokenRoutes.routeGraphWorkbench.quickAdd')}</DropdownMenu.Label>
                 {quickTemplates.map((template) => (
                   <DropdownMenu.Item key={template.id} onSelect={() => addTemplateById(template.id)}>
-                    {template.title}
+                    {getTemplateTitle(template)}
                   </DropdownMenu.Item>
                 ))}
                 <DropdownMenu.Separator />
@@ -2909,19 +3262,58 @@ function RouteGraphWorkbenchInner({ mode = 'graph', focusIntent = null, onFocusI
   if (mode === 'json') {
     return (
       <Card className="route-graph-advanced-json min-w-0 max-w-full overflow-hidden">
-        <CardHeader className="route-graph-advanced-head">
-          <div>
+        <CardHeader className="route-graph-advanced-head gap-3 border-b bg-muted/20 sm:flex sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
             <CardTitle>{tr('pages.tokenRoutes.routeGraphWorkbench.advancedJson')}</CardTitle>
             <CardDescription>{tr('pages.tokenRoutes.routeGraphWorkbench.advancedJsonDescription')}</CardDescription>
           </div>
-          <ButtonGroup>
-            <Button variant="outline" size="sm" type="button" onClick={() => setJsonText(JSON.stringify(graph, null, 2))}>{tr('pages.tokenRoutes.routeGraphWorkbench.format')}</Button>
-            <Button variant="outline" size="sm" type="button" onClick={() => navigator.clipboard?.writeText(jsonText)}>{tr('pages.tokenRoutes.routeGraphWorkbench.copy')}</Button>
-            <Button variant="outline" size="sm" type="button" onClick={exportWholeJson}>{tr('pages.tokenRoutes.routeGraphWorkbench.export')}</Button>
-            <Button variant="secondary" size="sm" type="button" onClick={applyWholeJson}>{tr('pages.tokenRoutes.routeGraphWorkbench.applyJson')}</Button>
-            <Button size="sm" type="button" disabled={saving} onClick={saveDraft}>{tr('pages.tokenRoutes.routeGraphWorkbench.saveDraft')}</Button>
-            <Button size="sm" type="button" disabled={saving || errorCount > 0} onClick={publish}>{tr('pages.tokenRoutes.routeGraphWorkbench.publish')}</Button>
-          </ButtonGroup>
+          <input
+            ref={jsonImportInputRef}
+            type="file"
+            accept=".json,application/json"
+            className="hidden"
+            onChange={(event) => {
+              const file = event.target.files?.[0] || null;
+              event.target.value = '';
+              void importWholeJsonFile(file);
+            }}
+          />
+          <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+            <ButtonGroup>
+              <Button variant="outline" size="sm" type="button" onClick={() => setJsonText(JSON.stringify(graph, null, 2))}>
+                <Braces className="size-4" />
+                {tr('pages.tokenRoutes.routeGraphWorkbench.formatJson')}
+              </Button>
+              <Button variant="outline" size="sm" type="button" onClick={() => navigator.clipboard?.writeText(jsonText)}>
+                <Copy className="size-4" />
+                {tr('pages.tokenRoutes.routeGraphWorkbench.copyJson')}
+              </Button>
+            </ButtonGroup>
+            <ButtonGroup>
+              <Button variant="outline" size="sm" type="button" onClick={() => jsonImportInputRef.current?.click()}>
+                <Upload className="size-4" />
+                {tr('pages.tokenRoutes.routeGraphWorkbench.importJson')}
+              </Button>
+              <Button variant="outline" size="sm" type="button" onClick={exportWholeJson}>
+                <Download className="size-4" />
+                {tr('pages.tokenRoutes.routeGraphWorkbench.exportJson')}
+              </Button>
+            </ButtonGroup>
+            <ButtonGroup>
+              <Button variant="secondary" size="sm" type="button" onClick={applyWholeJson}>
+                <Check className="size-4" />
+                {tr('pages.tokenRoutes.routeGraphWorkbench.applyToDraft')}
+              </Button>
+              <Button size="sm" type="button" disabled={saving} onClick={saveDraft}>
+                <Save className="size-4" />
+                {tr('pages.tokenRoutes.routeGraphWorkbench.saveDraft')}
+              </Button>
+              <Button size="sm" type="button" disabled={saving || errorCount > 0} onClick={publish}>
+                <Rocket className="size-4" />
+                {tr('pages.tokenRoutes.routeGraphWorkbench.publishVersion')}
+              </Button>
+            </ButtonGroup>
+          </div>
         </CardHeader>
         <JsonCodeEditor value={jsonText} onChange={setJsonText} minHeight={420} maxHeight={720} ariaLabel={tr('pages.tokenRoutes.routeGraphWorkbench.advancedJson')} />
       </Card>
@@ -2931,7 +3323,7 @@ function RouteGraphWorkbenchInner({ mode = 'graph', focusIntent = null, onFocusI
   return (
     <Tooltip.Provider>
     <div ref={workbenchRef} className="route-graph-workbench relative grid min-h-0 gap-3">
-      <header className="route-graph-toolbar flex min-w-0 items-center justify-between gap-3 rounded-lg border bg-card p-3 text-card-foreground">
+      <header className="route-graph-toolbar flex min-w-0 items-center justify-between gap-3 rounded-lg border bg-card p-3 text-card-foreground shadow-sm">
         <div className="min-w-0">
           <div className="text-sm font-semibold">{tr('pages.tokenRoutes.routeGraphWorkbench.routeGraph')}</div>
           <div className="truncate text-xs text-muted-foreground">
@@ -2940,7 +3332,7 @@ function RouteGraphWorkbenchInner({ mode = 'graph', focusIntent = null, onFocusI
               .replace('{nodes}', String(graph.nodes.length))
               .replace('{edges}', String(graph.edges.length))
               .replace('{macros}', String(graph.macros.length))
-              .replace('{publicEntries}', String(publicEntries.length))}
+              .replace('{publicEntries}', String(publicModelCount))}
           </div>
         </div>
         <div className="route-graph-toolbar-status flex items-center gap-1.5">
@@ -2960,12 +3352,12 @@ function RouteGraphWorkbenchInner({ mode = 'graph', focusIntent = null, onFocusI
       <ResizablePanelGroup
         id="route-graph-main-layout"
         orientation="horizontal"
-        className="route-graph-main-layout h-[calc(100vh-220px)] min-h-[620px] overflow-hidden rounded-lg border bg-card"
+        className="route-graph-main-layout h-[calc(100vh-220px)] min-h-[620px] overflow-hidden rounded-lg border bg-background shadow-sm"
       >
         <ResizablePanel id="left" defaultSize="24%" minSize="260px" maxSize="36%" className="min-h-0 overflow-hidden">
           <LeftWorkbenchPanel
             templates={templates}
-            publicEntries={publicEntries}
+            publicEntries={publicModelRows}
             nodes={graph.nodes}
             macros={graph.macros}
             viewState={viewState}
@@ -2973,8 +3365,14 @@ function RouteGraphWorkbenchInner({ mode = 'graph', focusIntent = null, onFocusI
             onAddTemplate={addTemplate}
             onStartDrag={setDragTemplateId}
             onSelect={(nodeId) => {
-              setSelection({ kind: 'node', nodeId });
-              applyGraphSelection({ nodeIds: [nodeId], edgeIds: [] });
+              const primitiveGraph = getPrimitiveGraphForView(graphRef.current);
+              const primitiveNode = primitiveGraph.nodes.find((node) => node.id === nodeId) || null;
+              const macroId = primitiveNode ? getPrimitiveNodeMacroId(primitiveNode) : null;
+              if (macroId) {
+                focusNode(nodeId, { macroId });
+                return;
+              }
+              focusNode(nodeId);
             }}
             onSelectMacro={(macroId) => {
               setSelection({ kind: 'macro', macroId });
@@ -2984,6 +3382,7 @@ function RouteGraphWorkbenchInner({ mode = 'graph', focusIntent = null, onFocusI
             }}
             onAddModelGroupMacro={addModelGroupMacro}
             onChangeView={setViewState}
+            onNeedEndpointCatalog={loadRouteEndpointCatalog}
           />
         </ResizablePanel>
         <ResizableHandle orientation="horizontal" withHandle />
@@ -3000,17 +3399,17 @@ function RouteGraphWorkbenchInner({ mode = 'graph', focusIntent = null, onFocusI
             </ResizablePanel>
             <ResizableHandle orientation="vertical" withHandle />
             <ResizablePanel id="bottom" defaultSize="30%" minSize="120px" maxSize="55%" className="min-h-0 overflow-hidden">
-              <Card className="grid h-full min-h-0 overflow-hidden rounded-none border-0 shadow-none">
-                <Tabs.Tabs value={bottomTab} onValueChange={(value) => setBottomTab(value as typeof bottomTab)}>
-                  <CardHeader className="p-2">
-                    <Tabs.TabsList className="max-w-full overflow-auto">
+              <div className="route-graph-bottom-panel grid h-full min-h-0 overflow-hidden">
+                <Tabs.Tabs value={bottomTab} onValueChange={(value) => setBottomTab(value as typeof bottomTab)} className="grid h-full min-h-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden">
+                  <div className="route-graph-bottom-tabs-header">
+                    <Tabs.TabsList className="route-graph-bottom-tabs-list max-w-full overflow-auto">
                       {BOTTOM_TABS.map((tab) => (
                         <Tabs.TabsTrigger key={tab} value={tab}>{tab}</Tabs.TabsTrigger>
                       ))}
                     </Tabs.TabsList>
-                  </CardHeader>
+                  </div>
                   {BOTTOM_TABS.map((tab) => (
-                    <Tabs.TabsContent key={tab} value={tab}>
+                    <Tabs.TabsContent key={tab} value={tab} className="min-h-0 overflow-hidden">
                       <BottomPanel
                         tab={tab}
                         graph={graph}
@@ -3022,7 +3421,7 @@ function RouteGraphWorkbenchInner({ mode = 'graph', focusIntent = null, onFocusI
                     </Tabs.TabsContent>
                   ))}
                 </Tabs.Tabs>
-              </Card>
+              </div>
             </ResizablePanel>
           </ResizablePanelGroup>
         </ResizablePanel>
@@ -3045,7 +3444,7 @@ function RouteGraphWorkbenchInner({ mode = 'graph', focusIntent = null, onFocusI
       {(selectedNode || selectedEdge || selectedMacro) && inspectorAnchor && (
         <aside
           ref={inspectorPanelRef}
-          className="route-graph-inspector-panel absolute z-[80] flex w-[min(440px,calc(100%-2rem))] min-w-0 flex-col overflow-y-auto rounded-lg border bg-background text-foreground shadow-lg"
+          className="route-graph-inspector-panel absolute z-[80] flex w-[min(440px,calc(100%-2rem))] min-w-0 flex-col overflow-hidden rounded-xl border bg-background text-foreground shadow-xl"
           style={{
             left: inspectorAnchor.x,
             top: inspectorAnchor.y,
@@ -3138,8 +3537,8 @@ function RouteGraphWorkbenchInner({ mode = 'graph', focusIntent = null, onFocusI
             <Command.CommandGroup heading={tr('pages.tokenRoutes.routeGraphWorkbench.quickAdd')}>
               {paletteTemplates.map((template) => (
                 <Command.CommandItem key={template.id} onSelect={() => { addTemplateById(template.id, contextMenu.position); setCommandOpen(false); }}>
-                  <span>{template.kicker}</span>
-                  {template.title}
+                  <span>{getTemplateKicker(template)}</span>
+                  {getTemplateTitle(template)}
                 </Command.CommandItem>
               ))}
             </Command.CommandGroup>
@@ -3169,20 +3568,19 @@ function AddPanel({
   const filteredTemplates = templates.filter((template) => (
     (category === 'All' || template.category === category)
     && (!normalizedQuery
-      || template.title.toLowerCase().includes(normalizedQuery)
-      || template.kicker.toLowerCase().includes(normalizedQuery)
-      || template.detail.toLowerCase().includes(normalizedQuery))
+      || getTemplateTitle(template).toLowerCase().includes(normalizedQuery)
+      || getTemplateKicker(template).toLowerCase().includes(normalizedQuery)
+      || getTemplateDetail(template).toLowerCase().includes(normalizedQuery))
   ));
   const coreTemplates = filteredTemplates.filter((template) => template.category === 'Core');
   const transformTemplates = filteredTemplates.filter((template) => template.category === 'Transform');
-  const fallbackTemplates = filteredTemplates.filter((template) => template.category === 'Fallback');
+  const syntheticTemplates = filteredTemplates.filter((template) => template.category === 'Synthetic');
   const primitiveNodeTypes = NODE_TYPES.filter((type) => {
     if (category !== 'All' && category !== 'Primitive') return false;
-    const detail = routeGraphNodeDefinitions[type];
     return !normalizedQuery
       || type.includes(normalizedQuery)
-      || detail.title.toLowerCase().includes(normalizedQuery)
-      || detail.detail.toLowerCase().includes(normalizedQuery);
+      || getNodeDefinitionTitle(type).toLowerCase().includes(normalizedQuery)
+      || getNodeDefinitionDetail(type).toLowerCase().includes(normalizedQuery);
   });
   const renderTemplate = (template: AddTemplate) => (
     <Card
@@ -3214,15 +3612,14 @@ function AddPanel({
           {template.primitiveType ? <Boxes size={13} /> : <Sparkles size={13} />}
         </span>
         <div className="min-w-0">
-          <div className="route-graph-template-card-title">{template.title}</div>
-          <div className="route-graph-template-card-kicker">{template.kicker}</div>
-          <p className="route-graph-template-card-detail">{template.detail}</p>
+          <div className="route-graph-template-card-title">{getTemplateTitle(template)}</div>
+          <div className="route-graph-template-card-kicker">{getTemplateKicker(template)}</div>
+          <p className="route-graph-template-card-detail">{getTemplateDetail(template)}</p>
         </div>
       </div>
     </Card>
   );
   const renderPrimitiveNode = (type: RouteGraphNodeType) => {
-    const detail = routeGraphNodeDefinitions[type];
     return (
       <Card
         key={type}
@@ -3253,9 +3650,9 @@ function AddPanel({
             <Boxes size={13} />
           </span>
           <div className="min-w-0">
-            <div className="route-graph-template-card-title">{detail.title}</div>
-            <div className="route-graph-template-card-kicker">{detail.kicker} · {type}</div>
-            <p className="route-graph-template-card-detail">{detail.detail}</p>
+            <div className="route-graph-template-card-title">{getNodeDefinitionTitle(type)}</div>
+            <div className="route-graph-template-card-kicker">{getNodeDefinitionKicker(type)} · {type}</div>
+            <p className="route-graph-template-card-detail">{getNodeDefinitionDetail(type)}</p>
           </div>
         </div>
       </Card>
@@ -3270,7 +3667,7 @@ function AddPanel({
       </div>
       <Tabs.Tabs value={category} onValueChange={(value) => setCategory(value as typeof category)}>
         <Tabs.TabsList className="flex w-full overflow-x-auto">
-          {(['All', 'Core', 'Transform', 'Fallback', 'Primitive'] as const).map((item) => (
+          {(['All', 'Core', 'Transform', 'Synthetic', 'Primitive'] as const).map((item) => (
             <Tabs.TabsTrigger key={item} value={item} className="shrink-0">{getLibraryCategoryLabel(item)}</Tabs.TabsTrigger>
           ))}
         </Tabs.TabsList>
@@ -3288,10 +3685,10 @@ function AddPanel({
           <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2">{transformTemplates.map(renderTemplate)}</div>
         </section>
       )}
-      {fallbackTemplates.length > 0 && (
+      {syntheticTemplates.length > 0 && (
         <section className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2">
-          <div className="text-xs font-semibold text-muted-foreground">{tr('pages.tokenRoutes.routeGraphWorkbench.fallbacks')}</div>
-          <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2">{fallbackTemplates.map(renderTemplate)}</div>
+          <div className="text-xs font-semibold text-muted-foreground">{tr('pages.tokenRoutes.routeGraphWorkbench.syntheticResponses')}</div>
+          <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2">{syntheticTemplates.map(renderTemplate)}</div>
         </section>
       )}
       {primitiveNodeTypes.length > 0 && (
@@ -3308,31 +3705,65 @@ function AddPanel({
   );
 }
 
-function getLibraryCategoryLabel(category: 'All' | 'Core' | 'Transform' | 'Fallback' | 'Primitive'): string {
+function getLibraryCategoryLabel(category: 'All' | 'Core' | 'Transform' | 'Synthetic' | 'Primitive'): string {
   if (category === 'Core') return tr('pages.tokenRoutes.routeGraphWorkbench.categoryCore');
   if (category === 'Transform') return tr('pages.tokenRoutes.routeGraphWorkbench.categoryTransform');
-  if (category === 'Fallback') return tr('pages.tokenRoutes.routeGraphWorkbench.categoryFallback');
+  if (category === 'Synthetic') return tr('pages.tokenRoutes.routeGraphWorkbench.categorySynthetic');
   if (category === 'Primitive') return tr('pages.tokenRoutes.routeGraphWorkbench.categoryPrimitive');
   return tr('pages.tokenRoutes.routeGraphWorkbench.categoryAll');
 }
 
-function ModelsPanel({ nodes, onSelect }: { nodes: RouteGraphNode[]; onSelect: (nodeId: string) => void }) {
+function ModelsPanel({
+  nodes,
+  onSelect,
+  onNeedEndpointCatalog,
+}: {
+  nodes: PublicModelEntryRow[];
+  onSelect: (nodeId: string) => void;
+  onNeedEndpointCatalog: () => void;
+}) {
+  const [query, setQuery] = useState('');
+  useEffect(() => {
+    onNeedEndpointCatalog();
+  }, [onNeedEndpointCatalog]);
+  const filteredNodes = useMemo(() => filterPublicModelEntryRows(nodes, query), [nodes, query]);
+  const visibleNodes = visibleSidebarItems(filteredNodes);
+  const hasQuery = query.trim().length > 0;
   return (
     <ScrollArea className="route-graph-sidebar-scroll h-full min-h-0">
-    <div className="grid gap-2 p-3">
-      {nodes.length === 0 ? <div className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">{tr('pages.tokenRoutes.routeGraphWorkbench.noPublicEntries')}</div> : nodes.map((node) => {
-        const match = (node.match || {}) as any;
-        const title = String(match.displayName || match.requestedModelPattern || getNodeTitle(node));
+    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-2 p-3">
+      <div className="route-graph-template-search">
+        <Search className="shrink-0 text-muted-foreground" size={14} />
+        <Input
+          type="search"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder={tr('pages.tokenRoutes.routeGraphWorkbench.searchModels')}
+          aria-label={tr('pages.tokenRoutes.routeGraphWorkbench.searchModels')}
+        />
+      </div>
+      {nodes.length === 0 ? (
+        <div className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">{tr('pages.tokenRoutes.routeGraphWorkbench.noPublicEntries')}</div>
+      ) : filteredNodes.length === 0 ? (
+        <div className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
+          {hasQuery ? tr('pages.tokenRoutes.routeGraphWorkbench.noModelSearchResults') : tr('pages.tokenRoutes.routeGraphWorkbench.noPublicEntries')}
+        </div>
+      ) : visibleNodes.map((node) => {
         return (
-          <Button key={node.id} type="button" variant="outline" className="h-auto min-w-0 justify-start gap-2 p-3 text-left" onClick={() => onSelect(node.id)}>
+          <Button key={node.id} type="button" variant="outline" className="h-auto min-w-0 justify-start gap-2 p-3 text-left" onClick={() => onSelect(node.nodeId)}>
             <Layers3 className="size-4 shrink-0 text-muted-foreground" />
             <span className="grid min-w-0 gap-0.5">
-              <strong className="truncate text-sm font-medium">{title}</strong>
-              <small className="truncate text-xs text-muted-foreground">{getModelListSubtitle(node)}</small>
+              <strong className="truncate text-sm font-medium">{node.title}</strong>
+              <small className="truncate text-xs text-muted-foreground">{node.subtitle}</small>
             </span>
           </Button>
         );
       })}
+      {filteredNodes.length > visibleNodes.length && (
+        <div className="rounded-md border p-2 text-xs text-muted-foreground">
+          {visibleNodes.length}/{filteredNodes.length}
+        </div>
+      )}
     </div>
     </ScrollArea>
   );
@@ -3441,6 +3872,22 @@ function getMacroRouteIds(macro: RouteGraphMacro): number[] {
   return routeIds;
 }
 
+function findMacroByIdOrFlowNodeId(graph: RouteGraphSource, macroIdOrFlowNodeId: string | null | undefined): RouteGraphMacro | null {
+  const id = String(macroIdOrFlowNodeId || '').trim();
+  if (!id) return null;
+  return graph.macros.find((macro) => macro.id === id || macroFlowNodeId(macro.id) === id) || null;
+}
+
+export function getMacroFocusContextForEdgeNode(graph: RouteGraphSource, edge: RouteGraphEdge, nodeId: string): string | null {
+  if (nodeId !== edge.sourceNodeId && nodeId !== edge.targetNodeId) return null;
+  const nodeMacro = findMacroByIdOrFlowNodeId(graph, nodeId);
+  if (nodeMacro) return nodeMacro.id;
+  const peerNodeId = nodeId === edge.sourceNodeId ? edge.targetNodeId : edge.sourceNodeId;
+  return findMacroByIdOrFlowNodeId(graph, peerNodeId)?.id
+    || findMacroForGeneratedPrimitive(graph, peerNodeId)?.id
+    || null;
+}
+
 function findMacroForGeneratedPrimitive(graph: RouteGraphSource, nodeId: string): RouteGraphMacro | null {
   const node = graph.nodes.find((item) => item.id === nodeId);
   const macroId = node ? getPrimitiveNodeMacroId(node) : null;
@@ -3469,6 +3916,7 @@ function MacrosPanel({
   onAdd: () => void;
 }) {
   const sortedMacros = [...macros].sort((left, right) => getMacroDisplayName(left).localeCompare(getMacroDisplayName(right)));
+  const visibleMacros = visibleSidebarItems(sortedMacros);
   return (
     <ScrollArea className="route-graph-sidebar-scroll h-full min-h-0">
       <div className="grid gap-2 p-3">
@@ -3478,7 +3926,7 @@ function MacrosPanel({
         </Button>
         {sortedMacros.length === 0 ? (
           <div className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">{tr('pages.tokenRoutes.routeGraphWorkbench.noSemanticMacros')}</div>
-        ) : sortedMacros.map((macro) => {
+        ) : visibleMacros.map((macro) => {
           const routeIds = getMacroRouteIds(macro);
           return (
             <Button key={macro.id} type="button" variant="outline" className="h-auto min-w-0 justify-start gap-2 p-3 text-left" onClick={() => onSelect(macro.id)}>
@@ -3495,16 +3943,22 @@ function MacrosPanel({
             </Button>
           );
         })}
+        {sortedMacros.length > visibleMacros.length && (
+          <div className="rounded-md border p-2 text-xs text-muted-foreground">
+            {visibleMacros.length}/{sortedMacros.length}
+          </div>
+        )}
       </div>
     </ScrollArea>
   );
 }
 
 function NodesPanel({ nodes, onSelect }: { nodes: RouteGraphNode[]; onSelect: (nodeId: string) => void }) {
+  const visibleNodes = visibleSidebarItems(nodes);
   return (
     <ScrollArea className="route-graph-sidebar-scroll h-full min-h-0">
     <div className="grid gap-2 p-3">
-      {nodes.map((node) => (
+      {visibleNodes.map((node) => (
         <Button key={node.id} type="button" variant="outline" className="h-auto min-w-0 justify-start gap-2 p-3 text-left" onClick={() => onSelect(node.id)}>
           <ListTree className="size-4 shrink-0 text-muted-foreground" />
           <span className="grid min-w-0 gap-0.5">
@@ -3513,6 +3967,11 @@ function NodesPanel({ nodes, onSelect }: { nodes: RouteGraphNode[]; onSelect: (n
           </span>
         </Button>
       ))}
+      {nodes.length > visibleNodes.length && (
+        <div className="rounded-md border p-2 text-xs text-muted-foreground">
+          {visibleNodes.length}/{nodes.length}
+        </div>
+      )}
     </div>
     </ScrollArea>
   );
@@ -3550,9 +4009,10 @@ function LeftWorkbenchPanel({
   onSelectMacro,
   onAddModelGroupMacro,
   onChangeView,
+  onNeedEndpointCatalog,
 }: {
   templates: AddTemplate[];
-  publicEntries: RouteGraphNode[];
+  publicEntries: PublicModelEntryRow[];
   nodes: RouteGraphNode[];
   macros: RouteGraphMacro[];
   viewState: ViewState;
@@ -3563,17 +4023,18 @@ function LeftWorkbenchPanel({
   onSelectMacro: (macroId: string) => void;
   onAddModelGroupMacro: () => void;
   onChangeView: (value: ViewState) => void;
+  onNeedEndpointCatalog: () => void;
 }) {
   const [section, setSection] = useState<'library' | 'models' | 'macros' | 'outline' | 'view'>('library');
   return (
-    <aside className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden border-r bg-card">
+    <aside className="route-graph-left-panel flex h-full min-h-0 min-w-0 flex-col overflow-hidden border-r bg-card">
       <Tabs.Tabs value={section} onValueChange={(value) => setSection(value as typeof section)} className="grid h-full min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)] overflow-hidden">
-        <div className="grid gap-3 border-b p-3">
+        <div className="route-graph-left-header grid gap-3 border-b p-3">
           <div className="min-w-0">
             <div className="text-sm font-semibold">{tr('pages.tokenRoutes.routeGraphWorkbench.graphTools')}</div>
             <div className="truncate text-xs text-muted-foreground">{tr('pages.tokenRoutes.routeGraphWorkbench.graphToolsDescription')}</div>
           </div>
-          <Tabs.TabsList className="grid w-full grid-cols-5" aria-label={tr('pages.tokenRoutes.routeGraphWorkbench.graphTools')}>
+          <Tabs.TabsList className="route-graph-left-tabs grid w-full grid-cols-5" aria-label={tr('pages.tokenRoutes.routeGraphWorkbench.graphTools')}>
             <Tabs.TabsTrigger value="library" title={tr('pages.tokenRoutes.routeGraphWorkbench.library')} className="gap-1 px-2">
               <Plus size={15} />
               <span className="hidden xl:inline">{tr('pages.tokenRoutes.routeGraphWorkbench.library')}</span>
@@ -3605,7 +4066,9 @@ function LeftWorkbenchPanel({
               onStartDrag={onStartDrag}
             />
           </Tabs.TabsContent>
-          <Tabs.TabsContent value="models" className="h-full min-h-0 overflow-hidden"><ModelsPanel nodes={publicEntries} onSelect={onSelect} /></Tabs.TabsContent>
+          <Tabs.TabsContent value="models" className="h-full min-h-0 overflow-hidden">
+            <ModelsPanel nodes={publicEntries} onSelect={onSelect} onNeedEndpointCatalog={onNeedEndpointCatalog} />
+          </Tabs.TabsContent>
           <Tabs.TabsContent value="macros" className="h-full min-h-0 overflow-hidden">
             <MacrosPanel
               macros={macros}
@@ -3675,12 +4138,12 @@ function RouteGraphPointMenu({
   onCopyText: (text: string, label: string) => void;
   onDelete: () => void;
   onDuplicateNode: (nodeId: string) => void;
-  onFocusNode: (nodeId: string) => void;
+  onFocusNode: (nodeId: string, options?: { moveInspector?: boolean; macroId?: string | null }) => void;
   expandedMacroIds: string[];
   onExpandMacro: (macroId: string) => void;
   onCollapseMacro: (macroId: string) => void;
   onToggleNodeEnabled: (nodeId: string) => void;
-  onSelectConnectedPath: (nodeId: string, direction: 'upstream' | 'downstream') => void;
+  onSelectConnectedPath: (nodeId: string, direction: 'upstream' | 'downstream', options?: { moveInspector?: boolean }) => void;
   onDisconnectPort: (nodeId: string, portId: string) => void;
   selectedCount: number;
 }) {
@@ -3703,7 +4166,7 @@ function RouteGraphPointMenu({
   const readonlyEdge = !edge || edge.ownership !== 'manual';
   const coreTemplates = templates.filter((template) => template.category === 'Core');
   const transformTemplates = templates.filter((template) => template.category === 'Transform');
-  const fallbackTemplates = templates.filter((template) => template.category === 'Fallback');
+  const syntheticTemplates = templates.filter((template) => template.category === 'Synthetic');
 
   return (
     <DropdownMenu.Root open={open} onOpenChange={onOpenChange}>
@@ -3735,7 +4198,7 @@ function RouteGraphPointMenu({
               {(templateById.get('entry') || coreTemplates[0]) && <DropdownMenu.Item onSelect={() => onAddTemplate(templateById.get('entry') || coreTemplates[0]!)}>{tr('pages.tokenRoutes.routeGraphWorkbench.entry')}</DropdownMenu.Item>}
               {(templateById.get('dispatcher-route') || coreTemplates[1]) && <DropdownMenu.Item onSelect={() => onAddTemplate(templateById.get('dispatcher-route') || coreTemplates[1]!)}>{tr('pages.tokenRoutes.routeGraphWorkbench.dispatcher')}</DropdownMenu.Item>}
               {coreTemplates.map((template) => (
-                <DropdownMenu.Item key={template.id} onSelect={() => onAddTemplate(template)}>{template.title}</DropdownMenu.Item>
+                <DropdownMenu.Item key={template.id} onSelect={() => onAddTemplate(template)}>{getTemplateTitle(template)}</DropdownMenu.Item>
               ))}
             </DropdownMenu.SubContent>
           </DropdownMenu.Sub>
@@ -3744,15 +4207,15 @@ function RouteGraphPointMenu({
             <DropdownMenu.SubTrigger><Sparkles size={14} />{tr('pages.tokenRoutes.routeGraphWorkbench.addTransform')}</DropdownMenu.SubTrigger>
             <DropdownMenu.SubContent className="min-w-56">
               {transformTemplates.map((template) => (
-                <DropdownMenu.Item key={template.id} onSelect={() => onAddTemplate(template)}>{template.title}</DropdownMenu.Item>
+                <DropdownMenu.Item key={template.id} onSelect={() => onAddTemplate(template)}>{getTemplateTitle(template)}</DropdownMenu.Item>
               ))}
             </DropdownMenu.SubContent>
           </DropdownMenu.Sub>
           <DropdownMenu.Sub>
-            <DropdownMenu.SubTrigger><Trash2 size={14} />{tr('pages.tokenRoutes.routeGraphWorkbench.addFallback')}</DropdownMenu.SubTrigger>
+            <DropdownMenu.SubTrigger><Trash2 size={14} />{tr('pages.tokenRoutes.routeGraphWorkbench.addSyntheticResponse')}</DropdownMenu.SubTrigger>
             <DropdownMenu.SubContent className="min-w-56">
-              {fallbackTemplates.map((template) => (
-                <DropdownMenu.Item key={template.id} onSelect={() => onAddTemplate(template)}>{template.title}</DropdownMenu.Item>
+              {syntheticTemplates.map((template) => (
+                <DropdownMenu.Item key={template.id} onSelect={() => onAddTemplate(template)}>{getTemplateTitle(template)}</DropdownMenu.Item>
               ))}
             </DropdownMenu.SubContent>
           </DropdownMenu.Sub>
@@ -3784,7 +4247,7 @@ function RouteGraphPointMenu({
             <DropdownMenu.SubTrigger><Plus size={14} />{tr('pages.tokenRoutes.routeGraphWorkbench.insertAfter')}</DropdownMenu.SubTrigger>
             <DropdownMenu.SubContent className="min-w-56">
               {templates.map((template) => (
-                <DropdownMenu.Item key={template.id} onSelect={() => onInsertTemplate(template)}>{template.title}</DropdownMenu.Item>
+                <DropdownMenu.Item key={template.id} onSelect={() => onInsertTemplate(template)}>{getTemplateTitle(template)}</DropdownMenu.Item>
               ))}
             </DropdownMenu.SubContent>
           </DropdownMenu.Sub>
@@ -3830,8 +4293,8 @@ function RouteGraphPointMenu({
         <>
           <DropdownMenu.Label>{edge.kind}</DropdownMenu.Label>
           <DropdownMenu.Item onSelect={() => onOpenInspector(safeTarget, 'Overview')}><MousePointer2 size={14} />{tr('pages.tokenRoutes.routeGraphWorkbench.inspectEdge')}</DropdownMenu.Item>
-          <DropdownMenu.Item onSelect={() => onFocusNode(edge.sourceNodeId)}>{tr('pages.tokenRoutes.routeGraphWorkbench.selectSource')}</DropdownMenu.Item>
-          <DropdownMenu.Item onSelect={() => onFocusNode(edge.targetNodeId)}>{tr('pages.tokenRoutes.routeGraphWorkbench.selectTarget')}</DropdownMenu.Item>
+          <DropdownMenu.Item onSelect={() => onFocusNode(edge.sourceNodeId, { macroId: getMacroFocusContextForEdgeNode(graph, edge, edge.sourceNodeId) })}>{tr('pages.tokenRoutes.routeGraphWorkbench.selectSource')}</DropdownMenu.Item>
+          <DropdownMenu.Item onSelect={() => onFocusNode(edge.targetNodeId, { macroId: getMacroFocusContextForEdgeNode(graph, edge, edge.targetNodeId) })}>{tr('pages.tokenRoutes.routeGraphWorkbench.selectTarget')}</DropdownMenu.Item>
           <DropdownMenu.Separator />
           <DropdownMenu.Item onSelect={() => onCopyText(JSON.stringify(edge, null, 2), tr('pages.tokenRoutes.routeGraphWorkbench.edgeJson'))}>{tr('pages.tokenRoutes.routeGraphWorkbench.copyEdgeJson')}</DropdownMenu.Item>
           <DropdownMenu.Item onSelect={() => onCopyText(`${edge.sourceNodeId}.${edge.sourcePortId}`, tr('pages.tokenRoutes.routeGraphWorkbench.sourceRef'))}>{tr('pages.tokenRoutes.routeGraphWorkbench.copySourceRef')}</DropdownMenu.Item>
@@ -3908,12 +4371,12 @@ function Inspector({
   expandedMacroIds: string[];
   onExpandMacro: (macroId: string) => void;
   onCollapseMacro: (macroId: string) => void;
-  onFocusGeneratedPrimitive: (macroId: string, nodeId: string) => void;
+  onFocusGeneratedPrimitive: (macroId: string, nodeId: string, options?: { moveInspector?: boolean }) => void;
   onCopyText: (text: string, label: string) => void;
   onDuplicateNode: (nodeId: string) => void;
-  onFocusNode: (nodeId: string, options?: { moveInspector?: boolean }) => void;
+  onFocusNode: (nodeId: string, options?: { moveInspector?: boolean; macroId?: string | null }) => void;
   onFocusEdge: (edgeId: string, options?: { moveInspector?: boolean }) => void;
-  onSelectConnectedPath: (nodeId: string, direction: 'upstream' | 'downstream') => void;
+  onSelectConnectedPath: (nodeId: string, direction: 'upstream' | 'downstream', options?: { moveInspector?: boolean }) => void;
   onToggleNodeEnabled: (nodeId: string) => void;
 }) {
   if (selectedMacro) {
@@ -3922,7 +4385,7 @@ function Inspector({
     const generatedRows = getMacroGeneratedPreviewRows(semanticGraph, selectedMacro);
     const generatedPreviewGraph = getMacroGeneratedPreviewGraph(semanticGraph, selectedMacro);
     const groupPreviews = getMacroGroupPreviews(selectedMacro);
-    const priorityGroupCount = getMacroPriorityGroupCount(selectedMacro, generatedRows);
+    const priorityBandCount = getMacroPriorityBandCount(selectedMacro, generatedRows);
     const expandedOnCanvas = expandedMacroIds.includes(selectedMacro.id);
     return (
       <div className="route-graph-inspector-content">
@@ -3932,163 +4395,182 @@ function Inspector({
           title={getMacroDisplayName(selectedMacro)}
           subtitle={`${selectedMacro.kind} · ${selectedMacro.visibility} · ${selectedMacro.ownership}`}
           action={(
-            <ButtonGroup>
+            <ButtonGroup className="route-graph-inspector-primary-actions">
               <Button type="button" variant="outline" size="sm" onClick={() => onFocusNode(selectedMacro.id, { moveInspector: false })}>
                 <Crosshair size={13} />
                 {tr('pages.tokenRoutes.routeGraphWorkbench.focus')}
               </Button>
-              <Button type="button" variant="outline" size="sm" onClick={() => onCopyText(selectedMacro.id, tr('pages.tokenRoutes.routeGraphWorkbench.macroId'))}>{tr('pages.tokenRoutes.routeGraphWorkbench.copyId')}</Button>
-              <Button type="button" variant="outline" size="sm" onClick={() => onCopyText(JSON.stringify(selectedMacro, null, 2), tr('pages.tokenRoutes.routeGraphWorkbench.macroJson'))}>{tr('pages.tokenRoutes.routeGraphWorkbench.copyJson')}</Button>
-              <Button type="button" variant="destructive" size="sm" disabled={readonly} onClick={onDelete}>{tr('pages.tokenRoutes.routeGraphWorkbench.delete')}</Button>
+              <Button type="button" variant="outline" size="sm" onClick={() => onCopyText(selectedMacro.id, tr('pages.tokenRoutes.routeGraphWorkbench.macroId'))}>
+                <Copy size={13} />
+                {tr('pages.tokenRoutes.routeGraphWorkbench.copyId')}
+              </Button>
+              <Button type="button" variant="outline" size="sm" onClick={() => onCopyText(JSON.stringify(selectedMacro, null, 2), tr('pages.tokenRoutes.routeGraphWorkbench.macroJson'))}>
+                <Copy size={13} />
+                {tr('pages.tokenRoutes.routeGraphWorkbench.copyJson')}
+              </Button>
+              <Button type="button" variant="destructive" size="sm" disabled={readonly} onClick={onDelete}>
+                <Trash2 size={13} />
+                {tr('pages.tokenRoutes.routeGraphWorkbench.delete')}
+              </Button>
             </ButtonGroup>
           )}
         />
         <Tabs.Tabs value={inspectorTab} onValueChange={(value) => setInspectorTab(value as typeof inspectorTab)} className="route-graph-inspector-tabs">
-          <Tabs.TabsList className="route-graph-inspector-tablist">
-            <Tabs.TabsTrigger value="Overview">{tr('pages.tokenRoutes.routeGraphWorkbench.overview')}</Tabs.TabsTrigger>
-            <Tabs.TabsTrigger value="Config">{tr('pages.tokenRoutes.routeGraphWorkbench.config')}</Tabs.TabsTrigger>
-            <Tabs.TabsTrigger value="JSON">{tr('pages.tokenRoutes.routeGraphWorkbench.json')}</Tabs.TabsTrigger>
-          </Tabs.TabsList>
-          <Tabs.TabsContent value="Overview">
-            <div className="route-graph-inspector-summary">
-              <span>{tr('pages.tokenRoutes.routeGraphWorkbench.kind')}<b>{selectedMacro.kind}</b></span>
-              <span>{tr('pages.tokenRoutes.routeGraphWorkbench.strategy')}<b>{getMacroStrategy(selectedMacro)}</b></span>
-              <span>{tr('pages.tokenRoutes.routeGraphWorkbench.groups')}<b>{getMacroGroups(selectedMacro).length}</b></span>
-              <span>{tr('pages.tokenRoutes.routeGraphWorkbench.routesLabel')}<b>{routeIds.length}</b></span>
-            </div>
-            <div className="route-graph-panel-stack">
-              <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <div className="text-sm font-medium">{tr('pages.tokenRoutes.routeGraphWorkbench.generatedView')}</div>
-                  <div className="text-xs text-muted-foreground">{tr('pages.tokenRoutes.routeGraphWorkbench.generatedViewDescription')}</div>
-                </div>
-                <ButtonGroup className="min-w-0 flex-wrap justify-end">
-                  <Button type="button" variant="secondary" size="sm" disabled>
-                    {tr('pages.tokenRoutes.routeGraphWorkbench.previewInInspector')}
+        <Tabs.TabsList className="route-graph-inspector-tablist">
+          <Tabs.TabsTrigger value="Overview">{tr('pages.tokenRoutes.routeGraphWorkbench.overview')}</Tabs.TabsTrigger>
+          <Tabs.TabsTrigger value="Config">{tr('pages.tokenRoutes.routeGraphWorkbench.config')}</Tabs.TabsTrigger>
+          <Tabs.TabsTrigger value="JSON">{tr('pages.tokenRoutes.routeGraphWorkbench.json')}</Tabs.TabsTrigger>
+        </Tabs.TabsList>
+        <Tabs.TabsContent value="Overview">
+          <div className="route-graph-inspector-summary">
+            <span>{tr('pages.tokenRoutes.routeGraphWorkbench.kind')}<b>{selectedMacro.kind}</b></span>
+            <span>{tr('pages.tokenRoutes.routeGraphWorkbench.strategy')}<b>{getMacroStrategy(selectedMacro)}</b></span>
+            <span>{tr('pages.tokenRoutes.routeGraphWorkbench.groups')}<b>{getMacroGroups(selectedMacro).length}</b></span>
+            <span>{tr('pages.tokenRoutes.routeGraphWorkbench.routesLabel')}<b>{routeIds.length}</b></span>
+          </div>
+          <div className="route-graph-panel-stack">
+            <div className="route-graph-section-head">
+              <div className="min-w-0">
+                <div className="text-sm font-medium">{tr('pages.tokenRoutes.routeGraphWorkbench.generatedView')}</div>
+              </div>
+              <ButtonGroup className="min-w-0 flex-wrap justify-end">
+                <Button type="button" variant="secondary" size="sm" disabled>
+                  {tr('pages.tokenRoutes.routeGraphWorkbench.previewInInspector')}
+                </Button>
+                {expandedOnCanvas ? (
+                  <Button type="button" variant="outline" size="sm" onClick={() => onCollapseMacro(selectedMacro.id)}>
+                    {tr('pages.tokenRoutes.routeGraphWorkbench.collapse')}
                   </Button>
-                  {expandedOnCanvas ? (
-                    <Button type="button" variant="outline" size="sm" onClick={() => onCollapseMacro(selectedMacro.id)}>
-                      {tr('pages.tokenRoutes.routeGraphWorkbench.collapse')}
-                    </Button>
-                  ) : (
-                    <Button type="button" variant="outline" size="sm" onClick={() => onExpandMacro(selectedMacro.id)}>
-                      {tr('pages.tokenRoutes.routeGraphWorkbench.expandOnCanvas')}
-                    </Button>
-                  )}
-                </ButtonGroup>
-              </div>
-              <div className="grid min-w-0 gap-2 rounded-md border p-3">
-                <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 text-xs">
-                  <Badge variant="outline">{tr('pages.tokenRoutes.routeGraphWorkbench.entry')}</Badge>
-                  <span className="text-muted-foreground">{'->'}</span>
-                  <Badge variant="outline">{tr('pages.tokenRoutes.routeGraphWorkbench.dispatcher')}</Badge>
-                  <span className="text-muted-foreground">{'->'}</span>
-                  <Badge variant="outline">{tr('pages.tokenRoutes.routeGraphWorkbench.endpointSet')}</Badge>
-                </div>
-                <div className="min-w-0 break-words text-xs text-muted-foreground">
-                  {tr('pages.tokenRoutes.routeGraphWorkbench.generatedViewSummary')
-                    .replace('{name}', getMacroDisplayName(selectedMacro))
-                    .replace('{paths}', String(generatedRows.length))
-                    .replace('{groups}', String(priorityGroupCount))}
-                </div>
-              </div>
-              <div className="route-graph-hidden-supply-summary rounded-md border border-dashed p-3">
-                <div className="route-graph-hidden-supply-lines" aria-hidden="true">
-                  {generatedRows.slice(0, 8).map((row) => <span key={row.id} />)}
-                </div>
-                <div className="min-w-0 text-xs text-muted-foreground">
-                  {generatedPreviewGraph.nodes.length} generated nodes · {generatedPreviewGraph.edges.length} generated links. Use Expand on canvas to inspect supply candidates.
-                </div>
-              </div>
-              <div className="grid min-w-0 gap-2">
-                {generatedRows.length === 0 ? (
-                  <div className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">{tr('pages.tokenRoutes.routeGraphWorkbench.noGeneratedPrimitiveRoutes')}</div>
-                ) : generatedRows.map((row) => (
-                  <div key={row.id} className="grid min-w-0 gap-2 rounded-md border p-2 text-xs">
-                    <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
-                      <strong className="min-w-0 truncate">{row.routeId ? tr('pages.tokenRoutes.routeGraphWorkbench.routeNumber').replace('{id}', String(row.routeId)) : tr('pages.tokenRoutes.routeGraphWorkbench.candidateNumber').replace('{index}', String(row.index + 1))}</strong>
-                      <span className="min-w-0 flex-1 break-words text-muted-foreground">{getMacroGeneratedRowDisplayLabel(row, groupPreviews)} · {tr('pages.tokenRoutes.routeGraphWorkbench.priorityValue').replace('{value}', String(row.priority))}</span>
-                      <Badge variant="outline" className="shrink-0">{tr('pages.tokenRoutes.routeGraphWorkbench.readOnly')}</Badge>
-                    </div>
-                    <div className="grid min-w-0 gap-1">
-                      {row.links.length > 0 ? row.links.map((link) => (
-                        <div key={link.id} className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-1 rounded-md bg-muted/35 px-2 py-1.5">
-                          <Button type="button" variant="ghost" size="sm" className="h-auto min-w-0 justify-start whitespace-normal px-1.5 py-1 text-left text-xs" onClick={() => onFocusGeneratedPrimitive(selectedMacro.id, link.sourceNodeId)}>
-                            <Crosshair size={12} className="mt-0.5 shrink-0" />
-                            <span className="min-w-0 break-all font-mono leading-snug">{link.sourceNodeId}</span>
-                          </Button>
-                          <span className="shrink-0 rounded-full border bg-background px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-                            {link.label}
-                          </span>
-                          <Button type="button" variant="ghost" size="sm" className="h-auto min-w-0 justify-start whitespace-normal px-1.5 py-1 text-left text-xs" onClick={() => onFocusGeneratedPrimitive(selectedMacro.id, link.targetNodeId)}>
-                            <Crosshair size={12} className="mt-0.5 shrink-0" />
-                            <span className="min-w-0 break-all font-mono leading-snug">{link.targetNodeId}</span>
-                          </Button>
-                        </div>
-                      )) : row.nodeIds.map((nodeId) => (
-                        <Button key={nodeId} type="button" variant="ghost" size="sm" className="h-auto min-w-0 justify-start whitespace-normal px-2 py-1 text-left text-xs" onClick={() => onFocusGeneratedPrimitive(selectedMacro.id, nodeId)}>
-                          <Crosshair size={12} className="mt-0.5 shrink-0" />
-                          <span className="min-w-0 break-all font-mono leading-snug">{nodeId}</span>
-                        </Button>
-                      ))}
-                    </div>
+                ) : (
+                  <Button type="button" variant="outline" size="sm" onClick={() => onExpandMacro(selectedMacro.id)}>
+                    {tr('pages.tokenRoutes.routeGraphWorkbench.expandOnCanvas')}
+                  </Button>
+                )}
+              </ButtonGroup>
+            </div>
+            <div className="route-graph-generated-panel">
+              <div className="route-graph-generated-summary">
+                <div className="min-w-0">
+                  <div className="route-graph-generated-summary-label">
+                    {tr('pages.tokenRoutes.routeGraphWorkbench.compiledPreview')}
                   </div>
-                ))}
+                  <div className="route-graph-generated-summary-text">
+                    {tr('pages.tokenRoutes.routeGraphWorkbench.generatedViewSummary')
+                      .replace('{name}', getMacroDisplayName(selectedMacro))
+                      .replace('{paths}', String(generatedRows.length))
+                      .replace('{bands}', String(priorityBandCount))}
+                  </div>
+                </div>
+                <div className="route-graph-generated-flow" aria-hidden="true">
+                  <Badge variant="outline" className="route-graph-generated-pill">{tr('pages.tokenRoutes.routeGraphWorkbench.entry')}</Badge>
+                  <span className="text-muted-foreground">{'->'}</span>
+                  <Badge variant="outline" className="route-graph-generated-pill">{tr('pages.tokenRoutes.routeGraphWorkbench.dispatcher')}</Badge>
+                  <span className="text-muted-foreground">{'->'}</span>
+                  <Badge variant="outline" className="route-graph-generated-pill">{tr('pages.tokenRoutes.routeGraphWorkbench.endpointSet')}</Badge>
+                </div>
+              </div>
+              <div className="route-graph-generated-list-head">
+                <span className="route-graph-generated-list-label">{tr('pages.tokenRoutes.routeGraphWorkbench.candidatePaths')}</span>
+                <span className="route-graph-generated-list-count">
+                  {tr('pages.tokenRoutes.routeGraphWorkbench.generatedGraphCounts')
+                    .replace('{nodes}', String(generatedPreviewGraph.nodes.length))
+                    .replace('{edges}', String(generatedPreviewGraph.edges.length))}
+                </span>
+              </div>
+              <div className="route-graph-generated-list">
+                  {generatedRows.length === 0 ? (
+                  <div className="route-graph-empty-generated">{tr('pages.tokenRoutes.routeGraphWorkbench.noGeneratedPrimitiveRoutes')}</div>
+                  ) : generatedRows.map((row) => (
+                  <div key={row.id} className="route-graph-generated-item">
+                    <div className="route-graph-generated-item-head">
+                      <strong className="min-w-0 truncate">{row.routeId ? tr('pages.tokenRoutes.routeGraphWorkbench.routeNumber').replace('{id}', String(row.routeId)) : tr('pages.tokenRoutes.routeGraphWorkbench.candidateNumber').replace('{index}', String(row.index + 1))}</strong>
+                      <Badge variant="outline" className="route-graph-generated-pill shrink-0">{tr('pages.tokenRoutes.routeGraphWorkbench.readOnly')}</Badge>
+                    </div>
+                    <div className="route-graph-generated-item-meta">
+                      <span className="min-w-0 flex-1 break-words">{getMacroGeneratedRowDisplayLabel(row, groupPreviews)}</span>
+                      <Badge variant="secondary" className="route-graph-generated-pill shrink-0">
+                        {tr('pages.tokenRoutes.routeGraphWorkbench.priorityValue').replace('{value}', String(row.priority))}
+                      </Badge>
+                    </div>
+                      <div className="route-graph-generated-item-body">
+                        <span className="min-w-0 flex-1 truncate">
+                          {tr('pages.tokenRoutes.routeGraphWorkbench.generatedPathSummary')
+                            .replace('{nodes}', String(row.nodeIds.length))
+                            .replace('{links}', String(row.links.length))}
+                        </span>
+                        <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => onFocusGeneratedPrimitive(selectedMacro.id, row.nodeIds[row.nodeIds.length - 1] || row.endpointId, { moveInspector: false })}>
+                          <Crosshair size={12} />
+                          {tr('pages.tokenRoutes.routeGraphWorkbench.focus')}
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
               </div>
             </div>
             <div className="route-graph-panel-stack">
-              <div className="text-sm font-medium">{tr('pages.tokenRoutes.routeGraphWorkbench.priorityBands')}</div>
+              <div className="route-graph-section-head">
+                <div>
+                  <div className="text-sm font-medium">{tr('pages.tokenRoutes.routeGraphWorkbench.priorityBands')}</div>
+                  <div className="text-xs text-muted-foreground">{tr('pages.tokenRoutes.routeGraphWorkbench.routePriorityBandsDescription')}</div>
+                </div>
+              </div>
               {groupPreviews.map((group) => (
-                <div key={group.id} className="route-graph-port-inspector-row">
-                  <div className="flex min-w-0 items-center justify-between gap-2">
-                    <strong className="min-w-0 truncate">{getMacroGroupDisplayLabel(group)}</strong>
-                    <HoverCard.Root openDelay={150} closeDelay={80}>
-                      <HoverCard.Trigger asChild>
-                        <Button type="button" variant="ghost" size="sm" className="h-7 shrink-0 px-2 text-xs">
-                          {tr('pages.tokenRoutes.routeGraphWorkbench.details')}
-                        </Button>
-                      </HoverCard.Trigger>
-                      <HoverCard.Content className="z-[90] w-[min(420px,calc(100vw-2rem))] max-w-[calc(100vw-2rem)] p-3 text-xs" side="left" align="start">
-                        <div className="grid gap-2">
-                          <div className="break-all font-medium">{group.label}</div>
-                          <div className="grid gap-1 text-muted-foreground">
-                            <div>{tr('pages.tokenRoutes.routeGraphWorkbench.priorityValue').replace('{value}', String(group.priority))}</div>
-                            <div>{group.enabled ? tr('pages.tokenRoutes.routeGraphWorkbench.enabled') : tr('pages.tokenRoutes.routeGraphWorkbench.disabled')}</div>
-                            <div>{group.inputKind}</div>
-                          </div>
-                          {group.routeIds.length > 0 && (
-                            <div className="grid gap-1">
-                              <div className="font-medium">{tr('pages.tokenRoutes.routeGraphWorkbench.routesLabel')}</div>
-                              <div className="break-words font-mono text-muted-foreground">{group.routeIds.join(', ')}</div>
-                            </div>
-                          )}
-                          {group.endpointIds.length > 0 && (
-                            <div className="grid gap-1">
-                              <div className="font-medium">{tr('pages.tokenRoutes.routeGraphWorkbench.endpointSet')}</div>
-                              <div className="grid gap-1">
-                                {group.endpointIds.map((endpointId) => (
-                                  <div key={endpointId} className="break-all rounded-md border p-1.5 font-mono text-muted-foreground">
-                                    {endpointId}
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-                          {group.pattern && (
-                            <div className="grid gap-1">
-                              <div className="font-medium">{tr('pages.tokenRoutes.routeGraphWorkbench.pattern')}</div>
-                              <div className="break-all font-mono text-muted-foreground">{group.pattern}</div>
-                            </div>
-                          )}
-                        </div>
-                      </HoverCard.Content>
-                    </HoverCard.Root>
+                <div key={group.id} className="route-graph-priority-band-preview-row">
+                  <div className="min-w-0">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <strong className="min-w-0 truncate">{getMacroGroupDisplayLabel(group)}</strong>
+                      <Badge variant={group.enabled ? 'outline' : 'secondary'} className="shrink-0">
+                        {tr('pages.tokenRoutes.routeGraphWorkbench.priorityValue').replace('{value}', String(group.priority))}
+                      </Badge>
+                    </div>
+                    <div className="truncate text-xs text-muted-foreground">{getMacroGroupPreviewSummary(group)}</div>
                   </div>
-                  <small>{tr('pages.tokenRoutes.routeGraphWorkbench.priorityValue').replace('{value}', String(group.priority))} · {group.enabled ? tr('pages.tokenRoutes.routeGraphWorkbench.enabled') : tr('pages.tokenRoutes.routeGraphWorkbench.disabled')}</small>
-                  <small>{getMacroGroupPreviewSummary(group)}</small>
+                  <HoverCard.Root openDelay={150} closeDelay={80}>
+                    <HoverCard.Trigger asChild>
+                      <Button type="button" variant="ghost" size="icon" className="size-7 shrink-0" aria-label={tr('pages.tokenRoutes.routeGraphWorkbench.details')}>
+                        <MoreHorizontal size={14} />
+                        <span className="sr-only">{tr('pages.tokenRoutes.routeGraphWorkbench.details')}</span>
+                      </Button>
+                    </HoverCard.Trigger>
+                    <HoverCard.Content className="z-[90] w-[min(420px,calc(100vw-2rem))] max-w-[calc(100vw-2rem)] p-3 text-xs" side="left" align="start">
+                      <div className="grid gap-2">
+                        <div className="break-all font-medium">{group.label}</div>
+                        <div className="grid gap-1 text-muted-foreground">
+                          <div>{tr('pages.tokenRoutes.routeGraphWorkbench.priorityValue').replace('{value}', String(group.priority))}</div>
+                          <div>{group.enabled ? tr('pages.tokenRoutes.routeGraphWorkbench.enabled') : tr('pages.tokenRoutes.routeGraphWorkbench.disabled')}</div>
+                          <div>{group.inputKind}</div>
+                        </div>
+                        {group.routeIds.length > 0 && (
+                          <div className="grid gap-1">
+                            <div className="font-medium">{tr('pages.tokenRoutes.routeGraphWorkbench.routesLabel')}</div>
+                            <div className="break-words font-mono text-muted-foreground">{group.routeIds.join(', ')}</div>
+                          </div>
+                        )}
+                        {group.endpointIds.length > 0 && (
+                          <div className="grid gap-1">
+                            <div className="font-medium">{tr('pages.tokenRoutes.routeGraphWorkbench.endpointSet')}</div>
+                            <div className="grid gap-1">
+                              {group.endpointIds.map((endpointId) => (
+                                <div key={endpointId} className="break-all rounded-md border p-1.5 font-mono text-muted-foreground">
+                                  {endpointId}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                        {group.pattern && (
+                          <div className="grid gap-1">
+                            <div className="font-medium">{tr('pages.tokenRoutes.routeGraphWorkbench.pattern')}</div>
+                            <div className="break-all font-mono text-muted-foreground">{group.pattern}</div>
+                          </div>
+                        )}
+                      </div>
+                    </HoverCard.Content>
+                  </HoverCard.Root>
                 </div>
               ))}
             </div>
+          </div>
           </Tabs.TabsContent>
           <Tabs.TabsContent value="Config">
             <MacroForm
@@ -4126,8 +4608,8 @@ function Inspector({
                 <Crosshair size={13} />
                 {tr('pages.tokenRoutes.routeGraphWorkbench.focus')}
               </Button>
-              <Button type="button" variant="outline" size="sm" onClick={() => onFocusNode(selectedEdge.sourceNodeId, { moveInspector: false })}>{tr('pages.tokenRoutes.routeGraphWorkbench.source')}</Button>
-              <Button type="button" variant="outline" size="sm" onClick={() => onFocusNode(selectedEdge.targetNodeId, { moveInspector: false })}>{tr('pages.tokenRoutes.routeGraphWorkbench.target')}</Button>
+              <Button type="button" variant="outline" size="sm" onClick={() => onFocusNode(selectedEdge.sourceNodeId, { moveInspector: false, macroId: getMacroFocusContextForEdgeNode(graph, selectedEdge, selectedEdge.sourceNodeId) })}>{tr('pages.tokenRoutes.routeGraphWorkbench.source')}</Button>
+              <Button type="button" variant="outline" size="sm" onClick={() => onFocusNode(selectedEdge.targetNodeId, { moveInspector: false, macroId: getMacroFocusContextForEdgeNode(graph, selectedEdge, selectedEdge.targetNodeId) })}>{tr('pages.tokenRoutes.routeGraphWorkbench.target')}</Button>
               <Button type="button" variant="destructive" size="sm" disabled={selectedEdge.ownership !== 'manual'} onClick={onDelete}>
                 <Trash2 size={13} />
                 {tr('pages.tokenRoutes.routeGraphWorkbench.delete')}
@@ -4142,7 +4624,9 @@ function Inspector({
           <span>{tr('pages.tokenRoutes.routeGraphWorkbench.target')}<b>{selectedEdge.targetNodeId}.{selectedEdge.targetPortId}</b></span>
         </div>
         <div className="route-graph-inspector-section">
-          <div className="text-sm font-medium">{tr('pages.tokenRoutes.routeGraphWorkbench.actions')}</div>
+          <div className="route-graph-section-head">
+            <div className="text-sm font-medium">{tr('pages.tokenRoutes.routeGraphWorkbench.actions')}</div>
+          </div>
           <ButtonGroup>
             <Button type="button" variant="outline" size="sm" onClick={() => onCopyText(`${selectedEdge.sourceNodeId}.${selectedEdge.sourcePortId}`, tr('pages.tokenRoutes.routeGraphWorkbench.sourceRef'))}>{tr('pages.tokenRoutes.routeGraphWorkbench.copySource')}</Button>
             <Button type="button" variant="outline" size="sm" onClick={() => onCopyText(`${selectedEdge.targetNodeId}.${selectedEdge.targetPortId}`, tr('pages.tokenRoutes.routeGraphWorkbench.targetRef'))}>{tr('pages.tokenRoutes.routeGraphWorkbench.copyTarget')}</Button>
@@ -4162,7 +4646,7 @@ function Inspector({
           subtitle={tr('pages.tokenRoutes.routeGraphWorkbench.routeSummaryDescription')}
         />
         <div className="route-graph-fact-grid">
-          {getGraphFacts(graph).map((fact) => (
+          {getGraphFacts(semanticGraph).map((fact) => (
             <span key={fact.label}>{fact.label}<b>{fact.value}</b></span>
           ))}
         </div>
@@ -4176,10 +4660,9 @@ function Inspector({
   }
 
   const readonly = selectedNode.ownership !== 'manual';
-  const generatedOwnerMacro = findMacroForGeneratedPrimitive(graph, selectedNode.id);
+  const generatedOwnerMacro = findMacroForGeneratedPrimitive(semanticGraph, selectedNode.id);
   const generatedOwnerExpanded = generatedOwnerMacro ? expandedMacroIds.includes(generatedOwnerMacro.id) : false;
-  const selectedPortSummary = selectedPort ? `${selectedPort.direction} · ${getPortSummary(selectedPort)}` : '';
-  const nodeConnections = selectedNode ? getNodeConnections(graph, selectedNode.id) : [];
+  const nodeConnections = selectedNode ? getNodeConnections(semanticGraph, selectedNode.id) : [];
   const hasUpstream = nodeConnections.some(({ direction }) => direction === 'inbound');
   const hasDownstream = nodeConnections.some(({ direction }) => direction === 'outbound');
   return (
@@ -4201,20 +4684,20 @@ function Inspector({
         </Tabs.TabsList>
         <div className="route-graph-inspector-actions">
           <Button type="button" variant="outline" size="sm" onClick={() => onToggleNodeEnabled(selectedNode.id)}>{selectedNode.enabled ? tr('pages.tokenRoutes.routeGraphWorkbench.disable') : tr('pages.tokenRoutes.routeGraphWorkbench.enable')}</Button>
-          <Button type="button" variant="outline" size="sm" disabled={!hasUpstream} onClick={() => onSelectConnectedPath(selectedNode.id, 'upstream')}>{tr('pages.tokenRoutes.routeGraphWorkbench.upstream')}</Button>
-          <Button type="button" variant="outline" size="sm" disabled={!hasDownstream} onClick={() => onSelectConnectedPath(selectedNode.id, 'downstream')}>{tr('pages.tokenRoutes.routeGraphWorkbench.downstream')}</Button>
+          <Button type="button" variant="outline" size="sm" disabled={!hasUpstream} onClick={() => onSelectConnectedPath(selectedNode.id, 'upstream', { moveInspector: false })}>{tr('pages.tokenRoutes.routeGraphWorkbench.upstream')}</Button>
+          <Button type="button" variant="outline" size="sm" disabled={!hasDownstream} onClick={() => onSelectConnectedPath(selectedNode.id, 'downstream', { moveInspector: false })}>{tr('pages.tokenRoutes.routeGraphWorkbench.downstream')}</Button>
         </div>
         {selectedPort && (
           <div className="route-graph-inspector-summary">
             <span>{tr('pages.tokenRoutes.routeGraphWorkbench.port')}<b>{selectedPort.id}</b></span>
             <span>{tr('pages.tokenRoutes.routeGraphWorkbench.signature')}<b>{getPortTypeSignature(selectedPort)}</b></span>
             <span>{tr('pages.tokenRoutes.routeGraphWorkbench.status')}<b>{selectedPort.enabled === false ? tr('pages.tokenRoutes.routeGraphWorkbench.disabled') : tr('pages.tokenRoutes.routeGraphWorkbench.enabled')}</b></span>
-            <span>{tr('pages.tokenRoutes.routeGraphWorkbench.connections')}<b>{getPortConnectionCount(graph, selectedNode.id, selectedPort.id)}</b></span>
+            <span>{tr('pages.tokenRoutes.routeGraphWorkbench.connections')}<b>{getPortConnectionCount(semanticGraph, selectedNode.id, selectedPort.id)}</b></span>
           </div>
         )}
         <Tabs.TabsContent value="Overview">
           <div className="route-graph-inspector-summary">
-            {getNodeInspectorFacts(graph, selectedNode).map((fact) => (
+            {getNodeInspectorFacts(semanticGraph, selectedNode).map((fact) => (
               <span key={fact.label}>{fact.label}<b>{fact.value}</b></span>
             ))}
           </div>
@@ -4222,7 +4705,7 @@ function Inspector({
             <div className="text-sm font-medium">{tr('pages.tokenRoutes.routeGraphWorkbench.localPorts')}</div>
             {getNodePortsPreview(selectedNode).map((port) => (
               <div key={port.id} className="route-graph-port-inspector-row compact">
-                <strong>{port.label}</strong>
+                <strong>{getPortDisplayLabel(port)}</strong>
                 <small>{getPortSummary(port)}</small>
                 {getPortModeNote(selectedNode, port) && <small>{getPortModeNote(selectedNode, port)}</small>}
               </div>
@@ -4234,26 +4717,36 @@ function Inspector({
         </Tabs.TabsContent>
         <Tabs.TabsContent value="Ports">
           <div className="route-graph-panel-stack">
-            <div className="text-sm font-medium">{tr('pages.tokenRoutes.routeGraphWorkbench.connectedPorts')}</div>
+            <div className="route-graph-section-head">
+              <div className="text-sm font-medium">{tr('pages.tokenRoutes.routeGraphWorkbench.connectedPorts')}</div>
+            </div>
             {getNodePorts(selectedNode).map((port) => (
               <div key={port.id} className="route-graph-port-inspector-row">
                 <strong>{port.id}</strong>
                 <small>{getPortSummary(port)}</small>
                 {getPortModeNote(selectedNode, port) && <small>{getPortModeNote(selectedNode, port)}</small>}
-                <small>{tr('pages.tokenRoutes.routeGraphWorkbench.connectionsCount').replace('{count}', String(getPortConnectionCount(graph, selectedNode.id, port.id)))}</small>
+                <small>{tr('pages.tokenRoutes.routeGraphWorkbench.connectionsCount').replace('{count}', String(getPortConnectionCount(semanticGraph, selectedNode.id, port.id)))}</small>
               </div>
             ))}
           </div>
         </Tabs.TabsContent>
         <Tabs.TabsContent value="Connections">
           <div className="route-graph-panel-stack">
-            <div className="text-sm font-medium">{tr('pages.tokenRoutes.routeGraphWorkbench.inboundOutbound')}</div>
-            {getNodeConnections(graph, selectedNode.id).map(({ edge, direction, peerNodeId }) => (
+            <div className="route-graph-section-head">
+              <div className="text-sm font-medium">{tr('pages.tokenRoutes.routeGraphWorkbench.inboundOutbound')}</div>
+            </div>
+            {getNodeConnections(semanticGraph, selectedNode.id).map(({ edge, direction, peerNodeId }) => (
               <div key={edge.id} className="route-graph-port-inspector-row">
                 <strong>{direction === 'inbound' ? tr('pages.tokenRoutes.routeGraphWorkbench.inbound') : tr('pages.tokenRoutes.routeGraphWorkbench.outbound')}</strong>
                 <small>{direction === 'inbound' ? `${edge.sourceNodeId}.${edge.sourcePortId}` : `${edge.targetNodeId}.${edge.targetPortId}`}</small>
                 <small>{edge.kind} · {edge.ownership}</small>
-                <small>{peerNodeId}</small>
+                <div className="flex min-w-0 items-center justify-between gap-2">
+                  <small className="min-w-0 truncate">{peerNodeId}</small>
+                  <Button type="button" variant="ghost" size="sm" className="h-7 shrink-0 px-2" onClick={() => onFocusNode(peerNodeId, { moveInspector: false, macroId: getMacroFocusContextForEdgeNode(semanticGraph, edge, peerNodeId) })}>
+                    <Crosshair size={12} />
+                    {tr('pages.tokenRoutes.routeGraphWorkbench.focus')}
+                  </Button>
+                </div>
               </div>
             ))}
           </div>
@@ -4310,7 +4803,6 @@ function RouteEndpointPicker({
 }) {
   const [query, setQuery] = useState('');
   const selected = new Set(selectedEndpointIds);
-  const selectedItems = selectedEndpointIds.map((endpointId) => catalog.find((item) => item.endpointId === endpointId || item.nodeId === endpointId) || null);
   const filtered = catalog
     .filter((item) => !selected.has(item.endpointId))
     .filter((item) => {
@@ -4337,30 +4829,16 @@ function RouteEndpointPicker({
     onChange([...selectedEndpointIds, endpointId]);
     setQuery('');
   };
-  const removeEndpoint = (endpointId: string) => {
-    if (readonly) return;
-    onChange(selectedEndpointIds.filter((item) => item !== endpointId));
-  };
   return (
     <div className="grid gap-2">
-      <div className="text-xs font-medium text-muted-foreground">{tr('pages.tokenRoutes.routeGraphWorkbench.endpointCandidates')}</div>
-      {selectedEndpointIds.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {selectedEndpointIds.map((endpointId, index) => {
-            const item = selectedItems[index];
-            return (
-              <Badge key={endpointId} variant={item?.endpointKind === 'supply' ? 'warning' : 'info'} className="max-w-full gap-1">
-                <span className="min-w-0 truncate">{item?.label || endpointId}</span>
-                {!readonly && (
-                  <button type="button" className="ml-1 text-current/70 hover:text-current" onClick={() => removeEndpoint(endpointId)} aria-label="Remove endpoint">
-                    <X size={11} />
-                  </button>
-                )}
-              </Badge>
-            );
-          })}
-        </div>
-      )}
+      <div className="flex min-w-0 items-center justify-between gap-2">
+        <div className="text-xs font-medium text-muted-foreground">{tr('pages.tokenRoutes.routeGraphWorkbench.endpointCandidates')}</div>
+        {selectedEndpointIds.length > 0 && (
+          <Badge variant="outline" className="shrink-0">
+            {tr('pages.tokenRoutes.routeGraphWorkbench.selectedEndpointCount').replace('{count}', String(selectedEndpointIds.length))}
+          </Badge>
+        )}
+      </div>
       <Command.Command className="rounded-md border">
         <Command.CommandInput
           value={query}
@@ -4378,7 +4856,7 @@ function RouteEndpointPicker({
                     <Badge variant="info">{tr('pages.tokenRoutes.routeGraphWorkbench.product')}</Badge>
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-xs font-medium">{item.label}</div>
-                      <div className="truncate text-[11px] text-muted-foreground">{item.endpointId}</div>
+                      <div className="truncate text-xs text-muted-foreground">{item.endpointId}</div>
                     </div>
                   </Command.CommandItem>
                 ))}
@@ -4391,7 +4869,7 @@ function RouteEndpointPicker({
                     <Badge variant="warning">{tr('pages.tokenRoutes.routeGraphWorkbench.supply')}</Badge>
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-xs font-medium">{item.label}</div>
-                      <div className="truncate text-[11px] text-muted-foreground">{[item.upstreamModels[0], item.siteNames[0], item.endpointId].filter(Boolean).join(' · ')}</div>
+                      <div className="truncate text-xs text-muted-foreground">{[item.upstreamModels[0], item.siteNames[0], item.endpointId].filter(Boolean).join(' · ')}</div>
                     </div>
                   </Command.CommandItem>
                 ))}
@@ -4417,6 +4895,8 @@ function MacroForm({ macro, readonly, endpointCatalog, onChange, onAddGroup }: {
   const match = entry.match && typeof entry.match === 'object' ? entry.match as Record<string, any> : {};
   const policy = config.policy && typeof config.policy === 'object' ? config.policy as Record<string, any> : {};
   const presentation = config.presentation && typeof config.presentation === 'object' ? config.presentation as Record<string, any> : {};
+  const filters = config.filters && typeof config.filters === 'object' ? config.filters as Record<string, any> : {};
+  const filterOperations = Array.isArray(filters.operations) ? filters.operations as RouteFilter[] : [];
   const groups = getMacroGroups(macro);
   const candidateOverrides = config.candidateOverrides && typeof config.candidateOverrides === 'object' ? config.candidateOverrides as Record<string, any> : {};
 
@@ -4462,6 +4942,11 @@ function MacroForm({ macro, readonly, endpointCatalog, onChange, onAddGroup }: {
         ...candidateOverrides,
         [bucketName]: nextBucket,
       },
+    });
+  };
+  const updateFilterOperations = (operations: RouteFilter[]) => {
+    updateConfig({
+      filters: operations.length > 0 ? { ...filters, operations } : undefined,
     });
   };
   const resetEndpointOverride = (endpointId: string, endpointKind?: string) => {
@@ -4529,24 +5014,39 @@ function MacroForm({ macro, readonly, endpointCatalog, onChange, onAddGroup }: {
           ? input.endpointIds.map((endpointId) => String(endpointId || '').trim()).filter(Boolean)
           : [];
         return (
-          <Card key={String(group.id || index)} className="p-3">
-            <div className="grid gap-2">
-              <div className="flex items-center justify-between gap-2">
-                <Badge variant="outline">{tr('pages.tokenRoutes.routeGraphWorkbench.bandNumber').replace('{index}', String(index + 1))}</Badge>
+          <div key={String(group.id || index)} className="route-graph-priority-band-card">
+            <div className="route-graph-priority-band-header">
+              <div className="flex min-w-0 items-center gap-2">
+                <Badge variant="outline" className="shrink-0">{tr('pages.tokenRoutes.routeGraphWorkbench.bandNumber').replace('{index}', String(index + 1))}</Badge>
+                {endpointIds.length > 0 && (
+                  <span className="min-w-0 truncate text-xs text-muted-foreground">
+                    {tr('pages.tokenRoutes.routeGraphWorkbench.selectedEndpointCount').replace('{count}', String(endpointIds.length))}
+                  </span>
+                )}
+              </div>
                 <Button
                   type="button"
                   variant="ghost"
-                  size="sm"
+                  size="icon"
+                  className="size-7 shrink-0"
                   disabled={readonly}
+                  aria-label={tr('pages.tokenRoutes.routeGraphWorkbench.remove')}
                   onClick={() => removeGroup(index)}
                 >
-                  {tr('pages.tokenRoutes.routeGraphWorkbench.remove')}
+                  <X size={14} />
                 </Button>
-              </div>
-              <label>
+            </div>
+            <div className="route-graph-priority-band-fields">
+              <label className="min-w-0">
                 {tr('pages.tokenRoutes.routeGraphWorkbench.label')}
                 <Input disabled={readonly} value={String(group.label || group.id || '')} onChange={(event) => updateGroup(index, { label: event.target.value })} />
               </label>
+              <label className="min-w-0">
+                {tr('pages.tokenRoutes.routeGraphWorkbench.priority')}
+                <Input disabled={readonly} type="number" value={String(Number.isFinite(Number(group.priority)) ? group.priority : index)} onChange={(event) => updateGroup(index, { priority: Number(event.target.value) || 0 })} />
+              </label>
+            </div>
+            <div className="grid min-w-0 gap-2">
               <RouteEndpointPicker
                 readonly={readonly}
                 catalog={endpointCatalog}
@@ -4554,21 +5054,35 @@ function MacroForm({ macro, readonly, endpointCatalog, onChange, onAddGroup }: {
                 onChange={(endpointIds) => updateGroup(index, { input: { kind: 'route_endpoints', endpointIds } })}
               />
               {endpointIds.length > 0 && (
-                <div className="route-graph-panel-stack">
+                <div className="route-graph-endpoint-override-list">
                   {endpointIds.map((endpointId) => {
                     const endpoint = endpointCatalog.find((item) => item.endpointId === endpointId || item.nodeId === endpointId);
                     const override = getEndpointOverride(endpointId, endpoint?.endpointKind);
                     return (
-                      <div key={endpointId} className="rounded-md border p-2">
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="min-w-0">
-                            <div className="truncate text-xs font-medium">{endpoint?.label || endpointId}</div>
-                            <div className="truncate text-[11px] text-muted-foreground">{endpoint?.endpointKind || 'endpoint'} · {endpointId}</div>
+                      <div key={endpointId} className="route-graph-endpoint-override-card">
+                        <div className="route-graph-endpoint-override-main">
+                          <div className="route-graph-endpoint-override-title">
+                            <div className="min-w-0">
+                              <div className="truncate text-xs font-medium">{endpoint?.label || endpointId}</div>
+                              <div className="route-graph-endpoint-override-id">{endpointId}</div>
+                            </div>
+                            <Badge variant={endpoint?.endpointKind === 'supply' ? 'warning' : 'info'} className="shrink-0">{endpoint?.endpointKind || 'endpoint'}</Badge>
                           </div>
-                          <Badge variant={endpoint?.endpointKind === 'supply' ? 'warning' : 'info'}>{endpoint?.endpointKind || 'endpoint'}</Badge>
+                          {!readonly && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="route-graph-endpoint-remove-button"
+                              aria-label={tr('pages.tokenRoutes.routeGraphWorkbench.remove')}
+                              onClick={() => updateGroup(index, { input: { kind: 'route_endpoints', endpointIds: endpointIds.filter((item) => item !== endpointId) } })}
+                            >
+                              <X size={12} />
+                            </Button>
+                          )}
                         </div>
-                        <div className="mt-2 grid grid-cols-3 gap-2">
-                          <label className="text-[11px] text-muted-foreground">
+                        <div className="route-graph-endpoint-override-grid">
+                          <label className="text-xs text-muted-foreground">
                             {tr('pages.tokenRoutes.routeGraphWorkbench.weight')}
                             <Input
                               disabled={readonly}
@@ -4578,7 +5092,7 @@ function MacroForm({ macro, readonly, endpointCatalog, onChange, onAddGroup }: {
                               onChange={(event) => updateEndpointOverride(endpointId, { weight: event.target.value === '' ? undefined : Number(event.target.value) }, endpoint?.endpointKind)}
                             />
                           </label>
-                          <label className="text-[11px] text-muted-foreground">
+                          <label className="text-xs text-muted-foreground">
                             {tr('pages.tokenRoutes.routeGraphWorkbench.priority')}
                             <Input
                               disabled={readonly}
@@ -4588,7 +5102,7 @@ function MacroForm({ macro, readonly, endpointCatalog, onChange, onAddGroup }: {
                               onChange={(event) => updateEndpointOverride(endpointId, { priority: event.target.value === '' ? undefined : Number(event.target.value) }, endpoint?.endpointKind)}
                             />
                           </label>
-                          <label className="text-[11px] text-muted-foreground">
+                          <label className="text-xs text-muted-foreground">
                             {tr('pages.tokenRoutes.routeGraphWorkbench.enabled')}
                             <Select
                               disabled={readonly}
@@ -4600,15 +5114,15 @@ function MacroForm({ macro, readonly, endpointCatalog, onChange, onAddGroup }: {
                             >
                               <SelectTrigger><SelectValue /></SelectTrigger>
                               <SelectContent>
-                                <SelectItem value="default">default</SelectItem>
-                                <SelectItem value="disabled">disabled</SelectItem>
-                                <SelectItem value="excluded">excluded</SelectItem>
+                                <SelectItem value="default">{tr('common.inherit')}</SelectItem>
+                                <SelectItem value="disabled">{tr('common.disabled')}</SelectItem>
+                                <SelectItem value="excluded">{tr('pages.tokenRoutes.routeGraphWorkbench.excluded')}</SelectItem>
                               </SelectContent>
                             </Select>
                           </label>
                         </div>
                         {Object.keys(override).length > 0 && (
-                          <Button type="button" variant="ghost" size="sm" disabled={readonly} onClick={() => resetEndpointOverride(endpointId, endpoint?.endpointKind)}>
+                          <Button type="button" variant="ghost" size="sm" className="mt-1 h-7 px-2 text-xs" disabled={readonly} onClick={() => resetEndpointOverride(endpointId, endpoint?.endpointKind)}>
                             {tr('pages.tokenRoutes.routeGraphWorkbench.reset')}
                           </Button>
                         )}
@@ -4617,95 +5131,121 @@ function MacroForm({ macro, readonly, endpointCatalog, onChange, onAddGroup }: {
                   })}
                 </div>
               )}
-              <label>
-                {tr('pages.tokenRoutes.routeGraphWorkbench.priority')}
-                <Input disabled={readonly} type="number" value={String(Number.isFinite(Number(group.priority)) ? group.priority : index)} onChange={(event) => updateGroup(index, { priority: Number(event.target.value) || 0 })} />
-              </label>
             </div>
-          </Card>
+          </div>
         );
       })}
     </div>
   );
   return (
-    <div className="grid gap-3">
-      {priorityBandEditor}
-      <label>
-        {tr('pages.tokenRoutes.routeGraphWorkbench.publicModelName')}
-        <Input
-          disabled={readonly}
-          value={String(match.displayName || macro.name || '')}
-          onChange={(event) => {
-            const displayName = event.target.value;
-            onChange({
+    <div className="route-graph-macro-form grid gap-3">
+      <section className="route-graph-config-section">
+        <div className="route-graph-config-section-header">
+          <div>
+            <div className="route-graph-config-title">{tr('pages.tokenRoutes.routeGraphWorkbench.routeSummary')}</div>
+            <p className="route-graph-config-description">{tr('pages.tokenRoutes.routeGraphWorkbench.routeSummaryDescription')}</p>
+          </div>
+        </div>
+        <label>
+          {tr('pages.tokenRoutes.routeGraphWorkbench.publicModelName')}
+          <Input
+            disabled={readonly}
+            value={String(match.displayName || macro.name || '')}
+            onChange={(event) => {
+              const displayName = event.target.value;
+              onChange({
+                ...macro,
+                name: displayName || null,
+                config: {
+                  ...config,
+                  surface: {
+                    ...surface,
+                    entry: {
+                      ...entry,
+                      kind: 'external',
+                      match: {
+                        ...match,
+                        kind: 'model',
+                        displayName,
+                      },
+                    },
+                    output: surface.output || 'route',
+                  },
+                },
+              });
+            }}
+          />
+        </label>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label>
+            {tr('pages.tokenRoutes.routeGraphWorkbench.visibility')}
+            <Select disabled={readonly} value={macro.visibility} onValueChange={(visibility: string) => onChange({
               ...macro,
-              name: displayName || null,
+              visibility: visibility as 'public' | 'internal',
               config: {
                 ...config,
                 surface: {
                   ...surface,
-                  entry: {
-                    ...entry,
-                    kind: 'external',
-                    match: {
-                      ...match,
-                      kind: 'model',
-                      displayName,
-                    },
-                  },
-                  output: surface.output || 'route',
+                  entry: { ...entry, visibility },
                 },
               },
-            });
-          }}
+            })}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="public">public</SelectItem>
+                <SelectItem value="internal">internal</SelectItem>
+              </SelectContent>
+            </Select>
+          </label>
+          <label>
+            {tr('pages.tokenRoutes.routeGraphWorkbench.strategy')}
+            <Select disabled={readonly} value={String(policy.strategy || 'weighted')} onValueChange={(strategy: string) => updateConfig({ policy: { ...policy, strategy } })}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="priority_order">priority_order</SelectItem>
+                <SelectItem value="weighted">weighted</SelectItem>
+                <SelectItem value="round_robin">round_robin</SelectItem>
+                <SelectItem value="stable_first">stable_first</SelectItem>
+                <SelectItem value="cel_select">cel_select</SelectItem>
+                <SelectItem value="cel_score">cel_score</SelectItem>
+              </SelectContent>
+            </Select>
+          </label>
+        </div>
+        <div className="route-graph-switch-field">
+          <span>{tr('pages.tokenRoutes.routeGraphWorkbench.enabled')}</span>
+          <Switch disabled={readonly} checked={macro.enabled} onCheckedChange={(enabled) => onChange({ ...macro, enabled })} aria-label={tr('pages.tokenRoutes.routeGraphWorkbench.macroEnabled')} />
+        </div>
+      </section>
+      <section className="route-graph-config-section">
+        <FilterOperationsEditor
+          readonly={readonly}
+          operations={filterOperations}
+          onChange={updateFilterOperations}
         />
-      </label>
-      <label>
-        {tr('pages.tokenRoutes.routeGraphWorkbench.visibility')}
-        <Select disabled={readonly} value={macro.visibility} onValueChange={(visibility: string) => onChange({
-          ...macro,
-          visibility: visibility as 'public' | 'internal',
-          config: {
-            ...config,
-            surface: {
-              ...surface,
-              entry: { ...entry, visibility },
-            },
-          },
-        })}>
-          <SelectTrigger><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="public">public</SelectItem>
-            <SelectItem value="internal">internal</SelectItem>
-          </SelectContent>
-        </Select>
-      </label>
-      <div className="flex items-center justify-between gap-3">
-        <span>{tr('pages.tokenRoutes.routeGraphWorkbench.enabled')}</span>
-        <Switch disabled={readonly} checked={macro.enabled} onCheckedChange={(enabled) => onChange({ ...macro, enabled })} aria-label={tr('pages.tokenRoutes.routeGraphWorkbench.macroEnabled')} />
-      </div>
-      <label>
-        {tr('pages.tokenRoutes.routeGraphWorkbench.strategy')}
-        <Select disabled={readonly} value={String(policy.strategy || 'weighted')} onValueChange={(strategy: string) => updateConfig({ policy: { ...policy, strategy } })}>
-          <SelectTrigger><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="priority_order">priority_order</SelectItem>
-            <SelectItem value="weighted">weighted</SelectItem>
-            <SelectItem value="round_robin">round_robin</SelectItem>
-            <SelectItem value="stable_first">stable_first</SelectItem>
-            <SelectItem value="cel_select">cel_select</SelectItem>
-            <SelectItem value="cel_score">cel_score</SelectItem>
-          </SelectContent>
-        </Select>
-      </label>
-      <label>
-        Display icon
-        <Input
-          disabled={readonly}
-          value={String(presentation.displayIcon || '')}
-          onChange={(event) => updateConfig({ presentation: { ...presentation, displayIcon: event.target.value || null } })}
-        />
-      </label>
+        <p className="text-xs text-muted-foreground">
+          {tr('pages.tokenRoutes.routeGraphWorkbench.macroFilterDescription')}
+        </p>
+      </section>
+      <section className="route-graph-config-section">
+        <div className="route-graph-section-head">
+          <div>
+            <div className="route-graph-config-title">{tr('pages.tokenRoutes.routeGraphWorkbench.routePriorityBands')}</div>
+            <p className="route-graph-config-description">{tr('pages.tokenRoutes.routeGraphWorkbench.routePriorityBandsDescription')}</p>
+          </div>
+        </div>
+        {priorityBandEditor}
+      </section>
+      <section className="route-graph-config-section">
+        <label>
+          Display icon
+          <Input
+            disabled={readonly}
+            value={String(presentation.displayIcon || '')}
+            onChange={(event) => updateConfig({ presentation: { ...presentation, displayIcon: event.target.value || null } })}
+          />
+        </label>
+      </section>
     </div>
   );
 }

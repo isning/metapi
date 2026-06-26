@@ -231,23 +231,36 @@ describe('upstreamCostPricingService', () => {
     expect(result?.evaluation.totalCostUsd).toBe(0.7);
   });
 
-  it('does not use upstream catalog fallback when provider catalog suggestions are disabled', async () => {
+  it('uses upstream catalog fallback as default platform pricing source', async () => {
     const { site, account, token } = await seedSupply(db, schema);
     await db.insert(schema.settings).values({
       key: 'pricing_reference_config_v1',
       value: JSON.stringify({
         schemaVersion: 1,
-        defaultReferenceMode: 'manual',
-        fallbackProfile: 'system_default',
-        catalog: {
-          builtInCatalogEnabled: true,
-          providerCatalogSuggestionsEnabled: false,
-        },
-        driftCheck: {
+        sync: {
           enabled: false,
+          url: '',
+          cron: '0 3 * * *',
+          replaceOnSync: true,
+          lastSyncedAt: null,
+          lastError: null,
         },
       }),
     }).run();
+
+    fetchUpstreamPricingCatalogMock.mockResolvedValue({
+      models: new Map([['gpt-5.5', {
+        modelName: 'gpt-5.5',
+        quotaType: 0,
+        modelRatio: 2,
+        completionRatio: 3,
+        cacheRatio: 1,
+        cacheCreationRatio: 1,
+        modelPrice: null,
+        enableGroups: ['premium'],
+      }]]),
+      groupRatio: { premium: 1 },
+    });
 
     const result = await service.resolveUpstreamCostPricing({
       siteId: site.id,
@@ -257,8 +270,13 @@ describe('upstreamCostPricingService', () => {
       modelName: 'gpt-5.5',
     });
 
-    expect(result).toBeNull();
-    expect(fetchUpstreamPricingCatalogMock).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      matchedScope: 'provider_catalog',
+      pricing: {
+        sourceType: 'provider_catalog',
+      },
+    });
+    expect(fetchUpstreamPricingCatalogMock).toHaveBeenCalledTimes(1);
   });
 });
 

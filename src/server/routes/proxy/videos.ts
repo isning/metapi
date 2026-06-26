@@ -10,6 +10,8 @@ import { withSiteProxyRequestInit, withSiteRecordProxyRequestInit } from '../../
 import { getProxyUrlFromExtraConfig } from '../../services/accountExtraConfig.js';
 import { cloneFormDataWithOverrides, ensureMultipartBufferParser, parseMultipartFormData } from '../../proxy-core/surfaces/multipart.js';
 import { buildUpstreamUrl } from './upstreamUrl.js';
+import { getProxyAuthContext } from '../../middleware/auth.js';
+import { detectDownstreamClientContext } from '../../proxy-core/downstreamClientContext.js';
 import {
   deleteProxyVideoTaskByPublicId,
   getProxyVideoTaskByPublicId,
@@ -24,6 +26,11 @@ import {
   getTesterForcedTargetId,
   selectProxyTargetForAttempt,
 } from '../../proxy-core/targetSelection.js';
+import {
+  bindSurfaceStickyChannel,
+  buildSurfaceStickySessionKey,
+  clearSurfaceStickyChannel,
+} from '../../proxy-core/orchestration/sharedProxyOrchestration.js';
 import { runWithSiteApiEndpointPool, SiteApiEndpointRequestError } from '../../services/siteApiEndpointService.js';
 
 function rewriteVideoResponsePublicId(payload: unknown, publicId: string): unknown {
@@ -58,6 +65,19 @@ export async function videosProxyRoute(app: FastifyInstance) {
       headers: request.headers as Record<string, unknown>,
       clientIp: request.ip,
     });
+    const downstreamApiKeyId = getProxyAuthContext(request)?.keyId ?? null;
+    const downstreamPath = '/v1/videos';
+    const clientContext = detectDownstreamClientContext({
+      downstreamPath,
+      headers: request.headers as Record<string, unknown>,
+      body: jsonBody || Object.fromEntries(multipartForm?.entries?.() || []),
+    });
+    const stickySessionKey = buildSurfaceStickySessionKey({
+      clientContext,
+      requestedModel,
+      downstreamPath,
+      downstreamApiKeyId,
+    });
     const excludeTargetIds: number[] = [];
     let retryCount = 0;
 
@@ -68,6 +88,7 @@ export async function videosProxyRoute(app: FastifyInstance) {
         excludeTargetIds,
         retryCount,
         forcedTargetId,
+        stickySessionKey,
       });
 
       if (!selected) {
@@ -163,6 +184,7 @@ export async function videosProxyRoute(app: FastifyInstance) {
         await recordTokenRouterEventBestEffort('record target success', () => (
           tokenRouter.recordSuccess(selected.target.id, latency, estimatedCost, upstreamModel)
         ));
+        bindSurfaceStickyChannel({ stickySessionKey, selected });
         recordDownstreamCostUsage(request, estimatedCost);
         return reply.code(upstream.status).send(rewriteVideoResponsePublicId(data, mapping.publicId));
       } catch (error: any) {
@@ -182,6 +204,7 @@ export async function videosProxyRoute(app: FastifyInstance) {
           });
         }
         if ((status > 0 ? shouldRetryProxyRequest(status, errorText) : true) && canRetryTargetSelection(retryCount, forcedTargetId)) {
+          clearSurfaceStickyChannel({ stickySessionKey, selected });
           retryCount += 1;
           continue;
         }

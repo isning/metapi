@@ -165,7 +165,7 @@ export default function SearchModal({ open, onClose }: { open: boolean; onClose:
         {loading ? (
           <div className="flex items-center gap-2 border-b px-3 py-2 text-xs text-muted-foreground">
             <Loader2 className="size-3.5 animate-spin" />
-            {t('components.searchModal.searchzh')}
+            {t('components.searchModal.searching')}
           </div>
         ) : null}
         <CommandList>

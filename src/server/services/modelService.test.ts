@@ -38,6 +38,11 @@ describe('rebuildTokenRoutesFromAvailability', () => {
     await db.delete(schema.routeGraphDrafts).run();
     await db.delete(schema.routeGraphActiveVersion).run();
     await db.delete(schema.routeGraphVersions).run();
+    await db.delete(schema.routeGroupCandidates).run();
+    await db.delete(schema.routeGroupBuckets).run();
+    await db.delete(schema.routeSupplyEndpointState).run();
+    await db.delete(schema.routeSupplyEndpoints).run();
+    await db.delete(schema.routeGroups).run();
     await db.delete(schema.routeEndpointTargets).run();
     await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.tokenModelAvailability).run();
@@ -101,6 +106,31 @@ describe('rebuildTokenRoutesFromAvailability', () => {
     expect(channels).toHaveLength(1);
     expect(channels[0]?.tokenId ?? null).toBeNull();
     expect(channels[0]?.manualOverride).toBe(false);
+
+    const routeGroup = await db.select().from(schema.routeGroups)
+      .where(and(
+        eq(schema.routeGroups.kind, 'automatic'),
+        eq(schema.routeGroups.groupKey, 'upstream:gpt-5.2-codex'),
+      ))
+      .get();
+    expect(routeGroup).toBeDefined();
+    expect(routeGroup?.legacyRouteId).toBe(route!.id);
+
+    const supplyEndpoints = await db.select().from(schema.routeSupplyEndpoints).all();
+    expect(supplyEndpoints).toHaveLength(1);
+    expect(supplyEndpoints[0]).toMatchObject({
+      upstreamModelName: 'gpt-5.2-codex',
+      legacyTargetId: channels[0]!.id,
+    });
+
+    const candidates = await db.select().from(schema.routeGroupCandidates)
+      .where(eq(schema.routeGroupCandidates.groupId, routeGroup!.id))
+      .all();
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]).toMatchObject({
+      candidateKind: 'supply_endpoint',
+      supplyEndpointId: supplyEndpoints[0]!.id,
+    });
   });
 
   it('ignores hidden account_tokens for direct apikey connections when rebuilding routes', async () => {
@@ -345,6 +375,75 @@ describe('rebuildTokenRoutesFromAvailability', () => {
     expect(wildcardRouteAfter).toBeDefined();
   });
 
+  it('keeps automatic and manual route groups separate when model names overlap', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'manual-overlap-site',
+      url: 'https://manual-overlap.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'overlap-user',
+      accessToken: 'access-token',
+      status: 'active',
+    }).returning().get();
+    const token = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'overlap-token',
+      token: 'sk-overlap',
+      source: 'manual',
+      enabled: true,
+      isDefault: true,
+    }).returning().get();
+
+    const manualRoute = await db.insert(schema.tokenRoutes).values({
+      displayName: 'deepseek-v4-flash-rerouted',
+      enabled: true,
+    }).returning().get();
+    await db.insert(schema.routeGroups).values({
+      kind: 'manual',
+      groupKey: 'manual:deepseek-v4-flash-rerouted',
+      publicModelName: 'deepseek-v4-flash-rerouted',
+      displayName: 'deepseek-v4-flash-rerouted',
+      visibility: 'public',
+      enabled: true,
+      routingStrategy: 'weighted',
+      sourceMode: 'manual',
+      legacyRouteId: manualRoute.id,
+      syncStatus: 'active',
+    }).run();
+
+    await db.insert(schema.tokenModelAvailability).values({
+      tokenId: token.id,
+      modelName: 'deepseek-v4-flash',
+      available: true,
+    }).run();
+
+    await rebuildTokenRoutesFromAvailability();
+
+    const automaticGroup = await db.select().from(schema.routeGroups)
+      .where(and(
+        eq(schema.routeGroups.kind, 'automatic'),
+        eq(schema.routeGroups.groupKey, 'upstream:deepseek-v4-flash'),
+      ))
+      .get();
+    expect(automaticGroup).toBeDefined();
+    expect(automaticGroup?.legacyRouteId).not.toBe(manualRoute.id);
+
+    const manualGroup = await db.select().from(schema.routeGroups)
+      .where(and(
+        eq(schema.routeGroups.kind, 'manual'),
+        eq(schema.routeGroups.groupKey, 'manual:deepseek-v4-flash-rerouted'),
+      ))
+      .get();
+    expect(manualGroup?.legacyRouteId).toBe(manualRoute.id);
+
+    const automaticRoute = await findRouteByExposedModel('deepseek-v4-flash');
+    expect(automaticRoute?.id).toBe(automaticGroup?.legacyRouteId);
+  });
+
   it('rebuilds automatic projection routes without deleting manual graph nodes', async () => {
     const site = await db.insert(schema.sites).values({
       name: 'site-graph',
@@ -420,11 +519,6 @@ describe('rebuildTokenRoutesFromAvailability', () => {
         id: 'route-endpoint:product:auto-model:auto-generated-model',
         type: 'route_endpoint',
         endpointKind: 'route_product',
-        ownership: 'auto_generated',
-      }),
-      expect.objectContaining({
-        id: `route-endpoint:route:${generatedRouteId}`,
-        type: 'route_endpoint',
         ownership: 'auto_generated',
       }),
     ]));

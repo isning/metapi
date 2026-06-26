@@ -124,19 +124,23 @@ describe('NodeForm', () => {
       ],
     });
 
+    expect(textOf(root.root)).toContain('请求过滤规则');
+    expect(textOf(root.root)).toContain('添加过滤器');
+
+    const operationTypeSelect = root.root.findAllByType(Select)
+      .find((item) => item.props.value === 'set_payload');
     act(() => {
-      findButtonByText(root.root, 'set_header').props.onClick();
+      operationTypeSelect!.props.onValueChange('set_header');
     });
     expect(onChange).toHaveBeenLastCalledWith({
       ...node,
       operations: [
-        { type: 'set_payload', path: 'reasoning_effort', value: 'high', mode: 'default' },
         { type: 'set_header', name: 'x-metapi-route', value: 'manual', mode: 'override' },
       ],
     });
 
     act(() => {
-      findButtonByText(root.root, '移除操作').props.onClick();
+      root.root.findAllByType(Button).find((item) => item.props['aria-label'] === '移除操作')!.props.onClick();
     });
     expect(onChange).toHaveBeenLastCalledWith({
       ...node,

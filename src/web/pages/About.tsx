@@ -19,7 +19,7 @@ const VERSION = '1.3.0';
 
 const FEATURES = [
   { icon: '🌐', title: tr('app.unifiedProxyGateway'), desc: tr('app.oneKeyOneEndpointCompatibleOpenaiClaude') },
-  { icon: '🧠', title: tr('app.smartRoutingEngine'), desc: tr('app.autoSelectsOptimalChannelCostLatencySuccess') },
+  { icon: '🧠', title: tr('app.smartRoutingEngine'), desc: tr('app.autoSelectsOptimalRouteCostLatencySuccess') },
   { icon: '📡', title: tr('pages.about.multiSiteAggregation'), desc: tr('pages.about.centrallyManageNewApiOneApiOnehub') },
   { icon: '🔍', title: tr('app.autoModelDiscovery'), desc: tr('app.newUpstreamModelsAppearAutomaticallyZeroConfig') },
   { icon: '🏪', title: tr('app.modelMarketplace'), desc: tr('pages.about.crossSiteModelCoveragePricingComparisonLatency') },
@@ -131,7 +131,7 @@ export default function About() {
           <div>
               <Button asChild variant="ghostPrimary" className="h-auto p-0">
                 <Link to="/settings">
-              {tr('pages.about.zh')}
+              {tr('pages.about.openUpdateCenter')}
             </Link>
               </Button>
           </div>

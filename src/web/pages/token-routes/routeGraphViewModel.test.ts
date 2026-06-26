@@ -12,20 +12,32 @@ import {
   getNodePortsPreview,
   getNodeSubtitle,
   getNodeTitle,
+  filterPublicModelEntryRows,
   getPortConnectionCount,
   getPortCollectionKind,
   getPortDisplayLabel,
   getPortModeNote,
   getPortSummary,
   getPortTypeSignature,
+  getPublicModelEntryRows,
   getOutlineSubtitle,
 } from './routeGraphViewModel.js';
+import { tr } from '../../i18n.js';
 import type { RouteGraphLike } from './routeGraphViewModel.js';
-import type { RouteGraphNode } from './routeGraphTypes.js';
+import type { RouteGraphMacro, RouteGraphNode } from './routeGraphTypes.js';
 
-function graphWith(nodes: RouteGraphNode[]): RouteGraphLike {
+function text(key: string, replacements: Record<string, string | number> = {}): string {
+  let value = tr(key);
+  for (const [name, replacement] of Object.entries(replacements)) {
+    value = value.replace(`{${name}}`, String(replacement));
+  }
+  return value;
+}
+
+function graphWith(nodes: RouteGraphNode[], macros: RouteGraphMacro[] = []): RouteGraphLike {
   return {
     nodes,
+    macros,
     edges: [
       {
         id: 'entry-dispatcher',
@@ -90,23 +102,23 @@ describe('routeGraphViewModel', () => {
     const graph = graphWith([entry, dispatcher, endpoint]);
 
     expect(getGraphFacts(graph)).toEqual([
-      { label: 'Nodes', value: 3 },
-      { label: 'Edges', value: 2 },
-      { label: 'Public', value: 1 },
-      { label: 'Manual', value: 3 },
+      { label: text('pages.tokenRoutes.routeGraphViewModel.fact.nodes'), value: 3 },
+      { label: text('pages.tokenRoutes.routeGraphViewModel.fact.edges'), value: 2 },
+      { label: text('pages.tokenRoutes.routeGraphViewModel.fact.public'), value: 1 },
+      { label: text('pages.tokenRoutes.routeGraphViewModel.fact.manual'), value: 3 },
     ]);
     expect(getNodeCardSubtitle(entry)).toBe('gpt-public');
-    expect(getNodeCardSubtitle(endpoint)).toBe('2 upstream targets');
+    expect(getNodeCardSubtitle(endpoint)).toBe(text('pages.tokenRoutes.routeGraphViewModel.upstreamTargetsCount', { count: 2 }));
     expect(getNodeCardMetrics(graph, dispatcher)).toEqual([
-      '2 connections',
-      '88% success',
+      text('pages.tokenRoutes.routeGraphViewModel.connectionsCount', { count: 2 }),
+      text('pages.tokenRoutes.routeGraphViewModel.successPercent', { percent: 88 }),
       'priority_order',
     ]);
     expect(getNodeInspectorFacts(graph, dispatcher)).toEqual([
-      { label: 'Selected', value: 'dispatcher.route' },
-      { label: 'Type', value: 'dispatcher' },
-      { label: 'Mode', value: 'route' },
-      { label: 'Connections', value: 2 },
+      { label: text('pages.tokenRoutes.routeGraphViewModel.fact.selected'), value: 'dispatcher.route' },
+      { label: text('pages.tokenRoutes.routeGraphViewModel.fact.type'), value: text('pages.tokenRoutes.routeGraphViewModel.nodeType.dispatcher') },
+      { label: text('pages.tokenRoutes.routeGraphViewModel.fact.mode'), value: 'route' },
+      { label: text('pages.tokenRoutes.routeGraphViewModel.fact.connections'), value: 2 },
     ]);
   });
 
@@ -128,13 +140,13 @@ describe('routeGraphViewModel', () => {
 
     expect(routeIn).toBeTruthy();
     expect(bidirectOut).toBeTruthy();
-    expect(getPortDisplayLabel(routeIn!)).toBe('endpoint candidates');
-    expect(getPortSummary(routeIn!)).toBe('input · route');
+    expect(getPortDisplayLabel(routeIn!)).toBe(text('pages.tokenRoutes.routeGraphViewModel.portLabel.endpointCandidates'));
+    expect(getPortSummary(routeIn!)).toBe(`${text('pages.tokenRoutes.routeGraphViewModel.portDirection.input')} · ${text('pages.tokenRoutes.routeGraphViewModel.portKind.route')}`);
     expect(getPortTypeSignature(routeIn!)).toBe('route{1,}');
-    expect(getPortModeNote(dispatcher, routeIn!)).toBe('Ignored in flow mode');
+    expect(getPortModeNote(dispatcher, routeIn!)).toBe(text('pages.tokenRoutes.routeGraphViewModel.ignoredInFlowMode'));
 
-    expect(getPortDisplayLabel(bidirectOut!)).toBe('dispatch paths');
-    expect(getPortSummary(bidirectOut!)).toBe('output · bidirect');
+    expect(getPortDisplayLabel(bidirectOut!)).toBe(text('pages.tokenRoutes.routeGraphViewModel.portLabel.dispatchPaths'));
+    expect(getPortSummary(bidirectOut!)).toBe(`${text('pages.tokenRoutes.routeGraphViewModel.portDirection.output')} · ${text('pages.tokenRoutes.routeGraphViewModel.portKind.bidirect')}`);
     expect(getPortTypeSignature(bidirectOut!)).toBe('bidirect[1,]');
     expect(getPortModeNote(dispatcher, bidirectOut!)).toBeNull();
   });
@@ -161,17 +173,175 @@ describe('routeGraphViewModel', () => {
       kind: 'request' as const,
     };
 
-    expect(getPortDisplayLabel(setPort)).toBe('candidate targets');
+    expect(getPortDisplayLabel(setPort)).toBe(text('pages.tokenRoutes.routeGraphViewModel.portLabel.candidateTargets'));
     expect(getPortTypeSignature(setPort)).toBe('route{0,8}');
     expect(getPortCollectionKind(setPort)).toBe('set');
 
-    expect(getPortDisplayLabel(arrPort)).toBe('dispatch paths');
+    expect(getPortDisplayLabel(arrPort)).toBe(text('pages.tokenRoutes.routeGraphViewModel.portLabel.dispatchPaths'));
     expect(getPortTypeSignature(arrPort)).toBe('bidirect[1,]');
     expect(getPortCollectionKind(arrPort)).toBe('arr');
 
     expect(getPortDisplayLabel(singlePort)).toBe('request input');
     expect(getPortTypeSignature(singlePort)).toBe('request');
     expect(getPortCollectionKind(singlePort)).toBe('single');
+  });
+
+  it('uses compiled public route products for model entries before primitive entry fallback', () => {
+    const entry: RouteGraphNode = {
+      id: 'entry.public',
+      type: 'entry',
+      enabled: true,
+      visibility: 'public',
+      ownership: 'manual',
+      match: { kind: 'model', requestedModelPattern: 'manual-model', displayName: 'manual-model' },
+    };
+    const graph = graphWith([entry]);
+
+    expect(getPublicModelEntryRows(graph, [
+      {
+        endpointId: 'route-endpoint:product:auto-model:deepseek-v4-flash-reroute',
+        nodeId: 'route-endpoint:product:auto-model:deepseek-v4-flash-reroute',
+        routeId: null,
+        label: 'deepseek-v4-flash-reroute',
+        endpointKind: 'route_product',
+        exposure: 'public',
+        resolutionStatus: 'resolved',
+        ownerKind: 'macro',
+        sourceKind: 'automatic_model_group',
+        enabled: true,
+        displayIcon: null,
+        modelPattern: 'deepseek-v4-flash-reroute',
+        publicModelName: 'deepseek-v4-flash-reroute',
+        upstreamModels: ['deepseek-v4-flash'],
+        siteNames: ['site-a', 'site-b', 'site-c'],
+        sourceRouteIds: [1, 2, 3],
+        tags: [],
+        metadata: {},
+      },
+    ])).toEqual([
+      expect.objectContaining({
+        id: 'route-endpoint:product:auto-model:deepseek-v4-flash-reroute',
+        nodeId: 'route-endpoint:product:auto-model:deepseek-v4-flash-reroute',
+        title: 'deepseek-v4-flash-reroute',
+        source: 'compiled_endpoint',
+      }),
+      expect.objectContaining({
+        id: 'entry.public',
+        nodeId: 'entry.public',
+        title: 'manual-model',
+        source: 'entry_node',
+      }),
+    ]);
+  });
+
+  it('uses current public candidate selector macros when endpoint catalog is empty', () => {
+    const macro: RouteGraphMacro = {
+      id: 'deepseek-v4-flash-reroute',
+      kind: 'candidate_selector',
+      enabled: true,
+      visibility: 'public',
+      ownership: 'manual',
+      name: 'deepseek-v4-flash-reroute',
+      config: {
+        surface: {
+          entry: {
+            kind: 'external',
+            visibility: 'public',
+            match: {
+              kind: 'model',
+              requestedModelPattern: 'deepseek-v4-flash-reroute',
+              displayName: 'deepseek-v4-flash-reroute',
+            },
+          },
+          output: 'route',
+        },
+        policy: { strategy: 'weighted' },
+        groups: [
+          {
+            id: 'primary',
+            enabled: true,
+            priority: 0,
+            input: { kind: 'model_pattern', pattern: 'deepseek-v4-flash' },
+          },
+        ],
+      },
+    };
+
+    expect(getPublicModelEntryRows(graphWith([], [macro]), [])).toEqual([
+      expect.objectContaining({
+        id: 'macro:deepseek-v4-flash-reroute:entry',
+        nodeId: 'macro:deepseek-v4-flash-reroute:entry',
+        title: 'deepseek-v4-flash-reroute',
+        source: 'macro_entry',
+      }),
+    ]);
+  });
+
+  it('keeps disabled public candidate selector macro entries visible as configured entries', () => {
+    const macro: RouteGraphMacro = {
+      id: 'manual-public-group',
+      kind: 'candidate_selector',
+      enabled: false,
+      visibility: 'public',
+      ownership: 'manual',
+      config: {
+        surface: {
+          entry: {
+            kind: 'external',
+            visibility: 'public',
+            match: {
+              kind: 'model',
+              requestedModelPattern: 'manual-public-group',
+              displayName: 'manual-public-group',
+            },
+          },
+          output: 'route',
+        },
+        policy: { strategy: 'weighted' },
+        groups: [],
+      },
+    };
+
+    expect(getPublicModelEntryRows(graphWith([], [macro]), [])).toEqual([
+      expect.objectContaining({
+        id: 'macro-config:manual-public-group:entry',
+        nodeId: 'macro:manual-public-group',
+        title: 'manual-public-group',
+        source: 'macro_entry',
+      }),
+    ]);
+  });
+
+  it('filters public model entries by title, subtitle, id, and multiple search terms', () => {
+    const rows = [
+      {
+        id: 'macro:deepseek-v4-flash-reroute:entry',
+        nodeId: 'macro:deepseek-v4-flash-reroute:entry',
+        title: 'deepseek-v4-flash-reroute',
+        subtitle: 'macro · deepseek-v4-flash-reroute',
+        source: 'macro_entry' as const,
+      },
+      {
+        id: 'entry.manual',
+        nodeId: 'entry.manual',
+        title: 'manual-model',
+        subtitle: 'enabled · manual',
+        source: 'entry_node' as const,
+      },
+      {
+        id: 'route-endpoint:product:auto-model:gpt-4o',
+        nodeId: 'route-endpoint:product:auto-model:gpt-4o',
+        title: 'gpt-4o',
+        subtitle: 'macro · site-a, site-b · 2 routes',
+        source: 'compiled_endpoint' as const,
+      },
+    ];
+
+    expect(filterPublicModelEntryRows(rows, '')).toBe(rows);
+    expect(filterPublicModelEntryRows(rows, 'DEEPSEEK reroute')).toEqual([rows[0]]);
+    expect(filterPublicModelEntryRows(rows, 'site-b')).toEqual([rows[2]]);
+    expect(filterPublicModelEntryRows(rows, 'entry manual')).toEqual([rows[1]]);
+    expect(filterPublicModelEntryRows(rows, 'missing')).toEqual([]);
   });
 
   it('keeps port type signatures compact for tooltip-only display', () => {
@@ -266,9 +436,9 @@ describe('routeGraphViewModel', () => {
       label: 'dispatch path',
       kind: 'bidirect',
     });
-    expect(getPortDisplayLabel(disabledFlowOut!)).toBe('dispatch paths');
+    expect(getPortDisplayLabel(disabledFlowOut!)).toBe(text('pages.tokenRoutes.routeGraphViewModel.portLabel.dispatchPaths'));
     expect(getPortTypeSignature(disabledFlowOut!)).toBe('bidirect[1,]');
-    expect(getPortModeNote(dispatcher, disabledFlowOut!)).toBe('Ignored in route mode');
+    expect(getPortModeNote(dispatcher, disabledFlowOut!)).toBe(text('pages.tokenRoutes.routeGraphViewModel.ignoredInRouteMode'));
   });
 
   it('keeps list and outline subtitles focused on status, visibility, and ownership', () => {
@@ -291,10 +461,10 @@ describe('routeGraphViewModel', () => {
       config: { targets: [], targetSelection: { strategy: 'weighted' } },
     };
 
-    expect(getModelListSubtitle(manualPublic)).toBe('enabled · manual');
-    expect(getOutlineSubtitle(manualPublic)).toBe('entry · public · manual');
-    expect(getModelListSubtitle(disabledDerived)).toBe('disabled · derived');
-    expect(getOutlineSubtitle(disabledDerived)).toBe('route_endpoint · internal · derived');
+    expect(getModelListSubtitle(manualPublic)).toBe(`${text('pages.tokenRoutes.routeGraphViewModel.status.enabled')} · ${text('pages.tokenRoutes.routeGraphViewModel.ownership.manual')}`);
+    expect(getOutlineSubtitle(manualPublic)).toBe(`${text('pages.tokenRoutes.routeGraphViewModel.nodeType.entry')} · ${text('pages.tokenRoutes.routeGraphViewModel.visibility.public')} · ${text('pages.tokenRoutes.routeGraphViewModel.ownership.manual')}`);
+    expect(getModelListSubtitle(disabledDerived)).toBe(`${text('pages.tokenRoutes.routeGraphViewModel.status.disabled')} · ${text('pages.tokenRoutes.routeGraphViewModel.ownership.derived')}`);
+    expect(getOutlineSubtitle(disabledDerived)).toBe(`${text('pages.tokenRoutes.routeGraphViewModel.nodeType.routeEndpoint')} · ${text('pages.tokenRoutes.routeGraphViewModel.visibility.internal')} · ${text('pages.tokenRoutes.routeGraphViewModel.ownership.derived')}`);
   });
 
   it('summarizes unknown and fallback node types without repeating enabled/public facts', () => {
@@ -319,13 +489,15 @@ describe('routeGraphViewModel', () => {
     };
     const graph = graphWith([autoNode, synthetic]);
 
-    expect(getNodeCardSubtitle(autoNode)).toBe('auto_generated node');
-    expect(getNodeCardSubtitle(synthetic)).toBe('429 synthetic response');
+    expect(getNodeCardSubtitle(autoNode)).toBe(text('pages.tokenRoutes.routeGraphViewModel.ownershipNode', {
+      ownership: text('pages.tokenRoutes.routeGraphViewModel.ownership.autoGenerated'),
+    }));
+    expect(getNodeCardSubtitle(synthetic)).toBe(text('pages.tokenRoutes.routeGraphViewModel.syntheticResponse', { status: 429 }));
     expect(getNodeInspectorFacts(graph, synthetic).map((fact) => fact.label)).toEqual([
-      'Selected',
-      'Type',
-      'Mode',
-      'Connections',
+      text('pages.tokenRoutes.routeGraphViewModel.fact.selected'),
+      text('pages.tokenRoutes.routeGraphViewModel.fact.type'),
+      text('pages.tokenRoutes.routeGraphViewModel.fact.mode'),
+      text('pages.tokenRoutes.routeGraphViewModel.fact.connections'),
     ]);
   });
 
@@ -401,16 +573,20 @@ describe('routeGraphViewModel', () => {
 
     expect(getNodeTitle(unnamedEntry)).toBe('entry.unnamed');
     expect(getNodeSubtitle(unnamedEntry)).toBe('entry.unnamed');
-    expect(getNodeCardSubtitle(unnamedEntry)).toBe('public model entry');
-    expect(getNodeCardSubtitle(dispatcherDefault)).toBe('route dispatcher');
+    expect(getNodeCardSubtitle(unnamedEntry)).toBe(text('pages.tokenRoutes.routeGraphViewModel.publicModelEntry'));
+    expect(getNodeCardSubtitle(dispatcherDefault)).toBe(text('pages.tokenRoutes.routeGraphViewModel.dispatcherSubtitle', {
+      mode: text('pages.tokenRoutes.routeGraphViewModel.dispatcherMode.route'),
+    }));
     expect(getNodeModeLabel(dispatcherDefault)).toBe('route');
-    expect(getNodeCardSubtitle(filterOne)).toBe('1 operation');
-    expect(getNodeCardSubtitle(filterZero)).toBe('0 operations');
-    expect(getNodeCardSubtitle(endpointOne)).toBe('1 upstream target');
-    expect(getNodeCardSubtitle(syntheticDefault)).toBe('503 synthetic response');
-    expect(getNodeCardSubtitle(manualAuto)).toBe('manual node');
-    expect(getNodeCardMetrics(graph, dispatcherDefault)).toEqual(['0 connections', 'weighted']);
-    expect(getNodeCardMetrics(graph, unnamedEntry)).toEqual(['1 connection']);
+    expect(getNodeCardSubtitle(filterOne)).toBe(text('pages.tokenRoutes.routeGraphViewModel.oneOperation'));
+    expect(getNodeCardSubtitle(filterZero)).toBe(text('pages.tokenRoutes.routeGraphViewModel.operationsCount', { count: 0 }));
+    expect(getNodeCardSubtitle(endpointOne)).toBe(text('pages.tokenRoutes.routeGraphViewModel.oneUpstreamTarget'));
+    expect(getNodeCardSubtitle(syntheticDefault)).toBe(text('pages.tokenRoutes.routeGraphViewModel.syntheticResponse', { status: 503 }));
+    expect(getNodeCardSubtitle(manualAuto)).toBe(text('pages.tokenRoutes.routeGraphViewModel.ownershipNode', {
+      ownership: text('pages.tokenRoutes.routeGraphViewModel.ownership.manual'),
+    }));
+    expect(getNodeCardMetrics(graph, dispatcherDefault)).toEqual([text('pages.tokenRoutes.routeGraphViewModel.connectionsCount', { count: 0 }), 'weighted']);
+    expect(getNodeCardMetrics(graph, unnamedEntry)).toEqual([text('pages.tokenRoutes.routeGraphViewModel.oneConnection')]);
     expect(getNodeConnectionCount(graph, 'entry.unnamed')).toBe(1);
     expect(getPortConnectionCount(graph, 'entry.unnamed', 'bidirect.out')).toBe(1);
     expect(getPortConnectionCount(graph, 'filter.one', 'bidirect.in')).toBe(1);

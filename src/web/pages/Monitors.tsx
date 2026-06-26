@@ -112,7 +112,7 @@ export default function Monitors() {
     <PageShell>
       <PageHeader
         title={tr('pages.monitors.embeddedMonitor')}
-        description={tr('pages.monitors.metapiViewingSites')}
+        description={tr('pages.monitors.embeddedMonitorDescription')}
         actions={(
           <>
           <Button variant="outline"
@@ -157,16 +157,16 @@ export default function Monitors() {
             {!usingCookieProxy && (
               <>
                 {tr('pages.monitors.1SignLinuxdoSign')}<br />
-                {tr('pages.monitors.2LdAuthSessionEnabledCookieActing')}<br />
+                {tr('pages.monitors.cookieProxySetupStep')}<br />
               </>
             )}
             {usingCookieProxy && (
               <>
-                {tr('pages.monitors.usageActingaccessCookie')}<br />
+                {tr('pages.monitors.serverProxyAccessDescription')}<br />
                 {tr('pages.monitors.saveCookie')}{monitorConfig.ldohCookieMasked || tr('pages.monitors.configured')}<br />
               </>
             )}
-            {tr('pages.monitors.cookieExpiredSave')}
+            {tr('pages.monitors.cookieExpiredDescription')}
             </CardDescription>
           </CardHeader>
 
@@ -199,7 +199,7 @@ export default function Monitors() {
                 type="button"
                 onClick={() => window.open('/monitor-proxy/ldoh/', '_blank', 'noopener,noreferrer')}
               >
-                {tr('pages.monitors.actingopen')}
+                {tr('pages.monitors.openThroughProxy')}
               </Button>
             )}
             </div>

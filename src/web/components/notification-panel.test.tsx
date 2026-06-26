@@ -11,6 +11,7 @@ const { apiMock } = vi.hoisted(() => ({
   apiMock: {
     getEvents: vi.fn(),
     markAllEventsRead: vi.fn(),
+    applyEventAction: vi.fn(),
     clearEvents: vi.fn(),
   },
 }));
@@ -28,8 +29,10 @@ const { translate } = vi.hoisted(() => {
     'components.notificationPanel.sign': '签到',
     'components.notificationPanel.balance': '余额',
     'components.notificationPanel.token': 'Token',
-    'components.notificationPanel.acting': '代理',
+    'components.notificationPanel.proxy': '代理',
     'components.notificationPanel.status': '状态',
+    'components.notificationPanel.scope.notification': '通知',
+    'components.notificationPanel.severity.warning': '警告',
     'app.sites': '站点',
   };
   return {
@@ -98,7 +101,15 @@ describe('NotificationPanel', () => {
         type: 'proxy',
         level: 'warning',
         title: 'Proxy Warning',
+        summary: 'Latency crossed threshold',
         message: 'Latency crossed threshold',
+        scope: 'notification',
+        category: 'health',
+        severity: 'warning',
+        state: 'open',
+        actions: [],
+        details: [],
+        occurrenceCount: 1,
         createdAt: '2026-06-19T10:00:00.000Z',
         read: false,
       },
@@ -111,7 +122,8 @@ describe('NotificationPanel', () => {
     expect(document.body.textContent).toContain('通知');
     expect(document.body.textContent).toContain('Proxy Warning');
     expect(document.body.textContent).toContain('Latency crossed threshold');
-    expect(apiMock.markAllEventsRead).toHaveBeenCalledTimes(1);
+    expect(apiMock.getEvents).toHaveBeenCalledWith('scope=notification');
+    expect(apiMock.markAllEventsRead).toHaveBeenCalledWith('scope=notification');
     expect(onUnreadCountChange).toHaveBeenCalledWith(0);
     expect(document.body.querySelector('[data-slot="card"]')).not.toBeNull();
     expect(Array.from(document.body.querySelectorAll('button')).some((button) => button.textContent === '清空')).toBe(true);
@@ -132,7 +144,7 @@ describe('NotificationPanel', () => {
         .click();
     });
 
-    expect(apiMock.clearEvents).toHaveBeenCalledTimes(1);
+    expect(apiMock.clearEvents).toHaveBeenCalledWith('scope=notification');
     expect(onUnreadCountChange).toHaveBeenCalledWith(0);
     await rendered.cleanup();
   });

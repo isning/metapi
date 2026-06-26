@@ -107,7 +107,7 @@ describe('modelPricingService upstream cost integration', () => {
     });
   });
 
-  it('does not bypass the provider catalog switch through the legacy catalog cost path', async () => {
+  it('uses provider catalog pricing even when the legacy provider catalog switch is disabled', async () => {
     const site = await db.insert(schema.sites).values({
       name: 'Catalog Disabled Cost',
       url: 'https://catalog-disabled.example.com',
@@ -128,14 +128,13 @@ describe('modelPricingService upstream cost integration', () => {
       key: 'pricing_reference_config_v1',
       value: JSON.stringify({
         schemaVersion: 1,
-        defaultReferenceMode: 'manual',
-        fallbackProfile: 'system_default',
-        catalog: {
-          builtInCatalogEnabled: true,
-          providerCatalogSuggestionsEnabled: false,
-        },
-        driftCheck: {
+        sync: {
           enabled: false,
+          url: '',
+          cron: '0 3 * * *',
+          replaceOnSync: true,
+          lastSyncedAt: null,
+          lastError: null,
         },
       }),
     }).run();
@@ -164,8 +163,17 @@ describe('modelPricingService upstream cost integration', () => {
       totalTokens: 1000,
     };
 
-    await expect(pricing.estimateProxyCost(input)).resolves.toBe(0.002);
-    await expect(pricing.buildProxyBillingDetails(input)).resolves.toBeNull();
-    expect(fetchUpstreamPricingCatalogMock).not.toHaveBeenCalled();
+    await expect(pricing.estimateProxyCost(input)).resolves.toBe(0.2);
+    await expect(pricing.buildProxyBillingDetails(input)).resolves.toMatchObject({
+      source: 'upstream_catalog',
+      upstreamCostPricingScope: 'provider_catalog',
+      breakdown: {
+        inputPerMillion: 200,
+        inputCost: 0.2,
+        outputCost: 0,
+        totalCost: 0.2,
+      },
+    });
+    expect(fetchUpstreamPricingCatalogMock).toHaveBeenCalledTimes(2);
   });
 });

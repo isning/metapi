@@ -66,6 +66,18 @@ export type RouteEndpointTarget = {
   routeUnit?: RouteEndpointTargetRouteUnit | null;
 };
 
+export type RouteGroupMetadata = {
+  id: number;
+  kind: string;
+  groupKey: string;
+  upstreamModelName: string | null;
+  normalizedModelName: string | null;
+  publicModelName: string | null;
+  visibility: string;
+  sourceMode: string;
+  syncStatus: string;
+};
+
 export type RouteRow = {
   id: number;
   match: RouteGraphMatchSpec;
@@ -80,6 +92,7 @@ export type RouteRow = {
   decisionSnapshot?: RouteDecision | null;
   decisionRefreshedAt?: string | null;
   enabled: boolean;
+  routeGroup?: RouteGroupMetadata | null;
   targets: RouteEndpointTarget[];
 };
 
@@ -100,6 +113,7 @@ export type RouteSummaryRow = {
   siteNames: string[];
   decisionSnapshot: RouteDecision | null;
   decisionRefreshedAt: string | null;
+  routeGroup?: RouteGroupMetadata | null;
   kind?: RouteRowKind;
   readOnly?: boolean;
   isVirtual?: boolean;
@@ -121,6 +135,8 @@ export type RouteEndpointCatalogItem = {
   publicModelName: string | null;
   upstreamModels: string[];
   siteNames: string[];
+  targetCount?: number;
+  sourceRouteIds?: number[];
   tags: string[];
   metadata: Record<string, unknown>;
 };

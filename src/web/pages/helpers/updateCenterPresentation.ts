@@ -45,7 +45,7 @@ export function describeGitHubDeployState(input: {
       kind: 'disabled',
       badgeTone: 'muted',
       badgeLabel: tr('pages.helpers.updateCenterPresentation.stopped'),
-      reason: tr('pages.helpers.updateCenterPresentation.stoppedTurnCheckDeploy'),
+      reason: tr('pages.helpers.updateCenterPresentation.sourceDisabledEnableToCheck'),
       canDeploy: false,
       highlight: false,
     };
@@ -58,7 +58,7 @@ export function describeGitHubDeployState(input: {
       kind: 'missing',
       badgeTone: 'warning',
       badgeLabel: tr('pages.helpers.updateCenterPresentation.noVersionFound'),
-      reason: tr('pages.helpers.updateCenterPresentation.currentSourceHasNoDeployableVersionYet'),
+      reason: tr('pages.helpers.updateCenterPresentation.sourceHasNoDeployableVersion'),
       canDeploy: false,
       highlight: false,
     };
@@ -69,7 +69,7 @@ export function describeGitHubDeployState(input: {
       kind: 'helper-unhealthy',
       badgeTone: 'warning',
       badgeLabel: tr('pages.helpers.updateCenterPresentation.helper'),
-      reason: input.helperError || tr('pages.helpers.updateCenterPresentation.deployHelperHealthyHelperDeploy'),
+      reason: input.helperError || tr('pages.helpers.updateCenterPresentation.deployHelperUnhealthy'),
       canDeploy: false,
       highlight: false,
     };
@@ -84,8 +84,8 @@ export function describeGitHubDeployState(input: {
       badgeTone: 'muted',
       badgeLabel: tr('pages.helpers.updateCenterPresentation.currentlyRunning'),
       reason: helperVersionCompare === 1
-        ? tr('pages.helpers.updateCenterPresentation.deployHelperHighNoneGithubStable')
-        : tr('pages.helpers.updateCenterPresentation.versionAlreadyRunningRedeploymentNotNeeded'),
+        ? tr('pages.helpers.updateCenterPresentation.helperAlreadyNewerThanGithubStable')
+        : tr('pages.helpers.updateCenterPresentation.versionAlreadyRunning'),
       canDeploy: false,
       highlight: false,
     };
@@ -96,7 +96,7 @@ export function describeGitHubDeployState(input: {
       kind: 'new-version',
       badgeTone: 'success',
       badgeLabel: tr('pages.helpers.updateCenterPresentation.newVersionFound'),
-      reason: tr('pages.helpers.updateCenterPresentation.stableVersionNewerThanCurrentRunningVersion'),
+      reason: tr('pages.helpers.updateCenterPresentation.stableVersionNewerThanCurrent'),
       canDeploy: true,
       highlight: true,
     };
@@ -106,7 +106,7 @@ export function describeGitHubDeployState(input: {
     kind: 'available',
     badgeTone: 'info',
     badgeLabel: tr('pages.helpers.updateCenterPresentation.deployable'),
-    reason: tr('pages.helpers.updateCenterPresentation.availableHelper'),
+    reason: tr('pages.helpers.updateCenterPresentation.versionAvailableUseHelper'),
     canDeploy: true,
     highlight: false,
   };
@@ -125,7 +125,7 @@ export function describeDockerDeployState(input: {
       kind: 'disabled',
       badgeTone: 'muted',
       badgeLabel: tr('pages.helpers.updateCenterPresentation.stopped'),
-      reason: tr('pages.helpers.updateCenterPresentation.stoppedTurnCheckDeploy'),
+      reason: tr('pages.helpers.updateCenterPresentation.sourceDisabledEnableToCheck'),
       canDeploy: false,
       highlight: false,
     };
@@ -139,7 +139,7 @@ export function describeDockerDeployState(input: {
       kind: 'missing',
       badgeTone: 'warning',
       badgeLabel: tr('pages.helpers.updateCenterPresentation.noVersionFound'),
-      reason: tr('pages.helpers.updateCenterPresentation.currentSourceHasNoDeployableVersionYet'),
+      reason: tr('pages.helpers.updateCenterPresentation.sourceHasNoDeployableVersion'),
       canDeploy: false,
       highlight: false,
     };
@@ -150,7 +150,7 @@ export function describeDockerDeployState(input: {
       kind: 'helper-unhealthy',
       badgeTone: 'warning',
       badgeLabel: tr('pages.helpers.updateCenterPresentation.helper'),
-      reason: input.helperError || tr('pages.helpers.updateCenterPresentation.deployHelperHealthyHelperDeploy'),
+      reason: input.helperError || tr('pages.helpers.updateCenterPresentation.deployHelperUnhealthy'),
       canDeploy: false,
       highlight: false,
     };
@@ -161,7 +161,7 @@ export function describeDockerDeployState(input: {
       kind: 'same-image',
       badgeTone: 'muted',
       badgeLabel: tr('pages.helpers.updateCenterPresentation.currentlyRunning'),
-      reason: tr('pages.helpers.updateCenterPresentation.imageAlreadyRunningRedeploymentNotNeeded'),
+      reason: tr('pages.helpers.updateCenterPresentation.imageAlreadyRunning'),
       canDeploy: false,
       highlight: false,
     };
@@ -174,7 +174,7 @@ export function describeDockerDeployState(input: {
       kind: 'same-version',
       badgeTone: 'muted',
       badgeLabel: tr('pages.helpers.updateCenterPresentation.currentlyRunning'),
-      reason: tr('pages.helpers.updateCenterPresentation.deployHelperHighNone'),
+      reason: tr('pages.helpers.updateCenterPresentation.helperAlreadyNewerThanCandidate'),
       canDeploy: false,
       highlight: false,
     };
@@ -186,7 +186,7 @@ export function describeDockerDeployState(input: {
       kind: 'new-version',
       badgeTone: 'success',
       badgeLabel: tr('pages.helpers.updateCenterPresentation.newVersionFound'),
-      reason: tr('pages.helpers.updateCenterPresentation.dockerHubHighDeploy'),
+      reason: tr('pages.helpers.updateCenterPresentation.dockerHubNewerVersionDeployable'),
       canDeploy: true,
       highlight: true,
     };
@@ -208,7 +208,7 @@ export function describeDockerDeployState(input: {
       kind: 'new-digest',
       badgeTone: 'success',
       badgeLabel: tr('pages.helpers.updateCenterPresentation.digest'),
-      reason: tr('pages.helpers.updateCenterPresentation.tagsDigestLevel'),
+      reason: tr('pages.helpers.updateCenterPresentation.tagSameDigestChanged'),
       canDeploy: true,
       highlight: true,
     };
@@ -218,7 +218,7 @@ export function describeDockerDeployState(input: {
     kind: 'available',
     badgeTone: 'info',
     badgeLabel: tr('pages.helpers.updateCenterPresentation.deployable'),
-    reason: tr('pages.helpers.updateCenterPresentation.availableHelper'),
+    reason: tr('pages.helpers.updateCenterPresentation.versionAvailableUseHelper'),
     canDeploy: true,
     highlight: false,
   };
@@ -261,18 +261,18 @@ export function buildUpdateReminder(input: {
       label: candidate.kind === 'new-digest' ? tr('pages.helpers.updateCenterPresentation.digest') : tr('pages.helpers.updateCenterPresentation.newVersionFound'),
       badgeTone: 'success',
       detail: candidate.kind === 'new-digest'
-        ? tr('pages.helpers.updateCenterPresentation.dockerHubAliasTagDigestDeploy')
+        ? tr('pages.helpers.updateCenterPresentation.dockerHubAliasDigestDeployable')
         : candidate.source === 'github-release'
-          ? `GitHub 稳定版 ${normalizeString(input.githubRelease?.displayVersion || input.githubRelease?.normalizedVersion)} 已可部署。`
-          : `Docker Hub ${normalizeString(input.dockerHubTag?.displayVersion || input.dockerHubTag?.normalizedVersion)} 已可部署。`,
+          ? `${tr('pages.helpers.updateCenterPresentation.githubStableDeployablePrefix')}${normalizeString(input.githubRelease?.displayVersion || input.githubRelease?.normalizedVersion)}${tr('pages.helpers.updateCenterPresentation.githubStableDeployableSuffix')}`
+          : `${tr('pages.helpers.updateCenterPresentation.dockerHubDeployablePrefix')}${normalizeString(input.dockerHubTag?.displayVersion || input.dockerHubTag?.normalizedVersion)}${tr('pages.helpers.updateCenterPresentation.dockerHubDeployableSuffix')}`,
       highlight: true,
     };
   }
 
   return {
-    label: tr('pages.helpers.updateCenterPresentation.alreadyUpDate'),
+    label: tr('pages.helpers.updateCenterPresentation.alreadyUpToDate'),
     badgeTone: 'muted',
-    detail: tr('pages.helpers.updateCenterPresentation.currentRunningVersionHasNoObviousDifference'),
+    detail: tr('pages.helpers.updateCenterPresentation.currentVersionMatchesTarget'),
     highlight: false,
   };
 }

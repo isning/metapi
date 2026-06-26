@@ -97,6 +97,7 @@ export type RouteEndpointCatalogItem = {
   publicModelName: string | null;
   upstreamModels: string[];
   siteNames: string[];
+  targetCount: number;
   sourceRouteIds: number[];
   tags: string[];
   metadata: Record<string, unknown>;
@@ -915,7 +916,7 @@ export async function publishRouteGraphSource(input: {
 
 export async function ensureActiveRouteGraphVersion(): Promise<ActiveRouteGraphVersion> {
   const active = await getActiveRouteGraphVersion();
-  if (active) return await reconcileActiveGraphWithRouteTable(active, new Map(), { allowDiagnostics: true });
+  if (active) return active;
 
   const sourceGraph = await loadLegacyRouteGraphSource();
   const published = await publishRouteGraphSource({
@@ -926,7 +927,16 @@ export async function ensureActiveRouteGraphVersion(): Promise<ActiveRouteGraphV
   if (!published.ok) {
     throw new Error(`Cannot bootstrap route graph: ${published.diagnostics.map((item) => item.message).join('; ')}`);
   }
-  return await reconcileActiveGraphWithRouteTable(published.version, new Map(), { allowDiagnostics: true });
+  return published.version;
+}
+
+export async function synchronizeActiveRouteGraphVersion(
+  options: { allowDiagnostics?: boolean } = {},
+): Promise<ActiveRouteGraphVersion> {
+  const active = await ensureActiveRouteGraphVersion();
+  return await reconcileActiveGraphWithRouteTable(active, new Map(), {
+    allowDiagnostics: options.allowDiagnostics ?? true,
+  });
 }
 
 export async function getActiveRouteGraphVersion(): Promise<ActiveRouteGraphVersion | null> {
@@ -1164,6 +1174,7 @@ export async function listRouteEndpointCatalog(): Promise<RouteEndpointCatalogIt
   const routeEndpointTargets = await db.select().from(schema.routeEndpointTargets).all();
   const routeSiteNames = new Map<number, Set<string>>();
   const routeModels = new Map<number, Set<string>>();
+  const routeTargetCounts = new Map<number, number>();
   const accountIds = Array.from(new Set(routeEndpointTargets.map((channel) => channel.accountId).filter((id): id is number => Number.isFinite(Number(id)))));
   const accounts = accountIds.length > 0
     ? await db.select().from(schema.accounts).all()
@@ -1174,6 +1185,7 @@ export async function listRouteEndpointCatalog(): Promise<RouteEndpointCatalogIt
   const accountById = new Map<number, typeof accounts[number]>(accounts.map((account) => [account.id, account]));
   const siteById = new Map<number, typeof sites[number]>(sites.map((site) => [site.id, site]));
   for (const channel of routeEndpointTargets) {
+    routeTargetCounts.set(channel.routeId, (routeTargetCounts.get(channel.routeId) || 0) + 1);
     const model = String(channel.sourceModel || '').trim();
     if (model) {
       const models = routeModels.get(channel.routeId) || new Set<string>();
@@ -1189,6 +1201,20 @@ export async function listRouteEndpointCatalog(): Promise<RouteEndpointCatalogIt
       routeSiteNames.set(channel.routeId, names);
     }
   }
+  const normalizeTextList = (values: unknown[]) => Array.from(new Set(values
+    .map((value) => String(value || '').trim())
+    .filter(Boolean)));
+  const readRecord = (value: unknown): Record<string, unknown> | null => (
+    value && typeof value === 'object' && !Array.isArray(value)
+      ? value as Record<string, unknown>
+      : null
+  );
+  const readEndpointIdentity = (value: unknown): Record<string, unknown> | null => {
+    const record = readRecord(value);
+    const metadata = readRecord(record?.metadata);
+    return readRecord(metadata?.endpointIdentity) || readRecord(record?.endpointIdentity);
+  };
+
   return routeEndpoints.map((endpoint) => {
     const node = nodesById.get(endpoint.nodeId);
     const sourceRouteIds = endpoint.backend.kind === 'routes'
@@ -1199,6 +1225,19 @@ export async function listRouteEndpointCatalog(): Promise<RouteEndpointCatalogIt
     const metadata = node && 'metadata' in node && node.metadata && typeof node.metadata === 'object' && !Array.isArray(node.metadata)
       ? node.metadata as Record<string, unknown>
       : {};
+    const supplyTargets = endpoint.endpointKind === 'supply'
+      ? (compiledGraph.programBundle?.endpointCatalog?.supplyTargets?.[endpoint.endpointId] || [])
+      : [];
+    const supplyIdentities = [
+      ...supplyTargets.map((target) => readEndpointIdentity(target)),
+      readEndpointIdentity(metadata),
+    ].filter((identity): identity is Record<string, unknown> => !!identity);
+    const endpointUpstreamModels = endpoint.endpointKind === 'supply' && supplyIdentities.length > 0
+      ? normalizeTextList(supplyIdentities.map((identity) => identity.model))
+      : Array.from(new Set(sourceRouteIds.flatMap((routeId) => Array.from(routeModels.get(routeId) || []))));
+    const endpointSiteNames = endpoint.endpointKind === 'supply' && supplyIdentities.length > 0
+      ? normalizeTextList(supplyIdentities.map((identity) => identity.siteName))
+      : Array.from(new Set(sourceRouteIds.flatMap((routeId) => Array.from(routeSiteNames.get(routeId) || []))));
     return {
       endpointId: endpoint.endpointId,
       nodeId: endpoint.nodeId,
@@ -1213,8 +1252,11 @@ export async function listRouteEndpointCatalog(): Promise<RouteEndpointCatalogIt
       displayIcon: route?.displayIcon ?? null,
       modelPattern: endpoint.match.requestedModelPattern || endpoint.match.displayName || '',
       publicModelName: endpoint.publicModelName || null,
-      upstreamModels: Array.from(new Set(sourceRouteIds.flatMap((routeId) => Array.from(routeModels.get(routeId) || [])))),
-      siteNames: Array.from(new Set(sourceRouteIds.flatMap((routeId) => Array.from(routeSiteNames.get(routeId) || [])))),
+      upstreamModels: endpointUpstreamModels,
+      siteNames: endpointSiteNames,
+      targetCount: endpoint.endpointKind === 'supply'
+        ? supplyTargets.length
+        : sourceRouteIds.reduce((sum, routeId) => sum + (routeTargetCounts.get(routeId) || 0), 0),
       sourceRouteIds,
       tags: [],
       metadata,
@@ -1272,25 +1314,26 @@ export async function resolveRouteEndpointSourceRouteIds(endpointIdsInput: unkno
 
 export async function loadActiveRouteGraphRouteBindings(): Promise<Map<number, RouteGraphRouteBinding>> {
   const active = await ensureActiveRouteGraphVersion();
+  const compiledGraph = active.compiledGraph;
   const macroVisibilityByRouteId = new Map<number, RouteGraphVisibility>();
   for (const macro of active.sourceGraph.macros || []) {
     const routeId = routeIdFromRouteTableMacroId(macro.id);
     if (!routeId) continue;
     macroVisibilityByRouteId.set(routeId, macro.visibility === 'internal' ? 'internal' : 'public');
   }
-  const compiled = compileRouteGraphSource(active.sourceGraph);
-  const primitiveSource = compiled.primitiveSource ?? active.sourceGraph;
-  const byEntryId = new Map(primitiveSource.nodes.map((node) => [node.id, node]));
-  const outgoing = new Map<string, typeof primitiveSource.edges>();
-  const incoming = new Map<string, typeof primitiveSource.edges>();
-  for (const edge of primitiveSource.edges) {
+  const primitiveNodes = Object.values(compiledGraph.nodesById);
+  const primitiveEdges = Object.values(compiledGraph.edgesByFromPort).flat();
+  const byEntryId = new Map(primitiveNodes.map((node) => [node.id, node]));
+  const outgoing = new Map<string, typeof primitiveEdges>();
+  const incoming = new Map<string, typeof primitiveEdges>();
+  for (const edge of primitiveEdges) {
     if (!outgoing.has(edge.sourceNodeId)) outgoing.set(edge.sourceNodeId, []);
     outgoing.get(edge.sourceNodeId)!.push(edge);
     if (!incoming.has(edge.targetNodeId)) incoming.set(edge.targetNodeId, []);
     incoming.get(edge.targetNodeId)!.push(edge);
   }
   const binding = new Map<number, RouteGraphRouteBinding>();
-  for (const endpoint of compiled.compiled.routeEndpoints || []) {
+  for (const endpoint of compiledGraph.routeEndpoints) {
     if (endpoint.endpointKind !== 'route_product') continue;
     const routeId = Number(endpoint.routeId);
     if (!Number.isFinite(routeId) || routeId <= 0) continue;
@@ -1342,7 +1385,7 @@ export async function loadActiveRouteGraphRouteBindings(): Promise<Map<number, R
     });
   }
   if (binding.size > 0) return binding;
-  for (const node of primitiveSource.nodes) {
+  for (const node of primitiveNodes) {
     if (node.type !== 'entry') continue;
     const routeId = Number(node.match.routeId || String(node.id).replace(/^entry:legacy:/, ''));
     if (!Number.isFinite(routeId) || routeId <= 0) continue;

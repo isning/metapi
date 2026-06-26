@@ -4,7 +4,6 @@ import { getInsertedRowId } from '../../db/insertHelpers.js';
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import { detectSite } from '../../services/siteDetector.js';
 import { invalidateSiteProxyCache, parseSiteProxyUrlInput } from '../../services/siteProxy.js';
-import { formatUtcSqlDateTime } from '../../services/localTimeService.js';
 import { invalidateTokenRouterCache } from '../../services/tokenRouter.js';
 import { parseSiteCustomHeadersInput } from '../../services/siteCustomHeaders.js';
 import { normalizeCompatibilityPolicyStorageInput } from '../../services/upstreamCompatibilityPolicyStorage.js';
@@ -25,6 +24,8 @@ import {
   replaceCredentialEndpointBindings,
   type CredentialEndpointBindingUpdate,
 } from '../../services/credentialEndpointBindingService.js';
+import { valueWalletBalanceInBaseUnit } from '../../services/walletBalanceValuationService.js';
+import { emitInboxItem } from '../../services/inboxService.js';
 
 function sseWrite(raw: import('http').ServerResponse, event: string, data: unknown) {
   try { raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch { /* ignore */ }
@@ -463,16 +464,19 @@ export async function sitesRoutes(app: FastifyInstance) {
         .run();
 
       try {
-        const createdAt = formatUtcSqlDateTime(new Date());
-        await db.insert(schema.events).values({
+        await emitInboxItem({
+          scope: 'activity',
+          category: 'site',
           type: 'status',
           title: '站点已禁用',
+          summary: `${existingSiteName} 已禁用`,
           message: `${existingSiteName} 已禁用，关联账号已全部置为禁用`,
           level: 'warning',
+          subject: { type: 'site', id: siteId, label: existingSiteName },
+          source: 'site',
           relatedId: siteId,
           relatedType: 'site',
-          createdAt,
-        }).run();
+        });
       } catch { }
       return;
     }
@@ -483,16 +487,19 @@ export async function sitesRoutes(app: FastifyInstance) {
       .run();
 
     try {
-      const createdAt = formatUtcSqlDateTime(new Date());
-      await db.insert(schema.events).values({
+      await emitInboxItem({
+        scope: 'activity',
+        category: 'site',
         type: 'status',
         title: '站点已启用',
+        summary: `${existingSiteName} 已启用`,
         message: `${existingSiteName} 已启用，关联禁用账号已恢复为活跃`,
         level: 'info',
+        subject: { type: 'site', id: siteId, label: existingSiteName },
+        source: 'site',
         relatedId: siteId,
         relatedType: 'site',
-        createdAt,
-      }).run();
+      });
     } catch { }
   }
 
@@ -508,21 +515,60 @@ export async function sitesRoutes(app: FastifyInstance) {
     const siteRows = await db.select().from(schema.sites).all();
     const siteRowsWithApiEndpoints = await attachSiteApiEndpoints(siteRows);
     const accountRows = await db.select({
+      id: schema.accounts.id,
       siteId: schema.accounts.siteId,
       balance: schema.accounts.balance,
       extraConfig: schema.accounts.extraConfig,
     }).from(schema.accounts).all();
 
-    const totalBalanceBySiteId: Record<number, number> = {};
+    const balanceBySiteId: Record<number, {
+      totalBalance: number;
+      rawBalance: number;
+      baseCostUnit: string;
+      valuedAccountCount: number;
+      accountCount: number;
+      valuationWarningCount: number;
+    }> = {};
     const subscriptionBySiteId: Record<number, SiteSubscriptionAggregate | undefined> = {};
-    for (const row of accountRows) {
-      totalBalanceBySiteId[row.siteId] = roundMetric((totalBalanceBySiteId[row.siteId] || 0) + Number(row.balance || 0));
+
+    const balanceValuations = await Promise.all(accountRows.map(async (row) => ({
+      row,
+      valuation: await valueWalletBalanceInBaseUnit({
+        siteId: row.siteId,
+        accountId: row.id,
+        balance: row.balance,
+      }),
+    })));
+
+    for (const { row, valuation } of balanceValuations) {
+      const current = balanceBySiteId[row.siteId] || {
+        totalBalance: 0,
+        rawBalance: 0,
+        baseCostUnit: valuation.baseCostUnit,
+        valuedAccountCount: 0,
+        accountCount: 0,
+        valuationWarningCount: 0,
+      };
+      current.accountCount += 1;
+      current.rawBalance = roundMetric(current.rawBalance + valuation.balance);
+      current.baseCostUnit = valuation.baseCostUnit || current.baseCostUnit;
+      if (valuation.normalizedValue != null) {
+        current.totalBalance = roundMetric(current.totalBalance + valuation.normalizedValue);
+        current.valuedAccountCount += 1;
+      }
+      current.valuationWarningCount += valuation.diagnostics.filter((item) => item.level !== 'info').length;
+      balanceBySiteId[row.siteId] = current;
       subscriptionBySiteId[row.siteId] = aggregateSiteSubscription(subscriptionBySiteId[row.siteId], row.extraConfig);
     }
 
     return siteRowsWithApiEndpoints.map((site) => ({
       ...site,
-      totalBalance: Math.round((totalBalanceBySiteId[site.id] || 0) * 1_000_000) / 1_000_000,
+      totalBalance: Math.round((balanceBySiteId[site.id]?.totalBalance || 0) * 1_000_000) / 1_000_000,
+      rawBalance: Math.round((balanceBySiteId[site.id]?.rawBalance || 0) * 1_000_000) / 1_000_000,
+      baseCostUnit: balanceBySiteId[site.id]?.baseCostUnit || 'USD',
+      valuedAccountCount: balanceBySiteId[site.id]?.valuedAccountCount || 0,
+      accountCount: balanceBySiteId[site.id]?.accountCount || 0,
+      balanceValuationWarningCount: balanceBySiteId[site.id]?.valuationWarningCount || 0,
       subscriptionSummary: subscriptionBySiteId[site.id] || null,
     }));
   });

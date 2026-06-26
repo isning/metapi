@@ -3,6 +3,6 @@ export const apiResources = {
     'api.responseStreamingcontent': '响应未返回流式内容',
   },
   en: {
-    'api.responseStreamingcontent': 'Response streamingContent',
+    'api.responseStreamingcontent': 'Response did not return streaming content',
   },
 } as const;

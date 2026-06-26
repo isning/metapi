@@ -20,6 +20,8 @@ type JsonCodeEditorProps = {
   ariaLabel?: string;
 };
 
+const JSON_LIVE_LINT_MAX_CHARS = 250_000;
+
 function useDarkMode() {
   const resolveDark = () => {
     if (typeof document === 'undefined' || !document.documentElement) return false;
@@ -174,6 +176,12 @@ export default function JsonCodeEditor({
     { tag: [tags.punctuation, tags.separator], color: 'var(--muted-foreground)' },
     { tag: [tags.invalid], color: 'var(--destructive)' },
   ])), []);
+  const extensions = useMemo(() => {
+    const baseExtensions = [json(), editorTheme, syntaxTheme];
+    return value.length > JSON_LIVE_LINT_MAX_CHARS
+      ? baseExtensions
+      : [json(), lintGutter(), linter(jsonParseLinter()), editorTheme, syntaxTheme];
+  }, [editorTheme, syntaxTheme, value.length]);
 
   return (
     <div className={cn('json-code-editor min-w-0 w-full max-w-full overflow-hidden', className)} data-disabled={disabled || readOnly ? 'true' : undefined}>
@@ -191,7 +199,7 @@ export default function JsonCodeEditor({
           closeBrackets: true,
           bracketMatching: true,
         }}
-        extensions={[json(), lintGutter(), linter(jsonParseLinter()), editorTheme, syntaxTheme]}
+        extensions={extensions}
         theme="none"
         placeholder={placeholder}
         aria-label={ariaLabel}

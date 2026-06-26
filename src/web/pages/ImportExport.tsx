@@ -88,7 +88,7 @@ const DEFAULT_WEBDAV_SNAPSHOT: WebdavConfigSnapshot = {
 
 const WEBDAV_EXPORT_TYPE_OPTIONS = [
   { value: 'all', label: tr('components.notificationPanel.all') },
-  { value: 'accounts', label: tr('pages.importExport.routesstrategy') },
+  { value: 'accounts', label: tr('pages.importExport.connectionsAndRoutingPolicy') },
   { value: 'preferences', label: tr('pages.importExport.systemSettings') },
 ] as const;
 
@@ -227,7 +227,7 @@ function parseImportSummary(raw: string): ParsedSummary | null {
 
 function buildImportSuccessMessage(result: any): string {
   const sections: string[] = [];
-  if (result?.sections?.accounts) sections.push(tr('pages.importExport.routesstrategy'));
+  if (result?.sections?.accounts) sections.push(tr('pages.importExport.connectionsAndRoutingPolicy'));
   if (result?.sections?.preferences) sections.push(tr('pages.importExport.systemSettings'));
 
   const parts = [`导入完成：${sections.length ? sections.join('、') : tr('pages.importExport.noValidData')}`];
@@ -408,7 +408,7 @@ export default function ImportExport() {
     }
     const confirmed = typeof window === 'undefined' || typeof window.confirm !== 'function'
       ? true
-      : window.confirm(tr('pages.importExport.importZhRoutesStrategyconfigurationSystemSettings'));
+      : window.confirm(tr('pages.importExport.importOverwriteBackupSectionsConfirm'));
     if (!confirmed) {
       return;
     }
@@ -470,7 +470,7 @@ export default function ImportExport() {
   const handleImportFromWebdav = async () => {
     const confirmed = typeof window === 'undefined' || typeof window.confirm !== 'function'
       ? true
-      : window.confirm(tr('pages.importExport.webdavImportZhRoutesStrategyconfigurationSystemSettings'));
+      : window.confirm(tr('pages.importExport.webdavImportOverwriteBackupSectionsConfirm'));
     if (!confirmed) return;
     setWebdavAction('import');
     try {
@@ -506,7 +506,7 @@ export default function ImportExport() {
           <p className="mt-1 text-sm text-muted-foreground">{tr('pages.importExport.supportedconfigurationManual')}</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <ToneBadge tone="-muted">Schema v2.2</ToneBadge>
+          <ToneBadge tone="-muted">Schema v2.3</ToneBadge>
           <ToneBadge tone="-warning">{tr('pages.importExport.keepSensitiveDataOffline')}</ToneBadge>
         </div>
       </div>
@@ -515,7 +515,7 @@ export default function ImportExport() {
         <Card>
           <CardHeader>
             <CardTitle>{tr('pages.importExport.exportData')}</CardTitle>
-            <CardDescription>{tr('pages.importExport.routesstrategySettingsJson')}</CardDescription>
+            <CardDescription>{tr('pages.importExport.connectionsAndRoutingPolicySettingsJson')}</CardDescription>
           </CardHeader>
           <CardContent className="grid gap-2">
             <Button type="button" onClick={() => handleExport('all')} disabled={!!exportingType}>
@@ -523,7 +523,7 @@ export default function ImportExport() {
               {exportingType === 'all' ? <LoaderCircle className="size-4 animate-spin" /> : null}
             </Button>
             <Button type="button" variant="outline" onClick={() => handleExport('accounts')} disabled={!!exportingType}>
-              <span>{tr('pages.importExport.routesstrategy2')}</span>
+              <span>{tr('pages.importExport.connectionsAndRoutingPolicy2')}</span>
               {exportingType === 'accounts' ? <LoaderCircle className="size-4 animate-spin" /> : null}
             </Button>
             <Button type="button" variant="outline" onClick={() => handleExport('preferences')} disabled={!!exportingType}>
@@ -587,7 +587,7 @@ export default function ImportExport() {
                   {summary.valid ? (
                     <div className="grid gap-1">
                       <div>{tr('pages.importExport.version')}{summary.version}{tr('pages.importExport.time')}{summary.timestampLabel}</div>
-                      <div>{tr('pages.importExport.includesSections')}{summary.hasAccounts ? tr('pages.importExport.routesstrategy') : ''}{summary.hasAccounts && summary.hasPreferences ? ' + ' : ''}{summary.hasPreferences ? tr('pages.importExport.systemSettings') : ''}</div>
+                      <div>{tr('pages.importExport.includesSections')}{summary.hasAccounts ? tr('pages.importExport.connectionsAndRoutingPolicy') : ''}{summary.hasAccounts && summary.hasPreferences ? ' + ' : ''}{summary.hasPreferences ? tr('pages.importExport.systemSettings') : ''}</div>
                       {summary.isAllApiHubV2 ? (
                         <>
                           <div>{tr('pages.importExport.allApiHubV2Available')}</div>
@@ -710,10 +710,10 @@ export default function ImportExport() {
               {webdavSaving ? tr('pages.accounts.saving') : tr('pages.importExport.saveWebdavConfiguration')}
             </Button>
             <Button type="button" variant="outline" onClick={handleExportToWebdav} disabled={webdavAction !== '' || webdavSaving || webdavConfigDirty}>
-              {webdavAction === 'export' ? tr('pages.importExport.zh2') : tr('pages.importExport.webdav')}
+              {webdavAction === 'export' ? tr('pages.importExport.exporting') : tr('pages.importExport.webdav')}
             </Button>
             <Button type="button" variant="outline" onClick={handleImportFromWebdav} disabled={webdavAction !== '' || webdavSaving || webdavConfigDirty}>
-              {webdavAction === 'import' ? tr('pages.importExport.zh') : tr('pages.importExport.webdav2')}
+              {webdavAction === 'import' ? tr('pages.importExport.pulling') : tr('pages.importExport.webdav2')}
             </Button>
           </div>
 
@@ -733,10 +733,10 @@ export default function ImportExport() {
       <Alert>
         <AlertTitle>{tr('pages.importExport.notes')}</AlertTitle>
         <AlertDescription>
-          <div>{tr('pages.importExport.1ImportZhSitesAccountsTokenRoutes')}</div>
-          <div>{tr('pages.importExport.2ZhRoutesStrategyconfiguration')}</div>
-          <div>{tr('pages.importExport.3AdminsignIntokenAuthTokenImport')}</div>
-          <div>{tr('pages.importExport.4SuggestionAllBackupImportactions')}</div>
+          <div>{tr('pages.importExport.importWarningConnectionsOverwrite')}</div>
+          <div>{tr('pages.importExport.importWarningKeepsLocalRuntimeData')}</div>
+          <div>{tr('pages.importExport.importWarningAdminTokenExcluded')}</div>
+          <div>{tr('pages.importExport.importWarningExportFullBackupFirst')}</div>
         </AlertDescription>
       </Alert>
     </div>

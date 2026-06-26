@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Activity, Bell, CheckCircle2, KeyRound, Loader2, Megaphone, Server, Wallet } from 'lucide-react';
+import { Activity, Bell, Check, CheckCircle2, Copy, ExternalLink, KeyRound, Loader2, Megaphone, Server, Wallet } from 'lucide-react';
 import { api } from '../api.js';
 import { formatDateTimeMinuteLocal } from '../pages/helpers/checkinLogTime.js';
 import { buildEventNavigationPath } from '../pages/helpers/navigationFocus.js';
 import { useI18n, tr } from '../i18n.js';
+import type { InboxAction, InboxItem } from '../../shared/inbox.js';
 import { Badge } from './ui/badge/index.js';
 import { Button } from './ui/button/index.js';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card/index.js';
@@ -15,7 +16,7 @@ const typeLabels: Record<string, string> = {
   checkin: tr('components.notificationPanel.sign'),
   balance: tr('components.notificationPanel.balance'),
   token: tr('components.notificationPanel.token'),
-  proxy: tr('components.notificationPanel.acting'),
+  proxy: tr('components.notificationPanel.proxy'),
   status: tr('components.notificationPanel.status'),
   site_notice: tr('app.sites'),
 };
@@ -27,6 +28,20 @@ const typeIcons: Record<string, React.ComponentType<{ className?: string }>> = {
   proxy: Server,
   status: Activity,
   site_notice: Megaphone,
+};
+
+const scopeLabels: Record<string, string> = {
+  notification: 'components.notificationPanel.scope.notification',
+  attention: 'components.notificationPanel.scope.attention',
+  activity: 'components.notificationPanel.scope.activity',
+  announcement: 'components.notificationPanel.scope.announcement',
+};
+
+const severityVariants: Record<string, React.ComponentProps<typeof Badge>['variant']> = {
+  critical: 'destructive',
+  warning: 'warning',
+  success: 'success',
+  info: 'secondary',
 };
 
 export default function NotificationPanel({
@@ -41,7 +56,7 @@ export default function NotificationPanel({
   onUnreadCountChange?: (count: number) => void;
 }) {
   const { t: tr } = useI18n();
-  const [events, setEvents] = useState<any[]>([]);
+  const [events, setEvents] = useState<InboxItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [filter, setFilter] = useState<string>('');
   const panelRef = useRef<HTMLDivElement>(null);
@@ -50,14 +65,15 @@ export default function NotificationPanel({
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const params = filter ? `type=${filter}` : '';
-      const data = await api.getEvents(params);
+      const params = new URLSearchParams();
+      params.set('scope', 'notification');
+      if (filter) params.set('type', filter);
+      const data = await api.getEvents(params.toString());
       setEvents(data);
 
-      // Auto mark all as read on open
       const hasUnread = Array.isArray(data) && data.some((e: any) => !e.read);
       if (hasUnread) {
-        api.markAllEventsRead().catch(() => {});
+        api.markAllEventsRead('scope=notification').catch(() => {});
         onUnreadCountChange?.(0);
       }
     } catch { /* ignore */ }
@@ -84,9 +100,30 @@ export default function NotificationPanel({
   }, [anchorRef, onClose, open]);
 
   const clearAll = async () => {
-    await api.clearEvents();
+    await api.clearEvents('scope=notification');
     setEvents([]);
     onUnreadCountChange?.(0);
+  };
+
+  const runAction = async (ev: InboxItem, action: InboxAction) => {
+    if (action.kind === 'navigate' && action.href) {
+      onClose();
+      navigate(action.href);
+      return;
+    }
+    if (action.kind === 'external' && action.href) {
+      window.open(action.href, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    if (action.kind === 'copy' && action.value) {
+      await navigator.clipboard?.writeText(action.value);
+      return;
+    }
+    if (action.kind === 'invoke' && action.command) {
+      const response = await api.applyEventAction(ev.id, { command: action.command as any });
+      setEvents((prev) => prev.map((item) => (item.id === ev.id ? response.item : item)));
+      return;
+    }
   };
 
   if (!open) return null;
@@ -132,37 +169,73 @@ export default function NotificationPanel({
           </div>
         )}
         {events.map((ev: any) => {
-          const targetPath = buildEventNavigationPath(ev);
+          const navigateAction = ev.actions?.find((action: InboxAction) => action.kind === 'navigate' && action.href);
+          const targetPath = navigateAction?.href || buildEventNavigationPath(ev);
           const openTarget = () => {
             onClose();
             navigate(targetPath);
           };
+          const visibleActions = (ev.actions || [])
+            .filter((action: InboxAction) => action.kind !== 'navigate' || action.href !== targetPath)
+            .filter((action: InboxAction) => action.placement !== 'overflow')
+            .slice(0, 2);
           return (
             <div key={ev.id} className="border-b">
-            <Button
-              type="button"
-              variant="ghost"
-              className="h-auto w-full justify-start p-3 text-left"
-              onClick={openTarget}
-            >
-              <div className="flex min-w-0 flex-1 items-start gap-2">
-                <Badge variant={ev.level === 'error' ? 'destructive' : 'secondary'} className="mt-0.5 px-1.5">
-                  {ev.level || 'info'}
-                </Badge>
-                <div className="min-w-0 flex-1">
-                  <div className="mb-1 flex items-center gap-2">
-                    <span className="truncate text-sm font-medium">{ev.title}</span>
-                    <Badge variant="outline">
-                    {tr(typeLabels[ev.type] || ev.type)}
+              <div className="p-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="h-auto w-full justify-start px-2 py-2 text-left"
+                  onClick={openTarget}
+                >
+                  <div className="flex min-w-0 flex-1 items-start gap-2">
+                    <Badge variant={severityVariants[ev.severity] || 'secondary'} className="mt-0.5 px-1.5">
+                      {tr(`components.notificationPanel.severity.${ev.severity}`)}
                     </Badge>
+                    <div className="min-w-0 flex-1">
+                      <div className="mb-1 flex min-w-0 items-center gap-2">
+                        <span className="truncate text-sm font-medium">{ev.title}</span>
+                        <Badge variant="outline" className="shrink-0">
+                          {tr(scopeLabels[ev.scope] || ev.scope)}
+                        </Badge>
+                        <Badge variant="outline" className="shrink-0">
+                          {tr(typeLabels[ev.type || ''] || ev.category || ev.type || 'system')}
+                        </Badge>
+                      </div>
+                      <div className="whitespace-normal text-xs leading-relaxed text-muted-foreground">{ev.summary || ev.message}</div>
+                      <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+                        <span>{formatDateTimeMinuteLocal(ev.lastSeenAt || ev.createdAt)}</span>
+                        {ev.occurrenceCount > 1 && <span>×{ev.occurrenceCount}</span>}
+                      </div>
+                    </div>
                   </div>
-                  <div className="whitespace-normal text-xs leading-relaxed text-muted-foreground">{ev.message}</div>
-                  <div className="mt-1 text-xs text-muted-foreground">
-                  {formatDateTimeMinuteLocal(ev.createdAt)}
+                </Button>
+                {visibleActions.length > 0 && (
+                  <div className="mt-1 flex flex-wrap justify-end gap-1 px-2">
+                    {visibleActions.map((action: InboxAction) => {
+                      const Icon = action.kind === 'copy'
+                        ? Copy
+                        : action.kind === 'external'
+                          ? ExternalLink
+                          : action.command === 'resolve'
+                            ? Check
+                            : Activity;
+                      return (
+                        <Button
+                          key={action.id}
+                          type="button"
+                          size="sm"
+                          variant={action.variant || 'outline'}
+                          onClick={() => runAction(ev, action)}
+                        >
+                          <Icon className="size-3.5" />
+                          {action.label}
+                        </Button>
+                      );
+                    })}
                   </div>
-                </div>
+                )}
               </div>
-            </Button>
             </div>
           );
         })}

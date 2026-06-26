@@ -835,7 +835,7 @@ html {
   padding: 12px 14px;
   border-radius: 10px;
   background: var(--color-surface-subtle);
-  border: 1px solid var(--color-border);
+  border: 1px dashed var(--color-border);
 }
 
 .announcement-rich-content pre code {
@@ -1034,15 +1034,6 @@ html {
 .site-balance-subscription:hover,
 .site-balance-subscription:focus-visible {
   color: var(--color-text-secondary);
-}
-
-.sites-url-cell {
-  white-space: normal !important;
-}
-
-.sites-url-link {
-  display: inline-block;
-  max-width: 100%;
 }
 
 .route-enable-toggle {
@@ -3125,7 +3116,7 @@ textarea {
 .site-observability-empty {
   padding: 28px 16px;
   text-align: center;
-  border: 1px dashed var(--color-border);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--color-bg) 90%, white);
 }
@@ -3150,8 +3141,8 @@ textarea {
 
   .sites-table th:nth-child(2),
   .sites-table td:nth-child(2),
-  .sites-table th:nth-child(6),
-  .sites-table td:nth-child(6) {
+  .sites-table th:nth-child(5),
+  .sites-table td:nth-child(5) {
     display: none;
   }
 
@@ -3629,6 +3620,11 @@ textarea {
   overflow: hidden;
 }
 
+.route-graph-toolbar,
+.route-graph-main-layout {
+  border-color: var(--border);
+}
+
 .route-graph-toolbar-status {
   flex: 0 0 auto;
   white-space: nowrap;
@@ -3647,6 +3643,27 @@ textarea {
 #route-graph-center-layout {
   min-height: 0;
   overflow: hidden;
+}
+
+.route-graph-left-panel {
+  border-color: var(--border);
+}
+
+.route-graph-left-header {
+  background: color-mix(in srgb, var(--card) 96%, var(--muted) 4%);
+  border-color: var(--border);
+}
+
+.route-graph-left-tabs {
+  height: auto;
+  min-height: 34px;
+}
+
+.route-graph-left-tabs [data-radix-tabs-trigger],
+.route-graph-left-tabs [role='tab'] {
+  min-width: 0;
+  gap: 4px;
+  padding-inline: 6px;
 }
 
 .route-graph-main-layout > [data-panel],
@@ -3778,6 +3795,15 @@ textarea {
   font-weight: 600;
 }
 
+.route-graph-section-head {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding-bottom: 2px;
+}
+
 .route-graph-advanced-json {
   padding: 12px;
   display: grid;
@@ -3814,41 +3840,30 @@ textarea {
   max-height: 100%;
 }
 
+.route-graph-inspector-panel {
+  border-color: var(--border);
+}
+
 .route-graph-inspector-panel.is-dragging {
-  box-shadow: 0 8px 24px color-mix(in srgb, var(--foreground) 10%, transparent);
+  box-shadow: 0 16px 36px color-mix(in srgb, var(--foreground) 16%, transparent);
   contain: layout paint;
 }
 
 .route-graph-inspector-controls {
   position: absolute;
-  top: 0;
-  right: 0;
-  z-index: 1;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
   display: inline-flex;
   align-items: center;
-  overflow: hidden;
-  border: 1px solid var(--border);
-  border-top: 0;
-  border-right: 0;
-  border-radius: 0 0 0 10px;
-  background: var(--background);
+  gap: 2px;
+  overflow: visible;
+  border: 1px dashed var(--border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--background) 94%, transparent);
   color: var(--foreground);
-  box-shadow: -1px 1px 0 color-mix(in srgb, var(--foreground) 6%, transparent), inset 1px 1px 0 color-mix(in srgb, var(--background) 70%, transparent);
-}
-
-.route-graph-inspector-controls::after {
-  left: -1px;
-  bottom: -1px;
-  content: "";
-  position: absolute;
-  width: 12px;
-  height: 12px;
-  pointer-events: none;
-  background: transparent;
-  border-right: 1px solid var(--border);
-  border-top: 1px solid var(--border);
-  border-top-right-radius: 10px;
-  box-shadow: 2px -2px 0 var(--background);
+  box-shadow: var(--shadow-sm);
+  backdrop-filter: blur(8px);
 }
 
 .route-graph-inspector-drag-handle {
@@ -3856,19 +3871,20 @@ textarea {
   align-items: center;
   justify-content: center;
   gap: 3px;
-  width: 30px;
-  height: 28px;
+  width: 28px;
+  height: 26px;
   padding: 0;
   border: 0;
+  border-radius: 999px;
   background: transparent;
-  color: var(--color-text-muted);
+  color: var(--muted-foreground);
   cursor: move;
 }
 
 .route-graph-inspector-close {
-  width: 30px;
-  height: 28px;
-  border-radius: 0;
+  width: 28px;
+  height: 26px;
+  border-radius: 999px;
   position: relative;
   z-index: 1;
 }
@@ -3899,12 +3915,16 @@ textarea {
   grid-template-columns: 30px minmax(0, 1fr);
   gap: 8px 10px;
   align-items: start;
-  padding: 10px 70px 10px 10px;
-  border: 1px solid var(--color-border);
+  padding: 12px;
+  border: 1px dashed var(--border);
   border-radius: 10px;
-  background: var(--color-bg-card);
+  background: var(--card);
   min-width: 0;
   max-width: 100%;
+}
+
+.route-graph-inspector-header > div:not(.route-graph-inspector-action) {
+  padding-right: 64px;
 }
 
 .route-graph-inspector-header .route-graph-inspector-icon {
@@ -3914,8 +3934,8 @@ textarea {
   width: 30px;
   height: 30px;
   border-radius: 9px;
-  background: color-mix(in srgb, var(--color-primary) 10%, var(--color-bg));
-  color: var(--color-primary);
+  background: var(--muted);
+  color: var(--foreground);
   line-height: 0;
   font-size: 0;
 }
@@ -3933,14 +3953,14 @@ textarea {
 }
 
 .route-graph-inspector-header small {
-  color: var(--color-text-muted);
+  color: var(--muted-foreground);
   font-size: 10px;
   font-weight: 900;
   text-transform: uppercase;
 }
 
 .route-graph-inspector-header strong {
-  color: var(--color-text-primary);
+  color: var(--foreground);
   font-size: 14px;
   font-weight: 900;
   overflow-wrap: anywhere;
@@ -3948,7 +3968,7 @@ textarea {
 }
 
 .route-graph-inspector-header span {
-  color: var(--color-text-secondary);
+  color: var(--muted-foreground);
   font-size: 12px;
   overflow-wrap: anywhere;
   white-space: normal;
@@ -3959,17 +3979,28 @@ textarea {
   display: flex;
   align-items: center;
   justify-content: flex-start;
+  width: 100%;
   min-width: 0;
   max-width: 100%;
-  overflow: hidden;
+  overflow: visible;
   padding-top: 2px;
 }
 
 .route-graph-inspector-action [role='group'] {
   display: flex;
   flex-wrap: wrap;
+  width: 100%;
   min-width: 0;
   max-width: 100%;
+}
+
+.route-graph-inspector-primary-actions {
+  display: flex;
+  flex-wrap: wrap;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  align-items: center;
 }
 
 .route-graph-inspector-actions {
@@ -3982,28 +4013,37 @@ textarea {
 
 .route-graph-inspector-summary {
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
-  border: 1px solid var(--color-border);
-  border-radius: 10px;
-  background: var(--color-bg);
-  padding: 9px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
   min-width: 0;
   max-width: 100%;
   align-self: start;
+}
+
+.route-graph-priority-band-preview-row {
+  display: grid;
+  min-width: 0;
+  max-width: 100%;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
 }
 
 .route-graph-inspector-summary span {
   display: grid;
   gap: 2px;
   min-width: 0;
-  color: var(--color-text-muted);
+  color: var(--muted-foreground);
   font-size: 11px;
 }
 
 .route-graph-inspector-summary b {
   min-width: 0;
-  color: var(--color-text-primary);
+  color: var(--foreground);
   overflow-wrap: anywhere;
   white-space: normal;
 }
@@ -4019,7 +4059,7 @@ textarea {
 
 .route-graph-inspector-tabs {
   display: grid;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
   max-width: 100%;
   align-content: start;
@@ -4031,6 +4071,7 @@ textarea {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   width: 100%;
+  height: auto;
   min-width: 0;
   overflow-x: auto;
   align-self: start;
@@ -4039,6 +4080,7 @@ textarea {
 .route-graph-inspector-tablist [data-radix-tabs-trigger],
 .route-graph-inspector-tablist [role='tab'] {
   min-width: 0;
+  min-height: 32px;
   padding-left: 8px;
   padding-right: 8px;
   white-space: nowrap;
@@ -4062,7 +4104,7 @@ textarea {
   gap: 8px;
   justify-items: start;
   padding: 10px 12px;
-  border: 1px dashed var(--color-border);
+  border: 1px solid var(--color-border);
   border-radius: 10px;
   color: var(--color-text-secondary);
   font-size: 12px;
@@ -4073,6 +4115,285 @@ textarea {
   gap: 6px;
   min-width: 0;
   max-width: 100%;
+}
+
+.route-graph-config-section {
+  display: grid;
+  min-width: 0;
+  max-width: 100%;
+  gap: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+.route-graph-config-section-header {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.route-graph-config-title {
+  @apply text-xs font-medium text-foreground;
+}
+
+.route-graph-config-description {
+  @apply text-xs leading-relaxed text-muted-foreground;
+}
+
+.route-graph-macro-form label,
+.route-graph-config-section label {
+  display: grid;
+  min-width: 0;
+  max-width: 100%;
+  gap: 6px;
+  @apply text-xs font-medium text-muted-foreground;
+}
+
+.route-graph-priority-band-card {
+  display: grid;
+  min-width: 0;
+  max-width: 100%;
+  gap: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+.route-graph-priority-band-header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.route-graph-priority-band-fields {
+  display: grid;
+  min-width: 0;
+  max-width: 100%;
+  grid-template-columns: minmax(0, 1fr) minmax(72px, 92px);
+  gap: 8px;
+}
+
+.route-graph-endpoint-chip-list {
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.route-graph-endpoint-chip {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.route-graph-endpoint-override-list {
+  display: grid;
+  min-width: 0;
+  max-width: 100%;
+  gap: 4px;
+}
+
+.route-graph-endpoint-override-card {
+  display: grid;
+  min-width: 0;
+  max-width: 100%;
+  gap: 6px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+  padding-top: 7px;
+}
+
+.route-graph-endpoint-override-main {
+  display: grid;
+  min-width: 0;
+  max-width: 100%;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 6px;
+}
+
+.route-graph-endpoint-override-title {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.route-graph-generated-summary {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.route-graph-generated-panel {
+  display: grid;
+  min-width: 0;
+  max-width: 100%;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--card);
+  padding: 10px 11px;
+}
+
+.route-graph-generated-summary-label,
+.route-graph-generated-list-label {
+  @apply text-xs font-semibold text-muted-foreground;
+  text-transform: uppercase;
+}
+
+.route-graph-generated-summary-text {
+  @apply text-sm leading-relaxed text-foreground;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.route-graph-generated-flow {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.route-graph-generated-pill {
+  @apply text-xs font-medium;
+  height: 22px;
+  border-radius: 6px;
+  line-height: 1;
+}
+
+.route-graph-generated-list-head {
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+.route-graph-generated-list-count {
+  @apply text-xs text-muted-foreground;
+  min-width: 0;
+  line-height: 1.3;
+  text-align: right;
+}
+
+.route-graph-generated-list {
+  display: grid;
+  gap: 0;
+  min-width: 0;
+}
+
+.route-graph-generated-item {
+  display: grid;
+  min-width: 0;
+  max-width: 100%;
+  gap: 5px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  padding: 9px 0;
+}
+
+.route-graph-generated-item:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.route-graph-generated-item-head,
+.route-graph-generated-item-meta,
+.route-graph-generated-item-body {
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
+  align-items: center;
+  gap: 6px;
+}
+
+.route-graph-generated-item-head {
+  justify-content: space-between;
+}
+
+.route-graph-generated-item-head strong {
+  @apply text-sm font-medium text-foreground;
+  line-height: 1.3;
+}
+
+.route-graph-generated-item-meta,
+.route-graph-generated-item-body {
+  flex-wrap: wrap;
+}
+
+.route-graph-generated-item-meta {
+  @apply text-xs text-muted-foreground;
+  line-height: 1.35;
+}
+
+.route-graph-generated-item-meta .route-graph-generated-pill {
+  color: var(--foreground);
+}
+
+.route-graph-generated-item-body {
+  @apply text-xs text-muted-foreground;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--muted) 34%, transparent);
+  padding: 5px 6px;
+  line-height: 1.35;
+}
+
+.route-graph-empty-generated {
+  @apply text-xs text-muted-foreground;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  line-height: 1.4;
+  padding: 10px;
+}
+
+.route-graph-endpoint-override-id {
+  @apply text-xs text-muted-foreground;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.route-graph-endpoint-remove-button {
+  width: 24px;
+  height: 24px;
+  flex: none;
+}
+
+.route-graph-endpoint-override-grid {
+  display: grid;
+  min-width: 0;
+  max-width: 100%;
+  grid-template-columns: minmax(58px, 0.72fr) minmax(58px, 0.72fr) minmax(0, 1fr);
+  gap: 5px;
+}
+
+.route-graph-endpoint-override-grid label:last-child {
+  grid-column: auto;
+}
+
+.route-graph-endpoint-override-grid input,
+.route-graph-endpoint-override-grid button[role='combobox'] {
+  height: 28px;
+}
+
+@media (max-width: 520px) {
+  .route-graph-priority-band-fields,
+  .route-graph-endpoint-override-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .route-graph-endpoint-override-grid label:last-child {
+    grid-column: auto;
+  }
 }
 
 .route-graph-panel-section-title {
@@ -4116,20 +4437,20 @@ textarea {
 
 [data-template-category] {
   --route-graph-accent: var(--color-primary);
-  border-color: color-mix(in srgb, var(--route-graph-accent) 36%, var(--color-border));
-  background:
-    linear-gradient(90deg, color-mix(in srgb, var(--route-graph-accent) 10%, transparent), transparent 42%),
-    var(--color-bg-card);
+  border-color: var(--border);
+  background: var(--card);
 }
 
 .route-graph-template-accent {
   position: absolute;
-  left: 9px;
-  top: 7px;
-  width: 24px;
-  height: 4px;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  height: auto;
   background: var(--route-graph-accent);
-  border-radius: 999px;
+  border-radius: 8px 0 0 8px;
+  opacity: 0.72;
   pointer-events: none;
 }
 
@@ -4146,7 +4467,21 @@ textarea {
   gap: 8px;
   align-items: center;
   border-radius: 8px;
-  padding: 8px 9px;
+  padding: 9px 10px 9px 12px;
+  box-shadow: none;
+  cursor: grab;
+  transition: border-color 120ms ease, background-color 120ms ease, transform 120ms ease;
+}
+
+.route-graph-template-card:hover,
+.route-graph-template-card:focus-visible {
+  border-color: color-mix(in srgb, var(--route-graph-accent) 36%, var(--border));
+  background: color-mix(in srgb, var(--muted) 38%, var(--card));
+}
+
+.route-graph-template-card:active {
+  cursor: grabbing;
+  transform: translateY(1px);
 }
 
 .route-graph-template-card-main {
@@ -4164,9 +4499,9 @@ textarea {
   height: 24px;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--border);
   border-radius: 7px;
-  background: var(--color-bg-card);
+  background: var(--background);
   color: var(--route-graph-accent);
 }
 
@@ -4191,7 +4526,7 @@ textarea {
   overflow: hidden;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 1;
-  color: var(--color-text-muted);
+  color: var(--muted-foreground);
   font-size: 12px;
   line-height: 1.35;
 }
@@ -4201,19 +4536,43 @@ textarea {
   min-width: 0;
   align-items: center;
   gap: 8px;
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--color-bg-card);
+  background: var(--background);
   padding: 0 8px;
 }
 
 .route-graph-template-hint {
-  border: 1px dashed var(--color-border);
+  border: 1px solid var(--border);
   border-radius: 8px;
-  color: var(--color-text-muted);
+  color: var(--muted-foreground);
   font-size: 11px;
   line-height: 1.4;
   padding: 8px 10px;
+}
+
+.route-graph-bottom-panel {
+  background: var(--card);
+}
+
+.route-graph-bottom-tabs-header {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--card) 96%, var(--muted) 4%);
+  padding: 8px;
+}
+
+.route-graph-bottom-tabs-list {
+  height: auto;
+  justify-content: flex-start;
+}
+
+.route-graph-bottom-tabs-list [data-radix-tabs-trigger],
+.route-graph-bottom-tabs-list [role='tab'] {
+  min-height: 30px;
+  white-space: nowrap;
 }
 
 .route-blueprint-node {
@@ -4358,25 +4717,6 @@ textarea {
   font-weight: 800;
   min-height: 0;
   overflow: hidden;
-}
-
-.route-graph-hidden-supply-summary {
-  display: grid;
-  min-width: 0;
-  gap: 8px;
-  background: color-mix(in srgb, var(--muted) 28%, transparent);
-}
-
-.route-graph-hidden-supply-lines {
-  display: flex;
-  min-width: 0;
-  flex-wrap: wrap;
-  gap: 5px;
-}
-
-.route-graph-hidden-supply-lines span {
-  width: 34px;
-  border-top: 1px dashed color-mix(in srgb, var(--muted-foreground) 54%, var(--border));
 }
 
 .route-blueprint-node-ports {
@@ -4665,9 +5005,10 @@ textarea {
   flex-wrap: wrap;
   align-items: flex-start;
   min-height: 0;
+  height: 100%;
   max-height: none;
   overflow: auto;
-  padding: 10px;
+  padding: 0;
   color: var(--color-text-muted);
   font-size: 12px;
 }
@@ -4687,7 +5028,7 @@ textarea {
   gap: 8px;
   min-width: 0;
   border-bottom: 1px solid var(--border);
-  padding: 5px 8px;
+  padding: 8px 10px;
 }
 
 .route-graph-diagnostics-counts {
@@ -4721,7 +5062,7 @@ textarea {
   border-bottom: 1px solid var(--border);
   background: transparent;
   color: var(--foreground);
-  padding: 5px 8px;
+  padding: 7px 10px;
   text-align: left;
   cursor: pointer;
 }
@@ -4781,7 +5122,7 @@ textarea {
   border-bottom: 1px solid var(--border);
   background: transparent;
   color: var(--foreground);
-  padding: 5px 8px;
+  padding: 7px 10px;
   text-align: left;
 }
 
@@ -4825,7 +5166,7 @@ textarea {
   gap: 12px;
   min-width: 0;
   border-bottom: 1px solid var(--border);
-  padding: 7px 8px;
+  padding: 8px 10px;
 }
 
 .route-graph-history-main,

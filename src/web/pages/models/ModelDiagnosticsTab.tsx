@@ -3,6 +3,7 @@ import DiagnosticItem from '../../components/details/DiagnosticItem.js';
 import JsonBlock from '../../components/details/JsonBlock.js';
 import { Card, CardContent } from '../../components/ui/card/index.js';
 import type { ModelDetailsView } from './modelDetailsView.js';
+import { tr } from '../../i18n.js';
 
 type ModelDiagnosticsTabProps = {
   details: ModelDetailsView;
@@ -26,7 +27,7 @@ export default function ModelDiagnosticsTab({
               message={diagnostic.message}
             />
           )) : (
-            <EmptyStateBlock title="No diagnostics" description="No diagnostics for this model route." />
+            <EmptyStateBlock title={tr('pages.models.modelDiagnosticsTab.noDiagnostics')} description={tr('pages.models.modelDiagnosticsTab.noDiagnosticsDescription')} />
           )}
         </CardContent>
       </Card>

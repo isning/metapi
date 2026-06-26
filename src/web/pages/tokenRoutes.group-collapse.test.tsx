@@ -10,11 +10,13 @@ const { apiMock, getBrandMock } = vi.hoisted(() => ({
   apiMock: {
     getRoutesSummary: vi.fn(),
     getRouteTargets: vi.fn(),
+    getRouteEndpoints: vi.fn(),
     getModelTokenCandidates: vi.fn(),
     getRouteDecisionsBatch: vi.fn(),
     getRouteWideDecisionsBatch: vi.fn(),
     updateRoute: vi.fn(),
     addRoute: vi.fn(),
+    batchUpdateRouteTargets: vi.fn(),
     batchUpdateChannels: vi.fn(),
   },
   getBrandMock: vi.fn(),
@@ -48,6 +50,16 @@ function findButtonByText(root: ReactTestInstance, text: string): ReactTestInsta
     && typeof node.props.onClick === 'function'
     && collectText(node).includes(text)
   ));
+}
+
+function findLastButtonByText(root: ReactTestInstance, text: string): ReactTestInstance {
+  const matches = root.findAll((node) => (
+    node.type === 'button'
+    && typeof node.props.onClick === 'function'
+    && collectText(node).includes(text)
+  ));
+  if (matches.length === 0) throw new Error(`No button found containing ${text}`);
+  return matches[matches.length - 1]!;
 }
 
 function findChipButtonByText(root: ReactTestInstance, text: string): ReactTestInstance {
@@ -157,10 +169,12 @@ describe('TokenRoutes grouped source models', () => {
     vi.stubGlobal('confirm', vi.fn(() => true));
     apiMock.getModelTokenCandidates.mockResolvedValue({ models: {} });
     apiMock.getRouteTargets.mockResolvedValue([]);
+    apiMock.getRouteEndpoints.mockResolvedValue([]);
     apiMock.getRouteDecisionsBatch.mockResolvedValue({ decisions: {} });
     apiMock.getRouteWideDecisionsBatch.mockResolvedValue({ decisions: {} });
     apiMock.updateRoute.mockResolvedValue({});
     apiMock.addRoute.mockResolvedValue({});
+    apiMock.batchUpdateRouteTargets.mockResolvedValue({ success: true, targets: [] });
     apiMock.batchUpdateChannels.mockResolvedValue({ success: true, channels: [] });
   });
 
@@ -199,6 +213,8 @@ describe('TokenRoutes grouped source models', () => {
         );
       });
       await flushMicrotasks();
+
+      expect(apiMock.getRouteEndpoints).not.toHaveBeenCalled();
 
       const filterToggle = findButtonByText(root.root, '筛选');
       await act(async () => {
@@ -533,7 +549,7 @@ describe('TokenRoutes grouped source models', () => {
       await flushMicrotasks();
 
       expect(globalThis.confirm).toHaveBeenCalledWith(expect.stringContaining('claude-proxy-b'));
-      expect(apiMock.batchUpdateChannels).toHaveBeenCalledWith([
+      expect(apiMock.batchUpdateRouteTargets).toHaveBeenCalledWith([
         { id: 101, priority: 0 },
         { id: 102, priority: 0 },
       ]);
@@ -702,7 +718,7 @@ describe('TokenRoutes grouped source models', () => {
       await flushMicrotasks();
 
       const text = collectText(root.root);
-      expect(text).toContain('显示 0 通道路由');
+      expect(text).toContain('显示 0 目标路由');
       expect(text).not.toContain('gpt-5.2-codex');
       expect(text).not.toContain('未生成');
     } finally {
@@ -747,17 +763,17 @@ describe('TokenRoutes grouped source models', () => {
       });
       await flushMicrotasks();
 
-      const toggle = findButtonByText(root.root, '显示 0 通道路由');
+      const toggle = findButtonByText(root.root, '显示 0 目标路由');
       await act(async () => {
         toggle.props.onClick();
       });
       await flushMicrotasks();
 
-      expect(collectText(root.root)).toContain('隐藏 0 通道路由');
+      expect(collectText(root.root)).toContain('隐藏 0 目标路由');
       expect(collectText(root.root)).toContain('gpt-5.2-codex');
       expect(collectText(root.root)).toContain('claude-opus-4-6');
       expect(collectText(root.root)).toContain('未生成');
-      expect(collectText(root.root)).toContain('0 通道');
+      expect(collectText(root.root)).toContain('0 目标');
 
       const expandCards = root.root.findAll((node) =>
         node.props.role === 'button' && typeof node.props.onClick === 'function',
@@ -773,7 +789,7 @@ describe('TokenRoutes grouped source models', () => {
       const expandedText = collectText(root.root);
       expect(expandedText).toContain('待注册站点');
       expect(expandedText).toContain('Wong');
-      expect(expandedText).toContain('暂无通道，先补齐连接配置后再重建路由。');
+      expect(expandedText).toContain('暂无目标，先补齐连接配置后再重建路由。');
       expect(expandedText).not.toContain('添加通道');
       expect(expandedText).not.toContain('删除路由');
       expect(expandedText).not.toContain('编辑群组');
@@ -1055,7 +1071,7 @@ describe('TokenRoutes grouped source models', () => {
 
       const text = collectText(root.root);
       expect(text).toContain('能力');
-      expect(text).toContain('暂无接口能力数据');
+      expect(text).toContain('暂无能力标签');
     } finally {
       root?.unmount();
     }
@@ -1139,7 +1155,7 @@ describe('TokenRoutes grouped source models', () => {
       });
       await flushMicrotasks();
 
-      const toggle = findButtonByText(root.root, '显示 0 通道路由');
+      const toggle = findButtonByText(root.root, '显示 0 目标路由');
       await act(async () => {
         toggle.props.onClick();
       });
@@ -1298,19 +1314,26 @@ describe('TokenRoutes grouped source models', () => {
       await flushMicrotasks();
 
       await act(async () => {
+        findButtonByText(root.root, '手动').props.onClick();
+      });
+      await flushMicrotasks();
+
+      await act(async () => {
         findButtonByText(root.root, '新建群组').props.onClick();
       });
       await flushMicrotasks();
 
       await act(async () => {
-        findButtonByText(root.root, '选择来源模型').props.onClick();
+        findLastButtonByText(root.root, '选择来源端点').props.onClick();
       });
       await flushMicrotasks();
 
-      const pickerGrid = root.root.find((node) => (
+      const findPickerGrid = () => root.root.find((node) => (
         node.type === 'div'
-        && String(node.props.className || '').includes('grid-cols-[repeat(auto-fill,minmax(220px,1fr))]')
+        && String(node.props.className || '').includes('items-stretch')
+        && String(node.props.className || '').includes('lg:grid-cols-2')
       ));
+      const pickerGrid = findPickerGrid();
       expect(String(pickerGrid.props.className || '')).toContain('grid');
 
       expect(findChipButtonByText(root.root, 'OpenAI')).toBeTruthy();
@@ -1321,9 +1344,9 @@ describe('TokenRoutes grouped source models', () => {
         findChipButtonByText(root.root, 'Wong').props.onClick();
       });
       await flushMicrotasks();
-      expect(collectText(pickerGrid)).toContain('gpt-5.4');
-      expect(collectText(pickerGrid)).toContain('gemini-2.5-pro');
-      expect(collectText(pickerGrid)).not.toContain('claude-sonnet-4-5');
+      expect(collectText(findPickerGrid())).toContain('gpt-5.4');
+      expect(collectText(findPickerGrid())).toContain('gemini-2.5-pro');
+      expect(collectText(findPickerGrid())).not.toContain('claude-sonnet-4-5');
 
       await act(async () => {
         findChipButtonByText(root.root, 'Wong').props.onClick();
@@ -1334,10 +1357,10 @@ describe('TokenRoutes grouped source models', () => {
         findChipButtonByText(root.root, 'OpenAI').props.onClick();
       });
       await flushMicrotasks();
-      expect(collectText(pickerGrid)).toContain('OpenAI');
-      expect(collectText(pickerGrid)).toContain('gpt-5.4');
-      expect(collectText(pickerGrid)).not.toContain('claude-sonnet-4-5');
-      expect(collectText(pickerGrid)).not.toContain('gemini-2.5-pro');
+      expect(collectText(findPickerGrid())).toContain('OpenAI');
+      expect(collectText(findPickerGrid())).toContain('gpt-5.4');
+      expect(collectText(findPickerGrid())).not.toContain('claude-sonnet-4-5');
+      expect(collectText(findPickerGrid())).not.toContain('gemini-2.5-pro');
 
       await act(async () => {
         findChipButtonByText(root.root, 'OpenAI').props.onClick();
@@ -1348,10 +1371,10 @@ describe('TokenRoutes grouped source models', () => {
         findChipButtonByText(root.root, 'anthropic').props.onClick();
       });
       await flushMicrotasks();
-      expect(collectText(pickerGrid)).toContain('Anthropic');
-      expect(collectText(pickerGrid)).toContain('claude-sonnet-4-5');
-      expect(collectText(pickerGrid)).not.toContain('gpt-5.4');
-      expect(collectText(pickerGrid)).not.toContain('gemini-2.5-pro');
+      expect(collectText(findPickerGrid())).toContain('Anthropic');
+      expect(collectText(findPickerGrid())).toContain('claude-sonnet-4-5');
+      expect(collectText(findPickerGrid())).not.toContain('gpt-5.4');
+      expect(collectText(findPickerGrid())).not.toContain('gemini-2.5-pro');
     } finally {
       root?.unmount();
     }
@@ -1439,6 +1462,48 @@ describe('TokenRoutes grouped source models', () => {
         backend: { kind: 'supply' },
         presentation: { displayName: null, displayIcon: null }},
     ]));
+    apiMock.getRouteEndpoints.mockResolvedValue([
+      {
+        endpointId: 'route-endpoint:product:route:11',
+        nodeId: 'route-endpoint:product:route:11',
+        routeId: 11,
+        label: 'claude-opus-4-5 product endpoint with a very long readable display name',
+        endpointKind: 'route_product',
+        exposure: 'internal',
+        resolutionStatus: 'resolved',
+        ownerKind: 'automatic_route',
+        sourceKind: 'automatic_model_group',
+        enabled: true,
+        displayIcon: null,
+        modelPattern: 'claude-opus-4-5',
+        publicModelName: 'claude-opus-4-5',
+        upstreamModels: ['claude-opus-4-5'],
+        siteNames: ['site-a'],
+        sourceRouteIds: [11],
+        tags: ['text'],
+        metadata: {},
+      },
+      {
+        endpointId: 'route-endpoint:supply:route:12:site-b:claude-sonnet-4-5',
+        nodeId: 'route-endpoint:supply:route:12:site-b:claude-sonnet-4-5',
+        routeId: 12,
+        label: 'claude-sonnet-4-5 supply endpoint with a very long readable display name',
+        endpointKind: 'supply',
+        exposure: 'none',
+        resolutionStatus: 'resolved',
+        ownerKind: 'automatic_route',
+        sourceKind: 'upstream_model',
+        enabled: true,
+        displayIcon: null,
+        modelPattern: 'claude-sonnet-4-5',
+        publicModelName: null,
+        upstreamModels: ['claude-sonnet-4-5'],
+        siteNames: ['site-b'],
+        sourceRouteIds: [12],
+        tags: ['cacheable'],
+        metadata: {},
+      },
+    ]);
 
     let root!: WebTestRenderer;
     try {
@@ -1454,6 +1519,11 @@ describe('TokenRoutes grouped source models', () => {
       await flushMicrotasks();
 
       await act(async () => {
+        findButtonByText(root.root, '手动').props.onClick();
+      });
+      await flushMicrotasks();
+
+      await act(async () => {
         findButtonByText(root.root, '新建群组').props.onClick();
       });
       await flushMicrotasks();
@@ -1463,18 +1533,18 @@ describe('TokenRoutes grouped source models', () => {
       });
       await flushMicrotasks();
 
-      expect(root.root.findAll((node) => typeof node.props?.placeholder === 'string' && node.props.placeholder.includes('搜索来源模型'))).toHaveLength(0);
+      expect(root.root.findAll((node) => typeof node.props?.placeholder === 'string' && node.props.placeholder.includes('搜索来源端点'))).toHaveLength(0);
 
       await act(async () => {
-        findButtonByText(root.root, '选择来源模型').props.onClick();
+        findLastButtonByText(root.root, '选择来源端点').props.onClick();
       });
       await flushMicrotasks();
 
-      expect(findInputByPlaceholder(root.root, '搜索来源模型')).toBeTruthy();
+      expect(findInputByPlaceholder(root.root, '搜索来源端点')).toBeTruthy();
 
       await act(async () => {
-        findButtonByText(root.root, 'claude-opus-4-5').props.onClick();
-        findButtonByText(root.root, 'claude-sonnet-4-5').props.onClick();
+        findButtonByText(root.root, 'claude-opus-4-5 product endpoint').props.onClick();
+        findButtonByText(root.root, 'claude-sonnet-4-5 supply endpoint').props.onClick();
       });
       await flushMicrotasks();
 
@@ -1490,6 +1560,18 @@ describe('TokenRoutes grouped source models', () => {
 
       expect(apiMock.addRoute).toHaveBeenCalledWith(expect.objectContaining({
         backend: { kind: 'routes', routeIds: [11, 12] },
+        macro: expect.objectContaining({
+          config: expect.objectContaining({
+            groups: [
+              expect.objectContaining({
+                input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:product:route:11'] },
+              }),
+              expect.objectContaining({
+                input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:supply:route:12:site-b:claude-sonnet-4-5'] },
+              }),
+            ],
+          }),
+        }),
         match: expect.objectContaining({ displayName: 'claude-opus-4-6', requestedModelPattern: '' }),
         presentation: expect.objectContaining({ displayName: 'claude-opus-4-6' }),
       }));
@@ -1523,6 +1605,11 @@ describe('TokenRoutes grouped source models', () => {
       await flushMicrotasks();
 
       await act(async () => {
+        findButtonByText(root.root, '手动').props.onClick();
+      });
+      await flushMicrotasks();
+
+      await act(async () => {
         findButtonByText(root.root, '新建群组').props.onClick();
       });
       await flushMicrotasks();
@@ -1533,7 +1620,7 @@ describe('TokenRoutes grouped source models', () => {
       await flushMicrotasks();
 
       await act(async () => {
-        findButtonByText(root.root, '选择来源模型').props.onClick();
+        findButtonByText(root.root, '选择来源端点').props.onClick();
       });
       await flushMicrotasks();
 
@@ -1608,9 +1695,9 @@ describe('TokenRoutes grouped source models', () => {
       });
       await flushMicrotasks();
 
-      expect(collectText(root.root)).toContain('Direct Channels');
+      expect(collectText(root.root)).toContain('直连目标');
       expect(findInputByPlaceholder(root.root, '模型匹配').props.value).toBe('re:^claude-.*$');
-      expect(root.root.findAll((node) => typeof node.props?.placeholder === 'string' && node.props.placeholder.includes('搜索来源模型'))).toHaveLength(0);
+      expect(root.root.findAll((node) => typeof node.props?.placeholder === 'string' && node.props.placeholder.includes('搜索来源端点'))).toHaveLength(0);
       expect(root.root.findAll((node) => typeof node.props?.placeholder === 'string' && node.props.placeholder.includes('对外模型名'))).toHaveLength(0);
     } finally {
       root?.unmount();
@@ -1694,7 +1781,7 @@ describe('TokenRoutes grouped source models', () => {
       await flushMicrotasks();
 
       await act(async () => {
-        findButtonByText(root.root, '选择来源模型').props.onClick();
+        findButtonByText(root.root, '选择来源端点').props.onClick();
       });
       await flushMicrotasks();
 

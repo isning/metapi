@@ -24,4 +24,12 @@ describe('App sidebar config', () => {
 
     expect(oauthItem?.label).toBe('OAuth 管理');
   });
+
+  it('adds 成本目录 under 控制台 for pricing ownership', () => {
+    const consoleGroup = sidebarGroups.find((group) => group.label === '控制台');
+    const systemGroup = sidebarGroups.find((group) => group.label === '系统');
+
+    expect(consoleGroup?.items.some((item) => item.to === '/costs')).toBe(true);
+    expect(systemGroup?.items.some((item) => item.to === '/costs')).toBe(false);
+  });
 });

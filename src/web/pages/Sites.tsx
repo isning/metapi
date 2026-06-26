@@ -24,7 +24,16 @@ import DeleteConfirmModal from '../components/DeleteConfirmModal.js';
 import SiteCreatedModal from '../components/SiteCreatedModal.js';
 import PageHeader from '../components/workspace/PageHeader.js';
 import PageShell from '../components/workspace/PageShell.js';
+import {
+  CreateActionButton,
+  DragHandleButton,
+  PageActionBar,
+  SecondaryActionButton,
+  SortModeControl,
+  TableActionBar,
+} from '../components/workspace/ActionBar.js';
 import { UpstreamCompatibilityPolicyEditor } from '../components/UpstreamCompatibilityPolicyEditor.js';
+import WalletAcquisitionEditor, { type WalletAcquisitionEditorSubject } from '../components/WalletAcquisitionEditor.js';
 import { ConfigSection, ConfigSectionItem } from '../components/ConfigSection.js';
 import { formatDateTimeLocal } from './helpers/checkinLogTime.js';
 import { clearFocusParams, readFocusSiteId } from './helpers/navigationFocus.js';
@@ -78,6 +87,7 @@ import {
   Pin,
   PinOff,
   Trash2,
+  Wallet,
 } from 'lucide-react';
 import {
   emptyUpstreamCompatibilityPolicyForm,
@@ -385,12 +395,12 @@ const platformColors: Record<string, string> = {
 const SITE_PLATFORM_OPTIONS = [
   { value: '', label: tr('pages.sites.platformTypeCanAutomaticallyDetected') },
   { value: 'new-api', label: 'new-api', description: tr('pages.sites.aggregationPanelUnifiedMultiChannelManagement') },
-  { value: 'one-api', label: 'one-api', description: tr('pages.sites.generalOpenaiZh') },
+  { value: 'one-api', label: 'one-api', description: tr('pages.sites.genericOpenAiRelayDescription') },
   { value: 'anyrouter', label: 'anyrouter', description: tr('pages.sites.anyDays') },
-  { value: 'veloera', label: 'veloera', description: tr('pages.sites.veloeraSitesActing') },
+  { value: 'veloera', label: 'veloera', description: tr('pages.sites.veloeraProxyRelayDescription') },
   { value: 'one-hub', label: 'one-hub', description: tr('pages.sites.accounts') },
   { value: 'done-hub', label: 'done-hub', description: tr('pages.sites.aggregationPanelUnifiedForwardingManagement') },
-  { value: 'sub2api', label: 'sub2api', description: tr('pages.sites.zhSyncBalanceinfo') },
+  { value: 'sub2api', label: 'sub2api', description: tr('pages.sites.sub2apiSyncBalanceDescription') },
   { value: 'openai', label: 'openai', description: tr('pages.sites.generalOpenaiBaseUrl') },
   { value: 'codex', label: 'codex', description: tr('pages.sites.codexOauthSession') },
   { value: 'claude', label: 'claude', description: tr('pages.sites.generalClaudeAnthropic') },
@@ -428,7 +438,7 @@ function SitesLoadingSkeleton({ isMobile }: { isMobile: boolean }) {
   }
 
   return (
-    <DataTable minWidth={1120} density="compact" aria-busy="true">
+    <DataTable minWidth={980} density="compact" aria-busy="true">
       <DataTableToolbar className="border-b bg-muted/30 px-4">
         <div className="flex min-w-0 items-center gap-3">
           <Skeleton className="size-4" />
@@ -449,11 +459,10 @@ function SitesLoadingSkeleton({ isMobile }: { isMobile: boolean }) {
           <TableRow>
             <TableHead className="w-11" />
             <TableHead className="w-11" />
-            <TableHead className="min-w-56">{tr('pages.models.name')}</TableHead>
-            <TableHead className="min-w-64">{tr('pages.sites.signUrl')}</TableHead>
+            <TableHead className="min-w-64">{tr('pages.models.name')}</TableHead>
             <TableHead className="min-w-32 text-right">{tr('pages.sites.balance')}</TableHead>
             <TableHead className="sites-status-col text-center">{tr('components.notificationPanel.status')}</TableHead>
-            <TableHead className="sites-system-proxy-col text-center">{tr('pages.settings.systemacting3')}</TableHead>
+            <TableHead className="sites-system-proxy-col text-center">{tr('pages.settings.systemProxy')}</TableHead>
             <TableHead className="sites-weight-col text-right">{tr('pages.sites.weight')}</TableHead>
             <TableHead className="min-w-32">{tr('pages.sites.platform')}</TableHead>
             <TableHead className="sites-created-col">{tr('pages.sites.time')}</TableHead>
@@ -468,13 +477,13 @@ function SitesLoadingSkeleton({ isMobile }: { isMobile: boolean }) {
               <TableCell>
                 <div className="grid gap-2">
                   <Skeleton className="h-4 w-44" />
+                  <Skeleton className="h-3 w-52" />
                   <div className="flex gap-1.5">
                     <Skeleton className="h-5 w-24 rounded-full" />
                     <Skeleton className="h-5 w-20 rounded-full" />
                   </div>
                 </div>
               </TableCell>
-              <TableCell><Skeleton className="h-4 w-56" /></TableCell>
               <TableCell><Skeleton className="ml-auto h-5 w-24" /></TableCell>
               <TableCell><Skeleton className="mx-auto h-5 w-16 rounded-full" /></TableCell>
               <TableCell><Skeleton className="mx-auto h-5 w-16 rounded-full" /></TableCell>
@@ -556,6 +565,7 @@ export default function Sites() {
     siteName?: string;
     count?: number;
   }>(null);
+  const [walletEditorSubject, setWalletEditorSubject] = useState<WalletAcquisitionEditorSubject | null>(null);
   const lastEditorRef = useRef<SiteEditorState | null>(null);
   const loadingModelsSiteIdRef = useRef<number | null>(null);
   const rowRefs = useRef<Map<number, HTMLTableRowElement>>(new Map());
@@ -587,6 +597,16 @@ export default function Sites() {
   const latestPrimarySiteUrlRef = useRef(form.url);
   const latestPlatformRef = useRef(form.platform);
   const latestInitializationPresetIdRef = useRef(selectedInitializationPresetId);
+
+  const openSiteWalletCost = (site: SiteRow) => {
+    setWalletEditorSubject({
+      scope: 'site',
+      siteId: site.id,
+      title: site.name || `${tr('common.site')} ${site.id}`,
+      subtitle: tr('upstreamCostPricing.walletEditor.openSiteDescription'),
+      siteLabel: site.name || `${tr('common.site')} ${site.id}`,
+    });
+  };
 
   useEffect(() => {
     latestPrimarySiteUrlRef.current = form.url;
@@ -1447,31 +1467,25 @@ export default function Sites() {
         title={tr('app.siteManagement')}
         description={tr('pages.sites.siteManagementSubtitle')}
         actions={(
-          <>
-          {isMobile ? (
-            <>
-              <Button variant="outline"
-                type="button"
-                onClick={() => setShowMobileTools(true)}
-               
-               
-              >
-                {tr('pages.accounts.actions3')}
-              </Button>
-              <Button variant="outline"
-                type="button"
-                data-testid="sites-mobile-select-all"
-                onClick={() => toggleSelectAllVisible(!allVisibleSitesSelected)}
-               
-               
-              >
-                {allVisibleSitesSelected ? tr('pages.accounts.cancelselectAll') : tr('pages.accounts.selectVisibleItems')}
-              </Button>
-            </>
-          ) : (
-            <div className="min-w-40">
-              <ModernSelect
-                size="sm"
+          <PageActionBar>
+            {isMobile ? (
+              <>
+                <SecondaryActionButton
+                  type="button"
+                  onClick={() => setShowMobileTools(true)}
+                >
+                  {tr('pages.accounts.actions3')}
+                </SecondaryActionButton>
+                <SecondaryActionButton
+                  type="button"
+                  data-testid="sites-mobile-select-all"
+                  onClick={() => toggleSelectAllVisible(!allVisibleSitesSelected)}
+                >
+                  {allVisibleSitesSelected ? tr('pages.accounts.cancelselectAll') : tr('pages.accounts.selectVisibleItems')}
+                </SecondaryActionButton>
+              </>
+            ) : (
+              <SortModeControl
                 value={sortMode}
                 onChange={(nextValue) => setSortMode(nextValue as SortMode)}
                 options={[
@@ -1481,12 +1495,16 @@ export default function Sites() {
                 ]}
                 placeholder={tr('pages.accounts.customOrder')}
               />
-            </div>
-          )}
-          <Button type="button" data-testid="sites-add-site-button" onClick={openAdd}>
-            {isAdding ? tr('app.cancel') : tr('pages.sites.addSite')}
-          </Button>
-          </>
+            )}
+            <CreateActionButton
+              type="button"
+              data-testid="sites-add-site-button"
+              active={isAdding}
+              label={tr('pages.sites.addSite')}
+              activeLabel={tr('app.cancel')}
+              onClick={openAdd}
+            />
+          </PageActionBar>
         )}
       />
 
@@ -1537,7 +1555,7 @@ export default function Sites() {
            
            
           >
-            {tr('pages.sites.turnOnsystemacting')}
+            {tr('pages.sites.enableSystemProxy')}
           </Button>
           <Button type="button" variant="outline"
             onClick={() => runBatchAction('disableSystemProxy')}
@@ -1545,7 +1563,7 @@ export default function Sites() {
            
            
           >
-            {tr('pages.sites.closesystemacting')}
+            {tr('pages.sites.disableSystemProxy')}
           </Button>
           <Button type="button" variant="outline" onClick={() => runBatchAction('enable')} disabled={batchActionLoading}>
             {tr('pages.accounts.enabled')}
@@ -1560,7 +1578,7 @@ export default function Sites() {
       )}
 
       <InfoNote className="mb-3">
-        {tr('pages.sites.sitesweightSitesmultiplierSitesWeightSettingsZhApi')}
+        {tr('pages.sites.siteWeightDescription')}
       </InfoNote>
 
       <DeleteConfirmModal
@@ -1572,7 +1590,7 @@ export default function Sites() {
         loading={batchActionLoading || (deleteConfirm?.mode === 'single' && deleting === deleteConfirm?.siteId)}
         description={deleteConfirm?.mode === 'single'
           ? <>{tr('pages.sites.deletesites2')} <strong>{deleteConfirm.siteName || `#${deleteConfirm.siteId}`}</strong> {tr('pages.accounts.textqcmnqj')}</>
-          : <>{tr('pages.accounts.deleteZh')} <strong>{deleteConfirm?.count || 0}</strong> {tr('pages.sites.sites')}</>}
+          : <>{tr('pages.accounts.confirmDeleteSelectedPrefix')} <strong>{deleteConfirm?.count || 0}</strong> {tr('pages.sites.sites')}</>}
       />
 
       {createdSiteForChoice && (
@@ -2036,7 +2054,7 @@ export default function Sites() {
                  
                  
                 >
-                  {probing ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.sites.zh')}</> : tr('pages.sites.detectNow')}
+                  {probing ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.sites.probing')}</> : tr('pages.sites.detectNow')}
                 </Button>
                 {probing && (
                   <Button type="button" variant="outline"
@@ -2100,19 +2118,19 @@ export default function Sites() {
           <ResponsiveFormGrid>
             <div className="flex flex-col gap-1.5">
               <Input
-                placeholder={tr('pages.sites.sitesactingHttp1270017890')}
+                placeholder={tr('pages.sites.siteProxyPlaceholder')}
                 value={form.proxyUrl}
                 onChange={(e) => setForm((prev) => ({ ...prev, proxyUrl: e.target.value }))}
               />
               <div className="text-xs text-muted-foreground">
-                {tr('pages.sites.httpSocksActingApiRequestUsagesitesactingUsagesystemacting')}
+                {tr('pages.sites.siteProxyDescription')}
               </div>
             </div>
             <label className="flex items-center gap-2.5 rounded-md border bg-muted px-3.5 py-2.5 text-sm text-foreground">
               <Checkbox
                 checked={form.useSystemProxy}
                 onCheckedChange={(checked) => setForm((prev) => ({ ...prev, useSystemProxy: checked === true }))}  />
-              {tr('pages.notificationSettings.usagesystemacting')}
+              {tr('pages.notificationSettings.useSystemProxy')}
             </label>
             <div className="flex flex-col gap-1.5">
               <Input
@@ -2121,7 +2139,7 @@ export default function Sites() {
                 onChange={(e) => setForm((prev) => ({ ...prev, globalWeight: e.target.value }))}
               />
               <div className="text-xs text-muted-foreground">
-                {tr('pages.sites.routesZhSuggestion053Default')}
+                {tr('pages.sites.weightSuggestion')}
               </div>
             </div>
           </ResponsiveFormGrid>
@@ -2257,10 +2275,10 @@ export default function Sites() {
                           )}
                         />
                         <MobileField
-                          label={tr('pages.settings.systemacting3')}
+                          label={tr('pages.settings.systemProxy')}
                           value={(
                             <ToneBadge tone={site.useSystemProxy ? 'info' : 'muted'}>
-                              {site.useSystemProxy ? tr('pages.proxyLogs.turn3') : tr('pages.proxyLogs.turn2')}
+                              {site.useSystemProxy ? tr('common.enabled') : tr('common.disabled')}
                             </ToneBadge>
                           )}
                         />
@@ -2330,7 +2348,7 @@ export default function Sites() {
               })}
             </div>
           ) : (
-            <DataTable minWidth={1120} density="compact">
+            <DataTable minWidth={980} density="compact">
               <DataTableToolbar className="border-b bg-muted/30 px-4">
                 <div className="flex min-w-0 items-center gap-3">
                   <Checkbox
@@ -2347,7 +2365,7 @@ export default function Sites() {
                     </div>
                   </div>
                 </div>
-                <div className="flex flex-wrap items-center justify-end gap-2">
+                <TableActionBar>
                   <Button
                     type="button"
                     variant="outline"
@@ -2357,7 +2375,7 @@ export default function Sites() {
                     disabled={batchActionLoading || selectedSiteIds.length === 0}
                   >
                     <Network className="size-4" />
-                    {tr('pages.sites.turnOnsystemacting')}
+                    {tr('pages.sites.enableSystemProxy')}
                   </Button>
                   <Button
                     type="button"
@@ -2367,7 +2385,7 @@ export default function Sites() {
                     disabled={batchActionLoading || selectedSiteIds.length === 0}
                   >
                     <CircleSlash className="size-4" />
-                    {tr('pages.sites.closesystemacting')}
+                    {tr('pages.sites.disableSystemProxy')}
                   </Button>
                   <Button
                     type="button"
@@ -2408,7 +2426,7 @@ export default function Sites() {
                     {batchActionLoading ? <LoaderCircle className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
                     {tr('pages.accounts.delete2')}
                   </Button>
-                </div>
+                </TableActionBar>
               </DataTableToolbar>
               <DndContext
                 sensors={siteReorderSensors}
@@ -2426,11 +2444,10 @@ export default function Sites() {
                 <TableRow>
                   <TableHead className="w-11" />
                   <TableHead className="w-11" />
-                  <TableHead className="min-w-56">{tr('pages.models.name')}</TableHead>
-                  <TableHead className="min-w-64">{tr('pages.sites.signUrl')}</TableHead>
+                  <TableHead className="min-w-64">{tr('pages.models.name')}</TableHead>
                   <TableHead className="min-w-32 text-right">{tr('pages.sites.balance')}</TableHead>
                   <TableHead className="sites-status-col text-center">{tr('components.notificationPanel.status')}</TableHead>
-                  <TableHead className="sites-system-proxy-col text-center">{tr('pages.settings.systemacting3')}</TableHead>
+                  <TableHead className="sites-system-proxy-col text-center">{tr('pages.settings.systemProxy')}</TableHead>
                   <TableHead className="sites-weight-col text-right">{tr('pages.sites.weight')}</TableHead>
                   <TableHead className="min-w-32">{tr('pages.sites.platform')}</TableHead>
                   <TableHead className="sites-created-col">{tr('pages.sites.time')}</TableHead>
@@ -2458,24 +2475,16 @@ export default function Sites() {
                       <>
                     <TableCell>
                       {sortMode === 'custom' ? (
-                        <Button
+                        <DragHandleButton
                           ref={dragHandle.setActivatorNodeRef}
-                          type="button"
-                          variant="ghostMuted"
-                          size="icon"
                           aria-label={tr('pages.accounts.reorder')}
                           className={dragHandle.isDragging ? 'cursor-grabbing' : 'cursor-grab'}
                           disabled={orderingSiteId === site.id}
+                          loading={orderingSiteId === site.id}
                           onClick={(event) => event.stopPropagation()}
                           {...dragHandle.attributes}
                           {...dragHandle.listeners}
-                        >
-                          {orderingSiteId === site.id ? (
-                            <LoaderCircle className="size-4 animate-spin" />
-                          ) : (
-                            <GripVertical className="size-4" />
-                          )}
-                        </Button>
+                        />
                       ) : null}
                     </TableCell>
                     <TableCell>
@@ -2485,15 +2494,27 @@ export default function Sites() {
                         onCheckedChange={(checked) => toggleSiteSelection(site.id, checked === true)}          />
                     </TableCell>
                     <TableCell className="font-semibold">
-                      <div className="flex flex-col items-start gap-1.5">
+                      <div className="flex min-w-0 flex-col items-start gap-1.5">
                         <a
                           href={site.url}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="text-foreground underline"
+                          className="max-w-full truncate text-foreground underline"
+                          title={site.name}
                         >
                           {site.name}
                         </a>
+                        {site.externalCheckinUrl ? (
+                          <a
+                            href={site.externalCheckinUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="max-w-full break-all font-mono text-[11px] font-normal leading-snug text-muted-foreground underline"
+                            title={site.externalCheckinUrl}
+                          >
+                            {site.externalCheckinUrl}
+                          </a>
+                        ) : null}
                         {hasConfiguredCustomHeaders(site.customHeaders) ? (
                           <ToneBadge tone="-info">
                             {tr('pages.sites.customHeaders')}
@@ -2501,18 +2522,6 @@ export default function Sites() {
                         ) : null}
                         <SiteApiEndpointSummaryBadge site={site} />
                       </div>
-                    </TableCell>
-                    <TableCell className="sites-url-cell max-w-75">
-                      {site.externalCheckinUrl ? (
-                        <a
-                          href={site.externalCheckinUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="break-all font-mono text-xs underline"
-                        >
-                          {site.externalCheckinUrl}
-                        </a>
-                      ) : null}
                     </TableCell>
                     <TableCell className="site-balance-cell text-right">
                       <SiteBalanceDisplay
@@ -2528,7 +2537,7 @@ export default function Sites() {
                     </TableCell>
                     <TableCell className="sites-system-proxy-cell text-center">
                       <ToneBadge tone={site.useSystemProxy ? 'info' : 'muted'}>
-                        {site.useSystemProxy ? tr('pages.proxyLogs.turn3') : tr('pages.proxyLogs.turn2')}
+                        {site.useSystemProxy ? tr('common.enabled') : tr('common.disabled')}
                       </ToneBadge>
                     </TableCell>
                     <TableCell className="sites-weight-cell text-right font-semibold tabular-nums">
@@ -2608,6 +2617,10 @@ export default function Sites() {
                               )}
                               {site.status === 'disabled' ? tr('pages.downstreamKeys.enabled') : tr('pages.downstreamKeys.disabled')}
                             </DropdownMenu.Item>
+                            <DropdownMenu.Item onSelect={() => openSiteWalletCost(site)}>
+                              <Wallet className="size-4" />
+                              {tr('upstreamCostPricing.walletEditor.configureAction')}
+                            </DropdownMenu.Item>
                             <DropdownMenu.Separator />
                             <DropdownMenu.Item
                               variant="destructive"
@@ -2643,6 +2656,14 @@ export default function Sites() {
           <EmptyStateBlock title={tr('pages.sites.noSites')} description={tr('pages.sites.clickAddSiteStart')} />
         )}
       </>
+      <WalletAcquisitionEditor
+        open={walletEditorSubject !== null}
+        subject={walletEditorSubject}
+        onOpenChange={(open) => {
+          if (!open) setWalletEditorSubject(null);
+        }}
+        toast={toast}
+      />
     </PageShell>
   );
 }

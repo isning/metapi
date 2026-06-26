@@ -124,6 +124,12 @@ describe("usageAggregationService", () => {
 
     const modelRows = await db.select().from(schema.modelDayUsage).all();
     expect(modelRows).toHaveLength(2);
+    expect(modelRows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ siteId: site.id, accountId: account.id, model: "gpt-5" }),
+        expect.objectContaining({ siteId: site.id, accountId: account.id, model: "gpt-5-mini" }),
+      ]),
+    );
 
     await db.insert(schema.proxyLogs).values({
       accountId: account.id,

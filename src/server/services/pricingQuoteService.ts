@@ -4,10 +4,12 @@ import {
   ENDPOINT_ROUTING_REFERENCE_USAGE,
   resolveEndpointPricing,
 } from './endpointPricingService.js';
-import { roundPricingNumber } from './pricingResolutionSummary.js';
+import { quoteEffectiveEndpointCost } from './effectiveEndpointCostService.js';
+import { comparePricingSummaries } from './pricingComparisonService.js';
 import { resolveReferencePricing } from './referencePricingService.js';
 import type {
   EndpointPricingSupply,
+  EffectiveCostQuote,
   PricingQuote,
   PricingQuoteComparison,
   PricingResolution,
@@ -17,6 +19,7 @@ import type {
 
 export type {
   EndpointPricingSupply,
+  EffectiveCostQuote,
   PricingQuote,
   PricingQuoteComparison,
   PricingResolution,
@@ -33,22 +36,11 @@ export function usageForPricingProfile(
   return usage || ENDPOINT_PREVIEW_USAGE;
 }
 
-function multiplier(value: number | null, baseline: number | null): number | null {
-  if (value == null || baseline == null || !Number.isFinite(value) || !Number.isFinite(baseline) || baseline <= 0) {
-    return null;
-  }
-  return roundPricingNumber(value / baseline);
-}
-
 export function comparePricingResolutions(
   endpoint: PricingResolution | null,
   reference: PricingResolution | null,
 ): PricingQuoteComparison {
-  return {
-    inputMultiplier: multiplier(endpoint?.summary.inputPerMillion ?? null, reference?.summary.inputPerMillion ?? null),
-    outputMultiplier: multiplier(endpoint?.summary.outputPerMillion ?? null, reference?.summary.outputPerMillion ?? null),
-    totalMultiplier: multiplier(endpoint?.summary.totalCostUsd ?? null, reference?.summary.totalCostUsd ?? null),
-  };
+  return comparePricingSummaries(endpoint?.summary ?? null, reference?.summary ?? null);
 }
 
 export async function quoteEndpointPricing(input: {
@@ -62,6 +54,10 @@ export async function quoteEndpointPricing(input: {
   const endpoint = await resolveEndpointPricing({
     supply: input.supply,
     usage,
+  });
+  const effectiveCost = await quoteEffectiveEndpointCost({
+    supply: input.supply,
+    endpoint,
   });
   const reference = input.includeReference === false
     ? null
@@ -82,9 +78,11 @@ export async function quoteEndpointPricing(input: {
     usage,
     endpoint,
     reference,
+    effectiveCost,
     comparison: comparePricingResolutions(endpoint, reference),
     diagnostics: [
       ...(!endpoint ? [{ level: 'info' as const, message: 'No endpoint pricing matched.' }] : []),
+      ...(effectiveCost?.diagnostics ?? []),
       ...(!reference && input.includeReference !== false
         ? [{ level: 'info' as const, message: 'No reference pricing matched.' }]
         : []),
@@ -113,6 +111,7 @@ export async function quoteReferencePricing(input: {
     usage,
     endpoint: null,
     reference,
+    effectiveCost: null,
     comparison: comparePricingResolutions(null, reference),
     diagnostics: [
       ...(!reference ? [{ level: 'info' as const, message: 'No reference pricing matched.' }] : []),
