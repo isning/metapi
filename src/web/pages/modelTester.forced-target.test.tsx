@@ -15,11 +15,16 @@ const { apiMock } = vi.hoisted(() => ({
     getModelsMarketplace: vi.fn(),
     getRoutes: vi.fn(),
     getRouteDecision: vi.fn(),
+    getModelRouteFlow: vi.fn(),
   },
 }));
 
 vi.mock('../api.js', () => ({
   api: apiMock,
+}));
+
+vi.mock('../components/ModelRouteFlow.js', () => ({
+  default: () => null,
 }));
 
 vi.mock('../authSession.js', () => ({
@@ -78,7 +83,7 @@ describe('ModelTester fixed channel behavior', () => {
       decision: {
         candidates: [
           {
-            channelId: 77,
+            targetId: 77,
             accountId: 12,
             username: 'tester',
             siteName: 'site-a',
@@ -90,6 +95,7 @@ describe('ModelTester fixed channel behavior', () => {
         ],
       },
     });
+    apiMock.getModelRouteFlow.mockResolvedValue({ flow: null });
 
     const session = serializeModelTesterSession({
       input: '',
@@ -102,7 +108,7 @@ describe('ModelTester fixed channel behavior', () => {
       conversationFiles: [],
       pendingPayload: null,
       pendingJobId: null,
-      forcedChannelId: 77,
+      forcedTargetId: 77,
       customRequestMode: false,
       customRequestBody: '',
       showDebugPanel: false,
@@ -145,7 +151,7 @@ describe('ModelTester fixed channel behavior', () => {
         await flushMicrotasks();
         expect(apiMock.getRouteDecision).toHaveBeenCalledTimes(1);
         expect(apiMock.getRouteDecision).toHaveBeenCalledWith('gpt-4o-mini');
-        expect(collectText(root.root)).toContain('已固定到通道 #77，失败不会自动切换。');
+        expect(collectText(root.root)).toContain('已固定到目标 #77，失败不会自动切换。');
       });
     } finally {
       root?.unmount();

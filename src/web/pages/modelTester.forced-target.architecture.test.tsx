@@ -6,9 +6,9 @@ describe('ModelTester forced channel architecture', () => {
   it('wires a fixed-channel selector through route decisions and tester envelopes', () => {
     const source = readFileSync(resolve(process.cwd(), 'src/web/pages/ModelTester.tsx'), 'utf8').replace(/\r\n/g, '\n');
 
-    expect(source).toContain('固定通道');
+    expect(source).toContain("tr('pages.modelTester.targets')");
     expect(source).toContain('api.getRouteDecision(inputs.model)');
-    expect(source).toContain('forcedChannelId');
-    expect(source).toContain('attachForcedChannelToEnvelope');
+    expect(source).toContain('forcedTargetId');
+    expect(source).toContain('attachForcedTargetToEnvelope');
   });
 });

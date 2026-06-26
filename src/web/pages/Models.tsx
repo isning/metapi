@@ -1,65 +1,51 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../api.js';
-import { BrandGlyph, getBrand, hashColor, BrandIcon, type BrandInfo } from '../components/BrandIcon.js';
-import SiteBadgeLink from '../components/SiteBadgeLink.js';
+import {
+  Check,
+  Filter,
+  RefreshCw,
+} from 'lucide-react';
+import { BrandGlyph, getBrand, BrandIcon, type BrandInfo } from '../components/BrandIcon.js';
+import SearchInput from '../components/SearchInput.js';
+import EmptyStateBlock from '../components/EmptyStateBlock.js';
 import { useToast } from '../components/Toast.js';
-import ModernSelect from '../components/ModernSelect.js';
 import ResponsiveFilterPanel from '../components/ResponsiveFilterPanel.js';
-import { useAnimatedVisibility } from '../components/useAnimatedVisibility.js';
 import { useIsMobile } from '../components/useIsMobile.js';
 import { mergeMarketplaceMetadata, shouldHydrateMarketplaceMetadata } from './helpers/modelsMarketplaceMetadata.js';
 import { tr } from '../i18n.js';
+import { Button } from '../components/ui/button/index.js';
+import { Skeleton } from '../components/ui/skeleton/index.js';
+import ToneBadge from '../components/ToneBadge.js';
+import { Card, CardContent } from '../components/ui/card/index.js';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '../components/ui/select/index.js';
+import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+  PaginationLink,
+  PaginationNext,
+  PaginationPrevious,
+} from '../components/ui/pagination/index.js';
+import EntityWorkspaceLayout from '../components/workspace/EntityWorkspaceLayout.js';
+import ModelDetailsWorkspace from './models/ModelDetailsWorkspace.js';
+import {
+  buildModelDetailsView,
+  getAccountCredentialCount,
+  getModelCredentialCount,
+  type ModelDetailsTab,
+  type ModelMetricsRange,
+  type ModelRow,
+} from './models/modelDetailsView.js';
+import type { ModelRouteFlowData } from '../components/ModelRouteFlow.js';
 
-type SortColumn = 'name' | 'accountCount' | 'tokenCount' | 'avgLatency' | 'successRate';
-type ViewMode = 'card' | 'table';
-
-interface ModelTokenInfo {
-  id: number;
-  name: string;
-  isDefault: boolean;
-}
-
-interface ModelGroupPricing {
-  quotaType: number;
-  inputPerMillion?: number;
-  outputPerMillion?: number;
-  perCallInput?: number;
-  perCallOutput?: number;
-  perCallTotal?: number;
-}
-
-interface ModelPricingSource {
-  siteId: number;
-  siteName: string;
-  accountId: number;
-  username: string | null;
-  ownerBy: string | null;
-  enableGroups: string[];
-  groupPricing: Record<string, ModelGroupPricing>;
-}
-
-interface ModelAccountInfo {
-  id: number;
-  site: string;
-  username: string | null;
-  latency: number | null;
-  balance: number;
-  tokens: ModelTokenInfo[];
-}
-
-interface ModelRow {
-  name: string;
-  accountCount: number;
-  tokenCount: number;
-  avgLatency: number | null;
-  successRate: number | null;
-  description: string | null;
-  tags: string[];
-  supportedEndpointTypes: string[];
-  pricingSources: ModelPricingSource[];
-  accounts: ModelAccountInfo[];
-}
+type SortColumn = 'name' | 'accountCount' | 'credentialCount' | 'avgLatency' | 'successRate';
 
 interface ModelsMarketplaceResponse {
   models: ModelRow[];
@@ -76,56 +62,18 @@ function isKnownLatency(latency: number | null | undefined): latency is number {
   return typeof latency === 'number' && Number.isFinite(latency);
 }
 
-function getMetricColor(latency: number | null) {
-  if (!isKnownLatency(latency)) return 'var(--color-text-muted)';
-  if (latency >= 3000) return 'var(--color-danger)';
-  if (latency >= 2000) return 'color-mix(in srgb, var(--color-warning) 30%, var(--color-danger))';
-  if (latency >= 1500) return 'color-mix(in srgb, var(--color-warning) 60%, var(--color-danger))';
-  if (latency >= 1000) return 'var(--color-warning)';
-  if (latency > 500) return 'color-mix(in srgb, var(--color-success) 60%, var(--color-warning))';
-  return 'var(--color-success)';
-}
-
-function getLatencyBadgeClass(latency: number | null) {
-  if (!isKnownLatency(latency)) return 'badge-muted';
-  if (latency >= 3000) return 'badge-error';
-  if (latency >= 1000) return 'badge-warning';
-  return 'badge-success';
-}
-
 function formatLatency(latency: number | null): string {
   return isKnownLatency(latency) ? `${latency}ms` : '—';
 }
 
-function getSuccessBadgeClass(rate: number | null) {
-  if (rate == null) return 'badge-muted';
-  if (rate >= 90) return 'badge-success';
-  if (rate >= 60) return 'badge-warning';
-  return 'badge-error';
-}
-
-function resolveMarketplaceDescription(model: ModelRow, metadataHydrating: boolean): string {
-  if (model.description && model.description.trim().length > 0) return model.description;
-  if (metadataHydrating) return tr('正在加载模型元数据...');
-
-  const hasOtherMetadata = model.tags.length > 0 || model.supportedEndpointTypes.length > 0 || model.pricingSources.length > 0;
-  if (hasOtherMetadata) return tr('上游未提供描述文本，但已同步标签、能力或价格信息。');
-  return tr('当前上游仅返回模型 ID，未返回描述字段。');
-}
-
-function renderGroupPricingValue(pricing: ModelGroupPricing): string {
-  if (pricing.quotaType === 0) {
-    return `${pricing.inputPerMillion ?? 0}/${pricing.outputPerMillion ?? 0} USD / 1M`;
-  }
-
-  if (pricing.perCallInput != null || pricing.perCallOutput != null) {
-    return `${pricing.perCallInput ?? 0}/${pricing.perCallOutput ?? 0} USD / call`;
-  }
-
-  return `${pricing.perCallTotal ?? 0} USD / call`;
-}
-
 const PAGE_SIZES = [10, 20, 50];
+const SORT_OPTIONS: Array<{ key: SortColumn; label: string }> = [
+  { key: 'accountCount', label: tr('pages.models.accounts') },
+  { key: 'credentialCount', label: tr('pages.models.credentials') },
+  { key: 'avgLatency', label: tr('components.modelRouteFlow.latency') },
+  { key: 'successRate', label: tr('components.modelAnalysisPanel.successRate') },
+  { key: 'name', label: tr('pages.models.name') },
+];
 
 function compareModels(a: ModelRow, b: ModelRow, sortBy: SortColumn, sortDir: 'asc' | 'desc'): number {
   if (sortBy === 'name') {
@@ -141,6 +89,7 @@ function compareModels(a: ModelRow, b: ModelRow, sortBy: SortColumn, sortDir: 'a
       }
       return model.avgLatency;
     }
+    if (sortBy === 'credentialCount') return getModelCredentialCount(model);
     return model[sortBy] ?? 0;
   };
 
@@ -150,9 +99,34 @@ function compareModels(a: ModelRow, b: ModelRow, sortBy: SortColumn, sortDir: 'a
   return sortDir === 'desc' ? vb - va : va - vb;
 }
 
+function SortIndicator({ active, direction }: { active: boolean; direction: 'asc' | 'desc' }) {
+  if (!active) return null;
+  return <span className="text-muted-foreground">{direction === 'desc' ? '↓' : '↑'}</span>;
+}
+
+function ModelTags({
+  model,
+  sites,
+}: {
+  model: ModelRow;
+  sites: string[];
+}) {
+  const brand = getBrand(model.name);
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {brand ? <ToneBadge tone="-info">{brand.name}</ToneBadge> : null}
+      {sites.map((site) => <ToneBadge key={site} tone="-muted">{site}</ToneBadge>)}
+      {model.successRate != null && model.successRate >= 90 ? <ToneBadge tone="-success">{tr('pages.accounts.healthy')}</ToneBadge> : null}
+      {model.successRate != null && model.successRate < 60 ? <ToneBadge tone="-warning">{tr('pages.models.risk')}</ToneBadge> : null}
+      {isKnownLatency(model.avgLatency) && model.avgLatency <= 500 ? <ToneBadge tone="-success">{tr('pages.models.lowLatency')}</ToneBadge> : null}
+    </div>
+  );
+}
+
 /* ---- component ---- */
 export default function Models() {
   const toast = useToast();
+  const navigate = useNavigate();
   const [data, setData] = useState<ModelsMarketplaceResponse>({ models: [] });
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -160,19 +134,32 @@ export default function Models() {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [activeSite, setActiveSite] = useState<string | null>(null);
   const [activeBrand, setActiveBrand] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<ViewMode>('card');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
-  const [copied, setCopied] = useState<string | null>(null);
-  const [filterCollapsed, setFilterCollapsed] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [metadataHydrating, setMetadataHydrating] = useState(false);
+  const [routeFlowByModel, setRouteFlowByModel] = useState<Record<string, ModelRouteFlowData | null>>({});
+  const [routeFlowLoadingByModel, setRouteFlowLoadingByModel] = useState<Record<string, boolean>>({});
+  const [routeFlowErrorByModel, setRouteFlowErrorByModel] = useState<Record<string, string>>({});
   const isMobile = useIsMobile();
-  const filterPanelPresence = useAnimatedVisibility(!isMobile && !filterCollapsed, 220);
   const latestPrimaryRequestRef = useRef(0);
   const latestMetadataRequestRef = useRef(0);
+  const requestedRouteFlowModelsRef = useRef(new Set<string>());
   const location = useLocation();
+  const routeParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
+  const selectedModelName = routeParams.get('model') || '';
+  const workspaceTab = (routeParams.get('tab') || 'overview') as ModelDetailsTab;
+  const workspaceRange = (routeParams.get('range') || '24h') as ModelMetricsRange;
+  const routingViewMode = (routeParams.get('routingView') || 'effective') as 'effective' | 'candidates' | 'compiled' | 'diagnostics';
+
+  const updateRouteParams = useCallback((updates: Record<string, string | null>) => {
+    const params = new URLSearchParams(location.search);
+    for (const [key, value] of Object.entries(updates)) {
+      if (value == null || value === '') params.delete(key);
+      else params.set(key, value);
+    }
+    navigate({ pathname: location.pathname, search: params.toString() ? `?${params.toString()}` : '' }, { replace: false });
+  }, [location.pathname, location.search, navigate]);
   const siteIdByName = useMemo(() => {
     const index = new Map<string, number>();
     for (const model of data.models) {
@@ -201,9 +188,9 @@ export default function Models() {
       setData(next);
       if (refresh && next.meta?.refreshRequested) {
         if (next.meta.refreshReused) {
-          toast.info(tr('模型广场刷新进行中'));
+          toast.info(tr('pages.models.marketplaceRefreshProgress'));
         } else if (next.meta.refreshQueued) {
-          toast.info(tr('已开始刷新模型广场'));
+          toast.info(tr('pages.models.startedRefreshingMarketplace'));
         }
       }
       return next;
@@ -247,16 +234,6 @@ export default function Models() {
   }, []);
 
   useEffect(() => {
-    if (!isMobile) return;
-    if (viewMode !== 'card') {
-      setViewMode('card');
-    }
-    if (!filterCollapsed) {
-      setFilterCollapsed(true);
-    }
-  }, [filterCollapsed, isMobile, viewMode]);
-
-  useEffect(() => {
     let cancelled = false;
     let metadataTimer: ReturnType<typeof setTimeout> | null = null;
     const bootstrap = async () => {
@@ -290,6 +267,44 @@ export default function Models() {
     const q = new URLSearchParams(location.search).get('q') || '';
     setSearch(q);
   }, [location.search]);
+
+  useEffect(() => {
+    if (!selectedModelName) return;
+    if (requestedRouteFlowModelsRef.current.has(selectedModelName)) return;
+
+    let cancelled = false;
+    requestedRouteFlowModelsRef.current.add(selectedModelName);
+    setRouteFlowLoadingByModel((current) => ({ ...current, [selectedModelName]: true }));
+    setRouteFlowErrorByModel((current) => ({ ...current, [selectedModelName]: '' }));
+    void api.getModelRouteFlow(selectedModelName)
+      .then((result) => {
+        if (cancelled) return;
+        setRouteFlowByModel((current) => ({
+          ...current,
+          [selectedModelName]: (result as { flow?: ModelRouteFlowData }).flow || null,
+        }));
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setRouteFlowByModel((current) => ({ ...current, [selectedModelName]: null }));
+        requestedRouteFlowModelsRef.current.delete(selectedModelName);
+        setRouteFlowErrorByModel((current) => ({
+          ...current,
+          [selectedModelName]: error instanceof Error ? error.message : tr('pages.modelTester.routesFailed'),
+        }));
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setRouteFlowLoadingByModel((current) => ({ ...current, [selectedModelName]: false }));
+        }
+      });
+
+    return () => {
+      cancelled = true;
+      requestedRouteFlowModelsRef.current.delete(selectedModelName);
+      setRouteFlowLoadingByModel((current) => ({ ...current, [selectedModelName]: false }));
+    };
+  }, [selectedModelName]);
 
   /* ---- derived: brand list ---- */
   const brandList = useMemo(() => {
@@ -360,6 +375,9 @@ export default function Models() {
         pricingSources,
         accountCount: accounts.length,
         tokenCount: accounts.reduce((sum, account) => sum + account.tokens.length, 0),
+        managedTokenCount: accounts.reduce((sum, account) => sum + (account.managedTokenCount ?? account.tokens.length), 0),
+        credentialCount: accounts.reduce((sum, account) => sum + getAccountCredentialCount(account), 0),
+        endpointCount: accounts.reduce((sum, account) => sum + getAccountCredentialCount(account), 0),
         avgLatency: latencyValues.length > 0
           ? Math.round(latencyValues.reduce((sum, latency) => sum + latency, 0) / latencyValues.length)
           : null,
@@ -376,8 +394,34 @@ export default function Models() {
 
   useEffect(() => { setPage(1); }, [search, activeSite, activeBrand, pageSize]);
 
+  const selectedModel = useMemo(() => (
+    selectedModelName ? detailModels.find((model) => model.name === selectedModelName) ?? null : null
+  ), [detailModels, selectedModelName]);
+
+  useEffect(() => {
+    if (!selectedModelName) return;
+    if (selectedModel) return;
+    const params = new URLSearchParams(location.search);
+    params.delete('model');
+    params.delete('node');
+    navigate({ pathname: location.pathname, search: params.toString() ? `?${params.toString()}` : '' }, { replace: true });
+  }, [location.pathname, location.search, navigate, selectedModel, selectedModelName]);
+
+  const selectedDetails = useMemo(() => {
+    if (!selectedModel) return null;
+    return buildModelDetailsView({
+      model: selectedModel,
+      brandName: getBrand(selectedModel.name)?.name ?? null,
+      routeFlow: routeFlowByModel[selectedModel.name] ?? null,
+      routeFlowLoading: !!routeFlowLoadingByModel[selectedModel.name],
+      routeFlowError: routeFlowErrorByModel[selectedModel.name] || '',
+      metadataHydrating,
+    });
+  }, [metadataHydrating, routeFlowByModel, routeFlowErrorByModel, routeFlowLoadingByModel, selectedModel]);
+
   /* ---- stats ---- */
   const totalCoverageSlots = detailModels.reduce((s, m) => s + m.accountCount, 0);
+  const totalCredentialSlots = detailModels.reduce((sum, model) => sum + getModelCredentialCount(model), 0);
   const uniqueAccountCount = (() => {
     const ids = new Set<number>();
     for (const model of detailModels) {
@@ -387,92 +431,93 @@ export default function Models() {
     }
     return ids.size;
   })();
-  const latencyMetrics = detailModels
-    .map((model) => model.avgLatency)
-    .filter(isKnownLatency);
-  const avgLatency = latencyMetrics.length > 0
-    ? Math.round(latencyMetrics.reduce((sum, latency) => sum + latency, 0) / latencyMetrics.length)
-    : null;
-
   /* ---- copy ---- */
   const copyName = (name: string) => {
     navigator.clipboard.writeText(name).catch(() => { });
-    setCopied(name);
-    setTimeout(() => setCopied(null), 1500);
   };
 
   const filterControls = (
-    <>
-      <div className="filter-panel-section">
-        <div className="filter-panel-title">
-          {tr('品牌')}
-          {activeBrand && <button onClick={() => setActiveBrand(null)}>{tr('重置')}</button>}
+    <div className="grid gap-4">
+      <div className="grid gap-2">
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-sm font-medium">{tr('pages.models.brands')}</div>
+          {activeBrand ? (
+            <Button type="button" variant="ghost" size="sm" onClick={() => setActiveBrand(null)}>
+              {tr('pages.models.reset')}
+            </Button>
+          ) : null}
         </div>
-        <div
-          className={`filter-item ${!activeBrand ? 'active' : ''}`}
+        <Button
+          type="button"
+          variant={!activeBrand ? 'secondary' : 'ghost'}
+          className="w-full justify-start gap-2"
           onClick={() => setActiveBrand(null)}
         >
-          <span className="filter-item-icon" style={{ background: 'var(--color-primary-light)', color: 'var(--color-primary)' }}>✓</span>
-          {tr('全部品牌')}
-          <span className="filter-item-count">{data.models.length}</span>
-        </div>
+          <Check className="size-4" />
+          <span className="min-w-0 flex-1 truncate text-left">{tr('pages.models.allBrands')}</span>
+          <ToneBadge tone="-muted">{data.models.length}</ToneBadge>
+        </Button>
         {brandList.list.map(([brandName, { count, brand }]) => (
-          <div
+          <Button
             key={brandName}
-            className={`filter-item ${activeBrand === brandName ? 'active' : ''}`}
+            type="button"
+            variant={activeBrand === brandName ? 'secondary' : 'ghost'}
+            className="w-full justify-start gap-2"
             onClick={() => setActiveBrand(activeBrand === brandName ? null : brandName)}
           >
-            <span className="filter-item-icon" style={{ background: 'var(--color-bg)', borderRadius: 4, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <BrandGlyph brand={brand} size={14} fallbackText={brandName} />
-            </span>
-            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{brandName}</span>
-            <span className="filter-item-count">{count}</span>
-          </div>
+            <BrandGlyph brand={brand} size={16} fallbackText={brandName} />
+            <span className="min-w-0 flex-1 truncate text-left">{brandName}</span>
+            <ToneBadge tone="-muted">{count}</ToneBadge>
+          </Button>
         ))}
         {brandList.otherCount > 0 && (
-          <div
-            className={`filter-item ${activeBrand === '__other__' ? 'active' : ''}`}
+          <Button
+            type="button"
+            variant={activeBrand === '__other__' ? 'secondary' : 'ghost'}
+            className="w-full justify-start gap-2"
             onClick={() => setActiveBrand(activeBrand === '__other__' ? null : '__other__')}
           >
-            <span className="filter-item-icon" style={{ background: 'var(--color-bg)', color: 'var(--color-text-muted)', fontSize: 10, borderRadius: 4 }}>?</span>
-            {tr('其他')}
-            <span className="filter-item-count">{brandList.otherCount}</span>
-          </div>
+            <span className="inline-flex size-4 items-center justify-center text-xs text-muted-foreground">?</span>
+            <span className="min-w-0 flex-1 truncate text-left">{tr('pages.models.other')}</span>
+            <ToneBadge tone="-muted">{brandList.otherCount}</ToneBadge>
+          </Button>
         )}
       </div>
 
-      <div className="filter-panel-section">
-        <div className="filter-panel-title">
-          {tr('供应商')}
-          {activeSite && <button onClick={() => setActiveSite(null)}>{tr('重置')}</button>}
+      <div className="grid gap-2">
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-sm font-medium">{tr('pages.models.providers')}</div>
+          {activeSite ? (
+            <Button type="button" variant="ghost" size="sm" onClick={() => setActiveSite(null)}>
+              {tr('pages.models.reset')}
+            </Button>
+          ) : null}
         </div>
         {siteMap.map(([site, count]) => (
-          <div
+          <Button
             key={site}
-            className={`filter-item ${activeSite === site ? 'active' : ''}`}
+            type="button"
+            variant={activeSite === site ? 'secondary' : 'ghost'}
+            className="w-full justify-start gap-2"
             onClick={() => setActiveSite(activeSite === site ? null : site)}
           >
-            <span className="filter-item-icon" style={{ background: hashColor(site), color: 'white', fontSize: 9, borderRadius: 4 }}>
-              {site.slice(0, 2).toUpperCase()}
+            <span className="inline-flex size-4 items-center justify-center text-xs text-muted-foreground">
+              {site.slice(0, 1).toUpperCase()}
             </span>
-            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{site}</span>
-            <span className="filter-item-count">{count}</span>
-          </div>
+            <span className="min-w-0 flex-1 truncate text-left">{site}</span>
+            <ToneBadge tone="-muted">{count}</ToneBadge>
+          </Button>
         ))}
       </div>
 
-      <div className="filter-panel-section">
-        <div className="filter-panel-title">{tr('排序方式')}</div>
-        {[
-          { key: 'accountCount' as SortColumn, label: tr('账号数') },
-          { key: 'tokenCount' as SortColumn, label: tr('令牌数') },
-          { key: 'avgLatency' as SortColumn, label: tr('延迟') },
-          { key: 'successRate' as SortColumn, label: tr('成功率') },
-          { key: 'name' as SortColumn, label: tr('名称') },
-        ].map(opt => (
-          <div
+      <div className="grid gap-2">
+        <div className="text-sm font-medium">{tr('pages.accounts.sort')}</div>
+        {SORT_OPTIONS.map(opt => (
+          <Button
             key={opt.key}
-            className={`filter-item ${sortBy === opt.key ? 'active' : ''}`}
+            type="button"
+            variant={sortBy === opt.key ? 'secondary' : 'ghost'}
+            className="w-full justify-start gap-2"
             onClick={() => {
               if (sortBy === opt.key) {
                 setSortDir(d => d === 'asc' ? 'desc' : 'asc');
@@ -482,43 +527,140 @@ export default function Models() {
               }
             }}
           >
-            {opt.label}
-            {sortBy === opt.key && (
-              <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--color-primary)' }}>
-                {sortDir === 'desc' ? '↓' : '↑'}
-              </span>
-            )}
-          </div>
+            <span className="min-w-0 flex-1 truncate text-left">{opt.label}</span>
+            <SortIndicator active={sortBy === opt.key} direction={sortDir} />
+          </Button>
         ))}
       </div>
-    </>
+    </div>
+  );
+
+  const selectModel = useCallback((modelName: string) => {
+    updateRouteParams({ model: modelName, tab: workspaceTab || 'overview' });
+  }, [updateRouteParams, workspaceTab]);
+
+  const modelIndexContent = (
+    <div className="grid gap-3 p-3">
+      <SearchInput
+        value={search}
+        onChange={e => setSearch(e.target.value)}
+        placeholder={tr('pages.modelTester.searchModelSupportsNameFragments')}
+      />
+      <div className="flex flex-wrap items-center gap-2">
+        <ToneBadge tone="-info">{tr('pages.models.total')} {filteredModels.length} {tr('pages.models.models2')}</ToneBadge>
+        <ToneBadge tone="-muted">{tr('pages.models.coverageTier')} {totalCoverageSlots}</ToneBadge>
+        <ToneBadge tone="-muted">{tr('pages.models.credentials')} {totalCredentialSlots}</ToneBadge>
+        <ToneBadge tone="-muted">{tr('pages.models.uniqueAccounts')} {uniqueAccountCount}</ToneBadge>
+      </div>
+      {filterControls}
+      <div className="grid gap-2">
+        {detailModels.length === 0 ? (
+          <EmptyStateBlock title={tr('pages.models.noModelYet')} description={tr('pages.models.checkSiteAccountStatusFirstThenRefresh')} />
+        ) : paged.map((model) => {
+          const selected = selectedModelName === model.name;
+          const sites = model.accounts.map((account) => account.site).filter((value, index, array) => array.indexOf(value) === index);
+          return (
+            <Button
+              key={model.name}
+              type="button"
+              variant={selected ? 'secondary' : 'outline'}
+              className="h-auto min-w-0 justify-start p-3 text-left"
+              onClick={() => selectModel(model.name)}
+            >
+              <div className="flex min-w-0 items-start gap-2">
+                <BrandIcon model={model.name} size={28} />
+                <div className="min-w-0 flex-1">
+                  <div className="truncate font-mono text-sm font-semibold">{model.name}</div>
+                  <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                    <span>{getBrand(model.name)?.name || tr('pages.models.modelDetailsView.providerUnknown')}</span>
+                    <span>·</span>
+                    <span>{formatLatency(model.avgLatency)}</span>
+                    <span>·</span>
+                    <span>{model.successRate == null ? tr('common.notAvailable') : `${model.successRate}%`}</span>
+                  </div>
+                  <div className="mt-2">
+                    <ModelTags model={model} sites={sites.slice(0, 2)} />
+                  </div>
+                </div>
+              </div>
+            </Button>
+          );
+        })}
+      </div>
+      {filteredModels.length > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-3">
+          <Pagination className="mx-0 w-auto">
+            <PaginationContent>
+              <PaginationItem>
+                <PaginationPrevious
+                  type="button"
+                  disabled={safePageVal <= 1}
+                  onClick={() => setPage(p => p - 1)}
+                  aria-label={tr('pages.models.previousPage')}
+                />
+              </PaginationItem>
+              {Array.from({ length: Math.min(totalPages, 5) }, (_, i) => {
+                let pageNum: number;
+                if (totalPages <= 5) pageNum = i + 1;
+                else if (safePageVal <= 3) pageNum = i + 1;
+                else if (safePageVal >= totalPages - 2) pageNum = totalPages - 4 + i;
+                else pageNum = safePageVal - 2 + i;
+                return (
+                  <PaginationItem key={pageNum}>
+                    <PaginationLink type="button" isActive={pageNum === safePageVal} onClick={() => setPage(pageNum)}>
+                      {pageNum}
+                    </PaginationLink>
+                  </PaginationItem>
+                );
+              })}
+              <PaginationItem>
+                <PaginationNext
+                  type="button"
+                  disabled={safePageVal >= totalPages}
+                  onClick={() => setPage(p => p + 1)}
+                  aria-label={tr('pages.models.nextPage')}
+                />
+              </PaginationItem>
+            </PaginationContent>
+          </Pagination>
+          <Select value={String(pageSize)} onValueChange={(nextValue) => setPageSize(Number(nextValue))}>
+            <SelectTrigger className="w-24">
+              <SelectValue placeholder={String(pageSize)} />
+            </SelectTrigger>
+            <SelectContent>
+              {PAGE_SIZES.map((size) => (
+                <SelectItem key={size} value={String(size)}>{size}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+    </div>
   );
 
   /* ---- loading skeleton ---- */
   if (loading) {
     return (
-      <div className="animate-fade-in" style={{ display: 'flex', gap: 24, minHeight: 400 }}>
+      <div className="flex min-h-[400px] gap-6">
         {!isMobile && (
-          <div style={{ width: 240 }}>
-            {[...Array(6)].map((_, i) => <div key={i} className="skeleton" style={{ height: 28, marginBottom: 8, borderRadius: 8 }} />)}
-          </div>
+          <Card className="w-60 shrink-0">
+            <CardContent className="grid gap-2 p-3">
+              {[...Array(6)].map((_, i) => <Skeleton key={i} className="h-7 w-full" />)}
+            </CardContent>
+          </Card>
         )}
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div className="page-header" style={{ marginBottom: 16 }}>
+        <div className="min-w-0 flex-1">
+          <div className="mb-4 flex items-start justify-between gap-3">
             <div>
-              <div className="skeleton" style={{ width: 220, height: 28, marginBottom: 8 }} />
-              <div className="skeleton" style={{ width: 160, height: 16 }} />
+              <Skeleton className="mb-2 h-7 w-56" />
+              <Skeleton className="h-4 w-40" />
             </div>
-            <div className="page-actions">
+            <div className="flex items-center gap-2">
               {isMobile && (
-                <button
-                  className="btn btn-ghost"
-                  style={{ border: '1px solid var(--color-border)', padding: '6px 12px' }}
-                  onClick={() => setShowFilters(true)}
-                >
-                  <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" /></svg>
-                  {tr('筛选')}
-                </button>
+                <Button type="button" variant="outline" onClick={() => setShowFilters(true)}>
+                  <Filter className="size-4" />
+                  {tr('components.mobileFilterSheet.filter')}
+                </Button>
               )}
             </div>
           </div>
@@ -526,81 +668,46 @@ export default function Models() {
             isMobile={isMobile}
             mobileOpen={showFilters}
             onMobileClose={() => setShowFilters(false)}
-            mobileTitle={tr('筛选模型')}
+            mobileTitle={tr('pages.models.filtermodel')}
             mobileContent={filterControls}
           />
-          {[...Array(4)].map((_, i) => <div key={i} className="skeleton" style={{ height: 100, marginBottom: 12, borderRadius: 12 }} />)}
+          <div className="grid gap-3">
+            {[...Array(4)].map((_, i) => <Skeleton key={i} className="h-24 w-full" />)}
+          </div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="animate-fade-in" style={{ display: 'flex', gap: 24, minHeight: 400 }}>
-      {!isMobile && filterPanelPresence.shouldRender && (
-        <div className={`filter-panel filter-collapsible ${filterPanelPresence.isVisible ? '' : 'is-closing'}`.trim()}>
-          {filterControls}
-          <button
-            className="btn btn-ghost"
-            style={{ width: '100%', fontSize: 12, padding: '6px 10px', marginTop: 8, justifyContent: 'center', border: '1px solid var(--color-border)' }}
-            onClick={() => setFilterCollapsed(true)}
-          >
-            {tr('收起')}
-          </button>
-        </div>
-      )}
-
-      {/* ====== RIGHT: Content Area ====== */}
-      <div style={{ flex: 1, minWidth: 0 }}>
-        {/* Header */}
-        <div className="page-header" style={{ marginBottom: 16 }}>
+    <div className="flex min-h-[400px] gap-6">
+      <div className="min-w-0 flex-1">
+        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            <h2 className="page-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              {activeBrand || activeSite || tr('模型广场')}
-              <span className="badge badge-info" style={{ fontSize: 12, fontWeight: 500 }}>
-                {tr('共')} {filteredModels.length} {tr('个模型')}
-              </span>
+            <h2 className="flex items-center gap-2 text-xl font-semibold">
+              {activeBrand || activeSite || tr('app.modelMarketplace')}
+              <ToneBadge tone="-info">
+                {tr('pages.models.total')} {filteredModels.length} {tr('pages.models.models2')}
+              </ToneBadge>
             </h2>
             {(activeBrand || activeSite) && (
-              <p style={{ fontSize: 12, color: 'var(--color-text-muted)', margin: '4px 0 0' }}>
-                {activeBrand && activeBrand !== '__other__' ? `${tr('查看')} ${activeBrand} ${tr('品牌的所有模型')}` : activeSite ? `${tr('来自供应商')} ${activeSite} ${tr('的模型')}` : tr('其他未归类的模型')}
+              <p className="mt-1 text-xs text-muted-foreground">
+                {activeBrand && activeBrand !== '__other__' ? `${tr('pages.downstreamKeys.viewing')} ${activeBrand} ${tr('pages.models.brandModels')}` : activeSite ? `${tr('pages.models.fromProvider')} ${activeSite} ${tr('pages.models.models')}` : tr('pages.models.otherUncategorizedModels')}
               </p>
             )}
           </div>
-          <div className="page-actions">
-            {(isMobile || filterCollapsed) && (
-              <button
-                className="btn btn-ghost"
-                style={{ border: '1px solid var(--color-border)', padding: '6px 12px' }}
-                onClick={() => {
-                  if (isMobile) {
-                    setShowFilters(true);
-                    return;
-                  }
-                  setFilterCollapsed(false);
-                }}
-              >
-                <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" /></svg>
-                {tr('筛选')}
-              </button>
+          <div className="flex flex-wrap items-center gap-2">
+            {isMobile && (
+              <Button type="button" variant="outline" onClick={() => setShowFilters(true)}>
+                <Filter className="size-4" />
+                {tr('components.mobileFilterSheet.filter')}
+              </Button>
             )}
-            <button onClick={handleRefresh} className="btn btn-ghost" style={{ border: '1px solid var(--color-border)', padding: '6px 12px' }}>
-              <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
-            </button>
+            <Button type="button" variant="outline" size="icon" onClick={handleRefresh} aria-label={tr('pages.accounts.refresh')}>
+              <RefreshCw className="size-4" />
+            </Button>
             {metadataHydrating && (
-              <span className="badge badge-muted" style={{ fontSize: 11 }}>{tr('加载元数据中...')}</span>
-            )}
-            {!isMobile && (
-              <div className="view-toggle">
-                <button className={`view-toggle-btn ${viewMode === 'card' ? 'active' : ''}`} onClick={() => setViewMode('card')} data-tooltip={tr('卡片视图')} aria-label={tr('卡片视图')}>
-                  <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" /></svg>
-                </button>
-                <button className={`view-toggle-btn ${viewMode === 'table' ? 'active' : ''}`} onClick={() => setViewMode('table')} data-tooltip={tr('表格视图')} aria-label={tr('表格视图')}>
-                  <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M3 14h18M3 6h18M3 18h18M10 3v18M14 3v18" /></svg>
-                </button>
-              </div>
+              <ToneBadge tone="-muted">{tr('pages.models.loadingMetadata')}</ToneBadge>
             )}
           </div>
         </div>
@@ -609,454 +716,32 @@ export default function Models() {
           isMobile={isMobile}
           mobileOpen={showFilters}
           onMobileClose={() => setShowFilters(false)}
-          mobileTitle={tr('筛选模型')}
+          mobileTitle={tr('pages.models.filtermodel')}
           mobileContent={filterControls}
         />
 
-        {/* Toolbar */}
-        <div className="toolbar">
-          <div className="toolbar-search">
-            <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
-            <input
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder={tr('搜索模型（支持名称片段）')}
+        <EntityWorkspaceLayout
+          index={modelIndexContent}
+          workspace={(
+            <ModelDetailsWorkspace
+              details={selectedDetails}
+              tab={workspaceTab}
+              onTabChange={(nextTab) => updateRouteParams({ tab: nextTab })}
+              range={workspaceRange}
+              onRangeChange={(nextRange) => updateRouteParams({ range: nextRange })}
+              routingViewMode={routingViewMode}
+              onRoutingViewModeChange={(nextMode) => updateRouteParams({ routingView: nextMode })}
+              siteIdByName={siteIdByName}
+              metadataHydrating={metadataHydrating}
+              onCopyModel={copyName}
+              onRefresh={handleRefresh}
+              onCopyJson={(text) => {
+                navigator.clipboard.writeText(text).catch(() => {});
+              }}
             />
-          </div>
-          {/* Quick stats */}
-          <div style={{ display: 'flex', gap: 16, fontSize: 12, color: 'var(--color-text-muted)', alignItems: 'center' }}>
-            <span data-tooltip={tr('所有模型 accountCount 累计值，同一账号在多个模型中会重复计数')}>
-              {tr('覆盖档位')} <b style={{ color: 'var(--color-text-primary)' }}>{totalCoverageSlots}</b>
-            </span>
-            <span data-tooltip={tr('当前筛选范围内去重后的唯一账号数')}>
-              {tr('去重账号')} <b style={{ color: 'var(--color-text-primary)' }}>{uniqueAccountCount}</b>
-            </span>
-            <span>{tr('平均延迟')} <b style={{ color: getMetricColor(avgLatency) }}>{formatLatency(avgLatency)}</b></span>
-          </div>
-        </div>
-
-        {/* Empty */}
-        {detailModels.length === 0 ? (
-          <div className="empty-state">
-            <div className="empty-state-icon">
-              <svg width="40" height="40" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
-              </svg>
-            </div>
-            <div className="empty-state-title">{tr('暂无模型结果')}</div>
-            <div className="empty-state-desc">{tr('请先检查站点与账号状态，然后点击刷新。')}</div>
-          </div>
-        ) : viewMode === 'card' ? (
-          /* ====== Card View ====== */
-          <div>
-            {paged.map((m) => {
-              const isExpanded = expanded === m.name;
-              return (
-              <div key={m.name} className="model-card" onClick={() => setExpanded(isExpanded ? null : m.name)}>
-                <div className="model-card-header">
-                  <BrandIcon model={m.name} size={44} />
-                  <div className="model-card-info">
-                    <div className="model-card-name">{m.name}</div>
-                    <div className="model-card-meta">
-                      <span>
-                        <svg width="12" height="12" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
-                        {m.accountCount} {tr('个账号')}
-                      </span>
-                      <span>
-                        <svg width="12" height="12" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" /></svg>
-                        {m.tokenCount} {tr('令牌')}
-                      </span>
-                      <span
-                        className={`badge ${getLatencyBadgeClass(m.avgLatency)}`}
-                        style={{ fontVariantNumeric: 'tabular-nums' }}
-                        data-tooltip={tr('平均延迟')}
-                      >
-                        {tr('延迟')} {formatLatency(m.avgLatency)}
-                      </span>
-                      <span
-                        className={`badge ${getSuccessBadgeClass(m.successRate)}`}
-                        style={{ fontVariantNumeric: 'tabular-nums' }}
-                        data-tooltip={tr('成功率')}
-                      >
-                        {tr('成功率')} {m.successRate != null ? `${m.successRate}%` : '—'}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="model-card-actions" onClick={e => e.stopPropagation()}>
-                    <button className="model-card-action-btn" data-tooltip={tr('复制模型名')} aria-label={tr('复制模型名')} onClick={() => copyName(m.name)}>
-                      {copied === m.name ? (
-                        <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="var(--color-success)"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
-                      ) : (
-                        <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
-                      )}
-                    </button>
-                    <button
-                      className="model-card-action-btn"
-                      data-tooltip={isExpanded ? tr('收起') : tr('展开')}
-                      aria-label={isExpanded ? tr('收起') : tr('展开')}
-                    >
-                      <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" style={{ transform: isExpanded ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }}>
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                      </svg>
-                    </button>
-                  </div>
-                </div>
-
-                {/* Tags */}
-                <div className="model-card-tags">
-                  {getBrand(m.name) && (
-                    <span className="model-tag model-tag-purple">{getBrand(m.name)!.name}</span>
-                  )}
-                  {m.accounts.map(a => a.site).filter((v, i, arr) => arr.indexOf(v) === i).map(site => (
-                    <span key={site} className="model-tag model-tag-blue">{site}</span>
-                  ))}
-                  {m.successRate != null && m.successRate >= 90 && (
-                    <span className="model-tag model-tag-green">{tr('健康')}</span>
-                  )}
-                  {m.successRate != null && m.successRate < 60 && (
-                    <span className="model-tag model-tag-orange">{tr('风险')}</span>
-                  )}
-                  {isKnownLatency(m.avgLatency) && m.avgLatency <= 500 && (
-                    <span className="model-tag model-tag-purple">{tr('低延迟')}</span>
-                  )}
-                </div>
-
-                {/* Expand: Account Details */}
-                {isExpanded ? (
-                <div className="anim-collapse is-open" onClick={e => e.stopPropagation()}>
-                  <div className="anim-collapse-inner">
-                    <div className="model-card-expand">
-                    <div style={{ display: 'grid', gap: 8, marginBottom: 10 }}>
-                      <div className="card" style={{ padding: 10 }}>
-                        <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>{tr('基础信息')}</div>
-                        <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', lineHeight: 1.6 }}>
-                          {resolveMarketplaceDescription(m, metadataHydrating)}
-                        </div>
-                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
-                          {m.tags.length > 0 ? m.tags.map((tag) => (
-                            <span key={tag} className="badge badge-info">{tag}</span>
-                          )) : <span className="badge badge-muted">{metadataHydrating ? tr('加载元数据中...') : tr('暂无标签')}</span>}
-                        </div>
-                      </div>
-
-                      <div className="card" style={{ padding: 10 }}>
-                        <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>{tr('接口能力')}</div>
-                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                          {m.supportedEndpointTypes.length > 0 ? m.supportedEndpointTypes.map((endpoint) => (
-                            <span key={endpoint} className="badge badge-success">{endpoint}</span>
-                          )) : <span className="badge badge-muted">{metadataHydrating ? tr('加载元数据中...') : tr('未提供')}</span>}
-                        </div>
-                      </div>
-
-                      <div className="card" style={{ padding: 10 }}>
-                        <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>{tr('分组计费')}</div>
-                        {m.pricingSources.length > 0 ? (
-                          <div style={{ display: 'grid', gap: 8 }}>
-                            {m.pricingSources.map((source) => (
-                              <div
-                                key={`${source.siteId}-${source.accountId}`}
-                                style={{ border: '1px solid var(--color-border-light)', borderRadius: 8, padding: 8 }}
-                              >
-                                <div style={{ fontSize: 12, marginBottom: 6 }}>
-                                  <SiteBadgeLink siteId={source.siteId} siteName={source.siteName} badgeStyle={{ fontSize: 11 }} /> · {source.username || `ID:${source.accountId}`}
-                                </div>
-                                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                                  {Object.entries(source.groupPricing).map(([group, pricing]) => (
-                                    <span key={group} className="badge badge-info">
-                                      {group}: {renderGroupPricingValue(pricing)}
-                                    </span>
-                                  ))}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <span className="badge badge-muted">{metadataHydrating ? tr('正在加载价格元数据...') : tr('暂无价格元数据')}</span>
-                        )}
-                      </div>
-                    </div>
-
-                    {isMobile ? (
-                      <div style={{ display: 'grid', gap: 8 }}>
-                        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text-secondary)' }}>{tr('账号明细')}</div>
-                        {m.accounts.map((a) => (
-                          <div
-                            key={a.id}
-                            className="card"
-                            style={{ padding: 10, display: 'grid', gap: 8 }}
-                          >
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
-                              <SiteBadgeLink siteId={siteIdByName.get(a.site)} siteName={a.site} badgeClassName="badge badge-info" badgeStyle={{ fontSize: 11 }} />
-                              <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>{a.username || `ID:${a.id}`}</span>
-                            </div>
-                            <div style={{ display: 'grid', gap: 6 }}>
-                              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 12 }}>
-                                <span style={{ color: 'var(--color-text-muted)' }}>{tr('延迟')}</span>
-                                <span style={{ color: getMetricColor(a.latency), fontVariantNumeric: 'tabular-nums' }}>
-                                  {a.latency != null ? `${a.latency}ms` : '—'}
-                                </span>
-                              </div>
-                              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, fontSize: 12 }}>
-                                <span style={{ color: 'var(--color-text-muted)' }}>{tr('余额')}</span>
-                                <span style={{ fontVariantNumeric: 'tabular-nums' }}>${(a.balance || 0).toFixed(2)}</span>
-                              </div>
-                              <div style={{ display: 'grid', gap: 6 }}>
-                                <span style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>{tr('令牌')}</span>
-                                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                                  {a.tokens.length > 0 ? a.tokens.map((t) => (
-                                    <span key={t.id} className={`badge ${t.isDefault ? 'badge-success' : 'badge-muted'}`} style={{ fontSize: 11 }}>{t.name}</span>
-                                  )) : <span style={{ color: 'var(--color-text-muted)', fontSize: 12 }}>—</span>}
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <table className="data-table" style={{ width: '100%' }}>
-                        <thead>
-                          <tr>
-                            <th style={{ fontWeight: 500 }}>{tr('站点')}</th>
-                            <th style={{ fontWeight: 500 }}>{tr('账号')}</th>
-                            <th style={{ fontWeight: 500 }}>{tr('令牌')}</th>
-                            <th style={{ fontWeight: 500 }}>{tr('延迟')}</th>
-                            <th style={{ fontWeight: 500 }}>{tr('余额')}</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {m.accounts.map(a => (
-                            <tr key={a.id}>
-                              <td><SiteBadgeLink siteId={siteIdByName.get(a.site)} siteName={a.site} badgeClassName="badge badge-info" badgeStyle={{ fontSize: 11 }} /></td>
-                              <td style={{ fontSize: 12 }}>{a.username || `ID:${a.id}`}</td>
-                              <td style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                                {a.tokens.length > 0 ? a.tokens.map(t => (
-                                  <span key={t.id} className={`badge ${t.isDefault ? 'badge-success' : 'badge-muted'}`} style={{ fontSize: 11 }}>{t.name}</span>
-                                )) : <span style={{ color: 'var(--color-text-muted)' }}>—</span>}
-                              </td>
-                              <td>
-                                {a.latency != null ? (
-                                  <span style={{ color: getMetricColor(a.latency), fontVariantNumeric: 'tabular-nums', fontSize: 12 }}>{a.latency}ms</span>
-                                ) : '—'}
-                              </td>
-                              <td style={{ fontVariantNumeric: 'tabular-nums', fontSize: 12 }}>${(a.balance || 0).toFixed(2)}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    )}
-                    </div>
-                  </div>
-                </div>
-                ) : null}
-              </div>
-              );
-            })}
-          </div>
-        ) : (
-          /* ====== Table View ====== */
-          <div className="card" style={{ overflowX: 'auto' }}>
-            <table className="data-table" style={{ width: '100%' }}>
-              <thead>
-                <tr>
-                  <th style={{ width: 44 }} />
-                  <th style={{ cursor: 'pointer' }} onClick={() => { setSortBy('name'); setSortDir(d => d === 'asc' ? 'desc' : 'asc'); }}>
-                    {tr('模型名称')} {sortBy === 'name' ? (sortDir === 'desc' ? '↓' : '↑') : ''}
-                  </th>
-                  <th style={{ cursor: 'pointer' }} onClick={() => { setSortBy('accountCount'); setSortDir(d => d === 'asc' ? 'desc' : 'asc'); }}>
-                    {tr('账号数')} {sortBy === 'accountCount' ? (sortDir === 'desc' ? '↓' : '↑') : ''}
-                  </th>
-                  <th style={{ cursor: 'pointer' }} onClick={() => { setSortBy('tokenCount'); setSortDir(d => d === 'asc' ? 'desc' : 'asc'); }}>
-                    {tr('令牌数')} {sortBy === 'tokenCount' ? (sortDir === 'desc' ? '↓' : '↑') : ''}
-                  </th>
-                  <th style={{ cursor: 'pointer' }} onClick={() => { setSortBy('avgLatency'); setSortDir(d => d === 'asc' ? 'desc' : 'asc'); }}>
-                    {tr('延迟')} {sortBy === 'avgLatency' ? (sortDir === 'desc' ? '↓' : '↑') : ''}
-                  </th>
-                  <th style={{ cursor: 'pointer' }} onClick={() => { setSortBy('successRate'); setSortDir(d => d === 'asc' ? 'desc' : 'asc'); }}>
-                    {tr('成功率')} {sortBy === 'successRate' ? (sortDir === 'desc' ? '↓' : '↑') : ''}
-                  </th>
-                  <th style={{ width: 60 }}>{tr('操作')}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {paged.map((m) => {
-                  const isExpanded = expanded === m.name;
-                  return (
-                  <React.Fragment key={m.name}>
-                    <tr onClick={() => setExpanded(isExpanded ? null : m.name)} style={{ cursor: 'pointer' }}>
-                      <td>
-                        <BrandIcon model={m.name} size={28} />
-                      </td>
-                      <td>
-                        <code style={{ fontSize: 12, padding: '3px 8px', background: 'var(--color-bg)', borderRadius: 4, border: '1px solid var(--color-border-light)' }}>
-                          {m.name}
-                        </code>
-                      </td>
-                      <td><span className="badge badge-info">{m.accountCount}</span></td>
-                      <td><span className="badge badge-muted">{m.tokenCount}</span></td>
-                      <td>
-                        <span
-                          className={`badge ${getLatencyBadgeClass(m.avgLatency)}`}
-                          style={{ fontSize: 12, fontVariantNumeric: 'tabular-nums' }}
-                        >
-                          {formatLatency(m.avgLatency)}
-                        </span>
-                      </td>
-                      <td>
-                        <span
-                          className={`badge ${getSuccessBadgeClass(m.successRate)}`}
-                          style={{ fontSize: 12, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}
-                        >
-                          {m.successRate != null ? `${m.successRate}%` : '—'}
-                        </span>
-                      </td>
-                      <td onClick={e => e.stopPropagation()}>
-                        <button className="model-card-action-btn" data-tooltip={tr('复制')} aria-label={tr('复制')} onClick={() => copyName(m.name)}>
-                          {copied === m.name ? (
-                            <svg width="12" height="12" fill="none" viewBox="0 0 24 24" stroke="var(--color-success)"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
-                          ) : (
-                            <svg width="12" height="12" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
-                          )}
-                        </button>
-                      </td>
-                    </tr>
-                    {isExpanded ? (
-                    <tr className="log-detail-row">
-                      <td colSpan={7} style={{ padding: 0 }}>
-                        <div className="anim-collapse is-open">
-                          <div className="anim-collapse-inner">
-                            <div style={{ padding: '12px 16px 12px 54px' }}>
-                            <div style={{ display: 'grid', gap: 8, marginBottom: 10 }}>
-                              <div className="card" style={{ padding: 10 }}>
-                                <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>{tr('基础信息')}</div>
-                                <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', lineHeight: 1.6 }}>
-                                  {resolveMarketplaceDescription(m, metadataHydrating)}
-                                </div>
-                                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
-                                  {m.tags.length > 0 ? m.tags.map((tag) => (
-                                    <span key={tag} className="badge badge-info">{tag}</span>
-                                  )) : <span className="badge badge-muted">{metadataHydrating ? tr('加载元数据中...') : tr('暂无标签')}</span>}
-                                </div>
-                              </div>
-
-                              <div className="card" style={{ padding: 10 }}>
-                                <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>{tr('接口能力')}</div>
-                                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                                  {m.supportedEndpointTypes.length > 0 ? m.supportedEndpointTypes.map((endpoint) => (
-                                    <span key={endpoint} className="badge badge-success">{endpoint}</span>
-                                  )) : <span className="badge badge-muted">{metadataHydrating ? tr('加载元数据中...') : tr('未提供')}</span>}
-                                </div>
-                              </div>
-
-                              <div className="card" style={{ padding: 10 }}>
-                                <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>{tr('分组计费')}</div>
-                                {m.pricingSources.length > 0 ? (
-                                  <div style={{ display: 'grid', gap: 8 }}>
-                                    {m.pricingSources.map((source) => (
-                                      <div
-                                        key={`${source.siteId}-${source.accountId}`}
-                                        style={{ border: '1px solid var(--color-border-light)', borderRadius: 8, padding: 8 }}
-                                      >
-                                        <div style={{ fontSize: 12, marginBottom: 6 }}>
-                                          <SiteBadgeLink siteId={source.siteId} siteName={source.siteName} badgeStyle={{ fontSize: 11 }} /> · {source.username || `ID:${source.accountId}`}
-                                        </div>
-                                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                                          {Object.entries(source.groupPricing).map(([group, pricing]) => (
-                                            <span key={group} className="badge badge-info">
-                                              {group}: {renderGroupPricingValue(pricing)}
-                                            </span>
-                                          ))}
-                                        </div>
-                                      </div>
-                                    ))}
-                                  </div>
-                                ) : (
-                                  <span className="badge badge-muted">{metadataHydrating ? tr('正在加载价格元数据...') : tr('暂无价格元数据')}</span>
-                                )}
-                              </div>
-                            </div>
-
-                            <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
-                              <thead><tr style={{ color: 'var(--color-text-muted)' }}>
-                                <th style={{ textAlign: 'left', padding: '6px 8px', fontWeight: 500 }}>{tr('站点')}</th>
-                                <th style={{ textAlign: 'left', padding: '6px 8px', fontWeight: 500 }}>{tr('账号')}</th>
-                                <th style={{ textAlign: 'left', padding: '6px 8px', fontWeight: 500 }}>{tr('令牌')}</th>
-                                <th style={{ textAlign: 'left', padding: '6px 8px', fontWeight: 500 }}>{tr('延迟')}</th>
-                                <th style={{ textAlign: 'left', padding: '6px 8px', fontWeight: 500 }}>{tr('余额')}</th>
-                              </tr></thead>
-                              <tbody>
-                                {m.accounts.map(a => (
-                                  <tr key={a.id} style={{ borderTop: '1px solid var(--color-border-light)' }}>
-                                    <td style={{ padding: 8 }}><SiteBadgeLink siteId={siteIdByName.get(a.site)} siteName={a.site} badgeClassName="badge badge-info" badgeStyle={{ fontSize: 11 }} /></td>
-                                    <td style={{ padding: 8 }}>{a.username || `ID:${a.id}`}</td>
-                                    <td style={{ padding: 8, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                                      {a.tokens.length > 0 ? a.tokens.map(t => (
-                                        <span key={t.id} className={`badge ${t.isDefault ? 'badge-success' : 'badge-info'}`}>{t.name}</span>
-                                      )) : '—'}
-                                    </td>
-                                    <td style={{ padding: 8, color: a.latency != null ? getMetricColor(a.latency) : 'var(--color-text-muted)' }}>
-                                      {a.latency != null ? `${a.latency}ms` : '—'}
-                                    </td>
-                                    <td style={{ padding: 8 }}>${(a.balance || 0).toFixed(2)}</td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                            </div>
-                          </div>
-                        </div>
-                      </td>
-                    </tr>
-                    ) : null}
-                  </React.Fragment>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        {/* Pagination */}
-        {filteredModels.length > 0 && (
-          <div className="pagination">
-            <button className="pagination-btn" disabled={safePageVal <= 1} onClick={() => setPage(p => p - 1)}>
-              <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
-            </button>
-            {Array.from({ length: Math.min(totalPages, 7) }, (_, i) => {
-              let pageNum: number;
-              if (totalPages <= 7) {
-                pageNum = i + 1;
-              } else if (safePageVal <= 4) {
-                pageNum = i + 1;
-              } else if (safePageVal >= totalPages - 3) {
-                pageNum = totalPages - 6 + i;
-              } else {
-                pageNum = safePageVal - 3 + i;
-              }
-              return (
-                <button key={pageNum} className={`pagination-btn ${safePageVal === pageNum ? 'active' : ''}`} onClick={() => setPage(pageNum)}>
-                  {pageNum}
-                </button>
-              );
-            })}
-            <button className="pagination-btn" disabled={safePageVal >= totalPages} onClick={() => setPage(p => p + 1)}>
-              <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
-            </button>
-            <div className="pagination-size">
-              {tr('每页条数')}:
-              <div style={{ minWidth: 86 }}>
-                <ModernSelect
-                  size="sm"
-                  value={String(pageSize)}
-                  onChange={(nextValue) => setPageSize(Number(nextValue))}
-                  options={PAGE_SIZES.map((s) => ({ value: String(s), label: String(s) }))}
-                  placeholder={String(pageSize)}
-                />
-              </div>
-            </div>
-          </div>
-        )}
+          )}
+          mobile={isMobile}
+        />
       </div>
     </div>
   );

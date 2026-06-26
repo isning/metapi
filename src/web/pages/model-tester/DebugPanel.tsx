@@ -1,6 +1,10 @@
 import React from 'react';
 import { DEBUG_TABS, type DebugTab } from '../helpers/modelTesterSession.js';
+import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card/index.js';
+import { ScrollArea } from '../../components/ui/scroll-area/index.js';
+import { Tabs, TabsList, TabsTrigger } from '../../components/ui/tabs/index.js';
 
+import { tr } from '../../i18n.js';
 type DebugTimelineEntry = {
   at: string;
   level: 'info' | 'warn' | 'error';
@@ -36,101 +40,42 @@ export default function DebugPanel({
   }
 
   return (
-    <div
-      className={`card panel-presence ${presence.isVisible ? '' : 'is-closing'}`.trim()}
-      style={{
-        padding: 14,
-        minHeight: isMobile ? 'auto' : 680,
-        maxHeight: isMobile ? 'none' : 740,
-        display: 'flex',
-        flexDirection: 'column',
-        order: isMobile ? 3 : 0,
-      }}
+    <Card
+      className={`panel-presence flex flex-col p-3 ${presence.isVisible ? '' : 'is-closing'} ${isMobile ? 'order-3' : 'max-h-[740px] min-h-[680px]'}`.trim()}
     >
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-        <h3 style={{ margin: 0, fontSize: 15 }}>调试</h3>
-        <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
+      <CardHeader className="flex-row items-center justify-between gap-3 p-0 pb-2 space-y-0">
+        <CardTitle>{tr('pages.modelTester.debugPanel.debug')}</CardTitle>
+        <div className="text-xs text-muted-foreground">
           {debugTimestamp ? new Date(debugTimestamp).toLocaleString() : '--'}
         </div>
-      </div>
+      </CardHeader>
 
-      <div style={{ display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
-        <button
-          className="btn btn-ghost"
-          style={{
-            border: activeDebugTab === DEBUG_TABS.PREVIEW ? '1px solid var(--color-primary)' : '1px solid var(--color-border)',
-            color: activeDebugTab === DEBUG_TABS.PREVIEW ? 'var(--color-primary)' : 'var(--color-text-secondary)',
-          }}
-          onClick={() => onTabChange(DEBUG_TABS.PREVIEW)}
-        >
-          预览
-        </button>
-        <button
-          className="btn btn-ghost"
-          style={{
-            border: activeDebugTab === DEBUG_TABS.REQUEST ? '1px solid var(--color-primary)' : '1px solid var(--color-border)',
-            color: activeDebugTab === DEBUG_TABS.REQUEST ? 'var(--color-primary)' : 'var(--color-text-secondary)',
-          }}
-          onClick={() => onTabChange(DEBUG_TABS.REQUEST)}
-        >
-          请求
-        </button>
-        <button
-          className="btn btn-ghost"
-          style={{
-            border: activeDebugTab === DEBUG_TABS.RESPONSE ? '1px solid var(--color-primary)' : '1px solid var(--color-border)',
-            color: activeDebugTab === DEBUG_TABS.RESPONSE ? 'var(--color-primary)' : 'var(--color-text-secondary)',
-          }}
-          onClick={() => onTabChange(DEBUG_TABS.RESPONSE)}
-        >
-          响应
-        </button>
-      </div>
+      <Tabs value={activeDebugTab} onValueChange={(value) => onTabChange(value as DebugTab)} className="mb-2">
+        <TabsList>
+          <TabsTrigger value={DEBUG_TABS.PREVIEW}>{tr('pages.modelTester.debugPanel.preview')}</TabsTrigger>
+          <TabsTrigger value={DEBUG_TABS.REQUEST}>{tr('pages.downstreamKeys.request')}</TabsTrigger>
+          <TabsTrigger value={DEBUG_TABS.RESPONSE}>{tr('pages.modelTester.debugPanel.response')}</TabsTrigger>
+        </TabsList>
+      </Tabs>
 
-      <div style={{ flex: 1, overflow: 'hidden', border: '1px solid var(--color-border-light)', borderRadius: 'var(--radius-sm)', background: 'var(--color-bg)' }}>
-        <pre style={{
-          margin: 0,
-          padding: 12,
-          fontSize: 12,
-          lineHeight: 1.55,
-          fontFamily: 'var(--font-mono)',
-          whiteSpace: 'pre-wrap',
-          wordBreak: 'break-word',
-          overflow: 'auto',
-          maxHeight: '100%',
-        }}>
-          {debugTabContent || '// 暂无数据'}
+      <ScrollArea className="min-h-0 flex-1 rounded-md border">
+        <pre className="m-0 whitespace-pre-wrap break-words p-3 font-mono text-xs leading-relaxed">
+          {debugTabContent || tr('pages.modelTester.debugPanel.noDataYet')}
         </pre>
-      </div>
+      </ScrollArea>
 
-      <div style={{ marginTop: 10, fontSize: 12, fontWeight: 600 }}>时间线</div>
-      <div style={{
-        marginTop: 6,
-        border: '1px solid var(--color-border-light)',
-        borderRadius: 'var(--radius-sm)',
-        padding: 8,
-        minHeight: 120,
-        maxHeight: 170,
-        overflowY: 'auto',
-        background: 'var(--color-bg)',
-      }}>
+      <CardTitle className="mt-3 text-xs">{tr('pages.modelTester.debugPanel.time')}</CardTitle>
+      <CardContent className="mt-1.5 min-h-28 max-h-44 overflow-y-auto rounded-md border p-2">
         {debugTimeline.length === 0 ? (
-          <div style={{ color: 'var(--color-text-muted)', fontSize: 12 }}>暂无事件。</div>
+          <div className="text-xs text-muted-foreground">{tr('pages.modelTester.debugPanel.noEventsYet')}</div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div className="grid gap-1.5">
             {debugTimeline.map((item, index) => (
-              <div key={`${item.at}-${index}`} style={{ fontSize: 11, color: 'var(--color-text-secondary)', lineHeight: 1.45 }}>
-                <span style={{
-                  display: 'inline-block',
-                  minWidth: 40,
-                  marginRight: 6,
-                  color: item.level === 'error' ? 'var(--color-danger)' : item.level === 'warn' ? 'var(--color-warning)' : 'var(--color-primary)',
-                  fontWeight: 700,
-                  textTransform: 'uppercase',
-                }}>
+              <div key={`${item.at}-${index}`} className="text-xs leading-relaxed text-muted-foreground">
+                <span className="mr-1.5 inline-block min-w-10 font-semibold uppercase text-foreground">
                   {item.level}
                 </span>
-                <span style={{ color: 'var(--color-text-muted)', marginRight: 6 }}>
+                <span className="mr-1.5 text-muted-foreground">
                   {new Date(item.at).toLocaleTimeString()}
                 </span>
                 <span>{item.text}</span>
@@ -138,7 +83,7 @@ export default function DebugPanel({
             ))}
           </div>
         )}
-      </div>
-    </div>
+      </CardContent>
+    </Card>
   );
 }
