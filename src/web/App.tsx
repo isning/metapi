@@ -653,7 +653,7 @@ function AppShell() {
           <img src="/logo.png" alt="Metapi" className="size-7 rounded-md" />
           <span className="text-[15px] font-bold text-foreground">Metapi</span>
         </div>
-        <nav className="flex items-center gap-1">
+        <nav className="flex items-center gap-1" aria-label={t('app.mainNavigation')}>
           {topNavItems.map((item) => (
             <NavLink
               key={item.to}

@@ -17,7 +17,7 @@ export const coreAdminPages: AdminPageSpec[] = [
 
 export async function expectAdminShell(page: Page): Promise<void> {
   await expect(page).toHaveTitle(/Metapi/i);
-  await expect(page.getByRole('navigation')).toBeVisible();
+  await expect(page.getByRole('navigation', { name: /主导航|Main navigation/i })).toBeVisible();
 }
 
 export async function expectAdminPageLoaded(page: Page, spec: AdminPageSpec): Promise<void> {
