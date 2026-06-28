@@ -89,6 +89,7 @@ export default withMermaid(
           items: [
             { text: '上游接入', link: '/upstream-integration' },
             { text: '上游 Endpoint、模型目录与兼容性', link: '/upstream-endpoint-compatibility' },
+            { text: 'WebSocket Transport', link: '/realtime-websocket-transport' },
             { text: '模型广场与模型测试', link: '/model-intelligence-workspace' },
             { text: '成本目录', link: '/cost-catalog' },
             { text: '高级计价方案', link: '/advanced-pricing' },

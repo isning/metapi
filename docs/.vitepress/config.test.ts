@@ -35,6 +35,19 @@ const getAlias = (aliasConfig: unknown, specifier: string): string | undefined =
 
 const repoRoot = fileURLToPath(new URL('../..', import.meta.url));
 
+const collectSidebarItems = (items: unknown): Array<{ text?: string; link?: string }> => {
+  if (!Array.isArray(items)) return [];
+
+  return items.flatMap((item) => {
+    if (!item || typeof item !== 'object') return [];
+    const entry = item as { text?: string; link?: string; items?: unknown };
+    return [
+      { text: entry.text, link: entry.link },
+      ...collectSidebarItems(entry.items),
+    ];
+  });
+};
+
 const getExpectedEntry = (hoistedRelativePath: string, pnpmPattern: string) => {
   let currentRoot = repoRoot;
 
@@ -102,5 +115,16 @@ describe('docs vitepress config', () => {
       ),
     );
     expect(alias && existsSync(alias)).toBe(true);
+  });
+
+  it('links the websocket transport guide from the operations sidebar', () => {
+    const sidebarItems = collectSidebarItems(config.themeConfig?.sidebar);
+
+    expect(sidebarItems).toContainEqual({
+      text: 'WebSocket Transport',
+      link: '/realtime-websocket-transport',
+    });
+    expect(existsSync(resolve(repoRoot, 'docs/realtime-websocket-transport.md'))).toBe(true);
+    expect(existsSync(resolve(repoRoot, 'docs/adr/0018-websocket-transport-profiles.md'))).toBe(true);
   });
 });

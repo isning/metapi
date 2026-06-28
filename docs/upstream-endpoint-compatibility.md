@@ -6,6 +6,7 @@
 
 - Graph Routing 选择稳定的上游模型供应，也就是 supply endpoint。
 - Endpoint profile 描述一次请求真正要调用的完整 URL。
+- WebSocket transport profile 描述 endpoint profile 的可选实时传输方式。
 - Model catalog source 描述模型列表从哪里来。
 - Credential binding 描述某个账号或 API Key 是否能使用某个 endpoint profile。
 - Runtime observation 记录真实请求或手动测试得到的证据。
@@ -16,8 +17,10 @@
 Site
   -> Model Catalog Source[]
   -> API Endpoint Profile[]
+      -> API Transport Profile[]
   -> Credential / Account / Token
       -> Credential Endpoint Binding[]
+          -> Credential Transport Binding[]
       -> Supply Endpoint
           -> API Attempt Plan
 ```
@@ -27,7 +30,9 @@ Site
 | Site | 上游站点 |
 | Model Catalog Source | 模型目录来源，例如 `GET /models` 或手动维护的模型列表 |
 | API Endpoint Profile | 可执行 API 入口，保存完整请求地址、API 类型、认证和默认能力 |
+| API Transport Profile | endpoint profile 的可选传输配置，例如 Responses WebSocket |
 | Credential Endpoint Binding | 某个账号或 API Key 是否能使用某个 endpoint profile |
+| Credential Transport Binding | 某个账号或 API Key 是否能使用某个 transport profile |
 | Supply Endpoint | Graph Routing 选择的稳定上游模型端点 |
 | API Attempt Plan | 本次请求在选中 supply 后实际尝试的 endpoint profile 顺序 |
 
@@ -65,6 +70,31 @@ Anthropic Messages:
 ```
 
 这样设计可以避免 `/v1/v1`、`/anthropic/v1/v1` 这类路径拼接问题，也允许兼容网关按自己的实际路径配置。
+
+## WebSocket Transport Profile
+
+WebSocket 是 endpoint profile 的可选 transport，不是新的路由节点。它用于 Codex Responses 这类下游以 WebSocket 接入、上游也支持实时传输的场景。
+
+WebSocket transport profile 主要包含：
+
+| 字段 | 说明 |
+|------|------|
+| URL 模式 | 从 HTTP endpoint profile 派生，或使用自定义 WebSocket URL |
+| 请求地址 | 自定义模式下保存完整 `ws://` 或 `wss://` URL |
+| 握手 header | 只用于 WebSocket handshake 的额外 header |
+| 会话策略 | 是否按 conversation 复用连接、空闲 TTL、终态错误是否关闭 |
+| HTTP fallback | WebSocket upgrade 或终态失败时是否回退到 HTTP |
+
+派生 URL 只替换 scheme：
+
+```text
+https://api.example.com/v1/responses
+  -> wss://api.example.com/v1/responses
+```
+
+如果上游 WebSocket 使用不同路径，就使用自定义 URL。运行时不应该重新从站点 URL 拼接 `/responses`。
+
+更多说明见 [WebSocket Transport](./realtime-websocket-transport.md)。
 
 ## Model Catalog Source
 
@@ -200,9 +230,11 @@ https://api.example.com/v1/chat/completions
 推荐 UI 组织方式：
 
 1. 在站点管理中配置 endpoint profile：API 类型、请求地址、认证方式、默认 header、默认能力和关联模型目录。
-2. 在站点管理中配置 model catalog source：发现地址、解析器、刷新策略和最近刷新结果。
-3. 在账号或 API Key 详情里配置 credential endpoint binding：支持状态、启用状态、优先级和 key 级覆盖。
-4. 在模型广场或模型测试中查看实际 API attempt plan：选中的 supply endpoint、候选 endpoint profile、请求地址和观测依据。
+2. 在 endpoint profile 详情中配置 WebSocket transport：派生或自定义 URL、握手 header、会话策略和 HTTP fallback。
+3. 在站点管理中配置 model catalog source：发现地址、解析器、刷新策略和最近刷新结果。
+4. 在账号或 API Key 详情里配置 credential endpoint binding：支持状态、启用状态、优先级和 key 级覆盖。
+5. 在账号或 API Key 的 endpoint 详情里查看或覆盖 credential transport binding。
+6. 在模型广场或模型测试中查看实际 API attempt plan：选中的 supply endpoint、候选 endpoint profile、transport、请求地址和观测依据。
 
 ## 和 Graph Routing 的关系
 
