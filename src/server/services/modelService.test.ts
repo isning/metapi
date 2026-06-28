@@ -544,4 +544,90 @@ describe('rebuildTokenRoutesFromAvailability', () => {
       }),
     ]));
   });
+
+  it('keeps rebuild heap growth bounded when many unrelated route targets exist', async () => {
+    const forceGc = () => (globalThis as { gc?: () => void }).gc?.();
+    const modelCount = 180;
+    const unrelatedTargetCount = 2_000;
+    const strictHeapBudgetBytes = 96 * 1024 * 1024;
+    const ciHeapBudgetBytes = 512 * 1024 * 1024;
+    const compiledGraphBudgetBytes = 64 * 1024 * 1024;
+    const compiledRouterBudgetBytes = 16 * 1024 * 1024;
+
+    const site = await db.insert(schema.sites).values({
+      name: 'memory-pressure-site',
+      url: 'https://memory-pressure.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'memory-pressure-user',
+      accessToken: '',
+      apiToken: 'sk-memory-pressure',
+      status: 'active',
+      extraConfig: JSON.stringify({ credentialMode: 'apikey' }),
+    }).returning().get();
+
+    const unrelatedRoute = await db.insert(schema.tokenRoutes).values({
+      displayName: 'manual-memory-pressure-*',
+      enabled: true,
+    }).returning().get();
+
+    for (let offset = 0; offset < modelCount; offset += 50) {
+      const rows = Array.from({ length: Math.min(50, modelCount - offset) }, (_, index) => ({
+        accountId: account.id,
+        modelName: `memory-pressure-model-${String(offset + index).padStart(4, '0')}`,
+        available: true,
+        latencyMs: 100 + index,
+        checkedAt: '2026-06-28T00:00:00.000Z',
+      }));
+      await db.insert(schema.modelAvailability).values(rows).run();
+    }
+
+    for (let offset = 0; offset < unrelatedTargetCount; offset += 200) {
+      const rows = Array.from({ length: Math.min(200, unrelatedTargetCount - offset) }, (_, index) => ({
+        routeId: unrelatedRoute.id,
+        accountId: account.id,
+        tokenId: null,
+        sourceModel: `unrelated-memory-pressure-${offset + index}`,
+        priority: 0,
+        weight: 10,
+        enabled: true,
+        manualOverride: true,
+      }));
+      await db.insert(schema.routeEndpointTargets).values(rows).run();
+    }
+
+    forceGc();
+    const beforeHeap = process.memoryUsage().heapUsed;
+    const rebuild = await rebuildTokenRoutesFromAvailability();
+    forceGc();
+    const afterHeap = process.memoryUsage().heapUsed;
+    const heapDelta = Math.max(0, afterHeap - beforeHeap);
+    const active = await getActiveRouteGraphVersion();
+    const compiledGraphBytes = active ? Buffer.byteLength(JSON.stringify(active.compiledGraph), 'utf8') : 0;
+    const flatProgramBytes = active?.compiledGraph.flatProgramBundle
+      ? Buffer.byteLength(JSON.stringify(active.compiledGraph.flatProgramBundle), 'utf8')
+      : 0;
+    const compiledRouterBytes = active?.compiledGraph.compiledRouterBundle
+      ? Buffer.byteLength(JSON.stringify(active.compiledGraph.compiledRouterBundle), 'utf8')
+      : 0;
+
+    expect(rebuild.models).toBe(modelCount);
+    expect(heapDelta).toBeLessThan((globalThis as { gc?: () => void }).gc ? strictHeapBudgetBytes : ciHeapBudgetBytes);
+    expect(compiledGraphBytes).toBeGreaterThan(0);
+    expect(compiledGraphBytes).toBeLessThan(compiledGraphBudgetBytes);
+    expect(flatProgramBytes).toBeGreaterThan(0);
+    expect(compiledRouterBytes).toBeGreaterThan(0);
+    expect(compiledRouterBytes).toBeLessThan(compiledRouterBudgetBytes);
+    expect(compiledRouterBytes).toBeLessThan(flatProgramBytes);
+
+    const unrelatedTargetsAfter = await db.select({ id: schema.routeEndpointTargets.id })
+      .from(schema.routeEndpointTargets)
+      .where(eq(schema.routeEndpointTargets.routeId, unrelatedRoute.id))
+      .all();
+    expect(unrelatedTargetsAfter).toHaveLength(unrelatedTargetCount);
+  }, 30_000);
 });

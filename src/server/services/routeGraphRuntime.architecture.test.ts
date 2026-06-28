@@ -6,13 +6,20 @@ function readRuntimeSource(): string {
 }
 
 describe('route graph runtime architecture', () => {
-  it('executes route programs instead of reconstructing the v2 compiled graph', () => {
+  it('executes compiled router bundles without reconstructing the source graph', () => {
     const source = readRuntimeSource();
 
+    expect(source).toContain('evaluateCompiledRouterBundle');
+    expect(source).toContain('compiledRouterBundle');
+    expect(source).toContain('random?: () => number');
+    expect(source).toContain('random: input.random');
     expect(source).toContain('evaluateFlatRouteProgramBundle');
     expect(source).toContain('flatProgramBundle');
     expect(source).toContain("from './selectorEngine.js'");
     expect(source).toContain('selectRuntimeCandidate');
+    expect(source).not.toContain('Math.random');
+    expect(source).not.toContain("from '../db/");
+    expect(source).not.toContain("from '../routes/");
     expect(source).not.toContain("from '@bufbuild/cel'");
     expect(source).not.toContain('evaluateCompiledRouteGraphV2');
     expect(source).not.toContain('findRouteGraphEntryForModel');

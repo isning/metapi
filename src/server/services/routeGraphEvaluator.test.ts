@@ -7,6 +7,7 @@ import {
   applyRouteGraphPostBuildFilters,
   evaluateCompiledRouteGraph,
   hydrateFlatRouteProgramBundle,
+  hydrateCompiledRouterBundle,
   evaluateRouteProgramBundle,
   hydrateRouteProgramBundle,
 } from './routeGraphRuntimeService.js';
@@ -111,9 +112,18 @@ describe('route graph runtime evaluator', () => {
     });
     const compiled = compileRouteGraphSource(source);
     expect(compiled.ok).toBe(true);
+    expect(compiled.compiled.compiledRouterBundle?.diagnostics.map((diagnostic) => diagnostic.code)).not.toContain('compiled_router.unsupported_filter_path');
+    const compiledRouterPlan = compiled.compiled.compiledRouterBundle?.plans.find((plan) => plan.id === 'program:entry.deepseek-max');
+    expect(compiledRouterPlan?.selectorLevels[0]?.filterStageIndexes.map((index) => compiledRouterPlan.filterStages[index]?.nodeId)).toEqual([
+      'filter.strip-max',
+      'filter.thinking',
+    ]);
 
     const selection = evaluateCompiledRouteGraph({
-      graph: compiled.compiled,
+      graph: {
+        ...compiled.compiled,
+        flatProgramBundle: undefined as unknown as typeof compiled.compiled.flatProgramBundle,
+      },
       requestedModel: 'deepseek-v4-pro-max',
     });
 
@@ -336,14 +346,18 @@ describe('route graph runtime evaluator', () => {
     });
     const compiled = compileRouteGraphSource(source);
     expect(compiled.ok).toBe(true);
+    const graphWithoutFlatBundle = {
+      ...compiled.compiled,
+      flatProgramBundle: undefined as unknown as typeof compiled.compiled.flatProgramBundle,
+    };
 
     expect(evaluateCompiledRouteGraph({
-      graph: compiled.compiled,
+      graph: graphWithoutFlatBundle,
       requestedModel: 'a',
       maxHops: 2,
     })).toBe(null);
     expect(evaluateCompiledRouteGraph({
-      graph: compiled.compiled,
+      graph: graphWithoutFlatBundle,
       requestedModel: 'a',
       maxHops: 4,
     })?.terminalKind).toBe('route_endpoint');
@@ -374,16 +388,20 @@ describe('route graph runtime evaluator', () => {
     });
 
     expect(compiled.ok).toBe(true);
-    vi.spyOn(Math, 'random').mockReturnValueOnce(0.01);
+    const graphWithoutFlatBundle = {
+      ...compiled.compiled,
+      flatProgramBundle: undefined as unknown as typeof compiled.compiled.flatProgramBundle,
+    };
     expect(evaluateCompiledRouteGraph({
-      graph: compiled.compiled,
+      graph: graphWithoutFlatBundle,
       requestedModel: 'a',
+      random: () => 0.01,
     })?.selectedRouteId).toBe(1);
 
-    vi.spyOn(Math, 'random').mockReturnValueOnce(0.99);
     expect(evaluateCompiledRouteGraph({
-      graph: compiled.compiled,
+      graph: graphWithoutFlatBundle,
       requestedModel: 'a',
+      random: () => 0.99,
     })?.selectedRouteId).toBe(2);
   });
 
@@ -422,7 +440,7 @@ describe('route graph runtime evaluator', () => {
     })?.selectedRouteId).toBe(2);
   });
 
-  it('hydrates flat selector CEL plans before route graph evaluation', () => {
+  it('hydrates compiled router selector CEL plans only for the matched plan', () => {
     const utils = __selectorEngineTestUtils();
     utils.clearCelPlanCache();
     const compiled = compileRouteGraphSource({
@@ -460,20 +478,56 @@ describe('route graph runtime evaluator', () => {
             },
           },
         },
+        { id: 'entry.unused', type: 'entry', enabled: true, visibility: 'public', ownership: 'manual', match: { requestedModelPattern: 'unused-model' } },
+        {
+          id: 'dispatcher.unused',
+          type: 'dispatcher',
+          enabled: true,
+          visibility: 'internal',
+          ownership: 'manual',
+          mode: 'route',
+          policy: {
+            strategy: 'weighted',
+            score: 'candidate.metadata.quality * 10',
+          },
+        },
+        {
+          id: 'endpoint.unused',
+          type: 'route_endpoint',
+          enabled: true,
+          visibility: 'internal',
+          ownership: 'manual',
+          legacyRouteId: 32,
+          metadata: { quality: 1 },
+          config: {
+            targets: [
+              { targetId: 'unused', model: 'target-unused', metadata: { latency: 1 } },
+            ],
+            targetSelection: {
+              strategy: 'weighted',
+              score: 'candidate.metadata.latency * 2',
+            },
+          },
+        },
       ],
       edges: [
         { id: 'entry-dispatcher', sourceNodeId: 'entry.prehydrated', sourcePortId: 'bidirect.out', targetNodeId: 'dispatcher.prehydrated', targetPortId: 'bidirect.in', kind: 'bidirect_flow', ownership: 'manual' },
         { id: 'endpoint-dispatcher', sourceNodeId: 'endpoint.prehydrated', sourcePortId: 'route.out', targetNodeId: 'dispatcher.prehydrated', targetPortId: 'route.in', kind: 'route_flow', ownership: 'manual' },
+        { id: 'unused-entry-dispatcher', sourceNodeId: 'entry.unused', sourcePortId: 'bidirect.out', targetNodeId: 'dispatcher.unused', targetPortId: 'bidirect.in', kind: 'bidirect_flow', ownership: 'manual' },
+        { id: 'unused-endpoint-dispatcher', sourceNodeId: 'endpoint.unused', sourcePortId: 'route.out', targetNodeId: 'dispatcher.unused', targetPortId: 'route.in', kind: 'route_flow', ownership: 'manual' },
       ],
     });
     expect(compiled.ok).toBe(true);
 
     expect(utils.celPlanCacheSize()).toBe(0);
-    expect(hydrateFlatRouteProgramBundle(compiled.compiled.flatProgramBundle)).toBeTruthy();
-    expect(utils.celPlanCacheSize()).toBe(2);
+    expect(hydrateCompiledRouterBundle(compiled.compiled.compiledRouterBundle!)).toBeTruthy();
+    expect(utils.celPlanCacheSize()).toBe(0);
 
     expect(evaluateCompiledRouteGraph({
-      graph: compiled.compiled,
+      graph: {
+        ...compiled.compiled,
+        flatProgramBundle: undefined as unknown as typeof compiled.compiled.flatProgramBundle,
+      },
       requestedModel: 'prehydrated-model',
     })).toMatchObject({
       selectedRouteId: 31,
@@ -736,10 +790,26 @@ describe('route graph runtime evaluator', () => {
     });
 
     expect(compiled.ok).toBe(true);
-    vi.spyOn(Math, 'random').mockReturnValueOnce(0.5);
+    const graphWithoutFlatBundle = {
+      ...compiled.compiled,
+      flatProgramBundle: undefined as unknown as typeof compiled.compiled.flatProgramBundle,
+    };
     expect(evaluateCompiledRouteGraph({
-      graph: compiled.compiled,
+      graph: graphWithoutFlatBundle,
       requestedModel: 'a',
+      random: () => 0.01,
+    })).toMatchObject({
+      selectedEndpointTarget: {
+        targetId: '10',
+        model: 'a-low',
+      },
+      currentModel: 'a-low',
+      upstreamModel: 'a-low',
+    });
+    expect(evaluateCompiledRouteGraph({
+      graph: graphWithoutFlatBundle,
+      requestedModel: 'a',
+      random: () => 0.5,
     })).toMatchObject({
       selectedEndpointTarget: {
         targetId: '20',
@@ -1162,6 +1232,9 @@ describe('route graph runtime evaluator', () => {
     const firstHydrated = hydrateRouteProgramBundle(compiled.compiled.programBundle);
     const secondHydrated = hydrateRouteProgramBundle(compiled.compiled.programBundle);
     expect(firstHydrated).toBe(secondHydrated);
+    const firstCompiledRouter = hydrateCompiledRouterBundle(compiled.compiled.compiledRouterBundle!);
+    const secondCompiledRouter = hydrateCompiledRouterBundle(compiled.compiled.compiledRouterBundle!);
+    expect(firstCompiledRouter).toBe(secondCompiledRouter);
     expect(evaluateRouteProgramBundle({
       bundle: compiled.compiled.programBundle,
       requestedModel: 'program-model',
@@ -1189,6 +1262,10 @@ describe('route graph runtime evaluator', () => {
         ...compiled.compiled.flatProgramBundle,
         programs: [],
       },
+      compiledRouterBundle: {
+        ...compiled.compiled.compiledRouterBundle!,
+        plans: [],
+      },
     };
     expect(evaluateCompiledRouteGraph({
       graph: graphWithoutUsableProgram,
@@ -1201,7 +1278,10 @@ describe('route graph runtime evaluator', () => {
         flatProgramBundle: undefined as unknown as typeof compiled.compiled.flatProgramBundle,
       },
       requestedModel: 'program-model',
-    })).toBe(null);
+    })).toMatchObject({
+      matchedEntryNodeId: 'entry.program',
+      selectedRouteId: 42,
+    });
 
     expect(hydrateRouteProgramBundle({
       ...compiled.compiled.programBundle,

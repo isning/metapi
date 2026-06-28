@@ -481,7 +481,9 @@ export async function compileModelRouteFlow(model: string): Promise<CompiledRout
   const [graphSelection, staticEntryPricing] = await Promise.all([
     evaluateActiveRouteGraphForModel(requestedModel),
     estimateRouteEntryPricing({
-      bundle: activeGraph.compiledGraph.flatProgramBundle || activeGraph.compiledGraph.programBundle,
+      bundle: activeGraph.compiledGraph.compiledRouterBundle
+        || activeGraph.compiledGraph.flatProgramBundle
+        || activeGraph.compiledGraph.programBundle,
       requestedModel,
     }),
   ]);

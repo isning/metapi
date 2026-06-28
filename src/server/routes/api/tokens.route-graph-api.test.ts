@@ -786,7 +786,8 @@ describe('/api/route-graph lifecycle', () => {
       headers: app.adminHeaders(),
     });
     expect(publish.statusCode, publish.body).toBe(200);
-    expect(publish.json()).toMatchObject({
+    const publishBody = publish.json();
+    expect(publishBody).toMatchObject({
       success: true,
       version: {
         compiledGraph: {
@@ -796,6 +797,12 @@ describe('/api/route-graph lifecycle', () => {
         },
       },
     });
+    const compiledRouterBundle = publishBody.version.compiledGraph.compiledRouterBundle;
+    expect(compiledRouterBundle.diagnostics.map((diagnostic: { code: string }) => diagnostic.code)).not.toContain('compiled_router.unsupported_filter_path');
+    const compiledRouterPlan = compiledRouterBundle.plans.find((plan: { id: string }) => plan.id === 'program:entry.deepseek-max');
+    expect(compiledRouterPlan?.selectorLevels[0]?.filterStageIndexes.map((index: number) => compiledRouterPlan.filterStages[index])).toEqual(expect.arrayContaining([
+      expect.objectContaining({ nodeId: 'filter.deepseek-request' }),
+    ]));
 
     const runtimeSelection = await evaluateActiveRouteGraphForModel('deepseek-v4-pro-max');
     expect(runtimeSelection).toMatchObject({

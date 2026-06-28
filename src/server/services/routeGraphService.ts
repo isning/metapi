@@ -192,6 +192,31 @@ function hasRouteProgramBundle(compiledGraph: CompiledRouteGraph | null | undefi
   return hasFlatProgram;
 }
 
+function hasCompiledRouterBundle(compiledGraph: CompiledRouteGraph | null | undefined): boolean {
+  const candidateGraph = compiledGraph as { compiledRouterBundle?: unknown } | null | undefined;
+  const bundle = candidateGraph?.compiledRouterBundle;
+  if (!bundle || typeof bundle !== 'object' || Array.isArray(bundle)) return false;
+  const candidate = bundle as {
+    version?: unknown;
+    matcher?: unknown;
+    plans?: unknown;
+    diagnostics?: unknown;
+  };
+  if (candidate.version !== 2 || !candidate.matcher || typeof candidate.matcher !== 'object' || !Array.isArray(candidate.plans)) {
+    return false;
+  }
+  if (Array.isArray(candidate.diagnostics) && candidate.diagnostics.some((diagnostic) => (
+    diagnostic
+    && typeof diagnostic === 'object'
+    && !Array.isArray(diagnostic)
+    && (diagnostic as { severity?: unknown }).severity === 'error'
+    && String((diagnostic as { code?: unknown }).code || '').startsWith('compiled_router.')
+  ))) {
+    return false;
+  }
+  return true;
+}
+
 function nowIso(): string {
   return new Date().toISOString();
 }
@@ -260,7 +285,7 @@ function buildCredentialFingerprint(input: {
 }
 
 function buildRouteEndpointIdentityFromTargets(targets: Array<Record<string, unknown>>, fallbackModel = ''): Record<string, unknown> | undefined {
-  const stableTargets = Array.from(
+  const stableTargetEntries = Array.from(
     new Map(targets
       .filter((target) => target && typeof target === 'object')
       .map((target) => {
@@ -268,10 +293,11 @@ function buildRouteEndpointIdentityFromTargets(targets: Array<Record<string, unk
         const normalizedTarget = targetModel || !fallbackModel
           ? target
           : { ...target, model: fallbackModel };
-        return [stableStringify(normalizedTarget), normalizedTarget];
+        return [stableStringify(normalizedTarget), normalizedTarget] as const;
       }))
-      .values(),
-  ).sort((left, right) => stableStringify(left).localeCompare(stableStringify(right)));
+      .entries(),
+  ).sort((left, right) => left[0].localeCompare(right[0]));
+  const stableTargets = stableTargetEntries.map(([, target]) => target);
   if (stableTargets.length === 0) return undefined;
   if (stableTargets.length === 1) {
     return stableTargets[0];
@@ -296,7 +322,8 @@ function buildRouteEndpointIdentityFromTargets(targets: Array<Record<string, unk
       ? credentialFingerprints[0]
       : stableHash({ credentialFingerprints }),
     model: models.length === 1 ? models[0] : 'mixed-models',
-    targets: stableTargets,
+    targetCount: stableTargets.length,
+    targetSetFingerprint: stableHash(stableTargetEntries.map(([fingerprint]) => fingerprint)),
   };
 }
 
@@ -652,7 +679,8 @@ export async function buildRouteGraphSourceFromRouteTable(
     existingLocalRefs.push(localRef);
     endpointLocalRefsByRouteId.set(routeTargetRow.routeId, existingLocalRefs);
     const existingIdentities = endpointStableTargetsByRouteId.get(routeTargetRow.routeId) || [];
-    endpointStableTargetsByRouteId.set(routeTargetRow.routeId, [...existingIdentities, stableEndpointIdentity]);
+    existingIdentities.push(stableEndpointIdentity);
+    endpointStableTargetsByRouteId.set(routeTargetRow.routeId, existingIdentities);
     const existingSupplySpecs = supplyEndpointSpecsByRouteId.get(routeTargetRow.routeId) || [];
     existingSupplySpecs.push({
       endpointIdentity: stableEndpointIdentity,
@@ -943,7 +971,7 @@ export async function getActiveRouteGraphVersion(): Promise<ActiveRouteGraphVers
   if (!row) return null;
   const sourceGraph = parseRouteGraphSource(row.sourceGraphJson);
   let compiledGraph = parseJsonObject<CompiledRouteGraph>(row.compiledGraphJson, compileRouteGraphSource(null).compiled);
-  if (!hasRouteProgramBundle(compiledGraph)) {
+  if (!hasRouteProgramBundle(compiledGraph) || !hasCompiledRouterBundle(compiledGraph)) {
     compiledGraph = compileRouteGraphSource(sourceGraph).compiled;
     await db.update(schema.routeGraphVersions).set({
       compiledGraphJson: JSON.stringify(compiledGraph),

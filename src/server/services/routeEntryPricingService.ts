@@ -1,4 +1,8 @@
 import type {
+  CompiledRouterBundle,
+  CompiledRouterPlan,
+  CompiledRouterSelectorGroup,
+  CompiledRouterTerminalCandidate,
   CompiledEndpointTarget,
   RouteFlatDecision,
   RouteFlatProgram,
@@ -353,9 +357,29 @@ function flatProgramMatchesModel(bundle: RouteFlatProgramBundle, requestedModel:
   return (bundle.programs || []).find((program) => program.id === exact.programId && program.enabled !== false) || null;
 }
 
-function isRouteFlatProgramBundle(bundle: RouteProgramBundle | RouteFlatProgramBundle): bundle is RouteFlatProgramBundle {
-  return Array.isArray(bundle.programs)
-    && bundle.programs.some((program) => isRecord(program) && isRecord(program.start));
+function compiledRouterPlanMatchesModel(bundle: CompiledRouterBundle, requestedModel: string): CompiledRouterPlan | null {
+  const exact = bundle.matcher?.exact?.[requestedModel]
+    || bundle.matcher?.normalizedExact?.[requestedModel.toLowerCase()]
+    || (bundle.matcher?.patterns || []).find((pattern) => {
+      if (pattern.patternKind !== 'regex') return matchesTokenRouteModelPattern(requestedModel, pattern.pattern);
+      const parsed = parseTokenRouteRegexPattern(pattern.pattern);
+      if (parsed.error) return false;
+      return matchesTokenRouteModelPattern(requestedModel, pattern.pattern);
+    });
+  if (!exact?.programId) return null;
+  return (bundle.plans || []).find((plan) => plan.id === exact.programId && plan.enabled !== false) || null;
+}
+
+function isCompiledRouterBundle(bundle: RouteProgramBundle | RouteFlatProgramBundle | CompiledRouterBundle): bundle is CompiledRouterBundle {
+  return isRecord(bundle)
+    && bundle.version === 2
+    && Array.isArray((bundle as CompiledRouterBundle).plans);
+}
+
+function isRouteFlatProgramBundle(bundle: RouteProgramBundle | RouteFlatProgramBundle | CompiledRouterBundle): bundle is RouteFlatProgramBundle {
+  return isRecord(bundle)
+    && Array.isArray((bundle as { programs?: unknown }).programs)
+    && ((bundle as { programs: unknown[] }).programs).some((program) => isRecord(program) && isRecord(program.start));
 }
 
 function runtimeCandidateFromProbabilityCandidate<T extends ProbabilityCandidate>(
@@ -568,11 +592,106 @@ function collectFlatProgramTargets(input: {
   return { targets, strategies, incomplete };
 }
 
+function probabilityForCompiledRouterGroups(
+  policy: Record<string, unknown> | null | undefined,
+  groups: CompiledRouterSelectorGroup[],
+): Array<{ group: CompiledRouterSelectorGroup; probability: number | null; strategy: string; incomplete: boolean }> {
+  return probabilityForCandidates(policy, groups, 'route')
+    .map((item) => ({
+      group: item.candidate,
+      probability: item.probability,
+      strategy: item.strategy,
+      incomplete: item.incomplete,
+    }));
+}
+
+function resolveCompiledRouterTerminalTargets(
+  plan: CompiledRouterPlan,
+  candidate: CompiledRouterTerminalCandidate,
+): CompiledEndpointTarget[] {
+  if (candidate.terminal.kind !== 'supply') return [];
+  const terminal = candidate.terminal;
+  const targets = Array.isArray(plan.targets) ? plan.targets : [];
+  return (Array.isArray(terminal.targetIndexes) ? terminal.targetIndexes : [])
+    .map((index) => targets[index])
+    .filter((target): target is NonNullable<typeof target> => !!target)
+    .map((target) => ({
+      ...target,
+      endpointId: asTrimmedString(target.endpointId) || terminal.endpointId,
+      nodeId: asTrimmedString(target.nodeId) || terminal.nodeId,
+      routeId: target.routeId ?? terminal.routeId,
+      enabled: target.enabled !== false,
+      modelSource: target.modelSource === 'request' ? 'request' : 'fixed',
+      sourceRef: isRecord(target.sourceRef) ? target.sourceRef : terminal.sourceRef,
+    } as CompiledEndpointTarget));
+}
+
+function collectCompiledRouterPlanTargets(input: {
+  plan: CompiledRouterPlan;
+  requestedModel: string;
+}): { targets: WeightedTarget[]; strategies: Set<string>; incomplete: boolean } {
+  const targets: WeightedTarget[] = [];
+  const strategies = new Set<string>();
+  let incomplete = false;
+  const groupProbabilityByPath = new Map<string, number | null>();
+
+  for (const level of input.plan.selectorLevels || []) {
+    const weighted = probabilityForCompiledRouterGroups(level.policy, level.groups || []);
+    for (const item of weighted) {
+      strategies.add(item.strategy);
+      if (item.incomplete || item.probability == null) incomplete = true;
+      groupProbabilityByPath.set(`${level.selectorId}:${item.group.groupId}`, item.probability);
+    }
+  }
+
+  for (const candidate of input.plan.candidates || []) {
+    if (candidate.enabled === false) continue;
+    if (candidate.terminal.kind === 'synthetic') {
+      incomplete = true;
+      continue;
+    }
+    let routeProbability: number | null = 1;
+    for (const pathItem of candidate.selectorPath || []) {
+      const probability = groupProbabilityByPath.get(`${pathItem.selectorId}:${pathItem.groupId}`);
+      if (probability == null) {
+        routeProbability = null;
+        incomplete = true;
+        break;
+      }
+      routeProbability = (routeProbability ?? 1) * probability;
+    }
+
+    const weighted = probabilityForTargets(candidate.terminal.targetSelectionPolicy, resolveCompiledRouterTerminalTargets(input.plan, candidate));
+    for (const item of weighted) {
+      strategies.add(item.strategy);
+      if (item.incomplete || item.probability == null) incomplete = true;
+      targets.push({
+        target: item.target,
+        probability: routeProbability == null || item.probability == null ? null : routeProbability * item.probability,
+        fallbackProbability: routeProbability != null && item.probability == null && item.fallbackProbability != null
+          ? routeProbability * item.fallbackProbability
+          : null,
+        weight: item.weight,
+        priority: item.priority,
+        strategy: item.strategy,
+        incomplete: item.incomplete,
+      });
+    }
+  }
+
+  return { targets, strategies, incomplete };
+}
+
 export async function estimateRouteEntryPricing(input: {
-  bundle: RouteProgramBundle | RouteFlatProgramBundle;
+  bundle: RouteProgramBundle | RouteFlatProgramBundle | CompiledRouterBundle;
   requestedModel: string;
 }): Promise<EntryPricingEstimate | null> {
-  const collected = isRouteFlatProgramBundle(input.bundle)
+  const collected = isCompiledRouterBundle(input.bundle)
+    ? (() => {
+      const plan = compiledRouterPlanMatchesModel(input.bundle, input.requestedModel);
+      return plan ? collectCompiledRouterPlanTargets({ plan, requestedModel: input.requestedModel }) : null;
+    })()
+    : isRouteFlatProgramBundle(input.bundle)
     ? (() => {
       const program = flatProgramMatchesModel(input.bundle, input.requestedModel);
       return program ? collectFlatProgramTargets({ program, requestedModel: input.requestedModel }) : null;

@@ -385,6 +385,54 @@ describe('routeGraph port-native source', () => {
     ]);
   });
 
+  it('keeps compiled route program metadata compact', () => {
+    const source = buildRouteGraphSourceFromLegacyRoutes([
+      ...Array.from({ length: 24 }, (_, index) => ({
+        id: index + 1,
+        enabled: true,
+        displayName: `compact-model-${index}`,
+        match: { kind: 'model' as const, requestedModelPattern: `compact-model-${index}`, displayName: null, routeId: index + 1 },
+        backend: { kind: 'supply' as const },
+        ownership: 'auto_generated' as const,
+        targets: Array.from({ length: 12 }, (__, targetIndex) => ({
+          targetId: `${index}-${targetIndex}`,
+          model: `compact-model-${index}`,
+          accountId: targetIndex + 1,
+          tokenId: targetIndex + 100,
+          weight: 10,
+        })),
+      })),
+    ]);
+
+    const compiled = compileRouteGraphSource(source);
+
+    expect(compiled.ok).toBe(true);
+    expect(compiled.compiled.hash).toMatch(/^[a-f0-9]{16}$/);
+    expect(compiled.compiled.programBundle.hash).toMatch(/^[a-f0-9]{16}$/);
+    expect(compiled.compiled.flatProgramBundle.hash).toMatch(/^[a-f0-9]{16}$/);
+    expect(compiled.compiled.compiledRouterBundle?.hash).toMatch(/^[a-f0-9]{16}$/);
+    expect(compiled.compiled.programBundle.debug.sourceRefs).toEqual({});
+    expect(compiled.compiled.flatProgramBundle.endpointCatalog).toEqual({ byId: {}, productToProgram: {}, supplyTargets: {} });
+    expect(compiled.compiled.compiledRouterBundle?.plans).toHaveLength(24);
+    expect(JSON.stringify(compiled.compiled.compiledRouterBundle)).not.toContain('"next"');
+    const flatProgramBytes = Buffer.byteLength(JSON.stringify(compiled.compiled.flatProgramBundle), 'utf8');
+    const compiledRouterBytes = Buffer.byteLength(JSON.stringify(compiled.compiled.compiledRouterBundle), 'utf8');
+    expect(compiledRouterBytes).toBeLessThan(flatProgramBytes);
+    const firstCompiledRouterPlan = compiled.compiled.compiledRouterBundle?.plans[0];
+    expect(firstCompiledRouterPlan?.targets.length).toBeGreaterThan(0);
+    expect(firstCompiledRouterPlan?.targets[0]).not.toHaveProperty('endpointId');
+    expect(firstCompiledRouterPlan?.targets[0]).not.toHaveProperty('nodeId');
+    expect(firstCompiledRouterPlan?.targets[0]).not.toHaveProperty('sourceRef');
+    expect(firstCompiledRouterPlan?.candidates[0]?.terminal).toMatchObject({
+      kind: 'supply',
+      targetIndexes: expect.any(Array),
+    });
+    expect(firstCompiledRouterPlan?.candidates[0]?.terminal).not.toHaveProperty('targets');
+    expect(firstCompiledRouterPlan?.candidates[0]).toHaveProperty('filterStageIndexes');
+    expect(firstCompiledRouterPlan?.candidates[0]).not.toHaveProperty('filterStages');
+    expect(Buffer.byteLength(JSON.stringify(compiled.compiled), 'utf8')).toBeLessThan(2 * 1024 * 1024);
+  });
+
   it('exposes clear default labels for candidate selector macro ports', () => {
     const macro = normalizeRouteGraphSource({
       version: 1,

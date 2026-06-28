@@ -545,11 +545,96 @@ export type RouteFlatProgramBundle = {
   diagnostics: RouteProgramDiagnostic[];
 };
 
+export type CompiledRouterSelectorGroup = {
+  groupId: string;
+  terminalCandidateIndexes: number[];
+  kind: 'route' | 'bidirect' | 'target' | string;
+  nodeId?: string;
+  edgeId?: string;
+  endpointId?: string;
+  enabled: boolean;
+  weight: number;
+  priority: number;
+  order: number;
+  metadata?: Record<string, unknown>;
+  sourceRef: RouteProgramSourceRef;
+};
+
+export type CompiledRouterSelectorLevel = {
+  selectorId: string;
+  nodeId: string;
+  mode: 'route' | 'flow' | 'target' | string;
+  policy: DispatcherPolicy;
+  filterStageIndexes: number[];
+  sourceRef: RouteProgramSourceRef;
+  groups: CompiledRouterSelectorGroup[];
+};
+
+export type CompiledRouterTarget = Omit<CompiledEndpointTarget, 'endpointId' | 'nodeId' | 'routeId' | 'enabled' | 'modelSource' | 'sourceRef'> & {
+  endpointId?: string;
+  nodeId?: string;
+  routeId?: number | null;
+  enabled?: boolean;
+  modelSource?: 'fixed' | 'request';
+  sourceRef?: RouteProgramSourceRef;
+};
+
+export type CompiledRouterTerminal =
+  | {
+      kind: 'supply';
+      endpointId: string;
+      nodeId: string;
+      routeId: number | null;
+      routeEndpointId?: string | null;
+      terminalModel?: string;
+      targetSelectionPolicy?: Record<string, unknown>;
+      targetIndexes: number[];
+      compatibilityPolicy?: Record<string, unknown>;
+      sourceRef: RouteProgramSourceRef;
+    }
+  | {
+      kind: 'synthetic';
+      nodeId: string;
+      statusCode: 429 | 503;
+      message: string;
+      sourceRef: RouteProgramSourceRef;
+    };
+
+export type CompiledRouterTerminalCandidate = {
+  candidateId: string;
+  enabled: boolean;
+  selectorPath: Array<{ selectorId: string; groupId: string }>;
+  filterStageIndexes: number[];
+  terminal: CompiledRouterTerminal;
+};
+
+export type CompiledRouterPlan = {
+  id: string;
+  entryNodeId: string;
+  publicModelName: string;
+  enabled: boolean;
+  rootEndpointId?: string | null;
+  sourceRef: RouteProgramSourceRef;
+  filterStages: RouteFlatFilterStage[];
+  targets: CompiledRouterTarget[];
+  selectorLevels: CompiledRouterSelectorLevel[];
+  candidates: CompiledRouterTerminalCandidate[];
+};
+
+export type CompiledRouterBundle = {
+  version: 2;
+  hash: string;
+  matcher: RouteMatcherTable;
+  plans: CompiledRouterPlan[];
+  diagnostics: RouteProgramDiagnostic[];
+};
+
 export type CompiledRouteGraph = {
   version: 1;
   hash: string;
   programBundle: RouteProgramBundle;
   flatProgramBundle: RouteFlatProgramBundle;
+  compiledRouterBundle?: CompiledRouterBundle;
   entries: Array<{
     nodeId: string;
     enabled: boolean;
@@ -604,6 +689,7 @@ export type RouteGraphCompileResult = {
 export const ROUTE_GRAPH_SCHEMA_VERSION: 1;
 export const ROUTE_PROGRAM_BUNDLE_VERSION: 1;
 export const ROUTE_FLAT_PROGRAM_BUNDLE_VERSION: 1;
+export const ROUTE_COMPILED_ROUTER_BUNDLE_VERSION: 2;
 export const ROUTE_GRAPH_MATCH_KIND_MODEL: 'model';
 export const ROUTE_GRAPH_BACKEND_KIND_SUPPLY: 'supply';
 export const ROUTE_GRAPH_BACKEND_KIND_ROUTES: 'routes';

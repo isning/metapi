@@ -563,8 +563,28 @@ describe('routeGraphService ownership guards', () => {
       .where(eq(schema.routeGraphVersions.id, published.version.id))
       .get();
     expect(JSON.parse(stored?.compiledGraphJson || '{}').programBundle).toMatchObject({ version: 1 });
+    expect(JSON.parse(stored?.compiledGraphJson || '{}').compiledRouterBundle).toMatchObject({ version: 2 });
 
-    const corruptedCompiled = JSON.parse(stored?.compiledGraphJson || '{}');
+    const compiledWithoutRouter = JSON.parse(stored?.compiledGraphJson || '{}');
+    delete compiledWithoutRouter.compiledRouterBundle;
+    await db.update(schema.routeGraphVersions).set({
+      compiledGraphJson: JSON.stringify(compiledWithoutRouter),
+    }).where(eq(schema.routeGraphVersions.id, published.version.id)).run();
+
+    const routerRepaired = await getActiveRouteGraphVersion();
+    expect(routerRepaired?.compiledGraph.compiledRouterBundle).toMatchObject({
+      version: 2,
+      matcher: {
+        exact: {
+          'cached-model': expect.objectContaining({ programId: 'program:entry.cached' }),
+        },
+      },
+    });
+
+    const routerRepairedStored = await db.select().from(schema.routeGraphVersions)
+      .where(eq(schema.routeGraphVersions.id, published.version.id))
+      .get();
+    const corruptedCompiled = JSON.parse(routerRepairedStored?.compiledGraphJson || '{}');
     corruptedCompiled.programBundle = {
       ...corruptedCompiled.programBundle,
       diagnostics: [{

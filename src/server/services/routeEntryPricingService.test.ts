@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { compileRouteGraphSource } from '../../shared/routeGraph.js';
 import type { RouteProgramBundle } from '../../shared/routeGraph.js';
 
 const quoteEndpointPricingMock = vi.hoisted(() => vi.fn());
@@ -260,6 +261,56 @@ describe('routeEntryPricingService', () => {
       outputMultiplier: null,
       totalMultiplier: null,
       reference: null,
+      sourceCount: 2,
+      strategy: 'weighted',
+      estimateLevel: 'exact',
+    });
+    expect(estimate?.candidates.map((candidate) => ({
+      modelName: candidate.modelName,
+      probability: candidate.probability,
+    }))).toEqual([
+      { modelName: 'upstream-a', probability: 0.25 },
+      { modelName: 'upstream-b', probability: 0.75 },
+    ]);
+  });
+
+  it('calculates theoretical entry pricing from a compiled router bundle without legacy program bundles', async () => {
+    mockEndpointQuotes();
+    const compiled = compileRouteGraphSource({
+      version: 1,
+      nodes: [
+        { id: 'entry.public', type: 'entry', enabled: true, visibility: 'public', ownership: 'manual', match: { requestedModelPattern: 'public-model' } },
+        {
+          id: 'endpoint.public',
+          type: 'route_endpoint',
+          enabled: true,
+          visibility: 'internal',
+          ownership: 'manual',
+          config: {
+            targets: [
+              { targetId: '101', model: 'upstream-a', enabled: true, siteId: 1, accountId: 11, tokenId: 111, weight: 1 },
+              { targetId: '102', model: 'upstream-b', enabled: true, siteId: 2, accountId: 22, tokenId: 222, weight: 3 },
+            ],
+            targetSelection: { strategy: 'weighted' },
+          },
+        },
+      ],
+      edges: [
+        { id: 'entry-endpoint', sourceNodeId: 'entry.public', sourcePortId: 'bidirect.out', targetNodeId: 'endpoint.public', targetPortId: 'bidirect.in', kind: 'bidirect_flow', ownership: 'manual' },
+      ],
+    });
+    expect(compiled.ok).toBe(true);
+
+    const { estimateRouteEntryPricing } = await import('./routeEntryPricingService.js');
+    const estimate = await estimateRouteEntryPricing({
+      bundle: compiled.compiled.compiledRouterBundle!,
+      requestedModel: 'public-model',
+    });
+
+    expect(estimate).toMatchObject({
+      inputPerMillion: 8,
+      outputPerMillion: 16,
+      totalCostUsd: 12,
       sourceCount: 2,
       strategy: 'weighted',
       estimateLevel: 'exact',
