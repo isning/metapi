@@ -919,26 +919,24 @@ describe('routeGraphService ownership guards', () => {
     });
     const secondRouteId = Number(secondRoute.lastInsertRowid || secondRoute.insertId);
     const { accountId, tokenId } = await seedAccountToken('stable-supply');
-    await db.insert(schema.routeEndpointTargets).values([
-      {
-        routeId: firstRouteId,
-        accountId,
-        tokenId,
-        sourceModel: 'gpt-stable-supply',
-        priority: 0,
-        weight: 10,
-        enabled: true,
-      },
-      {
-        routeId: secondRouteId,
-        accountId,
-        tokenId,
-        sourceModel: 'gpt-stable-supply',
-        priority: 1,
-        weight: 10,
-        enabled: true,
-      },
-    ]);
+    await db.insert(schema.routeEndpointTargets).values({
+      routeId: firstRouteId,
+      accountId,
+      tokenId,
+      sourceModel: 'gpt-stable-supply',
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    });
+    await db.insert(schema.routeEndpointTargets).values({
+      routeId: secondRouteId,
+      accountId,
+      tokenId,
+      sourceModel: 'gpt-stable-supply',
+      priority: 1,
+      weight: 10,
+      enabled: true,
+    });
 
     const graph = await buildRouteGraphSourceFromRouteTable();
     const stableSupplyEndpoints = graph.nodes.filter((node) => (
@@ -972,6 +970,77 @@ describe('routeGraphService ownership guards', () => {
     const compiled = compileRouteGraphSource(graph);
     expect(compiled.diagnostics.filter((diagnostic) => diagnostic.code === 'node.duplicate_id')).toEqual([]);
     expect(compiled.ok).toBe(true);
+  });
+
+  it('repairs active graphs that persisted compacted endpoint identities without target details', async () => {
+    const route = await db.insert(schema.tokenRoutes).values({
+      displayName: 'gpt-repair-compacted-identity',
+      routingStrategy: 'weighted',
+      enabled: true,
+    });
+    const routeId = Number(route.lastInsertRowid || route.insertId);
+    const { accountId, tokenId } = await seedAccountToken('repair-compacted');
+    await db.insert(schema.routeEndpointTargets).values({
+      routeId,
+      accountId,
+      tokenId,
+      sourceModel: 'gpt-repair-compacted-identity',
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    });
+
+    const active = await ensureActiveRouteGraphVersion();
+    const badSourceGraph = {
+      ...active.sourceGraph,
+      nodes: active.sourceGraph.nodes.map((node) => {
+        if (
+          node.type !== 'route_endpoint'
+          || node.endpointKind !== 'supply'
+          || node.routeId !== routeId
+          || !node.metadata
+          || typeof node.metadata !== 'object'
+          || Array.isArray(node.metadata)
+        ) {
+          return node;
+        }
+        const metadata = node.metadata as Record<string, unknown>;
+        const endpointIdentity = metadata.endpointIdentity && typeof metadata.endpointIdentity === 'object' && !Array.isArray(metadata.endpointIdentity)
+          ? metadata.endpointIdentity as Record<string, unknown>
+          : {};
+        const identityWithoutTargets = { ...endpointIdentity };
+        delete identityWithoutTargets.targets;
+        return {
+          ...node,
+          metadata: {
+            ...metadata,
+            endpointIdentity: {
+              ...identityWithoutTargets,
+              targetCount: 1,
+              targetSetFingerprint: 'bad-persisted-fingerprint',
+            },
+          },
+        };
+      }),
+    };
+    const badCompiled = compileRouteGraphSource(badSourceGraph);
+    await db.update(schema.routeGraphVersions).set({
+      sourceGraphJson: JSON.stringify(badSourceGraph),
+      compiledGraphJson: JSON.stringify(badCompiled.compiled),
+    }).where(eq(schema.routeGraphVersions.id, active.id)).run();
+
+    const repaired = await ensureActiveRouteGraphVersion();
+    const repairedSupply = repaired.sourceGraph.nodes.find((node) => (
+      node.type === 'route_endpoint'
+      && node.endpointKind === 'supply'
+      && node.routeId === routeId
+    ));
+
+    expect(repairedSupply?.metadata).toMatchObject({
+      endpointIdentity: expect.not.objectContaining({
+        targetSetFingerprint: expect.anything(),
+      }),
+    });
   });
 
   it('keeps inferred automatic route supply endpoints model-specific when sourceModel is missing', async () => {

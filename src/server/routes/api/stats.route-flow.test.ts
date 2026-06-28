@@ -1,4 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { eq } from 'drizzle-orm';
+import { compileRouteGraphSource } from '../../../shared/routeGraph.js';
 import {
   bootIsolatedRuntimeDb,
   type IsolatedRuntimeDbHandle,
@@ -13,6 +15,7 @@ describe('/api/models/route-flow', () => {
   let db: DbModule['db'];
   let schema: DbModule['schema'];
   let publishRouteGraphSource: RouteGraphServiceModule['publishRouteGraphSource'] | null = null;
+  let ensureActiveRouteGraphVersion: RouteGraphServiceModule['ensureActiveRouteGraphVersion'] | null = null;
   let runtimeDb: IsolatedRuntimeDbHandle | null = null;
 
   beforeAll(async () => {
@@ -23,6 +26,7 @@ describe('/api/models/route-flow', () => {
     db = dbModule.db;
     schema = dbModule.schema;
     publishRouteGraphSource = routeGraphServiceModule.publishRouteGraphSource;
+    ensureActiveRouteGraphVersion = routeGraphServiceModule.ensureActiveRouteGraphVersion;
 
     app = await createTestApp({
       routes: [routesModule.statsRoutes],
@@ -46,6 +50,47 @@ describe('/api/models/route-flow', () => {
     await app?.close();
     await runtimeDb?.cleanup();
   });
+
+  async function persistCompactedActiveRouteEndpointIdentity(routeId: number): Promise<void> {
+    const active = await ensureActiveRouteGraphVersion!();
+    const badSourceGraph = {
+      ...active.sourceGraph,
+      nodes: active.sourceGraph.nodes.map((node) => {
+        if (
+          node.type !== 'route_endpoint'
+          || node.endpointKind !== 'supply'
+          || node.routeId !== routeId
+          || !node.metadata
+          || typeof node.metadata !== 'object'
+          || Array.isArray(node.metadata)
+        ) {
+          return node;
+        }
+        const metadata = node.metadata as Record<string, unknown>;
+        const endpointIdentity = metadata.endpointIdentity && typeof metadata.endpointIdentity === 'object' && !Array.isArray(metadata.endpointIdentity)
+          ? metadata.endpointIdentity as Record<string, unknown>
+          : {};
+        const compactedIdentity = { ...endpointIdentity };
+        delete compactedIdentity.targets;
+        return {
+          ...node,
+          metadata: {
+            ...metadata,
+            endpointIdentity: {
+              ...compactedIdentity,
+              targetCount: 1,
+              targetSetFingerprint: 'bad-persisted-fingerprint',
+            },
+          },
+        };
+      }),
+    };
+    const badCompiled = compileRouteGraphSource(badSourceGraph);
+    await db.update(schema.routeGraphVersions).set({
+      sourceGraphJson: JSON.stringify(badSourceGraph),
+      compiledGraphJson: JSON.stringify(badCompiled.compiled),
+    }).where(eq(schema.routeGraphVersions.id, active.id)).run();
+  }
 
   it('uses graph-native route program while preserving supply endpoint metrics', async () => {
     const site = await db.insert(schema.sites).values({
@@ -376,6 +421,99 @@ describe('/api/models/route-flow', () => {
     const expensiveEdge = body.flow.edges.find((edge) => edge.source === expensiveNode?.id);
     expect(cheapEdge?.label).toBe('50%');
     expect(expensiveEdge?.label).toBe('50%');
+  });
+
+  it('repairs compacted persisted route endpoint identities before rendering route-flow metrics', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'compacted-flow-site',
+      url: 'https://compacted-flow.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'compacted-flow-user',
+      apiToken: 'sk-compacted-flow',
+      accessToken: 'access-compacted-flow',
+      status: 'active',
+    }).returning().get();
+    const token = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'compacted-flow-token',
+      token: 'sk-compacted-flow-token',
+      valueStatus: 'ready',
+      enabled: true,
+      isDefault: true,
+    }).returning().get();
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'compacted-flow-model',
+      enabled: true,
+      routingStrategy: 'weighted',
+    }).returning().get();
+    const target = await db.insert(schema.routeEndpointTargets).values({
+      routeId: route.id,
+      accountId: account.id,
+      tokenId: token.id,
+      sourceModel: 'compacted-flow-model',
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).returning().get();
+    await db.insert(schema.proxyLogs).values([
+      {
+        routeId: route.id,
+        targetId: target.id,
+        accountId: account.id,
+        modelRequested: 'compacted-flow-model',
+        modelActual: 'compacted-flow-model',
+        status: 'success',
+        httpStatus: 200,
+        latencyMs: 160,
+        createdAt: new Date().toISOString(),
+      },
+      {
+        routeId: route.id,
+        targetId: target.id,
+        accountId: account.id,
+        modelRequested: 'compacted-flow-model',
+        modelActual: 'compacted-flow-model',
+        status: 'failed',
+        httpStatus: 502,
+        errorMessage: 'bad gateway',
+        createdAt: new Date().toISOString(),
+      },
+    ]).run();
+    await persistCompactedActiveRouteEndpointIdentity(route.id);
+
+    const response = await app!.inject({
+      method: 'GET',
+      url: '/api/models/route-flow?model=compacted-flow-model',
+      headers: app!.adminHeaders(),
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as {
+      success: boolean;
+      flow: {
+        nodes: Array<{
+          kind: string;
+          label: string;
+          metrics: Record<string, unknown>;
+        }>;
+      };
+    };
+    const supplyNode = body.flow.nodes.find((node) => (
+      node.kind === 'route_endpoint'
+      && node.label.includes('compacted-flow-user')
+    ));
+
+    expect(body.success).toBe(true);
+    expect(supplyNode?.metrics).toMatchObject({
+      probability: 100,
+      successRate: 50,
+      avgLatencyMs: 160,
+      totalCalls: 2,
+    });
   });
 
   it('renders published graph filters from the compiled runtime route path', async () => {

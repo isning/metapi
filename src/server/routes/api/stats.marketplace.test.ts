@@ -4,6 +4,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { and, eq } from 'drizzle-orm';
+import { compileRouteGraphSource } from '../../../shared/routeGraph.js';
 
 type DbModule = typeof import('../../db/index.js');
 type StatsRoutesModule = typeof import('./stats.js');
@@ -16,6 +17,7 @@ describe('/api/models/marketplace', () => {
   let resetModelsMarketplaceCacheForTests: StatsRoutesModule['__resetModelsMarketplaceCacheForTests'];
   let buildRouteGraphSourceFromRouteTable: RouteGraphServiceModule['buildRouteGraphSourceFromRouteTable'];
   let publishRouteGraphSource: RouteGraphServiceModule['publishRouteGraphSource'];
+  let ensureActiveRouteGraphVersion: RouteGraphServiceModule['ensureActiveRouteGraphVersion'];
   let dataDir = '';
 
   beforeAll(async () => {
@@ -32,6 +34,7 @@ describe('/api/models/marketplace', () => {
     resetModelsMarketplaceCacheForTests = routesModule.__resetModelsMarketplaceCacheForTests;
     buildRouteGraphSourceFromRouteTable = routeGraphServiceModule.buildRouteGraphSourceFromRouteTable;
     publishRouteGraphSource = routeGraphServiceModule.publishRouteGraphSource;
+    ensureActiveRouteGraphVersion = routeGraphServiceModule.ensureActiveRouteGraphVersion;
 
     app = Fastify();
     await app.register(routesModule.statsRoutes);
@@ -58,6 +61,47 @@ describe('/api/models/marketplace', () => {
     await app.close();
     delete process.env.DATA_DIR;
   });
+
+  async function persistCompactedActiveRouteEndpointIdentity(routeId: number): Promise<void> {
+    const active = await ensureActiveRouteGraphVersion();
+    const badSourceGraph = {
+      ...active.sourceGraph,
+      nodes: active.sourceGraph.nodes.map((node) => {
+        if (
+          node.type !== 'route_endpoint'
+          || node.endpointKind !== 'supply'
+          || node.routeId !== routeId
+          || !node.metadata
+          || typeof node.metadata !== 'object'
+          || Array.isArray(node.metadata)
+        ) {
+          return node;
+        }
+        const metadata = node.metadata as Record<string, unknown>;
+        const endpointIdentity = metadata.endpointIdentity && typeof metadata.endpointIdentity === 'object' && !Array.isArray(metadata.endpointIdentity)
+          ? metadata.endpointIdentity as Record<string, unknown>
+          : {};
+        const compactedIdentity = { ...endpointIdentity };
+        delete compactedIdentity.targets;
+        return {
+          ...node,
+          metadata: {
+            ...metadata,
+            endpointIdentity: {
+              ...compactedIdentity,
+              targetCount: 1,
+              targetSetFingerprint: 'bad-persisted-fingerprint',
+            },
+          },
+        };
+      }),
+    };
+    const badCompiled = compileRouteGraphSource(badSourceGraph);
+    await db.update(schema.routeGraphVersions).set({
+      sourceGraphJson: JSON.stringify(badSourceGraph),
+      compiledGraphJson: JSON.stringify(badCompiled.compiled),
+    }).where(eq(schema.routeGraphVersions.id, active.id)).run();
+  }
 
   it('returns account-level discovered models even when account has no managed tokens', async () => {
     const site = await db.insert(schema.sites).values({
@@ -478,6 +522,81 @@ describe('/api/models/marketplace', () => {
         site: 'deepseek-site',
         credentialCount: 1,
         tokens: [expect.objectContaining({ id: token.id })],
+      }),
+    ]);
+  });
+
+  it('repairs compacted persisted route endpoint identities before aggregating public route products', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'compacted-market-site',
+      url: 'https://compacted-market.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'compacted-market-user',
+      accessToken: 'compacted-market-access',
+      apiToken: 'compacted-market-api',
+      status: 'active',
+    }).returning().get();
+    const token = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'compacted-market-token',
+      token: 'sk-compacted-market',
+      valueStatus: 'ready',
+      enabled: true,
+      isDefault: true,
+    }).returning().get();
+    const route = await db.insert(schema.tokenRoutes).values({
+      modelPattern: 'compacted-market-model',
+      enabled: true,
+      routingStrategy: 'weighted',
+    }).returning().get();
+    await db.insert(schema.routeEndpointTargets).values({
+      routeId: route.id,
+      accountId: account.id,
+      tokenId: token.id,
+      sourceModel: 'compacted-market-model',
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).run();
+    await persistCompactedActiveRouteEndpointIdentity(route.id);
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/models/marketplace',
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as {
+      models: Array<{
+        name: string;
+        accountCount: number;
+        tokenCount: number;
+        credentialCount: number;
+        accounts: Array<{
+          id: number;
+          site: string;
+          username: string | null;
+          tokens: Array<{ id: number; name: string }>;
+        }>;
+      }>;
+    };
+    const model = body.models.find((item) => item.name === 'compacted-market-model');
+
+    expect(model).toMatchObject({
+      accountCount: 1,
+      tokenCount: 1,
+      credentialCount: 1,
+    });
+    expect(model?.accounts).toEqual([
+      expect.objectContaining({
+        id: account.id,
+        site: 'compacted-market-site',
+        username: 'compacted-market-user',
+        tokens: [expect.objectContaining({ id: token.id, name: 'compacted-market-token' })],
       }),
     ]);
   });

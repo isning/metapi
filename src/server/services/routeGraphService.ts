@@ -217,6 +217,26 @@ function hasCompiledRouterBundle(compiledGraph: CompiledRouteGraph | null | unde
   return true;
 }
 
+function hasCompactedRouteEndpointIdentity(sourceGraph: RouteGraphSource): boolean {
+  return sourceGraph.nodes.some((node) => {
+    if (
+      node.type !== 'route_endpoint'
+      || node.ownership !== 'auto_generated'
+      || !node.metadata
+      || typeof node.metadata !== 'object'
+      || Array.isArray(node.metadata)
+    ) {
+      return false;
+    }
+    const metadata = node.metadata as Record<string, unknown>;
+    const endpointIdentity = metadata.endpointIdentity;
+    if (!endpointIdentity || typeof endpointIdentity !== 'object' || Array.isArray(endpointIdentity)) return false;
+    const identity = endpointIdentity as Record<string, unknown>;
+    return typeof identity.targetSetFingerprint === 'string'
+      && !Array.isArray(identity.targets);
+  });
+}
+
 function nowIso(): string {
   return new Date().toISOString();
 }
@@ -285,7 +305,7 @@ function buildCredentialFingerprint(input: {
 }
 
 function buildRouteEndpointIdentityFromTargets(targets: Array<Record<string, unknown>>, fallbackModel = ''): Record<string, unknown> | undefined {
-  const stableTargetEntries = Array.from(
+  const stableTargets = Array.from(
     new Map(targets
       .filter((target) => target && typeof target === 'object')
       .map((target) => {
@@ -293,11 +313,10 @@ function buildRouteEndpointIdentityFromTargets(targets: Array<Record<string, unk
         const normalizedTarget = targetModel || !fallbackModel
           ? target
           : { ...target, model: fallbackModel };
-        return [stableStringify(normalizedTarget), normalizedTarget] as const;
+        return [stableStringify(normalizedTarget), normalizedTarget];
       }))
-      .entries(),
-  ).sort((left, right) => left[0].localeCompare(right[0]));
-  const stableTargets = stableTargetEntries.map(([, target]) => target);
+      .values(),
+  ).sort((left, right) => stableStringify(left).localeCompare(stableStringify(right)));
   if (stableTargets.length === 0) return undefined;
   if (stableTargets.length === 1) {
     return stableTargets[0];
@@ -322,8 +341,7 @@ function buildRouteEndpointIdentityFromTargets(targets: Array<Record<string, unk
       ? credentialFingerprints[0]
       : stableHash({ credentialFingerprints }),
     model: models.length === 1 ? models[0] : 'mixed-models',
-    targetCount: stableTargets.length,
-    targetSetFingerprint: stableHash(stableTargetEntries.map(([fingerprint]) => fingerprint)),
+    targets: stableTargets,
   };
 }
 
@@ -939,7 +957,12 @@ export async function publishRouteGraphSource(input: {
 
 export async function ensureActiveRouteGraphVersion(): Promise<ActiveRouteGraphVersion> {
   const active = await getActiveRouteGraphVersion();
-  if (active) return active;
+  if (active) {
+    if (hasCompactedRouteEndpointIdentity(active.sourceGraph)) {
+      return await reconcileActiveGraphWithRouteTable(active, new Map(), { allowDiagnostics: true });
+    }
+    return active;
+  }
 
   const sourceGraph = await loadLegacyRouteGraphSource();
   const published = await publishRouteGraphSource({
