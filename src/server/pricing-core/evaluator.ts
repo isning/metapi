@@ -1,6 +1,7 @@
 import { stableSha256 } from './hash.js';
 import { pricingPlanSchema } from './schema.js';
 import { hashCanonicalUsage, normalizeCanonicalUsage } from './usage.js';
+import { evaluatePricingCelExpression, type PricingCelContext } from './cel.js';
 import type {
   CanonicalUsage,
   PricingAllowance,
@@ -14,6 +15,7 @@ import type {
   PricingPrice,
   PricingTier,
   PricingTierDimension,
+  PricingTransform,
   QuantityPriceTier,
   QuantityPricing,
   QuantityStepPrice,
@@ -35,6 +37,9 @@ export interface PricingEvaluationContext {
   batch?: boolean;
   modality?: string;
   region?: string;
+  request?: Record<string, unknown>;
+  response?: Record<string, unknown>;
+  upstreamSupply?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
 }
 
@@ -57,6 +62,12 @@ interface ComponentQuantity {
   missing: boolean;
 }
 
+interface RuntimeFormulaDiagnostic {
+  code: string;
+  message: string;
+  path?: string;
+}
+
 const DEFAULT_SCALE = 1;
 
 export function evaluatePricingPlan(input: EvaluatePricingPlanInput): PricingEvaluation {
@@ -67,11 +78,18 @@ export function evaluatePricingPlan(input: EvaluatePricingPlanInput): PricingEva
   }
 
   const plan = parsed.data as PricingPlan;
-  const usage = normalizeCanonicalUsage(input.usage);
   const planFingerprint = stableSha256(plan);
+  let context = input.context || {};
+  const transformDiagnostics: PricingEvaluationDiagnostic[] = [];
+  const transformed = applyPricingTransforms(plan.transforms || [], normalizeCanonicalUsage(input.usage), context, transformDiagnostics);
+  const usage = transformed.usage;
+  context = {
+    ...context,
+    metadata: transformed.metadata,
+  };
+  diagnostics.push(...transformDiagnostics);
   const usageHash = hashCanonicalUsage(usage);
-  const context = input.context || {};
-  const activeTierIds = selectActiveTierIds(plan.tiers, usage, context);
+  const activeTierIds = selectActiveTierIds(plan.tiers, usage, context, diagnostics);
   const periodState = input.periodState || null;
 
   let estimateLevel: PricingEvaluation['estimateLevel'] = 'exact';
@@ -92,7 +110,7 @@ export function evaluatePricingPlan(input: EvaluatePricingPlanInput): PricingEva
 
   const evaluatedComponents: PricingEvaluation['components'] = [];
   for (const component of components) {
-    if (!componentMatches(component, activeTierIds, usage, context)) continue;
+    if (!componentMatches(component, activeTierIds, usage, context, diagnostics)) continue;
     const quantityInfo = readComponentQuantity(component, usage, diagnostics);
     if (quantityInfo.missing && component.meter.missingQuantity === 'error') {
       estimateLevel = 'incomplete';
@@ -102,7 +120,15 @@ export function evaluatePricingPlan(input: EvaluatePricingPlanInput): PricingEva
     const allowanceApplied = consumeAllowance(component, quantityInfo.quantity, allowanceState);
     const billableQuantity = Math.max(0, quantityInfo.quantity - allowanceApplied);
     const scale = component.meter.scale || DEFAULT_SCALE;
-    const priced = evaluateComponentCost(component, billableQuantity, scale);
+    const priced = evaluateComponentCost(component, billableQuantity, scale, usage, context);
+    if (priced.diagnostic) {
+      estimateLevel = 'incomplete';
+      diagnostics.push({
+        ...priced.diagnostic,
+        severity: 'error',
+      });
+      continue;
+    }
     const signedCost = applyRole(component.role, priced.costUsd);
 
     evaluatedComponents.push({
@@ -142,7 +168,7 @@ export function evaluatePricingPlan(input: EvaluatePricingPlanInput): PricingEva
   }));
   const postProcessors = [
     ...overlayProcessors,
-    ...applyPostProcessors(plan.postProcessors || [], subtotalCostUsd + overlayProcessors.reduce((sum, item) => sum + item.amountUsd, 0), usage, context),
+    ...applyPostProcessors(plan.postProcessors || [], subtotalCostUsd + overlayProcessors.reduce((sum, item) => sum + item.amountUsd, 0), usage, context, diagnostics),
   ];
   const adjustmentCostUsd = postProcessors.reduce((sum, item) => sum + item.amountUsd, 0);
   const totalBeforeRounding = subtotalCostUsd + adjustmentCostUsd;
@@ -199,7 +225,7 @@ function applyOverlays(
 
   const overlays = [...(plan.overlays || [])].sort((a, b) => (a.priority || 0) - (b.priority || 0));
   for (const overlay of overlays) {
-    if (overlay.appliesWhen && !conditionMatches(overlay.appliesWhen, usage, context)) continue;
+    if (overlay.appliesWhen && !conditionMatches(overlay.appliesWhen, usage, context, diagnostics)) continue;
     const operation = overlay.operation;
     if (operation.kind === 'add_component') {
       components.set(operation.component.id, {
@@ -258,10 +284,11 @@ function selectActiveTierIds(
   tiers: PricingTier[],
   usage: CanonicalUsage,
   context: PricingEvaluationContext,
+  diagnostics: PricingEvaluationDiagnostic[],
 ): Set<string> {
   const active = new Set<string>();
   for (const tier of tiers) {
-    if (tier.dimensions.every((dimension) => dimensionMatches(dimension, usage, context))) {
+    if (tier.dimensions.every((dimension) => dimensionMatches(dimension, usage, context, diagnostics))) {
       active.add(tier.id);
     }
   }
@@ -273,9 +300,10 @@ function componentMatches(
   activeTierIds: Set<string>,
   usage: CanonicalUsage,
   context: PricingEvaluationContext,
+  diagnostics: PricingEvaluationDiagnostic[],
 ): boolean {
   if (component.tierRef && !activeTierIds.has(component.tierRef)) return false;
-  if (component.appliesWhen && !conditionMatches(component.appliesWhen, usage, context)) return false;
+  if (component.appliesWhen && !conditionMatches(component.appliesWhen, usage, context, diagnostics)) return false;
   return true;
 }
 
@@ -283,12 +311,24 @@ function conditionMatches(
   condition: PricingCondition,
   usage: CanonicalUsage,
   context: PricingEvaluationContext,
+  diagnostics: PricingEvaluationDiagnostic[],
 ): boolean {
-  if (condition.all && !condition.all.every((item) => conditionMatches(item, usage, context))) return false;
-  if (condition.any && !condition.any.some((item) => conditionMatches(item, usage, context))) return false;
-  if (condition.not && conditionMatches(condition.not, usage, context)) return false;
-  if (condition.predicate && !dimensionMatches(condition.predicate, usage, context)) return false;
-  if (condition.cel) return false;
+  if (condition.all && !condition.all.every((item) => conditionMatches(item, usage, context, diagnostics))) return false;
+  if (condition.any && !condition.any.some((item) => conditionMatches(item, usage, context, diagnostics))) return false;
+  if (condition.not && conditionMatches(condition.not, usage, context, diagnostics)) return false;
+  if (condition.predicate && !dimensionMatches(condition.predicate, usage, context, diagnostics)) return false;
+  if (condition.cel) {
+    const result = evaluatePricingCelExpression(condition.cel, buildPricingCelContext({ usage, context }));
+    if (typeof result !== 'boolean') {
+      diagnostics.push({
+        code: 'pricing_cel_condition_invalid',
+        severity: 'warning',
+        message: 'Pricing CEL condition did not evaluate to a boolean.',
+      });
+      return false;
+    }
+    return result;
+  }
   return true;
 }
 
@@ -296,6 +336,7 @@ function dimensionMatches(
   dimension: PricingTierDimension,
   usage: CanonicalUsage,
   context: PricingEvaluationContext,
+  diagnostics: PricingEvaluationDiagnostic[],
 ): boolean {
   if (dimension.kind === 'context_tokens') {
     return inRange(usage.totalTokens || usage.inputTokens + usage.outputTokens, dimension.min, dimension.max);
@@ -312,6 +353,14 @@ function dimensionMatches(
   if (dimension.kind === 'region') return context.region === dimension.value;
   if (dimension.kind === 'custom') {
     const value = context.metadata?.[dimension.key] ?? usage.custom[dimension.key];
+    if (value === undefined) {
+      diagnostics.push({
+        code: 'pricing_custom_dimension_missing',
+        severity: 'info',
+        message: `Pricing custom dimension ${dimension.key} is missing.`,
+        path: `metadata.${dimension.key}`,
+      });
+    }
     return compareCustomValue(value, dimension.op, dimension.value);
   }
   return false;
@@ -403,6 +452,92 @@ function readPath(source: Record<string, unknown>, path: string): unknown {
   return current;
 }
 
+function writePath(source: Record<string, unknown>, path: string, value: unknown): void {
+  const parts = path.split('.').filter(Boolean);
+  if (parts.length === 0) return;
+  let current: Record<string, unknown> = source;
+  for (const part of parts.slice(0, -1)) {
+    const next = current[part];
+    if (!next || typeof next !== 'object' || Array.isArray(next)) {
+      current[part] = {};
+    }
+    current = current[part] as Record<string, unknown>;
+  }
+  current[parts[parts.length - 1]!] = value;
+}
+
+function nonNegativeNumber(value: unknown): number | null {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric >= 0 ? numeric : null;
+}
+
+function applyPricingTransforms(
+  transforms: PricingTransform[],
+  usage: CanonicalUsage,
+  context: PricingEvaluationContext,
+  diagnostics: PricingEvaluationDiagnostic[],
+): { usage: CanonicalUsage; metadata: Record<string, unknown> } {
+  if (transforms.length === 0) {
+    return {
+      usage,
+      metadata: context.metadata || {},
+    };
+  }
+  const working: Record<string, unknown> = {
+    usage: cloneJsonObject(usage) as CanonicalUsage,
+    metadata: cloneJsonObject(context.metadata || {}),
+  };
+
+  for (const transform of transforms) {
+    const inputValues = transform.inputPaths.map((path) => readPath(working, path));
+    let nextValue: unknown;
+    if (transform.kind === 'custom') {
+      nextValue = transform.cel
+        ? evaluatePricingCelExpression(transform.cel, buildPricingCelContext({
+          usage: normalizeCanonicalUsage(working.usage as Partial<CanonicalUsage>),
+          context: { ...context, metadata: (working.metadata || {}) as Record<string, unknown> },
+        }))
+        : undefined;
+    } else if (transform.kind === 'copy_usage_field') {
+      nextValue = inputValues[0];
+    } else if (transform.kind === 'sum_usage_fields') {
+      nextValue = inputValues.reduce<number>((sum, value) => sum + (nonNegativeNumber(value) ?? 0), 0);
+    } else if (transform.kind === 'subtract_usage_fields') {
+      const [first = 0, ...rest] = inputValues.map((value) => nonNegativeNumber(value) ?? 0);
+      nextValue = Math.max(0, rest.reduce((remaining, value) => remaining - value, first));
+    } else if (transform.kind === 'cap_quantity') {
+      const value = nonNegativeNumber(inputValues[0]) ?? 0;
+      const cap = nonNegativeNumber(transform.value);
+      nextValue = cap == null ? value : Math.min(value, cap);
+    } else if (transform.kind === 'multiply_quantity') {
+      const value = nonNegativeNumber(inputValues[0]) ?? 0;
+      const factor = nonNegativeNumber(transform.value);
+      nextValue = value * (factor ?? 1);
+    }
+
+    const numeric = nonNegativeNumber(nextValue);
+    if (numeric == null) {
+      diagnostics.push({
+        code: 'pricing_transform_invalid',
+        severity: 'warning',
+        message: `Pricing transform ${transform.id} did not produce a non-negative number.`,
+        path: transform.outputPath,
+      });
+      continue;
+    }
+    writePath(working, transform.outputPath, numeric);
+  }
+
+  return {
+    usage: normalizeCanonicalUsage(working.usage as Partial<CanonicalUsage>),
+    metadata: (working.metadata || {}) as Record<string, unknown>,
+  };
+}
+
+function cloneJsonObject<T>(input: T): T {
+  return JSON.parse(JSON.stringify(input)) as T;
+}
+
 function buildAllowanceState(
   allowances: PricingAllowance[],
   usage: CanonicalUsage,
@@ -413,7 +548,7 @@ function buildAllowanceState(
 ): Map<string, Array<{ id: string; remaining: number; consumeOrder: number }>> {
   const state = new Map<string, Array<{ id: string; remaining: number; consumeOrder: number }>>();
   for (const allowance of allowances) {
-    if (allowance.appliesWhen && !conditionMatches(allowance.appliesWhen, usage, context)) continue;
+    if (allowance.appliesWhen && !conditionMatches(allowance.appliesWhen, usage, context, diagnostics)) continue;
     if (allowance.period !== 'request' && !periodState) {
       diagnostics.push({
         code: 'allowance_period_state_missing',
@@ -465,35 +600,85 @@ function evaluateComponentCost(
   component: PricingComponent,
   quantity: number,
   scale: number,
-): { costUsd: number; unitPriceUsd: number } {
+  usage: CanonicalUsage,
+  context: PricingEvaluationContext,
+): { costUsd: number; unitPriceUsd: number; diagnostic?: RuntimeFormulaDiagnostic } {
   const quantityPricing = component.quantityPricing || { mode: 'flat' as const };
   if (quantityPricing.mode === 'flat') {
+    const price = evaluatePricingPrice(component.price, { component, quantity, scale, usage, context });
+    if (price.diagnostic) return { costUsd: 0, unitPriceUsd: 0, diagnostic: price.diagnostic };
     return {
-      costUsd: (quantity / scale) * component.price.amount,
-      unitPriceUsd: component.price.amount,
+      costUsd: (quantity / scale) * price.amount,
+      unitPriceUsd: price.amount,
     };
   }
   if (quantityPricing.mode === 'volume_tier') {
     const tier = findQuantityTier(quantityPricing.tiers, quantity);
-    const price = tier?.price || component.price;
+    const price = evaluatePricingPrice(tier?.price || component.price, { component, quantity, scale, usage, context });
+    if (price.diagnostic) return { costUsd: 0, unitPriceUsd: 0, diagnostic: price.diagnostic };
     return {
       costUsd: (quantity / scale) * price.amount,
       unitPriceUsd: price.amount,
     };
   }
   if (quantityPricing.mode === 'graduated_tier') {
-    const costUsd = evaluateGraduatedCost(quantityPricing.tiers, quantity, scale);
+    const graduated = evaluateGraduatedCost(quantityPricing.tiers, quantity, scale, component, usage, context);
+    if (graduated.diagnostic) return { costUsd: 0, unitPriceUsd: 0, diagnostic: graduated.diagnostic };
+    const costUsd = graduated.costUsd;
     return {
       costUsd,
       unitPriceUsd: quantity > 0 ? (costUsd / quantity) * scale : 0,
     };
   }
   const step = findQuantityStep(quantityPricing.steps, quantity);
-  const flatPrice = step?.flatPrice || component.price;
+  const flatPrice = evaluatePricingPrice(step?.flatPrice || component.price, { component, quantity, scale, usage, context });
+  if (flatPrice.diagnostic) return { costUsd: 0, unitPriceUsd: 0, diagnostic: flatPrice.diagnostic };
   return {
     costUsd: flatPrice.amount,
     unitPriceUsd: quantity > 0 ? (flatPrice.amount / quantity) * scale : flatPrice.amount,
   };
+}
+
+function evaluatePricingPrice(
+  price: PricingPrice,
+  input: {
+    component: PricingComponent;
+    quantity: number;
+    scale: number;
+    usage: CanonicalUsage;
+    context: PricingEvaluationContext;
+  },
+): { amount: number; diagnostic?: RuntimeFormulaDiagnostic } {
+  const expression = price.expression;
+  if (!expression || expression.kind === 'fixed') return { amount: price.amount };
+  if (expression.kind === 'linear') return { amount: price.amount * expression.multiplier };
+
+  const result = evaluatePricingCelExpression(expression.cel, buildPricingCelContext({
+    usage: input.usage,
+    context: input.context,
+    quantity: input.quantity,
+    scale: input.scale,
+    unitPriceUsd: price.amount,
+    component: {
+      id: input.component.id,
+      kind: input.component.kind,
+      role: input.component.role,
+      label: input.component.label,
+      metadata: input.component.metadata || {},
+    },
+  }));
+  const amount = Number(result);
+  if (!Number.isFinite(amount) || amount < 0) {
+    return {
+      amount: 0,
+      diagnostic: {
+        code: 'pricing_cel_formula_invalid',
+        message: `Pricing CEL formula for component ${input.component.id} did not evaluate to a non-negative number.`,
+        path: `components.${input.component.id}.price.expression.cel`,
+      },
+    };
+  }
+  return { amount };
 }
 
 function findQuantityTier(tiers: QuantityPriceTier[], quantity: number): QuantityPriceTier | null {
@@ -508,15 +693,30 @@ function findQuantityStep(steps: QuantityStepPrice[], quantity: number): Quantit
     .find((step) => quantity >= step.from && (step.to === undefined || quantity <= step.to)) || null;
 }
 
-function evaluateGraduatedCost(tiers: QuantityPriceTier[], quantity: number, scale: number): number {
+function evaluateGraduatedCost(
+  tiers: QuantityPriceTier[],
+  quantity: number,
+  scale: number,
+  component: PricingComponent,
+  usage: CanonicalUsage,
+  context: PricingEvaluationContext,
+): { costUsd: number; diagnostic?: RuntimeFormulaDiagnostic } {
   let total = 0;
   for (const tier of [...tiers].sort((a, b) => a.from - b.from)) {
     if (quantity <= tier.from) continue;
     const upper = tier.to === undefined ? quantity : Math.min(quantity, tier.to);
     const bandQuantity = Math.max(0, upper - tier.from);
-    total += (bandQuantity / scale) * tier.price.amount;
+    const price = evaluatePricingPrice(tier.price, {
+      component,
+      quantity: bandQuantity,
+      scale,
+      usage,
+      context,
+    });
+    if (price.diagnostic) return { costUsd: 0, diagnostic: price.diagnostic };
+    total += (bandQuantity / scale) * price.amount;
   }
-  return total;
+  return { costUsd: total };
 }
 
 function applyRole(role: PricingComponent['role'], cost: number): number {
@@ -571,10 +771,11 @@ function applyPostProcessors(
   subtotal: number,
   usage: CanonicalUsage,
   context: PricingEvaluationContext,
+  diagnostics: PricingEvaluationDiagnostic[],
 ): NonNullable<PricingEvaluation['postProcessors']> {
   const result: NonNullable<PricingEvaluation['postProcessors']> = [];
   for (const processor of postProcessors) {
-    if (processor.appliesWhen && !conditionMatches(processor.appliesWhen, usage, context)) continue;
+    if (processor.appliesWhen && !conditionMatches(processor.appliesWhen, usage, context, diagnostics)) continue;
     let amountUsd = processor.amount || 0;
     if (processor.factor !== undefined) {
       amountUsd += subtotal * processor.factor;
@@ -589,6 +790,29 @@ function applyPostProcessors(
     });
   }
   return result;
+}
+
+function buildPricingCelContext(input: {
+  usage: CanonicalUsage;
+  context: PricingEvaluationContext;
+  quantity?: number;
+  scale?: number;
+  unitPriceUsd?: number;
+  component?: Record<string, unknown>;
+}): PricingCelContext {
+  return {
+    model: input.context.model ?? null,
+    provider: input.context.provider ?? null,
+    usage: input.usage,
+    quantity: input.quantity,
+    scale: input.scale,
+    unitPriceUsd: input.unitPriceUsd,
+    component: input.component,
+    request: input.context.request || {},
+    response: input.context.response || {},
+    upstreamSupply: input.context.upstreamSupply || {},
+    metadata: input.context.metadata || {},
+  };
 }
 
 function mergeEstimateLevel(

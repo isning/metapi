@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { tokenRouteFixture } from '../test/routeGraphFixtures.js';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -81,7 +82,7 @@ describe('TokenRouter oauth route units', () => {
     }).returning().get();
 
     const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-5.4',
+      ...tokenRouteFixture({ modelPattern: 'gpt-5.4' }),
       enabled: true,
     }).returning().get();
     const routeUnit = await db.insert(schema.oauthRouteUnits).values({
@@ -111,8 +112,8 @@ describe('TokenRouter oauth route units', () => {
     }).returning().get();
 
     const router = new TokenRouter();
-    const first = await router.selectChannel('gpt-5.4');
-    const second = await router.selectChannel('gpt-5.4');
+    const first = await router.selectTarget('gpt-5.4');
+    const second = await router.selectTarget('gpt-5.4');
 
     expect(first?.target.id).toBe(channel.id);
     expect(second?.target.id).toBe(channel.id);
@@ -156,8 +157,7 @@ describe('TokenRouter oauth route units', () => {
     }).returning().get();
 
     const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-5.4',
-      routingStrategy: 'stable_first',
+      ...tokenRouteFixture({ modelPattern: 'gpt-5.4', routingStrategy: 'stable_first' }),
       enabled: true,
     }).returning().get();
     const routeUnit = await db.insert(schema.oauthRouteUnits).values({
@@ -187,13 +187,13 @@ describe('TokenRouter oauth route units', () => {
     }).returning().get();
 
     const router = new TokenRouter();
-    const first = await router.selectChannel('gpt-5.4');
-    const second = await router.selectChannel('gpt-5.4');
+    const first = await router.selectTarget('gpt-5.4');
+    const second = await router.selectTarget('gpt-5.4');
     expect(first?.account.id).toBe(accountA.id);
     expect(second?.account.id).toBe(accountA.id);
 
     await router.recordFailure(channel.id, { status: 503, errorText: 'unavailable' }, accountA.id);
-    const third = await router.selectChannel('gpt-5.4');
+    const third = await router.selectTarget('gpt-5.4');
     expect(third?.target.id).toBe(channel.id);
     expect(third?.account.id).toBe(accountB.id);
   });
@@ -234,8 +234,7 @@ describe('TokenRouter oauth route units', () => {
     }).returning().get();
 
     const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-5.4',
-      routingStrategy: 'weighted',
+      ...tokenRouteFixture({ modelPattern: 'gpt-5.4', routingStrategy: 'weighted' }),
       enabled: true,
     }).returning().get();
     const routeUnit = await db.insert(schema.oauthRouteUnits).values({
@@ -268,7 +267,7 @@ describe('TokenRouter oauth route units', () => {
     expect(tokenRouterTestUtils.getStableFirstRotationCacheSize()).toBe(1);
 
     const router = new TokenRouter();
-    const selected = await router.selectChannel('gpt-5.4');
+    const selected = await router.selectTarget('gpt-5.4');
     expect(selected?.target.id).toBe(channel.id);
     expect(tokenRouterTestUtils.getStableFirstRotationCacheSize()).toBe(1);
 
@@ -299,7 +298,7 @@ describe('TokenRouter oauth route units', () => {
     }).returning().get();
 
     const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-5.4',
+      ...tokenRouteFixture({ modelPattern: 'gpt-5.4' }),
       enabled: true,
     }).returning().get();
     const routeUnit = await db.insert(schema.oauthRouteUnits).values({
@@ -321,7 +320,7 @@ describe('TokenRouter oauth route units', () => {
     }).run();
 
     const router = new TokenRouter();
-    const selected = await router.selectChannel('gpt-5.4');
+    const selected = await router.selectTarget('gpt-5.4');
 
     expect(selected).toBeNull();
   });
@@ -362,7 +361,7 @@ describe('TokenRouter oauth route units', () => {
     }).returning().get();
 
     const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-5.4',
+      ...tokenRouteFixture({ modelPattern: 'gpt-5.4' }),
       enabled: true,
     }).returning().get();
     const routeUnit = await db.insert(schema.oauthRouteUnits).values({
@@ -392,7 +391,7 @@ describe('TokenRouter oauth route units', () => {
     }).returning().get();
 
     const router = new TokenRouter();
-    const selected = await router.selectChannel('gpt-5.4');
+    const selected = await router.selectTarget('gpt-5.4');
 
     expect(selected?.target.id).toBe(channel.id);
     expect(selected?.account.id).toBe(accountA.id);
@@ -435,7 +434,7 @@ describe('TokenRouter oauth route units', () => {
     }).returning().get();
 
     const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-5.4',
+      ...tokenRouteFixture({ modelPattern: 'gpt-5.4' }),
       enabled: true,
     }).returning().get();
     const routeUnit = await db.insert(schema.oauthRouteUnits).values({
@@ -465,11 +464,11 @@ describe('TokenRouter oauth route units', () => {
     }).returning().get();
 
     const router = new TokenRouter();
-    const first = await router.selectChannel('gpt-5.4');
+    const first = await router.selectTarget('gpt-5.4');
     expect(first?.account.id).toBe(accountA.id);
 
     await router.recordFailure(channel.id, { status: 503, errorText: 'upstream unavailable' }, accountA.id);
-    const failover = await router.selectNextChannel('gpt-5.4', [channel.id]);
+    const failover = await router.selectNextTarget('gpt-5.4', [channel.id]);
 
     expect(failover).toBeNull();
   });

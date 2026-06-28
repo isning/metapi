@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { LoaderCircle, Network, RefreshCw, Save, Search } from 'lucide-react';
+import { Braces, LoaderCircle, Network, RefreshCw, Save, Search } from 'lucide-react';
 import {
   api,
   type CredentialEndpointBindingSupport,
@@ -13,10 +13,13 @@ import { useToast } from '../../components/Toast.js';
 import { Button } from '../../components/ui/button/index.js';
 import * as Dialog from '../../components/ui/dialog/index.js';
 import { Input } from '../../components/ui/input/index.js';
+import { Label } from '../../components/ui/label/index.js';
 import { Switch } from '../../components/ui/switch/index.js';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select/index.js';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs/index.js';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table/index.js';
 import { Empty, EmptyDescription, EmptyHeader, EmptyIcon, EmptyTitle } from '../../components/ui/empty/index.js';
+import JsonCodeEditor from '../../components/JsonCodeEditor.js';
 import ToneBadge from '../../components/ToneBadge.js';
 import { cn } from '../../lib/utils.js';
 
@@ -24,6 +27,17 @@ type DraftBinding = {
   apiEndpointProfileId: number;
   enabled: boolean;
   support: CredentialEndpointBindingSupport;
+  priority: number;
+};
+
+type DraftProfile = {
+  id: number;
+  label: string;
+  requestMethod: 'POST' | 'GET';
+  requestUrl: string;
+  defaultHeadersText: string;
+  modelCatalogSourceId: string;
+  enabled: boolean;
   priority: number;
 };
 
@@ -107,6 +121,58 @@ function areDraftBindingsEqual(
   });
 }
 
+function formatHeaders(headers: Record<string, string> | null | undefined) {
+  if (!headers || Object.keys(headers).length === 0) return '{}';
+  return JSON.stringify(headers, null, 2);
+}
+
+function createDraftProfiles(profiles: CredentialEndpointMatrixProfile[]): DraftProfile[] {
+  return profiles.map((profile, index) => ({
+    id: profile.rowId,
+    label: profile.label || profile.apiType,
+    requestMethod: profile.requestMethod === 'GET' ? 'GET' : 'POST',
+    requestUrl: profile.requestUrl || '',
+    defaultHeadersText: formatHeaders(profile.defaultHeaders),
+    modelCatalogSourceId: profile.modelCatalogSourceId ? String(profile.modelCatalogSourceId) : 'none',
+    enabled: profile.enabled !== false,
+    priority: profile.priority ?? index,
+  }));
+}
+
+function areDraftProfilesEqual(draft: DraftProfile[], profiles: CredentialEndpointMatrixProfile[]) {
+  const baseline = createDraftProfiles(profiles);
+  if (draft.length !== baseline.length) return false;
+  return draft.every((profile, index) => {
+    const other = baseline[index];
+    return !!other
+      && profile.id === other.id
+      && profile.label === other.label
+      && profile.requestMethod === other.requestMethod
+      && profile.requestUrl === other.requestUrl
+      && profile.defaultHeadersText === other.defaultHeadersText
+      && profile.modelCatalogSourceId === other.modelCatalogSourceId
+      && profile.enabled === other.enabled
+      && profile.priority === other.priority;
+  });
+}
+
+function parseHeadersDraft(value: string): Record<string, string> | null {
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === '{}') return null;
+  const parsed = JSON.parse(trimmed) as unknown;
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(tr('pages.accounts.endpointBindings.headersObjectRequired'));
+  }
+  const headers: Record<string, string> = {};
+  for (const [key, headerValue] of Object.entries(parsed as Record<string, unknown>)) {
+    if (typeof headerValue !== 'string') {
+      throw new Error(tr('pages.accounts.endpointBindings.headersStringValuesRequired'));
+    }
+    headers[key] = headerValue;
+  }
+  return headers;
+}
+
 function formatCredentialKind(credential: CredentialEndpointMatrixCredential) {
   return credential.credentialKind === 'account_token'
     ? tr('pages.accounts.endpointBindings.accountToken')
@@ -122,6 +188,11 @@ function ProfileLabel({ profile }: { profile: CredentialEndpointMatrixProfile })
       <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">
         {profile.apiType}
       </div>
+      {profile.requestUrl ? (
+        <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">
+          {profile.requestMethod || 'POST'} {profile.requestUrl}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -137,12 +208,15 @@ export default function EndpointBindingsModal({
   const [matrix, setMatrix] = useState<CredentialEndpointMatrix | null>(null);
   const [selectedCredentialKey, setSelectedCredentialKey] = useState('');
   const [draftBindings, setDraftBindings] = useState<DraftBinding[]>([]);
+  const [draftProfiles, setDraftProfiles] = useState<DraftProfile[]>([]);
+  const [activeTab, setActiveTab] = useState('profiles');
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [resetToDefaults, setResetToDefaults] = useState(false);
 
   const profiles = matrix?.profiles || [];
+  const catalogSources = matrix?.catalogSources || [];
   const credentials = matrix?.credentials || [];
   const selectedCredential = useMemo(
     () => credentials.find((credential) => credential.credentialKey === selectedCredentialKey) || null,
@@ -170,6 +244,8 @@ export default function EndpointBindingsModal({
     ),
     [draftBindings, profiles, resetToDefaults, selectedCredential],
   );
+  const profilesDirty = useMemo(() => !areDraftProfilesEqual(draftProfiles, profiles), [draftProfiles, profiles]);
+  const anyDirty = dirty || profilesDirty;
   const enabledSupportedCount = draftBindings.filter((binding) => (
     binding.enabled && binding.support === 'supported'
   )).length;
@@ -186,6 +262,7 @@ export default function EndpointBindingsModal({
         || null;
       setSelectedCredentialKey(nextSelected?.credentialKey || '');
       setDraftBindings(createDraftBindings(nextSelected, next.profiles));
+      setDraftProfiles(createDraftProfiles(next.profiles));
       setResetToDefaults(false);
     } catch (error: any) {
       toast.error(error?.message || tr('pages.accounts.endpointBindings.loadFailed'));
@@ -199,6 +276,8 @@ export default function EndpointBindingsModal({
       setMatrix(null);
       setSelectedCredentialKey('');
       setDraftBindings([]);
+      setDraftProfiles([]);
+      setActiveTab('profiles');
       setSearch('');
       setLoading(false);
       setSaving(false);
@@ -226,6 +305,15 @@ export default function EndpointBindingsModal({
     )));
   };
 
+  const updateDraftProfile = (
+    profileId: number,
+    patch: Partial<Omit<DraftProfile, 'id'>>,
+  ) => {
+    setDraftProfiles((current) => current.map((profile) => (
+      profile.id === profileId ? { ...profile, ...patch } : profile
+    )));
+  };
+
   const resetToSupportedDefaults = () => {
     setResetToDefaults(true);
     setDraftBindings(profiles.map((profile, index) => ({
@@ -237,20 +325,38 @@ export default function EndpointBindingsModal({
   };
 
   const save = async () => {
-    if (!siteId || !selectedCredential) return;
+    if (!siteId) return;
     setSaving(true);
     try {
-      const next = await api.updateSiteEndpointBindings(
-        siteId,
-        selectedCredential.credentialKey,
-        resetToDefaults ? [] : draftBindings,
-      );
+      let next = matrix;
+      if (profilesDirty) {
+        next = await api.updateSiteEndpointProfiles(siteId, draftProfiles.map((profile) => ({
+          id: profile.id,
+          label: profile.label,
+          requestMethod: profile.requestMethod,
+          requestUrl: profile.requestUrl || null,
+          defaultHeaders: parseHeadersDraft(profile.defaultHeadersText),
+          modelCatalogSourceId: profile.modelCatalogSourceId === 'none' ? null : Number(profile.modelCatalogSourceId),
+          enabled: profile.enabled,
+          priority: profile.priority,
+        })));
+      }
+      if (selectedCredential && dirty) {
+        next = await api.updateSiteEndpointBindings(
+          siteId,
+          selectedCredential.credentialKey,
+          resetToDefaults ? [] : draftBindings,
+        );
+      }
+      if (!next) return;
       setMatrix(next);
-      const nextSelected = next.credentials.find((credential) => credential.credentialKey === selectedCredential.credentialKey)
+      const preferredCredentialKey = selectedCredential?.credentialKey || selectedCredentialKey;
+      const nextSelected = next.credentials.find((credential) => credential.credentialKey === preferredCredentialKey)
         || next.credentials[0]
         || null;
       setSelectedCredentialKey(nextSelected?.credentialKey || '');
       setDraftBindings(createDraftBindings(nextSelected, next.profiles));
+      setDraftProfiles(createDraftProfiles(next.profiles));
       setResetToDefaults(false);
       toast.success(tr('pages.accounts.endpointBindings.saved'));
     } catch (error: any) {
@@ -304,11 +410,12 @@ export default function EndpointBindingsModal({
                   {tr('pages.accounts.endpointBindings.loading')}
                 </div>
               ) : visibleCredentials.length > 0 ? visibleCredentials.map((credential) => (
-                <button
+                <Button
                   key={credential.credentialKey}
                   type="button"
+                  variant="ghost"
                   className={cn(
-                    'flex w-full min-w-0 items-start gap-2 rounded-md border px-3 py-2 text-left transition-colors',
+                    'flex h-auto w-full min-w-0 justify-start gap-2 rounded-md border px-3 py-2 text-left transition-colors',
                     credential.credentialKey === selectedCredentialKey
                       ? 'border-primary/40 bg-primary/10 text-foreground'
                       : 'border-transparent bg-background/80 text-foreground hover:border-border hover:bg-background',
@@ -323,7 +430,7 @@ export default function EndpointBindingsModal({
                       {credential.detail ? ` · ${credential.detail}` : ''}
                     </span>
                   </span>
-                </button>
+                </Button>
               )) : (
                 <Empty className="min-h-40 p-4">
                   <EmptyHeader>
@@ -337,7 +444,121 @@ export default function EndpointBindingsModal({
           </aside>
 
           <section className="min-h-0 overflow-y-auto p-4">
-            {!selectedCredential ? (
+            <Tabs value={activeTab} onValueChange={setActiveTab} className="min-w-0">
+              <TabsList>
+                <TabsTrigger value="profiles">{tr('pages.accounts.endpointBindings.profileTab')}</TabsTrigger>
+                <TabsTrigger value="credentials">{tr('pages.accounts.endpointBindings.credentialTab')}</TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="profiles" className="mt-3">
+                {profiles.length === 0 ? (
+                  <Empty className="min-h-72">
+                    <EmptyHeader>
+                      <EmptyIcon><Network className="size-6" /></EmptyIcon>
+                      <EmptyTitle>{tr('pages.accounts.endpointBindings.noProfiles')}</EmptyTitle>
+                      <EmptyDescription>{tr('pages.accounts.endpointBindings.noProfilesDescription')}</EmptyDescription>
+                    </EmptyHeader>
+                  </Empty>
+                ) : (
+                  <div className="space-y-3">
+                    {profilesDirty ? <ToneBadge tone="warning">{tr('pages.accounts.endpointBindings.unsaved')}</ToneBadge> : null}
+                    <div className="space-y-2">
+                      {draftProfiles.map((draftProfile) => {
+                        const profile = profiles.find((item) => item.rowId === draftProfile.id);
+                        return (
+                          <div key={draftProfile.id} className="rounded-md border bg-background p-3">
+                            <div className="flex flex-wrap items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                                  <h3 className="truncate text-sm font-semibold text-foreground">{profile?.apiType || draftProfile.label}</h3>
+                                  <ToneBadge tone={draftProfile.enabled ? 'success' : '-muted'}>
+                                    {draftProfile.enabled ? tr('pages.accounts.endpointBindings.enabled') : tr('app.disabled')}
+                                  </ToneBadge>
+                                </div>
+                                <div className="mt-1 truncate font-mono text-xs text-muted-foreground">
+                                  {profile?.profileKey}
+                                </div>
+                              </div>
+                              <Switch
+                                checked={draftProfile.enabled}
+                                onCheckedChange={(enabled) => updateDraftProfile(draftProfile.id, { enabled })}
+                                aria-label={tr('pages.accounts.endpointBindings.enabled')}
+                              />
+                            </div>
+
+                            <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(0,1fr)_120px_220px]">
+                              <div className="space-y-1.5">
+                                <Label>{tr('pages.accounts.endpointBindings.profileLabel')}</Label>
+                                <Input
+                                  value={draftProfile.label}
+                                  onChange={(event) => updateDraftProfile(draftProfile.id, { label: event.target.value })}
+                                />
+                              </div>
+                              <div className="space-y-1.5">
+                                <Label>{tr('pages.accounts.endpointBindings.method')}</Label>
+                                <Select
+                                  value={draftProfile.requestMethod}
+                                  onValueChange={(value) => updateDraftProfile(draftProfile.id, { requestMethod: value === 'GET' ? 'GET' : 'POST' })}
+                                >
+                                  <SelectTrigger><SelectValue /></SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="POST">POST</SelectItem>
+                                    <SelectItem value="GET">GET</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div className="space-y-1.5">
+                                <Label>{tr('pages.accounts.endpointBindings.catalogSource')}</Label>
+                                <Select
+                                  value={draftProfile.modelCatalogSourceId}
+                                  onValueChange={(modelCatalogSourceId) => updateDraftProfile(draftProfile.id, { modelCatalogSourceId })}
+                                >
+                                  <SelectTrigger><SelectValue /></SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="none">{tr('pages.accounts.endpointBindings.noCatalogSource')}</SelectItem>
+                                    {catalogSources.map((source) => (
+                                      <SelectItem key={source.id} value={String(source.id)}>
+                                        {source.label}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            </div>
+
+                            <div className="mt-3 space-y-1.5">
+                              <Label>{tr('pages.accounts.endpointBindings.requestUrl')}</Label>
+                              <Input
+                                className="font-mono"
+                                value={draftProfile.requestUrl}
+                                onChange={(event) => updateDraftProfile(draftProfile.id, { requestUrl: event.target.value })}
+                                placeholder="https://api.example.com/v1/chat/completions"
+                              />
+                            </div>
+
+                            <div className="mt-3 space-y-1.5">
+                              <Label className="flex items-center gap-2">
+                                <Braces className="size-3.5" />
+                                {tr('pages.accounts.endpointBindings.defaultHeaders')}
+                              </Label>
+                              <JsonCodeEditor
+                                value={draftProfile.defaultHeadersText}
+                                onChange={(defaultHeadersText) => updateDraftProfile(draftProfile.id, { defaultHeadersText })}
+                                minHeight={96}
+                                maxHeight={180}
+                                ariaLabel={tr('pages.accounts.endpointBindings.defaultHeaders')}
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </TabsContent>
+
+              <TabsContent value="credentials" className="mt-3">
+                {!selectedCredential ? (
               <Empty className="min-h-72">
                 <EmptyHeader>
                   <EmptyIcon><Network className="size-6" /></EmptyIcon>
@@ -345,7 +566,7 @@ export default function EndpointBindingsModal({
                   <EmptyDescription>{tr('pages.accounts.endpointBindings.selectCredentialDescription')}</EmptyDescription>
                 </EmptyHeader>
               </Empty>
-            ) : profiles.length === 0 ? (
+                ) : profiles.length === 0 ? (
               <Empty className="min-h-72">
                 <EmptyHeader>
                   <EmptyIcon><Network className="size-6" /></EmptyIcon>
@@ -353,7 +574,7 @@ export default function EndpointBindingsModal({
                   <EmptyDescription>{tr('pages.accounts.endpointBindings.noProfilesDescription')}</EmptyDescription>
                 </EmptyHeader>
               </Empty>
-            ) : (
+                ) : (
               <div className="space-y-3">
                 <div className="flex flex-wrap items-start justify-between gap-3 rounded-md border bg-background px-3 py-2">
                   <div className="min-w-0">
@@ -375,7 +596,7 @@ export default function EndpointBindingsModal({
                 </div>
 
                 <div className="rounded-md border">
-                  <Table className="min-w-[680px]">
+                  <Table className="min-w-[760px]">
                     <TableHeader>
                       <TableRow>
                         <TableHead className="min-w-64">{tr('pages.accounts.endpointBindings.endpoint')}</TableHead>
@@ -452,7 +673,9 @@ export default function EndpointBindingsModal({
                   </Table>
                 </div>
               </div>
-            )}
+                )}
+              </TabsContent>
+            </Tabs>
           </section>
         </div>
 
@@ -463,7 +686,7 @@ export default function EndpointBindingsModal({
           <Button type="button" variant="outline" onClick={onClose}>
             {tr('app.cancel')}
           </Button>
-          <Button type="button" onClick={save} disabled={!selectedCredential || !dirty || loading || saving}>
+          <Button type="button" onClick={save} disabled={!anyDirty || loading || saving}>
             {saving ? <LoaderCircle className="size-4 animate-spin" /> : <Save className="size-4" />}
             {tr('app.save')}
           </Button>

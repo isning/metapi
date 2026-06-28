@@ -56,9 +56,6 @@ const portKindLabelKeys: Record<RouteGraphPortKind, string> = {
   request: 'pages.tokenRoutes.routeGraphViewModel.portKind.request',
   bidirect: 'pages.tokenRoutes.routeGraphViewModel.portKind.bidirect',
   route: 'pages.tokenRoutes.routeGraphViewModel.portKind.route',
-  response: 'pages.tokenRoutes.routeGraphViewModel.portKind.response',
-  control: 'pages.tokenRoutes.routeGraphViewModel.portKind.control',
-  metrics: 'pages.tokenRoutes.routeGraphViewModel.portKind.metrics',
 };
 
 const nodeTypeLabelKeys: Record<RouteGraphNode['type'], string> = {

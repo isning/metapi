@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { filterRecentlyFailedCandidates, isChannelRecentlyFailed, matchesModelPattern, parseRegexModelPattern } from './tokenRouter.js';
+import { filterRecentlyFailedCandidates, isTargetRecentlyFailed, matchesModelPattern, parseRegexModelPattern } from './tokenRouter.js';
 
 type Candidate = {
-  channel: {
+  target: {
     failCount?: number | null;
     lastFailAt?: string | null;
   };
@@ -17,7 +17,7 @@ describe('filterRecentlyFailedCandidates', () => {
 
   it('uses a short default recent-failure window', () => {
     const nowMs = Date.now();
-    expect(isChannelRecentlyFailed({
+    expect(isTargetRecentlyFailed({
       failCount: 1,
       lastFailAt: new Date(nowMs - 20 * 1000).toISOString(),
     }, nowMs)).toBe(false);
@@ -25,11 +25,11 @@ describe('filterRecentlyFailedCandidates', () => {
 
   it('expands the avoidance window with fibonacci-style backoff', () => {
     const nowMs = Date.now();
-    expect(isChannelRecentlyFailed({
+    expect(isTargetRecentlyFailed({
       failCount: 4,
       lastFailAt: new Date(nowMs - 40 * 1000).toISOString(),
     }, nowMs)).toBe(true);
-    expect(isChannelRecentlyFailed({
+    expect(isTargetRecentlyFailed({
       failCount: 4,
       lastFailAt: new Date(nowMs - 50 * 1000).toISOString(),
     }, nowMs)).toBe(false);
@@ -40,14 +40,14 @@ describe('filterRecentlyFailedCandidates', () => {
     const candidates: Candidate[] = [
       {
         id: 'failed',
-        channel: {
+        target: {
           failCount: 2,
           lastFailAt: new Date(nowMs - 30 * 1000).toISOString(),
         },
       },
       {
         id: 'healthy',
-        channel: {
+        target: {
           failCount: 0,
           lastFailAt: null,
         },
@@ -63,14 +63,14 @@ describe('filterRecentlyFailedCandidates', () => {
     const candidates: Candidate[] = [
       {
         id: 'a',
-        channel: {
+        target: {
           failCount: 1,
           lastFailAt: new Date(nowMs - 20 * 1000).toISOString(),
         },
       },
       {
         id: 'b',
-        channel: {
+        target: {
           failCount: 3,
           lastFailAt: new Date(nowMs - 40 * 1000).toISOString(),
         },
@@ -86,14 +86,14 @@ describe('filterRecentlyFailedCandidates', () => {
     const candidates: Candidate[] = [
       {
         id: 'recent-failure',
-        channel: {
+        target: {
           failCount: 3,
           lastFailAt: new Date(nowMs - 5 * 1000).toISOString(),
         },
       },
       {
         id: 'healthy',
-        channel: {
+        target: {
           failCount: 0,
           lastFailAt: null,
         },
@@ -109,14 +109,14 @@ describe('filterRecentlyFailedCandidates', () => {
     const candidates: Candidate[] = [
       {
         id: 'stale-failure',
-        channel: {
+        target: {
           failCount: 5,
           lastFailAt: new Date(nowMs - 20 * 60 * 1000).toISOString(),
         },
       },
       {
         id: 'healthy',
-        channel: {
+        target: {
           failCount: 0,
           lastFailAt: null,
         },

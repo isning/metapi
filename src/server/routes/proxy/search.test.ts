@@ -2,8 +2,8 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const fetchMock = vi.fn();
-const selectChannelMock = vi.fn();
-const selectNextChannelMock = vi.fn();
+const selectTargetMock = vi.fn();
+const selectNextTargetMock = vi.fn();
 const recordSuccessMock = vi.fn();
 const recordFailureMock = vi.fn();
 const refreshModelsAndRebuildRoutesMock = vi.fn();
@@ -26,8 +26,8 @@ vi.mock('undici', async () => {
 
 vi.mock('../../services/tokenRouter.js', () => ({
   tokenRouter: {
-    selectChannel: (...args: unknown[]) => selectChannelMock(...args),
-    selectNextChannel: (...args: unknown[]) => selectNextChannelMock(...args),
+    selectTarget: (...args: unknown[]) => selectTargetMock(...args),
+    selectNextTarget: (...args: unknown[]) => selectNextTargetMock(...args),
     recordSuccess: (...args: unknown[]) => recordSuccessMock(...args),
     recordFailure: (...args: unknown[]) => recordFailureMock(...args),
   },
@@ -54,6 +54,14 @@ vi.mock('../../services/proxyRetryPolicy.js', () => ({
   shouldRetryProxyRequest: () => false,
   shouldAbortSameSiteEndpointFallback: () => false,
   RETRYABLE_TIMEOUT_PATTERNS: [/(request timed out|connection timed out|read timeout|\btimed out\b)/i],
+}));
+
+vi.mock('../../services/credentialEndpointBindingService.js', () => ({
+  loadCredentialApiVariantConfig: async () => null,
+}));
+
+vi.mock('../../services/proxyLogRouteDecisionSnapshot.js', () => ({
+  buildProxyLogRouteDecisionSnapshot: async () => null,
 }));
 
 vi.mock('../../db/index.js', () => ({
@@ -101,8 +109,8 @@ describe('/v1/search route', () => {
 
   beforeEach(() => {
     fetchMock.mockReset();
-    selectChannelMock.mockReset();
-    selectNextChannelMock.mockReset();
+    selectTargetMock.mockReset();
+    selectNextTargetMock.mockReset();
     recordSuccessMock.mockReset();
     recordFailureMock.mockReset();
     refreshModelsAndRebuildRoutesMock.mockReset();
@@ -111,15 +119,15 @@ describe('/v1/search route', () => {
     estimateProxyCostMock.mockClear();
     dbInsertMock.mockClear();
 
-    selectChannelMock.mockReturnValue({
-      channel: { id: 11, routeId: 22 },
+    selectTargetMock.mockReturnValue({
+      target: { id: 11, routeId: 22 },
       site: { id: 44, name: 'demo-site', url: 'https://upstream.example.com', platform: 'openai' },
       account: { id: 33, username: 'demo-user' },
       tokenName: 'default',
       tokenValue: 'sk-demo',
       actualModel: '__search',
     });
-    selectNextChannelMock.mockReturnValue(null);
+    selectNextTargetMock.mockReturnValue(null);
   });
 
   afterAll(async () => {
@@ -149,7 +157,7 @@ describe('/v1/search route', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(selectChannelMock).toHaveBeenCalledWith('__search', expect.anything());
+    expect(selectTargetMock).toHaveBeenCalledWith('__search', expect.anything());
     const [targetUrl, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(targetUrl).toBe('https://upstream.example.com/v1/search');
     expect(JSON.parse(String(requestInit.body))).toEqual({
@@ -186,7 +194,7 @@ describe('/v1/search route', () => {
       data: [{ title: 'AxonHub' }],
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(selectNextChannelMock).not.toHaveBeenCalled();
+    expect(selectNextTargetMock).not.toHaveBeenCalled();
   });
 
   it('rejects max_results outside the allowed range', async () => {

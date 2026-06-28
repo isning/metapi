@@ -21,6 +21,7 @@ import { invalidateTokenRouterCache } from './tokenRouter.js';
 import {
   ensureActiveRouteGraphVersion,
   loadRouteGraphRouteTableBindings,
+  synchronizeActiveRouteGraphVersion,
 } from './routeGraphService.js';
 import { getBlockedBrandRules, isModelBlockedByBrand } from './brandMatcher.js';
 import { config } from '../config.js';
@@ -44,6 +45,11 @@ import {
   validateGeminiCliOauthConnection,
 } from './platformDiscoveryRegistry.js';
 import { probeRuntimeModel, type RuntimeModelProbeStatus } from './runtimeModelProbe.js';
+import {
+  discoverModelsFromCatalogSources,
+  ensureDefaultModelCatalogSourcesForSite,
+  type ModelCatalogSourceRow,
+} from './modelCatalogSourceService.js';
 const API_TOKEN_DISCOVERY_TIMEOUT_MS = 8_000;
 const MODEL_DISCOVERY_TIMEOUT_MS = 12_000;
 const MODEL_REFRESH_BATCH_SIZE = 3;
@@ -235,6 +241,52 @@ function normalizeModels(models: string[]): string[] {
   }
 
   return normalizedModels;
+}
+
+async function discoverModelsViaCatalogOrAdapter(input: {
+  site: typeof schema.sites.$inferSelect;
+  credential: string;
+  catalogSources: ModelCatalogSourceRow[];
+  adapterGetModels: () => Promise<string[]>;
+  recordFailure: (err: unknown) => void;
+}): Promise<{ models: string[]; latencyMs: number | null; source: 'catalog' | 'adapter' | 'none' }> {
+  const catalogResult = await discoverModelsFromCatalogSources({
+    site: input.site,
+    credential: input.credential,
+    sources: input.catalogSources,
+  });
+  if (catalogResult.models.length > 0) {
+    return {
+      models: normalizeModels(catalogResult.models),
+      latencyMs: catalogResult.latencyMs,
+      source: 'catalog',
+    };
+  }
+
+  const startedAt = Date.now();
+  try {
+    const models = normalizeModels(await input.adapterGetModels());
+    if (models.length === 0) {
+      for (const failure of catalogResult.failures) {
+        input.recordFailure(failure);
+      }
+    }
+    return {
+      models,
+      latencyMs: models.length > 0 ? Date.now() - startedAt : null,
+      source: models.length > 0 ? 'adapter' : 'none',
+    };
+  } catch (error) {
+    input.recordFailure(error);
+    for (const failure of catalogResult.failures) {
+      input.recordFailure(failure);
+    }
+    return {
+      models: [],
+      latencyMs: null,
+      source: 'none',
+    };
+  }
 }
 
 type TokenModelAvailabilityInsert = Omit<typeof schema.tokenModelAvailability.$inferInsert, 'id'>;
@@ -1208,6 +1260,7 @@ export async function refreshModelsForAccount(
 
   const accountModels = new Map<string, string>();   // lowercase key → original name (first-wins)
   const modelLatency = new Map<string, number | null>();
+  const catalogSources = await ensureDefaultModelCatalogSourcesForSite(site.id);
   let scannedTokenCount = 0;
   let discoveredByCredential = false;
   const attemptedCredentials = new Set<string>();
@@ -1238,25 +1291,25 @@ export async function refreshModelsForAccount(
     if (attemptedCredentials.has(credential)) return;
     attemptedCredentials.add(credential);
 
-    const startedAt = Date.now();
-    let models: string[] = [];
-    try {
-      models = normalizeModels(
-        await withTimeout(
-          () => withAccountProxyOverride(accountProxyUrl,
-            () => adapter.getModels(aiBaseUrl, credential, platformUserId)),
-          MODEL_DISCOVERY_TIMEOUT_MS,
-          `model discovery timeout (${Math.round(MODEL_DISCOVERY_TIMEOUT_MS / 1000)}s)`,
-        ),
-      );
-    } catch (err) {
-      recordFailure(err);
-      models = [];
-    }
+    const discovery = await withTimeout(
+      () => withAccountProxyOverride(accountProxyUrl,
+        () => discoverModelsViaCatalogOrAdapter({
+          site,
+          credential,
+          catalogSources,
+          adapterGetModels: () => adapter.getModels(aiBaseUrl, credential, platformUserId),
+          recordFailure,
+        })),
+      MODEL_DISCOVERY_TIMEOUT_MS,
+      `model discovery timeout (${Math.round(MODEL_DISCOVERY_TIMEOUT_MS / 1000)}s)`,
+    ).catch((error) => {
+      recordFailure(error);
+      return { models: [], latencyMs: null, source: 'none' as const };
+    });
+    const models = discovery.models;
     if (models.length === 0) return;
     discoveredByCredential = true;
-    const latencyMs = Date.now() - startedAt;
-    mergeDiscoveredModels(models, latencyMs);
+    mergeDiscoveredModels(models, discovery.latencyMs);
   };
 
   // Prefer account-level credential discovery so model availability does not rely on managed tokens.
@@ -1265,26 +1318,26 @@ export async function refreshModelsForAccount(
   await discoverModelsWithCredential(account.accessToken);
 
   for (const token of enabledTokens) {
-    const startedAt = Date.now();
-    let models: string[] = [];
-
-    try {
-      models = normalizeModels(
-        await withTimeout(
-          () => withAccountProxyOverride(accountProxyUrl,
-            () => adapter.getModels(aiBaseUrl, token.token, platformUserId)),
-          MODEL_DISCOVERY_TIMEOUT_MS,
-          `model discovery timeout (${Math.round(MODEL_DISCOVERY_TIMEOUT_MS / 1000)}s)`,
-        ),
-      );
-    } catch (err) {
-      recordFailure(err);
-      models = [];
-    }
+    const discovery = await withTimeout(
+      () => withAccountProxyOverride(accountProxyUrl,
+        () => discoverModelsViaCatalogOrAdapter({
+          site,
+          credential: token.token,
+          catalogSources,
+          adapterGetModels: () => adapter.getModels(aiBaseUrl, token.token, platformUserId),
+          recordFailure,
+        })),
+      MODEL_DISCOVERY_TIMEOUT_MS,
+      `model discovery timeout (${Math.round(MODEL_DISCOVERY_TIMEOUT_MS / 1000)}s)`,
+    ).catch((error) => {
+      recordFailure(error);
+      return { models: [], latencyMs: null, source: 'none' as const };
+    });
+    const models = discovery.models;
 
     if (models.length === 0) continue;
 
-    const latencyMs = Date.now() - startedAt;
+    const latencyMs = discovery.latencyMs;
     const checkedAt = new Date().toISOString();
 
     await upsertTokenModelAvailabilityRows(
@@ -1680,7 +1733,7 @@ export async function rebuildTokenRoutesFromAvailability() {
     bridgesByModelName: groupBridgeSync.bridgesByModelName,
   });
 
-  await ensureActiveRouteGraphVersion();
+  await synchronizeActiveRouteGraphVersion({ allowDiagnostics: true });
 
   if (
     createdRoutes > 0

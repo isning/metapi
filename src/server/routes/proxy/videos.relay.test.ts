@@ -154,7 +154,7 @@ describe('/v1/videos relay with persisted public task ids', () => {
     expect(response.statusCode, response.body).toBe(503);
     expect(response.json()).toMatchObject({
       error: expect.objectContaining({
-        message: expect.stringContaining('No available channels'),
+        message: expect.stringContaining('No available targets'),
       }),
     });
     expect(await harness.db.select().from(harness.schema.proxyVideoTasks).all()).toEqual([]);

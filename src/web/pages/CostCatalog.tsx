@@ -1,5 +1,5 @@
 import { type ChangeEvent, type ReactNode, type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Code2, Database, DownloadCloud, LoaderCircle, RefreshCw, Save, Search, Settings2, Upload } from 'lucide-react';
+import { Code2, Database, DownloadCloud, ExternalLink, LoaderCircle, RefreshCw, Save, Search, Settings2, Upload } from 'lucide-react';
 import {
   api,
   type PricingReferenceCatalog,
@@ -13,6 +13,7 @@ import JsonCodeEditor from '../components/JsonCodeEditor.js';
 import ToneBadge from '../components/ToneBadge.js';
 import { cn } from '../lib/utils.js';
 import PageHeader from '../components/workspace/PageHeader.js';
+import { SITE_DOCS_URL } from '../docsLink.js';
 import {
   CreateActionButton,
   PageActionBar,
@@ -166,8 +167,12 @@ function CostCatalogDialogLoadingSkeleton() {
   );
 }
 
+function errorMessage(error: unknown): string | null {
+  return error instanceof Error ? error.message : null;
+}
+
 function readPlanComponent(plan: Record<string, unknown>, key: string): string {
-  const components = Array.isArray((plan as any).components) ? (plan as any).components : [];
+  const components = Array.isArray(plan.components) ? plan.components : [];
   const component = components.find((item: unknown) => {
     if (!item || typeof item !== 'object') return false;
     const record = item as Record<string, unknown>;
@@ -280,8 +285,8 @@ export default function CostCatalog() {
         setEntryForm(entryToForm(selected ?? null));
         return selected?.id ?? null;
       });
-    } catch (error: any) {
-      toast.error(error?.message || tr('upstreamCostPricing.errors.loadFailed'));
+    } catch (error) {
+      toast.error(errorMessage(error) || tr('upstreamCostPricing.errors.loadFailed'));
     } finally {
       setLoading(false);
     }
@@ -329,8 +334,8 @@ export default function CostCatalog() {
       setConfig(saved);
       setSyncDialogOpen(false);
       toast.success(tr('upstreamCostPricing.reference.saved'));
-    } catch (error: any) {
-      toast.error(error?.message || tr('upstreamCostPricing.reference.errors.saveFailed'));
+    } catch (error) {
+      toast.error(errorMessage(error) || tr('upstreamCostPricing.reference.errors.saveFailed'));
     } finally {
       setSaving(false);
     }
@@ -359,8 +364,8 @@ export default function CostCatalog() {
       setEntryForm(entryToForm(nextSelected));
       setEntryDialogOpen(false);
       toast.success(tr('upstreamCostPricing.reference.catalogSaved'));
-    } catch (error: any) {
-      toast.error(error?.message || tr('upstreamCostPricing.reference.errors.saveFailed'));
+    } catch (error) {
+      toast.error(errorMessage(error) || tr('upstreamCostPricing.reference.errors.saveFailed'));
     } finally {
       setSaving(false);
     }
@@ -378,8 +383,8 @@ export default function CostCatalog() {
       setImportDraft('');
       setImportDialogOpen(false);
       toast.success(tr('upstreamCostPricing.reference.imported').replace('{count}', String(result.imported)));
-    } catch (error: any) {
-      toast.error(error?.message || tr('upstreamCostPricing.reference.importFailed'));
+    } catch (error) {
+      toast.error(errorMessage(error) || tr('upstreamCostPricing.reference.importFailed'));
     } finally {
       setSaving(false);
     }
@@ -399,8 +404,8 @@ export default function CostCatalog() {
         toast.success(tr('upstreamCostPricing.reference.syncSkipped'));
       }
       setConfig(await api.getPricingReferenceConfig());
-    } catch (error: any) {
-      toast.error(error?.message || tr('upstreamCostPricing.reference.syncFailed'));
+    } catch (error) {
+      toast.error(errorMessage(error) || tr('upstreamCostPricing.reference.syncFailed'));
     } finally {
       setSaving(false);
     }
@@ -411,8 +416,8 @@ export default function CostCatalog() {
     if (!file) return;
     try {
       setImportDraft(await file.text());
-    } catch (error: any) {
-      toast.error(error?.message || tr('upstreamCostPricing.reference.importFileFailed'));
+    } catch (error) {
+      toast.error(errorMessage(error) || tr('upstreamCostPricing.reference.importFileFailed'));
     } finally {
       event.target.value = '';
     }
@@ -949,17 +954,24 @@ function ReferenceEntryEditor({
       </EditorSection>
 
       <EditorSection>
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <SectionHeader
             title={tr('upstreamCostPricing.reference.advancedPlanSection')}
             description={tr('upstreamCostPricing.reference.advancedPlanSectionDescription')}
           />
-          <Switch
-            className="shrink-0"
-            checked={form.advancedPlanEnabled}
-            onCheckedChange={(advancedPlanEnabled) => onChange({ advancedPlanEnabled })}
-            aria-label={tr('upstreamCostPricing.reference.advancedPlanSection')}
-          />
+          <div className="flex shrink-0 items-center gap-2">
+            <Button type="button" variant="ghostPrimary" size="sm" asChild>
+              <a href={`${SITE_DOCS_URL}/advanced-pricing`} target="_blank" rel="noreferrer">
+                {tr('upstreamCostPricing.reference.advancedPlanDocs')}
+                <ExternalLink className="size-3.5" />
+              </a>
+            </Button>
+            <Switch
+              checked={form.advancedPlanEnabled}
+              onCheckedChange={(advancedPlanEnabled) => onChange({ advancedPlanEnabled })}
+              aria-label={tr('upstreamCostPricing.reference.advancedPlanSection')}
+            />
+          </div>
         </div>
         {form.advancedPlanEnabled ? (
           <JsonCodeEditor

@@ -35,8 +35,10 @@ describe('backupService', () => {
   });
 
   beforeEach(async () => {
+    await db.delete(schema.endpointModelObservations).run();
     await db.delete(schema.credentialEndpointBindings).run();
     await db.delete(schema.apiEndpointProfiles).run();
+    await db.delete(schema.modelCatalogSources).run();
     await db.delete(schema.routeEndpointTargets).run();
     await db.delete(schema.routeGroupSources).run();
     await db.delete(schema.tokenRoutes).run();
@@ -262,6 +264,48 @@ describe('backupService', () => {
       updatedAt: now,
     }).run();
 
+    const catalogSource = await db.insert(schema.modelCatalogSources).values({
+      siteId: site.id,
+      sourceKey: 'roundtrip-catalog',
+      label: 'Roundtrip catalog',
+      discoveryMethod: 'GET',
+      discoveryUrl: 'https://api-roundtrip.example.com/v1/models',
+      parser: 'openai_models',
+      credentialScope: 'credential',
+      enabled: true,
+      lastRefreshAt: now,
+      lastModelCount: 2,
+      createdAt: now,
+      updatedAt: now,
+    }).returning().get();
+
+    const endpointProfile = await db.insert(schema.apiEndpointProfiles).values({
+      siteId: site.id,
+      profileKey: 'openai_chat_completions',
+      apiType: 'openai_chat_completions',
+      label: 'Roundtrip chat',
+      requestMethod: 'POST',
+      requestUrl: 'https://api-roundtrip.example.com/v1/chat/completions',
+      defaultHeadersJson: '{"x-roundtrip":"1"}',
+      modelCatalogSourceId: catalogSource.id,
+      authMode: 'bearer',
+      enabled: true,
+      priority: 0,
+      createdAt: now,
+      updatedAt: now,
+    }).returning().get();
+
+    await db.insert(schema.endpointModelObservations).values({
+      siteId: site.id,
+      credentialKey: `account-token:${accountToken.id}`,
+      apiEndpointProfileId: endpointProfile.id,
+      modelName: 'gpt-4o',
+      status: 'confirmed',
+      source: 'runtime',
+      observedAt: now,
+      metadataJson: '{"roundtrip":true}',
+    }).run();
+
     await db.insert(schema.modelAvailability).values([
       {
         accountId: account.id,
@@ -328,6 +372,30 @@ describe('backupService', () => {
         cooldownUntil: null,
       }),
     ]);
+    expect(exported.accounts.modelCatalogSources).toEqual([
+      expect.objectContaining({
+        siteId: site.id,
+        sourceKey: 'roundtrip-catalog',
+        discoveryUrl: 'https://api-roundtrip.example.com/v1/models',
+      }),
+    ]);
+    expect(exported.accounts.apiEndpointProfiles).toEqual([
+      expect.objectContaining({
+        siteId: site.id,
+        requestUrl: 'https://api-roundtrip.example.com/v1/chat/completions',
+        defaultHeadersJson: '{"x-roundtrip":"1"}',
+        modelCatalogSourceId: catalogSource.id,
+      }),
+    ]);
+    expect(exported.accounts.endpointModelObservations).toEqual([
+      expect.objectContaining({
+        siteId: site.id,
+        credentialKey: `account-token:${accountToken.id}`,
+        apiEndpointProfileId: endpointProfile.id,
+        modelName: 'gpt-4o',
+        status: 'confirmed',
+      }),
+    ]);
     expect(exported.accounts.manualModels).toEqual([
       { accountId: account.id, modelName: 'gpt-manual' },
     ]);
@@ -374,6 +442,9 @@ describe('backupService', () => {
     const restoredDisabledModels = await db.select().from(schema.siteDisabledModels).all();
     const restoredModelAvailability = await db.select().from(schema.modelAvailability).all();
     const restoredDownstreamKeys = await db.select().from(schema.downstreamApiKeys).all();
+    const restoredCatalogSources = await db.select().from(schema.modelCatalogSources).all();
+    const restoredEndpointProfiles = await db.select().from(schema.apiEndpointProfiles).all();
+    const restoredEndpointObservations = await db.select().from(schema.endpointModelObservations).all();
 
     expect(restoredSite?.proxyUrl).toBe('http://127.0.0.1:8080');
     expect(restoredSite?.externalCheckinUrl).toBe('https://checkin.roundtrip.example.com');
@@ -419,6 +490,28 @@ describe('backupService', () => {
     ]);
     expect(restoredModelAvailability.some((row) => row.modelName === 'gpt-manual' && row.isManual)).toBe(true);
     expect(restoredModelAvailability.some((row) => row.modelName === 'gpt-discovered' && !row.isManual)).toBe(true);
+    expect(restoredCatalogSources).toEqual([
+      expect.objectContaining({
+        sourceKey: 'roundtrip-catalog',
+        discoveryUrl: 'https://api-roundtrip.example.com/v1/models',
+      }),
+    ]);
+    expect(restoredEndpointProfiles).toEqual([
+      expect.objectContaining({
+        profileKey: 'openai_chat_completions',
+        requestUrl: 'https://api-roundtrip.example.com/v1/chat/completions',
+        defaultHeadersJson: '{"x-roundtrip":"1"}',
+        modelCatalogSourceId: catalogSource.id,
+      }),
+    ]);
+    expect(restoredEndpointObservations).toEqual([
+      expect.objectContaining({
+        credentialKey: `account-token:${accountToken.id}`,
+        apiEndpointProfileId: endpointProfile.id,
+        modelName: 'gpt-4o',
+        status: 'confirmed',
+      }),
+    ]);
     expect(restoredDownstreamKeys).toEqual([
       expect.objectContaining({
         name: 'Shared Downstream',
@@ -1807,7 +1900,8 @@ describe('backupService', () => {
       .get();
     expect(activeGraph?.createdBy).toBe('backup-import');
     expect(activeGraph?.sourceGraphJson).not.toContain('stale-model');
-    expect(activeGraph?.sourceGraphJson).toContain('route-endpoint:product:route:127');
+    expect(activeGraph?.sourceGraphJson).toContain('route-endpoint:product:auto-model:gpt-old-graph');
+    expect(activeGraph?.sourceGraphJson).toContain('route-endpoint:supply:upstream-model:');
   });
 
   it('imports ALL-API-Hub style payload with accounts and preferences', async () => {

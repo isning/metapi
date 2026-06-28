@@ -35,6 +35,10 @@ import {
   loadOauthRouteUnitSummariesByIds,
   type OAuthRouteUnitSummary,
 } from './oauth/routeUnitService.js';
+import type {
+  RouteExecutionCandidate,
+  RouteExecutionScope,
+} from './routeExecutionScopeTypes.js';
 import {
   isExactTokenRouteModelPattern,
   isTokenRouteRegexPattern,
@@ -79,33 +83,6 @@ interface RouteMatch {
 }
 
 type RouteEndpointTargetCandidate = RouteMatch['targets'][number];
-
-export type RouteExecutionCandidate = {
-  candidateId: string;
-  routeEndpointId: string;
-  routeId: number | null;
-  supplyTargetId: string | null;
-  targetIds: number[];
-  priority: number;
-  weight: number;
-  enabled: boolean;
-};
-
-export type RouteExecutionScope = {
-  scopeId: string;
-  graphVersionId: number | null;
-  graphVersion: number | null;
-  requestedModel: string;
-  matchedEntryNodeId: string | null;
-  matchedRouteId: number | null;
-  selectedRouteId: number | null;
-  selectedCandidateId: string | null;
-  allowedTargetIds: number[];
-  candidates: RouteExecutionCandidate[];
-  failureOverlay: RouteGraphRuntimeFailureOverlay;
-  routeGraph?: RouteGraphRuntimeSelection | null;
-  matchSnapshot: RouteMatch;
-};
 
 export interface SelectedTarget {
   target: typeof schema.routeEndpointTargets.$inferSelect;
@@ -1167,12 +1144,21 @@ async function loadEnabledRoutes(nowMs = Date.now()): Promise<RouteRow[]> {
   const rawRoutes = await db.select().from(schema.tokenRoutes)
     .where(eq(schema.tokenRoutes.enabled, true))
     .all();
+  const routeGroupSources = await db.select().from(schema.routeGroupSources).all();
+  const sourceRouteIdsByGroupRouteId = new Map<number, number[]>();
+  for (const source of routeGroupSources) {
+    const existing = sourceRouteIdsByGroupRouteId.get(source.groupRouteId) || [];
+    existing.push(source.sourceRouteId);
+    sourceRouteIdsByGroupRouteId.set(source.groupRouteId, existing);
+  }
   const bindings = await loadRouteGraphRouteTableBindings();
   const routes = rawRoutes.map((route) => {
     const binding = bindings.get(route.id);
+    const legacySourceRouteIds = sourceRouteIdsByGroupRouteId.get(route.id) || [];
+    const fallbackPattern = (route.modelPattern || route.displayName || '').trim();
     const match = binding?.match ?? {
       kind: 'model' as const,
-      requestedModelPattern: route.displayName || '',
+      requestedModelPattern: fallbackPattern,
       currentModelPattern: '',
       displayName: route.displayName || null,
       downstreamProtocol: null,
@@ -1183,14 +1169,22 @@ async function loadEnabledRoutes(nowMs = Date.now()): Promise<RouteRow[]> {
       tokenId: null,
       siteId: null,
     };
-    const backend = binding?.backend ?? { kind: 'supply' as const };
+    const backend = legacySourceRouteIds.length > 0
+      ? { kind: 'routes' as const, routeIds: legacySourceRouteIds }
+      : binding?.backend ?? { kind: 'supply' as const };
     return {
       ...route,
       match,
       backend,
-      routeMode: binding?.routeMode ?? deriveLegacyRouteModeFromBackendSpec(backend),
-      modelPattern: binding?.modelPattern ?? deriveLegacyModelPatternFromSpecs(match, backend),
-      sourceRouteIds: binding?.sourceRouteIds ?? deriveLegacySourceRouteIdsFromBackendSpec(backend),
+      routeMode: legacySourceRouteIds.length > 0
+        ? 'explicit_group'
+        : binding?.routeMode ?? deriveLegacyRouteModeFromBackendSpec(backend),
+      modelPattern: binding?.modelPattern ?? (deriveLegacyModelPatternFromSpecs(match, backend) || fallbackPattern),
+      sourceRouteIds: binding?.sourceRouteIds ?? (
+        legacySourceRouteIds.length > 0
+          ? legacySourceRouteIds
+          : deriveLegacySourceRouteIdsFromBackendSpec(backend)
+      ),
     };
   });
   routeCacheSnapshot = {
@@ -1682,10 +1676,11 @@ function buildRouteExecutionScope(match: RouteMatch, requestedModel: string): Ro
 
 function matchWithinRouteExecutionScope(scope: RouteExecutionScope): RouteMatch {
   const allowed = new Set(scope.allowedTargetIds);
+  const matchSnapshot = scope.matchSnapshot as RouteMatch;
   return {
-    ...scope.matchSnapshot,
-    routeGraph: scope.routeGraph ?? scope.matchSnapshot.routeGraph ?? null,
-    targets: scope.matchSnapshot.targets.filter((candidate) => allowed.has(candidate.target.id)),
+    ...matchSnapshot,
+    routeGraph: scope.routeGraph ?? matchSnapshot.routeGraph ?? null,
+    targets: matchSnapshot.targets.filter((candidate) => allowed.has(candidate.target.id)),
   };
 }
 

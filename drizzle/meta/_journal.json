@@ -267,6 +267,13 @@
       "when": 1782464400000,
       "tag": "0037_model_day_usage_account",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "6",
+      "when": 1782604800000,
+      "tag": "0038_executable_endpoint_profiles",
+      "breakpoints": true
     }
   ]
 }

@@ -70,7 +70,7 @@ export const routeGraphNodeDefinitions = {
     accent: '#2563eb',
     primitive: true,
     defaultPorts: [
-      { id: 'bidirect.in', label: 'reuse input', direction: 'input', kind: 'bidirect', accepts: ['bidirect'] },
+      { id: 'bidirect.in', label: 'reuse input', direction: 'input', kind: 'bidirect' },
       { id: 'bidirect.out', label: 'matched flow', direction: 'output', kind: 'bidirect' },
     ],
     createDefaultNode: (index, position) => ({
@@ -86,9 +86,9 @@ export const routeGraphNodeDefinitions = {
     accent: '#7c3aed',
     primitive: true,
     defaultPorts: [
-      { id: 'request.in', label: 'before mutation', direction: 'input', kind: 'request', accepts: ['request'] },
+      { id: 'request.in', label: 'before mutation', direction: 'input', kind: 'request' },
       { id: 'request.out', label: 'after mutation', direction: 'output', kind: 'request' },
-      { id: 'bidirect.in', label: 'before round trip', direction: 'input', kind: 'bidirect', accepts: ['bidirect'] },
+      { id: 'bidirect.in', label: 'before round trip', direction: 'input', kind: 'bidirect' },
       { id: 'bidirect.out', label: 'after round trip', direction: 'output', kind: 'bidirect' },
     ],
     createDefaultNode: (index, position) => ({ ...baseNode('filter', index, position), operations: [] }),
@@ -100,9 +100,9 @@ export const routeGraphNodeDefinitions = {
     accent: '#2563eb',
     primitive: true,
     defaultPorts: [
-      { id: 'bidirect.in', label: 'dispatch input', direction: 'input', kind: 'bidirect', accepts: ['bidirect'], required: true },
+      { id: 'bidirect.in', label: 'dispatch input', direction: 'input', kind: 'bidirect', required: true },
       { id: 'bidirect[1...].out', label: 'dispatch path', direction: 'output', kind: 'bidirect', multiple: true, collection: { type: 'arr', min: 1 } },
-      { id: 'route.in', label: 'endpoint candidates', direction: 'input', kind: 'route', accepts: ['route'], multiple: true, collection: { type: 'set', min: 1 } },
+      { id: 'route.in', label: 'endpoint candidates', direction: 'input', kind: 'route', multiple: true, collection: { type: 'set', min: 1 } },
     ],
     createDefaultNode: (index, position) => ({ ...baseNode('dispatcher', index, position), mode: 'route', ordering: 'explicit', policy: { strategy: 'weighted' } }),
   },
@@ -114,7 +114,7 @@ export const routeGraphNodeDefinitions = {
     primitive: true,
     defaultPorts: [
       { id: 'route.out', label: 'route product', direction: 'output', kind: 'route' },
-      { id: 'bidirect.in', label: 'invoke route', direction: 'input', kind: 'bidirect', accepts: ['bidirect'], multiple: true },
+      { id: 'bidirect.in', label: 'invoke route', direction: 'input', kind: 'bidirect', multiple: true },
     ],
     createDefaultNode: (index, position) => {
       const node = baseNode('route_endpoint', index, position);
@@ -138,7 +138,7 @@ export const routeGraphNodeDefinitions = {
     primitive: true,
     defaultPorts: [
       { id: 'route.out', label: 'synthetic target', direction: 'output', kind: 'route' },
-      { id: 'bidirect.in', label: 'return response', direction: 'input', kind: 'bidirect', accepts: ['bidirect'] },
+      { id: 'bidirect.in', label: 'return response', direction: 'input', kind: 'bidirect' },
     ],
     createDefaultNode: (index, position) => ({ ...baseNode('synthetic_endpoint', index, position), statusCode: 503, message: 'Route unavailable' }),
   },
@@ -149,8 +149,8 @@ export const routeGraphNodeDefinitions = {
     accent: '#64748b',
     primitive: false,
     defaultPorts: [
-      { id: 'route.in', label: 'candidate targets', direction: 'input', kind: 'route', accepts: ['route'], multiple: true, collection: { type: 'set' } },
-      { id: 'bidirect.in', label: 'route input', direction: 'input', kind: 'bidirect', accepts: ['bidirect'] },
+      { id: 'route.in', label: 'candidate targets', direction: 'input', kind: 'route', multiple: true, collection: { type: 'set' } },
+      { id: 'bidirect.in', label: 'route input', direction: 'input', kind: 'bidirect' },
       { id: 'bidirect.out', label: 'selected path', direction: 'output', kind: 'bidirect' },
     ],
     createDefaultNode: (index, position) => {
@@ -173,17 +173,11 @@ export const ROUTE_GRAPH_VISUAL_COLORS = {
     request: '#2563eb',
     bidirect: '#2563eb',
     route: '#16a34a',
-    response: '#047857',
-    control: '#334155',
-    metrics: '#64748b',
   } satisfies Record<RouteGraphPortKind, string>,
   edge: {
     request_flow: '#2563eb',
     bidirect_flow: '#2563eb',
     route_flow: '#16a34a',
-    response_flow: '#047857',
-    control_flow: '#334155',
-    metrics_link: '#64748b',
   } satisfies Record<RouteGraphEdgeKind, string>,
   macro: {
     candidate_selector: '#9333ea',

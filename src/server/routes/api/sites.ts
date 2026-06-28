@@ -22,6 +22,8 @@ import { probeSiteModels } from '../../services/modelService.js';
 import {
   listCredentialEndpointMatrix,
   replaceCredentialEndpointBindings,
+  updateApiEndpointProfiles,
+  type ApiEndpointProfileUpdate,
   type CredentialEndpointBindingUpdate,
 } from '../../services/credentialEndpointBindingService.js';
 import { valueWalletBalanceInBaseUnit } from '../../services/walletBalanceValuationService.js';
@@ -295,6 +297,107 @@ function parseCredentialEndpointBindingUpdates(input: unknown): {
   }
 
   return { valid: true, bindings };
+}
+
+function parseHeaderRecord(input: unknown, index: number): Record<string, string> | null {
+  if (input === undefined || input === null || input === '') return null;
+  if (typeof input === 'string') {
+    try {
+      const parsed = JSON.parse(input);
+      return parseHeaderRecord(parsed, index);
+    } catch {
+      throw new Error(`Invalid defaultHeaders JSON at index ${index}.`);
+    }
+  }
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw new Error(`Invalid defaultHeaders at index ${index}.`);
+  }
+  const headers: Record<string, string> = {};
+  for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
+    if (typeof value !== 'string') {
+      throw new Error(`Invalid defaultHeaders value for ${key} at index ${index}.`);
+    }
+    headers[key] = value;
+  }
+  return headers;
+}
+
+function parseApiEndpointProfileUpdates(input: unknown): {
+  valid: boolean;
+  profiles: ApiEndpointProfileUpdate[];
+  error?: string;
+} {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    return { valid: false, profiles: [], error: 'Invalid body. Expected an object.' };
+  }
+  const rawProfiles = (input as { profiles?: unknown }).profiles;
+  if (!Array.isArray(rawProfiles)) {
+    return { valid: false, profiles: [], error: 'profiles must be an array.' };
+  }
+
+  const seenProfileIds = new Set<number>();
+  const profiles: ApiEndpointProfileUpdate[] = [];
+  try {
+    for (let index = 0; index < rawProfiles.length; index += 1) {
+      const row = rawProfiles[index];
+      if (!row || typeof row !== 'object' || Array.isArray(row)) {
+        return { valid: false, profiles: [], error: `Invalid profile at index ${index}.` };
+      }
+      const record = row as Record<string, unknown>;
+      const id = Number.parseInt(String(record.id ?? ''), 10);
+      if (!Number.isFinite(id) || id <= 0) {
+        return { valid: false, profiles: [], error: `Invalid profile id at index ${index}.` };
+      }
+      if (seenProfileIds.has(id)) {
+        return { valid: false, profiles: [], error: `Duplicate profile id: ${id}.` };
+      }
+      seenProfileIds.add(id);
+
+      const enabled = normalizePinnedFlag(record.enabled);
+      if (record.enabled !== undefined && enabled === null) {
+        return { valid: false, profiles: [], error: `Invalid enabled value at index ${index}.` };
+      }
+      const requestMethod = record.requestMethod === undefined || record.requestMethod === null || record.requestMethod === ''
+        ? undefined
+        : String(record.requestMethod).trim().toUpperCase();
+      if (requestMethod !== undefined && requestMethod !== 'POST' && requestMethod !== 'GET') {
+        return { valid: false, profiles: [], error: `Invalid requestMethod at index ${index}.` };
+      }
+      const priority = record.priority === undefined || record.priority === null || record.priority === ''
+        ? undefined
+        : Number.parseInt(String(record.priority), 10);
+      if (priority !== undefined && !Number.isFinite(priority)) {
+        return { valid: false, profiles: [], error: `Invalid priority at index ${index}.` };
+      }
+      const catalogSourceId = record.modelCatalogSourceId === undefined
+        ? undefined
+        : (record.modelCatalogSourceId === null || record.modelCatalogSourceId === ''
+          ? null
+          : Number.parseInt(String(record.modelCatalogSourceId), 10));
+      if (catalogSourceId !== undefined && catalogSourceId !== null && !Number.isFinite(catalogSourceId)) {
+        return { valid: false, profiles: [], error: `Invalid modelCatalogSourceId at index ${index}.` };
+      }
+
+      profiles.push({
+        id,
+        ...(record.label !== undefined ? { label: String(record.label || '').trim() } : {}),
+        ...(requestMethod !== undefined ? { requestMethod: requestMethod as 'POST' | 'GET' } : {}),
+        ...(record.requestUrl !== undefined ? { requestUrl: record.requestUrl === null ? null : String(record.requestUrl || '').trim() } : {}),
+        ...(record.defaultHeaders !== undefined ? { defaultHeaders: parseHeaderRecord(record.defaultHeaders, index) } : {}),
+        ...(catalogSourceId !== undefined ? { modelCatalogSourceId: catalogSourceId } : {}),
+        ...(enabled !== null ? { enabled } : {}),
+        ...(priority !== undefined ? { priority } : {}),
+      });
+    }
+  } catch (error) {
+    return {
+      valid: false,
+      profiles: [],
+      error: error instanceof Error ? error.message : 'Invalid endpoint profile payload.',
+    };
+  }
+
+  return { valid: true, profiles };
 }
 
 async function loadSiteApiEndpointsBySiteIds(siteIds: number[]) {
@@ -878,6 +981,40 @@ export async function sitesRoutes(app: FastifyInstance) {
     }
     return listCredentialEndpointMatrix(id);
   });
+
+  app.put<{ Params: { id: string }; Body: unknown }>(
+    '/api/sites/:id/endpoint-profiles',
+    async (request, reply) => {
+      const id = parseInt(request.params.id);
+      if (Number.isNaN(id)) {
+        return reply.code(400).send({ error: 'Invalid site id' });
+      }
+      const existingSite = await db.select({ id: schema.sites.id }).from(schema.sites).where(eq(schema.sites.id, id)).get();
+      if (!existingSite) {
+        return reply.code(404).send({ error: 'Site not found' });
+      }
+
+      const parsed = parseApiEndpointProfileUpdates(request.body);
+      if (!parsed.valid) {
+        return reply.code(400).send({ error: parsed.error || 'Invalid endpoint profile payload.' });
+      }
+
+      try {
+        const result = await updateApiEndpointProfiles({
+          siteId: id,
+          profiles: parsed.profiles,
+        });
+        invalidateSiteCaches();
+        return result;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to update endpoint profiles.';
+        if (message.includes('does not belong to this site') || message.includes('URL') || message.includes('Header') || message.includes('label')) {
+          return reply.code(400).send({ error: message });
+        }
+        throw error;
+      }
+    },
+  );
 
   app.put<{ Params: { id: string; credentialKey: string }; Body: unknown }>(
     '/api/sites/:id/endpoint-bindings/:credentialKey',

@@ -82,7 +82,7 @@ describe('TokenRouter session decoupling', () => {
     }).returning().get();
 
     const router = new TokenRouter();
-    const selected = await router.selectChannel('gpt-4o-mini');
+    const selected = await router.selectTarget('gpt-4o-mini');
 
     expect(selected).not.toBeNull();
     expect(selected?.target.id).toBe(channel.id);
@@ -127,7 +127,7 @@ describe('TokenRouter session decoupling', () => {
     }).returning().get();
 
     const router = new TokenRouter();
-    const selected = await router.selectChannel('gpt-4.1-mini');
+    const selected = await router.selectTarget('gpt-4.1-mini');
     expect(selected).toBeNull();
 
     const decision = await router.explainSelection('gpt-4.1-mini');

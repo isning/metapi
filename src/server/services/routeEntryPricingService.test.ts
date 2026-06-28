@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { RouteProgramBundleV3 } from '../../shared/routeGraph.js';
+import type { RouteProgramBundle } from '../../shared/routeGraph.js';
 
 const quoteEndpointPricingMock = vi.hoisted(() => vi.fn());
 const quoteReferencePricingMock = vi.hoisted(() => vi.fn());
@@ -43,9 +43,9 @@ function mockEndpointQuotes() {
   });
 }
 
-function bundleWithWeightedTargets(): RouteProgramBundleV3 {
+function bundleWithWeightedTargets(): RouteProgramBundle {
   return {
-    version: 3,
+    version: 1,
     matcher: {
       exact: {
         'public-model': {
@@ -115,7 +115,7 @@ function bundleWithWeightedTargets(): RouteProgramBundleV3 {
   };
 }
 
-function bundleWithTargetPolicy(policy: Record<string, unknown>): RouteProgramBundleV3 {
+function bundleWithTargetPolicy(policy: Record<string, unknown>): RouteProgramBundle {
   const bundle = bundleWithWeightedTargets();
   const selectSupply = bundle.programs[0]?.ops[0];
   if (selectSupply?.op === 'select_supply') {
@@ -126,9 +126,9 @@ function bundleWithTargetPolicy(policy: Record<string, unknown>): RouteProgramBu
   return bundle;
 }
 
-function bundleWithDynamicDispatchPolicy(): RouteProgramBundleV3 {
+function bundleWithDynamicDispatchPolicy(): RouteProgramBundle {
   return {
-    version: 3,
+    version: 1,
     matcher: {
       exact: {
         'public-model': {

@@ -115,7 +115,7 @@ const edges: RouteGraphEdge[] = [
 ];
 
 const graph = {
-  version: 2 as const,
+  version: 1 as const,
   nodes: [generatedEntry, generatedRouteEndpoint, generatedSupplyEndpoint, generatedDispatcher, generatedEndpoint, otherGeneratedEntry, otherGeneratedRouteEndpoint, manualFilter],
   macros: [generatedMacro, otherMacro],
   edges,
@@ -479,7 +479,7 @@ describe('RouteGraphWorkbench view filtering', () => {
 
   it('falls back to macro endpoint groups when lowered candidate edges are unavailable', () => {
     const rows = getMacroGeneratedPreviewRows({
-      version: 2,
+      version: 1,
       nodes: [generatedRouteEndpoint],
       macros: [generatedMacro],
       edges: [],
@@ -514,7 +514,7 @@ describe('RouteGraphWorkbench view filtering', () => {
       },
     };
     const rows = getMacroGeneratedPreviewRows({
-      version: 2,
+      version: 1,
       nodes: [],
       macros: [macroWithSharedPriority],
       edges: [],

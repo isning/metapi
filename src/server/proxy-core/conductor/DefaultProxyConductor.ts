@@ -3,7 +3,7 @@ import {
   isTerminalFailure,
   shouldFailover,
   shouldRefreshAuth,
-  shouldRetrySameChannel,
+  shouldRetrySameTarget,
 } from './retryPolicy.js';
 import type { ExecuteInput, ExecuteResult, ProxyConductorDependencies, SelectedTargetLike } from './types.js';
 import { recordFailedAttempt, recordSuccessfulAttempt } from './usageHooks.js';
@@ -15,17 +15,17 @@ export class DefaultProxyConductor {
     if (this.deps.previewSelectedTarget) {
       return this.deps.previewSelectedTarget(requestedModel, downstreamPolicy);
     }
-    return this.deps.selectChannel(requestedModel, downstreamPolicy);
+    return this.deps.selectTarget(requestedModel, downstreamPolicy);
   }
 
   async execute(input: ExecuteInput): Promise<ExecuteResult> {
     const excludeTargetIds: number[] = [];
     let attempts = 0;
-    let selected = await this.deps.selectChannel(input.requestedModel, input.downstreamPolicy);
+    let selected = await this.deps.selectTarget(input.requestedModel, input.downstreamPolicy);
     if (!selected) {
       return {
         ok: false,
-        reason: 'no_channel',
+        reason: 'no_target',
         attempts: 0,
       };
     }
@@ -72,7 +72,7 @@ export class DefaultProxyConductor {
         };
       }
 
-      if (shouldRetrySameChannel(action)) {
+      if (shouldRetrySameTarget(action)) {
         continue;
       }
 
@@ -89,7 +89,7 @@ export class DefaultProxyConductor {
 
       if (shouldFailover(action)) {
         excludeTargetIds.push(selected.target.id);
-        const next = await this.deps.selectNextChannel(
+        const next = await this.deps.selectNextTarget(
           input.requestedModel,
           excludeTargetIds,
           input.downstreamPolicy,

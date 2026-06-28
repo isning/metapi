@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { compilePricingCelExpression } from './cel.js';
 import type { PricingComponent, PricingOverlay, PricingPlan, PricingTierDimension } from './types.js';
 
 const finiteNumberSchema = z.number().finite();
@@ -81,6 +82,13 @@ export const pricingConditionSchema: z.ZodType<any> = z.lazy(() => z.object({
       message: 'Pricing condition must contain at least one predicate.',
     });
   }
+  if (condition.cel && !compilePricingCelExpression(condition.cel)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Pricing condition CEL expression is invalid.',
+      path: ['cel'],
+    });
+  }
 }));
 
 const quantityPriceTierSchema = z.object({
@@ -143,11 +151,11 @@ const pricingComponentBaseSchema = z.object({
 
 export const pricingComponentSchema: z.ZodType<PricingComponent> = pricingComponentBaseSchema.superRefine((component, ctx) => {
   const expression = component.price.expression;
-  if (expression?.kind === 'formula') {
+  if (expression?.kind === 'formula' && !compilePricingCelExpression(expression.cel)) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
-      message: 'Formula CEL pricing is not enabled in pricing-core v1.',
-      path: ['price', 'expression'],
+      message: 'Pricing formula CEL expression is invalid.',
+      path: ['price', 'expression', 'cel'],
     });
   }
 });
@@ -211,10 +219,17 @@ const pricingTransformSchema = z.object({
   value: z.unknown().optional(),
   cel: z.string().trim().min(1).max(2048).optional(),
 }).superRefine((transform, ctx) => {
-  if (transform.kind === 'custom' || transform.cel) {
+  if (transform.kind === 'custom' && !transform.cel) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
-      message: 'Custom/CEL transforms are not enabled in pricing-core v1.',
+      message: 'Custom pricing transforms require a CEL expression.',
+      path: ['cel'],
+    });
+  }
+  if (transform.cel && !compilePricingCelExpression(transform.cel)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Pricing transform CEL expression is invalid.',
       path: ['cel'],
     });
   }

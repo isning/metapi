@@ -151,13 +151,13 @@ describe('routeGraphRegistry', () => {
       ownership: 'manual' as const,
       dynamicPorts: [
         { id: 'route.in', label: 'custom candidate set', direction: 'input' as const, kind: 'route' as const, collection: { type: 'set' as const, min: 0, max: 8 } },
-        { id: 'metrics.out', label: 'telemetry', direction: 'output' as const, kind: 'metrics' as const, collection: { type: 'arr' as const } },
+        { id: 'bidirect.out', label: 'selected paths', direction: 'output' as const, kind: 'bidirect' as const, collection: { type: 'arr' as const } },
       ],
     };
 
     const ports = getNodePorts(node);
     const routePort = ports.find((port) => port.id === 'route.in');
-    const metricsPort = ports.find((port) => port.id === 'metrics.out');
+    const bidirectPort = ports.find((port) => port.id === 'bidirect.out');
 
     expect(routePort).toMatchObject({
       label: 'custom candidate set',
@@ -166,8 +166,8 @@ describe('routeGraphRegistry', () => {
     });
     expect(getPortCollectionKind(routePort!)).toBe('set');
     expect(getPortTypeSignature(routePort!)).toBe('route{0,8}');
-    expect(getPortDisplayLabel(metricsPort!)).toBe('telemetrys');
-    expect(getPortTypeSignature(metricsPort!)).toBe('metrics[]');
+    expect(getPortDisplayLabel(bidirectPort!)).toBe('selected paths');
+    expect(getPortTypeSignature(bidirectPort!)).toBe('bidirect[]');
   });
 
   it('keeps graph templates graph-native instead of legacy-route specific', () => {

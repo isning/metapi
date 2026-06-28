@@ -6,8 +6,8 @@ import { join } from 'node:path';
 import { asc, eq } from 'drizzle-orm';
 
 const fetchMock = vi.fn();
-const selectChannelMock = vi.fn();
-const selectNextChannelMock = vi.fn();
+const selectTargetMock = vi.fn();
+const selectNextTargetMock = vi.fn();
 const recordSuccessMock = vi.fn();
 const recordFailureMock = vi.fn();
 const refreshModelsAndRebuildRoutesMock = vi.fn();
@@ -27,8 +27,8 @@ vi.mock('undici', async () => {
 
 vi.mock('../../services/tokenRouter.js', () => ({
   tokenRouter: {
-    selectChannel: (...args: unknown[]) => selectChannelMock(...args),
-    selectNextChannel: (...args: unknown[]) => selectNextChannelMock(...args),
+    selectTarget: (...args: unknown[]) => selectTargetMock(...args),
+    selectNextTarget: (...args: unknown[]) => selectNextTargetMock(...args),
     recordSuccess: (...args: unknown[]) => recordSuccessMock(...args),
     recordFailure: (...args: unknown[]) => recordFailureMock(...args),
   },
@@ -89,8 +89,8 @@ describe('/v1/completions site api endpoint rotation', () => {
 
   beforeEach(async () => {
     fetchMock.mockReset();
-    selectChannelMock.mockReset();
-    selectNextChannelMock.mockReset();
+    selectTargetMock.mockReset();
+    selectNextTargetMock.mockReset();
     recordSuccessMock.mockReset();
     recordFailureMock.mockReset();
     refreshModelsAndRebuildRoutesMock.mockReset();
@@ -159,15 +159,15 @@ describe('/v1/completions site api endpoint rotation', () => {
       },
     ]).run();
 
-    selectChannelMock.mockResolvedValue({
-      channel: { id: 11, routeId: 22 },
+    selectTargetMock.mockResolvedValue({
+      target: { id: 11, routeId: 22 },
       site,
       account,
       tokenName: 'default',
       tokenValue: 'sk-nihao',
       actualModel: 'gpt-4o-mini',
     });
-    selectNextChannelMock.mockResolvedValue(null);
+    selectNextTargetMock.mockResolvedValue(null);
 
     fetchMock
       .mockResolvedValueOnce(new Response('bad gateway', { status: 502 }))
@@ -205,7 +205,7 @@ describe('/v1/completions site api endpoint rotation', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(String(fetchMock.mock.calls[0]?.[0] || '')).toBe('https://api-a.example.com/v1/completions');
     expect(String(fetchMock.mock.calls[1]?.[0] || '')).toBe('https://api-b.example.com/v1/completions');
-    expect(selectNextChannelMock).not.toHaveBeenCalled();
+    expect(selectNextTargetMock).not.toHaveBeenCalled();
     expect(recordFailureMock).not.toHaveBeenCalled();
     expect(recordSuccessMock).toHaveBeenCalledTimes(1);
 

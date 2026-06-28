@@ -162,4 +162,40 @@ describe('credentialEndpointBindingService', () => {
     });
     expect(config).toBeNull();
   });
+
+  it('updates executable endpoint profile settings for a site', async () => {
+    const { site } = await createCredentialFixture();
+    const initial = await service.listCredentialEndpointMatrix(site.id);
+    const chatProfile = initial.profiles.find((profile) => profile.apiType === 'openai_chat_completions');
+    const catalogSource = initial.catalogSources[0];
+    expect(chatProfile).toBeTruthy();
+    expect(catalogSource).toBeTruthy();
+
+    const matrix = await service.updateApiEndpointProfiles({
+      siteId: site.id,
+      profiles: [{
+        id: chatProfile!.rowId,
+        label: 'DeepSeek Chat',
+        requestMethod: 'POST',
+        requestUrl: 'https://api.deepseek.com/chat/completions',
+        defaultHeaders: {
+          'x-provider': 'deepseek',
+        },
+        modelCatalogSourceId: catalogSource!.id,
+        enabled: true,
+        priority: 7,
+      }],
+    });
+
+    const updated = matrix.profiles.find((profile) => profile.rowId === chatProfile!.rowId);
+    expect(updated).toMatchObject({
+      label: 'DeepSeek Chat',
+      requestUrl: 'https://api.deepseek.com/chat/completions',
+      defaultHeaders: {
+        'x-provider': 'deepseek',
+      },
+      modelCatalogSourceId: String(catalogSource!.id),
+      priority: 7,
+    });
+  });
 });

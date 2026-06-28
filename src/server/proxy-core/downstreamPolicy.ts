@@ -6,7 +6,23 @@ import { EMPTY_DOWNSTREAM_ROUTING_POLICY, type DownstreamRoutingPolicy } from '.
 export function getDownstreamRoutingPolicy(request: FastifyRequest): DownstreamRoutingPolicy {
   const authContext = getProxyAuthContext(request);
   if (!authContext) return EMPTY_DOWNSTREAM_ROUTING_POLICY;
-  return authContext.policy;
+  return {
+    ...EMPTY_DOWNSTREAM_ROUTING_POLICY,
+    ...authContext.policy,
+    supportedModels: Array.isArray(authContext.policy.supportedModels)
+      ? authContext.policy.supportedModels
+      : EMPTY_DOWNSTREAM_ROUTING_POLICY.supportedModels,
+    allowedRouteIds: Array.isArray(authContext.policy.allowedRouteIds)
+      ? authContext.policy.allowedRouteIds
+      : EMPTY_DOWNSTREAM_ROUTING_POLICY.allowedRouteIds,
+    siteWeightMultipliers: authContext.policy.siteWeightMultipliers || EMPTY_DOWNSTREAM_ROUTING_POLICY.siteWeightMultipliers,
+    excludedSiteIds: Array.isArray(authContext.policy.excludedSiteIds)
+      ? authContext.policy.excludedSiteIds
+      : EMPTY_DOWNSTREAM_ROUTING_POLICY.excludedSiteIds,
+    excludedCredentialRefs: Array.isArray(authContext.policy.excludedCredentialRefs)
+      ? authContext.policy.excludedCredentialRefs
+      : EMPTY_DOWNSTREAM_ROUTING_POLICY.excludedCredentialRefs,
+  };
 }
 
 export async function ensureModelAllowedForDownstreamKey(

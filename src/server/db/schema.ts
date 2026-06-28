@@ -45,14 +45,38 @@ export const siteApiEndpoints = sqliteTable('site_api_endpoints', {
   siteCooldownIdx: index('site_api_endpoints_site_cooldown_idx').on(table.siteId, table.cooldownUntil),
 }));
 
+export const modelCatalogSources = sqliteTable('model_catalog_sources', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  siteId: integer('site_id').notNull().references(() => sites.id, { onDelete: 'cascade' }),
+  sourceKey: text('source_key').notNull(),
+  label: text('label').notNull(),
+  discoveryMethod: text('discovery_method').notNull().default('GET'),
+  discoveryUrl: text('discovery_url'),
+  parser: text('parser').notNull().default('openai_models'),
+  credentialScope: text('credential_scope').notNull().default('credential'),
+  refreshPolicyJson: text('refresh_policy_json'),
+  enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
+  metadataJson: text('metadata_json'),
+  lastRefreshAt: text('last_refresh_at'),
+  lastModelCount: integer('last_model_count').default(0),
+  lastError: text('last_error'),
+  createdAt: text('created_at').default(sql`(datetime('now'))`),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  siteSourceKeyUnique: uniqueIndex('model_catalog_sources_site_source_key_unique').on(table.siteId, table.sourceKey),
+  siteEnabledIdx: index('model_catalog_sources_site_enabled_idx').on(table.siteId, table.enabled),
+}));
+
 export const apiEndpointProfiles = sqliteTable('api_endpoint_profiles', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   siteId: integer('site_id').notNull().references(() => sites.id, { onDelete: 'cascade' }),
   profileKey: text('profile_key').notNull(),
   apiType: text('api_type').notNull(),
   label: text('label').notNull(),
-  baseUrl: text('base_url'),
-  pathTemplate: text('path_template'),
+  requestMethod: text('request_method').notNull().default('POST'),
+  requestUrl: text('request_url'),
+  defaultHeadersJson: text('default_headers_json'),
+  modelCatalogSourceId: integer('model_catalog_source_id').references(() => modelCatalogSources.id, { onDelete: 'set null' }),
   authMode: text('auth_mode').notNull().default('bearer'),
   enabled: integer('enabled', { mode: 'boolean' }).notNull().default(true),
   priority: integer('priority').default(0),
@@ -64,6 +88,24 @@ export const apiEndpointProfiles = sqliteTable('api_endpoint_profiles', {
 }, (table) => ({
   siteProfileKeyUnique: uniqueIndex('api_endpoint_profiles_site_profile_key_unique').on(table.siteId, table.profileKey),
   siteApiTypeIdx: index('api_endpoint_profiles_site_api_type_idx').on(table.siteId, table.apiType, table.enabled),
+}));
+
+export const endpointModelObservations = sqliteTable('endpoint_model_observations', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  siteId: integer('site_id').notNull().references(() => sites.id, { onDelete: 'cascade' }),
+  credentialKey: text('credential_key').notNull(),
+  apiEndpointProfileId: integer('api_endpoint_profile_id').notNull().references(() => apiEndpointProfiles.id, { onDelete: 'cascade' }),
+  modelName: text('model_name').notNull(),
+  status: text('status').notNull(),
+  failureClass: text('failure_class'),
+  source: text('source').notNull().default('runtime'),
+  observedAt: text('observed_at').default(sql`(datetime('now'))`),
+  expiresAt: text('expires_at'),
+  metadataJson: text('metadata_json'),
+}, (table) => ({
+  credentialProfileModelUnique: uniqueIndex('endpoint_model_observations_credential_profile_model_unique').on(table.siteId, table.credentialKey, table.apiEndpointProfileId, table.modelName),
+  siteModelIdx: index('endpoint_model_observations_site_model_idx').on(table.siteId, table.modelName),
+  profileStatusIdx: index('endpoint_model_observations_profile_status_idx').on(table.apiEndpointProfileId, table.status),
 }));
 
 export const siteDisabledModels = sqliteTable('site_disabled_models', {

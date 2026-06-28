@@ -16,8 +16,8 @@ function expectImportsRouteRefreshWorkflow(source: string): void {
   );
 }
 
-function expectCallsSelectProxyChannelForAttempt(source: string): void {
-  expect(source).toMatch(/\bselect(?:Proxy|Surface)ChannelForAttempt\s*\(/);
+function expectCallsSelectProxyTargetForAttempt(source: string): void {
+  expect(source).toMatch(/\bselect(?:Proxy|Surface)TargetForAttempt\s*\(/);
 }
 
 function expectCallsRebuildRoutesOnly(source: string): void {
@@ -79,11 +79,11 @@ describe('route refresh workflow architecture boundaries', () => {
       sharedOrchestrationSource,
       genericOrchestratorSource,
     ]) {
-      expectCallsSelectProxyChannelForAttempt(source);
+      expectCallsSelectProxyTargetForAttempt(source);
     }
 
     expectImportsRouteRefreshWorkflow(modelListOrchestratorSource);
-    expect(modelListOrchestratorSource).toMatch(/\bselectModelListChannel\s*\(/);
+    expect(modelListOrchestratorSource).toMatch(/\bselectModelListTarget\s*\(/);
     expect(geminiAdapterSource).toContain('modelListModelProbes: GEMINI_MODEL_PROBES');
   });
 });

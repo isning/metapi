@@ -8,8 +8,8 @@ import { config } from '../../config.js';
 import { resetUpstreamEndpointRuntimeState } from '../../services/upstreamEndpointRuntimeMemory.js';
 
 const fetchMock = vi.fn();
-const selectChannelMock = vi.fn();
-const selectNextChannelMock = vi.fn();
+const selectTargetMock = vi.fn();
+const selectNextTargetMock = vi.fn();
 const recordSuccessMock = vi.fn();
 const recordFailureMock = vi.fn();
 const refreshModelsAndRebuildRoutesMock = vi.fn();
@@ -35,8 +35,8 @@ vi.mock('undici', async () => {
 
 vi.mock('../../services/tokenRouter.js', () => ({
   tokenRouter: {
-    selectChannel: (...args: unknown[]) => selectChannelMock(...args),
-    selectNextChannel: (...args: unknown[]) => selectNextChannelMock(...args),
+    selectTarget: (...args: unknown[]) => selectTargetMock(...args),
+    selectNextTarget: (...args: unknown[]) => selectNextTargetMock(...args),
     recordSuccess: (...args: unknown[]) => recordSuccessMock(...args),
     recordFailure: (...args: unknown[]) => recordFailureMock(...args),
   },
@@ -100,8 +100,8 @@ describe('chat proxy site api endpoint rotation', () => {
 
   beforeEach(async () => {
     fetchMock.mockReset();
-    selectChannelMock.mockReset();
-    selectNextChannelMock.mockReset();
+    selectTargetMock.mockReset();
+    selectNextTargetMock.mockReset();
     recordSuccessMock.mockReset();
     recordFailureMock.mockReset();
     refreshModelsAndRebuildRoutesMock.mockReset();
@@ -174,15 +174,15 @@ describe('chat proxy site api endpoint rotation', () => {
       },
     ]).run();
 
-    selectChannelMock.mockReturnValue({
-      channel: { id: 11, routeId: 22 },
+    selectTargetMock.mockReturnValue({
+      target: { id: 11, routeId: 22 },
       site,
       account,
       tokenName: 'default',
       tokenValue: 'sk-nihao',
       actualModel: 'gpt-4o-mini',
     });
-    selectNextChannelMock.mockReturnValue(null);
+    selectNextTargetMock.mockReturnValue(null);
 
     fetchMock
       .mockResolvedValueOnce(new Response('bad gateway', { status: 502 }))
@@ -220,7 +220,7 @@ describe('chat proxy site api endpoint rotation', () => {
     expect(String(fetchMock.mock.calls[1]?.[0] || '')).toBe('https://api-a.example.com/v1/chat/completions');
     expect(String(fetchMock.mock.calls[2]?.[0] || '')).toBe('https://api-a.example.com/v1/messages');
     expect(String(fetchMock.mock.calls[3]?.[0] || '')).toBe('https://api-b.example.com/v1/responses');
-    expect(selectNextChannelMock).not.toHaveBeenCalled();
+    expect(selectNextTargetMock).not.toHaveBeenCalled();
     expect(recordFailureMock).not.toHaveBeenCalled();
     expect(recordSuccessMock).toHaveBeenCalledTimes(1);
 

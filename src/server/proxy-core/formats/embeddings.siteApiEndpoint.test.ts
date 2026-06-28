@@ -7,7 +7,7 @@ import { join } from 'node:path';
 const fetchMock = vi.fn();
 const fetchWithObservedFirstByteMock = vi.fn();
 const getObservedResponseMetaMock = vi.fn();
-const selectChannelMock = vi.fn();
+const selectTargetMock = vi.fn();
 const recordSuccessMock = vi.fn();
 const recordFailureMock = vi.fn();
 const refreshModelsAndRebuildRoutesMock = vi.fn();
@@ -32,7 +32,7 @@ vi.mock('../../proxy-core/firstByteTimeout.js', () => ({
 
 vi.mock('../../services/tokenRouter.js', () => ({
   tokenRouter: {
-    selectChannel: (...args: unknown[]) => selectChannelMock(...args),
+    selectTarget: (...args: unknown[]) => selectTargetMock(...args),
     recordSuccess: (...args: unknown[]) => recordSuccessMock(...args),
     recordFailure: (...args: unknown[]) => recordFailureMock(...args),
   },
@@ -95,7 +95,7 @@ describe('/v1/embeddings usage source logging', () => {
     fetchMock.mockReset();
     fetchWithObservedFirstByteMock.mockReset();
     getObservedResponseMetaMock.mockReset();
-    selectChannelMock.mockReset();
+    selectTargetMock.mockReset();
     recordSuccessMock.mockReset();
     recordFailureMock.mockReset();
     refreshModelsAndRebuildRoutesMock.mockReset();
@@ -159,8 +159,8 @@ describe('/v1/embeddings usage source logging', () => {
       sortOrder: 0,
     }).run();
 
-    selectChannelMock.mockResolvedValue({
-      channel: { id: 11, routeId: 22 },
+    selectTargetMock.mockResolvedValue({
+      target: { id: 11, routeId: 22 },
       site,
       account,
       tokenName: 'default',

@@ -26,6 +26,8 @@ type SqlMethod = 'all' | 'get' | 'run' | 'values' | 'execute';
 const TABLES_WITH_NUMERIC_ID = new Set([
   'sites',
   'api_endpoint_profiles',
+  'model_catalog_sources',
+  'endpoint_model_observations',
   'credential_endpoint_bindings',
   'accounts',
   'account_tokens',

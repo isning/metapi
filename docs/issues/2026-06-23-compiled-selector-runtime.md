@@ -5,7 +5,7 @@ ADR: [ADR-0012](../adr/0012-compiled-selector-runtime.md)
 
 ## Goal
 
-Move semantic graph selection and endpoint/channel selection onto one compiled
+Move semantic graph selection and final target selection onto one compiled
 selector runtime so CEL, metadata policies, health weighting, cooldown avoidance,
 runtime load, cost, balance, usage, and downstream multipliers are evaluated by a
 single data-plane module.
@@ -33,11 +33,11 @@ single data-plane module.
 - Route graph CEL score/direct tests pass without per-request `run(expr)`.
 - Route graph runtime has no local CEL parse/run dispatcher implementation.
 - Token router still:
-  - avoids recently failed channels;
+  - avoids recently failed targets;
   - respects site/model runtime breakers;
   - applies cost, balance, usage, global site weight, downstream site
     multipliers, historical health, runtime health, and runtime load;
-  - preserves stable-first observation-pool behavior.
+  - preserves stable-first observation behavior.
 - Architecture tests assert that graph runtime delegates selection to
   `selectorEngine`.
 - `npm run repo:drift-check` passes after shared runtime changes.
@@ -49,4 +49,3 @@ single data-plane module.
 - Emit route-flow/model-test explanations directly from selector snapshots.
 - Add micro-benchmarks for large candidate sets with CEL and dynamic health
   terms.
-

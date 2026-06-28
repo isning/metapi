@@ -279,13 +279,29 @@ export type CredentialEndpointMatrixProfile = {
   siteId: number;
   apiType: string;
   label: string;
-  baseUrl?: string | null;
-  pathTemplate?: string | null;
+  requestMethod?: "POST" | "GET" | string | null;
+  requestUrl?: string | null;
+  defaultHeaders?: Record<string, string> | null;
+  modelCatalogSourceId?: string | null;
   authMode: string;
   enabled: boolean;
   priority?: number | null;
   compatibilityPolicyRef?: string | null;
   metadata?: Record<string, unknown>;
+};
+
+export type ModelCatalogSourceSummary = {
+  id: number;
+  sourceKey: string;
+  label: string;
+  discoveryMethod: string;
+  discoveryUrl: string | null;
+  parser: string;
+  credentialScope: string;
+  enabled: boolean;
+  lastRefreshAt: string | null;
+  lastModelCount: number;
+  lastError: string | null;
 };
 
 export type CredentialEndpointMatrixBinding = {
@@ -311,6 +327,7 @@ export type CredentialEndpointMatrixCredential = {
 export type CredentialEndpointMatrix = {
   siteId: number;
   profiles: CredentialEndpointMatrixProfile[];
+  catalogSources: ModelCatalogSourceSummary[];
   credentials: CredentialEndpointMatrixCredential[];
 };
 
@@ -1115,6 +1132,23 @@ export const api = {
     }),
   getSiteEndpointBindings: (siteId: number) =>
     request<CredentialEndpointMatrix>(`/api/sites/${siteId}/endpoint-bindings`),
+  updateSiteEndpointProfiles: (
+    siteId: number,
+    profiles: Array<{
+      id: number;
+      label?: string;
+      requestMethod?: "POST" | "GET";
+      requestUrl?: string | null;
+      defaultHeaders?: Record<string, string> | null;
+      modelCatalogSourceId?: number | null;
+      enabled?: boolean;
+      priority?: number;
+    }>,
+  ) =>
+    request<CredentialEndpointMatrix>(`/api/sites/${siteId}/endpoint-profiles`, {
+      method: "PUT",
+      body: JSON.stringify({ profiles }),
+    }),
   updateSiteEndpointBindings: (
     siteId: number,
     credentialKey: string,

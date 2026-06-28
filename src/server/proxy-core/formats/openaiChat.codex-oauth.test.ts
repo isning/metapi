@@ -2,8 +2,8 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const fetchMock = vi.fn();
-const selectChannelMock = vi.fn();
-const selectNextChannelMock = vi.fn();
+const selectTargetMock = vi.fn();
+const selectNextTargetMock = vi.fn();
 const recordSuccessMock = vi.fn();
 const recordFailureMock = vi.fn();
 const refreshModelsAndRebuildRoutesMock = vi.fn();
@@ -33,8 +33,8 @@ vi.mock('undici', async () => {
 
 vi.mock('../../services/tokenRouter.js', () => ({
   tokenRouter: {
-    selectChannel: (...args: unknown[]) => selectChannelMock(...args),
-    selectNextChannel: (...args: unknown[]) => selectNextChannelMock(...args),
+    selectTarget: (...args: unknown[]) => selectTargetMock(...args),
+    selectNextTarget: (...args: unknown[]) => selectNextTargetMock(...args),
     recordSuccess: (...args: unknown[]) => recordSuccessMock(...args),
     recordFailure: (...args: unknown[]) => recordFailureMock(...args),
   },
@@ -81,6 +81,14 @@ vi.mock('../../services/oauth/quota.js', () => ({
 vi.mock('../../services/routeGraphRuntimeService.js', async (importOriginal) => ({
   ...await importOriginal<typeof import('../../services/routeGraphRuntimeService.js')>(),
   evaluateActiveRouteGraphForModel: async () => null,
+}));
+
+vi.mock('../../services/credentialEndpointBindingService.js', () => ({
+  loadCredentialApiVariantConfig: async () => null,
+}));
+
+vi.mock('../../services/proxyLogRouteDecisionSnapshot.js', () => ({
+  buildProxyLogRouteDecisionSnapshot: async () => null,
 }));
 
 vi.mock('../../db/index.js', () => ({
@@ -146,8 +154,8 @@ describe('chat proxy codex oauth compatibility', () => {
 
   beforeEach(() => {
     fetchMock.mockReset();
-    selectChannelMock.mockReset();
-    selectNextChannelMock.mockReset();
+    selectTargetMock.mockReset();
+    selectNextTargetMock.mockReset();
     recordSuccessMock.mockReset();
     recordFailureMock.mockReset();
     refreshModelsAndRebuildRoutesMock.mockReset();
@@ -157,9 +165,9 @@ describe('chat proxy codex oauth compatibility', () => {
     refreshOauthAccessTokenSingleflightMock.mockReset();
     dbInsertMock.mockClear();
 
-    selectChannelMock.mockReturnValue({
-      channel: { id: 11, routeId: 22 },
-      site: { name: 'codex-site', url: 'https://chatgpt.com/backend-api/codex', platform: 'codex' },
+    selectTargetMock.mockReturnValue({
+      target: { id: 11, routeId: 22 },
+      site: { id: 44, name: 'codex-site', url: 'https://chatgpt.com/backend-api/codex', platform: 'codex' },
       account: {
         id: 33,
         username: 'codex-user@example.com',
@@ -177,7 +185,7 @@ describe('chat proxy codex oauth compatibility', () => {
       tokenValue: 'oauth-access-token',
       actualModel: 'gpt-5.4',
     });
-    selectNextChannelMock.mockReturnValue(null);
+    selectNextTargetMock.mockReturnValue(null);
     refreshOauthAccessTokenSingleflightMock.mockResolvedValue({
       accessToken: 'fresh-access-token',
       accountId: 33,
@@ -339,9 +347,9 @@ describe('chat proxy codex oauth compatibility', () => {
   });
 
   it('retries oauth chat requests with a normalized upstream URL after refresh', async () => {
-    selectChannelMock.mockReturnValue({
-      channel: { id: 11, routeId: 22 },
-      site: { name: 'openai-site', url: 'https://gateway.example.com/v1/', platform: 'openai' },
+    selectTargetMock.mockReturnValue({
+      target: { id: 11, routeId: 22 },
+      site: { id: 44, name: 'openai-site', url: 'https://gateway.example.com/v1/', platform: 'openai' },
       account: {
         id: 33,
         username: 'oauth-user@example.com',

@@ -408,18 +408,6 @@
           "defaultValue": null,
           "primaryKey": false
         },
-        "base_url": {
-          "logicalType": "text",
-          "notNull": false,
-          "defaultValue": null,
-          "primaryKey": false
-        },
-        "path_template": {
-          "logicalType": "text",
-          "notNull": false,
-          "defaultValue": null,
-          "primaryKey": false
-        },
         "auth_mode": {
           "logicalType": "text",
           "notNull": true,
@@ -466,6 +454,30 @@
           "logicalType": "datetime",
           "notNull": false,
           "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "request_method": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'POST'",
+          "primaryKey": false
+        },
+        "request_url": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "default_headers_json": {
+          "logicalType": "json",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "model_catalog_source_id": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": null,
           "primaryKey": false
         }
       }
@@ -739,6 +751,76 @@
           "primaryKey": false
         },
         "excluded_credential_refs": {
+          "logicalType": "json",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        }
+      }
+    },
+    "endpoint_model_observations": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "site_id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "credential_key": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "api_endpoint_profile_id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "model_name": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "status": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "failure_class": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "source": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'runtime'",
+          "primaryKey": false
+        },
+        "observed_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "expires_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "metadata_json": {
           "logicalType": "json",
           "notNull": false,
           "defaultValue": null,
@@ -1030,6 +1112,106 @@
           "logicalType": "boolean",
           "notNull": false,
           "defaultValue": "false",
+          "primaryKey": false
+        }
+      }
+    },
+    "model_catalog_sources": {
+      "columns": {
+        "id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "site_id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "source_key": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "label": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "discovery_method": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'GET'",
+          "primaryKey": false
+        },
+        "discovery_url": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "parser": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'openai_models'",
+          "primaryKey": false
+        },
+        "credential_scope": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'credential'",
+          "primaryKey": false
+        },
+        "refresh_policy_json": {
+          "logicalType": "json",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "enabled": {
+          "logicalType": "boolean",
+          "notNull": true,
+          "defaultValue": "true",
+          "primaryKey": false
+        },
+        "metadata_json": {
+          "logicalType": "json",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "last_refresh_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "last_model_count": {
+          "logicalType": "integer",
+          "notNull": false,
+          "defaultValue": "0",
+          "primaryKey": false
+        },
+        "last_error": {
+          "logicalType": "text",
+          "notNull": false,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "created_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
           "primaryKey": false
         }
       }
@@ -3667,6 +3849,35 @@
       "unique": false
     },
     {
+      "name": "endpoint_model_observations_credential_profile_model_unique",
+      "table": "endpoint_model_observations",
+      "columns": [
+        "site_id",
+        "credential_key",
+        "api_endpoint_profile_id",
+        "model_name"
+      ],
+      "unique": true
+    },
+    {
+      "name": "endpoint_model_observations_profile_status_idx",
+      "table": "endpoint_model_observations",
+      "columns": [
+        "api_endpoint_profile_id",
+        "status"
+      ],
+      "unique": false
+    },
+    {
+      "name": "endpoint_model_observations_site_model_idx",
+      "table": "endpoint_model_observations",
+      "columns": [
+        "site_id",
+        "model_name"
+      ],
+      "unique": false
+    },
+    {
       "name": "events_category_created_at_idx",
       "table": "events",
       "columns": [
@@ -3773,6 +3984,24 @@
         "model_name"
       ],
       "unique": false
+    },
+    {
+      "name": "model_catalog_sources_site_enabled_idx",
+      "table": "model_catalog_sources",
+      "columns": [
+        "site_id",
+        "enabled"
+      ],
+      "unique": false
+    },
+    {
+      "name": "model_catalog_sources_site_source_key_unique",
+      "table": "model_catalog_sources",
+      "columns": [
+        "site_id",
+        "source_key"
+      ],
+      "unique": true
     },
     {
       "name": "model_day_usage_account_id_idx",
@@ -4590,11 +4819,29 @@
       ]
     },
     {
+      "name": "endpoint_model_observations_credential_profile_model_unique",
+      "table": "endpoint_model_observations",
+      "columns": [
+        "site_id",
+        "credential_key",
+        "api_endpoint_profile_id",
+        "model_name"
+      ]
+    },
+    {
       "name": "model_availability_account_model_unique",
       "table": "model_availability",
       "columns": [
         "account_id",
         "model_name"
+      ]
+    },
+    {
+      "name": "model_catalog_sources_site_source_key_unique",
+      "table": "model_catalog_sources",
+      "columns": [
+        "site_id",
+        "source_key"
       ]
     },
     {
@@ -4802,6 +5049,17 @@
     {
       "table": "api_endpoint_profiles",
       "columns": [
+        "model_catalog_source_id"
+      ],
+      "referencedTable": "model_catalog_sources",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "SET NULL"
+    },
+    {
+      "table": "api_endpoint_profiles",
+      "columns": [
         "site_id"
       ],
       "referencedTable": "sites",
@@ -4866,11 +5124,44 @@
       "onDelete": "CASCADE"
     },
     {
+      "table": "endpoint_model_observations",
+      "columns": [
+        "api_endpoint_profile_id"
+      ],
+      "referencedTable": "api_endpoint_profiles",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "endpoint_model_observations",
+      "columns": [
+        "site_id"
+      ],
+      "referencedTable": "sites",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
       "table": "model_availability",
       "columns": [
         "account_id"
       ],
       "referencedTable": "accounts",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "model_catalog_sources",
+      "columns": [
+        "site_id"
+      ],
+      "referencedTable": "sites",
       "referencedColumns": [
         "id"
       ],

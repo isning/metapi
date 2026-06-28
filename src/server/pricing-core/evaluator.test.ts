@@ -4,6 +4,7 @@ import {
   hashCanonicalUsage,
   normalizeCanonicalUsage,
   parsePricingPlan,
+  pricingCelTestUtils,
   type PricingPlan,
 } from './index.js';
 
@@ -64,6 +65,29 @@ describe('pricing-core evaluator', () => {
     expect(result).toEqual({
       success: false,
       error: 'Duplicate component id: input',
+    });
+  });
+
+  it('validates CEL syntax in pricing plans', () => {
+    const result = parsePricingPlan(basePlan({
+      components: [{
+        id: 'input',
+        label: 'Input',
+        role: 'charge',
+        kind: 'input_tokens',
+        meter: { unit: 'token', scale: 1_000_000 },
+        price: {
+          currency: 'USD',
+          amount: 1,
+          unitLabel: '1M tokens',
+          expression: { kind: 'formula', cel: 'unitPriceUsd *' },
+        },
+      }],
+    }));
+
+    expect(result).toEqual({
+      success: false,
+      error: 'Pricing formula CEL expression is invalid.',
     });
   });
 
@@ -273,5 +297,183 @@ describe('pricing-core evaluator', () => {
       { id: 'reseller-markup', kind: 'markup', amountUsd: 2 },
       { id: 'tax', kind: 'tax', amountUsd: 1.2 },
     ]);
+  });
+
+  it('uses CEL conditions against normalized pricing context', () => {
+    const evaluation = evaluatePricingPlan({
+      plan: basePlan({
+        components: [
+          {
+            id: 'batch-input',
+            label: 'Batch input',
+            role: 'charge',
+            kind: 'input_tokens',
+            meter: { unit: 'token', quantityPath: 'usage.inputTokens', scale: 1_000_000 },
+            price: { currency: 'USD', amount: 2, unitLabel: '1M input tokens' },
+            appliesWhen: { cel: 'metadata.billing_mode == "batch" && usage.inputTokens > 0' },
+          },
+          {
+            id: 'live-input',
+            label: 'Live input',
+            role: 'charge',
+            kind: 'input_tokens',
+            meter: { unit: 'token', quantityPath: 'usage.inputTokens', scale: 1_000_000 },
+            price: { currency: 'USD', amount: 10, unitLabel: '1M input tokens' },
+            appliesWhen: { cel: 'metadata.billing_mode != "batch"' },
+          },
+        ],
+      }),
+      usage: { inputTokens: 1_000_000 },
+      context: { metadata: { billing_mode: 'batch' } },
+    });
+
+    expect(evaluation.totalCostUsd).toBe(2);
+    expect(evaluation.components).toEqual([
+      expect.objectContaining({ componentId: 'batch-input', unitPriceUsd: 2 }),
+    ]);
+  });
+
+  it('uses CEL formula price expressions as component unit prices', () => {
+    const evaluation = evaluatePricingPlan({
+      plan: basePlan({
+        components: [{
+          id: 'input',
+          label: 'Input',
+          role: 'charge',
+          kind: 'input_tokens',
+          meter: { unit: 'token', quantityPath: 'usage.inputTokens', scale: 1_000_000 },
+          price: {
+            currency: 'USD',
+            amount: 10,
+            unitLabel: '1M input tokens',
+            expression: { kind: 'formula', cel: 'unitPriceUsd * metadata.contract_multiplier' },
+          },
+        }],
+      }),
+      usage: { inputTokens: 2_000_000 },
+      context: { metadata: { contract_multiplier: 0.25 } },
+    });
+
+    expect(evaluation.totalCostUsd).toBe(5);
+    expect(evaluation.components[0]).toMatchObject({
+      unitPriceUsd: 2.5,
+      costUsd: 5,
+    });
+    expect(evaluation.estimateLevel).toBe('exact');
+  });
+
+  it('marks CEL formula prices incomplete when they do not return a non-negative number', () => {
+    const evaluation = evaluatePricingPlan({
+      plan: basePlan({
+        components: [{
+          id: 'input',
+          label: 'Input',
+          role: 'charge',
+          kind: 'input_tokens',
+          meter: { unit: 'token', quantityPath: 'usage.inputTokens', scale: 1_000_000 },
+          price: {
+            currency: 'USD',
+            amount: 10,
+            unitLabel: '1M input tokens',
+            expression: { kind: 'formula', cel: '"not-a-number"' },
+          },
+        }],
+      }),
+      usage: { inputTokens: 1_000_000 },
+    });
+
+    expect(evaluation.totalCostUsd).toBe(0);
+    expect(evaluation.estimateLevel).toBe('incomplete');
+    expect(evaluation.diagnostics).toContainEqual(expect.objectContaining({
+      code: 'pricing_cel_formula_invalid',
+      severity: 'error',
+    }));
+  });
+
+  it('applies usage transforms before component pricing', () => {
+    const evaluation = evaluatePricingPlan({
+      plan: basePlan({
+        transforms: [{
+          id: 'billable-input',
+          kind: 'subtract_usage_fields',
+          inputPaths: ['usage.inputTokens', 'usage.cacheReadTokens'],
+          outputPath: 'usage.custom.billableInputTokens',
+        }],
+        components: [{
+          id: 'billable-input',
+          label: 'Billable input',
+          role: 'charge',
+          kind: 'custom',
+          meter: { unit: 'token', quantityPath: 'usage.custom.billableInputTokens', scale: 1_000_000 },
+          price: { currency: 'USD', amount: 10, unitLabel: '1M billable input tokens' },
+        }],
+      }),
+      usage: { inputTokens: 1_000_000, cacheReadTokens: 250_000 },
+    });
+
+    expect(evaluation.totalCostUsd).toBe(7.5);
+    expect(evaluation.components[0]).toMatchObject({
+      componentId: 'billable-input',
+      quantity: 750_000,
+    });
+  });
+
+  it('allows custom CEL transforms to feed later formula pricing metadata', () => {
+    const evaluation = evaluatePricingPlan({
+      plan: basePlan({
+        transforms: [{
+          id: 'contract-multiplier',
+          kind: 'custom',
+          inputPaths: ['usage.inputTokens'],
+          outputPath: 'metadata.contract_multiplier',
+          cel: 'usage.inputTokens > 1000000 ? 0.5 : 1.0',
+        }],
+        components: [{
+          id: 'input',
+          label: 'Input',
+          role: 'charge',
+          kind: 'input_tokens',
+          meter: { unit: 'token', quantityPath: 'usage.inputTokens', scale: 1_000_000 },
+          price: {
+            currency: 'USD',
+            amount: 10,
+            unitLabel: '1M input tokens',
+            expression: { kind: 'formula', cel: 'unitPriceUsd * metadata.contract_multiplier' },
+          },
+        }],
+      }),
+      usage: { inputTokens: 2_000_000 },
+    });
+
+    expect(evaluation.totalCostUsd).toBe(10);
+    expect(evaluation.components[0]).toMatchObject({
+      unitPriceUsd: 5,
+      costUsd: 10,
+    });
+  });
+
+  it('plans pricing CEL expressions once and reuses the compiled expression', () => {
+    pricingCelTestUtils.clearCelPlanCache();
+    const plan = basePlan({
+      components: [{
+        id: 'input',
+        label: 'Input',
+        role: 'charge',
+        kind: 'input_tokens',
+        meter: { unit: 'token', quantityPath: 'usage.inputTokens', scale: 1_000_000 },
+        price: {
+          currency: 'USD',
+          amount: 10,
+          unitLabel: '1M input tokens',
+          expression: { kind: 'formula', cel: 'unitPriceUsd * 0.5' },
+        },
+      }],
+    });
+
+    evaluatePricingPlan({ plan, usage: { inputTokens: 1_000_000 } });
+    expect(pricingCelTestUtils.celPlanCacheSize()).toBe(1);
+
+    evaluatePricingPlan({ plan, usage: { inputTokens: 2_000_000 } });
+    expect(pricingCelTestUtils.celPlanCacheSize()).toBe(1);
   });
 });

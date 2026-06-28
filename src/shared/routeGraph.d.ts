@@ -22,29 +22,28 @@ export type RouteGraphSelectionStrategy = 'priority_order' | 'weighted' | 'round
 export type RouteGraphPortKind =
   | 'request'
   | 'bidirect'
-  | 'route'
-  | 'response'
-  | 'control'
-  | 'metrics';
+  | 'route';
 export type RouteGraphEdgeKind =
   | 'request_flow'
   | 'bidirect_flow'
-  | 'route_flow'
-  | 'response_flow'
-  | 'control_flow'
-  | 'metrics_link';
+  | 'route_flow';
 export type RouteGraphPort = {
   id: string;
   label: string;
   direction: 'input' | 'output';
   kind: RouteGraphPortKind;
-  accepts?: RouteGraphPortKind[];
   required?: boolean;
   multiple?: boolean;
   collection?: { type: 'single' } | { type: 'arr'; min?: number; max?: number } | { type: 'set'; min?: number; max?: number };
   readonly?: boolean;
   enabled?: boolean;
   description?: string;
+};
+
+export type RouteGraphPortConnectionBounds = {
+  min: number;
+  max: number;
+  collection: boolean;
 };
 
 export type RouteGraphMatchSpec = {
@@ -273,7 +272,7 @@ export type RouteGraphMacro = {
 };
 
 export type RouteGraphSource = {
-  version: 2;
+  version: 1;
   nodes: RouteGraphNode[];
   edges: RouteGraphEdge[];
   macros?: RouteGraphMacro[];
@@ -448,8 +447,8 @@ export type RouteProgramDebugInfo = {
   generatedByMacro: Record<string, { nodeIds: string[]; edgeIds: string[] }>;
 };
 
-export type RouteProgramBundleV3 = {
-  version: 3;
+export type RouteProgramBundle = {
+  version: 1;
   hash: string;
   matcher: RouteMatcherTable;
   programs: RouteProgram[];
@@ -536,8 +535,8 @@ export type RouteFlatProgram = {
   sourceRef: RouteProgramSourceRef;
 };
 
-export type RouteProgramBundleV4 = {
-  version: 4;
+export type RouteFlatProgramBundle = {
+  version: 1;
   hash: string;
   matcher: RouteMatcherTable;
   programs: RouteFlatProgram[];
@@ -547,10 +546,10 @@ export type RouteProgramBundleV4 = {
 };
 
 export type CompiledRouteGraph = {
-  version: 2;
+  version: 1;
   hash: string;
-  programBundle: RouteProgramBundleV3;
-  flatProgramBundle: RouteProgramBundleV4;
+  programBundle: RouteProgramBundle;
+  flatProgramBundle: RouteFlatProgramBundle;
   entries: Array<{
     nodeId: string;
     enabled: boolean;
@@ -594,7 +593,7 @@ export type CompiledRouteGraph = {
 };
 
 export type RouteGraphCompileResult = {
-  version: 2;
+  version: 1;
   source: RouteGraphSource;
   primitiveSource?: RouteGraphSource;
   compiled: CompiledRouteGraph;
@@ -602,9 +601,9 @@ export type RouteGraphCompileResult = {
   ok: boolean;
 };
 
-export const ROUTE_GRAPH_SCHEMA_VERSION: 2;
-export const ROUTE_PROGRAM_BUNDLE_VERSION: 3;
-export const ROUTE_FLAT_PROGRAM_BUNDLE_VERSION: 4;
+export const ROUTE_GRAPH_SCHEMA_VERSION: 1;
+export const ROUTE_PROGRAM_BUNDLE_VERSION: 1;
+export const ROUTE_FLAT_PROGRAM_BUNDLE_VERSION: 1;
 export const ROUTE_GRAPH_MATCH_KIND_MODEL: 'model';
 export const ROUTE_GRAPH_BACKEND_KIND_SUPPLY: 'supply';
 export const ROUTE_GRAPH_BACKEND_KIND_ROUTES: 'routes';
@@ -644,6 +643,7 @@ export function getRouteGraphNodePorts(nodeInput: unknown): RouteGraphPort[];
 export function getRouteGraphNodePort(nodeInput: unknown, portId: string): RouteGraphPort | null;
 export function getRouteGraphMacroPorts(macroInput: unknown): RouteGraphPort[];
 export function getRouteGraphMacroPort(macroInput: unknown, portId: string): RouteGraphPort | null;
+export function getRouteGraphPortConnectionBounds(port: RouteGraphPort | null | undefined): RouteGraphPortConnectionBounds;
 export function normalizeRouteGraphNode(input: unknown): RouteGraphNode;
 export function normalizeRouteGraphEdge(input: unknown): RouteGraphEdge;
 export function normalizeRouteGraphMacro(input: unknown): RouteGraphMacro;

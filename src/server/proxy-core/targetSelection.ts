@@ -2,7 +2,8 @@ import * as routeRefreshWorkflow from '../services/routeRefreshWorkflow.js';
 import { proxyTargetCoordinator } from '../services/proxyTargetCoordinator.js';
 import { canRetryProxyTarget } from '../services/proxyTargetRetry.js';
 import type { DownstreamRoutingPolicy } from '../services/downstreamPolicyTypes.js';
-import { tokenRouter, type RouteExecutionScope } from '../services/tokenRouter.js';
+import { tokenRouter } from '../services/tokenRouter.js';
+import type { RouteExecutionScope } from '../services/routeExecutionScopeTypes.js';
 
 type SelectedTarget = Awaited<ReturnType<typeof tokenRouter.selectTarget>>;
 

@@ -1,13 +1,14 @@
-# ADR-0011: Route Flat Program Bundle V4
+# ADR-0011: Route Flat Program Bundle
 
 Status: Accepted
 Date: 2026-06-23
 
 ## Context
 
-ADR-0008 introduced `RouteProgramBundleV3` so request routing could execute a
-compiled program instead of interpreting the editable graph snapshot. V3 fixed
-the source graph/runtime split, but it is still an operation chain:
+ADR-0008 introduced `RouteProgramBundle` so request routing could execute a
+compiled program instead of interpreting the editable graph snapshot. The
+operation-chain bundle fixed the source graph/runtime split, but it still
+requires pointer chasing on the hot path:
 
 - runtime hydrates `programsById` and `opsByProgramId`;
 - hot path follows `startOpId`, `targetOpId`, and `nextOpId`;
@@ -20,17 +21,17 @@ compile rich config once, then execute a compact precomputed plan per request.
 
 ## Decision
 
-Metapi will add `RouteProgramBundleV4` as the preferred runtime program format.
-The editable source graph remains the authoring interface. V4 is the request
-runtime plan.
+Metapi will add `RouteFlatProgramBundle` as the preferred runtime program format.
+The editable source graph remains the authoring interface. The flat bundle is
+the request runtime plan.
 
 `CompiledRouteGraph` carries both:
 
-- `programBundle`: V3 operation bundle kept only for migration/debug tests while
+- `programBundle`: operation-chain bundle kept only for migration/debug tests while
   the migration is in progress.
-- `flatProgramBundle`: V4 flat decision bundle used by runtime first.
+- `flatProgramBundle`: flat decision bundle used by runtime first.
 
-V4 lowers operation chains into decision objects:
+The flat bundle lowers operation chains into decision objects:
 
 - matcher table selects a flat program;
 - filters are pre-grouped as `RouteFlatFilterStage[]`;
@@ -46,20 +47,20 @@ requested model -> matcher -> program -> dispatcher -> candidate -> supply targe
 ```
 
 No runtime source graph traversal, node/edge lookup, or `opsByProgramId` lookup
-is needed for V4 execution.
+is needed for flat execution.
 
 ## Runtime Rules
 
 - `evaluateCompiledRouteGraph()` must execute `flatProgramBundle`.
-- If a compiled graph lacks usable V4, request runtime must fail closed instead
-  of falling back to V3.
+- If a compiled graph lacks a usable flat bundle, request runtime must fail
+  closed instead of falling back to graph interpretation.
 - Active graph loading must recompile persisted compiled graphs that do not
-  contain a usable V4 bundle.
-- Runtime selection must preserve V3 strategy semantics: weighted,
+  contain a usable flat bundle.
+- Runtime selection must preserve existing strategy semantics: weighted,
   priority-order, round-robin, stable-first, direct/CEL, target selection, and
   synthetic fallback.
-- V4 selects semantic route decisions. Concrete target/endpoint dispatch still
-  flows through the token router health layer so endpoint cooldown, recently
+- The flat bundle selects semantic route decisions. Concrete target/endpoint
+  dispatch still flows through the token router health layer so endpoint cooldown, recently
   failed avoidance, site runtime breakers, historical success-rate weighting,
   runtime load weighting, and downstream site multipliers remain effective.
 - The runtime return contract stays stable so proxy orchestration does not need
@@ -67,22 +68,22 @@ is needed for V4 execution.
 
 ## UI And Explainability
 
-Debug views, model-route flow, and pricing estimates should prefer V4 because it
-is closer to the executable route shape:
+Debug views, model-route flow, and pricing estimates should prefer the flat
+bundle because it is closer to the executable route shape:
 
 - dispatcher candidates are the visible route alternatives;
 - supply targets are data behind candidates, not extra executable graph nodes;
-- probability and theoretical cost calculations should walk V4 decisions;
+- probability and theoretical cost calculations should walk flat decisions;
 - source refs remain available for focusing the semantic graph or generated
   primitives.
 
 ## Consequences
 
-- V4 improves hot-path locality: request runtime reads a compact executable
+- The flat bundle improves hot-path locality: request runtime reads a compact executable
   plan instead of chasing operation ids.
 - The compiler owns more normalization work.
-- Tests must cover V4 parity with existing route behavior before V3 helper code
-  can be deleted.
-- Future performance work can prehydrate V4 into arrays with parsed policies,
+- Tests must cover flat bundle parity with existing route behavior before
+  operation-chain helper code can be deleted.
+- Future performance work can prehydrate the flat bundle into arrays with parsed policies,
   precomputed priority buckets, and matcher regex caches without changing the
   source graph model.

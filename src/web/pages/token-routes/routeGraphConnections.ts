@@ -1,4 +1,4 @@
-import { getRouteGraphMacroPort } from '../../../shared/routeGraph.js';
+import { getRouteGraphMacroPort, getRouteGraphPortConnectionBounds } from '../../../shared/routeGraph.js';
 import { getNodePorts } from './routeGraphRegistry.js';
 import type {
   RouteGraphEdge,
@@ -54,9 +54,6 @@ function isPortEnabled(port: RouteGraphPort | null | undefined): boolean {
 function edgeKindForPort(kind: RouteGraphPortKind): RouteGraphEdgeKind {
   if (kind === 'bidirect') return 'bidirect_flow';
   if (kind === 'route') return 'route_flow';
-  if (kind === 'response') return 'response_flow';
-  if (kind === 'control') return 'control_flow';
-  if (kind === 'metrics') return 'metrics_link';
   return 'request_flow';
 }
 
@@ -102,17 +99,13 @@ export function validateRouteGraphConnection(
   if (!isPortEnabled(sourcePort) || !isPortEnabled(targetPort)) return { ok: false, message: tr('pages.tokenRoutes.routeGraphConnections.disabled') };
   if (sourcePort.direction !== 'output') return { ok: false, message: tr('pages.tokenRoutes.routeGraphConnections.sourceMustOutputPort') };
   if (targetPort.direction !== 'input') return { ok: false, message: tr('pages.tokenRoutes.routeGraphConnections.targetMustInputPort') };
-  const accepts = targetPort.accepts || [targetPort.kind];
-  if (!accepts.includes(sourcePort.kind)) {
+  if (sourcePort.kind !== targetPort.kind) {
     return {
       ok: false,
       message: tr('pages.tokenRoutes.routeGraphConnections.portKindCannotConnect')
         .replace('{source}', sourcePort.kind)
         .replace('{target}', targetPort.kind),
     };
-  }
-  if (targetPort.multiple === false && graph.edges.some((edge) => edge.targetNodeId === connection.target && edge.targetPortId === targetPort.id)) {
-    return { ok: false, message: tr('pages.tokenRoutes.routeGraphConnections.inputPortAlreadyConnected') };
   }
   if (graph.edges.some((edge) => (
     edge.sourceNodeId === connection.source
@@ -121,6 +114,16 @@ export function validateRouteGraphConnection(
     && edge.targetPortId === targetPort.id
   ))) {
     return { ok: false, message: tr('pages.tokenRoutes.routeGraphConnections.duplicateConnection') };
+  }
+  const incomingCount = graph.edges.filter((edge) => edge.targetNodeId === connection.target && edge.targetPortId === targetPort.id).length;
+  const bounds = getRouteGraphPortConnectionBounds(targetPort);
+  if (incomingCount >= bounds.max) {
+    if (!bounds.collection) return { ok: false, message: tr('pages.tokenRoutes.routeGraphConnections.inputPortAlreadyConnected') };
+    return {
+      ok: false,
+      message: tr('pages.tokenRoutes.routeGraphConnections.inputPortMaxConnections')
+        .replace('{max}', String(bounds.max)),
+    };
   }
   if (hasPath(graph.edges, targetNode.id, sourceNode.id)) return { ok: false, message: tr('pages.tokenRoutes.routeGraphConnections.cannotCreateCycle') };
   return { ok: true, kind: edgeKindForPort(sourcePort.kind) };

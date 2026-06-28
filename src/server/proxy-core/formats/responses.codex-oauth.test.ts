@@ -6,9 +6,9 @@ import { resetCodexHttpSessionQueue } from '../runtime/codexHttpSessionQueue.js'
 import { resetCodexSessionResponseStore } from '../runtime/codexSessionResponseStore.js';
 
 const fetchMock = vi.fn();
-const selectChannelMock = vi.fn();
-const selectNextChannelMock = vi.fn();
-const selectPreferredChannelMock = vi.fn();
+const selectTargetMock = vi.fn();
+const selectNextTargetMock = vi.fn();
+const selectPreferredTargetMock = vi.fn();
 const recordSuccessMock = vi.fn();
 const recordFailureMock = vi.fn();
 const refreshModelsAndRebuildRoutesMock = vi.fn();
@@ -48,9 +48,9 @@ vi.mock('undici', async () => {
 
 vi.mock('../../services/tokenRouter.js', () => ({
   tokenRouter: {
-    selectChannel: (...args: unknown[]) => selectChannelMock(...args),
-    selectNextChannel: (...args: unknown[]) => selectNextChannelMock(...args),
-    selectPreferredChannel: (...args: unknown[]) => selectPreferredChannelMock(...args),
+    selectTarget: (...args: unknown[]) => selectTargetMock(...args),
+    selectNextTarget: (...args: unknown[]) => selectNextTargetMock(...args),
+    selectPreferredTarget: (...args: unknown[]) => selectPreferredTargetMock(...args),
     recordSuccess: (...args: unknown[]) => recordSuccessMock(...args),
     recordFailure: (...args: unknown[]) => recordFailureMock(...args),
   },
@@ -97,6 +97,14 @@ vi.mock('../../services/oauth/quota.js', () => ({
 vi.mock('../../services/routeGraphRuntimeService.js', async (importOriginal) => ({
   ...await importOriginal<typeof import('../../services/routeGraphRuntimeService.js')>(),
   evaluateActiveRouteGraphForModel: async () => null,
+}));
+
+vi.mock('../../services/credentialEndpointBindingService.js', () => ({
+  loadCredentialApiVariantConfig: async () => null,
+}));
+
+vi.mock('../../services/proxyLogRouteDecisionSnapshot.js', () => ({
+  buildProxyLogRouteDecisionSnapshot: async () => null,
 }));
 
 vi.mock('../../db/index.js', () => ({
@@ -200,9 +208,9 @@ describe('responses proxy codex oauth refresh', () => {
     config.proxySessionTargetQueueWaitMs = originalProxySessionChannelQueueWaitMs;
     (config as any).openAiServiceTierRules = undefined;
     fetchMock.mockReset();
-    selectChannelMock.mockReset();
-    selectNextChannelMock.mockReset();
-    selectPreferredChannelMock.mockReset();
+    selectTargetMock.mockReset();
+    selectNextTargetMock.mockReset();
+    selectPreferredTargetMock.mockReset();
     recordSuccessMock.mockReset();
     recordFailureMock.mockReset();
     refreshModelsAndRebuildRoutesMock.mockReset();
@@ -215,9 +223,9 @@ describe('responses proxy codex oauth refresh', () => {
     dbInsertMock.mockClear();
     insertedProxyLogs.length = 0;
 
-    selectChannelMock.mockReturnValue({
-      channel: { id: 11, routeId: 22 },
-      site: { name: 'codex-site', url: 'https://chatgpt.com/backend-api/codex', platform: 'codex' },
+    selectTargetMock.mockReturnValue({
+      target: { id: 11, routeId: 22 },
+      site: { id: 44, name: 'codex-site', url: 'https://chatgpt.com/backend-api/codex', platform: 'codex' },
       account: {
         id: 33,
         username: 'codex-user@example.com',
@@ -235,9 +243,9 @@ describe('responses proxy codex oauth refresh', () => {
       tokenValue: 'expired-access-token',
       actualModel: 'gpt-5.2-codex',
     });
-    selectPreferredChannelMock.mockReturnValue(null);
-    selectNextChannelMock.mockReturnValue(null);
-    selectPreferredChannelMock.mockReturnValue(null);
+    selectPreferredTargetMock.mockReturnValue(null);
+    selectNextTargetMock.mockReturnValue(null);
+    selectPreferredTargetMock.mockReturnValue(null);
     refreshOauthAccessTokenSingleflightMock.mockResolvedValue({
       accessToken: 'fresh-access-token',
       accountId: 33,
@@ -439,9 +447,9 @@ describe('responses proxy codex oauth refresh', () => {
   });
 
   it('retries oauth responses requests with a normalized upstream URL after refresh', async () => {
-    selectChannelMock.mockReturnValue({
-      channel: { id: 11, routeId: 22 },
-      site: { name: 'openai-site', url: 'https://gateway.example.com/v1/', platform: 'openai' },
+    selectTargetMock.mockReturnValue({
+      target: { id: 11, routeId: 22 },
+      site: { id: 44, name: 'openai-site', url: 'https://gateway.example.com/v1/', platform: 'openai' },
       account: {
         id: 33,
         username: 'oauth-user@example.com',
@@ -896,8 +904,8 @@ describe('responses proxy codex oauth refresh', () => {
 
   it('reuses previous_response_id for codex tool-output follow-up turns after channel/account drift on the same downstream session', async () => {
     const firstSelected = {
-      channel: { id: 11, routeId: 22 },
-      site: { name: 'codex-site', url: 'https://chatgpt.com/backend-api/codex', platform: 'codex' },
+      target: { id: 11, routeId: 22 },
+      site: { id: 44, name: 'codex-site', url: 'https://chatgpt.com/backend-api/codex', platform: 'codex' },
       account: {
         id: 33,
         username: 'codex-user-a@example.com',
@@ -916,8 +924,8 @@ describe('responses proxy codex oauth refresh', () => {
       actualModel: 'gpt-5.2-codex',
     };
     const secondSelected = {
-      channel: { id: 12, routeId: 23 },
-      site: { name: 'codex-site', url: 'https://chatgpt.com/backend-api/codex', platform: 'codex' },
+      target: { id: 12, routeId: 23 },
+      site: { id: 44, name: 'codex-site', url: 'https://chatgpt.com/backend-api/codex', platform: 'codex' },
       account: {
         id: 34,
         username: 'codex-user-b@example.com',
@@ -936,11 +944,11 @@ describe('responses proxy codex oauth refresh', () => {
       actualModel: 'gpt-5.2-codex',
     };
 
-    selectChannelMock
+    selectTargetMock
       .mockReset()
       .mockReturnValueOnce(firstSelected)
       .mockReturnValueOnce(secondSelected);
-    selectPreferredChannelMock
+    selectPreferredTargetMock
       .mockReset()
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce(null);
@@ -1004,8 +1012,8 @@ describe('responses proxy codex oauth refresh', () => {
 
     expect(secondResponse.statusCode).toBe(200);
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(selectChannelMock).toHaveBeenCalledTimes(2);
-    expect(selectPreferredChannelMock).toHaveBeenCalledTimes(2);
+    expect(selectTargetMock).toHaveBeenCalledTimes(2);
+    expect(selectPreferredTargetMock).toHaveBeenCalledTimes(2);
 
     const [, firstOptions] = fetchMock.mock.calls[0] as [string, any];
     const [, secondOptions] = fetchMock.mock.calls[1] as [string, any];
@@ -1340,8 +1348,8 @@ describe('responses proxy codex oauth refresh', () => {
     config.proxyStickySessionEnabled = true;
 
     const selected = {
-      channel: { id: 11, routeId: 22 },
-      site: { name: 'codex-site', url: 'https://chatgpt.com/backend-api/codex', platform: 'codex' },
+      target: { id: 11, routeId: 22 },
+      site: { id: 44, name: 'codex-site', url: 'https://chatgpt.com/backend-api/codex', platform: 'codex' },
       account: {
         id: 33,
         username: 'codex-user@example.com',
@@ -1359,8 +1367,8 @@ describe('responses proxy codex oauth refresh', () => {
       tokenValue: 'expired-access-token',
       actualModel: 'gpt-5.2-codex',
     };
-    selectChannelMock.mockReturnValue(selected);
-    selectPreferredChannelMock.mockReturnValue(selected);
+    selectTargetMock.mockReturnValue(selected);
+    selectPreferredTargetMock.mockReturnValue(selected);
 
     const stickyHeaders = {
       'x-metapi-responses-websocket-transport': '1',
@@ -1388,7 +1396,7 @@ describe('responses proxy codex oauth refresh', () => {
 
     expect(firstResponse.statusCode).toBe(200);
     expect(firstResponse.body).toContain('event: response.completed');
-    expect(selectPreferredChannelMock).not.toHaveBeenCalled();
+    expect(selectPreferredTargetMock).not.toHaveBeenCalled();
 
     const secondResponse = await app.inject({
       method: 'POST',
@@ -1402,9 +1410,9 @@ describe('responses proxy codex oauth refresh', () => {
     });
 
     expect(secondResponse.statusCode).toBe(200);
-    expect(selectPreferredChannelMock).toHaveBeenCalledTimes(1);
-    expect(selectPreferredChannelMock.mock.calls[0]?.[0]).toBe('gpt-5.4');
-    expect(selectPreferredChannelMock.mock.calls[0]?.[1]).toBe(11);
+    expect(selectPreferredTargetMock).toHaveBeenCalledTimes(1);
+    expect(selectPreferredTargetMock.mock.calls[0]?.[0]).toBe('gpt-5.4');
+    expect(selectPreferredTargetMock.mock.calls[0]?.[1]).toBe(11);
   });
 
   it('decodes zstd-compressed codex responses SSE before relaying native downstream streams', async () => {

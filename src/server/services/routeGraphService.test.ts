@@ -552,7 +552,7 @@ describe('routeGraphService ownership guards', () => {
 
     const active = await getActiveRouteGraphVersion();
     expect(active?.compiledGraph.programBundle).toMatchObject({
-      version: 3,
+      version: 1,
       matcher: {
         exact: {
           'cached-model': expect.objectContaining({ programId: 'program:entry.cached' }),
@@ -562,7 +562,7 @@ describe('routeGraphService ownership guards', () => {
     const stored = await db.select().from(schema.routeGraphVersions)
       .where(eq(schema.routeGraphVersions.id, published.version.id))
       .get();
-    expect(JSON.parse(stored?.compiledGraphJson || '{}').programBundle).toMatchObject({ version: 3 });
+    expect(JSON.parse(stored?.compiledGraphJson || '{}').programBundle).toMatchObject({ version: 1 });
 
     const corruptedCompiled = JSON.parse(stored?.compiledGraphJson || '{}');
     corruptedCompiled.programBundle = {
@@ -640,7 +640,7 @@ describe('routeGraphService ownership guards', () => {
               entry: { kind: 'embedded', input: 'bidirect' },
               output: 'bidirect',
               ports: [
-                { id: 'flow.in', label: 'incoming flow', direction: 'input', kind: 'bidirect', accepts: ['bidirect'] },
+                { id: 'flow.in', label: 'incoming flow', direction: 'input', kind: 'bidirect' },
                 { id: 'flow.out', label: 'selected flow', direction: 'output', kind: 'bidirect', collection: { type: 'arr', min: 1 } },
               ],
             },

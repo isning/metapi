@@ -176,8 +176,17 @@ async function decorateRoutesWithSources(
   routes: Array<typeof schema.tokenRoutes.$inferSelect>,
 ): Promise<RouteRow[]> {
   const bindings = await loadRouteGraphRouteTableBindings();
-  const routeGroups = await db.select().from(schema.routeGroups).all();
+  const [routeGroups, routeGroupSources] = await Promise.all([
+    db.select().from(schema.routeGroups).all(),
+    db.select().from(schema.routeGroupSources).all(),
+  ]);
   const routeGroupByLegacyRouteId = new Map<number, RouteGroupResponse>();
+  const sourceRouteIdsByGroupRouteId = new Map<number, number[]>();
+  for (const source of routeGroupSources) {
+    const existing = sourceRouteIdsByGroupRouteId.get(source.groupRouteId) || [];
+    existing.push(source.sourceRouteId);
+    sourceRouteIdsByGroupRouteId.set(source.groupRouteId, existing);
+  }
   for (const group of routeGroups) {
     const legacyRouteId = Number(group.legacyRouteId || 0);
     if (!Number.isFinite(legacyRouteId) || legacyRouteId <= 0) continue;
@@ -195,21 +204,32 @@ async function decorateRoutesWithSources(
   }
   return routes.map((route) => {
     const binding = bindings.get(route.id);
-    const fallbackPattern = route.displayName || '';
+    const legacySourceRouteIds = sourceRouteIdsByGroupRouteId.get(route.id) || [];
+    const fallbackPattern = (route.displayName || '').trim();
     const match = binding?.match ?? normalizeRouteGraphMatchSpec({
       requestedModelPattern: fallbackPattern,
       displayName: route.displayName,
       routeId: route.id,
     });
-    const backend = binding?.backend ?? normalizeRouteGraphBackendSpec({ kind: 'supply' });
+    const backend = normalizeRouteGraphBackendSpec(
+      legacySourceRouteIds.length > 0
+        ? { kind: 'routes', routeIds: legacySourceRouteIds }
+        : binding?.backend ?? { kind: 'supply' },
+    );
     return {
       ...route,
       match,
       backend,
       visibility: binding?.visibility ?? 'public',
-      routeMode: binding?.routeMode ?? deriveLegacyRouteModeFromBackendSpec(backend),
-      modelPattern: binding?.modelPattern ?? fallbackPattern,
-      sourceRouteIds: binding?.sourceRouteIds ?? deriveLegacySourceRouteIdsFromBackendSpec(backend),
+      routeMode: legacySourceRouteIds.length > 0
+        ? 'explicit_group'
+        : binding?.routeMode ?? deriveLegacyRouteModeFromBackendSpec(backend),
+      modelPattern: binding?.modelPattern ?? (deriveLegacyModelPatternFromSpecs(match, backend) || fallbackPattern),
+      sourceRouteIds: binding?.sourceRouteIds ?? (
+        legacySourceRouteIds.length > 0
+          ? legacySourceRouteIds
+          : deriveLegacySourceRouteIdsFromBackendSpec(backend)
+      ),
       routeGroup: routeGroupByLegacyRouteId.get(route.id) ?? null,
     };
   });
@@ -1259,7 +1279,7 @@ export async function tokensRoutes(app: FastifyInstance) {
         existingPairs.add(pairKey);
         created += 1;
       } catch (e: any) {
-        errors.push(e.message || `添加通道失败: accountId=${item.accountId}`);
+        errors.push(e.message || `添加目标失败: accountId=${item.accountId}`);
       }
     }
 

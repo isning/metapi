@@ -1,15 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { EMPTY_DOWNSTREAM_ROUTING_POLICY } from '../../services/downstreamPolicyTypes.js';
 
-const selectChannelMock = vi.fn();
-const selectNextChannelMock = vi.fn();
-const selectPreferredChannelMock = vi.fn();
+const selectTargetMock = vi.fn();
+const selectNextTargetMock = vi.fn();
+const selectPreferredTargetMock = vi.fn();
 const recordFailureMock = vi.fn();
 const refreshModelsAndRebuildRoutesMock = vi.fn();
 const composeProxyLogMessageMock = vi.fn();
 const formatUtcSqlDateTimeMock = vi.fn();
 const insertProxyLogMock = vi.fn();
-const resolveChannelProxyUrlMock = vi.fn();
+const resolveTargetProxyUrlMock = vi.fn();
 const withSiteRecordProxyRequestInitMock = vi.fn();
 const dispatchRuntimeRequestMock = vi.fn();
 const reportProxyAllFailedMock = vi.fn();
@@ -32,9 +32,9 @@ let consoleErrorMock: ReturnType<typeof vi.spyOn>;
 
 vi.mock('../../services/tokenRouter.js', () => ({
   tokenRouter: {
-    selectChannel: (...args: unknown[]) => selectChannelMock(...args),
-    selectNextChannel: (...args: unknown[]) => selectNextChannelMock(...args),
-    selectPreferredChannel: (...args: unknown[]) => selectPreferredChannelMock(...args),
+    selectTarget: (...args: unknown[]) => selectTargetMock(...args),
+    selectNextTarget: (...args: unknown[]) => selectNextTargetMock(...args),
+    selectPreferredTarget: (...args: unknown[]) => selectPreferredTargetMock(...args),
     recordFailure: (...args: unknown[]) => recordFailureMock(...args),
     recordSuccess: (...args: unknown[]) => recordSuccessMock(...args),
   },
@@ -66,8 +66,12 @@ vi.mock('../../services/proxyLogStore.js', () => ({
   insertProxyLog: (...args: unknown[]) => insertProxyLogMock(...args),
 }));
 
+vi.mock('../../services/proxyLogRouteDecisionSnapshot.js', () => ({
+  buildProxyLogRouteDecisionSnapshot: async () => null,
+}));
+
 vi.mock('../../services/siteProxy.js', () => ({
-  resolveChannelProxyUrl: (...args: unknown[]) => resolveChannelProxyUrlMock(...args),
+  resolveChannelProxyUrl: (...args: unknown[]) => resolveTargetProxyUrlMock(...args),
   withSiteRecordProxyRequestInit: (...args: unknown[]) => withSiteRecordProxyRequestInitMock(...args),
 }));
 
@@ -106,17 +110,17 @@ vi.mock('../../services/oauth/refreshSingleflight.js', () => ({
   refreshOauthAccessTokenSingleflight: (...args: unknown[]) => refreshOauthAccessTokenSingleflightMock(...args),
 }));
 
-describe('selectSurfaceChannelForAttempt', () => {
+describe('selectSurfaceTargetForAttempt', () => {
   beforeEach(() => {
-    selectChannelMock.mockReset();
-    selectNextChannelMock.mockReset();
-    selectPreferredChannelMock.mockReset();
+    selectTargetMock.mockReset();
+    selectNextTargetMock.mockReset();
+    selectPreferredTargetMock.mockReset();
     recordFailureMock.mockReset();
     refreshModelsAndRebuildRoutesMock.mockReset();
     composeProxyLogMessageMock.mockReset();
     formatUtcSqlDateTimeMock.mockReset();
     insertProxyLogMock.mockReset();
-    resolveChannelProxyUrlMock.mockReset();
+    resolveTargetProxyUrlMock.mockReset();
     withSiteRecordProxyRequestInitMock.mockReset();
     dispatchRuntimeRequestMock.mockReset();
     reportProxyAllFailedMock.mockReset();
@@ -138,14 +142,14 @@ describe('selectSurfaceChannelForAttempt', () => {
     consoleErrorMock = vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
-  it('refreshes models and retries selectChannel on the first attempt when no target is available', async () => {
+  it('refreshes models and retries selectTarget on the first attempt when no target is available', async () => {
     const selected = { target: { id: 11 } };
-    selectChannelMock
+    selectTargetMock
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce(selected);
 
-    const { selectSurfaceChannelForAttempt } = await import('./sharedProxyOrchestration.js');
-    const result = await selectSurfaceChannelForAttempt({
+    const { selectSurfaceTargetForAttempt } = await import('./sharedProxyOrchestration.js');
+    const result = await selectSurfaceTargetForAttempt({
       requestedModel: 'gpt-5.2',
       downstreamPolicy: EMPTY_DOWNSTREAM_ROUTING_POLICY,
       excludeTargetIds: [],
@@ -153,17 +157,17 @@ describe('selectSurfaceChannelForAttempt', () => {
     });
 
     expect(result).toBe(selected);
-    expect(selectChannelMock).toHaveBeenCalledTimes(2);
-    expect(selectNextChannelMock).not.toHaveBeenCalled();
+    expect(selectTargetMock).toHaveBeenCalledTimes(2);
+    expect(selectNextTargetMock).not.toHaveBeenCalled();
     expect(refreshModelsAndRebuildRoutesMock).toHaveBeenCalledTimes(1);
   });
 
-  it('uses selectNextChannel on retry attempts without refreshing models', async () => {
+  it('uses selectNextTarget on retry attempts without refreshing models', async () => {
     const selected = { target: { id: 22 } };
-    selectNextChannelMock.mockResolvedValueOnce(selected);
+    selectNextTargetMock.mockResolvedValueOnce(selected);
 
-    const { selectSurfaceChannelForAttempt } = await import('./sharedProxyOrchestration.js');
-    const result = await selectSurfaceChannelForAttempt({
+    const { selectSurfaceTargetForAttempt } = await import('./sharedProxyOrchestration.js');
+    const result = await selectSurfaceTargetForAttempt({
       requestedModel: 'gpt-5.2',
       downstreamPolicy: EMPTY_DOWNSTREAM_ROUTING_POLICY,
       excludeTargetIds: [11],
@@ -171,8 +175,8 @@ describe('selectSurfaceChannelForAttempt', () => {
     });
 
     expect(result).toBe(selected);
-    expect(selectChannelMock).not.toHaveBeenCalled();
-    expect(selectNextChannelMock).toHaveBeenCalledWith(
+    expect(selectTargetMock).not.toHaveBeenCalled();
+    expect(selectNextTargetMock).toHaveBeenCalledWith(
       'gpt-5.2',
       [11],
       EMPTY_DOWNSTREAM_ROUTING_POLICY,
@@ -183,10 +187,10 @@ describe('selectSurfaceChannelForAttempt', () => {
   it('prefers the sticky session target on the first attempt when it is still eligible', async () => {
     const selected = { target: { id: 55 } };
     getStickyTargetIdMock.mockReturnValueOnce(55);
-    selectPreferredChannelMock.mockResolvedValueOnce(selected);
+    selectPreferredTargetMock.mockResolvedValueOnce(selected);
 
-    const { selectSurfaceChannelForAttempt } = await import('./sharedProxyOrchestration.js');
-    const result = await selectSurfaceChannelForAttempt({
+    const { selectSurfaceTargetForAttempt } = await import('./sharedProxyOrchestration.js');
+    const result = await selectSurfaceTargetForAttempt({
       requestedModel: 'gpt-5.2',
       downstreamPolicy: EMPTY_DOWNSTREAM_ROUTING_POLICY,
       excludeTargetIds: [],
@@ -195,22 +199,22 @@ describe('selectSurfaceChannelForAttempt', () => {
     });
 
     expect(result).toBe(selected);
-    expect(selectPreferredChannelMock).toHaveBeenCalledWith(
+    expect(selectPreferredTargetMock).toHaveBeenCalledWith(
       'gpt-5.2',
       55,
       EMPTY_DOWNSTREAM_ROUTING_POLICY,
       [],
     );
-    expect(selectChannelMock).not.toHaveBeenCalled();
+    expect(selectTargetMock).not.toHaveBeenCalled();
     expect(clearStickyTargetMock).not.toHaveBeenCalled();
   });
 
   it('uses the forced tester target before sticky or automatic selection', async () => {
     const selected = { target: { id: 88 } };
-    selectPreferredChannelMock.mockResolvedValueOnce(selected);
+    selectPreferredTargetMock.mockResolvedValueOnce(selected);
 
-    const { selectSurfaceChannelForAttempt } = await import('./sharedProxyOrchestration.js');
-    const result = await selectSurfaceChannelForAttempt({
+    const { selectSurfaceTargetForAttempt } = await import('./sharedProxyOrchestration.js');
+    const result = await selectSurfaceTargetForAttempt({
       requestedModel: 'gpt-5.2',
       downstreamPolicy: EMPTY_DOWNSTREAM_ROUTING_POLICY,
       excludeTargetIds: [],
@@ -220,23 +224,23 @@ describe('selectSurfaceChannelForAttempt', () => {
     });
 
     expect(result).toBe(selected);
-    expect(selectPreferredChannelMock).toHaveBeenCalledWith(
+    expect(selectPreferredTargetMock).toHaveBeenCalledWith(
       'gpt-5.2',
       88,
       EMPTY_DOWNSTREAM_ROUTING_POLICY,
       [],
     );
     expect(getStickyTargetIdMock).not.toHaveBeenCalled();
-    expect(selectChannelMock).not.toHaveBeenCalled();
-    expect(selectNextChannelMock).not.toHaveBeenCalled();
+    expect(selectTargetMock).not.toHaveBeenCalled();
+    expect(selectNextTargetMock).not.toHaveBeenCalled();
     expect(refreshModelsAndRebuildRoutesMock).not.toHaveBeenCalled();
   });
 
   it('does not refresh or fall back when the forced tester target is unavailable', async () => {
-    selectPreferredChannelMock.mockResolvedValueOnce(null);
+    selectPreferredTargetMock.mockResolvedValueOnce(null);
 
-    const { selectSurfaceChannelForAttempt } = await import('./sharedProxyOrchestration.js');
-    const result = await selectSurfaceChannelForAttempt({
+    const { selectSurfaceTargetForAttempt } = await import('./sharedProxyOrchestration.js');
+    const result = await selectSurfaceTargetForAttempt({
       requestedModel: 'gpt-5.2',
       downstreamPolicy: EMPTY_DOWNSTREAM_ROUTING_POLICY,
       excludeTargetIds: [],
@@ -245,27 +249,27 @@ describe('selectSurfaceChannelForAttempt', () => {
     });
 
     expect(result).toBeNull();
-    expect(selectPreferredChannelMock).toHaveBeenCalledWith(
+    expect(selectPreferredTargetMock).toHaveBeenCalledWith(
       'gpt-5.2',
       91,
       EMPTY_DOWNSTREAM_ROUTING_POLICY,
       [],
     );
-    expect(selectChannelMock).not.toHaveBeenCalled();
-    expect(selectNextChannelMock).not.toHaveBeenCalled();
+    expect(selectTargetMock).not.toHaveBeenCalled();
+    expect(selectNextTargetMock).not.toHaveBeenCalled();
     expect(refreshModelsAndRebuildRoutesMock).not.toHaveBeenCalled();
   });
 
   it('refreshes and retries the sticky preferred target before clearing a stale binding', async () => {
     const selected = { target: { id: 22 } };
     getStickyTargetIdMock.mockReturnValueOnce(55);
-    selectPreferredChannelMock
+    selectPreferredTargetMock
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce(null);
-    selectChannelMock.mockResolvedValueOnce(selected);
+    selectTargetMock.mockResolvedValueOnce(selected);
 
-    const { selectSurfaceChannelForAttempt } = await import('./sharedProxyOrchestration.js');
-    const result = await selectSurfaceChannelForAttempt({
+    const { selectSurfaceTargetForAttempt } = await import('./sharedProxyOrchestration.js');
+    const result = await selectSurfaceTargetForAttempt({
       requestedModel: 'gpt-5.2',
       downstreamPolicy: EMPTY_DOWNSTREAM_ROUTING_POLICY,
       excludeTargetIds: [],
@@ -275,20 +279,20 @@ describe('selectSurfaceChannelForAttempt', () => {
 
     expect(result).toBe(selected);
     expect(refreshModelsAndRebuildRoutesMock).toHaveBeenCalledTimes(1);
-    expect(selectPreferredChannelMock).toHaveBeenCalledTimes(2);
+    expect(selectPreferredTargetMock).toHaveBeenCalledTimes(2);
     expect(clearStickyTargetMock).toHaveBeenCalledWith('sticky-session', 55);
-    expect(selectChannelMock).toHaveBeenCalledWith('gpt-5.2', EMPTY_DOWNSTREAM_ROUTING_POLICY);
+    expect(selectTargetMock).toHaveBeenCalledWith('gpt-5.2', EMPTY_DOWNSTREAM_ROUTING_POLICY);
   });
 
   it('keeps the sticky binding when route refresh recovers the preferred target', async () => {
     const selected = { target: { id: 55 } };
     getStickyTargetIdMock.mockReturnValueOnce(55);
-    selectPreferredChannelMock
+    selectPreferredTargetMock
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce(selected);
 
-    const { selectSurfaceChannelForAttempt } = await import('./sharedProxyOrchestration.js');
-    const result = await selectSurfaceChannelForAttempt({
+    const { selectSurfaceTargetForAttempt } = await import('./sharedProxyOrchestration.js');
+    const result = await selectSurfaceTargetForAttempt({
       requestedModel: 'gpt-5.2',
       downstreamPolicy: EMPTY_DOWNSTREAM_ROUTING_POLICY,
       excludeTargetIds: [],
@@ -298,20 +302,20 @@ describe('selectSurfaceChannelForAttempt', () => {
 
     expect(result).toBe(selected);
     expect(refreshModelsAndRebuildRoutesMock).toHaveBeenCalledTimes(1);
-    expect(selectPreferredChannelMock).toHaveBeenCalledTimes(2);
+    expect(selectPreferredTargetMock).toHaveBeenCalledTimes(2);
     expect(clearStickyTargetMock).not.toHaveBeenCalled();
-    expect(selectChannelMock).not.toHaveBeenCalled();
+    expect(selectTargetMock).not.toHaveBeenCalled();
   });
 
   it('logs refresh failures and still retries selection once on the first attempt', async () => {
     const selected = { target: { id: 33 } };
-    selectChannelMock
+    selectTargetMock
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce(selected);
     refreshModelsAndRebuildRoutesMock.mockRejectedValueOnce(new Error('refresh failed'));
 
-    const { selectSurfaceChannelForAttempt } = await import('./sharedProxyOrchestration.js');
-    const result = await selectSurfaceChannelForAttempt({
+    const { selectSurfaceTargetForAttempt } = await import('./sharedProxyOrchestration.js');
+    const result = await selectSurfaceTargetForAttempt({
       requestedModel: 'gpt-5.2',
       downstreamPolicy: EMPTY_DOWNSTREAM_ROUTING_POLICY,
       excludeTargetIds: [],
@@ -319,7 +323,7 @@ describe('selectSurfaceChannelForAttempt', () => {
     });
 
     expect(result).toBe(selected);
-    expect(selectChannelMock).toHaveBeenCalledTimes(2);
+    expect(selectTargetMock).toHaveBeenCalledTimes(2);
     expect(consoleWarnMock).toHaveBeenCalledWith(
       '[proxy/surface] failed to refresh routes after empty selection',
       expect.any(Error),
@@ -390,6 +394,7 @@ describe('selectSurfaceChannelForAttempt', () => {
       totalTokens: 15,
       estimatedCost: 0.42,
       billingDetails: { source: 'test' },
+      routeDecisionSnapshot: null,
       clientFamily: 'codex',
       clientAppId: 'app-id',
       clientAppName: 'App',
@@ -409,7 +414,7 @@ describe('selectSurfaceChannelForAttempt', () => {
       body: { model: 'gpt-5.2', input: 'hello' },
       runtime: { executor: 'default' },
     };
-    resolveChannelProxyUrlMock.mockReturnValue('http://proxy.example.com');
+    resolveTargetProxyUrlMock.mockReturnValue('http://proxy.example.com');
     withSiteRecordProxyRequestInitMock.mockImplementation(async (_site, init, proxyUrl) => ({
       ...init,
       proxyUrl,
@@ -424,7 +429,7 @@ describe('selectSurfaceChannelForAttempt', () => {
     const result = await dispatchRequest(request, 'https://target.example.com/v1/responses');
 
     expect(result).toBe('ok');
-    expect(resolveChannelProxyUrlMock).toHaveBeenCalledWith(
+    expect(resolveTargetProxyUrlMock).toHaveBeenCalledWith(
       site,
       '{"proxyUrl":"http://proxy.example.com"}',
     );

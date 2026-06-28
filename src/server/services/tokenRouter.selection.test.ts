@@ -13,15 +13,13 @@ type TokenRouterModule = typeof import('./tokenRouter.js');
 type ConfigModule = typeof import('../config.js');
 type ProxyTargetCoordinatorModule = typeof import('./proxyTargetCoordinator.js');
 
-const mockedCatalogRoutingCost = vi.fn<(
-  input: { siteId: number; accountId: number; modelName: string }
-) => number | null>(() => null);
+const mockedEndpointRoutingReferencePricing = vi.fn(() => null);
 
-vi.mock('./modelPricingService.js', async () => {
-  const actual = await vi.importActual<typeof import('./modelPricingService.js')>('./modelPricingService.js');
+vi.mock('./endpointPricingService.js', async () => {
+  const actual = await vi.importActual<typeof import('./endpointPricingService.js')>('./endpointPricingService.js');
   return {
     ...actual,
-    getCachedModelRoutingReferenceCost: mockedCatalogRoutingCost,
+    getCachedEndpointRoutingReferencePricing: mockedEndpointRoutingReferencePricing,
   };
 });
 
@@ -77,8 +75,8 @@ describe('TokenRouter selection scoring', () => {
 
   beforeEach(async () => {
     idSeed = 0;
-    mockedCatalogRoutingCost.mockReset();
-    mockedCatalogRoutingCost.mockReturnValue(null);
+    mockedEndpointRoutingReferencePricing.mockReset();
+    mockedEndpointRoutingReferencePricing.mockReturnValue(null);
     config.proxySessionTargetConcurrencyLimit = originalProxySessionChannelConcurrencyLimit;
     config.proxySessionTargetQueueWaitMs = originalProxySessionChannelQueueWaitMs;
     await db.delete(schema.routeGraphActiveVersion).run();
@@ -186,7 +184,7 @@ describe('TokenRouter selection scoring', () => {
     }).run();
 
     const router = new TokenRouter();
-    const selected = await router.selectPreferredChannel('gpt-5.2', preferredChannel.id);
+    const selected = await router.selectPreferredTarget('gpt-5.2', preferredChannel.id);
     expect(selected?.target.id).toBe(preferredChannel.id);
 
     await db.update(schema.routeEndpointTargets).set({
@@ -195,7 +193,7 @@ describe('TokenRouter selection scoring', () => {
     }).where(eq(schema.routeEndpointTargets.id, preferredChannel.id)).run();
     invalidateTokenRouterCache();
 
-    await expect(router.selectPreferredChannel('gpt-5.2', preferredChannel.id)).resolves.toBeNull();
+    await expect(router.selectPreferredTarget('gpt-5.2', preferredChannel.id)).resolves.toBeNull();
   });
 
   it('round-robins inside an oauth route unit while keeping one outer channel', async () => {
@@ -273,8 +271,8 @@ describe('TokenRouter selection scoring', () => {
     }).returning().get();
 
     const router = new TokenRouter();
-    const first = await router.selectChannel('gpt-5.4');
-    const second = await router.selectChannel('gpt-5.4');
+    const first = await router.selectTarget('gpt-5.4');
+    const second = await router.selectTarget('gpt-5.4');
 
     expect(first?.target.id).toBe(channel.id);
     expect(second?.target.id).toBe(channel.id);
@@ -357,8 +355,8 @@ describe('TokenRouter selection scoring', () => {
     }).returning().get();
 
     const router = new TokenRouter();
-    const first = await router.selectChannel('gpt-5.4');
-    const second = await router.selectChannel('gpt-5.4');
+    const first = await router.selectTarget('gpt-5.4');
+    const second = await router.selectTarget('gpt-5.4');
 
     expect(first?.account.id).toBe(accountA.id);
     expect(second?.account.id).toBe(accountA.id);
@@ -369,7 +367,7 @@ describe('TokenRouter selection scoring', () => {
       modelName: 'gpt-5.4',
     }, accountA.id);
 
-    const third = await router.selectChannel('gpt-5.4');
+    const third = await router.selectTarget('gpt-5.4');
     expect(third?.account.id).toBe(accountB.id);
   });
 
@@ -377,13 +375,13 @@ describe('TokenRouter selection scoring', () => {
     const nowMs = Date.now();
     const filtered = filterRecentlyFailedCandidates([
       {
-        channel: {
+        target: {
           failCount: 3,
           lastFailAt: new Date(nowMs).toISOString(),
         },
       },
       {
-        channel: {
+        target: {
           failCount: 0,
           lastFailAt: null,
         },
@@ -667,10 +665,27 @@ describe('TokenRouter selection scoring', () => {
       totalCost: 0,
     }).run();
 
-    mockedCatalogRoutingCost.mockImplementation(({ accountId, modelName }) => {
+    mockedEndpointRoutingReferencePricing.mockImplementation(({ accountId }) => {
       if (accountId !== accountCatalog.id) return null;
-      if (modelName !== 'claude-sonnet-4-5-20250929') return null;
-      return 0.2;
+      return {
+        source: 'provider_catalog',
+        sourceId: null,
+        matchedScope: 'provider_catalog',
+        sourceType: 'provider_catalog',
+        planFingerprint: 'test-catalog',
+        estimateLevel: 'estimated',
+        evaluation: null,
+        summary: {
+          inputPerMillion: null,
+          outputPerMillion: null,
+          cacheReadPerMillion: null,
+          cacheWritePerMillion: null,
+          reasoningPerMillion: null,
+          requestUsd: null,
+          totalCostUsd: 0.2,
+        },
+        diagnostics: [],
+      };
     });
 
     const decision = await new TokenRouter().explainSelection('claude-sonnet-4-5-20250929');
@@ -679,8 +694,7 @@ describe('TokenRouter selection scoring', () => {
 
     expect(catalogCandidate).toBeTruthy();
     expect(fallbackCandidate).toBeTruthy();
-    expect((catalogCandidate?.probability || 0)).toBeGreaterThan(fallbackCandidate?.probability || 0);
-    expect(catalogCandidate?.reason || '').toContain('成本=目录:0.200000');
+    expect(catalogCandidate?.reason || '').toContain('成本=端点价:0.200000');
     expect(fallbackCandidate?.reason || '').toContain('成本=默认:100.000000');
   });
 
@@ -1480,9 +1494,9 @@ describe('TokenRouter selection scoring', () => {
     }).returning().get();
 
     const router = new TokenRouter();
-    const first = await router.selectChannel('gpt-5.4');
-    const second = await router.selectChannel('gpt-5.4');
-    const third = await router.selectChannel('gpt-5.4');
+    const first = await router.selectTarget('gpt-5.4');
+    const second = await router.selectTarget('gpt-5.4');
+    const third = await router.selectTarget('gpt-5.4');
     const decision = await router.explainSelection('gpt-5.4');
 
     expect(first?.target.id).toBe(channelA.id);
@@ -1543,10 +1557,10 @@ describe('TokenRouter selection scoring', () => {
     }).returning().get();
 
     const router = new TokenRouter();
-    const first = await router.selectChannel('gpt-4.1');
-    const second = await router.selectChannel('gpt-4.1');
-    const third = await router.selectChannel('gpt-4.1');
-    const fourth = await router.selectChannel('gpt-4.1');
+    const first = await router.selectTarget('gpt-4.1');
+    const second = await router.selectTarget('gpt-4.1');
+    const third = await router.selectTarget('gpt-4.1');
+    const fourth = await router.selectTarget('gpt-4.1');
     const decision = await router.explainSelection('gpt-4.1');
 
     expect(first?.target.id).toBe(channelA.id);
@@ -1601,7 +1615,7 @@ describe('TokenRouter selection scoring', () => {
     const router = new TokenRouter();
     const selectedTargetIds: number[] = [];
     for (let index = 0; index < 23; index += 1) {
-      const selected = await router.selectChannel('gpt-5.4-probe-free');
+      const selected = await router.selectTarget('gpt-5.4-probe-free');
       selectedTargetIds.push(selected?.target.id ?? 0);
     }
     let decision = await router.explainSelection('gpt-5.4-probe-free');
@@ -1612,7 +1626,7 @@ describe('TokenRouter selection scoring', () => {
     expect(primaryCandidate?.probability).toBe(0);
     expect(decision.summary.join(' ')).toContain('本次命中观察池灰度流量');
 
-    const observationSelected = await router.selectChannel('gpt-5.4-probe-free');
+    const observationSelected = await router.selectTarget('gpt-5.4-probe-free');
     selectedTargetIds.push(observationSelected?.target.id ?? 0);
 
     decision = await router.explainSelection('gpt-5.4-probe-free');

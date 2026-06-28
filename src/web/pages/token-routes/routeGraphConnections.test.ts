@@ -104,7 +104,7 @@ describe('routeGraphConnections', () => {
       targetHandle: 'bidirect.in',
     })).toMatchObject({
       ok: false,
-      message: '非 manual macro 只允许从输出接口复用',
+      message: '自动路由组只允许从输出接口复用',
     });
   });
 
@@ -300,7 +300,7 @@ describe('routeGraphConnections', () => {
       targetHandle: 'route.in',
     })).toMatchObject({
       ok: false,
-      message: '非 manual 节点不能新增出边',
+      message: '只有手动节点可以新增出边',
     });
 
     expect(validateRouteGraphConnection(sourceGraph, {
@@ -365,7 +365,7 @@ describe('routeGraphConnections', () => {
       targetHandle: 'bidirect.in',
     })).toMatchObject({
       ok: false,
-      message: '非 manual macro 只允许从输出接口复用',
+      message: '自动路由组只允许从输出接口复用',
     });
 
     expect(validateRouteGraphConnection(sourceGraph, {
@@ -409,7 +409,7 @@ describe('routeGraphConnections', () => {
           visibility: 'internal',
           ownership: 'manual',
           dynamicPorts: [
-            { id: 'request.in', label: 'request in', direction: 'input', kind: 'request', accepts: ['request'], multiple: false },
+            { id: 'request.in', label: 'request in', direction: 'input', kind: 'request', multiple: false },
           ],
         },
       ],
@@ -437,7 +437,94 @@ describe('routeGraphConnections', () => {
     });
   });
 
-  it('maps specialized output port kinds to matching edge kinds', () => {
+  it('rejects connections beyond collection max on set and arr input ports', () => {
+    const sourceGraph = graph({
+      nodes: [
+        {
+          id: 'source.a',
+          type: 'filter',
+          enabled: true,
+          visibility: 'internal',
+          ownership: 'manual',
+          dynamicPorts: [
+            { id: 'request.out', label: 'request out', direction: 'output', kind: 'request' },
+          ],
+        },
+        {
+          id: 'source.b',
+          type: 'filter',
+          enabled: true,
+          visibility: 'internal',
+          ownership: 'manual',
+          dynamicPorts: [
+            { id: 'request.out', label: 'request out', direction: 'output', kind: 'request' },
+          ],
+        },
+        {
+          id: 'target.set',
+          type: 'filter',
+          enabled: true,
+          visibility: 'internal',
+          ownership: 'manual',
+          dynamicPorts: [
+            { id: 'request.in', label: 'request in', direction: 'input', kind: 'request', collection: { type: 'set', max: 1 } },
+          ],
+        },
+        {
+          id: 'target.arr',
+          type: 'filter',
+          enabled: true,
+          visibility: 'internal',
+          ownership: 'manual',
+          dynamicPorts: [
+            { id: 'request.in', label: 'request in', direction: 'input', kind: 'request', collection: { type: 'arr', max: 1 } },
+          ],
+        },
+      ],
+      edges: [
+        {
+          id: 'existing:set',
+          sourceNodeId: 'source.a',
+          sourcePortId: 'request.out',
+          targetNodeId: 'target.set',
+          targetPortId: 'request.in',
+          kind: 'request_flow',
+          ownership: 'manual',
+        },
+        {
+          id: 'existing:arr',
+          sourceNodeId: 'source.a',
+          sourcePortId: 'request.out',
+          targetNodeId: 'target.arr',
+          targetPortId: 'request.in',
+          kind: 'request_flow',
+          ownership: 'manual',
+        },
+      ],
+    });
+
+    expect(validateRouteGraphConnection(sourceGraph, {
+      source: 'source.b',
+      sourceHandle: 'request.out',
+      target: 'target.set',
+      targetHandle: 'request.in',
+    })).toMatchObject({
+      ok: false,
+      message: '该输入接口最多允许 1 条连接',
+    });
+
+    expect(validateRouteGraphConnection(sourceGraph, {
+      source: 'source.b',
+      sourceHandle: 'request.out',
+      target: 'target.arr',
+      targetHandle: 'request.in',
+    })).toMatchObject({
+      ok: false,
+      message: '该输入接口最多允许 1 条连接',
+    });
+  });
+
+  it('maps supported output port kinds to matching edge kinds', () => {
     const sourceGraph = graph({
       nodes: [
         {
@@ -447,9 +534,8 @@ describe('routeGraphConnections', () => {
           visibility: 'internal',
           ownership: 'manual',
           dynamicPorts: [
-            { id: 'response.out', label: 'response out', direction: 'output', kind: 'response' },
-            { id: 'control.out', label: 'control out', direction: 'output', kind: 'control' },
-            { id: 'metrics.out', label: 'metrics out', direction: 'output', kind: 'metrics' },
+            { id: 'bidirect.out', label: 'bidirect out', direction: 'output', kind: 'bidirect' },
+            { id: 'route.out', label: 'route out', direction: 'output', kind: 'route' },
             { id: 'request.out', label: 'request out', direction: 'output', kind: 'request' },
           ],
         },
@@ -460,10 +546,9 @@ describe('routeGraphConnections', () => {
           visibility: 'internal',
           ownership: 'manual',
           dynamicPorts: [
-            { id: 'response.in', label: 'response in', direction: 'input', kind: 'response', accepts: ['response'] },
-            { id: 'control.in', label: 'control in', direction: 'input', kind: 'control', accepts: ['control'] },
-            { id: 'metrics.in', label: 'metrics in', direction: 'input', kind: 'metrics', accepts: ['metrics'] },
-            { id: 'request.in', label: 'request in', direction: 'input', kind: 'request', accepts: ['request'] },
+            { id: 'bidirect.in', label: 'bidirect in', direction: 'input', kind: 'bidirect' },
+            { id: 'route.in', label: 'route in', direction: 'input', kind: 'route' },
+            { id: 'request.in', label: 'request in', direction: 'input', kind: 'request' },
           ],
         },
       ],
@@ -477,21 +562,15 @@ describe('routeGraphConnections', () => {
     })).toEqual({ ok: true, kind: 'request_flow' });
     expect(validateRouteGraphConnection(sourceGraph, {
       source: 'source',
-      sourceHandle: 'response.out',
+      sourceHandle: 'bidirect.out',
       target: 'target',
-      targetHandle: 'response.in',
-    })).toEqual({ ok: true, kind: 'response_flow' });
+      targetHandle: 'bidirect.in',
+    })).toEqual({ ok: true, kind: 'bidirect_flow' });
     expect(validateRouteGraphConnection(sourceGraph, {
       source: 'source',
-      sourceHandle: 'control.out',
+      sourceHandle: 'route.out',
       target: 'target',
-      targetHandle: 'control.in',
-    })).toEqual({ ok: true, kind: 'control_flow' });
-    expect(validateRouteGraphConnection(sourceGraph, {
-      source: 'source',
-      sourceHandle: 'metrics.out',
-      target: 'target',
-      targetHandle: 'metrics.in',
-    })).toEqual({ ok: true, kind: 'metrics_link' });
+      targetHandle: 'route.in',
+    })).toEqual({ ok: true, kind: 'route_flow' });
   });
 });

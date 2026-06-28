@@ -235,8 +235,8 @@ describe('TokenRouter patterns and model mapping', () => {
     await createRouteWithSingleChannel('re:^claude-(opus|sonnet)-4-6$');
     const router = new TokenRouter();
 
-    const matched = await router.selectChannel('claude-opus-4-6');
-    const unmatched = await router.selectChannel('claude-haiku-4-6');
+    const matched = await router.selectTarget('claude-opus-4-6');
+    const unmatched = await router.selectTarget('claude-haiku-4-6');
 
     expect(matched).toBeTruthy();
     expect(matched?.actualModel).toBe('claude-opus-4-6');
@@ -248,10 +248,10 @@ describe('TokenRouter patterns and model mapping', () => {
     const glob = await createRouteWithSingleChannel('claude-*');
     const router = new TokenRouter();
 
-    const selected = await router.selectChannel('claude-opus-4-6');
+    const selected = await router.selectTarget('claude-opus-4-6');
     expect(selected).toBeTruthy();
-    expect(selected?.target.id).toBe(glob.target.id);
-    expect(selected?.target.id).not.toBe(invalid.target.id);
+    expect(selected?.target.id).toBe(glob.channel.id);
+    expect(selected?.target.id).not.toBe(invalid.channel.id);
   });
 
   it('supports exact, glob and re: keys in modelMapping with exact taking precedence', async () => {
@@ -263,9 +263,9 @@ describe('TokenRouter patterns and model mapping', () => {
     await createRouteWithSingleChannel('*', mapping);
     const router = new TokenRouter();
 
-    const exact = await router.selectChannel('claude-sonnet-4-6');
-    const glob = await router.selectChannel('claude-sonnet-4-7');
-    const regex = await router.selectChannel('gpt-4o-mini-20250101');
+    const exact = await router.selectTarget('claude-sonnet-4-6');
+    const glob = await router.selectTarget('claude-sonnet-4-7');
+    const regex = await router.selectTarget('gpt-4o-mini-20250101');
 
     expect(exact?.actualModel).toBe('target-exact');
     expect(glob?.actualModel).toBe('target-glob');
@@ -294,7 +294,7 @@ describe('TokenRouter patterns and model mapping', () => {
     );
     const router = new TokenRouter();
 
-    const selected = await router.selectChannel('claude-opus-4-6');
+    const selected = await router.selectTarget('claude-opus-4-6');
     const decision = await router.explainSelection('claude-opus-4-6');
     const exposedModels = await router.getAvailableModels();
 
@@ -322,12 +322,12 @@ describe('TokenRouter patterns and model mapping', () => {
     const grouped = await createExplicitGroupRoute('claude-opus-4-6', [source.route.id]);
     const router = new TokenRouter();
 
-    const selected = await router.selectChannel('claude-opus-4-6');
+    const selected = await router.selectTarget('claude-opus-4-6');
     const decision = await router.explainSelection('claude-opus-4-6');
 
     expect(selected).toBeTruthy();
     expect(selected?.target.routeId).toBe(source.route.id);
-    expect(selected?.target.id).not.toBe(exact.target.id);
+    expect(selected?.target.id).not.toBe(exact.channel.id);
     expect(selected?.actualModel).toBe('claude-opus-4-5');
     expect(decision.routeId).toBe(grouped.id);
     expect(decision.actualModel).toBe('claude-opus-4-5');
@@ -338,7 +338,7 @@ describe('TokenRouter patterns and model mapping', () => {
     await createExplicitGroupRoute('claude-test-4.6-sonnet', [source.route.id]);
     const router = new TokenRouter();
 
-    const selected = await router.selectChannel('claude-test-4.6-sonnet');
+    const selected = await router.selectTarget('claude-test-4.6-sonnet');
     const decision = await router.explainSelection('claude-test-4.6-sonnet');
 
     expect(selected).toBeTruthy();

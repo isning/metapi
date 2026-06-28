@@ -5,8 +5,8 @@ import { config } from '../../config.js';
 import { resetUpstreamEndpointRuntimeState } from '../../services/upstreamEndpointRuntimeMemory.js';
 
 const fetchMock = vi.fn();
-const selectChannelMock = vi.fn();
-const selectNextChannelMock = vi.fn();
+const selectTargetMock = vi.fn();
+const selectNextTargetMock = vi.fn();
 const recordSuccessMock = vi.fn();
 const recordFailureMock = vi.fn();
 const refreshModelsAndRebuildRoutesMock = vi.fn();
@@ -36,8 +36,8 @@ vi.mock('undici', async () => {
 
 vi.mock('../../services/tokenRouter.js', () => ({
   tokenRouter: {
-    selectChannel: (...args: unknown[]) => selectChannelMock(...args),
-    selectNextChannel: (...args: unknown[]) => selectNextChannelMock(...args),
+    selectTarget: (...args: unknown[]) => selectTargetMock(...args),
+    selectNextTarget: (...args: unknown[]) => selectNextTargetMock(...args),
     recordSuccess: (...args: unknown[]) => recordSuccessMock(...args),
     recordFailure: (...args: unknown[]) => recordFailureMock(...args),
   },
@@ -70,6 +70,19 @@ vi.mock('../../services/proxyRetryPolicy.js', () => ({
 
 vi.mock('../../services/proxyUsageFallbackService.js', () => ({
   resolveProxyUsageWithSelfLogFallback: (arg: any) => resolveProxyUsageWithSelfLogFallbackMock(arg),
+}));
+
+vi.mock('../../services/oauth/quota.js', () => ({
+  recordOauthQuotaHeadersSnapshot: async () => undefined,
+  recordOauthQuotaResetHint: async () => null,
+}));
+
+vi.mock('../../services/credentialEndpointBindingService.js', () => ({
+  loadCredentialApiVariantConfig: async () => null,
+}));
+
+vi.mock('../../services/proxyLogRouteDecisionSnapshot.js', () => ({
+  buildProxyLogRouteDecisionSnapshot: async () => null,
 }));
 
 vi.mock('../../services/routeGraphRuntimeService.js', async (importOriginal) => ({
@@ -131,8 +144,8 @@ describe('chat proxy stream behavior', () => {
 
   beforeEach(() => {
     fetchMock.mockReset();
-    selectChannelMock.mockReset();
-    selectNextChannelMock.mockReset();
+    selectTargetMock.mockReset();
+    selectNextTargetMock.mockReset();
     recordSuccessMock.mockReset();
     recordFailureMock.mockReset();
     refreshModelsAndRebuildRoutesMock.mockReset();
@@ -145,15 +158,15 @@ describe('chat proxy stream behavior', () => {
     dbInsertMock.mockClear();
     resetUpstreamEndpointRuntimeState();
 
-    selectChannelMock.mockReturnValue({
-      channel: { id: 11, routeId: 22 },
-      site: { name: 'demo-site', url: 'https://upstream.example.com' },
-      account: { id: 33, username: 'demo-user' },
+    selectTargetMock.mockReturnValue({
+      target: { id: 11, routeId: 22 },
+      site: { id: 44, name: 'demo-site', url: 'https://upstream.example.com', platform: 'new-api' },
+      account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
       tokenValue: 'sk-demo',
       actualModel: 'upstream-gpt',
     });
-    selectNextChannelMock.mockReturnValue(null);
+    selectNextTargetMock.mockReturnValue(null);
     fetchModelPricingCatalogMock.mockResolvedValue(null);
     (config as any).codexHeaderDefaults = {
       userAgent: '',
@@ -829,14 +842,14 @@ describe('chat proxy stream behavior', () => {
   });
 
   it('normalizes null Claude message content before proxying on /v1/messages', async () => {
-    selectChannelMock.mockReturnValue({
-      channel: { id: 11, routeId: 22 },
+    selectTargetMock.mockReturnValue({
+      target: { id: 11, routeId: 22 },
       site: {
         name: 'claude-site',
         url: 'https://upstream.example.com',
         platform: 'claude',
       },
-      account: { id: 33, username: 'demo-user' },
+      account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
       tokenValue: 'sk-demo',
       actualModel: 'claude-opus-4-6',
@@ -875,14 +888,14 @@ describe('chat proxy stream behavior', () => {
   });
 
   it('prefers responses for Claude tool_result follow-ups that include continuation hints', async () => {
-    selectChannelMock.mockReturnValue({
-      channel: { id: 11, routeId: 22 },
+    selectTargetMock.mockReturnValue({
+      target: { id: 11, routeId: 22 },
       site: {
         name: 'openai-site',
         url: 'https://upstream.example.com',
         platform: 'openai',
       },
-      account: { id: 33, username: 'demo-user' },
+      account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
       tokenValue: 'sk-demo',
       actualModel: 'gpt-5.4',
@@ -1431,10 +1444,10 @@ describe('chat proxy stream behavior', () => {
   });
 
   it('forces upstream SSE for non-stream /v1/responses requests on sub2api and aggregates the final payload', async () => {
-    selectChannelMock.mockReturnValue({
-      channel: { id: 11, routeId: 22 },
-      site: { name: 'generic-site', url: 'https://generic.example.com', platform: 'sub2api' },
-      account: { id: 33, username: 'demo-user' },
+    selectTargetMock.mockReturnValue({
+      target: { id: 11, routeId: 22 },
+      site: { id: 44, name: 'generic-site', url: 'https://generic.example.com', platform: 'sub2api' },
+      account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
       tokenValue: 'sk-generic',
       actualModel: 'gpt-5.2-codex',
@@ -2024,10 +2037,10 @@ describe('chat proxy stream behavior', () => {
   });
 
   it('rejects external HTTP previous_response_id before sub2api compatibility retries', async () => {
-    selectChannelMock.mockReturnValue({
-      channel: { id: 11, routeId: 22 },
-      site: { name: 'sub2api-site', url: 'https://sub2api.example.com', platform: 'sub2api' },
-      account: { id: 33, username: 'demo-user' },
+    selectTargetMock.mockReturnValue({
+      target: { id: 11, routeId: 22 },
+      site: { id: 44, name: 'sub2api-site', url: 'https://sub2api.example.com', platform: 'sub2api' },
+      account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
       tokenValue: 'sk-sub2api',
       actualModel: 'upstream-gpt',
@@ -2708,10 +2721,10 @@ describe('chat proxy stream behavior', () => {
   });
 
   it('does not stick generic /v1/responses traffic to /v1/messages after a fallback success', async () => {
-    selectChannelMock.mockReturnValue({
-      channel: { id: 11, routeId: 22 },
-      site: { name: 'generic-site', url: 'https://upstream.example.com', platform: 'new-api' },
-      account: { id: 33, username: 'demo-user' },
+    selectTargetMock.mockReturnValue({
+      target: { id: 11, routeId: 22 },
+      site: { id: 44, name: 'generic-site', url: 'https://upstream.example.com', platform: 'new-api' },
+      account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
       tokenValue: 'sk-demo',
       actualModel: 'upstream-gpt',
@@ -2789,10 +2802,10 @@ describe('chat proxy stream behavior', () => {
   });
 
   it('prefers native /v1/responses for claude-family /v1/responses requests that explicitly ask for encrypted reasoning', async () => {
-    selectChannelMock.mockReturnValue({
-      channel: { id: 11, routeId: 22 },
-      site: { name: 'generic-site', url: 'https://upstream.example.com', platform: 'new-api' },
-      account: { id: 33, username: 'demo-user' },
+    selectTargetMock.mockReturnValue({
+      target: { id: 11, routeId: 22 },
+      site: { id: 44, name: 'generic-site', url: 'https://upstream.example.com', platform: 'new-api' },
+      account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
       tokenValue: 'sk-demo',
       actualModel: 'upstream-gpt',
@@ -2901,10 +2914,10 @@ describe('chat proxy stream behavior', () => {
   });
 
   it('prefers native /v1/responses for claude-family /v1/responses requests that include input_file file_url', async () => {
-    selectChannelMock.mockReturnValue({
-      channel: { id: 11, routeId: 22 },
-      site: { name: 'generic-site', url: 'https://upstream.example.com', platform: 'new-api' },
-      account: { id: 33, username: 'demo-user' },
+    selectTargetMock.mockReturnValue({
+      target: { id: 11, routeId: 22 },
+      site: { id: 44, name: 'generic-site', url: 'https://upstream.example.com', platform: 'new-api' },
+      account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
       tokenValue: 'sk-demo',
       actualModel: 'upstream-gpt',
@@ -2966,10 +2979,10 @@ describe('chat proxy stream behavior', () => {
   });
 
   it('converts input_file file_url into Claude document url blocks for claude-only upstreams', async () => {
-    selectChannelMock.mockReturnValue({
-      channel: { id: 11, routeId: 22 },
-      site: { name: 'claude-site', url: 'https://upstream.example.com', platform: 'claude' },
-      account: { id: 33, username: 'demo-user' },
+    selectTargetMock.mockReturnValue({
+      target: { id: 11, routeId: 22 },
+      site: { id: 44, name: 'claude-site', url: 'https://upstream.example.com', platform: 'claude' },
+      account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
       tokenValue: 'sk-demo',
       actualModel: 'upstream-claude',
@@ -3025,10 +3038,10 @@ describe('chat proxy stream behavior', () => {
   });
 
   it('does not let remote document url success poison later inline document endpoint preference', async () => {
-    selectChannelMock.mockReturnValue({
-      channel: { id: 11, routeId: 22 },
-      site: { name: 'generic-site', url: 'https://upstream.example.com', platform: 'new-api' },
-      account: { id: 33, username: 'demo-user' },
+    selectTargetMock.mockReturnValue({
+      target: { id: 11, routeId: 22 },
+      site: { id: 44, name: 'generic-site', url: 'https://upstream.example.com', platform: 'new-api' },
+      account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
       tokenValue: 'sk-demo',
       actualModel: 'upstream-gpt',
@@ -3125,10 +3138,10 @@ describe('chat proxy stream behavior', () => {
   });
 
   it('prefers native /v1/responses for claude-family /v1/responses requests that opt into reasoning without injecting a generic default include', async () => {
-    selectChannelMock.mockReturnValue({
-      channel: { id: 11, routeId: 22 },
-      site: { name: 'generic-site', url: 'https://upstream.example.com', platform: 'new-api' },
-      account: { id: 33, username: 'demo-user' },
+    selectTargetMock.mockReturnValue({
+      target: { id: 11, routeId: 22 },
+      site: { id: 44, name: 'generic-site', url: 'https://upstream.example.com', platform: 'new-api' },
+      account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
       tokenValue: 'sk-demo',
       actualModel: 'upstream-gpt',
@@ -3177,10 +3190,10 @@ describe('chat proxy stream behavior', () => {
   });
 
   it('keeps generic claude-family /v1/responses requests on the default messages-first order when codex headers are absent', async () => {
-    selectChannelMock.mockReturnValue({
-      channel: { id: 11, routeId: 22 },
-      site: { name: 'generic-site', url: 'https://upstream.example.com', platform: 'new-api' },
-      account: { id: 33, username: 'demo-user' },
+    selectTargetMock.mockReturnValue({
+      target: { id: 11, routeId: 22 },
+      site: { id: 44, name: 'generic-site', url: 'https://upstream.example.com', platform: 'new-api' },
+      account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
       tokenValue: 'sk-demo',
       actualModel: 'upstream-gpt',
@@ -3214,10 +3227,10 @@ describe('chat proxy stream behavior', () => {
   });
 
   it('defaults encrypted reasoning include and prefers native /v1/responses for claude-family codex-surface requests even without reasoning config', async () => {
-    selectChannelMock.mockReturnValue({
-      channel: { id: 11, routeId: 22 },
-      site: { name: 'generic-site', url: 'https://upstream.example.com', platform: 'new-api' },
-      account: { id: 33, username: 'demo-user' },
+    selectTargetMock.mockReturnValue({
+      target: { id: 11, routeId: 22 },
+      site: { id: 44, name: 'generic-site', url: 'https://upstream.example.com', platform: 'new-api' },
+      account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
       tokenValue: 'sk-demo',
       actualModel: 'upstream-gpt',
@@ -3267,10 +3280,10 @@ describe('chat proxy stream behavior', () => {
   });
 
   it('keeps explicit empty include on claude-family codex-surface responses requests and stays on the default messages-first order', async () => {
-    selectChannelMock.mockReturnValue({
-      channel: { id: 11, routeId: 22 },
-      site: { name: 'generic-site', url: 'https://upstream.example.com', platform: 'new-api' },
-      account: { id: 33, username: 'demo-user' },
+    selectTargetMock.mockReturnValue({
+      target: { id: 11, routeId: 22 },
+      site: { id: 44, name: 'generic-site', url: 'https://upstream.example.com', platform: 'new-api' },
+      account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
       tokenValue: 'sk-demo',
       actualModel: 'upstream-gpt',
@@ -3314,10 +3327,10 @@ describe('chat proxy stream behavior', () => {
   });
 
   it('keeps explicit custom include on claude-family codex-surface responses requests and stays on the default messages-first order', async () => {
-    selectChannelMock.mockReturnValue({
-      channel: { id: 11, routeId: 22 },
-      site: { name: 'generic-site', url: 'https://upstream.example.com', platform: 'new-api' },
-      account: { id: 33, username: 'demo-user' },
+    selectTargetMock.mockReturnValue({
+      target: { id: 11, routeId: 22 },
+      site: { id: 44, name: 'generic-site', url: 'https://upstream.example.com', platform: 'new-api' },
+      account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
       tokenValue: 'sk-demo',
       actualModel: 'upstream-gpt',
@@ -3361,10 +3374,10 @@ describe('chat proxy stream behavior', () => {
   });
 
   it('forces anyrouter platform to prefer /v1/messages even when catalog says openai', async () => {
-    selectChannelMock.mockReturnValue({
-      channel: { id: 11, routeId: 22 },
-      site: { name: 'anyrouter-site', url: 'https://anyrouter.example.com', platform: 'anyrouter' },
-      account: { id: 33, username: 'demo-user' },
+    selectTargetMock.mockReturnValue({
+      target: { id: 11, routeId: 22 },
+      site: { id: 44, name: 'anyrouter-site', url: 'https://anyrouter.example.com', platform: 'anyrouter' },
+      account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
       tokenValue: 'sk-demo',
       actualModel: 'upstream-gpt',
@@ -3421,10 +3434,10 @@ describe('chat proxy stream behavior', () => {
       groupRatio: {},
     });
 
-    selectChannelMock.mockReturnValue({
-      channel: { id: 11, routeId: 22 },
-      site: { name: 'openai-site', url: 'https://api.openai.com', platform: 'openai' },
-      account: { id: 33, username: 'demo-user' },
+    selectTargetMock.mockReturnValue({
+      target: { id: 11, routeId: 22 },
+      site: { id: 44, name: 'openai-site', url: 'https://api.openai.com', platform: 'openai' },
+      account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
       tokenValue: 'sk-openai',
       actualModel: 'claude-opus-4-6',
@@ -3465,10 +3478,10 @@ describe('chat proxy stream behavior', () => {
   });
 
   it('falls back from /v1/responses to /v1/messages on openai platform when responses endpoint is unavailable', async () => {
-    selectChannelMock.mockReturnValue({
-      channel: { id: 11, routeId: 22 },
-      site: { name: 'openai-site', url: 'https://api.openai.com', platform: 'openai' },
-      account: { id: 33, username: 'demo-user' },
+    selectTargetMock.mockReturnValue({
+      target: { id: 11, routeId: 22 },
+      site: { id: 44, name: 'openai-site', url: 'https://api.openai.com', platform: 'openai' },
+      account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
       tokenValue: 'sk-openai',
       actualModel: 'claude-opus-4-6',
@@ -3512,10 +3525,10 @@ describe('chat proxy stream behavior', () => {
   });
 
   it('falls back to /v1/responses for /v1/chat/completions when messages/chat endpoints return 502', async () => {
-    selectChannelMock.mockReturnValue({
-      channel: { id: 11, routeId: 22 },
-      site: { name: 'generic-site', url: 'https://generic.example.com', platform: 'new-api' },
-      account: { id: 33, username: 'demo-user' },
+    selectTargetMock.mockReturnValue({
+      target: { id: 11, routeId: 22 },
+      site: { id: 44, name: 'generic-site', url: 'https://generic.example.com', platform: 'new-api' },
+      account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
       tokenValue: 'sk-generic',
       actualModel: 'claude-haiku-4-5-20251001',
@@ -3574,10 +3587,10 @@ describe('chat proxy stream behavior', () => {
 
   it('stops after the first failed protocol when cross protocol fallback is disabled', async () => {
     (config as any).disableCrossProtocolFallback = true;
-    selectChannelMock.mockReturnValue({
-      channel: { id: 11, routeId: 22 },
-      site: { name: 'generic-site', url: 'https://generic.example.com', platform: 'new-api' },
-      account: { id: 33, username: 'demo-user' },
+    selectTargetMock.mockReturnValue({
+      target: { id: 11, routeId: 22 },
+      site: { id: 44, name: 'generic-site', url: 'https://generic.example.com', platform: 'new-api' },
+      account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
       tokenValue: 'sk-generic',
       actualModel: 'claude-haiku-4-5-20251001',
@@ -3610,10 +3623,10 @@ describe('chat proxy stream behavior', () => {
   });
 
   it('continues to /v1/responses when /v1/messages dispatch is denied for /v1/chat/completions', async () => {
-    selectChannelMock.mockReturnValue({
-      channel: { id: 11, routeId: 22 },
-      site: { name: 'generic-site', url: 'https://generic.example.com', platform: 'new-api' },
-      account: { id: 33, username: 'demo-user' },
+    selectTargetMock.mockReturnValue({
+      target: { id: 11, routeId: 22 },
+      site: { id: 44, name: 'generic-site', url: 'https://generic.example.com', platform: 'new-api' },
+      account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
       tokenValue: 'sk-generic',
       actualModel: 'gpt-5.2-codex',
@@ -3666,10 +3679,10 @@ describe('chat proxy stream behavior', () => {
   });
 
   it('prefers /v1/responses immediately after explicit legacy protocol rejection on /v1/chat/completions', async () => {
-    selectChannelMock.mockReturnValue({
-      channel: { id: 11, routeId: 22 },
-      site: { name: 'generic-site', url: 'https://generic.example.com', platform: 'sub2api' },
-      account: { id: 33, username: 'demo-user' },
+    selectTargetMock.mockReturnValue({
+      target: { id: 11, routeId: 22 },
+      site: { id: 44, name: 'generic-site', url: 'https://generic.example.com', platform: 'sub2api' },
+      account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
       tokenValue: 'sk-generic',
       actualModel: 'gpt-5.2-codex',
@@ -3725,10 +3738,10 @@ describe('chat proxy stream behavior', () => {
   });
 
   it('prefers /v1/messages immediately after a generic chat endpoint says messages is required', async () => {
-    selectChannelMock.mockReturnValue({
-      channel: { id: 11, routeId: 22 },
-      site: { name: 'generic-site', url: 'https://generic.example.com', platform: 'new-api' },
-      account: { id: 33, username: 'demo-user' },
+    selectTargetMock.mockReturnValue({
+      target: { id: 11, routeId: 22 },
+      site: { id: 44, name: 'generic-site', url: 'https://generic.example.com', platform: 'new-api' },
+      account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
       tokenValue: 'sk-generic',
       actualModel: 'gpt-5.2',
@@ -3803,10 +3816,10 @@ describe('chat proxy stream behavior', () => {
   });
 
   it('promotes /v1/responses to the next same-request attempt when a generic chat endpoint says input is required', async () => {
-    selectChannelMock.mockReturnValue({
-      channel: { id: 11, routeId: 22 },
-      site: { name: 'generic-site', url: 'https://generic.example.com', platform: 'new-api' },
-      account: { id: 33, username: 'demo-user' },
+    selectTargetMock.mockReturnValue({
+      target: { id: 11, routeId: 22 },
+      site: { id: 44, name: 'generic-site', url: 'https://generic.example.com', platform: 'new-api' },
+      account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
       tokenValue: 'sk-generic',
       actualModel: 'gpt-5.2',
@@ -3886,10 +3899,10 @@ describe('chat proxy stream behavior', () => {
   });
 
   it('keeps messages-first semantics for claude-family models on generic upstreams', async () => {
-    selectChannelMock.mockReturnValue({
-      channel: { id: 11, routeId: 22 },
-      site: { name: 'generic-site', url: 'https://generic.example.com', platform: 'new-api' },
-      account: { id: 33, username: 'demo-user' },
+    selectTargetMock.mockReturnValue({
+      target: { id: 11, routeId: 22 },
+      site: { id: 44, name: 'generic-site', url: 'https://generic.example.com', platform: 'new-api' },
+      account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
       tokenValue: 'sk-generic',
       actualModel: 'claude-haiku-4-5-20251001',
@@ -3945,10 +3958,10 @@ describe('chat proxy stream behavior', () => {
   });
 
   it('forces openai platform to use /v1/responses for claude downstream requests', async () => {
-    selectChannelMock.mockReturnValue({
-      channel: { id: 11, routeId: 22 },
-      site: { name: 'openai-site', url: 'https://api.openai.com', platform: 'openai' },
-      account: { id: 33, username: 'demo-user' },
+    selectTargetMock.mockReturnValue({
+      target: { id: 11, routeId: 22 },
+      site: { id: 44, name: 'openai-site', url: 'https://api.openai.com', platform: 'openai' },
+      account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
       tokenValue: 'sk-openai',
       actualModel: 'gpt-4o-mini',
@@ -3990,10 +4003,10 @@ describe('chat proxy stream behavior', () => {
   });
 
   it('preserves claude tool_use/tool_result when claude downstream is routed to openai responses endpoint', async () => {
-    selectChannelMock.mockReturnValue({
-      channel: { id: 11, routeId: 22 },
-      site: { name: 'openai-site', url: 'https://api.openai.com', platform: 'openai' },
-      account: { id: 33, username: 'demo-user' },
+    selectTargetMock.mockReturnValue({
+      target: { id: 11, routeId: 22 },
+      site: { id: 44, name: 'openai-site', url: 'https://api.openai.com', platform: 'openai' },
+      account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
       tokenValue: 'sk-openai',
       actualModel: 'gpt-4o-mini',
@@ -4073,10 +4086,10 @@ describe('chat proxy stream behavior', () => {
   });
 
   it('maps claude tool config and thinking budget before routing claude downstream requests to openai responses endpoint', async () => {
-    selectChannelMock.mockReturnValue({
-      channel: { id: 11, routeId: 22 },
-      site: { name: 'openai-site', url: 'https://api.openai.com', platform: 'openai' },
-      account: { id: 33, username: 'demo-user' },
+    selectTargetMock.mockReturnValue({
+      target: { id: 11, routeId: 22 },
+      site: { id: 44, name: 'openai-site', url: 'https://api.openai.com', platform: 'openai' },
+      account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
       tokenValue: 'sk-openai',
       actualModel: 'gpt-4o-mini',
@@ -4155,10 +4168,10 @@ describe('chat proxy stream behavior', () => {
   });
 
   it('forces claude platform to use /v1/messages with x-api-key auth for openai downstream requests', async () => {
-    selectChannelMock.mockReturnValue({
-      channel: { id: 11, routeId: 22 },
-      site: { name: 'claude-site', url: 'https://api.anthropic.com', platform: 'claude' },
-      account: { id: 33, username: 'demo-user' },
+    selectTargetMock.mockReturnValue({
+      target: { id: 11, routeId: 22 },
+      site: { id: 44, name: 'claude-site', url: 'https://api.anthropic.com', platform: 'claude' },
+      account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
       tokenValue: 'sk-claude',
       actualModel: 'claude-sonnet-4-5-20250929',
@@ -4196,10 +4209,10 @@ describe('chat proxy stream behavior', () => {
   });
 
   it('preserves openai tool context when /v1/chat/completions is routed to /v1/messages upstream', async () => {
-    selectChannelMock.mockReturnValue({
-      channel: { id: 11, routeId: 22 },
-      site: { name: 'claude-site', url: 'https://api.anthropic.com', platform: 'claude' },
-      account: { id: 33, username: 'demo-user' },
+    selectTargetMock.mockReturnValue({
+      target: { id: 11, routeId: 22 },
+      site: { id: 44, name: 'claude-site', url: 'https://api.anthropic.com', platform: 'claude' },
+      account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
       tokenValue: 'sk-claude',
       actualModel: 'claude-sonnet-4-5-20250929',
@@ -4291,10 +4304,10 @@ describe('chat proxy stream behavior', () => {
   });
 
   it('groups consecutive tool messages into one anthropic user turn when routing /v1/chat/completions to /v1/messages', async () => {
-    selectChannelMock.mockReturnValue({
-      channel: { id: 11, routeId: 22 },
-      site: { name: 'claude-site', url: 'https://api.anthropic.com', platform: 'claude' },
-      account: { id: 33, username: 'demo-user' },
+    selectTargetMock.mockReturnValue({
+      target: { id: 11, routeId: 22 },
+      site: { id: 44, name: 'claude-site', url: 'https://api.anthropic.com', platform: 'claude' },
+      account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
       tokenValue: 'sk-claude',
       actualModel: 'claude-sonnet-4-5-20250929',
@@ -4751,7 +4764,7 @@ describe('chat proxy stream behavior', () => {
 
     expect(response.statusCode, response.body).toBe(200);
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(selectChannelMock).toHaveBeenCalledWith('__search', expect.anything());
+    expect(selectTargetMock).toHaveBeenCalledWith('__search', expect.anything());
     const [targetUrl, options] = fetchMock.mock.calls[0] as [string, any];
     expect(targetUrl).toBe('https://upstream.example.com/v1/search');
     expect(JSON.parse(options.body)).toMatchObject({
@@ -4819,7 +4832,7 @@ describe('chat proxy stream behavior', () => {
 
     expect(response.statusCode, response.body).toBe(200);
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(selectChannelMock).toHaveBeenCalledWith('__search', expect.anything());
+    expect(selectTargetMock).toHaveBeenCalledWith('__search', expect.anything());
     const [targetUrl, options] = fetchMock.mock.calls[0] as [string, any];
     expect(targetUrl).toBe('https://upstream.example.com/v1/search');
     expect(JSON.parse(options.body)).toMatchObject({
@@ -4842,10 +4855,10 @@ describe('chat proxy stream behavior', () => {
   });
 
   it('routes gemini platform to OpenAI-compatible upstream endpoint path', async () => {
-    selectChannelMock.mockReturnValue({
-      channel: { id: 11, routeId: 22 },
-      site: { name: 'gemini-site', url: 'https://generativelanguage.googleapis.com', platform: 'gemini' },
-      account: { id: 33, username: 'demo-user' },
+    selectTargetMock.mockReturnValue({
+      target: { id: 11, routeId: 22 },
+      site: { id: 44, name: 'gemini-site', url: 'https://generativelanguage.googleapis.com', platform: 'gemini' },
+      account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
       tokenValue: 'gemini-key',
       actualModel: 'gemini-2.5-flash',

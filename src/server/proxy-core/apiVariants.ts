@@ -1,4 +1,4 @@
-import type { UpstreamEndpoint } from './orchestration/upstreamRequest.js';
+import { buildUpstreamUrl, type UpstreamEndpoint } from './orchestration/upstreamRequest.js';
 
 export const API_TYPES = [
   'openai_chat_completions',
@@ -59,8 +59,10 @@ export interface ApiEndpointProfile {
   siteId: number;
   apiType: ApiType;
   label: string;
-  baseUrl?: string | null;
-  pathTemplate?: string | null;
+  requestMethod?: 'POST' | 'GET';
+  requestUrl?: string | null;
+  defaultHeaders?: Record<string, string>;
+  modelCatalogSourceId?: string | null;
   authMode: 'bearer' | 'api_key_header' | 'query' | 'custom';
   enabled: boolean;
   priority?: number;
@@ -83,6 +85,19 @@ export interface CredentialEndpointBinding {
   pricingPolicyRef?: string | null;
   measuredPricingRef?: string | null;
   metadata?: Record<string, unknown>;
+}
+
+export type EndpointModelObservationStatus = 'confirmed' | 'rejected' | 'transient_failure';
+
+export interface EndpointModelObservation {
+  siteId: number;
+  credentialId: string;
+  apiEndpointProfileId: string;
+  modelName: string;
+  status: EndpointModelObservationStatus;
+  failureClass?: string | null;
+  observedAt?: string | null;
+  expiresAt?: string | null;
 }
 
 export interface SupplyTarget {
@@ -112,6 +127,8 @@ export interface ApiVariant {
   supplyTargetId: string;
   apiType: ApiType;
   upstreamEndpoint: UpstreamEndpoint;
+  requestMethod: 'POST' | 'GET';
+  requestUrl: string;
   apiEndpointProfileId: string;
   credentialEndpointBindingId: string;
   adapterId: string;
@@ -143,6 +160,9 @@ export interface ApiAttempt {
   supplyTargetId: string;
   apiType: ApiType;
   upstreamEndpoint: UpstreamEndpoint;
+  requestMethod: 'POST' | 'GET';
+  requestUrl: string;
+  defaultHeaders?: Record<string, string>;
   adapterId: string;
   credentialEndpointBindingId: string;
   apiEndpointProfileId: string;
@@ -176,6 +196,8 @@ export interface BuildApiAttemptPlanInput {
   endpointCandidates: UpstreamEndpoint[];
   endpointProfiles?: ApiEndpointProfile[];
   credentialEndpointBindings?: CredentialEndpointBinding[];
+  endpointModelObservations?: EndpointModelObservation[];
+  siteUrl?: string | null;
   policy?: ApiVariantPolicy | null;
   disableCrossProtocolFallback?: boolean;
 }
@@ -217,6 +239,18 @@ const API_TYPE_TO_UPSTREAM_ENDPOINT = new Map<ApiType, UpstreamEndpoint>(
     .map(([endpoint, apiType]) => [apiType, endpoint as UpstreamEndpoint]),
 );
 
+const UPSTREAM_ENDPOINT_PATH: Record<UpstreamEndpoint, string> = {
+  chat: '/v1/chat/completions',
+  messages: '/v1/messages',
+  responses: '/v1/responses',
+  embeddings: '/v1/embeddings',
+  completions: '/v1/completions',
+  'images/generations': '/v1/images/generations',
+  'images/edits': '/v1/images/edits',
+  'videos/generations': '/v1/videos/generations',
+  videos: '/v1/videos',
+};
+
 function asStableSegment(value: unknown, fallback = 'unknown'): string {
   const normalized = String(value ?? '').trim().toLowerCase()
     .replace(/[^a-z0-9._:-]+/g, '-')
@@ -233,6 +267,40 @@ function uniqueEndpoints(endpoints: UpstreamEndpoint[]): UpstreamEndpoint[] {
     next.push(endpoint);
   }
   return next;
+}
+
+export function defaultRequestPathForUpstreamEndpoint(endpoint: UpstreamEndpoint): string {
+  return UPSTREAM_ENDPOINT_PATH[endpoint] || '/v1/chat/completions';
+}
+
+export function defaultRequestUrlForUpstreamEndpoint(input: {
+  siteUrl?: string | null;
+  endpoint: UpstreamEndpoint;
+}): string | null {
+  const baseUrl = String(input.siteUrl || '').trim();
+  if (!baseUrl) return null;
+  try {
+    const parsed = new URL(baseUrl);
+    if (parsed.hostname === 'api.deepseek.com') {
+      const deepSeekBase = `${parsed.protocol}//${parsed.host}`;
+      if (input.endpoint === 'chat') return `${deepSeekBase}/chat/completions`;
+      if (input.endpoint === 'messages') return `${deepSeekBase}/anthropic/v1/messages`;
+    }
+    if (parsed.hostname === 'chatgpt.com' && parsed.pathname.replace(/\/+$/, '') === '/backend-api/codex') {
+      const codexBase = `${parsed.protocol}//${parsed.host}${parsed.pathname.replace(/\/+$/, '')}`;
+      if (input.endpoint === 'chat') return `${codexBase}/chat/completions`;
+      if (input.endpoint === 'responses') return `${codexBase}/responses`;
+    }
+    if (parsed.hostname === 'generativelanguage.googleapis.com') {
+      const geminiOpenAiBase = `${parsed.protocol}//${parsed.host}/v1beta/openai`;
+      if (input.endpoint === 'chat') return `${geminiOpenAiBase}/chat/completions`;
+      if (input.endpoint === 'responses') return `${geminiOpenAiBase}/responses`;
+      if (input.endpoint === 'embeddings') return `${geminiOpenAiBase}/embeddings`;
+    }
+  } catch {
+    // Fall back to generic URL joining below.
+  }
+  return buildUpstreamUrl(baseUrl, defaultRequestPathForUpstreamEndpoint(input.endpoint));
 }
 
 function mergeCapability(
@@ -288,6 +356,7 @@ export function buildSupplyTargetId(input: {
 export function buildDefaultApiEndpointProfile(input: {
   siteId: number;
   endpoint: UpstreamEndpoint;
+  siteUrl?: string | null;
 }): ApiEndpointProfile {
   const apiType = apiTypeFromUpstreamEndpoint(input.endpoint);
   return {
@@ -295,6 +364,11 @@ export function buildDefaultApiEndpointProfile(input: {
     siteId: input.siteId,
     apiType,
     label: apiType,
+    requestMethod: 'POST',
+    requestUrl: defaultRequestUrlForUpstreamEndpoint({
+      siteUrl: input.siteUrl,
+      endpoint: input.endpoint,
+    }),
     authMode: 'bearer',
     enabled: true,
     capabilityDefaults: DEFAULT_API_VARIANT_CAPABILITY,
@@ -326,10 +400,12 @@ function defaultBindingForEndpoint(input: {
   siteId: number;
   credentialId?: number | string | null;
   endpoint: UpstreamEndpoint;
+  siteUrl?: string | null;
 }): { profile: ApiEndpointProfile; binding: CredentialEndpointBinding } {
   const profile = buildDefaultApiEndpointProfile({
     siteId: input.siteId,
     endpoint: input.endpoint,
+    siteUrl: input.siteUrl,
   });
   return {
     profile,
@@ -351,19 +427,43 @@ function bindingCanPlan(
   return binding.support === 'unknown' && input.allowUnknownBindings;
 }
 
+function observationForBinding(input: {
+  observations: EndpointModelObservation[];
+  binding: CredentialEndpointBinding;
+  modelName?: string | null;
+}): EndpointModelObservation | null {
+  const normalizedModel = String(input.modelName || '').trim().toLowerCase();
+  if (!normalizedModel) return null;
+  const nowMs = Date.now();
+  return input.observations.find((observation) => {
+    if (observation.credentialId !== input.binding.credentialId) return false;
+    if (observation.apiEndpointProfileId !== input.binding.apiEndpointProfileId) return false;
+    if (String(observation.modelName || '').trim().toLowerCase() !== normalizedModel) return false;
+    if (!observation.expiresAt) return true;
+    const expiresMs = Date.parse(observation.expiresAt);
+    return !Number.isFinite(expiresMs) || expiresMs > nowMs;
+  }) || null;
+}
+
 function buildVariant(input: {
   supplyTargetId: string;
   endpoint: UpstreamEndpoint;
   profile: ApiEndpointProfile;
   binding: CredentialEndpointBinding;
   downgradeAllowed: boolean;
+  siteUrl?: string | null;
 }): ApiVariant {
   const capability = mergeCapability(input.profile.capabilityDefaults, input.binding.capabilityOverride);
+  const requestUrl = input.profile.requestUrl
+    || defaultRequestUrlForUpstreamEndpoint({ siteUrl: input.siteUrl, endpoint: input.endpoint })
+    || defaultRequestPathForUpstreamEndpoint(input.endpoint);
   return {
     id: `api-variant:${input.supplyTargetId}:${input.binding.id}`,
     supplyTargetId: input.supplyTargetId,
     apiType: input.profile.apiType,
     upstreamEndpoint: input.endpoint,
+    requestMethod: input.profile.requestMethod || 'POST',
+    requestUrl,
     apiEndpointProfileId: input.profile.id,
     credentialEndpointBindingId: input.binding.id,
     adapterId: input.profile.apiType,
@@ -381,6 +481,7 @@ function buildVariant(input: {
     priority: input.binding.priority ?? input.profile.priority,
     metadata: {
       source: input.binding.source,
+      defaultHeaders: input.profile.defaultHeaders,
     },
   };
 }
@@ -396,6 +497,9 @@ function attemptFromVariant(input: {
     supplyTargetId: input.variant.supplyTargetId,
     apiType: input.variant.apiType,
     upstreamEndpoint: input.variant.upstreamEndpoint,
+    requestMethod: input.variant.requestMethod,
+    requestUrl: input.variant.requestUrl,
+    defaultHeaders: input.variant.metadata?.defaultHeaders as Record<string, string> | undefined,
     adapterId: input.variant.adapterId,
     credentialEndpointBindingId: input.variant.credentialEndpointBindingId,
     apiEndpointProfileId: input.variant.apiEndpointProfileId,
@@ -443,6 +547,7 @@ export function buildApiAttemptPlan(input: BuildApiAttemptPlanInput): ApiAttempt
   const variants: ApiVariant[] = [];
   const attempts: ApiAttempt[] = [];
   const endpoints = uniqueEndpoints(input.endpointCandidates);
+  const observations = input.endpointModelObservations || [];
   const profilesById = new Map((input.endpointProfiles || []).map((profile) => [profile.id, profile]));
   const hasExplicitBindings = Array.isArray(input.credentialEndpointBindings);
 
@@ -473,7 +578,7 @@ export function buildApiAttemptPlan(input: BuildApiAttemptPlanInput): ApiAttempt
                 })];
           })
           .sort(sortBindings)
-      : [defaultBindingForEndpoint({ siteId: input.siteId, credentialId: input.credentialId, endpoint }).binding];
+      : [defaultBindingForEndpoint({ siteId: input.siteId, credentialId: input.credentialId, endpoint, siteUrl: input.siteUrl }).binding];
 
     if (hasExplicitBindings && candidateProfiles.length === 0) {
       diagnostics.push({
@@ -502,12 +607,30 @@ export function buildApiAttemptPlan(input: BuildApiAttemptPlanInput): ApiAttempt
         siteId: input.siteId,
         credentialId: input.credentialId,
         endpoint,
+        siteUrl: input.siteUrl,
       }).profile;
       if (!bindingCanPlan(binding, { allowUnknownBindings })) {
         diagnostics.push({
           severity: binding.support === 'unknown' ? 'info' : 'warning',
           code: 'credential_endpoint_binding.not_plannable',
           message: `Credential endpoint binding ${binding.id} is ${binding.enabled ? binding.support : 'disabled'}.`,
+          apiType,
+          upstreamEndpoint: endpoint,
+          credentialEndpointBindingId: binding.id,
+          apiEndpointProfileId: binding.apiEndpointProfileId,
+        });
+        continue;
+      }
+      const observation = observationForBinding({
+        observations,
+        binding,
+        modelName: input.modelName || input.canonicalModel,
+      });
+      if (observation?.status === 'rejected') {
+        diagnostics.push({
+          severity: 'warning',
+          code: 'endpoint_model_observation.rejected',
+          message: `Endpoint profile ${binding.apiEndpointProfileId} recently rejected model ${input.modelName || input.canonicalModel || ''}.`,
           apiType,
           upstreamEndpoint: endpoint,
           credentialEndpointBindingId: binding.id,
@@ -522,6 +645,7 @@ export function buildApiAttemptPlan(input: BuildApiAttemptPlanInput): ApiAttempt
         profile,
         binding,
         downgradeAllowed,
+        siteUrl: input.siteUrl,
       });
       variants.push(variant);
       attempts.push(attemptFromVariant({
@@ -556,6 +680,8 @@ export function summarizeApiAttemptPlanForDebug(plan: ApiAttemptPlan): Record<st
       index,
       apiType: attempt.apiType,
       endpoint: attempt.upstreamEndpoint,
+      requestMethod: attempt.requestMethod,
+      requestUrl: attempt.requestUrl,
       variantId: attempt.variantId,
       credentialEndpointBindingId: attempt.credentialEndpointBindingId,
       apiEndpointProfileId: attempt.apiEndpointProfileId,

@@ -1,4 +1,4 @@
-# ADR-0008: Route Program Bundle V3
+# ADR-0008: Route Program Bundle
 
 Status: Accepted
 Date: 2026-06-21
@@ -42,7 +42,7 @@ compiled executable model that should sit under it.
 
 ## Decision
 
-Metapi will introduce `RouteProgramBundleV3` as the executable compiled route
+Metapi will introduce `RouteProgramBundle` as the executable compiled route
 format. It is a route dispatch IR, not another editable graph.
 
 The source and compiled layers become:
@@ -56,18 +56,18 @@ The source and compiled layers become:
 4. **Runtime Hydrated Plan**: in-memory optimized indexes/state-machine helpers
    built from the program bundle.
 
-`CompiledRouteGraph` may temporarily keep its existing v2 fields while carrying
-`programBundle`. Those v2 fields are debug and migration views only. The
-request runtime executes `RouteProgramBundleV3`; it must not reconstruct or
-interpret the v2 graph snapshot per request.
+`CompiledRouteGraph` keeps graph index fields for UI/debug consumers while
+carrying `programBundle`. Those graph indexes are not the execution contract.
+The request runtime executes `RouteProgramBundle`; it must not reconstruct or
+interpret the editable graph snapshot per request.
 
 ## Route Program Bundle
 
-`RouteProgramBundleV3` has these top-level sections:
+`RouteProgramBundle` has these top-level sections:
 
 ```ts
-type RouteProgramBundleV3 = {
-  version: 3;
+type RouteProgramBundle = {
+  version: 1;
   hash: string;
   matcher: RouteMatcherTable;
   programs: RouteProgram[];
@@ -207,14 +207,14 @@ Runtime must not silently guess around `program.*` errors.
 
 The compiler merges `program.*` diagnostics into the top-level compile result.
 The runtime refuses bundles with executable program errors, missing start ops, or
-invalid regex patterns. Persisted active graphs that lack an executable v3
-bundle are recompiled from their semantic source before use.
+invalid regex patterns. Persisted active graphs that lack an executable bundle
+are recompiled from their semantic source before use.
 
 ## Migration Plan
 
-This migration is implemented in stages:
+This change is implemented in stages:
 
-1. Add `programBundle` alongside the existing v2 compiled graph fields.
+1. Add `programBundle` alongside the existing compiled graph index fields.
 2. Build matcher, endpoint catalog, and source maps from the lowered primitive
    graph.
 3. Generate executable operations for the graph shapes currently supported by
@@ -222,11 +222,11 @@ This migration is implemented in stages:
 4. Add a hydrated evaluator and test it against the existing graph evaluator.
 5. Switch request dispatch to the hydrated evaluator.
 6. Recompile persisted active graphs that lack an executable bundle.
-7. Remove v2 graph interpretation from request runtime.
+7. Remove graph interpretation from request runtime.
 
-Persisted compiled JSON may still carry both v2 fields and `programBundle`.
-That is not the execution contract; it is a debug and migration bridge while UI
-consumers finish moving to program source maps and endpoint catalog views.
+Persisted compiled JSON may carry both graph indexes and `programBundle`.
+That is not the execution contract; graph indexes exist for debug and UI
+consumers, while runtime uses program source maps and endpoint catalog views.
 
 ## Consequences
 
@@ -244,5 +244,5 @@ Tradeoffs:
   evaluator during migration;
 - UI debug views must read source maps instead of assuming compiled graph nodes
   are the authoritative runtime shape;
-- migration needs one deliberate removal step for v2 runtime fields after the
-  program evaluator is stable.
+- migration needs one deliberate removal step for request-time graph
+  interpretation after the program evaluator is stable.

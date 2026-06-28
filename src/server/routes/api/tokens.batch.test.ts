@@ -19,7 +19,7 @@ describe('PUT /api/targets/batch', () => {
     return seedId;
   };
 
-  const seedChannel = async (options: { priority: number; weight: number; manualOverride?: boolean }) => {
+  const seedTarget = async (options: { priority: number; weight: number; manualOverride?: boolean }) => {
     const id = nextId();
     const site = await db.insert(schema.sites).values({
       name: `site-${id}`,
@@ -112,16 +112,16 @@ describe('PUT /api/targets/batch', () => {
   });
 
   it('updates priorities in batch, sets manualOverride, and keeps weight unchanged', async () => {
-    const channelA = await seedChannel({ priority: 9, weight: 17, manualOverride: false });
-    const channelB = await seedChannel({ priority: 8, weight: 23, manualOverride: false });
+    const targetA = await seedTarget({ priority: 9, weight: 17, manualOverride: false });
+    const targetB = await seedTarget({ priority: 8, weight: 23, manualOverride: false });
 
     const res = await app.inject({
       method: 'PUT',
       url: '/api/targets/batch',
       payload: {
         updates: [
-          { id: channelA.id, priority: 3.8 },
-          { id: channelB.id, priority: -7.2 },
+          { id: targetA.id, priority: 3.8 },
+          { id: targetB.id, priority: -7.2 },
         ],
       },
     });
@@ -129,13 +129,13 @@ describe('PUT /api/targets/batch', () => {
     expect(res.statusCode).toBe(200);
     const body = res.json() as {
       success: boolean;
-      channels: Array<{ id: number; priority: number; weight: number; manualOverride: boolean }>;
+      targets: Array<{ id: number; priority: number; weight: number; manualOverride: boolean }>;
     };
     expect(body.success).toBe(true);
-    expect(body.channels).toHaveLength(2);
+    expect(body.targets).toHaveLength(2);
 
-    const returnedA = body.channels.find((channel) => channel.id === channelA.id);
-    const returnedB = body.channels.find((channel) => channel.id === channelB.id);
+    const returnedA = body.targets.find((target) => target.id === targetA.id);
+    const returnedB = body.targets.find((target) => target.id === targetB.id);
     expect(returnedA).toBeDefined();
     expect(returnedB).toBeDefined();
     expect(returnedA?.priority).toBe(3);
@@ -145,8 +145,8 @@ describe('PUT /api/targets/batch', () => {
     expect(returnedA?.manualOverride).toBe(true);
     expect(returnedB?.manualOverride).toBe(true);
 
-    const dbA = await db.select().from(schema.routeEndpointTargets).where(eq(schema.routeEndpointTargets.id, channelA.id)).get();
-    const dbB = await db.select().from(schema.routeEndpointTargets).where(eq(schema.routeEndpointTargets.id, channelB.id)).get();
+    const dbA = await db.select().from(schema.routeEndpointTargets).where(eq(schema.routeEndpointTargets.id, targetA.id)).get();
+    const dbB = await db.select().from(schema.routeEndpointTargets).where(eq(schema.routeEndpointTargets.id, targetB.id)).get();
     expect(dbA?.priority).toBe(3);
     expect(dbB?.priority).toBe(0);
     expect(dbA?.weight).toBe(17);

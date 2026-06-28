@@ -63,7 +63,7 @@ describe('routeGraphSnapshot', () => {
 
     expect(validation.ok).toBe(false);
     if (!validation.ok) {
-      expect(validation.message).toContain('只允许编辑 manual 节点');
+      expect(validation.message).toContain('只允许编辑手动节点');
     }
   });
 
@@ -425,13 +425,13 @@ describe('routeGraphSnapshot', () => {
       ok: false,
       message: '导入内容必须是对象',
     });
-    expect(validateRouteGraphSnapshot({ version: 2, nodes: [] })).toEqual({
+    expect(validateRouteGraphSnapshot({ version: 99, nodes: [] })).toEqual({
       ok: false,
-      message: '仅支持 version=1 的 RouteGraphSnapshot',
+      message: '仅支持版本 1 的路由图文件',
     });
     expect(validateRouteGraphSnapshot({ version: 1, nodes: [{}] })).toEqual({
       ok: false,
-      message: 'nodes[0]: pattern 节点必须提供 match.requestedModelPattern',
+      message: 'nodes[0]: 模式匹配节点必须填写请求模型规则',
     });
 
     const valid = validateRouteGraphSnapshot({

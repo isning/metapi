@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { getTableName } from 'drizzle-orm';
 import { integer, real, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 
 const analyticsProjectionCheckpoints = sqliteTable('analytics_projection_checkpoints', {
@@ -123,6 +124,13 @@ function resetMockState() {
 }
 
 function resolveTableName(table: unknown): string {
+  if (table && typeof table === 'object') {
+    try {
+      return getTableName(table as never);
+    } catch {
+      // Fall through to identity checks for the local table fixtures.
+    }
+  }
   if (table === analyticsProjectionCheckpoints) return 'analytics_projection_checkpoints';
   if (table === proxyLogs) return 'proxy_logs';
   if (table === siteDayUsage) return 'site_day_usage';
@@ -136,7 +144,8 @@ function applyInsert(
   values: Record<string, unknown> | Array<Record<string, unknown>>,
   onDuplicateSet: Record<string, unknown> | null,
 ) {
-  if (table === analyticsProjectionCheckpoints) {
+  const tableName = resolveTableName(table);
+  if (tableName === 'analytics_projection_checkpoints') {
     if (!state.checkpoint) {
       state.checkpoint = { ...(values as Record<string, unknown>) };
       return;
@@ -147,17 +156,17 @@ function applyInsert(
     return;
   }
 
-  if (table === siteDayUsage) {
+  if (tableName === 'site_day_usage') {
     state.siteDayRows.push({ ...(values as Record<string, unknown>) });
     return;
   }
 
-  if (table === siteHourUsage) {
+  if (tableName === 'site_hour_usage') {
     state.siteHourRows.push({ ...(values as Record<string, unknown>) });
     return;
   }
 
-  if (table === modelDayUsage) {
+  if (tableName === 'model_day_usage') {
     state.modelDayRows.push({ ...(values as Record<string, unknown>) });
   }
 }
@@ -206,25 +215,27 @@ function makeSelectChain() {
       return chain;
     },
     async get() {
-      if (fromTable === analyticsProjectionCheckpoints) {
+      const tableName = resolveTableName(fromTable);
+      if (tableName === 'analytics_projection_checkpoints') {
         return state.checkpoint ? { ...state.checkpoint } : undefined;
       }
-      if (fromTable === proxyLogs) {
+      if (tableName === 'proxy_logs') {
         return state.proxyRows[0] ? { ...state.proxyRows[0] } : undefined;
       }
       return undefined;
     },
     async all() {
-      if (fromTable === proxyLogs) {
+      const tableName = resolveTableName(fromTable);
+      if (tableName === 'proxy_logs') {
         return state.proxyRows.map((row) => ({ ...row }));
       }
-      if (fromTable === siteDayUsage) {
+      if (tableName === 'site_day_usage') {
         return state.siteDayRows.map((row) => ({ ...row }));
       }
-      if (fromTable === siteHourUsage) {
+      if (tableName === 'site_hour_usage') {
         return state.siteHourRows.map((row) => ({ ...row }));
       }
-      if (fromTable === modelDayUsage) {
+      if (tableName === 'model_day_usage') {
         return state.modelDayRows.map((row) => ({ ...row }));
       }
       return [];
@@ -308,6 +319,7 @@ describe('usageAggregationService mysql conflict handling', () => {
       estimatedCost: 0.2,
       modelActual: 'gpt-5',
       modelRequested: 'gpt-5',
+      accountId: 17,
       siteId: 7,
       sitePlatform: 'new-api',
     }];

@@ -15,7 +15,8 @@ sound, but the current request hot path still has an important gap:
 - retry selection currently re-enters route matching from `requestedModel`
   instead of continuing from the candidate set selected for the current request;
 - API variant fallback can switch protocol endpoints inside the selected target;
-- site API endpoint fallback can switch base URLs inside the selected site.
+- site API endpoint fallback can switch executable request URLs inside the
+  selected site.
 
 Those are different fallback scopes. If they are not modeled explicitly, a
 request can become hard to reason about. In the worst case, a retry may evaluate
@@ -185,16 +186,16 @@ type ApiAttempt = {
 
 type TransportReplica = {
   replicaId: string;
-  baseUrl: string;
+  requestUrl: string;
   priority: number;
   healthStatus: 'healthy' | 'degraded' | 'unhealthy' | 'unknown';
 };
 ```
 
 The legacy `site_api_endpoints` pool should be migrated into transport replicas
-under API endpoint profiles. Long term, base URL failover should not be a second
-independent fallback model beside `ApiEndpointProfile.baseUrl` and
-`pathTemplate`.
+under API endpoint profiles. ADR-0017 makes the executable endpoint profile
+field `requestUrl`; long term, URL failover should not be a second independent
+fallback model beside endpoint profiles and their replicas.
 
 ## Logging And Explainability
 

@@ -8,8 +8,8 @@ import {
   type RouteFlatFilterStage,
   type RouteFlatTerminal,
   type RouteProgram,
-  type RouteProgramBundleV3,
-  type RouteProgramBundleV4,
+  type RouteProgramBundle,
+  type RouteFlatProgramBundle,
   type RouteProgramCandidate,
   type RouteProgramOp,
   type RouteProgramSourceRef,
@@ -137,25 +137,25 @@ type DispatcherCandidate = RuntimeSelectorCandidate & {
 };
 
 export type HydratedRouteProgramBundle = {
-  bundle: RouteProgramBundleV3;
+  bundle: RouteProgramBundle;
   programsById: Map<string, RouteProgram>;
   opsByProgramId: Map<string, Map<string, RouteProgramOp>>;
-  exact: Map<string, NonNullable<RouteProgramBundleV3['matcher']['exact'][string]>>;
-  normalizedExact: Map<string, NonNullable<RouteProgramBundleV3['matcher']['normalizedExact'][string]>>;
-  patterns: RouteProgramBundleV3['matcher']['patterns'];
+  exact: Map<string, NonNullable<RouteProgramBundle['matcher']['exact'][string]>>;
+  normalizedExact: Map<string, NonNullable<RouteProgramBundle['matcher']['normalizedExact'][string]>>;
+  patterns: RouteProgramBundle['matcher']['patterns'];
 };
 
 export type HydratedFlatRouteProgramBundle = {
-  bundle: RouteProgramBundleV4;
-  programsById: Map<string, RouteProgramBundleV4['programs'][number]>;
-  exact: Map<string, NonNullable<RouteProgramBundleV4['matcher']['exact'][string]>>;
-  normalizedExact: Map<string, NonNullable<RouteProgramBundleV4['matcher']['normalizedExact'][string]>>;
-  patterns: RouteProgramBundleV4['matcher']['patterns'];
+  bundle: RouteFlatProgramBundle;
+  programsById: Map<string, RouteFlatProgramBundle['programs'][number]>;
+  exact: Map<string, NonNullable<RouteFlatProgramBundle['matcher']['exact'][string]>>;
+  normalizedExact: Map<string, NonNullable<RouteFlatProgramBundle['matcher']['normalizedExact'][string]>>;
+  patterns: RouteFlatProgramBundle['matcher']['patterns'];
 };
 
 const DEFAULT_ROUTE_GRAPH_MAX_HOPS = 8;
-const hydratedRouteProgramCache = new WeakMap<RouteProgramBundleV3, HydratedRouteProgramBundle>();
-const hydratedFlatRouteProgramCache = new WeakMap<RouteProgramBundleV4, HydratedFlatRouteProgramBundle>();
+const hydratedRouteProgramCache = new WeakMap<RouteProgramBundle, HydratedRouteProgramBundle>();
+const hydratedFlatRouteProgramCache = new WeakMap<RouteFlatProgramBundle, HydratedFlatRouteProgramBundle>();
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -360,8 +360,8 @@ function collectPostBuildFilter(target: RouteGraphPostBuildFilters, operation: R
   }
 }
 
-function hasUsableRouteProgramBundle(value: unknown): value is RouteProgramBundleV3 {
-  if (!isRecord(value) || value.version !== 3 || !isRecord(value.matcher) || !Array.isArray(value.programs)) {
+function hasUsableRouteProgramBundle(value: unknown): value is RouteProgramBundle {
+  if (!isRecord(value) || value.version !== 1 || !isRecord(value.matcher) || !Array.isArray(value.programs)) {
     return false;
   }
   if (Array.isArray(value.diagnostics) && value.diagnostics.some((diagnostic) => (
@@ -374,8 +374,8 @@ function hasUsableRouteProgramBundle(value: unknown): value is RouteProgramBundl
   return value.programs.some((program) => isRecord(program) && asTrimmedString(program.startOpId) && Array.isArray(program.ops));
 }
 
-function hasUsableFlatRouteProgramBundle(value: unknown): value is RouteProgramBundleV4 {
-  if (!isRecord(value) || value.version !== 4 || !isRecord(value.matcher) || !Array.isArray(value.programs)) {
+function hasUsableFlatRouteProgramBundle(value: unknown): value is RouteFlatProgramBundle {
+  if (!isRecord(value) || value.version !== 1 || !isRecord(value.matcher) || !Array.isArray(value.programs)) {
     return false;
   }
   if (Array.isArray(value.diagnostics) && value.diagnostics.some((diagnostic) => (
@@ -417,7 +417,7 @@ function hydrateFlatDecisionSelectorPlans(decision: RouteFlatDecision | null | u
   }
 }
 
-export function hydrateRouteProgramBundle(bundle: RouteProgramBundleV3): HydratedRouteProgramBundle | null {
+export function hydrateRouteProgramBundle(bundle: RouteProgramBundle): HydratedRouteProgramBundle | null {
   if (!hasUsableRouteProgramBundle(bundle)) return null;
   const cached = hydratedRouteProgramCache.get(bundle);
   if (cached) return cached;
@@ -451,11 +451,11 @@ export function hydrateRouteProgramBundle(bundle: RouteProgramBundleV3): Hydrate
   return hydrated;
 }
 
-export function hydrateFlatRouteProgramBundle(bundle: RouteProgramBundleV4): HydratedFlatRouteProgramBundle | null {
+export function hydrateFlatRouteProgramBundle(bundle: RouteFlatProgramBundle): HydratedFlatRouteProgramBundle | null {
   if (!hasUsableFlatRouteProgramBundle(bundle)) return null;
   const cached = hydratedFlatRouteProgramCache.get(bundle);
   if (cached) return cached;
-  const programsById = new Map<string, RouteProgramBundleV4['programs'][number]>();
+  const programsById = new Map<string, RouteFlatProgramBundle['programs'][number]>();
   for (const program of bundle.programs) {
     const programId = asTrimmedString(program.id);
     if (!programId || !isRecord(program.start)) return null;
@@ -494,7 +494,7 @@ function matchRouteProgramBundle(hydrated: HydratedRouteProgramBundle, requested
   };
 }
 
-function matchFlatRouteProgramBundle(hydrated: HydratedFlatRouteProgramBundle, requestedModel: string): { program: RouteProgramBundleV4['programs'][number]; entryNodeId: string; routeId: number | null } | null {
+function matchFlatRouteProgramBundle(hydrated: HydratedFlatRouteProgramBundle, requestedModel: string): { program: RouteFlatProgramBundle['programs'][number]; entryNodeId: string; routeId: number | null } | null {
   const target = hydrated.exact.get(requestedModel)
     || hydrated.normalizedExact.get(requestedModel.toLowerCase())
     || hydrated.patterns.find((pattern) => matchesTokenRouteModelPattern(requestedModel, pattern.pattern));
@@ -681,7 +681,7 @@ function applyFlatFilterStages(input: {
 
 function evaluateFlatTerminal(input: {
   terminal: RouteFlatTerminal;
-  program: RouteProgramBundleV4['programs'][number];
+  program: RouteFlatProgramBundle['programs'][number];
   entryNodeId: string;
   matchedRouteId: number | null;
   state: RouteGraphRuntimeState;
@@ -765,7 +765,7 @@ function evaluateFlatTerminal(input: {
 
 function evaluateFlatDecision(input: {
   decision: RouteFlatDecision;
-  program: RouteProgramBundleV4['programs'][number];
+  program: RouteFlatProgramBundle['programs'][number];
   entryNodeId: string;
   matchedRouteId: number | null;
   state: RouteGraphRuntimeState;
@@ -845,7 +845,7 @@ function evaluateFlatDecision(input: {
 }
 
 export function evaluateFlatRouteProgramBundle(input: {
-  bundle: RouteProgramBundleV4;
+  bundle: RouteFlatProgramBundle;
   requestedModel: string;
   maxHops?: number;
   stateStore?: Record<string, unknown>;
@@ -1083,7 +1083,7 @@ function evaluateRouteProgram(input: {
 }
 
 export function evaluateRouteProgramBundle(input: {
-  bundle: RouteProgramBundleV3;
+  bundle: RouteProgramBundle;
   requestedModel: string;
   maxHops?: number;
   stateStore?: Record<string, unknown>;

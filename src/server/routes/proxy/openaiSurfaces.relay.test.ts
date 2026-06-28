@@ -280,6 +280,113 @@ describe('OpenAI-compatible relay surfaces with scenario upstreams', () => {
     expect(storedSecond?.lastSelectedAt).toBeTruthy();
   });
 
+  it('uses credential endpoint profile request URLs and default headers during relay dispatch', async () => {
+    const { site, token, managedKey } = await harness.seedRoute({
+      model: 'profiled-embedding',
+      siteUrl: 'https://panel.profiled.example.com',
+    });
+    const {
+      listCredentialEndpointMatrix,
+      updateApiEndpointProfiles,
+      replaceCredentialEndpointBindings,
+    } = await import('../../services/credentialEndpointBindingService.js');
+
+    const matrix = await listCredentialEndpointMatrix(site.id);
+    const embeddingsProfile = matrix.profiles.find((profile) => profile.apiType === 'openai_embeddings');
+    expect(embeddingsProfile).toBeTruthy();
+
+    await updateApiEndpointProfiles({
+      siteId: site.id,
+      profiles: [{
+        id: embeddingsProfile!.rowId,
+        label: 'Profiled embeddings',
+        requestUrl: 'https://profiled-endpoint.example.com/custom/embeddings',
+        defaultHeaders: {
+          'x-endpoint-profile': 'profiled-embeddings',
+        },
+        priority: 0,
+        enabled: true,
+      }],
+    });
+    await replaceCredentialEndpointBindings({
+      siteId: site.id,
+      credentialKey: `account-token:${token.id}`,
+      bindings: [{
+        apiEndpointProfileId: embeddingsProfile!.rowId,
+        enabled: true,
+        support: 'supported',
+        priority: 0,
+      }],
+    });
+
+    harness.upstream.add({
+      method: 'POST',
+      path: (request) => (
+        request.url.origin === 'https://profiled-endpoint.example.com'
+        && request.url.pathname === '/custom/embeddings'
+      ),
+      respond: {
+        json: {
+          object: 'list',
+          data: [{ object: 'embedding', index: 0, embedding: [0.4, 0.5] }],
+          model: 'profiled-embedding',
+          usage: {
+            prompt_tokens: 2,
+            total_tokens: 2,
+          },
+        },
+      },
+    });
+
+    const response = await harness.app.inject({
+      method: 'POST',
+      url: '/v1/embeddings',
+      headers: {
+        authorization: `Bearer ${managedKey.key}`,
+      },
+      payload: {
+        model: 'profiled-embedding',
+        input: 'use profile',
+      },
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({
+      object: 'list',
+      model: 'profiled-embedding',
+    });
+
+    const call = harness.upstream.calls.find((entry) => entry.url.origin === 'https://profiled-endpoint.example.com');
+    expect(call?.url.pathname).toBe('/custom/embeddings');
+    expect(call?.headers.get('authorization')).toBe('Bearer profiled-embedding-token-value');
+    expect(call?.headers.get('x-endpoint-profile')).toBe('profiled-embeddings');
+    expect(call?.json).toEqual({
+      model: 'profiled-embedding',
+      input: 'use profile',
+    });
+
+    const logs = await harness.db.select().from(harness.schema.proxyLogs).all();
+    expect(logs).toEqual([
+      expect.objectContaining({
+        modelRequested: 'profiled-embedding',
+        status: 'success',
+      }),
+    ]);
+    const observations = await harness.db.select().from(harness.schema.endpointModelObservations)
+      .where(eq(harness.schema.endpointModelObservations.apiEndpointProfileId, embeddingsProfile!.rowId))
+      .all();
+    expect(observations).toEqual([
+      expect.objectContaining({
+        siteId: site.id,
+        credentialKey: `account-token:${token.id}`,
+        modelName: 'profiled-embedding',
+        status: 'confirmed',
+        source: 'runtime',
+        metadataJson: expect.stringContaining('https://profiled-endpoint.example.com/custom/embeddings'),
+      }),
+    ]);
+  });
+
   it('records a failed proxy log when embeddings upstream candidates are exhausted', async () => {
     const { managedKey, route, target, account } = await harness.seedRoute({ model: 'embedding-failure-model' });
     harness.upstream.add({

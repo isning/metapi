@@ -472,9 +472,18 @@ describe('/v1/models route', () => {
       method: 'POST',
       url: '/api/routes',
       payload: {
-        routeMode: 'explicit_group',
-        displayName: 'claude-opus-4-6',
-        sourceRouteIds: [sourceRouteA.id, sourceRouteB.id],
+        match: {
+          kind: 'model',
+          requestedModelPattern: '',
+          displayName: 'claude-opus-4-6',
+        },
+        backend: {
+          kind: 'routes',
+          routeIds: [sourceRouteA.id, sourceRouteB.id],
+        },
+        presentation: {
+          displayName: 'claude-opus-4-6',
+        },
       },
     });
     expect(groupResponse.statusCode).toBe(200);

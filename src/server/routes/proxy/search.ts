@@ -25,9 +25,9 @@ import {
   selectProxyTargetForAttempt,
 } from '../../proxy-core/targetSelection.js';
 import {
-  bindSurfaceStickyChannel,
+  bindSurfaceStickyTarget,
   buildSurfaceStickySessionKey,
-  clearSurfaceStickyChannel,
+  clearSurfaceStickyTarget,
 } from '../../proxy-core/orchestration/sharedProxyOrchestration.js';
 const DEFAULT_SEARCH_MODEL = '__search';
 const DEFAULT_MAX_RESULTS = 10;
@@ -100,13 +100,13 @@ export async function searchProxyRoute(app: FastifyInstance) {
       });
 
       if (!selected) {
-        const noChannelMessage = buildForcedTargetUnavailableMessage(forcedTargetId);
+        const noTargetMessage = buildForcedTargetUnavailableMessage(forcedTargetId);
         await reportProxyAllFailed({
           model: requestedModel,
-          reason: forcedTargetId ? noChannelMessage : 'No available targets after retries',
+          reason: forcedTargetId ? noTargetMessage : 'No available targets after retries',
         });
         return reply.code(503).send({
-          error: { message: noChannelMessage, type: 'server_error' },
+          error: { message: noTargetMessage, type: 'server_error' },
         });
       }
 
@@ -161,7 +161,7 @@ export async function searchProxyRoute(app: FastifyInstance) {
         await recordTokenRouterEventBestEffort('record target success', () => (
           tokenRouter.recordSuccess(selected.target.id, latency, 0, upstreamModel)
         ));
-        bindSurfaceStickyChannel({ stickySessionKey, selected });
+        bindSurfaceStickyTarget({ stickySessionKey, selected });
         recordDownstreamCostUsage(request, 0);
         logProxy(
           selected,
@@ -210,7 +210,7 @@ export async function searchProxyRoute(app: FastifyInstance) {
           });
         }
         if ((status > 0 ? shouldRetryProxyRequest(status, errorText) : true) && canRetryTargetSelection(retryCount, forcedTargetId)) {
-          clearSurfaceStickyChannel({ stickySessionKey, selected });
+          clearSurfaceStickyTarget({ stickySessionKey, selected });
           retryCount += 1;
           continue;
         }

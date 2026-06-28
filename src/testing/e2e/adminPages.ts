@@ -27,22 +27,22 @@ export async function expectAdminPageLoaded(page: Page, spec: AdminPageSpec): Pr
 }
 
 export async function expectRouteEditorModes(page: Page): Promise<void> {
-  await expect(page.getByRole('tab', { name: /Wizard|列表/i })).toBeVisible();
+  await expect(page.getByRole('tab', { name: /^Route Groups$|^路由组$/i })).toBeVisible();
   await expect(page.getByRole('tab', { name: /Edit|图编辑/i })).toBeVisible();
-  await expect(page.getByRole('tab', { name: /JSON|高级 JSON/i })).toBeVisible();
-  await expect(page.getByText(/Route Wizard/i)).toBeVisible();
+  await expect(page.getByRole('tab', { name: /Advanced JSON|高级 JSON|JSON/i })).toBeVisible();
+  await expect(page.getByText(/Route groups|路由组/i).first()).toBeVisible();
 
   await page.getByRole('tab', { name: /Edit|图编辑/i }).click();
   await expect(page.getByText(/Graph Tools|Primitive|Template|Diagnostics|Problems/i).first()).toBeVisible();
 
-  await page.getByRole('tab', { name: /JSON|高级 JSON/i }).click();
+  await page.getByRole('tab', { name: /Advanced JSON|高级 JSON|JSON/i }).click();
   await expect(page.getByText(/JSON|Validate|Publish|Draft|Diagnostics/i).first()).toBeVisible();
 }
 
 export async function expectModelsMarketplaceEmptyState(page: Page): Promise<void> {
   await expect(page.getByText(/Model Marketplace|模型广场/i).first()).toBeVisible();
   await expect(page.getByPlaceholder(/Search model|搜索模型/i)).toBeVisible();
-  await expect(page.getByRole('button', { name: /Card View|卡片视图/i })).toBeVisible();
-  await expect(page.getByRole('button', { name: /Table View|表格视图/i })).toBeVisible();
-  await expect(page.getByText(/No model yet|暂无模型结果|共\s*0\s*个模型|覆盖档位/i).first()).toBeVisible();
+  await expect(page.getByRole('button', { name: /All Brands|全部品牌/i })).toBeVisible();
+  await expect(page.getByText(/Sort By|排序/i).first()).toBeVisible();
+  await expect(page.getByText(/No model yet|暂无模型结果|Total\s*0\s*models|共\s*0\s*个模型|Coverage tier/i).first()).toBeVisible();
 }

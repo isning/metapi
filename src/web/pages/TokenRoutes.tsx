@@ -2862,13 +2862,14 @@ export default function TokenRoutes() {
                                 <div className="flex min-w-0 flex-wrap items-center gap-2">
                                   <Badge variant="info" className="max-w-full">
                                     <Boxes className="size-3" />
-                                    <button
+                                    <Button
                                       type="button"
-                                      className="min-w-0 truncate border-0 bg-transparent p-0 text-left text-current"
+                                      variant="ghost"
+                                      className="h-auto min-w-0 truncate p-0 text-left text-current hover:bg-transparent"
                                       onClick={() => focusRouteGraphMacro(activeRouteGraphMacro.id)}
                                     >
                                       {getMacroDisplayName(activeRouteGraphMacro)}
-                                    </button>
+                                    </Button>
                                   </Badge>
                                   <Badge variant="secondary">
                                     <Waypoints className="size-3" />

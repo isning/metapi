@@ -76,6 +76,10 @@ export async function createProxyRelayHarness(prefix = 'metapi-proxy-relay-'): P
     await db.delete(schema.proxyVideoTasks).run();
     await db.delete(schema.proxyFiles).run();
     await db.delete(schema.proxyLogs).run();
+    await db.delete(schema.endpointModelObservations).run();
+    await db.delete(schema.credentialEndpointBindings).run();
+    await db.delete(schema.apiEndpointProfiles).run();
+    await db.delete(schema.modelCatalogSources).run();
     await db.delete(schema.routeGraphDrafts).run();
     await db.delete(schema.routeGraphActiveVersion).run();
     await db.delete(schema.routeGraphVersions).run();

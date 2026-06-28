@@ -2,7 +2,7 @@ import { TextDecoder } from 'node:util';
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import { config } from '../../config.js';
 import { tokenRouter } from '../../services/tokenRouter.js';
-import type { RouteExecutionScope } from '../../services/tokenRouter.js';
+import type { RouteExecutionScope } from '../../services/routeExecutionScopeTypes.js';
 import { reportProxyAllFailed } from '../../services/alertService.js';
 import { hasProxyUsagePayload, mergeProxyUsage, parseProxyUsage } from '../../services/proxyUsageParser.js';
 import { resolveUpstreamEndpointCandidates } from '../../services/upstreamEndpointDerivation.js';
@@ -28,6 +28,7 @@ import { getProxyMaxTargetRetries } from '../../services/proxyTargetRetry.js';
 import { shouldAbortSameSiteEndpointFallback } from '../../services/proxyRetryPolicy.js';
 import { applyOpenAiServiceTierPolicy } from '../serviceTierPolicy.js';
 import { maybeHandleWebSearchOnlySimulation } from '../webSearchSimulation.js';
+import { buildUpstreamUrl } from './upstreamRequest.js';
 import {
   shouldForceResponsesUpstreamStream,
   sanitizeCompactResponsesRequestBody,
@@ -44,25 +45,31 @@ import { isCodexResponsesSurface } from '../cliProfiles/codexProfile.js';
 import { protocolAdapters, type CompatibilityEndpoint } from '../formats/protocolAdapters.js';
 import {
   buildApiAttemptPlan,
+  defaultRequestPathForUpstreamEndpoint,
   endpointCandidatesFromApiAttemptPlan,
   summarizeApiAttemptPlanForDebug,
+  type ApiAttempt,
 } from '../apiVariants.js';
 import {
-  acquireSurfaceChannelLease,
-  bindSurfaceStickyChannel,
-  buildSurfaceChannelBusyMessage,
+  acquireSurfaceTargetLease,
+  bindSurfaceStickyTarget,
+  buildSurfaceTargetBusyMessage,
   buildSurfaceStickySessionKey,
-  clearSurfaceStickyChannel,
+  clearSurfaceStickyTarget,
   createSurfaceFailureToolkit,
   createSurfaceDispatchRequest,
   getSurfaceStickyPreferredTargetId,
   recordSurfaceSuccess,
-  selectSurfaceChannelForAttempt,
+  selectSurfaceTargetForAttempt,
   trySurfaceOauthRefreshRecovery,
 } from './sharedProxyOrchestration.js';
 import { runWithSiteApiEndpointPool, SiteApiEndpointRequestError } from '../../services/siteApiEndpointService.js';
 import { evaluateActiveRouteGraphForModel } from '../../services/routeGraphRuntimeService.js';
 import { resolveDispatchUpstreamCompatibilityPolicy } from '../../services/upstreamCompatibilityPolicyResolver.js';
+import {
+  classifyEndpointObservationFailure,
+  recordEndpointModelObservation,
+} from '../../services/endpointModelObservationService.js';
 import { buildOauthProviderHeaders } from '../../services/oauth/service.js';
 import {
   buildSurfaceProxyDebugResponseHeaders,
@@ -278,7 +285,7 @@ export async function handleGenericSurfaceRequest(
     for (let attempt = 0; attempt <= maxRetries; attempt++) {
       const stickyPreferredTargetId = getSurfaceStickyPreferredTargetId(stickySessionKey);
 
-      const selected = adapter.selectChannel
+      const selected: any = adapter.selectChannel
         ? await adapter.selectChannel({
             requestedModel,
             policy: downstreamPolicy,
@@ -286,7 +293,7 @@ export async function handleGenericSurfaceRequest(
             forcedTargetId,
             routeExecutionScope,
           })
-        : await selectSurfaceChannelForAttempt({
+        : await selectSurfaceTargetForAttempt({
             requestedModel,
             downstreamPolicy,
             excludeTargetIds,
@@ -297,13 +304,13 @@ export async function handleGenericSurfaceRequest(
           });
 
       if (!selected) {
-        const noChannelMessage = buildForcedTargetUnavailableMessage(forcedTargetId);
+        const noTargetMessage = buildForcedTargetUnavailableMessage(forcedTargetId);
         await reportProxyAllFailed({
           model: requestedModel,
-          reason: forcedTargetId ? noChannelMessage : 'No available targets after retries',
+          reason: forcedTargetId ? noTargetMessage : 'No available targets after retries',
         });
         const payload = {
-          error: { message: noChannelMessage, type: 'server_error' as const },
+          error: { message: noTargetMessage, type: 'server_error' as const },
         };
         await safeFinalizeSurfaceProxyDebugTrace(debugTrace, {
           finalStatus: 'failure',
@@ -312,7 +319,7 @@ export async function handleGenericSurfaceRequest(
           finalResponseBody: payload,
         });
         return reply.code(503).send({
-          error: { message: noChannelMessage, type: 'server_error' },
+          error: { message: noTargetMessage, type: 'server_error' },
         });
       }
 
@@ -358,16 +365,16 @@ export async function handleGenericSurfaceRequest(
         : null;
 
       const startTime = Date.now();
-      const leaseResult = await acquireSurfaceChannelLease({
+      const leaseResult = await acquireSurfaceTargetLease({
         stickySessionKey,
         selected,
       });
       if (leaseResult.status === 'timeout') {
-        clearSurfaceStickyChannel({
+        clearSurfaceStickyTarget({
           stickySessionKey,
           selected,
         });
-        const busyMessage = buildSurfaceChannelBusyMessage(leaseResult.waitMs);
+        const busyMessage = buildSurfaceTargetBusyMessage(leaseResult.waitMs);
         await failureToolkit.log({
           selected,
           modelRequested: requestedModel,
@@ -395,7 +402,7 @@ export async function handleGenericSurfaceRequest(
         });
       }
 
-      const channelLease = leaseResult.lease;
+      const targetLease = leaseResult.lease;
       try {
         const debugAttemptIndex = attempt;
 
@@ -436,7 +443,26 @@ export async function handleGenericSurfaceRequest(
       });
 
       const executeEndpointResultForSiteApiBaseUrl = async (siteApiBaseUrl: string) => {
-        const buildEndpointRequest = (endpoint: CompatibilityEndpoint) => {
+        const appendRequestUrlSuffix = (requestUrl: string | undefined, suffix: string): string | undefined => {
+          const trimmed = String(requestUrl || '').trim();
+          if (!trimmed) return undefined;
+          return `${trimmed.replace(/\/+$/, '')}/${suffix.replace(/^\/+/, '')}`;
+        };
+        const targetUrlForAttemptPath = (
+          requestUrl: string | undefined,
+          endpoint: CompatibilityEndpoint,
+          requestPath: string,
+        ): string | undefined => {
+          const trimmed = String(requestUrl || '').trim();
+          if (!trimmed) return undefined;
+          const defaultPath = defaultRequestPathForUpstreamEndpoint(endpoint);
+          if (requestPath === defaultPath) return trimmed;
+          if (requestPath.startsWith(`${defaultPath}/`) || requestPath.startsWith(`${defaultPath}?`)) {
+            return `${trimmed.replace(/\/+$/, '')}${requestPath.slice(defaultPath.length)}`;
+          }
+          return buildUpstreamUrl(siteApiBaseUrl, requestPath);
+        };
+        const buildEndpointRequest = (endpoint: CompatibilityEndpoint, apiAttempt?: ApiAttempt) => {
           const upstreamStream = isStream || (forceResponsesUpstreamStream && endpoint === 'responses');
           const passthroughHeaders = adapter.extractPassthroughHeaders(request.headers as Record<string, unknown>);
           const platformHeaders = buildOauthProviderHeaders({
@@ -446,7 +472,7 @@ export async function handleGenericSurfaceRequest(
 
           if (adapter.buildUpstreamRequest && transformed.requestKind) {
             const currentOauth = getOauthInfoFromAccount(selected.account);
-            return adapter.buildUpstreamRequest({
+            const adapterRequest = adapter.buildUpstreamRequest({
               endpoint,
               modelName,
               requestedModel,
@@ -462,6 +488,10 @@ export async function handleGenericSurfaceRequest(
               routeGraphFilters,
               compatibilityPolicy,
             });
+            return {
+              ...adapterRequest,
+              targetUrl: targetUrlForAttemptPath(apiAttempt?.requestUrl, endpoint, adapterRequest.path),
+            };
           }
 
           let finalOpenAiBody = openAiBody;
@@ -548,10 +578,19 @@ export async function handleGenericSurfaceRequest(
                 })
               : endpointRequest.headers
           );
+          const headersWithProfileDefaults = {
+            ...(apiAttempt?.defaultHeaders || {}),
+            ...requestHeaders,
+          };
           return {
             endpoint,
             path: upstreamPath,
-            headers: requestHeaders,
+            targetUrl: (
+              isCompactRequest && endpoint === 'responses'
+                ? appendRequestUrlSuffix(apiAttempt?.requestUrl, 'compact')
+                : targetUrlForAttemptPath(apiAttempt?.requestUrl, endpoint, upstreamPath)
+            ),
+            headers: headersWithProfileDefaults,
             body: requestBody,
             runtime: endpointRequest.runtime,
           };
@@ -644,6 +683,7 @@ export async function handleGenericSurfaceRequest(
           siteId: selected.site.id,
           accountId: selected.account.id,
           tokenId: selected.token?.id ?? selected.target.tokenId ?? null,
+          modelName,
         });
         const credentialKey = apiVariantConfig?.credentialKey.credentialKey ?? (
           selected.token?.id || selected.target.tokenId
@@ -658,9 +698,21 @@ export async function handleGenericSurfaceRequest(
           endpointCandidates: candidates,
           endpointProfiles: apiVariantConfig?.endpointProfiles,
           credentialEndpointBindings: apiVariantConfig?.credentialEndpointBindings,
+          endpointModelObservations: apiVariantConfig?.endpointModelObservations,
+          siteUrl: siteApiBaseUrl,
           disableCrossProtocolFallback: endpointFallbackDisabled,
         });
         const plannedCandidates = endpointCandidatesFromApiAttemptPlan(apiAttemptPlan);
+        const plannedAttempts = apiAttemptPlan.attempts;
+        const syncApiAttemptOrderToCandidates = () => {
+          const endpointRank = new Map(plannedCandidates.map((endpoint, index) => [endpoint, index]));
+          plannedAttempts.sort((left, right) => {
+            const leftRank = endpointRank.get(left.upstreamEndpoint) ?? Number.MAX_SAFE_INTEGER;
+            const rightRank = endpointRank.get(right.upstreamEndpoint) ?? Number.MAX_SAFE_INTEGER;
+            if (leftRank !== rightRank) return leftRank - rightRank;
+            return 0;
+          });
+        };
 
         const endpointRuntimeContext = {
           siteId: selected.site.id,
@@ -735,7 +787,7 @@ export async function handleGenericSurfaceRequest(
               ctx,
               selected,
               siteUrl: siteApiBaseUrl,
-              buildRequest: (endpoint) => buildEndpointRequest(endpoint as CompatibilityEndpoint),
+              buildRequest: (endpoint) => buildEndpointRequest(endpoint as CompatibilityEndpoint, ctx.apiAttempt as ApiAttempt | undefined),
               dispatchRequest,
             });
             if (recovered?.upstream?.ok) {
@@ -801,7 +853,8 @@ export async function handleGenericSurfaceRequest(
           disableCrossProtocolFallback: endpointFallbackDisabled,
           firstByteTimeoutMs: Math.max(0, Math.trunc((config.proxyFirstByteTimeoutSec || 0) * 1000)),
           endpointCandidates: plannedCandidates,
-          buildRequest: (endpoint) => buildEndpointRequest(endpoint as CompatibilityEndpoint),
+          apiAttempts: plannedAttempts,
+          buildRequest: (endpoint, _endpointIndex, apiAttempt) => buildEndpointRequest(endpoint as CompatibilityEndpoint, apiAttempt),
           dispatchRequest,
           tryRecover,
           shouldDowngrade: endpointStrategy?.shouldDowngrade as ((ctx: any) => boolean) | undefined,
@@ -811,6 +864,7 @@ export async function handleGenericSurfaceRequest(
               currentEndpoint: ctx.request.endpoint as CompatibilityEndpoint,
               upstreamErrorText: ctx.rawErrText,
             });
+            syncApiAttemptOrderToCandidates();
             await safeUpdateSurfaceProxyDebugAttempt(debugTrace, getDebugAttemptIndex(ctx.endpointIndex), {
               downgradeDecision: true,
               downgradeReason: 'api_variant_fallback',
@@ -841,6 +895,22 @@ export async function handleGenericSurfaceRequest(
               status,
               errorText: ctx.rawErrText,
             });
+            const observationFailure = classifyEndpointObservationFailure({
+              status,
+              errorText: ctx.rawErrText || ctx.errText,
+            });
+            await recordEndpointModelObservation({
+              siteId: selected.site.id,
+              credentialKey,
+              apiEndpointProfileId: ctx.apiAttempt?.apiEndpointProfileId,
+              modelName,
+              status: observationFailure.status,
+              failureClass: observationFailure.failureClass,
+              metadata: {
+                endpoint: ctx.request.endpoint,
+                requestUrl: ctx.targetUrl,
+              },
+            }).catch(() => undefined);
             await safeInsertSurfaceProxyDebugAttempt(debugTrace, {
               attemptIndex: getDebugAttemptIndex(ctx.endpointIndex),
               endpoint: ctx.request.endpoint,
@@ -877,6 +947,17 @@ export async function handleGenericSurfaceRequest(
               ...endpointRuntimeContext,
               endpoint: ctx.request.endpoint,
             });
+            await recordEndpointModelObservation({
+              siteId: selected.site.id,
+              credentialKey,
+              apiEndpointProfileId: ctx.apiAttempt?.apiEndpointProfileId,
+              modelName,
+              status: 'confirmed',
+              metadata: {
+                endpoint: ctx.request.endpoint,
+                requestUrl: ctx.targetUrl,
+              },
+            }).catch(() => undefined);
             await safeInsertSurfaceProxyDebugAttempt(debugTrace, {
               attemptIndex: getDebugAttemptIndex(ctx.endpointIndex),
               endpoint: ctx.request.endpoint,
@@ -913,8 +994,7 @@ export async function handleGenericSurfaceRequest(
           })
           : await executeEndpointResultForSiteApiBaseUrl(selected.site.url);
       } catch (err: any) {
-        console.log('LOOP_ATTEMPT_ERROR:', err.stack || err);
-        clearSurfaceStickyChannel({
+        clearSurfaceStickyTarget({
           stickySessionKey,
           selected,
         });
@@ -1167,14 +1247,14 @@ export async function handleGenericSurfaceRequest(
         modelName,
         successfulUpstreamPath,
         getUsage: () => parsedUsage,
-        onParsedPayload: (payload) => {
+        onParsedPayload: (payload: unknown) => {
           if (payload && typeof payload === 'object') {
             upstreamUsagePresent = upstreamUsagePresent || hasProxyUsagePayload(payload);
             parsedUsage = mergeProxyUsage(parsedUsage, parseProxyUsage(payload));
           }
         },
         writeLines,
-        writeRaw: (chunk) => {
+        writeRaw: (chunk: string | Buffer) => {
           startSseResponse();
           reply.raw.write(chunk);
         },
@@ -1193,7 +1273,7 @@ export async function handleGenericSurfaceRequest(
           );
           const latency = Date.now() - startTime;
           if (streamResult.status === 'failed') {
-            clearSurfaceStickyChannel({
+            clearSurfaceStickyTarget({
               stickySessionKey,
               selected,
             });
@@ -1237,7 +1317,7 @@ export async function handleGenericSurfaceRequest(
                   usage: parsedUsage,
                 },
           );
-          bindSurfaceStickyChannel({
+          bindSurfaceStickyTarget({
             stickySessionKey,
             selected,
           });
@@ -1258,7 +1338,7 @@ export async function handleGenericSurfaceRequest(
         const latency = Date.now() - startTime;
         const failure = detectProxyFailure({ rawText, usage: parsedUsage });
         if (failure) {
-          clearSurfaceStickyChannel({
+          clearSurfaceStickyTarget({
             stickySessionKey,
             selected,
           });
@@ -1293,7 +1373,7 @@ export async function handleGenericSurfaceRequest(
 
         const streamResult = streamSession.consumeUpstreamFinalPayload(fallbackData, fallbackText, streamResponse);
         if (streamResult.status === 'failed') {
-          clearSurfaceStickyChannel({
+          clearSurfaceStickyTarget({
             stickySessionKey,
             selected,
           });
@@ -1338,7 +1418,7 @@ export async function handleGenericSurfaceRequest(
                 usage: parsedUsage,
               },
         );
-        bindSurfaceStickyChannel({
+        bindSurfaceStickyTarget({
           stickySessionKey,
           selected,
         });
@@ -1374,7 +1454,7 @@ export async function handleGenericSurfaceRequest(
         const streamResult = await streamSession.run(reader, streamResponse);
         const latency = Date.now() - startTime;
         if (streamResult.status === 'failed') {
-          clearSurfaceStickyChannel({
+          clearSurfaceStickyTarget({
             stickySessionKey,
             selected,
           });
@@ -1419,7 +1499,7 @@ export async function handleGenericSurfaceRequest(
                 usage: parsedUsage,
               },
         );
-        bindSurfaceStickyChannel({
+        bindSurfaceStickyTarget({
           stickySessionKey,
           selected,
         });
@@ -1485,7 +1565,7 @@ export async function handleGenericSurfaceRequest(
         }
       }
       if (failure) {
-        clearSurfaceStickyChannel({
+        clearSurfaceStickyTarget({
           stickySessionKey,
           selected,
         });
@@ -1571,7 +1651,7 @@ export async function handleGenericSurfaceRequest(
         buildSurfaceProxyDebugResponseHeaders(upstream) ?? {},
         finalPayload,
       );
-      bindSurfaceStickyChannel({
+      bindSurfaceStickyTarget({
         stickySessionKey,
         selected,
       });
@@ -1579,7 +1659,7 @@ export async function handleGenericSurfaceRequest(
       return reply.code(upstream.status).send(finalPayload);
     }
   } finally {
-    channelLease.release();
+    targetLease.release();
   }
 }
   } catch (err: any) {

@@ -106,19 +106,17 @@ describe('Settings proxy transport', () => {
       expect(collectText(proxyTransportCard)).toContain('HTTP 优先');
       expect(collectText(proxyTransportCard)).toContain('会话池 4 并发 / 3200ms');
 
-      const websocketToggleLabel = root.root.find((node) => (
-        node.type === 'label'
-        && collectText(node).includes('允许 metapi 到 Codex 上游使用 WebSocket')
+      const websocketToggle = root.root.find((node) => (
+        node.props['aria-label'] === '允许 metapi 到 Codex 上游使用 WebSocket'
+        && (typeof node.props.onClick === 'function' || typeof node.props.onCheckedChange === 'function')
       ));
-      const websocketToggle = websocketToggleLabel.findByType('input');
-      expect(websocketToggle.props.checked).toBe(false);
+      expect(websocketToggle.props['aria-checked'] ?? websocketToggle.props.checked).toBe(false);
 
-      const compactFallbackToggleLabel = root.root.find((node) => (
-        node.type === 'label'
-        && collectText(node).includes('Compact 明确不支持时回退到普通 Responses')
+      const compactFallbackToggle = root.root.find((node) => (
+        node.props['aria-label'] === 'Compact 明确不支持时回退到普通 Responses'
+        && (typeof node.props.onClick === 'function' || typeof node.props.onCheckedChange === 'function')
       ));
-      const compactFallbackToggle = compactFallbackToggleLabel.findByType('input');
-      expect(compactFallbackToggle.props.checked).toBe(false);
+      expect(compactFallbackToggle.props['aria-checked'] ?? compactFallbackToggle.props.checked).toBe(false);
 
       const concurrencyInput = root.root.find((node) => (
         node.type === 'input'
@@ -132,8 +130,10 @@ describe('Settings proxy transport', () => {
       ));
 
       await act(async () => {
-        websocketToggle.props.onChange({ target: { checked: true } });
-        compactFallbackToggle.props.onChange({ target: { checked: true } });
+        if (typeof websocketToggle.props.onClick === 'function') websocketToggle.props.onClick();
+        else websocketToggle.props.onCheckedChange(true);
+        if (typeof compactFallbackToggle.props.onClick === 'function') compactFallbackToggle.props.onClick();
+        else compactFallbackToggle.props.onCheckedChange(true);
         concurrencyInput.props.onChange({ target: { value: '6' } });
         queueWaitInput.props.onChange({ target: { value: '4200' } });
       });

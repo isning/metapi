@@ -155,7 +155,7 @@ type HiddenSupplyAnchorData = {
 };
 
 export type RouteGraphSource = {
-  version: 2;
+  version: 1;
   nodes: RouteGraphNode[];
   edges: RouteGraphEdge[];
   macros: RouteGraphMacro[];
@@ -321,7 +321,7 @@ function getVisibleMacroSupplyTarget(input: {
 }
 
 export function defaultGraph(): RouteGraphSource {
-  return { version: 2, nodes: [], edges: [], macros: [], metadata: {} };
+  return { version: 1, nodes: [], edges: [], macros: [], metadata: {} };
 }
 
 function comparableGraphEntity(value: unknown): string {
@@ -469,7 +469,7 @@ function normalizeGraph(input: unknown): RouteGraphSource {
     ROUTE_GRAPH_NODE_TYPES.includes(type as RouteGraphNodeType) ? type as RouteGraphNodeType : 'entry'
   );
   return {
-    version: 2,
+    version: 1,
     nodes: Array.isArray(raw.nodes) ? raw.nodes.map((node: any) => ({
       ...node,
       id: String(node.id || ''),
@@ -1829,7 +1829,7 @@ const RouteGraphEdgeView = memo(function RouteGraphEdgeView(props: EdgeProps<Rou
           data-kind={edge?.kind}
           style={routeGraphAccentStyle(edge ? ROUTE_GRAPH_VISUAL_COLORS.edge[edge.kind] : ROUTE_GRAPH_VISUAL_COLORS.edge.request_flow)}
           strokeWidth={props.selected || highlighted ? 3 : control ? 1.25 : 2}
-          strokeDasharray={control ? '4 4' : edge?.ownership === 'auto_generated' || edge?.kind === 'metrics_link' ? '6 5' : undefined}
+          strokeDasharray={control ? '4 4' : edge?.ownership === 'auto_generated' ? '6 5' : undefined}
         />
       </g>
       {control && (
@@ -2712,7 +2712,7 @@ function RouteGraphWorkbenchInner({ mode = 'graph', focusIntent = null, onFocusI
     };
     const nextNode = template.create(currentGraph.nodes.length, position);
     const sourcePort = getNodePorts(sourceNode).find((port) => port.direction === 'output' && !port.readonly);
-    const targetPort = getNodePorts(nextNode).find((port) => port.direction === 'input' && (port.accepts || [port.kind]).includes(sourcePort?.kind || 'request'));
+    const targetPort = getNodePorts(nextNode).find((port) => port.direction === 'input' && port.kind === (sourcePort?.kind || 'request'));
     const nextGraph = { ...currentGraph, nodes: [...currentGraph.nodes, nextNode] };
     if (!sourcePort || !targetPort) {
       applyGraph(nextGraph);
@@ -5212,7 +5212,7 @@ function MacroForm({ macro, readonly, endpointCatalog, onChange, onAddGroup }: {
             </Select>
           </label>
         </div>
-        <div className="route-graph-switch-field">
+        <div className="route-blueprint-toggle-field">
           <span>{tr('pages.tokenRoutes.routeGraphWorkbench.enabled')}</span>
           <Switch disabled={readonly} checked={macro.enabled} onCheckedChange={(enabled) => onChange({ ...macro, enabled })} aria-label={tr('pages.tokenRoutes.routeGraphWorkbench.macroEnabled')} />
         </div>

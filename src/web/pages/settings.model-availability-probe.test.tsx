@@ -102,15 +102,15 @@ describe('Settings model availability probe confirmation', () => {
       expect(collectText(probeCard)).toContain('已关闭');
       expect(collectText(probeCard)).toContain('高风险操作');
 
-      const toggleLabel = root.root.find((node) => (
-        node.type === 'label'
-        && collectText(node).includes('允许 metapi 后台主动批量测活')
+      const toggle = root.root.find((node) => (
+        node.props['aria-label'] === '允许 metapi 后台主动批量测活'
+        && (typeof node.props.onClick === 'function' || typeof node.props.onCheckedChange === 'function')
       ));
-      const toggle = toggleLabel.findByType('input');
-      expect(toggle.props.checked).toBe(false);
+      expect(toggle.props['aria-checked'] ?? toggle.props.checked).toBe(false);
 
       await act(async () => {
-        toggle.props.onChange({ target: { checked: true } });
+        if (typeof toggle.props.onClick === 'function') toggle.props.onClick();
+        else toggle.props.onCheckedChange(true);
       });
 
       expect(collectText(probeCard)).toContain('待保存');

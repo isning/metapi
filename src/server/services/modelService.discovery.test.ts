@@ -197,6 +197,74 @@ describe('refreshModelsForAccount credential discovery', () => {
     expect(getModelsMock).toHaveBeenCalledWith('https://api.example.com', 'session-token', undefined);
   });
 
+  it('discovers models from the configured model catalog source before adapter probing', async () => {
+    getApiTokenMock.mockResolvedValue(null);
+    getModelsMock.mockResolvedValue(['adapter-model']);
+    undiciFetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        data: [
+          { id: 'catalog-model-a' },
+          { id: 'catalog-model-b' },
+        ],
+      }),
+    });
+
+    const site = await db.insert(schema.sites).values({
+      name: 'catalog-site',
+      url: 'https://catalog.example.com',
+      platform: 'openai',
+      status: 'active',
+    }).returning().get();
+
+    const catalogSource = await db.insert(schema.modelCatalogSources).values({
+      siteId: site.id,
+      sourceKey: 'catalog-api',
+      label: 'Catalog API',
+      discoveryMethod: 'GET',
+      discoveryUrl: 'https://models.example.com/v1/models',
+      parser: 'openai_models',
+      credentialScope: 'credential',
+      enabled: true,
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'catalog-user',
+      accessToken: 'session-token',
+      apiToken: null,
+      status: 'active',
+    }).returning().get();
+
+    const result = await refreshModelsForAccount(account.id);
+
+    expect(result).toMatchObject({
+      accountId: account.id,
+      refreshed: true,
+      status: 'success',
+      modelCount: 2,
+      modelsPreview: ['catalog-model-a', 'catalog-model-b'],
+      discoveredByCredential: true,
+    });
+    expect(getModelsMock).not.toHaveBeenCalled();
+    expect(undiciFetchMock).toHaveBeenCalledWith(
+      'https://models.example.com/v1/models',
+      expect.objectContaining({
+        method: 'GET',
+        headers: expect.objectContaining({
+          Authorization: 'Bearer session-token',
+        }),
+      }),
+    );
+
+    const source = await db.select().from(schema.modelCatalogSources)
+      .where(eq(schema.modelCatalogSources.id, catalogSource.id))
+      .get();
+    expect(source?.lastModelCount).toBe(2);
+    expect(source?.lastRefreshAt).toBeTruthy();
+    expect(source?.lastError).toBeNull();
+  });
+
   it('deduplicates discovered model names before writing availability rows', async () => {
     getApiTokenMock.mockResolvedValue(null);
     getModelsMock.mockResolvedValue(['? ', '?', 'GPT-4.1', 'gpt-4.1']);

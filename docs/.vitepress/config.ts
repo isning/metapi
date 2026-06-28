@@ -54,6 +54,7 @@ export default withMermaid(
     cleanUrls: true,
     lastUpdated: true,
     ignoreDeadLinks: true,
+    srcExclude: ['plans/**'],
     vite: {
       resolve: {
         alias: [
@@ -87,6 +88,11 @@ export default withMermaid(
           text: '使用与运维',
           items: [
             { text: '上游接入', link: '/upstream-integration' },
+            { text: '上游 Endpoint、模型目录与兼容性', link: '/upstream-endpoint-compatibility' },
+            { text: '模型广场与模型测试', link: '/model-intelligence-workspace' },
+            { text: '成本目录', link: '/cost-catalog' },
+            { text: '高级计价方案', link: '/advanced-pricing' },
+            { text: 'Inbox 与活跃问题', link: '/inbox-attention-events' },
             { text: 'OAuth 管理', link: '/oauth' },
             { text: '配置说明', link: '/configuration' },
             { text: 'K3s 更新中心（高级）', link: '/k3s-update-center' },
@@ -94,6 +100,21 @@ export default withMermaid(
             { text: '管理 API', link: '/management-api' },
             { text: '运维手册', link: '/operations' },
             { text: '常见问题 FAQ', link: '/faq' },
+          ],
+        },
+        {
+          text: 'Graph Routing',
+          items: [
+            { text: '概览', link: '/graph-routing' },
+            { text: '路由组', link: '/route-groups-guide' },
+            { text: '图编辑器', link: '/route-graph-editor-guide' },
+            { text: '运行时路由流', link: '/model-route-flow' },
+            { text: '概率与成本估算', link: '/route-probability-cost' },
+            { text: 'Source JSON', link: '/route-graph-json-overview' },
+            { text: '节点参考', link: '/route-graph-nodes-reference' },
+            { text: 'Filter 参考', link: '/route-graph-filters-reference' },
+            { text: 'Metadata 与 CEL', link: '/route-graph-metadata-cel-reference' },
+            { text: 'Recipes', link: '/route-graph-recipes' },
           ],
         },
         {

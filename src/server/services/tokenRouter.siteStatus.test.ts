@@ -75,7 +75,7 @@ describe('TokenRouter site status guard', () => {
     }).returning().get();
 
     const router = new TokenRouter();
-    const selected = await router.selectChannel('gpt-4o-mini');
+    const selected = await router.selectTarget('gpt-4o-mini');
     expect(selected).toBeNull();
 
     const decision = await router.explainSelection('gpt-4o-mini');
@@ -116,7 +116,7 @@ describe('TokenRouter site status guard', () => {
       manualOverride: false,
     }).run();
 
-    const selected = await new TokenRouter().selectChannel('gpt-4.1-mini');
+    const selected = await new TokenRouter().selectTarget('gpt-4.1-mini');
     expect(selected).toBeNull();
   });
 
@@ -160,7 +160,7 @@ describe('TokenRouter site status guard', () => {
       manualOverride: false,
     }).run();
 
-    const selected = await new TokenRouter().selectChannel('gpt-5.2-codex');
+    const selected = await new TokenRouter().selectTarget('gpt-5.2-codex');
     expect(selected).not.toBeNull();
     expect(selected?.tokenValue).toBe('oauth-access-token');
   });
@@ -205,7 +205,7 @@ describe('TokenRouter site status guard', () => {
       manualOverride: false,
     }).run();
 
-    const selected = await new TokenRouter().selectChannel('gpt-5.2-codex');
+    const selected = await new TokenRouter().selectTarget('gpt-5.2-codex');
     expect(selected).not.toBeNull();
     expect(selected?.tokenValue).toBe('oauth-access-token');
   });
@@ -250,7 +250,7 @@ describe('TokenRouter site status guard', () => {
       manualOverride: false,
     }).run();
 
-    const selected = await new TokenRouter().selectChannel('gpt-5.2-codex');
+    const selected = await new TokenRouter().selectTarget('gpt-5.2-codex');
     expect(selected).toBeNull();
   });
 });

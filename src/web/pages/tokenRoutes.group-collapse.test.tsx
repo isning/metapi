@@ -790,7 +790,7 @@ describe('TokenRoutes grouped source models', () => {
       expect(expandedText).toContain('待注册站点');
       expect(expandedText).toContain('Wong');
       expect(expandedText).toContain('暂无目标，先补齐连接配置后再重建路由。');
-      expect(expandedText).not.toContain('添加通道');
+      expect(expandedText).not.toContain('添加目标');
       expect(expandedText).not.toContain('删除路由');
       expect(expandedText).not.toContain('编辑群组');
       expect(apiMock.getRouteTargets).not.toHaveBeenCalled();

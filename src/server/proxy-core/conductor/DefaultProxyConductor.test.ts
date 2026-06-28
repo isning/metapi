@@ -4,7 +4,7 @@ import { DefaultProxyConductor } from './DefaultProxyConductor.js';
 import { terminalStreamFailure } from './streamTermination.js';
 
 const baseSelectedTarget = {
-  channel: { id: 11, routeId: 22 },
+  target: { id: 11, routeId: 22 },
   site: { id: 44, name: 'demo-site', url: 'https://upstream.example.com', platform: 'openai' },
   account: { id: 33, username: 'demo-user' },
   tokenName: 'default',
@@ -14,13 +14,13 @@ const baseSelectedTarget = {
 
 describe('DefaultProxyConductor', () => {
   it('returns the first selected channel when the first attempt succeeds', async () => {
-    const selectChannel = vi.fn().mockResolvedValue(baseSelectedTarget);
-    const selectNextChannel = vi.fn();
+    const selectTarget = vi.fn().mockResolvedValue(baseSelectedTarget);
+    const selectNextTarget = vi.fn();
     const recordSuccess = vi.fn().mockResolvedValue(undefined);
     const recordFailure = vi.fn().mockResolvedValue(undefined);
     const conductor = new DefaultProxyConductor({
-      selectChannel,
-      selectNextChannel,
+      selectTarget,
+      selectNextTarget,
       recordSuccess,
       recordFailure,
     });
@@ -41,8 +41,8 @@ describe('DefaultProxyConductor', () => {
       selected: baseSelectedTarget,
       attempts: 1,
     });
-    expect(selectChannel).toHaveBeenCalledWith('gpt-5.4', undefined);
-    expect(selectNextChannel).not.toHaveBeenCalled();
+    expect(selectTarget).toHaveBeenCalledWith('gpt-5.4', undefined);
+    expect(selectNextTarget).not.toHaveBeenCalled();
     expect(recordFailure).not.toHaveBeenCalled();
     expect(recordSuccess).toHaveBeenCalledWith(11, {
       latencyMs: 12,
@@ -50,21 +50,21 @@ describe('DefaultProxyConductor', () => {
     });
   });
 
-  it('retries on the same channel when the attempt asks for a same-channel retry', async () => {
-    const selectChannel = vi.fn().mockResolvedValue(baseSelectedTarget);
-    const selectNextChannel = vi.fn();
+  it('retries on the same target when the attempt asks for a same-channel retry', async () => {
+    const selectTarget = vi.fn().mockResolvedValue(baseSelectedTarget);
+    const selectNextTarget = vi.fn();
     const recordSuccess = vi.fn().mockResolvedValue(undefined);
     const recordFailure = vi.fn().mockResolvedValue(undefined);
     const conductor = new DefaultProxyConductor({
-      selectChannel,
-      selectNextChannel,
+      selectTarget,
+      selectNextTarget,
       recordSuccess,
       recordFailure,
     });
     const attempt = vi.fn()
       .mockResolvedValueOnce({
         ok: false,
-        action: 'retry_same_channel',
+        action: 'retry_same_target',
         status: 429,
         rawErrorText: 'rate limited',
       })
@@ -82,7 +82,7 @@ describe('DefaultProxyConductor', () => {
       ok: true,
       attempts: 2,
     });
-    expect(selectNextChannel).not.toHaveBeenCalled();
+    expect(selectNextTarget).not.toHaveBeenCalled();
     expect(attempt).toHaveBeenCalledTimes(2);
     expect(recordFailure).toHaveBeenCalledWith(11, {
       status: 429,
@@ -90,19 +90,19 @@ describe('DefaultProxyConductor', () => {
     });
   });
 
-  it('fails over to the next channel when the attempt asks for failover', async () => {
+  it('fails over to the next target when the attempt asks for failover', async () => {
     const nextSelectedTarget = {
       ...baseSelectedTarget,
-      channel: { id: 12, routeId: 22 },
+      target: { id: 12, routeId: 22 },
       tokenValue: 'sk-next',
     };
-    const selectChannel = vi.fn().mockResolvedValue(baseSelectedTarget);
-    const selectNextChannel = vi.fn().mockResolvedValue(nextSelectedTarget);
+    const selectTarget = vi.fn().mockResolvedValue(baseSelectedTarget);
+    const selectNextTarget = vi.fn().mockResolvedValue(nextSelectedTarget);
     const recordSuccess = vi.fn().mockResolvedValue(undefined);
     const recordFailure = vi.fn().mockResolvedValue(undefined);
     const conductor = new DefaultProxyConductor({
-      selectChannel,
-      selectNextChannel,
+      selectTarget,
+      selectNextTarget,
       recordSuccess,
       recordFailure,
     });
@@ -128,7 +128,7 @@ describe('DefaultProxyConductor', () => {
       selected: nextSelectedTarget,
       attempts: 2,
     });
-    expect(selectNextChannel).toHaveBeenCalledWith('gpt-5.4', [11], undefined);
+    expect(selectNextTarget).toHaveBeenCalledWith('gpt-5.4', [11], undefined);
     expect(recordFailure).toHaveBeenCalledWith(11, {
       status: 503,
       rawErrorText: 'upstream unavailable',
@@ -139,15 +139,15 @@ describe('DefaultProxyConductor', () => {
     });
   });
 
-  it('refreshes auth on 401 and retries the same channel with the refreshed selection', async () => {
-    const refreshedChannel = {
+  it('refreshes auth on 401 and retries the same target with the refreshed selection', async () => {
+    const refreshedTarget = {
       ...baseSelectedTarget,
       tokenValue: 'sk-refreshed',
     };
-    const refreshAuth = vi.fn().mockResolvedValue(refreshedChannel);
+    const refreshAuth = vi.fn().mockResolvedValue(refreshedTarget);
     const conductor = new DefaultProxyConductor({
-      selectChannel: vi.fn().mockResolvedValue(baseSelectedTarget),
-      selectNextChannel: vi.fn(),
+      selectTarget: vi.fn().mockResolvedValue(baseSelectedTarget),
+      selectNextTarget: vi.fn(),
       recordSuccess: vi.fn().mockResolvedValue(undefined),
       recordFailure: vi.fn().mockResolvedValue(undefined),
       refreshAuth,
@@ -171,7 +171,7 @@ describe('DefaultProxyConductor', () => {
 
     expect(result).toMatchObject({
       ok: true,
-      selected: refreshedChannel,
+      selected: refreshedTarget,
       attempts: 2,
     });
     expect(refreshAuth).toHaveBeenCalledWith(baseSelectedTarget, {
@@ -180,10 +180,10 @@ describe('DefaultProxyConductor', () => {
     });
   });
 
-  it('returns a no_channel result when no channel is available', async () => {
+  it('returns a no_target result when no channel is available', async () => {
     const conductor = new DefaultProxyConductor({
-      selectChannel: vi.fn().mockResolvedValue(null),
-      selectNextChannel: vi.fn(),
+      selectTarget: vi.fn().mockResolvedValue(null),
+      selectNextTarget: vi.fn(),
       recordSuccess: vi.fn(),
       recordFailure: vi.fn(),
       previewSelectedTarget: vi.fn().mockResolvedValue(null),
@@ -198,7 +198,7 @@ describe('DefaultProxyConductor', () => {
 
     expect(result).toEqual({
       ok: false,
-      reason: 'no_channel',
+      reason: 'no_target',
       attempts: 0,
     });
   });
@@ -206,8 +206,8 @@ describe('DefaultProxyConductor', () => {
   it('propagates terminal stream failures and calls the terminal failure hook', async () => {
     const onTerminalFailure = vi.fn().mockResolvedValue(undefined);
     const conductor = new DefaultProxyConductor({
-      selectChannel: vi.fn().mockResolvedValue(baseSelectedTarget),
-      selectNextChannel: vi.fn(),
+      selectTarget: vi.fn().mockResolvedValue(baseSelectedTarget),
+      selectNextTarget: vi.fn(),
       recordSuccess: vi.fn(),
       recordFailure: vi.fn().mockResolvedValue(undefined),
     });

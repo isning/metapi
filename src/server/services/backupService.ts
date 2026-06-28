@@ -6,11 +6,10 @@ import { upsertSetting } from '../db/upsertSetting.js';
 import { mergeAccountExtraConfig } from './accountExtraConfig.js';
 import { getOauthInfoFromAccount } from './oauth/oauthAccount.js';
 import { PLATFORM_ALIASES, detectPlatformByUrlHint } from '../../shared/platformIdentity.js';
-import { publishRouteGraphSource } from './routeGraphService.js';
+import { buildRouteGraphSourceFromRouteTable, publishRouteGraphSource } from './routeGraphService.js';
 import {
   ROUTE_GRAPH_SCHEMA_VERSION,
   buildRouteGraphSpecsFromLegacyRoute,
-  buildRouteGraphSourceFromLegacyRoutes,
   compileRouteGraphSource,
   type RouteGraphBackendSpec,
   type RouteGraphMatchSpec,
@@ -52,7 +51,9 @@ export interface BackupWebdavState {
 
 type SiteRow = typeof schema.sites.$inferSelect;
 type SiteApiEndpointRow = typeof schema.siteApiEndpoints.$inferSelect;
+type ModelCatalogSourceRow = typeof schema.modelCatalogSources.$inferSelect;
 type ApiEndpointProfileRow = typeof schema.apiEndpointProfiles.$inferSelect;
+type EndpointModelObservationRow = typeof schema.endpointModelObservations.$inferSelect;
 type CredentialEndpointBindingRow = typeof schema.credentialEndpointBindings.$inferSelect;
 type AccountRow = typeof schema.accounts.$inferSelect;
 type AccountTokenRow = typeof schema.accountTokens.$inferSelect;
@@ -171,7 +172,9 @@ type BackupDownstreamApiKeyRow = Pick<DownstreamApiKeyRow,
 interface AccountsBackupSection {
   sites: SiteRow[];
   siteApiEndpoints?: SiteApiEndpointRow[];
+  modelCatalogSources?: ModelCatalogSourceRow[];
   apiEndpointProfiles?: ApiEndpointProfileRow[];
+  endpointModelObservations?: EndpointModelObservationRow[];
   credentialEndpointBindings?: CredentialEndpointBindingRow[];
   accounts: BackupAccountRow[];
   accountTokens: AccountTokenRow[];
@@ -390,6 +393,28 @@ function asRequiredJsonText(value: unknown, fallback: unknown): string {
   return asNullableJsonText(value) ?? JSON.stringify(fallback);
 }
 
+function normalizeRouteDecisionSnapshot(value: unknown): unknown {
+  if (value === null || value === undefined) return value;
+  let parsed = value;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return value;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      return value;
+    }
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return value;
+  const record = parsed as Record<string, unknown>;
+  if (!Array.isArray(record.channels) || record.targets !== undefined) return value;
+  const { channels: _channels, ...rest } = record;
+  return {
+    ...rest,
+    targets: record.channels,
+  };
+}
+
 function asBoolean(value: unknown, fallback = false): boolean {
   if (typeof value === 'boolean') return value;
   return fallback;
@@ -513,7 +538,7 @@ function normalizeBackupTokenRouteRow(row: BackupTokenRouteRow): BackupTokenRout
     displayName,
     displayIcon: asNullableString(row.displayIcon ?? row.display_icon),
     modelMapping: asNullableJsonText(row.modelMapping ?? row.model_mapping),
-    decisionSnapshot: asNullableJsonText(row.decisionSnapshot ?? row.decision_snapshot),
+    decisionSnapshot: asNullableJsonText(normalizeRouteDecisionSnapshot(row.decisionSnapshot ?? row.decision_snapshot)),
     decisionRefreshedAt: asNullableString(row.decisionRefreshedAt ?? row.decision_refreshed_at),
     routingStrategy: row.routingStrategy ?? row.routing_strategy ?? 'weighted',
     enabled: row.enabled ?? true,
@@ -539,7 +564,10 @@ function normalizeAccountsBackupSection(section: AccountsBackupSection): Account
   };
 }
 
-function canRestoreNativeRouteGraphSnapshot(routeGraph: BackupRouteGraphSection | undefined): boolean {
+function canRestoreNativeRouteGraphSnapshot(
+  routeGraph: BackupRouteGraphSection | undefined,
+  tokenRoutes: BackupTokenRouteRow[] = [],
+): boolean {
   if (!routeGraph || !Array.isArray(routeGraph.versions) || routeGraph.versions.length === 0) return false;
   const activeVersionId = routeGraph.activeVersion?.versionId;
   if (typeof activeVersionId !== 'number') return false;
@@ -550,10 +578,74 @@ function canRestoreNativeRouteGraphSnapshot(routeGraph: BackupRouteGraphSection 
     const sourceGraph = JSON.parse(activeVersion.sourceGraphJson || '{}');
     if (!isRecord(sourceGraph) || sourceGraph.version !== ROUTE_GRAPH_SCHEMA_VERSION) return false;
     const compiled = compileRouteGraphSource(sourceGraph);
+    const routeIds = tokenRoutes
+      .map((route) => Number(route.id))
+      .filter((routeId) => Number.isFinite(routeId) && routeId > 0);
+    if (routeIds.length > 0) {
+      const coveredRouteIds = new Set<number>();
+      for (const endpoint of compiled.compiled.routeEndpoints || []) {
+        const routeId = Number(endpoint.routeId);
+        if (Number.isFinite(routeId) && routeId > 0) coveredRouteIds.add(routeId);
+      }
+      for (const entry of compiled.compiled.entries || []) {
+        const routeId = Number(entry.match?.routeId);
+        if (Number.isFinite(routeId) && routeId > 0) coveredRouteIds.add(routeId);
+      }
+      if (!routeIds.every((routeId) => coveredRouteIds.has(routeId))) return false;
+    }
     return !compiled.diagnostics.some((diagnostic) => diagnostic.severity === 'error');
   } catch {
     return false;
   }
+}
+
+function parseActiveBackupRouteGraphSource(routeGraph: BackupRouteGraphSection | undefined): unknown | null {
+  if (!routeGraph || !Array.isArray(routeGraph.versions) || routeGraph.versions.length === 0) return null;
+  const activeVersionId = routeGraph.activeVersion?.versionId;
+  if (typeof activeVersionId !== 'number') return null;
+  const activeVersion = routeGraph.versions.find((row) => row.id === activeVersionId);
+  if (!activeVersion) return null;
+  try {
+    const sourceGraph = JSON.parse(activeVersion.sourceGraphJson || '{}');
+    return isRecord(sourceGraph) && sourceGraph.version === ROUTE_GRAPH_SCHEMA_VERSION ? sourceGraph : null;
+  } catch {
+    return null;
+  }
+}
+
+function mergeRouteTableGraphWithManualBackupGraph(routeTableGraph: any, backupGraph: unknown): any {
+  if (!isRecord(backupGraph)) return routeTableGraph;
+  const manualNodes = Array.isArray(backupGraph.nodes)
+    ? backupGraph.nodes.filter((node) => isRecord(node) && node.ownership === 'manual')
+    : [];
+  const manualEdges = Array.isArray(backupGraph.edges)
+    ? backupGraph.edges.filter((edge) => isRecord(edge) && edge.ownership === 'manual')
+    : [];
+  const manualMacros = Array.isArray(backupGraph.macros)
+    ? backupGraph.macros.filter((macro) => isRecord(macro) && macro.ownership === 'manual')
+    : [];
+  const nodeIds = new Set((Array.isArray(routeTableGraph.nodes) ? routeTableGraph.nodes : []).map((node: any) => node?.id));
+  const edgeIds = new Set((Array.isArray(routeTableGraph.edges) ? routeTableGraph.edges : []).map((edge: any) => edge?.id));
+  const macroIds = new Set((Array.isArray(routeTableGraph.macros) ? routeTableGraph.macros : []).map((macro: any) => macro?.id));
+  return {
+    ...routeTableGraph,
+    nodes: [
+      ...(Array.isArray(routeTableGraph.nodes) ? routeTableGraph.nodes : []),
+      ...manualNodes.filter((node) => !nodeIds.has((node as { id?: unknown }).id)),
+    ],
+    edges: [
+      ...(Array.isArray(routeTableGraph.edges) ? routeTableGraph.edges : []),
+      ...manualEdges.filter((edge) => !edgeIds.has((edge as { id?: unknown }).id)),
+    ],
+    macros: [
+      ...(Array.isArray(routeTableGraph.macros) ? routeTableGraph.macros : []),
+      ...manualMacros.filter((macro) => !macroIds.has((macro as { id?: unknown }).id)),
+    ],
+    metadata: {
+      ...(isRecord(routeTableGraph.metadata) ? routeTableGraph.metadata : {}),
+      importedManualGraphMerged: manualNodes.length > 0 || manualEdges.length > 0 || manualMacros.length > 0,
+    },
+  };
 }
 
 function buildModelAvailabilityIdentityKey(accountKey: string, modelName: string): string {
@@ -1550,7 +1642,9 @@ async function exportAccountsSection(): Promise<AccountsBackupSection> {
   const [
     sites,
     siteApiEndpoints,
+    modelCatalogSources,
     apiEndpointProfiles,
+    endpointModelObservations,
     credentialEndpointBindings,
     accounts,
     accountTokens,
@@ -1574,11 +1668,24 @@ async function exportAccountsSection(): Promise<AccountsBackupSection> {
         asc(schema.siteApiEndpoints.id),
       )
       .all(),
+    db.select().from(schema.modelCatalogSources)
+      .orderBy(
+        asc(schema.modelCatalogSources.siteId),
+        asc(schema.modelCatalogSources.id),
+      )
+      .all(),
     db.select().from(schema.apiEndpointProfiles)
       .orderBy(
         asc(schema.apiEndpointProfiles.siteId),
         asc(schema.apiEndpointProfiles.priority),
         asc(schema.apiEndpointProfiles.id),
+      )
+      .all(),
+    db.select().from(schema.endpointModelObservations)
+      .orderBy(
+        asc(schema.endpointModelObservations.siteId),
+        asc(schema.endpointModelObservations.apiEndpointProfileId),
+        asc(schema.endpointModelObservations.id),
       )
       .all(),
     db.select().from(schema.credentialEndpointBindings)
@@ -1612,7 +1719,9 @@ async function exportAccountsSection(): Promise<AccountsBackupSection> {
   return {
     sites,
     siteApiEndpoints,
+    modelCatalogSources,
     apiEndpointProfiles,
+    endpointModelObservations,
     credentialEndpointBindings,
     accounts: accounts.map(({ balanceUsed: _balanceUsed, lastCheckinAt: _lastCheckinAt, lastBalanceRefresh: _lastBalanceRefresh, ...row }) => row),
     accountTokens,
@@ -1718,8 +1827,14 @@ function coerceAccountsSection(input: unknown): AccountsBackupSection | null {
   const siteApiEndpoints = Array.isArray(input.siteApiEndpoints)
     ? input.siteApiEndpoints as SiteApiEndpointRow[]
     : undefined;
+  const modelCatalogSources = Array.isArray(input.modelCatalogSources)
+    ? input.modelCatalogSources as ModelCatalogSourceRow[]
+    : undefined;
   const apiEndpointProfiles = Array.isArray(input.apiEndpointProfiles)
     ? input.apiEndpointProfiles as ApiEndpointProfileRow[]
+    : undefined;
+  const endpointModelObservations = Array.isArray(input.endpointModelObservations)
+    ? input.endpointModelObservations as EndpointModelObservationRow[]
     : undefined;
   const credentialEndpointBindings = Array.isArray(input.credentialEndpointBindings)
     ? input.credentialEndpointBindings as CredentialEndpointBindingRow[]
@@ -1767,7 +1882,9 @@ function coerceAccountsSection(input: unknown): AccountsBackupSection | null {
   return {
     sites,
     siteApiEndpoints,
+    modelCatalogSources,
     apiEndpointProfiles,
+    endpointModelObservations,
     credentialEndpointBindings,
     accounts,
     accountTokens,
@@ -1866,7 +1983,7 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
   const runtimeState = await collectCurrentRuntimeStateSnapshot();
   const importedIndexes = buildRuntimeIdentityIndexesFromSection(normalizedSection);
   const routeGraphActiveVersionId = normalizedSection.routeGraph?.activeVersion?.versionId;
-  const shouldRestoreRouteGraph = canRestoreNativeRouteGraphSnapshot(normalizedSection.routeGraph);
+  const shouldRestoreRouteGraph = canRestoreNativeRouteGraphSnapshot(normalizedSection.routeGraph, normalizedSection.tokenRoutes);
   const shouldReplaceOauthRouteUnits = Array.isArray(normalizedSection.oauthRouteUnits);
   const shouldReplaceSiteDisabledModels = Array.isArray(normalizedSection.siteDisabledModels);
   const shouldReplaceManualModels = Array.isArray(normalizedSection.manualModels);
@@ -1887,10 +2004,12 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
     await tx.delete(schema.tokenRoutes).run();
     await tx.delete(schema.tokenModelAvailability).run();
     await tx.delete(schema.modelAvailability).run();
+    await tx.delete(schema.endpointModelObservations).run();
     await tx.delete(schema.credentialEndpointBindings).run();
     await tx.delete(schema.accountTokens).run();
     await tx.delete(schema.accounts).run();
     await tx.delete(schema.apiEndpointProfiles).run();
+    await tx.delete(schema.modelCatalogSources).run();
     await tx.delete(schema.sites).run();
 
     for (const row of normalizedSection.sites) {
@@ -1934,6 +2053,27 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
       }).run();
     }
 
+    for (const row of normalizedSection.modelCatalogSources || []) {
+      await tx.insert(schema.modelCatalogSources).values({
+        id: row.id,
+        siteId: row.siteId,
+        sourceKey: row.sourceKey,
+        label: row.label,
+        discoveryMethod: row.discoveryMethod ?? 'GET',
+        discoveryUrl: row.discoveryUrl ?? null,
+        parser: row.parser ?? 'openai_models',
+        credentialScope: row.credentialScope ?? 'credential',
+        refreshPolicyJson: asNullableJsonText(row.refreshPolicyJson),
+        enabled: row.enabled ?? true,
+        metadataJson: asNullableJsonText(row.metadataJson),
+        lastRefreshAt: row.lastRefreshAt ?? null,
+        lastModelCount: row.lastModelCount ?? 0,
+        lastError: row.lastError ?? null,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+      }).run();
+    }
+
     for (const row of normalizedSection.apiEndpointProfiles || []) {
       await tx.insert(schema.apiEndpointProfiles).values({
         id: row.id,
@@ -1941,8 +2081,10 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
         profileKey: row.profileKey,
         apiType: row.apiType,
         label: row.label,
-        baseUrl: row.baseUrl ?? null,
-        pathTemplate: row.pathTemplate ?? null,
+        requestMethod: row.requestMethod ?? 'POST',
+        requestUrl: row.requestUrl ?? null,
+        defaultHeadersJson: asNullableJsonText(row.defaultHeadersJson),
+        modelCatalogSourceId: row.modelCatalogSourceId ?? null,
         authMode: row.authMode ?? 'bearer',
         enabled: row.enabled ?? true,
         priority: row.priority ?? 0,
@@ -2021,6 +2163,22 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
         metadataJson: asNullableJsonText(row.metadataJson),
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
+      }).run();
+    }
+
+    for (const row of normalizedSection.endpointModelObservations || []) {
+      await tx.insert(schema.endpointModelObservations).values({
+        id: row.id,
+        siteId: row.siteId,
+        credentialKey: row.credentialKey,
+        apiEndpointProfileId: row.apiEndpointProfileId,
+        modelName: row.modelName,
+        status: row.status,
+        failureClass: row.failureClass ?? null,
+        source: row.source ?? 'runtime',
+        observedAt: row.observedAt,
+        expiresAt: row.expiresAt ?? null,
+        metadataJson: asNullableJsonText(row.metadataJson),
       }).run();
     }
 
@@ -2375,31 +2533,27 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
   });
 
   if (!shouldRestoreRouteGraph) {
-    const restoredRouteGroupSources = await db.select().from(schema.routeGroupSources).all();
-    const sourceRouteIdsByGroupRouteId = new Map<number, number[]>();
-    for (const source of restoredRouteGroupSources) {
-      const existing = sourceRouteIdsByGroupRouteId.get(source.groupRouteId) || [];
-      existing.push(source.sourceRouteId);
-      sourceRouteIdsByGroupRouteId.set(source.groupRouteId, existing);
+    const routeOverrides = new Map<number, {
+      match: RouteGraphMatchSpec;
+      backend: RouteGraphBackendSpec;
+      visibility?: 'public' | 'internal';
+    }>();
+    for (const route of normalizedSection.tokenRoutes) {
+      const routeId = Number(route.id);
+      if (!Number.isFinite(routeId) || routeId <= 0) continue;
+      if (!isRecord(route.match) || !isRecord(route.backend)) continue;
+      routeOverrides.set(routeId, {
+        match: route.match as RouteGraphMatchSpec,
+        backend: route.backend as RouteGraphBackendSpec,
+      });
     }
+    const routeTableGraph = await buildRouteGraphSourceFromRouteTable(null, routeOverrides);
+    const sourceGraph = mergeRouteTableGraphWithManualBackupGraph(
+      routeTableGraph,
+      parseActiveBackupRouteGraphSource(normalizedSection.routeGraph),
+    );
     await publishRouteGraphSource({
-      sourceGraph: buildRouteGraphSourceFromLegacyRoutes(normalizedSection.tokenRoutes.map((route) => {
-        const sourceRouteIds = sourceRouteIdsByGroupRouteId.get(route.id) || [];
-        const isExplicitGroup = sourceRouteIds.length > 0;
-        return {
-          ...route,
-          match: isExplicitGroup
-            ? {
-              kind: 'model',
-              requestedModelPattern: '',
-              displayName: route.displayName ?? null,
-            }
-            : route.match,
-          backend: isExplicitGroup
-            ? { kind: 'routes', routeIds: sourceRouteIds }
-            : route.backend,
-        };
-      })),
+      sourceGraph,
       createdBy: 'backup-import',
       allowDiagnostics: true,
     });

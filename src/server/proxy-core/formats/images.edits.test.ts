@@ -2,8 +2,8 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const fetchMock = vi.fn();
-const selectChannelMock = vi.fn();
-const selectNextChannelMock = vi.fn();
+const selectTargetMock = vi.fn();
+const selectNextTargetMock = vi.fn();
 const recordSuccessMock = vi.fn();
 const recordFailureMock = vi.fn();
 const refreshModelsAndRebuildRoutesMock = vi.fn();
@@ -26,8 +26,8 @@ vi.mock('undici', async () => {
 
 vi.mock('../../services/tokenRouter.js', () => ({
   tokenRouter: {
-    selectChannel: (...args: unknown[]) => selectChannelMock(...args),
-    selectNextChannel: (...args: unknown[]) => selectNextChannelMock(...args),
+    selectTarget: (...args: unknown[]) => selectTargetMock(...args),
+    selectNextTarget: (...args: unknown[]) => selectNextTargetMock(...args),
     recordSuccess: (...args: unknown[]) => recordSuccessMock(...args),
     recordFailure: (...args: unknown[]) => recordFailureMock(...args),
   },
@@ -66,6 +66,14 @@ vi.mock('../../services/routeGraphRuntimeService.js', async () => {
     evaluateActiveRouteGraphForModel: async () => null,
   };
 });
+
+vi.mock('../../services/credentialEndpointBindingService.js', () => ({
+  loadCredentialApiVariantConfig: async () => null,
+}));
+
+vi.mock('../../services/proxyLogRouteDecisionSnapshot.js', () => ({
+  buildProxyLogRouteDecisionSnapshot: async () => null,
+}));
 
 vi.mock('../../db/index.js', () => ({
   db: {
@@ -131,8 +139,8 @@ describe('/v1/images/edits route', () => {
 
   beforeEach(() => {
     fetchMock.mockReset();
-    selectChannelMock.mockReset();
-    selectNextChannelMock.mockReset();
+    selectTargetMock.mockReset();
+    selectNextTargetMock.mockReset();
     recordSuccessMock.mockReset();
     recordFailureMock.mockReset();
     refreshModelsAndRebuildRoutesMock.mockReset();
@@ -141,15 +149,15 @@ describe('/v1/images/edits route', () => {
     estimateProxyCostMock.mockClear();
     dbInsertMock.mockClear();
 
-    selectChannelMock.mockReturnValue({
-      channel: { id: 11, routeId: 22 },
+    selectTargetMock.mockReturnValue({
+      target: { id: 11, routeId: 22 },
       site: { id: 44, name: 'demo-site', url: 'https://upstream.example.com', platform: 'openai' },
       account: { id: 33, username: 'demo-user' },
       tokenName: 'default',
       tokenValue: 'sk-demo',
       actualModel: 'upstream-gpt-image',
     });
-    selectNextChannelMock.mockReturnValue(null);
+    selectNextTargetMock.mockReturnValue(null);
   });
 
   afterAll(async () => {
@@ -184,8 +192,8 @@ describe('/v1/images/edits route', () => {
   });
 
   it('retries the next channel when image generation JSON is malformed', async () => {
-    selectNextChannelMock.mockReturnValueOnce({
-      channel: { id: 12, routeId: 23 },
+    selectNextTargetMock.mockReturnValueOnce({
+      target: { id: 12, routeId: 23 },
       site: { id: 45, name: 'fallback-site', url: 'https://fallback.example.com', platform: 'openai' },
       account: { id: 34, username: 'fallback-user' },
       tokenName: 'fallback',
@@ -222,7 +230,7 @@ describe('/v1/images/edits route', () => {
       created: 2,
       data: [{ b64_json: 'ZmFsbGJhY2s=' }],
     });
-    expect(selectNextChannelMock).toHaveBeenCalledTimes(1);
+    expect(selectNextTargetMock).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
@@ -252,7 +260,7 @@ describe('/v1/images/edits route', () => {
       created: 1,
       data: [{ b64_json: 'iVBORw0KGgo=' }],
     });
-    expect(selectNextChannelMock).not.toHaveBeenCalled();
+    expect(selectNextTargetMock).not.toHaveBeenCalled();
     expect(recordFailureMock).not.toHaveBeenCalled();
   });
 

@@ -236,7 +236,7 @@ describe('TokenRoutes desktop detail panel', () => {
     ]);
     apiMock.getRouteGraphActive.mockResolvedValue({
       sourceGraph: {
-        version: 3,
+        version: 1,
         nodes: [],
         edges: [],
         macros: [],
@@ -467,7 +467,7 @@ describe('TokenRoutes desktop detail panel', () => {
   it('binds automatic route groups to the generated native macro in the desktop workbench', async () => {
     apiMock.getRouteGraphActive.mockResolvedValue({
       sourceGraph: {
-        version: 3,
+        version: 1,
         nodes: [
           {
             id: 'route-endpoint:supply:upstream-model:openai:credential:gpt-4o-mini:abc12345',
@@ -556,7 +556,7 @@ describe('TokenRoutes desktop detail panel', () => {
     const productEndpointId = 'route-endpoint:product:route:1';
     apiMock.getRouteGraphActive.mockResolvedValue({
       sourceGraph: {
-        version: 3,
+        version: 1,
         nodes: [
           {
             id: productEndpointId,

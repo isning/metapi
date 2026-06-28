@@ -81,6 +81,36 @@ describe('executeEndpointFlow', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('uses executable request urls from api attempts', async () => {
+    fetchMock.mockResolvedValueOnce(toUndiciResponse(new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })));
+
+    const result = await executeEndpointFlow({
+      siteUrl: 'https://site-url.example.com',
+      endpointCandidates: ['chat'],
+      apiAttempts: [{
+        id: 'api-attempt:deepseek-chat',
+        variantId: 'api-variant:deepseek-chat',
+        supplyTargetId: 'supply-target:deepseek',
+        apiType: 'openai_chat_completions',
+        upstreamEndpoint: 'chat',
+        requestMethod: 'POST',
+        requestUrl: 'https://api.deepseek.com/chat/completions',
+        adapterId: 'openai_chat_completions',
+        credentialEndpointBindingId: 'credential-endpoint:key-a:deepseek-chat',
+        apiEndpointProfileId: 'deepseek-chat',
+        reason: ['credential_binding_supported'],
+        downgradeAllowed: true,
+      }],
+      buildRequest: () => ({ ...requestFor('/v1/chat/completions'), endpoint: 'chat' }),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://api.deepseek.com/chat/completions');
+  });
+
   it('avoids duplicated /v1 when base url already ends with /v1', async () => {
     fetchMock.mockResolvedValueOnce(toUndiciResponse(new Response(JSON.stringify({ ok: true }), {
       status: 200,

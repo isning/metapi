@@ -574,7 +574,7 @@ export class OneHubAdapter extends OneApiAdapter {
 
   /**
    * OneHub model discovery: try /v1/models first, fall back to /api/available_model.
-   * The /api/available_model model-list API returns { data: { model_name: { price: ... }, ... } }
+   * The /api/available_model endpoint returns { data: { model_name: { price: ... }, ... } }
    * where the keys are model names.
    */
   override async getModels(baseUrl: string, apiToken: string, platformUserId?: number): Promise<string[]> {

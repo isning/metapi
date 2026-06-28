@@ -64,11 +64,16 @@ async function decorateRoutesWithSources(
   const routeBindings = await loadActiveRouteGraphRouteBindings();
   return routes.map((route) => {
     const binding = routeBindings.get(route.id);
+    const fallbackModelPattern = (route.displayName || '').trim();
+    const sourceRouteIds = sourceRouteIdsByRouteId.get(route.id) ?? binding?.sourceRouteIds ?? [];
+    const backend = sourceRouteIds.length > 0
+      ? { kind: 'routes' as const, routeIds: sourceRouteIds }
+      : binding?.backend ?? { kind: 'supply' as const };
     return {
       ...route,
       match: binding?.match ?? {
         kind: 'model',
-        requestedModelPattern: route.displayName || '',
+        requestedModelPattern: fallbackModelPattern,
         currentModelPattern: '',
         displayName: route.displayName || null,
         downstreamProtocol: null,
@@ -79,10 +84,10 @@ async function decorateRoutesWithSources(
         tokenId: null,
         siteId: null,
       },
-      backend: binding?.backend ?? { kind: 'supply' },
-      routeMode: binding?.routeMode ?? 'pattern',
-      modelPattern: binding?.exactModelName || binding?.exposedModelName || '',
-      sourceRouteIds: sourceRouteIdsByRouteId.get(route.id) ?? binding?.sourceRouteIds ?? [],
+      backend,
+      routeMode: sourceRouteIds.length > 0 ? 'explicit_group' : binding?.routeMode ?? 'pattern',
+      modelPattern: binding?.exactModelName || binding?.exposedModelName || fallbackModelPattern,
+      sourceRouteIds,
     } as RouteRow;
   });
 }

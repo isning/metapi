@@ -19,7 +19,7 @@ describe('normalizeForcedTargetId', () => {
 });
 
 describe('getTesterForcedTargetId', () => {
-  it('ignores forged forced-channel headers without the trusted tester bridge marker', () => {
+  it('ignores forged forced-target headers without the trusted tester bridge marker', () => {
     expect(getTesterForcedTargetId({
       headers: {
         [TESTER_FORCED_TARGET_HEADER]: '77',
@@ -36,7 +36,7 @@ describe('getTesterForcedTargetId', () => {
     })).toBeNull();
   });
 
-  it('accepts the forced channel id only for loopback tester bridge traffic', () => {
+  it('accepts the forced target id only for loopback tester bridge traffic', () => {
     expect(getTesterForcedTargetId({
       headers: {
         [TESTER_REQUEST_HEADER]: '1',

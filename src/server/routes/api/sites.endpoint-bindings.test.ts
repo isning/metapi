@@ -143,6 +143,62 @@ describe('sites endpoint bindings API', () => {
     ]));
   });
 
+  it('updates executable endpoint profiles for a site', async () => {
+    const { site } = await createSiteWithToken();
+    const matrixResponse = await app.inject({
+      method: 'GET',
+      url: `/api/sites/${site.id}/endpoint-bindings`,
+    });
+    const matrix = matrixResponse.json() as {
+      profiles: Array<{ apiType: string; rowId: number }>;
+      catalogSources: Array<{ id: number }>;
+    };
+    const chat = matrix.profiles.find((profile) => profile.apiType === 'openai_chat_completions');
+    const catalogSource = matrix.catalogSources[0];
+    expect(chat).toBeTruthy();
+    expect(catalogSource).toBeTruthy();
+
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/api/sites/${site.id}/endpoint-profiles`,
+      payload: {
+        profiles: [{
+          id: chat!.rowId,
+          label: 'DeepSeek Chat',
+          requestMethod: 'POST',
+          requestUrl: 'https://api.deepseek.com/chat/completions',
+          defaultHeaders: {
+            'x-provider': 'deepseek',
+          },
+          modelCatalogSourceId: catalogSource!.id,
+          enabled: true,
+          priority: 3,
+        }],
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as {
+      profiles: Array<{
+        rowId: number;
+        label: string;
+        requestUrl: string;
+        defaultHeaders: Record<string, string>;
+        modelCatalogSourceId: string;
+        priority: number;
+      }>;
+    };
+    expect(body.profiles.find((profile) => profile.rowId === chat!.rowId)).toMatchObject({
+      label: 'DeepSeek Chat',
+      requestUrl: 'https://api.deepseek.com/chat/completions',
+      defaultHeaders: {
+        'x-provider': 'deepseek',
+      },
+      modelCatalogSourceId: String(catalogSource!.id),
+      priority: 3,
+    });
+  });
+
   it('rejects credentials outside the site', async () => {
     const { site } = await createSiteWithToken();
 

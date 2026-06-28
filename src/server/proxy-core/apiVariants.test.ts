@@ -36,6 +36,7 @@ describe('apiVariants', () => {
       siteId: 1,
       credentialId: 2,
       modelName: 'gpt-test',
+      siteUrl: 'https://api.example.com',
       endpointCandidates: ['responses', 'chat', 'messages'],
     });
 
@@ -45,7 +46,77 @@ describe('apiVariants', () => {
       'openai_chat_completions',
       'anthropic_messages',
     ]);
+    expect(plan.attempts.map((attempt) => attempt.requestUrl)).toEqual([
+      'https://api.example.com/v1/responses',
+      'https://api.example.com/v1/chat/completions',
+      'https://api.example.com/v1/messages',
+    ]);
     expect(plan.diagnostics).toEqual([]);
+  });
+
+  it('plans executable request urls from endpoint profiles', () => {
+    const chatProfile = {
+      ...buildDefaultApiEndpointProfile({ siteId: 10, endpoint: 'chat' }),
+      requestUrl: 'https://api.deepseek.com/chat/completions',
+      defaultHeaders: {
+        'x-provider': 'deepseek',
+      },
+    };
+    const messagesProfile = {
+      ...buildDefaultApiEndpointProfile({ siteId: 10, endpoint: 'messages' }),
+      requestUrl: 'https://api.deepseek.com/anthropic/v1/messages',
+    };
+    const bindings: CredentialEndpointBinding[] = [
+      {
+        id: 'credential-endpoint:key-a:deepseek-chat',
+        siteId: 10,
+        credentialId: 'key-a',
+        apiEndpointProfileId: chatProfile.id,
+        enabled: true,
+        support: 'supported',
+        source: 'manual',
+      },
+      {
+        id: 'credential-endpoint:key-a:deepseek-messages',
+        siteId: 10,
+        credentialId: 'key-a',
+        apiEndpointProfileId: messagesProfile.id,
+        enabled: true,
+        support: 'supported',
+        source: 'manual',
+      },
+    ];
+
+    const plan = buildApiAttemptPlan({
+      siteId: 10,
+      credentialId: 'key-a',
+      endpointCandidates: ['chat', 'messages'],
+      endpointProfiles: [chatProfile, messagesProfile],
+      credentialEndpointBindings: bindings,
+      siteUrl: 'https://ignored.example.com',
+    });
+
+    expect(plan.attempts.map((attempt) => attempt.requestUrl)).toEqual([
+      'https://api.deepseek.com/chat/completions',
+      'https://api.deepseek.com/anthropic/v1/messages',
+    ]);
+    expect(plan.attempts[0]?.defaultHeaders).toEqual({
+      'x-provider': 'deepseek',
+    });
+  });
+
+  it('derives DeepSeek executable urls from the official root url', () => {
+    const plan = buildApiAttemptPlan({
+      siteId: 10,
+      credentialId: 'key-a',
+      siteUrl: 'https://api.deepseek.com',
+      endpointCandidates: ['chat', 'messages'],
+    });
+
+    expect(plan.attempts.map((attempt) => attempt.requestUrl)).toEqual([
+      'https://api.deepseek.com/chat/completions',
+      'https://api.deepseek.com/anthropic/v1/messages',
+    ]);
   });
 
   it('filters selectable attempts by credential endpoint bindings for the active site and key', () => {
@@ -166,6 +237,50 @@ describe('apiVariants', () => {
 
     expect(endpointCandidatesFromApiAttemptPlan(plan)).toEqual(['responses', 'chat', 'messages']);
     expect(plan.attempts[0]?.reason).toContain('pinned_api_type');
+  });
+
+  it('removes endpoint/model pairs rejected by recent observations', () => {
+    const chatProfile = buildDefaultApiEndpointProfile({ siteId: 1, endpoint: 'chat' });
+    const responsesProfile = buildDefaultApiEndpointProfile({ siteId: 1, endpoint: 'responses' });
+    const bindings: CredentialEndpointBinding[] = [
+      {
+        id: 'credential-endpoint:key-a:chat',
+        siteId: 1,
+        credentialId: 'key-a',
+        apiEndpointProfileId: chatProfile.id,
+        enabled: true,
+        support: 'supported',
+        source: 'manual',
+      },
+      {
+        id: 'credential-endpoint:key-a:responses',
+        siteId: 1,
+        credentialId: 'key-a',
+        apiEndpointProfileId: responsesProfile.id,
+        enabled: true,
+        support: 'supported',
+        source: 'manual',
+      },
+    ];
+
+    const plan = buildApiAttemptPlan({
+      siteId: 1,
+      credentialId: 'key-a',
+      modelName: 'gpt-test',
+      endpointProfiles: [responsesProfile, chatProfile],
+      credentialEndpointBindings: bindings,
+      endpointModelObservations: [{
+        siteId: 1,
+        credentialId: 'key-a',
+        apiEndpointProfileId: responsesProfile.id,
+        modelName: 'gpt-test',
+        status: 'rejected',
+      }],
+      endpointCandidates: ['responses', 'chat'],
+    });
+
+    expect(endpointCandidatesFromApiAttemptPlan(plan)).toEqual(['chat']);
+    expect(plan.diagnostics.map((diagnostic) => diagnostic.code)).toContain('endpoint_model_observation.rejected');
   });
 
   it('inherits endpoint capability defaults and key-scoped overrides', () => {

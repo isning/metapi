@@ -64,8 +64,11 @@ Site
 manual macros. It corresponds to the existing graph-visible
 `route_endpoint endpointKind=supply`.
 
-`ApiEndpointProfile` is a site-level callable API profile: API type, base URL,
-path template, auth shape, default capability, and compatibility inheritance.
+`ApiEndpointProfile` is a site-level callable API profile: API type,
+executable request URL, auth shape, default capability, and compatibility
+inheritance. ADR-0017 further separates executable endpoint profiles from model
+catalog sources and replaces the earlier `baseUrl + pathTemplate` shape with a
+single `requestUrl`.
 
 `CredentialEndpointBinding` records whether a specific credential/API key can
 use a specific endpoint profile, including key-scoped overrides and discovered
@@ -95,13 +98,13 @@ type ApiEndpointProfile = {
   siteId: number;
   apiType: ApiType;
   label: string;
-  baseUrl: string;
-  pathTemplate: string;
+  requestUrl: string;
   authMode: 'bearer' | 'api_key_header' | 'query' | 'custom';
   enabled: boolean;
   priority?: number;
   capabilityDefaults: ApiVariantCapability;
   compatibilityPolicyRef?: string | null;
+  modelCatalogSourceId?: string | null;
   metadata?: Record<string, unknown>;
 };
 ```
@@ -227,7 +230,7 @@ type ApiVariant = {
   apiType: ApiType;
   apiEndpointProfileId: string;
   credentialEndpointBindingId: string;
-  urlTemplate?: string;
+  requestUrl: string;
   adapterId: string;
   capability: ApiVariantCapability;
   health: ApiVariantHealth;
@@ -333,7 +336,7 @@ type ApiAttempt = {
   variantId: string;
   apiType: ApiType;
   adapterId: string;
-  endpointUrl: string;
+  requestUrl: string;
   requestTransform: string;
   responseTransform: string;
   reason: ApiAttemptReason[];
@@ -423,7 +426,7 @@ range until enough measurements exist.
 
 ## Route Program Integration
 
-`RouteProgramBundleV3` keeps `select_supply` as the executable graph operation:
+`RouteProgramBundle` keeps `select_supply` as the executable graph operation:
 
 ```ts
 type SelectSupplyOp = {

@@ -15,7 +15,9 @@ function createDbSchemaMock() {
     settings: { __table: 'settings' },
     sites: { __table: 'sites' },
     siteApiEndpoints: { __table: 'siteApiEndpoints' },
+    modelCatalogSources: { __table: 'modelCatalogSources' },
     apiEndpointProfiles: { __table: 'apiEndpointProfiles' },
+    endpointModelObservations: { __table: 'endpointModelObservations' },
     credentialEndpointBindings: { __table: 'credentialEndpointBindings' },
     siteAnnouncements: { __table: 'siteAnnouncements' },
     siteDisabledModels: { __table: 'siteDisabledModels' },
@@ -891,8 +893,25 @@ describe('databaseMigrationService', () => {
           enabled: true,
           createdAt: '2026-03-14T00:00:00.000Z',
           updatedAt: '2026-03-14T01:00:00.000Z',
+        }, {
+          id: 13,
+          modelPattern: 'claude-opus-4-6',
+          displayName: 'claude-opus-4-6 source',
+          routingStrategy: 'weighted',
+          enabled: true,
+          createdAt: '2026-03-14T00:00:00.000Z',
+          updatedAt: '2026-03-14T01:00:00.000Z',
         }],
-        routeEndpointTargets: [],
+        routeEndpointTargets: [{
+          id: 21,
+          routeId: 13,
+          accountId: 9,
+          tokenId: null,
+          sourceModel: 'claude-opus-4-6',
+          priority: 0,
+          weight: 10,
+          enabled: true,
+        }],
         proxyLogs: [],
         proxyVideoTasks: [{
           id: 5,
@@ -950,11 +969,24 @@ describe('databaseMigrationService', () => {
     const graphSourceIndex = graphVersionStatement?.columns.indexOf('source_graph_json') ?? -1;
     expect(graphSourceIndex).toBeGreaterThanOrEqual(0);
     const graphSource = JSON.parse(String(graphVersionStatement?.values[graphSourceIndex])) as {
+      nodes?: Array<{ id?: string; type?: string; endpointKind?: string; config?: { targets?: unknown[] } }>;
       macros?: Array<{ kind?: string; config?: { groups?: Array<{ input?: { endpointIds?: string[] } }> } }>;
     };
     const selectorMacro = graphSource.macros?.find((macro) => macro.kind === 'candidate_selector');
     expect(selectorMacro).toBeTruthy();
-    expect(selectorMacro?.config?.groups?.map((group) => group.input?.endpointIds)).toContainEqual(['route-endpoint:product:route:13']);
+    const endpointIds = selectorMacro?.config?.groups?.flatMap((group) => group.input?.endpointIds || []) || [];
+    expect(endpointIds.some((endpointId) => endpointId.startsWith('route-endpoint:supply:'))).toBe(true);
+    const supplyEndpoint = graphSource.nodes?.find((node) => node.id === endpointIds[0]);
+    expect(supplyEndpoint).toMatchObject({
+      type: 'route_endpoint',
+      endpointKind: 'supply',
+    });
+    expect(supplyEndpoint?.config?.targets).toEqual([
+      expect.objectContaining({
+        targetId: '21',
+        model: 'claude-opus-4-6',
+      }),
+    ]);
   });
 
   it('includes site announcements in migration statements', () => {

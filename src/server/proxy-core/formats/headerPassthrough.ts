@@ -43,7 +43,7 @@ export const GENERIC_PASSTHROUGH_ALLOWED_HEADERS = new Set([
 
 export const METAPI_INTERNAL_HEADER_BLOCKLIST = new Set([
   'x-metapi-tester-request',
-  'x-metapi-tester-forced-channel-id',
+  'x-metapi-tester-forced-target-id',
   'x-metapi-responses-websocket-mode',
   'x-metapi-responses-websocket-transport',
 ]);

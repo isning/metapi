@@ -19,7 +19,7 @@ import { refreshOauthAccessTokenSingleflight } from '../../services/oauth/refres
 import { proxyTargetCoordinator } from '../../services/proxyTargetCoordinator.js';
 import { readRuntimeResponseText } from '../executors/types.js';
 import { selectProxyTargetForAttempt } from '../targetSelection.js';
-import type { RouteExecutionScope } from '../../services/tokenRouter.js';
+import type { RouteExecutionScope } from '../../services/routeExecutionScopeTypes.js';
 import { buildProxyLogRouteDecisionSnapshot } from '../../services/proxyLogRouteDecisionSnapshot.js';
 
 type SelectedTarget = Awaited<ReturnType<typeof tokenRouter.selectTarget>>;
@@ -104,7 +104,7 @@ type SurfaceResolvedUsageSummary = {
   usageSource: 'upstream' | 'self-log' | 'unknown';
 };
 
-export async function selectSurfaceChannelForAttempt(input: {
+export async function selectSurfaceTargetForAttempt(input: {
   requestedModel: string;
   downstreamPolicy: DownstreamRoutingPolicy;
   excludeTargetIds: number[];
@@ -136,7 +136,7 @@ export function getSurfaceStickyPreferredTargetId(stickySessionKey?: string | nu
   return proxyTargetCoordinator.getStickyTargetId(stickySessionKey) ?? null;
 }
 
-export function bindSurfaceStickyChannel(input: {
+export function bindSurfaceStickyTarget(input: {
   stickySessionKey?: string | null;
   selected: {
     target: { id: number };
@@ -150,7 +150,7 @@ export function bindSurfaceStickyChannel(input: {
   );
 }
 
-export function clearSurfaceStickyChannel(input: {
+export function clearSurfaceStickyTarget(input: {
   stickySessionKey?: string | null;
   selected: {
     target: { id: number };
@@ -162,7 +162,7 @@ export function clearSurfaceStickyChannel(input: {
   );
 }
 
-export async function acquireSurfaceChannelLease(input: {
+export async function acquireSurfaceTargetLease(input: {
   stickySessionKey?: string | null;
   selected: {
     target: { id: number };
@@ -179,7 +179,7 @@ export async function acquireSurfaceChannelLease(input: {
   });
 }
 
-export function buildSurfaceChannelBusyMessage(waitMs: number): string {
+export function buildSurfaceTargetBusyMessage(waitMs: number): string {
   return waitMs > 0
     ? `Target busy: waited ${waitMs}ms for an available session slot`
     : 'Target busy: no session slot available';
@@ -265,7 +265,7 @@ export function createSurfaceDispatchRequest(input: {
   accountExtraConfig?: string | null;
   siteUrl?: string;
 }) {
-  const channelProxyUrl = resolveChannelProxyUrl(input.site, input.accountExtraConfig);
+  const targetProxyUrl = resolveChannelProxyUrl(input.site, input.accountExtraConfig);
   return (
     request: BuiltEndpointRequest,
     targetUrl?: string,
@@ -280,7 +280,7 @@ export function createSurfaceDispatchRequest(input: {
         method: 'POST',
         headers: requestForFetch.headers,
         body: JSON.stringify(requestForFetch.body),
-      }, channelProxyUrl),
+      }, targetProxyUrl),
     })
   );
 }
@@ -311,7 +311,7 @@ export async function trySurfaceOauthRefreshRecovery<TRequest extends BuiltEndpo
     };
 
     const refreshedRequest = input.buildRequest(input.ctx.request.endpoint);
-    const refreshedTargetUrl = buildUpstreamUrl(input.siteUrl, refreshedRequest.path);
+    const refreshedTargetUrl = refreshedRequest.targetUrl || buildUpstreamUrl(input.siteUrl, refreshedRequest.path);
     const refreshedResponse = await input.dispatchRequest(refreshedRequest, refreshedTargetUrl);
     if (refreshedResponse.ok) {
       return {

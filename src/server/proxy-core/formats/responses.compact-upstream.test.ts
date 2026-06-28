@@ -4,8 +4,8 @@ import { config } from '../../config.js';
 import { resetUpstreamEndpointRuntimeState } from '../../services/upstreamEndpointRuntimeMemory.js';
 
 const fetchMock = vi.fn();
-const selectChannelMock = vi.fn();
-const selectNextChannelMock = vi.fn();
+const selectTargetMock = vi.fn();
+const selectNextTargetMock = vi.fn();
 const recordSuccessMock = vi.fn();
 const recordFailureMock = vi.fn();
 const refreshModelsAndRebuildRoutesMock = vi.fn();
@@ -37,8 +37,8 @@ vi.mock('undici', async () => {
 
 vi.mock('../../services/tokenRouter.js', () => ({
   tokenRouter: {
-    selectChannel: (...args: unknown[]) => selectChannelMock(...args),
-    selectNextChannel: (...args: unknown[]) => selectNextChannelMock(...args),
+    selectTarget: (...args: unknown[]) => selectTargetMock(...args),
+    selectNextTarget: (...args: unknown[]) => selectNextTargetMock(...args),
     recordSuccess: (...args: unknown[]) => recordSuccessMock(...args),
     recordFailure: (...args: unknown[]) => recordFailureMock(...args),
   },
@@ -80,6 +80,14 @@ vi.mock('../../services/routeGraphRuntimeService.js', async () => {
     evaluateActiveRouteGraphForModel: async () => null,
   };
 });
+
+vi.mock('../../services/credentialEndpointBindingService.js', () => ({
+  loadCredentialApiVariantConfig: async () => null,
+}));
+
+vi.mock('../../services/proxyLogRouteDecisionSnapshot.js', () => ({
+  buildProxyLogRouteDecisionSnapshot: async () => null,
+}));
 
 vi.mock('../../db/index.js', () => ({
   db: {
@@ -130,8 +138,8 @@ describe('responses proxy compact upstream routing', () => {
     resetUpstreamEndpointRuntimeState();
     config.responsesCompactFallbackToResponsesEnabled = false;
     fetchMock.mockReset();
-    selectChannelMock.mockReset();
-    selectNextChannelMock.mockReset();
+    selectTargetMock.mockReset();
+    selectNextTargetMock.mockReset();
     recordSuccessMock.mockReset();
     recordFailureMock.mockReset();
     refreshModelsAndRebuildRoutesMock.mockReset();
@@ -143,15 +151,15 @@ describe('responses proxy compact upstream routing', () => {
     resolveProxyUsageWithSelfLogFallbackMock.mockClear();
     dbInsertMock.mockClear();
 
-    selectChannelMock.mockReturnValue({
-      channel: { id: 11, routeId: 22 },
+    selectTargetMock.mockReturnValue({
+      target: { id: 11, routeId: 22 },
       site: { id: 44, name: 'demo-site', url: 'https://api.openai.com', platform: 'openai' },
       account: { id: 33, username: 'demo-user' },
       tokenName: 'default',
       tokenValue: 'sk-demo',
       actualModel: 'upstream-gpt',
     });
-    selectNextChannelMock.mockReturnValue(null);
+    selectNextTargetMock.mockReturnValue(null);
     fetchModelPricingCatalogMock.mockResolvedValue(null);
   });
 
@@ -189,8 +197,8 @@ describe('responses proxy compact upstream routing', () => {
   });
 
   it('does not fall back from compact to ordinary responses for generic openai-compatible upstreams when the fallback toggle is off', async () => {
-    selectChannelMock.mockReturnValue({
-      channel: { id: 11, routeId: 22 },
+    selectTargetMock.mockReturnValue({
+      target: { id: 11, routeId: 22 },
       site: { id: 44, name: 'generic-openai-site', url: 'https://upstream.example.com', platform: 'openai' },
       account: { id: 33, username: 'demo-user' },
       tokenName: 'default',
@@ -233,8 +241,8 @@ describe('responses proxy compact upstream routing', () => {
 
   it('optionally falls back from compact to ordinary responses when compact is explicitly unsupported', async () => {
     config.responsesCompactFallbackToResponsesEnabled = true;
-    selectChannelMock.mockReturnValue({
-      channel: { id: 11, routeId: 22 },
+    selectTargetMock.mockReturnValue({
+      target: { id: 11, routeId: 22 },
       site: { id: 44, name: 'generic-openai-site', url: 'https://upstream.example.com', platform: 'openai' },
       account: { id: 33, username: 'demo-user' },
       tokenName: 'default',
@@ -282,8 +290,8 @@ describe('responses proxy compact upstream routing', () => {
 
   it('automatically falls back from compact when a generic upstream rejects the stream parameter on the compact endpoint', async () => {
     config.responsesCompactFallbackToResponsesEnabled = true;
-    selectChannelMock.mockReturnValue({
-      channel: { id: 11, routeId: 22 },
+    selectTargetMock.mockReturnValue({
+      target: { id: 11, routeId: 22 },
       site: { id: 44, name: 'generic-openai-site', url: 'https://upstream.example.com', platform: 'openai' },
       account: { id: 33, username: 'demo-user' },
       tokenName: 'default',
@@ -332,8 +340,8 @@ describe('responses proxy compact upstream routing', () => {
 
   it('rebuilds compact fallback as an SSE-capable non-compact /v1/responses request for sub2api', async () => {
     config.responsesCompactFallbackToResponsesEnabled = true;
-    selectChannelMock.mockReturnValue({
-      channel: { id: 11, routeId: 22 },
+    selectTargetMock.mockReturnValue({
+      target: { id: 11, routeId: 22 },
       site: { id: 44, name: 'sub2api-site', url: 'https://sub2api.example.com', platform: 'sub2api' },
       account: { id: 33, username: 'sub2api-user' },
       tokenName: 'default',
@@ -395,8 +403,8 @@ describe('responses proxy compact upstream routing', () => {
 
   it('does not fall back for unrelated unsupported errors that do not mention compact', async () => {
     config.responsesCompactFallbackToResponsesEnabled = true;
-    selectChannelMock.mockReturnValue({
-      channel: { id: 11, routeId: 22 },
+    selectTargetMock.mockReturnValue({
+      target: { id: 11, routeId: 22 },
       site: { id: 44, name: 'generic-openai-site', url: 'https://upstream.example.com', platform: 'openai' },
       account: { id: 33, username: 'demo-user' },
       tokenName: 'default',
@@ -438,8 +446,8 @@ describe('responses proxy compact upstream routing', () => {
   });
 
   it('strips stream fields and store when forwarding compact requests to codex upstreams', async () => {
-    selectChannelMock.mockReturnValue({
-      channel: { id: 11, routeId: 22 },
+    selectTargetMock.mockReturnValue({
+      target: { id: 11, routeId: 22 },
       site: { id: 44, name: 'codex-site', url: 'https://chatgpt.com/backend-api/codex', platform: 'codex' },
       account: {
         id: 33,
@@ -499,8 +507,8 @@ describe('responses proxy compact upstream routing', () => {
   });
 
   it('strips stream fields and store when forwarding compact requests to sub2api upstreams', async () => {
-    selectChannelMock.mockReturnValue({
-      channel: { id: 11, routeId: 22 },
+    selectTargetMock.mockReturnValue({
+      target: { id: 11, routeId: 22 },
       site: { id: 44, name: 'sub2api-site', url: 'https://sub2api.example.com', platform: 'sub2api' },
       account: { id: 33, username: 'sub2api-user' },
       tokenName: 'default',

@@ -49,6 +49,10 @@ vi.mock('../../services/proxyLogStore.js', () => ({
   insertProxyLog: (...args: unknown[]) => insertProxyLogMock(...args),
 }));
 
+vi.mock('../../services/proxyLogRouteDecisionSnapshot.js', () => ({
+  buildProxyLogRouteDecisionSnapshot: vi.fn(async () => null),
+}));
+
 vi.mock('../../services/runtimeDispatch.js', () => ({
   dispatchRuntimeRequest: vi.fn(),
 }));

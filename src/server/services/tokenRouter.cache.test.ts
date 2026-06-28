@@ -13,7 +13,7 @@ describe('TokenRouter runtime cache', () => {
   let schema: DbModule['schema'];
   let TokenRouter: TokenRouterModule['TokenRouter'];
   let invalidateTokenRouterCache: TokenRouterModule['invalidateTokenRouterCache'];
-  let isChannelRecentlyFailed: TokenRouterModule['isChannelRecentlyFailed'];
+  let isTargetRecentlyFailed: TokenRouterModule['isTargetRecentlyFailed'];
   let resetSiteRuntimeHealthState: TokenRouterModule['resetSiteRuntimeHealthState'];
   let config: ConfigModule['config'];
   let dataDir = '';
@@ -32,7 +32,7 @@ describe('TokenRouter runtime cache', () => {
     schema = dbModule.schema;
     TokenRouter = tokenRouterModule.TokenRouter;
     invalidateTokenRouterCache = tokenRouterModule.invalidateTokenRouterCache;
-    isChannelRecentlyFailed = tokenRouterModule.isChannelRecentlyFailed;
+    isTargetRecentlyFailed = tokenRouterModule.isTargetRecentlyFailed;
     resetSiteRuntimeHealthState = tokenRouterModule.resetSiteRuntimeHealthState;
     config = configModule.config;
     originalCacheTtlMs = config.tokenRouterCacheTtlMs;
@@ -99,16 +99,16 @@ describe('TokenRouter runtime cache', () => {
     }).run();
 
     const router = new TokenRouter();
-    expect(await router.selectChannel('gpt-4o-mini')).toBeTruthy();
+    expect(await router.selectTarget('gpt-4o-mini')).toBeTruthy();
 
     await db.delete(schema.routeEndpointTargets).where(eq(schema.routeEndpointTargets.routeId, route.id)).run();
     await db.delete(schema.tokenRoutes).where(eq(schema.tokenRoutes.id, route.id)).run();
 
-    const cachedSelection = await router.selectChannel('gpt-4o-mini');
+    const cachedSelection = await router.selectTarget('gpt-4o-mini');
     expect(cachedSelection).toBeNull();
 
     invalidateTokenRouterCache();
-    const refreshedSelection = await router.selectChannel('gpt-4o-mini');
+    const refreshedSelection = await router.selectTarget('gpt-4o-mini');
     expect(refreshedSelection).toBeNull();
   });
 
@@ -238,11 +238,11 @@ describe('TokenRouter runtime cache', () => {
     expect(cooldownMs).toBeGreaterThanOrEqual(17_000);
     expect(cooldownMs).toBeLessThanOrEqual(23_000);
     const recentFailureCheckAt = Date.now();
-    expect(isChannelRecentlyFailed({
+    expect(isTargetRecentlyFailed({
       failCount: 3,
       lastFailAt: new Date(recentFailureCheckAt - 19_000).toISOString(),
     }, recentFailureCheckAt)).toBe(true);
-    expect(isChannelRecentlyFailed({
+    expect(isTargetRecentlyFailed({
       failCount: 3,
       lastFailAt: new Date(recentFailureCheckAt - 21_000).toISOString(),
     }, recentFailureCheckAt)).toBe(false);
@@ -592,7 +592,7 @@ describe('TokenRouter runtime cache', () => {
     }).returning().get();
 
     const router = new TokenRouter();
-    const initialSiblingSelection = await router.selectChannel('gpt-4o-mini');
+    const initialSiblingSelection = await router.selectTarget('gpt-4o-mini');
     expect(initialSiblingSelection?.target.id).toBe(siblingChannel.id);
 
     await router.recordFailure(primaryChannel.id, {
@@ -612,7 +612,7 @@ describe('TokenRouter runtime cache', () => {
 
     expect(cooledSibling?.cooldownUntil).toBeTruthy();
     expect(cooledSibling?.failCount).toBe(0);
-    expect(await router.selectChannel('gpt-4o-mini')).toBeNull();
+    expect(await router.selectTarget('gpt-4o-mini')).toBeNull();
   });
 
   it('clears short-window cooldown on sibling channels after a successful recovery probe', async () => {
@@ -737,10 +737,10 @@ describe('TokenRouter runtime cache', () => {
 
     const router = new TokenRouter();
 
-    const first = await router.selectChannel('gpt-4o-mini');
-    const second = await router.selectChannel('gpt-4o-mini');
-    const third = await router.selectChannel('gpt-4o-mini');
-    const fourth = await router.selectChannel('gpt-4o-mini');
+    const first = await router.selectTarget('gpt-4o-mini');
+    const second = await router.selectTarget('gpt-4o-mini');
+    const third = await router.selectTarget('gpt-4o-mini');
+    const fourth = await router.selectTarget('gpt-4o-mini');
 
     expect(first?.target.id).toBe(channels[0].id);
     expect(second?.target.id).toBe(channels[1].id);

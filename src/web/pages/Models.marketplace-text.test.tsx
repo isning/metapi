@@ -164,10 +164,10 @@ describe('Models marketplace text', () => {
       expect(expandedText).toContain('余额');
       expect(expandedText).toContain('实测 entry 价格');
       expect(expandedText).toContain('$5 / 1M');
-      expect(expandedText).toContain('倍率 2.5x');
-      expect(expandedText).toContain('理论 entry 价格');
+      expect(expandedText).toContain('输入参考倍率 未配置参考价');
+      expect(expandedText).toContain('理论入口价格');
       expect(expandedText).toContain('$4 / 1M');
-      expect(expandedText).toContain('倍率 2x');
+      expect(expandedText).toContain('输出参考倍率 未配置参考价');
     } finally {
       root?.unmount();
     }

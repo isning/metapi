@@ -1420,6 +1420,12 @@ Unsafe or invalid CEL makes the plan invalid unless the field is optional and a
 safe default exists. Runtime evaluation must not execute unvalidated CEL stored
 in raw provider metadata.
 
+Implementation note: pricing-core v1 enables CEL for `PricingCondition.cel`,
+`PricingPrice.expression.kind = "formula"`, and custom pricing transforms.
+Formula expressions must return a non-negative component unit price. Custom
+transforms must return a non-negative number and should write only normalized
+pricing fields such as `usage.custom.*` or `metadata.*`.
+
 ## UI
 
 ### Upstream Cost Editor

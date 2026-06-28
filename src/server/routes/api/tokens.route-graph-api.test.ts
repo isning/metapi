@@ -900,7 +900,7 @@ describe('/api/route-graph lifecycle', () => {
               entry: { kind: 'embedded', input: 'bidirect' },
               output: 'bidirect',
               ports: [
-                { id: 'flow.in', label: 'incoming flow', direction: 'input', kind: 'bidirect', accepts: ['bidirect'] },
+                { id: 'flow.in', label: 'incoming flow', direction: 'input', kind: 'bidirect' },
                 { id: 'flow.out', label: 'selected flow', direction: 'output', kind: 'bidirect', collection: { type: 'arr', min: 1 } },
               ],
             },

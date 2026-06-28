@@ -53,7 +53,6 @@ candidates:
   label: 'Candidates';
   direction: 'input';
   kind: 'route';
-  accepts: ['route'];
   multiple: true;
   collection: { type: 'set'; min: 1 };
 }
@@ -319,7 +318,7 @@ Migration should:
 3. Preserve group policy by moving candidate instance properties into
    `candidateOverrides` or generated edge metadata.
 4. Preserve automatic graph data as read-only generated data.
-5. Recompile active route graphs to program bundle v3.
+5. Recompile active route graphs to the current route program bundle.
 6. Fail import with actionable diagnostics if candidate ownership cannot be
    determined.
 

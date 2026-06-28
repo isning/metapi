@@ -18,7 +18,7 @@ Metapi already has several routing concepts:
 These features solve related problems, but they are not one architecture.
 Pattern routes, groups, target selection, payload mutation, health-aware
 failover, and provider compatibility rules currently risk becoming separate
-control paths.
+execution paths.
 
 The long-term architecture must let operators express all routing behavior as a
 single graph:
@@ -29,7 +29,6 @@ public model entry
   -> dispatcher policy
   <- route_endpoint[] / synthetic_endpoint[] candidate resources
   -> selected terminal or flow execution
-  -> response
 ```
 
 The graph must also support future provider quirks such as reasoning/thinking
@@ -101,7 +100,8 @@ Public model names must be globally unique across manual and generated entries.
 
 ### Filter
 
-`filter` mutates request or response state. It does not select endpoints.
+`filter` mutates request state before an upstream request is built. It does not
+select endpoints.
 
 Filters may be request-only or bidirectional:
 
@@ -117,7 +117,7 @@ Examples:
 - set headers;
 - map reasoning/thinking fields;
 - normalize tool choice;
-- transform response metadata.
+- choose an upstream API endpoint preference.
 
 ```ts
 type FilterNode = BaseRouteGraphNode & {
@@ -658,17 +658,13 @@ Edges connect typed ports, never whole nodes.
 type RouteGraphPortKind =
   | 'request'
   | 'bidirect'
-  | 'route'
-  | 'response'
-  | 'control'
-  | 'metrics';
+  | 'route';
 
 type RouteGraphPort = {
   id: string;
   label: string;
   direction: 'input' | 'output';
   kind: RouteGraphPortKind;
-  accepts?: RouteGraphPortKind[];
   required?: boolean;
   multiple?: boolean;
   collection?: RouteGraphPortCollection;
@@ -713,7 +709,7 @@ synthetic_endpoint:
 dispatcher:
   bidirect.in
   bidirect[1...].out
-  route.in      accepts route, set
+  route.in      set
 ```
 
 `dispatcher` is the single policy-driven choice node. Its `mode` determines the
@@ -758,8 +754,8 @@ semantically significant. `route.in` is a `set`.
 `single` means a single logical value or a single connection target.
 
 `arr` and `set` may declare `min` and `max` bounds. A bounded set such as
-`set(max: 4)` accepts at most four unique values. A bounded array such as
-`arr(min: 1, max: 3)` accepts one to three ordered values. Validators, editors,
+`set(max: 4)` allows at most four unique values. A bounded array such as
+`arr(min: 1, max: 3)` allows one to three ordered values. Validators, editors,
 the compiler, import/export, and runtime traces must all enforce the same
 bounds.
 
@@ -776,9 +772,6 @@ Pin rendering must follow the base type system.
 - `request`
 - `bidirect`
 - `route`
-- `response`
-- `control`
-- `metrics`
 
 `collection` controls circle treatment:
 
@@ -805,9 +798,9 @@ without adding `[...]` to the label.
 
 `request` means request-only transformation.
 
-`bidirect` means request plus response lifecycle. A bidirect edge carries the
-request into a node that may also observe or transform the response on the way
-back.
+`bidirect` means the route participates in the full request/response lifecycle.
+It is still one graph flow; response handling is not modeled as a separate port
+kind.
 
 Reasoning/thinking transfer is response metadata on a bidirect flow, not a
 separate route category. A reasoning view in the UI may highlight bidirect

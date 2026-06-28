@@ -18,12 +18,13 @@ import { resolveDispatchUpstreamCompatibilityPolicy } from '../../services/upstr
 import { getOauthInfoFromAccount } from '../../services/oauth/oauthAccount.js';
 import { protocolAdapters } from '../formats/protocolAdapters.js';
 import { buildUpstreamEndpointRequest } from '../formats/upstreamRequestBuilder.js';
+import { defaultRequestUrlForUpstreamEndpoint } from '../apiVariants.js';
 import { config } from '../../config.js';
 import { applyOpenAiServiceTierPolicy } from '../serviceTierPolicy.js';
 import { resolvePlatformProfile } from '../platforms/registry.js';
 import { selectProxyTargetForAttempt } from '../targetSelection.js';
 import {
-  bindSurfaceStickyChannel,
+  bindSurfaceStickyTarget,
   buildSurfaceStickySessionKey,
 } from './sharedProxyOrchestration.js';
 
@@ -86,28 +87,28 @@ function readNestedRecord(value: unknown, key: string): Record<string, unknown> 
   const nested = value[key];
   return isRecord(nested) ? nested : null;
 }
-function selectedChannelModelMatches(
-  selectedChannel: SelectedTarget | null,
+function selectedTargetModelMatches(
+  selectedTarget: SelectedTarget | null,
   requestModel: string,
 ): boolean {
-  if (!selectedChannel) return false;
-  const selectedModel = asTrimmedString(selectedChannel.actualModel).toLowerCase();
+  if (!selectedTarget) return false;
+  const selectedModel = asTrimmedString(selectedTarget.actualModel).toLowerCase();
   const normalizedRequestModel = asTrimmedString(requestModel).toLowerCase();
   if (!selectedModel || !normalizedRequestModel) return true;
   return selectedModel === normalizedRequestModel;
 }
 
-function selectedChannelSupportsCodexWebsocketTransport(
-  selectedChannel: SelectedTarget | null,
+function selectedTargetSupportsCodexWebsocketTransport(
+  selectedTarget: SelectedTarget | null,
   requestModel: string,
 ): boolean {
-  if (!selectedChannel) return false;
-  const platform = asTrimmedString(selectedChannel.site?.platform).toLowerCase();
+  if (!selectedTarget) return false;
+  const platform = asTrimmedString(selectedTarget.site?.platform).toLowerCase();
   if (platform !== 'codex') return false;
-  if (!selectedChannelModelMatches(selectedChannel, requestModel)) return false;
+  if (!selectedTargetModelMatches(selectedTarget, requestModel)) return false;
   if (!config.codexUpstreamWebsocketEnabled) return false;
 
-  const extraConfig = parseExtraConfigRecord(selectedChannel.account.extraConfig);
+  const extraConfig = parseExtraConfigRecord(selectedTarget.account.extraConfig);
   const oauth = readNestedRecord(extraConfig, 'oauth');
   const providerData = readNestedRecord(oauth, 'providerData');
   const candidateFlags = [
@@ -125,11 +126,11 @@ function selectedChannelSupportsCodexWebsocketTransport(
   return true;
 }
 
-function selectedChannelSupportsIncrementalInput(
-  selectedChannel: SelectedTarget | null,
+function selectedTargetSupportsIncrementalInput(
+  selectedTarget: SelectedTarget | null,
   requestModel: string,
 ): boolean {
-  return selectedChannelSupportsCodexWebsocketTransport(selectedChannel, requestModel);
+  return selectedTargetSupportsCodexWebsocketTransport(selectedTarget, requestModel);
 }
 
 function unwrapCodexWebsocketRuntimeError(error: unknown): CodexWebsocketRuntimeError {
@@ -145,11 +146,11 @@ function unwrapCodexWebsocketRuntimeError(error: unknown): CodexWebsocketRuntime
 }
 
 function shouldReuseSelectedTarget(
-  selectedChannel: SelectedTarget | null,
+  selectedTarget: SelectedTarget | null,
   requestModel: string,
 ): boolean {
-  if (!selectedChannel) return false;
-  const selectedModel = asTrimmedString(selectedChannel.actualModel).toLowerCase();
+  if (!selectedTarget) return false;
+  const selectedModel = asTrimmedString(selectedTarget.actualModel).toLowerCase();
   const normalizedRequestModel = asTrimmedString(requestModel).toLowerCase();
   if (!selectedModel || !normalizedRequestModel) return true;
   return selectedModel === normalizedRequestModel;
@@ -326,7 +327,7 @@ async function supportsResponsesWebsocketIncrementalInput(
 
   try {
     const selected = await tokenRouter.previewSelectedTarget(requestModel, authContext.policy);
-    return selectedChannelSupportsIncrementalInput(selected, requestModel);
+    return selectedTargetSupportsIncrementalInput(selected, requestModel);
   } catch {
     return false;
   }
@@ -346,7 +347,7 @@ async function handleResponsesWebsocketConnection(
   const runtimeSessionKeys = new Set<string>();
   let lastRequest: Record<string, unknown> | null = null;
   let lastResponseOutput: unknown[] = [];
-  let selectedChannel: SelectedTarget | null = null;
+  let selectedTarget: SelectedTarget | null = null;
   let messageQueue = Promise.resolve();
 
   socket.once('close', () => {
@@ -396,7 +397,7 @@ async function handleResponsesWebsocketConnection(
           }
           parsed.service_tier = serviceTierPolicy.body.service_tier;
           if (serviceTierPolicy.body.service_tier === undefined) delete parsed.service_tier;
-          const supportsIncrementalInput = selectedChannelSupportsIncrementalInput(selectedChannel, requestModel)
+          const supportsIncrementalInput = selectedTargetSupportsIncrementalInput(selectedTarget, requestModel)
             || await supportsResponsesWebsocketIncrementalInput(parsed, lastRequest, authContext);
           const shouldHandleLocalPrewarm = protocolAdapters.responses.websocket.shouldHandlePrewarmLocally({
             parsed,
@@ -427,7 +428,7 @@ async function handleResponsesWebsocketConnection(
             return;
           }
 
-          if (!shouldReuseSelectedTarget(selectedChannel, requestModel)) {
+          if (!shouldReuseSelectedTarget(selectedTarget, requestModel)) {
             const stickySessionKey = requestModel
               ? buildSurfaceStickySessionKey({
                 clientContext: {
@@ -440,7 +441,7 @@ async function handleResponsesWebsocketConnection(
                 downstreamApiKeyId: authContext.key?.id ?? null,
               })
               : null;
-            selectedChannel = requestModel
+            selectedTarget = requestModel
               ? await selectProxyTargetForAttempt({
                 requestedModel: requestModel,
                 downstreamPolicy: authContext.policy,
@@ -449,10 +450,10 @@ async function handleResponsesWebsocketConnection(
                 stickySessionKey,
               })
               : null;
-            if (selectedChannel) {
-              bindSurfaceStickyChannel({
+            if (selectedTarget) {
+              bindSurfaceStickyTarget({
                 stickySessionKey,
-                selected: selectedChannel,
+                selected: selectedTarget,
               });
             }
           }
@@ -461,9 +462,9 @@ async function handleResponsesWebsocketConnection(
             body: normalized.request,
             context: {
               requestedModel: requestModel,
-              actualModel: asTrimmedString(selectedChannel?.actualModel),
-              sitePlatform: asTrimmedString(selectedChannel?.site?.platform),
-              accountType: getOauthInfoFromAccount(selectedChannel?.account)?.planType,
+              actualModel: asTrimmedString(selectedTarget?.actualModel),
+              sitePlatform: asTrimmedString(selectedTarget?.site?.platform),
+              accountType: getOauthInfoFromAccount(selectedTarget?.account)?.planType,
             },
             rules: getServiceTierPolicyRules(),
           });
@@ -486,40 +487,40 @@ async function handleResponsesWebsocketConnection(
           }
           lastRequest = normalized.nextRequestSnapshot;
 
-          const codexWebsocketChannel = selectedChannelSupportsCodexWebsocketTransport(selectedChannel, requestModel)
-            ? selectedChannel
+          const codexWebsocketTarget = selectedTargetSupportsCodexWebsocketTransport(selectedTarget, requestModel)
+            ? selectedTarget
             : null;
 
-          if (codexWebsocketChannel) {
+          if (codexWebsocketTarget) {
             const downstreamHeaders: Record<string, unknown> = {
               ...(request.headers as Record<string, unknown>),
               [RESPONSES_WEBSOCKET_TRANSPORT_HEADER]: '1',
               ...(supportsIncrementalInput ? { [RESPONSES_WEBSOCKET_MODE_HEADER]: 'incremental' } : {}),
             };
             const platformHeaders = buildOauthProviderHeaders({
-              account: codexWebsocketChannel.account,
+              account: codexWebsocketTarget.account,
               downstreamHeaders,
             });
 
             const websocketRuntimeSessionKey = buildCodexSessionResponseStoreKey({
               sessionId: websocketSessionId,
-              siteId: codexWebsocketChannel.site.id,
-              accountId: codexWebsocketChannel.account.id,
-              targetId: codexWebsocketChannel.target.id,
+              siteId: codexWebsocketTarget.site.id,
+              accountId: codexWebsocketTarget.account.id,
+              targetId: codexWebsocketTarget.target.id,
             }) || websocketSessionId;
             runtimeSessionKeys.add(websocketRuntimeSessionKey);
 
             try {
-              const platformProfile = resolvePlatformProfile(codexWebsocketChannel.site.platform);
+              const platformProfile = resolvePlatformProfile(codexWebsocketTarget.site.platform);
               const runtimeResult = await runWithSiteApiEndpointPool(
-                codexWebsocketChannel.site as Parameters<typeof runWithSiteApiEndpointPool>[0],
+                codexWebsocketTarget.site as Parameters<typeof runWithSiteApiEndpointPool>[0],
                 async (target) => {
                   const prepared = buildUpstreamEndpointRequest({
                     endpoint: 'responses',
-                    modelName: asTrimmedString(codexWebsocketChannel.actualModel) || requestModel,
+                    modelName: asTrimmedString(codexWebsocketTarget.actualModel) || requestModel,
                     stream: true,
-                    tokenValue: codexWebsocketChannel.tokenValue,
-                    sitePlatform: codexWebsocketChannel.site.platform,
+                    tokenValue: codexWebsocketTarget.tokenValue,
+                    sitePlatform: codexWebsocketTarget.site.platform,
                     siteUrl: target.baseUrl,
                     openaiBody: normalized.request,
                     downstreamFormat: 'responses',
@@ -527,17 +528,21 @@ async function handleResponsesWebsocketConnection(
                     downstreamHeaders,
                     platformHeaders,
                     codexExplicitSessionId: deriveCodexExplicitSessionId(normalized.request, websocketSessionId),
-                    routeGraphFilters: codexWebsocketChannel.routeGraph?.postBuildFilters ?? null,
+                    routeGraphFilters: codexWebsocketTarget.routeGraph?.postBuildFilters ?? null,
                     compatibilityPolicy: resolveDispatchUpstreamCompatibilityPolicy({
                       defaultCompatibilityPolicy: platformProfile?.defaultCompatibilityPolicy,
-                      site: codexWebsocketChannel.site,
-                      account: codexWebsocketChannel.account,
-                      token: codexWebsocketChannel.token,
-                      routeEndpointCompatibilityPolicy: codexWebsocketChannel.routeGraph?.routeEndpointCompatibilityPolicy,
-                      selectedEndpointTarget: codexWebsocketChannel.routeGraph?.selectedEndpointTarget,
+                      site: codexWebsocketTarget.site,
+                      account: codexWebsocketTarget.account,
+                      token: codexWebsocketTarget.token,
+                      routeEndpointCompatibilityPolicy: codexWebsocketTarget.routeGraph?.routeEndpointCompatibilityPolicy,
+                      selectedEndpointTarget: codexWebsocketTarget.routeGraph?.selectedEndpointTarget,
                     }),
                   });
-                  const requestUrl = `${target.baseUrl.replace(/\/+$/, '')}${prepared.path}`;
+                  const requestUrl = defaultRequestUrlForUpstreamEndpoint({
+                    siteUrl: target.baseUrl,
+                    endpoint: 'responses',
+                  })
+                    || `${target.baseUrl.replace(/\/+$/, '')}${prepared.path}`;
 
                   try {
                     return await codexWebsocketRuntime.sendRequest({

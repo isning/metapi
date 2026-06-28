@@ -4,8 +4,8 @@ import type {
   RouteFlatProgram,
   RouteProgramSourceRef,
   RouteProgram,
-  RouteProgramBundleV3,
-  RouteProgramBundleV4,
+  RouteProgramBundle,
+  RouteFlatProgramBundle,
   RouteProgramCandidate,
   RouteProgramOp,
 } from '../../shared/routeGraph.js';
@@ -327,7 +327,7 @@ export function applyRuntimeEntryPricingProbabilities(input: {
   return recalculateEntryPricingEstimate(input.estimate, candidates);
 }
 
-function programMatchesModel(bundle: RouteProgramBundleV3, requestedModel: string): RouteProgram | null {
+function programMatchesModel(bundle: RouteProgramBundle, requestedModel: string): RouteProgram | null {
   const exact = bundle.matcher?.exact?.[requestedModel]
     || bundle.matcher?.normalizedExact?.[requestedModel.toLowerCase()]
     || (bundle.matcher?.patterns || []).find((pattern) => {
@@ -340,7 +340,7 @@ function programMatchesModel(bundle: RouteProgramBundleV3, requestedModel: strin
   return (bundle.programs || []).find((program) => program.id === exact.programId && program.enabled !== false) || null;
 }
 
-function flatProgramMatchesModel(bundle: RouteProgramBundleV4, requestedModel: string): RouteFlatProgram | null {
+function flatProgramMatchesModel(bundle: RouteFlatProgramBundle, requestedModel: string): RouteFlatProgram | null {
   const exact = bundle.matcher?.exact?.[requestedModel]
     || bundle.matcher?.normalizedExact?.[requestedModel.toLowerCase()]
     || (bundle.matcher?.patterns || []).find((pattern) => {
@@ -351,6 +351,11 @@ function flatProgramMatchesModel(bundle: RouteProgramBundleV4, requestedModel: s
     });
   if (!exact?.programId) return null;
   return (bundle.programs || []).find((program) => program.id === exact.programId && program.enabled !== false) || null;
+}
+
+function isRouteFlatProgramBundle(bundle: RouteProgramBundle | RouteFlatProgramBundle): bundle is RouteFlatProgramBundle {
+  return Array.isArray(bundle.programs)
+    && bundle.programs.some((program) => isRecord(program) && isRecord(program.start));
 }
 
 function runtimeCandidateFromProbabilityCandidate<T extends ProbabilityCandidate>(
@@ -564,16 +569,16 @@ function collectFlatProgramTargets(input: {
 }
 
 export async function estimateRouteEntryPricing(input: {
-  bundle: RouteProgramBundleV3 | RouteProgramBundleV4;
+  bundle: RouteProgramBundle | RouteFlatProgramBundle;
   requestedModel: string;
 }): Promise<EntryPricingEstimate | null> {
-  const collected = input.bundle.version === 4
+  const collected = isRouteFlatProgramBundle(input.bundle)
     ? (() => {
-      const program = flatProgramMatchesModel(input.bundle as RouteProgramBundleV4, input.requestedModel);
+      const program = flatProgramMatchesModel(input.bundle, input.requestedModel);
       return program ? collectFlatProgramTargets({ program, requestedModel: input.requestedModel }) : null;
     })()
     : (() => {
-      const program = programMatchesModel(input.bundle as RouteProgramBundleV3, input.requestedModel);
+      const program = programMatchesModel(input.bundle, input.requestedModel);
       return program ? collectProgramTargets({ program, requestedModel: input.requestedModel }) : null;
     })();
   if (!collected) return null;

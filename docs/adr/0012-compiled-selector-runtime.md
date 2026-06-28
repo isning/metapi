@@ -5,8 +5,8 @@ Date: 2026-06-23
 
 ## Context
 
-ADR-0011 flattened route graph execution into `RouteProgramBundleV4`, but V4
-still leaves an important split in the request data plane:
+ADR-0011 flattened route graph execution into `RouteFlatProgramBundle`, but the
+flat bundle still leaves an important split in the request data plane:
 
 - route graph runtime selects semantic candidates with a local dispatcher helper;
 - `tokenRouter` later applies endpoint cooldown, site/model breakers, recent
@@ -78,4 +78,3 @@ Selector evaluation applies masks and scoring in this order:
 - Explain output can be produced from the same selector path used for dispatch.
 - Future work can hydrate selectors into typed arrays and compact state refs
   without changing the editable graph or public APIs.
-

@@ -12,7 +12,7 @@ import {
 describe('routeGraph port-native source', () => {
   it('normalizes route graph sources with unique edge ids', () => {
     const source = normalizeRouteGraphSource({
-      version: 2,
+      version: 1,
       nodes: [],
       macros: [],
       edges: [
@@ -53,7 +53,7 @@ describe('routeGraph port-native source', () => {
     expect(compileRouteGraphSource(source).ok).toBe(true);
     const compiled = compileRouteGraphSource(source);
     expect(compiled.compiled.programBundle).toMatchObject({
-      version: 3,
+      version: 1,
       matcher: {
         exact: {
           'gpt-4o': expect.objectContaining({
@@ -83,7 +83,7 @@ describe('routeGraph port-native source', () => {
       },
     });
     expect(compiled.compiled.flatProgramBundle).toMatchObject({
-      version: 4,
+      version: 1,
       matcher: {
         exact: {
           'gpt-4o': expect.objectContaining({
@@ -556,6 +556,27 @@ describe('routeGraph port-native source', () => {
     });
   });
 
+  it('normalizes single port collections without cardinality bounds', () => {
+    const source = normalizeRouteGraphSource({
+      version: 1,
+      nodes: [
+        {
+          id: 'filter:single-collection',
+          type: 'filter',
+          enabled: true,
+          visibility: 'internal',
+          ownership: 'manual',
+          dynamicPorts: [
+            { id: 'request.in', label: 'single request', direction: 'input', kind: 'request', collection: { type: 'single', min: 1, max: 2 } },
+          ],
+        },
+      ],
+      edges: [],
+    });
+
+    expect(getRouteGraphNodePorts(source.nodes[0]).find((port) => port.id === 'request.in')?.collection).toEqual({ type: 'single' });
+  });
+
   it('rejects node-level edges without ports', () => {
     const source = normalizeRouteGraphSource({
       version: 1,
@@ -789,6 +810,132 @@ describe('routeGraph port-native source', () => {
     ]);
     expect(result.compiled.edgesByFromPort['endpoint:a:route.out'].map((edge) => edge.id)).toEqual(['a-dispatcher']);
     expect(result.compiled.edgesByFromPort['endpoint:b:route.out'].map((edge) => edge.id)).toEqual(['b-dispatcher']);
+  });
+
+  it('enforces collection bounds on set and arr input ports', () => {
+    const belowMin = compileRouteGraphSource({
+      version: 1,
+      nodes: [
+        {
+          id: 'filter:set-required',
+          type: 'filter',
+          enabled: true,
+          visibility: 'internal',
+          ownership: 'manual',
+          dynamicPorts: [
+            { id: 'request.in', label: 'required request set', direction: 'input', kind: 'request', collection: { type: 'set', min: 1 } },
+            { id: 'request.out', label: 'request out', direction: 'output', kind: 'request' },
+          ],
+        },
+      ],
+      edges: [],
+    });
+
+    expect(belowMin.ok).toBe(false);
+    expect(belowMin.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'port.collection_min', nodeId: 'filter:set-required' }),
+    ]));
+
+    const aboveMax = compileRouteGraphSource({
+      version: 1,
+      nodes: [
+        {
+          id: 'source:a',
+          type: 'filter',
+          enabled: true,
+          visibility: 'internal',
+          ownership: 'manual',
+          dynamicPorts: [
+            { id: 'request.out', label: 'request out', direction: 'output', kind: 'request' },
+          ],
+        },
+        {
+          id: 'source:b',
+          type: 'filter',
+          enabled: true,
+          visibility: 'internal',
+          ownership: 'manual',
+          dynamicPorts: [
+            { id: 'request.out', label: 'request out', direction: 'output', kind: 'request' },
+          ],
+        },
+        {
+          id: 'filter:arr-limited',
+          type: 'filter',
+          enabled: true,
+          visibility: 'internal',
+          ownership: 'manual',
+          dynamicPorts: [
+            { id: 'request.in', label: 'limited request arr', direction: 'input', kind: 'request', collection: { type: 'arr', max: 1 } },
+            { id: 'request.out', label: 'request out', direction: 'output', kind: 'request' },
+          ],
+        },
+      ],
+      edges: [
+        { id: 'edge:a', sourceNodeId: 'source:a', sourcePortId: 'request.out', targetNodeId: 'filter:arr-limited', targetPortId: 'request.in', kind: 'request_flow', ownership: 'manual' },
+        { id: 'edge:b', sourceNodeId: 'source:b', sourcePortId: 'request.out', targetNodeId: 'filter:arr-limited', targetPortId: 'request.in', kind: 'request_flow', ownership: 'manual' },
+      ],
+    });
+
+    expect(aboveMax.ok).toBe(false);
+    expect(aboveMax.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'edge.collection_max', edgeId: 'edge:b' }),
+    ]));
+  });
+
+  it('enforces collection max on semantic macro input ports during compilation', () => {
+    const endpoint = (id) => ({
+      id: `endpoint:${id}`,
+      type: 'route_endpoint',
+      enabled: true,
+      visibility: 'internal',
+      ownership: 'manual',
+      endpointKind: 'supply',
+      resolutionStatus: 'resolved',
+      config: {
+        targets: [{ targetId: id, model: `model-${id}` }],
+        targetSelection: { strategy: 'weighted' },
+      },
+    });
+    const result = compileRouteGraphSource({
+      version: 1,
+      nodes: [endpoint('a'), endpoint('b')],
+      macros: [
+        {
+          id: 'macro:limited-candidates',
+          kind: 'candidate_selector',
+          enabled: true,
+          visibility: 'public',
+          ownership: 'manual',
+          config: {
+            surface: {
+              entry: {
+                kind: 'external',
+                visibility: 'public',
+                match: { requestedModelPattern: 'limited-candidates', displayName: 'limited-candidates' },
+              },
+              output: 'route',
+              ports: [
+                { id: 'bidirect.in', label: 'input', direction: 'input', kind: 'bidirect' },
+                { id: 'candidates.in', label: 'candidate inputs', direction: 'input', kind: 'route', multiple: true, collection: { type: 'set', max: 1 } },
+                { id: 'route.out', label: 'route output', direction: 'output', kind: 'route' },
+              ],
+            },
+            policy: { strategy: 'weighted' },
+            groups: [],
+          },
+        },
+      ],
+      edges: [
+        { id: 'edge:a', sourceNodeId: 'endpoint:a', sourcePortId: 'route.out', targetNodeId: 'macro:limited-candidates', targetPortId: 'candidates.in', kind: 'route_flow', ownership: 'manual' },
+        { id: 'edge:b', sourceNodeId: 'endpoint:b', sourcePortId: 'route.out', targetNodeId: 'macro:limited-candidates', targetPortId: 'candidates.in', kind: 'route_flow', ownership: 'manual' },
+      ],
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'edge.collection_max', edgeId: 'edge:b' }),
+    ]));
   });
 
   it('rejects duplicate public model names from active public entries', () => {
@@ -1343,7 +1490,7 @@ describe('routeGraph port-native source', () => {
               entry: { kind: 'embedded', input: 'bidirect' },
               output: 'route',
               ports: [
-                { id: 'reuse.in', label: 'reuse flow', direction: 'input', kind: 'bidirect', accepts: ['bidirect'], multiple: true },
+                { id: 'reuse.in', label: 'reuse flow', direction: 'input', kind: 'bidirect', multiple: true },
                 { id: 'candidates.out', label: 'candidate routes', direction: 'output', kind: 'route', multiple: true, collection: { type: 'set', min: 1 } },
               ],
             },
@@ -1443,7 +1590,7 @@ describe('routeGraph port-native source', () => {
               entry: { kind: 'embedded', input: 'bidirect' },
               output: 'route',
               ports: [
-                { id: 'reuse.in', label: 'reuse flow', direction: 'input', kind: 'bidirect', accepts: ['bidirect'], multiple: true },
+                { id: 'reuse.in', label: 'reuse flow', direction: 'input', kind: 'bidirect', multiple: true },
                 { id: 'candidates.out', label: 'candidate routes', direction: 'output', kind: 'route', multiple: true, collection: { type: 'set', min: 1 } },
               ],
             },
@@ -2160,7 +2307,7 @@ describe('routeGraph port-native source', () => {
               },
               output: 'bidirect',
               ports: [
-                { id: 'bidirect.in', label: 'incoming flow', direction: 'input', kind: 'bidirect', accepts: ['bidirect'], multiple: true },
+                { id: 'bidirect.in', label: 'incoming flow', direction: 'input', kind: 'bidirect', multiple: true },
                 { id: 'bidirect.out', label: 'selected flow', direction: 'output', kind: 'bidirect', multiple: true, collection: { type: 'arr', min: 1 } },
               ],
             },
@@ -2302,7 +2449,7 @@ describe('routeGraph port-native source', () => {
               entry: { kind: 'embedded', input: 'bidirect' },
               output: 'bidirect',
               ports: [
-                { id: 'bidirect.in', label: 'incoming flow', direction: 'input', kind: 'bidirect', accepts: ['bidirect'], multiple: true },
+                { id: 'bidirect.in', label: 'incoming flow', direction: 'input', kind: 'bidirect', multiple: true },
                 { id: 'bidirect.out', label: 'selected flow', direction: 'output', kind: 'bidirect', multiple: true, collection: { type: 'arr', min: 1 } },
               ],
             },
@@ -2389,7 +2536,7 @@ describe('routeGraph port-native source', () => {
               entry: { kind: 'embedded', input: 'bidirect' },
               output: 'bidirect',
               ports: [
-                { id: 'flow.in', label: 'incoming flow', direction: 'input', kind: 'bidirect', accepts: ['bidirect'] },
+                { id: 'flow.in', label: 'incoming flow', direction: 'input', kind: 'bidirect' },
                 { id: 'flow.out', label: 'selected flow', direction: 'output', kind: 'bidirect', collection: { type: 'arr', min: 1 } },
               ],
             },

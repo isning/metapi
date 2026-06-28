@@ -138,7 +138,7 @@ function hasRouteProgramBundle(compiledGraph: CompiledRouteGraph | null | undefi
     programs?: unknown;
     diagnostics?: unknown;
   };
-  if (candidate.version !== 3 || !candidate.matcher || typeof candidate.matcher !== 'object' || !Array.isArray(candidate.programs)) {
+  if (candidate.version !== 1 || !candidate.matcher || typeof candidate.matcher !== 'object' || !Array.isArray(candidate.programs)) {
     return false;
   }
   if (Array.isArray(candidate.diagnostics) && candidate.diagnostics.some((diagnostic) => (
@@ -150,7 +150,7 @@ function hasRouteProgramBundle(compiledGraph: CompiledRouteGraph | null | undefi
   ))) {
     return false;
   }
-  const hasV3 = candidate.programs.some((program) => (
+  const hasOperationProgram = candidate.programs.some((program) => (
     program
     && typeof program === 'object'
     && !Array.isArray(program)
@@ -158,7 +158,7 @@ function hasRouteProgramBundle(compiledGraph: CompiledRouteGraph | null | undefi
     && !!String((program as { startOpId?: unknown }).startOpId).trim()
     && Array.isArray((program as { ops?: unknown }).ops)
   ));
-  if (!hasV3) return false;
+  if (!hasOperationProgram) return false;
 
   const flatBundle = candidateGraph?.flatProgramBundle;
   if (!flatBundle || typeof flatBundle !== 'object' || Array.isArray(flatBundle)) return false;
@@ -168,7 +168,7 @@ function hasRouteProgramBundle(compiledGraph: CompiledRouteGraph | null | undefi
     programs?: unknown;
     diagnostics?: unknown;
   };
-  if (flatCandidate.version !== 4 || !flatCandidate.matcher || typeof flatCandidate.matcher !== 'object' || !Array.isArray(flatCandidate.programs)) {
+  if (flatCandidate.version !== 1 || !flatCandidate.matcher || typeof flatCandidate.matcher !== 'object' || !Array.isArray(flatCandidate.programs)) {
     return false;
   }
   if (Array.isArray(flatCandidate.diagnostics) && flatCandidate.diagnostics.some((diagnostic) => (
@@ -183,13 +183,13 @@ function hasRouteProgramBundle(compiledGraph: CompiledRouteGraph | null | undefi
   ))) {
     return false;
   }
-  const hasV4 = flatCandidate.programs.some((program) => (
+  const hasFlatProgram = flatCandidate.programs.some((program) => (
     program
     && typeof program === 'object'
     && !Array.isArray(program)
     && !!(program as { start?: unknown }).start
   ));
-  return hasV4;
+  return hasFlatProgram;
 }
 
 function nowIso(): string {
@@ -415,7 +415,7 @@ async function loadLegacyRouteGraphSource(): Promise<RouteGraphSource> {
 }
 
 function routeIdFromLegacyGraphNodeId(nodeId: string): number | null {
-  const match = /^(entry|dispatcher|pool):legacy:(\d+)$/.exec(nodeId);
+  const match = /^(entry|dispatcher):legacy:(\d+)$/.exec(nodeId);
   if (!match) return null;
   const routeId = Number(match[2]);
   return Number.isFinite(routeId) && routeId > 0 ? routeId : null;
@@ -471,7 +471,7 @@ function routeIdFromRouteTableCandidateNode(node: { id?: string; type?: string; 
     const matchRouteId = Number(node.match?.routeId);
     if (Number.isFinite(matchRouteId) && matchRouteId > 0) return Math.trunc(matchRouteId);
   }
-  const match = /^(?:entry|dispatcher|pool):legacy:(\d+)$/.exec(String(node.id || ''));
+  const match = /^(?:entry|dispatcher):legacy:(\d+)$/.exec(String(node.id || ''));
   if (!match) return null;
   const routeId = Number(match[1]);
   return Number.isFinite(routeId) && routeId > 0 ? routeId : null;
@@ -498,11 +498,6 @@ function routeIdFromRouteTableEntryNode(node: { id?: string; type?: string; matc
   if (node.type === 'auto_node') {
     const direct = Number(node.legacyRouteId);
     if (Number.isFinite(direct) && direct > 0) return Math.trunc(direct);
-    const match = /^(?:pool):legacy:(\d+)$/.exec(String(node.id || ''));
-    if (match) {
-      const routeId = Number(match[1]);
-      return Number.isFinite(routeId) && routeId > 0 ? routeId : null;
-    }
   }
   return routeIdFromRouteTableCandidateNode(node);
 }
@@ -574,9 +569,9 @@ export async function buildRouteGraphSourceFromRouteTable(
     db.select().from(schema.routeGroupSources).all(),
     db.select().from(schema.routeEndpointTargets).all(),
   ]);
-  const accountIdsWithRouteEndpointTargets = Array.from(new Set(routeEndpointTargets.map((channel) => channel.accountId)));
+  const accountIdsWithRouteEndpointTargets = Array.from(new Set(routeEndpointTargets.map((routeTarget) => routeTarget.accountId)));
   const tokenIdsWithRouteEndpointTargets = Array.from(new Set(routeEndpointTargets
-    .map((channel) => channel.tokenId)
+    .map((routeTarget) => routeTarget.tokenId)
     .filter((tokenId): tokenId is number => Number.isFinite(Number(tokenId)))));
   const [accounts, tokens, sites] = await Promise.all([
     accountIdsWithRouteEndpointTargets.length > 0 ? db.select().from(schema.accounts).all() : Promise.resolve([]),
@@ -598,10 +593,10 @@ export async function buildRouteGraphSourceFromRouteTable(
   const endpointStableTargetsByRouteId = new Map<number, Array<Record<string, unknown>>>();
   const endpointLocalRefsByRouteId = new Map<number, Array<Record<string, unknown>>>();
   const supplyEndpointSpecsByRouteId = new Map<number, Array<Record<string, unknown>>>();
-  for (const channel of routeEndpointTargets) {
-    const sourceModel = String(channel.sourceModel || '').trim();
-    const account = accountById.get(channel.accountId) || null;
-    const token = channel.tokenId ? tokenById.get(channel.tokenId) || null : null;
+  for (const routeTargetRow of routeEndpointTargets) {
+    const sourceModel = String(routeTargetRow.sourceModel || '').trim();
+    const account = accountById.get(routeTargetRow.accountId) || null;
+    const token = routeTargetRow.tokenId ? tokenById.get(routeTargetRow.tokenId) || null : null;
     const site = account ? siteById.get(account.siteId) || null : null;
     const credentialFingerprint = buildCredentialFingerprint({ site, account, token });
     const stableEndpointIdentity = {
@@ -621,56 +616,56 @@ export async function buildRouteGraphSourceFromRouteTable(
       model: sourceModel,
     };
     const localRef = {
-      localRouteId: channel.routeId,
-      routeTargetId: channel.id,
-      accountId: channel.accountId,
-      tokenId: channel.tokenId,
-      oauthRouteUnitId: channel.oauthRouteUnitId,
+      localRouteId: routeTargetRow.routeId,
+      routeTargetId: routeTargetRow.id,
+      accountId: routeTargetRow.accountId,
+      tokenId: routeTargetRow.tokenId,
+      oauthRouteUnitId: routeTargetRow.oauthRouteUnitId,
     };
-    const existingTargets = targetsByRouteId.get(channel.routeId) || [];
+    const existingTargets = targetsByRouteId.get(routeTargetRow.routeId) || [];
     const target = {
-      targetId: String(channel.id),
+      targetId: String(routeTargetRow.id),
       model: sourceModel,
       modelSource: sourceModel ? 'fixed' : 'request',
-      accountId: channel.accountId,
-      tokenId: channel.tokenId,
+      accountId: routeTargetRow.accountId,
+      tokenId: routeTargetRow.tokenId,
       siteId: site?.id ?? null,
-      weight: channel.weight,
-      priority: channel.priority,
+      weight: routeTargetRow.weight,
+      priority: routeTargetRow.priority,
       metadata: {
         ...localRef,
-        routeTargetId: channel.id,
+        routeTargetId: routeTargetRow.id,
         endpointIdentity: stableEndpointIdentity,
-        oauthRouteUnitId: channel.oauthRouteUnitId,
-        enabled: channel.enabled !== false,
-        manualOverride: channel.manualOverride === true,
-        successCount: channel.successCount || 0,
-        failCount: channel.failCount || 0,
-        consecutiveFailCount: channel.consecutiveFailCount || 0,
-        cooldownLevel: channel.cooldownLevel || 0,
-        cooldownUntil: channel.cooldownUntil || null,
+        oauthRouteUnitId: routeTargetRow.oauthRouteUnitId,
+        enabled: routeTargetRow.enabled !== false,
+        manualOverride: routeTargetRow.manualOverride === true,
+        successCount: routeTargetRow.successCount || 0,
+        failCount: routeTargetRow.failCount || 0,
+        consecutiveFailCount: routeTargetRow.consecutiveFailCount || 0,
+        cooldownLevel: routeTargetRow.cooldownLevel || 0,
+        cooldownUntil: routeTargetRow.cooldownUntil || null,
       },
     };
     existingTargets.push(target);
-    targetsByRouteId.set(channel.routeId, existingTargets);
-    const existingLocalRefs = endpointLocalRefsByRouteId.get(channel.routeId) || [];
+    targetsByRouteId.set(routeTargetRow.routeId, existingTargets);
+    const existingLocalRefs = endpointLocalRefsByRouteId.get(routeTargetRow.routeId) || [];
     existingLocalRefs.push(localRef);
-    endpointLocalRefsByRouteId.set(channel.routeId, existingLocalRefs);
-    const existingIdentities = endpointStableTargetsByRouteId.get(channel.routeId) || [];
-    endpointStableTargetsByRouteId.set(channel.routeId, [...existingIdentities, stableEndpointIdentity]);
-    const existingSupplySpecs = supplyEndpointSpecsByRouteId.get(channel.routeId) || [];
+    endpointLocalRefsByRouteId.set(routeTargetRow.routeId, existingLocalRefs);
+    const existingIdentities = endpointStableTargetsByRouteId.get(routeTargetRow.routeId) || [];
+    endpointStableTargetsByRouteId.set(routeTargetRow.routeId, [...existingIdentities, stableEndpointIdentity]);
+    const existingSupplySpecs = supplyEndpointSpecsByRouteId.get(routeTargetRow.routeId) || [];
     existingSupplySpecs.push({
       endpointIdentity: stableEndpointIdentity,
       endpointLocalRefs: [localRef],
       targets: [target],
     });
-    supplyEndpointSpecsByRouteId.set(channel.routeId, existingSupplySpecs);
+    supplyEndpointSpecsByRouteId.set(routeTargetRow.routeId, existingSupplySpecs);
     if (!sourceModel) {
       continue;
     }
-    const existing = sourceModelsByRouteId.get(channel.routeId) || [];
+    const existing = sourceModelsByRouteId.get(routeTargetRow.routeId) || [];
     if (!existing.includes(sourceModel)) existing.push(sourceModel);
-    sourceModelsByRouteId.set(channel.routeId, existing);
+    sourceModelsByRouteId.set(routeTargetRow.routeId, existing);
   }
   const availableModelsByAccountId = new Map<number, string[]>();
   if (accountIdsWithRouteEndpointTargets.length > 0) {
@@ -686,7 +681,7 @@ export async function buildRouteGraphSourceFromRouteTable(
   }
   for (const route of routes) {
     if (sourceModelsByRouteId.has(route.id)) continue;
-    const routeTargets = routeEndpointTargets.filter((channel) => channel.routeId === route.id);
+    const routeTargets = routeEndpointTargets.filter((routeTarget) => routeTarget.routeId === route.id);
     if (routeTargets.length === 0) continue;
     const routeAccountModelSet = new Set<string>();
     for (const target of routeTargets) {
@@ -1175,7 +1170,7 @@ export async function listRouteEndpointCatalog(): Promise<RouteEndpointCatalogIt
   const routeSiteNames = new Map<number, Set<string>>();
   const routeModels = new Map<number, Set<string>>();
   const routeTargetCounts = new Map<number, number>();
-  const accountIds = Array.from(new Set(routeEndpointTargets.map((channel) => channel.accountId).filter((id): id is number => Number.isFinite(Number(id)))));
+  const accountIds = Array.from(new Set(routeEndpointTargets.map((routeTarget) => routeTarget.accountId).filter((id): id is number => Number.isFinite(Number(id)))));
   const accounts = accountIds.length > 0
     ? await db.select().from(schema.accounts).all()
     : [];
@@ -1184,21 +1179,21 @@ export async function listRouteEndpointCatalog(): Promise<RouteEndpointCatalogIt
     : [];
   const accountById = new Map<number, typeof accounts[number]>(accounts.map((account) => [account.id, account]));
   const siteById = new Map<number, typeof sites[number]>(sites.map((site) => [site.id, site]));
-  for (const channel of routeEndpointTargets) {
-    routeTargetCounts.set(channel.routeId, (routeTargetCounts.get(channel.routeId) || 0) + 1);
-    const model = String(channel.sourceModel || '').trim();
+  for (const routeTarget of routeEndpointTargets) {
+    routeTargetCounts.set(routeTarget.routeId, (routeTargetCounts.get(routeTarget.routeId) || 0) + 1);
+    const model = String(routeTarget.sourceModel || '').trim();
     if (model) {
-      const models = routeModels.get(channel.routeId) || new Set<string>();
+      const models = routeModels.get(routeTarget.routeId) || new Set<string>();
       models.add(model);
-      routeModels.set(channel.routeId, models);
+      routeModels.set(routeTarget.routeId, models);
     }
-    const account = accountById.get(channel.accountId);
+    const account = accountById.get(routeTarget.accountId);
     const site = account ? siteById.get(account.siteId) : null;
     const siteName = String(site?.name || '').trim();
     if (siteName) {
-      const names = routeSiteNames.get(channel.routeId) || new Set<string>();
+      const names = routeSiteNames.get(routeTarget.routeId) || new Set<string>();
       names.add(siteName);
-      routeSiteNames.set(channel.routeId, names);
+      routeSiteNames.set(routeTarget.routeId, names);
     }
   }
   const normalizeTextList = (values: unknown[]) => Array.from(new Set(values

@@ -86,12 +86,12 @@ describe('TokenRouter downstream policy', () => {
 
     const router = new TokenRouter();
 
-    const allowedPick = await router.selectChannel('claude-opus-4-6', {
+    const allowedPick = await router.selectTarget('claude-opus-4-6', {
       allowedRouteIds: [routeAllowed.id],
       supportedModels: [],
       siteWeightMultipliers: {},
     });
-    const blockedPick = await router.selectChannel('gpt-4o-mini', {
+    const blockedPick = await router.selectTarget('gpt-4o-mini', {
       allowedRouteIds: [routeAllowed.id],
       supportedModels: [],
       siteWeightMultipliers: {},
@@ -133,7 +133,7 @@ describe('TokenRouter downstream policy', () => {
     }).run();
 
     const router = new TokenRouter();
-    const deniedPick = await router.selectChannel('gpt-4o-mini', {
+    const deniedPick = await router.selectTarget('gpt-4o-mini', {
       allowedRouteIds: [],
       supportedModels: [],
       siteWeightMultipliers: {},
@@ -359,8 +359,8 @@ describe('TokenRouter downstream policy', () => {
       siteWeightMultipliers: {},
     };
 
-    const claudePick = await router.selectChannel('claude-opus-4-6', policy);
-    const gptPick = await router.selectChannel('gpt-4o-mini', policy);
+    const claudePick = await router.selectTarget('claude-opus-4-6', policy);
+    const gptPick = await router.selectTarget('gpt-4o-mini', policy);
 
     expect(claudePick?.target.routeId).toBe(claudeGroupRoute.id);
     expect(gptPick?.target.routeId).toBe(gptExactRoute.id);
@@ -405,7 +405,7 @@ describe('TokenRouter downstream policy', () => {
       excludedCredentialRefs: [],
     };
 
-    const pick = await router.selectChannel('gpt-4o-mini', policy);
+    const pick = await router.selectTarget('gpt-4o-mini', policy);
     const decision = await router.explainSelectionForRoute(route.id, 'gpt-4o-mini', [], policy);
     const candidate = decision.candidates.find((item) => item.targetId === channel.id);
 
@@ -487,7 +487,7 @@ describe('TokenRouter downstream policy', () => {
       ],
     };
 
-    const pick = await router.selectChannel('claude-sonnet-4-6', policy);
+    const pick = await router.selectTarget('claude-sonnet-4-6', policy);
     const decision = await router.explainSelectionForRoute(route.id, 'claude-sonnet-4-6', [], policy);
     const blockedCandidate = decision.candidates.find((item) => item.targetId === blockedChannel.id);
     const allowedCandidate = decision.candidates.find((item) => item.targetId === allowedChannel.id);
@@ -554,7 +554,7 @@ describe('TokenRouter downstream policy', () => {
       ],
     };
 
-    const pick = await router.selectChannel('gpt-5-mini', policy);
+    const pick = await router.selectTarget('gpt-5-mini', policy);
     const decision = await router.explainSelectionForRoute(route.id, 'gpt-5-mini', [], policy);
     const blockedCandidate = decision.candidates.find((item) => item.targetId === blockedChannel.id);
 

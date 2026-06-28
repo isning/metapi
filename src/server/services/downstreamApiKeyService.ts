@@ -3,6 +3,7 @@ import { minimatch } from 'minimatch';
 import { db, schema } from '../db/index.js';
 import { config } from '../config.js';
 import { loadActiveRouteGraphRouteBindings } from './routeGraphService.js';
+import { getRouteGraphExposedModelName } from '../../shared/routeGraph.js';
 import {
   EMPTY_DOWNSTREAM_ROUTING_POLICY,
   type DownstreamExcludedCredentialRef,
@@ -309,6 +310,7 @@ async function isModelMatchedByAllowedRoutes(model: string, allowedRouteIds: num
   const routeBindings = await loadActiveRouteGraphRouteBindings();
   const routes = await db.select({
     id: schema.tokenRoutes.id,
+    displayName: schema.tokenRoutes.displayName,
   })
     .from(schema.tokenRoutes)
     .where(and(
@@ -319,7 +321,12 @@ async function isModelMatchedByAllowedRoutes(model: string, allowedRouteIds: num
 
   return routes.some((route) => {
     const binding = routeBindings.get(route.id);
-    return !!binding && binding.exposedModelName === model;
+    if (binding) {
+      return binding.exposedModelName === model
+        || getRouteGraphExposedModelName(binding.match, binding.backend) === model;
+    }
+    const displayName = String(route.displayName || '').trim();
+    return displayName === model;
   });
 }
 

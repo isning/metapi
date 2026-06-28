@@ -3,24 +3,17 @@ export type RouteGraphNodeType = 'entry' | 'route_endpoint' | 'filter' | 'dispat
 export type RouteGraphPortKind =
   | 'request'
   | 'bidirect'
-  | 'route'
-  | 'response'
-  | 'control'
-  | 'metrics';
+  | 'route';
 export type RouteGraphEdgeKind =
   | 'request_flow'
   | 'bidirect_flow'
-  | 'route_flow'
-  | 'response_flow'
-  | 'control_flow'
-  | 'metrics_link';
+  | 'route_flow';
 
 export type RouteGraphPort = {
   id: string;
   label: string;
   direction: 'input' | 'output';
   kind: RouteGraphPortKind;
-  accepts?: RouteGraphPortKind[];
   required?: boolean;
   multiple?: boolean;
   collection?: { type: 'single' } | { type: 'arr'; min?: number; max?: number } | { type: 'set'; min?: number; max?: number };

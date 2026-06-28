@@ -73,9 +73,13 @@ async function readRouteAwareModels(request: FastifyRequest): Promise<ListedMode
   const publicGraphModels = (activeGraph.compiledGraph.publicModels || [])
     .map((item) => String(item.model || '').trim())
     .filter(Boolean);
+  const routableModels = typeof tokenRouter.getAvailableModels === 'function'
+    ? await tokenRouter.getAvailableModels()
+    : [];
   const deduped = Array.from(new Set([
     ...rows.map((row) => String(row.modelName || '').trim()).filter(Boolean),
     ...publicGraphModels,
+    ...routableModels,
   ])).sort();
 
   const allowed: ListedModel[] = [];
@@ -91,7 +95,7 @@ async function readRouteAwareModels(request: FastifyRequest): Promise<ListedMode
   return allowed;
 }
 
-async function selectModelListChannel(
+async function selectModelListTarget(
   request: FastifyRequest,
   adapter: DownstreamProtocolAdapter,
   forcedTargetId: number | null,
@@ -128,7 +132,7 @@ export async function handleModelListSurfaceRequest(
   let lastContentType = 'application/json';
 
   while (retryCount <= 3) {
-    const selected = await selectModelListChannel(request, adapter, forcedTargetId, excludeTargetIds, retryCount);
+    const selected = await selectModelListTarget(request, adapter, forcedTargetId, excludeTargetIds, retryCount);
     if (!selected) {
       return reply.code(lastStatus).type(lastContentType).send(lastText);
     }

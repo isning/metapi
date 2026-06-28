@@ -4,7 +4,7 @@ import {
   matchesTokenRouteModelPattern,
 } from './tokenRoutePatterns.js';
 
-export const ROUTE_GRAPH_SCHEMA_VERSION = 2;
+export const ROUTE_GRAPH_SCHEMA_VERSION = 1;
 export const ROUTE_GRAPH_MATCH_KIND_MODEL = 'model';
 export const ROUTE_GRAPH_BACKEND_KIND_SUPPLY = 'supply';
 export const ROUTE_GRAPH_BACKEND_KIND_ROUTES = 'routes';
@@ -39,21 +39,15 @@ export const ROUTE_GRAPH_PORT_KINDS = Object.freeze([
   'request',
   'bidirect',
   'route',
-  'response',
-  'control',
-  'metrics',
 ]);
 export const ROUTE_GRAPH_EDGE_KINDS = Object.freeze([
   'request_flow',
   'bidirect_flow',
   'route_flow',
-  'response_flow',
-  'control_flow',
-  'metrics_link',
 ]);
 export const ROUTE_GRAPH_MACRO_KINDS = Object.freeze(['candidate_selector']);
-export const ROUTE_PROGRAM_BUNDLE_VERSION = 3;
-export const ROUTE_FLAT_PROGRAM_BUNDLE_VERSION = 4;
+export const ROUTE_PROGRAM_BUNDLE_VERSION = 1;
+export const ROUTE_FLAT_PROGRAM_BUNDLE_VERSION = 1;
 export const ROUTE_GRAPH_CANDIDATE_SELECTOR_INPUT_KINDS = Object.freeze([
   'route_endpoints',
   'model_pattern',
@@ -85,7 +79,6 @@ function buildCandidateSelectorDefaultSurfacePorts(surface) {
       label: inputKind === 'request' ? 'request input' : 'incoming flow',
       direction: 'input',
       kind: inputKind,
-      accepts: [inputKind],
       multiple: true,
     },
     {
@@ -93,7 +86,6 @@ function buildCandidateSelectorDefaultSurfacePorts(surface) {
       label: 'candidate inputs',
       direction: 'input',
       kind: 'route',
-      accepts: ['route'],
       multiple: true,
       collection: { type: 'set', min: 1 },
     },
@@ -114,9 +106,6 @@ const ROUTE_GRAPH_EDGE_KIND_BY_PORT_KIND = Object.freeze({
   request: 'request_flow',
   bidirect: 'bidirect_flow',
   route: 'route_flow',
-  response: 'response_flow',
-  control: 'control_flow',
-  metrics: 'metrics_link',
 });
 
 const ROUTE_GRAPH_DEFAULT_PORTS = Object.freeze({
@@ -125,26 +114,26 @@ const ROUTE_GRAPH_DEFAULT_PORTS = Object.freeze({
   ],
   route_endpoint: [
     { id: 'route.out', label: 'route product', direction: 'output', kind: 'route' },
-    { id: 'bidirect.in', label: 'invoke route', direction: 'input', kind: 'bidirect', accepts: ['bidirect'], multiple: true },
+    { id: 'bidirect.in', label: 'invoke route', direction: 'input', kind: 'bidirect', multiple: true },
   ],
   filter: [
-    { id: 'request.in', label: 'before mutation', direction: 'input', kind: 'request', accepts: ['request'] },
+    { id: 'request.in', label: 'before mutation', direction: 'input', kind: 'request' },
     { id: 'request.out', label: 'after mutation', direction: 'output', kind: 'request' },
-    { id: 'bidirect.in', label: 'before round trip', direction: 'input', kind: 'bidirect', accepts: ['bidirect'] },
+    { id: 'bidirect.in', label: 'before round trip', direction: 'input', kind: 'bidirect' },
     { id: 'bidirect.out', label: 'after round trip', direction: 'output', kind: 'bidirect' },
   ],
   dispatcher: [
-    { id: 'bidirect.in', label: 'dispatch input', direction: 'input', kind: 'bidirect', accepts: ['bidirect'], required: true },
+    { id: 'bidirect.in', label: 'dispatch input', direction: 'input', kind: 'bidirect', required: true },
     { id: 'bidirect[1...].out', label: 'dispatch path', direction: 'output', kind: 'bidirect', multiple: true, collection: { type: 'arr', min: 1 } },
-    { id: 'route.in', label: 'endpoint candidates', direction: 'input', kind: 'route', accepts: ['route'], multiple: true, collection: { type: 'set', min: 1 } },
+    { id: 'route.in', label: 'endpoint candidates', direction: 'input', kind: 'route', multiple: true, collection: { type: 'set', min: 1 } },
   ],
   synthetic_endpoint: [
     { id: 'route.out', label: 'synthetic target', direction: 'output', kind: 'route' },
-    { id: 'bidirect.in', label: 'return response', direction: 'input', kind: 'bidirect', accepts: ['bidirect'], multiple: true },
+    { id: 'bidirect.in', label: 'return response', direction: 'input', kind: 'bidirect', multiple: true },
   ],
   auto_node: [
-    { id: 'route.in', label: 'candidate targets', direction: 'input', kind: 'route', accepts: ['route'], multiple: true, collection: { type: 'set' } },
-    { id: 'bidirect.in', label: 'route input', direction: 'input', kind: 'bidirect', accepts: ['bidirect'] },
+    { id: 'route.in', label: 'candidate targets', direction: 'input', kind: 'route', multiple: true, collection: { type: 'set' } },
+    { id: 'bidirect.in', label: 'route input', direction: 'input', kind: 'bidirect' },
     { id: 'bidirect.out', label: 'selected path', direction: 'output', kind: 'bidirect' },
   ],
 });
@@ -173,6 +162,13 @@ function normalizePositiveInteger(input) {
   return normalized > 0 ? normalized : null;
 }
 
+function normalizeNonNegativeInteger(input) {
+  const value = Number(input);
+  if (!Number.isFinite(value)) return null;
+  const normalized = Math.trunc(value);
+  return normalized >= 0 ? normalized : null;
+}
+
 function normalizeEnum(input, allowed, fallback) {
   return allowed.includes(input) ? input : fallback;
 }
@@ -194,28 +190,49 @@ function normalizeRouteGraphPort(input) {
   const raw = isPlainObject(input) ? input : {};
   const kind = normalizeEnum(raw.kind, ROUTE_GRAPH_PORT_KINDS, 'request');
   const direction = raw.direction === 'output' ? 'output' : 'input';
-  const accepts = Array.isArray(raw.accepts)
-    ? raw.accepts.filter((item) => ROUTE_GRAPH_PORT_KINDS.includes(item))
-    : undefined;
   const collection = isPlainObject(raw.collection)
-    ? {
-      type: normalizeEnum(raw.collection.type, ['single', 'arr', 'set'], 'single'),
-      ...(normalizePositiveInteger(raw.collection.min) ? { min: normalizePositiveInteger(raw.collection.min) } : {}),
-      ...(normalizePositiveInteger(raw.collection.max) ? { max: normalizePositiveInteger(raw.collection.max) } : {}),
-    }
+    ? normalizeRouteGraphPortCollection(raw.collection)
     : undefined;
   return {
     id: normalizeString(raw.id),
     label: normalizeString(raw.label) || normalizeString(raw.id) || kind,
     direction,
     kind,
-    ...(accepts && accepts.length > 0 ? { accepts: Array.from(new Set(accepts)) } : {}),
     ...(raw.required === true ? { required: true } : {}),
     ...(raw.multiple === true ? { multiple: true } : {}),
     ...(collection ? { collection } : {}),
     ...(raw.readonly === true ? { readonly: true } : {}),
     ...(raw.enabled === false ? { enabled: false } : {}),
     ...(normalizeString(raw.description) ? { description: normalizeString(raw.description) } : {}),
+  };
+}
+
+function normalizeRouteGraphPortCollection(input) {
+  const raw = isPlainObject(input) ? input : {};
+  const type = normalizeEnum(raw.type, ['single', 'arr', 'set'], 'single');
+  if (type === 'single') return { type };
+  const min = normalizeNonNegativeInteger(raw.min);
+  const max = normalizeNonNegativeInteger(raw.max);
+  return {
+    type,
+    ...(min !== null ? { min } : {}),
+    ...(max !== null ? { max } : {}),
+  };
+}
+
+export function getRouteGraphPortConnectionBounds(port) {
+  const collection = port?.collection;
+  if (collection && (collection.type === 'arr' || collection.type === 'set')) {
+    return {
+      min: typeof collection.min === 'number' ? collection.min : 0,
+      max: typeof collection.max === 'number' ? collection.max : Infinity,
+      collection: true,
+    };
+  }
+  return {
+    min: 0,
+    max: port?.multiple === true ? Infinity : 1,
+    collection: false,
   };
 }
 
@@ -691,7 +708,6 @@ function normalizeMacroSurfacePort(input) {
     label: normalizeString(raw.label) || normalizeString(raw.id) || kind,
     direction: raw.direction === 'output' ? 'output' : 'input',
     kind,
-    ...(Array.isArray(raw.accepts) ? { accepts: raw.accepts } : {}),
     ...(raw.required === true ? { required: true } : {}),
     ...(raw.multiple === true ? { multiple: true } : {}),
     ...(isPlainObject(raw.collection) ? { collection: raw.collection } : {}),
@@ -968,6 +984,10 @@ function isInactiveDispatcherModeEdge(edge, sourceNode, targetNode) {
   return false;
 }
 
+function formatPortBound(value) {
+  return Number.isFinite(value) ? String(value) : 'unbounded';
+}
+
 function buildAdjacency(nodesById, edges, diagnostics) {
   const adjacency = new Map();
   for (const nodeId of nodesById.keys()) adjacency.set(nodeId, []);
@@ -1013,28 +1033,55 @@ function buildAdjacency(nodesById, edges, diagnostics) {
       addDiagnostic(diagnostics, 'error', 'edge.invalid_target_port', `Edge target port ${edge.targetPortId} is not an input port.`, edge.targetNodeId, edge.id);
       continue;
     }
-    const accepts = targetPort.accepts || [targetPort.kind];
-    if (!accepts.includes(sourcePort.kind)) {
+    if (sourcePort.kind !== targetPort.kind) {
       addDiagnostic(diagnostics, 'error', 'edge.incompatible_ports', `${sourcePort.kind} cannot connect to ${targetPort.kind}.`, edge.targetNodeId, edge.id);
       continue;
-    }
-    const incomingKey = `${edge.targetNodeId}\u0000${edge.targetPortId}`;
-    if (!targetPort.multiple && incomingByPort.has(incomingKey)) {
-      addDiagnostic(diagnostics, 'error', 'edge.duplicate_input', `Input port ${edge.targetPortId} on ${edge.targetNodeId} already has a connection.`, edge.targetNodeId, edge.id);
-      continue;
-    }
-    incomingByPort.set(incomingKey, edge.id);
-    const expectedKind = inferEdgeKindFromPorts(sourcePort, targetPort);
-    if (edge.kind !== expectedKind) {
-      addDiagnostic(diagnostics, 'warning', 'edge.kind_mismatch', `Edge kind ${edge.kind} does not match port flow ${expectedKind}.`, edge.sourceNodeId, edge.id);
     }
     const key = `${edge.sourceNodeId}\u0000${edge.sourcePortId}\u0000${edge.targetNodeId}\u0000${edge.targetPortId}`;
     if (dedupe.has(key)) {
       addDiagnostic(diagnostics, 'warning', 'edge.duplicate', 'Duplicate edge ignored by compiler.', edge.sourceNodeId, edge.id);
       continue;
     }
+    const incomingKey = `${edge.targetNodeId}\u0000${edge.targetPortId}`;
+    const incomingCount = incomingByPort.get(incomingKey)?.count || 0;
+    const bounds = getRouteGraphPortConnectionBounds(targetPort);
+    if (incomingCount >= bounds.max) {
+      const code = bounds.collection ? 'edge.collection_max' : 'edge.duplicate_input';
+      const message = bounds.collection
+        ? `Input port ${edge.targetPortId} on ${edge.targetNodeId} allows at most ${formatPortBound(bounds.max)} connections.`
+        : `Input port ${edge.targetPortId} on ${edge.targetNodeId} already has a connection.`;
+      addDiagnostic(diagnostics, 'error', code, message, edge.targetNodeId, edge.id);
+      continue;
+    }
+    incomingByPort.set(incomingKey, {
+      nodeId: edge.targetNodeId,
+      portId: edge.targetPortId,
+      count: incomingCount + 1,
+    });
+    const expectedKind = inferEdgeKindFromPorts(sourcePort, targetPort);
+    if (edge.kind !== expectedKind) {
+      addDiagnostic(diagnostics, 'warning', 'edge.kind_mismatch', `Edge kind ${edge.kind} does not match port flow ${expectedKind}.`, edge.sourceNodeId, edge.id);
+    }
     dedupe.add(key);
     adjacency.get(edge.sourceNodeId).push(edge.targetNodeId);
+  }
+  for (const node of nodesById.values()) {
+    for (const port of getRouteGraphNodePorts(node)) {
+      if (port.enabled === false || port.direction !== 'input') continue;
+      const bounds = getRouteGraphPortConnectionBounds(port);
+      if (bounds.min <= 0) continue;
+      const incomingKey = `${node.id}\u0000${port.id}`;
+      const count = incomingByPort.get(incomingKey)?.count || 0;
+      if (count < bounds.min) {
+        addDiagnostic(
+          diagnostics,
+          'error',
+          'port.collection_min',
+          `Input port ${port.id} on ${node.id} requires at least ${formatPortBound(bounds.min)} connections.`,
+          node.id,
+        );
+      }
+    }
   }
   return adjacency;
 }
@@ -1174,7 +1221,7 @@ function legacyRouteIdFromRouteGraphNode(node) {
   if (node.type === 'entry' && Number.isFinite(Number(node.match?.routeId)) && Number(node.match.routeId) > 0) {
     return Math.trunc(Number(node.match.routeId));
   }
-  const match = /^(?:entry|pool):legacy:(\d+)$/.exec(String(node.id || ''));
+  const match = /^(?:entry):legacy:(\d+)$/.exec(String(node.id || ''));
   if (!match) return null;
   const routeId = Number(match[1]);
   return Number.isFinite(routeId) && routeId > 0 ? routeId : null;
@@ -1754,7 +1801,7 @@ function buildRouteProgramOpsForEntry(input) {
   };
 }
 
-function buildRouteProgramBundleV3(input) {
+function buildRouteProgramBundle(input) {
   const semanticSource = normalizeRouteGraphSource(input?.semanticSource);
   const primitiveSource = normalizeRouteGraphSource(input?.primitiveSource);
   const compiledGraph = isPlainObject(input?.compiledGraph) ? input.compiledGraph : {};
@@ -2095,7 +2142,7 @@ function buildFlatDecisionFromRouteProgramOps(input) {
   return null;
 }
 
-function buildRouteProgramBundleV4FromV3(bundle) {
+function buildRouteFlatProgramBundle(bundle) {
   const diagnostics = Array.isArray(bundle?.diagnostics) ? [...bundle.diagnostics] : [];
   const programs = [];
   for (const program of Array.isArray(bundle?.programs) ? bundle.programs : []) {
@@ -2648,6 +2695,47 @@ function lowerCandidateSelectorMacro(macro, source) {
   return { macro, nodes, edges, diagnostics, semanticNodeId, entryId, entryTargetId, dispatcherId, candidateNodeIds };
 }
 
+function validateMacroSemanticInputCollectionBounds(source, macroLoweringsBySemanticId, diagnostics) {
+  const nodesById = new Map((source.nodes || []).map((node) => [node.id, node]));
+  const incomingByPort = new Map();
+  const dedupe = new Set();
+  for (const edge of source.edges || []) {
+    const sourceMacro = macroLoweringsBySemanticId.get(edge.sourceNodeId);
+    const targetMacro = macroLoweringsBySemanticId.get(edge.targetNodeId);
+    if (!targetMacro || sourceMacro || targetMacro.macro?.enabled === false) continue;
+    const sourcePort = getRouteGraphNodePort(nodesById.get(edge.sourceNodeId), edge.sourcePortId);
+    const targetPort = getRouteGraphMacroPort(targetMacro.macro, edge.targetPortId);
+    if (!sourcePort || !targetPort) continue;
+    if (sourcePort.enabled === false || targetPort.enabled === false) continue;
+    if (sourcePort.direction !== 'output' || targetPort.direction !== 'input') continue;
+    if (sourcePort.kind !== targetPort.kind) continue;
+    const bounds = getRouteGraphPortConnectionBounds(targetPort);
+    if (!bounds.collection || !Number.isFinite(bounds.max)) continue;
+    const dedupeKey = [
+      edge.sourceNodeId || '',
+      edge.sourcePortId || '',
+      targetMacro.semanticNodeId || edge.targetNodeId || '',
+      edge.targetPortId || '',
+    ].join('\u0000');
+    if (dedupe.has(dedupeKey)) continue;
+    dedupe.add(dedupeKey);
+    const incomingKey = `${targetMacro.semanticNodeId || edge.targetNodeId}\u0000${edge.targetPortId}`;
+    const incomingCount = incomingByPort.get(incomingKey) || 0;
+    if (incomingCount >= bounds.max) {
+      addDiagnostic(
+        diagnostics,
+        'error',
+        'edge.collection_max',
+        `Input port ${edge.targetPortId} on ${edge.targetNodeId} allows at most ${formatPortBound(bounds.max)} connections.`,
+        edge.targetNodeId,
+        edge.id,
+      );
+      continue;
+    }
+    incomingByPort.set(incomingKey, incomingCount + 1);
+  }
+}
+
 export function lowerRouteGraphSource(sourceInput) {
   const source = normalizeRouteGraphSource(sourceInput);
   const diagnostics = [];
@@ -2667,6 +2755,7 @@ export function lowerRouteGraphSource(sourceInput) {
     }
     addDiagnostic(diagnostics, 'error', 'macro.unknown_kind', `Unknown route graph macro kind ${macro.kind}.`);
   }
+  validateMacroSemanticInputCollectionBounds(source, macroLoweringsBySemanticId, diagnostics);
   const semanticEdges = [];
   const primitiveEdges = [];
   for (const edge of source.edges) {
@@ -3007,12 +3096,12 @@ function compileRouteGraph(sourceInput) {
       macros: lowered.semanticSource.macros,
     }),
   };
-  const programBundle = buildRouteProgramBundleV3({
+  const programBundle = buildRouteProgramBundle({
     semanticSource: lowered.semanticSource,
     primitiveSource: lowered.primitiveSource,
     compiledGraph: nextCompiledGraph,
   });
-  const flatProgramBundle = buildRouteProgramBundleV4FromV3(programBundle);
+  const flatProgramBundle = buildRouteFlatProgramBundle(programBundle);
   const diagnostics = [
     ...compiled.diagnostics,
     ...(Array.isArray(programBundle.diagnostics) ? programBundle.diagnostics : []),
@@ -3248,7 +3337,7 @@ export function buildRouteGraphSourceFromLegacyRoutes(routesInput) {
     }
 
     const productEndpointId = binding.productEndpointId;
-    const channelSupplySpecs = backend.kind === ROUTE_GRAPH_BACKEND_KIND_SUPPLY
+    const supplyEndpointSpecs = backend.kind === ROUTE_GRAPH_BACKEND_KIND_SUPPLY
       ? (binding.supplyEndpointSpecs.length > 0
         ? binding.supplyEndpointSpecs
         : [{
@@ -3283,7 +3372,7 @@ export function buildRouteGraphSourceFromLegacyRoutes(routesInput) {
       metadata: routeBindingMetadata,
       provenance: route.provenance || { source: 'legacy', routeId },
     });
-    for (const spec of channelSupplySpecs) {
+    for (const spec of supplyEndpointSpecs) {
       const supplyEndpointId = spec.endpointId;
       pushOrMergeSupplyEndpointNode({
         id: supplyEndpointId,
@@ -3406,7 +3495,7 @@ export function buildRouteGraphSourceFromLegacyRoutes(routesInput) {
         metadata: routeBindingMetadata,
         provenance: route.provenance || { source: 'legacy', routeId },
       });
-      for (const spec of channelSupplySpecs) {
+      for (const spec of supplyEndpointSpecs) {
         edges.push(normalizeRouteGraphEdge({
           id: `edge:${spec.endpointId}:route.out:${dispatcherId}:route.in`,
           sourceNodeId: spec.endpointId,

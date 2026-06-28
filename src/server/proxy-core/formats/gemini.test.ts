@@ -8,9 +8,9 @@ const fetchMock = vi.fn();
 const fetchModelPricingCatalogMock = vi.fn();
 const refreshModelsAndRebuildRoutesMock = vi.fn();
 const refreshOauthAccessTokenSingleflightMock = vi.fn();
-const selectChannelMock = vi.fn();
-const selectNextChannelMock = vi.fn();
-const selectPreferredChannelMock = vi.fn();
+const selectTargetMock = vi.fn();
+const selectNextTargetMock = vi.fn();
+const selectPreferredTargetMock = vi.fn();
 const recordSuccessMock = vi.fn();
 const recordFailureMock = vi.fn();
 const explainSelectionMock = vi.fn();
@@ -58,6 +58,8 @@ vi.mock('undici', async () => {
 
 vi.mock('../../services/modelPricingService.js', () => ({
   fetchModelPricingCatalog: (...args: unknown[]) => fetchModelPricingCatalogMock(...args),
+  estimateProxyCost: async () => 0,
+  buildProxyBillingDetails: async () => null,
 }));
 
 vi.mock('../../services/modelService.js', () => ({
@@ -70,9 +72,9 @@ vi.mock('../../services/oauth/refreshSingleflight.js', () => ({
 
 vi.mock('../../services/tokenRouter.js', () => ({
   tokenRouter: {
-    selectChannel: (...args: unknown[]) => selectChannelMock(...args),
-    selectNextChannel: (...args: unknown[]) => selectNextChannelMock(...args),
-    selectPreferredChannel: (...args: unknown[]) => selectPreferredChannelMock(...args),
+    selectTarget: (...args: unknown[]) => selectTargetMock(...args),
+    selectNextTarget: (...args: unknown[]) => selectNextTargetMock(...args),
+    selectPreferredTarget: (...args: unknown[]) => selectPreferredTargetMock(...args),
     recordSuccess: (...args: unknown[]) => recordSuccessMock(...args),
     recordFailure: (...args: unknown[]) => recordFailureMock(...args),
     explainSelection: (...args: unknown[]) => explainSelectionMock(...args),
@@ -109,6 +111,14 @@ vi.mock('../../services/routeGraphService.js', async (importOriginal) => ({
     createdAt: '2026-06-18 00:00:00',
     activatedAt: '2026-06-18 00:00:00',
   }),
+}));
+
+vi.mock('../../services/credentialEndpointBindingService.js', () => ({
+  loadCredentialApiVariantConfig: async () => null,
+}));
+
+vi.mock('../../services/proxyLogRouteDecisionSnapshot.js', () => ({
+  buildProxyLogRouteDecisionSnapshot: async () => null,
 }));
 
 vi.mock('../../db/index.js', () => ({
@@ -210,9 +220,9 @@ describe('gemini native proxy routes', () => {
     fetchModelPricingCatalogMock.mockReset();
     refreshModelsAndRebuildRoutesMock.mockReset();
     refreshOauthAccessTokenSingleflightMock.mockReset();
-    selectChannelMock.mockReset();
-    selectNextChannelMock.mockReset();
-    selectPreferredChannelMock.mockReset();
+    selectTargetMock.mockReset();
+    selectNextTargetMock.mockReset();
+    selectPreferredTargetMock.mockReset();
     recordSuccessMock.mockReset();
     recordFailureMock.mockReset();
     explainSelectionMock.mockReset();
@@ -255,16 +265,16 @@ describe('gemini native proxy routes', () => {
     dbSelectGetMock.mockResolvedValue(null);
     dbSelectAllMock.mockResolvedValue([]);
 
-    selectChannelMock.mockReturnValue({
-      channel: { id: 11, routeId: 22 },
+    selectTargetMock.mockReturnValue({
+      target: { id: 11, routeId: 22 },
       site: { id: 44, name: 'gemini-site', url: 'https://generativelanguage.googleapis.com', platform: 'gemini' },
       account: { id: 33, username: 'demo-user' },
       tokenName: 'default',
       tokenValue: 'gemini-key',
       actualModel: 'gemini-2.5-flash',
     });
-    selectNextChannelMock.mockReturnValue(null);
-    selectPreferredChannelMock.mockReturnValue(null);
+    selectNextTargetMock.mockReturnValue(null);
+    selectPreferredTargetMock.mockReturnValue(null);
     recordSuccessMock.mockResolvedValue(undefined);
     recordFailureMock.mockResolvedValue(undefined);
     resetUpstreamEndpointRuntimeState();
@@ -306,8 +316,8 @@ describe('gemini native proxy routes', () => {
   });
 
   it('falls back to the next channel for listModels when first Gemini channel fails', async () => {
-    selectNextChannelMock.mockReturnValue({
-      channel: { id: 12, routeId: 22 },
+    selectNextTargetMock.mockReturnValue({
+      target: { id: 12, routeId: 22 },
       site: { id: 45, name: 'gemini-site-2', url: 'https://generativelanguage.googleapis.com', platform: 'gemini' },
       account: { id: 34, username: 'demo-user-2' },
       tokenName: 'fallback',
@@ -352,10 +362,10 @@ describe('gemini native proxy routes', () => {
   });
 
   it('pins /v1beta/models to the forced tester channel when present', async () => {
-    selectPreferredChannelMock
+    selectPreferredTargetMock
       .mockReturnValueOnce(null)
       .mockReturnValueOnce({
-        channel: { id: 77, routeId: 22 },
+        target: { id: 77, routeId: 22 },
         site: { id: 88, name: 'forced-gemini-site', url: 'https://generativelanguage.googleapis.com', platform: 'gemini' },
         account: { id: 39, username: 'forced-user' },
         tokenName: 'forced',
@@ -379,22 +389,22 @@ describe('gemini native proxy routes', () => {
       headers: {
         authorization: 'Bearer sk-managed-gemini',
         'x-metapi-tester-request': '1',
-        'x-metapi-tester-forced-channel-id': '77',
+        'x-metapi-tester-forced-target-id': '77',
       },
     });
 
     expect(response.statusCode).toBe(200);
-    expect(selectChannelMock).not.toHaveBeenCalled();
-    expect(selectNextChannelMock).not.toHaveBeenCalled();
-    expect(selectPreferredChannelMock).toHaveBeenCalledTimes(2);
-    expect(selectPreferredChannelMock).toHaveBeenNthCalledWith(
+    expect(selectTargetMock).not.toHaveBeenCalled();
+    expect(selectNextTargetMock).not.toHaveBeenCalled();
+    expect(selectPreferredTargetMock).toHaveBeenCalledTimes(2);
+    expect(selectPreferredTargetMock).toHaveBeenNthCalledWith(
       1,
       'gemini-2.5-flash',
       77,
       expect.anything(),
       expect.any(Array),
     );
-    expect(selectPreferredChannelMock).toHaveBeenNthCalledWith(
+    expect(selectPreferredTargetMock).toHaveBeenNthCalledWith(
       2,
       'gemini-2.0-flash',
       77,
@@ -406,8 +416,8 @@ describe('gemini native proxy routes', () => {
   });
 
   it('serves gemini-cli model list from local static catalog without upstream fetch', async () => {
-    selectChannelMock.mockReturnValue({
-      channel: { id: 21, routeId: 22 },
+    selectTargetMock.mockReturnValue({
+      target: { id: 21, routeId: 22 },
       site: { id: 55, name: 'gemini-cli-site', url: 'https://cloudcode-pa.googleapis.com', platform: 'gemini-cli' },
       account: {
         id: 35,
@@ -452,8 +462,8 @@ describe('gemini native proxy routes', () => {
   });
 
   it('synthesizes /v1beta/models from locally available routed models for non-gemini upstreams', async () => {
-    selectChannelMock.mockReturnValue({
-      channel: { id: 41, routeId: 22 },
+    selectTargetMock.mockReturnValue({
+      target: { id: 41, routeId: 22 },
       site: { id: 77, name: 'openai-site', url: 'https://api.openai.com', platform: 'openai' },
       account: { id: 37, username: 'openai-user@example.com' },
       tokenName: 'default',
@@ -558,8 +568,8 @@ describe('gemini native proxy routes', () => {
   });
 
   it('applies compatibility policy to direct Gemini native request history before upstream forwarding', async () => {
-    selectChannelMock.mockReturnValue({
-      channel: { id: 11, routeId: 22 },
+    selectTargetMock.mockReturnValue({
+      target: { id: 11, routeId: 22 },
       site: {
         id: 44,
         name: 'gemini-site',
@@ -676,8 +686,8 @@ describe('gemini native proxy routes', () => {
   });
 
   it('wraps gemini-cli native generateContent requests and unwraps the response payload', async () => {
-    selectChannelMock.mockReturnValue({
-      channel: { id: 31, routeId: 22 },
+    selectTargetMock.mockReturnValue({
+      target: { id: 31, routeId: 22 },
       site: { id: 66, name: 'gemini-cli-site', url: 'https://cloudcode-pa.googleapis.com', platform: 'gemini-cli' },
       account: {
         id: 36,
@@ -765,8 +775,8 @@ describe('gemini native proxy routes', () => {
   });
 
   it('refreshes gemini-cli oauth token and retries the same internal request on 401', async () => {
-    selectChannelMock.mockReturnValue({
-      channel: { id: 31, routeId: 22 },
+    selectTargetMock.mockReturnValue({
+      target: { id: 31, routeId: 22 },
       site: { id: 66, name: 'gemini-cli-site', url: 'https://cloudcode-pa.googleapis.com', platform: 'gemini-cli' },
       account: {
         id: 36,
@@ -842,7 +852,7 @@ describe('gemini native proxy routes', () => {
     expect(response.statusCode).toBe(200);
     expect(refreshOauthAccessTokenSingleflightMock).toHaveBeenCalledWith(36);
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(selectNextChannelMock).not.toHaveBeenCalled();
+    expect(selectNextTargetMock).not.toHaveBeenCalled();
 
     const [, firstRequestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
     const [, secondRequestInit] = fetchMock.mock.calls[1] as [string, RequestInit];
@@ -881,8 +891,8 @@ describe('gemini native proxy routes', () => {
   });
 
   it('returns a server error when gemini-cli oauth project metadata is missing at runtime', async () => {
-    selectChannelMock.mockReturnValue({
-      channel: { id: 31, routeId: 22 },
+    selectTargetMock.mockReturnValue({
+      target: { id: 31, routeId: 22 },
       site: { id: 66, name: 'gemini-cli-site', url: 'https://cloudcode-pa.googleapis.com', platform: 'gemini-cli' },
       account: {
         id: 36,
@@ -900,7 +910,7 @@ describe('gemini native proxy routes', () => {
       tokenValue: 'oauth-access-token',
       actualModel: 'gemini-2.5-pro',
     });
-    selectNextChannelMock.mockReturnValue(null);
+    selectNextTargetMock.mockReturnValue(null);
 
     const response = await app.inject({
       method: 'POST',
@@ -933,8 +943,8 @@ describe('gemini native proxy routes', () => {
   });
 
   it('routes Gemini native generateContent requests to openai upstreams and serializes the response back to Gemini shape', async () => {
-    selectChannelMock.mockReturnValue({
-      channel: { id: 41, routeId: 22 },
+    selectTargetMock.mockReturnValue({
+      target: { id: 41, routeId: 22 },
       site: { id: 77, name: 'openai-site', url: 'https://api.openai.com', platform: 'openai' },
       account: { id: 37, username: 'openai-user@example.com' },
       tokenName: 'default',
@@ -1045,8 +1055,8 @@ describe('gemini native proxy routes', () => {
   });
 
   it('serializes non-streaming generic upstream JSON into Gemini SSE when alt=sse is requested', async () => {
-    selectChannelMock.mockReturnValue({
-      channel: { id: 41, routeId: 22 },
+    selectTargetMock.mockReturnValue({
+      target: { id: 41, routeId: 22 },
       site: { id: 77, name: 'openai-site', url: 'https://api.openai.com', platform: 'openai' },
       account: { id: 37, username: 'openai-user@example.com' },
       tokenName: 'default',
@@ -1119,8 +1129,8 @@ describe('gemini native proxy routes', () => {
   });
 
   it('exposes GeminiCLI downstream generateContent endpoint and wraps the downstream response payload', async () => {
-    selectChannelMock.mockReturnValue({
-      channel: { id: 42, routeId: 22 },
+    selectTargetMock.mockReturnValue({
+      target: { id: 42, routeId: 22 },
       site: { id: 78, name: 'openai-site', url: 'https://api.openai.com', platform: 'openai' },
       account: { id: 38, username: 'openai-user@example.com' },
       tokenName: 'default',
@@ -1202,8 +1212,8 @@ describe('gemini native proxy routes', () => {
   });
 
   it('routes Gemini native document requests to responses endpoints on openai-compatible upstreams', async () => {
-    selectChannelMock.mockReturnValue({
-      channel: { id: 42, routeId: 22 },
+    selectTargetMock.mockReturnValue({
+      target: { id: 42, routeId: 22 },
       site: { id: 78, name: 'openai-site', url: 'https://api.openai.com', platform: 'openai' },
       account: { id: 38, username: 'openai-user@example.com' },
       tokenName: 'default',
@@ -1288,8 +1298,8 @@ describe('gemini native proxy routes', () => {
   });
 
   it('routes Gemini native generateContent requests to antigravity special models through the internal stream endpoint and aggregates back to Gemini JSON', async () => {
-    selectChannelMock.mockReturnValue({
-      channel: { id: 43, routeId: 22 },
+    selectTargetMock.mockReturnValue({
+      target: { id: 43, routeId: 22 },
       site: { id: 79, name: 'antigravity-site', url: 'https://cloudcode-pa.googleapis.com', platform: 'antigravity' },
       account: {
         id: 39,
@@ -1383,8 +1393,8 @@ describe('gemini native proxy routes', () => {
   });
 
   it('exposes GeminiCLI downstream streamGenerateContent endpoint and preserves GeminiCLI response envelopes', async () => {
-    selectChannelMock.mockReturnValue({
-      channel: { id: 44, routeId: 22 },
+    selectTargetMock.mockReturnValue({
+      target: { id: 44, routeId: 22 },
       site: { id: 80, name: 'gemini-cli-site', url: 'https://cloudcode-pa.googleapis.com', platform: 'gemini-cli' },
       account: {
         id: 40,
@@ -1440,8 +1450,8 @@ describe('gemini native proxy routes', () => {
   });
 
   it('exposes GeminiCLI downstream countTokens endpoint', async () => {
-    selectChannelMock.mockReturnValue({
-      channel: { id: 45, routeId: 22 },
+    selectTargetMock.mockReturnValue({
+      target: { id: 45, routeId: 22 },
       site: { id: 81, name: 'gemini-cli-site', url: 'https://cloudcode-pa.googleapis.com', platform: 'gemini-cli' },
       account: {
         id: 41,
@@ -1553,8 +1563,20 @@ describe('gemini native proxy routes', () => {
         },
       ],
     });
-    expect(isModelAllowedByPolicyOrAllowedRoutesMock).toHaveBeenCalledWith('gemini-2.5-flash', { supportedModels: ['gemini-2.5-flash'], allowedRouteIds: [], siteWeightMultipliers: {} });
-    expect(isModelAllowedByPolicyOrAllowedRoutesMock).toHaveBeenCalledWith('gemini-2.0-flash', { supportedModels: ['gemini-2.5-flash'], allowedRouteIds: [], siteWeightMultipliers: {} });
+    expect(isModelAllowedByPolicyOrAllowedRoutesMock).toHaveBeenCalledWith('gemini-2.5-flash', {
+      supportedModels: ['gemini-2.5-flash'],
+      allowedRouteIds: [],
+      siteWeightMultipliers: {},
+      excludedSiteIds: [],
+      excludedCredentialRefs: [],
+    });
+    expect(isModelAllowedByPolicyOrAllowedRoutesMock).toHaveBeenCalledWith('gemini-2.0-flash', {
+      supportedModels: ['gemini-2.5-flash'],
+      allowedRouteIds: [],
+      siteWeightMultipliers: {},
+      excludedSiteIds: [],
+      excludedCredentialRefs: [],
+    });
   });
 
   it('writes a proxy log row for successful native generateContent requests', async () => {
@@ -1655,7 +1677,7 @@ describe('gemini native proxy routes', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(selectNextChannelMock).not.toHaveBeenCalled();
+    expect(selectNextTargetMock).not.toHaveBeenCalled();
     expect(recordFailureMock).not.toHaveBeenCalled();
     expect(response.json()).toEqual({
       responseId: '',
@@ -1891,8 +1913,8 @@ describe('gemini native proxy routes', () => {
   });
 
   it('derives gemini-3 thinkingLevel from OpenAI-style reasoning inputs in the runtime request path', async () => {
-    selectChannelMock.mockReturnValue({
-      channel: { id: 11, routeId: 22 },
+    selectTargetMock.mockReturnValue({
+      target: { id: 11, routeId: 22 },
       site: { id: 44, name: 'gemini-site', url: 'https://generativelanguage.googleapis.com', platform: 'gemini' },
       account: { id: 33, username: 'demo-user' },
       tokenName: 'default',
@@ -2068,13 +2090,13 @@ describe('gemini native proxy routes', () => {
     expect(response.headers['content-type']).toContain('text/event-stream');
     expect(response.body).toContain('hello after bookkeeping failure');
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(selectNextChannelMock).not.toHaveBeenCalled();
+    expect(selectNextTargetMock).not.toHaveBeenCalled();
     expect(recordFailureMock).not.toHaveBeenCalled();
   });
 
   it('falls back to the next channel when first Gemini channel returns 400 before any bytes are written', async () => {
-    selectNextChannelMock.mockReturnValue({
-      channel: { id: 12, routeId: 22 },
+    selectNextTargetMock.mockReturnValue({
+      target: { id: 12, routeId: 22 },
       site: { id: 45, name: 'gemini-site-2', url: 'https://generativelanguage.googleapis.com', platform: 'gemini' },
       account: { id: 34, username: 'demo-user-2' },
       tokenName: 'fallback',
@@ -2126,8 +2148,8 @@ describe('gemini native proxy routes', () => {
   });
 
   it('falls back to the next channel when first Gemini channel returns 403 before any bytes are written', async () => {
-    selectNextChannelMock.mockReturnValue({
-      channel: { id: 12, routeId: 22 },
+    selectNextTargetMock.mockReturnValue({
+      target: { id: 12, routeId: 22 },
       site: { id: 45, name: 'gemini-site-2', url: 'https://generativelanguage.googleapis.com', platform: 'gemini' },
       account: { id: 34, username: 'demo-user-2' },
       tokenName: 'fallback',
@@ -2174,8 +2196,8 @@ describe('gemini native proxy routes', () => {
   });
 
   it('falls back to the next channel when first Gemini channel returns 500 before any bytes are written', async () => {
-    selectNextChannelMock.mockReturnValue({
-      channel: { id: 12, routeId: 22 },
+    selectNextTargetMock.mockReturnValue({
+      target: { id: 12, routeId: 22 },
       site: { id: 45, name: 'gemini-site-2', url: 'https://generativelanguage.googleapis.com', platform: 'gemini' },
       account: { id: 34, username: 'demo-user-2' },
       tokenName: 'fallback',
@@ -2220,8 +2242,8 @@ describe('gemini native proxy routes', () => {
   });
 
   it('falls back to the next channel when first Gemini channel throws before any bytes are written', async () => {
-    selectNextChannelMock.mockReturnValue({
-      channel: { id: 12, routeId: 22 },
+    selectNextTargetMock.mockReturnValue({
+      target: { id: 12, routeId: 22 },
       site: { id: 45, name: 'gemini-site-2', url: 'https://generativelanguage.googleapis.com', platform: 'gemini' },
       account: { id: 34, username: 'demo-user-2' },
       tokenName: 'fallback',
@@ -2262,8 +2284,8 @@ describe('gemini native proxy routes', () => {
   });
 
   it('falls back to the next channel for SSE requests before any bytes are written', async () => {
-    selectNextChannelMock.mockReturnValue({
-      channel: { id: 12, routeId: 22 },
+    selectNextTargetMock.mockReturnValue({
+      target: { id: 12, routeId: 22 },
       site: { id: 45, name: 'gemini-site-2', url: 'https://generativelanguage.googleapis.com', platform: 'gemini' },
       account: { id: 34, username: 'demo-user-2' },
       tokenName: 'fallback',
@@ -2312,8 +2334,8 @@ describe('gemini native proxy routes', () => {
   });
 
   it('writes failed and successful proxy log rows for Gemini-native stream retries', async () => {
-    selectNextChannelMock.mockReturnValue({
-      channel: { id: 12, routeId: 22 },
+    selectNextTargetMock.mockReturnValue({
+      target: { id: 12, routeId: 22 },
       site: { id: 45, name: 'gemini-site-2', url: 'https://generativelanguage.googleapis.com', platform: 'gemini' },
       account: { id: 34, username: 'demo-user-2' },
       tokenName: 'fallback',

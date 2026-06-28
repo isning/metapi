@@ -90,9 +90,9 @@ describe('stats dashboard filters disabled sites', () => {
       totalAccounts: number;
     };
 
-    expect(body.totalBalance).toBe(0);
+    expect(body.totalBalance).toBe(100);
     expect(body.rawBalance).toBe(100);
-    expect(body.valuedAccountCount).toBe(0);
+    expect(body.valuedAccountCount).toBe(1);
     expect(body.activeAccounts).toBe(1);
     expect(body.totalAccounts).toBe(1);
   });

@@ -195,7 +195,7 @@ describe('getTargetDecisionState', () => {
       reasonText: '计算中...',
     });
     expect(getTargetDecisionState(undefined, target(), true, false)).toMatchObject({
-      reasonText: '无可用通道',
+      reasonText: '无可用目标',
     });
   });
 

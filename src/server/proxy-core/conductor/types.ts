@@ -15,7 +15,7 @@ export type AttemptSuccess = {
 };
 
 export type AttemptFailureAction =
-  | 'retry_same_channel'
+  | 'retry_same_target'
   | 'refresh_auth'
   | 'failover'
   | 'terminal'
@@ -38,9 +38,9 @@ export type ExecuteAttemptContext = {
 };
 
 export type ProxyConductorDependencies = {
-  selectChannel: (requestedModel: string, downstreamPolicy?: unknown) => Promise<SelectedTargetLike | null>;
+  selectTarget: (requestedModel: string, downstreamPolicy?: unknown) => Promise<SelectedTargetLike | null>;
   previewSelectedTarget?: (requestedModel: string, downstreamPolicy?: unknown) => Promise<SelectedTargetLike | null>;
-  selectNextChannel: (
+  selectNextTarget: (
     requestedModel: string,
     excludeTargetIds: number[],
     downstreamPolicy?: unknown,
@@ -72,7 +72,7 @@ export type ExecuteResult =
   }
   | {
     ok: false;
-    reason: 'no_channel' | 'failed' | 'terminal';
+    reason: 'no_target' | 'failed' | 'terminal';
     selected?: SelectedTargetLike;
     status?: number;
     rawErrorText?: string;

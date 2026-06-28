@@ -15,7 +15,7 @@
 | 方式 | 特点 | 适用场景 |
 |------|------|----------|
 | **Access Token（系统访问令牌）** | 稳定、适合长期使用、适合多账号 | 标准 New API / One API / OneHub / DoneHub / Veloera 等面板站 |
-| **Cookie（浏览器登录态）** | 兼容性强，但更容易过期 | Access Token 不可用、AnyRouter 一类魔改站点、特殊兜底场景 |
+| **Cookie（浏览器登录态）** | 兼容性强，但更容易过期 | Access Token 不可用、AnyRouter 一类魔改站点、临时认证场景 |
 | **API Key** | 最简单，适合代理调用 | OpenAI / Claude / Gemini 兼容入口、CPA、各类官方预设 |
 | **OAuth** | 不手填普通凭证，走浏览器授权 | Codex、Claude、Gemini CLI、Antigravity |
 
@@ -38,7 +38,7 @@
 ### Q: 以 NewAPI 为例，Access Token 在哪里生成？
 
 **A:** 通常路径是：**控制台 → 个人设置 → 安全设置 → 系统访问令牌**。  
-如果你确实需要 Cookie 兜底，可在浏览器 `F12 → Application → Cookie` 获取对应登录态。
+如果站点只能使用 Cookie 登录态，可在浏览器 `F12 → Application → Cookie` 获取对应值。
 
 ### Q: 什么情况下应该直接走 OAuth？
 

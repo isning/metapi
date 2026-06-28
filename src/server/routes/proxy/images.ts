@@ -27,9 +27,9 @@ import {
   selectProxyTargetForAttempt,
 } from '../../proxy-core/targetSelection.js';
 import {
-  bindSurfaceStickyChannel,
+  bindSurfaceStickyTarget,
   buildSurfaceStickySessionKey,
-  clearSurfaceStickyChannel,
+  clearSurfaceStickyTarget,
 } from '../../proxy-core/orchestration/sharedProxyOrchestration.js';
 
 export async function imagesProxyRoute(app: FastifyInstance) {
@@ -80,13 +80,13 @@ export async function imagesProxyRoute(app: FastifyInstance) {
       });
 
       if (!selected) {
-        const noChannelMessage = buildForcedTargetUnavailableMessage(forcedTargetId);
+        const noTargetMessage = buildForcedTargetUnavailableMessage(forcedTargetId);
         await reportProxyAllFailed({
           model: requestedModel,
-          reason: forcedTargetId ? noChannelMessage : 'No available targets after retries',
+          reason: forcedTargetId ? noTargetMessage : 'No available targets after retries',
         });
         return reply.code(503).send({
-          error: { message: noChannelMessage, type: 'server_error' },
+          error: { message: noTargetMessage, type: 'server_error' },
         });
       }
 
@@ -168,7 +168,7 @@ export async function imagesProxyRoute(app: FastifyInstance) {
             firstByteLatencyMs,
           );
           if (canRetryTargetSelection(retryCount, forcedTargetId)) {
-            clearSurfaceStickyChannel({ stickySessionKey, selected });
+            clearSurfaceStickyTarget({ stickySessionKey, selected });
             retryCount++;
             continue;
           }
@@ -198,7 +198,7 @@ export async function imagesProxyRoute(app: FastifyInstance) {
         await recordTokenRouterEventBestEffort('record target success', () => (
           tokenRouter.recordSuccess(selected.target.id, latency, estimatedCost, upstreamModel)
         ));
-        bindSurfaceStickyChannel({ stickySessionKey, selected });
+        bindSurfaceStickyTarget({ stickySessionKey, selected });
         await recordTokenRouterEventBestEffort('record downstream cost usage', () => (
           recordDownstreamCostUsage(request, estimatedCost)
         ));
@@ -251,7 +251,7 @@ export async function imagesProxyRoute(app: FastifyInstance) {
           });
         }
         if ((status > 0 ? shouldRetryProxyRequest(status, errorText) : true) && canRetryTargetSelection(retryCount, forcedTargetId)) {
-          clearSurfaceStickyChannel({ stickySessionKey, selected });
+          clearSurfaceStickyTarget({ stickySessionKey, selected });
           retryCount++;
           continue;
         }
