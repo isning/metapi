@@ -16,11 +16,17 @@ describe('docker workflows', () => {
     expect(releaseWorkflow).toContain('"${tag}-armv7"');
   });
 
-  it('derives Docker Hub image names from the configured username secret', () => {
+  it('publishes ci docker images to ghcr without docker hub secrets', () => {
     const ciWorkflow = readFileSync(resolve(process.cwd(), '.github/workflows/ci.yml'), 'utf8');
     const releaseWorkflow = readFileSync(resolve(process.cwd(), '.github/workflows/release.yml'), 'utf8');
 
-    expect(ciWorkflow).toContain('DOCKERHUB_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/metapi');
+    expect(ciWorkflow).toContain('packages: write');
+    expect(ciWorkflow).toContain('GHCR_IMAGE: ghcr.io/${{ github.repository }}');
+    expect(ciWorkflow).toContain('registry: ghcr.io');
+    expect(ciWorkflow).toContain('username: ${{ github.actor }}');
+    expect(ciWorkflow).toContain('password: ${{ secrets.GITHUB_TOKEN }}');
+    expect(ciWorkflow).not.toContain('DOCKERHUB_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/metapi');
+    expect(ciWorkflow).not.toContain('DOCKERHUB_TOKEN');
     expect(ciWorkflow).not.toContain('images: 1467078763/metapi');
 
     expect(releaseWorkflow).toContain('DOCKERHUB_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/metapi');
