@@ -1428,7 +1428,19 @@ async function refreshModelsForAllActiveAccounts(): Promise<ModelRefreshResult[]
 }
 
 export async function rebuildTokenRoutesFromAvailability() {
-  const tokenRows = await db.select().from(schema.tokenModelAvailability)
+  const tokenRows = await db.select({
+    modelName: schema.tokenModelAvailability.modelName,
+    accountId: schema.accounts.id,
+    siteId: schema.accounts.siteId,
+    accountAccessToken: schema.accounts.accessToken,
+    accountApiToken: schema.accounts.apiToken,
+    accountExtraConfig: schema.accounts.extraConfig,
+    accountOauthProvider: schema.accounts.oauthProvider,
+    tokenId: schema.accountTokens.id,
+    token: schema.accountTokens.token,
+    tokenEnabled: schema.accountTokens.enabled,
+    tokenValueStatus: schema.accountTokens.valueStatus,
+  }).from(schema.tokenModelAvailability)
     .innerJoin(schema.accountTokens, eq(schema.tokenModelAvailability.tokenId, schema.accountTokens.id))
     .innerJoin(schema.accounts, eq(schema.accountTokens.accountId, schema.accounts.id))
     .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
@@ -1443,11 +1455,28 @@ export async function rebuildTokenRoutesFromAvailability() {
     )
     .all();
   const usableTokenRows = tokenRows.filter((row) => (
-    isUsableAccountToken(row.account_tokens)
-    && requiresManagedAccountTokens(row.accounts)
+    isUsableAccountToken({
+      enabled: row.tokenEnabled,
+      token: row.token,
+      valueStatus: row.tokenValueStatus,
+    } as typeof schema.accountTokens.$inferSelect)
+    && requiresManagedAccountTokens({
+      accessToken: row.accountAccessToken,
+      apiToken: row.accountApiToken,
+      extraConfig: row.accountExtraConfig,
+      oauthProvider: row.accountOauthProvider,
+    })
   ));
 
-  const accountRows = await db.select().from(schema.modelAvailability)
+  const accountRows = await db.select({
+    modelName: schema.modelAvailability.modelName,
+    accountId: schema.accounts.id,
+    siteId: schema.accounts.siteId,
+    accountAccessToken: schema.accounts.accessToken,
+    accountApiToken: schema.accounts.apiToken,
+    accountExtraConfig: schema.accounts.extraConfig,
+    accountOauthProvider: schema.accounts.oauthProvider,
+  }).from(schema.modelAvailability)
     .innerJoin(schema.accounts, eq(schema.modelAvailability.accountId, schema.accounts.id))
     .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
     .where(
@@ -1460,7 +1489,10 @@ export async function rebuildTokenRoutesFromAvailability() {
     .all();
 
   // Load site-level disabled models
-  const disabledModelRows = await db.select().from(schema.siteDisabledModels).all();
+  const disabledModelRows = await db.select({
+    siteId: schema.siteDisabledModels.siteId,
+    modelName: schema.siteDisabledModels.modelName,
+  }).from(schema.siteDisabledModels).all();
   const disabledModelsBySite = new Map<number, Set<string>>();
   for (const row of disabledModelRows) {
     if (!disabledModelsBySite.has(row.siteId)) disabledModelsBySite.set(row.siteId, new Set());
@@ -1536,24 +1568,29 @@ export async function rebuildTokenRoutesFromAvailability() {
   };
 
   for (const row of accountRows) {
-    if (!supportsDirectAccountRoutingConnection(row.accounts)) continue;
-    const routeUnit = routeUnitByAccountId.get(row.accounts.id);
+    if (!supportsDirectAccountRoutingConnection({
+      accessToken: row.accountAccessToken,
+      apiToken: row.accountApiToken,
+      extraConfig: row.accountExtraConfig,
+      oauthProvider: row.accountOauthProvider,
+    })) continue;
+    const routeUnit = routeUnitByAccountId.get(row.accountId);
     if (routeUnit) {
       addModelCandidate(
-        row.model_availability.modelName,
+        row.modelName,
         routeUnit.representativeAccountId,
         null,
-        row.accounts.siteId,
+        row.siteId,
         routeUnit.routeUnitId,
       );
       continue;
     }
-    addModelCandidate(row.model_availability.modelName, row.accounts.id, null, row.accounts.siteId);
+    addModelCandidate(row.modelName, row.accountId, null, row.siteId);
   }
 
   for (const row of usableTokenRows) {
-    if (routeUnitByAccountId.has(row.accounts.id)) continue;
-    addModelCandidate(row.token_model_availability.modelName, row.accounts.id, row.account_tokens.id, row.accounts.siteId);
+    if (routeUnitByAccountId.has(row.accountId)) continue;
+    addModelCandidate(row.modelName, row.accountId, row.tokenId, row.siteId);
   }
 
   const groupBridgeSync = await ensureAutomaticRouteGroupBridges(modelCandidates);
@@ -1561,7 +1598,6 @@ export async function rebuildTokenRoutesFromAvailability() {
 
   const bindings = await loadRouteGraphRouteTableBindings();
   const routes = (await db.select().from(schema.tokenRoutes).all()).map((row) => compileTokenRoute(row, bindings.get(row.id)));
-  const targets = await db.select().from(schema.routeEndpointTargets).all();
 
   let createdRoutes = groupBridgeSync.createdLegacyRoutes;
   let createdTargets = 0;
@@ -1594,7 +1630,9 @@ export async function rebuildTokenRoutesFromAvailability() {
       routes.push(route);
     }
 
-    const routeEndpointTargets = targets.filter((target) => target.routeId === route.id);
+    const routeEndpointTargets = await db.select().from(schema.routeEndpointTargets)
+      .where(eq(schema.routeEndpointTargets.routeId, route.id))
+      .all();
     const targetsMissingSourceModel = routeEndpointTargets.filter((target) => !(target.sourceModel || '').trim());
     if (targetsMissingSourceModel.length > 0) {
       for (const target of targetsMissingSourceModel) {
@@ -1627,7 +1665,6 @@ export async function rebuildTokenRoutesFromAvailability() {
       if (insertedId == null) continue;
       const created = await db.select().from(schema.routeEndpointTargets).where(eq(schema.routeEndpointTargets.id, insertedId)).get();
       if (!created) continue;
-      targets.push(created);
       routeEndpointTargets.push(created);
       createdTargets++;
       desiredKeys.add(candidateKey);
@@ -1656,8 +1693,6 @@ export async function rebuildTokenRoutesFromAvailability() {
         await db.delete(schema.routeEndpointTargets).where(eq(schema.routeEndpointTargets.id, target.id)).run();
         const routeTargetIndex = routeEndpointTargets.findIndex((item) => item.id === target.id);
         if (routeTargetIndex >= 0) routeEndpointTargets.splice(routeTargetIndex, 1);
-        const targetIndex = targets.findIndex((item) => item.id === target.id);
-        if (targetIndex >= 0) targets.splice(targetIndex, 1);
         removedTargets++;
       }
     }
@@ -1684,13 +1719,14 @@ export async function rebuildTokenRoutesFromAvailability() {
     const upstreamModelName = (group.upstreamModelName || group.publicModelName || group.displayName || '').trim();
     if (!upstreamModelName || latestModelNames.has(upstreamModelName)) continue;
 
-    for (const target of [...targets.filter((item) => item.routeId === routeId)]) {
+    const staleTargets = await db.select().from(schema.routeEndpointTargets)
+      .where(eq(schema.routeEndpointTargets.routeId, routeId))
+      .all();
+    for (const target of staleTargets) {
       if (target.manualOverride) continue;
       await db.delete(schema.routeEndpointTargets)
         .where(eq(schema.routeEndpointTargets.id, target.id))
         .run();
-      const targetIndex = targets.findIndex((item) => item.id === target.id);
-      if (targetIndex >= 0) targets.splice(targetIndex, 1);
       removedTargets++;
     }
 
@@ -1717,7 +1753,10 @@ export async function rebuildTokenRoutesFromAvailability() {
       continue;
     }
 
-    const routeTargetCount = targets.filter((target) => target.routeId === route.id).length;
+    const routeTargetCount = (await db.select({ id: schema.routeEndpointTargets.id })
+      .from(schema.routeEndpointTargets)
+      .where(eq(schema.routeEndpointTargets.routeId, route.id))
+      .all()).length;
     if (routeTargetCount > 0) {
       removedTargets += routeTargetCount;
     }

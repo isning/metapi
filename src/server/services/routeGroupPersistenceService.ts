@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import { getInsertedRowId } from '../db/insertHelpers.js';
 import {
@@ -487,12 +487,17 @@ export async function syncAutomaticRouteGroupCandidates(input: {
   bridgesByModelName: Map<string, AutomaticRouteGroupBridge>;
 }): Promise<AutomaticRouteGroupCandidateSyncResult> {
   const routeIds = Array.from(input.bridgesByModelName.values()).map((bridge) => bridge.routeId);
-  const allTargets = routeIds.length > 0
-    ? await db.select().from(schema.routeEndpointTargets).all()
-    : [];
+  const allTargets: Array<typeof schema.routeEndpointTargets.$inferSelect> = [];
+  const routeIdBatchSize = 400;
+  for (let offset = 0; offset < routeIds.length; offset += routeIdBatchSize) {
+    const batch = routeIds.slice(offset, offset + routeIdBatchSize);
+    if (batch.length === 0) continue;
+    allTargets.push(...await db.select().from(schema.routeEndpointTargets)
+      .where(inArray(schema.routeEndpointTargets.routeId, batch))
+      .all());
+  }
   const targetsByRouteAndCandidateKey = new Map<string, typeof schema.routeEndpointTargets.$inferSelect>();
   for (const target of allTargets) {
-    if (!routeIds.includes(target.routeId)) continue;
     targetsByRouteAndCandidateKey.set(`${target.routeId}:${buildTargetKey(target)}`, target);
   }
 

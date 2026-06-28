@@ -86,4 +86,12 @@ describe('route refresh workflow architecture boundaries', () => {
     expect(modelListOrchestratorSource).toMatch(/\bselectModelListTarget\s*\(/);
     expect(geminiAdapterSource).toContain('modelListModelProbes: GEMINI_MODEL_PROBES');
   });
+
+  it('keeps full availability route rebuilds out of the synchronous server startup path', () => {
+    const serverEntrySource = readSource('../../index.ts');
+
+    expect(serverEntrySource).not.toMatch(/\brouteRefreshWorkflow\.rebuildRoutesOnly\s*\(/);
+    expect(serverEntrySource).not.toMatch(/\brouteRefreshWorkflow\.refreshModelsAndRebuildRoutes\s*\(/);
+    expect(serverEntrySource).toContain('ensureActiveRouteGraphVersion');
+  });
 });
