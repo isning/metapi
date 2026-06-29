@@ -97,6 +97,7 @@ Use:
 - `npm run test:performance`
 - `scripts/dev/route-runtime-performance-gate.ts`
 - `npm run bench:performance:throughput` for auto-concurrency route QPS sweeps
+- `npm run bench:performance:http` for autocannon-based HTTP RPS sweeps
 - `npm run bench:performance:matrix` for exploratory vCPU/worker scaling runs
 
 Guidelines:
@@ -116,6 +117,12 @@ Guidelines:
   to 10,000 by default, reports latency percentiles, CPU utilization,
   event-loop utilization, event-loop delay, peak concurrency, and the lowest
   concurrency that reaches 95% of peak median elapsed QPS
+- use `bench:performance:http` for real HTTP RPS at the route-decision seam:
+  it starts a local Fastify server, drives it with autocannon as an external
+  load-generator process, sweeps connections, reports autocannon RPS and
+  latency percentiles, and separately reports server-process CPU RPS. This
+  covers TCP/HTTP/Fastify/JSON/auth/token-router overhead, but intentionally
+  excludes upstream provider network I/O and streaming relay.
 - keep vCPU and worker-count scaling checks out of `test:all`; use
   `bench:performance:matrix` when validating capacity planning or runtime
   scaling changes. The matrix runner writes
@@ -124,8 +131,8 @@ Guidelines:
   count as independent Node route-runtime gate processes. Matrix workers keep
   failed route-runtime gate budgets in the report instead of aborting the whole
   matrix; use `test:performance` for enforced merge budgets. CI runs bounded
-  throughput and 1/2-vCPU by 1/2-worker matrix snapshots, while full local
-  capacity runs use the benchmark defaults.
+  throughput, HTTP RPS, and 1/2-vCPU by 1/2-worker matrix snapshots, while full
+  local capacity runs use the benchmark defaults.
 
 ## Mock Strategy
 
@@ -173,6 +180,7 @@ Name fixtures by behavior, not by test number.
 - `npm run test:architecture`
 - `npm run test:performance`
 - `npm run bench:performance:throughput`
+- `npm run bench:performance:http`
 - `npm run bench:performance:matrix`
 - `npm run test:e2e:install`
 - `npm run test:e2e`

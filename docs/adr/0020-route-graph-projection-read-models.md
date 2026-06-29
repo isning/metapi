@@ -746,6 +746,17 @@ cardinality, sweep up to 10,000 concurrency, and choose the lowest concurrency
 that reaches at least 95% of peak median elapsed QPS. This report is route
 decision QPS, not HTTP ingress RPS.
 
+HTTP ingress capacity planning uses `npm run bench:performance:http`. This is
+not a default merge gate. It starts a local Fastify server with the same route
+runtime fixture, registers a benchmark-only route-decision endpoint, and drives
+it with autocannon as an external load-generator process. Defaults use 10,000
+route groups and 10,000 model cardinality, sweep up to 1,024 HTTP connections,
+and report autocannon RPS, latency percentiles, server-process CPU RPS,
+event-loop utilization, and event-loop delay. This covers TCP, HTTP parsing,
+Fastify routing, JSON parsing and serialization, auth header handling, and token
+router selection. It intentionally excludes upstream provider network I/O and
+streaming relay; full proxy RPS needs a separate upstream-mock profile.
+
 vCPU and worker-process capacity planning uses `npm run
 bench:performance:matrix`. This runner is not a default merge gate. It runs the
 same route-runtime gate across a matrix of CPU affinity profiles and independent
@@ -758,12 +769,15 @@ matrix report instead of aborting the whole matrix; the default merge gate
 remains `npm run test:performance`.
 Reports are written to
 `test-results/performance/throughput/route-runtime-throughput-benchmark-report.md`
-and `.json`, and
+and `.json`,
+`test-results/performance/http-rps/route-http-rps-benchmark-report.md` and
+`.json`, and
 `test-results/performance/matrix/route-runtime-performance-matrix-report.md`
 and `.json`.
-CI also runs bounded throughput and matrix snapshots so the performance step
-summary shows representative concurrency and vCPU/worker scaling without turning
-the full capacity benchmarks into merge gates.
+CI also runs bounded throughput, HTTP RPS, and matrix snapshots so the
+performance step summary shows representative concurrency, HTTP ingress, and
+vCPU/worker scaling without turning the full capacity benchmarks into merge
+gates.
 
 ## Test Requirements
 

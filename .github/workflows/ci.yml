@@ -147,6 +147,19 @@ jobs:
           ROUTE_THROUGHPUT_DURATION_MS: 750
         run: npm run bench:performance:throughput
 
+      - name: Run route HTTP RPS benchmark report
+        continue-on-error: true
+        env:
+          ROUTE_HTTP_RPS_REPORT_DIR: test-results/performance/http-rps
+          ROUTE_HTTP_RPS_GROUPS: 1024
+          ROUTE_HTTP_RPS_MODEL_CARDINALITY: 1024
+          ROUTE_HTTP_RPS_CONNECTION_SWEEP: 1,16,64
+          ROUTE_HTTP_RPS_REPEATS: 1
+          ROUTE_HTTP_RPS_WARMUP_SECONDS: 1
+          ROUTE_HTTP_RPS_DURATION_SECONDS: 2
+          ROUTE_HTTP_RPS_WORKERS: 1
+        run: npm run bench:performance:http
+
       - name: Run route runtime performance matrix report
         continue-on-error: true
         env:
@@ -175,6 +188,12 @@ jobs:
             cat test-results/performance/throughput/route-runtime-throughput-benchmark-report.md >> "$GITHUB_STEP_SUMMARY"
           else
             printf '\nRoute runtime throughput benchmark report was not generated.\n' >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f test-results/performance/http-rps/route-http-rps-benchmark-report.md ]; then
+            printf '\n' >> "$GITHUB_STEP_SUMMARY"
+            cat test-results/performance/http-rps/route-http-rps-benchmark-report.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf '\nRoute HTTP RPS benchmark report was not generated.\n' >> "$GITHUB_STEP_SUMMARY"
           fi
           if [ -f test-results/performance/matrix/route-runtime-performance-matrix-report.md ]; then
             printf '\n' >> "$GITHUB_STEP_SUMMARY"
