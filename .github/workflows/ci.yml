@@ -135,6 +135,32 @@ jobs:
       - name: Run route runtime performance gate
         run: npm run test:performance
 
+      - name: Run route runtime throughput benchmark report
+        continue-on-error: true
+        env:
+          ROUTE_THROUGHPUT_REPORT_DIR: test-results/performance/throughput
+          ROUTE_THROUGHPUT_GROUPS: 2048
+          ROUTE_THROUGHPUT_MODEL_CARDINALITY: 2048
+          ROUTE_THROUGHPUT_CONCURRENCY_SWEEP: 1,16,128,512
+          ROUTE_THROUGHPUT_REPEATS: 1
+          ROUTE_THROUGHPUT_WARMUP_MS: 250
+          ROUTE_THROUGHPUT_DURATION_MS: 750
+        run: npm run bench:performance:throughput
+
+      - name: Run route runtime performance matrix report
+        continue-on-error: true
+        env:
+          ROUTE_PERF_MATRIX_VCPUS: 1,2
+          ROUTE_PERF_MATRIX_WORKERS: 1,2
+          ROUTE_PERF_MATRIX_REPORT_DIR: test-results/performance/matrix
+          ROUTE_PERF_GROUPS: 10000
+          ROUTE_PERF_CONCURRENCY: 1024
+          ROUTE_PERF_HOT_ITERATIONS: 5000
+          ROUTE_PERF_DISTINCT_SAMPLES: 1000
+          ROUTE_PERF_DISTINCT_CONCURRENT_SAMPLES: 10000
+          ROUTE_PERF_DISTINCT_CONCURRENT_WIDTH: 10000
+        run: npm run bench:performance:matrix
+
       - name: Publish performance step summary
         if: always()
         shell: bash
@@ -143,6 +169,18 @@ jobs:
             cat test-results/performance/route-runtime-performance-report.md >> "$GITHUB_STEP_SUMMARY"
           else
             echo "Route runtime performance report was not generated." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f test-results/performance/throughput/route-runtime-throughput-benchmark-report.md ]; then
+            printf '\n' >> "$GITHUB_STEP_SUMMARY"
+            cat test-results/performance/throughput/route-runtime-throughput-benchmark-report.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf '\nRoute runtime throughput benchmark report was not generated.\n' >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f test-results/performance/matrix/route-runtime-performance-matrix-report.md ]; then
+            printf '\n' >> "$GITHUB_STEP_SUMMARY"
+            cat test-results/performance/matrix/route-runtime-performance-matrix-report.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf '\nRoute runtime performance matrix report was not generated.\n' >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Upload performance report

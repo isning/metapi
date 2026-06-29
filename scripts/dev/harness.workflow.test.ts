@@ -37,8 +37,20 @@ describe('harness workflows', () => {
     expect(ciWorkflow).toContain('npm run test:integration');
     expect(ciWorkflow).toContain('npm run test:architecture');
     expect(ciWorkflow).toContain('npm run test:performance');
+    expect(ciWorkflow).toContain('name: Run route runtime throughput benchmark report');
+    expect(ciWorkflow).toContain('npm run bench:performance:throughput');
+    expect(ciWorkflow).toContain('ROUTE_THROUGHPUT_CONCURRENCY_SWEEP: 1,16,128,512');
+    expect(ciWorkflow).toContain('ROUTE_THROUGHPUT_DURATION_MS: 750');
+    expect(ciWorkflow).toContain('name: Run route runtime performance matrix report');
+    expect(ciWorkflow).toContain('npm run bench:performance:matrix');
+    expect(ciWorkflow).toContain('ROUTE_PERF_MATRIX_VCPUS: 1,2');
+    expect(ciWorkflow).toContain('ROUTE_PERF_MATRIX_WORKERS: 1,2');
+    expect(ciWorkflow).toContain('ROUTE_PERF_DISTINCT_CONCURRENT_SAMPLES: 10000');
+    expect(ciWorkflow).toContain('ROUTE_PERF_DISTINCT_CONCURRENT_WIDTH: 10000');
     expect(ciWorkflow).toContain('name: Publish performance step summary');
     expect(ciWorkflow).toContain('GITHUB_STEP_SUMMARY');
+    expect(ciWorkflow).toContain('route-runtime-throughput-benchmark-report.md');
+    expect(ciWorkflow).toContain('route-runtime-performance-matrix-report.md');
     expect(ciWorkflow).toContain('name: Upload performance report');
     expect(ciWorkflow).toContain('route-runtime-performance-report');
     expect(ciWorkflow).toContain('test-results/performance/');
@@ -74,6 +86,8 @@ describe('harness workflows', () => {
       devDependencies?: Record<string, string>;
     };
     const testingFrameworkDoc = readFileSync(resolve(process.cwd(), 'docs/engineering/testing-framework.md'), 'utf8');
+    const performanceGate = readFileSync(resolve(process.cwd(), 'scripts/dev/route-runtime-performance-gate.ts'), 'utf8');
+    const throughputBenchmark = readFileSync(resolve(process.cwd(), 'scripts/dev/route-runtime-throughput-benchmark.ts'), 'utf8');
     const e2eRunner = readFileSync(resolve(process.cwd(), 'scripts/dev/run-e2e.ts'), 'utf8');
     const e2ePreflight = readFileSync(resolve(process.cwd(), 'scripts/dev/e2ePreflight.ts'), 'utf8');
     const e2eRunnerConfig = readFileSync(resolve(process.cwd(), 'scripts/dev/e2eRunnerConfig.ts'), 'utf8');
@@ -84,6 +98,8 @@ describe('harness workflows', () => {
     expect(packageJson.scripts?.['test:performance']).toContain('route-runtime-performance-gate.ts');
     expect(packageJson.scripts?.['test:performance']).toContain('--expose-gc');
     expect(packageJson.scripts?.['test:performance']).toContain('--max-old-space-size=384');
+    expect(packageJson.scripts?.['bench:performance:throughput']).toContain('route-runtime-throughput-benchmark.ts');
+    expect(packageJson.scripts?.['bench:performance:throughput']).toContain('--expose-gc');
     expect(packageJson.scripts?.['bench:performance:matrix']).toContain('route-runtime-performance-matrix.ts');
     expect(packageJson.scripts?.['test:e2e']).toContain('scripts/dev/run-e2e.ts');
     expect(packageJson.scripts?.['test:all']).toContain('test:unit');
@@ -91,10 +107,16 @@ describe('harness workflows', () => {
     expect(packageJson.scripts?.['test:all']).toContain('test:architecture');
     expect(packageJson.scripts?.['test:all']).toContain('test:performance');
     expect(packageJson.scripts?.['test:all']).toContain('test:e2e');
+    expect(packageJson.scripts?.['test:all']).not.toContain('bench:performance:throughput');
     expect(packageJson.scripts?.['test:all']).not.toContain('bench:performance:matrix');
     expect(packageJson.devDependencies?.['@playwright/test']).toBeTruthy();
     expect(existsSync(resolve(process.cwd(), 'package-lock.json'))).toBe(true);
     expect(existsSync(resolve(process.cwd(), 'pnpm-lock.yaml'))).toBe(false);
+    expect(performanceGate).toContain("readPositiveInteger('ROUTE_PERF_DISTINCT_CONCURRENT_SAMPLES', 12_800)");
+    expect(performanceGate).toContain("readPositiveInteger('ROUTE_PERF_DISTINCT_CONCURRENT_WIDTH', 2_048)");
+    expect(throughputBenchmark).toContain("readPositiveInteger('ROUTE_THROUGHPUT_GROUPS', 100_000)");
+    expect(throughputBenchmark).toContain("readPositiveInteger('ROUTE_THROUGHPUT_MODEL_CARDINALITY', 100_000)");
+    expect(throughputBenchmark).toContain("readPositiveInteger('ROUTE_THROUGHPUT_MAX_CONCURRENCY', 10_000)");
 
     expect(testingFrameworkDoc).toContain('## Unit');
     expect(testingFrameworkDoc).toContain('## Integration');
@@ -109,7 +131,10 @@ describe('harness workflows', () => {
     expect(testingFrameworkDoc).toContain('npm run test:architecture');
     expect(testingFrameworkDoc).toContain('npm run test:performance');
     expect(testingFrameworkDoc).toContain('scripts/dev/route-runtime-performance-gate.ts');
+    expect(testingFrameworkDoc).toContain('npm run bench:performance:throughput');
     expect(testingFrameworkDoc).toContain('npm run bench:performance:matrix');
+    expect(testingFrameworkDoc).toContain('auto-concurrency route QPS sweeps');
+    expect(testingFrameworkDoc).toContain('95% of peak median elapsed QPS');
     expect(testingFrameworkDoc).toContain('route-runtime-performance-matrix-report.md');
     expect(testingFrameworkDoc).toContain('test-results/performance/route-runtime-performance-report.md');
     expect(testingFrameworkDoc).toContain('test-results/performance/route-runtime-performance-report.json');

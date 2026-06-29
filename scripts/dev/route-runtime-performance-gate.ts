@@ -1,17 +1,25 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { isAbsolute, join, resolve } from 'node:path';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 
-type DbModule = typeof import('../../src/server/db/index.js');
-type TokenRouterModule = typeof import('../../src/server/services/tokenRouter.js');
+import {
+  configureRouteRuntimeDataDir,
+  cpuUsageMs,
+  createRouteRuntimeDataDir,
+  gc,
+  heapLimitMiB,
+  memory,
+  memoryDelta,
+  readPositiveInteger,
+  readPositiveNumber,
+  resolveReportDir,
+  round,
+  seedRouteRuntimeFixture,
+  type DbModule,
+  type MemorySnapshot,
+} from './routeRuntimePerformanceFixture.js';
 
-type MemorySnapshot = {
-  rssMiB: number;
-  heapUsedMiB: number;
-  heapTotalMiB: number;
-  externalMiB: number;
-};
+type TokenRouterModule = typeof import('../../src/server/services/tokenRouter.js');
 
 type RuntimeCounterSnapshot = {
   routeCacheLoadCount: number;
@@ -95,17 +103,14 @@ const groupCount = Math.max(
 );
 const insertChunkSize = readPositiveInteger('ROUTE_PERF_INSERT_CHUNK_SIZE', 250);
 const reportDir = resolveReportDir(process.env.ROUTE_PERF_REPORT_DIR || 'test-results/performance');
-const dataDir = mkdtempSync(join(tmpdir(), 'metapi-route-runtime-perf-'));
+const dataDir = createRouteRuntimeDataDir();
 const distinctConcurrentAvgCpuMs = readPositiveNumber('ROUTE_PERF_DISTINCT_CONCURRENT_AVG_CPU_MS', 2);
 const distinctConcurrentCpuQps = readPositiveNumber('ROUTE_PERF_DISTINCT_CONCURRENT_CPU_QPS', 1_500);
 const distinctBarrierDir = (process.env.ROUTE_PERF_DISTINCT_BARRIER_DIR || '').trim();
 const distinctBarrierId = (process.env.ROUTE_PERF_DISTINCT_BARRIER_ID || `${process.pid}`).trim();
 const distinctBarrierTimeoutMs = readPositiveInteger('ROUTE_PERF_DISTINCT_BARRIER_TIMEOUT_MS', 120_000);
 
-process.env.DATA_DIR = dataDir;
-process.env.DB_TYPE = 'sqlite';
-process.env.TOKEN_ROUTER_CACHE_TTL_MS = '600000';
-delete process.env.DB_URL;
+configureRouteRuntimeDataDir(dataDir);
 
 const budgets = {
   singleColdCpuMs: readPositiveNumber('ROUTE_PERF_SINGLE_COLD_CPU_MS', 50),
@@ -127,53 +132,6 @@ const budgets = {
   finalHeapUsedMiB: readPositiveNumber('ROUTE_PERF_FINAL_HEAP_USED_MIB', 256),
   cacheEntryLimit: readPositiveInteger('ROUTE_PERF_CACHE_ENTRY_LIMIT', 4096),
 };
-
-function readPositiveInteger(name: string, fallback: number): number {
-  const raw = process.env[name];
-  if (!raw) return fallback;
-  const parsed = Math.trunc(Number(raw));
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
-
-function readPositiveNumber(name: string, fallback: number): number {
-  const raw = process.env[name];
-  if (!raw) return fallback;
-  const parsed = Number(raw);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
-
-function resolveReportDir(input: string): string {
-  const trimmed = input.trim() || 'test-results/performance';
-  return isAbsolute(trimmed) ? trimmed : resolve(process.cwd(), trimmed);
-}
-
-function gc(): void {
-  if (typeof global.gc === 'function') global.gc();
-}
-
-function memory(): MemorySnapshot {
-  gc();
-  const usage = process.memoryUsage();
-  return {
-    rssMiB: usage.rss / 1024 / 1024,
-    heapUsedMiB: usage.heapUsed / 1024 / 1024,
-    heapTotalMiB: usage.heapTotal / 1024 / 1024,
-    externalMiB: usage.external / 1024 / 1024,
-  };
-}
-
-function round(value: number, fractionDigits = 2): number {
-  return Number(value.toFixed(fractionDigits));
-}
-
-function memoryDelta(after: MemorySnapshot, before: MemorySnapshot): MemorySnapshot {
-  return {
-    rssMiB: round(after.rssMiB - before.rssMiB, 1),
-    heapUsedMiB: round(after.heapUsedMiB - before.heapUsedMiB, 1),
-    heapTotalMiB: round(after.heapTotalMiB - before.heapTotalMiB, 1),
-    externalMiB: round(after.externalMiB - before.externalMiB, 1),
-  };
-}
 
 function readRuntimeCounters(routerModule: TokenRouterModule): RuntimeCounterSnapshot {
   const utils = routerModule.__tokenRouterTestUtils;
@@ -226,17 +184,6 @@ async function waitForDistinctBarrier(): Promise<void> {
   }
 }
 
-function cpuUsageMs(usage: NodeJS.CpuUsage): number {
-  return (usage.user + usage.system) / 1000;
-}
-
-function heapLimitMiB(): number | null {
-  const arg = process.execArgv.find((item) => item.startsWith('--max-old-space-size='));
-  if (!arg) return null;
-  const value = Number(arg.slice('--max-old-space-size='.length));
-  return Number.isFinite(value) ? value : null;
-}
-
 async function measure<T>(
   label: string,
   operations: number,
@@ -266,92 +213,6 @@ async function measure<T>(
   };
   console.log(JSON.stringify({ type: 'measurement', ...measurement }));
   return { result, measurement };
-}
-
-async function insertChunks<T>(
-  rows: T[],
-  insert: (chunk: T[]) => Promise<void>,
-): Promise<void> {
-  for (let index = 0; index < rows.length; index += insertChunkSize) {
-    await insert(rows.slice(index, index + insertChunkSize));
-  }
-}
-
-async function insertReturningChunks<T, R>(
-  rows: T[],
-  insert: (chunk: T[]) => Promise<R[]>,
-): Promise<R[]> {
-  const inserted: R[] = [];
-  for (let index = 0; index < rows.length; index += insertChunkSize) {
-    inserted.push(...await insert(rows.slice(index, index + insertChunkSize)));
-  }
-  return inserted;
-}
-
-async function seed(dbModule: DbModule): Promise<void> {
-  const { db, schema } = dbModule;
-  const site = await db.insert(schema.sites).values({
-    name: 'perf-site',
-    url: 'https://perf.example.com',
-    platform: 'openai',
-    status: 'active',
-  }).returning().get();
-  const account = await db.insert(schema.accounts).values({
-    siteId: site.id,
-    username: 'perf-account',
-    accessToken: 'perf-access',
-    apiToken: 'perf-api',
-    status: 'active',
-  }).returning().get();
-  const token = await db.insert(schema.accountTokens).values({
-    accountId: account.id,
-    name: 'perf-token',
-    token: 'sk-perf-token',
-    valueStatus: 'ready',
-    enabled: true,
-    isDefault: true,
-  }).returning().get();
-
-  const sourceRoutes = await insertReturningChunks(
-    Array.from({ length: groupCount }, (_, groupIndex) => ({
-      displayName: `perf-source-${groupIndex}`,
-      routingStrategy: 'weighted',
-      enabled: true,
-    })),
-    async (chunk) => await db.insert(schema.tokenRoutes).values(chunk).returning().all(),
-  );
-  const groupRoutes = await insertReturningChunks(
-    Array.from({ length: groupCount }, (_, groupIndex) => ({
-      displayName: `perf-group-${groupIndex}`,
-      routingStrategy: 'weighted',
-      enabled: true,
-    })),
-    async (chunk) => await db.insert(schema.tokenRoutes).values(chunk).returning().all(),
-  );
-
-  await insertChunks(
-    sourceRoutes.map((sourceRoute, groupIndex) => ({
-      routeId: sourceRoute.id,
-      accountId: account.id,
-      tokenId: token.id,
-      sourceModel: `perf-source-${groupIndex}`,
-      priority: 0,
-      weight: 10,
-      enabled: true,
-    })),
-    async (chunk) => {
-      await db.insert(schema.routeEndpointTargets).values(chunk).run();
-    },
-  );
-  await insertChunks(
-    groupRoutes.map((groupRoute, groupIndex) => ({
-      groupRouteId: groupRoute.id,
-      sourceRouteId: sourceRoutes[groupIndex]?.id || 0,
-    })),
-    async (chunk) => {
-      await db.insert(schema.routeGroupSources).values(chunk).run();
-    },
-  );
 }
 
 function failIfNull<T>(label: string, value: T | null | undefined): T {
@@ -596,7 +457,11 @@ async function main(): Promise<void> {
     });
     if (!dbModule) throw new Error('database module did not load');
 
-    await measure(`seed ${groupCount} route groups`, groupCount, () => seed(dbModule!));
+    await measure(`seed ${groupCount} route groups`, groupCount, () => seedRouteRuntimeFixture({
+      dbModule: dbModule!,
+      groupCount,
+      insertChunkSize,
+    }));
     const projection = await import('../../src/server/services/routeTableProjectionService.js');
     await measure('sync route binding projections', groupCount, () => projection.syncRouteBindingProjectionsFromRouteTable());
 

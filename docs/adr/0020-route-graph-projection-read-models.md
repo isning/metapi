@@ -731,23 +731,39 @@ The gate must publish detailed reports on every CI run:
 
 - Markdown: `test-results/performance/route-runtime-performance-report.md`;
 - JSON: `test-results/performance/route-runtime-performance-report.json`;
-- GitHub Actions step summary: append the Markdown report;
+- GitHub Actions step summary: append the Markdown report plus bounded
+  throughput and matrix snapshot reports when available;
 - GitHub Actions artifact: upload the complete `test-results/performance/`
   directory, even when the gate fails.
 
-Capacity planning uses `npm run bench:performance:matrix`. This runner is not a
-default merge gate. It runs the same route-runtime gate across a matrix of CPU
-affinity profiles and independent Node worker-process counts. Defaults are
-`ROUTE_PERF_MATRIX_VCPUS=1,2,4` and `ROUTE_PERF_MATRIX_WORKERS=1,2,4`, with
-`taskset` used when available. Each worker synchronizes at the
-distinct-concurrent measurement barrier, so the matrix can report both
-aggregate CPU QPS and synchronized measured elapsed QPS for vCPU/worker scaling.
-Worker gate budget failures are preserved in the matrix report instead of
-aborting the whole matrix; the default merge gate remains `npm run
-test:performance`.
+Sustained route-decision capacity planning uses `npm run
+bench:performance:throughput`. This is not a default merge gate. It runs a
+closed-loop benchmark against the token router selection seam with warmup,
+duration-based measurement windows, repeated samples, automatic concurrency
+sweeps, latency percentiles, process CPU utilization, event-loop utilization,
+and event-loop delay. Defaults use 100,000 route groups and 100,000 model
+cardinality, sweep up to 10,000 concurrency, and choose the lowest concurrency
+that reaches at least 95% of peak median elapsed QPS. This report is route
+decision QPS, not HTTP ingress RPS.
+
+vCPU and worker-process capacity planning uses `npm run
+bench:performance:matrix`. This runner is not a default merge gate. It runs the
+same route-runtime gate across a matrix of CPU affinity profiles and independent
+Node worker-process counts. Defaults are `ROUTE_PERF_MATRIX_VCPUS=1,2,4` and
+`ROUTE_PERF_MATRIX_WORKERS=1,2,4`, with `taskset` used when available. Each
+worker synchronizes at the distinct-concurrent measurement barrier, so the
+matrix can report both aggregate CPU QPS and synchronized measured elapsed QPS
+for vCPU/worker scaling. Worker gate budget failures are preserved in the
+matrix report instead of aborting the whole matrix; the default merge gate
+remains `npm run test:performance`.
 Reports are written to
+`test-results/performance/throughput/route-runtime-throughput-benchmark-report.md`
+and `.json`, and
 `test-results/performance/matrix/route-runtime-performance-matrix-report.md`
 and `.json`.
+CI also runs bounded throughput and matrix snapshots so the performance step
+summary shows representative concurrency and vCPU/worker scaling without turning
+the full capacity benchmarks into merge gates.
 
 ## Test Requirements
 
