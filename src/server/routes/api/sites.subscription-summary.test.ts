@@ -1,8 +1,9 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { mkdtempSync } from 'node:fs';
+import {
+  bootIsolatedRuntimeDb,
+  type IsolatedRuntimeDbHandle,
+} from '../../../testing/dbHarness.js';
 import {
   buildStoredSub2ApiSubscriptionSummary,
   mergeAccountExtraConfig,
@@ -12,16 +13,13 @@ type DbModule = typeof import('../../db/index.js');
 
 describe('sites route subscription summary aggregation', () => {
   let app: FastifyInstance;
+  let runtimeDb: IsolatedRuntimeDbHandle;
   let db: DbModule['db'];
   let schema: DbModule['schema'];
-  let dataDir = '';
 
   beforeAll(async () => {
-    dataDir = mkdtempSync(join(tmpdir(), 'metapi-sites-subscription-'));
-    process.env.DATA_DIR = dataDir;
-
-    await import('../../db/migrate.js');
-    const dbModule = await import('../../db/index.js');
+    runtimeDb = await bootIsolatedRuntimeDb('metapi-sites-subscription-');
+    const dbModule = runtimeDb.dbModule;
     const routesModule = await import('./sites.js');
     db = dbModule.db;
     schema = dbModule.schema;
@@ -37,7 +35,7 @@ describe('sites route subscription summary aggregation', () => {
 
   afterAll(async () => {
     await app.close();
-    delete process.env.DATA_DIR;
+    await runtimeDb.cleanup();
   });
 
   it('aggregates stored sub2api subscription summaries into /api/sites', async () => {

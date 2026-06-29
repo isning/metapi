@@ -1,25 +1,23 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { mkdtempSync } from 'node:fs';
 import { eq } from 'drizzle-orm';
+import {
+  bootIsolatedRuntimeDb,
+  type IsolatedRuntimeDbHandle,
+} from '../../../testing/dbHarness.js';
 import { mergeAccountExtraConfig } from '../../services/accountExtraConfig.js';
 
 type DbModule = typeof import('../../db/index.js');
 
 describe('search routes', () => {
   let app: FastifyInstance;
+  let runtimeDb: IsolatedRuntimeDbHandle;
   let db: DbModule['db'];
   let schema: DbModule['schema'];
-  let dataDir = '';
 
   beforeAll(async () => {
-    dataDir = mkdtempSync(join(tmpdir(), 'metapi-search-route-'));
-    process.env.DATA_DIR = dataDir;
-
-    await import('../../db/migrate.js');
-    const dbModule = await import('../../db/index.js');
+    runtimeDb = await bootIsolatedRuntimeDb('metapi-search-route-');
+    const dbModule = runtimeDb.dbModule;
     const routesModule = await import('./search.js');
     db = dbModule.db;
     schema = dbModule.schema;
@@ -42,7 +40,7 @@ describe('search routes', () => {
 
   afterAll(async () => {
     await app.close();
-    delete process.env.DATA_DIR;
+    await runtimeDb.cleanup();
   });
 
   it('returns apikey connections and account tokens for global search', async () => {
