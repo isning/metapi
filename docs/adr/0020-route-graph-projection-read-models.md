@@ -735,6 +735,20 @@ The gate must publish detailed reports on every CI run:
 - GitHub Actions artifact: upload the complete `test-results/performance/`
   directory, even when the gate fails.
 
+Capacity planning uses `npm run bench:performance:matrix`. This runner is not a
+default merge gate. It runs the same route-runtime gate across a matrix of CPU
+affinity profiles and independent Node worker-process counts. Defaults are
+`ROUTE_PERF_MATRIX_VCPUS=1,2,4` and `ROUTE_PERF_MATRIX_WORKERS=1,2,4`, with
+`taskset` used when available. Each worker synchronizes at the
+distinct-concurrent measurement barrier, so the matrix can report both
+aggregate CPU QPS and synchronized measured elapsed QPS for vCPU/worker scaling.
+Worker gate budget failures are preserved in the matrix report instead of
+aborting the whole matrix; the default merge gate remains `npm run
+test:performance`.
+Reports are written to
+`test-results/performance/matrix/route-runtime-performance-matrix-report.md`
+and `.json`.
+
 ## Test Requirements
 
 Every implementation slice that moves a route graph read path must include:

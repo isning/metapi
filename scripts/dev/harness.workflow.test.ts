@@ -84,12 +84,14 @@ describe('harness workflows', () => {
     expect(packageJson.scripts?.['test:performance']).toContain('route-runtime-performance-gate.ts');
     expect(packageJson.scripts?.['test:performance']).toContain('--expose-gc');
     expect(packageJson.scripts?.['test:performance']).toContain('--max-old-space-size=384');
+    expect(packageJson.scripts?.['bench:performance:matrix']).toContain('route-runtime-performance-matrix.ts');
     expect(packageJson.scripts?.['test:e2e']).toContain('scripts/dev/run-e2e.ts');
     expect(packageJson.scripts?.['test:all']).toContain('test:unit');
     expect(packageJson.scripts?.['test:all']).toContain('test:integration');
     expect(packageJson.scripts?.['test:all']).toContain('test:architecture');
     expect(packageJson.scripts?.['test:all']).toContain('test:performance');
     expect(packageJson.scripts?.['test:all']).toContain('test:e2e');
+    expect(packageJson.scripts?.['test:all']).not.toContain('bench:performance:matrix');
     expect(packageJson.devDependencies?.['@playwright/test']).toBeTruthy();
     expect(existsSync(resolve(process.cwd(), 'package-lock.json'))).toBe(true);
     expect(existsSync(resolve(process.cwd(), 'pnpm-lock.yaml'))).toBe(false);
@@ -107,6 +109,8 @@ describe('harness workflows', () => {
     expect(testingFrameworkDoc).toContain('npm run test:architecture');
     expect(testingFrameworkDoc).toContain('npm run test:performance');
     expect(testingFrameworkDoc).toContain('scripts/dev/route-runtime-performance-gate.ts');
+    expect(testingFrameworkDoc).toContain('npm run bench:performance:matrix');
+    expect(testingFrameworkDoc).toContain('route-runtime-performance-matrix-report.md');
     expect(testingFrameworkDoc).toContain('test-results/performance/route-runtime-performance-report.md');
     expect(testingFrameworkDoc).toContain('test-results/performance/route-runtime-performance-report.json');
     expect(testingFrameworkDoc).toContain('CPU QPS');

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
@@ -98,6 +98,9 @@ const reportDir = resolveReportDir(process.env.ROUTE_PERF_REPORT_DIR || 'test-re
 const dataDir = mkdtempSync(join(tmpdir(), 'metapi-route-runtime-perf-'));
 const distinctConcurrentAvgCpuMs = readPositiveNumber('ROUTE_PERF_DISTINCT_CONCURRENT_AVG_CPU_MS', 2);
 const distinctConcurrentCpuQps = readPositiveNumber('ROUTE_PERF_DISTINCT_CONCURRENT_CPU_QPS', 1_500);
+const distinctBarrierDir = (process.env.ROUTE_PERF_DISTINCT_BARRIER_DIR || '').trim();
+const distinctBarrierId = (process.env.ROUTE_PERF_DISTINCT_BARRIER_ID || `${process.pid}`).trim();
+const distinctBarrierTimeoutMs = readPositiveInteger('ROUTE_PERF_DISTINCT_BARRIER_TIMEOUT_MS', 120_000);
 
 process.env.DATA_DIR = dataDir;
 process.env.DB_TYPE = 'sqlite';
@@ -201,6 +204,26 @@ function runtimeCounterDelta(
 function assertCounterEquals(label: string, actual: number, expected: number): void {
   if (actual === expected) return;
   throw new Error(`route runtime performance gate integrity failed: ${label} expected ${expected}, got ${actual}`);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolveSleep) => {
+    setTimeout(resolveSleep, ms);
+  });
+}
+
+async function waitForDistinctBarrier(): Promise<void> {
+  if (!distinctBarrierDir) return;
+  mkdirSync(distinctBarrierDir, { recursive: true });
+  writeFileSync(join(distinctBarrierDir, `ready-${distinctBarrierId}`), `${process.pid}\n`, 'utf8');
+  const startFile = join(distinctBarrierDir, 'start');
+  const deadline = Date.now() + distinctBarrierTimeoutMs;
+  while (!existsSync(startFile)) {
+    if (Date.now() > deadline) {
+      throw new Error(`route runtime performance distinct barrier timed out: ${distinctBarrierDir}`);
+    }
+    await sleep(25);
+  }
 }
 
 function cpuUsageMs(usage: NodeJS.CpuUsage): number {
@@ -619,6 +642,7 @@ async function main(): Promise<void> {
     const distinctCounterLabel = `concurrent distinct cold models x${distinctConcurrentTotal} (${distinctConcurrency}-wide)`;
     routerModule.invalidateTokenRouterCache();
     const distinctCountersBefore = readRuntimeCounters(routerModule);
+    await waitForDistinctBarrier();
     const distinctConcurrentMeasurement = await measure(
       distinctCounterLabel,
       distinctConcurrentTotal,

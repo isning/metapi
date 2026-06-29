@@ -49,6 +49,7 @@
     "test:e2e": "tsx scripts/dev/run-e2e.ts",
     "test:e2e:install": "playwright install chromium",
     "test:performance": "node --expose-gc --max-old-space-size=384 --import tsx scripts/dev/route-runtime-performance-gate.ts",
+    "bench:performance:matrix": "node --import tsx scripts/dev/route-runtime-performance-matrix.ts",
     "test:all": "npm run test:unit && npm run test:integration && npm run test:architecture && npm run test:performance && npm run test:e2e",
     "docs:dev": "vitepress dev docs --host 0.0.0.0 --port 4173",
     "docs:build": "vitepress build docs",

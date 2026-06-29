@@ -96,6 +96,7 @@ sets.
 Use:
 - `npm run test:performance`
 - `scripts/dev/route-runtime-performance-gate.ts`
+- `npm run bench:performance:matrix` for exploratory vCPU/worker scaling runs
 
 Guidelines:
 - treat the script as a merge gate, not an exploratory benchmark
@@ -108,6 +109,14 @@ Guidelines:
 - upload the performance report artifact from CI and append the Markdown report
   to the GitHub step summary
 - tune budget values only with measured evidence
+- keep vCPU and worker-count scaling checks out of `test:all`; use
+  `bench:performance:matrix` when validating capacity planning or runtime
+  scaling changes. The matrix runner writes
+  `test-results/performance/matrix/route-runtime-performance-matrix-report.md`
+  and `.json`, uses `taskset` when available for CPU affinity, and treats worker
+  count as independent Node route-runtime gate processes. Matrix workers keep
+  failed route-runtime gate budgets in the report instead of aborting the whole
+  matrix; use `test:performance` for enforced merge budgets.
 
 ## Mock Strategy
 
@@ -154,6 +163,7 @@ Name fixtures by behavior, not by test number.
 - `npm run test:integration`
 - `npm run test:architecture`
 - `npm run test:performance`
+- `npm run bench:performance:matrix`
 - `npm run test:e2e:install`
 - `npm run test:e2e`
 - `npm run test:all`
