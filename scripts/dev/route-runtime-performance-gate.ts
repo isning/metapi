@@ -13,6 +13,18 @@ type MemorySnapshot = {
   externalMiB: number;
 };
 
+type RuntimeCounterSnapshot = {
+  routeCacheLoadCount: number;
+  routeMatchLoadCount: number;
+  routeMatchBatchLoadCount: number;
+  routeModelCandidateLoadCount: number;
+  routeModelCandidateBatchLoadCount: number;
+};
+
+type RuntimeCounterDelta = RuntimeCounterSnapshot & {
+  label: string;
+};
+
 type Measurement = {
   label: string;
   operations: number;
@@ -47,6 +59,8 @@ type PerformanceReport = {
     concurrency: number;
     hotIterations: number;
     distinctSequentialSamples: number;
+    distinctConcurrentSamples: number;
+    distinctConcurrentWidth: number;
     insertChunkSize: number;
     dataDir: string;
     node: string;
@@ -67,12 +81,18 @@ type PerformanceReport = {
     totalDelta: MemorySnapshot;
   };
   cacheStats: ReturnType<TokenRouterModule['__tokenRouterTestUtils']['getRouteCacheStats']>;
+  runtimeCounterDeltas: RuntimeCounterDelta[];
 };
 
-const groupCount = readPositiveInteger('ROUTE_PERF_GROUPS', 10_000);
 const concurrency = readPositiveInteger('ROUTE_PERF_CONCURRENCY', 128);
 const hotIterations = readPositiveInteger('ROUTE_PERF_HOT_ITERATIONS', 1_000);
 const distinctSequentialSamples = readPositiveInteger('ROUTE_PERF_DISTINCT_SAMPLES', 1_000);
+const distinctConcurrentSamples = readPositiveInteger('ROUTE_PERF_DISTINCT_CONCURRENT_SAMPLES', 12_800);
+const distinctConcurrentWidth = readPositiveInteger('ROUTE_PERF_DISTINCT_CONCURRENT_WIDTH', 2_048);
+const groupCount = Math.max(
+  readPositiveInteger('ROUTE_PERF_GROUPS', 10_000),
+  distinctConcurrentSamples,
+);
 const insertChunkSize = readPositiveInteger('ROUTE_PERF_INSERT_CHUNK_SIZE', 250);
 const reportDir = resolveReportDir(process.env.ROUTE_PERF_REPORT_DIR || 'test-results/performance');
 const dataDir = mkdtempSync(join(tmpdir(), 'metapi-route-runtime-perf-'));
@@ -92,7 +112,7 @@ const budgets = {
   distinctConcurrentAvgCpuMs,
   distinctConcurrentCpuMs: readPositiveNumber(
     'ROUTE_PERF_DISTINCT_CONCURRENT_CPU_MS',
-    concurrency * (1_000 / distinctConcurrentCpuQps),
+    distinctConcurrentSamples * (1_000 / distinctConcurrentCpuQps),
   ),
   distinctConcurrentCpuQps,
   hotAverageCpuMs: readPositiveNumber('ROUTE_PERF_HOT_AVG_CPU_MS', 1),
@@ -150,6 +170,37 @@ function memoryDelta(after: MemorySnapshot, before: MemorySnapshot): MemorySnaps
     heapTotalMiB: round(after.heapTotalMiB - before.heapTotalMiB, 1),
     externalMiB: round(after.externalMiB - before.externalMiB, 1),
   };
+}
+
+function readRuntimeCounters(routerModule: TokenRouterModule): RuntimeCounterSnapshot {
+  const utils = routerModule.__tokenRouterTestUtils;
+  return {
+    routeCacheLoadCount: utils.getRouteCacheLoadCount(),
+    routeMatchLoadCount: utils.getRouteMatchLoadCount(),
+    routeMatchBatchLoadCount: utils.getRouteMatchBatchLoadCount(),
+    routeModelCandidateLoadCount: utils.getRouteModelCandidateLoadCount(),
+    routeModelCandidateBatchLoadCount: utils.getRouteModelCandidateBatchLoadCount(),
+  };
+}
+
+function runtimeCounterDelta(
+  label: string,
+  after: RuntimeCounterSnapshot,
+  before: RuntimeCounterSnapshot,
+): RuntimeCounterDelta {
+  return {
+    label,
+    routeCacheLoadCount: after.routeCacheLoadCount - before.routeCacheLoadCount,
+    routeMatchLoadCount: after.routeMatchLoadCount - before.routeMatchLoadCount,
+    routeMatchBatchLoadCount: after.routeMatchBatchLoadCount - before.routeMatchBatchLoadCount,
+    routeModelCandidateLoadCount: after.routeModelCandidateLoadCount - before.routeModelCandidateLoadCount,
+    routeModelCandidateBatchLoadCount: after.routeModelCandidateBatchLoadCount - before.routeModelCandidateBatchLoadCount,
+  };
+}
+
+function assertCounterEquals(label: string, actual: number, expected: number): void {
+  if (actual === expected) return;
+  throw new Error(`route runtime performance gate integrity failed: ${label} expected ${expected}, got ${actual}`);
 }
 
 function cpuUsageMs(usage: NodeJS.CpuUsage): number {
@@ -391,6 +442,14 @@ function buildMarkdownReport(report: PerformanceReport): string {
     result.comparison,
     formatNumber(result.limit, 4),
   ]);
+  const runtimeCounterRows = report.runtimeCounterDeltas.map((delta) => [
+    delta.label,
+    String(delta.routeCacheLoadCount),
+    String(delta.routeModelCandidateLoadCount),
+    String(delta.routeModelCandidateBatchLoadCount),
+    String(delta.routeMatchLoadCount),
+    String(delta.routeMatchBatchLoadCount),
+  ]);
 
   return [
     '# Route Runtime Performance Report',
@@ -407,6 +466,8 @@ function buildMarkdownReport(report: PerformanceReport): string {
         ['Concurrency', String(report.config.concurrency)],
         ['Hot iterations', String(report.config.hotIterations)],
         ['Distinct sequential samples', String(report.config.distinctSequentialSamples)],
+        ['Distinct concurrent samples', String(report.config.distinctConcurrentSamples)],
+        ['Distinct concurrent width', String(report.config.distinctConcurrentWidth)],
         ['Insert chunk size', String(report.config.insertChunkSize)],
         ['Node', report.config.node],
         ['Platform', `${report.config.platform}/${report.config.arch}`],
@@ -427,6 +488,15 @@ function buildMarkdownReport(report: PerformanceReport): string {
       ['Result', 'Label', 'Metric', 'Actual', 'Cmp', 'Limit'],
       budgetRows,
     ),
+    '',
+    '## Runtime Counter Deltas',
+    '',
+    runtimeCounterRows.length > 0
+      ? markdownTable(
+        ['Label', 'Route cache loads', 'Candidate logical loads', 'Candidate batch loads', 'Match logical loads', 'Match batch loads'],
+        runtimeCounterRows,
+      )
+      : 'No runtime counter deltas recorded.',
     '',
     '## Memory',
     '',
@@ -483,6 +553,8 @@ async function main(): Promise<void> {
     concurrency,
     hotIterations,
     distinctSequentialSamples,
+    distinctConcurrentSamples,
+    distinctConcurrentWidth,
     dataDir,
     reportDir,
     budgets,
@@ -491,6 +563,7 @@ async function main(): Promise<void> {
   const setupStartMemory = memory();
   const measurements: Measurement[] = [];
   const checks: Budget[] = [];
+  const runtimeCounterDeltas: RuntimeCounterDelta[] = [];
   let dbModule: DbModule | null = null;
 
   try {
@@ -500,7 +573,7 @@ async function main(): Promise<void> {
     });
     if (!dbModule) throw new Error('database module did not load');
 
-    await measure('seed 10k route groups', groupCount, () => seed(dbModule!));
+    await measure(`seed ${groupCount} route groups`, groupCount, () => seed(dbModule!));
     const projection = await import('../../src/server/services/routeTableProjectionService.js');
     await measure('sync route binding projections', groupCount, () => projection.syncRouteBindingProjectionsFromRouteTable());
 
@@ -541,15 +614,55 @@ async function main(): Promise<void> {
       }
     })).measurement);
 
-    const distinctConcurrency = Math.min(concurrency, groupCount);
+    const distinctConcurrentTotal = Math.min(distinctConcurrentSamples, groupCount);
+    const distinctConcurrency = Math.min(distinctConcurrentWidth, distinctConcurrentTotal);
+    const distinctCounterLabel = `concurrent distinct cold models x${distinctConcurrentTotal} (${distinctConcurrency}-wide)`;
     routerModule.invalidateTokenRouterCache();
-    measurements.push((await measure(`concurrent distinct cold models x${distinctConcurrency}`, distinctConcurrency, async () => {
-      const results = await Promise.all(Array.from({ length: distinctConcurrency }, (_, index) => {
-        const model = `perf-group-${Math.floor((index * groupCount) / distinctConcurrency)}`;
-        return router.selectTarget(model);
-      }));
-      if (results.some((result) => !result)) throw new Error('concurrent distinct cold models returned null');
-    })).measurement);
+    const distinctCountersBefore = readRuntimeCounters(routerModule);
+    const distinctConcurrentMeasurement = await measure(
+      distinctCounterLabel,
+      distinctConcurrentTotal,
+      async () => {
+        for (let offset = 0; offset < distinctConcurrentTotal; offset += distinctConcurrency) {
+          const batchSize = Math.min(distinctConcurrency, distinctConcurrentTotal - offset);
+          const results = await Promise.all(Array.from({ length: batchSize }, (_, index) => {
+            const modelIndex = offset + index;
+            const model = `perf-group-${Math.floor((modelIndex * groupCount) / distinctConcurrentTotal)}`;
+            return router.selectTarget(model);
+          }));
+          if (results.some((result) => !result)) throw new Error('concurrent distinct cold models returned null');
+        }
+      },
+    );
+    const distinctCountersAfter = readRuntimeCounters(routerModule);
+    const distinctCounterDelta = runtimeCounterDelta(
+      distinctCounterLabel,
+      distinctCountersAfter,
+      distinctCountersBefore,
+    );
+    const expectedDistinctBatchLoads = Math.ceil(distinctConcurrentTotal / distinctConcurrency);
+    assertCounterEquals(
+      `${distinctCounterLabel}.routeModelCandidateLoadCount`,
+      distinctCounterDelta.routeModelCandidateLoadCount,
+      distinctConcurrentTotal,
+    );
+    assertCounterEquals(
+      `${distinctCounterLabel}.routeMatchLoadCount`,
+      distinctCounterDelta.routeMatchLoadCount,
+      distinctConcurrentTotal,
+    );
+    assertCounterEquals(
+      `${distinctCounterLabel}.routeModelCandidateBatchLoadCount`,
+      distinctCounterDelta.routeModelCandidateBatchLoadCount,
+      expectedDistinctBatchLoads,
+    );
+    assertCounterEquals(
+      `${distinctCounterLabel}.routeMatchBatchLoadCount`,
+      distinctCounterDelta.routeMatchBatchLoadCount,
+      expectedDistinctBatchLoads,
+    );
+    runtimeCounterDeltas.push(distinctCounterDelta);
+    measurements.push(distinctConcurrentMeasurement.measurement);
 
     routerModule.invalidateTokenRouterCache();
     measurements.push((await measure('single cold route decision after cache invalidation', 1, async () => {
@@ -581,6 +694,8 @@ async function main(): Promise<void> {
         concurrency,
         hotIterations,
         distinctSequentialSamples,
+        distinctConcurrentSamples,
+        distinctConcurrentWidth,
         insertChunkSize,
         dataDir,
         node: process.version,
@@ -601,15 +716,19 @@ async function main(): Promise<void> {
         totalDelta: totalMemoryDelta,
       },
       cacheStats,
+      runtimeCounterDeltas,
     };
 
     console.log(JSON.stringify({
       type: 'summary',
       routeGroups: groupCount,
       concurrency,
+      distinctConcurrentSamples,
+      distinctConcurrentWidth,
       measurements,
       memory: report.memory,
       cacheStats,
+      runtimeCounterDeltas,
     }));
 
     logBudgetResults(budgetResults);

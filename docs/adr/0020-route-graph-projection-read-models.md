@@ -688,8 +688,8 @@ For a deployment with 10,000 route groups and one supply target per group:
 - 128 concurrent requests for the same cold model: less than 50 ms total routing
   CPU, with model-candidate and route-match loads coalesced into one in-flight
   load each;
-- 128 concurrent requests for distinct cold exact/group models: at least 1,500
-  routing decisions per CPU second;
+- 12,800 distinct cold exact/group route decisions, executed 2,048-wide: at least
+  1,500 routing decisions per CPU second;
 - hot exact/group route decision: less than 2 ms average routing CPU;
 - no unbounded growth in per-model or per-route runtime caches under high
   cardinality traffic; caches must use bounded eviction.
@@ -698,15 +698,15 @@ The single-request CPU budget remains the primary guardrail. The concurrent
 batch budgets prevent a burst of cache misses from serializing full graph or
 route-table scans onto the event loop.
 
-The executable performance gate is `npm run test:performance`. It seeds 10,000
-route groups on an isolated SQLite runtime database, rebuilds route binding
+The executable performance gate is `npm run test:performance`. It seeds at least
+12,800 route groups on an isolated SQLite runtime database, rebuilds route binding
 projections, and measures the public token router selection seam before upstream
 network I/O. The gate currently enforces:
 
 - one cold exact/group decision under 50 ms CPU and 100 ms elapsed;
 - 128 concurrent requests for the same cold model under 75 ms total CPU and at
   least 1,500 routing decisions per CPU second;
-- 128 concurrent requests for distinct cold models at least 1,500 routing
+- 12,800 distinct cold models, executed 2,048-wide, at least 1,500 routing
   decisions per CPU second, with the total CPU budget derived from that QPS
   target;
 - 1,000 hot same-model decisions under 1 ms average CPU and at least 1,000
@@ -720,6 +720,12 @@ network I/O. The gate currently enforces:
 The reported QPS values are routing-decision throughput numbers, not full proxy
 HTTP throughput, because upstream I/O and client streaming are intentionally
 outside this runtime seam.
+
+The distinct-concurrent gate also records token-router counter deltas. The
+12,800 reported operations must correspond to 12,800 cold logical candidate
+loads and 12,800 cold logical match loads. The expected candidate and match
+batch count is `ceil(samples / width)`, so the gate fails if cache hits or
+incorrect batching make the QPS number look better than the path actually is.
 
 The gate must publish detailed reports on every CI run:
 
