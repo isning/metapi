@@ -7,6 +7,7 @@ import { eq, inArray } from 'drizzle-orm';
 type DbModule = typeof import('../db/index.js');
 type TokenRouterModule = typeof import('./tokenRouter.js');
 type ConfigModule = typeof import('../config.js');
+type RouteTableProjectionModule = typeof import('./routeTableProjectionService.js');
 
 describe('TokenRouter runtime cache', () => {
   let db: DbModule['db'];
@@ -16,6 +17,7 @@ describe('TokenRouter runtime cache', () => {
   let invalidateTokenRouterCache: TokenRouterModule['invalidateTokenRouterCache'];
   let isTargetRecentlyFailed: TokenRouterModule['isTargetRecentlyFailed'];
   let resetSiteRuntimeHealthState: TokenRouterModule['resetSiteRuntimeHealthState'];
+  let syncRouteBindingProjectionsFromRouteTable: RouteTableProjectionModule['syncRouteBindingProjectionsFromRouteTable'];
   let config: ConfigModule['config'];
   let dataDir = '';
   let originalCacheTtlMs = 0;
@@ -29,6 +31,7 @@ describe('TokenRouter runtime cache', () => {
     const dbModule = await import('../db/index.js');
     const tokenRouterModule = await import('./tokenRouter.js');
     const configModule = await import('../config.js');
+    const routeTableProjectionModule = await import('./routeTableProjectionService.js');
     db = dbModule.db;
     schema = dbModule.schema;
     TokenRouter = tokenRouterModule.TokenRouter;
@@ -36,6 +39,7 @@ describe('TokenRouter runtime cache', () => {
     invalidateTokenRouterCache = tokenRouterModule.invalidateTokenRouterCache;
     isTargetRecentlyFailed = tokenRouterModule.isTargetRecentlyFailed;
     resetSiteRuntimeHealthState = tokenRouterModule.resetSiteRuntimeHealthState;
+    syncRouteBindingProjectionsFromRouteTable = routeTableProjectionModule.syncRouteBindingProjectionsFromRouteTable;
     config = configModule.config;
     originalCacheTtlMs = config.tokenRouterCacheTtlMs;
     originalFailureCooldownMaxSec = config.tokenRouterFailureCooldownMaxSec;
@@ -108,6 +112,21 @@ describe('TokenRouter runtime cache', () => {
     return { site, account, token, route, target };
   }
 
+  async function createProjectedGroupRoute(model: string) {
+    const source = await createSimpleRoute(`${model}-source`);
+    const groupRoute = await db.insert(schema.tokenRoutes).values({
+      displayName: model,
+      routingStrategy: 'weighted',
+      enabled: true,
+    }).returning().get();
+    await db.insert(schema.routeGroupSources).values({
+      groupRouteId: groupRoute.id,
+      sourceRouteId: source.route.id,
+    }).run();
+    await syncRouteBindingProjectionsFromRouteTable([source.route.id, groupRoute.id]);
+    return { ...source, groupRoute };
+  }
+
   it('does not bootstrap an active route graph during runtime route selection', async () => {
     const { target } = await createSimpleRoute('runtime-no-bootstrap-model');
 
@@ -146,6 +165,29 @@ describe('TokenRouter runtime cache', () => {
     expect(tokenRouterTestUtils.getRouteCacheLoadCount() - routeLoadsBefore).toBe(0);
     expect(tokenRouterTestUtils.getRouteModelCandidateLoadCount() - candidateLoadsBefore).toBe(1);
     expect(tokenRouterTestUtils.getRouteMatchLoadCount() - matchLoadsBefore).toBe(1);
+  });
+
+  it('batches concurrent distinct projected route misses', async () => {
+    const seeded = [];
+    for (let index = 0; index < 8; index += 1) {
+      seeded.push(await createProjectedGroupRoute(`runtime-distinct-projected-${index}`));
+    }
+    const router = new TokenRouter();
+    invalidateTokenRouterCache();
+
+    const candidateLoadsBefore = tokenRouterTestUtils.getRouteModelCandidateLoadCount();
+    const candidateBatchLoadsBefore = tokenRouterTestUtils.getRouteModelCandidateBatchLoadCount();
+    const matchLoadsBefore = tokenRouterTestUtils.getRouteMatchLoadCount();
+    const matchBatchLoadsBefore = tokenRouterTestUtils.getRouteMatchBatchLoadCount();
+    const selections = await Promise.all(seeded.map((item) => router.selectTarget(item.groupRoute.displayName || '')));
+
+    expect(selections.map((selection) => selection?.target.id).sort((a, b) => Number(a) - Number(b))).toEqual(
+      seeded.map((item) => item.target.id).sort((a, b) => a - b),
+    );
+    expect(tokenRouterTestUtils.getRouteModelCandidateLoadCount() - candidateLoadsBefore).toBe(seeded.length);
+    expect(tokenRouterTestUtils.getRouteModelCandidateBatchLoadCount() - candidateBatchLoadsBefore).toBe(1);
+    expect(tokenRouterTestUtils.getRouteMatchLoadCount() - matchLoadsBefore).toBe(seeded.length);
+    expect(tokenRouterTestUtils.getRouteMatchBatchLoadCount() - matchBatchLoadsBefore).toBe(1);
   });
 
   it('keeps direct route candidates and matches inside TTL until explicit invalidation', async () => {

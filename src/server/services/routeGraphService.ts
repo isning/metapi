@@ -221,7 +221,18 @@ let activeRouteGraphBindingsCache: {
   bindings: Map<number, RouteGraphRouteBinding>;
 } | null = null;
 
+const ACTIVE_ROUTE_GRAPH_VERSION_ID_CACHE_TTL_MS = 1_000;
+let activeRouteGraphVersionIdCache: {
+  loadedAt: number;
+  versionId: number | null;
+} | null = null;
+let activeRouteGraphVersionIdLoadPromise: Promise<number | null> | null = null;
+let activeRouteGraphVersionIdCacheGeneration = 0;
+
 export function invalidateRouteGraphReadCaches(): void {
+  activeRouteGraphVersionIdCacheGeneration += 1;
+  activeRouteGraphVersionIdCache = null;
+  activeRouteGraphVersionIdLoadPromise = null;
   activeRouteGraphCache = null;
   activeRouteGraphSourceCache = null;
   activeRouteGraphRuntimeCache = null;
@@ -290,8 +301,38 @@ function cacheActiveSourceVersion(input: ActiveRouteGraphSourceVersion, compacte
 }
 
 async function getActiveRouteGraphVersionId(): Promise<number | null> {
-  const pointer = await db.select().from(schema.routeGraphActiveVersion).where(eq(schema.routeGraphActiveVersion.id, 1)).get();
-  return pointer?.versionId ?? null;
+  const nowMs = Date.now();
+  if (
+    activeRouteGraphVersionIdCache
+    && nowMs - activeRouteGraphVersionIdCache.loadedAt < ACTIVE_ROUTE_GRAPH_VERSION_ID_CACHE_TTL_MS
+  ) {
+    return activeRouteGraphVersionIdCache.versionId;
+  }
+  if (activeRouteGraphVersionIdLoadPromise) {
+    return await activeRouteGraphVersionIdLoadPromise;
+  }
+
+  const generation = activeRouteGraphVersionIdCacheGeneration;
+  const loadTask = db.select().from(schema.routeGraphActiveVersion)
+    .where(eq(schema.routeGraphActiveVersion.id, 1))
+    .get()
+    .then((pointer) => {
+      const versionId = pointer?.versionId ?? null;
+      if (generation === activeRouteGraphVersionIdCacheGeneration) {
+        activeRouteGraphVersionIdCache = {
+          loadedAt: Date.now(),
+          versionId,
+        };
+      }
+      return versionId;
+    })
+    .finally(() => {
+      if (activeRouteGraphVersionIdLoadPromise === loadTask) {
+        activeRouteGraphVersionIdLoadPromise = null;
+      }
+    });
+  activeRouteGraphVersionIdLoadPromise = loadTask;
+  return await loadTask;
 }
 
 function hasRouteProgramBundle(compiledGraph: CompiledRouteGraph | null | undefined): boolean {

@@ -77,6 +77,7 @@ const insertChunkSize = readPositiveInteger('ROUTE_PERF_INSERT_CHUNK_SIZE', 250)
 const reportDir = resolveReportDir(process.env.ROUTE_PERF_REPORT_DIR || 'test-results/performance');
 const dataDir = mkdtempSync(join(tmpdir(), 'metapi-route-runtime-perf-'));
 const distinctConcurrentAvgCpuMs = readPositiveNumber('ROUTE_PERF_DISTINCT_CONCURRENT_AVG_CPU_MS', 2);
+const distinctConcurrentCpuQps = readPositiveNumber('ROUTE_PERF_DISTINCT_CONCURRENT_CPU_QPS', 1_500);
 
 process.env.DATA_DIR = dataDir;
 process.env.DB_TYPE = 'sqlite';
@@ -91,9 +92,9 @@ const budgets = {
   distinctConcurrentAvgCpuMs,
   distinctConcurrentCpuMs: readPositiveNumber(
     'ROUTE_PERF_DISTINCT_CONCURRENT_CPU_MS',
-    concurrency * distinctConcurrentAvgCpuMs,
+    concurrency * (1_000 / distinctConcurrentCpuQps),
   ),
-  distinctConcurrentCpuQps: readPositiveNumber('ROUTE_PERF_DISTINCT_CONCURRENT_CPU_QPS', 500),
+  distinctConcurrentCpuQps,
   hotAverageCpuMs: readPositiveNumber('ROUTE_PERF_HOT_AVG_CPU_MS', 1),
   hotCpuQps: readPositiveNumber('ROUTE_PERF_HOT_CPU_QPS', 1_000),
   distinctSequentialAvgCpuMs: readPositiveNumber('ROUTE_PERF_DISTINCT_SEQUENTIAL_AVG_CPU_MS', 2),
@@ -450,6 +451,8 @@ function buildMarkdownReport(report: PerformanceReport): string {
         ['modelCandidateCacheSize', String(report.cacheStats.modelCandidateCacheSize)],
         ['matchCacheSize', String(report.cacheStats.matchCacheSize)],
         ['routeCacheLoadInFlight', String(report.cacheStats.routeCacheLoadInFlight)],
+        ['routeModelCandidateBatchInFlight', String(report.cacheStats.routeModelCandidateBatchInFlight)],
+        ['routeMatchBatchInFlight', String(report.cacheStats.routeMatchBatchInFlight)],
         ['routeModelCandidateLoadsInFlight', String(report.cacheStats.routeModelCandidateLoadsInFlight)],
         ['routeMatchLoadsInFlight', String(report.cacheStats.routeMatchLoadsInFlight)],
       ],

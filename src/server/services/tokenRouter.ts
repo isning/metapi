@@ -12,7 +12,7 @@ import {
 } from './endpointPricingService.js';
 import { loadRouteGraphRouteTableBindings } from './routeGraphService.js';
 import {
-  loadEnabledRouteBindingProjectionsByModelPattern,
+  hydrateRouteBindingProjection,
   loadRouteBindingProjectionMap,
   loadRouteBindingProjectionsForRouteIds,
   type RouteBindingProjection,
@@ -1138,6 +1138,29 @@ type RouteModelCandidateCacheSnapshot = {
   candidates: RouteRow[];
 };
 
+type Deferred<T> = {
+  resolve: (value: T) => void;
+  reject: (error: unknown) => void;
+};
+
+type RouteModelCandidateBatch = {
+  models: Set<string>;
+  waitersByModel: Map<string, Array<Deferred<RouteRow[]>>>;
+};
+
+type RouteMatchBatch = {
+  routeById: Map<number, RouteRow>;
+  waitersByRouteId: Map<number, Array<Deferred<RouteMatch>>>;
+};
+
+type TargetJoinRow = {
+  route_endpoint_targets: typeof schema.routeEndpointTargets.$inferSelect;
+  token_routes: typeof schema.tokenRoutes.$inferSelect;
+  accounts: typeof schema.accounts.$inferSelect;
+  sites: typeof schema.sites.$inferSelect;
+  account_tokens: typeof schema.accountTokens.$inferSelect | null;
+};
+
 function emptyRouteCacheSnapshot(): RouteCacheSnapshot {
   return {
     loadedAt: 0,
@@ -1169,6 +1192,10 @@ let routeMatchLoadCount = 0;
 const routeModelCandidateCache = new Map<string, RouteModelCandidateCacheSnapshot>();
 const routeModelCandidateLoadPromises = new Map<string, Promise<RouteRow[]>>();
 let routeModelCandidateLoadCount = 0;
+let routeModelCandidateBatch: RouteModelCandidateBatch | null = null;
+let routeModelCandidateBatchLoadCount = 0;
+let routeMatchBatch: RouteMatchBatch | null = null;
+let routeMatchBatchLoadCount = 0;
 
 function enforceMapSizeLimit<K, V>(map: Map<K, V>, limit: number): void {
   while (map.size > limit) {
@@ -1333,23 +1360,88 @@ async function loadEnabledRouteRowsByIds(routeIdsInput: number[]): Promise<Map<n
   ]));
 }
 
-async function loadEnabledRouteCandidatesByModelUncached(model: string): Promise<RouteRow[]> {
-  routeModelCandidateLoadCount += 1;
-  const trimmedModel = model.trim();
-  if (!trimmedModel) return [];
+async function loadEnabledRouteCandidatesByModelsUncached(modelsInput: string[]): Promise<Map<string, RouteRow[]>> {
+  const models = Array.from(new Set(modelsInput.map((model) => model.trim()).filter(Boolean)));
+  routeModelCandidateLoadCount += models.length;
+  routeModelCandidateBatchLoadCount += 1;
+  const results = new Map(models.map((model) => [model, [] as RouteRow[]]));
+  if (models.length === 0) return results;
 
-  const projectionMatches = await loadEnabledRouteBindingProjectionsByModelPattern(trimmedModel);
-  if (projectionMatches.length > 0) {
-    return projectionMatches.map(({ route, projection }) => buildRouteRow(route, projection));
-  }
-
-  const legacyRows = await db.select().from(schema.tokenRoutes)
+  const projectionRows = await db.select()
+    .from(schema.routeBindingProjections)
+    .innerJoin(schema.tokenRoutes, eq(schema.routeBindingProjections.routeId, schema.tokenRoutes.id))
     .where(and(
+      inArray(schema.routeBindingProjections.modelPattern, models),
       eq(schema.tokenRoutes.enabled, true),
-      eq(schema.tokenRoutes.displayName, trimmedModel),
     ))
     .all();
-  return legacyRows.map((route) => buildRouteRow(route, null));
+
+  for (const row of projectionRows) {
+    const model = row.route_binding_projections.modelPattern.trim();
+    const bucket = results.get(model);
+    if (!bucket) continue;
+    bucket.push(buildRouteRow(row.token_routes, hydrateRouteBindingProjection(row.route_binding_projections)));
+  }
+
+  const legacyModels = models.filter((model) => (results.get(model)?.length || 0) === 0);
+  if (legacyModels.length > 0) {
+    const legacyRows = await db.select().from(schema.tokenRoutes)
+      .where(and(
+        eq(schema.tokenRoutes.enabled, true),
+        inArray(schema.tokenRoutes.displayName, legacyModels),
+      ))
+      .all();
+    for (const route of legacyRows) {
+      const model = (route.displayName || '').trim();
+      const bucket = results.get(model);
+      if (!bucket) continue;
+      bucket.push(buildRouteRow(route, null));
+    }
+  }
+
+  return results;
+}
+
+function flushRouteModelCandidateBatch(batch: RouteModelCandidateBatch): void {
+  if (routeModelCandidateBatch === batch) {
+    routeModelCandidateBatch = null;
+  }
+  const models = Array.from(batch.models);
+  loadEnabledRouteCandidatesByModelsUncached(models)
+    .then((results) => {
+      for (const model of models) {
+        const candidates = results.get(model) || [];
+        const waiters = batch.waitersByModel.get(model) || [];
+        for (const waiter of waiters) {
+          waiter.resolve(candidates);
+        }
+      }
+    })
+    .catch((error) => {
+      for (const waiters of batch.waitersByModel.values()) {
+        for (const waiter of waiters) {
+          waiter.reject(error);
+        }
+      }
+    });
+}
+
+function enqueueRouteModelCandidateLoad(model: string): Promise<RouteRow[]> {
+  const batch = routeModelCandidateBatch ?? {
+    models: new Set<string>(),
+    waitersByModel: new Map<string, Array<Deferred<RouteRow[]>>>(),
+  };
+  if (!routeModelCandidateBatch) {
+    routeModelCandidateBatch = batch;
+    queueMicrotask(() => flushRouteModelCandidateBatch(batch));
+  }
+
+  batch.models.add(model);
+  return new Promise<RouteRow[]>((resolve, reject) => {
+    const waiters = batch.waitersByModel.get(model) || [];
+    waiters.push({ resolve, reject });
+    batch.waitersByModel.set(model, waiters);
+  });
 }
 
 async function loadEnabledRouteCandidatesByModel(model: string, nowMs = Date.now()): Promise<RouteRow[]> {
@@ -1365,7 +1457,7 @@ async function loadEnabledRouteCandidatesByModel(model: string, nowMs = Date.now
   const inFlight = routeModelCandidateLoadPromises.get(trimmedModel);
   if (inFlight) return await inFlight;
 
-  const loadTask = loadEnabledRouteCandidatesByModelUncached(trimmedModel)
+  const loadTask = enqueueRouteModelCandidateLoad(trimmedModel)
     .then((candidates) => {
       rememberRouteModelCandidateCache(trimmedModel, {
         loadedAt: nowMs,
@@ -1419,38 +1511,53 @@ function resolveRouteMatchFallbackSourceModel(row: {
   return (row.token_routes.displayName || '').trim() || null;
 }
 
-async function loadRouteMatchUncached(route: RouteRow, nowMs = Date.now(), routeGraph?: RouteGraphRuntimeSelection | null): Promise<RouteMatch> {
-  routeMatchLoadCount += 1;
-  const cached = routeMatchCache.get(route.id);
-  if (!routeGraph && cached && isCacheFresh(cached.loadedAt, nowMs)) {
-    rememberRouteMatchCache(route.id, cached);
-    return cached.match;
+async function loadTargetJoinRowsForRouteIds(routeIdsInput: number[]): Promise<TargetJoinRow[]> {
+  const routeIds = normalizeRouteIds(routeIdsInput);
+  if (routeIds.length === 0) return [];
+  return await db
+    .select()
+    .from(schema.routeEndpointTargets)
+    .innerJoin(schema.tokenRoutes, eq(schema.routeEndpointTargets.routeId, schema.tokenRoutes.id))
+    .innerJoin(schema.accounts, eq(schema.routeEndpointTargets.accountId, schema.accounts.id))
+    .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
+    .leftJoin(schema.accountTokens, eq(schema.routeEndpointTargets.tokenId, schema.accountTokens.id))
+    .where(and(
+      inArray(schema.routeEndpointTargets.routeId, routeIds),
+      eq(schema.tokenRoutes.enabled, true),
+    ))
+    .all();
+}
+
+async function loadRouteMatchesUncached(routes: RouteRow[], nowMs = Date.now()): Promise<Map<number, RouteMatch>> {
+  const uniqueRoutes = Array.from(new Map(routes.map((route) => [route.id, route])).values());
+  routeMatchLoadCount += uniqueRoutes.length;
+  routeMatchBatchLoadCount += 1;
+
+  const ownerRouteIdsByActualRouteId = new Map<number, number[]>();
+  for (const route of uniqueRoutes) {
+    const actualRouteIds = isExplicitGroupRoute(route)
+      ? normalizeRouteIds(route.sourceRouteIds)
+      : [route.id];
+    for (const actualRouteId of actualRouteIds) {
+      const ownerRouteIds = ownerRouteIdsByActualRouteId.get(actualRouteId) || [];
+      ownerRouteIds.push(route.id);
+      ownerRouteIdsByActualRouteId.set(actualRouteId, ownerRouteIds);
+    }
   }
 
-  const routeIds = (() => {
-    if (!isExplicitGroupRoute(route)) {
-      return [route.id];
+  const targetRows = await loadTargetJoinRowsForRouteIds(Array.from(ownerRouteIdsByActualRouteId.keys()));
+  const targetRowsByOwnerRouteId = new Map<number, TargetJoinRow[]>();
+  for (const row of targetRows) {
+    const ownerRouteIds = ownerRouteIdsByActualRouteId.get(row.route_endpoint_targets.routeId) || [];
+    for (const ownerRouteId of ownerRouteIds) {
+      const bucket = targetRowsByOwnerRouteId.get(ownerRouteId) || [];
+      bucket.push(row);
+      targetRowsByOwnerRouteId.set(ownerRouteId, bucket);
     }
-    return Array.from(new Set(route.sourceRouteIds.filter((routeId) => Number.isFinite(routeId) && routeId > 0)));
-  })();
-  const targetRows = routeIds.length > 0
-    ? await db
-      .select()
-      .from(schema.routeEndpointTargets)
-      .innerJoin(schema.tokenRoutes, eq(schema.routeEndpointTargets.routeId, schema.tokenRoutes.id))
-      .innerJoin(schema.accounts, eq(schema.routeEndpointTargets.accountId, schema.accounts.id))
-      .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
-      .leftJoin(schema.accountTokens, eq(schema.routeEndpointTargets.tokenId, schema.accountTokens.id))
-      .where(and(
-        inArray(schema.routeEndpointTargets.routeId, routeIds),
-        eq(schema.tokenRoutes.enabled, true),
-      ))
-      .all()
-    : [];
-  const targets = targetRows;
+  }
 
   const oauthRouteUnitIds: number[] = Array.from(new Set<number>(
-    targets
+    targetRows
       .map((row) => Number(row.route_endpoint_targets.oauthRouteUnitId))
       .filter((id): id is number => Number.isFinite(id) && id > 0),
   ));
@@ -1459,7 +1566,68 @@ async function loadRouteMatchUncached(route: RouteRow, nowMs = Date.now(), route
     listOauthRouteUnitMembersByUnitIds(oauthRouteUnitIds),
   ]);
 
-  const mapped = targets.map((row) => ({
+  const matches = new Map<number, RouteMatch>();
+  for (const route of uniqueRoutes) {
+    const mapped = (targetRowsByOwnerRouteId.get(route.id) || []).map((row) => ({
+      target: {
+        ...row.route_endpoint_targets,
+        sourceModel: normalizeTargetSourceModel(row.route_endpoint_targets.sourceModel)
+          || resolveRouteMatchFallbackSourceModel(row)
+          || null,
+      },
+      account: row.accounts,
+      site: row.sites,
+      token: row.account_tokens,
+      routeUnit: row.route_endpoint_targets.oauthRouteUnitId
+        ? (routeUnitSummaries.get(row.route_endpoint_targets.oauthRouteUnitId) || null)
+        : null,
+      routeUnitMembers: row.route_endpoint_targets.oauthRouteUnitId
+        ? (routeUnitMembersByUnitId.get(row.route_endpoint_targets.oauthRouteUnitId) || []).map((member) => ({
+          member: member.member,
+          account: member.account,
+          site: member.site,
+          token: null,
+        }))
+        : [],
+    }));
+    const match = { route, routeGraph: null, targets: mapped };
+    rememberRouteMatchCache(route.id, {
+      loadedAt: nowMs,
+      match,
+    });
+    matches.set(route.id, match);
+  }
+  return matches;
+}
+
+async function loadRouteMatchUncached(route: RouteRow, nowMs = Date.now(), routeGraph?: RouteGraphRuntimeSelection | null): Promise<RouteMatch> {
+  const cached = routeMatchCache.get(route.id);
+  if (!routeGraph && cached && isCacheFresh(cached.loadedAt, nowMs)) {
+    rememberRouteMatchCache(route.id, cached);
+    return cached.match;
+  }
+
+  if (!routeGraph) {
+    const matches = await loadRouteMatchesUncached([route], nowMs);
+    return matches.get(route.id) || { route, routeGraph: null, targets: [] };
+  }
+
+  routeMatchLoadCount += 1;
+  const routeIds = isExplicitGroupRoute(route)
+    ? normalizeRouteIds(route.sourceRouteIds)
+    : [route.id];
+  const targetRows = await loadTargetJoinRowsForRouteIds(routeIds);
+  const oauthRouteUnitIds: number[] = Array.from(new Set<number>(
+    targetRows
+      .map((row) => Number(row.route_endpoint_targets.oauthRouteUnitId))
+      .filter((id): id is number => Number.isFinite(id) && id > 0),
+  ));
+  const [routeUnitSummaries, routeUnitMembersByUnitId] = await Promise.all([
+    loadOauthRouteUnitSummariesByIds(oauthRouteUnitIds),
+    listOauthRouteUnitMembersByUnitIds(oauthRouteUnitIds),
+  ]);
+
+  const mapped = targetRows.map((row) => ({
     target: {
       ...row.route_endpoint_targets,
       sourceModel: normalizeTargetSourceModel(row.route_endpoint_targets.sourceModel)
@@ -1481,14 +1649,49 @@ async function loadRouteMatchUncached(route: RouteRow, nowMs = Date.now(), route
       }))
       : [],
   }));
-  const match = { route, routeGraph: routeGraph || null, targets: mapped };
-  if (!routeGraph) {
-    rememberRouteMatchCache(route.id, {
-      loadedAt: nowMs,
-      match,
-    });
+  return { route, routeGraph: routeGraph || null, targets: mapped };
+}
+
+function flushRouteMatchBatch(batch: RouteMatchBatch): void {
+  if (routeMatchBatch === batch) {
+    routeMatchBatch = null;
   }
-  return match;
+  const routes = Array.from(batch.routeById.values());
+  loadRouteMatchesUncached(routes)
+    .then((matches) => {
+      for (const route of routes) {
+        const match = matches.get(route.id) || { route, routeGraph: null, targets: [] };
+        const waiters = batch.waitersByRouteId.get(route.id) || [];
+        for (const waiter of waiters) {
+          waiter.resolve(match);
+        }
+      }
+    })
+    .catch((error) => {
+      for (const waiters of batch.waitersByRouteId.values()) {
+        for (const waiter of waiters) {
+          waiter.reject(error);
+        }
+      }
+    });
+}
+
+function enqueueRouteMatchLoad(route: RouteRow): Promise<RouteMatch> {
+  const batch = routeMatchBatch ?? {
+    routeById: new Map<number, RouteRow>(),
+    waitersByRouteId: new Map<number, Array<Deferred<RouteMatch>>>(),
+  };
+  if (!routeMatchBatch) {
+    routeMatchBatch = batch;
+    queueMicrotask(() => flushRouteMatchBatch(batch));
+  }
+
+  batch.routeById.set(route.id, route);
+  return new Promise<RouteMatch>((resolve, reject) => {
+    const waiters = batch.waitersByRouteId.get(route.id) || [];
+    waiters.push({ resolve, reject });
+    batch.waitersByRouteId.set(route.id, waiters);
+  });
 }
 
 async function loadRouteMatch(route: RouteRow, nowMs = Date.now(), routeGraph?: RouteGraphRuntimeSelection | null): Promise<RouteMatch> {
@@ -1505,7 +1708,7 @@ async function loadRouteMatch(route: RouteRow, nowMs = Date.now(), routeGraph?: 
   const inFlight = routeMatchLoadPromises.get(route.id);
   if (inFlight) return await inFlight;
 
-  const loadTask = loadRouteMatchUncached(route, nowMs)
+  const loadTask = enqueueRouteMatchLoad(route)
     .finally(() => {
       if (routeMatchLoadPromises.get(route.id) === loadTask) {
         routeMatchLoadPromises.delete(route.id);
@@ -1555,8 +1758,10 @@ export function invalidateTokenRouterCache(): void {
   routeCacheLoadPromise = null;
   routeMatchCache.clear();
   routeMatchLoadPromises.clear();
+  routeMatchBatch = null;
   routeModelCandidateCache.clear();
   routeModelCandidateLoadPromises.clear();
+  routeModelCandidateBatch = null;
   stableFirstLastSelectedSiteByKey.clear();
   stableFirstObservationProgressByKey.clear();
   stableFirstObservationSiteCooldownByKey.clear();
@@ -4399,12 +4604,16 @@ export const __tokenRouterTestUtils = {
   getStableFirstRotationCacheSize: () => stableFirstLastSelectedSiteByKey.size,
   getRouteCacheLoadCount: () => routeCacheLoadCount,
   getRouteMatchLoadCount: () => routeMatchLoadCount,
+  getRouteMatchBatchLoadCount: () => routeMatchBatchLoadCount,
   getRouteModelCandidateLoadCount: () => routeModelCandidateLoadCount,
+  getRouteModelCandidateBatchLoadCount: () => routeModelCandidateBatchLoadCount,
   getRouteCacheStats: () => ({
     routeCount: routeCacheSnapshot.routes.length,
     modelCandidateCacheSize: routeModelCandidateCache.size,
     matchCacheSize: routeMatchCache.size,
     routeCacheLoadInFlight: !!routeCacheLoadPromise,
+    routeModelCandidateBatchInFlight: !!routeModelCandidateBatch,
+    routeMatchBatchInFlight: !!routeMatchBatch,
     routeModelCandidateLoadsInFlight: routeModelCandidateLoadPromises.size,
     routeMatchLoadsInFlight: routeMatchLoadPromises.size,
   }),

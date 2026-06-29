@@ -688,8 +688,8 @@ For a deployment with 10,000 route groups and one supply target per group:
 - 128 concurrent requests for the same cold model: less than 50 ms total routing
   CPU, with model-candidate and route-match loads coalesced into one in-flight
   load each;
-- 128 concurrent requests for distinct cold exact/group models: less than 150 ms
-  total routing CPU and less than 2 ms average routing CPU per request;
+- 128 concurrent requests for distinct cold exact/group models: at least 1,500
+  routing decisions per CPU second;
 - hot exact/group route decision: less than 2 ms average routing CPU;
 - no unbounded growth in per-model or per-route runtime caches under high
   cardinality traffic; caches must use bounded eviction.
@@ -706,9 +706,9 @@ network I/O. The gate currently enforces:
 - one cold exact/group decision under 50 ms CPU and 100 ms elapsed;
 - 128 concurrent requests for the same cold model under 75 ms total CPU and at
   least 1,500 routing decisions per CPU second;
-- 128 concurrent requests for distinct cold models under 200 ms total CPU, less
-  than 2 ms average CPU per request, and at least 500 routing decisions per CPU
-  second;
+- 128 concurrent requests for distinct cold models at least 1,500 routing
+  decisions per CPU second, with the total CPU budget derived from that QPS
+  target;
 - 1,000 hot same-model decisions under 1 ms average CPU and at least 1,000
   routing decisions per CPU second;
 - 1,000 distinct sequential decisions under 2 ms average CPU;
