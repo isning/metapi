@@ -111,6 +111,9 @@ describe('PUT /api/routes/:id route rebuild', () => {
 
   beforeEach(async () => {
     resetTokenRouteReadLimitersForTests();
+    await db.delete(schema.routeGraphDrafts).run();
+    await db.delete(schema.routeGraphActiveVersion).run();
+    await db.delete(schema.routeGraphVersions).run();
     await db.delete(schema.routeGroupCandidates).run();
     await db.delete(schema.routeGroupBuckets).run();
     await db.delete(schema.routeSupplyEndpointState).run();
@@ -208,11 +211,11 @@ describe('PUT /api/routes/:id route rebuild', () => {
 
     const firstSummary = await app.inject({
       method: 'GET',
-      url: '/api/routes/summary',
+      url: '/api/routes/summary?all=1',
     });
     const secondSummary = await app.inject({
       method: 'GET',
-      url: '/api/routes/summary',
+      url: '/api/routes/summary?all=1',
     });
     const firstRoutes = await app.inject({
       method: 'GET',
@@ -237,7 +240,7 @@ describe('PUT /api/routes/:id route rebuild', () => {
     const rebuild = await workflow.rebuildRoutesOnly();
     expect(rebuild.models).toBe(1);
 
-    const summary = await app.inject({ method: 'GET', url: '/api/routes/summary' });
+    const summary = await app.inject({ method: 'GET', url: '/api/routes/summary?all=1' });
     expect(summary.statusCode).toBe(200);
     const rows = summary.json() as Array<Record<string, any>>;
     const row = rows.find((item) => item.match?.requestedModelPattern === model || item.presentation?.displayName === model);
@@ -315,7 +318,7 @@ describe('PUT /api/routes/:id route rebuild', () => {
 
     const summaryResponse = await app.inject({
       method: 'GET',
-      url: '/api/routes/summary',
+      url: '/api/routes/summary?all=1',
     });
     expect(summaryResponse.statusCode).toBe(200);
     expect(summaryResponse.json()).toContainEqual(expect.objectContaining({
@@ -882,6 +885,130 @@ describe('PUT /api/routes/:id route rebuild', () => {
     });
   });
 
+  it('syncs batch enabled state into route table endpoint catalog projections without bootstrapping active graph', async () => {
+    const exactCandidate = await seedAccountWithToken('batch-enabled-source-model');
+    const exactRoute = await db.insert(schema.tokenRoutes).values({
+      ...tokenRouteFixture({ modelPattern: 'batch-enabled-source-model' }),
+      enabled: true,
+    }).returning().get();
+    await db.insert(schema.routeEndpointTargets).values({
+      routeId: exactRoute.id,
+      accountId: exactCandidate.account.id,
+      tokenId: exactCandidate.token.id,
+      sourceModel: 'batch-enabled-source-model',
+      priority: 0,
+      weight: 10,
+      enabled: true,
+      manualOverride: false,
+    }).run();
+
+    const disableResponse = await app.inject({
+      method: 'POST',
+      url: '/api/routes/batch',
+      payload: { ids: [exactRoute.id], action: 'disable' },
+    });
+    expect(disableResponse.statusCode).toBe(200);
+
+    const summary = await app.inject({ method: 'GET', url: '/api/routes/summary?all=1' });
+    expect(summary.statusCode).toBe(200);
+    expect(summary.json()).toContainEqual(expect.objectContaining({
+      id: exactRoute.id,
+      enabled: false,
+    }));
+
+    const endpointCatalog = await app.inject({ method: 'GET', url: '/api/route-endpoints?all=1' });
+    expect(endpointCatalog.statusCode).toBe(200);
+    expect(endpointCatalog.json()).toContainEqual(expect.objectContaining({
+      routeId: exactRoute.id,
+      endpointKind: 'route_product',
+      enabled: false,
+    }));
+    const activeVersions = await db.select({ id: schema.routeGraphVersions.id }).from(schema.routeGraphVersions).all();
+    expect(activeVersions).toHaveLength(0);
+  });
+
+  it('syncs target mutations into route table supply endpoint projections without bootstrapping active graph', async () => {
+    const first = await seedAccountWithToken('target-sync-model');
+    const second = await seedAccountWithToken('target-sync-model');
+    const exactRoute = await db.insert(schema.tokenRoutes).values({
+      ...tokenRouteFixture({ modelPattern: 'target-sync-model' }),
+      enabled: true,
+    }).returning().get();
+    const firstTarget = await db.insert(schema.routeEndpointTargets).values({
+      routeId: exactRoute.id,
+      accountId: first.account.id,
+      tokenId: first.token.id,
+      sourceModel: 'target-sync-model',
+      priority: 0,
+      weight: 10,
+      enabled: true,
+      manualOverride: false,
+    }).returning().get();
+
+    const initialCatalog = await app.inject({ method: 'GET', url: '/api/route-endpoints?all=1' });
+    expect(initialCatalog.statusCode).toBe(200);
+    const initialSupplyItems = initialCatalog.json().filter((item: Record<string, unknown>) => (
+      item.endpointKind === 'supply' && item.routeId === exactRoute.id
+    ));
+    expect(initialSupplyItems).toHaveLength(1);
+
+    const createTarget = await app.inject({
+      method: 'POST',
+      url: `/api/routes/${exactRoute.id}/targets`,
+      payload: {
+        accountId: second.account.id,
+        tokenId: second.token.id,
+        sourceModel: 'target-sync-model',
+        priority: 2,
+        weight: 4,
+      },
+    });
+    expect(createTarget.statusCode).toBe(200);
+    const createdTargetId = createTarget.json().id;
+
+    const catalogAfterCreate = await app.inject({ method: 'GET', url: '/api/route-endpoints?all=1' });
+    expect(catalogAfterCreate.statusCode).toBe(200);
+    const supplyItemsAfterCreate = catalogAfterCreate.json().filter((item: Record<string, unknown>) => (
+      item.endpointKind === 'supply' && item.routeId === exactRoute.id
+    ));
+    expect(supplyItemsAfterCreate).toHaveLength(2);
+
+    const updateTarget = await app.inject({
+      method: 'PUT',
+      url: `/api/targets/${createdTargetId}`,
+      payload: { priority: 7, weight: 3, enabled: false },
+    });
+    expect(updateTarget.statusCode).toBe(200);
+
+    const catalogAfterUpdate = await app.inject({ method: 'GET', url: '/api/route-endpoints?all=1' });
+    expect(catalogAfterUpdate.statusCode).toBe(200);
+    const updatedSupplyItem = catalogAfterUpdate.json().find((item: Record<string, any>) => (
+      item.endpointKind === 'supply'
+      && item.routeId === exactRoute.id
+      && item.metadata?.routeTargetId === createdTargetId
+    ));
+    expect(updatedSupplyItem?.metadata).toMatchObject({
+      routeTargetId: createdTargetId,
+      priority: 7,
+      weight: 3,
+      enabled: false,
+    });
+    expect(updatedSupplyItem?.enabled).toBe(false);
+
+    const deleteTarget = await app.inject({ method: 'DELETE', url: `/api/targets/${createdTargetId}` });
+    expect(deleteTarget.statusCode).toBe(200);
+
+    const catalogAfterDelete = await app.inject({ method: 'GET', url: '/api/route-endpoints?all=1' });
+    expect(catalogAfterDelete.statusCode).toBe(200);
+    const supplyItemsAfterDelete = catalogAfterDelete.json().filter((item: Record<string, any>) => (
+      item.endpointKind === 'supply' && item.routeId === exactRoute.id
+    ));
+    expect(supplyItemsAfterDelete).toHaveLength(1);
+    expect(supplyItemsAfterDelete[0]?.metadata.routeTargetId).toBe(firstTarget.id);
+    const activeVersions = await db.select({ id: schema.routeGraphVersions.id }).from(schema.routeGraphVersions).all();
+    expect(activeVersions).toHaveLength(0);
+  });
+
   it('batch moves automatic route groups between public and internal visibility', async () => {
     const exactCandidate = await seedAccountWithToken('batch-visibility-model');
     const exactRoute = await db.insert(schema.tokenRoutes).values({
@@ -907,14 +1034,14 @@ describe('PUT /api/routes/:id route rebuild', () => {
     expect(internalResponse.statusCode).toBe(200);
     expect(internalResponse.json()).toMatchObject({ success: true, updatedCount: 1 });
 
-    const internalSummary = await app.inject({ method: 'GET', url: '/api/routes/summary' });
+    const internalSummary = await app.inject({ method: 'GET', url: '/api/routes/summary?all=1' });
     expect(internalSummary.statusCode).toBe(200);
     expect(internalSummary.json()).toContainEqual(expect.objectContaining({
       id: exactRoute.id,
       visibility: 'internal',
     }));
 
-    const internalGraph = await app.inject({ method: 'GET', url: '/api/route-graph/active' });
+    const internalGraph = await app.inject({ method: 'GET', url: '/api/route-graph/active?include=full' });
     expect(internalGraph.statusCode).toBe(200);
     expect(internalGraph.json().sourceGraph.macros).toContainEqual(expect.objectContaining({
       id: 'auto-model:batch-visibility-model',
@@ -929,7 +1056,7 @@ describe('PUT /api/routes/:id route rebuild', () => {
     expect(publicResponse.statusCode).toBe(200);
     expect(publicResponse.json()).toMatchObject({ success: true, updatedCount: 1 });
 
-    const publicSummary = await app.inject({ method: 'GET', url: '/api/routes/summary' });
+    const publicSummary = await app.inject({ method: 'GET', url: '/api/routes/summary?all=1' });
     expect(publicSummary.statusCode).toBe(200);
     expect(publicSummary.json()).toContainEqual(expect.objectContaining({
       id: exactRoute.id,

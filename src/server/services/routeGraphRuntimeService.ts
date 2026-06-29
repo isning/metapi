@@ -1651,12 +1651,15 @@ export async function evaluateActiveRouteGraphForModel(
   requestedModel: string,
   options: {
     failureOverlay?: RouteGraphRuntimeFailureOverlay | null;
+    bootstrapIfMissing?: boolean;
   } = {},
 ): Promise<RouteGraphRuntimeSelection | null> {
-  const { ensureActiveRouteGraphVersion } = await import('./routeGraphService.js');
-  const active = await ensureActiveRouteGraphVersion();
+  const { ensureActiveRouteGraphVersion, getActiveRouteGraphRuntimeVersion } = await import('./routeGraphService.js');
+  const active = await getActiveRouteGraphRuntimeVersion()
+    ?? (options.bootstrapIfMissing === false ? null : await ensureActiveRouteGraphVersion());
+  if (!active) return null;
   const selection = evaluateCompiledRouteGraph({
-    graph: active.compiledGraph,
+    graph: active.compiledGraph as CompiledRouteGraph,
     requestedModel,
     failureOverlay: options.failureOverlay,
   });

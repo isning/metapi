@@ -759,6 +759,6 @@ export function parseRouteGraphSource(raw: string | null | undefined): RouteGrap
 export function stringifyRouteGraphSource(source: unknown): string;
 export function lowerRouteGraphSource(sourceInput: unknown): { semanticSource: RouteGraphSource; primitiveSource: RouteGraphSource; diagnostics: RouteGraphDiagnostic[] };
 export function validateRouteGraphSource(sourceInput: unknown): { ok: boolean; diagnostics: RouteGraphDiagnostic[] };
-export function compileRouteGraphSource(sourceInput: unknown): RouteGraphCompileResult;
+export function compileRouteGraphSource(sourceInput: unknown, options?: { includeLegacyBundles?: boolean; includePrimitiveSource?: boolean }): RouteGraphCompileResult;
 export function findRouteGraphEntryForModel(compiledGraph: unknown, model: string): CompiledRouteGraph['entries'][number] | null;
 export function buildRouteGraphSourceFromLegacyRoutes(routesInput: unknown): RouteGraphSource;

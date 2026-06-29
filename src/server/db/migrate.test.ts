@@ -481,9 +481,13 @@ describe('sqlite migrate bootstrap', () => {
     const downstreamApiKeysTable = verified
       .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'downstream_api_keys'")
       .get() as { name?: string } | undefined;
+    const routeBindingProjectionsTable = verified
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'route_binding_projections'")
+      .get() as { name?: string } | undefined;
 
     expect(disabledModelsTable?.name).toBe('site_disabled_models');
     expect(downstreamApiKeysTable?.name).toBe('downstream_api_keys');
+    expect(routeBindingProjectionsTable?.name).toBe('route_binding_projections');
     expect(appliedRows.map((row) => Number(row.created_at))).toEqual(
       journalEntries.map((entry) => entry.when),
     );

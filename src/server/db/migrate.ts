@@ -496,15 +496,13 @@ function isReplacedRouteGraphLegacyTokenRoutesStatement(
   }
 
   const normalized = normalizeSqlForMatch(statement);
-  return normalized.includes('token_routes')
-    && (
-      normalized.includes('model_pattern')
-      || normalized.includes('route_mode')
-      || normalized.includes('match_spec')
-      || normalized.includes('backend_spec')
-      || normalized.includes('token_routes_model_pattern_idx')
-      || normalized.includes('token_routes_match_spec_idx')
-    );
+  return normalized.includes('token_routes.model_pattern')
+    || normalized.includes('token_routes.route_mode')
+    || normalized.includes('token_routes.match_spec')
+    || normalized.includes('token_routes.backend_spec')
+    || /^alter table token_routes add (column )?(model_pattern|route_mode|match_spec|backend_spec)\b/.test(normalized)
+    || normalized.includes('token_routes_model_pattern_idx')
+    || normalized.includes('token_routes_match_spec_idx');
 }
 
 function isLegacyProxyTargetBackfillStatement(

@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { eq } from 'drizzle-orm';
 
 import { createTestApp, type TestAppHandle } from '../../../testing/appHarness.js';
 import {
@@ -10,6 +11,7 @@ import { tokenRouteFixture } from '../../test/routeGraphFixtures.js';
 type DbModule = typeof import('../../db/index.js');
 type TokenRouterModule = typeof import('../../services/tokenRouter.js');
 type RouteGraphRuntimeModule = typeof import('../../services/routeGraphRuntimeService.js');
+type RouteTableProjectionModule = typeof import('../../services/routeTableProjectionService.js');
 
 describe('/api/route-graph lifecycle', () => {
   let app: TestAppHandle;
@@ -17,13 +19,15 @@ describe('/api/route-graph lifecycle', () => {
   let db: DbModule['db'];
   let schema: DbModule['schema'];
   let invalidateTokenRouterCache: TokenRouterModule['invalidateTokenRouterCache'];
+  let resetTokenRouteReadLimitersForTests: (options?: { summaryPoints?: number; listPoints?: number }) => void;
   let evaluateActiveRouteGraphForModel: RouteGraphRuntimeModule['evaluateActiveRouteGraphForModel'];
   let applyRouteGraphPostBuildFilters: RouteGraphRuntimeModule['applyRouteGraphPostBuildFilters'];
+  let syncRouteBindingProjectionsFromRouteTable: RouteTableProjectionModule['syncRouteBindingProjectionsFromRouteTable'];
 
-  async function seedRoutableRoute(model = 'graph-api-model') {
+  async function seedRoutableRoute(model = 'graph-api-model', options: { siteName?: string; siteUrl?: string } = {}) {
     const site = await db.insert(schema.sites).values({
-      name: `${model}-site`,
-      url: `https://${model}.example.com`,
+      name: options.siteName || `${model}-site`,
+      url: options.siteUrl || `https://${model}.example.com`,
       platform: 'new-api',
       status: 'active',
     }).returning().get();
@@ -57,17 +61,148 @@ describe('/api/route-graph lifecycle', () => {
     return { site, account, token, route, channel };
   }
 
+  async function seedRouteGroups(input: { groupCount: number; sourcesPerGroup: number }) {
+    const site = await db.insert(schema.sites).values({
+      name: 'large-summary-site',
+      url: 'https://large-summary.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'large-summary-account',
+      accessToken: 'large-summary-access',
+      apiToken: 'large-summary-api',
+      status: 'active',
+    }).returning().get();
+    const token = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'large-summary-token',
+      token: 'sk-large-summary',
+      enabled: true,
+      isDefault: true,
+    }).returning().get();
+
+    const sourceRouteIdsByGroup: number[][] = [];
+    for (let groupIndex = 0; groupIndex < input.groupCount; groupIndex += 1) {
+      const sourceRouteIds: number[] = [];
+      for (let sourceIndex = 0; sourceIndex < input.sourcesPerGroup; sourceIndex += 1) {
+        const model = `large-summary-source-${groupIndex}-${sourceIndex}`;
+        const route = await db.insert(schema.tokenRoutes).values({
+          ...tokenRouteFixture({ modelPattern: model }),
+          enabled: true,
+        }).returning().get();
+        await db.insert(schema.routeEndpointTargets).values({
+          routeId: route.id,
+          accountId: account.id,
+          tokenId: token.id,
+          sourceModel: model,
+          priority: sourceIndex,
+          weight: 10,
+          enabled: true,
+        }).run();
+        sourceRouteIds.push(route.id);
+      }
+      sourceRouteIdsByGroup.push(sourceRouteIds);
+    }
+
+    for (let groupIndex = 0; groupIndex < input.groupCount; groupIndex += 1) {
+      const groupRoute = await db.insert(schema.tokenRoutes).values({
+        ...tokenRouteFixture({ modelPattern: `large-summary-group-${groupIndex}` }),
+        enabled: true,
+      }).returning().get();
+      await db.insert(schema.routeGroupSources).values(sourceRouteIdsByGroup[groupIndex].map((sourceRouteId) => ({
+        groupRouteId: groupRoute.id,
+        sourceRouteId,
+      }))).run();
+    }
+  }
+
+  function chunkValues<T>(values: T[], size: number): T[][] {
+    const chunks: T[][] = [];
+    for (let index = 0; index < values.length; index += size) {
+      chunks.push(values.slice(index, index + size));
+    }
+    return chunks;
+  }
+
+  async function seedLargeExplicitRouteGroups(groupCount: number) {
+    const site = await db.insert(schema.sites).values({
+      name: 'ten-thousand-route-groups-site',
+      url: 'https://ten-thousand-route-groups.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'ten-thousand-route-groups-account',
+      accessToken: 'ten-thousand-route-groups-access',
+      apiToken: 'ten-thousand-route-groups-api',
+      status: 'active',
+    }).returning().get();
+    const token = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'ten-thousand-route-groups-token',
+      token: 'sk-ten-thousand-route-groups',
+      enabled: true,
+      isDefault: true,
+    }).returning().get();
+
+    const sourceRoutes: Array<typeof schema.tokenRoutes.$inferSelect> = [];
+    for (const chunk of chunkValues(Array.from({ length: groupCount }, (_, index) => index), 250)) {
+      sourceRoutes.push(...await db.insert(schema.tokenRoutes).values(chunk.map((index) => ({
+        displayName: `scale-source-${index}`,
+        displayIcon: null,
+        modelMapping: null,
+        routingStrategy: 'weighted',
+        enabled: true,
+      }))).returning().all());
+    }
+    for (const chunk of chunkValues(sourceRoutes, 250)) {
+      await db.insert(schema.routeEndpointTargets).values(chunk.map((route, index) => ({
+        routeId: route.id,
+        accountId: account.id,
+        tokenId: token.id,
+        sourceModel: route.displayName || `scale-source-${index}`,
+        priority: 0,
+        weight: 10,
+        enabled: true,
+      }))).run();
+    }
+
+    const groupRoutes: Array<typeof schema.tokenRoutes.$inferSelect> = [];
+    for (const chunk of chunkValues(Array.from({ length: groupCount }, (_, index) => index), 250)) {
+      groupRoutes.push(...await db.insert(schema.tokenRoutes).values(chunk.map((index) => ({
+        displayName: `scale-group-${index}`,
+        displayIcon: null,
+        modelMapping: null,
+        routingStrategy: 'weighted',
+        enabled: true,
+      }))).returning().all());
+    }
+    for (let start = 0; start < groupRoutes.length; start += 250) {
+      const groupChunk = groupRoutes.slice(start, start + 250);
+      await db.insert(schema.routeGroupSources).values(groupChunk.map((groupRoute, index) => ({
+        groupRouteId: groupRoute.id,
+        sourceRouteId: sourceRoutes[start + index].id,
+      }))).run();
+    }
+  }
+
   beforeAll(async () => {
     runtimeDb = await bootIsolatedRuntimeDb('metapi-route-graph-api-');
     const dbModule = runtimeDb.dbModule;
     const routesModule = await import('./tokens.js');
     const tokenRouterModule = await import('../../services/tokenRouter.js');
     const routeGraphRuntimeModule = await import('../../services/routeGraphRuntimeService.js');
+    const routeTableProjectionModule = await import('../../services/routeTableProjectionService.js');
     db = dbModule.db;
     schema = dbModule.schema;
+    resetTokenRouteReadLimitersForTests = routesModule.resetTokenRouteReadLimitersForTests;
     invalidateTokenRouterCache = tokenRouterModule.invalidateTokenRouterCache;
     evaluateActiveRouteGraphForModel = routeGraphRuntimeModule.evaluateActiveRouteGraphForModel;
     applyRouteGraphPostBuildFilters = routeGraphRuntimeModule.applyRouteGraphPostBuildFilters;
+    syncRouteBindingProjectionsFromRouteTable = routeTableProjectionModule.syncRouteBindingProjectionsFromRouteTable;
     app = await createTestApp({
       routes: [routesModule.tokensRoutes],
       auth: 'admin-api',
@@ -82,12 +217,14 @@ describe('/api/route-graph lifecycle', () => {
     await db.delete(schema.routeGraphDrafts).run();
     await db.delete(schema.routeGraphActiveVersion).run();
     await db.delete(schema.routeGraphVersions).run();
+    await db.delete(schema.routeBindingProjections).run();
     await db.delete(schema.routeGroupSources).run();
     await db.delete(schema.routeEndpointTargets).run();
     await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.accountTokens).run();
     await db.delete(schema.accounts).run();
     await db.delete(schema.sites).run();
+    resetTokenRouteReadLimitersForTests();
     invalidateTokenRouterCache();
   });
 
@@ -97,12 +234,203 @@ describe('/api/route-graph lifecycle', () => {
     await runtimeDb?.cleanup();
   });
 
+  it('returns a lightweight active graph summary by default', async () => {
+    await seedRoutableRoute('summary-default-model');
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/route-graph/active',
+      headers: app.adminHeaders(),
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as {
+      version: { id: number; status: string };
+      sourceSummary: { nodes: number; edges: number; macros: number };
+      hashes: { sourceGraph: string; compiledGraph: string | null };
+      sourceGraph: unknown;
+      compiledGraph: unknown;
+    };
+    expect(body.version.status).toBe('active');
+    expect(body.sourceSummary.nodes).toBeGreaterThan(0);
+    expect(body.sourceSummary.edges).toBeGreaterThan(0);
+    expect(body.sourceSummary.macros).toBeGreaterThan(0);
+    expect(body.version.id).toBe(0);
+    expect(body.hashes.sourceGraph).toMatch(/^route-table:/);
+    expect(body.sourceGraph).toBeNull();
+    expect(body.compiledGraph).toBeNull();
+    expect(response.body).not.toContain('"programBundle"');
+    expect(response.body).not.toContain('"compiledRouterBundle"');
+    const activeVersions = await db.select({ id: schema.routeGraphVersions.id }).from(schema.routeGraphVersions).all();
+    expect(activeVersions).toHaveLength(0);
+  });
+
+  it('keeps the default active graph payload small for hundreds of route groups', async () => {
+    await seedRouteGroups({ groupCount: 630, sourcesPerGroup: 1 });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/route-graph/active',
+      headers: app.adminHeaders(),
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(Buffer.byteLength(response.body, 'utf8')).toBeLessThan(200_000);
+    expect(response.body).not.toContain('"sourceGraph":{"nodes"');
+    expect(response.body).not.toContain('"compiledGraph":{"version"');
+    expect(response.body).not.toContain('"programBundle"');
+    expect(response.body).not.toContain('"flatProgramBundle"');
+    expect(response.body).not.toContain('"compiledRouterBundle"');
+  });
+
+  it('serves route summaries from the active source projection without compiled graph hydration', async () => {
+    const seeded = await seedRoutableRoute('source-projected-summary-model');
+    const bootstrap = await app.inject({
+      method: 'GET',
+      url: '/api/route-graph/active?include=full',
+      headers: app.adminHeaders(),
+    });
+    expect(bootstrap.statusCode).toBe(200);
+    const active = await db.select().from(schema.routeGraphActiveVersion).where(eq(schema.routeGraphActiveVersion.id, 1)).get();
+    expect(active?.versionId).toEqual(expect.any(Number));
+    await db.update(schema.routeGraphVersions).set({
+      compiledGraphJson: '{}',
+    }).where(eq(schema.routeGraphVersions.id, active!.versionId)).run();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/routes/summary?all=1',
+      headers: app.adminHeaders(),
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: seeded.route.id,
+        match: expect.objectContaining({ requestedModelPattern: 'source-projected-summary-model' }),
+        backend: { kind: 'supply' },
+        targetCount: 1,
+        enabledTargetCount: 1,
+        siteNames: [seeded.site.name],
+      }),
+    ]));
+    const stored = await db.select().from(schema.routeGraphVersions).where(eq(schema.routeGraphVersions.id, active!.versionId)).get();
+    expect(stored?.compiledGraphJson).toBe('{}');
+  });
+
+  it('persists graph-published automatic source routes as supply projections', async () => {
+    const seeded = await seedRoutableRoute('graph-published-source-model');
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/route-graph/active?include=full',
+      headers: app.adminHeaders(),
+    });
+    expect(response.statusCode).toBe(200);
+
+    const projection = await db.select().from(schema.routeBindingProjections)
+      .where(eq(schema.routeBindingProjections.routeId, seeded.route.id))
+      .get();
+    expect(projection).toBeDefined();
+    expect(JSON.parse(projection!.backendJson)).toEqual({ kind: 'supply' });
+    expect(projection!.routeMode).toBe('pattern');
+    expect(JSON.parse(projection!.sourceRouteIdsJson)).toEqual([]);
+  });
+
+  it('keeps duplicate automatic source route projections as supply after graph bootstrap', async () => {
+    const first = await seedRoutableRoute('duplicate-source-projection-model');
+    const second = await seedRoutableRoute('duplicate-source-projection-model', {
+      siteName: 'duplicate-source-projection-model-second-site',
+      siteUrl: 'https://duplicate-source-projection-model-second.example.com',
+    });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/route-graph/active?include=full',
+      headers: app.adminHeaders(),
+    });
+    expect(response.statusCode).toBe(200);
+
+    const projections = await db.select().from(schema.routeBindingProjections).all();
+    const projectionByRouteId = new Map(projections.map((projection) => [projection.routeId, projection]));
+
+    for (const routeId of [first.route.id, second.route.id]) {
+      const projection = projectionByRouteId.get(routeId);
+      expect(projection).toBeDefined();
+      expect(JSON.parse(projection!.backendJson)).toEqual({ kind: 'supply' });
+      expect(projection!.routeMode).toBe('pattern');
+      expect(JSON.parse(projection!.sourceRouteIdsJson)).toEqual([]);
+    }
+  });
+
+  it('returns a bounded route summary page by default', async () => {
+    await seedRoutableRoute('paged-summary-model-a');
+    await seedRoutableRoute('paged-summary-model-b');
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/routes/summary?pageSize=1',
+      headers: app.adminHeaders(),
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      items: [expect.objectContaining({ id: expect.any(Number) })],
+      pageInfo: {
+        page: 1,
+        pageSize: 1,
+        totalCount: 2,
+        hasMore: true,
+      },
+    });
+    expect(response.json().items).toHaveLength(1);
+  });
+
+  it('serves route endpoint catalog from the active source projection without compiled graph hydration', async () => {
+    const seeded = await seedRoutableRoute('source-projected-catalog-model');
+    const bootstrap = await app.inject({
+      method: 'GET',
+      url: '/api/route-graph/active?include=full',
+      headers: app.adminHeaders(),
+    });
+    expect(bootstrap.statusCode).toBe(200);
+    const active = await db.select().from(schema.routeGraphActiveVersion).where(eq(schema.routeGraphActiveVersion.id, 1)).get();
+    expect(active?.versionId).toEqual(expect.any(Number));
+    await db.update(schema.routeGraphVersions).set({
+      compiledGraphJson: '{}',
+    }).where(eq(schema.routeGraphVersions.id, active!.versionId)).run();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/route-endpoints?all=1',
+      headers: app.adminHeaders(),
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        endpointId: 'route-endpoint:product:auto-model:source-projected-catalog-model',
+        routeId: seeded.route.id,
+        exposure: 'public',
+        endpointKind: 'route_product',
+        sourceKind: 'automatic_model_group',
+        modelPattern: 'source-projected-catalog-model',
+        publicModelName: 'source-projected-catalog-model',
+        sourceRouteIds: [seeded.route.id],
+        upstreamModels: ['source-projected-catalog-model'],
+        siteNames: [seeded.site.name],
+      }),
+    ]));
+    const stored = await db.select().from(schema.routeGraphVersions).where(eq(schema.routeGraphVersions.id, active!.versionId)).get();
+    expect(stored?.compiledGraphJson).toBe('{}');
+  });
+
   it('validates, saves, and publishes graph-native drafts without replacing active on invalid publish', async () => {
     const seeded = await seedRoutableRoute();
 
     const activeResponse = await app.inject({
       method: 'GET',
-      url: '/api/route-graph/active',
+      url: '/api/route-graph/active?include=full',
       headers: app.adminHeaders(),
     });
     expect(activeResponse.statusCode).toBe(200);
@@ -187,7 +515,7 @@ describe('/api/route-graph lifecycle', () => {
 
     const activeAfterRejectedPublish = await app.inject({
       method: 'GET',
-      url: '/api/route-graph/active',
+      url: '/api/route-graph/active?include=full',
       headers: app.adminHeaders(),
     });
     expect(activeAfterRejectedPublish.statusCode).toBe(200);
@@ -288,7 +616,7 @@ describe('/api/route-graph lifecycle', () => {
 
     const activeAfterPublish = await app.inject({
       method: 'GET',
-      url: '/api/route-graph/active',
+      url: '/api/route-graph/active?include=full',
       headers: app.adminHeaders(),
     });
     expect(activeAfterPublish.statusCode).toBe(200);
@@ -311,7 +639,7 @@ describe('/api/route-graph lifecycle', () => {
 
     const response = await app.inject({
       method: 'GET',
-      url: '/api/route-endpoints',
+      url: '/api/route-endpoints?all=1',
       headers: app.adminHeaders(),
     });
 
@@ -331,6 +659,148 @@ describe('/api/route-graph lifecycle', () => {
       }),
     ]));
   });
+
+  it('returns a bounded route endpoint catalog page by default', async () => {
+    await seedRoutableRoute('paged-catalog-model-a');
+    await seedRoutableRoute('paged-catalog-model-b');
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/route-endpoints?pageSize=1&endpointKind=route_product',
+      headers: app.adminHeaders(),
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      items: [expect.objectContaining({ endpointKind: 'route_product' })],
+      pageInfo: {
+        page: 1,
+        pageSize: 1,
+        totalCount: expect.any(Number),
+        hasMore: true,
+      },
+    });
+    expect(response.json().items).toHaveLength(1);
+  });
+
+  it('serves paged route endpoint catalog for ten thousand route groups without bootstrapping active graph', async () => {
+    await seedLargeExplicitRouteGroups(10_000);
+
+    const summaryResponse = await app.inject({
+      method: 'GET',
+      url: '/api/routes/summary?pageSize=5',
+      headers: app.adminHeaders(),
+    });
+    expect(summaryResponse.statusCode).toBe(200);
+    const summaryBody = summaryResponse.json() as {
+      items: Array<{ presentation: { displayName: string | null }; targetCount: number; enabledTargetCount: number }>;
+      pageInfo: { page: number; pageSize: number; totalCount: number; hasMore: boolean };
+    };
+    expect(summaryBody.items[0]).toMatchObject({
+      presentation: expect.objectContaining({ displayName: 'scale-source-0' }),
+      targetCount: 1,
+      enabledTargetCount: 1,
+    });
+    expect(summaryBody.pageInfo).toMatchObject({
+      page: 1,
+      pageSize: 5,
+      totalCount: 20_000,
+      hasMore: true,
+    });
+    expect(summaryBody.items).toHaveLength(5);
+    expect(Buffer.byteLength(summaryResponse.body, 'utf8')).toBeLessThan(20_000);
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/route-endpoints?page=2001&pageSize=5&endpointKind=route_product',
+      headers: app.adminHeaders(),
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as {
+      items: Array<{ label: string; endpointKind: string; sourceRouteIds: number[] }>;
+      pageInfo: { page: number; pageSize: number; totalCount: number; hasMore: boolean };
+    };
+    expect(body.items).toHaveLength(5);
+    expect(body.items[0]).toMatchObject({
+      label: 'scale-group-0',
+      endpointKind: 'route_product',
+    });
+    expect(body.items[0].sourceRouteIds).toHaveLength(1);
+    expect(body.pageInfo).toMatchObject({
+      page: 2001,
+      pageSize: 5,
+      totalCount: 20_000,
+      hasMore: true,
+    });
+
+    const supplyResponse = await app.inject({
+      method: 'GET',
+      url: '/api/route-endpoints?pageSize=5&endpointKind=supply',
+      headers: app.adminHeaders(),
+    });
+    expect(supplyResponse.statusCode).toBe(200);
+    const supplyBody = supplyResponse.json() as {
+      items: Array<{ label: string; endpointKind: string; modelPattern: string }>;
+      pageInfo: { page: number; pageSize: number; totalCount: number; hasMore: boolean };
+    };
+    expect(supplyBody.items[0]).toMatchObject({
+      label: 'scale-source-0',
+      endpointKind: 'supply',
+      modelPattern: 'scale-source-0',
+    });
+    expect(supplyBody.pageInfo).toMatchObject({
+      page: 1,
+      pageSize: 5,
+      totalCount: 10_000,
+      hasMore: true,
+    });
+    expect(supplyBody.items).toHaveLength(5);
+    expect(await db.select().from(schema.routeGraphVersions).all()).toHaveLength(0);
+  }, 30_000);
+
+  it('updates a route against a ten thousand group projection without bootstrapping active graph', async () => {
+    await seedLargeExplicitRouteGroups(10_000);
+    await syncRouteBindingProjectionsFromRouteTable();
+    const groupRoute = await db.select().from(schema.tokenRoutes)
+      .where(eq(schema.tokenRoutes.displayName, 'scale-group-0'))
+      .get();
+    expect(groupRoute).toBeDefined();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/routes/batch',
+      headers: app.adminHeaders(),
+      payload: { ids: [groupRoute!.id], action: 'set_internal' },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ success: true, updatedCount: 1 });
+
+    const summaryResponse = await app.inject({
+      method: 'GET',
+      url: '/api/routes/summary?page=10001&pageSize=1',
+      headers: app.adminHeaders(),
+    });
+    expect(summaryResponse.statusCode).toBe(200);
+    expect(summaryResponse.json().items).toEqual([
+      expect.objectContaining({
+        id: groupRoute!.id,
+        visibility: 'internal',
+      }),
+    ]);
+
+    const endpointResponse = await app.inject({
+      method: 'GET',
+      url: '/api/route-endpoints?page=2001&pageSize=5&endpointKind=route_product',
+      headers: app.adminHeaders(),
+    });
+    expect(endpointResponse.statusCode).toBe(200);
+    expect(endpointResponse.json().items).toContainEqual(expect.objectContaining({
+      routeId: groupRoute!.id,
+      exposure: 'internal',
+    }));
+    expect(await db.select().from(schema.routeGraphVersions).all()).toHaveLength(0);
+  }, 30_000);
 
   it('keeps supply endpoint catalog site names scoped to the upstream endpoint', async () => {
     const seeded = await seedRoutableRoute('multi-site-catalog-model');
@@ -366,7 +836,7 @@ describe('/api/route-graph lifecycle', () => {
 
     const response = await app.inject({
       method: 'GET',
-      url: '/api/route-endpoints',
+      url: '/api/route-endpoints?all=1',
       headers: app.adminHeaders(),
     });
 
@@ -463,7 +933,7 @@ describe('/api/route-graph lifecycle', () => {
 
     const activeResponse = await app.inject({
       method: 'GET',
-      url: '/api/route-graph/active',
+      url: '/api/route-graph/active?include=full',
       headers: app.adminHeaders(),
     });
     expect(activeResponse.statusCode).toBe(200);
@@ -574,7 +1044,7 @@ describe('/api/route-graph lifecycle', () => {
 
     const activeResponse = await app.inject({
       method: 'GET',
-      url: '/api/route-graph/active',
+      url: '/api/route-graph/active?include=full',
       headers: app.adminHeaders(),
     });
     expect(activeResponse.statusCode).toBe(200);
@@ -679,7 +1149,7 @@ describe('/api/route-graph lifecycle', () => {
 
     const activeResponse = await app.inject({
       method: 'GET',
-      url: '/api/route-graph/active',
+      url: '/api/route-graph/active?include=full',
       headers: app.adminHeaders(),
     });
     expect(activeResponse.statusCode).toBe(200);
@@ -861,7 +1331,7 @@ describe('/api/route-graph lifecycle', () => {
     const source = await seedRoutableRoute('embedded-source-model');
     const activeResponse = await app.inject({
       method: 'GET',
-      url: '/api/route-graph/active',
+      url: '/api/route-graph/active?include=full',
       headers: app.adminHeaders(),
     });
     expect(activeResponse.statusCode).toBe(200);

@@ -19,10 +19,10 @@ import {
 } from './accountExtraConfig.js';
 import { invalidateTokenRouterCache } from './tokenRouter.js';
 import {
-  ensureActiveRouteGraphVersion,
+  invalidateRouteGraphReadCaches,
   loadRouteGraphRouteTableBindings,
-  synchronizeActiveRouteGraphVersion,
 } from './routeGraphService.js';
+import { syncRouteBindingProjectionsFromRouteTable } from './routeTableProjectionService.js';
 import { getBlockedBrandRules, isModelBlockedByBrand } from './brandMatcher.js';
 import { config } from '../config.js';
 import { setAccountRuntimeHealth } from './accountHealthService.js';
@@ -1772,7 +1772,7 @@ export async function rebuildTokenRoutesFromAvailability() {
     bridgesByModelName: groupBridgeSync.bridgesByModelName,
   });
 
-  await synchronizeActiveRouteGraphVersion({ allowDiagnostics: true });
+  await syncRouteBindingProjectionsFromRouteTable();
 
   if (
     createdRoutes > 0
@@ -1789,6 +1789,7 @@ export async function rebuildTokenRoutesFromAvailability() {
   }
 
   invalidateTokenRouterCache();
+  invalidateRouteGraphReadCaches();
 
   return {
     models: modelCandidates.size,

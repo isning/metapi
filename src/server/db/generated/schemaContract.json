@@ -2070,6 +2070,58 @@
         }
       }
     },
+    "route_binding_projections": {
+      "columns": {
+        "route_id": {
+          "logicalType": "integer",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": true
+        },
+        "match_json": {
+          "logicalType": "json",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "backend_json": {
+          "logicalType": "json",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "visibility": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'public'",
+          "primaryKey": false
+        },
+        "model_pattern": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "''",
+          "primaryKey": false
+        },
+        "route_mode": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'pattern'",
+          "primaryKey": false
+        },
+        "source_route_ids_json": {
+          "logicalType": "json",
+          "notNull": true,
+          "defaultValue": null,
+          "primaryKey": false
+        },
+        "updated_at": {
+          "logicalType": "datetime",
+          "notNull": false,
+          "defaultValue": "datetime('now')",
+          "primaryKey": false
+        }
+      }
+    },
     "route_endpoint_targets": {
       "columns": {
         "id": {
@@ -4256,6 +4308,30 @@
       "unique": false
     },
     {
+      "name": "route_binding_projections_model_pattern_idx",
+      "table": "route_binding_projections",
+      "columns": [
+        "model_pattern"
+      ],
+      "unique": false
+    },
+    {
+      "name": "route_binding_projections_route_mode_idx",
+      "table": "route_binding_projections",
+      "columns": [
+        "route_mode"
+      ],
+      "unique": false
+    },
+    {
+      "name": "route_binding_projections_visibility_idx",
+      "table": "route_binding_projections",
+      "columns": [
+        "visibility"
+      ],
+      "unique": false
+    },
+    {
       "name": "route_endpoint_targets_account_id_idx",
       "table": "route_endpoint_targets",
       "columns": [
@@ -5228,6 +5304,17 @@
         "trace_id"
       ],
       "referencedTable": "proxy_debug_traces",
+      "referencedColumns": [
+        "id"
+      ],
+      "onDelete": "CASCADE"
+    },
+    {
+      "table": "route_binding_projections",
+      "columns": [
+        "route_id"
+      ],
+      "referencedTable": "token_routes",
       "referencedColumns": [
         "id"
       ],

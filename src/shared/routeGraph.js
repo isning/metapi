@@ -3326,7 +3326,8 @@ function compilePrimitiveRouteGraph(sourceInput, preDiagnostics = []) {
   };
 }
 
-function compileRouteGraph(sourceInput) {
+function compileRouteGraph(sourceInput, options = {}) {
+  const includeLegacyBundles = options.includeLegacyBundles !== false;
   const lowered = lowerRouteGraphSource(sourceInput);
   const compiled = compilePrimitiveRouteGraph(lowered.primitiveSource, lowered.diagnostics);
   const nextCompiledGraph = {
@@ -3343,25 +3344,31 @@ function compileRouteGraph(sourceInput) {
     compiledGraph: nextCompiledGraph,
   });
   const compiledRouterBundle = buildCompiledRouterBundle(programBundle);
-  const flatProgramBundle = buildRouteFlatProgramBundle(programBundle);
+  const flatProgramBundle = includeLegacyBundles ? buildRouteFlatProgramBundle(programBundle) : null;
   const diagnostics = [
     ...compiled.diagnostics,
     ...(Array.isArray(programBundle.diagnostics) ? programBundle.diagnostics : []),
-    ...(Array.isArray(flatProgramBundle.diagnostics) ? flatProgramBundle.diagnostics.filter((diagnostic) => (
+    ...(Array.isArray(flatProgramBundle?.diagnostics) ? flatProgramBundle.diagnostics.filter((diagnostic) => (
       String(diagnostic?.code || '').startsWith('flat_program.')
     )) : []),
   ];
+  if (!includeLegacyBundles) {
+    programBundle.programs = [];
+    programBundle.matcher = { exact: {}, normalizedExact: {}, patterns: [] };
+    programBundle.endpointCatalog = { byId: {}, productToProgram: {}, supplyTargets: {} };
+    programBundle.debug = { generatedByMacro: {}, sourceRefs: {} };
+    programBundle.diagnostics = [];
+  }
   return {
     ...compiled,
     source: lowered.semanticSource,
-    primitiveSource: lowered.primitiveSource,
+    primitiveSource: options.includePrimitiveSource === false ? normalizeRouteGraphSource(null) : lowered.primitiveSource,
     diagnostics,
     ok: !diagnostics.some((diagnostic) => diagnostic.severity === 'error'),
     compiled: {
       ...nextCompiledGraph,
-      programBundle,
-      flatProgramBundle,
       compiledRouterBundle,
+      ...(includeLegacyBundles ? { programBundle, flatProgramBundle } : {}),
     },
   };
 }
@@ -3371,8 +3378,8 @@ export function validateRouteGraphSource(sourceInput) {
   return { ok, diagnostics };
 }
 
-export function compileRouteGraphSource(sourceInput) {
-  return compileRouteGraph(sourceInput);
+export function compileRouteGraphSource(sourceInput, options = {}) {
+  return compileRouteGraph(sourceInput, options);
 }
 
 export function findRouteGraphEntryForModel(compiledGraph, model) {

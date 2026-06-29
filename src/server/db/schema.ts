@@ -328,6 +328,21 @@ export const routeGroupSources = sqliteTable('route_group_sources', {
   sourceRouteIdx: index('route_group_sources_source_route_id_idx').on(table.sourceRouteId),
 }));
 
+export const routeBindingProjections = sqliteTable('route_binding_projections', {
+  routeId: integer('route_id').primaryKey().references(() => tokenRoutes.id, { onDelete: 'cascade' }),
+  matchJson: text('match_json').notNull(),
+  backendJson: text('backend_json').notNull(),
+  visibility: text('visibility').notNull().default('public'),
+  modelPattern: text('model_pattern').notNull().default(''),
+  routeMode: text('route_mode').notNull().default('pattern'),
+  sourceRouteIdsJson: text('source_route_ids_json').notNull(),
+  updatedAt: text('updated_at').default(sql`(datetime('now'))`),
+}, (table) => ({
+  visibilityIdx: index('route_binding_projections_visibility_idx').on(table.visibility),
+  routeModeIdx: index('route_binding_projections_route_mode_idx').on(table.routeMode),
+  modelPatternIdx: index('route_binding_projections_model_pattern_idx').on(table.modelPattern),
+}));
+
 export const routeGraphVersions = sqliteTable('route_graph_versions', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   version: integer('version').notNull(),

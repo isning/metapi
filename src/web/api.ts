@@ -1300,7 +1300,12 @@ export const api = {
     }),
 
   // Routes
-  getRouteGraphActive: () => request("/api/route-graph/active"),
+  getRouteGraphActive: (options?: { include?: "summary" | "source" | "compiled" | "full" }) => {
+    const include = options?.include && options.include !== "summary"
+      ? `?include=${encodeURIComponent(options.include)}`
+      : "";
+    return request(`/api/route-graph/active${include}`);
+  },
   getRouteGraphDraft: () => request("/api/route-graph/draft"),
   validateRouteGraph: (graph: any) =>
     request("/api/route-graph/validate", {
@@ -1325,7 +1330,15 @@ export const api = {
     }),
   getRoutes: () => request("/api/routes"),
   getRoutesLite: () => request("/api/routes/lite"),
-  getRoutesSummary: () => request("/api/routes/summary"),
+  getRoutesSummary: (options?: { paged?: boolean; page?: number; pageSize?: number; raw?: boolean }) =>
+    request(`/api/routes/summary${buildQueryString({
+      ...(options?.paged ? { paged: 1 } : {}),
+      page: options?.page,
+      pageSize: options?.pageSize,
+    })}`).then((response) => {
+      if (options?.raw) return response;
+      return Array.isArray(response) ? response : response?.items || [];
+    }),
   getRouteTargets: (routeId: number) =>
     request(`/api/routes/${routeId}/targets`),
   batchAddTargets: (
@@ -1425,7 +1438,28 @@ export const api = {
         ...(options?.persistSnapshots ? { persistSnapshots: true } : {}),
       }),
     }),
-  getRouteEndpoints: () => request("/api/route-endpoints"),
+  getRouteEndpoints: (options?: {
+    paged?: boolean;
+    page?: number;
+    pageSize?: number;
+    endpointKind?: "all" | "supply" | "route_product";
+    routeId?: number;
+    siteId?: number;
+    q?: string;
+    raw?: boolean;
+  }) =>
+    request(`/api/route-endpoints${buildQueryString({
+      ...(options?.paged ? { paged: 1 } : {}),
+      page: options?.page,
+      pageSize: options?.pageSize,
+      endpointKind: options?.endpointKind,
+      routeId: options?.routeId,
+      siteId: options?.siteId,
+      q: options?.q,
+    })}`).then((response) => {
+      if (options?.raw) return response;
+      return Array.isArray(response) ? response : response?.items || [];
+    }),
 
   // Stats
   getDashboard: () => request("/api/stats/dashboard"),

@@ -1979,7 +1979,7 @@ function RouteGraphWorkbenchInner({ mode = 'graph', focusIntent = null, onFocusI
     let promise!: Promise<void>;
     promise = (async () => {
       try {
-        const items = await api.getRouteEndpoints();
+        const items = await api.getRouteEndpoints({ paged: true, pageSize: 500, endpointKind: 'all' });
         if (routeEndpointCatalogSeqRef.current !== seq) return;
         setRouteEndpointCatalog(Array.isArray(items) ? items as RouteEndpointCatalogItem[] : []);
       } catch (error) {

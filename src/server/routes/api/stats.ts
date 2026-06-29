@@ -16,9 +16,10 @@ import {
 import { comparePricingSummaries } from "../../services/pricingComparisonService.js";
 import { compileModelRouteFlow } from "../../services/routeFlowService.js";
 import {
-  ensureActiveRouteGraphVersion,
+  getActiveRouteGraphSourceVersion,
   listRouteEndpointCatalog,
 } from "../../services/routeGraphService.js";
+import { matchesTokenRouteModelPattern } from "../../../shared/tokenRoutePatterns.js";
 import {
   buildModelAvailabilityProbeTaskDedupeKey,
   queueModelAvailabilityProbeTask,
@@ -1704,6 +1705,11 @@ export async function statsRoutes(app: FastifyInstance) {
         String(account.accessToken || "").trim().length > 0 ||
         String(account.apiToken || "").trim().length > 0
       );
+      const readRecordValue = (value: unknown): Record<string, unknown> | null => (
+        value && typeof value === "object" && !Array.isArray(value)
+          ? value as Record<string, unknown>
+          : null
+      );
 
       for (const row of availability) {
         const m = row.token_model_availability;
@@ -1737,8 +1743,7 @@ export async function statsRoutes(app: FastifyInstance) {
       }
 
       try {
-        const activeGraph = await ensureActiveRouteGraphVersion();
-        const routeEndpointCatalog = await listRouteEndpointCatalog();
+        const routeEndpointCatalog = await listRouteEndpointCatalog({ endpointKind: "route_product" });
         const publicRouteIdsByModel = new Map<string, Set<number>>();
         const addPublicModelRouteId = (modelName: string, routeIdInput: unknown) => {
           const routeId = Number(routeIdInput);
@@ -1752,52 +1757,6 @@ export async function statsRoutes(app: FastifyInstance) {
           if (!Array.isArray(values)) return;
           for (const routeId of values) addPublicModelRouteId(modelName, routeId);
         };
-        const readRecordValue = (value: unknown): Record<string, unknown> | null => (
-          value && typeof value === "object" && !Array.isArray(value)
-            ? value as Record<string, unknown>
-            : null
-        );
-        const collectCompiledMacroRouteIds = (modelName: string, entryNodeId: string) => {
-          const nodesById = activeGraph.compiledGraph.nodesById || {};
-          const entryNode = readRecordValue(nodesById[entryNodeId]);
-          const provenance = readRecordValue(entryNode?.provenance);
-          const macroId = typeof provenance?.macroId === "string" ? provenance.macroId : "";
-          if (!macroId) return;
-          for (const node of Object.values(nodesById)) {
-            const nodeRecord = readRecordValue(node);
-            if (!nodeRecord) continue;
-            const nodeProvenance = readRecordValue(nodeRecord.provenance);
-            const metadata = readRecordValue(nodeRecord.metadata);
-            const macroCandidate = readRecordValue(metadata?.macroCandidate);
-            const belongsToMacro = nodeProvenance?.macroId === macroId || macroCandidate?.macroId === macroId;
-            if (!belongsToMacro) continue;
-            addPublicModelRouteId(modelName, nodeRecord.routeId);
-            addPublicModelRouteId(modelName, nodeRecord.legacyRouteId);
-            addPublicModelRouteId(modelName, macroCandidate?.routeId);
-            addPublicModelRouteId(modelName, macroCandidate?.localRouteId);
-            recordRouteIdsFromArray(modelName, metadata?.sourceRouteIds);
-            recordRouteIdsFromArray(modelName, metadata?.localRouteIds);
-            const configRecord = readRecordValue(nodeRecord.config);
-            const targets = Array.isArray(configRecord?.targets) ? configRecord.targets : [];
-            for (const target of targets) {
-              const targetRecord = readRecordValue(target);
-              const targetMetadata = readRecordValue(targetRecord?.metadata);
-              addPublicModelRouteId(modelName, targetMetadata?.localRouteId);
-              addPublicModelRouteId(modelName, targetMetadata?.routeId);
-            }
-          }
-        };
-        for (const publicModel of activeGraph.compiledGraph.publicModels || []) {
-          const modelName = String(publicModel.model || "").trim();
-          if (!modelName) continue;
-          if (!modelMap[modelName]) {
-            modelMap[modelName] = {
-              name: modelName,
-              accountsById: new Map(),
-            };
-          }
-          collectCompiledMacroRouteIds(modelName, publicModel.nodeId);
-        }
         const publicRouteProducts = routeEndpointCatalog.filter((endpoint) => (
           endpoint.enabled !== false
           && endpoint.endpointKind === "route_product"
@@ -1821,6 +1780,72 @@ export async function statsRoutes(app: FastifyInstance) {
             }
           }
         }
+        const routeProductsById = new Map<string, typeof publicRouteProducts[number]>();
+        for (const endpoint of publicRouteProducts) {
+          routeProductsById.set(endpoint.endpointId, endpoint);
+          routeProductsById.set(endpoint.nodeId, endpoint);
+        }
+        const collectManualMacroRouteIds = async () => {
+          const activePointer = await db.select({ versionId: schema.routeGraphActiveVersion.versionId })
+            .from(schema.routeGraphActiveVersion)
+            .where(eq(schema.routeGraphActiveVersion.id, 1))
+            .get();
+          if (!activePointer?.versionId) return;
+          const activeRow = await db.select({ sourceGraphJson: schema.routeGraphVersions.sourceGraphJson })
+            .from(schema.routeGraphVersions)
+            .where(eq(schema.routeGraphVersions.id, activePointer.versionId))
+            .get();
+          const sourceGraphJson = String(activeRow?.sourceGraphJson || "");
+          if (!sourceGraphJson.includes('"ownership":"manual"') || !sourceGraphJson.includes('"candidate_selector"')) return;
+
+          const activeSource = await getActiveRouteGraphSourceVersion();
+          for (const macro of activeSource?.sourceGraph.macros || []) {
+            const macroRecord = readRecordValue(macro);
+            const config = readRecordValue(macroRecord?.config);
+            const surface = readRecordValue(config?.surface);
+            const entry = readRecordValue(surface?.entry);
+            if (
+              macroRecord?.kind !== "candidate_selector" ||
+              macroRecord?.enabled === false ||
+              macroRecord?.visibility !== "public" ||
+              entry?.kind !== "external"
+            ) continue;
+            const entryMatch = readRecordValue(entry.match);
+            const modelName = String(entryMatch?.requestedModelPattern || entryMatch?.displayName || "").trim();
+            if (!modelName) continue;
+            if (!modelMap[modelName]) {
+              modelMap[modelName] = {
+                name: modelName,
+                accountsById: new Map(),
+              };
+            }
+            const groups = Array.isArray(config?.groups) ? config.groups : [];
+            for (const group of groups) {
+              const groupRecord = readRecordValue(group);
+              if (groupRecord?.enabled === false) continue;
+              const input = readRecordValue(groupRecord?.input);
+              if (input?.kind === "route_endpoints") {
+                const endpointIds = Array.isArray(input.endpointIds) ? input.endpointIds : [];
+                for (const endpointId of endpointIds) {
+                  const endpoint = routeProductsById.get(String(endpointId || "").trim());
+                  if (endpoint) recordRouteIdsFromArray(modelName, endpoint.sourceRouteIds);
+                }
+                continue;
+              }
+              if (input?.kind === "model_pattern") {
+                const pattern = String(input.pattern || "").trim();
+                if (!pattern) continue;
+                for (const endpoint of publicRouteProducts) {
+                  const endpointModel = String(endpoint.publicModelName || endpoint.modelPattern || endpoint.label || "").trim();
+                  if (endpointModel && matchesTokenRouteModelPattern(endpointModel, pattern)) {
+                    recordRouteIdsFromArray(modelName, endpoint.sourceRouteIds);
+                  }
+                }
+              }
+            }
+          }
+        };
+        await collectManualMacroRouteIds();
         for (const routeIds of publicRouteIdsByModel.values()) {
           for (const routeId of routeIds) publicSourceRouteIds.add(routeId);
         }

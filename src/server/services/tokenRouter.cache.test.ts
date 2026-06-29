@@ -12,6 +12,7 @@ describe('TokenRouter runtime cache', () => {
   let db: DbModule['db'];
   let schema: DbModule['schema'];
   let TokenRouter: TokenRouterModule['TokenRouter'];
+  let tokenRouterTestUtils: TokenRouterModule['__tokenRouterTestUtils'];
   let invalidateTokenRouterCache: TokenRouterModule['invalidateTokenRouterCache'];
   let isTargetRecentlyFailed: TokenRouterModule['isTargetRecentlyFailed'];
   let resetSiteRuntimeHealthState: TokenRouterModule['resetSiteRuntimeHealthState'];
@@ -31,6 +32,7 @@ describe('TokenRouter runtime cache', () => {
     db = dbModule.db;
     schema = dbModule.schema;
     TokenRouter = tokenRouterModule.TokenRouter;
+    tokenRouterTestUtils = tokenRouterModule.__tokenRouterTestUtils;
     invalidateTokenRouterCache = tokenRouterModule.invalidateTokenRouterCache;
     isTargetRecentlyFailed = tokenRouterModule.isTargetRecentlyFailed;
     resetSiteRuntimeHealthState = tokenRouterModule.resetSiteRuntimeHealthState;
@@ -40,7 +42,12 @@ describe('TokenRouter runtime cache', () => {
   });
 
   beforeEach(async () => {
+    await db.delete(schema.routeGraphActiveVersion).run();
+    await db.delete(schema.routeGraphDrafts).run();
+    await db.delete(schema.routeGraphVersions).run();
     await db.delete(schema.routeEndpointTargets).run();
+    await db.delete(schema.routeGroupSources).run();
+    await db.delete(schema.routeBindingProjections).run();
     await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.settings).run();
     await db.delete(schema.accountTokens).run();
@@ -60,7 +67,88 @@ describe('TokenRouter runtime cache', () => {
     delete process.env.DATA_DIR;
   });
 
-  it('keeps route snapshot inside TTL until explicit invalidation', async () => {
+  async function createSimpleRoute(model: string) {
+    const site = await db.insert(schema.sites).values({
+      name: `${model}-site`,
+      url: `https://${model}.example.com`,
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: `${model}-user`,
+      accessToken: `${model}-access-token`,
+      apiToken: `${model}-api-token`,
+      status: 'active',
+    }).returning().get();
+
+    const token = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: `${model}-token`,
+      token: `sk-${model}-token`,
+      enabled: true,
+      isDefault: true,
+    }).returning().get();
+
+    const route = await db.insert(schema.tokenRoutes).values({
+      displayName: model,
+      enabled: true,
+    }).returning().get();
+
+    const target = await db.insert(schema.routeEndpointTargets).values({
+      routeId: route.id,
+      accountId: account.id,
+      tokenId: token.id,
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).returning().get();
+
+    return { site, account, token, route, target };
+  }
+
+  it('does not bootstrap an active route graph during runtime route selection', async () => {
+    const { target } = await createSimpleRoute('runtime-no-bootstrap-model');
+
+    const router = new TokenRouter();
+    const selection = await router.selectTarget('runtime-no-bootstrap-model');
+
+    expect(selection?.target.id).toBe(target.id);
+    expect(await db.select().from(schema.routeGraphVersions).all()).toHaveLength(0);
+    expect(await db.select().from(schema.routeGraphActiveVersion).all()).toHaveLength(0);
+  });
+
+  it('keeps weighted route selection free of synchronous selection timestamp writes', async () => {
+    const { target } = await createSimpleRoute('runtime-weighted-no-selection-write');
+
+    const router = new TokenRouter();
+    const selection = await router.selectTarget('runtime-weighted-no-selection-write');
+    const storedTarget = await db.select().from(schema.routeEndpointTargets)
+      .where(eq(schema.routeEndpointTargets.id, target.id))
+      .get();
+
+    expect(selection?.target.id).toBe(target.id);
+    expect(storedTarget?.lastSelectedAt).toBeNull();
+  });
+
+  it('coalesces concurrent runtime model candidate and route match cache misses', async () => {
+    const { target } = await createSimpleRoute('runtime-concurrent-model');
+    const router = new TokenRouter();
+    invalidateTokenRouterCache();
+
+    const routeLoadsBefore = tokenRouterTestUtils.getRouteCacheLoadCount();
+    const candidateLoadsBefore = tokenRouterTestUtils.getRouteModelCandidateLoadCount();
+    const matchLoadsBefore = tokenRouterTestUtils.getRouteMatchLoadCount();
+    const selections = await Promise.all(Array.from({ length: 32 }, () => router.selectTarget('runtime-concurrent-model')));
+
+    expect(selections.every((selection) => selection?.target.id === target.id)).toBe(true);
+    expect(tokenRouterTestUtils.getRouteCacheLoadCount() - routeLoadsBefore).toBe(0);
+    expect(tokenRouterTestUtils.getRouteModelCandidateLoadCount() - candidateLoadsBefore).toBe(1);
+    expect(tokenRouterTestUtils.getRouteMatchLoadCount() - matchLoadsBefore).toBe(1);
+  });
+
+  it('keeps direct route candidates and matches inside TTL until explicit invalidation', async () => {
     const site = await db.insert(schema.sites).values({
       name: 'cache-site',
       url: 'https://cache-site.example.com',
@@ -105,7 +193,7 @@ describe('TokenRouter runtime cache', () => {
     await db.delete(schema.tokenRoutes).where(eq(schema.tokenRoutes.id, route.id)).run();
 
     const cachedSelection = await router.selectTarget('gpt-4o-mini');
-    expect(cachedSelection).toBeNull();
+    expect(cachedSelection?.target.id).toBeTruthy();
 
     invalidateTokenRouterCache();
     const refreshedSelection = await router.selectTarget('gpt-4o-mini');

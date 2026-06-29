@@ -561,14 +561,14 @@ export default function TokenRoutes() {
   const loadRouteEndpointCatalog = useCallback((force?: boolean) => {
     if (routeEndpointCatalogLoadedRef.current && !force) return;
     if (routeEndpointCatalogPromiseRef.current && !force) return;
-    const endpointFetcher = (api as { getRouteEndpoints?: () => Promise<unknown> }).getRouteEndpoints;
+    const endpointFetcher = (api as { getRouteEndpoints?: (options?: { paged?: boolean; pageSize?: number; endpointKind?: 'all' | 'supply' | 'route_product' }) => Promise<unknown> }).getRouteEndpoints;
     if (typeof endpointFetcher !== 'function') return;
     const seq = ++routeEndpointCatalogSeqRef.current;
     routeEndpointCatalogLoadedRef.current = true;
     let promise!: Promise<void>;
     promise = (async () => {
       try {
-        const endpointRows = await endpointFetcher();
+        const endpointRows = await endpointFetcher({ paged: true, pageSize: 500, endpointKind: 'supply' });
         if (routeEndpointCatalogSeqRef.current !== seq) return;
         startTransition(() => {
           setRouteEndpointCatalog((endpointRows || []) as RouteEndpointCatalogItem[]);
@@ -587,14 +587,14 @@ export default function TokenRoutes() {
   const loadActiveRouteGraphSource = useCallback((force?: boolean) => {
     if (activeRouteGraphSourceLoadedRef.current && !force) return;
     if (activeRouteGraphSourcePromiseRef.current && !force) return;
-    const graphFetcher = (api as { getRouteGraphActive?: () => Promise<unknown> }).getRouteGraphActive;
+    const graphFetcher = (api as { getRouteGraphActive?: (options?: { include?: 'source' | 'full' | 'compiled' | 'summary' }) => Promise<unknown> }).getRouteGraphActive;
     if (typeof graphFetcher !== 'function') return;
     const seq = ++activeRouteGraphSourceSeqRef.current;
     activeRouteGraphSourceLoadedRef.current = true;
     let promise!: Promise<void>;
     promise = (async () => {
       try {
-        const activeGraph = await graphFetcher();
+        const activeGraph = await graphFetcher({ include: 'source' });
         if (activeRouteGraphSourceSeqRef.current !== seq) return;
         startTransition(() => {
           setActiveRouteGraphSource(extractActiveRouteGraphSource(activeGraph));
@@ -645,7 +645,7 @@ export default function TokenRoutes() {
   const load = async () => {
     setRoutesLoading((current) => current || routeSummaries.length === 0);
     try {
-      const summaryRows = await api.getRoutesSummary();
+      const summaryRows = await api.getRoutesSummary({ paged: true, pageSize: 1000 });
 
       const summaries = (summaryRows || []) as RouteSummaryRow[];
       setRouteSummaries(summaries);

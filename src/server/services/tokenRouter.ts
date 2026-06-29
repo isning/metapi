@@ -12,6 +12,12 @@ import {
 } from './endpointPricingService.js';
 import { loadRouteGraphRouteTableBindings } from './routeGraphService.js';
 import {
+  loadEnabledRouteBindingProjectionsByModelPattern,
+  loadRouteBindingProjectionMap,
+  loadRouteBindingProjectionsForRouteIds,
+  type RouteBindingProjection,
+} from './routeTableProjectionService.js';
+import {
   evaluateActiveRouteGraphForModel,
   type RouteGraphRuntimeSelection,
   type RouteGraphRuntimeFailureOverlay,
@@ -155,6 +161,8 @@ const SITE_RUNTIME_HEALTH_PERSIST_DEBOUNCE_MS = 500;
 const SITE_RUNTIME_HEALTH_PERSIST_STALE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const SITE_RUNTIME_HEALTH_PERSIST_IDLE_TTL_MS = 12 * 60 * 60 * 1000;
 const SITE_RUNTIME_HEALTH_PERSIST_MIN_PENALTY = 0.02;
+const ROUTE_MODEL_CANDIDATE_CACHE_LIMIT = 4096;
+const ROUTE_MATCH_CACHE_LIMIT = 4096;
 
 const SITE_PROTOCOL_FAILURE_PATTERNS: RegExp[] = [
   /unsupported\s+legacy\s+protocol/i,
@@ -1113,6 +1121,11 @@ type TargetRow = typeof schema.routeEndpointTargets.$inferSelect;
 type RouteCacheSnapshot = {
   loadedAt: number;
   routes: RouteRow[];
+  routesById: Map<number, RouteRow>;
+  explicitGroupByExposedName: Map<string, RouteRow>;
+  exactRouteByModel: Map<string, RouteRow>;
+  nonGroupByExposedName: Map<string, RouteRow>;
+  patternRoutes: RouteRow[];
 };
 
 type RouteMatchCacheSnapshot = {
@@ -1120,12 +1133,66 @@ type RouteMatchCacheSnapshot = {
   match: RouteMatch;
 };
 
+type RouteModelCandidateCacheSnapshot = {
+  loadedAt: number;
+  candidates: RouteRow[];
+};
+
+function emptyRouteCacheSnapshot(): RouteCacheSnapshot {
+  return {
+    loadedAt: 0,
+    routes: [],
+    routesById: new Map(),
+    explicitGroupByExposedName: new Map(),
+    exactRouteByModel: new Map(),
+    nonGroupByExposedName: new Map(),
+    patternRoutes: [],
+  };
+}
+
 let routeCacheSnapshot: RouteCacheSnapshot = {
   loadedAt: 0,
   routes: [],
+  routesById: new Map(),
+  explicitGroupByExposedName: new Map(),
+  exactRouteByModel: new Map(),
+  nonGroupByExposedName: new Map(),
+  patternRoutes: [],
 };
+let routeCacheLoadPromise: Promise<RouteCacheSnapshot> | null = null;
+let routeCacheGeneration = 0;
+let routeCacheLoadCount = 0;
 
 const routeMatchCache = new Map<number, RouteMatchCacheSnapshot>();
+const routeMatchLoadPromises = new Map<number, Promise<RouteMatch>>();
+let routeMatchLoadCount = 0;
+const routeModelCandidateCache = new Map<string, RouteModelCandidateCacheSnapshot>();
+const routeModelCandidateLoadPromises = new Map<string, Promise<RouteRow[]>>();
+let routeModelCandidateLoadCount = 0;
+
+function enforceMapSizeLimit<K, V>(map: Map<K, V>, limit: number): void {
+  while (map.size > limit) {
+    const oldestKey = map.keys().next().value;
+    if (oldestKey === undefined) break;
+    map.delete(oldestKey);
+  }
+}
+
+function rememberRouteMatchCache(routeId: number, snapshot: RouteMatchCacheSnapshot): void {
+  if (routeMatchCache.has(routeId)) {
+    routeMatchCache.delete(routeId);
+  }
+  routeMatchCache.set(routeId, snapshot);
+  enforceMapSizeLimit(routeMatchCache, ROUTE_MATCH_CACHE_LIMIT);
+}
+
+function rememberRouteModelCandidateCache(model: string, snapshot: RouteModelCandidateCacheSnapshot): void {
+  if (routeModelCandidateCache.has(model)) {
+    routeModelCandidateCache.delete(model);
+  }
+  routeModelCandidateCache.set(model, snapshot);
+  enforceMapSizeLimit(routeModelCandidateCache, ROUTE_MODEL_CANDIDATE_CACHE_LIMIT);
+}
 
 function resolveTokenRouterCacheTtlMs(): number {
   const raw = Math.trunc(config.tokenRouterCacheTtlMs || 0);
@@ -1136,100 +1203,251 @@ function isCacheFresh(loadedAt: number, nowMs: number): boolean {
   return nowMs - loadedAt < resolveTokenRouterCacheTtlMs();
 }
 
-async function loadEnabledRoutes(nowMs = Date.now()): Promise<RouteRow[]> {
-  if (isCacheFresh(routeCacheSnapshot.loadedAt, nowMs)) {
-    return routeCacheSnapshot.routes;
+function rememberFirstRouteByKey(map: Map<string, RouteRow>, key: string, route: RouteRow): void {
+  const normalizedKey = key.trim();
+  if (!normalizedKey || map.has(normalizedKey)) return;
+  map.set(normalizedKey, route);
+}
+
+function buildRouteRow(
+  route: typeof schema.tokenRoutes.$inferSelect,
+  binding: RouteBindingProjection | null | undefined,
+  legacySourceRouteIds: number[] = [],
+): RouteRow {
+  const fallbackPattern = (route.displayName || '').trim();
+  const match = binding?.match ?? {
+    kind: 'model' as const,
+    requestedModelPattern: fallbackPattern,
+    currentModelPattern: '',
+    displayName: route.displayName || null,
+    downstreamProtocol: null,
+    upstreamProtocol: null,
+    sitePlatform: null,
+    routeId: route.id,
+    accountId: null,
+    tokenId: null,
+    siteId: null,
+  };
+  const backend = legacySourceRouteIds.length > 0
+    ? { kind: 'routes' as const, routeIds: legacySourceRouteIds }
+    : binding?.backend ?? { kind: 'supply' as const };
+  return {
+    ...route,
+    match,
+    backend,
+    routeMode: legacySourceRouteIds.length > 0
+      ? 'explicit_group'
+      : binding?.routeMode ?? deriveLegacyRouteModeFromBackendSpec(backend),
+    modelPattern: binding?.modelPattern ?? (deriveLegacyModelPatternFromSpecs(match, backend) || fallbackPattern),
+    sourceRouteIds: binding?.sourceRouteIds ?? (
+      legacySourceRouteIds.length > 0
+        ? legacySourceRouteIds
+        : deriveLegacySourceRouteIdsFromBackendSpec(backend)
+    ),
+  };
+}
+
+function buildRouteCacheSnapshot(nowMs: number, routes: RouteRow[]): RouteCacheSnapshot {
+  const snapshot: RouteCacheSnapshot = {
+    loadedAt: nowMs,
+    routes,
+    routesById: new Map(routes.map((route) => [route.id, route])),
+    explicitGroupByExposedName: new Map(),
+    exactRouteByModel: new Map(),
+    nonGroupByExposedName: new Map(),
+    patternRoutes: [],
+  };
+
+  for (const route of routes) {
+    if (isExplicitGroupRoute(route)) {
+      rememberFirstRouteByKey(snapshot.explicitGroupByExposedName, getExposedModelNameForRoute(route), route);
+      continue;
+    }
+
+    if (isRouteGraphExactModelMatch(route.match, route.backend)) {
+      rememberFirstRouteByKey(snapshot.exactRouteByModel, route.modelPattern || '', route);
+    }
+
+    rememberFirstRouteByKey(snapshot.nonGroupByExposedName, getExposedModelNameForRoute(route), route);
+    snapshot.patternRoutes.push(route);
   }
 
-  const rawRoutes = await db.select().from(schema.tokenRoutes)
+  return snapshot;
+}
+
+async function buildEnabledRouteSnapshot(nowMs: number): Promise<RouteCacheSnapshot> {
+  routeCacheLoadCount += 1;
+  const [rawRoutes, routeGroupSources, projections] = await Promise.all([
+    db.select().from(schema.tokenRoutes)
     .where(eq(schema.tokenRoutes.enabled, true))
-    .all();
-  const routeGroupSources = await db.select().from(schema.routeGroupSources).all();
+      .all(),
+    db.select().from(schema.routeGroupSources).all(),
+    loadRouteBindingProjectionMap(),
+  ]);
   const sourceRouteIdsByGroupRouteId = new Map<number, number[]>();
   for (const source of routeGroupSources) {
     const existing = sourceRouteIdsByGroupRouteId.get(source.groupRouteId) || [];
     existing.push(source.sourceRouteId);
     sourceRouteIdsByGroupRouteId.set(source.groupRouteId, existing);
   }
-  const bindings = await loadRouteGraphRouteTableBindings();
-  const routes = rawRoutes.map((route) => {
-    const binding = bindings.get(route.id);
-    const legacySourceRouteIds = sourceRouteIdsByGroupRouteId.get(route.id) || [];
-    const fallbackPattern = (route.modelPattern || route.displayName || '').trim();
-    const match = binding?.match ?? {
-      kind: 'model' as const,
-      requestedModelPattern: fallbackPattern,
-      currentModelPattern: '',
-      displayName: route.displayName || null,
-      downstreamProtocol: null,
-      upstreamProtocol: null,
-      sitePlatform: null,
-      routeId: route.id,
-      accountId: null,
-      tokenId: null,
-      siteId: null,
-    };
-    const backend = legacySourceRouteIds.length > 0
-      ? { kind: 'routes' as const, routeIds: legacySourceRouteIds }
-      : binding?.backend ?? { kind: 'supply' as const };
-    return {
-      ...route,
-      match,
-      backend,
-      routeMode: legacySourceRouteIds.length > 0
-        ? 'explicit_group'
-        : binding?.routeMode ?? deriveLegacyRouteModeFromBackendSpec(backend),
-      modelPattern: binding?.modelPattern ?? (deriveLegacyModelPatternFromSpecs(match, backend) || fallbackPattern),
-      sourceRouteIds: binding?.sourceRouteIds ?? (
-        legacySourceRouteIds.length > 0
-          ? legacySourceRouteIds
-          : deriveLegacySourceRouteIdsFromBackendSpec(backend)
-      ),
-    };
-  });
-  routeCacheSnapshot = {
-    loadedAt: nowMs,
-    routes,
-  };
-  return routes;
+  const routes = rawRoutes.map((route) => buildRouteRow(
+    route,
+    projections.get(route.id),
+    sourceRouteIdsByGroupRouteId.get(route.id) || [],
+  ));
+  return buildRouteCacheSnapshot(nowMs, routes);
 }
 
-async function loadRouteMatch(route: RouteRow, nowMs = Date.now(), routeGraph?: RouteGraphRuntimeSelection | null): Promise<RouteMatch> {
+function normalizeRouteIds(routeIdsInput: number[]): number[] {
+  return Array.from(new Set(routeIdsInput
+    .map((routeId) => Math.trunc(Number(routeId)))
+    .filter((routeId) => Number.isFinite(routeId) && routeId > 0)));
+}
+
+async function loadEnabledRouteRowsByIds(routeIdsInput: number[]): Promise<Map<number, RouteRow>> {
+  const routeIds = normalizeRouteIds(routeIdsInput);
+  if (routeIds.length === 0) return new Map();
+
+  const [rawRoutes, routeGroupSources, projections] = await Promise.all([
+    db.select().from(schema.tokenRoutes)
+      .where(and(
+        inArray(schema.tokenRoutes.id, routeIds),
+        eq(schema.tokenRoutes.enabled, true),
+      ))
+      .all(),
+    db.select().from(schema.routeGroupSources)
+      .where(inArray(schema.routeGroupSources.groupRouteId, routeIds))
+      .all(),
+    loadRouteBindingProjectionsForRouteIds(routeIds),
+  ]);
+  const sourceRouteIdsByGroupRouteId = new Map<number, number[]>();
+  for (const source of routeGroupSources) {
+    const existing = sourceRouteIdsByGroupRouteId.get(source.groupRouteId) || [];
+    existing.push(source.sourceRouteId);
+    sourceRouteIdsByGroupRouteId.set(source.groupRouteId, existing);
+  }
+
+  return new Map(rawRoutes.map((route) => [
+    route.id,
+    buildRouteRow(route, projections.get(route.id), sourceRouteIdsByGroupRouteId.get(route.id) || []),
+  ]));
+}
+
+async function loadEnabledRouteCandidatesByModelUncached(model: string): Promise<RouteRow[]> {
+  routeModelCandidateLoadCount += 1;
+  const trimmedModel = model.trim();
+  if (!trimmedModel) return [];
+
+  const projectionMatches = await loadEnabledRouteBindingProjectionsByModelPattern(trimmedModel);
+  if (projectionMatches.length > 0) {
+    return projectionMatches.map(({ route, projection }) => buildRouteRow(route, projection));
+  }
+
+  const legacyRows = await db.select().from(schema.tokenRoutes)
+    .where(and(
+      eq(schema.tokenRoutes.enabled, true),
+      eq(schema.tokenRoutes.displayName, trimmedModel),
+    ))
+    .all();
+  return legacyRows.map((route) => buildRouteRow(route, null));
+}
+
+async function loadEnabledRouteCandidatesByModel(model: string, nowMs = Date.now()): Promise<RouteRow[]> {
+  const trimmedModel = model.trim();
+  if (!trimmedModel) return [];
+
+  const cached = routeModelCandidateCache.get(trimmedModel);
+  if (cached && isCacheFresh(cached.loadedAt, nowMs)) {
+    rememberRouteModelCandidateCache(trimmedModel, cached);
+    return cached.candidates;
+  }
+
+  const inFlight = routeModelCandidateLoadPromises.get(trimmedModel);
+  if (inFlight) return await inFlight;
+
+  const loadTask = loadEnabledRouteCandidatesByModelUncached(trimmedModel)
+    .then((candidates) => {
+      rememberRouteModelCandidateCache(trimmedModel, {
+        loadedAt: nowMs,
+        candidates,
+      });
+      return candidates;
+    })
+    .finally(() => {
+      if (routeModelCandidateLoadPromises.get(trimmedModel) === loadTask) {
+        routeModelCandidateLoadPromises.delete(trimmedModel);
+      }
+    });
+  routeModelCandidateLoadPromises.set(trimmedModel, loadTask);
+  return await loadTask;
+}
+
+async function loadEnabledRouteSnapshot(nowMs = Date.now()): Promise<RouteCacheSnapshot> {
+  if (isCacheFresh(routeCacheSnapshot.loadedAt, nowMs)) {
+    return routeCacheSnapshot;
+  }
+
+  if (routeCacheLoadPromise) {
+    return await routeCacheLoadPromise;
+  }
+
+  const generation = routeCacheGeneration;
+  const loadTask = buildEnabledRouteSnapshot(nowMs)
+    .then(async (snapshot) => {
+      if (generation !== routeCacheGeneration) {
+        return await loadEnabledRouteSnapshot(Date.now());
+      }
+      routeCacheSnapshot = snapshot;
+      return snapshot;
+    })
+    .finally(() => {
+      if (routeCacheLoadPromise === loadTask) {
+        routeCacheLoadPromise = null;
+      }
+    });
+  routeCacheLoadPromise = loadTask;
+  return await loadTask;
+}
+
+async function loadEnabledRoutes(nowMs = Date.now()): Promise<RouteRow[]> {
+  return (await loadEnabledRouteSnapshot(nowMs)).routes;
+}
+
+function resolveRouteMatchFallbackSourceModel(row: {
+  token_routes: typeof schema.tokenRoutes.$inferSelect;
+}): string | null {
+  return (row.token_routes.displayName || '').trim() || null;
+}
+
+async function loadRouteMatchUncached(route: RouteRow, nowMs = Date.now(), routeGraph?: RouteGraphRuntimeSelection | null): Promise<RouteMatch> {
+  routeMatchLoadCount += 1;
   const cached = routeMatchCache.get(route.id);
   if (!routeGraph && cached && isCacheFresh(cached.loadedAt, nowMs)) {
+    rememberRouteMatchCache(route.id, cached);
     return cached.match;
   }
 
-  const enabledRoutes = await loadEnabledRoutes(nowMs);
   const routeIds = (() => {
     if (!isExplicitGroupRoute(route)) {
       return [route.id];
     }
     return Array.from(new Set(route.sourceRouteIds.filter((routeId) => Number.isFinite(routeId) && routeId > 0)));
   })();
-  const enabledSourceRoutes = isExplicitGroupRoute(route)
-    ? enabledRoutes.filter((item) => (
-      routeIds.includes(item.id)
-      && !isExplicitGroupRoute(item)
-      && isRouteGraphExactModelMatch(item.match, item.backend)
-    ))
-    : enabledRoutes.filter((item) => routeIds.includes(item.id));
-  const enabledSourceRouteIds = enabledSourceRoutes.map((item) => item.id);
-  const fallbackSourceModelByRouteId = new Map<number, string>(
-    enabledSourceRoutes
-      .filter((item) => isRouteGraphExactModelMatch(item.match, item.backend))
-      .map((item) => [item.id, (item.modelPattern || '').trim()]),
-  );
-  const targets = enabledSourceRouteIds.length > 0
+  const targetRows = routeIds.length > 0
     ? await db
       .select()
       .from(schema.routeEndpointTargets)
+      .innerJoin(schema.tokenRoutes, eq(schema.routeEndpointTargets.routeId, schema.tokenRoutes.id))
       .innerJoin(schema.accounts, eq(schema.routeEndpointTargets.accountId, schema.accounts.id))
       .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
       .leftJoin(schema.accountTokens, eq(schema.routeEndpointTargets.tokenId, schema.accountTokens.id))
-      .where(inArray(schema.routeEndpointTargets.routeId, enabledSourceRouteIds))
+      .where(and(
+        inArray(schema.routeEndpointTargets.routeId, routeIds),
+        eq(schema.tokenRoutes.enabled, true),
+      ))
       .all()
     : [];
+  const targets = targetRows;
 
   const oauthRouteUnitIds: number[] = Array.from(new Set<number>(
     targets
@@ -1245,7 +1463,7 @@ async function loadRouteMatch(route: RouteRow, nowMs = Date.now(), routeGraph?: 
     target: {
       ...row.route_endpoint_targets,
       sourceModel: normalizeTargetSourceModel(row.route_endpoint_targets.sourceModel)
-        || fallbackSourceModelByRouteId.get(row.route_endpoint_targets.routeId)
+        || resolveRouteMatchFallbackSourceModel(row)
         || null,
     },
     account: row.accounts,
@@ -1265,12 +1483,36 @@ async function loadRouteMatch(route: RouteRow, nowMs = Date.now(), routeGraph?: 
   }));
   const match = { route, routeGraph: routeGraph || null, targets: mapped };
   if (!routeGraph) {
-    routeMatchCache.set(route.id, {
+    rememberRouteMatchCache(route.id, {
       loadedAt: nowMs,
       match,
     });
   }
   return match;
+}
+
+async function loadRouteMatch(route: RouteRow, nowMs = Date.now(), routeGraph?: RouteGraphRuntimeSelection | null): Promise<RouteMatch> {
+  if (routeGraph) {
+    return await loadRouteMatchUncached(route, nowMs, routeGraph);
+  }
+
+  const cached = routeMatchCache.get(route.id);
+  if (cached && isCacheFresh(cached.loadedAt, nowMs)) {
+    rememberRouteMatchCache(route.id, cached);
+    return cached.match;
+  }
+
+  const inFlight = routeMatchLoadPromises.get(route.id);
+  if (inFlight) return await inFlight;
+
+  const loadTask = loadRouteMatchUncached(route, nowMs)
+    .finally(() => {
+      if (routeMatchLoadPromises.get(route.id) === loadTask) {
+        routeMatchLoadPromises.delete(route.id);
+      }
+    });
+  routeMatchLoadPromises.set(route.id, loadTask);
+  return await loadTask;
 }
 
 function patchCachedTarget(targetId: number, apply: (target: TargetRow) => void): void {
@@ -1308,11 +1550,13 @@ function invalidateRouteScopedCache(routeId: number): void {
 }
 
 export function invalidateTokenRouterCache(): void {
-  routeCacheSnapshot = {
-    loadedAt: 0,
-    routes: [],
-  };
+  routeCacheGeneration += 1;
+  routeCacheSnapshot = emptyRouteCacheSnapshot();
+  routeCacheLoadPromise = null;
   routeMatchCache.clear();
+  routeMatchLoadPromises.clear();
+  routeModelCandidateCache.clear();
+  routeModelCandidateLoadPromises.clear();
   stableFirstLastSelectedSiteByKey.clear();
   stableFirstObservationProgressByKey.clear();
   stableFirstObservationSiteCooldownByKey.clear();
@@ -1439,6 +1683,20 @@ function isRouteExposedNameMatch(model: string, route: RouteRow): boolean {
 
 function matchesRouteRequestModel(model: string, route: RouteRow): boolean {
   return routeGraphMatchesRequestedModel(model, route.match, route.backend);
+}
+
+function rankRouteCandidateForModel(model: string, route: RouteRow): number {
+  if (isExplicitGroupRoute(route) && isRouteExposedNameMatch(model, route)) return 0;
+  if (
+    !isExplicitGroupRoute(route)
+    && isRouteGraphExactModelMatch(route.match, route.backend)
+    && (route.modelPattern || '').trim() === model
+  ) {
+    return 1;
+  }
+  if (!isExplicitGroupRoute(route) && isRouteExposedNameMatch(model, route)) return 2;
+  if (!isExplicitGroupRoute(route) && routeGraphMatchesRequestedModel(model, route.match, route.backend)) return 3;
+  return 4;
 }
 
 function getExposedModelNameForRoute(route: RouteRow): string {
@@ -2120,14 +2378,16 @@ export class TokenRouter {
     await ensureSiteRuntimeHealthStateLoaded();
 
     const failureOverlay = routeExecutionFailureOverlayForExcludedTargets(scope, excludeTargetIds);
-    const rerunGraphSelection = await evaluateActiveRouteGraphForModel(scope.requestedModel, { failureOverlay });
+    const rerunGraphSelection = await evaluateActiveRouteGraphForModel(scope.requestedModel, {
+      failureOverlay,
+      bootstrapIfMissing: false,
+    });
     if (routeGraphSelectionIsInsideScope(scope, rerunGraphSelection)) {
       const scopedGraphSelection = rerunGraphSelection;
       if (!scopedGraphSelection) return null;
       const selectedGraphRouteId = scopedGraphSelection.matchedRouteId ?? scopedGraphSelection.selectedRouteId ?? null;
-      const routes = await loadEnabledRoutes();
       const graphRoute = selectedGraphRouteId
-        ? routes.find((route) => route.id === selectedGraphRouteId)
+        ? (await loadEnabledRouteRowsByIds([selectedGraphRouteId])).get(selectedGraphRouteId) || null
         : null;
       if (graphRoute) {
         const graphMatch = await loadRouteMatch(graphRoute, Date.now(), scopedGraphSelection);
@@ -3171,7 +3431,7 @@ export class TokenRouter {
     routeExecutionScope: RouteExecutionScope | null = null,
   ): Promise<SelectedTarget | null> {
     const mappedModel = resolveRouteMatchUpstreamModel(match, requestedModel);
-    const requestedByDisplayName = isRouteDisplayNameMatch(requestedModel, match.route.displayName)
+    const requestedByDisplayName = isRouteExposedNameMatch(requestedModel, match.route)
       || !!graphMatchedAliasForMatch(match, requestedModel);
     const bypassSourceModelCheck = requestedByDisplayName || !!match.routeGraph;
     const eligibilityModel = match.routeGraph?.currentModel || requestedModel;
@@ -3295,6 +3555,7 @@ export class TokenRouter {
         false,
         excludeTargetIds,
         routeExecutionScope,
+        false,
       );
       if (resolved) return resolved;
     }
@@ -3312,7 +3573,7 @@ export class TokenRouter {
     routeExecutionScope: RouteExecutionScope | null = null,
   ): Promise<SelectedTarget | null> {
     const mappedModel = resolveRouteMatchUpstreamModel(match, requestedModel);
-    const requestedByDisplayName = isRouteDisplayNameMatch(requestedModel, match.route.displayName)
+    const requestedByDisplayName = isRouteExposedNameMatch(requestedModel, match.route)
       || !!graphMatchedAliasForMatch(match, requestedModel);
     const bypassSourceModelCheck = requestedByDisplayName || !!match.routeGraph;
     const eligibilityModel = match.routeGraph?.currentModel || requestedModel;
@@ -3362,35 +3623,54 @@ export class TokenRouter {
   }
 
   private async findRoute(model: string, downstreamPolicy: DownstreamRoutingPolicy): Promise<RouteMatch | null> {
-    let routes = await loadEnabledRoutes();
-
     const supportedPatterns = Array.isArray(downstreamPolicy.supportedModels)
       ? downstreamPolicy.supportedModels
       : [];
     const matchedSupportedPattern = supportedPatterns.some((pattern) => matchesModelPattern(model, pattern));
+    const allowedRouteSet = downstreamPolicy.allowedRouteIds.length > 0 && !matchedSupportedPattern
+      ? new Set(downstreamPolicy.allowedRouteIds)
+      : null;
+    const routeAllowedByPolicy = (route: RouteRow | null | undefined): route is RouteRow => (
+      !!route && (!allowedRouteSet || allowedRouteSet.has(route.id))
+    );
 
-    if (downstreamPolicy.allowedRouteIds.length > 0 && !matchedSupportedPattern) {
-      const allowSet = new Set(downstreamPolicy.allowedRouteIds);
-      routes = routes.filter((route) => allowSet.has(route.id));
-    }
-
-    const graphSelection = await evaluateActiveRouteGraphForModel(model);
+    const graphSelection = await evaluateActiveRouteGraphForModel(model, { bootstrapIfMissing: false });
     const selectedGraphRouteId = graphSelection?.matchedRouteId ?? graphSelection?.selectedRouteId ?? null;
     if (graphSelection?.terminalKind === 'route_endpoint' && selectedGraphRouteId) {
-      const graphRoute = routes.find((route) => route.id === selectedGraphRouteId);
-      if (graphRoute) {
+      const graphRoute = (await loadEnabledRouteRowsByIds([selectedGraphRouteId])).get(selectedGraphRouteId);
+      if (routeAllowedByPolicy(graphRoute)) {
         return await loadRouteMatch(graphRoute, Date.now(), graphSelection);
       }
     }
 
-    const matchedRoute = routes.find((route) => isExplicitGroupRoute(route) && isRouteExposedNameMatch(model, route))
-      || routes.find((route) => (
-        !isExplicitGroupRoute(route)
-        && isRouteGraphExactModelMatch(route.match, route.backend)
-        && (route.modelPattern || '').trim() === model
-      ))
-      || routes.find((route) => !isExplicitGroupRoute(route) && isRouteExposedNameMatch(model, route))
-      || routes.find((route) => !isExplicitGroupRoute(route) && routeGraphMatchesRequestedModel(model, route.match, route.backend));
+    const directRoute = (await loadEnabledRouteCandidatesByModel(model))
+      .filter(routeAllowedByPolicy)
+      .map((route) => ({ route, rank: rankRouteCandidateForModel(model, route) }))
+      .filter((item) => item.rank < 4)
+      .sort((left, right) => left.rank - right.rank)
+      .at(0)?.route ?? null;
+
+    if (directRoute) {
+      return await this.loadRouteMatch(directRoute);
+    }
+
+    const routeSnapshot = await loadEnabledRouteSnapshot();
+    const matchedRoute = (
+      routeAllowedByPolicy(routeSnapshot.explicitGroupByExposedName.get(model))
+        ? routeSnapshot.explicitGroupByExposedName.get(model)
+        : null
+    ) || (
+      routeAllowedByPolicy(routeSnapshot.exactRouteByModel.get(model))
+        ? routeSnapshot.exactRouteByModel.get(model)
+        : null
+    ) || (
+      routeAllowedByPolicy(routeSnapshot.nonGroupByExposedName.get(model))
+        ? routeSnapshot.nonGroupByExposedName.get(model)
+        : null
+    ) || routeSnapshot.patternRoutes.find((route) => (
+      routeAllowedByPolicy(route)
+      && routeGraphMatchesRequestedModel(model, route.match, route.backend)
+    ));
 
     if (!matchedRoute) return null;
 
@@ -3402,7 +3682,7 @@ export class TokenRouter {
       return null;
     }
 
-    const route = (await loadEnabledRoutes()).find((item) => item.id === routeId);
+    const route = (await loadEnabledRouteRowsByIds([routeId])).get(routeId);
     if (!route) return null;
 
     return await this.loadRouteMatch(route);
@@ -3798,6 +4078,7 @@ export class TokenRouter {
     usedObservation = false,
     excludeTargetIds: number[] = [],
     routeExecutionScope: RouteExecutionScope | null = null,
+    recordOuterTargetSelection = recordSelection,
   ): Promise<SelectedTarget | null> {
     let dispatchCandidate = selected;
     let resolvedRouteUnitMemberTokenValue: string | null = null;
@@ -3833,7 +4114,9 @@ export class TokenRouter {
           nowMs,
         });
       }
-      await this.recordTargetSelection(selected.target.id);
+      if (recordOuterTargetSelection) {
+        await this.recordTargetSelection(selected.target.id);
+      }
     }
 
     const selectedRouteGraph = routeGraphSelectionForSelectedCandidate(match.routeGraph, selected);
@@ -4114,6 +4397,17 @@ export const tokenRouter = new TokenRouter();
 export const __tokenRouterTestUtils = {
   resolveMappedModel,
   getStableFirstRotationCacheSize: () => stableFirstLastSelectedSiteByKey.size,
+  getRouteCacheLoadCount: () => routeCacheLoadCount,
+  getRouteMatchLoadCount: () => routeMatchLoadCount,
+  getRouteModelCandidateLoadCount: () => routeModelCandidateLoadCount,
+  getRouteCacheStats: () => ({
+    routeCount: routeCacheSnapshot.routes.length,
+    modelCandidateCacheSize: routeModelCandidateCache.size,
+    matchCacheSize: routeMatchCache.size,
+    routeCacheLoadInFlight: !!routeCacheLoadPromise,
+    routeModelCandidateLoadsInFlight: routeModelCandidateLoadPromises.size,
+    routeMatchLoadsInFlight: routeMatchLoadPromises.size,
+  }),
   rememberStableFirstSiteSelectionForKey,
 };
 

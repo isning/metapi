@@ -21,6 +21,7 @@ describe('routeGraphService ownership guards', () => {
   let buildRouteGraphSourceFromRouteTable: RouteGraphServiceModule['buildRouteGraphSourceFromRouteTable'];
   let reconcileActiveGraphWithRouteTable: RouteGraphServiceModule['reconcileActiveGraphWithRouteTable'];
   let loadActiveRouteGraphRouteBindings: RouteGraphServiceModule['loadActiveRouteGraphRouteBindings'];
+  let invalidateRouteGraphReadCaches: RouteGraphServiceModule['invalidateRouteGraphReadCaches'];
   let dataDir = '';
 
   async function seedAccountToken(prefix: string): Promise<{ accountId: number; tokenId: number }> {
@@ -68,6 +69,7 @@ describe('routeGraphService ownership guards', () => {
     buildRouteGraphSourceFromRouteTable = serviceModule.buildRouteGraphSourceFromRouteTable;
     reconcileActiveGraphWithRouteTable = serviceModule.reconcileActiveGraphWithRouteTable;
     loadActiveRouteGraphRouteBindings = serviceModule.loadActiveRouteGraphRouteBindings;
+    invalidateRouteGraphReadCaches = serviceModule.invalidateRouteGraphReadCaches;
   });
 
   beforeEach(async () => {
@@ -85,6 +87,7 @@ describe('routeGraphService ownership guards', () => {
     await db.delete(schema.accounts).run();
     await db.delete(schema.sites).run();
     await db.delete(schema.tokenRoutes).run();
+    invalidateRouteGraphReadCaches();
   });
 
   afterAll(() => {
@@ -514,7 +517,7 @@ describe('routeGraphService ownership guards', () => {
     expect(compileRouteGraphSource(draft.workingGraph).ok).toBe(true);
   });
 
-  it('recompiles cached active graph JSON when the program bundle is missing', async () => {
+  it('compacts cached active graph JSON to the compiled router bundle', async () => {
     const sourceGraph = {
       version: 1,
       nodes: [
@@ -544,15 +547,23 @@ describe('routeGraphService ownership guards', () => {
     expect(published.ok).toBe(true);
     if (!published.ok) return;
 
-    const legacyCompiled = { ...published.version.compiledGraph } as Record<string, unknown>;
-    delete legacyCompiled.programBundle;
+    const initiallyStored = await db.select().from(schema.routeGraphVersions)
+      .where(eq(schema.routeGraphVersions.id, published.version.id))
+      .get();
+    expect(JSON.parse(initiallyStored?.compiledGraphJson || '{}').compiledRouterBundle).toMatchObject({ version: 2 });
+    expect(JSON.parse(initiallyStored?.compiledGraphJson || '{}').programBundle).toBeUndefined();
+    expect(JSON.parse(initiallyStored?.compiledGraphJson || '{}').flatProgramBundle).toBeUndefined();
+
+    const legacyCompiled = compileRouteGraphSource(sourceGraph).compiled as unknown as Record<string, unknown>;
+    delete legacyCompiled.compiledRouterBundle;
     await db.update(schema.routeGraphVersions).set({
       compiledGraphJson: JSON.stringify(legacyCompiled),
     }).where(eq(schema.routeGraphVersions.id, published.version.id)).run();
+    invalidateRouteGraphReadCaches();
 
     const active = await getActiveRouteGraphVersion();
-    expect(active?.compiledGraph.programBundle).toMatchObject({
-      version: 1,
+    expect(active?.compiledGraph.compiledRouterBundle).toMatchObject({
+      version: 2,
       matcher: {
         exact: {
           'cached-model': expect.objectContaining({ programId: 'program:entry.cached' }),
@@ -562,51 +573,23 @@ describe('routeGraphService ownership guards', () => {
     const stored = await db.select().from(schema.routeGraphVersions)
       .where(eq(schema.routeGraphVersions.id, published.version.id))
       .get();
-    expect(JSON.parse(stored?.compiledGraphJson || '{}').programBundle).toMatchObject({ version: 1 });
     expect(JSON.parse(stored?.compiledGraphJson || '{}').compiledRouterBundle).toMatchObject({ version: 2 });
+    expect(JSON.parse(stored?.compiledGraphJson || '{}').programBundle).toBeUndefined();
+    expect(JSON.parse(stored?.compiledGraphJson || '{}').flatProgramBundle).toBeUndefined();
 
-    const compiledWithoutRouter = JSON.parse(stored?.compiledGraphJson || '{}');
-    delete compiledWithoutRouter.compiledRouterBundle;
+    const legacyCompiledWithRouter = compileRouteGraphSource(sourceGraph).compiled;
     await db.update(schema.routeGraphVersions).set({
-      compiledGraphJson: JSON.stringify(compiledWithoutRouter),
+      compiledGraphJson: JSON.stringify(legacyCompiledWithRouter),
     }).where(eq(schema.routeGraphVersions.id, published.version.id)).run();
+    invalidateRouteGraphReadCaches();
 
-    const routerRepaired = await getActiveRouteGraphVersion();
-    expect(routerRepaired?.compiledGraph.compiledRouterBundle).toMatchObject({
-      version: 2,
-      matcher: {
-        exact: {
-          'cached-model': expect.objectContaining({ programId: 'program:entry.cached' }),
-        },
-      },
-    });
-
-    const routerRepairedStored = await db.select().from(schema.routeGraphVersions)
+    const compacted = await getActiveRouteGraphVersion();
+    expect(compacted?.compiledGraph.compiledRouterBundle).toMatchObject({ version: 2 });
+    const compactedStored = await db.select().from(schema.routeGraphVersions)
       .where(eq(schema.routeGraphVersions.id, published.version.id))
       .get();
-    const corruptedCompiled = JSON.parse(routerRepairedStored?.compiledGraphJson || '{}');
-    corruptedCompiled.programBundle = {
-      ...corruptedCompiled.programBundle,
-      diagnostics: [{
-        severity: 'error',
-        code: 'program.unsupported_shape',
-        message: 'cached program bundle is not executable',
-      }],
-    };
-    await db.update(schema.routeGraphVersions).set({
-      compiledGraphJson: JSON.stringify(corruptedCompiled),
-    }).where(eq(schema.routeGraphVersions.id, published.version.id)).run();
-
-    const repaired = await getActiveRouteGraphVersion();
-    expect(repaired?.compiledGraph.programBundle.diagnostics).not.toEqual(expect.arrayContaining([
-      expect.objectContaining({ code: 'program.unsupported_shape' }),
-    ]));
-    const repairedStored = await db.select().from(schema.routeGraphVersions)
-      .where(eq(schema.routeGraphVersions.id, published.version.id))
-      .get();
-    expect(JSON.parse(repairedStored?.compiledGraphJson || '{}').programBundle.diagnostics).not.toEqual(expect.arrayContaining([
-      expect.objectContaining({ code: 'program.unsupported_shape' }),
-    ]));
+    expect(JSON.parse(compactedStored?.compiledGraphJson || '{}').programBundle).toBeUndefined();
+    expect(JSON.parse(compactedStored?.compiledGraphJson || '{}').flatProgramBundle).toBeUndefined();
   });
 
   it('preserves manual edges that reuse generated endpoints and semantic macros during active graph reconciliation', async () => {
@@ -707,14 +690,16 @@ describe('routeGraphService ownership guards', () => {
       expect.objectContaining({ id: 'manual-entry-to-semantic-macro' }),
       expect.objectContaining({ id: 'manual-semantic-macro-to-generated-endpoint' }),
     ]));
-    expect(reconciled.compiledGraph.programBundle.matcher.exact['manual-route-table-reuse']).toMatchObject({
+    expect(reconciled.compiledGraph.compiledRouterBundle?.matcher.exact['manual-route-table-reuse']).toMatchObject({
       programId: 'program:entry.manual-route-table-reuse',
     });
-    const program = reconciled.compiledGraph.programBundle.programs.find((item) => item.id === 'program:entry.manual-route-table-reuse');
-    expect(program?.ops).toEqual(expect.arrayContaining([
+    const plan = reconciled.compiledGraph.compiledRouterBundle?.plans.find((item) => item.id === 'program:entry.manual-route-table-reuse');
+    expect(plan?.candidates).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        op: 'select_supply',
-        routeId: sourceRouteId,
+        terminal: expect.objectContaining({
+          kind: 'supply',
+          routeId: sourceRouteId,
+        }),
       }),
     ]));
   });

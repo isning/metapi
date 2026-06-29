@@ -14,7 +14,7 @@ describe('rebuildTokenRoutesFromAvailability', () => {
   let rebuildTokenRoutesFromAvailability: ModelServiceModule['rebuildTokenRoutesFromAvailability'];
   let publishRouteGraphSource: RouteGraphServiceModule['publishRouteGraphSource'];
   let getActiveRouteGraphVersion: RouteGraphServiceModule['getActiveRouteGraphVersion'];
-  let loadActiveRouteGraphRouteBindings: RouteGraphServiceModule['loadActiveRouteGraphRouteBindings'];
+  let loadRouteGraphRouteTableBindings: RouteGraphServiceModule['loadRouteGraphRouteTableBindings'];
   let dataDir = '';
 
   beforeAll(async () => {
@@ -31,7 +31,7 @@ describe('rebuildTokenRoutesFromAvailability', () => {
     rebuildTokenRoutesFromAvailability = modelService.rebuildTokenRoutesFromAvailability;
     publishRouteGraphSource = routeGraphService.publishRouteGraphSource;
     getActiveRouteGraphVersion = routeGraphService.getActiveRouteGraphVersion;
-    loadActiveRouteGraphRouteBindings = routeGraphService.loadActiveRouteGraphRouteBindings;
+    loadRouteGraphRouteTableBindings = routeGraphService.loadRouteGraphRouteTableBindings;
   });
 
   beforeEach(async () => {
@@ -57,8 +57,8 @@ describe('rebuildTokenRoutesFromAvailability', () => {
   });
 
   async function findRouteByExposedModel(model: string) {
-    const bindings = await loadActiveRouteGraphRouteBindings();
-    const binding = Array.from(bindings.values()).find((item) => item.exposedModelName === model);
+    const bindings = await loadRouteGraphRouteTableBindings();
+    const binding = Array.from(bindings.values()).find((item) => item.modelPattern === model);
     if (!binding) return null;
     return await db.select().from(schema.tokenRoutes)
       .where(eq(schema.tokenRoutes.id, binding.routeId))
@@ -496,52 +496,19 @@ describe('rebuildTokenRoutesFromAvailability', () => {
     const rebuild = await rebuildTokenRoutesFromAvailability();
     expect(rebuild.createdRoutes).toBe(1);
 
+    const generatedRoute = await findRouteByExposedModel('auto-generated-model');
+    expect(generatedRoute).toBeDefined();
+
     const active = await getActiveRouteGraphVersion();
-    const generatedProduct = active?.sourceGraph.nodes.find((node) => (
-      node.type === 'route_endpoint'
-      && node.ownership === 'auto_generated'
-      && node.id === 'route-endpoint:product:auto-model:auto-generated-model'
-    ));
-    expect(generatedProduct).toBeDefined();
-    const generatedRouteId = generatedProduct && 'routeId' in generatedProduct ? generatedProduct.routeId : null;
-    const generatedSupply = active?.sourceGraph.nodes.find((node) => (
-      node.type === 'route_endpoint'
-      && node.endpointKind === 'supply'
-      && node.routeId === generatedRouteId
-    ));
-    expect(generatedSupply?.id).toEqual(expect.stringMatching(/^route-endpoint:supply:upstream-model:/));
+    expect(active?.id).toBe(published.ok ? published.version.id : undefined);
     expect(active?.sourceGraph.nodes).toEqual(expect.arrayContaining([
       expect.objectContaining({
         id: 'filter:manual:reasoning',
         ownership: 'manual',
       }),
-      expect.objectContaining({
-        id: 'route-endpoint:product:auto-model:auto-generated-model',
-        type: 'route_endpoint',
-        endpointKind: 'route_product',
-        ownership: 'auto_generated',
-      }),
     ]));
-    expect(active?.sourceGraph.macros).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        id: 'auto-model:auto-generated-model',
-        kind: 'candidate_selector',
-        ownership: 'auto_generated',
-        config: expect.objectContaining({
-          surface: expect.objectContaining({
-            entry: expect.objectContaining({
-              match: expect.objectContaining({
-                requestedModelPattern: 'auto-generated-model',
-              }),
-            }),
-          }),
-          groups: [
-            expect.objectContaining({
-              input: { kind: 'route_endpoints', endpointIds: [generatedSupply?.id] },
-            }),
-          ],
-        }),
-      }),
+    expect(active?.sourceGraph.nodes).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'route-endpoint:product:auto-model:auto-generated-model' }),
     ]));
   });
 
@@ -551,8 +518,6 @@ describe('rebuildTokenRoutesFromAvailability', () => {
     const unrelatedTargetCount = 2_000;
     const strictHeapBudgetBytes = 96 * 1024 * 1024;
     const ciHeapBudgetBytes = 512 * 1024 * 1024;
-    const compiledGraphBudgetBytes = 64 * 1024 * 1024;
-    const compiledRouterBudgetBytes = 16 * 1024 * 1024;
 
     const site = await db.insert(schema.sites).values({
       name: 'memory-pressure-site',
@@ -606,23 +571,16 @@ describe('rebuildTokenRoutesFromAvailability', () => {
     forceGc();
     const afterHeap = process.memoryUsage().heapUsed;
     const heapDelta = Math.max(0, afterHeap - beforeHeap);
-    const active = await getActiveRouteGraphVersion();
-    const compiledGraphBytes = active ? Buffer.byteLength(JSON.stringify(active.compiledGraph), 'utf8') : 0;
-    const flatProgramBytes = active?.compiledGraph.flatProgramBundle
-      ? Buffer.byteLength(JSON.stringify(active.compiledGraph.flatProgramBundle), 'utf8')
-      : 0;
-    const compiledRouterBytes = active?.compiledGraph.compiledRouterBundle
-      ? Buffer.byteLength(JSON.stringify(active.compiledGraph.compiledRouterBundle), 'utf8')
-      : 0;
+    const activeVersions = await db.select({ id: schema.routeGraphVersions.id }).from(schema.routeGraphVersions).all();
+    const bindings = await loadRouteGraphRouteTableBindings();
+    const rebuiltBindings = Array.from(bindings.values()).filter((binding) => (
+      binding.modelPattern.startsWith('memory-pressure-model-')
+    ));
 
     expect(rebuild.models).toBe(modelCount);
     expect(heapDelta).toBeLessThan((globalThis as { gc?: () => void }).gc ? strictHeapBudgetBytes : ciHeapBudgetBytes);
-    expect(compiledGraphBytes).toBeGreaterThan(0);
-    expect(compiledGraphBytes).toBeLessThan(compiledGraphBudgetBytes);
-    expect(flatProgramBytes).toBeGreaterThan(0);
-    expect(compiledRouterBytes).toBeGreaterThan(0);
-    expect(compiledRouterBytes).toBeLessThan(compiledRouterBudgetBytes);
-    expect(compiledRouterBytes).toBeLessThan(flatProgramBytes);
+    expect(activeVersions).toHaveLength(0);
+    expect(rebuiltBindings).toHaveLength(modelCount);
 
     const unrelatedTargetsAfter = await db.select({ id: schema.routeEndpointTargets.id })
       .from(schema.routeEndpointTargets)
