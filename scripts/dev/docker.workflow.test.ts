@@ -40,6 +40,13 @@ describe('docker workflows', () => {
     expect(dockerfile).toContain('FROM node:22-bookworm-slim');
   });
 
+  it('caps the production node heap for memory-constrained containers', () => {
+    const dockerfile = readFileSync(resolve(process.cwd(), 'docker/Dockerfile'), 'utf8');
+
+    expect(dockerfile).toContain('ENV NODE_OPTIONS=--max-old-space-size=160');
+    expect(dockerfile).toContain('node dist/server/db/migrate.js && node dist/server/index.js');
+  });
+
   it('avoids buildkit-only frontend syntax so managed docker builders can parse it reliably', () => {
     const dockerfile = readFileSync(resolve(process.cwd(), 'docker/Dockerfile'), 'utf8');
 
