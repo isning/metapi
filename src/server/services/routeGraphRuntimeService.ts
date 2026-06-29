@@ -34,6 +34,11 @@ import {
   type UpstreamCompatibilityPolicy,
 } from '../contracts/upstreamCompatibilityPolicy.js';
 import {
+  ensureActiveRouteGraphVersion,
+  getActiveRouteGraphRuntimeVersion,
+  getCachedActiveRouteGraphRuntimeVersion,
+} from './routeGraphService.js';
+import {
   hydrateRuntimeSelectorPlan,
   selectRuntimeCandidate,
   type RuntimeSelectorCandidate,
@@ -1654,8 +1659,8 @@ export async function evaluateActiveRouteGraphForModel(
     bootstrapIfMissing?: boolean;
   } = {},
 ): Promise<RouteGraphRuntimeSelection | null> {
-  const { ensureActiveRouteGraphVersion, getActiveRouteGraphRuntimeVersion } = await import('./routeGraphService.js');
-  const active = await getActiveRouteGraphRuntimeVersion()
+  const cachedActive = getCachedActiveRouteGraphRuntimeVersion();
+  const active = (cachedActive === undefined ? await getActiveRouteGraphRuntimeVersion() : cachedActive)
     ?? (options.bootstrapIfMissing === false ? null : await ensureActiveRouteGraphVersion());
   if (!active) return null;
   const selection = evaluateCompiledRouteGraph({

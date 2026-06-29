@@ -17,6 +17,8 @@ describe('routeGraphService ownership guards', () => {
   let rebaseRouteGraphDraft: RouteGraphServiceModule['rebaseRouteGraphDraft'];
   let ensureActiveRouteGraphVersion: RouteGraphServiceModule['ensureActiveRouteGraphVersion'];
   let getActiveRouteGraphVersion: RouteGraphServiceModule['getActiveRouteGraphVersion'];
+  let getActiveRouteGraphRuntimeVersion: RouteGraphServiceModule['getActiveRouteGraphRuntimeVersion'];
+  let getCachedActiveRouteGraphRuntimeVersion: RouteGraphServiceModule['getCachedActiveRouteGraphRuntimeVersion'];
   let getRouteGraphDraft: RouteGraphServiceModule['getRouteGraphDraft'];
   let buildRouteGraphSourceFromRouteTable: RouteGraphServiceModule['buildRouteGraphSourceFromRouteTable'];
   let reconcileActiveGraphWithRouteTable: RouteGraphServiceModule['reconcileActiveGraphWithRouteTable'];
@@ -65,6 +67,8 @@ describe('routeGraphService ownership guards', () => {
     rebaseRouteGraphDraft = serviceModule.rebaseRouteGraphDraft;
     ensureActiveRouteGraphVersion = serviceModule.ensureActiveRouteGraphVersion;
     getActiveRouteGraphVersion = serviceModule.getActiveRouteGraphVersion;
+    getActiveRouteGraphRuntimeVersion = serviceModule.getActiveRouteGraphRuntimeVersion;
+    getCachedActiveRouteGraphRuntimeVersion = serviceModule.getCachedActiveRouteGraphRuntimeVersion;
     getRouteGraphDraft = serviceModule.getRouteGraphDraft;
     buildRouteGraphSourceFromRouteTable = serviceModule.buildRouteGraphSourceFromRouteTable;
     reconcileActiveGraphWithRouteTable = serviceModule.reconcileActiveGraphWithRouteTable;
@@ -176,6 +180,14 @@ describe('routeGraphService ownership guards', () => {
       'ownership.non_manual_delete',
       'ownership.non_manual_edge_delete',
     ]));
+  });
+
+  it('caches a missing active runtime graph as a synchronous null fast path', async () => {
+    expect(getCachedActiveRouteGraphRuntimeVersion()).toBeUndefined();
+
+    await expect(getActiveRouteGraphRuntimeVersion()).resolves.toBeNull();
+
+    expect(getCachedActiveRouteGraphRuntimeVersion()).toBeNull();
   });
 
   it('rejects draft-created non-manual nodes, edges, and macros so derived primitives stay read-only', async () => {

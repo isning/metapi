@@ -42,7 +42,10 @@ describe('route graph runtime architecture', () => {
     const orchestratorSource = readGenericProxyOrchestratorSource();
 
     expect(runtimeSource).toContain('bootstrapIfMissing?: boolean');
+    expect(runtimeSource).toContain("from './routeGraphService.js'");
+    expect(runtimeSource).toContain('getCachedActiveRouteGraphRuntimeVersion()');
     expect(runtimeSource).toContain("options.bootstrapIfMissing === false ? null : await ensureActiveRouteGraphVersion()");
+    expect(runtimeSource).not.toContain("await import('./routeGraphService.js')");
     expect(tokenRouterSource).toContain("evaluateActiveRouteGraphForModel(model, { bootstrapIfMissing: false })");
     expect(tokenRouterSource).toContain('bootstrapIfMissing: false');
     expect(orchestratorSource).toContain("evaluateActiveRouteGraphForModel(requestedModel, { bootstrapIfMissing: false })");

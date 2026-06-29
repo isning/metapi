@@ -240,6 +240,22 @@ export function invalidateRouteGraphReadCaches(): void {
   activeRouteGraphBindingsCache = null;
 }
 
+export function getCachedActiveRouteGraphRuntimeVersion(nowMs = Date.now()): ActiveRouteGraphRuntimeVersion | null | undefined {
+  if (
+    !activeRouteGraphVersionIdCache
+    || nowMs - activeRouteGraphVersionIdCache.loadedAt >= ACTIVE_ROUTE_GRAPH_VERSION_ID_CACHE_TTL_MS
+  ) {
+    return undefined;
+  }
+
+  const versionId = activeRouteGraphVersionIdCache.versionId;
+  if (!versionId) return null;
+  if (activeRouteGraphRuntimeCache?.versionId === versionId) {
+    return activeRouteGraphRuntimeCache.version;
+  }
+  return undefined;
+}
+
 function activeVersionMetadata(input: ActiveRouteGraphSourceVersion): ActiveRouteGraphSummary['version'] {
   return {
     id: input.id,
