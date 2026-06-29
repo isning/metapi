@@ -2,6 +2,8 @@ import { configDefaults, defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
+    hookTimeout: 30_000,
+    maxWorkers: 8,
     exclude: [
       ...configDefaults.exclude,
       '.worktrees/**',

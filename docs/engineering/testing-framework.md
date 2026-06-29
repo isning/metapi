@@ -1,6 +1,6 @@
 # Testing Framework
 
-This repository uses four test layers:
+This repository uses five test layers:
 
 ## Unit
 
@@ -88,6 +88,27 @@ Use:
 - `src/**/*.architecture.test.ts`
 - `scripts/**/*.workflow.test.ts`
 
+## Performance
+
+Budgeted tests protect routes that must stay predictable under large local data
+sets.
+
+Use:
+- `npm run test:performance`
+- `scripts/dev/route-runtime-performance-gate.ts`
+
+Guidelines:
+- treat the script as a merge gate, not an exploratory benchmark
+- keep route-runtime budgets measured before upstream network I/O
+- publish CPU milliseconds, elapsed QPS, CPU QPS, cache size, and memory data
+- test at 10,000 route groups by default
+- keep heap pressure bounded with `--max-old-space-size=384` and explicit GC
+- write the human report to `test-results/performance/route-runtime-performance-report.md`
+- write the machine-readable report to `test-results/performance/route-runtime-performance-report.json`
+- upload the performance report artifact from CI and append the Markdown report
+  to the GitHub step summary
+- tune budget values only with measured evidence
+
 ## Mock Strategy
 
 Prefer local test fixtures over global mocks.
@@ -115,7 +136,9 @@ Name fixtures by behavior, not by test number.
 1. Add or update a unit test for pure logic.
 2. Add an integration test when the behavior crosses module seams.
 3. Add an architecture test if the seam matters for future maintenance.
-4. Add an E2E smoke when the user-visible flow changes.
+4. Add a performance gate when the behavior is on a high-cardinality runtime
+   path.
+5. Add an E2E smoke when the user-visible flow changes.
 
 ## Adding A Test
 
@@ -130,6 +153,7 @@ Name fixtures by behavior, not by test number.
 - `npm run test:unit`
 - `npm run test:integration`
 - `npm run test:architecture`
+- `npm run test:performance`
 - `npm run test:e2e:install`
 - `npm run test:e2e`
 - `npm run test:all`

@@ -31,19 +31,26 @@ describe('harness workflows', () => {
     expect(ciWorkflow).toContain('name: Test Core');
     expect(ciWorkflow).toContain('name: Test Integration');
     expect(ciWorkflow).toContain('name: Test Architecture');
+    expect(ciWorkflow).toContain('name: Test Performance');
     expect(ciWorkflow).toContain('name: Test E2E');
     expect(ciWorkflow).toContain('npm run test:unit');
     expect(ciWorkflow).toContain('npm run test:integration');
     expect(ciWorkflow).toContain('npm run test:architecture');
+    expect(ciWorkflow).toContain('npm run test:performance');
+    expect(ciWorkflow).toContain('name: Publish performance step summary');
+    expect(ciWorkflow).toContain('GITHUB_STEP_SUMMARY');
+    expect(ciWorkflow).toContain('name: Upload performance report');
+    expect(ciWorkflow).toContain('route-runtime-performance-report');
+    expect(ciWorkflow).toContain('test-results/performance/');
     expect(ciWorkflow).toContain('npm run test:e2e:install');
     expect(ciWorkflow).toContain('npm run test:e2e');
     expect(ciWorkflow).toContain('name: Upload E2E artifacts');
     expect(ciWorkflow).toContain('playwright-report/');
-    expect(ciWorkflow).toContain('test-results/');
+    expect(ciWorkflow).toContain('test-results/e2e/');
     expect(ciWorkflow).toContain('name: Build Web');
     expect(ciWorkflow).toContain('name: Typecheck');
 
-    expect(playwrightConfig).toContain("outputDir: 'test-results'");
+    expect(playwrightConfig).toContain("outputDir: 'test-results/e2e'");
     expect(playwrightConfig).toContain("outputFolder: 'playwright-report'");
     expect(playwrightConfig).toContain("screenshot: 'only-on-failure'");
     expect(playwrightConfig).toContain("trace: 'on-first-retry'");
@@ -74,10 +81,14 @@ describe('harness workflows', () => {
     expect(packageJson.scripts?.['test:unit']).toContain('vitest.unit.config.ts');
     expect(packageJson.scripts?.['test:integration']).toContain('vitest.integration.config.ts');
     expect(packageJson.scripts?.['test:architecture']).toContain('vitest.architecture.config.ts');
+    expect(packageJson.scripts?.['test:performance']).toContain('route-runtime-performance-gate.ts');
+    expect(packageJson.scripts?.['test:performance']).toContain('--expose-gc');
+    expect(packageJson.scripts?.['test:performance']).toContain('--max-old-space-size=384');
     expect(packageJson.scripts?.['test:e2e']).toContain('scripts/dev/run-e2e.ts');
     expect(packageJson.scripts?.['test:all']).toContain('test:unit');
     expect(packageJson.scripts?.['test:all']).toContain('test:integration');
     expect(packageJson.scripts?.['test:all']).toContain('test:architecture');
+    expect(packageJson.scripts?.['test:all']).toContain('test:performance');
     expect(packageJson.scripts?.['test:all']).toContain('test:e2e');
     expect(packageJson.devDependencies?.['@playwright/test']).toBeTruthy();
     expect(existsSync(resolve(process.cwd(), 'package-lock.json'))).toBe(true);
@@ -87,12 +98,18 @@ describe('harness workflows', () => {
     expect(testingFrameworkDoc).toContain('## Integration');
     expect(testingFrameworkDoc).toContain('## E2E');
     expect(testingFrameworkDoc).toContain('## Architecture');
+    expect(testingFrameworkDoc).toContain('## Performance');
     expect(testingFrameworkDoc).toContain('## Mock Strategy');
     expect(testingFrameworkDoc).toContain('createTestApp()');
     expect(testingFrameworkDoc).toContain('createUpstreamMock()');
     expect(testingFrameworkDoc).toContain('createRouteGraphBuilder()');
     expect(testingFrameworkDoc).toContain('src/testing/fixtures/');
     expect(testingFrameworkDoc).toContain('npm run test:architecture');
+    expect(testingFrameworkDoc).toContain('npm run test:performance');
+    expect(testingFrameworkDoc).toContain('scripts/dev/route-runtime-performance-gate.ts');
+    expect(testingFrameworkDoc).toContain('test-results/performance/route-runtime-performance-report.md');
+    expect(testingFrameworkDoc).toContain('test-results/performance/route-runtime-performance-report.json');
+    expect(testingFrameworkDoc).toContain('CPU QPS');
     expect(testingFrameworkDoc).toContain('src/testing/e2eHarness.ts');
     expect(testingFrameworkDoc).toContain('src/testing/e2e/adminPages.ts');
     expect(testingFrameworkDoc).toContain('src/testing/e2ePageMatchers.ts');
@@ -210,7 +227,7 @@ describe('harness workflows', () => {
     expect(testingFrameworkDoc).toContain('Decide the shallowest layer that can observe the behavior.');
     expect(testingFrameworkDoc).toContain('Use the nearest harness instead of hand-rolling globals.');
 
-    const requiredScripts = ['test:unit', 'test:integration', 'test:architecture', 'test:e2e', 'test:all'];
+    const requiredScripts = ['test:unit', 'test:integration', 'test:architecture', 'test:performance', 'test:e2e', 'test:all'];
     for (const script of requiredScripts) {
       expect(packageJson.scripts?.[script], script).toBeTruthy();
       expect(testingFrameworkDoc).toContain(`npm run ${script}`);
@@ -219,10 +236,15 @@ describe('harness workflows', () => {
     expect(ciWorkflow).toContain('name: Test Core');
     expect(ciWorkflow).toContain('name: Test Integration');
     expect(ciWorkflow).toContain('name: Test Architecture');
+    expect(ciWorkflow).toContain('name: Test Performance');
     expect(ciWorkflow).toContain('name: Test E2E');
     expect(ciWorkflow).toContain('npm run test:unit');
     expect(ciWorkflow).toContain('npm run test:integration');
     expect(ciWorkflow).toContain('npm run test:architecture');
+    expect(ciWorkflow).toContain('npm run test:performance');
+    expect(ciWorkflow).toContain('GITHUB_STEP_SUMMARY');
+    expect(ciWorkflow).toContain('actions/upload-artifact@v6');
+    expect(ciWorkflow).toContain('route-runtime-performance-report');
     expect(ciWorkflow).toContain('npm run test:e2e');
   });
 });

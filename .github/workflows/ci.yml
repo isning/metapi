@@ -114,6 +114,46 @@ jobs:
       - name: Run architecture tests
         run: npm run test:architecture
 
+  test-performance:
+    name: Test Performance
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit --no-fund
+
+      - name: Run route runtime performance gate
+        run: npm run test:performance
+
+      - name: Publish performance step summary
+        if: always()
+        shell: bash
+        run: |
+          if [ -f test-results/performance/route-runtime-performance-report.md ]; then
+            cat test-results/performance/route-runtime-performance-report.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Route runtime performance report was not generated." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload performance report
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: route-runtime-performance-report
+          path: test-results/performance/
+          if-no-files-found: warn
+          retention-days: 14
+
   build-web:
     name: Build Web
     runs-on: ubuntu-latest
@@ -166,7 +206,7 @@ jobs:
           name: e2e-artifacts
           path: |
             playwright-report/
-            test-results/
+            test-results/e2e/
           if-no-files-found: ignore
           retention-days: 7
 

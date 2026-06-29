@@ -2,6 +2,8 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
+    hookTimeout: 30_000,
+    maxWorkers: 8,
     include: [
       'src/server/routes/**/*.test.ts',
       'src/server/db/**/*.live.test.ts',
