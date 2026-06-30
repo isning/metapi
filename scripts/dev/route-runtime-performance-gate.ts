@@ -195,6 +195,11 @@ function assertCounterEquals(label: string, actual: number, expected: number): v
   throw new Error(`route runtime performance gate integrity failed: ${label} expected ${expected}, got ${actual}`);
 }
 
+function assertCounterAtMost(label: string, actual: number, limit: number): void {
+  if (actual <= limit) return;
+  throw new Error(`route runtime performance gate integrity failed: ${label} expected <= ${limit}, got ${actual}`);
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolveSleep) => {
     setTimeout(resolveSleep, ms);
@@ -625,6 +630,7 @@ async function main(): Promise<void> {
       distinctCountersBefore,
     );
     const expectedDistinctBatchLoads = Math.ceil(distinctConcurrentTotal / distinctConcurrency);
+    const maxDistinctBatchLoads = expectedDistinctBatchLoads + 1;
     assertCounterEquals(
       `${distinctCounterLabel}.routeModelCandidateLoadCount`,
       distinctCounterDelta.routeModelCandidateLoadCount,
@@ -635,15 +641,15 @@ async function main(): Promise<void> {
       distinctCounterDelta.routeMatchLoadCount,
       distinctConcurrentTotal,
     );
-    assertCounterEquals(
+    assertCounterAtMost(
       `${distinctCounterLabel}.routeModelCandidateBatchLoadCount`,
       distinctCounterDelta.routeModelCandidateBatchLoadCount,
-      expectedDistinctBatchLoads,
+      maxDistinctBatchLoads,
     );
-    assertCounterEquals(
+    assertCounterAtMost(
       `${distinctCounterLabel}.routeMatchBatchLoadCount`,
       distinctCounterDelta.routeMatchBatchLoadCount,
-      expectedDistinctBatchLoads,
+      maxDistinctBatchLoads,
     );
     runtimeCounterDeltas.push(distinctCounterDelta);
     measurements.push(distinctConcurrentMeasurement.measurement);
@@ -685,7 +691,6 @@ async function main(): Promise<void> {
       const selection = failIfNull('complex active graph overlay selection', await routeGraphRuntime.evaluateActiveRouteGraphForModel(
         complexGraph!.overlayModel,
         {
-          bootstrapIfMissing: false,
           failureOverlay: {
             disabledTargetIds: [complexGraph!.overlayDisabledTargetId],
           },

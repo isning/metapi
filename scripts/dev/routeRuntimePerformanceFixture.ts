@@ -358,13 +358,11 @@ export async function publishComplexActiveRouteGraphFixture(input: {
     candidateGroupsPerModel,
     endpointsPerCandidateGroup,
   });
-  const compiled = compileRouteGraphSource(sourceGraph, {
-    includeLegacyBundles: false,
-    includePrimitiveSource: false,
-  });
+  const compiled = compileRouteGraphSource(sourceGraph, { includePrimitiveSource: false });
   if (!compiled.ok) {
     throw new Error(`complex route graph fixture did not compile: ${compiled.diagnostics.map((item) => item.message).join('; ')}`);
   }
+  const routeGraphService = await import('../../src/server/services/routeGraphService.js');
 
   const timestamp = new Date().toISOString();
   const versionRow = await db.select({ version: schema.routeGraphVersions.version })
@@ -373,7 +371,7 @@ export async function publishComplexActiveRouteGraphFixture(input: {
     .all();
   const version = Math.max(0, ...versionRow.map((row) => Number(row.version) || 0)) + 1;
   const sourceGraphJson = JSON.stringify(compiled.source);
-  const compiledGraphJson = JSON.stringify(compiled.compiled);
+  const compiledGraphJson = JSON.stringify(routeGraphService.buildRouteGraphRuntimeStorageArtifact(compiled.compiled));
   await db.update(schema.routeGraphVersions).set({ status: 'archived' }).run();
   const inserted = await db.insert(schema.routeGraphVersions).values({
     version,
@@ -390,7 +388,6 @@ export async function publishComplexActiveRouteGraphFixture(input: {
     versionId: inserted.id,
     updatedAt: timestamp,
   }).run();
-  const routeGraphService = await import('../../src/server/services/routeGraphService.js');
   routeGraphService.invalidateRouteGraphReadCaches();
 
   return {

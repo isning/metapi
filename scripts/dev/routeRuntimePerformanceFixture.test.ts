@@ -41,10 +41,7 @@ describe('route runtime performance fixture', () => {
       },
     });
 
-    const compiled = compileRouteGraphSource(source, {
-      includeLegacyBundles: false,
-      includePrimitiveSource: false,
-    });
+    const compiled = compileRouteGraphSource(source, { includePrimitiveSource: false });
 
     expect(compiled.ok).toBe(true);
     expect(compiled.compiled.compiledRouterBundle?.version).toBe(2);
