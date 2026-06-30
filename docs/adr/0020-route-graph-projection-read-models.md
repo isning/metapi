@@ -275,6 +275,43 @@ Rules:
 - graph editor views request more data intentionally;
 - subgraph reads use projection tables and id indexes, not a full graph scan.
 
+## Admin UX Contract
+
+Projection pagination is a data access mechanism, not the visual model for the
+graph editor. The route graph editor must feel like a progressive graph
+explorer:
+
+- opening the editor loads a manifest plus the current working neighborhood,
+  not the full graph;
+- the canvas shows a bounded, meaningful neighborhood around the selected
+  route product, macro, endpoint, or search result;
+- route groups, products, and endpoints are found through searchable indexes
+  with incremental loading and real total counts;
+- expanding a macro or route product loads the next subgraph slice in place
+  instead of navigating to a rigid page number;
+- selected entities stay pinned in local UI state even when they are outside
+  the current search result page;
+- endpoint pickers use backend search and "load more" affordances, not a
+  first-page local filter;
+- the JSON view is a sectioned explorer for manifest, selected entity,
+  diagnostics, and small subgraph JSON. Full graph JSON is an explicit
+  export/import workflow, not the default editor surface.
+
+The user should not have to understand projection page numbers to edit a graph.
+Pagination state stays behind search, focus, expand, and load-more actions.
+
+Graph-editor tests should assert observable outcomes:
+
+- opening the graph editor does not request full active or draft graph JSON;
+- search can find a route group, route product, or endpoint beyond the first
+  page and displays the real total;
+- expanding a macro fetches and renders its neighborhood without replacing the
+  whole canvas;
+- selected endpoints keep readable labels when the catalog page changes;
+- the JSON editor does not stringify the full graph by default;
+- route editor, model marketplace, model details, and playground paths keep
+  working at 10,000 route groups with bounded payload size.
+
 ### Compiled Plan Lookup
 
 ```text
