@@ -6,7 +6,7 @@ import TokenRoutes from './TokenRoutes.js';
 
 const { apiMock, getBrandMock } = vi.hoisted(() => ({
   apiMock: {
-    getRoutesSummary: vi.fn(),
+    getRouteSummaryPage: vi.fn(),
     getRouteTargets: vi.fn(),
     getModelTokenCandidates: vi.fn(),
     getRouteDecisionsBatch: vi.fn(),
@@ -75,7 +75,7 @@ describe('TokenRoutes mobile layout', () => {
     } as unknown as typeof IntersectionObserver;
     getBrandMock.mockReset();
     getBrandMock.mockReturnValue(null);
-    apiMock.getRoutesSummary.mockResolvedValue([
+    apiMock.getRouteSummaryPage.mockResolvedValue([
       {
         id: 1,
         modelMapping: null,

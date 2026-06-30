@@ -1,5 +1,6 @@
 import type { RouteRoutingStrategy, RouteSummaryRow } from './types.js';
 import type { RouteFilter, RouteGraphOwnership } from './routeGraphTypes.js';
+import { routeGraphSupplyEndpointIdFromRoute } from '../../../shared/routeGraph.js';
 import {
   getModelPatternError,
   getRouteBackendRouteIds,
@@ -185,11 +186,23 @@ export function routeEndpointIdFromRouteId(routeId: number): string {
   return `route-endpoint:product:route:${Math.trunc(routeId)}`;
 }
 
-function routeIdFromRouteEndpointId(endpointId: unknown): number | null {
+export function routeSourceEndpointIdFromRouteId(routeId: number): string {
+  return routeGraphSupplyEndpointIdFromRoute(Math.trunc(routeId));
+}
+
+export function routeIdFromRouteEndpointId(endpointId: unknown): number | null {
   const match = /^route-endpoint:(?:product|supply):route:(\d+)(?::|$)/.exec(String(endpointId || ''));
   if (!match) return null;
   const routeId = Number(match[1]);
   return Number.isFinite(routeId) && routeId > 0 ? Math.trunc(routeId) : null;
+}
+
+function normalizeRouteGroupEndpointId(endpointId: string): string {
+  const routeId = routeIdFromRouteEndpointId(endpointId);
+  if (routeId && endpointId === routeSourceEndpointIdFromRouteId(routeId)) {
+    return routeEndpointIdFromRouteId(routeId);
+  }
+  return endpointId;
 }
 
 function normalizeEndpointIdArray(value: unknown): string[] {
@@ -324,10 +337,10 @@ export function updateCandidateSelectorMacroFromEditor(input: {
   const existingEndpointIds = getCandidateSelectorEndpointIds(existing);
   const requestedRouteIds = normalizeRouteIdArray(input.routeIds);
   const endpointIds = explicitEndpointIds.length > 0
-    ? explicitEndpointIds
+    ? explicitEndpointIds.map(normalizeRouteGroupEndpointId)
     : existingEndpointIds.length > 0
       ? requestedRouteIds.map((routeId) => (
-        existingEndpointIds.find((endpointId) => routeIdFromRouteEndpointId(endpointId) === routeId)
+        normalizeRouteGroupEndpointId(existingEndpointIds.find((endpointId) => routeIdFromRouteEndpointId(endpointId) === routeId) || '')
         || routeEndpointIdFromRouteId(routeId)
       ))
       : requestedRouteIds.map(routeEndpointIdFromRouteId);

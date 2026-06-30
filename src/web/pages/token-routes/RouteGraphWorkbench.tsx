@@ -55,6 +55,7 @@ import {
 } from 'lucide-react';
 import '@xyflow/react/dist/style.css';
 import { api } from '../../api.js';
+import type { PageInfo } from '../../pagedResponse.js';
 import { getRouteGraphMacroPort, getRouteGraphMacroPorts, lowerRouteGraphSource } from '../../../shared/routeGraph.js';
 import EmptyStateBlock from '../../components/EmptyStateBlock.js';
 import { useToast } from '../../components/Toast.js';
@@ -69,6 +70,7 @@ import { Input } from '../../components/ui/input/index.js';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '../../components/ui/resizable/index.js';
 import { ScrollArea } from '../../components/ui/scroll-area/index.js';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select/index.js';
+import { Skeleton } from '../../components/ui/skeleton/index.js';
 import { Switch } from '../../components/ui/switch/index.js';
 import * as Tabs from '../../components/ui/tabs/index.js';
 import * as Tooltip from '../../components/ui/tooltip/index.js';
@@ -250,6 +252,111 @@ const BOTTOM_TABS = ['Diagnostics', 'Diff', 'History'] as const;
 const QUICK_TEMPLATE_IDS = ['entry', 'dispatcher', 'route_endpoint', 'reasoning_effort'] as const;
 const ROUTE_GRAPH_MINIMAP_NODE_LIMIT = 240;
 const ROUTE_GRAPH_SIDEBAR_RENDER_LIMIT = 180;
+const ROUTE_GRAPH_ENDPOINT_CATALOG_PAGE_SIZE = 500;
+const EMPTY_ROUTE_GRAPH_ENDPOINT_PAGE_INFO: PageInfo = {
+  page: 1,
+  pageSize: ROUTE_GRAPH_ENDPOINT_CATALOG_PAGE_SIZE,
+  totalCount: 0,
+  hasMore: false,
+};
+
+function RouteGraphJsonLoadingSkeleton() {
+  const lineWidths = ['w-11/12', 'w-8/12', 'w-10/12', 'w-7/12', 'w-9/12', 'w-6/12', 'w-10/12', 'w-5/12'];
+  return (
+    <div
+      data-testid="route-graph-json-loading"
+      aria-busy="true"
+      aria-label={tr('pages.tokenRoutes.routeGraphWorkbench.loadingRouteGraph')}
+      className="grid min-h-[420px] gap-3 p-3"
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <Skeleton className="h-5 w-28 rounded-full" />
+        <Skeleton className="h-5 w-20 rounded-full" />
+        <Skeleton className="h-5 w-24 rounded-full" />
+      </div>
+      <div className="rounded-md border bg-card p-3">
+        <div className="mb-3 grid gap-2 border-b pb-3">
+          <Skeleton className="h-3 w-32" />
+          <Skeleton className="h-3 w-44" />
+        </div>
+        <div className="grid gap-2 font-mono">
+          {lineWidths.map((width, index) => (
+            <div key={`${width}-${index}`} className="grid grid-cols-[2rem_minmax(0,1fr)] items-center gap-3">
+              <Skeleton className="h-3 w-5 justify-self-end" />
+              <Skeleton className={`h-3 ${width}`} />
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RouteGraphCanvasLoadingSkeleton() {
+  const nodeCards = [
+    { className: 'left-[8%] top-[14%] w-48', rows: ['w-24', 'w-36', 'w-28'] },
+    { className: 'left-[38%] top-[24%] w-56', rows: ['w-28', 'w-44', 'w-32'] },
+    { className: 'left-[70%] top-[16%] w-52', rows: ['w-24', 'w-40', 'w-32'] },
+    { className: 'left-[24%] top-[58%] w-52', rows: ['w-20', 'w-36', 'w-28'] },
+    { className: 'left-[62%] top-[62%] w-48', rows: ['w-24', 'w-32', 'w-24'] },
+  ];
+  const edges = [
+    'left-[27%] top-[25%] w-[15%] rotate-[8deg]',
+    'left-[56%] top-[27%] w-[16%] -rotate-[6deg]',
+    'left-[42%] top-[49%] w-[21%] rotate-[18deg]',
+    'left-[29%] top-[61%] w-[33%] -rotate-[5deg]',
+  ];
+
+  return (
+    <div
+      data-testid="route-graph-canvas-loading"
+      aria-busy="true"
+      aria-label={tr('pages.tokenRoutes.routeGraphWorkbench.loadingRouteGraph')}
+      className="relative h-full min-h-[520px] overflow-hidden bg-background"
+    >
+      <div className="absolute inset-0 opacity-60 [background-image:linear-gradient(var(--border)_1px,transparent_1px),linear-gradient(90deg,var(--border)_1px,transparent_1px)] [background-size:32px_32px]" />
+      <div className="absolute left-3 top-3 z-10 flex items-center gap-2 rounded-md border bg-popover px-3 py-2 shadow-sm">
+        <Skeleton className="size-4 rounded-full" />
+        <Skeleton className="h-3 w-28" />
+      </div>
+      <div className="absolute right-3 top-3 z-10 flex items-center gap-1 rounded-md border bg-popover p-1.5 shadow-sm">
+        <Skeleton className="size-7" />
+        <Skeleton className="size-7" />
+        <Skeleton className="size-7" />
+      </div>
+      {edges.map((className, index) => (
+        <Skeleton
+          key={`edge-${index}`}
+          className={`absolute h-1 origin-left rounded-full opacity-80 ${className}`}
+        />
+      ))}
+      {nodeCards.map((node, index) => (
+        <div
+          key={`node-${index}`}
+          className={`absolute z-10 rounded-lg border bg-card p-3 shadow-sm ${node.className}`}
+        >
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <Skeleton className="size-7 rounded-md" />
+            <Skeleton className="h-4 w-16 rounded-full" />
+          </div>
+          <div className="grid gap-2">
+            {node.rows.map((width, rowIndex) => (
+              <Skeleton key={`${width}-${rowIndex}`} className={`h-3 ${width}`} />
+            ))}
+          </div>
+          <div className="mt-3 flex flex-wrap gap-1.5">
+            <Skeleton className="h-5 w-16 rounded-full" />
+            <Skeleton className="h-5 w-20 rounded-full" />
+          </div>
+        </div>
+      ))}
+      <div className="absolute bottom-4 left-4 z-10 grid w-56 gap-2 rounded-md border bg-popover p-3 shadow-sm">
+        <Skeleton className="h-3 w-24" />
+        <Skeleton className="h-16 w-full" />
+      </div>
+    </div>
+  );
+}
 export const DEFAULT_ROUTE_GRAPH_VIEW_STATE: ViewState = {
   showGeneratedPrimitives: false,
   expandedMacroIds: [],
@@ -287,6 +394,45 @@ function visibleSidebarItems<T>(items: T[]): T[] {
   return items.length > ROUTE_GRAPH_SIDEBAR_RENDER_LIMIT
     ? items.slice(0, ROUTE_GRAPH_SIDEBAR_RENDER_LIMIT)
     : items;
+}
+
+function mergeRouteEndpointCatalogItems(
+  current: RouteEndpointCatalogItem[],
+  incoming: RouteEndpointCatalogItem[],
+): RouteEndpointCatalogItem[] {
+  if (incoming.length === 0) return current;
+  const byId = new Map<string, RouteEndpointCatalogItem>();
+  for (const item of current) {
+    byId.set(item.endpointId, item);
+    if (item.nodeId) byId.set(item.nodeId, item);
+  }
+  const merged = [...current];
+  for (const item of incoming) {
+    const existing = byId.get(item.endpointId) || (item.nodeId ? byId.get(item.nodeId) : undefined);
+    if (existing) {
+      const index = merged.indexOf(existing);
+      if (index >= 0) merged[index] = item;
+    } else {
+      merged.push(item);
+    }
+    byId.set(item.endpointId, item);
+    if (item.nodeId) byId.set(item.nodeId, item);
+  }
+  return merged;
+}
+
+function routeEndpointCatalogSearchText(item: RouteEndpointCatalogItem): string {
+  return [
+    item.endpointId,
+    item.nodeId,
+    item.label,
+    item.endpointKind,
+    item.exposure,
+    item.modelPattern,
+    item.publicModelName || '',
+    ...item.upstreamModels,
+    ...item.siteNames,
+  ].join(' ').toLowerCase();
 }
 
 function hiddenSupplyAnchorNodeId(macroId: string): string {
@@ -1933,9 +2079,12 @@ function RouteGraphWorkbenchInner({ mode = 'graph', focusIntent = null, onFocusI
   const [nodeJsonText, setNodeJsonText] = useState('');
   const [saving, setSaving] = useState(false);
   const [routeEndpointCatalog, setRouteEndpointCatalog] = useState<RouteEndpointCatalogItem[]>([]);
+  const [routeEndpointCatalogPageInfo, setRouteEndpointCatalogPageInfo] = useState<PageInfo>(EMPTY_ROUTE_GRAPH_ENDPOINT_PAGE_INFO);
+  const [routeEndpointCatalogLoading, setRouteEndpointCatalogLoading] = useState(false);
   const routeEndpointCatalogLoadedRef = useRef(false);
   const routeEndpointCatalogPromiseRef = useRef<Promise<void> | null>(null);
   const routeEndpointCatalogSeqRef = useRef(0);
+  const routeEndpointCatalogQueryRef = useRef('');
   const [dragTemplateId, setDragTemplateId] = useState<string | null>(null);
   const [commandOpen, setCommandOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<GraphContextMenuState>({
@@ -1971,21 +2120,45 @@ function RouteGraphWorkbenchInner({ mode = 'graph', focusIntent = null, onFocusI
   const syncWholeJsonFromGraph = useCallback((nextGraph: RouteGraphSource) => {
     setJsonText(JSON.stringify(nextGraph, null, 2));
   }, []);
-  const loadRouteEndpointCatalog = useCallback((force?: boolean) => {
-    if (routeEndpointCatalogLoadedRef.current && !force) return;
+  const loadRouteEndpointCatalog = useCallback((options?: boolean | {
+    force?: boolean;
+    query?: string;
+    page?: number;
+  }) => {
+    const force = typeof options === 'boolean' ? options : Boolean(options?.force);
+    const page = typeof options === 'object' && Number.isFinite(Number(options.page))
+      ? Math.max(1, Math.trunc(Number(options.page)))
+      : 1;
+    const normalizedQuery = String(typeof options === 'object' ? options.query ?? routeEndpointCatalogQueryRef.current : routeEndpointCatalogQueryRef.current).trim();
+    const sameFirstPageQuery = page === 1 && routeEndpointCatalogQueryRef.current === normalizedQuery;
+    if (routeEndpointCatalogLoadedRef.current && sameFirstPageQuery && !force) return;
     if (routeEndpointCatalogPromiseRef.current && !force) return;
     const seq = ++routeEndpointCatalogSeqRef.current;
+    routeEndpointCatalogQueryRef.current = normalizedQuery;
     routeEndpointCatalogLoadedRef.current = true;
+    setRouteEndpointCatalogLoading(true);
     let promise!: Promise<void>;
     promise = (async () => {
       try {
-        const items = await api.getRouteEndpoints({ paged: true, pageSize: 500, endpointKind: 'all' });
+        const catalogPage = await api.getRouteEndpointPage<RouteEndpointCatalogItem>({
+          page,
+          pageSize: ROUTE_GRAPH_ENDPOINT_CATALOG_PAGE_SIZE,
+          endpointKind: 'all',
+          ...(normalizedQuery ? { q: normalizedQuery } : {}),
+        });
         if (routeEndpointCatalogSeqRef.current !== seq) return;
-        setRouteEndpointCatalog(Array.isArray(items) ? items as RouteEndpointCatalogItem[] : []);
+        setRouteEndpointCatalog((current) => mergeRouteEndpointCatalogItems(current, Array.isArray(catalogPage?.items) ? catalogPage.items : []));
+        setRouteEndpointCatalogPageInfo(catalogPage?.pageInfo || {
+          ...EMPTY_ROUTE_GRAPH_ENDPOINT_PAGE_INFO,
+          page,
+        });
       } catch (error) {
         if (routeEndpointCatalogSeqRef.current === seq) routeEndpointCatalogLoadedRef.current = false;
         toast.error((error as Error).message || tr('pages.tokenRoutes.routeGraphWorkbench.check'));
       } finally {
+        if (routeEndpointCatalogSeqRef.current === seq) {
+          setRouteEndpointCatalogLoading(false);
+        }
         if (routeEndpointCatalogPromiseRef.current === promise) {
           routeEndpointCatalogPromiseRef.current = null;
         }
@@ -1993,6 +2166,16 @@ function RouteGraphWorkbenchInner({ mode = 'graph', focusIntent = null, onFocusI
     })();
     routeEndpointCatalogPromiseRef.current = promise;
   }, [toast]);
+  const searchRouteEndpointCatalog = useCallback((query: string) => {
+    loadRouteEndpointCatalog({ force: true, query, page: 1 });
+  }, [loadRouteEndpointCatalog]);
+  const loadMoreRouteEndpointCatalog = useCallback((query: string) => {
+    loadRouteEndpointCatalog({
+      force: true,
+      query,
+      page: Math.max(1, routeEndpointCatalogPageInfo.page + 1),
+    });
+  }, [loadRouteEndpointCatalog, routeEndpointCatalogPageInfo.page]);
   const inspectorNodeId = getSelectionNodeId(inspectorTarget);
   const inspectorPortId = getSelectionPortId(inspectorTarget);
   const inspectorMacroId = getSelectionMacroId(inspectorTarget);
@@ -2109,7 +2292,11 @@ function RouteGraphWorkbenchInner({ mode = 'graph', focusIntent = null, onFocusI
   useEffect(() => {
     if (mode !== 'graph') return;
     if (!selectedMacro || inspectorTab !== 'Config') return;
-    loadRouteEndpointCatalog();
+    loadRouteEndpointCatalog({
+      force: routeEndpointCatalogQueryRef.current !== '',
+      query: '',
+      page: 1,
+    });
   }, [inspectorTab, loadRouteEndpointCatalog, mode, selectedMacro]);
 
   const expandMacroOnCanvas = useCallback((macroId: string) => {
@@ -3109,7 +3296,7 @@ function RouteGraphWorkbenchInner({ mode = 'graph', focusIntent = null, onFocusI
       }}
     >
           {loading ? (
-            <div className="flex h-full items-center justify-center text-sm text-muted-foreground">{tr('pages.tokenRoutes.routeGraphWorkbench.loadingRouteGraph')}</div>
+            <RouteGraphCanvasLoadingSkeleton />
           ) : (
             <ReactFlow<RouteFlowNode, RouteFlowEdge>
           nodes={flowNodes}
@@ -3280,42 +3467,46 @@ function RouteGraphWorkbenchInner({ mode = 'graph', focusIntent = null, onFocusI
           />
           <div className="flex flex-wrap items-center gap-2 sm:justify-end">
             <ButtonGroup>
-              <Button variant="outline" size="sm" type="button" onClick={() => setJsonText(JSON.stringify(graph, null, 2))}>
+              <Button variant="outline" size="sm" type="button" disabled={loading} onClick={() => setJsonText(JSON.stringify(graph, null, 2))}>
                 <Braces className="size-4" />
                 {tr('pages.tokenRoutes.routeGraphWorkbench.formatJson')}
               </Button>
-              <Button variant="outline" size="sm" type="button" onClick={() => navigator.clipboard?.writeText(jsonText)}>
+              <Button variant="outline" size="sm" type="button" disabled={loading} onClick={() => navigator.clipboard?.writeText(jsonText)}>
                 <Copy className="size-4" />
                 {tr('pages.tokenRoutes.routeGraphWorkbench.copyJson')}
               </Button>
             </ButtonGroup>
             <ButtonGroup>
-              <Button variant="outline" size="sm" type="button" onClick={() => jsonImportInputRef.current?.click()}>
+              <Button variant="outline" size="sm" type="button" disabled={loading} onClick={() => jsonImportInputRef.current?.click()}>
                 <Upload className="size-4" />
                 {tr('pages.tokenRoutes.routeGraphWorkbench.importJson')}
               </Button>
-              <Button variant="outline" size="sm" type="button" onClick={exportWholeJson}>
+              <Button variant="outline" size="sm" type="button" disabled={loading} onClick={exportWholeJson}>
                 <Download className="size-4" />
                 {tr('pages.tokenRoutes.routeGraphWorkbench.exportJson')}
               </Button>
             </ButtonGroup>
             <ButtonGroup>
-              <Button variant="secondary" size="sm" type="button" onClick={applyWholeJson}>
+              <Button variant="secondary" size="sm" type="button" disabled={loading} onClick={applyWholeJson}>
                 <Check className="size-4" />
                 {tr('pages.tokenRoutes.routeGraphWorkbench.applyToDraft')}
               </Button>
-              <Button size="sm" type="button" disabled={saving} onClick={saveDraft}>
+              <Button size="sm" type="button" disabled={loading || saving} onClick={saveDraft}>
                 <Save className="size-4" />
                 {tr('pages.tokenRoutes.routeGraphWorkbench.saveDraft')}
               </Button>
-              <Button size="sm" type="button" disabled={saving || errorCount > 0} onClick={publish}>
+              <Button size="sm" type="button" disabled={loading || saving || errorCount > 0} onClick={publish}>
                 <Rocket className="size-4" />
                 {tr('pages.tokenRoutes.routeGraphWorkbench.publishVersion')}
               </Button>
             </ButtonGroup>
           </div>
         </CardHeader>
-        <JsonCodeEditor value={jsonText} onChange={setJsonText} minHeight={420} maxHeight={720} ariaLabel={tr('pages.tokenRoutes.routeGraphWorkbench.advancedJson')} />
+        {loading ? (
+          <RouteGraphJsonLoadingSkeleton />
+        ) : (
+          <JsonCodeEditor value={jsonText} onChange={setJsonText} minHeight={420} maxHeight={720} ariaLabel={tr('pages.tokenRoutes.routeGraphWorkbench.advancedJson')} />
+        )}
       </Card>
     );
   }
@@ -3480,6 +3671,10 @@ function RouteGraphWorkbenchInner({ mode = 'graph', focusIntent = null, onFocusI
               graph={interactiveGraph}
               semanticGraph={graph}
               routeEndpointCatalog={routeEndpointCatalog}
+              routeEndpointCatalogPageInfo={routeEndpointCatalogPageInfo}
+              routeEndpointCatalogLoading={routeEndpointCatalogLoading}
+              onSearchRouteEndpoints={searchRouteEndpointCatalog}
+              onLoadMoreRouteEndpoints={loadMoreRouteEndpointCatalog}
               selectedNode={selectedNode}
               selectedPort={selectedPort}
               selectedEdge={selectedEdge}
@@ -4328,6 +4523,10 @@ function Inspector({
   graph,
   semanticGraph,
   routeEndpointCatalog,
+  routeEndpointCatalogPageInfo,
+  routeEndpointCatalogLoading,
+  onSearchRouteEndpoints,
+  onLoadMoreRouteEndpoints,
   selectedNode,
   selectedPort,
   selectedEdge,
@@ -4355,6 +4554,10 @@ function Inspector({
   graph: RouteGraphSource;
   semanticGraph: RouteGraphSource;
   routeEndpointCatalog: RouteEndpointCatalogItem[];
+  routeEndpointCatalogPageInfo: PageInfo;
+  routeEndpointCatalogLoading: boolean;
+  onSearchRouteEndpoints: (query: string) => void;
+  onLoadMoreRouteEndpoints: (query: string) => void;
   selectedNode: RouteGraphNode | null;
   selectedPort: RouteGraphPort | null;
   selectedEdge: RouteGraphEdge | null;
@@ -4577,6 +4780,10 @@ function Inspector({
               macro={selectedMacro}
               readonly={readonly}
               endpointCatalog={routeEndpointCatalog}
+              endpointCatalogPageInfo={routeEndpointCatalogPageInfo}
+              endpointCatalogLoading={routeEndpointCatalogLoading}
+              onSearchEndpoints={onSearchRouteEndpoints}
+              onLoadMoreEndpoints={onLoadMoreRouteEndpoints}
               onChange={onChangeMacro}
               onAddGroup={() => onAddMacroGroup(selectedMacro.id)}
             />
@@ -4790,36 +4997,42 @@ function InspectorHeader({
   );
 }
 
-function RouteEndpointPicker({
+export function RouteEndpointPicker({
   readonly,
   catalog,
+  pageInfo = EMPTY_ROUTE_GRAPH_ENDPOINT_PAGE_INFO,
+  loading = false,
   selectedEndpointIds,
   onChange,
+  onSearch,
+  onLoadMore,
 }: {
   readonly: boolean;
   catalog: RouteEndpointCatalogItem[];
+  pageInfo?: PageInfo;
+  loading?: boolean;
   selectedEndpointIds: string[];
   onChange: (endpointIds: string[]) => void;
+  onSearch?: (query: string) => void;
+  onLoadMore?: (query: string) => void;
 }) {
   const [query, setQuery] = useState('');
+  const searchMountedRef = useRef(false);
   const selected = new Set(selectedEndpointIds);
   const filtered = catalog
     .filter((item) => !selected.has(item.endpointId))
     .filter((item) => {
-      const text = [
-        item.endpointId,
-        item.nodeId,
-        item.label,
-        item.endpointKind,
-        item.exposure,
-        item.modelPattern,
-        item.publicModelName || '',
-        ...item.upstreamModels,
-        ...item.siteNames,
-      ].join(' ').toLowerCase();
+      const text = routeEndpointCatalogSearchText(item);
       return !query.trim() || text.includes(query.trim().toLowerCase());
     })
     .slice(0, 40);
+  const matchingCachedCount = catalog
+    .filter((item) => !selected.has(item.endpointId))
+    .filter((item) => {
+      const text = routeEndpointCatalogSearchText(item);
+      return !query.trim() || text.includes(query.trim().toLowerCase());
+    }).length;
+  const totalCount = Math.max(Number(pageInfo.totalCount) || 0, matchingCachedCount);
   const grouped = {
     route_product: filtered.filter((item) => item.endpointKind === 'route_product'),
     supply: filtered.filter((item) => item.endpointKind === 'supply'),
@@ -4827,17 +5040,32 @@ function RouteEndpointPicker({
   const addEndpoint = (endpointId: string) => {
     if (readonly || selected.has(endpointId)) return;
     onChange([...selectedEndpointIds, endpointId]);
-    setQuery('');
   };
+  useEffect(() => {
+    if (!onSearch || readonly) return;
+    if (!searchMountedRef.current) {
+      searchMountedRef.current = true;
+      return;
+    }
+    const timer = window.setTimeout(() => onSearch(query), 220);
+    return () => window.clearTimeout(timer);
+  }, [onSearch, query, readonly]);
   return (
     <div className="grid gap-2">
       <div className="flex min-w-0 items-center justify-between gap-2">
         <div className="text-xs font-medium text-muted-foreground">{tr('pages.tokenRoutes.routeGraphWorkbench.endpointCandidates')}</div>
-        {selectedEndpointIds.length > 0 && (
-          <Badge variant="outline" className="shrink-0">
-            {tr('pages.tokenRoutes.routeGraphWorkbench.selectedEndpointCount').replace('{count}', String(selectedEndpointIds.length))}
+        <div className="flex min-w-0 items-center gap-1">
+          <Badge variant="secondary" className="shrink-0">
+            {tr('pages.tokenRoutes.routeGraphWorkbench.endpointCatalogShowing')
+              .replace('{shown}', String(matchingCachedCount))
+              .replace('{total}', String(totalCount))}
           </Badge>
-        )}
+          {selectedEndpointIds.length > 0 && (
+            <Badge variant="outline" className="shrink-0">
+              {tr('pages.tokenRoutes.routeGraphWorkbench.selectedEndpointCount').replace('{count}', String(selectedEndpointIds.length))}
+            </Badge>
+          )}
+        </div>
       </div>
       <Command.Command className="rounded-md border">
         <Command.CommandInput
@@ -4878,14 +5106,51 @@ function RouteEndpointPicker({
           </Command.CommandList>
         )}
       </Command.Command>
+      {!readonly && (
+        <div className="flex min-w-0 items-center justify-between gap-2 text-xs text-muted-foreground">
+          <span className="min-w-0 truncate">
+            {loading
+              ? tr('pages.tokenRoutes.routeGraphWorkbench.endpointCatalogSearching')
+              : tr('pages.tokenRoutes.routeGraphWorkbench.endpointCatalogShowing')
+                .replace('{shown}', String(matchingCachedCount))
+                .replace('{total}', String(totalCount))}
+          </span>
+          {pageInfo.hasMore && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 shrink-0 px-2"
+              disabled={loading}
+              onClick={() => onLoadMore?.(query)}
+            >
+              {tr('pages.tokenRoutes.routeGraphWorkbench.loadMoreEndpoints')}
+            </Button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
-function MacroForm({ macro, readonly, endpointCatalog, onChange, onAddGroup }: {
+function MacroForm({
+  macro,
+  readonly,
+  endpointCatalog,
+  endpointCatalogPageInfo,
+  endpointCatalogLoading,
+  onSearchEndpoints,
+  onLoadMoreEndpoints,
+  onChange,
+  onAddGroup,
+}: {
   macro: RouteGraphMacro;
   readonly: boolean;
   endpointCatalog: RouteEndpointCatalogItem[];
+  endpointCatalogPageInfo: PageInfo;
+  endpointCatalogLoading: boolean;
+  onSearchEndpoints: (query: string) => void;
+  onLoadMoreEndpoints: (query: string) => void;
   onChange: (macro: RouteGraphMacro) => void;
   onAddGroup: () => void;
 }) {
@@ -5050,7 +5315,11 @@ function MacroForm({ macro, readonly, endpointCatalog, onChange, onAddGroup }: {
               <RouteEndpointPicker
                 readonly={readonly}
                 catalog={endpointCatalog}
+                pageInfo={endpointCatalogPageInfo}
+                loading={endpointCatalogLoading}
                 selectedEndpointIds={endpointIds}
+                onSearch={onSearchEndpoints}
+                onLoadMore={onLoadMoreEndpoints}
                 onChange={(endpointIds) => updateGroup(index, { input: { kind: 'route_endpoints', endpointIds } })}
               />
               {endpointIds.length > 0 && (

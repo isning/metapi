@@ -6,7 +6,7 @@ import TokenRoutes, { DesktopDetailPanelPresence } from './TokenRoutes.js';
 
 const { apiMock, getBrandMock, routeGraphWorkbenchRenderMock } = vi.hoisted(() => ({
   apiMock: {
-    getRoutesSummary: vi.fn(),
+    getRouteSummaryPage: vi.fn(),
     getRouteGraphActive: vi.fn(),
     getRouteTargets: vi.fn(),
     getModelTokenCandidates: vi.fn(),
@@ -204,7 +204,7 @@ describe('TokenRoutes desktop detail panel', () => {
     getBrandMock.mockReset();
     getBrandMock.mockReturnValue(null);
     routeGraphWorkbenchRenderMock.mockReset();
-    apiMock.getRoutesSummary.mockResolvedValue([
+    apiMock.getRouteSummaryPage.mockResolvedValue([
       {
         id: 1,
         modelMapping: null,

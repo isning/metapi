@@ -6,7 +6,7 @@ import TokenRoutes from './TokenRoutes.js';
 
 const { apiMock, getBrandMock } = vi.hoisted(() => ({
   apiMock: {
-    getRoutesSummary: vi.fn(),
+    getRouteSummaryPage: vi.fn(),
     getRouteTargets: vi.fn(),
     getModelTokenCandidates: vi.fn(),
     getRouteDecisionsBatch: vi.fn(),
@@ -51,7 +51,7 @@ describe('TokenRoutes cached snapshot load', () => {
     apiMock.getModelTokenCandidates.mockResolvedValue({ models: {} });
     apiMock.getRouteDecisionsBatch.mockResolvedValue({ decisions: {} });
     apiMock.getRouteWideDecisionsBatch.mockResolvedValue({ decisions: {} });
-    apiMock.getRoutesSummary.mockResolvedValue([
+    apiMock.getRouteSummaryPage.mockResolvedValue([
       {
         id: 1,
         modelMapping: null,

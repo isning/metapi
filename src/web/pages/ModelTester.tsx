@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api.js';
+import { normalizePagedResponse } from '../pagedResponse.js';
 import { clearAuthSession, getAuthToken } from '../authSession.js';
 import {
   DEBUG_TABS,
@@ -103,10 +104,24 @@ type ForcedTargetOption = {
 };
 
 const POLL_INTERVAL_MS = 1200;
+const MODEL_TESTER_ROUTE_MODEL_PAGE_SIZE = 500;
 const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 const createConversationFileLocalId = () =>
   `draft-file-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+type ModelTesterRouteSummaryItem = {
+  modelPattern?: unknown;
+  enabled?: unknown;
+  visibility?: unknown;
+  match?: {
+    requestedModelPattern?: unknown;
+    displayName?: unknown;
+  } | null;
+  presentation?: {
+    displayName?: unknown;
+  } | null;
+};
 
 const summarizeModeRequest = (
   mode: PlaygroundMode,
@@ -803,8 +818,15 @@ export default function ModelTester() {
       setLoadingModels(true);
       try {
         const [marketResult, routesResult] = await Promise.allSettled([
-          api.getModelsMarketplace({ includePricing: false }),
-          api.getRoutes(),
+          api.getModelsMarketplace({
+            page: 1,
+            pageSize: MODEL_TESTER_ROUTE_MODEL_PAGE_SIZE,
+            includePricing: false,
+          }),
+          api.getRouteSummaryPage({
+            page: 1,
+            pageSize: MODEL_TESTER_ROUTE_MODEL_PAGE_SIZE,
+          }),
         ]);
 
         if (marketResult.status === 'rejected' && routesResult.status === 'rejected') {
@@ -813,7 +835,9 @@ export default function ModelTester() {
 
         const names = collectModelTesterModelNames(
           marketResult.status === 'fulfilled' ? marketResult.value : null,
-          routesResult.status === 'fulfilled' ? routesResult.value : null,
+          routesResult.status === 'fulfilled'
+            ? normalizePagedResponse<ModelTesterRouteSummaryItem>(routesResult.value).items
+            : null,
         );
         setModels(names);
 

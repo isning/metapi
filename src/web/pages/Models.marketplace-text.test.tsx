@@ -47,6 +47,43 @@ function findButtonsByText(root: ReactTestInstance, text: string): ReactTestInst
   ));
 }
 
+function findButtonByAriaLabel(root: ReactTestInstance, label: string): ReactTestInstance {
+  const button = root.findAll((node) => (
+    node.type === 'button'
+    && node.props['aria-label'] === label
+    && typeof node.props.onClick === 'function'
+  ))[0];
+  if (!button) {
+    throw new Error(`No button found with aria-label ${label}`);
+  }
+  return button;
+}
+
+function createMarketplaceModel(name: string, site = 'Demo Site') {
+  return {
+    name,
+    accountCount: 1,
+    tokenCount: 1,
+    avgLatency: 320,
+    successRate: 98,
+    description: null,
+    tags: [],
+    supportedEndpointTypes: [],
+    pricingSources: [],
+    measuredEntryPricing: null,
+    accounts: [
+      {
+        id: 1,
+        site,
+        username: 'tester',
+        latency: 320,
+        balance: 12.5,
+        tokens: [{ id: 1, name: 'default', isDefault: true }],
+      },
+    ],
+  };
+}
+
 async function flushMicrotasks() {
   await act(async () => {
     await Promise.resolve();
@@ -118,6 +155,12 @@ describe('Models marketplace text', () => {
           ],
         },
       ],
+      pageInfo: { page: 1, pageSize: 20, totalCount: 1, hasMore: false },
+      facets: {
+        brands: [{ name: 'OpenAI', icon: 'openai', count: 1 }],
+        otherBrandCount: 0,
+        sites: [{ name: 'Demo Site', count: 1 }],
+      },
     });
   });
 
@@ -168,6 +211,116 @@ describe('Models marketplace text', () => {
       expect(expandedText).toContain('理论入口价格');
       expect(expandedText).toContain('$4 / 1M');
       expect(expandedText).toContain('输出参考倍率 未配置参考价');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('renders server marketplace totals and fetches the next marketplace page', async () => {
+    apiMock.getModelsMarketplace.mockImplementation((options: { page: number; pageSize: number }) => Promise.resolve({
+      models: [
+        createMarketplaceModel(options.page === 2 ? 'gpt-page-2' : 'gpt-page-1'),
+      ],
+      pageInfo: {
+        page: options.page,
+        pageSize: options.pageSize,
+        totalCount: 50_000,
+        hasMore: true,
+      },
+      facets: {
+        brands: [{ name: 'OpenAI', icon: 'openai', count: 50_000 }],
+        otherBrandCount: 0,
+        sites: [{ name: 'Demo Site', count: 50_000 }],
+      },
+    }));
+
+    let root!: WebTestRenderer;
+
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/models']}>
+            <ToastProvider>
+              <Models />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      expect(collectText(root!.root)).toContain('共 50000 个模型');
+      expect(collectText(root!.root)).toContain('gpt-page-1');
+
+      await act(async () => {
+        findButtonByAriaLabel(root!.root, '下一页').props.onClick();
+      });
+
+      await vi.waitFor(async () => {
+        await flushMicrotasks();
+        expect(apiMock.getModelsMarketplace).toHaveBeenCalledWith(expect.objectContaining({
+          page: 2,
+          pageSize: 20,
+          sortBy: 'accountCount',
+          sortDir: 'desc',
+        }));
+        expect(collectText(root!.root)).toContain('gpt-page-2');
+      });
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('sends marketplace search terms to the server and renders the returned result', async () => {
+    apiMock.getModelsMarketplace.mockImplementation((options: { q?: string }) => Promise.resolve({
+      models: [
+        createMarketplaceModel(options.q ? 'tail-marketplace-model' : 'gpt-page-1'),
+      ],
+      pageInfo: {
+        page: 1,
+        pageSize: 20,
+        totalCount: options.q ? 1 : 50_000,
+        hasMore: !options.q,
+      },
+      facets: {
+        brands: [{ name: 'OpenAI', icon: 'openai', count: options.q ? 1 : 50_000 }],
+        otherBrandCount: 0,
+        sites: [{ name: 'Demo Site', count: options.q ? 1 : 50_000 }],
+      },
+    }));
+
+    let root!: WebTestRenderer;
+
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/models']}>
+            <ToastProvider>
+              <Models />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const searchInput = root!.root.find((node) => (
+        node.type === 'input'
+        && node.props.type === 'search'
+      ));
+      await act(async () => {
+        searchInput.props.onChange({ target: { value: 'tail-marketplace-model' } });
+      });
+
+      await vi.waitFor(async () => {
+        await flushMicrotasks();
+        expect(apiMock.getModelsMarketplace).toHaveBeenCalledWith(expect.objectContaining({
+          page: 1,
+          pageSize: 20,
+          q: 'tail-marketplace-model',
+        }));
+        const text = collectText(root!.root);
+        expect(text).toContain('共 1 个模型');
+        expect(text).toContain('tail-marketplace-model');
+      });
     } finally {
       root?.unmount();
     }

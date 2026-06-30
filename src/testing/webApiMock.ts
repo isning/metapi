@@ -26,8 +26,15 @@ export function createWebApiMock(overrides: Record<string, unknown> = {}) {
     discardRouteGraphDraft: vi.fn().mockResolvedValue({}),
     compileRouteGraph: vi.fn().mockResolvedValue({ ok: true, diagnostics: [] }),
     getModelRouteFlow: vi.fn().mockResolvedValue({ flow: null }),
-    getModelsMarketplace: vi.fn().mockResolvedValue({ models: [] }),
-    getRoutesSummary: vi.fn().mockResolvedValue([]),
+    getModelsMarketplace: vi.fn().mockResolvedValue({
+      models: [],
+      pageInfo: { page: 1, pageSize: 0, totalCount: 0, hasMore: false },
+      facets: { brands: [], otherBrandCount: 0, sites: [] },
+    }),
+    getRouteSummaryPage: vi.fn().mockResolvedValue({
+      items: [],
+      pageInfo: { page: 1, pageSize: 0, totalCount: 0, hasMore: false },
+    }),
     getRouteEndpointTargets: vi.fn().mockResolvedValue([]),
     getModelTokenCandidates: vi.fn().mockResolvedValue({ models: {} }),
     getRouteDecisionsBatch: vi.fn().mockResolvedValue({ decisions: {} }),

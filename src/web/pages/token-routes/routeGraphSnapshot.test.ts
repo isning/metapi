@@ -369,6 +369,22 @@ describe('routeGraphSnapshot', () => {
     }));
   });
 
+  it('normalizes legacy route-only supply endpoint inputs when updating Model Group macros', () => {
+    const macro = updateCandidateSelectorMacroFromEditor({
+      displayName: 'public-model',
+      displayIcon: null,
+      visibility: 'public',
+      enabled: true,
+      routingStrategy: 'weighted',
+      routeIds: [12],
+      endpointIds: ['route-endpoint:supply:route:12'],
+    });
+
+    expect(macro.config.groups.map((group) => group.input.endpointIds[0])).toEqual([
+      'route-endpoint:product:route:12',
+    ]);
+  });
+
   it('omits disabled macro groups from generated route backend payloads', () => {
     const validation = validateRouteGraphNodeDraft({
       id: 12,

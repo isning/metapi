@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react';
-import { BrandGlyph, InlineBrandIcon, hashColor, type BrandInfo } from '../../components/BrandIcon.js';
+import { BrandGlyph, InlineBrandIcon, getBrand, hashColor, type BrandInfo } from '../../components/BrandIcon.js';
 import CenteredModal from '../../components/CenteredModal.js';
 import ModernSelect from '../../components/ModernSelect.js';
 import SearchInput from '../../components/SearchInput.js';
@@ -10,6 +10,7 @@ import { Button } from '../../components/ui/button/index.js';
 import { ArrowDown, ArrowUp, Braces, Download, LoaderCircle, Settings2, Trash2, X } from 'lucide-react';
 import ToneBadge from '../../components/ToneBadge.js';
 import JsonCodeEditor from '../../components/JsonCodeEditor.js';
+import type { PageInfo } from '../../pagedResponse.js';
 import { Input } from '../../components/ui/input/index.js';
 import { Checkbox } from '../../components/ui/checkbox/index.js';
 import {
@@ -23,6 +24,7 @@ import {
   routeGraphNodeToEditorForm,
   getCandidateSelectorEndpointIds,
   routeEndpointIdFromRouteId,
+  routeIdFromRouteEndpointId,
   stringifyRouteGraphJson,
   updateCandidateSelectorMacroFromEditor,
   validateRouteGraphNodeDraft,
@@ -82,8 +84,12 @@ type ManualRoutePanelProps = {
   modelMatchPreviewEndpoints: RouteEndpointCatalogItem[];
   exactSourceRouteOptions: RouteSummaryRow[];
   routeEndpointCatalog?: RouteEndpointCatalogItem[];
+  routeEndpointCatalogPageInfo?: PageInfo;
+  routeEndpointCatalogLoading?: boolean;
   sourceEndpointTypesByRouteId: Record<number, string[]>;
   currentRouteNodeJson?: RouteGraphSnapshotNode | null;
+  onSourceEndpointSearch?: (query: string) => void;
+  onLoadMoreSourceEndpoints?: (query: string) => void;
   onSave: () => void;
   onCancel: () => void;
 };
@@ -104,6 +110,15 @@ function getEndpointMatchModelNames(endpoint: RouteEndpointCatalogItem): string[
     if (fallback) names.push(fallback);
   }
   return Array.from(new Set(names));
+}
+
+function resolveEndpointCatalogBrand(endpoint: RouteEndpointCatalogItem, routeBrand: BrandInfo | null): BrandInfo | null {
+  if (routeBrand) return routeBrand;
+  for (const modelName of getEndpointMatchModelNames(endpoint)) {
+    const brand = getBrand(modelName);
+    if (brand) return brand;
+  }
+  return null;
 }
 
 function endpointMatchesModelPattern(endpoint: RouteEndpointCatalogItem, pattern: string): boolean {
@@ -233,8 +248,12 @@ export default function ManualRoutePanel({
   modelMatchPreviewEndpoints,
   exactSourceRouteOptions,
   routeEndpointCatalog = [],
+  routeEndpointCatalogPageInfo,
+  routeEndpointCatalogLoading = false,
   sourceEndpointTypesByRouteId,
   currentRouteNodeJson,
+  onSourceEndpointSearch,
+  onLoadMoreSourceEndpoints,
   onSave,
   onCancel,
 }: ManualRoutePanelProps) {
@@ -316,6 +335,8 @@ export default function ManualRoutePanel({
     [selectableSourceRouteOptions],
   );
 
+  const remoteSourceSearchActive = !!onSourceEndpointSearch && sourceSearch.trim().length > 0;
+
   const sourceEndpointItems = useMemo<SourcePickerItem[]>(() => {
     const catalogRouteIds = new Set(
       routeEndpointCatalog
@@ -325,30 +346,32 @@ export default function ManualRoutePanel({
         .map((routeId) => Math.trunc(routeId)),
     );
 
-    const routeItems = selectableSourceRouteOptions
-      .filter((route) => !catalogRouteIds.has(route.id))
-      .map((route): SourcePickerItem => {
-        const label = renderRouteOptionLabel(route);
-        return {
-          endpointId: routeEndpointIdFromRouteId(route.id),
-          routeIds: [route.id],
-          label,
-          modelPattern: getRouteRequestedModelPattern(route),
-          brand: sourceRouteBrandById.get(route.id) || null,
-          endpointKind: 'route',
-          exposure: route.visibility || null,
-          resolutionStatus: 'resolved',
-          ownerKind: 'route',
-          sourceKind: 'route',
-          enabled: route.enabled,
-          displayIcon: getRouteDisplayIcon(route),
-          upstreamModels: [getRouteRequestedModelPattern(route)].filter(Boolean),
-          siteNames: route.siteNames || [],
-          endpointTypes: sourceEndpointTypesByRouteId[route.id] || [],
-          targetCount: route.targetCount,
-          selectable: true,
-        };
-      });
+    const routeItems = remoteSourceSearchActive
+      ? []
+      : selectableSourceRouteOptions
+        .filter((route) => !catalogRouteIds.has(route.id))
+        .map((route): SourcePickerItem => {
+          const label = renderRouteOptionLabel(route);
+          return {
+            endpointId: routeEndpointIdFromRouteId(route.id),
+            routeIds: [route.id],
+            label,
+            modelPattern: getRouteRequestedModelPattern(route),
+            brand: sourceRouteBrandById.get(route.id) || null,
+            endpointKind: 'route',
+            exposure: route.visibility || null,
+            resolutionStatus: 'resolved',
+            ownerKind: 'route',
+            sourceKind: 'route',
+            enabled: route.enabled,
+            displayIcon: getRouteDisplayIcon(route),
+            upstreamModels: [getRouteRequestedModelPattern(route)].filter(Boolean),
+            siteNames: route.siteNames || [],
+            endpointTypes: sourceEndpointTypesByRouteId[route.id] || [],
+            targetCount: route.targetCount,
+            selectable: true,
+          };
+        });
 
     const catalogItems = routeEndpointCatalog.map((endpoint): SourcePickerItem => {
       const routeIds = Array.from(new Set(
@@ -358,13 +381,14 @@ export default function ManualRoutePanel({
           .map((routeId) => Math.trunc(routeId)),
       ));
       const primaryRoute = routeIds.map((routeId) => sourceRouteById.get(routeId)).find(Boolean) || null;
+      const primaryRouteBrand = primaryRoute ? sourceRouteBrandById.get(primaryRoute.id) || null : null;
       const label = endpoint.label || endpoint.publicModelName || endpoint.modelPattern || endpoint.endpointId;
       return {
         endpointId: endpoint.endpointId,
         routeIds,
         label,
         modelPattern: endpoint.modelPattern || (primaryRoute ? getRouteRequestedModelPattern(primaryRoute) : ''),
-        brand: primaryRoute ? sourceRouteBrandById.get(primaryRoute.id) || null : null,
+        brand: resolveEndpointCatalogBrand(endpoint, primaryRouteBrand),
         endpointKind: endpoint.endpointKind,
         exposure: endpoint.exposure,
         resolutionStatus: endpoint.resolutionStatus,
@@ -386,7 +410,7 @@ export default function ManualRoutePanel({
     for (const item of routeItems) byEndpointId.set(item.endpointId, item);
     for (const item of catalogItems) byEndpointId.set(item.endpointId, item);
     return Array.from(byEndpointId.values());
-  }, [routeEndpointCatalog, selectableSourceRouteOptions, sourceEndpointTypesByRouteId, sourceRouteBrandById, sourceRouteById]);
+  }, [remoteSourceSearchActive, routeEndpointCatalog, selectableSourceRouteOptions, sourceEndpointTypesByRouteId, sourceRouteBrandById, sourceRouteById]);
 
   const sourceBrandList = useMemo(() => {
     const grouped = new Map<string, { count: number; brand: BrandInfo }>();
@@ -478,7 +502,7 @@ export default function ManualRoutePanel({
     }
 
     const normalizedSearch = sourceSearch.trim().toLowerCase();
-    if (normalizedSearch) {
+    if (normalizedSearch && !onSourceEndpointSearch) {
       list = list.filter((item) => {
         const label = item.label.toLowerCase();
         const routePattern = item.modelPattern.toLowerCase();
@@ -516,24 +540,47 @@ export default function ManualRoutePanel({
     activeSourceBrand,
     activeSourceEndpointType,
     activeSourceSite,
+    onSourceEndpointSearch,
     sourceEndpointItems,
     sourceSearch,
   ]);
 
-  const selectedSourceItems = useMemo(() => {
-    const itemById = new Map(sourceEndpointItems.map((item) => [item.endpointId, item]));
-    return sourceEndpointIds
-      .map((endpointId) => itemById.get(endpointId))
-      .filter((item): item is SourcePickerItem => !!item);
-  }, [sourceEndpointItems, sourceEndpointIds]);
+  const sourceEndpointTotalCount = Math.max(
+    sourceEndpointItems.length,
+    Number(routeEndpointCatalogPageInfo?.totalCount) || 0,
+  );
+  const displayedFilteredSourceCount = filteredSourceItems.length;
+  const sourceEndpointHasMore = !!routeEndpointCatalogPageInfo?.hasMore;
 
   const sourceItemByEndpointId = useMemo(
     () => new Map(sourceEndpointItems.map((item) => [item.endpointId, item])),
     [sourceEndpointItems],
   );
 
+  const resolveSourceEndpointIdForPicker = (endpointId: string): string => {
+    if (sourceItemByEndpointId.has(endpointId)) return endpointId;
+    const routeId = routeIdFromRouteEndpointId(endpointId);
+    if (!routeId) return endpointId;
+    return sourceEndpointItems.find((item) => item.routeIds.includes(routeId))?.endpointId || endpointId;
+  };
+
+  const resolveSourceEndpointIdsForPicker = (endpointIds: string[]): string[] => Array.from(new Set(
+    endpointIds.map(resolveSourceEndpointIdForPicker),
+  ));
+
+  const selectedSourceItems = useMemo(() => (
+    resolveSourceEndpointIdsForPicker(sourceEndpointIds)
+      .map((endpointId) => sourceItemByEndpointId.get(endpointId))
+      .filter((item): item is SourcePickerItem => !!item)
+  ), [sourceEndpointIds, sourceItemByEndpointId, sourceEndpointItems]);
+
   const getRouteIdsForSourceEndpointIds = (endpointIds: string[]): number[] => Array.from(new Set(
-    endpointIds.flatMap((endpointId) => sourceItemByEndpointId.get(endpointId)?.routeIds || []),
+    endpointIds.flatMap((endpointId) => {
+      const itemRouteIds = sourceItemByEndpointId.get(endpointId)?.routeIds || [];
+      if (itemRouteIds.length > 0) return itemRouteIds;
+      const routeId = routeIdFromRouteEndpointId(endpointId);
+      return routeId ? [routeId] : [];
+    }),
   ));
 
   const sourcePickerSelectionSet = useMemo(
@@ -963,7 +1010,8 @@ export default function ManualRoutePanel({
   );
 
   const openSourcePicker = () => {
-    setSourcePickerSelection([...sourceEndpointIds]);
+    setSourcePickerSelection(resolveSourceEndpointIdsForPicker(sourceEndpointIds));
+    if (sourceSearch.trim()) onSourceEndpointSearch?.('');
     setSourceSearch('');
     setActiveSourceBrand(null);
     setActiveSourceSite(null);
@@ -973,6 +1021,7 @@ export default function ManualRoutePanel({
 
   const closeSourcePicker = () => {
     setShowSourcePicker(false);
+    if (sourceSearch.trim()) onSourceEndpointSearch?.('');
     setSourceSearch('');
     setActiveSourceBrand(null);
     setActiveSourceSite(null);
@@ -982,10 +1031,16 @@ export default function ManualRoutePanel({
   const confirmSourcePicker = () => {
     applySourceEndpointIdsToForm(sourcePickerSelection);
     setShowSourcePicker(false);
+    if (sourceSearch.trim()) onSourceEndpointSearch?.('');
     setSourceSearch('');
     setActiveSourceBrand(null);
     setActiveSourceSite(null);
     setActiveSourceEndpointType(null);
+  };
+
+  const handleSourceSearchChange = (nextValue: string) => {
+    setSourceSearch(nextValue);
+    onSourceEndpointSearch?.(nextValue);
   };
 
   const footer = (
@@ -1048,7 +1103,7 @@ export default function ManualRoutePanel({
         <span className="min-w-0 whitespace-normal break-words text-sm font-semibold leading-snug">{tr('pages.tokenRoutes.manualRoutePanel.selectSourceEndpoints')}</span>
         <span className="min-w-0 whitespace-normal break-words text-xs leading-relaxed text-muted-foreground">{tr('pages.tokenRoutes.manualRoutePanel.modelModel2')}</span>
         <span className="min-w-0 whitespace-normal break-words text-xs leading-snug text-muted-foreground">
-          {tr('pages.tokenRoutes.manualRoutePanel.availableSourceEndpoints').replace('{count}', String(sourceEndpointItems.length))}
+          {tr('pages.tokenRoutes.manualRoutePanel.availableSourceEndpoints').replace('{count}', String(sourceEndpointTotalCount))}
         </span>
       </Button>
       <Button
@@ -1320,7 +1375,7 @@ export default function ManualRoutePanel({
           <div className="text-xs text-muted-foreground">
             {tr('pages.tokenRoutes.manualRoutePanel.selectedOutOfTotal')
               .replace('{selected}', String(selectedSourceItems.length))
-              .replace('{total}', String(sourceEndpointItems.length))}
+              .replace('{total}', String(sourceEndpointTotalCount))}
           </div>
         </div>
         <Button variant="outline" type="button" onClick={openSourcePicker}>
@@ -1608,8 +1663,8 @@ export default function ManualRoutePanel({
                 </div>
                 <div className="text-xs text-muted-foreground">
                   {tr('pages.tokenRoutes.manualRoutePanel.candidatesOutOfTotal')
-                    .replace('{filtered}', String(filteredSourceItems.length))
-                    .replace('{total}', String(sourceEndpointItems.length))}
+                    .replace('{filtered}', String(displayedFilteredSourceCount))
+                    .replace('{total}', String(sourceEndpointTotalCount))}
                 </div>
               </div>
               {activeSourceFilterCount > 0 ? (
@@ -1631,7 +1686,7 @@ export default function ManualRoutePanel({
                 <FilterChip
                   active={!activeSourceBrand}
                   label={tr('components.notificationPanel.all')}
-                  count={sourceEndpointItems.length}
+                  count={sourceEndpointTotalCount}
                   onClick={() => setActiveSourceBrand(null)}
                 />
                 {sourceBrandList.list.map(([brandName, { count, brand }]) => (
@@ -1659,7 +1714,7 @@ export default function ManualRoutePanel({
                   <FilterChip
                     active={!activeSourceSite}
                     label={tr('components.notificationPanel.all')}
-                    count={sourceEndpointItems.length}
+                    count={sourceEndpointTotalCount}
                     onClick={() => setActiveSourceSite(null)}
                   />
                   {sourceSiteList.map(([siteName, count]) => (
@@ -1692,7 +1747,7 @@ export default function ManualRoutePanel({
                 <FilterChip
                   active={!activeSourceEndpointType}
                   label={tr('components.notificationPanel.all')}
-                  count={sourceEndpointItems.length}
+                  count={sourceEndpointTotalCount}
                   onClick={() => setActiveSourceEndpointType(null)}
                 />
                 {sourceEndpointTypeList.map(([endpointType, count]) => {
@@ -1719,14 +1774,14 @@ export default function ManualRoutePanel({
             <div className="grid gap-2">
               <SearchField
                 value={sourceSearch}
-                onChange={setSourceSearch}
+                onChange={handleSourceSearchChange}
                 placeholder={tr('pages.tokenRoutes.manualRoutePanel.searchModel')}
               />
               <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
                 <span>
                   {tr('pages.tokenRoutes.manualRoutePanel.candidatesOutOfTotal')
-                    .replace('{filtered}', String(filteredSourceItems.length))
-                    .replace('{total}', String(sourceEndpointItems.length))}
+                    .replace('{filtered}', String(displayedFilteredSourceCount))
+                    .replace('{total}', String(sourceEndpointTotalCount))}
                 </span>
                 <span>
                   {tr('pages.tokenRoutes.manualRoutePanel.selectedSourceModels').replace('{count}', String(sourcePickerSelection.length))}
@@ -1737,7 +1792,7 @@ export default function ManualRoutePanel({
             <div className="min-h-0 overflow-y-auto pr-1 lg:max-h-[min(62vh,640px)]">
               {filteredSourceItems.length === 0 ? (
                 <div className="py-3 text-center text-xs text-muted-foreground">
-                  {sourceEndpointItems.length === 0
+                  {sourceEndpointTotalCount === 0
                     ? tr('pages.tokenRoutes.manualRoutePanel.modelRoutes')
                     : tr('pages.tokenRoutes.manualRoutePanel.matchModel')}
                 </div>
@@ -1849,6 +1904,26 @@ export default function ManualRoutePanel({
                 </div>
               )}
             </div>
+            {sourceEndpointHasMore && onLoadMoreSourceEndpoints ? (
+              <div className="flex items-center justify-between gap-3 rounded-md border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+                <span>
+                  {tr('pages.tokenRoutes.routeGraphWorkbench.endpointCatalogShowing')
+                    .replace('{shown}', String(sourceEndpointItems.length))
+                    .replace('{total}', String(sourceEndpointTotalCount))}
+                </span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={routeEndpointCatalogLoading}
+                  onClick={() => onLoadMoreSourceEndpoints(sourceSearch)}
+                >
+                  {routeEndpointCatalogLoading
+                    ? tr('pages.tokenRoutes.routeGraphWorkbench.endpointCatalogSearching')
+                    : tr('pages.tokenRoutes.routeGraphWorkbench.loadMoreEndpoints')}
+                </Button>
+              </div>
+            ) : null}
           </div>
         </div>
       </CenteredModal>

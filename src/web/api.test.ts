@@ -179,3 +179,124 @@ describe('api proxy test timeout handling', () => {
     expect(api.proxyTestStream).toBe(api.testProxyStream);
   });
 });
+
+describe('api paged route projection helpers', () => {
+  beforeEach(() => {
+    vi.stubGlobal('localStorage', createMemoryStorage());
+    persistAuthSession(globalThis.localStorage as Storage, 'token-1');
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('preserves route summary page metadata for callers that need real totals', async () => {
+    const pageInfo = {
+      page: 2,
+      pageSize: 137,
+      totalCount: 50_000,
+      hasMore: false,
+    };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({
+        items: [{ id: 50_000, match: { requestedModelPattern: 'tail-model' } }],
+        pageInfo,
+      }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await api.getRouteSummaryPage({ page: 2, pageSize: 137 });
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/routes/summary?paged=1&page=2&pageSize=137');
+    expect(result.items).toEqual([{ id: 50_000, match: { requestedModelPattern: 'tail-model' } }]);
+    expect(result.pageInfo).toEqual(pageInfo);
+  });
+
+  it('serializes route summary filters for server-side route list projection', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({
+        items: [{ id: 50_000, match: { requestedModelPattern: 'tail-model' } }],
+        pageInfo: { page: 2, pageSize: 20, totalCount: 50_000, hasMore: true },
+        facets: { brands: [], otherBrandCount: 0, sites: [], tabs: { public: 50_000, internal: 0, manual: 0 }, enabled: { enabled: 50_000, disabled: 0 } },
+      }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await api.getRouteSummaryPage({
+      page: 2,
+      pageSize: 20,
+      q: 'tail',
+      tab: 'public',
+      group: '__all__',
+      brand: 'OpenAI',
+      site: 'Demo Site',
+      endpointType: 'openai',
+      includeZeroTarget: true,
+      enabled: 'enabled',
+      sortBy: 'name',
+      sortDir: 'asc',
+    });
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/routes/summary?paged=1&page=2&pageSize=20&q=tail&tab=public&group=__all__&brand=OpenAI&site=Demo+Site&endpointType=openai&includeZeroTarget=1&enabled=enabled&sortBy=name&sortDir=asc');
+  });
+
+  it('preserves route endpoint catalog page metadata for source pickers', async () => {
+    const pageInfo = {
+      page: 1,
+      pageSize: 73,
+      totalCount: 50_000,
+      hasMore: true,
+    };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({
+        items: [{ endpointId: 'route-endpoint:supply:tail', label: 'tail source' }],
+        pageInfo,
+      }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await api.getRouteEndpointPage({
+      page: 1,
+      pageSize: 73,
+      endpointKind: 'supply',
+      q: 'tail',
+    });
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/route-endpoints?paged=1&page=1&pageSize=73&endpointKind=supply&q=tail');
+    expect(result.items).toEqual([{ endpointId: 'route-endpoint:supply:tail', label: 'tail source' }]);
+    expect(result.pageInfo).toEqual(pageInfo);
+  });
+
+  it('serializes marketplace paging filters and sorting for server-side projection', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({
+        models: [{ name: 'gpt-tail-model' }],
+        pageInfo: { page: 3, pageSize: 50, totalCount: 50_000, hasMore: true },
+        facets: { brands: [], otherBrandCount: 0, sites: [] },
+      }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await api.getModelsMarketplace({
+      page: 3,
+      pageSize: 50,
+      q: 'tail',
+      brand: 'OpenAI',
+      site: 'Demo Site',
+      sortBy: 'name',
+      sortDir: 'asc',
+      includePricing: true,
+    });
+
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/models/marketplace?page=3&pageSize=50&q=tail&brand=OpenAI&site=Demo+Site&sortBy=name&sortDir=asc&includePricing=1');
+    expect(result).toMatchObject({
+      models: [{ name: 'gpt-tail-model' }],
+      pageInfo: { totalCount: 50_000 },
+    });
+  });
+});

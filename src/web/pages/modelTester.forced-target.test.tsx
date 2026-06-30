@@ -13,7 +13,7 @@ import {
 const { apiMock } = vi.hoisted(() => ({
   apiMock: {
     getModelsMarketplace: vi.fn(),
-    getRoutes: vi.fn(),
+    getRouteSummaryPage: vi.fn(),
     getRouteDecision: vi.fn(),
     getModelRouteFlow: vi.fn(),
   },
@@ -78,7 +78,7 @@ describe('ModelTester fixed channel behavior', () => {
         { name: 'gpt-4o-mini' },
       ],
     });
-    apiMock.getRoutes.mockResolvedValue([]);
+    apiMock.getRouteSummaryPage.mockResolvedValue({ items: [], pageInfo: { page: 1, pageSize: 500, totalCount: 0, hasMore: false } });
     apiMock.getRouteDecision.mockResolvedValue({
       decision: {
         candidates: [
@@ -153,6 +153,59 @@ describe('ModelTester fixed channel behavior', () => {
         expect(apiMock.getRouteDecision).toHaveBeenCalledWith('gpt-4o-mini');
         expect(collectText(root.root)).toContain('已固定到目标 #77，失败不会自动切换。');
       });
+      expect(apiMock.getModelsMarketplace).toHaveBeenCalledWith(expect.objectContaining({
+        page: 1,
+        pageSize: 500,
+        includePricing: false,
+      }));
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('hydrates model choices from bounded route summary fallback when marketplace is unavailable', async () => {
+    apiMock.getModelsMarketplace.mockRejectedValueOnce(new Error('market unavailable'));
+    apiMock.getRouteSummaryPage.mockResolvedValueOnce({
+      items: [
+        {
+          id: 50_000,
+          enabled: true,
+          visibility: 'public',
+          match: {
+            kind: 'model',
+            requestedModelPattern: 'summary-only-model',
+            displayName: null,
+          },
+          backend: { kind: 'supply' },
+          presentation: { displayName: null, displayIcon: null },
+          targetCount: 1,
+          enabledTargetCount: 1,
+          siteNames: ['site-a'],
+          decisionSnapshot: null,
+          decisionRefreshedAt: null,
+        },
+      ],
+      pageInfo: { page: 1, pageSize: 500, totalCount: 50_000, hasMore: true },
+    });
+    apiMock.getRouteDecision.mockResolvedValueOnce({ decision: { candidates: [] } });
+    apiMock.getModelRouteFlow.mockResolvedValueOnce({ flow: null });
+
+    let root!: ReactTestRenderer;
+
+    try {
+      await act(async () => {
+        root = create(<ModelTester />);
+      });
+      await vi.waitFor(async () => {
+        await flushMicrotasks();
+        const text = collectText(root.root);
+        expect(text).toContain('共 1 个模型');
+        expect(text).toContain('summary-only-model');
+      });
+      expect(apiMock.getRouteSummaryPage).toHaveBeenCalledWith(expect.objectContaining({
+        page: 1,
+        pageSize: 500,
+      }));
     } finally {
       root?.unmount();
     }

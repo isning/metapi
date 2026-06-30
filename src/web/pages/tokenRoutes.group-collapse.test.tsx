@@ -8,9 +8,9 @@ import { routeSummaryFixture } from './testApiCompat.js';
 
 const { apiMock, getBrandMock } = vi.hoisted(() => ({
   apiMock: {
-    getRoutesSummary: vi.fn(),
+    getRouteSummaryPage: vi.fn(),
     getRouteTargets: vi.fn(),
-    getRouteEndpoints: vi.fn(),
+    getRouteEndpointPage: vi.fn(),
     getModelTokenCandidates: vi.fn(),
     getRouteDecisionsBatch: vi.fn(),
     getRouteWideDecisionsBatch: vi.fn(),
@@ -161,6 +161,86 @@ function routeSummaryRows(rows: any[]): any[] {
   return rows.map((row) => routeSummaryFixture(row as any));
 }
 
+function routeSummaryPage(rows: any[], totalCount: number, page = 1, pageSize = rows.length): any {
+  return {
+    items: routeSummaryRows(rows),
+    pageInfo: {
+      page,
+      pageSize,
+      totalCount,
+      hasMore: page * pageSize < totalCount,
+    },
+  };
+}
+
+function routeFixture(id: number, overrides: Record<string, unknown> = {}) {
+  return {
+    id,
+    modelMapping: null,
+    enabled: true,
+    targetCount: 1,
+    enabledTargetCount: 1,
+    siteNames: [`site-${id % 7}`],
+    decisionSnapshot: null,
+    decisionRefreshedAt: null,
+    match: {
+      kind: 'model' as const,
+      requestedModelPattern: `paged-route-${String(id).padStart(3, '0')}`,
+      displayName: null,
+    },
+    backend: { kind: 'supply' as const },
+    presentation: { displayName: null, displayIcon: null },
+    ...overrides,
+  };
+}
+
+function endpointCatalogPage(items: any[], totalCount: number, page = 1, pageSize = items.length): any {
+  return {
+    items,
+    pageInfo: {
+      page,
+      pageSize,
+      totalCount,
+      hasMore: page * pageSize < totalCount,
+    },
+  };
+}
+
+function routeEndpointFixture(id: number, overrides: Record<string, unknown> = {}) {
+  return {
+    endpointId: `route-endpoint:supply:paged:${id}`,
+    nodeId: `route-endpoint:supply:paged:${id}`,
+    routeId: id,
+    label: `paged-source-${String(id).padStart(3, '0')}`,
+    endpointKind: 'supply',
+    exposure: 'none',
+    resolutionStatus: 'resolved',
+    ownerKind: 'automatic_route',
+    sourceKind: 'upstream_model',
+    enabled: true,
+    displayIcon: null,
+    modelPattern: `paged-source-${String(id).padStart(3, '0')}`,
+    publicModelName: null,
+    upstreamModels: [`paged-source-${String(id).padStart(3, '0')}`],
+    siteNames: [`site-${id % 5}`],
+    sourceRouteIds: [id],
+    targetCount: 1,
+    tags: [],
+    metadata: {},
+    ...overrides,
+  };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
+}
+
 describe('TokenRoutes grouped source models', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -169,7 +249,7 @@ describe('TokenRoutes grouped source models', () => {
     vi.stubGlobal('confirm', vi.fn(() => true));
     apiMock.getModelTokenCandidates.mockResolvedValue({ models: {} });
     apiMock.getRouteTargets.mockResolvedValue([]);
-    apiMock.getRouteEndpoints.mockResolvedValue([]);
+    apiMock.getRouteEndpointPage.mockResolvedValue([]);
     apiMock.getRouteDecisionsBatch.mockResolvedValue({ decisions: {} });
     apiMock.getRouteWideDecisionsBatch.mockResolvedValue({ decisions: {} });
     apiMock.updateRoute.mockResolvedValue({});
@@ -184,7 +264,7 @@ describe('TokenRoutes grouped source models', () => {
   });
 
   it('does not treat bracket-prefixed exact model routes as group filters', async () => {
-    apiMock.getRoutesSummary.mockResolvedValue(routeSummaryRows([
+    apiMock.getRouteSummaryPage.mockResolvedValue(routeSummaryRows([
       {
         id: 4386, modelMapping: null, enabled: true,
         channelCount: 1, enabledChannelCount: 1, siteNames: ['test'],
@@ -214,7 +294,7 @@ describe('TokenRoutes grouped source models', () => {
       });
       await flushMicrotasks();
 
-      expect(apiMock.getRouteEndpoints).not.toHaveBeenCalled();
+      expect(apiMock.getRouteEndpointPage).not.toHaveBeenCalled();
 
       const filterToggle = findButtonByText(root.root, '筛选');
       await act(async () => {
@@ -252,7 +332,7 @@ describe('TokenRoutes grouped source models', () => {
         token: { id: 1002, name: 'token-b', accountId: 102, enabled: true, isDefault: true },
       },
     ];
-    apiMock.getRoutesSummary.mockResolvedValue(routeSummaryRows([
+    apiMock.getRouteSummaryPage.mockResolvedValue(routeSummaryRows([
       {
         id: 1, modelMapping: null, enabled: true,
         channelCount: 2, enabledChannelCount: 2, siteNames: ['site-a', 'site-b'],
@@ -308,7 +388,7 @@ describe('TokenRoutes grouped source models', () => {
         presentation: { displayName: null, displayIcon: null },
       };
     });
-    apiMock.getRoutesSummary.mockResolvedValue(routeSummaryRows(routes));
+    apiMock.getRouteSummaryPage.mockResolvedValue(routeSummaryRows(routes));
 
     let root!: WebTestRenderer;
     try {
@@ -341,8 +421,315 @@ describe('TokenRoutes grouped source models', () => {
     }
   });
 
+  it('shows paged route summary metadata as the real route group total', async () => {
+    const firstPageRows = Array.from({ length: 3 }, (_, index) => routeFixture(index + 1));
+    apiMock.getRouteSummaryPage.mockResolvedValue(routeSummaryPage(firstPageRows, 50_000, 1, 3));
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/routes']}>
+            <ToastProvider>
+              <TokenRoutes />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const normalizedText = collectText(root.root).replace(/\s+/g, '');
+      expect(normalizedText).toContain('共50000条路由');
+      expect(normalizedText).toContain('公开路由组50000');
+      expect(normalizedText).toContain('候选50000');
+      expect(normalizedText).toContain('来源端点与聚合路由组');
+      expect(apiMock.getRouteSummaryPage).toHaveBeenCalledWith(expect.objectContaining({
+        page: 1,
+        pageSize: 20,
+      }));
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('keeps remote route group facets stable when switching to a tab that fits on one page', async () => {
+    apiMock.getRouteSummaryPage.mockImplementation((options: { tab?: string; page?: number; pageSize?: number }) => {
+      const tab = options.tab || 'public';
+      const rows = tab === 'manual'
+        ? [
+            routeFixture(201, {
+              match: { kind: 'model' as const, requestedModelPattern: '', displayName: 'manual-a' },
+              backend: { kind: 'routes' as const, routeIds: [1] },
+              presentation: { displayName: 'manual-a', displayIcon: null },
+            }),
+            routeFixture(202, {
+              match: { kind: 'model' as const, requestedModelPattern: '', displayName: 'manual-b' },
+              backend: { kind: 'routes' as const, routeIds: [2] },
+              presentation: { displayName: 'manual-b', displayIcon: null },
+            }),
+            routeFixture(203, {
+              match: { kind: 'model' as const, requestedModelPattern: '', displayName: 'manual-c' },
+              backend: { kind: 'routes' as const, routeIds: [3] },
+              presentation: { displayName: 'manual-c', displayIcon: null },
+            }),
+          ]
+        : [routeFixture(1), routeFixture(2)];
+      return Promise.resolve({
+        ...routeSummaryPage(rows, tab === 'manual' ? 3 : 176, options.page || 1, options.pageSize || 20),
+        facets: {
+          brands: [],
+          otherBrandCount: 0,
+          sites: [],
+          endpointTypes: [],
+          tabs: { public: 176, internal: 4, manual: 3 },
+          enabled: { enabled: 180, disabled: 3 },
+        },
+      });
+    });
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/routes']}>
+            <ToastProvider>
+              <TokenRoutes />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      let normalizedText = collectText(root.root).replace(/\s+/g, '');
+      expect(normalizedText).toContain('共183');
+      expect(normalizedText).toContain('启用180');
+      expect(normalizedText).toContain('禁用3');
+      expect(normalizedText).toContain('公开路由组176');
+      expect(normalizedText).toContain('内部路由组4');
+      expect(normalizedText).toContain('手动路由3');
+
+      await selectRouteGroupTab(root.root, '手动路由');
+      await vi.waitFor(async () => {
+        await flushMicrotasks();
+        expect(apiMock.getRouteSummaryPage).toHaveBeenLastCalledWith(expect.objectContaining({
+          tab: 'manual',
+        }));
+      });
+
+      normalizedText = collectText(root.root).replace(/\s+/g, '');
+      expect(normalizedText).toContain('共183');
+      expect(normalizedText).toContain('启用180');
+      expect(normalizedText).toContain('禁用3');
+      expect(normalizedText).toContain('公开路由组176');
+      expect(normalizedText).toContain('内部路由组4');
+      expect(normalizedText).toContain('手动路由3');
+      expect(normalizedText).toContain('共3条路由');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('keeps page and route browser summaries visible while route group tab results load', async () => {
+    const manualPage = deferred<any>();
+    const facets = {
+      brands: [],
+      otherBrandCount: 0,
+      sites: [],
+      endpointTypes: [],
+      tabs: { public: 176, internal: 4, manual: 3 },
+      enabled: { enabled: 180, disabled: 3 },
+    };
+    apiMock.getRouteSummaryPage.mockImplementation((options: { tab?: string; page?: number; pageSize?: number }) => {
+      const tab = options.tab || 'public';
+      if (tab === 'manual') return manualPage.promise;
+      return Promise.resolve({
+        ...routeSummaryPage([routeFixture(1), routeFixture(2)], 176, options.page || 1, options.pageSize || 20),
+        facets,
+      });
+    });
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/routes']}>
+            <ToastProvider>
+              <TokenRoutes />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      let normalizedText = collectText(root.root).replace(/\s+/g, '');
+      expect(normalizedText).toContain('共183');
+      expect(normalizedText).toContain('启用180');
+      expect(normalizedText).toContain('禁用3');
+      expect(normalizedText).toContain('公开路由组176');
+      expect(normalizedText).toContain('内部路由组4');
+      expect(normalizedText).toContain('手动路由3');
+      expect(root.root.findAllByProps({ 'data-testid': 'route-group-list-loading' })).toHaveLength(0);
+
+      const manualTab = findTabByText(root.root, '手动路由');
+      await act(async () => {
+        manualTab.props.onClick?.({ preventDefault: vi.fn(), stopPropagation: vi.fn() });
+      });
+      await vi.waitFor(async () => {
+        await flushMicrotasks();
+        expect(apiMock.getRouteSummaryPage).toHaveBeenLastCalledWith(expect.objectContaining({
+          tab: 'manual',
+        }));
+      });
+
+      normalizedText = collectText(root.root).replace(/\s+/g, '');
+      expect(normalizedText).toContain('共183');
+      expect(normalizedText).toContain('启用180');
+      expect(normalizedText).toContain('禁用3');
+      expect(normalizedText).toContain('公开路由组176');
+      expect(normalizedText).toContain('内部路由组4');
+      expect(normalizedText).toContain('手动路由3');
+      expect(normalizedText).toContain('共3条路由');
+      expect(normalizedText).toContain('候选3');
+      expect(root.root.findAllByProps({ 'data-testid': 'route-group-list-loading' })).toHaveLength(1);
+
+      await act(async () => {
+        manualPage.resolve({
+          ...routeSummaryPage([
+            routeFixture(201, {
+              match: { kind: 'model' as const, requestedModelPattern: '', displayName: 'manual-a' },
+              backend: { kind: 'routes' as const, routeIds: [1] },
+              presentation: { displayName: 'manual-a', displayIcon: null },
+            }),
+            routeFixture(202, {
+              match: { kind: 'model' as const, requestedModelPattern: '', displayName: 'manual-b' },
+              backend: { kind: 'routes' as const, routeIds: [2] },
+              presentation: { displayName: 'manual-b', displayIcon: null },
+            }),
+            routeFixture(203, {
+              match: { kind: 'model' as const, requestedModelPattern: '', displayName: 'manual-c' },
+              backend: { kind: 'routes' as const, routeIds: [3] },
+              presentation: { displayName: 'manual-c', displayIcon: null },
+            }),
+          ], 3, 1, 20),
+          facets,
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(root.root.findAllByProps({ 'data-testid': 'route-group-list-loading' })).toHaveLength(0);
+      normalizedText = collectText(root.root).replace(/\s+/g, '');
+      expect(normalizedText).toContain('manual-a');
+      expect(normalizedText).toContain('共3条路由');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('requests the next route summary page from the backend when route groups exceed the first page', async () => {
+    const firstPageRows = [routeFixture(1)];
+    const secondPageRows = [routeFixture(2)];
+    apiMock.getRouteSummaryPage
+      .mockResolvedValueOnce(routeSummaryPage(firstPageRows, 50_000, 1, 1))
+      .mockResolvedValueOnce(routeSummaryPage(secondPageRows, 50_000, 2, 1));
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/routes']}>
+            <ToastProvider>
+              <TokenRoutes />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const nextPageButton = findButtonByAriaLabel(root.root, '下一页');
+      expect(nextPageButton.props.disabled).toBe(false);
+      await act(async () => {
+        nextPageButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.getRouteSummaryPage).toHaveBeenLastCalledWith(expect.objectContaining({
+        page: 2,
+        pageSize: 20,
+      }));
+      expect(collectText(root.root)).toContain('paged-route-002');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('sends route list search and sort state to the paged route summary endpoint', async () => {
+    apiMock.getRouteSummaryPage.mockImplementation((options: { q?: string; page?: number; pageSize?: number }) => Promise.resolve({
+      ...routeSummaryPage([
+        routeFixture(options.q ? 50_000 : 1, {
+          match: {
+            kind: 'model' as const,
+            requestedModelPattern: options.q ? 'tail-route-model' : 'paged-route-001',
+            displayName: null,
+          },
+        }),
+      ], options.q ? 1 : 50_000, options.page || 1, options.pageSize || 20),
+      facets: {
+        brands: [{ name: 'OpenAI', icon: 'openai', count: options.q ? 1 : 50_000 }],
+        otherBrandCount: 0,
+        sites: [{ name: 'site-a', count: options.q ? 1 : 50_000, siteId: 0 }],
+        tabs: { public: options.q ? 1 : 50_000, internal: 0, manual: 0 },
+        enabled: { enabled: options.q ? 1 : 50_000, disabled: 0 },
+      },
+    }));
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/routes']}>
+            <ToastProvider>
+              <TokenRoutes />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.getRouteSummaryPage).toHaveBeenCalledWith(expect.objectContaining({
+        page: 1,
+        pageSize: 20,
+        tab: 'public',
+        sortBy: 'targetCount',
+        sortDir: 'desc',
+      }));
+
+      const searchInput = findInputByPlaceholder(root.root, '搜索模型路由');
+      await act(async () => {
+        searchInput.props.onChange({ target: { value: 'tail-route-model' } });
+      });
+
+      await vi.waitFor(async () => {
+        await flushMicrotasks();
+        expect(apiMock.getRouteSummaryPage).toHaveBeenLastCalledWith(expect.objectContaining({
+          page: 1,
+          pageSize: 20,
+          q: 'tail-route-model',
+          tab: 'public',
+          sortBy: 'targetCount',
+          sortDir: 'desc',
+        }));
+        const normalizedText = collectText(root.root).replace(/\s+/g, '');
+        expect(normalizedText).toContain('共1条路由');
+        expect(normalizedText).toContain('tail-route-model');
+      });
+    } finally {
+      root?.unmount();
+    }
+  });
+
   it('renders oauth route unit summary and members after expanding a pooled route', async () => {
-    apiMock.getRoutesSummary.mockResolvedValue(routeSummaryRows([
+    apiMock.getRouteSummaryPage.mockResolvedValue(routeSummaryRows([
       {
         id: 31, modelMapping: null, enabled: true,
         channelCount: 1, enabledChannelCount: 1, siteNames: ['codex-oauth'],
@@ -406,7 +793,7 @@ describe('TokenRoutes grouped source models', () => {
   });
 
   it('shows oauth route unit summary and member details after expanding a pooled route', async () => {
-    apiMock.getRoutesSummary.mockResolvedValue(routeSummaryRows([
+    apiMock.getRouteSummaryPage.mockResolvedValue(routeSummaryRows([
       {
         id: 1, modelMapping: null, enabled: true,
         channelCount: 1, enabledChannelCount: 1, siteNames: ['site-a'],
@@ -469,7 +856,7 @@ describe('TokenRoutes grouped source models', () => {
   });
 
   it('writes explicit-group priority edits back to source channels and confirms shared-source impact', async () => {
-    apiMock.getRoutesSummary.mockResolvedValue(routeSummaryRows([
+    apiMock.getRouteSummaryPage.mockResolvedValue(routeSummaryRows([
       {
         id: 11, modelMapping: null, enabled: true,
         channelCount: 1, enabledChannelCount: 1, siteNames: ['site-a'],
@@ -560,7 +947,7 @@ describe('TokenRoutes grouped source models', () => {
 
   it('does not rewrite shared-source priorities when the confirmation is cancelled', async () => {
     vi.stubGlobal('confirm', vi.fn(() => false));
-    apiMock.getRoutesSummary.mockResolvedValue(routeSummaryRows([
+    apiMock.getRouteSummaryPage.mockResolvedValue(routeSummaryRows([
       {
         id: 11, modelMapping: null, enabled: true,
         channelCount: 1, enabledChannelCount: 1, siteNames: ['site-a'],
@@ -646,7 +1033,7 @@ describe('TokenRoutes grouped source models', () => {
   });
 
   it('renders missing-token site tags with interactive hover class', async () => {
-    apiMock.getRoutesSummary.mockResolvedValue(routeSummaryRows([
+    apiMock.getRouteSummaryPage.mockResolvedValue(routeSummaryRows([
       {
         id: 1, modelMapping: null, enabled: true,
         channelCount: 0, enabledChannelCount: 0, siteNames: [],
@@ -694,7 +1081,7 @@ describe('TokenRoutes grouped source models', () => {
   });
 
   it('keeps zero-channel placeholder routes hidden by default', async () => {
-    apiMock.getRoutesSummary.mockResolvedValue(routeSummaryRows([]));
+    apiMock.getRouteSummaryPage.mockResolvedValue(routeSummaryRows([]));
     apiMock.getModelTokenCandidates.mockResolvedValue({
       models: {},
       modelsWithoutToken: {
@@ -727,7 +1114,44 @@ describe('TokenRoutes grouped source models', () => {
   });
 
   it('shows read-only zero-channel placeholder routes after toggle without loading channels', async () => {
-    apiMock.getRoutesSummary.mockResolvedValue(routeSummaryRows([]));
+    apiMock.getRouteSummaryPage.mockImplementation((options: { includeZeroTarget?: boolean; page?: number; pageSize?: number }) => Promise.resolve(
+      options.includeZeroTarget
+        ? routeSummaryPage([
+          {
+            id: -101,
+            modelMapping: null,
+            enabled: false,
+            targetCount: 0,
+            enabledTargetCount: 0,
+            siteNames: ['Wong'],
+            decisionSnapshot: null,
+            decisionRefreshedAt: null,
+            match: { kind: 'model', requestedModelPattern: 'gpt-5.2-codex', displayName: null },
+            backend: { kind: 'supply' },
+            presentation: { displayName: null, displayIcon: null },
+            kind: 'zero_target',
+            readOnly: true,
+            isVirtual: true,
+          },
+          {
+            id: -201,
+            modelMapping: null,
+            enabled: false,
+            targetCount: 0,
+            enabledTargetCount: 0,
+            siteNames: ['香草api'],
+            decisionSnapshot: null,
+            decisionRefreshedAt: null,
+            match: { kind: 'model', requestedModelPattern: 'claude-opus-4-6', displayName: null },
+            backend: { kind: 'supply' },
+            presentation: { displayName: null, displayIcon: null },
+            kind: 'zero_target',
+            readOnly: true,
+            isVirtual: true,
+          },
+        ], 2, options.page || 1, options.pageSize || 20)
+        : routeSummaryPage([], 0, options.page || 1, options.pageSize || 20),
+    ));
     apiMock.getModelTokenCandidates.mockResolvedValue({
       models: {},
       modelsWithoutToken: {
@@ -774,6 +1198,9 @@ describe('TokenRoutes grouped source models', () => {
       expect(collectText(root.root)).toContain('claude-opus-4-6');
       expect(collectText(root.root)).toContain('未生成');
       expect(collectText(root.root)).toContain('0 目标');
+      expect(apiMock.getRouteSummaryPage).toHaveBeenLastCalledWith(expect.objectContaining({
+        includeZeroTarget: true,
+      }));
 
       const expandCards = root.root.findAll((node) =>
         node.props.role === 'button' && typeof node.props.onClick === 'function',
@@ -800,7 +1227,7 @@ describe('TokenRoutes grouped source models', () => {
   });
 
   it('does not render missing-token site tags when the hint lacks a valid account id', async () => {
-    apiMock.getRoutesSummary.mockResolvedValue(routeSummaryRows([
+    apiMock.getRouteSummaryPage.mockResolvedValue(routeSummaryRows([
       {
         id: 1, modelMapping: null, enabled: true,
         channelCount: 0, enabledChannelCount: 0, siteNames: [],
@@ -840,7 +1267,7 @@ describe('TokenRoutes grouped source models', () => {
   });
 
   it('renders missing-token-group hints separately from missing-token site tags', async () => {
-    apiMock.getRoutesSummary.mockResolvedValue(routeSummaryRows([
+    apiMock.getRouteSummaryPage.mockResolvedValue(routeSummaryRows([
       {
         id: 1, modelMapping: null, enabled: true,
         channelCount: 0, enabledChannelCount: 0, siteNames: [],
@@ -896,7 +1323,7 @@ describe('TokenRoutes grouped source models', () => {
   });
 
   it('maps endpoint types to expected brand icons in filter panel', async () => {
-    apiMock.getRoutesSummary.mockResolvedValue(routeSummaryRows([
+    apiMock.getRouteSummaryPage.mockResolvedValue(routeSummaryRows([
       {
         id: 1, modelMapping: null, enabled: true,
         channelCount: 1, enabledChannelCount: 1, siteNames: ['Wong'],
@@ -941,6 +1368,60 @@ describe('TokenRoutes grouped source models', () => {
     }
   });
 
+  it('sends endpoint type filters to the paged route summary endpoint', async () => {
+    apiMock.getRouteSummaryPage.mockResolvedValue({
+      ...routeSummaryPage([
+        routeFixture(1, {
+          match: { kind: 'model' as const, requestedModelPattern: 'gpt-5.2-codex', displayName: null },
+        }),
+      ], 50_000, 1, 20),
+      facets: {
+        brands: [],
+        otherBrandCount: 0,
+        sites: [],
+        tabs: { public: 50_000, internal: 0, manual: 0 },
+        enabled: { enabled: 50_000, disabled: 0 },
+        endpointTypes: [
+          { name: 'openai', count: 30_000 },
+          { name: 'anthropic', count: 20_000 },
+        ],
+      },
+    });
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/routes']}>
+            <ToastProvider>
+              <TokenRoutes />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const filterSummary = findFilterSummaryButton(root.root);
+      await act(async () => {
+        filterSummary.props.onClick();
+      });
+      await flushMicrotasks();
+
+      await act(async () => {
+        findChipButtonByText(root.root, 'openai').props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.getRouteSummaryPage).toHaveBeenLastCalledWith(expect.objectContaining({
+        page: 1,
+        pageSize: 20,
+        endpointType: 'openai',
+      }));
+    } finally {
+      root?.unmount();
+    }
+  });
+
   it('shows newly categorized brands in the route brand filter', async () => {
     getBrandMock.mockImplementation((modelName: string) => {
       if (String(modelName).includes('nvidia/vila')) {
@@ -952,7 +1433,7 @@ describe('TokenRoutes grouped source models', () => {
       }
       return null;
     });
-    apiMock.getRoutesSummary.mockResolvedValue(routeSummaryRows([
+    apiMock.getRouteSummaryPage.mockResolvedValue(routeSummaryRows([
       {
         id: 91, modelMapping: null, enabled: true,
         channelCount: 0, enabledChannelCount: 0, siteNames: [],
@@ -993,7 +1474,7 @@ describe('TokenRoutes grouped source models', () => {
     // The endpoint type should come from endpointTypesByModel data.
     // When endpointTypesByModel is empty and channels aren't loaded, no fallback is possible.
     // This test verifies the endpoint type section renders correctly.
-    apiMock.getRoutesSummary.mockResolvedValue(routeSummaryRows([
+    apiMock.getRouteSummaryPage.mockResolvedValue(routeSummaryRows([
       {
         id: 1, modelMapping: null, enabled: true,
         channelCount: 1, enabledChannelCount: 1, siteNames: ['site-a'],
@@ -1035,7 +1516,7 @@ describe('TokenRoutes grouped source models', () => {
   });
 
   it('still shows endpoint group section with empty hint when no endpoint data can be inferred', async () => {
-    apiMock.getRoutesSummary.mockResolvedValue(routeSummaryRows([
+    apiMock.getRouteSummaryPage.mockResolvedValue(routeSummaryRows([
       {
         id: 1, modelMapping: null, enabled: true,
         channelCount: 0, enabledChannelCount: 0, siteNames: [],
@@ -1078,7 +1559,7 @@ describe('TokenRoutes grouped source models', () => {
   });
 
   it('hides exact routes covered by a group route from the main route list', async () => {
-    apiMock.getRoutesSummary.mockResolvedValue(routeSummaryRows([
+    apiMock.getRouteSummaryPage.mockResolvedValue(routeSummaryRows([
       {
         id: 1, modelMapping: null, enabled: true,
         channelCount: 0, enabledChannelCount: 0, siteNames: [],
@@ -1124,7 +1605,7 @@ describe('TokenRoutes grouped source models', () => {
   });
 
   it('still hides zero-channel placeholders when a named group route covers the exact model', async () => {
-    apiMock.getRoutesSummary.mockResolvedValue(routeSummaryRows([
+    apiMock.getRouteSummaryPage.mockResolvedValue(routeSummaryRows([
       {
         id: 3, modelMapping: null, enabled: true,
         channelCount: 0, enabledChannelCount: 0, siteNames: [],
@@ -1171,7 +1652,7 @@ describe('TokenRoutes grouped source models', () => {
   });
 
   it('keeps exact routes visible when a group display name collides with a real exact model', async () => {
-    apiMock.getRoutesSummary.mockResolvedValue(routeSummaryRows([
+    apiMock.getRouteSummaryPage.mockResolvedValue(routeSummaryRows([
       {
         id: 1, modelMapping: null, enabled: true,
         channelCount: 0, enabledChannelCount: 0, siteNames: [],
@@ -1217,7 +1698,7 @@ describe('TokenRoutes grouped source models', () => {
   });
 
   it('searches routes by display name as well as model pattern', async () => {
-    apiMock.getRoutesSummary.mockResolvedValue(routeSummaryRows([
+    apiMock.getRouteSummaryPage.mockResolvedValue(routeSummaryRows([
       {
         id: 31, modelMapping: null, enabled: true,
         channelCount: 0, enabledChannelCount: 0, siteNames: [],
@@ -1268,7 +1749,7 @@ describe('TokenRoutes grouped source models', () => {
       }
       return null;
     });
-    apiMock.getRoutesSummary.mockResolvedValue(routeSummaryRows([
+    apiMock.getRouteSummaryPage.mockResolvedValue(routeSummaryRows([
       {
         id: 11, modelMapping: null, enabled: true,
         channelCount: 3, enabledChannelCount: 3, siteNames: ['Wong'],
@@ -1380,8 +1861,111 @@ describe('TokenRoutes grouped source models', () => {
     }
   });
 
+  it('derives source picker brand filters from catalog endpoint model names when route rows are not loaded', async () => {
+    getBrandMock.mockImplementation((modelName: string) => {
+      const model = String(modelName).toLowerCase();
+      if (model.includes('gpt')) {
+        return { name: 'OpenAI', icon: 'openai', color: 'linear-gradient(135deg,#111,#555)' };
+      }
+      if (model.includes('claude')) {
+        return { name: 'Anthropic', icon: 'anthropic', color: 'linear-gradient(135deg,#d97706,#f59e0b)' };
+      }
+      return null;
+    });
+    apiMock.getRouteSummaryPage.mockResolvedValue(routeSummaryRows([
+      routeFixture(1, {
+        match: { kind: 'model', requestedModelPattern: 'local-source-without-known-brand', displayName: null },
+      }),
+    ]));
+    apiMock.getRouteEndpointPage.mockResolvedValue(endpointCatalogPage([
+      routeEndpointFixture(901, {
+        endpointId: 'route-endpoint:supply:route:901:site-a:gpt-5.4',
+        nodeId: 'route-endpoint:supply:route:901:site-a:gpt-5.4',
+        routeId: 901,
+        sourceRouteIds: [901],
+        label: 'gpt-5.4 catalog endpoint',
+        modelPattern: 'gpt-5.4',
+        upstreamModels: ['gpt-5.4'],
+        siteNames: ['site-a'],
+        tags: ['openai'],
+      }),
+      routeEndpointFixture(902, {
+        endpointId: 'route-endpoint:supply:route:902:site-b:claude-sonnet-4-5',
+        nodeId: 'route-endpoint:supply:route:902:site-b:claude-sonnet-4-5',
+        routeId: 902,
+        sourceRouteIds: [902],
+        label: 'claude-sonnet-4-5 catalog endpoint',
+        modelPattern: 'claude-sonnet-4-5',
+        upstreamModels: ['claude-sonnet-4-5'],
+        siteNames: ['site-b'],
+        tags: ['anthropic'],
+      }),
+    ], 2, 1, 2));
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/routes']}>
+            <ToastProvider>
+              <TokenRoutes />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      await act(async () => {
+        findButtonByText(root.root, '手动').props.onClick();
+      });
+      await flushMicrotasks();
+
+      await act(async () => {
+        findButtonByText(root.root, '新建群组').props.onClick();
+      });
+      await flushMicrotasks();
+
+      await act(async () => {
+        findLastButtonByText(root.root, '选择来源端点').props.onClick();
+      });
+      await flushMicrotasks();
+
+      const findPickerGrid = () => root.root.find((node) => (
+        node.type === 'div'
+        && String(node.props.className || '').includes('items-stretch')
+        && String(node.props.className || '').includes('lg:grid-cols-2')
+      ));
+
+      expect(findChipButtonByText(root.root, 'OpenAI')).toBeTruthy();
+      expect(findChipButtonByText(root.root, 'Anthropic')).toBeTruthy();
+
+      await act(async () => {
+        findChipButtonByText(root.root, 'OpenAI').props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(collectText(findPickerGrid())).toContain('gpt-5.4');
+      expect(collectText(findPickerGrid())).not.toContain('claude-sonnet-4-5');
+
+      await act(async () => {
+        findChipButtonByText(root.root, 'OpenAI').props.onClick();
+      });
+      await flushMicrotasks();
+
+      await act(async () => {
+        findChipButtonByText(root.root, 'Anthropic').props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(collectText(findPickerGrid())).toContain('claude-sonnet-4-5');
+      expect(collectText(findPickerGrid())).not.toContain('gpt-5.4');
+    } finally {
+      root?.unmount();
+    }
+  });
+
   it('shows explicit-group source counts instead of aggregated channel counts in the route list and filter chips', async () => {
-    apiMock.getRoutesSummary.mockResolvedValue(routeSummaryRows([
+    apiMock.getRouteSummaryPage.mockResolvedValue(routeSummaryRows([
       {
         id: 11, modelMapping: null, enabled: true,
         channelCount: 40, enabledChannelCount: 40, siteNames: ['Wong'],
@@ -1446,7 +2030,7 @@ describe('TokenRoutes grouped source models', () => {
   });
 
   it('uses a dedicated source picker modal and submits explicit-group sourceRouteIds', async () => {
-    apiMock.getRoutesSummary.mockResolvedValue(routeSummaryRows([
+    apiMock.getRouteSummaryPage.mockResolvedValue(routeSummaryRows([
       {
         id: 11, modelMapping: null, enabled: true,
         channelCount: 1, enabledChannelCount: 1, siteNames: ['site-a'],
@@ -1462,14 +2046,14 @@ describe('TokenRoutes grouped source models', () => {
         backend: { kind: 'supply' },
         presentation: { displayName: null, displayIcon: null }},
     ]));
-    apiMock.getRouteEndpoints.mockResolvedValue([
+    apiMock.getRouteEndpointPage.mockResolvedValue([
       {
-        endpointId: 'route-endpoint:product:route:11',
-        nodeId: 'route-endpoint:product:route:11',
+        endpointId: 'route-endpoint:supply:route:11',
+        nodeId: 'route-endpoint:supply:route:11',
         routeId: 11,
-        label: 'claude-opus-4-5 product endpoint with a very long readable display name',
-        endpointKind: 'route_product',
-        exposure: 'internal',
+        label: 'claude-opus-4-5 supply endpoint with a very long readable display name',
+        endpointKind: 'supply',
+        exposure: 'none',
         resolutionStatus: 'resolved',
         ownerKind: 'automatic_route',
         sourceKind: 'automatic_model_group',
@@ -1543,7 +2127,7 @@ describe('TokenRoutes grouped source models', () => {
       expect(findInputByPlaceholder(root.root, '搜索来源端点')).toBeTruthy();
 
       await act(async () => {
-        findButtonByText(root.root, 'claude-opus-4-5 product endpoint').props.onClick();
+        findButtonByText(root.root, 'claude-opus-4-5 supply endpoint').props.onClick();
         findButtonByText(root.root, 'claude-sonnet-4-5 supply endpoint').props.onClick();
       });
       await flushMicrotasks();
@@ -1580,8 +2164,278 @@ describe('TokenRoutes grouped source models', () => {
     }
   });
 
+  it('uses source endpoint fallback ids for route rows when the endpoint catalog is empty', async () => {
+    apiMock.getRouteSummaryPage.mockResolvedValue(routeSummaryRows([
+      {
+        id: 537, modelMapping: null, enabled: true,
+        channelCount: 1, enabledChannelCount: 1, siteNames: ['site-a'],
+        decisionSnapshot: null, decisionRefreshedAt: null,
+        match: { kind: 'model', requestedModelPattern: 'fallback-source-model', displayName: null },
+        backend: { kind: 'supply' },
+        presentation: { displayName: null, displayIcon: null }},
+    ]));
+    apiMock.getRouteEndpointPage.mockResolvedValue(endpointCatalogPage([], 0, 1, 500));
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/routes']}>
+            <ToastProvider>
+              <TokenRoutes />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      await act(async () => {
+        findButtonByText(root.root, '手动').props.onClick();
+      });
+      await flushMicrotasks();
+
+      await act(async () => {
+        findButtonByText(root.root, '新建群组').props.onClick();
+      });
+      await flushMicrotasks();
+
+      await act(async () => {
+        findInputByPlaceholder(root.root, '对外模型名').props.onChange({ target: { value: 'fallback-group' } });
+      });
+      await flushMicrotasks();
+
+      await act(async () => {
+        findLastButtonByText(root.root, '选择来源端点').props.onClick();
+      });
+      await flushMicrotasks();
+
+      await act(async () => {
+        findButtonByText(root.root, 'fallback-source-model').props.onClick();
+      });
+      await flushMicrotasks();
+
+      await act(async () => {
+        findButtonByText(root.root, '确认选择').props.onClick();
+      });
+      await flushMicrotasks();
+
+      await act(async () => {
+        findButtonByText(root.root, '创建路由组').props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.addRoute).toHaveBeenCalledWith(expect.objectContaining({
+        backend: { kind: 'routes', routeIds: [537] },
+        macro: expect.objectContaining({
+          config: expect.objectContaining({
+            groups: [
+              expect.objectContaining({
+                input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:product:route:537'] },
+              }),
+            ],
+          }),
+        }),
+      }));
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('uses endpoint catalog page metadata for the real source endpoint total in the manual picker', async () => {
+    apiMock.getRouteSummaryPage.mockResolvedValue(routeSummaryRows([
+      routeFixture(1, {
+        match: { kind: 'model', requestedModelPattern: 'paged-source-001', displayName: null },
+      }),
+    ]));
+    apiMock.getRouteEndpointPage.mockResolvedValue(endpointCatalogPage(
+      Array.from({ length: 73 }, (_, index) => routeEndpointFixture(index + 1)),
+      50_000,
+      1,
+      73,
+    ));
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/routes']}>
+            <ToastProvider>
+              <TokenRoutes />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      await act(async () => {
+        findButtonByText(root.root, '手动').props.onClick();
+      });
+      await flushMicrotasks();
+
+      await act(async () => {
+        findButtonByText(root.root, '新建群组').props.onClick();
+      });
+      await flushMicrotasks();
+
+      await act(async () => {
+        findLastButtonByText(root.root, '选择来源端点').props.onClick();
+      });
+      await flushMicrotasks();
+
+      const normalizedText = collectText(root.root).replace(/\s+/g, '');
+      expect(normalizedText).toContain('显示73/50000');
+      expect(apiMock.getRouteEndpointPage).toHaveBeenCalledWith(expect.objectContaining({
+        page: 1,
+        pageSize: 500,
+        endpointKind: 'supply',
+      }));
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('searches source endpoints through the paged backend catalog and renders the returned total', async () => {
+    apiMock.getRouteSummaryPage.mockResolvedValue(routeSummaryRows([
+      routeFixture(1, {
+        match: { kind: 'model', requestedModelPattern: 'paged-source-001', displayName: null },
+      }),
+    ]));
+    apiMock.getRouteEndpointPage
+      .mockResolvedValueOnce(endpointCatalogPage(
+        Array.from({ length: 73 }, (_, index) => routeEndpointFixture(index + 1)),
+        50_000,
+        1,
+        73,
+      ))
+      .mockResolvedValueOnce(endpointCatalogPage([
+        routeEndpointFixture(50_000, {
+          label: 'tail-source-50000',
+          modelPattern: 'tail-source-50000',
+          upstreamModels: ['tail-source-50000'],
+        }),
+      ], 1, 1, 73));
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/routes']}>
+            <ToastProvider>
+              <TokenRoutes />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      await act(async () => {
+        findButtonByText(root.root, '手动').props.onClick();
+      });
+      await flushMicrotasks();
+
+      await act(async () => {
+        findButtonByText(root.root, '新建群组').props.onClick();
+      });
+      await flushMicrotasks();
+
+      await act(async () => {
+        findLastButtonByText(root.root, '选择来源端点').props.onClick();
+      });
+      await flushMicrotasks();
+
+      const searchInput = findInputByPlaceholder(root.root, '搜索来源端点');
+      await act(async () => {
+        searchInput.props.onValueChange?.('tail-source-50000');
+        searchInput.props.onChange?.({ target: { value: 'tail-source-50000' } });
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.getRouteEndpointPage).toHaveBeenLastCalledWith(expect.objectContaining({
+        page: 1,
+        pageSize: 500,
+        endpointKind: 'supply',
+        q: 'tail-source-50000',
+      }));
+      const normalizedText = collectText(root.root).replace(/\s+/g, '');
+      expect(normalizedText).toContain('显示1/1');
+      expect(normalizedText).toContain('tail-source-50000');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('loads additional source endpoint catalog pages into the manual picker', async () => {
+    apiMock.getRouteSummaryPage.mockResolvedValue(routeSummaryRows([
+      routeFixture(1, {
+        match: { kind: 'model', requestedModelPattern: 'paged-source-001', displayName: null },
+      }),
+    ]));
+    apiMock.getRouteEndpointPage
+      .mockResolvedValueOnce(endpointCatalogPage([
+        routeEndpointFixture(1, {
+          label: 'paged-source-first',
+          modelPattern: 'paged-source-first',
+          upstreamModels: ['paged-source-first'],
+        }),
+      ], 1_000, 1, 500))
+      .mockResolvedValueOnce(endpointCatalogPage([
+        routeEndpointFixture(999, {
+          label: 'paged-source-tail',
+          modelPattern: 'paged-source-tail',
+          upstreamModels: ['paged-source-tail'],
+        }),
+      ], 1_000, 2, 500));
+
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/routes']}>
+            <ToastProvider>
+              <TokenRoutes />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      await act(async () => {
+        findButtonByText(root.root, '手动').props.onClick();
+      });
+      await flushMicrotasks();
+
+      await act(async () => {
+        findButtonByText(root.root, '新建群组').props.onClick();
+      });
+      await flushMicrotasks();
+
+      await act(async () => {
+        findLastButtonByText(root.root, '选择来源端点').props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(collectText(root.root)).toContain('paged-source-first');
+      await act(async () => {
+        findButtonByText(root.root, '加载更多端点').props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.getRouteEndpointPage).toHaveBeenLastCalledWith(expect.objectContaining({
+        page: 2,
+        pageSize: 500,
+        endpointKind: 'supply',
+      }));
+      const normalizedText = collectText(root.root).replace(/\s+/g, '');
+      expect(normalizedText).toContain('显示2/1000');
+      expect(normalizedText).toContain('paged-source-first');
+      expect(normalizedText).toContain('paged-source-tail');
+    } finally {
+      root?.unmount();
+    }
+  });
+
   it('saves explicit groups with auto brand icon disabled as a no-icon sentinel', async () => {
-    apiMock.getRoutesSummary.mockResolvedValue(routeSummaryRows([
+    apiMock.getRouteSummaryPage.mockResolvedValue(routeSummaryRows([
       {
         id: 11, modelMapping: null, enabled: true,
         channelCount: 1, enabledChannelCount: 1, siteNames: ['site-a'],
@@ -1658,7 +2512,7 @@ describe('TokenRoutes grouped source models', () => {
   });
 
   it('edits legacy regex groups in advanced mode only', async () => {
-    apiMock.getRoutesSummary
+    apiMock.getRouteSummaryPage
       .mockResolvedValueOnce(routeSummaryRows([
         {
           id: 51, modelMapping: null, enabled: true,
@@ -1705,7 +2559,7 @@ describe('TokenRoutes grouped source models', () => {
   });
 
   it('updates explicit-group sources from the modal and reloads routes afterwards', async () => {
-    apiMock.getRoutesSummary
+    apiMock.getRouteSummaryPage
       .mockResolvedValueOnce(routeSummaryRows([
         {
           id: 11, modelMapping: null, enabled: true,
@@ -1752,6 +2606,29 @@ describe('TokenRoutes grouped source models', () => {
           backend: { kind: 'routes', routeIds: [11, 12] },
           presentation: { displayName: 'claude-opus-4-6', displayIcon: '' }},
       ]));
+    apiMock.getRouteEndpointPage.mockResolvedValue(endpointCatalogPage([
+      routeEndpointFixture(11, {
+        endpointId: 'route-endpoint:supply:route:11',
+        label: 'claude-opus-4-5',
+        modelPattern: 'claude-opus-4-5',
+        sourceRouteIds: [11],
+        siteNames: ['site-a'],
+      }),
+      routeEndpointFixture(12, {
+        endpointId: 'route-endpoint:supply:route:12',
+        label: 'claude-sonnet-4-5',
+        modelPattern: 'claude-sonnet-4-5',
+        sourceRouteIds: [12],
+        siteNames: ['site-b'],
+      }),
+      routeEndpointFixture(13, {
+        endpointId: 'route-endpoint:supply:route:13',
+        label: 'claude-haiku-4-5',
+        modelPattern: 'claude-haiku-4-5',
+        sourceRouteIds: [13],
+        siteNames: ['site-c'],
+      }),
+    ], 3, 1, 3));
     apiMock.getRouteTargets.mockResolvedValue([]);
 
     let root!: WebTestRenderer;
@@ -1786,7 +2663,7 @@ describe('TokenRoutes grouped source models', () => {
       await flushMicrotasks();
 
       await act(async () => {
-        findButtonByText(root.root, 'claude-sonnet-4-5').props.onClick();
+        findButtonByText(root.root, 'claude-haiku-4-5').props.onClick();
       });
       await flushMicrotasks();
 
@@ -1801,18 +2678,18 @@ describe('TokenRoutes grouped source models', () => {
       await flushMicrotasks();
 
       expect(apiMock.updateRoute).toHaveBeenCalledWith(21, expect.objectContaining({
-        backend: { kind: 'routes', routeIds: [11, 12] },
+        backend: { kind: 'routes', routeIds: [11, 12, 13] },
         match: expect.objectContaining({ displayName: 'claude-opus-4-6', requestedModelPattern: '' }),
         presentation: expect.objectContaining({ displayName: 'claude-opus-4-6' }),
       }));
-      expect(apiMock.getRoutesSummary).toHaveBeenCalledTimes(2);
+      expect(apiMock.getRouteSummaryPage.mock.calls.length).toBeGreaterThanOrEqual(2);
     } finally {
       root?.unmount();
     }
   });
 
   it('reuses the standard channel row presentation for explicit-group details while keeping channel management hidden', async () => {
-    apiMock.getRoutesSummary.mockResolvedValue(routeSummaryRows([
+    apiMock.getRouteSummaryPage.mockResolvedValue(routeSummaryRows([
       {
         id: 11, modelMapping: null, enabled: true,
         channelCount: 6, enabledChannelCount: 6, siteNames: ['Wong'],

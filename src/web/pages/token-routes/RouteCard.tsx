@@ -496,6 +496,8 @@ function RouteCardInner({
   const explicitGroupSourceCount = getRouteBackendRouteIds(route.backend).length;
   const routePattern = getRouteRequestedModelPattern(route);
   const routeDisplayName = getRouteDisplayName(route);
+  const routePatternBadge = routePattern.trim();
+  const showRoutePatternBadge = !!routeDisplayName && !!routePatternBadge && routeDisplayName.trim() !== routePatternBadge;
   const readOnlyRoute = route.kind === 'zero_target' || route.readOnly === true || route.isVirtual === true;
   const targetManagementDisabled = explicitGroupRoute;
   const title = resolveRouteTitle(route);
@@ -603,94 +605,106 @@ function RouteCardInner({
           }
         }}
       >
-        <div className="flex min-w-0 items-center gap-2 overflow-hidden">
-          <span className="inline-flex size-5 shrink-0 items-center">
-            {routeIcon.kind === 'brand' ? (
-              <BrandGlyph icon={routeIcon.value} alt={title} size={18} fallbackText={title} />
-            ) : routeIcon.kind === 'text' ? (
-              <span className="text-sm leading-none">{routeIcon.value}</span>
-            ) : routeIcon.kind === 'auto' && brand ? (
-              <BrandGlyph brand={brand} alt={title} size={18} fallbackText={title} />
-            ) : routeIcon.kind === 'auto' ? (
-              <InlineBrandIcon model={routePattern} size={18} />
-            ) : null}
-          </span>
-
+        <div
+          data-testid="collapsed-route-body"
+          className="min-w-0"
+        >
           <div
-            data-testid="collapsed-route-title-row"
-            className="flex min-w-0 flex-[1_1_180px] items-center gap-1.5"
+            data-testid="collapsed-route-content"
+            className="flex min-w-0 w-full flex-wrap items-center gap-x-2 gap-y-1.5"
           >
-            <code
-              className="min-w-0 flex-[1_1_180px] truncate text-sm font-semibold text-foreground"
+            <div
+              data-testid="collapsed-route-title-row"
+              className="flex min-w-0 flex-[0_1_auto] flex-wrap items-center gap-1.5"
             >
-              {title}
-            </code>
-
-            {routeDisplayName && routeDisplayName.trim() !== routePattern ? (
-              <ToneBadge tone="-muted"
-               
-                title={routePattern}
-                className="min-w-0 max-w-[116px] flex-[0_1_116px] truncate"
-               
+              <span
+                data-testid="collapsed-route-icon"
+                className="inline-flex size-5 shrink-0 items-center justify-center"
               >
-                {routePattern}
-              </ToneBadge>
-            ) : null}
+                {routeIcon.kind === 'brand' ? (
+                  <BrandGlyph icon={routeIcon.value} alt={title} size={18} fallbackText={title} />
+                ) : routeIcon.kind === 'text' ? (
+                  <span className="text-sm leading-none">{routeIcon.value}</span>
+                ) : routeIcon.kind === 'auto' && brand ? (
+                  <BrandGlyph brand={brand} alt={title} size={18} fallbackText={title} />
+                ) : routeIcon.kind === 'auto' ? (
+                  <InlineBrandIcon model={routePattern} size={18} />
+                ) : null}
+              </span>
+
+              <code
+                className="min-w-0 break-words text-sm font-semibold text-foreground"
+              >
+                {title}
+              </code>
+
+              {showRoutePatternBadge ? (
+                <ToneBadge tone="-muted"
+                  title={routePatternBadge}
+                  className="min-w-0 whitespace-normal break-all leading-snug"
+                >
+                  {routePatternBadge}
+                </ToneBadge>
+              ) : null}
+            </div>
+
+            <div
+              data-testid="collapsed-route-meta-row"
+              className="ml-auto flex min-w-0 max-w-full flex-[0_1_auto] flex-wrap items-center justify-end gap-1.5"
+            >
+              {readOnlyRoute ? (
+                <ToneBadge tone="-muted">
+                  {tr('pages.tokenRoutes.notGenerated')}
+                </ToneBadge>
+              ) : (
+                <Button
+                  type="button"
+                  variant={route.enabled ? 'secondary' : 'outline'}
+                  size="sm"
+                  className="shrink-0"
+                  onClick={(e) => { e.stopPropagation(); onToggleEnabled(route); }}
+                  data-tooltip={route.enabled ? tr('pages.tokenRoutes.routeCard.disabledRoutes') : tr('pages.tokenRoutes.routeCard.enabledRoutes')}
+                >
+                  {route.enabled ? tr('pages.downstreamKeys.enabled') : tr('pages.downstreamKeys.disabled')}
+                </Button>
+              )}
+
+              {explicitGroupRoute && explicitGroupSourceCount > 0 ? (
+                <>
+                  <ToneBadge tone="-info">
+                    {explicitGroupSourceCount} {tr('pages.tokenRoutes.manualRoutePanel.model2')}
+                  </ToneBadge>
+                  <ToneBadge tone="-muted">
+                    {route.targetCount} {tr('pages.tokenRoutes.targets')}
+                  </ToneBadge>
+                </>
+              ) : (
+                <ToneBadge tone="-info">
+                  {route.targetCount} {tr('pages.tokenRoutes.targets')}
+                </ToneBadge>
+              )}
+              {hasCachedDecisionSnapshot ? (
+                <ToneBadge tone="-success"
+                  data-tooltip={cachedDecisionTooltip}
+                >
+                  {tr('pages.tokenRoutes.routeCard.cached')}
+                </ToneBadge>
+              ) : null}
+
+              {readOnlyRoute ? (
+                <ToneBadge tone="-warning">
+                  {tr('pages.tokenRoutes.routeCard.0Targets')}
+                </ToneBadge>
+              ) : (
+                <ToneBadge tone="-muted"
+                  className="min-w-0 whitespace-normal break-words leading-snug"
+                  data-tooltip={`${getRouteRoutingStrategyLabel(routingStrategy)}：${routingStrategyDescription}`}
+                >
+                  {getRouteRoutingStrategyLabel(routingStrategy)}
+                </ToneBadge>
+              )}
+            </div>
           </div>
-
-          {readOnlyRoute ? (
-            <ToneBadge tone="-muted">
-              {tr('pages.tokenRoutes.notGenerated')}
-            </ToneBadge>
-          ) : (
-            <Button
-              type="button"
-              variant={route.enabled ? 'secondary' : 'outline'}
-              size="sm"
-              onClick={(e) => { e.stopPropagation(); onToggleEnabled(route); }}
-              data-tooltip={route.enabled ? tr('pages.tokenRoutes.routeCard.disabledRoutes') : tr('pages.tokenRoutes.routeCard.enabledRoutes')}
-            >
-              {route.enabled ? tr('pages.downstreamKeys.enabled') : tr('pages.downstreamKeys.disabled')}
-            </Button>
-          )}
-
-          {explicitGroupRoute && explicitGroupSourceCount > 0 ? (
-            <>
-              <ToneBadge tone="-info">
-                {explicitGroupSourceCount} {tr('pages.tokenRoutes.manualRoutePanel.model2')}
-              </ToneBadge>
-              <ToneBadge tone="-muted">
-                {route.targetCount} {tr('pages.tokenRoutes.targets')}
-              </ToneBadge>
-            </>
-          ) : (
-            <ToneBadge tone="-info">
-              {route.targetCount} {tr('pages.tokenRoutes.targets')}
-            </ToneBadge>
-          )}
-          {hasCachedDecisionSnapshot ? (
-            <ToneBadge tone="-success"
-             
-              data-tooltip={cachedDecisionTooltip}
-             
-            >
-              {tr('pages.tokenRoutes.routeCard.cached')}
-            </ToneBadge>
-          ) : null}
-
-          {readOnlyRoute ? (
-            <ToneBadge tone="-warning">
-              {tr('pages.tokenRoutes.routeCard.0Targets')}
-            </ToneBadge>
-          ) : (
-            <ToneBadge tone="-muted"
-              className="min-w-0 max-w-[132px] truncate"
-             
-              data-tooltip={`${getRouteRoutingStrategyLabel(routingStrategy)}：${routingStrategyDescription}`}
-            >
-              {getRouteRoutingStrategyLabel(routingStrategy)}
-            </ToneBadge>
-          )}
         </div>
       </Card>
     );
@@ -723,8 +737,8 @@ function RouteCardInner({
               ) : null}
               {title}
             </code>
-            {routeDisplayName && routeDisplayName.trim() !== routePattern ? (
-              <ToneBadge tone="-muted">{routePattern}</ToneBadge>
+            {showRoutePatternBadge ? (
+              <ToneBadge tone="-muted">{routePatternBadge}</ToneBadge>
             ) : null}
             {readOnlyRoute ? (
               <ToneBadge tone="-muted">
@@ -813,8 +827,8 @@ function RouteCardInner({
               <code className="inline-flex max-w-full min-w-0 truncate rounded-md bg-muted px-2 py-0.5 text-sm font-semibold text-foreground">
                 {title}
               </code>
-              {routeDisplayName && routeDisplayName.trim() !== routePattern ? (
-                <ToneBadge tone="-muted">{routePattern}</ToneBadge>
+              {showRoutePatternBadge ? (
+                <ToneBadge tone="-muted">{routePatternBadge}</ToneBadge>
               ) : null}
               {readOnlyRoute ? (
                 <ToneBadge tone="-muted">{tr('pages.tokenRoutes.notGenerated')}</ToneBadge>

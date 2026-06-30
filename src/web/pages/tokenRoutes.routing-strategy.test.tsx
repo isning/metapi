@@ -7,7 +7,7 @@ import TokenRoutes from './TokenRoutes.js';
 
 const { apiMock, getBrandMock } = vi.hoisted(() => ({
   apiMock: {
-    getRoutesSummary: vi.fn(),
+    getRouteSummaryPage: vi.fn(),
     getRouteTargets: vi.fn(),
     getModelTokenCandidates: vi.fn(),
     getRouteDecisionsBatch: vi.fn(),
@@ -50,7 +50,7 @@ describe('TokenRoutes routing strategy updates', () => {
     vi.clearAllMocks();
     getBrandMock.mockReset();
     getBrandMock.mockReturnValue(null);
-    apiMock.getRoutesSummary
+    apiMock.getRouteSummaryPage
       .mockResolvedValue([
         {
           id: 1,
@@ -101,7 +101,7 @@ describe('TokenRoutes routing strategy updates', () => {
       });
       await flushMicrotasks();
 
-      apiMock.getRoutesSummary.mockRejectedValueOnce(new Error('refresh failed'));
+      apiMock.getRouteSummaryPage.mockRejectedValueOnce(new Error('refresh failed'));
 
       const strategySelect = root.root.findAllByType(ModernSelect).find((node) => (
         node.props.value === 'weighted'
@@ -114,7 +114,7 @@ describe('TokenRoutes routing strategy updates', () => {
       await flushMicrotasks();
 
       expect(apiMock.updateRoute).toHaveBeenCalledWith(1, { routingStrategy: 'round_robin' });
-      expect(apiMock.getRoutesSummary).toHaveBeenCalledTimes(2);
+      expect(apiMock.getRouteSummaryPage).toHaveBeenCalledTimes(2);
 
       const updatedStrategySelect = root.root.findAllByType(ModernSelect).find((node) => (
         node.props.value === 'round_robin'
@@ -149,7 +149,7 @@ describe('TokenRoutes routing strategy updates', () => {
       });
       await flushMicrotasks();
 
-      apiMock.getRoutesSummary.mockRejectedValueOnce(new Error('refresh failed'));
+      apiMock.getRouteSummaryPage.mockRejectedValueOnce(new Error('refresh failed'));
 
       const strategySelect = root.root.findAllByType(ModernSelect).find((node) => (
         node.props.value === 'weighted'

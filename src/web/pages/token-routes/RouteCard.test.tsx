@@ -77,6 +77,53 @@ function buildTarget(overrides: Partial<RouteEndpointTarget> = {}): RouteEndpoin
   };
 }
 
+function renderRouteCard({
+  route = buildRoute(),
+  expanded = false,
+  compact = false,
+}: {
+  route?: RouteSummaryRow;
+  expanded?: boolean;
+  compact?: boolean;
+} = {}) {
+  return create(
+    <RouteCard
+      route={route}
+      brand={null}
+      expanded={expanded}
+      compact={compact}
+      onToggleExpand={vi.fn()}
+      onEdit={vi.fn()}
+      onDelete={vi.fn()}
+      onToggleEnabled={vi.fn()}
+      onClearCooldown={vi.fn()}
+      clearingCooldown={false}
+      onRoutingStrategyChange={vi.fn()}
+      updatingRoutingStrategy={false}
+      targets={[]}
+      loadingTargets={false}
+      routeDecision={null}
+      loadingDecision={false}
+      candidateView={{ routeCandidates: [], accountOptions: [], tokenOptionsByAccountId: {} }}
+      targetTokenDraft={{}}
+      updatingTarget={{}}
+      savingPriority={false}
+      onTokenDraftChange={vi.fn()}
+      onSaveToken={vi.fn()}
+      onDeleteTarget={vi.fn()}
+      onToggleTargetEnabled={vi.fn()}
+      onTargetDragEnd={vi.fn()}
+      missingTokenSiteItems={[]}
+      missingTokenGroupItems={[]}
+      onCreateTokenForMissing={vi.fn()}
+      onAddTarget={vi.fn()}
+      onSiteBlockModel={vi.fn()}
+      expandedSourceGroupMap={{}}
+      onToggleSourceGroup={vi.fn()}
+    />,
+  );
+}
+
 describe('RouteCard', () => {
   it('renders oauth route unit summary and member labels on expanded targets', () => {
     const root = create(
@@ -145,7 +192,7 @@ describe('RouteCard', () => {
     expect(text).toContain('route-unit-third');
   });
 
-  it('truncates the collapsed regex badge while keeping the group name primary', () => {
+  it('wraps the collapsed regex badge without hiding the full pattern', () => {
     const root = create(
       <RouteCard
         route={buildRoute()}
@@ -189,13 +236,13 @@ describe('RouteCard', () => {
       && collectText(node) === LONG_REGEX_PATTERN
     ));
 
-    expect(regexBadge.props.className).toContain('flex-[0_1_116px]');
-    expect(regexBadge.props.className).toContain('max-w-[116px]');
     expect(regexBadge.props.className).toContain('min-w-0');
-    expect(regexBadge.props.className).toContain('truncate');
+    expect(regexBadge.props.className).toContain('whitespace-normal');
+    expect(regexBadge.props.className).toContain('break-all');
+    expect(regexBadge.props.className).not.toContain('truncate');
   });
 
-  it('gives the collapsed group title more layout priority than the regex badge', () => {
+  it('keeps collapsed route metadata in the same wrapping row instead of forcing a second line', () => {
     const root = create(
       <RouteCard
         route={buildRoute({
@@ -239,6 +286,22 @@ describe('RouteCard', () => {
       node.type === 'div'
       && node.props['data-testid'] === 'collapsed-route-title-row'
     ));
+    const body = root.root.find((node) => (
+      node.type === 'div'
+      && node.props['data-testid'] === 'collapsed-route-body'
+    ));
+    const content = root.root.find((node) => (
+      node.type === 'div'
+      && node.props['data-testid'] === 'collapsed-route-content'
+    ));
+    const icon = titleRow.find((node) => (
+      node.type === 'span'
+      && node.props['data-testid'] === 'collapsed-route-icon'
+    ));
+    const metaRow = root.root.find((node) => (
+      node.type === 'div'
+      && node.props['data-testid'] === 'collapsed-route-meta-row'
+    ));
     const titleNode = titleRow.find((node) => (
       node.type === 'code'
       && collectText(node) === 'minimax m2.1 群组名称'
@@ -248,11 +311,51 @@ describe('RouteCard', () => {
       && collectText(node) === LONG_REGEX_PATTERN
     ));
 
-    expect(titleNode.props.className).toContain('flex-[1_1_180px]');
+    expect(body.props.className).toContain('min-w-0');
+    expect(body.props.className).not.toContain('grid-cols-[auto_minmax(0,1fr)]');
+    expect(body.props.className).not.toContain('items-start');
+    expect(body.props.className).not.toContain('overflow-hidden');
+    expect(content.props.className).toContain('w-full');
+    expect(content.props.className).toContain('flex-wrap');
+    expect(content.props.className).toContain('items-center');
+    expect(titleRow.props.className).toContain('flex-wrap');
+    expect(titleRow.props.className).toContain('items-center');
+    expect(titleRow.props.className).toContain('flex-[0_1_auto]');
+    expect(icon.props.className).toContain('items-center');
+    expect(icon.props.className).toContain('justify-center');
+    expect(icon.props.className).not.toContain('self-start');
+    expect(metaRow.props.className).toContain('flex-wrap');
+    expect(metaRow.props.className).toContain('ml-auto');
+    expect(metaRow.props.className).toContain('justify-end');
+    expect(metaRow.props.className).not.toContain('col-start-2');
     expect(titleNode.props.className).toContain('min-w-0');
-    expect(titleNode.props.className).toContain('truncate');
-    expect(regexBadge.props.className).toContain('flex-[0_1_116px]');
-    expect(regexBadge.props.className).toContain('max-w-[116px]');
+    expect(titleNode.props.className).toContain('break-words');
+    expect(titleNode.props.className).not.toContain('truncate');
+    expect(regexBadge.props.className).toContain('whitespace-normal');
+    expect(regexBadge.props.className).toContain('break-all');
+    expect(regexBadge.props.className).not.toContain('truncate');
+  });
+
+  it('does not render an empty model-pattern badge for manual route groups', () => {
+    const manualGroup = buildRoute({
+      match: { kind: 'model', requestedModelPattern: '', displayName: 'glm-5-rerouted' },
+      backend: { kind: 'routes', routeIds: [11, 12, 13] },
+      presentation: { displayName: 'glm-5-rerouted', displayIcon: null },
+      targetCount: 5,
+      enabledTargetCount: 5,
+    });
+
+    const collapsed = renderRouteCard({ route: manualGroup, expanded: false });
+    const expanded = renderRouteCard({ route: manualGroup, expanded: true, compact: true });
+
+    expect(collectText(collapsed.root)).toContain('glm-5-rerouted');
+    expect(collectText(expanded.root)).toContain('glm-5-rerouted');
+    expect(collapsed.root.findAll((node) => (
+      node.props?.['data-tone'] === '-muted' && collectText(node) === ''
+    ))).toHaveLength(0);
+    expect(expanded.root.findAll((node) => (
+      node.props?.['data-tone'] === '-muted' && collectText(node) === ''
+    ))).toHaveLength(0);
   });
 
   it('renders a clear cooldown action on expanded cards', () => {

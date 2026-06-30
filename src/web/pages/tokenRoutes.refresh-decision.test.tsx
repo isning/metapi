@@ -7,7 +7,7 @@ import TokenRoutes from './TokenRoutes.js';
 
 const { apiMock, getBrandMock } = vi.hoisted(() => ({
   apiMock: {
-    getRoutesSummary: vi.fn(),
+    getRouteSummaryPage: vi.fn(),
     refreshRouteDecisionSnapshots: vi.fn(),
     getRouteTargets: vi.fn(),
     getTask: vi.fn(),
@@ -68,7 +68,7 @@ describe('TokenRoutes refresh decision action', () => {
     vi.clearAllMocks();
     getBrandMock.mockReset();
     getBrandMock.mockReturnValue(null);
-    apiMock.getRoutesSummary.mockResolvedValue([
+    apiMock.getRouteSummaryPage.mockResolvedValue([
       {
         id: 1, modelMapping: null, enabled: true,
         match: { kind: 'model', requestedModelPattern: 'gpt-4o-mini', displayName: 'gpt-4o-mini' },
@@ -102,7 +102,7 @@ describe('TokenRoutes refresh decision action', () => {
   it('queues a background snapshot refresh task when user clicks refresh selection probability', async () => {
     let root!: ReactTestRenderer;
     try {
-      apiMock.getRoutesSummary
+      apiMock.getRouteSummaryPage
         .mockResolvedValueOnce([
           {
             id: 1, modelMapping: null, enabled: true,
@@ -160,7 +160,7 @@ describe('TokenRoutes refresh decision action', () => {
 
       expect(apiMock.refreshRouteDecisionSnapshots).toHaveBeenCalledTimes(1);
       expect(apiMock.getTask).toHaveBeenCalledWith('task-1');
-      expect(apiMock.getRoutesSummary).toHaveBeenCalledTimes(2);
+      expect(apiMock.getRouteSummaryPage).toHaveBeenCalledTimes(2);
       expect(apiMock.getRouteDecisionsBatch).not.toHaveBeenCalled();
       expect(apiMock.getRouteWideDecisionsBatch).not.toHaveBeenCalled();
     } finally {
@@ -171,7 +171,7 @@ describe('TokenRoutes refresh decision action', () => {
   it('resumes a running background probability refresh task when revisiting the page', async () => {
     let root!: ReactTestRenderer;
     try {
-      apiMock.getRoutesSummary
+      apiMock.getRouteSummaryPage
         .mockResolvedValueOnce([
           {
             id: 1, modelMapping: null, enabled: true,
@@ -217,7 +217,7 @@ describe('TokenRoutes refresh decision action', () => {
 
       expect(apiMock.getTasks).toHaveBeenCalled();
       expect(apiMock.getTask).toHaveBeenCalledWith('task-restore');
-      expect(apiMock.getRoutesSummary).toHaveBeenCalledTimes(2);
+      expect(apiMock.getRouteSummaryPage).toHaveBeenCalledTimes(2);
     } finally {
       root?.unmount();
     }

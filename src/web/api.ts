@@ -2,6 +2,8 @@ import { clearAuthSession, getAuthToken } from "./authSession.js";
 
 import { tr } from './i18n.js';
 import type { InboxActionRequest, InboxItem } from '../shared/inbox.js';
+import { normalizePagedResponse } from './pagedResponse.js';
+export type { PageInfo, PagedResponse } from './pagedResponse.js';
 type BufferLike = {
   from(data: ArrayBuffer): { toString(encoding: "base64"): string };
 };
@@ -1328,17 +1330,36 @@ export const api = {
       method: "POST",
       body: JSON.stringify(graph),
     }),
-  getRoutes: () => request("/api/routes"),
   getRoutesLite: () => request("/api/routes/lite"),
-  getRoutesSummary: (options?: { paged?: boolean; page?: number; pageSize?: number; raw?: boolean }) =>
+  getRouteSummaryPage: <T = any>(options: {
+    page: number;
+    pageSize: number;
+    q?: string;
+    tab?: "public" | "internal" | "manual";
+    group?: string | number | null;
+    brand?: string | null;
+    site?: string | null;
+    endpointType?: string | null;
+    includeZeroTarget?: boolean;
+    enabled?: "all" | "enabled" | "disabled";
+    sortBy?: "targetCount" | "name";
+    sortDir?: "asc" | "desc";
+  }) =>
     request(`/api/routes/summary${buildQueryString({
-      ...(options?.paged ? { paged: 1 } : {}),
-      page: options?.page,
-      pageSize: options?.pageSize,
-    })}`).then((response) => {
-      if (options?.raw) return response;
-      return Array.isArray(response) ? response : response?.items || [];
-    }),
+      paged: 1,
+      page: options.page,
+      pageSize: options.pageSize,
+      q: options.q,
+      tab: options.tab,
+      group: options.group,
+      brand: options.brand,
+      site: options.site,
+      endpointType: options.endpointType,
+      ...(options.includeZeroTarget ? { includeZeroTarget: 1 } : {}),
+      enabled: options.enabled,
+      sortBy: options.sortBy,
+      sortDir: options.sortDir,
+    })}`).then((response) => normalizePagedResponse<T>(response)),
   getRouteTargets: (routeId: number) =>
     request(`/api/routes/${routeId}/targets`),
   batchAddTargets: (
@@ -1438,28 +1459,23 @@ export const api = {
         ...(options?.persistSnapshots ? { persistSnapshots: true } : {}),
       }),
     }),
-  getRouteEndpoints: (options?: {
-    paged?: boolean;
-    page?: number;
-    pageSize?: number;
+  getRouteEndpointPage: <T = any>(options: {
+    page: number;
+    pageSize: number;
     endpointKind?: "all" | "supply" | "route_product";
     routeId?: number;
     siteId?: number;
     q?: string;
-    raw?: boolean;
   }) =>
     request(`/api/route-endpoints${buildQueryString({
-      ...(options?.paged ? { paged: 1 } : {}),
-      page: options?.page,
+      paged: 1,
+      page: options.page,
       pageSize: options?.pageSize,
       endpointKind: options?.endpointKind,
       routeId: options?.routeId,
       siteId: options?.siteId,
       q: options?.q,
-    })}`).then((response) => {
-      if (options?.raw) return response;
-      return Array.isArray(response) ? response : response?.items || [];
-    }),
+    })}`).then((response) => normalizePagedResponse<T>(response)),
 
   // Stats
   getDashboard: () => request("/api/stats/dashboard"),
@@ -1864,16 +1880,29 @@ export const api = {
   initMonitorSession: () => request("/api/monitor/session", { method: "POST" }),
 
   // Models marketplace
-  getModelsMarketplace: (options?: {
+  getModelsMarketplace: (options: {
+    page: number;
+    pageSize: number;
+    q?: string;
+    brand?: string | null;
+    site?: string | null;
+    sortBy?: "name" | "accountCount" | "credentialCount" | "avgLatency" | "successRate";
+    sortDir?: "asc" | "desc";
     refresh?: boolean;
     includePricing?: boolean;
   }) => {
-    const params = new URLSearchParams();
-    if (options?.refresh) params.set("refresh", "1");
-    if (options?.includePricing) params.set("includePricing", "1");
-    const query = params.toString();
-    return request(`/api/models/marketplace${query ? `?${query}` : ""}`, {
-      timeoutMs: options?.refresh ? 45_000 : 15_000,
+    return request(`/api/models/marketplace${buildQueryString({
+      page: options.page,
+      pageSize: options.pageSize,
+      q: options.q,
+      brand: options.brand,
+      site: options.site,
+      sortBy: options.sortBy,
+      sortDir: options.sortDir,
+      ...(options.refresh ? { refresh: 1 } : {}),
+      ...(options.includePricing ? { includePricing: 1 } : {}),
+    })}`, {
+      timeoutMs: options.refresh ? 45_000 : 15_000,
     });
   },
   getModelRouteFlow: (model: string) =>

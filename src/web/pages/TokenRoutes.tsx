@@ -2,6 +2,7 @@ import { Fragment, startTransition, useCallback, useEffect, useMemo, useRef, use
 import { useNavigate } from 'react-router-dom';
 import type { DragEndEvent } from '@dnd-kit/core';
 import { api } from '../api.js';
+import { normalizePagedResponse, type PageInfo } from '../pagedResponse.js';
 import { BrandGlyph, getBrand, InlineBrandIcon, type BrandInfo } from '../components/BrandIcon.js';
 import EmptyStateBlock from '../components/EmptyStateBlock.js';
 import { useToast } from '../components/Toast.js';
@@ -45,7 +46,6 @@ import {
   type RouteMissingTokenHint,
 } from './helpers/routeMissingTokenHints.js';
 import { buildVisibleRouteList } from './helpers/routeListVisibility.js';
-import { buildZeroTargetPlaceholderRoutes } from './helpers/zeroTargetRoutes.js';
 import {
   getRouteRoutingStrategyDescription,
   getRouteRoutingStrategyLabel,
@@ -89,7 +89,7 @@ import {
   buildRouteGraphNodeFromRoute,
   buildCandidateSelectorMacro,
   updateCandidateSelectorMacroFromEditor,
-  routeEndpointIdFromRouteId,
+  routeSourceEndpointIdFromRouteId,
   routeGraphEditorFormToRoutePayload,
   type RouteGraphSnapshotMacro,
 } from './token-routes/routeGraphSnapshot.js';
@@ -145,6 +145,14 @@ const EMPTY_ROUTE_CANDIDATE_VIEW: RouteCandidateView = {
   tokenOptionsByAccountId: {},
 };
 const DEFAULT_ROUTE_PAGE_SIZE = 20;
+const ROUTE_ENDPOINT_CATALOG_PAGE_SIZE = 500;
+const EMPTY_PAGE_INFO: PageInfo = {
+  page: 1,
+  pageSize: 0,
+  totalCount: 0,
+  hasMore: false,
+};
+
 const ROUTE_PAGE_SIZES = [20, 40, 80, 120] as const;
 const EMPTY_MISSING_ITEMS: MissingTokenRouteSiteActionItem[] = [];
 const EMPTY_MISSING_GROUP_ITEMS: MissingTokenGroupRouteSiteActionItem[] = [];
@@ -188,6 +196,37 @@ type SiteBlockConfirmation = {
 type RouteGroupListTab = 'public' | 'internal' | 'manual';
 type RouteWorkbenchTab = 'priority' | 'macro' | 'generated' | 'diagnostics' | 'json';
 type RouteBatchAction = 'enable' | 'disable' | 'set_internal' | 'set_public';
+type RouteSummaryFacets = {
+  brands: Array<{ name: string; icon?: string | null; color?: string | null; count: number }>;
+  otherBrandCount: number;
+  sites: Array<{ name: string; count: number; siteId?: number }>;
+  endpointTypes: Array<{ name: string; count: number }>;
+  tabs: Record<RouteGroupListTab, number>;
+  enabled: { enabled: number; disabled: number };
+};
+
+const EMPTY_ROUTE_SUMMARY_FACETS: RouteSummaryFacets = {
+  brands: [],
+  otherBrandCount: 0,
+  sites: [],
+  endpointTypes: [],
+  tabs: { public: 0, internal: 0, manual: 0 },
+  enabled: { enabled: 0, disabled: 0 },
+};
+
+function getRouteSummaryTabTotal(tabs: Record<RouteGroupListTab, number>): number {
+  return (tabs.public || 0) + (tabs.internal || 0) + (tabs.manual || 0);
+}
+
+function mergeRouteEndpointCatalogItems(
+  current: RouteEndpointCatalogItem[],
+  incoming: RouteEndpointCatalogItem[],
+): RouteEndpointCatalogItem[] {
+  const byId = new Map<string, RouteEndpointCatalogItem>();
+  for (const item of current) byId.set(item.endpointId || item.nodeId, item);
+  for (const item of incoming) byId.set(item.endpointId || item.nodeId, item);
+  return Array.from(byId.values());
+}
 
 const EMPTY_ROUTE_FORM: RouteEditorForm = {
   match: {
@@ -337,7 +376,7 @@ export function DesktopDetailPanelPresence({
 function RouteGroupListLoadingSkeleton({ isMobile }: { isMobile: boolean }) {
   if (isMobile) {
     return (
-      <div className="grid gap-2" aria-busy="true">
+      <div className="grid gap-2" aria-busy="true" data-testid="route-group-list-loading">
         {Array.from({ length: 4 }).map((_, index) => (
           <MobileCard
             key={index}
@@ -365,7 +404,7 @@ function RouteGroupListLoadingSkeleton({ isMobile }: { isMobile: boolean }) {
   }
 
   return (
-    <div className="grid gap-2" aria-busy="true">
+    <div className="grid gap-2" aria-busy="true" data-testid="route-group-list-loading">
       {Array.from({ length: 7 }).map((_, index) => (
         <div key={index} className="rounded-md border bg-card p-3">
           <div className="flex min-w-0 items-start justify-between gap-3">
@@ -455,6 +494,7 @@ export default function TokenRoutes() {
   const [routeEditorMode, setRouteEditorMode] = useState<'list' | 'graph' | 'json'>('list');
   const [routeSummaries, setRouteSummaries] = useState<RouteSummaryRow[]>([]);
   const [routesLoading, setRoutesLoading] = useState(true);
+  const [routeListLoading, setRouteListLoading] = useState(true);
   const [routeEndpointCatalog, setRouteEndpointCatalog] = useState<RouteEndpointCatalogItem[]>([]);
   const [activeRouteGraphSource, setActiveRouteGraphSource] = useState<RouteMacroBindingGraph>(null);
   const [modelCandidates, setModelCandidates] = useState<RouteModelCandidatesByModelName>({});
@@ -499,6 +539,13 @@ export default function TokenRoutes() {
   const [decisionAutoSkipped, setDecisionAutoSkipped] = useState(false);
   const [routePage, setRoutePage] = useState(1);
   const [routePageSize, setRoutePageSize] = useState(DEFAULT_ROUTE_PAGE_SIZE);
+  const [routePageInfo, setRoutePageInfo] = useState<PageInfo>(EMPTY_PAGE_INFO);
+  const [routeSummaryFacets, setRouteSummaryFacets] = useState<RouteSummaryFacets>(EMPTY_ROUTE_SUMMARY_FACETS);
+  const [routeSummaryHasRemoteFacets, setRouteSummaryHasRemoteFacets] = useState(false);
+  const [routeEndpointCatalogPageInfo, setRouteEndpointCatalogPageInfo] = useState<PageInfo>(EMPTY_PAGE_INFO);
+  const [routeEndpointCatalogLoading, setRouteEndpointCatalogLoading] = useState(false);
+  const routeEndpointCatalogQueryRef = useRef('');
+  const routePageLoadReadyRef = useRef(false);
   const [expandedSourceGroupMap, setExpandedSourceGroupMap] = useState<Record<string, boolean>>({});
   const [expandedRouteIds, setExpandedRouteIds] = useState<number[]>([]);
   const [closingDesktopDetailRouteIds, setClosingDesktopDetailRouteIds] = useState<number[]>([]);
@@ -555,27 +602,49 @@ export default function TokenRoutes() {
   const activeRouteGraphSourceLoadedRef = useRef(false);
   const activeRouteGraphSourcePromiseRef = useRef<Promise<void> | null>(null);
   const activeRouteGraphSourceSeqRef = useRef(0);
+  const routeSummariesLoadedRef = useRef(false);
   const decisionRefreshWatchSeqRef = useRef(0);
   const mountedRef = useRef(true);
 
-  const loadRouteEndpointCatalog = useCallback((force?: boolean) => {
+  const loadRouteEndpointCatalog = useCallback((options?: boolean | { force?: boolean; query?: string; page?: number; append?: boolean }) => {
+    const force = typeof options === 'boolean' ? options : Boolean(options?.force);
+    const page = typeof options === 'object' && Number.isFinite(Number(options.page))
+      ? Math.max(1, Math.trunc(Number(options.page)))
+      : 1;
+    const append = typeof options === 'object' && options.append === true && page > 1;
+    const normalizedQuery = String(typeof options === 'object' ? options.query ?? routeEndpointCatalogQueryRef.current : routeEndpointCatalogQueryRef.current).trim();
+    routeEndpointCatalogQueryRef.current = normalizedQuery;
     if (routeEndpointCatalogLoadedRef.current && !force) return;
     if (routeEndpointCatalogPromiseRef.current && !force) return;
-    const endpointFetcher = (api as { getRouteEndpoints?: (options?: { paged?: boolean; pageSize?: number; endpointKind?: 'all' | 'supply' | 'route_product' }) => Promise<unknown> }).getRouteEndpoints;
+    const endpointFetcher = (api as { getRouteEndpointPage?: (options: { page: number; pageSize: number; endpointKind?: 'all' | 'supply' | 'route_product'; q?: string }) => Promise<unknown> }).getRouteEndpointPage;
     if (typeof endpointFetcher !== 'function') return;
     const seq = ++routeEndpointCatalogSeqRef.current;
     routeEndpointCatalogLoadedRef.current = true;
+    setRouteEndpointCatalogLoading(true);
     let promise!: Promise<void>;
     promise = (async () => {
       try {
-        const endpointRows = await endpointFetcher({ paged: true, pageSize: 500, endpointKind: 'supply' });
+        const endpointRows = await endpointFetcher({
+          page,
+          pageSize: ROUTE_ENDPOINT_CATALOG_PAGE_SIZE,
+          endpointKind: 'supply',
+          ...(normalizedQuery ? { q: normalizedQuery } : {}),
+        });
         if (routeEndpointCatalogSeqRef.current !== seq) return;
+        const endpointPage = normalizePagedResponse<RouteEndpointCatalogItem>(endpointRows, {
+          page,
+          pageSize: ROUTE_ENDPOINT_CATALOG_PAGE_SIZE,
+          totalCount: 0,
+          hasMore: false,
+        });
         startTransition(() => {
-          setRouteEndpointCatalog((endpointRows || []) as RouteEndpointCatalogItem[]);
+          setRouteEndpointCatalog((current) => append ? mergeRouteEndpointCatalogItems(current, endpointPage.items) : endpointPage.items);
+          setRouteEndpointCatalogPageInfo(endpointPage.pageInfo);
         });
       } catch {
         if (routeEndpointCatalogSeqRef.current === seq) routeEndpointCatalogLoadedRef.current = false;
       } finally {
+        if (routeEndpointCatalogSeqRef.current === seq) setRouteEndpointCatalogLoading(false);
         if (routeEndpointCatalogPromiseRef.current === promise) {
           routeEndpointCatalogPromiseRef.current = null;
         }
@@ -642,13 +711,44 @@ export default function TokenRoutes() {
     candidatesPromiseRef.current = promise;
   };
 
-  const load = async () => {
-    setRoutesLoading((current) => current || routeSummaries.length === 0);
+  const load = async (page = routePage) => {
+    const initialRouteSummaryLoad = !routeSummariesLoadedRef.current;
+    if (initialRouteSummaryLoad) setRoutesLoading(true);
+    setRouteListLoading(true);
     try {
-      const summaryRows = await api.getRoutesSummary({ paged: true, pageSize: 1000 });
+      const summaryRows = await api.getRouteSummaryPage<RouteSummaryRow>({
+        page,
+        pageSize: routePageSize,
+        q: search,
+        tab: routeGroupListTab,
+        group: activeGroupFilter,
+        brand: activeBrand,
+        site: activeSite,
+        endpointType: activeEndpointType,
+        includeZeroTarget: showZeroTargetRoutes,
+        enabled: enabledFilter,
+        sortBy: sortBy === 'modelPattern' ? 'name' : 'targetCount',
+        sortDir,
+      });
 
-      const summaries = (summaryRows || []) as RouteSummaryRow[];
+      const summaryPage = normalizePagedResponse<RouteSummaryRow>(summaryRows, {
+        page,
+        pageSize: routePageSize,
+        totalCount: 0,
+        hasMore: false,
+      });
+      const facets = (summaryPage as typeof summaryPage & { facets?: RouteSummaryFacets }).facets;
+      const hasFacets = !!facets;
+      const summaries = summaryPage.items;
       setRouteSummaries(summaries);
+      setRoutePageInfo(summaryPage.pageInfo);
+      setRouteSummaryHasRemoteFacets(hasFacets);
+      setRouteSummaryFacets(facets ? {
+        ...EMPTY_ROUTE_SUMMARY_FACETS,
+        ...facets,
+        tabs: { ...EMPTY_ROUTE_SUMMARY_FACETS.tabs, ...(facets.tabs || {}) },
+        enabled: { ...EMPTY_ROUTE_SUMMARY_FACETS.enabled, ...(facets.enabled || {}) },
+      } : EMPTY_ROUTE_SUMMARY_FACETS);
       const decisionPlaceholder: Record<number, RouteDecision | null> = {};
       for (const route of summaries) {
         decisionPlaceholder[route.id] = route.decisionSnapshot || null;
@@ -657,6 +757,7 @@ export default function TokenRoutes() {
       setDecisionAutoSkipped(
         summaries.some((route) => isRouteExactModel(route) && !route.decisionSnapshot),
       );
+      routeSummariesLoadedRef.current = true;
 
       // Silently refresh candidates in the background if already loaded
       if (candidatesLoadedRef.current) {
@@ -669,12 +770,26 @@ export default function TokenRoutes() {
         loadActiveRouteGraphSource(true);
       }
     } finally {
-      setRoutesLoading(false);
+      if (initialRouteSummaryLoad) setRoutesLoading(false);
+      setRouteListLoading(false);
     }
   };
 
   const loadRef = useRef(load);
   loadRef.current = load;
+
+  const handleRouteEndpointCatalogSearch = useCallback((query: string) => {
+    loadRouteEndpointCatalog({ force: true, query, page: 1 });
+  }, [loadRouteEndpointCatalog]);
+
+  const handleRouteEndpointCatalogLoadMore = useCallback((query: string) => {
+    loadRouteEndpointCatalog({
+      force: true,
+      query,
+      page: Math.max(1, routeEndpointCatalogPageInfo.page + 1),
+      append: true,
+    });
+  }, [loadRouteEndpointCatalog, routeEndpointCatalogPageInfo.page]);
 
   const toastRef = useRef(toast);
   toastRef.current = toast;
@@ -764,7 +879,8 @@ export default function TokenRoutes() {
     (async () => {
       try {
         await resumeRouteDecisionRefreshTask();
-        await load();
+        await load(routePage);
+        routePageLoadReadyRef.current = true;
       } catch {
         toast.error(tr('pages.tokenRoutes.failedLoadRoutingConfiguration'));
       }
@@ -774,9 +890,15 @@ export default function TokenRoutes() {
     })();
     return () => {
       mountedRef.current = false;
+      routePageLoadReadyRef.current = false;
       decisionRefreshWatchSeqRef.current += 1;
     };
   }, [resumeRouteDecisionRefreshTask, toast]);
+
+  useEffect(() => {
+    if (!routePageLoadReadyRef.current) return;
+    void load(routePage);
+  }, [routePage, routePageSize]);
 
   useEffect(() => {
     if (showManual) loadRouteEndpointCatalog();
@@ -839,15 +961,7 @@ export default function TokenRoutes() {
     [routeSummaries],
   );
 
-  const zeroTargetPlaceholderRoutes = useMemo(
-    () => buildZeroTargetPlaceholderRoutes(routeSummaries, missingTokenModelsByName, missingTokenGroupModelsByName),
-    [routeSummaries, missingTokenModelsByName, missingTokenGroupModelsByName],
-  );
-
-  const visibleRouteRows = useMemo(
-    () => (showZeroTargetRoutes ? [...routeSummaries, ...zeroTargetPlaceholderRoutes] : routeSummaries),
-    [routeSummaries, showZeroTargetRoutes, zeroTargetPlaceholderRoutes],
-  );
+  const visibleRouteRows = routeSummaries;
 
   const canSaveRoute = useMemo(() => {
     if (saving) return false;
@@ -875,8 +989,8 @@ export default function TokenRoutes() {
     return routeSummaries
       .filter((route) => isRouteExactModel(route))
       .map((route): RouteEndpointCatalogItem => ({
-        endpointId: routeEndpointIdFromRouteId(route.id),
-        nodeId: routeEndpointIdFromRouteId(route.id),
+        endpointId: routeSourceEndpointIdFromRouteId(route.id),
+        nodeId: routeSourceEndpointIdFromRouteId(route.id),
         routeId: route.id,
         label: resolveRouteTitle(route),
         endpointKind: 'supply',
@@ -1129,12 +1243,32 @@ export default function TokenRoutes() {
     return next;
   }, [visibleRouteRows]);
 
+  const routeSummaryFacetsAreRemote = routeSummaryHasRemoteFacets || routePageInfo.totalCount > routeSummaries.length;
   const listVisibleRoutes = useMemo(
-    () => buildVisibleRouteList(visibleRouteRows, isExactModelPattern, matchesModelPattern),
-    [visibleRouteRows],
+    () => routeSummaryFacetsAreRemote
+      ? visibleRouteRows
+      : buildVisibleRouteList(visibleRouteRows, isExactModelPattern, matchesModelPattern),
+    [routeSummaryFacetsAreRemote, visibleRouteRows],
   );
 
   const brandList = useMemo(() => {
+    if (routeSummaryFacetsAreRemote) {
+      return {
+        list: routeSummaryFacets.brands.map((brand) => [
+          brand.name,
+          {
+            count: brand.count,
+            brand: {
+              name: brand.name,
+              icon: brand.icon || getBrand(brand.name)?.icon || '',
+              color: brand.color || getBrand(brand.name)?.color || '',
+            } satisfies BrandInfo,
+          },
+        ] as [string, { count: number; brand: BrandInfo }]),
+        otherCount: routeSummaryFacets.otherBrandCount,
+      };
+    }
+
     const grouped = new Map<string, { count: number; brand: BrandInfo }>();
     let otherCount = 0;
 
@@ -1160,9 +1294,16 @@ export default function TokenRoutes() {
       }) as [string, { count: number; brand: BrandInfo }][],
       otherCount,
     };
-  }, [listVisibleRoutes, routeBrandById]);
+  }, [listVisibleRoutes, routeBrandById, routeSummaryFacets.brands, routeSummaryFacets.otherBrandCount, routeSummaryFacetsAreRemote]);
 
   const siteList = useMemo(() => {
+    if (routeSummaryFacetsAreRemote) {
+      return routeSummaryFacets.sites.map((site) => [
+        site.name,
+        { count: site.count, siteId: site.siteId || 0 },
+      ] as [string, { count: number; siteId: number }]);
+    }
+
     const grouped = new Map<string, { count: number; siteId: number }>();
 
     for (const route of listVisibleRoutes) {
@@ -1184,7 +1325,7 @@ export default function TokenRoutes() {
       if (a[1].count === b[1].count) return a[0].localeCompare(b[0]);
       return b[1].count - a[1].count;
     }) as [string, { count: number; siteId: number }][];
-  }, [listVisibleRoutes]);
+  }, [listVisibleRoutes, routeSummaryFacets.sites, routeSummaryFacetsAreRemote]);
 
   const routeEndpointTypesByRouteId = useMemo(() => {
     const index: Record<number, Set<string>> = {};
@@ -1212,6 +1353,10 @@ export default function TokenRoutes() {
   }, [visibleRouteRows, endpointTypesByModel]);
 
   const endpointTypeList = useMemo(() => {
+    if (routeSummaryFacetsAreRemote) {
+      return routeSummaryFacets.endpointTypes.map((item) => [item.name, item.count] as [string, number]);
+    }
+
     const grouped = new Map<string, number>();
     for (const route of listVisibleRoutes) {
       const endpointTypes = routeEndpointTypesByRouteId[route.id] || new Set<string>();
@@ -1223,7 +1368,7 @@ export default function TokenRoutes() {
       if (a[1] === b[1]) return a[0].localeCompare(b[0], undefined, { sensitivity: 'base' });
       return b[1] - a[1];
     }) as [string, number][];
-  }, [listVisibleRoutes, routeEndpointTypesByRouteId]);
+  }, [listVisibleRoutes, routeEndpointTypesByRouteId, routeSummaryFacets.endpointTypes, routeSummaryFacetsAreRemote]);
 
   const sourceEndpointTypesByRouteId = useMemo(() => {
     if (!showManual) return {};
@@ -1286,8 +1431,9 @@ export default function TokenRoutes() {
     return listVisibleRoutes.find((route) => route.id === activeGroupFilter) || null;
   }, [activeGroupFilter, listVisibleRoutes]);
 
-  const sortedRoutes = useMemo(() => (
-    [...listVisibleRoutes].sort((a, b) => {
+  const sortedRoutes = useMemo(() => {
+    if (routeSummaryFacetsAreRemote) return listVisibleRoutes;
+    return [...listVisibleRoutes].sort((a, b) => {
       if (sortBy === 'targetCount') {
         const countCmp = a.targetCount - b.targetCount;
         if (countCmp !== 0) return sortDir === 'asc' ? countCmp : -countCmp;
@@ -1295,10 +1441,12 @@ export default function TokenRoutes() {
 
       const nameCmp = getRouteRequestedModelPattern(a).localeCompare(getRouteRequestedModelPattern(b), undefined, { sensitivity: 'base' });
       return sortDir === 'asc' ? nameCmp : -nameCmp;
-    })
-  ), [listVisibleRoutes, sortBy, sortDir]);
+    });
+  }, [listVisibleRoutes, routeSummaryFacetsAreRemote, sortBy, sortDir]);
 
   const routeGroupTabCounts = useMemo(() => {
+    if (routeSummaryFacetsAreRemote) return routeSummaryFacets.tabs;
+
     let publicCount = 0;
     let internal = 0;
     let manual = 0;
@@ -1312,10 +1460,12 @@ export default function TokenRoutes() {
       }
     }
     return { public: publicCount, internal, manual };
-  }, [listVisibleRoutes]);
+  }, [listVisibleRoutes, routeSummaryFacets.tabs, routeSummaryFacetsAreRemote]);
 
   // Shared base filter: all filters EXCEPT enabledFilter
   const baseFilteredRoutes = useMemo(() => {
+    if (routeSummaryFacetsAreRemote) return sortedRoutes;
+
     let list = sortedRoutes.filter((route) => {
       if (isExplicitGroupRoute(route)) return routeGroupListTab === 'manual';
       if (route.visibility === 'internal') return routeGroupListTab === 'internal';
@@ -1340,12 +1490,6 @@ export default function TokenRoutes() {
       list = list.filter((route) => route.siteNames?.includes(activeSite));
     }
 
-    if (activeEndpointType) {
-      list = list.filter((route) =>
-        (routeEndpointTypesByRouteId[route.id] || new Set<string>()).has(activeEndpointType),
-      );
-    }
-
     if (search.trim()) {
       const q = search.trim().toLowerCase();
       list = list.filter((route) => {
@@ -1357,9 +1501,11 @@ export default function TokenRoutes() {
     }
 
     return list;
-  }, [sortedRoutes, routeGroupListTab, activeGroupFilter, activeBrand, activeSite, activeEndpointType, search, routeBrandById, routeEndpointTypesByRouteId]);
+  }, [activeBrand, activeGroupFilter, activeSite, routeGroupListTab, routeSummaryFacetsAreRemote, search, sortedRoutes, routeBrandById]);
 
   const enabledCounts = useMemo(() => {
+    if (routeSummaryFacetsAreRemote) return routeSummaryFacets.enabled;
+
     let enabled = 0;
     let disabled = 0;
     for (const route of baseFilteredRoutes) {
@@ -1368,15 +1514,37 @@ export default function TokenRoutes() {
       else disabled++;
     }
     return { enabled, disabled };
-  }, [baseFilteredRoutes]);
+  }, [baseFilteredRoutes, routeSummaryFacets.enabled, routeSummaryFacetsAreRemote]);
 
   const filteredRoutes = useMemo(() => {
+    if (routeSummaryFacetsAreRemote) return baseFilteredRoutes;
     if (enabledFilter === 'all') return baseFilteredRoutes;
     return baseFilteredRoutes.filter((route) => {
       if (route.kind === 'zero_target' || route.readOnly === true || route.isVirtual === true) return false;
       return enabledFilter === 'enabled' ? route.enabled : !route.enabled;
     });
-  }, [baseFilteredRoutes, enabledFilter]);
+  }, [baseFilteredRoutes, enabledFilter, routeSummaryFacetsAreRemote]);
+
+  const routePageHasRemoteTotal = routeSummaryFacetsAreRemote;
+  const displayedRouteTotalCount = routePageHasRemoteTotal
+    ? (routeSummaryHasRemoteFacets ? routeSummaryFacets.tabs[routeGroupListTab] ?? routePageInfo.totalCount : routePageInfo.totalCount)
+    : filteredRoutes.length;
+  const displayedBaseRouteTotalCount = routePageHasRemoteTotal
+    ? (routeSummaryHasRemoteFacets ? displayedRouteTotalCount : routePageInfo.totalCount)
+    : baseFilteredRoutes.length;
+  const displayedRouteSummaryTotalCount = routeSummaryHasRemoteFacets
+    ? getRouteSummaryTabTotal(routeSummaryFacets.tabs)
+    : routePageHasRemoteTotal
+      ? routePageInfo.totalCount
+      : routeSummaries.length;
+  const displayedRouteGroupTabCounts = useMemo(() => {
+    if (routeSummaryHasRemoteFacets) return routeGroupTabCounts;
+    if (!routePageHasRemoteTotal) return routeGroupTabCounts;
+    return {
+      ...routeGroupTabCounts,
+      [routeGroupListTab]: routePageInfo.totalCount,
+    };
+  }, [routeGroupListTab, routeGroupTabCounts, routePageHasRemoteTotal, routePageInfo.totalCount, routeSummaryHasRemoteFacets]);
 
   const selectableRouteIds = useMemo(() => {
     return new Set(
@@ -1453,14 +1621,22 @@ export default function TokenRoutes() {
   };
 
   useEffect(() => {
-    setRoutePage(1);
+    if (!routePageLoadReadyRef.current) {
+      setRoutePage(1);
+      return;
+    }
+    if (routePage !== 1) {
+      setRoutePage(1);
+      return;
+    }
+    void load(1);
   }, [routeGroupListTab, search, activeBrand, activeSite, activeEndpointType, activeGroupFilter, enabledFilter, sortBy, sortDir, showZeroTargetRoutes, routePageSize]);
 
   const routePageWindow = useMemo(() => getRouteListPageWindow({
     page: routePage,
-    total: filteredRoutes.length,
+    total: displayedRouteTotalCount,
     pageSize: routePageSize,
-  }), [filteredRoutes.length, routePage, routePageSize]);
+  }), [displayedRouteTotalCount, routePage, routePageSize]);
 
   useEffect(() => {
     setRoutePage((current) => routePageWindow.safePage === current ? current : routePageWindow.safePage);
@@ -1472,10 +1648,10 @@ export default function TokenRoutes() {
   );
 
   const visibleRoutes = useMemo(
-    () => filteredRoutes.slice(routePageWindow.startIndex, routePageWindow.endIndex),
-    [filteredRoutes, routePageWindow.endIndex, routePageWindow.startIndex],
+    () => (routePageHasRemoteTotal ? filteredRoutes : filteredRoutes.slice(routePageWindow.startIndex, routePageWindow.endIndex)),
+    [filteredRoutes, routePageHasRemoteTotal, routePageWindow.endIndex, routePageWindow.startIndex],
   );
-  const routeListSingleColumn = isMobile || (!routesLoading && filteredRoutes.length === 0);
+  const routeListSingleColumn = isMobile || (!routeListLoading && filteredRoutes.length === 0);
 
   const activeRoute = useMemo(() => (
     activeRouteId == null ? null : filteredRoutes.find((route) => route.id === activeRouteId) || null
@@ -2160,7 +2336,7 @@ export default function TokenRoutes() {
               </>
             ) : (
               <>
-                <Badge variant="secondary">{tr('pages.models.total')} {routeSummaries.length}</Badge>
+                <Badge variant="secondary">{tr('pages.models.total')} {displayedRouteSummaryTotalCount}</Badge>
                 <Badge variant="success">{tr('pages.downstreamKeys.enabled')} {enabledCounts.enabled}</Badge>
                 <Badge variant="secondary">{tr('pages.downstreamKeys.disabled')} {enabledCounts.disabled}</Badge>
               </>
@@ -2191,8 +2367,6 @@ export default function TokenRoutes() {
                     <Skeleton className="h-4 w-72 max-w-full" />
                   ) : (
                     tr('pages.tokenRoutes.routeWizard.description')
-                      .replace('{exactRoutes}', String(exactSourceRouteOptions.length))
-                      .replace('{routeReferences}', String(routeSummaries.filter((route) => isExplicitGroupRoute(route)).length))
                   )}
                 </div>
               </div>
@@ -2209,17 +2383,17 @@ export default function TokenRoutes() {
                   onValueChange={setRouteGroupListTab}
                   className="w-full lg:w-auto"
                   items={[
-                    { value: 'public', label: tr('pages.tokenRoutes.routeGroupTabs.external'), count: routeGroupTabCounts.public },
-                    { value: 'internal', label: tr('pages.tokenRoutes.routeGroupTabs.internalGroup'), count: routeGroupTabCounts.internal },
-                    { value: 'manual', label: tr('pages.tokenRoutes.routeGroupTabs.manual'), count: routeGroupTabCounts.manual },
+                    { value: 'public', label: tr('pages.tokenRoutes.routeGroupTabs.external'), count: displayedRouteGroupTabCounts.public },
+                    { value: 'internal', label: tr('pages.tokenRoutes.routeGroupTabs.internalGroup'), count: displayedRouteGroupTabCounts.internal },
+                    { value: 'manual', label: tr('pages.tokenRoutes.routeGroupTabs.manual'), count: displayedRouteGroupTabCounts.manual },
                   ]}
                 />
                 <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                   <Badge variant="secondary">
-                    {tr('pages.tokenRoutes.routeBrowser.totalRoutes').replace('{count}', String(filteredRoutes.length))}
+                    {tr('pages.tokenRoutes.routeBrowser.totalRoutes').replace('{count}', String(displayedRouteTotalCount))}
                   </Badge>
                   <Badge variant="secondary">
-                    {tr('pages.tokenRoutes.routeBrowser.baseRoutes').replace('{count}', String(baseFilteredRoutes.length))}
+                    {tr('pages.tokenRoutes.routeBrowser.baseRoutes').replace('{count}', String(displayedBaseRouteTotalCount))}
                   </Badge>
                 </div>
               </div>
@@ -2309,7 +2483,7 @@ export default function TokenRoutes() {
         )}
         mobileContent={(
           <RouteFilterBar
-            totalRouteCount={baseFilteredRoutes.length}
+            totalRouteCount={displayedBaseRouteTotalCount}
             activeBrand={activeBrand}
             setActiveBrand={setActiveBrand}
             activeSite={activeSite}
@@ -2331,7 +2505,7 @@ export default function TokenRoutes() {
         )}
         desktopContent={(
           <RouteFilterBar
-            totalRouteCount={baseFilteredRoutes.length}
+            totalRouteCount={displayedBaseRouteTotalCount}
             activeBrand={activeBrand}
             setActiveBrand={setActiveBrand}
             activeSite={activeSite}
@@ -2368,8 +2542,12 @@ export default function TokenRoutes() {
         modelMatchPreviewEndpoints={modelMatchPreviewEndpoints}
         exactSourceRouteOptions={exactSourceRouteOptions}
         routeEndpointCatalog={routeEndpointCatalog}
+        routeEndpointCatalogPageInfo={routeEndpointCatalogPageInfo}
+        routeEndpointCatalogLoading={routeEndpointCatalogLoading}
         sourceEndpointTypesByRouteId={sourceEndpointTypesByRouteId}
         currentRouteNodeJson={editingRouteNodeJson}
+        onSourceEndpointSearch={handleRouteEndpointCatalogSearch}
+        onLoadMoreSourceEndpoints={handleRouteEndpointCatalogLoadMore}
         onSave={handleAddRoute}
         onCancel={handleCancelEditRoute}
       />
@@ -2446,14 +2624,14 @@ export default function TokenRoutes() {
 
       <div className={routeListSingleColumn ? 'grid min-w-0 gap-3' : 'route-list-workbench-layout grid min-w-0 grid-cols-1 gap-3 xl:grid-cols-[minmax(280px,0.82fr)_minmax(0,1.18fr)]'}>
         <div className={isMobile ? 'grid gap-2' : 'route-list-pane grid min-w-0 max-w-full content-start gap-2'}>
-        {routesLoading ? (
+        {routeListLoading ? (
           <RouteGroupListLoadingSkeleton isMobile={isMobile} />
-        ) : filteredRoutes.length === 0 ? (
+        ) : displayedRouteTotalCount === 0 ? (
           <EmptyStateBlock
             className="min-h-[360px] rounded-lg border bg-card"
             icon={<Search className="size-5" />}
-            title={routeSummaries.length === 0 ? tr('pages.tokenRoutes.noRouteYet') : tr('pages.tokenRoutes.noMatchingRoute')}
-            description={routeSummaries.length === 0
+            title={displayedRouteSummaryTotalCount === 0 ? tr('pages.tokenRoutes.noRouteYet') : tr('pages.tokenRoutes.noMatchingRoute')}
+            description={displayedRouteSummaryTotalCount === 0
               ? tr('pages.tokenRoutes.autoRebuildModelavailableRoutes')
               : tr('pages.tokenRoutes.pleaseAdjustYourBrandFiltersSearchTerms')}
           />
@@ -2655,7 +2833,7 @@ export default function TokenRoutes() {
         })}
         </div>
 
-        {!isMobile && routesLoading ? (
+        {!isMobile && routeListLoading ? (
           <RouteGroupDetailLoadingSkeleton />
         ) : !isMobile && filteredRoutes.length > 0 && (
           <section className="route-workbench grid min-h-[520px] min-w-0 max-w-full content-start gap-3">
@@ -2981,13 +3159,13 @@ export default function TokenRoutes() {
         )}
       </div>
 
-      {!routesLoading && filteredRoutes.length > 0 && (
+      {!routeListLoading && filteredRoutes.length > 0 && (
         <div className="flex flex-wrap items-center gap-3 border-t pt-3">
           <div className="mr-auto text-xs text-muted-foreground">
             {tr('pages.tokenRoutes.routeBrowser.showingRoutes')
               .replace('{start}', String(routePageWindow.displayedStart))
               .replace('{end}', String(routePageWindow.displayedEnd))
-              .replace('{total}', String(filteredRoutes.length))}
+              .replace('{total}', String(displayedRouteTotalCount))}
           </div>
           <Pagination className="mx-0 w-auto">
             <PaginationContent>

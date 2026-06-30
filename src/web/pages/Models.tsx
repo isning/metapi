@@ -44,11 +44,18 @@ import {
   type ModelRow,
 } from './models/modelDetailsView.js';
 import type { ModelRouteFlowData } from '../components/ModelRouteFlow.js';
+import type { PageInfo } from '../pagedResponse.js';
 
 type SortColumn = 'name' | 'accountCount' | 'credentialCount' | 'avgLatency' | 'successRate';
 
 interface ModelsMarketplaceResponse {
   models: ModelRow[];
+  pageInfo?: PageInfo;
+  facets?: {
+    brands?: Array<{ name: string; icon?: string | null; color?: string | null; count: number }>;
+    otherBrandCount?: number;
+    sites?: Array<{ name: string; count: number }>;
+  };
   meta?: {
     refreshRequested?: boolean;
     refreshQueued?: boolean;
@@ -97,6 +104,28 @@ function compareModels(a: ModelRow, b: ModelRow, sortBy: SortColumn, sortDir: 'a
   const vb = resolveNumericSortValue(b);
   if (va === vb) return a.name.localeCompare(b.name);
   return sortDir === 'desc' ? vb - va : va - vb;
+}
+
+function scopeModelToSite(model: ModelRow, activeSite: string | null): ModelRow {
+  if (!activeSite) return model;
+  const accounts = model.accounts.filter((account) => account.site === activeSite);
+  const pricingSources = model.pricingSources.filter((source) => source.siteName === activeSite);
+  const latencyValues = accounts
+    .map((account) => account.latency)
+    .filter(isKnownLatency);
+  return {
+    ...model,
+    accounts,
+    pricingSources,
+    accountCount: accounts.length,
+    tokenCount: accounts.reduce((sum, account) => sum + account.tokens.length, 0),
+    managedTokenCount: accounts.reduce((sum, account) => sum + (account.managedTokenCount ?? account.tokens.length), 0),
+    credentialCount: accounts.reduce((sum, account) => sum + getAccountCredentialCount(account), 0),
+    endpointCount: accounts.reduce((sum, account) => sum + getAccountCredentialCount(account), 0),
+    avgLatency: latencyValues.length > 0
+      ? Math.round(latencyValues.reduce((sum, latency) => sum + latency, 0) / latencyValues.length)
+      : null,
+  };
 }
 
 function SortIndicator({ active, direction }: { active: boolean; direction: 'asc' | 'desc' }) {
@@ -180,6 +209,13 @@ export default function Models() {
     setLoading(true);
     try {
       const res = await api.getModelsMarketplace({
+        page,
+        pageSize,
+        q: search,
+        brand: activeBrand,
+        site: activeSite,
+        sortBy,
+        sortDir,
         refresh,
         includePricing: false,
       });
@@ -203,7 +239,7 @@ export default function Models() {
         setLoading(false);
       }
     }
-  }, [toast]);
+  }, [activeBrand, activeSite, page, pageSize, search, sortBy, sortDir, toast]);
 
   const hydrateMarketplaceMetadata = useCallback(async (baseModels: ModelRow[]) => {
     if (!shouldHydrateMarketplaceMetadata(baseModels)) return;
@@ -213,6 +249,13 @@ export default function Models() {
     setMetadataHydrating(true);
     try {
       const res = await api.getModelsMarketplace({
+        page,
+        pageSize,
+        q: search,
+        brand: activeBrand,
+        site: activeSite,
+        sortBy,
+        sortDir,
         includePricing: true,
       });
       if (metadataRequestId !== latestMetadataRequestRef.current) return;
@@ -231,7 +274,7 @@ export default function Models() {
         setMetadataHydrating(false);
       }
     }
-  }, []);
+  }, [activeBrand, activeSite, page, pageSize, search, sortBy, sortDir]);
 
   useEffect(() => {
     let cancelled = false;
@@ -308,6 +351,25 @@ export default function Models() {
 
   /* ---- derived: brand list ---- */
   const brandList = useMemo(() => {
+    if (data.facets?.brands) {
+      const list = data.facets.brands.map((brand) => [
+        brand.name,
+        {
+          count: brand.count,
+          brand: {
+            name: brand.name,
+            icon: brand.icon || getBrand(brand.name)?.icon || '',
+            color: brand.color || getBrand(brand.name)?.color || '',
+          } satisfies BrandInfo,
+        },
+      ] as const);
+      return {
+        list,
+        otherCount: data.facets.otherBrandCount || 0,
+        totalCount: list.reduce((sum, [, item]) => sum + item.count, 0) + (data.facets.otherBrandCount || 0),
+      };
+    }
+
     const m = new Map<string, { count: number; brand: BrandInfo }>();
     let otherCount = 0;
     for (const model of data.models) {
@@ -321,11 +383,19 @@ export default function Models() {
       }
     }
     const list = [...m.entries()].sort((a, b) => b[1].count - a[1].count);
-    return { list, otherCount };
-  }, [data.models]);
+    return {
+      list,
+      otherCount,
+      totalCount: list.reduce((sum, [, item]) => sum + item.count, 0) + otherCount,
+    };
+  }, [data.facets?.brands, data.facets?.otherBrandCount, data.models]);
 
   /* ---- derived: site list ---- */
   const siteMap = useMemo(() => {
+    if (data.facets?.sites) {
+      return data.facets.sites.map((site) => [site.name, site.count] as const);
+    }
+
     const m = new Map<string, number>();
     for (const model of data.models) {
       for (const a of model.accounts) {
@@ -333,70 +403,32 @@ export default function Models() {
       }
     }
     return [...m.entries()].sort((a, b) => b[1] - a[1]);
-  }, [data.models]);
+  }, [data.facets?.sites, data.models]);
 
-  /* ---- filtered ---- */
-  const filteredModels = useMemo(() => {
-    let list = data.models;
+  const displayedTotal = data.pageInfo?.totalCount ?? data.models.length;
 
-    if (activeBrand) {
-      if (activeBrand === '__other__') {
-        list = list.filter(m => !getBrand(m.name));
-      } else {
-        list = list.filter(m => getBrand(m.name)?.name === activeBrand);
-      }
-    }
-
-    if (activeSite) {
-      list = list.filter(m => m.accounts.some(a => a.site === activeSite));
-    }
-
-    if (search) {
-      const q = search.toLowerCase();
-      list = list.filter(m => m.name.toLowerCase().includes(q));
-    }
-
-    return list;
-  }, [data.models, search, activeSite, activeBrand]);
-
-  // Keep expanded detail consistent with filters (especially site filter).
-  // The list-level filter uses "model has at least one account on this site" semantics;
-  // once a model is shown, its detail should honor the active site as well.
-  const detailModels = useMemo(() => {
-    const scopedModels = activeSite ? filteredModels.map((model) => {
-      const accounts = model.accounts.filter((account) => account.site === activeSite);
-      const pricingSources = model.pricingSources.filter((source) => source.siteName === activeSite);
-      const latencyValues = accounts
-        .map((account) => account.latency)
-        .filter(isKnownLatency);
-      return {
-        ...model,
-        accounts,
-        pricingSources,
-        accountCount: accounts.length,
-        tokenCount: accounts.reduce((sum, account) => sum + account.tokens.length, 0),
-        managedTokenCount: accounts.reduce((sum, account) => sum + (account.managedTokenCount ?? account.tokens.length), 0),
-        credentialCount: accounts.reduce((sum, account) => sum + getAccountCredentialCount(account), 0),
-        endpointCount: accounts.reduce((sum, account) => sum + getAccountCredentialCount(account), 0),
-        avgLatency: latencyValues.length > 0
-          ? Math.round(latencyValues.reduce((sum, latency) => sum + latency, 0) / latencyValues.length)
-          : null,
-      };
-    }) : filteredModels;
-
-    return [...scopedModels].sort((a, b) => compareModels(a, b, sortBy, sortDir));
-  }, [filteredModels, activeSite, sortBy, sortDir]);
+  const visibleModels = useMemo(() => (
+    data.models
+      .map((model) => scopeModelToSite(model, activeSite))
+      .filter((model) => !activeSite || model.accounts.length > 0)
+      .sort((a, b) => compareModels(a, b, sortBy, sortDir))
+  ), [activeSite, data.models, sortBy, sortDir]);
 
   /* ---- pagination ---- */
-  const totalPages = Math.max(1, Math.ceil(detailModels.length / pageSize));
+  const totalPages = Math.max(1, Math.ceil(displayedTotal / pageSize));
   const safePageVal = Math.min(page, totalPages);
-  const paged = detailModels.slice((safePageVal - 1) * pageSize, safePageVal * pageSize);
 
   useEffect(() => { setPage(1); }, [search, activeSite, activeBrand, pageSize]);
 
+  useEffect(() => {
+    if (!data.pageInfo) return;
+    if (page <= totalPages) return;
+    setPage(totalPages);
+  }, [data.pageInfo, page, totalPages]);
+
   const selectedModel = useMemo(() => (
-    selectedModelName ? detailModels.find((model) => model.name === selectedModelName) ?? null : null
-  ), [detailModels, selectedModelName]);
+    selectedModelName ? visibleModels.find((model) => model.name === selectedModelName) ?? null : null
+  ), [selectedModelName, visibleModels]);
 
   useEffect(() => {
     if (!selectedModelName) return;
@@ -420,11 +452,11 @@ export default function Models() {
   }, [metadataHydrating, routeFlowByModel, routeFlowErrorByModel, routeFlowLoadingByModel, selectedModel]);
 
   /* ---- stats ---- */
-  const totalCoverageSlots = detailModels.reduce((s, m) => s + m.accountCount, 0);
-  const totalCredentialSlots = detailModels.reduce((sum, model) => sum + getModelCredentialCount(model), 0);
+  const totalCoverageSlots = visibleModels.reduce((s, m) => s + m.accountCount, 0);
+  const totalCredentialSlots = visibleModels.reduce((sum, model) => sum + getModelCredentialCount(model), 0);
   const uniqueAccountCount = (() => {
     const ids = new Set<number>();
-    for (const model of detailModels) {
+    for (const model of visibleModels) {
       for (const account of model.accounts) {
         ids.add(account.id);
       }
@@ -442,7 +474,10 @@ export default function Models() {
         <div className="flex items-center justify-between gap-2">
           <div className="text-sm font-medium">{tr('pages.models.brands')}</div>
           {activeBrand ? (
-            <Button type="button" variant="ghost" size="sm" onClick={() => setActiveBrand(null)}>
+            <Button type="button" variant="ghost" size="sm" onClick={() => {
+              setActiveBrand(null);
+              setPage(1);
+            }}>
               {tr('pages.models.reset')}
             </Button>
           ) : null}
@@ -451,11 +486,14 @@ export default function Models() {
           type="button"
           variant={!activeBrand ? 'secondary' : 'ghost'}
           className="w-full justify-start gap-2"
-          onClick={() => setActiveBrand(null)}
+          onClick={() => {
+            setActiveBrand(null);
+            setPage(1);
+          }}
         >
           <Check className="size-4" />
           <span className="min-w-0 flex-1 truncate text-left">{tr('pages.models.allBrands')}</span>
-          <ToneBadge tone="-muted">{data.models.length}</ToneBadge>
+          <ToneBadge tone="-muted">{brandList.totalCount || displayedTotal}</ToneBadge>
         </Button>
         {brandList.list.map(([brandName, { count, brand }]) => (
           <Button
@@ -463,7 +501,10 @@ export default function Models() {
             type="button"
             variant={activeBrand === brandName ? 'secondary' : 'ghost'}
             className="w-full justify-start gap-2"
-            onClick={() => setActiveBrand(activeBrand === brandName ? null : brandName)}
+            onClick={() => {
+              setActiveBrand(activeBrand === brandName ? null : brandName);
+              setPage(1);
+            }}
           >
             <BrandGlyph brand={brand} size={16} fallbackText={brandName} />
             <span className="min-w-0 flex-1 truncate text-left">{brandName}</span>
@@ -475,7 +516,10 @@ export default function Models() {
             type="button"
             variant={activeBrand === '__other__' ? 'secondary' : 'ghost'}
             className="w-full justify-start gap-2"
-            onClick={() => setActiveBrand(activeBrand === '__other__' ? null : '__other__')}
+            onClick={() => {
+              setActiveBrand(activeBrand === '__other__' ? null : '__other__');
+              setPage(1);
+            }}
           >
             <span className="inline-flex size-4 items-center justify-center text-xs text-muted-foreground">?</span>
             <span className="min-w-0 flex-1 truncate text-left">{tr('pages.models.other')}</span>
@@ -488,7 +532,10 @@ export default function Models() {
         <div className="flex items-center justify-between gap-2">
           <div className="text-sm font-medium">{tr('pages.models.providers')}</div>
           {activeSite ? (
-            <Button type="button" variant="ghost" size="sm" onClick={() => setActiveSite(null)}>
+            <Button type="button" variant="ghost" size="sm" onClick={() => {
+              setActiveSite(null);
+              setPage(1);
+            }}>
               {tr('pages.models.reset')}
             </Button>
           ) : null}
@@ -499,7 +546,10 @@ export default function Models() {
             type="button"
             variant={activeSite === site ? 'secondary' : 'ghost'}
             className="w-full justify-start gap-2"
-            onClick={() => setActiveSite(activeSite === site ? null : site)}
+            onClick={() => {
+              setActiveSite(activeSite === site ? null : site);
+              setPage(1);
+            }}
           >
             <span className="inline-flex size-4 items-center justify-center text-xs text-muted-foreground">
               {site.slice(0, 1).toUpperCase()}
@@ -525,6 +575,7 @@ export default function Models() {
                 setSortBy(opt.key);
                 setSortDir(opt.key === 'name' ? 'asc' : 'desc');
               }
+              setPage(1);
             }}
           >
             <span className="min-w-0 flex-1 truncate text-left">{opt.label}</span>
@@ -543,20 +594,23 @@ export default function Models() {
     <div className="grid gap-3 p-3">
       <SearchInput
         value={search}
-        onChange={e => setSearch(e.target.value)}
+        onChange={(e) => {
+          setSearch(e.target.value);
+          setPage(1);
+        }}
         placeholder={tr('pages.modelTester.searchModelSupportsNameFragments')}
       />
       <div className="flex flex-wrap items-center gap-2">
-        <ToneBadge tone="-info">{tr('pages.models.total')} {filteredModels.length} {tr('pages.models.models2')}</ToneBadge>
+        <ToneBadge tone="-info">{tr('pages.models.total')} {displayedTotal} {tr('pages.models.models2')}</ToneBadge>
         <ToneBadge tone="-muted">{tr('pages.models.coverageTier')} {totalCoverageSlots}</ToneBadge>
         <ToneBadge tone="-muted">{tr('pages.models.credentials')} {totalCredentialSlots}</ToneBadge>
         <ToneBadge tone="-muted">{tr('pages.models.uniqueAccounts')} {uniqueAccountCount}</ToneBadge>
       </div>
       {filterControls}
       <div className="grid gap-2">
-        {detailModels.length === 0 ? (
+        {visibleModels.length === 0 ? (
           <EmptyStateBlock title={tr('pages.models.noModelYet')} description={tr('pages.models.checkSiteAccountStatusFirstThenRefresh')} />
-        ) : paged.map((model) => {
+        ) : visibleModels.map((model) => {
           const selected = selectedModelName === model.name;
           const sites = model.accounts.map((account) => account.site).filter((value, index, array) => array.indexOf(value) === index);
           return (
@@ -587,7 +641,7 @@ export default function Models() {
           );
         })}
       </div>
-      {filteredModels.length > 0 && (
+      {displayedTotal > 0 && (
         <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-3">
           <Pagination className="mx-0 w-auto">
             <PaginationContent>
@@ -595,7 +649,7 @@ export default function Models() {
                 <PaginationPrevious
                   type="button"
                   disabled={safePageVal <= 1}
-                  onClick={() => setPage(p => p - 1)}
+                  onClick={() => setPage(p => Math.max(1, p - 1))}
                   aria-label={tr('pages.models.previousPage')}
                 />
               </PaginationItem>
@@ -617,13 +671,16 @@ export default function Models() {
                 <PaginationNext
                   type="button"
                   disabled={safePageVal >= totalPages}
-                  onClick={() => setPage(p => p + 1)}
+                  onClick={() => setPage(p => Math.min(totalPages, p + 1))}
                   aria-label={tr('pages.models.nextPage')}
                 />
               </PaginationItem>
             </PaginationContent>
           </Pagination>
-          <Select value={String(pageSize)} onValueChange={(nextValue) => setPageSize(Number(nextValue))}>
+          <Select value={String(pageSize)} onValueChange={(nextValue) => {
+            setPageSize(Number(nextValue));
+            setPage(1);
+          }}>
             <SelectTrigger className="w-24">
               <SelectValue placeholder={String(pageSize)} />
             </SelectTrigger>
@@ -687,7 +744,7 @@ export default function Models() {
             <h2 className="flex items-center gap-2 text-xl font-semibold">
               {activeBrand || activeSite || tr('app.modelMarketplace')}
               <ToneBadge tone="-info">
-                {tr('pages.models.total')} {filteredModels.length} {tr('pages.models.models2')}
+                {tr('pages.models.total')} {displayedTotal} {tr('pages.models.models2')}
               </ToneBadge>
             </h2>
             {(activeBrand || activeSite) && (

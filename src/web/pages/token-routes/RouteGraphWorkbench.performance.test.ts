@@ -30,7 +30,7 @@ describe('RouteGraphWorkbench large graph performance guardrails', () => {
 
     expect(text).toContain('routeEndpointCatalogLoadedRef');
     expect(text).toContain('loadRouteEndpointCatalog');
-    expect(refreshBlock).not.toContain('api.getRouteEndpoints');
+    expect(refreshBlock).not.toContain('api.getRouteEndpointPage');
     expect(refreshBlock).toContain("if (mode === 'json') syncWholeJsonFromGraph(nextGraph)");
     expect(applyGraphBlock).toContain("if (mode === 'json') syncWholeJsonFromGraph(normalized)");
   });
