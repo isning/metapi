@@ -12,6 +12,7 @@ type DbModule = typeof import('../../db/index.js');
 type TokenRouterModule = typeof import('../../services/tokenRouter.js');
 type RouteGraphRuntimeModule = typeof import('../../services/routeGraphRuntimeService.js');
 type RouteTableProjectionModule = typeof import('../../services/routeTableProjectionService.js');
+type ModelsMarketplaceCacheServiceModule = typeof import('../../services/modelsMarketplaceCacheService.js');
 
 describe('/api/route-graph lifecycle', () => {
   let app: TestAppHandle;
@@ -23,6 +24,9 @@ describe('/api/route-graph lifecycle', () => {
   let evaluateActiveRouteGraphForModel: RouteGraphRuntimeModule['evaluateActiveRouteGraphForModel'];
   let applyRouteGraphPostBuildFilters: RouteGraphRuntimeModule['applyRouteGraphPostBuildFilters'];
   let syncRouteBindingProjectionsFromRouteTable: RouteTableProjectionModule['syncRouteBindingProjectionsFromRouteTable'];
+  let upsertRouteBindingProjections: RouteTableProjectionModule['upsertRouteBindingProjections'];
+  let writeModelsMarketplaceCache: ModelsMarketplaceCacheServiceModule['writeModelsMarketplaceCache'];
+  let clearModelsMarketplaceCache: ModelsMarketplaceCacheServiceModule['clearModelsMarketplaceCache'];
 
   async function seedRoutableRoute(model = 'graph-api-model', options: { siteName?: string; siteUrl?: string } = {}) {
     const site = await db.insert(schema.sites).values({
@@ -196,6 +200,7 @@ describe('/api/route-graph lifecycle', () => {
     const tokenRouterModule = await import('../../services/tokenRouter.js');
     const routeGraphRuntimeModule = await import('../../services/routeGraphRuntimeService.js');
     const routeTableProjectionModule = await import('../../services/routeTableProjectionService.js');
+    const modelsMarketplaceCacheServiceModule = await import('../../services/modelsMarketplaceCacheService.js');
     db = dbModule.db;
     schema = dbModule.schema;
     resetTokenRouteReadLimitersForTests = routesModule.resetTokenRouteReadLimitersForTests;
@@ -203,6 +208,9 @@ describe('/api/route-graph lifecycle', () => {
     evaluateActiveRouteGraphForModel = routeGraphRuntimeModule.evaluateActiveRouteGraphForModel;
     applyRouteGraphPostBuildFilters = routeGraphRuntimeModule.applyRouteGraphPostBuildFilters;
     syncRouteBindingProjectionsFromRouteTable = routeTableProjectionModule.syncRouteBindingProjectionsFromRouteTable;
+    upsertRouteBindingProjections = routeTableProjectionModule.upsertRouteBindingProjections;
+    writeModelsMarketplaceCache = modelsMarketplaceCacheServiceModule.writeModelsMarketplaceCache;
+    clearModelsMarketplaceCache = modelsMarketplaceCacheServiceModule.clearModelsMarketplaceCache;
     app = await createTestApp({
       routes: [routesModule.tokensRoutes],
       auth: 'admin-api',
@@ -221,9 +229,12 @@ describe('/api/route-graph lifecycle', () => {
     await db.delete(schema.routeGroupSources).run();
     await db.delete(schema.routeEndpointTargets).run();
     await db.delete(schema.tokenRoutes).run();
+    await db.delete(schema.tokenModelAvailability).run();
+    await db.delete(schema.modelAvailability).run();
     await db.delete(schema.accountTokens).run();
     await db.delete(schema.accounts).run();
     await db.delete(schema.sites).run();
+    clearModelsMarketplaceCache();
     resetTokenRouteReadLimitersForTests();
     invalidateTokenRouterCache();
   });
@@ -384,6 +395,244 @@ describe('/api/route-graph lifecycle', () => {
       },
     });
     expect(response.json().items).toHaveLength(1);
+  });
+
+  it('returns a bounded filtered route summary page with real totals and facets', async () => {
+    await seedRoutableRoute('gpt-route-alpha', { siteName: 'route-filter-site-a' });
+    await seedRoutableRoute('gpt-route-beta', { siteName: 'route-filter-site-a' });
+    await seedRoutableRoute('gpt-route-gamma', { siteName: 'route-filter-site-a' });
+    await seedRoutableRoute('gpt-route-other-site', { siteName: 'route-filter-site-b' });
+    await seedRoutableRoute('claude-route-sonnet', { siteName: 'route-filter-site-a' });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/routes/summary?page=2&pageSize=1&q=gpt&tab=public&brand=OpenAI&site=route-filter-site-a&sortBy=name&sortDir=asc&enabled=enabled',
+      headers: app.adminHeaders(),
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as {
+      items: Array<{ match: { requestedModelPattern: string }; siteNames: string[] }>;
+      pageInfo: { page: number; pageSize: number; totalCount: number; hasMore: boolean };
+      facets: {
+        brands: Array<{ name: string; count: number }>;
+        sites: Array<{ name: string; count: number }>;
+        tabs: { public: number; internal: number; manual: number };
+      };
+    };
+
+    expect(body.items.map((item) => item.match.requestedModelPattern)).toEqual(['gpt-route-beta']);
+    expect(body.items[0]?.siteNames).toEqual(['route-filter-site-a']);
+    expect(body.pageInfo).toEqual({
+      page: 2,
+      pageSize: 1,
+      totalCount: 3,
+      hasMore: true,
+    });
+    expect(body.facets.brands).toEqual([
+      expect.objectContaining({ name: 'OpenAI', count: 4 }),
+    ]);
+    expect(body.facets.sites).toEqual([
+      expect.objectContaining({ name: 'route-filter-site-a', count: 3 }),
+      expect.objectContaining({ name: 'route-filter-site-b', count: 1 }),
+    ]);
+    expect(body.facets.tabs).toMatchObject({
+      public: 4,
+      internal: 0,
+      manual: 0,
+    });
+  });
+
+  it('applies route group visibility before paging route summaries', async () => {
+    await seedRoutableRoute('minimax-m2.1');
+    await seedRoutableRoute('minimaxai/minimax-m2.1');
+    const groupRoute = await db.insert(schema.tokenRoutes).values({
+      displayName: 'minimax2.1',
+      displayIcon: null,
+      modelMapping: null,
+      routingStrategy: 'weighted',
+      enabled: true,
+    }).returning().get();
+    await upsertRouteBindingProjections([{
+      routeId: groupRoute.id,
+      match: {
+        kind: 'model',
+        requestedModelPattern: 're:^(minimax-m2\\.1|minimaxai/minimax-m2\\.1)$',
+        displayName: null,
+      },
+      backend: { kind: 'supply' },
+      visibility: 'public',
+    }]);
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/routes/summary?page=1&pageSize=10&tab=public&sortBy=name&sortDir=asc',
+      headers: app.adminHeaders(),
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as {
+      items: Array<{
+        match: { requestedModelPattern: string };
+        presentation: { displayName?: string | null };
+      }>;
+      pageInfo: { totalCount: number; hasMore: boolean };
+    };
+
+    expect(body.items.map((item) => item.match.requestedModelPattern)).toEqual([
+      're:^(minimax-m2\\.1|minimaxai/minimax-m2\\.1)$',
+    ]);
+    expect(body.items[0]?.presentation.displayName).toBe('minimax2.1');
+    expect(body.pageInfo).toMatchObject({ totalCount: 1, hasMore: false });
+  });
+
+  it('filters route summary pages by endpoint type across the full route set', async () => {
+    await seedRoutableRoute('gpt-endpoint-type-a');
+    await seedRoutableRoute('gpt-endpoint-type-b');
+    await seedRoutableRoute('claude-endpoint-type-a');
+    writeModelsMarketplaceCache(true, [
+      { name: 'gpt-endpoint-type-a', supportedEndpointTypes: ['openai'] },
+      { name: 'gpt-endpoint-type-b', supportedEndpointTypes: ['openai'] },
+      { name: 'claude-endpoint-type-a', supportedEndpointTypes: ['anthropic'] },
+    ]);
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/routes/summary?page=2&pageSize=1&endpointType=openai&sortBy=name&sortDir=asc',
+      headers: app.adminHeaders(),
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as {
+      items: Array<{ match: { requestedModelPattern: string } }>;
+      pageInfo: { page: number; pageSize: number; totalCount: number; hasMore: boolean };
+      facets: { endpointTypes: Array<{ name: string; count: number }> };
+    };
+
+    expect(body.items.map((item) => item.match.requestedModelPattern)).toEqual(['gpt-endpoint-type-b']);
+    expect(body.pageInfo).toEqual({
+      page: 2,
+      pageSize: 1,
+      totalCount: 2,
+      hasMore: false,
+    });
+    expect(body.facets.endpointTypes).toEqual([
+      { name: 'openai', count: 2 },
+      { name: 'anthropic', count: 1 },
+    ]);
+  });
+
+  it('includes zero-target placeholder routes in the paged route summary projection', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'zero-target-site',
+      url: 'https://zero-target.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'zero-target-account',
+      accessToken: 'zero-target-access',
+      apiToken: 'zero-target-api',
+      status: 'active',
+    }).returning().get();
+    await db.insert(schema.modelAvailability).values({
+      accountId: account.id,
+      modelName: 'zero-target-tail-model',
+      available: true,
+    }).run();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/routes/summary?page=1&pageSize=1&q=zero-target-tail&includeZeroTarget=1',
+      headers: app.adminHeaders(),
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as {
+      items: Array<{
+        id: number;
+        kind?: string;
+        readOnly?: boolean;
+        match: { requestedModelPattern: string };
+        siteNames: string[];
+      }>;
+      pageInfo: { totalCount: number; hasMore: boolean };
+    };
+
+    expect(body.items).toHaveLength(1);
+    expect(body.items[0]).toMatchObject({
+      kind: 'zero_target',
+      readOnly: true,
+      match: { requestedModelPattern: 'zero-target-tail-model' },
+      siteNames: ['zero-target-site'],
+    });
+    expect(body.items[0]!.id).toBeLessThan(0);
+    expect(body.pageInfo).toMatchObject({ totalCount: 1, hasMore: false });
+  });
+
+  it('does not add zero-target placeholders already covered by a visible group route', async () => {
+    const groupRoute = await db.insert(schema.tokenRoutes).values({
+      displayName: 'Zero Covered',
+      displayIcon: null,
+      modelMapping: null,
+      routingStrategy: 'weighted',
+      enabled: true,
+    }).returning().get();
+    await upsertRouteBindingProjections([{
+      routeId: groupRoute.id,
+      match: {
+        kind: 'model',
+        requestedModelPattern: 're:^(zero-covered-model)$',
+        displayName: null,
+      },
+      backend: { kind: 'supply' },
+      visibility: 'public',
+    }]);
+    const site = await db.insert(schema.sites).values({
+      name: 'zero-covered-site',
+      url: 'https://zero-covered.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'zero-covered-account',
+      accessToken: 'zero-covered-access',
+      apiToken: 'zero-covered-api',
+      status: 'active',
+    }).returning().get();
+    await db.insert(schema.modelAvailability).values({
+      accountId: account.id,
+      modelName: 'zero-covered-model',
+      available: true,
+    }).run();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/routes/summary?page=1&pageSize=10&tab=public&includeZeroTarget=1&sortBy=name&sortDir=asc',
+      headers: app.adminHeaders(),
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as {
+      items: Array<{
+        kind?: string;
+        match: { requestedModelPattern: string; displayName?: string | null };
+        presentation: { displayName?: string | null };
+      }>;
+      pageInfo: { totalCount: number; hasMore: boolean };
+    };
+
+    expect(body.items).toHaveLength(1);
+    expect(body.items[0]).toMatchObject({
+      match: {
+        requestedModelPattern: 're:^(zero-covered-model)$',
+      },
+      presentation: { displayName: 'Zero Covered' },
+    });
+    expect(body.items.some((item) => item.kind === 'zero_target')).toBe(false);
+    expect(body.pageInfo).toMatchObject({ totalCount: 1, hasMore: false });
   });
 
   it('serves route endpoint catalog from the active source projection without compiled graph hydration', async () => {
@@ -1035,6 +1284,316 @@ describe('/api/route-graph lifecycle', () => {
       currentModel: 'macro-source-model',
       selectedEndpointTarget: null,
     });
+  });
+
+  it('accepts route-only product endpoint aliases for ordinary source routes in manual group payloads', async () => {
+    const source = await seedRoutableRoute('legacy-product-route-source-model');
+    const legacyProductRouteEndpointId = `route-endpoint:product:route:${source.route.id}`;
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/routes',
+      headers: app.adminHeaders(),
+      payload: {
+        match: {
+          kind: 'model',
+          requestedModelPattern: '',
+          displayName: 'legacy-product-route-group',
+        },
+        backend: {
+          kind: 'routes',
+          routeIds: [source.route.id],
+        },
+        presentation: {
+          displayName: 'legacy-product-route-group',
+          displayIcon: null,
+        },
+        routingStrategy: 'priority_order',
+        visibility: 'public',
+        enabled: true,
+        macro: {
+          id: 'macro:legacy-product-route-group',
+          kind: 'candidate_selector',
+          enabled: true,
+          visibility: 'public',
+          ownership: 'manual',
+          config: {
+            surface: {
+              entry: {
+                kind: 'external',
+                visibility: 'public',
+                match: {
+                  kind: 'model',
+                  requestedModelPattern: '',
+                  displayName: 'legacy-product-route-group',
+                },
+              },
+              output: 'route',
+            },
+            policy: { strategy: 'priority_order' },
+            groups: [
+              {
+                id: 'source:legacy-product-route',
+                enabled: true,
+                priority: 0,
+                input: {
+                  kind: 'route_endpoints',
+                  endpointIds: [legacyProductRouteEndpointId],
+                },
+                defaults: {
+                  enabled: true,
+                  weight: 10,
+                  priority: 0,
+                },
+              },
+            ],
+            presentation: {
+              displayIcon: null,
+            },
+          },
+        },
+      },
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({
+      backend: {
+        kind: 'routes',
+        routeIds: [source.route.id],
+      },
+    });
+    const sources = await db.select().from(schema.routeGroupSources).all();
+    expect(sources).toEqual([
+      expect.objectContaining({
+        sourceRouteId: source.route.id,
+      }),
+    ]);
+  });
+
+  it('accepts route-only legacy supply endpoint aliases for ordinary source routes in manual group payloads', async () => {
+    const source = await seedRoutableRoute('legacy-supply-route-source-model');
+    const legacySupplyRouteEndpointId = `route-endpoint:supply:route:${source.route.id}`;
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/routes',
+      headers: app.adminHeaders(),
+      payload: {
+        match: {
+          kind: 'model',
+          requestedModelPattern: '',
+          displayName: 'legacy-supply-route-group',
+        },
+        backend: {
+          kind: 'routes',
+          routeIds: [source.route.id],
+        },
+        presentation: {
+          displayName: 'legacy-supply-route-group',
+          displayIcon: null,
+        },
+        routingStrategy: 'priority_order',
+        visibility: 'public',
+        enabled: true,
+        macro: {
+          id: 'macro:legacy-supply-route-group',
+          kind: 'candidate_selector',
+          enabled: true,
+          visibility: 'public',
+          ownership: 'manual',
+          config: {
+            surface: {
+              entry: {
+                kind: 'external',
+                visibility: 'public',
+                match: {
+                  kind: 'model',
+                  requestedModelPattern: '',
+                  displayName: 'legacy-supply-route-group',
+                },
+              },
+              output: 'route',
+            },
+            policy: { strategy: 'priority_order' },
+            groups: [
+              {
+                id: 'source:legacy-supply-route',
+                enabled: true,
+                priority: 0,
+                input: {
+                  kind: 'route_endpoints',
+                  endpointIds: [legacySupplyRouteEndpointId],
+                },
+                defaults: {
+                  enabled: true,
+                  weight: 10,
+                  priority: 0,
+                },
+              },
+            ],
+            presentation: {
+              displayIcon: null,
+            },
+          },
+        },
+      },
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()).toMatchObject({
+      backend: {
+        kind: 'routes',
+        routeIds: [source.route.id],
+      },
+    });
+    const sources = await db.select().from(schema.routeGroupSources).all();
+    expect(sources).toEqual([
+      expect.objectContaining({
+        sourceRouteId: source.route.id,
+      }),
+    ]);
+  });
+
+  it('preserves explicit backend source routes when macro endpoints resolve to merged supply endpoints', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'merged-endpoint-site',
+      url: 'https://merged-endpoint.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'merged-endpoint-account',
+      accessToken: 'merged-endpoint-access',
+      apiToken: 'merged-endpoint-api',
+      status: 'active',
+    }).returning().get();
+    const token = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'merged-endpoint-token',
+      token: 'sk-merged-endpoint',
+      enabled: true,
+      isDefault: true,
+    }).returning().get();
+    const firstSource = await db.insert(schema.tokenRoutes).values({
+      ...tokenRouteFixture({ modelPattern: 'merged-source-a' }),
+      enabled: true,
+    }).returning().get();
+    const secondSource = await db.insert(schema.tokenRoutes).values({
+      ...tokenRouteFixture({ modelPattern: 'merged-source-b' }),
+      enabled: true,
+    }).returning().get();
+    await db.insert(schema.routeEndpointTargets).values([
+      {
+        routeId: firstSource.id,
+        accountId: account.id,
+        tokenId: token.id,
+        sourceModel: 'merged-upstream-model',
+        priority: 0,
+        weight: 10,
+        enabled: true,
+      },
+      {
+        routeId: secondSource.id,
+        accountId: account.id,
+        tokenId: token.id,
+        sourceModel: 'merged-upstream-model',
+        priority: 0,
+        weight: 10,
+        enabled: true,
+      },
+    ]).run();
+    await syncRouteBindingProjectionsFromRouteTable();
+
+    const endpointsResponse = await app.inject({
+      method: 'GET',
+      url: `/api/route-endpoints?paged=1&page=1&pageSize=10&endpointKind=supply&routeId=${firstSource.id}`,
+      headers: app.adminHeaders(),
+    });
+    expect(endpointsResponse.statusCode).toBe(200);
+    const endpointId = endpointsResponse.json().items.find((item: { endpointKind: string }) => item.endpointKind === 'supply')?.endpointId;
+    expect(endpointId).toEqual(expect.stringMatching(/^route-endpoint:supply:upstream-model:/));
+
+    const group = await db.insert(schema.tokenRoutes).values({
+      displayName: 'merged-explicit-group',
+      displayIcon: null,
+      modelMapping: null,
+      routingStrategy: 'weighted',
+      enabled: true,
+    }).returning().get();
+    await db.insert(schema.routeGroupSources).values({
+      groupRouteId: group.id,
+      sourceRouteId: firstSource.id,
+    }).run();
+
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/api/routes/${group.id}`,
+      headers: app.adminHeaders(),
+      payload: {
+        match: {
+          kind: 'model',
+          requestedModelPattern: '',
+          displayName: 'merged-explicit-group',
+        },
+        backend: {
+          kind: 'routes',
+          routeIds: [firstSource.id],
+        },
+        presentation: {
+          displayName: 'merged-explicit-group',
+          displayIcon: null,
+        },
+        routingStrategy: 'weighted',
+        visibility: 'public',
+        enabled: true,
+        macro: {
+          id: `route:${group.id}:model-group`,
+          kind: 'candidate_selector',
+          enabled: true,
+          visibility: 'public',
+          ownership: 'manual',
+          config: {
+            surface: {
+              entry: {
+                kind: 'external',
+                visibility: 'public',
+                match: {
+                  kind: 'model',
+                  requestedModelPattern: '',
+                  displayName: 'merged-explicit-group',
+                },
+              },
+              output: 'route',
+            },
+            policy: { strategy: 'weighted' },
+            groups: [
+              {
+                id: 'source:merged-endpoint',
+                enabled: true,
+                priority: 0,
+                input: {
+                  kind: 'route_endpoints',
+                  endpointIds: [endpointId],
+                },
+                defaults: {
+                  enabled: true,
+                  weight: 10,
+                  priority: 0,
+                },
+              },
+            ],
+          },
+        },
+      },
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json().backend).toEqual({ kind: 'routes', routeIds: [firstSource.id] });
+    const sources = await db.select().from(schema.routeGroupSources)
+      .where(eq(schema.routeGroupSources.groupRouteId, group.id))
+      .all();
+    expect(sources.map((source) => source.sourceRouteId)).toEqual([firstSource.id]);
   });
 
   it('publishes candidate_selector macros whose priority groups are sourced by model patterns', async () => {

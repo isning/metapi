@@ -55,6 +55,15 @@ import {
   type RouteBindingProjection,
 } from '../../services/routeTableProjectionService.js';
 import {
+  buildRouteSummaryProjectionPage,
+  hasRouteSummaryProjectionQuery,
+  type RouteSummaryProjectionQuery,
+} from '../../services/routeSummaryProjectionService.js';
+import {
+  buildEndpointTypesByModelFromMarketplaceCache,
+  buildModelTokenCandidatesPayload,
+} from '../../services/modelTokenCandidateService.js';
+import {
   listOauthRouteUnitMembersByUnitIds,
   loadOauthRouteUnitSummariesByIds,
 } from '../../services/oauth/routeUnitService.js';
@@ -363,6 +372,9 @@ async function resolveRoutePayloadFromMacro(
       message: `Route endpoint ${endpointId} cannot be resolved to source routes.`,
     })));
   }
+  const explicitBackendRouteIds = fallback.backend.kind === 'routes' && fallback.backend.routeIds.length > 0
+    ? fallback.backend.routeIds
+    : resolvedSources.routeIds;
   return {
     match: normalizeRouteGraphMatchSpec({
       ...fallback.match,
@@ -372,7 +384,7 @@ async function resolveRoutePayloadFromMacro(
     }),
     backend: {
       kind: 'routes',
-      routeIds: resolvedSources.routeIds,
+      routeIds: explicitBackendRouteIds,
     },
     presentation: {
       displayName: entry.match.displayName ?? fallback.displayName,
@@ -1642,7 +1654,7 @@ export async function tokensRoutes(app: FastifyInstance) {
       all?: string;
       page?: string;
       pageSize?: string;
-    };
+    } & RouteSummaryProjectionQuery;
   }>('/api/routes/summary', async (request, reply) => {
     try {
       await routeSummaryReadLimiter.consume(request.ip);
@@ -1652,6 +1664,16 @@ export async function tokensRoutes(app: FastifyInstance) {
     }
     if (request.query.all === '1' || request.query.all === 'true') {
       return await loadCachedRouteSummaryRows();
+    }
+    if (hasRouteSummaryProjectionQuery(request.query)) {
+      const rows = await loadCachedRouteSummaryRows();
+      const includeZeroTarget = ['1', 'true', 'yes'].includes(String(request.query.includeZeroTarget || '').trim().toLowerCase());
+      const candidatePayload = includeZeroTarget ? await buildModelTokenCandidatesPayload() : null;
+      return buildRouteSummaryProjectionPage(rows, request.query, {
+        endpointTypesByModel: candidatePayload?.endpointTypesByModel || buildEndpointTypesByModelFromMarketplaceCache(),
+        modelsWithoutToken: candidatePayload?.modelsWithoutToken,
+        modelsMissingTokenGroups: candidatePayload?.modelsMissingTokenGroups,
+      });
     }
     return await loadRouteSummaryPage(request.query);
   });

@@ -735,4 +735,72 @@ describe('/api/models/marketplace', () => {
     ]);
     expect(body.meta.includePricing).toBe(true);
   });
+
+  it('returns a bounded filtered marketplace page with real totals and facets', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'paged-market-site',
+      url: 'https://paged-market.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+    const otherSite = await db.insert(schema.sites).values({
+      name: 'other-market-site',
+      url: 'https://other-market.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'paged-user',
+      accessToken: 'paged-access',
+      apiToken: 'paged-api',
+      status: 'active',
+    }).returning().get();
+    const otherAccount = await db.insert(schema.accounts).values({
+      siteId: otherSite.id,
+      username: 'other-user',
+      accessToken: 'other-access',
+      apiToken: 'other-api',
+      status: 'active',
+    }).returning().get();
+
+    await db.insert(schema.modelAvailability).values([
+      { accountId: account.id, modelName: 'gpt-alpha', available: true, latencyMs: 31 },
+      { accountId: account.id, modelName: 'gpt-beta', available: true, latencyMs: 32 },
+      { accountId: account.id, modelName: 'gpt-gamma', available: true, latencyMs: 33 },
+      { accountId: account.id, modelName: 'claude-sonnet-4-5-20250929', available: true, latencyMs: 34 },
+      { accountId: otherAccount.id, modelName: 'gpt-other-site', available: true, latencyMs: 35 },
+    ]).run();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/models/marketplace?page=2&pageSize=1&q=gpt&brand=OpenAI&site=paged-market-site&sortBy=name&sortDir=asc',
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as {
+      models: Array<{ name: string; accounts: Array<{ site: string }> }>;
+      pageInfo: { page: number; pageSize: number; totalCount: number; hasMore: boolean };
+      facets: {
+        brands: Array<{ name: string; count: number }>;
+        sites: Array<{ name: string; count: number }>;
+      };
+    };
+
+    expect(body.models.map((model) => model.name)).toEqual(['gpt-beta']);
+    expect(body.models[0]?.accounts.map((accountRow) => accountRow.site)).toEqual(['paged-market-site']);
+    expect(body.pageInfo).toEqual({
+      page: 2,
+      pageSize: 1,
+      totalCount: 3,
+      hasMore: true,
+    });
+    expect(body.facets.brands).toEqual([
+      expect.objectContaining({ name: 'OpenAI', count: 4 }),
+    ]);
+    expect(body.facets.sites).toEqual([
+      expect.objectContaining({ name: 'paged-market-site', count: 3 }),
+      expect.objectContaining({ name: 'other-market-site', count: 1 }),
+    ]);
+  });
 });

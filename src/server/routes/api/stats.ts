@@ -19,6 +19,16 @@ import {
   getActiveRouteGraphSourceVersion,
   listRouteEndpointCatalog,
 } from "../../services/routeGraphService.js";
+import {
+  buildModelsMarketplacePage,
+  type ModelsMarketplaceQuery,
+} from "../../services/modelsMarketplaceProjectionService.js";
+import {
+  clearModelsMarketplaceCache,
+  readModelsMarketplaceCache,
+  resetModelsMarketplaceCacheForTests,
+  writeModelsMarketplaceCache,
+} from "../../services/modelsMarketplaceCacheService.js";
 import { matchesTokenRouteModelPattern } from "../../../shared/tokenRoutePatterns.js";
 import {
   buildModelAvailabilityProbeTaskDedupeKey,
@@ -48,10 +58,8 @@ import {
   listProxyDebugTraces,
 } from "../../services/proxyDebugTraceStore.js";
 import { parseProxyLogMessageMeta } from "../../services/proxyLogMessage.js";
-import {
-  requiresManagedAccountTokens,
-  supportsDirectAccountRoutingConnection,
-} from "../../services/accountExtraConfig.js";
+import { supportsDirectAccountRoutingConnection } from "../../services/accountExtraConfig.js";
+import { buildModelTokenCandidatesPayload } from "../../services/modelTokenCandidateService.js";
 import { ACCOUNT_TOKEN_VALUE_STATUS_READY } from "../../services/accountTokenService.js";
 import {
   formatLocalDateTime,
@@ -114,18 +122,11 @@ function roundPricingValue(value: number | null): number | null {
   return Math.round(value * 1_000_000) / 1_000_000;
 }
 
-const MODELS_MARKETPLACE_BASE_TTL_MS = 15_000;
-const MODELS_MARKETPLACE_PRICING_TTL_MS = 90_000;
 const limitModelTokenCandidatesRead = createRateLimitGuard({
   bucket: "models-token-candidates-read",
   max: 30,
   windowMs: 60_000,
 });
-
-type ModelsMarketplaceCacheEntry = {
-  expiresAt: number;
-  models: any[];
-};
 
 type MeasuredEntryPricingAggregate = {
   inputWeightedTotal: number;
@@ -147,38 +148,8 @@ type MeasuredEntryPricingSummary = {
   lastMeasuredAt: string | null;
 };
 
-const modelsMarketplaceCache = new Map<
-  "base" | "pricing",
-  ModelsMarketplaceCacheEntry
->();
-
-function readModelsMarketplaceCache(includePricing: boolean): any[] | null {
-  const key = includePricing ? "pricing" : "base";
-  const cached = modelsMarketplaceCache.get(key);
-  if (!cached) return null;
-  if (Date.now() >= cached.expiresAt) {
-    modelsMarketplaceCache.delete(key);
-    return null;
-  }
-  return cached.models;
-}
-
-function writeModelsMarketplaceCache(
-  includePricing: boolean,
-  models: any[],
-): void {
-  const ttl = includePricing
-    ? MODELS_MARKETPLACE_PRICING_TTL_MS
-    : MODELS_MARKETPLACE_BASE_TTL_MS;
-  const key = includePricing ? "pricing" : "base";
-  modelsMarketplaceCache.set(key, {
-    expiresAt: Date.now() + ttl,
-    models,
-  });
-}
-
 export function __resetModelsMarketplaceCacheForTests(): void {
-  modelsMarketplaceCache.clear();
+  resetModelsMarketplaceCacheForTests();
 }
 
 function proxyCostSqlExpression() {
@@ -1350,7 +1321,7 @@ export async function statsRoutes(app: FastifyInstance) {
   );
 
   // Models marketplace - refresh upstream models and aggregate.
-  app.get<{ Querystring: { refresh?: string; includePricing?: string } }>(
+  app.get<{ Querystring: ModelsMarketplaceQuery & { refresh?: string; includePricing?: string } }>(
     "/api/models/marketplace",
     async (request) => {
       const refreshRequested = parseBooleanFlag(request.query.refresh);
@@ -1361,7 +1332,7 @@ export async function statsRoutes(app: FastifyInstance) {
       let refreshJobId: string | null = null;
 
       if (refreshRequested) {
-        modelsMarketplaceCache.clear();
+        clearModelsMarketplaceCache();
         const { task, reused } = startBackgroundTask(
           {
             type: "model",
@@ -1393,9 +1364,10 @@ export async function statsRoutes(app: FastifyInstance) {
       if (!refreshRequested) {
         const cachedModels = readModelsMarketplaceCache(includePricing);
         if (cachedModels) {
-          return {
-            models: cachedModels,
-            meta: {
+          return buildModelsMarketplacePage(
+            cachedModels,
+            request.query,
+            {
               refreshRequested,
               refreshQueued,
               refreshReused,
@@ -1404,7 +1376,7 @@ export async function statsRoutes(app: FastifyInstance) {
               includePricing,
               cacheHit: true,
             },
-          };
+          );
         }
       }
 
@@ -2141,9 +2113,10 @@ export async function statsRoutes(app: FastifyInstance) {
 
       models.sort((a, b) => b.accountCount - a.accountCount);
       writeModelsMarketplaceCache(includePricing, models);
-      return {
+      return buildModelsMarketplacePage(
         models,
-        meta: {
+        request.query,
+        {
           refreshRequested,
           refreshQueued,
           refreshReused,
@@ -2151,7 +2124,7 @@ export async function statsRoutes(app: FastifyInstance) {
           refreshJobId,
           includePricing,
         },
-      };
+      );
     },
   );
 
@@ -2172,389 +2145,7 @@ export async function statsRoutes(app: FastifyInstance) {
     "/api/models/token-candidates",
     { preHandler: [limitModelTokenCandidatesRead] },
     async () => {
-      const resolveTokenGroupLabel = (
-        tokenGroup: string | null,
-        tokenName: string | null,
-      ): string | null => {
-        const explicit = (tokenGroup || "").trim();
-        if (explicit) return explicit;
-
-        const name = (tokenName || "").trim();
-        if (!name) return null;
-        const normalized = name.toLowerCase();
-        if (
-          normalized === "default" ||
-          normalized === "默认" ||
-          /^default($|[-_\s])/.test(normalized)
-        ) {
-          return "default";
-        }
-        if (/^token-\d+$/.test(normalized)) return null;
-        return name;
-      };
-
-      // Load global allowed models whitelist
-      const globalAllowedModels = new Set(
-        config.globalAllowedModels
-          .map((m) => m.toLowerCase().trim())
-          .filter(Boolean),
-      );
-
-      const rows = await db
-        .select()
-        .from(schema.tokenModelAvailability)
-        .innerJoin(
-          schema.accountTokens,
-          eq(schema.tokenModelAvailability.tokenId, schema.accountTokens.id),
-        )
-        .innerJoin(
-          schema.accounts,
-          eq(schema.accountTokens.accountId, schema.accounts.id),
-        )
-        .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
-        .where(
-          and(
-            eq(schema.tokenModelAvailability.available, true),
-            eq(schema.accountTokens.enabled, true),
-            eq(
-              schema.accountTokens.valueStatus,
-              ACCOUNT_TOKEN_VALUE_STATUS_READY,
-            ),
-            eq(schema.accounts.status, "active"),
-            eq(schema.sites.status, "active"),
-          ),
-        )
-        .all();
-      const availableModelRows = await db
-        .select({
-          modelName: schema.modelAvailability.modelName,
-          accountId: schema.accounts.id,
-          username: schema.accounts.username,
-          siteId: schema.sites.id,
-          siteName: schema.sites.name,
-          accessToken: schema.accounts.accessToken,
-          apiToken: schema.accounts.apiToken,
-          extraConfig: schema.accounts.extraConfig,
-        })
-        .from(schema.modelAvailability)
-        .innerJoin(
-          schema.accounts,
-          eq(schema.modelAvailability.accountId, schema.accounts.id),
-        )
-        .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
-        .where(
-          and(
-            eq(schema.modelAvailability.available, true),
-            eq(schema.accounts.status, "active"),
-            eq(schema.sites.status, "active"),
-          ),
-        )
-        .all();
-
-      const result: Record<
-        string,
-        Array<{
-          accountId: number;
-          tokenId: number;
-          tokenName: string;
-          isDefault: boolean;
-          username: string | null;
-          siteId: number;
-          siteName: string;
-        }>
-      > = {};
-      const coveredAccountModelSet = new Set<string>();
-      const coveredGroupsByAccountModel = new Map<
-        string,
-        Map<string, string>
-      >();
-      const unknownGroupCoverageByAccountModel = new Set<string>();
-      const modelsWithoutToken: Record<
-        string,
-        Array<{
-          accountId: number;
-          username: string | null;
-          siteId: number;
-          siteName: string;
-        }>
-      > = {};
-      const modelsMissingTokenGroups: Record<
-        string,
-        Array<{
-          accountId: number;
-          username: string | null;
-          siteId: number;
-          siteName: string;
-          missingGroups: string[];
-          requiredGroups: string[];
-          availableGroups: string[];
-          groupCoverageUncertain?: boolean;
-        }>
-      > = {};
-      let hasAnyTokenGroupSignals = false;
-
-      for (const row of rows) {
-        const modelName = (row.token_model_availability.modelName || "").trim();
-        if (!modelName) continue;
-        const accountModelKey = `${row.accounts.id}::${modelName.toLowerCase()}`;
-        coveredAccountModelSet.add(accountModelKey);
-
-        const resolvedTokenGroup = resolveTokenGroupLabel(
-          row.account_tokens.tokenGroup,
-          row.account_tokens.name,
-        );
-        if (resolvedTokenGroup) {
-          hasAnyTokenGroupSignals = true;
-          if (!coveredGroupsByAccountModel.has(accountModelKey)) {
-            coveredGroupsByAccountModel.set(
-              accountModelKey,
-              new Map<string, string>(),
-            );
-          }
-          const groupKey = resolvedTokenGroup.toLowerCase();
-          if (
-            !coveredGroupsByAccountModel.get(accountModelKey)!.has(groupKey)
-          ) {
-            coveredGroupsByAccountModel
-              .get(accountModelKey)!
-              .set(groupKey, resolvedTokenGroup);
-          }
-        } else {
-          unknownGroupCoverageByAccountModel.add(accountModelKey);
-        }
-
-        if (!result[modelName]) result[modelName] = [];
-        if (
-          result[modelName].some(
-            (item) => item.tokenId === row.account_tokens.id,
-          )
-        )
-          continue;
-        result[modelName].push({
-          accountId: row.accounts.id,
-          tokenId: row.account_tokens.id,
-          tokenName: row.account_tokens.name,
-          isDefault: !!row.account_tokens.isDefault,
-          username: row.accounts.username,
-          siteId: row.sites.id,
-          siteName: row.sites.name,
-        });
-      }
-
-      for (const row of availableModelRows) {
-        if (!requiresManagedAccountTokens(row)) continue;
-        const modelName = (row.modelName || "").trim();
-        if (!modelName) continue;
-        const coverageKey = `${row.accountId}::${modelName.toLowerCase()}`;
-        if (coveredAccountModelSet.has(coverageKey)) continue;
-        if (!modelsWithoutToken[modelName]) modelsWithoutToken[modelName] = [];
-        if (
-          modelsWithoutToken[modelName].some(
-            (item) => item.accountId === row.accountId,
-          )
-        )
-          continue;
-        modelsWithoutToken[modelName].push({
-          accountId: row.accountId,
-          username: row.username,
-          siteId: row.siteId,
-          siteName: row.siteName,
-        });
-      }
-
-      const accountIdsForGroupHints = new Set(
-        availableModelRows
-          .filter((row) => requiresManagedAccountTokens(row))
-          .map((row) => row.accountId),
-      );
-      const requiredGroupsByAccountModel = new Map<
-        string,
-        Map<string, string>
-      >();
-      const hasPotentialGroupHints =
-        hasAnyTokenGroupSignals || unknownGroupCoverageByAccountModel.size > 0;
-
-      if (hasPotentialGroupHints && accountIdsForGroupHints.size > 0) {
-        const accountRows = await db
-          .select()
-          .from(schema.accounts)
-          .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
-          .where(
-            and(
-              eq(schema.accounts.status, "active"),
-              eq(schema.sites.status, "active"),
-            ),
-          )
-          .all();
-
-        const metadataResults = await Promise.all(
-          accountRows
-            .filter((row) => accountIdsForGroupHints.has(row.accounts.id))
-            .map(async (row) => {
-              try {
-                const catalog = await fetchModelPricingCatalog({
-                  site: {
-                    id: row.sites.id,
-                    url: row.sites.url,
-                    platform: row.sites.platform,
-                    apiKey: row.sites.apiKey,
-                  },
-                  account: {
-                    id: row.accounts.id,
-                    username: row.accounts.username,
-                    accessToken: row.accounts.accessToken,
-                    apiToken: row.accounts.apiToken,
-                    extraConfig: row.accounts.extraConfig,
-                  },
-                  modelName: "__metadata__",
-                  totalTokens: 0,
-                });
-                return { accountId: row.accounts.id, catalog };
-              } catch {
-                return {
-                  accountId: row.accounts.id,
-                  catalog: null as Awaited<
-                    ReturnType<typeof fetchModelPricingCatalog>
-                  >,
-                };
-              }
-            }),
-        );
-
-        for (const result of metadataResults) {
-          if (!result.catalog) continue;
-          for (const model of result.catalog.models) {
-            const modelName = (model.modelName || "").trim();
-            if (!modelName) continue;
-            const groups = new Map<string, string>();
-            for (const rawGroup of model.enableGroups || []) {
-              const group = String(rawGroup || "").trim();
-              if (!group) continue;
-              const groupKey = group.toLowerCase();
-              if (!groups.has(groupKey)) groups.set(groupKey, group);
-            }
-            if (groups.size === 0) continue;
-            requiredGroupsByAccountModel.set(
-              `${result.accountId}::${modelName.toLowerCase()}`,
-              groups,
-            );
-          }
-        }
-      }
-
-      for (const row of availableModelRows) {
-        if (!requiresManagedAccountTokens(row)) continue;
-        const modelName = (row.modelName || "").trim();
-        if (!modelName) continue;
-        const accountModelKey = `${row.accountId}::${modelName.toLowerCase()}`;
-
-        const requiredGroups =
-          requiredGroupsByAccountModel.get(accountModelKey);
-        if (!requiredGroups || requiredGroups.size === 0) continue;
-
-        const availableGroups =
-          coveredGroupsByAccountModel.get(accountModelKey) ||
-          new Map<string, string>();
-        const missingGroups = Array.from(requiredGroups.entries())
-          .filter(([groupKey]) => !availableGroups.has(groupKey))
-          .map(([, label]) => label);
-        if (missingGroups.length === 0) continue;
-
-        if (!modelsMissingTokenGroups[modelName])
-          modelsMissingTokenGroups[modelName] = [];
-        if (
-          modelsMissingTokenGroups[modelName].some(
-            (item) => item.accountId === row.accountId,
-          )
-        )
-          continue;
-        const hintRow = {
-          accountId: row.accountId,
-          username: row.username,
-          siteId: row.siteId,
-          siteName: row.siteName,
-          missingGroups: missingGroups.sort((a, b) => a.localeCompare(b)),
-          requiredGroups: Array.from(requiredGroups.values()).sort((a, b) =>
-            a.localeCompare(b),
-          ),
-          availableGroups: Array.from(availableGroups.values()).sort((a, b) =>
-            a.localeCompare(b),
-          ),
-        } as {
-          accountId: number;
-          username: string | null;
-          siteId: number;
-          siteName: string;
-          missingGroups: string[];
-          requiredGroups: string[];
-          availableGroups: string[];
-          groupCoverageUncertain?: boolean;
-        };
-        if (unknownGroupCoverageByAccountModel.has(accountModelKey)) {
-          hintRow.groupCoverageUncertain = true;
-        }
-        modelsMissingTokenGroups[modelName].push(hintRow);
-      }
-
-      const endpointTypesByModel: Record<string, string[]> = {};
-      const cachedPricing = readModelsMarketplaceCache(true);
-      const cachedBase = cachedPricing || readModelsMarketplaceCache(false);
-      if (cachedBase) {
-        for (const model of cachedBase) {
-          if (
-            Array.isArray(model.supportedEndpointTypes) &&
-            model.supportedEndpointTypes.length > 0
-          ) {
-            endpointTypesByModel[model.name] = model.supportedEndpointTypes;
-          }
-        }
-      }
-
-      // Apply model whitelist filter if configured
-      const filteredResult: typeof result = {};
-      const filteredModelsWithoutToken: typeof modelsWithoutToken = {};
-      const filteredModelsMissingTokenGroups: typeof modelsMissingTokenGroups =
-        {};
-
-      if (globalAllowedModels.size > 0) {
-        // Filter result
-        for (const [modelName, candidates] of Object.entries(result)) {
-          if (globalAllowedModels.has(modelName.toLowerCase().trim())) {
-            filteredResult[modelName] = candidates;
-          }
-        }
-        // Filter modelsWithoutToken
-        for (const [modelName, accounts] of Object.entries(
-          modelsWithoutToken,
-        )) {
-          if (globalAllowedModels.has(modelName.toLowerCase().trim())) {
-            filteredModelsWithoutToken[modelName] = accounts;
-          }
-        }
-        // Filter modelsMissingTokenGroups
-        for (const [modelName, accounts] of Object.entries(
-          modelsMissingTokenGroups,
-        )) {
-          if (globalAllowedModels.has(modelName.toLowerCase().trim())) {
-            filteredModelsMissingTokenGroups[modelName] = accounts;
-          }
-        }
-      } else {
-        // No whitelist configured, return all models (backward compatible)
-        Object.assign(filteredResult, result);
-        Object.assign(filteredModelsWithoutToken, modelsWithoutToken);
-        Object.assign(
-          filteredModelsMissingTokenGroups,
-          modelsMissingTokenGroups,
-        );
-      }
-
-      return {
-        models: filteredResult,
-        modelsWithoutToken: filteredModelsWithoutToken,
-        modelsMissingTokenGroups: filteredModelsMissingTokenGroups,
-        endpointTypesByModel,
-      };
+      return buildModelTokenCandidatesPayload();
     },
   );
 
