@@ -183,6 +183,12 @@ jobs:
           else
             echo "Route runtime performance report was not generated." >> "$GITHUB_STEP_SUMMARY"
           fi
+          if [ -f test-results/performance/startup/route-startup-memory-report.md ]; then
+            printf '\n' >> "$GITHUB_STEP_SUMMARY"
+            cat test-results/performance/startup/route-startup-memory-report.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf '\nRoute startup memory report was not generated.\n' >> "$GITHUB_STEP_SUMMARY"
+          fi
           if [ -f test-results/performance/throughput/route-runtime-throughput-benchmark-report.md ]; then
             printf '\n' >> "$GITHUB_STEP_SUMMARY"
             cat test-results/performance/throughput/route-runtime-throughput-benchmark-report.md >> "$GITHUB_STEP_SUMMARY"

@@ -48,7 +48,7 @@
     "test:architecture": "vitest run --config vitest.architecture.config.ts --root .",
     "test:e2e": "tsx scripts/dev/run-e2e.ts",
     "test:e2e:install": "playwright install chromium",
-    "test:performance": "node --expose-gc --max-old-space-size=384 --import tsx scripts/dev/route-runtime-performance-gate.ts",
+    "test:performance": "node --expose-gc --max-old-space-size=384 --import tsx scripts/dev/route-runtime-performance-gate.ts && node --expose-gc --max-old-space-size=384 --import tsx scripts/dev/route-startup-memory-gate.ts",
     "bench:performance:matrix": "node --import tsx scripts/dev/route-runtime-performance-matrix.ts",
     "bench:performance:throughput": "node --expose-gc --max-old-space-size=384 --import tsx scripts/dev/route-runtime-throughput-benchmark.ts",
     "bench:performance:http": "node --expose-gc --max-old-space-size=384 --import tsx scripts/dev/route-http-rps-benchmark.ts",

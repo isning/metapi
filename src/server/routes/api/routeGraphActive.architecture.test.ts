@@ -2,6 +2,8 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const source = () => readFileSync(new URL('./tokens.ts', import.meta.url), 'utf8');
+const serverEntrySource = () => readFileSync(new URL('../../index.ts', import.meta.url), 'utf8');
+const sqliteMigrationSource = () => readFileSync(new URL('../../db/migrate.ts', import.meta.url), 'utf8');
 const routeGraphServiceSource = () => readFileSync(new URL('../../services/routeGraphService.ts', import.meta.url), 'utf8');
 const routeTableProjectionServiceSource = () => readFileSync(new URL('../../services/routeTableProjectionService.ts', import.meta.url), 'utf8');
 const statsSource = () => readFileSync(new URL('./stats.ts', import.meta.url), 'utf8');
@@ -126,6 +128,31 @@ describe('route graph active route architecture', () => {
     expect(text).not.toContain('schema.settings');
     expect(text).not.toContain('ROUTE_BINDING_PROJECTION');
     expect(text).not.toContain('route_binding_projection_v1');
+  });
+
+  it('keeps server startup from hydrating full active graph JSON', () => {
+    const text = serverEntrySource();
+
+    expect(text).toContain('syncRouteBindingProjectionsFromRouteTable');
+    expect(text).not.toContain('ensureActiveRouteGraphVersion');
+    expect(text).not.toContain('syncRouteBindingProjectionsFromRouteGraphSource');
+  });
+
+  it('keeps sqlite graph-reference migration row-streamed', () => {
+    const text = sqliteMigrationSource();
+    const start = text.indexOf('function normalizeLegacyRouteGraphSourceEndpointReferences');
+    const end = text.indexOf('function readMigrationRecordsUntilTag', start);
+    const block = text.slice(start, end);
+
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    expect(text).toContain('GRAPH_JSON_MIGRATION_BATCH_SIZE = 1');
+    expect(block).toContain('WHERE id > ?');
+    expect(text).toContain('instr(%COLUMN%');
+    expect(block).toContain('LEGACY_GRAPH_ENDPOINT_REFERENCE_SQL.replaceAll');
+    expect(block).toContain('LIMIT ${GRAPH_JSON_MIGRATION_BATCH_SIZE}');
+    expect(block).not.toContain("SELECT id, source_graph_json FROM route_graph_versions').all()");
+    expect(block).not.toContain("SELECT id, working_graph_json FROM route_graph_drafts').all()");
   });
 
   it('keeps persisted active graphs compact by excluding legacy program bundles', () => {

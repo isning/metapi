@@ -96,6 +96,7 @@ sets.
 Use:
 - `npm run test:performance`
 - `scripts/dev/route-runtime-performance-gate.ts`
+- `scripts/dev/route-startup-memory-gate.ts`
 - `npm run bench:performance:throughput` for auto-concurrency route QPS sweeps
 - `npm run bench:performance:http` for autocannon-based HTTP RPS sweeps
 - `npm run bench:performance:matrix` for exploratory vCPU/worker scaling runs
@@ -103,12 +104,16 @@ Use:
 Guidelines:
 - treat the script as a merge gate, not an exploratory benchmark
 - keep route-runtime budgets measured before upstream network I/O
+- keep server startup covered with a persisted large active graph fixture so
+  startup repair hooks cannot hydrate full graph JSON under a bounded heap
 - publish CPU milliseconds, elapsed QPS, CPU QPS, cache size, and memory data
 - keep `test:performance` deterministic; use benchmark scripts for capacity
   planning, not larger fixed-width guesses
 - keep heap pressure bounded with `--max-old-space-size=384` and explicit GC
 - write the human report to `test-results/performance/route-runtime-performance-report.md`
 - write the machine-readable report to `test-results/performance/route-runtime-performance-report.json`
+- write the startup memory report to
+  `test-results/performance/startup/route-startup-memory-report.md`
 - upload the performance report artifact from CI and append the Markdown report
   plus bounded throughput and matrix snapshot reports to the GitHub step summary
 - tune budget values only with measured evidence

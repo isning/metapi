@@ -102,6 +102,7 @@ describe('harness workflows', () => {
     expect(packageJson.scripts?.['test:integration']).toContain('vitest.integration.config.ts');
     expect(packageJson.scripts?.['test:architecture']).toContain('vitest.architecture.config.ts');
     expect(packageJson.scripts?.['test:performance']).toContain('route-runtime-performance-gate.ts');
+    expect(packageJson.scripts?.['test:performance']).toContain('route-startup-memory-gate.ts');
     expect(packageJson.scripts?.['test:performance']).toContain('--expose-gc');
     expect(packageJson.scripts?.['test:performance']).toContain('--max-old-space-size=384');
     expect(packageJson.scripts?.['bench:performance:throughput']).toContain('route-runtime-throughput-benchmark.ts');
@@ -144,6 +145,7 @@ describe('harness workflows', () => {
     expect(testingFrameworkDoc).toContain('npm run test:architecture');
     expect(testingFrameworkDoc).toContain('npm run test:performance');
     expect(testingFrameworkDoc).toContain('scripts/dev/route-runtime-performance-gate.ts');
+    expect(testingFrameworkDoc).toContain('scripts/dev/route-startup-memory-gate.ts');
     expect(testingFrameworkDoc).toContain('npm run bench:performance:throughput');
     expect(testingFrameworkDoc).toContain('npm run bench:performance:http');
     expect(testingFrameworkDoc).toContain('npm run bench:performance:matrix');
@@ -154,6 +156,7 @@ describe('harness workflows', () => {
     expect(testingFrameworkDoc).toContain('route-runtime-performance-matrix-report.md');
     expect(testingFrameworkDoc).toContain('test-results/performance/route-runtime-performance-report.md');
     expect(testingFrameworkDoc).toContain('test-results/performance/route-runtime-performance-report.json');
+    expect(testingFrameworkDoc).toContain('test-results/performance/startup/route-startup-memory-report.md');
     expect(testingFrameworkDoc).toContain('CPU QPS');
     expect(testingFrameworkDoc).toContain('src/testing/e2eHarness.ts');
     expect(testingFrameworkDoc).toContain('src/testing/e2e/adminPages.ts');

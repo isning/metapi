@@ -738,7 +738,10 @@ route-table scans onto the event loop.
 The executable performance gate is `npm run test:performance`. It seeds at least
 12,800 route groups on an isolated SQLite runtime database, rebuilds route binding
 projections, and measures the public token router selection seam before upstream
-network I/O. The gate currently enforces:
+network I/O. It also runs a real server startup smoke with a persisted large
+active `compiled_graph_json` row under a bounded child heap, so startup repair
+hooks cannot silently reintroduce full active graph hydration. The gate
+currently enforces:
 
 - one cold exact/group decision under 50 ms CPU and 100 ms elapsed;
 - 128 concurrent requests for the same cold model under 75 ms total CPU and at
@@ -753,6 +756,8 @@ network I/O. The gate currently enforces:
   entries;
 - retained routing heap growth under 64 MiB and final gate heap under 256 MiB
   while running Node with `--max-old-space-size=384`.
+- server startup succeeds without reading a 128 MiB persisted active compiled
+  graph payload, with the child process running under a 256 MiB heap cap.
 
 The reported QPS values are routing-decision throughput numbers, not full proxy
 HTTP throughput, because upstream I/O and client streaming are intentionally
@@ -768,6 +773,10 @@ The gate must publish detailed reports on every CI run:
 
 - Markdown: `test-results/performance/route-runtime-performance-report.md`;
 - JSON: `test-results/performance/route-runtime-performance-report.json`;
+- Startup Markdown:
+  `test-results/performance/startup/route-startup-memory-report.md`;
+- Startup JSON:
+  `test-results/performance/startup/route-startup-memory-report.json`;
 - GitHub Actions step summary: append the Markdown report plus bounded
   throughput and matrix snapshot reports when available;
 - GitHub Actions artifact: upload the complete `test-results/performance/`

@@ -92,6 +92,8 @@ describe('route refresh workflow architecture boundaries', () => {
 
     expect(serverEntrySource).not.toMatch(/\brouteRefreshWorkflow\.rebuildRoutesOnly\s*\(/);
     expect(serverEntrySource).not.toMatch(/\brouteRefreshWorkflow\.refreshModelsAndRebuildRoutes\s*\(/);
-    expect(serverEntrySource).toContain('ensureActiveRouteGraphVersion');
+    expect(serverEntrySource).toContain('syncRouteBindingProjectionsFromRouteTable');
+    expect(serverEntrySource).not.toContain('ensureActiveRouteGraphVersion');
+    expect(serverEntrySource).not.toContain('syncRouteBindingProjectionsFromRouteGraphSource');
   });
 });

@@ -57,6 +57,12 @@ type LegacySiteRow = {
 const VERIFIED_BOOTSTRAP_TAG = '0012_account_token_value_status';
 const GRAPH_NATIVE_BOOTSTRAP_TAG = '0027_route_graph_replacement';
 const SQLITE_MIGRATION_RECOVERY_RETRY_BUDGET = 64;
+const GRAPH_JSON_MIGRATION_BATCH_SIZE = 1;
+const LEGACY_GRAPH_ENDPOINT_REFERENCE_SQL = `
+  instr(%COLUMN%, 'route-endpoint:product:route:') > 0
+  OR instr(%COLUMN%, 'route-endpoint:supply:route:') > 0
+  OR instr(%COLUMN%, 'entry:legacy:') > 0
+`;
 const VERIFIED_SCHEMA_MARKERS: SchemaMarker[] = [
   { table: 'sites' },
   { table: 'settings' },
@@ -492,24 +498,50 @@ function normalizeLegacyRouteGraphSourceEndpointReferences(sqlite: Database.Data
   let changedRows = 0;
   const transaction = sqlite.transaction(() => {
     if (tableExists(sqlite, 'route_graph_versions')) {
-      const rows = sqlite.prepare('SELECT id, source_graph_json FROM route_graph_versions').all() as Array<{ id: number; source_graph_json: string | null }>;
+      const select = sqlite.prepare(`
+        SELECT id, source_graph_json
+        FROM route_graph_versions
+        WHERE id > ?
+          AND (${LEGACY_GRAPH_ENDPOINT_REFERENCE_SQL.replaceAll('%COLUMN%', 'source_graph_json')})
+        ORDER BY id
+        LIMIT ${GRAPH_JSON_MIGRATION_BATCH_SIZE}
+      `);
       const update = sqlite.prepare('UPDATE route_graph_versions SET source_graph_json = ? WHERE id = ?');
-      for (const row of rows) {
-        const next = rewriteGraphJson(row.source_graph_json);
-        if (!next) continue;
-        update.run(next, row.id);
-        changedRows += 1;
+      let lastId = 0;
+      for (;;) {
+        const rows = select.all(lastId) as Array<{ id: number; source_graph_json: string | null }>;
+        if (rows.length === 0) break;
+        for (const row of rows) {
+          lastId = Math.max(lastId, Number(row.id) || lastId);
+          const next = rewriteGraphJson(row.source_graph_json);
+          if (!next) continue;
+          update.run(next, row.id);
+          changedRows += 1;
+        }
       }
     }
 
     if (tableExists(sqlite, 'route_graph_drafts')) {
-      const rows = sqlite.prepare('SELECT id, working_graph_json FROM route_graph_drafts').all() as Array<{ id: number; working_graph_json: string | null }>;
+      const select = sqlite.prepare(`
+        SELECT id, working_graph_json
+        FROM route_graph_drafts
+        WHERE id > ?
+          AND (${LEGACY_GRAPH_ENDPOINT_REFERENCE_SQL.replaceAll('%COLUMN%', 'working_graph_json')})
+        ORDER BY id
+        LIMIT ${GRAPH_JSON_MIGRATION_BATCH_SIZE}
+      `);
       const update = sqlite.prepare('UPDATE route_graph_drafts SET working_graph_json = ? WHERE id = ?');
-      for (const row of rows) {
-        const next = rewriteGraphJson(row.working_graph_json);
-        if (!next) continue;
-        update.run(next, row.id);
-        changedRows += 1;
+      let lastId = 0;
+      for (;;) {
+        const rows = select.all(lastId) as Array<{ id: number; working_graph_json: string | null }>;
+        if (rows.length === 0) break;
+        for (const row of rows) {
+          lastId = Math.max(lastId, Number(row.id) || lastId);
+          const next = rewriteGraphJson(row.working_graph_json);
+          if (!next) continue;
+          update.run(next, row.id);
+          changedRows += 1;
+        }
       }
     }
   });

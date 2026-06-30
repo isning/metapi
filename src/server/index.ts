@@ -64,10 +64,7 @@ import {
   stopPricingReferenceCatalogScheduler,
 } from './services/pricingReferenceCatalogService.js';
 import { ensureRuntimeDatabaseReady } from './runtimeDatabaseBootstrap.js';
-import {
-  ensureActiveRouteGraphVersion,
-  syncRouteBindingProjectionsFromRouteGraphSource,
-} from './services/routeGraphService.js';
+import { syncRouteBindingProjectionsFromRouteTable } from './services/routeTableProjectionService.js';
 import { isPublicApiRoute, registerDesktopRoutes } from './desktop.js';
 import { existsSync } from 'fs';
 import { fileURLToPath } from 'url';
@@ -200,8 +197,7 @@ try {
   await migrateSiteApiKeysToAccounts();
   await ensureDefaultSitesSeeded();
   await ensureOauthIdentityBackfill();
-  const activeRouteGraph = await ensureActiveRouteGraphVersion();
-  await syncRouteBindingProjectionsFromRouteGraphSource(activeRouteGraph.sourceGraph, { repairOnly: true });
+  await syncRouteBindingProjectionsFromRouteTable();
 
   console.log('Loaded runtime settings overrides');
 } catch (error) {
