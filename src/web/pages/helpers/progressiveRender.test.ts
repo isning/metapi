@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  getRouteListPageItems,
   clampRouteListPage,
   getRouteListPageNumbers,
   getRouteListPageWindow,
@@ -45,5 +46,33 @@ describe('route list pagination', () => {
     expect(getRouteListPageNumbers(1, 4)).toEqual([1, 2, 3, 4]);
     expect(getRouteListPageNumbers(5, 10)).toEqual([3, 4, 5, 6, 7]);
     expect(getRouteListPageNumbers(10, 10)).toEqual([6, 7, 8, 9, 10]);
+  });
+
+  it('includes first, last, and ellipsis items for long page ranges', () => {
+    expect(getRouteListPageItems(1, 30)).toEqual([
+      { type: 'page', page: 1 },
+      { type: 'page', page: 2 },
+      { type: 'page', page: 3 },
+      { type: 'page', page: 4 },
+      { type: 'ellipsis', key: 'end-ellipsis' },
+      { type: 'page', page: 30 },
+    ]);
+    expect(getRouteListPageItems(15, 30)).toEqual([
+      { type: 'page', page: 1 },
+      { type: 'ellipsis', key: 'start-ellipsis' },
+      { type: 'page', page: 14 },
+      { type: 'page', page: 15 },
+      { type: 'page', page: 16 },
+      { type: 'ellipsis', key: 'end-ellipsis' },
+      { type: 'page', page: 30 },
+    ]);
+    expect(getRouteListPageItems(30, 30)).toEqual([
+      { type: 'page', page: 1 },
+      { type: 'ellipsis', key: 'start-ellipsis' },
+      { type: 'page', page: 27 },
+      { type: 'page', page: 28 },
+      { type: 'page', page: 29 },
+      { type: 'page', page: 30 },
+    ]);
   });
 });

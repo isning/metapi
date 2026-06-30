@@ -21,6 +21,7 @@ import { Skeleton } from '../components/ui/skeleton/index.js';
 import {
   Pagination,
   PaginationContent,
+  PaginationEllipsis,
   PaginationItem,
   PaginationLink,
   PaginationNext,
@@ -38,7 +39,7 @@ import {
   type RouteCandidateView,
   type RouteModelCandidatesByModelName,
 } from './helpers/routeModelCandidatesIndex.js';
-import { getRouteListPageNumbers, getRouteListPageWindow } from './helpers/progressiveRender.js';
+import { getRouteListPageItems, getRouteListPageWindow } from './helpers/progressiveRender.js';
 import {
   buildRouteMissingTokenIndex,
   normalizeMissingTokenModels,
@@ -1645,8 +1646,8 @@ export default function TokenRoutes() {
     setRoutePage((current) => routePageWindow.safePage === current ? current : routePageWindow.safePage);
   }, [routePageWindow.safePage]);
 
-  const routePageNumbers = useMemo(
-    () => getRouteListPageNumbers(routePageWindow.safePage, routePageWindow.totalPages),
+  const routePageItems = useMemo(
+    () => getRouteListPageItems(routePageWindow.safePage, routePageWindow.totalPages),
     [routePageWindow.safePage, routePageWindow.totalPages],
   );
 
@@ -3180,15 +3181,19 @@ export default function TokenRoutes() {
                   aria-label={tr('pages.models.previousPage')}
                 />
               </PaginationItem>
-              {routePageNumbers.map((pageNumber) => (
-                <PaginationItem key={pageNumber}>
-                  <PaginationLink
-                    type="button"
-                    isActive={pageNumber === routePageWindow.safePage}
-                    onClick={() => setRoutePage(pageNumber)}
-                  >
-                    {pageNumber}
-                  </PaginationLink>
+              {routePageItems.map((item) => (
+                <PaginationItem key={item.type === 'page' ? `page-${item.page}` : item.key}>
+                  {item.type === 'ellipsis' ? (
+                    <PaginationEllipsis />
+                  ) : (
+                    <PaginationLink
+                      type="button"
+                      isActive={item.page === routePageWindow.safePage}
+                      onClick={() => setRoutePage(item.page)}
+                    >
+                      {item.page}
+                    </PaginationLink>
+                  )}
                 </PaginationItem>
               ))}
               <PaginationItem>

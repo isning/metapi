@@ -52,3 +52,54 @@ export function getRouteListPageNumbers(currentPage: number, totalPages: number,
   start = Math.min(start, Math.max(1, normalizedTotalPages - count + 1));
   return Array.from({ length: count }, (_, index) => start + index);
 }
+
+export type RouteListPageItem =
+  | { type: 'page'; page: number }
+  | { type: 'ellipsis'; key: 'start-ellipsis' | 'end-ellipsis' };
+
+export function getRouteListPageItems(currentPage: number, totalPages: number, siblingCount = 1): RouteListPageItem[] {
+  const normalizedTotalPages = Math.max(1, Math.trunc(Number.isFinite(totalPages) ? totalPages : 1));
+  const normalizedSiblingCount = Math.max(0, Math.trunc(Number.isFinite(siblingCount) ? siblingCount : 1));
+  const safePage = Math.min(
+    Math.max(1, Math.trunc(Number.isFinite(currentPage) ? currentPage : 1)),
+    normalizedTotalPages,
+  );
+  const visiblePageBudget = 2 + (normalizedSiblingCount * 2) + 3;
+  if (normalizedTotalPages <= visiblePageBudget) {
+    return Array.from({ length: normalizedTotalPages }, (_, index) => ({
+      type: 'page',
+      page: index + 1,
+    }));
+  }
+
+  const pages = new Set<number>([1, normalizedTotalPages]);
+  const siblingStart = Math.max(
+    Math.min(
+      safePage - normalizedSiblingCount,
+      normalizedTotalPages - 1 - (normalizedSiblingCount * 2),
+    ),
+    2,
+  );
+  const siblingEnd = Math.min(
+    Math.max(
+      safePage + normalizedSiblingCount,
+      2 + (normalizedSiblingCount * 2),
+    ),
+    normalizedTotalPages - 1,
+  );
+
+  for (let page = siblingStart; page <= siblingEnd; page += 1) {
+    pages.add(page);
+  }
+
+  const sortedPages = Array.from(pages).sort((left, right) => left - right);
+  const items: RouteListPageItem[] = [];
+  for (const page of sortedPages) {
+    const previous = items[items.length - 1];
+    if (previous?.type === 'page' && page - previous.page > 1) {
+      items.push({ type: 'ellipsis', key: previous.page === 1 ? 'start-ellipsis' : 'end-ellipsis' });
+    }
+    items.push({ type: 'page', page });
+  }
+  return items;
+}
