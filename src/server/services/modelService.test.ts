@@ -133,6 +133,233 @@ describe('rebuildTokenRoutesFromAvailability', () => {
     });
   });
 
+  it('coalesces route groups and entries case-insensitively while preserving upstream model casing per source', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'case-model-site',
+      url: 'https://case-model.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+
+    const upperAccount = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'case-upper',
+      accessToken: 'upper-access',
+      status: 'active',
+    }).returning().get();
+    const lowerAccount = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'case-lower',
+      accessToken: 'lower-access',
+      status: 'active',
+    }).returning().get();
+
+    const upperToken = await db.insert(schema.accountTokens).values({
+      accountId: upperAccount.id,
+      name: 'upper-token',
+      token: 'sk-upper',
+      source: 'manual',
+      enabled: true,
+      isDefault: true,
+    }).returning().get();
+    const lowerToken = await db.insert(schema.accountTokens).values({
+      accountId: lowerAccount.id,
+      name: 'lower-token',
+      token: 'sk-lower',
+      source: 'manual',
+      enabled: true,
+      isDefault: true,
+    }).returning().get();
+
+    await db.insert(schema.tokenModelAvailability).values([
+      {
+        tokenId: upperToken.id,
+        modelName: 'DeepSeek-v4-Flash',
+        available: true,
+        latencyMs: 100,
+        checkedAt: '2026-06-30T00:00:00.000Z',
+      },
+      {
+        tokenId: lowerToken.id,
+        modelName: 'deepseek-v4-flash',
+        available: true,
+        latencyMs: 120,
+        checkedAt: '2026-06-30T00:00:00.000Z',
+      },
+    ]).run();
+
+    const rebuild = await rebuildTokenRoutesFromAvailability();
+
+    expect(rebuild.models).toBe(1);
+
+    const routeGroups = await db.select().from(schema.routeGroups)
+      .where(eq(schema.routeGroups.kind, 'automatic'))
+      .all();
+    expect(routeGroups.map((group) => group.groupKey)).toEqual(['upstream:deepseek-v4-flash']);
+    expect(routeGroups[0]).toMatchObject({
+      upstreamModelName: 'deepseek-v4-flash',
+      normalizedModelName: 'deepseek-v4-flash',
+      publicModelName: 'deepseek-v4-flash',
+      displayName: 'deepseek-v4-flash',
+    });
+
+    const bindings = await loadRouteGraphRouteTableBindings();
+    const exposedModels = Array.from(bindings.values())
+      .map((binding) => binding.modelPattern)
+      .filter((model) => model.toLowerCase() === 'deepseek-v4-flash');
+    expect(exposedModels).toEqual(['deepseek-v4-flash']);
+
+    const route = await findRouteByExposedModel('deepseek-v4-flash');
+    expect(route).toBeDefined();
+
+    const targets = await db.select().from(schema.routeEndpointTargets)
+      .where(eq(schema.routeEndpointTargets.routeId, route!.id))
+      .all();
+    expect(targets).toHaveLength(2);
+    expect(targets.map((target) => target.sourceModel).sort()).toEqual([
+      'DeepSeek-v4-Flash',
+      'deepseek-v4-flash',
+    ]);
+
+    const supplyEndpoints = await db.select().from(schema.routeSupplyEndpoints).all();
+    expect(supplyEndpoints).toHaveLength(2);
+    expect(supplyEndpoints.map((endpoint) => endpoint.supplyKey).sort()).toEqual([
+      `upstream:deepseek-v4-flash|${lowerAccount.id}:${lowerToken.id}`,
+      `upstream:deepseek-v4-flash|${upperAccount.id}:${upperToken.id}`,
+    ].sort());
+    expect(supplyEndpoints.map((endpoint) => endpoint.upstreamModelName).sort()).toEqual([
+      'DeepSeek-v4-Flash',
+      'deepseek-v4-flash',
+    ]);
+  });
+
+  it('removes preexisting automatic route group case variants during rebuild', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'case-variant-existing-site',
+      url: 'https://case-variant-existing.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+
+    const upperAccount = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'existing-upper',
+      accessToken: 'existing-upper-access',
+      status: 'active',
+    }).returning().get();
+    const lowerAccount = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'existing-lower',
+      accessToken: 'existing-lower-access',
+      status: 'active',
+    }).returning().get();
+    const upperToken = await db.insert(schema.accountTokens).values({
+      accountId: upperAccount.id,
+      name: 'existing-upper-token',
+      token: 'sk-existing-upper',
+      source: 'manual',
+      enabled: true,
+      isDefault: true,
+    }).returning().get();
+    const lowerToken = await db.insert(schema.accountTokens).values({
+      accountId: lowerAccount.id,
+      name: 'existing-lower-token',
+      token: 'sk-existing-lower',
+      source: 'manual',
+      enabled: true,
+      isDefault: true,
+    }).returning().get();
+
+    await db.insert(schema.tokenModelAvailability).values([
+      { tokenId: upperToken.id, modelName: 'DeepSeek-v4-Flash', available: true },
+      { tokenId: lowerToken.id, modelName: 'deepseek-v4-flash', available: true },
+    ]).run();
+
+    const canonicalRoute = await db.insert(schema.tokenRoutes).values({
+      displayName: 'deepseek-v4-flash',
+      enabled: true,
+    }).returning().get();
+    await db.insert(schema.routeGroups).values({
+      kind: 'automatic',
+      groupKey: 'upstream:deepseek-v4-flash',
+      upstreamModelName: 'deepseek-v4-flash',
+      normalizedModelName: 'deepseek-v4-flash',
+      publicModelName: 'deepseek-v4-flash',
+      displayName: 'deepseek-v4-flash',
+      visibility: 'public',
+      enabled: true,
+      routingStrategy: 'weighted',
+      sourceMode: 'auto',
+      legacyRouteId: canonicalRoute.id,
+      syncStatus: 'active',
+    }).run();
+    await db.insert(schema.routeEndpointTargets).values({
+      routeId: canonicalRoute.id,
+      accountId: lowerAccount.id,
+      tokenId: lowerToken.id,
+      sourceModel: 'deepseek-v4-flash',
+      priority: 0,
+      weight: 10,
+      enabled: true,
+      manualOverride: false,
+    }).run();
+
+    const staleRoute = await db.insert(schema.tokenRoutes).values({
+      displayName: 'DeepSeek-v4-Flash',
+      enabled: true,
+    }).returning().get();
+    await db.insert(schema.routeGroups).values({
+      kind: 'automatic',
+      groupKey: 'upstream:DeepSeek-v4-Flash',
+      upstreamModelName: 'DeepSeek-v4-Flash',
+      normalizedModelName: 'deepseek-v4-flash',
+      publicModelName: 'DeepSeek-v4-Flash',
+      displayName: 'DeepSeek-v4-Flash',
+      visibility: 'public',
+      enabled: true,
+      routingStrategy: 'weighted',
+      sourceMode: 'auto',
+      legacyRouteId: staleRoute.id,
+      syncStatus: 'active',
+    }).run();
+    await db.insert(schema.routeEndpointTargets).values({
+      routeId: staleRoute.id,
+      accountId: upperAccount.id,
+      tokenId: upperToken.id,
+      sourceModel: 'DeepSeek-v4-Flash',
+      priority: 0,
+      weight: 10,
+      enabled: true,
+      manualOverride: false,
+    }).run();
+
+    const rebuild = await rebuildTokenRoutesFromAvailability();
+
+    expect(rebuild.models).toBe(1);
+
+    const staleRouteAfter = await db.select().from(schema.tokenRoutes)
+      .where(eq(schema.tokenRoutes.id, staleRoute.id))
+      .get();
+    expect(staleRouteAfter).toBeUndefined();
+
+    const routeGroups = await db.select().from(schema.routeGroups)
+      .where(eq(schema.routeGroups.kind, 'automatic'))
+      .all();
+    expect(routeGroups.map((group) => group.groupKey)).toEqual(['upstream:deepseek-v4-flash']);
+
+    const route = await findRouteByExposedModel('deepseek-v4-flash');
+    expect(route).toBeDefined();
+    expect(route?.id).toBe(canonicalRoute.id);
+    const targets = await db.select().from(schema.routeEndpointTargets)
+      .where(eq(schema.routeEndpointTargets.routeId, route!.id))
+      .all();
+    expect(targets).toHaveLength(2);
+    expect(targets.map((target) => target.sourceModel).sort()).toEqual([
+      'DeepSeek-v4-Flash',
+      'deepseek-v4-flash',
+    ]);
+  });
+
   it('ignores hidden account_tokens for direct apikey connections when rebuilding routes', async () => {
     const site = await db.insert(schema.sites).values({
       name: 'apikey-legacy-site',

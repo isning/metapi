@@ -6,6 +6,7 @@ import {
   loadRouteBindingProjectionsForRouteIds,
   syncRouteBindingProjectionsFromRouteTable,
   upsertRouteBindingProjections,
+  type RouteBindingProjection,
 } from './routeTableProjectionService.js';
 import {
   buildRouteGraphSourceFromLegacyRoutes,
@@ -33,6 +34,12 @@ import {
   type RouteGraphVisibility,
   type RouteGraphSource,
 } from '../../shared/routeGraph.js';
+import {
+  legacyEntryRouteEndpointIdRouteId,
+  legacySupplyRouteEndpointIdRouteId,
+  normalizeStoredRouteEndpointId,
+  productRouteEndpointIdRouteId,
+} from '../shared/routeGraphLegacyEndpointReferences.js';
 
 export type ActiveRouteGraphVersion = {
   id: number;
@@ -197,13 +204,13 @@ const EMPTY_ROUTE_GRAPH_SOURCE = parseRouteGraphSource(null);
 let activeRouteGraphCache: {
   versionId: number;
   version: ActiveRouteGraphVersion;
-  compactedIdentity: boolean;
+  needsRouteTableReconciliation: boolean;
 } | null = null;
 
 let activeRouteGraphSourceCache: {
   versionId: number;
   version: ActiveRouteGraphSourceVersion;
-  compactedIdentity: boolean;
+  needsRouteTableReconciliation: boolean;
 } | null = null;
 
 let activeRouteGraphRuntimeCache: {
@@ -308,11 +315,11 @@ function runtimeVersionFromActiveVersion(input: ActiveRouteGraphVersion): Active
   };
 }
 
-function cacheActiveSourceVersion(input: ActiveRouteGraphSourceVersion, compactedIdentity?: boolean): void {
+function cacheActiveSourceVersion(input: ActiveRouteGraphSourceVersion, needsRouteTableReconciliation?: boolean): void {
   activeRouteGraphSourceCache = {
     versionId: input.id,
     version: input,
-    compactedIdentity: compactedIdentity ?? hasCompactedRouteEndpointIdentity(input.sourceGraph),
+    needsRouteTableReconciliation: needsRouteTableReconciliation ?? sourceGraphNeedsRouteTableReconciliation(input.sourceGraph),
   };
 }
 
@@ -465,6 +472,36 @@ function hasCompactedRouteEndpointIdentity(sourceGraph: RouteGraphSource): boole
   });
 }
 
+function hasLegacySupplyRouteEndpointReference(sourceGraph: RouteGraphSource): boolean {
+  const isLegacySupplyRouteEndpointId = (value: unknown): boolean => (
+    /^route-endpoint:supply:route:\d+$/.test(String(value || '').trim())
+  );
+  if (sourceGraph.nodes.some((node) => (
+    isLegacySupplyRouteEndpointId(node.id)
+    || isLegacySupplyRouteEndpointId((node as { routeEndpointId?: unknown }).routeEndpointId)
+    || isLegacySupplyRouteEndpointId((node as { endpointId?: unknown }).endpointId)
+  ))) {
+    return true;
+  }
+  if (sourceGraph.edges.some((edge) => (
+    isLegacySupplyRouteEndpointId(edge.sourceNodeId)
+    || isLegacySupplyRouteEndpointId(edge.targetNodeId)
+  ))) {
+    return true;
+  }
+  return (sourceGraph.macros || []).some((macro) => (
+    (macro.config.groups || []).some((group) => (
+      group.input.kind === 'route_endpoints'
+      && group.input.endpointIds.some(isLegacySupplyRouteEndpointId)
+    ))
+  ));
+}
+
+function sourceGraphNeedsRouteTableReconciliation(sourceGraph: RouteGraphSource): boolean {
+  return hasCompactedRouteEndpointIdentity(sourceGraph)
+    || hasLegacySupplyRouteEndpointReference(sourceGraph);
+}
+
 function nowIso(): string {
   return new Date().toISOString();
 }
@@ -530,6 +567,10 @@ function buildCredentialFingerprint(input: {
         isDefault: token?.isDefault === true,
       },
   });
+}
+
+function normalizeStoredRouteEndpointTargetId(value: unknown): string | null {
+  return normalizeStoredRouteEndpointId(value);
 }
 
 function buildRouteEndpointIdentityFromTargets(targets: Array<Record<string, unknown>>, fallbackModel = ''): Record<string, unknown> | undefined {
@@ -882,6 +923,7 @@ export async function buildRouteGraphSourceFromRouteTable(
     const token = routeTargetRow.tokenId ? tokenById.get(routeTargetRow.tokenId) || null : null;
     const site = account ? siteById.get(account.siteId) || null : null;
     const credentialFingerprint = buildCredentialFingerprint({ site, account, token });
+    const storedRouteEndpointId = normalizeStoredRouteEndpointTargetId(routeTargetRow.routeEndpointId);
     const stableEndpointIdentity = {
       kind: 'upstream_model',
       provider: site?.platform || 'unknown',
@@ -939,6 +981,7 @@ export async function buildRouteGraphSourceFromRouteTable(
     endpointStableTargetsByRouteId.set(routeTargetRow.routeId, existingIdentities);
     const existingSupplySpecs = supplyEndpointSpecsByRouteId.get(routeTargetRow.routeId) || [];
     existingSupplySpecs.push({
+      ...(storedRouteEndpointId ? { endpointId: storedRouteEndpointId } : {}),
       endpointIdentity: stableEndpointIdentity,
       endpointLocalRefs: [localRef],
       targets: [target],
@@ -1190,13 +1233,7 @@ export async function publishRouteGraphSource(input: {
   if (shouldSyncRouteTableProjection) {
     await syncRouteBindingProjectionsFromRouteTable();
   } else {
-    const routeBindings = collectMatchAndBackendByLegacyRouteId(compiled.source);
-    await upsertRouteBindingProjections(Array.from(routeBindings.entries()).map(([routeId, binding]) => ({
-      routeId,
-      match: binding.match,
-      backend: binding.backend,
-      visibility: binding.visibility,
-    })));
+    await syncRouteBindingProjectionsFromRouteGraphSource(compiled.source, { includeCompiledFallback: true });
   }
 
   invalidateRouteGraphReadCaches();
@@ -1225,10 +1262,10 @@ export async function publishRouteGraphSource(input: {
 export async function ensureActiveRouteGraphVersion(): Promise<ActiveRouteGraphVersion> {
   const active = await getActiveRouteGraphVersion();
   if (active) {
-    const compactedIdentity = activeRouteGraphCache?.versionId === active.id
-      ? activeRouteGraphCache.compactedIdentity
-      : hasCompactedRouteEndpointIdentity(active.sourceGraph);
-    if (compactedIdentity) {
+    const needsRouteTableReconciliation = activeRouteGraphCache?.versionId === active.id
+      ? activeRouteGraphCache.needsRouteTableReconciliation
+      : sourceGraphNeedsRouteTableReconciliation(active.sourceGraph);
+    if (needsRouteTableReconciliation) {
       return await reconcileActiveGraphWithRouteTable(active, new Map(), { allowDiagnostics: true });
     }
     return active;
@@ -1286,9 +1323,9 @@ export async function getActiveRouteGraphVersion(): Promise<ActiveRouteGraphVers
   activeRouteGraphCache = {
     versionId: row.id,
     version,
-    compactedIdentity: hasCompactedRouteEndpointIdentity(sourceGraph),
+    needsRouteTableReconciliation: sourceGraphNeedsRouteTableReconciliation(sourceGraph),
   };
-  cacheActiveSourceVersion(sourceVersionFromActiveVersion(version), activeRouteGraphCache.compactedIdentity);
+  cacheActiveSourceVersion(sourceVersionFromActiveVersion(version), activeRouteGraphCache.needsRouteTableReconciliation);
   activeRouteGraphRuntimeCache = {
     versionId: row.id,
     version: runtimeVersionFromActiveVersion(version),
@@ -1308,7 +1345,7 @@ export async function getActiveRouteGraphSourceVersion(): Promise<ActiveRouteGra
   }
   if (activeRouteGraphCache?.versionId === versionId) {
     const sourceVersion = sourceVersionFromActiveVersion(activeRouteGraphCache.version);
-    cacheActiveSourceVersion(sourceVersion, activeRouteGraphCache.compactedIdentity);
+    cacheActiveSourceVersion(sourceVersion, activeRouteGraphCache.needsRouteTableReconciliation);
     return sourceVersion;
   }
   const row = await db.select({
@@ -1970,7 +2007,7 @@ function routeEndpointTargetCatalogRowToItem(
     tokenSource: row.account_tokens?.source || '',
     model: sourceModel,
   };
-  const endpointId = String(target.routeEndpointId || '').trim()
+  const endpointId = normalizeStoredRouteEndpointTargetId(target.routeEndpointId)
     || routeGraphSupplyEndpointIdFromIdentity(endpointIdentity, target.routeId);
   const metadata = {
     source: input.metadataSource,
@@ -2293,10 +2330,18 @@ export async function resolveRouteEndpointSourceRouteIds(endpointIdsInput: unkno
   const routeIds: number[] = [];
   const missingEndpointIds: string[] = [];
   const unresolvedEndpointIds: string[] = [];
+  const routeOnlyEndpointAliases: Array<{ endpointId: string; routeId: number }> = [];
   for (const endpointId of endpointIds) {
     const endpoint = endpointsById.get(endpointId);
     if (!endpoint) {
-      missingEndpointIds.push(endpointId);
+      const aliasRouteId = productRouteEndpointIdRouteId(endpointId)
+        || legacySupplyRouteEndpointIdRouteId(endpointId)
+        || legacyEntryRouteEndpointIdRouteId(endpointId);
+      if (aliasRouteId) {
+        routeOnlyEndpointAliases.push({ endpointId, routeId: aliasRouteId });
+      } else {
+        missingEndpointIds.push(endpointId);
+      }
       continue;
     }
     if (endpoint.resolutionStatus === 'unresolved') {
@@ -2313,6 +2358,21 @@ export async function resolveRouteEndpointSourceRouteIds(endpointIdsInput: unkno
       continue;
     }
     unresolvedEndpointIds.push(endpointId);
+  }
+  if (routeOnlyEndpointAliases.length > 0) {
+    const aliasRouteIds = Array.from(new Set(routeOnlyEndpointAliases.map((item) => item.routeId)));
+    const existingRows = await db.select({ id: schema.tokenRoutes.id })
+      .from(schema.tokenRoutes)
+      .where(inArray(schema.tokenRoutes.id, aliasRouteIds))
+      .all();
+    const existingRouteIds = new Set(existingRows.map((row) => row.id));
+    for (const alias of routeOnlyEndpointAliases) {
+      if (existingRouteIds.has(alias.routeId)) {
+        routeIds.push(alias.routeId);
+      } else {
+        missingEndpointIds.push(alias.endpointId);
+      }
+    }
   }
   return {
     routeIds: Array.from(new Set(routeIds)),
@@ -2385,6 +2445,103 @@ function loadRouteBindingsFromSourceGraph(sourceGraph: RouteGraphSource): Map<nu
   return bindings;
 }
 
+function fallbackRouteBindingFromCompiledRouteGraph(
+  routeId: number,
+  binding: {
+    match: RouteGraphMatchSpec;
+    backend: RouteGraphBackendSpec;
+    visibility: RouteGraphVisibility;
+  },
+): RouteGraphRouteBinding {
+  const backend = normalizeRouteGraphBackendSpec(binding.backend);
+  const sourceRouteIds = backend.kind === 'routes' ? backend.routeIds : [];
+  const modelPattern = deriveLegacyModelPatternFromSpecs(binding.match, backend);
+  return {
+    routeId,
+    entryNodeId: legacyRouteIdToRouteGraphEntryNodeId(routeId),
+    match: binding.match,
+    backend,
+    visibility: binding.visibility,
+    sourceRouteIds,
+    exposedModelName: modelPattern,
+    exactModelName: backend.kind === 'routes' ? '' : binding.match.requestedModelPattern || '',
+    routeMode: backend.kind === 'routes' ? 'explicit_group' : 'pattern',
+  };
+}
+
+function loadRouteBindingProjectionBindingsFromSourceGraph(
+  sourceGraph: RouteGraphSource,
+  options: { includeCompiledFallback?: boolean } = {},
+): Map<number, RouteGraphRouteBinding> {
+  const bindings = loadRouteBindingsFromSourceGraph(sourceGraph);
+  if (!options.includeCompiledFallback) return bindings;
+  const compiledFallbackBindings = collectMatchAndBackendByLegacyRouteId(sourceGraph);
+  for (const [routeId, binding] of compiledFallbackBindings) {
+    if (bindings.has(routeId)) continue;
+    bindings.set(routeId, fallbackRouteBindingFromCompiledRouteGraph(routeId, binding));
+  }
+  return bindings;
+}
+
+function routeGraphBindingToProjectionInput(binding: RouteGraphRouteBinding): {
+  routeId: number;
+  match: RouteGraphMatchSpec;
+  backend: RouteGraphBackendSpec;
+  visibility: RouteGraphVisibility;
+} {
+  return {
+    routeId: binding.routeId,
+    match: binding.match,
+    backend: binding.backend,
+    visibility: binding.visibility,
+  };
+}
+
+function projectionMatchesRouteGraphBinding(
+  projection: RouteBindingProjection,
+  binding: RouteGraphRouteBinding,
+): boolean {
+  return projection.routeMode === binding.routeMode
+    && projection.visibility === binding.visibility
+    && JSON.stringify(projection.match) === JSON.stringify(binding.match)
+    && JSON.stringify(projection.backend) === JSON.stringify(binding.backend)
+    && JSON.stringify(projection.sourceRouteIds) === JSON.stringify(binding.sourceRouteIds);
+}
+
+export async function syncRouteBindingProjectionsFromRouteGraphSource(
+  sourceGraph: RouteGraphSource,
+  options: { repairOnly?: boolean; includeCompiledFallback?: boolean } = {},
+): Promise<{ checked: number; upserted: number }> {
+  const bindings = loadRouteBindingProjectionBindingsFromSourceGraph(sourceGraph, {
+    includeCompiledFallback: options.includeCompiledFallback,
+  });
+  const routeIds = Array.from(bindings.keys());
+  if (routeIds.length === 0) return { checked: 0, upserted: 0 };
+
+  let bindingsToUpsert = Array.from(bindings.values());
+  if (options.repairOnly) {
+    const existingProjections = await loadRouteBindingProjectionsForRouteIds(routeIds);
+    bindingsToUpsert = bindingsToUpsert.filter((binding) => {
+      const existing = existingProjections.get(binding.routeId);
+      return !existing || !projectionMatchesRouteGraphBinding(existing, binding);
+    });
+  }
+
+  if (bindingsToUpsert.length > 0) {
+    await upsertRouteBindingProjections(bindingsToUpsert.map(routeGraphBindingToProjectionInput));
+  }
+
+  return { checked: routeIds.length, upserted: bindingsToUpsert.length };
+}
+
+export async function syncRouteBindingProjectionsFromActiveRouteGraph(
+  options: { repairOnly?: boolean; includeCompiledFallback?: boolean } = {},
+): Promise<{ checked: number; upserted: number }> {
+  const active = await getActiveRouteGraphVersion();
+  if (!active) return { checked: 0, upserted: 0 };
+  return await syncRouteBindingProjectionsFromRouteGraphSource(active.sourceGraph, options);
+}
+
 export async function loadActiveRouteGraphRouteBindings(): Promise<Map<number, RouteGraphRouteBinding>> {
   const activeVersionId = await getActiveRouteGraphVersionId();
   if (activeVersionId && activeRouteGraphBindingsCache?.versionId === activeVersionId) {
@@ -2392,7 +2549,7 @@ export async function loadActiveRouteGraphRouteBindings(): Promise<Map<number, R
   }
   const activeSource = await getActiveRouteGraphSourceVersion() ?? await ensureActiveRouteGraphSourceVersion();
   if (activeSource) {
-    const sourceBindings = loadRouteBindingsFromSourceGraph(activeSource.sourceGraph);
+    const sourceBindings = loadRouteBindingProjectionBindingsFromSourceGraph(activeSource.sourceGraph);
     if (sourceBindings.size > 0) {
       activeRouteGraphBindingsCache = {
         versionId: activeSource.id,

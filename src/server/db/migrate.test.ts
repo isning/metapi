@@ -6,6 +6,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+vi.setConfig({ testTimeout: 20_000 });
+
 type MigrationJournalEntry = {
   tag: string;
   when: number;
@@ -776,6 +778,303 @@ describe('sqlite migrate bootstrap', () => {
       { id: 128, display_name: null, routing_strategy: 'weighted' },
     ]);
 
+    verified.close();
+  });
+
+  it('normalizes persisted manual group source endpoint references during migrate', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'metapi-migrate-route-graph-endpoint-refs-'));
+    const dbPath = join(dataDir, 'hub.db');
+    const sqlite = new Database(dbPath);
+    const journalEntries = readMigrationJournalEntries();
+    const graph = {
+      version: 1,
+      nodes: [],
+      edges: [],
+      macros: [
+        {
+          id: 'route:300:model-group',
+          kind: 'candidate_selector',
+          enabled: true,
+          visibility: 'public',
+          ownership: 'manual',
+          config: {
+            surface: {
+              entry: {
+                kind: 'external',
+                visibility: 'public',
+                match: { kind: 'model', requestedModelPattern: '', displayName: 'manual-group' },
+              },
+              output: 'route',
+            },
+            policy: { strategy: 'weighted' },
+            groups: [
+              {
+                id: 'source:127',
+                enabled: true,
+                priority: 0,
+                input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:product:route:127'] },
+              },
+              {
+                id: 'source:128',
+                enabled: true,
+                priority: 1,
+                input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:supply:route:128'] },
+              },
+              {
+                id: 'source:301',
+                enabled: true,
+                priority: 2,
+                input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:product:route:301'] },
+              },
+            ],
+          },
+        },
+      ],
+    };
+
+    sqlite.exec(`
+      CREATE TABLE token_routes (
+        id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+        display_name text,
+        display_icon text,
+        model_mapping text,
+        decision_snapshot text,
+        decision_refreshed_at text,
+        routing_strategy text DEFAULT 'weighted',
+        enabled integer DEFAULT true,
+        created_at text DEFAULT (datetime('now')),
+        updated_at text DEFAULT (datetime('now'))
+      );
+      INSERT INTO token_routes (id, display_name, routing_strategy, enabled)
+      VALUES
+        (127, NULL, 'weighted', 1),
+        (128, NULL, 'weighted', 1),
+        (300, 'manual-group', 'weighted', 1),
+        (301, 'nested-group', 'weighted', 1);
+
+      CREATE TABLE sites (
+        id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+        name text NOT NULL,
+        url text NOT NULL,
+        platform text DEFAULT 'openai'
+      );
+      INSERT INTO sites (id, name, url, platform)
+      VALUES (1, 'route-site', 'https://route.example', 'openai');
+
+      CREATE TABLE accounts (
+        id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+        site_id integer NOT NULL,
+        username text,
+        api_token text,
+        access_token text,
+        oauth_provider text,
+        oauth_account_key text,
+        oauth_project_id text
+      );
+      INSERT INTO accounts (id, site_id, username, access_token)
+      VALUES (1, 1, 'route-account', 'route-access-token');
+
+      CREATE TABLE account_tokens (
+        id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+        account_id integer NOT NULL,
+        name text,
+        token text,
+        token_group text,
+        source text,
+        is_default integer DEFAULT false
+      );
+      INSERT INTO account_tokens (id, account_id, name, token, token_group, source, is_default)
+      VALUES (1, 1, 'route-token', 'sk-route-token', 'default', 'manual', 1);
+
+      CREATE TABLE route_group_sources (
+        id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+        group_route_id integer NOT NULL,
+        source_route_id integer NOT NULL
+      );
+      INSERT INTO route_group_sources (group_route_id, source_route_id)
+      VALUES
+        (300, 127),
+        (300, 128),
+        (301, 127);
+
+      CREATE TABLE route_binding_projections (
+        route_id integer PRIMARY KEY NOT NULL,
+        model_pattern text NOT NULL
+      );
+      INSERT INTO route_binding_projections (route_id, model_pattern)
+      VALUES
+        (127, 'legacy-source-127'),
+        (128, 'legacy-source-128');
+
+      CREATE TABLE route_graph_versions (
+        id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+        version integer NOT NULL,
+        source_graph_json text NOT NULL,
+        compiled_graph_json text NOT NULL,
+        status text DEFAULT 'archived' NOT NULL,
+        created_by text DEFAULT 'system',
+        created_at text DEFAULT (datetime('now')),
+        activated_at text
+      );
+      CREATE TABLE route_graph_drafts (
+        id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+        base_version integer,
+        working_graph_json text NOT NULL,
+        status text DEFAULT 'active' NOT NULL,
+        diagnostics_json text,
+        updated_at text DEFAULT (datetime('now'))
+      );
+      CREATE TABLE route_graph_active_version (
+        id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+        version_id integer NOT NULL,
+        updated_at text DEFAULT (datetime('now'))
+      );
+      CREATE TABLE route_endpoint_targets (
+        id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+        route_id integer NOT NULL,
+        route_endpoint_id text,
+        account_id integer NOT NULL,
+        token_id integer,
+        source_model text,
+        priority integer DEFAULT 0,
+        weight integer DEFAULT 10,
+        enabled integer DEFAULT true,
+        manual_override integer DEFAULT false
+      );
+      INSERT INTO route_endpoint_targets (id, route_id, route_endpoint_id, account_id, token_id, source_model, priority, weight, enabled, manual_override)
+      VALUES
+        (1001, 127, 'entry:legacy:127', 1, 1, NULL, 0, 10, 1, 1),
+        (1002, 128, 'route-endpoint:supply:route:128', 1, 1, NULL, 1, 10, 1, 1);
+    `);
+    sqlite.prepare(`
+      INSERT INTO route_graph_versions (id, version, source_graph_json, compiled_graph_json, status)
+      VALUES (1, 1, ?, '{}', 'active')
+    `).run(JSON.stringify(graph));
+    sqlite.prepare(`
+      INSERT INTO route_graph_drafts (id, base_version, working_graph_json, status, diagnostics_json)
+      VALUES (1, 1, ?, 'active', '[]')
+    `).run(JSON.stringify(graph));
+    sqlite.prepare('INSERT INTO route_graph_active_version (id, version_id) VALUES (1, 1)').run();
+    recordAppliedMigrations(sqlite, journalEntries);
+    sqlite.close();
+
+    process.env.DATA_DIR = dataDir;
+    vi.resetModules();
+
+    await expect(import('./migrate.js')).resolves.toMatchObject({
+      runSqliteMigrations: expect.any(Function),
+    });
+
+    const verified = new Database(dbPath, { readonly: true });
+    const version = verified
+      .prepare('SELECT source_graph_json FROM route_graph_versions WHERE id = 1')
+      .get() as { source_graph_json: string };
+    const draft = verified
+      .prepare('SELECT working_graph_json FROM route_graph_drafts WHERE id = 1')
+      .get() as { working_graph_json: string };
+
+    for (const raw of [version.source_graph_json, draft.working_graph_json]) {
+      expect(raw).toContain('route-endpoint:supply:upstream-model:');
+      expect(raw).toContain('legacy-source-127');
+      expect(raw).toContain('legacy-source-128');
+      expect(raw).not.toContain('route-endpoint:product:route:127');
+      expect(raw).not.toContain('route-endpoint:supply:route:127');
+      expect(raw).not.toContain('route-endpoint:supply:route:128');
+      expect(raw).not.toContain('entry:legacy:127');
+      expect(raw).toContain('route-endpoint:product:route:301');
+      expect(raw).not.toContain('route-endpoint:supply:route:301');
+    }
+    const targetEndpointRows = verified
+      .prepare('SELECT route_endpoint_id FROM route_endpoint_targets ORDER BY id')
+      .all() as Array<{ route_endpoint_id: string | null }>;
+    expect(targetEndpointRows).toEqual([{ route_endpoint_id: null }, { route_endpoint_id: null }]);
+    verified.close();
+  });
+
+  it('does not guess route graph endpoint reference normalization before group source metadata exists', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'metapi-migrate-route-graph-endpoint-refs-no-sources-'));
+    const dbPath = join(dataDir, 'hub.db');
+    const sqlite = new Database(dbPath);
+    const journalEntries = readMigrationJournalEntries();
+    const graph = {
+      version: 1,
+      nodes: [],
+      edges: [],
+      macros: [
+        {
+          id: 'route:300:model-group',
+          kind: 'candidate_selector',
+          enabled: true,
+          visibility: 'public',
+          ownership: 'manual',
+          config: {
+            surface: {
+              entry: {
+                kind: 'external',
+                visibility: 'public',
+                match: { kind: 'model', requestedModelPattern: '', displayName: 'manual-group' },
+              },
+              output: 'route',
+            },
+            policy: { strategy: 'weighted' },
+            groups: [
+              {
+                id: 'source:127',
+                enabled: true,
+                priority: 0,
+                input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:product:route:127'] },
+              },
+            ],
+          },
+        },
+      ],
+    };
+
+    sqlite.exec(`
+      CREATE TABLE token_routes (
+        id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+        display_name text,
+        display_icon text,
+        model_mapping text,
+        decision_snapshot text,
+        decision_refreshed_at text,
+        routing_strategy text DEFAULT 'weighted',
+        enabled integer DEFAULT true,
+        created_at text DEFAULT (datetime('now')),
+        updated_at text DEFAULT (datetime('now'))
+      );
+      CREATE TABLE route_graph_versions (
+        id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+        version integer NOT NULL,
+        source_graph_json text NOT NULL,
+        compiled_graph_json text NOT NULL,
+        status text DEFAULT 'archived' NOT NULL,
+        created_by text DEFAULT 'system',
+        created_at text DEFAULT (datetime('now')),
+        activated_at text
+      );
+    `);
+    sqlite.prepare(`
+      INSERT INTO route_graph_versions (id, version, source_graph_json, compiled_graph_json, status)
+      VALUES (1, 1, ?, '{}', 'active')
+    `).run(JSON.stringify(graph));
+    recordAppliedMigrations(sqlite, journalEntries);
+    sqlite.close();
+
+    process.env.DATA_DIR = dataDir;
+    vi.resetModules();
+
+    await expect(import('./migrate.js')).resolves.toMatchObject({
+      runSqliteMigrations: expect.any(Function),
+    });
+
+    const verified = new Database(dbPath, { readonly: true });
+    const version = verified
+      .prepare('SELECT source_graph_json FROM route_graph_versions WHERE id = 1')
+      .get() as { source_graph_json: string };
+
+    expect(version.source_graph_json).toContain('route-endpoint:product:route:127');
+    expect(version.source_graph_json).not.toContain('route-endpoint:supply:route:127');
     verified.close();
   });
 

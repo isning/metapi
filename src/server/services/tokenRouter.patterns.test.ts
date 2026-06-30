@@ -304,6 +304,50 @@ describe('TokenRouter patterns and model mapping', () => {
     expect(exposedModels).toContain('claude-opus-4-6');
   });
 
+  it('matches exact route entries case-insensitively while preserving fixed upstream model casing', async () => {
+    await createRouteWithSingleChannel('deepseek-v4-flash', undefined, {
+      sourceModel: 'DeepSeek-v4-Flash',
+    });
+    const router = new TokenRouter();
+
+    const selected = await router.selectTarget('DeepSeek-v4-Flash');
+    const decision = await router.explainSelection('DeepSeek-v4-Flash');
+    const exposedModels = await router.getAvailableModels();
+
+    expect(selected).toBeTruthy();
+    expect(selected?.actualModel).toBe('DeepSeek-v4-Flash');
+    expect(decision.actualModel).toBe('DeepSeek-v4-Flash');
+    expect(exposedModels).toContain('deepseek-v4-flash');
+    expect(exposedModels).not.toContain('DeepSeek-v4-Flash');
+  });
+
+  it('matches legacy route table exact entries case-insensitively while preserving fixed upstream model casing', async () => {
+    const site = await createSite('legacy-case-site');
+    const account = await createAccount(site.id, 'legacy-case-user');
+    const route = await db.insert(schema.tokenRoutes).values({
+      displayName: 'deepseek-v4-flash',
+      enabled: true,
+    }).returning().get();
+    await db.insert(schema.routeEndpointTargets).values({
+      routeId: route.id,
+      accountId: account.id,
+      tokenId: null,
+      sourceModel: 'DeepSeek-v4-Flash',
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    }).run();
+    invalidateTokenRouterCache();
+    const router = new TokenRouter();
+
+    const selected = await router.selectTarget('DeepSeek-v4-Flash');
+    const decision = await router.explainSelection('DeepSeek-v4-Flash');
+
+    expect(selected).toBeTruthy();
+    expect(selected?.actualModel).toBe('DeepSeek-v4-Flash');
+    expect(decision.actualModel).toBe('DeepSeek-v4-Flash');
+  });
+
   it('prefers a group display-name alias over a colliding exact route', async () => {
     const source = await createRouteWithSingleChannel(
       'claude-opus-4-5',

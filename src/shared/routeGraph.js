@@ -892,6 +892,16 @@ export function buildCandidateSelectorMacroFromRouteBinding(input) {
       weight: 10,
       endpointIds: [endpointId],
     }));
+  const materializedCandidateGroups = candidateGroups.length > 0
+    ? candidateGroups
+    : [{
+      id: 'unavailable',
+      label: 'Unavailable',
+      enabled: true,
+      priority: 0,
+      weight: 1,
+      input: { kind: 'synthetic', statusCode: 503, message: 'No route is available.' },
+    }];
   const displayName = normalizeNullableString(input?.displayName) || null;
   const match = normalizeRouteGraphMatchSpec(input?.match);
   const stableId = normalizeNullableString(input?.stableId) || null;
@@ -928,12 +938,12 @@ export function buildCandidateSelectorMacroFromRouteBinding(input) {
       policy: {
         strategy: normalizeEnum(input?.routingStrategy, ROUTE_GRAPH_CANDIDATE_SELECTOR_STRATEGIES, 'weighted'),
       },
-      groups: candidateGroups.map((group) => ({
+      groups: materializedCandidateGroups.map((group) => ({
         id: group.id,
         label: group.label,
         enabled: group.enabled,
         priority: group.priority,
-        input: { kind: 'route_endpoints', endpointIds: group.endpointIds },
+        input: isPlainObject(group.input) ? group.input : { kind: 'route_endpoints', endpointIds: group.endpointIds },
         defaults: {
           enabled: true,
           weight: group.weight,
@@ -3435,6 +3445,9 @@ export function buildRouteGraphSourceFromLegacyRoutes(routesInput) {
       const canonicalModelKey = projectExactRouteAsMacro
         ? canonicalRouteGraphModelKey(getRouteGraphExposedModelName(match, backend))
         : '';
+      const hasRouteLevelSupplyEndpoint = !!normalizeString(route.supplyEndpointId)
+        || isPlainObject(route.endpointIdentity)
+        || (Array.isArray(route.targets) && route.targets.length > 0);
       return {
         route,
         routeId,
@@ -3447,16 +3460,24 @@ export function buildRouteGraphSourceFromLegacyRoutes(routesInput) {
         productEndpointId: projectExactRouteAsMacro
           ? normalizeString(route.productEndpointId) || routeGraphAutoModelProductEndpointId(canonicalModelKey || routeId)
           : normalizeString(route.productEndpointId) || routeGraphRouteProductEndpointIdFromRoute(routeId),
-        supplyEndpointId: normalizeString(route.supplyEndpointId)
-          || routeGraphSupplyEndpointIdFromIdentity(route.endpointIdentity, routeId),
+        supplyEndpointId: hasRouteLevelSupplyEndpoint
+          ? (normalizeString(route.supplyEndpointId) || routeGraphSupplyEndpointIdFromIdentity(route.endpointIdentity, routeId))
+          : '',
         supplyEndpointSpecs: Array.isArray(route.supplyEndpointSpecs)
           ? route.supplyEndpointSpecs
-            .map((spec) => (isPlainObject(spec) ? {
-              endpointId: normalizeString(spec.endpointId) || routeGraphSupplyEndpointIdFromIdentity(spec.endpointIdentity, routeId),
-              endpointIdentity: isPlainObject(spec.endpointIdentity) ? spec.endpointIdentity : undefined,
-              endpointLocalRefs: Array.isArray(spec.endpointLocalRefs) ? spec.endpointLocalRefs : [],
-              targets: Array.isArray(spec.targets) ? spec.targets : [],
-            } : null))
+            .map((spec) => {
+              if (!isPlainObject(spec)) return null;
+              const hasSpecSupplyEndpoint = !!normalizeString(spec.endpointId)
+                || isPlainObject(spec.endpointIdentity)
+                || (Array.isArray(spec.targets) && spec.targets.length > 0);
+              if (!hasSpecSupplyEndpoint) return null;
+              return {
+                endpointId: normalizeString(spec.endpointId) || routeGraphSupplyEndpointIdFromIdentity(spec.endpointIdentity, routeId),
+                endpointIdentity: isPlainObject(spec.endpointIdentity) ? spec.endpointIdentity : undefined,
+                endpointLocalRefs: Array.isArray(spec.endpointLocalRefs) ? spec.endpointLocalRefs : [],
+                targets: Array.isArray(spec.targets) ? spec.targets : [],
+              };
+            })
             .filter((spec) => spec && spec.endpointId)
           : [],
       };
@@ -3514,12 +3535,12 @@ export function buildRouteGraphSourceFromLegacyRoutes(routesInput) {
       const macroId = routeGraphAutoModelMacroId(canonicalModelKey || routeId);
       const supplySpecs = binding.supplyEndpointSpecs.length > 0
         ? binding.supplyEndpointSpecs
-        : [{
+        : binding.supplyEndpointId ? [{
           endpointId: binding.supplyEndpointId,
           endpointIdentity: isPlainObject(route.endpointIdentity) ? route.endpointIdentity : undefined,
           endpointLocalRefs: Array.isArray(route.endpointLocalRefs) ? route.endpointLocalRefs : [],
           targets: Array.isArray(route.targets) ? route.targets : [],
-        }];
+        }] : [];
       for (const spec of supplySpecs) {
         const supplyEndpointId = spec.endpointId;
         const routeBindingMetadata = {
@@ -3590,12 +3611,12 @@ export function buildRouteGraphSourceFromLegacyRoutes(routesInput) {
     const supplyEndpointSpecs = backend.kind === ROUTE_GRAPH_BACKEND_KIND_SUPPLY
       ? (binding.supplyEndpointSpecs.length > 0
         ? binding.supplyEndpointSpecs
-        : [{
+        : binding.supplyEndpointId ? [{
           endpointId: binding.supplyEndpointId,
           endpointIdentity: isPlainObject(route.endpointIdentity) ? route.endpointIdentity : undefined,
           endpointLocalRefs: Array.isArray(route.endpointLocalRefs) ? route.endpointLocalRefs : [],
           targets: Array.isArray(route.targets) ? route.targets : [],
-        }])
+        }] : [])
       : [];
     const routeBindingMetadata = {};
     pushNode({

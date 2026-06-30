@@ -6,6 +6,8 @@ import {
 import {
   applyRouteGraphPostBuildFilters,
   evaluateCompiledRouteGraph,
+  evaluateCompiledRouterBundle,
+  evaluateFlatRouteProgramBundle,
   hydrateFlatRouteProgramBundle,
   hydrateCompiledRouterBundle,
   evaluateRouteProgramBundle,
@@ -1250,6 +1252,40 @@ describe('route graph runtime evaluator', () => {
           }),
         ]),
       },
+    });
+
+    const programBundleWithoutRouteEndpointId = structuredClone(compiled.compiled.programBundle);
+    delete (programBundleWithoutRouteEndpointId.programs[0].ops[0] as Record<string, unknown>).routeEndpointId;
+    expect(evaluateRouteProgramBundle({
+      bundle: programBundleWithoutRouteEndpointId,
+      requestedModel: 'program-model',
+    })).toMatchObject({
+      selectedEntryNodeId: 'endpoint.program',
+      selectedRouteId: 42,
+    });
+
+    const flatBundleWithoutRouteEndpointId = structuredClone(compiled.compiled.flatProgramBundle);
+    const flatTerminal = flatBundleWithoutRouteEndpointId.programs[0].start.kind === 'terminal'
+      ? flatBundleWithoutRouteEndpointId.programs[0].start.terminal
+      : null;
+    expect(flatTerminal).toBeTruthy();
+    delete (flatTerminal as Record<string, unknown>).routeEndpointId;
+    expect(evaluateFlatRouteProgramBundle({
+      bundle: flatBundleWithoutRouteEndpointId,
+      requestedModel: 'program-model',
+    })).toMatchObject({
+      selectedEntryNodeId: 'endpoint.program',
+      selectedRouteId: 42,
+    });
+
+    const compiledRouterBundleWithoutRouteEndpointId = structuredClone(compiled.compiled.compiledRouterBundle!);
+    delete (compiledRouterBundleWithoutRouteEndpointId.plans[0].candidates[0].terminal as Record<string, unknown>).routeEndpointId;
+    expect(evaluateCompiledRouterBundle({
+      bundle: compiledRouterBundleWithoutRouteEndpointId,
+      requestedModel: 'program-model',
+    })).toMatchObject({
+      selectedEntryNodeId: 'endpoint.program',
+      selectedRouteId: 42,
     });
 
     const graphWithoutUsableProgram = {

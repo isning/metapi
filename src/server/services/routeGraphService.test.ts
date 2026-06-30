@@ -7,6 +7,7 @@ import { compileRouteGraphSource } from '../../shared/routeGraph.js';
 
 type DbModule = typeof import('../db/index.js');
 type RouteGraphServiceModule = typeof import('./routeGraphService.js');
+type RouteTableProjectionModule = typeof import('./routeTableProjectionService.js');
 
 describe('routeGraphService ownership guards', () => {
   let db: DbModule['db'];
@@ -23,7 +24,10 @@ describe('routeGraphService ownership guards', () => {
   let buildRouteGraphSourceFromRouteTable: RouteGraphServiceModule['buildRouteGraphSourceFromRouteTable'];
   let reconcileActiveGraphWithRouteTable: RouteGraphServiceModule['reconcileActiveGraphWithRouteTable'];
   let loadActiveRouteGraphRouteBindings: RouteGraphServiceModule['loadActiveRouteGraphRouteBindings'];
+  let listRouteEndpointCatalogPage: RouteGraphServiceModule['listRouteEndpointCatalogPage'];
+  let syncRouteBindingProjectionsFromRouteGraphSource: RouteGraphServiceModule['syncRouteBindingProjectionsFromRouteGraphSource'];
   let invalidateRouteGraphReadCaches: RouteGraphServiceModule['invalidateRouteGraphReadCaches'];
+  let loadRouteBindingProjectionMap: RouteTableProjectionModule['loadRouteBindingProjectionMap'];
   let dataDir = '';
 
   async function seedAccountToken(prefix: string): Promise<{ accountId: number; tokenId: number }> {
@@ -59,6 +63,7 @@ describe('routeGraphService ownership guards', () => {
     await import('../db/migrate.js');
     const dbModule = await import('../db/index.js');
     const serviceModule = await import('./routeGraphService.js');
+    const projectionModule = await import('./routeTableProjectionService.js');
     db = dbModule.db;
     schema = dbModule.schema;
     publishRouteGraphSource = serviceModule.publishRouteGraphSource;
@@ -73,7 +78,10 @@ describe('routeGraphService ownership guards', () => {
     buildRouteGraphSourceFromRouteTable = serviceModule.buildRouteGraphSourceFromRouteTable;
     reconcileActiveGraphWithRouteTable = serviceModule.reconcileActiveGraphWithRouteTable;
     loadActiveRouteGraphRouteBindings = serviceModule.loadActiveRouteGraphRouteBindings;
+    listRouteEndpointCatalogPage = serviceModule.listRouteEndpointCatalogPage;
+    syncRouteBindingProjectionsFromRouteGraphSource = serviceModule.syncRouteBindingProjectionsFromRouteGraphSource;
     invalidateRouteGraphReadCaches = serviceModule.invalidateRouteGraphReadCaches;
+    loadRouteBindingProjectionMap = projectionModule.loadRouteBindingProjectionMap;
   });
 
   beforeEach(async () => {
@@ -969,6 +977,51 @@ describe('routeGraphService ownership guards', () => {
     expect(compiled.ok).toBe(true);
   });
 
+  it('does not expose persisted legacy entry ids as route endpoint catalog ids', async () => {
+    const route = await db.insert(schema.tokenRoutes).values({
+      displayName: 'gpt-legacy-entry-target',
+      routingStrategy: 'weighted',
+      enabled: true,
+    });
+    const routeId = Number(route.lastInsertRowid || route.insertId);
+    const { accountId, tokenId } = await seedAccountToken('legacy-entry-target');
+    await db.insert(schema.routeEndpointTargets).values({
+      routeId,
+      routeEndpointId: `entry:legacy:${routeId}`,
+      accountId,
+      tokenId,
+      sourceModel: 'gpt-legacy-entry-target',
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    });
+
+    const graph = await buildRouteGraphSourceFromRouteTable();
+    const supplyEndpoint = graph.nodes.find((node) => (
+      node.type === 'route_endpoint'
+      && node.endpointKind === 'supply'
+      && node.routeId === routeId
+    ));
+    expect(supplyEndpoint?.id).toEqual(expect.stringMatching(/^route-endpoint:supply:upstream-model:/));
+    expect(supplyEndpoint?.id).not.toBe(`entry:legacy:${routeId}`);
+
+    const catalog = await listRouteEndpointCatalogPage({
+      routeId,
+      endpointKind: 'supply',
+      page: 1,
+      pageSize: 10,
+    });
+    expect(catalog.items).toEqual([
+      expect.objectContaining({
+        endpointId: supplyEndpoint?.id,
+        nodeId: supplyEndpoint?.id,
+        routeId,
+        endpointKind: 'supply',
+      }),
+    ]);
+    expect(catalog.items.map((item) => item.endpointId)).not.toContain(`entry:legacy:${routeId}`);
+  });
+
   it('repairs active graphs that persisted compacted endpoint identities without target details', async () => {
     const route = await db.insert(schema.tokenRoutes).values({
       displayName: 'gpt-repair-compacted-identity',
@@ -1038,6 +1091,93 @@ describe('routeGraphService ownership guards', () => {
         targetSetFingerprint: expect.anything(),
       }),
     });
+  });
+
+  it('reconciles legacy fallback supply endpoint nodes for routes without targets into synthetic unavailable branches', async () => {
+    const route = await db.insert(schema.tokenRoutes).values({
+      displayName: 'minimax-m2.7',
+      routingStrategy: 'weighted',
+      enabled: true,
+    });
+    const routeId = Number(route.lastInsertRowid || route.insertId);
+    const oldSupplyEndpointId = `route-endpoint:supply:route:${routeId}`;
+    const sourceGraph = {
+      version: 1,
+      nodes: [
+        {
+          id: oldSupplyEndpointId,
+          type: 'route_endpoint',
+          enabled: true,
+          visibility: 'internal',
+          ownership: 'auto_generated',
+          endpointKind: 'supply',
+          exposure: 'none',
+          resolutionStatus: 'resolved',
+          routeEndpointId: oldSupplyEndpointId,
+          endpointId: oldSupplyEndpointId,
+          routeId,
+          legacyRouteId: routeId,
+          sourceKind: 'upstream_model',
+          backend: { kind: 'supply' },
+          match: { kind: 'model', requestedModelPattern: 'minimax-m2.7', displayName: 'minimax-m2.7', routeId },
+          config: { targets: [], targetSelection: { strategy: 'defer_to_router' } },
+          metadata: { sourceRouteId: routeId, localRouteId: routeId, sourceRouteIds: [routeId], localRouteIds: [routeId] },
+        },
+      ],
+      edges: [],
+      macros: [
+        {
+          id: 'auto-model:minimax-m2.7',
+          kind: 'candidate_selector',
+          enabled: true,
+          visibility: 'public',
+          ownership: 'auto_generated',
+          name: 'minimax-m2.7',
+          config: {
+            surface: {
+              entry: {
+                kind: 'external',
+                visibility: 'public',
+                match: { kind: 'model', requestedModelPattern: 'minimax-m2.7', displayName: 'minimax-m2.7', routeId },
+              },
+              output: 'route',
+            },
+            policy: { strategy: 'weighted' },
+            groups: [
+              {
+                id: 'priority:0',
+                enabled: true,
+                priority: 0,
+                input: { kind: 'route_endpoints', endpointIds: [oldSupplyEndpointId] },
+                defaults: { weight: 10, priority: 0 },
+              },
+            ],
+          },
+        },
+      ],
+      metadata: {},
+    };
+    const published = await publishRouteGraphSource({ sourceGraph, createdBy: 'test', allowDiagnostics: true });
+    expect(published.ok).toBe(true);
+
+    const reconciled = await ensureActiveRouteGraphVersion();
+    const raw = JSON.stringify(reconciled.sourceGraph);
+    const compiled = compileRouteGraphSource(reconciled.sourceGraph);
+
+    expect(raw).not.toContain(oldSupplyEndpointId);
+    expect(compiled.ok).toBe(true);
+    expect(reconciled.sourceGraph.macros).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'auto-model:minimax-m2.7',
+        config: expect.objectContaining({
+          groups: [
+            expect.objectContaining({
+              input: { kind: 'synthetic', statusCode: 503, message: 'No route is available.' },
+            }),
+          ],
+        }),
+      }),
+    ]));
   });
 
   it('keeps inferred automatic route supply endpoints model-specific when sourceModel is missing', async () => {
@@ -1334,6 +1474,72 @@ describe('routeGraphService ownership guards', () => {
       }),
     ]));
     expect(primitive.nodes.some((node) => node.id === `macro:manual-pattern-group:candidate:claude:route:${routeBId}`)).toBe(false);
+  });
+
+  it('publishes automatic exact-model groups as pattern projections instead of manual groups', async () => {
+    const modelName = 'Qwen/Qwen3.5-122B-A10B';
+    const firstRouteInsert = await db.insert(schema.tokenRoutes).values({
+      routingStrategy: 'weighted',
+      enabled: true,
+    });
+    const firstRouteId = Number(firstRouteInsert.lastInsertRowid || firstRouteInsert.insertId);
+    const secondRouteInsert = await db.insert(schema.tokenRoutes).values({
+      routingStrategy: 'weighted',
+      enabled: true,
+    });
+    const secondRouteId = Number(secondRouteInsert.lastInsertRowid || secondRouteInsert.insertId);
+    const { accountId, tokenId } = await seedAccountToken('qwen-auto-group');
+    await db.insert(schema.routeEndpointTargets).values([
+      {
+        routeId: firstRouteId,
+        accountId,
+        tokenId,
+        sourceModel: modelName,
+        priority: 0,
+        weight: 10,
+        enabled: true,
+      },
+      {
+        routeId: secondRouteId,
+        accountId,
+        tokenId,
+        sourceModel: modelName,
+        priority: 0,
+        weight: 10,
+        enabled: true,
+      },
+    ]).run();
+
+    const graph = await buildRouteGraphSourceFromRouteTable();
+    const automaticProductNode = graph.nodes.find((node) => (
+      node.type === 'route_endpoint'
+      && node.endpointKind === 'route_product'
+      && node.sourceKind === 'automatic_model_group'
+      && node.match.requestedModelPattern === modelName
+    ));
+    expect(automaticProductNode?.backend).toEqual({ kind: 'routes', routeIds: [firstRouteId, secondRouteId] });
+
+    const published = await publishRouteGraphSource({ sourceGraph: graph, createdBy: 'backup-import' });
+    expect(published.ok).toBe(true);
+
+    const projections = await loadRouteBindingProjectionMap();
+    expect(projections.get(firstRouteId)).toMatchObject({
+      routeMode: 'pattern',
+      backend: { kind: 'supply' },
+      sourceRouteIds: [],
+      modelPattern: modelName,
+    });
+
+    const bindings = await loadActiveRouteGraphRouteBindings();
+    expect(bindings.get(firstRouteId)).toMatchObject({
+      routeMode: 'pattern',
+      backend: { kind: 'supply' },
+      sourceRouteIds: [],
+      exactModelName: modelName,
+    });
+
+    await expect(syncRouteBindingProjectionsFromRouteGraphSource(graph, { repairOnly: true }))
+      .resolves.toMatchObject({ checked: 1, upserted: 0 });
   });
 
   it('rebases stale drafts with newly generated route table macros', async () => {

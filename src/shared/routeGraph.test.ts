@@ -352,6 +352,51 @@ describe('routeGraph port-native source', () => {
     ]));
   });
 
+  it('does not synthesize legacy supply endpoints for routes without executable targets', () => {
+    const source = buildRouteGraphSourceFromLegacyRoutes([
+      {
+        id: 321,
+        enabled: true,
+        displayName: 'minimax-m2.7',
+        match: { kind: 'model', requestedModelPattern: 'minimax-m2.7', displayName: 'minimax-m2.7', routeId: 321 },
+        backend: { kind: 'supply' },
+        ownership: 'auto_generated',
+      },
+    ]);
+
+    expect(JSON.stringify(source)).not.toContain('route-endpoint:supply:route:321');
+    expect(source.nodes).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'route-endpoint:product:auto-model:minimax-m2.7',
+        endpointKind: 'route_product',
+        resolutionStatus: 'unresolved',
+      }),
+    ]));
+    expect(source.macros).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'auto-model:minimax-m2.7',
+        config: expect.objectContaining({
+          groups: [
+            expect.objectContaining({
+              id: 'unavailable',
+              input: { kind: 'synthetic', statusCode: 503, message: 'No route is available.' },
+            }),
+          ],
+        }),
+      }),
+    ]));
+
+    const result = compileRouteGraphSource(source);
+
+    expect(result.ok).toBe(true);
+    expect(result.primitiveSource.nodes).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'macro:auto-model:minimax-m2.7:candidate:unavailable:synthetic',
+        type: 'synthetic_endpoint',
+      }),
+    ]));
+  });
+
   it('groups automatic exact-model supplies with colon model names without duplicate primitive ids', () => {
     const source = buildRouteGraphSourceFromLegacyRoutes([
       {
@@ -2218,6 +2263,25 @@ describe('routeGraph port-native source', () => {
 
     expect(missingRequiredPort.ok).toBe(false);
     expect(missingRequiredPort.diagnostics.map((item) => item.code)).toContain('port.required_missing');
+  });
+
+  it('rejects public entry model names that differ only by case', () => {
+    const result = compileRouteGraphSource({
+      version: 1,
+      nodes: [
+        { id: 'entry:upper', type: 'entry', enabled: true, visibility: 'public', ownership: 'manual', match: { requestedModelPattern: 'DeepSeek-v4-Flash' } },
+        { id: 'entry:lower', type: 'entry', enabled: true, visibility: 'public', ownership: 'manual', match: { requestedModelPattern: 'deepseek-v4-flash' } },
+        { id: 'endpoint:upper', type: 'route_endpoint', enabled: true, visibility: 'internal', ownership: 'manual', config: { targets: [{ targetId: 'upper', model: 'DeepSeek-v4-Flash' }], targetSelection: { strategy: 'weighted' } } },
+        { id: 'endpoint:lower', type: 'route_endpoint', enabled: true, visibility: 'internal', ownership: 'manual', config: { targets: [{ targetId: 'lower', model: 'deepseek-v4-flash' }], targetSelection: { strategy: 'weighted' } } },
+      ],
+      edges: [
+        { id: 'upper-flow', sourceNodeId: 'entry:upper', sourcePortId: 'bidirect.out', targetNodeId: 'endpoint:upper', targetPortId: 'bidirect.in', kind: 'bidirect_flow', ownership: 'manual' },
+        { id: 'lower-flow', sourceNodeId: 'entry:lower', sourcePortId: 'bidirect.out', targetNodeId: 'endpoint:lower', targetPortId: 'bidirect.in', kind: 'bidirect_flow', ownership: 'manual' },
+      ],
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics.map((item) => item.code)).toContain('public_model.duplicate');
   });
 
   it('lowers synthetic and inline candidate selector groups with defaults and provenance', () => {

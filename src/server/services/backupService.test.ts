@@ -1629,7 +1629,7 @@ describe('backupService', () => {
       expect.objectContaining({
         id: 1,
         routeId: 127,
-        routeEndpointId: 'entry:legacy:127',
+        routeEndpointId: null,
         accountId: 1,
         tokenId: 1,
         sourceModel: 'gpt-native-21-upstream',
@@ -1902,6 +1902,307 @@ describe('backupService', () => {
     expect(activeGraph?.sourceGraphJson).not.toContain('stale-model');
     expect(activeGraph?.sourceGraphJson).toContain('route-endpoint:product:auto-model:gpt-old-graph');
     expect(activeGraph?.sourceGraphJson).toContain('route-endpoint:supply:upstream-model:');
+  });
+
+  it('normalizes legacy manual graph source endpoint references during backup import', async () => {
+    const payload = {
+      version: '2.4',
+      timestamp: Date.now(),
+      accounts: {
+        sites: [
+          {
+            id: 1,
+            name: 'manual-group-site',
+            url: 'https://manual-group.example.com',
+            platform: 'new-api',
+            status: 'active',
+            createdAt: '2026-03-20T00:00:00.000Z',
+            updatedAt: '2026-03-20T00:00:00.000Z',
+          },
+        ],
+        accounts: [
+          {
+            id: 1,
+            siteId: 1,
+            username: 'manual-group-user',
+            accessToken: '',
+            apiToken: 'manual-group-token',
+            balance: 10,
+            quota: 20,
+            status: 'active',
+            checkinEnabled: true,
+            createdAt: '2026-03-20T00:00:00.000Z',
+            updatedAt: '2026-03-20T00:00:00.000Z',
+          },
+        ],
+        accountTokens: [
+          {
+            id: 1,
+            accountId: 1,
+            name: 'default',
+            token: 'manual-group-token',
+            tokenGroup: 'default',
+            source: 'manual',
+            enabled: true,
+            isDefault: true,
+            createdAt: '2026-03-20T00:00:00.000Z',
+            updatedAt: '2026-03-20T00:00:00.000Z',
+          },
+        ],
+        tokenRoutes: [
+          {
+            id: 157,
+            modelPattern: 'deepseek-v4-flash',
+            routingStrategy: 'weighted',
+            enabled: true,
+            createdAt: '2026-03-20T00:00:00.000Z',
+            updatedAt: '2026-03-20T00:00:00.000Z',
+          },
+          {
+            id: 166,
+            modelPattern: 'deepseek-v4-chat',
+            routingStrategy: 'weighted',
+            enabled: true,
+            createdAt: '2026-03-20T00:00:00.000Z',
+            updatedAt: '2026-03-20T00:00:00.000Z',
+          },
+          {
+            id: 300,
+            displayName: 'deepseek-manual-group',
+            routingStrategy: 'weighted',
+            enabled: true,
+            createdAt: '2026-03-20T00:00:00.000Z',
+            updatedAt: '2026-03-20T00:00:00.000Z',
+          },
+        ],
+        routeEndpointTargets: [
+          {
+            id: 1,
+            routeId: 157,
+            routeEndpointId: 'route-endpoint:supply:route:157',
+            accountId: 1,
+            tokenId: 1,
+            sourceModel: 'deepseek-v4-flash',
+            priority: 0,
+            weight: 10,
+            enabled: true,
+            manualOverride: false,
+          },
+          {
+            id: 2,
+            routeId: 166,
+            accountId: 1,
+            tokenId: 1,
+            sourceModel: 'deepseek-v4-chat',
+            priority: 1,
+            weight: 10,
+            enabled: true,
+            manualOverride: false,
+          },
+        ],
+        routeGroupSources: [
+          { id: 1, groupRouteId: 300, sourceRouteId: 157 },
+          { id: 2, groupRouteId: 300, sourceRouteId: 166 },
+        ],
+        routeGraph: {
+          versions: [
+            {
+              id: 9,
+              version: 9,
+              sourceGraphJson: JSON.stringify({
+                version: 1,
+                nodes: [],
+                edges: [],
+                macros: [
+                  {
+                    id: 'manual:imported-selector',
+                    kind: 'candidate_selector',
+                    enabled: true,
+                    visibility: 'public',
+                    ownership: 'manual',
+                    name: 'deepseek-manual-group',
+                    config: {
+                      surface: {
+                        entry: {
+                          kind: 'external',
+                          visibility: 'public',
+                          match: { kind: 'model', requestedModelPattern: '', displayName: 'deepseek-manual-group', routeId: 300 },
+                        },
+                        output: 'route',
+                      },
+                      policy: { strategy: 'weighted' },
+                      groups: [
+                        {
+                          id: 'source:157',
+                          enabled: true,
+                          priority: 0,
+                          input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:supply:route:157'] },
+                          defaults: { enabled: true, weight: 10, priority: 0 },
+                        },
+                        {
+                          id: 'source:166',
+                          enabled: true,
+                          priority: 1,
+                          input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:supply:route:166'] },
+                          defaults: { enabled: true, weight: 10, priority: 1 },
+                        },
+                      ],
+                    },
+                  },
+                ],
+              }),
+              compiledGraphJson: JSON.stringify({ version: 1 }),
+              status: 'active',
+              createdBy: 'old-backup',
+              createdAt: '2026-03-20T00:00:00.000Z',
+              activatedAt: '2026-03-20T00:00:00.000Z',
+            },
+          ],
+          activeVersion: {
+            id: 1,
+            versionId: 9,
+            updatedAt: '2026-03-20T00:00:00.000Z',
+          },
+          drafts: [],
+        },
+      },
+      preferences: {
+        settings: [
+          { key: 'routing_fallback_unit_cost', value: 0.25 },
+        ],
+      },
+    } as Record<string, unknown>;
+
+    await expect(backupService.importBackup(payload)).resolves.toMatchObject({
+      allImported: true,
+      sections: { accounts: true, preferences: true },
+    });
+
+    const activeGraph = await db.select().from(schema.routeGraphVersions)
+      .where(eq(schema.routeGraphVersions.status, 'active'))
+      .get();
+    expect(activeGraph?.sourceGraphJson).not.toContain('route-endpoint:supply:route:157');
+    expect(activeGraph?.sourceGraphJson).not.toContain('route-endpoint:supply:route:166');
+    expect(activeGraph?.sourceGraphJson).toContain('route-endpoint:supply:upstream-model:');
+    const targetRows = await db.select().from(schema.routeEndpointTargets).orderBy(asc(schema.routeEndpointTargets.id)).all();
+    expect(targetRows.map((row) => row.routeEndpointId)).toEqual([null, null]);
+  });
+
+  it('keeps imported automatic exact-model groups out of manual route projections', async () => {
+    const modelName = 'Qwen/Qwen3.5-122B-A10B';
+    const payload = {
+      version: '2.4',
+      timestamp: Date.now(),
+      accounts: {
+        sites: [
+          {
+            id: 1,
+            name: 'qwen-auto-site',
+            url: 'https://qwen-auto.example.com',
+            platform: 'new-api',
+            status: 'active',
+            createdAt: '2026-03-20T00:00:00.000Z',
+            updatedAt: '2026-03-20T00:00:00.000Z',
+          },
+        ],
+        accounts: [
+          {
+            id: 1,
+            siteId: 1,
+            username: 'qwen-auto-user',
+            accessToken: '',
+            apiToken: 'qwen-auto-token',
+            balance: 10,
+            quota: 20,
+            status: 'active',
+            checkinEnabled: true,
+            createdAt: '2026-03-20T00:00:00.000Z',
+            updatedAt: '2026-03-20T00:00:00.000Z',
+          },
+        ],
+        accountTokens: [
+          {
+            id: 1,
+            accountId: 1,
+            name: 'default',
+            token: 'qwen-auto-token',
+            tokenGroup: 'default',
+            source: 'manual',
+            enabled: true,
+            isDefault: true,
+            createdAt: '2026-03-20T00:00:00.000Z',
+            updatedAt: '2026-03-20T00:00:00.000Z',
+          },
+        ],
+        tokenRoutes: [
+          {
+            id: 2788,
+            modelPattern: modelName,
+            routingStrategy: 'weighted',
+            enabled: true,
+            createdAt: '2026-03-20T00:00:00.000Z',
+            updatedAt: '2026-03-20T00:00:00.000Z',
+          },
+          {
+            id: 5107,
+            modelPattern: modelName,
+            routingStrategy: 'weighted',
+            enabled: true,
+            createdAt: '2026-03-20T00:00:00.000Z',
+            updatedAt: '2026-03-20T00:00:00.000Z',
+          },
+        ],
+        routeEndpointTargets: [
+          {
+            id: 1,
+            routeId: 2788,
+            accountId: 1,
+            tokenId: 1,
+            sourceModel: modelName,
+            priority: 0,
+            weight: 10,
+            enabled: true,
+            manualOverride: false,
+          },
+          {
+            id: 2,
+            routeId: 5107,
+            accountId: 1,
+            tokenId: 1,
+            sourceModel: modelName,
+            priority: 0,
+            weight: 10,
+            enabled: true,
+            manualOverride: false,
+          },
+        ],
+        routeGroupSources: [],
+      },
+    } as Record<string, unknown>;
+
+    await expect(backupService.importBackup(payload)).resolves.toMatchObject({
+      allImported: true,
+      sections: { accounts: true },
+    });
+
+    const projection = await db.select().from(schema.routeBindingProjections)
+      .where(eq(schema.routeBindingProjections.routeId, 2788))
+      .get();
+    expect(projection?.routeMode).toBe('pattern');
+    expect(JSON.parse(projection?.backendJson || '{}')).toEqual({ kind: 'supply' });
+    expect(JSON.parse(projection?.sourceRouteIdsJson || '[]')).toEqual([]);
+
+    const activeGraph = await db.select().from(schema.routeGraphVersions)
+      .where(eq(schema.routeGraphVersions.status, 'active'))
+      .get();
+    const sourceGraph = JSON.parse(activeGraph?.sourceGraphJson || '{}');
+    const automaticProduct = sourceGraph.nodes.find((node: any) => (
+      node.type === 'route_endpoint'
+      && node.endpointKind === 'route_product'
+      && node.sourceKind === 'automatic_model_group'
+      && node.match?.requestedModelPattern === modelName
+    ));
+    expect(automaticProduct?.backend).toEqual({ kind: 'routes', routeIds: [2788, 5107] });
   });
 
   it('imports ALL-API-Hub style payload with accounts and preferences', async () => {

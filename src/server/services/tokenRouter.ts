@@ -1231,7 +1231,7 @@ function isCacheFresh(loadedAt: number, nowMs: number): boolean {
 }
 
 function rememberFirstRouteByKey(map: Map<string, RouteRow>, key: string, route: RouteRow): void {
-  const normalizedKey = key.trim();
+  const normalizedKey = key.trim().toLowerCase();
   if (!normalizedKey || map.has(normalizedKey)) return;
   map.set(normalizedKey, route);
 }
@@ -1447,30 +1447,31 @@ function enqueueRouteModelCandidateLoad(model: string): Promise<RouteRow[]> {
 async function loadEnabledRouteCandidatesByModel(model: string, nowMs = Date.now()): Promise<RouteRow[]> {
   const trimmedModel = model.trim();
   if (!trimmedModel) return [];
+  const lookupModel = trimmedModel.toLowerCase();
 
-  const cached = routeModelCandidateCache.get(trimmedModel);
+  const cached = routeModelCandidateCache.get(lookupModel);
   if (cached && isCacheFresh(cached.loadedAt, nowMs)) {
-    rememberRouteModelCandidateCache(trimmedModel, cached);
+    rememberRouteModelCandidateCache(lookupModel, cached);
     return cached.candidates;
   }
 
-  const inFlight = routeModelCandidateLoadPromises.get(trimmedModel);
+  const inFlight = routeModelCandidateLoadPromises.get(lookupModel);
   if (inFlight) return await inFlight;
 
-  const loadTask = enqueueRouteModelCandidateLoad(trimmedModel)
+  const loadTask = enqueueRouteModelCandidateLoad(lookupModel)
     .then((candidates) => {
-      rememberRouteModelCandidateCache(trimmedModel, {
+      rememberRouteModelCandidateCache(lookupModel, {
         loadedAt: nowMs,
         candidates,
       });
       return candidates;
     })
     .finally(() => {
-      if (routeModelCandidateLoadPromises.get(trimmedModel) === loadTask) {
-        routeModelCandidateLoadPromises.delete(trimmedModel);
+      if (routeModelCandidateLoadPromises.get(lookupModel) === loadTask) {
+        routeModelCandidateLoadPromises.delete(lookupModel);
       }
     });
-  routeModelCandidateLoadPromises.set(trimmedModel, loadTask);
+  routeModelCandidateLoadPromises.set(lookupModel, loadTask);
   return await loadTask;
 }
 
@@ -1879,7 +1880,7 @@ function normalizeRouteDisplayName(displayName: string | null | undefined): stri
 
 function isRouteDisplayNameMatch(model: string, displayName: string | null | undefined): boolean {
   const alias = normalizeRouteDisplayName(displayName);
-  return !!alias && alias === model;
+  return !!alias && (alias === model || isModelAliasEquivalent(alias, model));
 }
 
 function isRouteExposedNameMatch(model: string, route: RouteRow): boolean {
@@ -2050,7 +2051,7 @@ function resolveActualModelForSelectedTarget(
     return selectedTarget.model;
   }
   const sourceModel = normalizeTargetSourceModel(targetSourceModel);
-  if (isRouteDisplayNameMatch(requestedModel, route.displayName) && sourceModel) {
+  if (isRouteExposedNameMatch(requestedModel, route) && sourceModel) {
     return sourceModel;
   }
   return mappedModel;
@@ -3860,17 +3861,18 @@ export class TokenRouter {
     }
 
     const routeSnapshot = await loadEnabledRouteSnapshot();
+    const lookupModel = model.trim().toLowerCase();
     const matchedRoute = (
-      routeAllowedByPolicy(routeSnapshot.explicitGroupByExposedName.get(model))
-        ? routeSnapshot.explicitGroupByExposedName.get(model)
+      routeAllowedByPolicy(routeSnapshot.explicitGroupByExposedName.get(lookupModel))
+        ? routeSnapshot.explicitGroupByExposedName.get(lookupModel)
         : null
     ) || (
-      routeAllowedByPolicy(routeSnapshot.exactRouteByModel.get(model))
-        ? routeSnapshot.exactRouteByModel.get(model)
+      routeAllowedByPolicy(routeSnapshot.exactRouteByModel.get(lookupModel))
+        ? routeSnapshot.exactRouteByModel.get(lookupModel)
         : null
     ) || (
-      routeAllowedByPolicy(routeSnapshot.nonGroupByExposedName.get(model))
-        ? routeSnapshot.nonGroupByExposedName.get(model)
+      routeAllowedByPolicy(routeSnapshot.nonGroupByExposedName.get(lookupModel))
+        ? routeSnapshot.nonGroupByExposedName.get(lookupModel)
         : null
     ) || routeSnapshot.patternRoutes.find((route) => (
       routeAllowedByPolicy(route)

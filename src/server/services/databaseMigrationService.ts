@@ -12,6 +12,7 @@ import {
   compileRouteGraphSource,
 } from '../../shared/routeGraph.js';
 import { migratePreferenceSettingsToCurrentConfigVersion } from './configMigrationService.js';
+import { normalizeStoredRouteEndpointId } from '../shared/routeGraphLegacyEndpointReferences.js';
 
 export type MigrationDialect = RuntimeSchemaDialect;
 
@@ -829,13 +830,14 @@ function buildStatements(
   });
 
   for (const row of snapshot.accounts.routeEndpointTargets) {
+    const routeEndpointId = asNullableString(row.routeEndpointId);
     statements.push({
       table: 'route_endpoint_targets',
       columns: ['id', 'route_id', 'route_endpoint_id', 'account_id', 'token_id', 'source_model', 'priority', 'weight', 'enabled', 'manual_override', 'success_count', 'fail_count', 'total_latency_ms', 'total_cost', 'last_used_at', 'last_selected_at', 'last_fail_at', 'consecutive_fail_count', 'cooldown_level', 'cooldown_until'],
       values: [
         asNumber(row.id, 0),
         asNumber(row.routeId, 0),
-        asNullableString(row.routeEndpointId) || `entry:legacy:${asNumber(row.routeId, 0)}`,
+        normalizeStoredRouteEndpointId(routeEndpointId),
         asNumber(row.accountId, 0),
         asNumber(row.tokenId, null),
         asNullableString(row.sourceModel),

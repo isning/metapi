@@ -1562,9 +1562,14 @@ export async function rebuildTokenRoutesFromAvailability() {
     if (!isModelAllowedByWhitelist(modelName)) return;
     if (isModelDisabledForSite(siteId, modelName)) return;
     if (blockedBrandRules.length > 0 && isModelBlockedByBrand(modelName, blockedBrandRules)) return;
-    if (!modelCandidates.has(modelName)) modelCandidates.set(modelName, new Map());
-    const candidate = { accountId, tokenId, oauthRouteUnitId, siteId };
-    modelCandidates.get(modelName)!.set(buildCandidateKey(candidate), candidate);
+    const canonicalModelName = modelName.toLowerCase();
+    if (!modelCandidates.has(canonicalModelName)) modelCandidates.set(canonicalModelName, new Map());
+    const candidate = { accountId, tokenId, oauthRouteUnitId, siteId, modelName };
+    const candidateKey = buildCandidateKey(candidate);
+    const candidates = modelCandidates.get(canonicalModelName)!;
+    if (!candidates.has(candidateKey)) {
+      candidates.set(candidateKey, candidate);
+    }
   };
 
   for (const row of accountRows) {
@@ -1655,7 +1660,7 @@ export async function rebuildTokenRoutesFromAvailability() {
         accountId: candidate.accountId,
         tokenId: candidate.tokenId,
         oauthRouteUnitId: candidate.oauthRouteUnitId,
-        sourceModel: modelName,
+        sourceModel: candidate.modelName,
         priority: 0,
         weight: 10,
         enabled: true,
@@ -1717,7 +1722,13 @@ export async function rebuildTokenRoutesFromAvailability() {
     const routeId = Number(group.legacyRouteId || 0);
     if (!Number.isFinite(routeId) || routeId <= 0) continue;
     const upstreamModelName = (group.upstreamModelName || group.publicModelName || group.displayName || '').trim();
-    if (!upstreamModelName || latestModelNames.has(upstreamModelName)) continue;
+    const groupModelKey = (group.normalizedModelName || upstreamModelName).trim().toLowerCase();
+    const expectedGroupKey = groupModelKey ? `upstream:${groupModelKey}` : '';
+    const isCurrentAutomaticGroup = !!groupModelKey
+      && latestModelNames.has(groupModelKey)
+      && group.groupKey === expectedGroupKey;
+    if (!upstreamModelName || isCurrentAutomaticGroup) continue;
+    const isCaseVariantDuplicate = !!groupModelKey && latestModelNames.has(groupModelKey);
 
     const staleTargets = await db.select().from(schema.routeEndpointTargets)
       .where(eq(schema.routeEndpointTargets.routeId, routeId))
@@ -1738,6 +1749,26 @@ export async function rebuildTokenRoutesFromAvailability() {
       await db.delete(schema.routeGroupCandidates)
         .where(eq(schema.routeGroupCandidates.id, candidate.id))
         .run();
+    }
+
+    if (isCaseVariantDuplicate) {
+      const remainingTargets = await db.select({ id: schema.routeEndpointTargets.id })
+        .from(schema.routeEndpointTargets)
+        .where(eq(schema.routeEndpointTargets.routeId, routeId))
+        .all();
+      const remainingCandidates = await db.select({ id: schema.routeGroupCandidates.id })
+        .from(schema.routeGroupCandidates)
+        .where(eq(schema.routeGroupCandidates.groupId, group.id))
+        .all();
+      if (remainingTargets.length === 0 && remainingCandidates.length === 0) {
+        await db.delete(schema.routeGroups)
+          .where(eq(schema.routeGroups.id, group.id))
+          .run();
+        const deleted = await db.delete(schema.tokenRoutes)
+          .where(eq(schema.tokenRoutes.id, routeId))
+          .run();
+        removedRoutes += Number(deleted?.changes || 0);
+      }
     }
   }
 

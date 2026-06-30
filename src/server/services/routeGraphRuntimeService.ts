@@ -1041,7 +1041,7 @@ function evaluateFlatTerminal(input: {
   input.trace.terminalNodeId = terminal.nodeId;
   return {
     matchedEntryNodeId: input.entryNodeId,
-    selectedEntryNodeId: asTrimmedString(terminal.routeEndpointId) || (terminal.routeId ? `entry:legacy:${terminal.routeId}` : terminal.nodeId),
+    selectedEntryNodeId: asTrimmedString(terminal.routeEndpointId) || terminal.nodeId,
     matchedRouteId: input.matchedRouteId,
     selectedRouteId: terminal.routeId,
     routeEndpointCompatibilityPolicy: isRecord(terminal.compatibilityPolicy)
@@ -1211,7 +1211,7 @@ function evaluateCompiledRouterTerminal(input: {
   input.trace.terminalNodeId = terminal.nodeId;
   return {
     matchedEntryNodeId: input.entryNodeId,
-    selectedEntryNodeId: asTrimmedString(terminal.routeEndpointId) || (terminal.routeId ? `entry:legacy:${terminal.routeId}` : terminal.nodeId),
+    selectedEntryNodeId: asTrimmedString(terminal.routeEndpointId) || terminal.nodeId,
     matchedRouteId: input.matchedRouteId,
     selectedRouteId: terminal.routeId,
     routeEndpointCompatibilityPolicy: isRecord(terminal.compatibilityPolicy)
@@ -1575,7 +1575,7 @@ function evaluateRouteProgram(input: {
       trace.terminalNodeId = op.nodeId;
       return {
         matchedEntryNodeId: input.entryNodeId,
-        selectedEntryNodeId: asTrimmedString(op.routeEndpointId) || (op.routeId ? `entry:legacy:${op.routeId}` : op.nodeId),
+        selectedEntryNodeId: asTrimmedString(op.routeEndpointId) || op.nodeId,
         matchedRouteId: input.matchedRouteId,
         selectedRouteId: op.routeId,
         routeEndpointCompatibilityPolicy: isRecord(op.compatibilityPolicy)

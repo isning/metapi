@@ -6,6 +6,11 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { routeGraphSupplyEndpointIdFromIdentity } from '../../shared/routeGraph.js';
+import {
+  normalizeLegacyRouteGraphEndpointReferencesJson,
+  normalizeStoredRouteEndpointId,
+} from '../shared/routeGraphLegacyEndpointReferences.js';
 
 type MigrationJournalEntry = {
   tag: string;
@@ -265,6 +270,255 @@ function repairSqliteRouteGraphTokenRoutesSchema(sqlite: Database.Database): boo
   })();
   console.warn('[db] Repaired legacy token_routes graph columns.');
   return true;
+}
+
+function collectExplicitGroupRouteIds(sqlite: Database.Database): Set<number> {
+  const rows = sqlite.prepare(`
+    SELECT DISTINCT group_route_id AS routeId
+    FROM route_group_sources
+  `).all() as Array<{ routeId: number }>;
+  return new Set(rows
+    .map((row) => Math.trunc(Number(row.routeId)))
+    .filter((routeId) => Number.isFinite(routeId) && routeId > 0));
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableJson(item)).join(',')}]`;
+  }
+  if (value && typeof value === 'object') {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function stableHash(value: unknown): string {
+  const input = stableJson(value);
+  let hash = 2166136261;
+  for (let index = 0; index < input.length; index += 1) {
+    hash ^= input.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+function normalizeIdentityText(value: unknown): string {
+  return String(value || '').trim().toLowerCase();
+}
+
+function buildLegacyRouteEndpointCredentialFingerprint(row: {
+  sitePlatform?: string | null;
+  siteUrl?: string | null;
+  accountUsername?: string | null;
+  accountApiToken?: string | null;
+  accountAccessToken?: string | null;
+  oauthProvider?: string | null;
+  oauthAccountKey?: string | null;
+  oauthProjectId?: string | null;
+  tokenName?: string | null;
+  tokenValue?: string | null;
+  tokenGroup?: string | null;
+  tokenSource?: string | null;
+  tokenIsDefault?: number | boolean | null;
+}): string {
+  const tokenHash = row.tokenValue ? stableHash(String(row.tokenValue)) : '';
+  const oauthIdentity = row.oauthProvider || row.oauthAccountKey || row.oauthProjectId
+    ? {
+      mode: 'oauth',
+      provider: normalizeIdentityText(row.oauthProvider),
+      accountKey: normalizeIdentityText(row.oauthAccountKey),
+      projectId: normalizeIdentityText(row.oauthProjectId),
+    }
+    : null;
+  return stableHash({
+    sitePlatform: normalizeIdentityText(row.sitePlatform),
+    siteUrl: normalizeIdentityText(row.siteUrl),
+    account: oauthIdentity || {
+      mode: row.accountApiToken ? 'api_key' : 'session',
+      username: normalizeIdentityText(row.accountUsername),
+      apiTokenHash: row.accountApiToken ? stableHash(String(row.accountApiToken)) : '',
+      accessTokenHash: row.accountAccessToken ? stableHash(String(row.accountAccessToken)) : '',
+    },
+    token: tokenHash
+      ? { tokenHash }
+      : {
+        name: normalizeIdentityText(row.tokenName),
+        tokenGroup: normalizeIdentityText(row.tokenGroup),
+        source: normalizeIdentityText(row.tokenSource),
+        isDefault: row.tokenIsDefault === true || row.tokenIsDefault === 1,
+      },
+  });
+}
+
+function normalizeLegacyRouteEndpointTargetIds(sqlite: Database.Database): number {
+  if (!tableExists(sqlite, 'route_endpoint_targets')) return 0;
+  if (!columnExists(sqlite, 'route_endpoint_targets', 'route_endpoint_id')) return 0;
+  const result = sqlite.prepare(`
+    UPDATE route_endpoint_targets
+    SET route_endpoint_id = NULL
+    WHERE route_endpoint_id LIKE 'entry:legacy:%'
+       OR route_endpoint_id LIKE 'route-endpoint:supply:route:%'
+  `).run();
+  const changedRows = Number(result.changes || 0);
+  if (changedRows > 0) {
+    console.warn(`[db] Cleared ${changedRows} legacy route endpoint target id row(s).`);
+  }
+  return changedRows;
+}
+
+function collectRouteSupplyEndpointIds(sqlite: Database.Database): Map<number, string[]> {
+  const requiredTables = ['route_endpoint_targets', 'accounts', 'sites', 'token_routes'];
+  if (requiredTables.some((table) => !tableExists(sqlite, table))) return new Map();
+  if (!columnExists(sqlite, 'route_endpoint_targets', 'route_endpoint_id')) return new Map();
+  const hasAccountTokens = tableExists(sqlite, 'account_tokens');
+  const hasRouteBindingProjections = tableExists(sqlite, 'route_binding_projections')
+    && columnExists(sqlite, 'route_binding_projections', 'model_pattern');
+  const routeTargetSourceModelExpr = columnExists(sqlite, 'route_endpoint_targets', 'source_model')
+    ? 'route_endpoint_targets.source_model'
+    : 'NULL';
+  const tokenRouteDisplayNameExpr = columnExists(sqlite, 'token_routes', 'display_name')
+    ? 'token_routes.display_name'
+    : 'NULL';
+  const sitePlatformExpr = columnExists(sqlite, 'sites', 'platform') ? 'sites.platform' : 'NULL';
+  const siteUrlExpr = columnExists(sqlite, 'sites', 'url') ? 'sites.url' : 'NULL';
+  const siteNameExpr = columnExists(sqlite, 'sites', 'name') ? 'sites.name' : 'NULL';
+  const accountUsernameExpr = columnExists(sqlite, 'accounts', 'username') ? 'accounts.username' : 'NULL';
+  const accountApiTokenExpr = columnExists(sqlite, 'accounts', 'api_token') ? 'accounts.api_token' : 'NULL';
+  const accountAccessTokenExpr = columnExists(sqlite, 'accounts', 'access_token') ? 'accounts.access_token' : 'NULL';
+  const oauthProviderExpr = columnExists(sqlite, 'accounts', 'oauth_provider') ? 'accounts.oauth_provider' : 'NULL';
+  const oauthAccountKeyExpr = columnExists(sqlite, 'accounts', 'oauth_account_key') ? 'accounts.oauth_account_key' : 'NULL';
+  const oauthProjectIdExpr = columnExists(sqlite, 'accounts', 'oauth_project_id') ? 'accounts.oauth_project_id' : 'NULL';
+  const tokenNameExpr = hasAccountTokens && columnExists(sqlite, 'account_tokens', 'name') ? 'account_tokens.name' : 'NULL';
+  const tokenValueExpr = hasAccountTokens && columnExists(sqlite, 'account_tokens', 'token') ? 'account_tokens.token' : 'NULL';
+  const tokenGroupExpr = hasAccountTokens && columnExists(sqlite, 'account_tokens', 'token_group') ? 'account_tokens.token_group' : 'NULL';
+  const tokenSourceExpr = hasAccountTokens && columnExists(sqlite, 'account_tokens', 'source') ? 'account_tokens.source' : 'NULL';
+  const tokenIsDefaultExpr = hasAccountTokens && columnExists(sqlite, 'account_tokens', 'is_default') ? 'account_tokens.is_default' : 'NULL';
+  const rows = sqlite.prepare(`
+    SELECT
+      route_endpoint_targets.route_id AS routeId,
+      route_endpoint_targets.route_endpoint_id AS routeEndpointId,
+      ${routeTargetSourceModelExpr} AS sourceModel,
+      ${tokenRouteDisplayNameExpr} AS routeDisplayName,
+      ${hasRouteBindingProjections ? 'route_binding_projections.model_pattern' : "''"} AS projectedModelPattern,
+      ${sitePlatformExpr} AS sitePlatform,
+      ${siteUrlExpr} AS siteUrl,
+      ${siteNameExpr} AS siteName,
+      ${accountUsernameExpr} AS accountUsername,
+      ${accountApiTokenExpr} AS accountApiToken,
+      ${accountAccessTokenExpr} AS accountAccessToken,
+      ${oauthProviderExpr} AS oauthProvider,
+      ${oauthAccountKeyExpr} AS oauthAccountKey,
+      ${oauthProjectIdExpr} AS oauthProjectId,
+      ${tokenNameExpr} AS tokenName,
+      ${tokenValueExpr} AS tokenValue,
+      ${tokenGroupExpr} AS tokenGroup,
+      ${tokenSourceExpr} AS tokenSource,
+      ${tokenIsDefaultExpr} AS tokenIsDefault
+    FROM route_endpoint_targets
+    INNER JOIN token_routes ON route_endpoint_targets.route_id = token_routes.id
+    INNER JOIN accounts ON route_endpoint_targets.account_id = accounts.id
+    INNER JOIN sites ON accounts.site_id = sites.id
+    ${hasAccountTokens ? 'LEFT JOIN account_tokens ON route_endpoint_targets.token_id = account_tokens.id' : ''}
+    ${hasRouteBindingProjections ? 'LEFT JOIN route_binding_projections ON route_endpoint_targets.route_id = route_binding_projections.route_id' : ''}
+  `).all() as Array<{
+    routeId: number;
+    routeEndpointId: string | null;
+    sourceModel: string | null;
+    routeDisplayName: string | null;
+    projectedModelPattern: string | null;
+    sitePlatform: string | null;
+    siteUrl: string | null;
+    siteName: string | null;
+    accountUsername: string | null;
+    accountApiToken: string | null;
+    accountAccessToken: string | null;
+    oauthProvider: string | null;
+    oauthAccountKey: string | null;
+    oauthProjectId: string | null;
+    tokenName: string | null;
+    tokenValue: string | null;
+    tokenGroup: string | null;
+    tokenSource: string | null;
+    tokenIsDefault: number | boolean | null;
+  }>;
+  const endpointIdsByRouteId = new Map<number, string[]>();
+  for (const row of rows) {
+    const routeId = Math.trunc(Number(row.routeId));
+    if (!Number.isFinite(routeId) || routeId <= 0) continue;
+    const storedEndpointId = normalizeStoredRouteEndpointId(row.routeEndpointId);
+    const sourceModel = String(row.sourceModel || row.projectedModelPattern || row.routeDisplayName || '').trim();
+    const endpointIdentity = {
+      kind: 'upstream_model',
+      provider: row.sitePlatform || 'unknown',
+      sitePlatform: row.sitePlatform || '',
+      siteUrl: row.siteUrl || '',
+      siteName: row.siteName || '',
+      credentialFingerprint: buildLegacyRouteEndpointCredentialFingerprint(row),
+      accountUsername: row.accountUsername || '',
+      oauthProvider: row.oauthProvider || '',
+      oauthAccountKey: row.oauthAccountKey || '',
+      oauthProjectId: row.oauthProjectId || '',
+      tokenName: row.tokenName || '',
+      tokenGroup: row.tokenGroup || '',
+      tokenSource: row.tokenSource || '',
+      model: sourceModel,
+    };
+    const endpointId = storedEndpointId || routeGraphSupplyEndpointIdFromIdentity(endpointIdentity, routeId);
+    const existing = endpointIdsByRouteId.get(routeId) || [];
+    if (!existing.includes(endpointId)) existing.push(endpointId);
+    endpointIdsByRouteId.set(routeId, existing);
+  }
+  return endpointIdsByRouteId;
+}
+
+function normalizeLegacyRouteGraphSourceEndpointReferences(sqlite: Database.Database): number {
+  if (!tableExists(sqlite, 'token_routes')) return 0;
+  if (!tableExists(sqlite, 'route_group_sources')) return 0;
+  if (!tableExists(sqlite, 'route_graph_versions') && !tableExists(sqlite, 'route_graph_drafts')) return 0;
+
+  const explicitGroupRouteIds = collectExplicitGroupRouteIds(sqlite);
+  const supplyEndpointIdsByRouteId = collectRouteSupplyEndpointIds(sqlite);
+  const rewriteGraphJson = (raw: string | null | undefined): string | null => {
+    const result = normalizeLegacyRouteGraphEndpointReferencesJson(raw, {
+      supplyEndpointIdsByRouteId,
+      explicitGroupRouteIds,
+    });
+    return result.changed ? result.json : null;
+  };
+
+  let changedRows = 0;
+  const transaction = sqlite.transaction(() => {
+    if (tableExists(sqlite, 'route_graph_versions')) {
+      const rows = sqlite.prepare('SELECT id, source_graph_json FROM route_graph_versions').all() as Array<{ id: number; source_graph_json: string | null }>;
+      const update = sqlite.prepare('UPDATE route_graph_versions SET source_graph_json = ? WHERE id = ?');
+      for (const row of rows) {
+        const next = rewriteGraphJson(row.source_graph_json);
+        if (!next) continue;
+        update.run(next, row.id);
+        changedRows += 1;
+      }
+    }
+
+    if (tableExists(sqlite, 'route_graph_drafts')) {
+      const rows = sqlite.prepare('SELECT id, working_graph_json FROM route_graph_drafts').all() as Array<{ id: number; working_graph_json: string | null }>;
+      const update = sqlite.prepare('UPDATE route_graph_drafts SET working_graph_json = ? WHERE id = ?');
+      for (const row of rows) {
+        const next = rewriteGraphJson(row.working_graph_json);
+        if (!next) continue;
+        update.run(next, row.id);
+        changedRows += 1;
+      }
+    }
+  });
+
+  transaction();
+  if (changedRows > 0) {
+    console.warn(`[db] Normalized ${changedRows} legacy route graph source endpoint reference row(s).`);
+  }
+  return changedRows;
 }
 
 function readMigrationRecordsUntilTag(migrationsFolder: string, stopTag?: string): MigrationRecord[] {
@@ -894,6 +1148,8 @@ export const __migrateTestUtils = {
   tryRecoverDuplicateColumnMigrationError,
   isSitesPlatformUrlUniqueConflictError,
   deduplicateLegacySitesForUniqueIndex,
+  normalizeLegacyRouteEndpointTargetIds,
+  normalizeLegacyRouteGraphSourceEndpointReferences,
   runSqliteMigrationRecoveryLoop,
   sqliteMigrationRecoveryRetryBudget: SQLITE_MIGRATION_RECOVERY_RETRY_BUDGET,
 };
@@ -944,6 +1200,8 @@ export function runSqliteMigrations(): void {
   if (hasRouteGraphScaffolding(sqlite)) {
     repairSqliteRouteGraphTokenRoutesSchema(sqlite);
   }
+  normalizeLegacyRouteEndpointTargetIds(sqlite);
+  normalizeLegacyRouteGraphSourceEndpointReferences(sqlite);
   bootstrapLegacyDrizzleMigrations(sqlite, migrationsFolder);
   backfillMissingRecordedMigrations(sqlite, migrationsFolder);
 
@@ -960,6 +1218,8 @@ export function runSqliteMigrations(): void {
   });
 
   repairSqliteRouteGraphTokenRoutesSchema(sqlite);
+  normalizeLegacyRouteEndpointTargetIds(sqlite);
+  normalizeLegacyRouteGraphSourceEndpointReferences(sqlite);
   sqlite.close();
   console.log('Migration complete.');
 }

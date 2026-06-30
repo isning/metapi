@@ -12,6 +12,7 @@ export type AutomaticRouteGroupCandidate = {
   tokenId: number | null;
   oauthRouteUnitId: number | null;
   siteId: number;
+  modelName: string;
 };
 
 export type AutomaticRouteGroupCandidateMap = Map<string, Map<string, AutomaticRouteGroupCandidate>>;
@@ -49,7 +50,7 @@ function normalizeModelName(modelName: string): string {
 }
 
 function buildAutomaticGroupKey(modelName: string): string {
-  return `upstream:${modelName.trim()}`;
+  return `upstream:${normalizeModelName(modelName)}`;
 }
 
 function buildSupplyKey(modelName: string, candidateKey: string): string {
@@ -133,9 +134,9 @@ async function ensureAutomaticRouteGroup(modelName: string): Promise<{
   created: boolean;
   updated: boolean;
 }> {
-  const trimmedModelName = modelName.trim();
-  const groupKey = buildAutomaticGroupKey(trimmedModelName);
-  const existing = await db.select().from(schema.routeGroups)
+  const canonicalModelName = normalizeModelName(modelName);
+  const groupKey = buildAutomaticGroupKey(canonicalModelName);
+  let existing = await db.select().from(schema.routeGroups)
     .where(and(
       eq(schema.routeGroups.kind, 'automatic'),
       eq(schema.routeGroups.groupKey, groupKey),
@@ -143,14 +144,23 @@ async function ensureAutomaticRouteGroup(modelName: string): Promise<{
     .get();
 
   if (!existing) {
+    existing = await db.select().from(schema.routeGroups)
+      .where(and(
+        eq(schema.routeGroups.kind, 'automatic'),
+        eq(schema.routeGroups.normalizedModelName, canonicalModelName),
+      ))
+      .get();
+  }
+
+  if (!existing) {
     return {
       row: await insertAndLoadRouteGroup({
         kind: 'automatic',
         groupKey,
-        upstreamModelName: trimmedModelName,
-        normalizedModelName: normalizeModelName(trimmedModelName),
-        publicModelName: trimmedModelName,
-        displayName: trimmedModelName,
+        upstreamModelName: canonicalModelName,
+        normalizedModelName: canonicalModelName,
+        publicModelName: canonicalModelName,
+        displayName: canonicalModelName,
         visibility: 'public',
         enabled: true,
         routingStrategy: DEFAULT_ROUTE_ROUTING_STRATEGY,
@@ -164,13 +174,14 @@ async function ensureAutomaticRouteGroup(modelName: string): Promise<{
   }
 
   const updates: Partial<typeof schema.routeGroups.$inferInsert> = {
-    upstreamModelName: trimmedModelName,
-    normalizedModelName: normalizeModelName(trimmedModelName),
+    groupKey,
+    upstreamModelName: canonicalModelName,
+    normalizedModelName: canonicalModelName,
     syncStatus: 'active',
     updatedAt: nowIso(),
   };
-  if (!existing.publicModelName) updates.publicModelName = trimmedModelName;
-  if (!existing.displayName) updates.displayName = trimmedModelName;
+  if (!existing.publicModelName) updates.publicModelName = canonicalModelName;
+  if (!existing.displayName) updates.displayName = canonicalModelName;
   if (!existing.configJson) updates.configJson = JSON.stringify({ version: 1, groupKey });
 
   await db.update(schema.routeGroups)
@@ -336,6 +347,8 @@ async function upsertSupplyEndpoint(input: {
   target: typeof schema.routeEndpointTargets.$inferSelect | null;
 }): Promise<{ row: typeof schema.routeSupplyEndpoints.$inferSelect; created: boolean; updated: boolean }> {
   const supplyKey = buildSupplyKey(input.modelName, input.candidateKey);
+  const upstreamModelName = input.candidate.modelName.trim() || normalizeModelName(input.modelName);
+  const normalizedModelName = normalizeModelName(upstreamModelName);
   const existing = await db.select().from(schema.routeSupplyEndpoints)
     .where(eq(schema.routeSupplyEndpoints.supplyKey, supplyKey))
     .get();
@@ -354,8 +367,8 @@ async function upsertSupplyEndpoint(input: {
       accountId: input.candidate.accountId,
       tokenId: input.candidate.tokenId,
       oauthRouteUnitId: input.candidate.oauthRouteUnitId,
-      upstreamModelName: input.modelName,
-      normalizedModelName: normalizeModelName(input.modelName),
+      upstreamModelName,
+      normalizedModelName,
       enabled: input.target ? input.target.enabled !== false : true,
       discovered: true,
       source: 'availability_rebuild',
@@ -377,8 +390,8 @@ async function upsertSupplyEndpoint(input: {
       accountId: input.candidate.accountId,
       tokenId: input.candidate.tokenId,
       oauthRouteUnitId: input.candidate.oauthRouteUnitId,
-      upstreamModelName: input.modelName,
-      normalizedModelName: normalizeModelName(input.modelName),
+      upstreamModelName,
+      normalizedModelName,
       enabled: input.target ? input.target.enabled !== false : existing.enabled,
       discovered: true,
       legacyTargetId: input.target?.id ?? existing.legacyTargetId ?? null,
@@ -395,8 +408,8 @@ async function upsertSupplyEndpoint(input: {
       accountId: input.candidate.accountId,
       tokenId: input.candidate.tokenId,
       oauthRouteUnitId: input.candidate.oauthRouteUnitId,
-      upstreamModelName: input.modelName,
-      normalizedModelName: normalizeModelName(input.modelName),
+      upstreamModelName,
+      normalizedModelName,
       enabled: input.target ? input.target.enabled !== false : existing.enabled,
       discovered: true,
       legacyTargetId: input.target?.id ?? existing.legacyTargetId ?? null,
