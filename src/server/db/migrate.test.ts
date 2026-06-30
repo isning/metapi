@@ -967,8 +967,8 @@ describe('sqlite migrate bootstrap', () => {
 
     const verified = new Database(dbPath, { readonly: true });
     const version = verified
-      .prepare('SELECT source_graph_json FROM route_graph_versions WHERE id = 1')
-      .get() as { source_graph_json: string };
+      .prepare('SELECT source_graph_json, compiled_graph_json FROM route_graph_versions WHERE id = 1')
+      .get() as { source_graph_json: string; compiled_graph_json: string };
     const draft = verified
       .prepare('SELECT working_graph_json FROM route_graph_drafts WHERE id = 1')
       .get() as { working_graph_json: string };
@@ -984,6 +984,10 @@ describe('sqlite migrate bootstrap', () => {
       expect(raw).toContain('route-endpoint:product:route:301');
       expect(raw).not.toContain('route-endpoint:supply:route:301');
     }
+    const compiledGraph = JSON.parse(version.compiled_graph_json || '{}');
+    expect(compiledGraph).toEqual({ version: 1 });
+    expect(compiledGraph.programBundle).toBeUndefined();
+    expect(compiledGraph.flatProgramBundle).toBeUndefined();
     const targetEndpointRows = verified
       .prepare('SELECT route_endpoint_id FROM route_endpoint_targets ORDER BY id')
       .all() as Array<{ route_endpoint_id: string | null }>;

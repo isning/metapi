@@ -226,6 +226,15 @@ describe('backupService', () => {
     };
     const published = await publishRouteGraphSource({ sourceGraph: graphSource, createdBy: 'test' });
     expect(published.ok).toBe(true);
+    if (published.ok) {
+      await db.update(schema.routeGraphVersions).set({
+        compiledGraphJson: JSON.stringify({
+          version: 1,
+          legacyCompiledCacheMarker: 'must-not-be-exported',
+          padding: 'x'.repeat(1024),
+        }),
+      }).where(eq(schema.routeGraphVersions.id, published.version.id)).run();
+    }
 
     await db.insert(schema.routeEndpointTargets).values({
       routeId: route.id,
@@ -351,12 +360,22 @@ describe('backupService', () => {
 
     const exported = await backupService.exportBackup('all') as any;
     expect(exported.version).toBe('2.4');
+    const exportedRouteGraphVersion = exported.accounts.routeGraph.versions.find((row: any) => (
+      String(row.sourceGraphJson || '').includes('entry:manual:roundtrip')
+    ));
+    const exportedCompiledGraph = JSON.parse(exportedRouteGraphVersion?.compiledGraphJson || '{}');
     expect(exported.accounts.routeGraph.versions).toEqual(expect.arrayContaining([
       expect.objectContaining({
         sourceGraphJson: expect.stringContaining('entry:manual:roundtrip'),
-        compiledGraphJson: expect.stringContaining('gpt-graph'),
+        compiledGraphJson: expect.not.stringContaining('must-not-be-exported'),
       }),
     ]));
+    expect(exportedCompiledGraph).toMatchObject({
+      version: 1,
+      compiledRouterBundle: expect.objectContaining({ version: 2 }),
+    });
+    expect(exportedCompiledGraph.programBundle).toBeUndefined();
+    expect(exportedCompiledGraph.flatProgramBundle).toBeUndefined();
     expect(exported.accounts.routeGraph.activeVersion).toEqual(expect.objectContaining({
       versionId: expect.any(Number),
     }));
@@ -1873,7 +1892,11 @@ describe('backupService', () => {
                 edges: [],
                 macros: [],
               }),
-              compiledGraphJson: JSON.stringify({ version: 1 }),
+              compiledGraphJson: JSON.stringify({
+                version: 1,
+                legacyCompiledCacheMarker: 'must-not-be-imported',
+                padding: 'x'.repeat(1024),
+              }),
               status: 'active',
               createdBy: 'old-backup',
               createdAt: '2026-03-20T00:00:00.000Z',
@@ -1901,6 +1924,143 @@ describe('backupService', () => {
     expect(activeGraph?.createdBy).toBe('backup-import');
     expect(activeGraph?.sourceGraphJson).not.toContain('stale-model');
     expect(activeGraph?.sourceGraphJson).toContain('route-endpoint:product:auto-model:gpt-old-graph');
+    expect(activeGraph?.sourceGraphJson).toContain('route-endpoint:supply:upstream-model:');
+  });
+
+  it('rejects invalid native route graph snapshots and rebuilds from imported routes', async () => {
+    const payload = {
+      version: '2.4',
+      timestamp: Date.now(),
+      type: 'accounts',
+      accounts: {
+        sites: [
+          {
+            id: 1,
+            name: 'invalid-native-site',
+            url: 'https://invalid-native.example.com',
+            platform: 'new-api',
+            status: 'active',
+            createdAt: '2026-03-20T00:00:00.000Z',
+            updatedAt: '2026-03-20T00:00:00.000Z',
+          },
+        ],
+        accounts: [
+          {
+            id: 1,
+            siteId: 1,
+            username: 'invalid-native-user',
+            accessToken: '',
+            apiToken: 'invalid-native-token',
+            balance: 10,
+            quota: 20,
+            unitCost: null,
+            valueScore: 0,
+            status: 'active',
+            checkinEnabled: true,
+            extraConfig: '',
+            createdAt: '2026-03-20T00:00:00.000Z',
+            updatedAt: '2026-03-20T00:00:00.000Z',
+          },
+        ],
+        accountTokens: [
+          {
+            id: 1,
+            accountId: 1,
+            name: 'default',
+            token: 'invalid-native-token',
+            tokenGroup: 'default',
+            source: 'legacy',
+            enabled: true,
+            isDefault: true,
+            createdAt: '2026-03-20T00:00:00.000Z',
+            updatedAt: '2026-03-20T00:00:00.000Z',
+          },
+        ],
+        tokenRoutes: [
+          {
+            id: 127,
+            modelPattern: 'gpt-invalid-native',
+            routingStrategy: 'weighted',
+            enabled: true,
+            createdAt: '2026-03-20T00:00:00.000Z',
+            updatedAt: '2026-03-20T00:00:00.000Z',
+          },
+        ],
+        routeEndpointTargets: [
+          {
+            id: 1,
+            routeId: 127,
+            accountId: 1,
+            tokenId: 1,
+            sourceModel: 'gpt-invalid-native-upstream',
+            priority: 0,
+            weight: 10,
+            enabled: true,
+            manualOverride: false,
+          },
+        ],
+        routeGroupSources: [],
+        routeGraph: {
+          versions: [
+            {
+              id: 10,
+              version: 10,
+              sourceGraphJson: JSON.stringify({
+                version: 1,
+                nodes: [
+                  {
+                    id: 'entry.invalid-native',
+                    type: 'entry',
+                    enabled: true,
+                    visibility: 'public',
+                    ownership: 'manual',
+                    match: {
+                      requestedModelPattern: 'gpt-invalid-native',
+                      routeId: 127,
+                    },
+                  },
+                ],
+                edges: [
+                  {
+                    id: 'edge-missing-target',
+                    sourceNodeId: 'entry.invalid-native',
+                    sourcePortId: 'bidirect.out',
+                    targetNodeId: 'missing.invalid-native',
+                    targetPortId: 'bidirect.in',
+                    kind: 'bidirect_flow',
+                    ownership: 'manual',
+                  },
+                ],
+                macros: [],
+              }),
+              compiledGraphJson: JSON.stringify({ version: 1, legacyCompiledCacheMarker: 'invalid-native' }),
+              status: 'active',
+              createdBy: 'invalid-native-backup',
+              createdAt: '2026-03-20T00:00:00.000Z',
+              activatedAt: '2026-03-20T00:00:00.000Z',
+            },
+          ],
+          activeVersion: {
+            id: 1,
+            versionId: 10,
+            updatedAt: '2026-03-20T00:00:00.000Z',
+          },
+          drafts: [],
+        },
+      },
+    } as Record<string, unknown>;
+
+    await expect(backupService.importBackup(payload)).resolves.toMatchObject({
+      allImported: true,
+      sections: { accounts: true },
+    });
+
+    const activeGraph = await db.select().from(schema.routeGraphVersions)
+      .where(eq(schema.routeGraphVersions.status, 'active'))
+      .get();
+    expect(activeGraph?.createdBy).toBe('backup-import');
+    expect(activeGraph?.sourceGraphJson).not.toContain('missing.invalid-native');
+    expect(activeGraph?.sourceGraphJson).toContain('route-endpoint:product:auto-model:gpt-invalid-native');
     expect(activeGraph?.sourceGraphJson).toContain('route-endpoint:supply:upstream-model:');
   });
 
@@ -2084,6 +2244,14 @@ describe('backupService', () => {
     expect(activeGraph?.sourceGraphJson).not.toContain('route-endpoint:supply:route:157');
     expect(activeGraph?.sourceGraphJson).not.toContain('route-endpoint:supply:route:166');
     expect(activeGraph?.sourceGraphJson).toContain('route-endpoint:supply:upstream-model:');
+    expect(activeGraph?.compiledGraphJson).not.toContain('must-not-be-imported');
+    const runtimeArtifact = JSON.parse(activeGraph?.compiledGraphJson || '{}');
+    expect(runtimeArtifact).toMatchObject({
+      version: 1,
+      compiledRouterBundle: expect.objectContaining({ version: 2 }),
+    });
+    expect(runtimeArtifact.programBundle).toBeUndefined();
+    expect(runtimeArtifact.flatProgramBundle).toBeUndefined();
     const targetRows = await db.select().from(schema.routeEndpointTargets).orderBy(asc(schema.routeEndpointTargets.id)).all();
     expect(targetRows.map((row) => row.routeEndpointId)).toEqual([null, null]);
   });

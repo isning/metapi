@@ -1,10 +1,9 @@
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import { requireInsertedRowId } from '../db/insertHelpers.js';
 import { ACCOUNT_TOKEN_VALUE_STATUS_READY } from './accountTokenService.js';
 import * as routeRefreshWorkflow from './routeRefreshWorkflow.js';
-import { compileRouteGraphSource } from '../../shared/routeGraph.js';
-import { ensureActiveRouteGraphVersion } from './routeGraphService.js';
+import { loadEnabledRouteBindingProjectionsByModelPattern } from './routeTableProjectionService.js';
 
 const DUMMY_SITE_NAME = 'Metapi Dummy Upstreams';
 const DUMMY_SITE_URL = 'https://dummy-upstreams.metapi.local';
@@ -158,10 +157,15 @@ async function ensureTokenModelAvailability(tokenId: number, modelName: string):
 }
 
 async function applyDummyRouteWeights(modelName: string, priority: number, weight: number): Promise<void> {
-  const active = await ensureActiveRouteGraphVersion();
-  const compiled = compileRouteGraphSource(active.sourceGraph);
-  const entry = compiled.compiled.entries.find((item) => item.publicModelName === modelName);
-  const routeId = Number(entry?.match?.routeId || 0);
+  const projectedRoutes = await loadEnabledRouteBindingProjectionsByModelPattern(modelName);
+  let routeId = Number(projectedRoutes[0]?.route.id || 0);
+  if (!Number.isFinite(routeId) || routeId <= 0) {
+    const route = await db.select({ id: schema.tokenRoutes.id })
+      .from(schema.tokenRoutes)
+      .where(eq(schema.tokenRoutes.displayName, modelName))
+      .get();
+    routeId = Number(route?.id || 0);
+  }
   if (!Number.isFinite(routeId) || routeId <= 0) return;
 
   const channels = await db.select().from(schema.routeEndpointTargets)
@@ -173,6 +177,21 @@ async function applyDummyRouteWeights(modelName: string, priority: number, weigh
       .where(eq(schema.routeEndpointTargets.id, channel.id))
       .run();
   }
+}
+
+async function loadRouteTableGraphSummary(): Promise<{ graphNodes: number; graphEdges: number }> {
+  const [routeCountRow, targetCountRow, sourceCountRow] = await Promise.all([
+    db.select({ count: sql<number>`count(*)` }).from(schema.tokenRoutes).get(),
+    db.select({ count: sql<number>`count(*)` }).from(schema.routeEndpointTargets).get(),
+    db.select({ count: sql<number>`count(*)` }).from(schema.routeGroupSources).get(),
+  ]);
+  const routeCount = Number(routeCountRow?.count || 0);
+  const targetCount = Number(targetCountRow?.count || 0);
+  const sourceCount = Number(sourceCountRow?.count || 0);
+  return {
+    graphNodes: routeCount + targetCount,
+    graphEdges: targetCount + sourceCount,
+  };
 }
 
 export async function seedDummyUpstreamRoutes(): Promise<DummyUpstreamSeedSummary> {
@@ -190,7 +209,7 @@ export async function seedDummyUpstreamRoutes(): Promise<DummyUpstreamSeedSummar
     await applyDummyRouteWeights(model.name, model.priority, model.weight);
   }
 
-  const active = await ensureActiveRouteGraphVersion();
+  const routeTableSummary = await loadRouteTableGraphSummary();
 
   return {
     siteId: site.id,
@@ -199,8 +218,8 @@ export async function seedDummyUpstreamRoutes(): Promise<DummyUpstreamSeedSummar
     modelNames: DUMMY_UPSTREAM_MODELS.map((model) => model.name),
     routes: DUMMY_UPSTREAM_MODELS.length,
     channels: tokenIds.length,
-    graphNodes: active.sourceGraph.nodes.length,
-    graphEdges: active.sourceGraph.edges.length,
+    graphNodes: routeTableSummary.graphNodes,
+    graphEdges: routeTableSummary.graphEdges,
     rebuild,
   };
 }

@@ -27,6 +27,7 @@ describe('dummyUpstreamSeedService', () => {
 
   beforeEach(async () => {
     await db.delete(schema.routeEndpointTargets).run();
+    await db.delete(schema.routeBindingProjections).run();
     await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.tokenModelAvailability).run();
     await db.delete(schema.accountTokens).run();
@@ -41,7 +42,7 @@ describe('dummyUpstreamSeedService', () => {
     delete process.env.DATA_DIR;
   });
 
-  it('creates deterministic dummy upstream routes and rebuilds the active graph', async () => {
+  it('creates deterministic dummy upstream routes and rebuilds route-table projections', async () => {
     const result = await seedDummyUpstreamRoutes();
 
     expect(result.routes).toBe(3);
@@ -56,7 +57,7 @@ describe('dummyUpstreamSeedService', () => {
     const routeNames = routes.map((route) => route.displayName).filter((name): name is string => !!name);
     expect(routeNames).toEqual(expect.arrayContaining(result.modelNames));
 
-    const graphVersions = await db.select().from(schema.routeGraphVersions).all();
-    expect(graphVersions.length).toBeGreaterThan(0);
+    const projections = await db.select().from(schema.routeBindingProjections).all();
+    expect(projections.map((projection) => projection.modelPattern)).toEqual(expect.arrayContaining(result.modelNames));
   });
 });

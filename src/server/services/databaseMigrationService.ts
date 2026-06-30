@@ -12,6 +12,7 @@ import {
   compileRouteGraphSource,
 } from '../../shared/routeGraph.js';
 import { migratePreferenceSettingsToCurrentConfigVersion } from './configMigrationService.js';
+import { buildRouteGraphRuntimeStorageArtifact } from './routeGraphService.js';
 import { normalizeStoredRouteEndpointId } from '../shared/routeGraphLegacyEndpointReferences.js';
 
 export type MigrationDialect = RuntimeSchemaDialect;
@@ -817,11 +818,11 @@ function buildStatements(
       sourceRouteIds,
     };
   }));
-  const compiledGraph = compileRouteGraphSource(sourceGraph).compiled;
+  const compiledGraph = compileRouteGraphSource(sourceGraph, { includePrimitiveSource: false }).compiled;
   statements.push({
     table: 'route_graph_versions',
     columns: ['id', 'version', 'source_graph_json', 'compiled_graph_json', 'status', 'created_by', 'created_at', 'activated_at'],
-    values: [1, 1, JSON.stringify(sourceGraph), JSON.stringify(compiledGraph), 'active', 'migration', new Date(snapshot.timestamp || Date.now()).toISOString(), new Date(snapshot.timestamp || Date.now()).toISOString()],
+    values: [1, 1, JSON.stringify(sourceGraph), JSON.stringify(buildRouteGraphRuntimeStorageArtifact(compiledGraph)), 'active', 'migration', new Date(snapshot.timestamp || Date.now()).toISOString(), new Date(snapshot.timestamp || Date.now()).toISOString()],
   });
   statements.push({
     table: 'route_graph_active_version',

@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { routeGraphSupplyEndpointIdFromIdentity } from '../../shared/routeGraph.js';
+import { compileRouteGraphSource, routeGraphSupplyEndpointIdFromIdentity } from '../../shared/routeGraph.js';
 import {
   normalizeLegacyRouteGraphEndpointReferencesJson,
   normalizeStoredRouteEndpointId,
@@ -63,6 +63,7 @@ const LEGACY_GRAPH_ENDPOINT_REFERENCE_SQL = `
   OR instr(%COLUMN%, 'route-endpoint:supply:route:') > 0
   OR instr(%COLUMN%, 'entry:legacy:') > 0
 `;
+const EMPTY_ROUTE_GRAPH_RUNTIME_ARTIFACT_JSON = JSON.stringify({ version: 1 });
 const VERIFIED_SCHEMA_MARKERS: SchemaMarker[] = [
   { table: 'sites' },
   { table: 'settings' },
@@ -494,6 +495,21 @@ function normalizeLegacyRouteGraphSourceEndpointReferences(sqlite: Database.Data
     });
     return result.changed ? result.json : null;
   };
+  const runtimeArtifactJsonForSource = (raw: string): string => {
+    try {
+      const compiled = compileRouteGraphSource(JSON.parse(raw), { includePrimitiveSource: false });
+      if (compiled.diagnostics.some((diagnostic) => diagnostic.severity === 'error')) {
+        return EMPTY_ROUTE_GRAPH_RUNTIME_ARTIFACT_JSON;
+      }
+      return JSON.stringify({
+        version: 1,
+        hash: compiled.compiled.hash,
+        ...(compiled.compiled.compiledRouterBundle ? { compiledRouterBundle: compiled.compiled.compiledRouterBundle } : {}),
+      });
+    } catch {
+      return EMPTY_ROUTE_GRAPH_RUNTIME_ARTIFACT_JSON;
+    }
+  };
 
   let changedRows = 0;
   const transaction = sqlite.transaction(() => {
@@ -506,7 +522,7 @@ function normalizeLegacyRouteGraphSourceEndpointReferences(sqlite: Database.Data
         ORDER BY id
         LIMIT ${GRAPH_JSON_MIGRATION_BATCH_SIZE}
       `);
-      const update = sqlite.prepare('UPDATE route_graph_versions SET source_graph_json = ? WHERE id = ?');
+      const update = sqlite.prepare('UPDATE route_graph_versions SET source_graph_json = ?, compiled_graph_json = ? WHERE id = ?');
       let lastId = 0;
       for (;;) {
         const rows = select.all(lastId) as Array<{ id: number; source_graph_json: string | null }>;
@@ -515,7 +531,7 @@ function normalizeLegacyRouteGraphSourceEndpointReferences(sqlite: Database.Data
           lastId = Math.max(lastId, Number(row.id) || lastId);
           const next = rewriteGraphJson(row.source_graph_json);
           if (!next) continue;
-          update.run(next, row.id);
+          update.run(next, runtimeArtifactJsonForSource(next), row.id);
           changedRows += 1;
         }
       }

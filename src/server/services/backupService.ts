@@ -1,4 +1,4 @@
-import { asc, eq } from 'drizzle-orm';
+import { asc, eq, gt } from 'drizzle-orm';
 import cron from 'node-cron';
 import { db, schema } from '../db/index.js';
 import { requireInsertedRowId } from '../db/insertHelpers.js';
@@ -8,6 +8,7 @@ import { getOauthInfoFromAccount } from './oauth/oauthAccount.js';
 import { PLATFORM_ALIASES, detectPlatformByUrlHint } from '../../shared/platformIdentity.js';
 import {
   buildRouteGraphSourceFromRouteTable,
+  buildRouteGraphRuntimeStorageArtifact,
   invalidateRouteGraphReadCaches,
   publishRouteGraphSource,
   syncRouteBindingProjectionsFromActiveRouteGraph,
@@ -30,6 +31,8 @@ import {
 } from '../shared/routeGraphLegacyEndpointReferences.js';
 
 const BACKUP_VERSION = CURRENT_CONFIG_VERSION;
+const ROUTE_GRAPH_RUNTIME_ARTIFACT_SOURCE_BYTE_LIMIT = 16 * 1024 * 1024;
+const EMPTY_ROUTE_GRAPH_RUNTIME_ARTIFACT_JSON = JSON.stringify({ version: ROUTE_GRAPH_SCHEMA_VERSION });
 
 export type BackupExportType = 'all' | 'accounts' | 'preferences';
 
@@ -576,6 +579,58 @@ function normalizeAccountsBackupSection(section: AccountsBackupSection): Account
   };
 }
 
+function collectRouteIdsReferencedByRouteGraphSource(sourceGraph: Record<string, unknown>): Set<number> {
+  const result = new Set<number>();
+  const addRouteId = (value: unknown) => {
+    const routeId = Number(value);
+    if (Number.isFinite(routeId) && routeId > 0) result.add(Math.trunc(routeId));
+  };
+  const addRouteIdFromText = (value: unknown) => {
+    const text = String(value || '').trim();
+    const patterns = [
+      /^(?:entry|dispatcher):legacy:(\d+)$/,
+      /^route-endpoint:(?:supply|product):route:(\d+)$/,
+      /^ref:legacy:(\d+):\d+$/,
+    ];
+    for (const pattern of patterns) {
+      const match = pattern.exec(text);
+      if (match) addRouteId(match[1]);
+    }
+  };
+  const addBackendRouteIds = (value: unknown) => {
+    if (!isRecord(value) || value.kind !== 'routes' || !Array.isArray(value.routeIds)) return;
+    for (const routeId of value.routeIds) addRouteId(routeId);
+  };
+
+  for (const node of Array.isArray(sourceGraph.nodes) ? sourceGraph.nodes : []) {
+    if (!isRecord(node)) continue;
+    addRouteId(node.routeId);
+    addRouteId(node.legacyRouteId);
+    addRouteIdFromText(node.id);
+    if (isRecord(node.match)) addRouteId(node.match.routeId);
+    addBackendRouteIds(node.backend);
+  }
+  for (const edge of Array.isArray(sourceGraph.edges) ? sourceGraph.edges : []) {
+    if (!isRecord(edge)) continue;
+    addRouteIdFromText(edge.sourceNodeId);
+    addRouteIdFromText(edge.targetNodeId);
+  }
+  for (const macro of Array.isArray(sourceGraph.macros) ? sourceGraph.macros : []) {
+    if (!isRecord(macro)) continue;
+    const config = isRecord(macro.config) ? macro.config : {};
+    for (const group of Array.isArray(config.groups) ? config.groups : []) {
+      if (!isRecord(group) || !isRecord(group.input)) continue;
+      if (group.input.kind === 'route_endpoints' && Array.isArray(group.input.endpointIds)) {
+        for (const endpointId of group.input.endpointIds) addRouteIdFromText(endpointId);
+      }
+      if (group.input.kind === 'routes' && Array.isArray(group.input.routeIds)) {
+        for (const routeId of group.input.routeIds) addRouteId(routeId);
+      }
+    }
+  }
+  return result;
+}
+
 function canRestoreNativeRouteGraphSnapshot(
   routeGraph: BackupRouteGraphSection | undefined,
   tokenRoutes: BackupTokenRouteRow[] = [],
@@ -589,23 +644,19 @@ function canRestoreNativeRouteGraphSnapshot(
   try {
     const sourceGraph = JSON.parse(activeVersion.sourceGraphJson || '{}');
     if (!isRecord(sourceGraph) || sourceGraph.version !== ROUTE_GRAPH_SCHEMA_VERSION) return false;
-    const compiled = compileRouteGraphSource(sourceGraph);
+    const hasValidShape = Array.isArray(sourceGraph.nodes)
+      && Array.isArray(sourceGraph.edges)
+      && (sourceGraph.macros === undefined || Array.isArray(sourceGraph.macros));
+    if (!hasValidShape) return false;
+    const compiled = compileRouteGraphSource(sourceGraph, { includePrimitiveSource: false });
+    if (compiled.diagnostics.some((diagnostic) => diagnostic.severity === 'error')) return false;
     const routeIds = tokenRoutes
       .map((route) => Number(route.id))
-      .filter((routeId) => Number.isFinite(routeId) && routeId > 0);
-    if (routeIds.length > 0) {
-      const coveredRouteIds = new Set<number>();
-      for (const endpoint of compiled.compiled.routeEndpoints || []) {
-        const routeId = Number(endpoint.routeId);
-        if (Number.isFinite(routeId) && routeId > 0) coveredRouteIds.add(routeId);
-      }
-      for (const entry of compiled.compiled.entries || []) {
-        const routeId = Number(entry.match?.routeId);
-        if (Number.isFinite(routeId) && routeId > 0) coveredRouteIds.add(routeId);
-      }
-      if (!routeIds.every((routeId) => coveredRouteIds.has(routeId))) return false;
-    }
-    return !compiled.diagnostics.some((diagnostic) => diagnostic.severity === 'error');
+      .filter((routeId) => Number.isFinite(routeId) && routeId > 0)
+      .map((routeId) => Math.trunc(routeId));
+    if (routeIds.length === 0) return true;
+    const coveredRouteIds = collectRouteIdsReferencedByRouteGraphSource(sourceGraph);
+    return routeIds.every((routeId) => coveredRouteIds.has(routeId));
   } catch {
     return false;
   }
@@ -658,6 +709,18 @@ function mergeRouteTableGraphWithManualBackupGraph(routeTableGraph: any, backupG
       importedManualGraphMerged: manualNodes.length > 0 || manualEdges.length > 0 || manualMacros.length > 0,
     },
   };
+}
+
+function mergeValidManualBackupGraph(routeTableGraph: unknown, backupGraph: unknown): unknown {
+  const mergedGraph = mergeRouteTableGraphWithManualBackupGraph(routeTableGraph, backupGraph);
+  try {
+    const compiled = compileRouteGraphSource(mergedGraph, { includePrimitiveSource: false });
+    return compiled.diagnostics.some((diagnostic) => diagnostic.severity === 'error')
+      ? routeTableGraph
+      : mergedGraph;
+  } catch {
+    return routeTableGraph;
+  }
 }
 
 function collectRouteGraphSupplyEndpointIdsByRouteId(sourceGraph: unknown): Map<number, string[]> {
@@ -713,37 +776,82 @@ function normalizeLegacyRouteGraphEndpointReferencesForImport(
   }).value;
 }
 
+function buildRouteGraphRuntimeArtifactJsonForSource(sourceGraphJson: string): {
+  sourceGraphJson: string;
+  compiledGraphJson: string;
+} {
+  const normalizedSourceGraphJson = sourceGraphJson || JSON.stringify({ version: ROUTE_GRAPH_SCHEMA_VERSION, nodes: [], edges: [], macros: [] });
+  if (Buffer.byteLength(normalizedSourceGraphJson, 'utf8') > ROUTE_GRAPH_RUNTIME_ARTIFACT_SOURCE_BYTE_LIMIT) {
+    return {
+      sourceGraphJson: normalizedSourceGraphJson,
+      compiledGraphJson: EMPTY_ROUTE_GRAPH_RUNTIME_ARTIFACT_JSON,
+    };
+  }
+
+  try {
+    const sourceGraph = JSON.parse(normalizedSourceGraphJson) as unknown;
+    const compiled = compileRouteGraphSource(sourceGraph, { includePrimitiveSource: false });
+    return {
+      sourceGraphJson: JSON.stringify(compiled.source),
+      compiledGraphJson: JSON.stringify(buildRouteGraphRuntimeStorageArtifact(compiled.compiled)),
+    };
+  } catch {
+    return {
+      sourceGraphJson: normalizedSourceGraphJson,
+      compiledGraphJson: EMPTY_ROUTE_GRAPH_RUNTIME_ARTIFACT_JSON,
+    };
+  }
+}
+
 async function normalizeImportedRouteGraphRows(): Promise<void> {
   const routeTableGraph = await buildRouteGraphSourceFromRouteTable(null);
   const explicitGroupRouteIds = collectExplicitGroupRouteIdsFromRows(await db.select().from(schema.routeGroupSources).all());
   const supplyEndpointIdsByRouteId = collectRouteGraphSupplyEndpointIdsByRouteId(routeTableGraph);
   let changedRows = 0;
 
-  const versionRows = await db.select().from(schema.routeGraphVersions).all();
-  for (const row of versionRows) {
+  let lastVersionId = 0;
+  while (true) {
+    const row = await db.select({
+      id: schema.routeGraphVersions.id,
+      sourceGraphJson: schema.routeGraphVersions.sourceGraphJson,
+    })
+      .from(schema.routeGraphVersions)
+      .where(gt(schema.routeGraphVersions.id, lastVersionId))
+      .orderBy(asc(schema.routeGraphVersions.id))
+      .limit(1)
+      .get();
+    if (!row) break;
+    lastVersionId = row.id;
     const normalized = normalizeLegacyRouteGraphEndpointReferencesJson(row.sourceGraphJson, {
       supplyEndpointIdsByRouteId,
       explicitGroupRouteIds,
     });
-    if (!normalized.changed || !normalized.json) continue;
-    const sourceGraph = JSON.parse(normalized.json) as unknown;
-    const compiled = compileRouteGraphSource(sourceGraph, { includeLegacyBundles: false, includePrimitiveSource: false });
+    const runtimeArtifact = buildRouteGraphRuntimeArtifactJsonForSource(
+      normalized.changed && normalized.json ? normalized.json : row.sourceGraphJson,
+    );
     await db.update(schema.routeGraphVersions).set({
-      sourceGraphJson: JSON.stringify(compiled.source),
-      compiledGraphJson: JSON.stringify(compiled.compiled),
+      sourceGraphJson: runtimeArtifact.sourceGraphJson,
+      compiledGraphJson: runtimeArtifact.compiledGraphJson,
     }).where(eq(schema.routeGraphVersions.id, row.id)).run();
-    changedRows += 1;
+    if (normalized.changed) changedRows += 1;
   }
 
-  const draftRows = await db.select().from(schema.routeGraphDrafts).all();
-  for (const row of draftRows) {
+  let lastDraftId = 0;
+  while (true) {
+    const row = await db.select().from(schema.routeGraphDrafts)
+      .where(gt(schema.routeGraphDrafts.id, lastDraftId))
+      .orderBy(asc(schema.routeGraphDrafts.id))
+      .limit(1)
+      .get();
+    if (!row) break;
+    lastDraftId = row.id;
     const normalized = normalizeLegacyRouteGraphEndpointReferencesJson(row.workingGraphJson, {
       supplyEndpointIdsByRouteId,
       explicitGroupRouteIds,
     });
     if (!normalized.changed || !normalized.json) continue;
     const sourceGraph = JSON.parse(normalized.json) as unknown;
-    const compiled = compileRouteGraphSource(sourceGraph, { includeLegacyBundles: false, includePrimitiveSource: false });
+    const compiled = compileRouteGraphSource(sourceGraph, { includePrimitiveSource: false });
     await db.update(schema.routeGraphDrafts).set({
       workingGraphJson: JSON.stringify(compiled.source),
       diagnosticsJson: JSON.stringify(compiled.diagnostics),
@@ -1747,6 +1855,36 @@ function isSettingValueAcceptable(key: string, value: unknown): boolean {
   return true;
 }
 
+async function exportRouteGraphVersionRows(): Promise<RouteGraphVersionRow[]> {
+  const rows: RouteGraphVersionRow[] = [];
+  let lastVersionId = 0;
+
+  while (true) {
+    const row = await db.select({
+      id: schema.routeGraphVersions.id,
+      version: schema.routeGraphVersions.version,
+      sourceGraphJson: schema.routeGraphVersions.sourceGraphJson,
+      status: schema.routeGraphVersions.status,
+      createdBy: schema.routeGraphVersions.createdBy,
+      createdAt: schema.routeGraphVersions.createdAt,
+      activatedAt: schema.routeGraphVersions.activatedAt,
+    })
+      .from(schema.routeGraphVersions)
+      .where(gt(schema.routeGraphVersions.id, lastVersionId))
+      .orderBy(asc(schema.routeGraphVersions.id))
+      .limit(1)
+      .get();
+    if (!row) break;
+    lastVersionId = row.id;
+    rows.push({
+      ...row,
+      compiledGraphJson: buildRouteGraphRuntimeArtifactJsonForSource(row.sourceGraphJson).compiledGraphJson,
+    });
+  }
+
+  return rows;
+}
+
 async function exportAccountsSection(): Promise<AccountsBackupSection> {
   const [
     sites,
@@ -1810,7 +1948,7 @@ async function exportAccountsSection(): Promise<AccountsBackupSection> {
     db.select().from(schema.tokenRoutes).orderBy(asc(schema.tokenRoutes.id)).all(),
     db.select().from(schema.routeEndpointTargets).orderBy(asc(schema.routeEndpointTargets.id)).all(),
     db.select().from(schema.routeGroupSources).orderBy(asc(schema.routeGroupSources.id)).all(),
-    db.select().from(schema.routeGraphVersions).orderBy(asc(schema.routeGraphVersions.id)).all(),
+    exportRouteGraphVersionRows(),
     db.select().from(schema.routeGraphActiveVersion).orderBy(asc(schema.routeGraphActiveVersion.id)).all(),
     db.select().from(schema.routeGraphDrafts).orderBy(asc(schema.routeGraphDrafts.id)).all(),
     db.select().from(schema.oauthRouteUnits).orderBy(asc(schema.oauthRouteUnits.id)).all(),
@@ -2558,11 +2696,13 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
 
     if (shouldRestoreRouteGraph) {
       for (const row of normalizedSection.routeGraph?.versions || []) {
+        const sourceGraphJson = asRequiredJsonText(row.sourceGraphJson, { version: 1, nodes: [], edges: [], macros: [] });
+        const runtimeArtifact = buildRouteGraphRuntimeArtifactJsonForSource(sourceGraphJson);
         await tx.insert(schema.routeGraphVersions).values({
           id: row.id,
           version: row.version,
-          sourceGraphJson: asRequiredJsonText(row.sourceGraphJson, { version: 1, nodes: [], edges: [], macros: [] }),
-          compiledGraphJson: asRequiredJsonText(row.compiledGraphJson, { version: 1 }),
+          sourceGraphJson: runtimeArtifact.sourceGraphJson,
+          compiledGraphJson: runtimeArtifact.compiledGraphJson,
           status: row.status,
           createdBy: row.createdBy ?? 'backup-import',
           createdAt: row.createdAt,
@@ -2644,7 +2784,7 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
   if (shouldRestoreRouteGraph) {
     await normalizeImportedRouteGraphRows();
     invalidateRouteGraphReadCaches();
-    await syncRouteBindingProjectionsFromActiveRouteGraph({ includeCompiledFallback: true });
+    await syncRouteBindingProjectionsFromActiveRouteGraph();
   } else {
     const routeOverrides = new Map<number, {
       match: RouteGraphMatchSpec;
@@ -2661,7 +2801,7 @@ async function importAccountsSection(section: AccountsBackupSection): Promise<vo
       });
     }
     const routeTableGraph = await buildRouteGraphSourceFromRouteTable(null, routeOverrides);
-    const mergedSourceGraph = mergeRouteTableGraphWithManualBackupGraph(
+    const mergedSourceGraph = mergeValidManualBackupGraph(
       routeTableGraph,
       parseActiveBackupRouteGraphSource(normalizedSection.routeGraph),
     );
