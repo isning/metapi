@@ -1331,21 +1331,34 @@ function normalizeRouteIds(routeIdsInput: number[]): number[] {
     .filter((routeId) => Number.isFinite(routeId) && routeId > 0)));
 }
 
-async function loadEnabledRouteRowsByIds(routeIdsInput: number[]): Promise<Map<number, RouteRow>> {
+async function loadEnabledRouteRowsByIds(routeIdsInput: number[], nowMs = Date.now()): Promise<Map<number, RouteRow>> {
   const routeIds = normalizeRouteIds(routeIdsInput);
   if (routeIds.length === 0) return new Map();
+
+  const cachedRoutes = new Map<number, RouteRow>();
+  const missingRouteIds: number[] = [];
+  for (const routeId of routeIds) {
+    const cached = routeMatchCache.get(routeId);
+    if (cached && isCacheFresh(cached.loadedAt, nowMs)) {
+      rememberRouteMatchCache(routeId, cached);
+      cachedRoutes.set(routeId, cached.match.route);
+      continue;
+    }
+    missingRouteIds.push(routeId);
+  }
+  if (missingRouteIds.length === 0) return cachedRoutes;
 
   const [rawRoutes, routeGroupSources, projections] = await Promise.all([
     db.select().from(schema.tokenRoutes)
       .where(and(
-        inArray(schema.tokenRoutes.id, routeIds),
+        inArray(schema.tokenRoutes.id, missingRouteIds),
         eq(schema.tokenRoutes.enabled, true),
       ))
       .all(),
     db.select().from(schema.routeGroupSources)
-      .where(inArray(schema.routeGroupSources.groupRouteId, routeIds))
+      .where(inArray(schema.routeGroupSources.groupRouteId, missingRouteIds))
       .all(),
-    loadRouteBindingProjectionsForRouteIds(routeIds),
+    loadRouteBindingProjectionsForRouteIds(missingRouteIds),
   ]);
   const sourceRouteIdsByGroupRouteId = new Map<number, number[]>();
   for (const source of routeGroupSources) {
@@ -1354,10 +1367,13 @@ async function loadEnabledRouteRowsByIds(routeIdsInput: number[]): Promise<Map<n
     sourceRouteIdsByGroupRouteId.set(source.groupRouteId, existing);
   }
 
-  return new Map(rawRoutes.map((route) => [
-    route.id,
-    buildRouteRow(route, projections.get(route.id), sourceRouteIdsByGroupRouteId.get(route.id) || []),
-  ]));
+  for (const route of rawRoutes) {
+    cachedRoutes.set(
+      route.id,
+      buildRouteRow(route, projections.get(route.id), sourceRouteIdsByGroupRouteId.get(route.id) || []),
+    );
+  }
+  return cachedRoutes;
 }
 
 async function loadEnabledRouteCandidatesByModelsUncached(modelsInput: string[]): Promise<Map<string, RouteRow[]>> {
@@ -1601,58 +1617,6 @@ async function loadRouteMatchesUncached(routes: RouteRow[], nowMs = Date.now()):
   return matches;
 }
 
-async function loadRouteMatchUncached(route: RouteRow, nowMs = Date.now(), routeGraph?: RouteGraphRuntimeSelection | null): Promise<RouteMatch> {
-  const cached = routeMatchCache.get(route.id);
-  if (!routeGraph && cached && isCacheFresh(cached.loadedAt, nowMs)) {
-    rememberRouteMatchCache(route.id, cached);
-    return cached.match;
-  }
-
-  if (!routeGraph) {
-    const matches = await loadRouteMatchesUncached([route], nowMs);
-    return matches.get(route.id) || { route, routeGraph: null, targets: [] };
-  }
-
-  routeMatchLoadCount += 1;
-  const routeIds = isExplicitGroupRoute(route)
-    ? normalizeRouteIds(route.sourceRouteIds)
-    : [route.id];
-  const targetRows = await loadTargetJoinRowsForRouteIds(routeIds);
-  const oauthRouteUnitIds: number[] = Array.from(new Set<number>(
-    targetRows
-      .map((row) => Number(row.route_endpoint_targets.oauthRouteUnitId))
-      .filter((id): id is number => Number.isFinite(id) && id > 0),
-  ));
-  const [routeUnitSummaries, routeUnitMembersByUnitId] = await Promise.all([
-    loadOauthRouteUnitSummariesByIds(oauthRouteUnitIds),
-    listOauthRouteUnitMembersByUnitIds(oauthRouteUnitIds),
-  ]);
-
-  const mapped = targetRows.map((row) => ({
-    target: {
-      ...row.route_endpoint_targets,
-      sourceModel: normalizeTargetSourceModel(row.route_endpoint_targets.sourceModel)
-        || resolveRouteMatchFallbackSourceModel(row)
-        || null,
-    },
-    account: row.accounts,
-    site: row.sites,
-    token: row.account_tokens,
-    routeUnit: row.route_endpoint_targets.oauthRouteUnitId
-      ? (routeUnitSummaries.get(row.route_endpoint_targets.oauthRouteUnitId) || null)
-      : null,
-    routeUnitMembers: row.route_endpoint_targets.oauthRouteUnitId
-      ? (routeUnitMembersByUnitId.get(row.route_endpoint_targets.oauthRouteUnitId) || []).map((member) => ({
-        member: member.member,
-        account: member.account,
-        site: member.site,
-        token: null,
-      }))
-      : [],
-  }));
-  return { route, routeGraph: routeGraph || null, targets: mapped };
-}
-
 function flushRouteMatchBatch(batch: RouteMatchBatch): void {
   if (routeMatchBatch === batch) {
     routeMatchBatch = null;
@@ -1696,18 +1660,17 @@ function enqueueRouteMatchLoad(route: RouteRow): Promise<RouteMatch> {
 }
 
 async function loadRouteMatch(route: RouteRow, nowMs = Date.now(), routeGraph?: RouteGraphRuntimeSelection | null): Promise<RouteMatch> {
-  if (routeGraph) {
-    return await loadRouteMatchUncached(route, nowMs, routeGraph);
-  }
-
   const cached = routeMatchCache.get(route.id);
   if (cached && isCacheFresh(cached.loadedAt, nowMs)) {
     rememberRouteMatchCache(route.id, cached);
-    return cached.match;
+    return routeGraph ? { ...cached.match, routeGraph } : cached.match;
   }
 
   const inFlight = routeMatchLoadPromises.get(route.id);
-  if (inFlight) return await inFlight;
+  if (inFlight) {
+    const match = await inFlight;
+    return routeGraph ? { ...match, routeGraph } : match;
+  }
 
   const loadTask = enqueueRouteMatchLoad(route)
     .finally(() => {
@@ -1716,7 +1679,8 @@ async function loadRouteMatch(route: RouteRow, nowMs = Date.now(), routeGraph?: 
       }
     });
   routeMatchLoadPromises.set(route.id, loadTask);
-  return await loadTask;
+  const match = await loadTask;
+  return routeGraph ? { ...match, routeGraph } : match;
 }
 
 function patchCachedTarget(targetId: number, apply: (target: TargetRow) => void): void {

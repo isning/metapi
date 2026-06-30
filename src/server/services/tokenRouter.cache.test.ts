@@ -3,11 +3,13 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq, inArray } from 'drizzle-orm';
+import { buildRouteGraphSourceFromLegacyRoutes } from '../../shared/routeGraph.js';
 
 type DbModule = typeof import('../db/index.js');
 type TokenRouterModule = typeof import('./tokenRouter.js');
 type ConfigModule = typeof import('../config.js');
 type RouteTableProjectionModule = typeof import('./routeTableProjectionService.js');
+type RouteGraphServiceModule = typeof import('./routeGraphService.js');
 
 describe('TokenRouter runtime cache', () => {
   let db: DbModule['db'];
@@ -18,6 +20,8 @@ describe('TokenRouter runtime cache', () => {
   let isTargetRecentlyFailed: TokenRouterModule['isTargetRecentlyFailed'];
   let resetSiteRuntimeHealthState: TokenRouterModule['resetSiteRuntimeHealthState'];
   let syncRouteBindingProjectionsFromRouteTable: RouteTableProjectionModule['syncRouteBindingProjectionsFromRouteTable'];
+  let publishRouteGraphSource: RouteGraphServiceModule['publishRouteGraphSource'];
+  let invalidateRouteGraphReadCaches: RouteGraphServiceModule['invalidateRouteGraphReadCaches'];
   let config: ConfigModule['config'];
   let dataDir = '';
   let originalCacheTtlMs = 0;
@@ -32,6 +36,7 @@ describe('TokenRouter runtime cache', () => {
     const tokenRouterModule = await import('./tokenRouter.js');
     const configModule = await import('../config.js');
     const routeTableProjectionModule = await import('./routeTableProjectionService.js');
+    const routeGraphServiceModule = await import('./routeGraphService.js');
     db = dbModule.db;
     schema = dbModule.schema;
     TokenRouter = tokenRouterModule.TokenRouter;
@@ -40,6 +45,8 @@ describe('TokenRouter runtime cache', () => {
     isTargetRecentlyFailed = tokenRouterModule.isTargetRecentlyFailed;
     resetSiteRuntimeHealthState = tokenRouterModule.resetSiteRuntimeHealthState;
     syncRouteBindingProjectionsFromRouteTable = routeTableProjectionModule.syncRouteBindingProjectionsFromRouteTable;
+    publishRouteGraphSource = routeGraphServiceModule.publishRouteGraphSource;
+    invalidateRouteGraphReadCaches = routeGraphServiceModule.invalidateRouteGraphReadCaches;
     config = configModule.config;
     originalCacheTtlMs = config.tokenRouterCacheTtlMs;
     originalFailureCooldownMaxSec = config.tokenRouterFailureCooldownMaxSec;
@@ -60,6 +67,7 @@ describe('TokenRouter runtime cache', () => {
     config.tokenRouterCacheTtlMs = 60_000;
     config.tokenRouterFailureCooldownMaxSec = originalFailureCooldownMaxSec;
     invalidateTokenRouterCache();
+    invalidateRouteGraphReadCaches();
     resetSiteRuntimeHealthState();
   });
 
@@ -67,6 +75,7 @@ describe('TokenRouter runtime cache', () => {
     config.tokenRouterCacheTtlMs = originalCacheTtlMs;
     config.tokenRouterFailureCooldownMaxSec = originalFailureCooldownMaxSec;
     invalidateTokenRouterCache();
+    invalidateRouteGraphReadCaches();
     resetSiteRuntimeHealthState();
     delete process.env.DATA_DIR;
   });
@@ -136,6 +145,81 @@ describe('TokenRouter runtime cache', () => {
     expect(selection?.target.id).toBe(target.id);
     expect(await db.select().from(schema.routeGraphVersions).all()).toHaveLength(0);
     expect(await db.select().from(schema.routeGraphActiveVersion).all()).toHaveLength(0);
+  });
+
+  it('reuses cached route matches when an active graph selects the same route', async () => {
+    const { account, token, route, target } = await createSimpleRoute('graph-cache-source');
+    await syncRouteBindingProjectionsFromRouteTable([route.id]);
+
+    const source = buildRouteGraphSourceFromLegacyRoutes([
+      {
+        id: route.id,
+        enabled: true,
+        displayName: 'graph-cache-source',
+        visibility: 'internal',
+        ownership: 'manual',
+        projectAsMacro: false,
+        match: {
+          kind: 'model',
+          requestedModelPattern: 'graph-cache-source',
+          displayName: 'graph-cache-source',
+          routeId: route.id,
+        },
+        backend: { kind: 'supply' },
+        targets: [{
+          targetId: String(target.id),
+          model: 'graph-cache-source',
+          accountId: account.id,
+          tokenId: token.id,
+          weight: 10,
+        }],
+      },
+    ]);
+    source.macros = [{
+      id: 'graph-cache-public',
+      kind: 'candidate_selector',
+      enabled: true,
+      visibility: 'public',
+      ownership: 'manual',
+      config: {
+        surface: {
+          entry: {
+            kind: 'external',
+            visibility: 'public',
+            match: { displayName: 'graph-cache-public-model' },
+          },
+          output: 'route',
+        },
+        policy: { strategy: 'priority_order' },
+        groups: [{
+          id: 'primary',
+          enabled: true,
+          priority: 0,
+          input: { kind: 'route_endpoints', endpointIds: [`route-endpoint:supply:route:${route.id}`] },
+          defaults: { weight: 10 },
+        }],
+      },
+    }];
+
+    const published = await publishRouteGraphSource({
+      sourceGraph: source,
+      createdBy: 'token-router-cache-test',
+    });
+    expect(published.ok).toBe(true);
+    invalidateTokenRouterCache();
+
+    const router = new TokenRouter();
+    const before = tokenRouterTestUtils.getRouteMatchLoadCount();
+    const first = await router.selectTarget('graph-cache-public-model');
+    const afterFirst = tokenRouterTestUtils.getRouteMatchLoadCount();
+    const second = await router.selectTarget('graph-cache-public-model');
+    const afterSecond = tokenRouterTestUtils.getRouteMatchLoadCount();
+
+    expect(first?.target.id).toBe(target.id);
+    expect(second?.target.id).toBe(target.id);
+    expect(afterFirst).toBeGreaterThan(before);
+    expect(afterSecond).toBe(afterFirst);
+    expect(tokenRouterTestUtils.getRouteCacheStats().matchCacheSize).toBe(1);
   });
 
   it('keeps weighted route selection free of synchronous selection timestamp writes', async () => {

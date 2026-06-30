@@ -124,6 +124,9 @@ describe('harness workflows', () => {
     expect(existsSync(resolve(process.cwd(), 'pnpm-lock.yaml'))).toBe(false);
     expect(performanceGate).toContain("readPositiveInteger('ROUTE_PERF_DISTINCT_CONCURRENT_SAMPLES', 12_800)");
     expect(performanceGate).toContain("readPositiveInteger('ROUTE_PERF_DISTINCT_CONCURRENT_WIDTH', 2_048)");
+    expect(performanceGate).toContain("readPositiveInteger('ROUTE_PERF_COMPLEX_GRAPH_GROUPS', 1_024)");
+    expect(performanceGate).toContain('publishComplexActiveRouteGraphFixture');
+    expect(performanceGate).toContain('complex active graph distinct models');
     expect(throughputBenchmark).toContain("readPositiveInteger('ROUTE_THROUGHPUT_GROUPS', 100_000)");
     expect(throughputBenchmark).toContain("readPositiveInteger('ROUTE_THROUGHPUT_MODEL_CARDINALITY', 100_000)");
     expect(throughputBenchmark).toContain("readPositiveInteger('ROUTE_THROUGHPUT_MAX_CONCURRENCY', 10_000)");

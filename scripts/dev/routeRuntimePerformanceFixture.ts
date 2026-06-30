@@ -1,6 +1,11 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
+import {
+  buildRouteGraphSourceFromLegacyRoutes,
+  compileRouteGraphSource,
+  type RouteGraphSource,
+} from '../../src/shared/routeGraph.js';
 
 export type DbModule = typeof import('../../src/server/db/index.js');
 
@@ -9,6 +14,33 @@ export type MemorySnapshot = {
   heapUsedMiB: number;
   heapTotalMiB: number;
   externalMiB: number;
+};
+
+export type SeededRouteRuntimeRoute = {
+  id: number;
+  displayName: string;
+  targetId: number;
+};
+
+export type SeededRouteRuntimeFixture = {
+  accountId: number;
+  tokenId: number;
+  sourceRoutes: SeededRouteRuntimeRoute[];
+};
+
+export type ComplexActiveRouteGraphFixture = {
+  versionId: number;
+  version: number;
+  groupCount: number;
+  candidateGroupsPerModel: number;
+  endpointsPerCandidateGroup: number;
+  firstModel: string;
+  lastModel: string;
+  overlayModel: string;
+  overlayDisabledTargetId: number;
+  sourceGraphBytes: number;
+  compiledGraphBytes: number;
+  compiledRouterBundleBytes: number;
 };
 
 export function readPositiveInteger(name: string, fallback: number): number {
@@ -102,11 +134,129 @@ async function insertReturningChunks<T, R>(
   return inserted;
 }
 
+export function complexRouteGraphModelName(index: number): string {
+  return `perf-complex-group-${index}`;
+}
+
+function sourceRouteModelName(index: number): string {
+  return `perf-source-${index}`;
+}
+
+function normalizeComplexGraphCount(input: {
+  requestedGroupCount: number;
+  sourceRouteCount: number;
+  candidateGroupsPerModel: number;
+  endpointsPerCandidateGroup: number;
+}): number {
+  const minimumSourceRoutes = input.candidateGroupsPerModel * input.endpointsPerCandidateGroup;
+  if (input.sourceRouteCount < minimumSourceRoutes) {
+    throw new Error(
+      `complex route graph fixture needs at least ${minimumSourceRoutes} source routes, got ${input.sourceRouteCount}`,
+    );
+  }
+  return Math.max(1, Math.min(input.requestedGroupCount, input.sourceRouteCount));
+}
+
+export function buildComplexRouteGraphSourceFixture(input: {
+  sourceRoutes: SeededRouteRuntimeRoute[];
+  accountId: number;
+  tokenId: number;
+  groupCount: number;
+  candidateGroupsPerModel: number;
+  endpointsPerCandidateGroup: number;
+}): RouteGraphSource {
+  const candidateGroupsPerModel = Math.max(1, Math.trunc(input.candidateGroupsPerModel));
+  const endpointsPerCandidateGroup = Math.max(1, Math.trunc(input.endpointsPerCandidateGroup));
+  const groupCount = normalizeComplexGraphCount({
+    requestedGroupCount: input.groupCount,
+    sourceRouteCount: input.sourceRoutes.length,
+    candidateGroupsPerModel,
+    endpointsPerCandidateGroup,
+  });
+  const sourceRoutes = input.sourceRoutes.slice(
+    0,
+    Math.min(input.sourceRoutes.length, groupCount + (candidateGroupsPerModel * endpointsPerCandidateGroup)),
+  );
+  const legacyRoutes = sourceRoutes.map((route, index) => ({
+    id: route.id,
+    enabled: true,
+    displayName: route.displayName || sourceRouteModelName(index),
+    visibility: 'internal',
+    ownership: 'manual',
+    projectAsMacro: false,
+    match: {
+      kind: 'model',
+      requestedModelPattern: route.displayName || sourceRouteModelName(index),
+      displayName: route.displayName || sourceRouteModelName(index),
+      routeId: route.id,
+    },
+    backend: { kind: 'supply' },
+    targets: [{
+      targetId: String(route.targetId),
+      model: route.displayName || sourceRouteModelName(index),
+      accountId: input.accountId,
+      tokenId: input.tokenId,
+      weight: 10,
+    }],
+  }));
+  const source = buildRouteGraphSourceFromLegacyRoutes(legacyRoutes);
+  source.macros = Array.from({ length: groupCount }, (_, groupIndex) => ({
+    id: `perf-complex:${groupIndex}`,
+    kind: 'candidate_selector',
+    enabled: true,
+    visibility: 'public',
+    ownership: 'manual',
+    config: {
+      surface: {
+        entry: {
+          kind: 'external',
+          visibility: 'public',
+          match: { displayName: complexRouteGraphModelName(groupIndex) },
+        },
+        output: 'route',
+      },
+      policy: { strategy: 'priority_order' },
+      filters: {
+        operations: [
+          {
+            type: 'rewrite_model',
+            source: 'current_model',
+            operation: 'strip_suffix',
+            suffix: '-debug',
+          },
+          {
+            type: 'set_payload',
+            path: 'metadata.route_group',
+            value: complexRouteGraphModelName(groupIndex),
+            mode: 'default',
+          },
+        ],
+      },
+      groups: Array.from({ length: candidateGroupsPerModel }, (_, priority) => ({
+        id: `priority-${priority}`,
+        enabled: true,
+        priority,
+        input: {
+          kind: 'route_endpoints',
+          endpointIds: Array.from({ length: endpointsPerCandidateGroup }, (_, endpointIndex) => {
+            const routeIndex = (groupIndex + (priority * endpointsPerCandidateGroup) + endpointIndex) % sourceRoutes.length;
+            return `route-endpoint:supply:route:${sourceRoutes[routeIndex]!.id}`;
+          }),
+        },
+        defaults: {
+          weight: Math.max(1, 10 - priority),
+        },
+      })),
+    },
+  }));
+  return source;
+}
+
 export async function seedRouteRuntimeFixture(input: {
   dbModule: DbModule;
   groupCount: number;
   insertChunkSize: number;
-}): Promise<void> {
+}): Promise<SeededRouteRuntimeFixture> {
   const { db, schema } = input.dbModule;
   const site = await db.insert(schema.sites).values({
     name: 'perf-site',
@@ -149,7 +299,7 @@ export async function seedRouteRuntimeFixture(input: {
     async (chunk) => await db.insert(schema.tokenRoutes).values(chunk).returning().all(),
   );
 
-  await insertChunks(
+  const sourceTargets = await insertReturningChunks(
     sourceRoutes.map((sourceRoute, groupIndex) => ({
       routeId: sourceRoute.id,
       accountId: account.id,
@@ -160,10 +310,9 @@ export async function seedRouteRuntimeFixture(input: {
       enabled: true,
     })),
     input.insertChunkSize,
-    async (chunk) => {
-      await db.insert(schema.routeEndpointTargets).values(chunk).run();
-    },
+    async (chunk) => await db.insert(schema.routeEndpointTargets).values(chunk).returning().all(),
   );
+  const targetIdByRouteId = new Map(sourceTargets.map((target) => [target.routeId, target.id]));
   await insertChunks(
     groupRoutes.map((groupRoute, groupIndex) => ({
       groupRouteId: groupRoute.id,
@@ -174,4 +323,88 @@ export async function seedRouteRuntimeFixture(input: {
       await db.insert(schema.routeGroupSources).values(chunk).run();
     },
   );
+  return {
+    accountId: account.id,
+    tokenId: token.id,
+    sourceRoutes: sourceRoutes.map((route, index) => ({
+      id: route.id,
+      displayName: route.displayName || sourceRouteModelName(index),
+      targetId: targetIdByRouteId.get(route.id) || route.id,
+    })),
+  };
+}
+
+export async function publishComplexActiveRouteGraphFixture(input: {
+  dbModule: DbModule;
+  seeded: SeededRouteRuntimeFixture;
+  groupCount: number;
+  candidateGroupsPerModel: number;
+  endpointsPerCandidateGroup: number;
+}): Promise<ComplexActiveRouteGraphFixture> {
+  const { db, schema } = input.dbModule;
+  const candidateGroupsPerModel = Math.max(1, Math.trunc(input.candidateGroupsPerModel));
+  const endpointsPerCandidateGroup = Math.max(1, Math.trunc(input.endpointsPerCandidateGroup));
+  const groupCount = normalizeComplexGraphCount({
+    requestedGroupCount: input.groupCount,
+    sourceRouteCount: input.seeded.sourceRoutes.length,
+    candidateGroupsPerModel,
+    endpointsPerCandidateGroup,
+  });
+  const sourceGraph = buildComplexRouteGraphSourceFixture({
+    sourceRoutes: input.seeded.sourceRoutes,
+    accountId: input.seeded.accountId,
+    tokenId: input.seeded.tokenId,
+    groupCount,
+    candidateGroupsPerModel,
+    endpointsPerCandidateGroup,
+  });
+  const compiled = compileRouteGraphSource(sourceGraph, {
+    includeLegacyBundles: false,
+    includePrimitiveSource: false,
+  });
+  if (!compiled.ok) {
+    throw new Error(`complex route graph fixture did not compile: ${compiled.diagnostics.map((item) => item.message).join('; ')}`);
+  }
+
+  const timestamp = new Date().toISOString();
+  const versionRow = await db.select({ version: schema.routeGraphVersions.version })
+    .from(schema.routeGraphVersions)
+    .orderBy(schema.routeGraphVersions.version)
+    .all();
+  const version = Math.max(0, ...versionRow.map((row) => Number(row.version) || 0)) + 1;
+  const sourceGraphJson = JSON.stringify(compiled.source);
+  const compiledGraphJson = JSON.stringify(compiled.compiled);
+  await db.update(schema.routeGraphVersions).set({ status: 'archived' }).run();
+  const inserted = await db.insert(schema.routeGraphVersions).values({
+    version,
+    sourceGraphJson,
+    compiledGraphJson,
+    status: 'active',
+    createdBy: 'route-runtime-performance-gate',
+    createdAt: timestamp,
+    activatedAt: timestamp,
+  }).returning().get();
+  await db.delete(schema.routeGraphActiveVersion).run();
+  await db.insert(schema.routeGraphActiveVersion).values({
+    id: 1,
+    versionId: inserted.id,
+    updatedAt: timestamp,
+  }).run();
+  const routeGraphService = await import('../../src/server/services/routeGraphService.js');
+  routeGraphService.invalidateRouteGraphReadCaches();
+
+  return {
+    versionId: inserted.id,
+    version,
+    groupCount,
+    candidateGroupsPerModel,
+    endpointsPerCandidateGroup,
+    firstModel: complexRouteGraphModelName(0),
+    lastModel: complexRouteGraphModelName(groupCount - 1),
+    overlayModel: complexRouteGraphModelName(0),
+    overlayDisabledTargetId: input.seeded.sourceRoutes[0]?.targetId || 0,
+    sourceGraphBytes: Buffer.byteLength(sourceGraphJson, 'utf8'),
+    compiledGraphBytes: Buffer.byteLength(compiledGraphJson, 'utf8'),
+    compiledRouterBundleBytes: Buffer.byteLength(JSON.stringify(compiled.compiled.compiledRouterBundle || {}), 'utf8'),
+  };
 }

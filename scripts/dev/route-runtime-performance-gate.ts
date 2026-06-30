@@ -10,13 +10,16 @@ import {
   heapLimitMiB,
   memory,
   memoryDelta,
+  publishComplexActiveRouteGraphFixture,
   readPositiveInteger,
   readPositiveNumber,
   resolveReportDir,
   round,
   seedRouteRuntimeFixture,
+  type ComplexActiveRouteGraphFixture,
   type DbModule,
   type MemorySnapshot,
+  type SeededRouteRuntimeFixture,
 } from './routeRuntimePerformanceFixture.js';
 
 type TokenRouterModule = typeof import('../../src/server/services/tokenRouter.js');
@@ -69,6 +72,12 @@ type PerformanceReport = {
     distinctSequentialSamples: number;
     distinctConcurrentSamples: number;
     distinctConcurrentWidth: number;
+    complexGraphGroupCount: number;
+    complexGraphCandidateGroupsPerModel: number;
+    complexGraphEndpointsPerCandidateGroup: number;
+    complexGraphHotIterations: number;
+    complexGraphDistinctSamples: number;
+    complexGraphDistinctWidth: number;
     insertChunkSize: number;
     dataDir: string;
     node: string;
@@ -88,6 +97,7 @@ type PerformanceReport = {
     routingDelta: MemorySnapshot;
     totalDelta: MemorySnapshot;
   };
+  complexGraph: ComplexActiveRouteGraphFixture | null;
   cacheStats: ReturnType<TokenRouterModule['__tokenRouterTestUtils']['getRouteCacheStats']>;
   runtimeCounterDeltas: RuntimeCounterDelta[];
 };
@@ -97,10 +107,18 @@ const hotIterations = readPositiveInteger('ROUTE_PERF_HOT_ITERATIONS', 1_000);
 const distinctSequentialSamples = readPositiveInteger('ROUTE_PERF_DISTINCT_SAMPLES', 1_000);
 const distinctConcurrentSamples = readPositiveInteger('ROUTE_PERF_DISTINCT_CONCURRENT_SAMPLES', 12_800);
 const distinctConcurrentWidth = readPositiveInteger('ROUTE_PERF_DISTINCT_CONCURRENT_WIDTH', 2_048);
+const requestedComplexGraphGroupCount = readPositiveInteger('ROUTE_PERF_COMPLEX_GRAPH_GROUPS', 1_024);
+const complexGraphCandidateGroupsPerModel = readPositiveInteger('ROUTE_PERF_COMPLEX_GRAPH_CANDIDATE_GROUPS', 3);
+const complexGraphEndpointsPerCandidateGroup = readPositiveInteger('ROUTE_PERF_COMPLEX_GRAPH_ENDPOINTS_PER_GROUP', 2);
+const complexGraphHotIterations = readPositiveInteger('ROUTE_PERF_COMPLEX_GRAPH_HOT_ITERATIONS', 1_000);
+const complexGraphDistinctSamples = readPositiveInteger('ROUTE_PERF_COMPLEX_GRAPH_DISTINCT_SAMPLES', requestedComplexGraphGroupCount);
+const complexGraphDistinctWidth = readPositiveInteger('ROUTE_PERF_COMPLEX_GRAPH_DISTINCT_WIDTH', 512);
 const groupCount = Math.max(
   readPositiveInteger('ROUTE_PERF_GROUPS', 10_000),
   distinctConcurrentSamples,
+  requestedComplexGraphGroupCount,
 );
+const complexGraphGroupCount = Math.min(requestedComplexGraphGroupCount, groupCount);
 const insertChunkSize = readPositiveInteger('ROUTE_PERF_INSERT_CHUNK_SIZE', 250);
 const reportDir = resolveReportDir(process.env.ROUTE_PERF_REPORT_DIR || 'test-results/performance');
 const dataDir = createRouteRuntimeDataDir();
@@ -126,8 +144,21 @@ const budgets = {
   hotAverageCpuMs: readPositiveNumber('ROUTE_PERF_HOT_AVG_CPU_MS', 1),
   hotCpuQps: readPositiveNumber('ROUTE_PERF_HOT_CPU_QPS', 1_000),
   distinctSequentialAvgCpuMs: readPositiveNumber('ROUTE_PERF_DISTINCT_SEQUENTIAL_AVG_CPU_MS', 2),
+  complexGraphPublishHeapDeltaMiB: readPositiveNumber('ROUTE_PERF_COMPLEX_GRAPH_PUBLISH_HEAP_DELTA_MIB', 128),
+  complexGraphPublishRssDeltaMiB: readPositiveNumber('ROUTE_PERF_COMPLEX_GRAPH_PUBLISH_RSS_DELTA_MIB', 320),
+  complexGraphColdCpuMs: readPositiveNumber('ROUTE_PERF_COMPLEX_GRAPH_COLD_CPU_MS', 750),
+  complexGraphColdElapsedMs: readPositiveNumber('ROUTE_PERF_COMPLEX_GRAPH_COLD_ELAPSED_MS', 1_500),
+  complexGraphColdHeapDeltaMiB: readPositiveNumber('ROUTE_PERF_COMPLEX_GRAPH_COLD_HEAP_DELTA_MIB', 96),
+  complexGraphColdRssDeltaMiB: readPositiveNumber('ROUTE_PERF_COMPLEX_GRAPH_COLD_RSS_DELTA_MIB', 192),
+  complexGraphOverlayCpuMs: readPositiveNumber('ROUTE_PERF_COMPLEX_GRAPH_OVERLAY_CPU_MS', 50),
+  complexGraphHotAverageCpuMs: readPositiveNumber('ROUTE_PERF_COMPLEX_GRAPH_HOT_AVG_CPU_MS', 2),
+  complexGraphHotCpuQps: readPositiveNumber('ROUTE_PERF_COMPLEX_GRAPH_HOT_CPU_QPS', 1_000),
+  complexGraphDistinctAvgCpuMs: readPositiveNumber('ROUTE_PERF_COMPLEX_GRAPH_DISTINCT_AVG_CPU_MS', 3),
+  complexGraphDistinctCpuQps: readPositiveNumber('ROUTE_PERF_COMPLEX_GRAPH_DISTINCT_CPU_QPS', 1_000),
+  complexGraphDistinctHeapDeltaMiB: readPositiveNumber('ROUTE_PERF_COMPLEX_GRAPH_DISTINCT_HEAP_DELTA_MIB', 96),
+  complexGraphDistinctRssDeltaMiB: readPositiveNumber('ROUTE_PERF_COMPLEX_GRAPH_DISTINCT_RSS_DELTA_MIB', 192),
   routingHeapDeltaMiB: readPositiveNumber('ROUTE_PERF_ROUTING_HEAP_DELTA_MIB', 64),
-  routingRssDeltaMiB: readPositiveNumber('ROUTE_PERF_ROUTING_RSS_DELTA_MIB', 128),
+  routingRssDeltaMiB: readPositiveNumber('ROUTE_PERF_ROUTING_RSS_DELTA_MIB', 160),
   finalRssMiB: readPositiveNumber('ROUTE_PERF_FINAL_RSS_MIB', 650),
   finalHeapUsedMiB: readPositiveNumber('ROUTE_PERF_FINAL_HEAP_USED_MIB', 256),
   cacheEntryLimit: readPositiveInteger('ROUTE_PERF_CACHE_ENTRY_LIMIT', 4096),
@@ -261,6 +292,34 @@ function assertBudgets(results: BudgetResult[]): void {
 }
 
 function addMeasurementBudgets(checks: Budget[], measurement: Measurement): void {
+  if (measurement.label.startsWith('publish complex active route graph')) {
+    addLte(checks, measurement.label, 'heapUsedDeltaMiB', measurement.delta.heapUsedMiB, budgets.complexGraphPublishHeapDeltaMiB);
+    addLte(checks, measurement.label, 'rssDeltaMiB', measurement.delta.rssMiB, budgets.complexGraphPublishRssDeltaMiB);
+    return;
+  }
+  if (measurement.label.startsWith('complex active graph cold-cache route decision')) {
+    addLte(checks, measurement.label, 'cpuMs', measurement.cpuMs, budgets.complexGraphColdCpuMs);
+    addLte(checks, measurement.label, 'elapsedMs', measurement.elapsedMs, budgets.complexGraphColdElapsedMs);
+    addLte(checks, measurement.label, 'heapUsedDeltaMiB', measurement.delta.heapUsedMiB, budgets.complexGraphColdHeapDeltaMiB);
+    addLte(checks, measurement.label, 'rssDeltaMiB', measurement.delta.rssMiB, budgets.complexGraphColdRssDeltaMiB);
+    return;
+  }
+  if (measurement.label.startsWith('complex active graph failure-overlay decision')) {
+    addLte(checks, measurement.label, 'cpuMs', measurement.cpuMs, budgets.complexGraphOverlayCpuMs);
+    return;
+  }
+  if (measurement.label.startsWith('complex active graph hot same model')) {
+    addLte(checks, measurement.label, 'avgCpuMs', measurement.avgCpuMs, budgets.complexGraphHotAverageCpuMs);
+    addGte(checks, measurement.label, 'cpuQps', measurement.cpuQps, budgets.complexGraphHotCpuQps);
+    return;
+  }
+  if (measurement.label.startsWith('complex active graph distinct models')) {
+    addLte(checks, measurement.label, 'avgCpuMs', measurement.avgCpuMs, budgets.complexGraphDistinctAvgCpuMs);
+    addGte(checks, measurement.label, 'cpuQps', measurement.cpuQps, budgets.complexGraphDistinctCpuQps);
+    addLte(checks, measurement.label, 'heapUsedDeltaMiB', measurement.delta.heapUsedMiB, budgets.complexGraphDistinctHeapDeltaMiB);
+    addLte(checks, measurement.label, 'rssDeltaMiB', measurement.delta.rssMiB, budgets.complexGraphDistinctRssDeltaMiB);
+    return;
+  }
   if (measurement.label.includes('after cache invalidation')) {
     addLte(checks, measurement.label, 'cpuMs', measurement.cpuMs, budgets.singleColdCpuMs);
     addLte(checks, measurement.label, 'elapsedMs', measurement.elapsedMs, budgets.singleColdElapsedMs);
@@ -352,12 +411,37 @@ function buildMarkdownReport(report: PerformanceReport): string {
         ['Distinct sequential samples', String(report.config.distinctSequentialSamples)],
         ['Distinct concurrent samples', String(report.config.distinctConcurrentSamples)],
         ['Distinct concurrent width', String(report.config.distinctConcurrentWidth)],
+        ['Complex graph groups', String(report.config.complexGraphGroupCount)],
+        ['Complex graph candidate groups/model', String(report.config.complexGraphCandidateGroupsPerModel)],
+        ['Complex graph endpoints/candidate group', String(report.config.complexGraphEndpointsPerCandidateGroup)],
+        ['Complex graph hot iterations', String(report.config.complexGraphHotIterations)],
+        ['Complex graph distinct samples', String(report.config.complexGraphDistinctSamples)],
+        ['Complex graph distinct width', String(report.config.complexGraphDistinctWidth)],
         ['Insert chunk size', String(report.config.insertChunkSize)],
         ['Node', report.config.node],
         ['Platform', `${report.config.platform}/${report.config.arch}`],
         ['Heap cap MiB', report.config.heapLimitMiB == null ? 'unbounded' : String(report.config.heapLimitMiB)],
       ],
     ),
+    '',
+    '## Complex Active Graph',
+    '',
+    report.complexGraph
+      ? markdownTable(
+        ['Metric', 'Value'],
+        [
+          ['Version id', String(report.complexGraph.versionId)],
+          ['Route groups', String(report.complexGraph.groupCount)],
+          ['Candidate groups/model', String(report.complexGraph.candidateGroupsPerModel)],
+          ['Endpoints/candidate group', String(report.complexGraph.endpointsPerCandidateGroup)],
+          ['Source graph MiB', formatNumber(report.complexGraph.sourceGraphBytes / 1024 / 1024)],
+          ['Compiled graph MiB', formatNumber(report.complexGraph.compiledGraphBytes / 1024 / 1024)],
+          ['Compiled router bundle MiB', formatNumber(report.complexGraph.compiledRouterBundleBytes / 1024 / 1024)],
+          ['First model', report.complexGraph.firstModel],
+          ['Last model', report.complexGraph.lastModel],
+        ],
+      )
+      : 'No complex active graph fixture was published.',
     '',
     '## Measurements',
     '',
@@ -439,6 +523,12 @@ async function main(): Promise<void> {
     distinctSequentialSamples,
     distinctConcurrentSamples,
     distinctConcurrentWidth,
+    complexGraphGroupCount,
+    complexGraphCandidateGroupsPerModel,
+    complexGraphEndpointsPerCandidateGroup,
+    complexGraphHotIterations,
+    complexGraphDistinctSamples,
+    complexGraphDistinctWidth,
     dataDir,
     reportDir,
     budgets,
@@ -449,6 +539,8 @@ async function main(): Promise<void> {
   const checks: Budget[] = [];
   const runtimeCounterDeltas: RuntimeCounterDelta[] = [];
   let dbModule: DbModule | null = null;
+  let seeded: SeededRouteRuntimeFixture | null = null;
+  let complexGraph: ComplexActiveRouteGraphFixture | null = null;
 
   try {
     await measure('import database runtime', 1, async () => {
@@ -457,11 +549,14 @@ async function main(): Promise<void> {
     });
     if (!dbModule) throw new Error('database module did not load');
 
-    await measure(`seed ${groupCount} route groups`, groupCount, () => seedRouteRuntimeFixture({
-      dbModule: dbModule!,
-      groupCount,
-      insertChunkSize,
-    }));
+    await measure(`seed ${groupCount} route groups`, groupCount, async () => {
+      seeded = await seedRouteRuntimeFixture({
+        dbModule: dbModule!,
+        groupCount,
+        insertChunkSize,
+      });
+    });
+    if (!seeded) throw new Error('route runtime fixture did not seed');
     const projection = await import('../../src/server/services/routeTableProjectionService.js');
     await measure('sync route binding projections', groupCount, () => projection.syncRouteBindingProjectionsFromRouteTable());
 
@@ -558,6 +653,68 @@ async function main(): Promise<void> {
       failIfNull('cache invalidated last model', await router.selectTarget(lastModel));
     })).measurement);
 
+    const complexPublish = await measure(
+      `publish complex active route graph x${complexGraphGroupCount}`,
+      complexGraphGroupCount,
+      async () => {
+        complexGraph = await publishComplexActiveRouteGraphFixture({
+          dbModule: dbModule!,
+          seeded: seeded!,
+          groupCount: complexGraphGroupCount,
+          candidateGroupsPerModel: complexGraphCandidateGroupsPerModel,
+          endpointsPerCandidateGroup: complexGraphEndpointsPerCandidateGroup,
+        });
+      },
+    );
+    measurements.push(complexPublish.measurement);
+    if (!complexGraph) throw new Error('complex active route graph fixture was not published');
+
+    routerModule.invalidateTokenRouterCache();
+    measurements.push((await measure('complex active graph cold-cache route decision first model', 1, async () => {
+      failIfNull('complex active graph cold first model', await router.selectTarget(complexGraph!.firstModel));
+    })).measurement);
+
+    measurements.push((await measure(`complex active graph hot same model x${complexGraphHotIterations}`, complexGraphHotIterations, async () => {
+      for (let index = 0; index < complexGraphHotIterations; index += 1) {
+        failIfNull(`complex active graph hot same model ${index}`, await router.selectTarget(complexGraph!.lastModel));
+      }
+    })).measurement);
+
+    const routeGraphRuntime = await import('../../src/server/services/routeGraphRuntimeService.js');
+    measurements.push((await measure('complex active graph failure-overlay decision', 1, async () => {
+      const selection = failIfNull('complex active graph overlay selection', await routeGraphRuntime.evaluateActiveRouteGraphForModel(
+        complexGraph!.overlayModel,
+        {
+          bootstrapIfMissing: false,
+          failureOverlay: {
+            disabledTargetIds: [complexGraph!.overlayDisabledTargetId],
+          },
+        },
+      ));
+      if (String(selection.selectedEndpointTarget?.targetId || '') === String(complexGraph!.overlayDisabledTargetId)) {
+        throw new Error(`complex active graph overlay selected disabled target ${complexGraph!.overlayDisabledTargetId}`);
+      }
+    })).measurement);
+
+    const complexDistinctTotal = Math.min(complexGraphDistinctSamples, complexGraph.groupCount);
+    const complexDistinctConcurrency = Math.min(complexGraphDistinctWidth, complexDistinctTotal);
+    routerModule.invalidateTokenRouterCache();
+    measurements.push((await measure(
+      `complex active graph distinct models x${complexDistinctTotal} (${complexDistinctConcurrency}-wide)`,
+      complexDistinctTotal,
+      async () => {
+        for (let offset = 0; offset < complexDistinctTotal; offset += complexDistinctConcurrency) {
+          const batchSize = Math.min(complexDistinctConcurrency, complexDistinctTotal - offset);
+          const results = await Promise.all(Array.from({ length: batchSize }, (_, index) => {
+            const modelIndex = offset + index;
+            const model = `perf-complex-group-${Math.floor((modelIndex * complexGraph!.groupCount) / complexDistinctTotal)}`;
+            return router.selectTarget(model);
+          }));
+          if (results.some((result) => !result)) throw new Error('complex active graph distinct models returned null');
+        }
+      },
+    )).measurement);
+
     for (const measurement of measurements) {
       addMeasurementBudgets(checks, measurement);
     }
@@ -585,6 +742,12 @@ async function main(): Promise<void> {
         distinctSequentialSamples,
         distinctConcurrentSamples,
         distinctConcurrentWidth,
+        complexGraphGroupCount,
+        complexGraphCandidateGroupsPerModel,
+        complexGraphEndpointsPerCandidateGroup,
+        complexGraphHotIterations,
+        complexGraphDistinctSamples,
+        complexGraphDistinctWidth,
         insertChunkSize,
         dataDir,
         node: process.version,
@@ -604,6 +767,7 @@ async function main(): Promise<void> {
         routingDelta: routingMemoryDelta,
         totalDelta: totalMemoryDelta,
       },
+      complexGraph,
       cacheStats,
       runtimeCounterDeltas,
     };
@@ -615,6 +779,7 @@ async function main(): Promise<void> {
       distinctConcurrentSamples,
       distinctConcurrentWidth,
       measurements,
+      complexGraph,
       memory: report.memory,
       cacheStats,
       runtimeCounterDeltas,

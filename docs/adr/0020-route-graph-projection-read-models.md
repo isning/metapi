@@ -740,8 +740,22 @@ The executable performance gate is `npm run test:performance`. It seeds at least
 projections, and measures the public token router selection seam before upstream
 network I/O. It also runs a real server startup smoke with a persisted large
 active `compiled_graph_json` row under a bounded child heap, so startup repair
-hooks cannot silently reintroduce full active graph hydration. The gate
-currently enforces:
+hooks cannot silently reintroduce full active graph hydration.
+
+The same runtime gate also publishes a real compiled active graph fixture. The
+fixture is generated from route-table-backed source routes, contains public
+`candidate_selector` macros, priority buckets, multiple supply endpoints per
+bucket, pre-selection and post-build filters, and persists only the v2
+`compiledRouterBundle` runtime format. This covers the first real
+`compiled_graph_json` parse, hot graph route decisions, failure-overlay
+reselection, and distinct-model graph traffic without reintroducing legacy
+`programBundle` or recursive `flatProgramBundle` execution. The default gate
+uses 1,024 complex graph groups so CI remains bounded; operators can raise
+`ROUTE_PERF_COMPLEX_GRAPH_GROUPS`, `ROUTE_PERF_COMPLEX_GRAPH_DISTINCT_SAMPLES`,
+and `ROUTE_PERF_COMPLEX_GRAPH_DISTINCT_WIDTH` for heavier local or scheduled
+capacity runs.
+
+The gate currently enforces:
 
 - one cold exact/group decision under 50 ms CPU and 100 ms elapsed;
 - 128 concurrent requests for the same cold model under 75 ms total CPU and at
@@ -752,10 +766,19 @@ currently enforces:
 - 1,000 hot same-model decisions under 1 ms average CPU and at least 1,000
   routing decisions per CPU second;
 - 1,000 distinct sequential decisions under 2 ms average CPU;
+- a real active compiled graph with 1,024 public complex route groups, 3
+  candidate priority buckets per group, and 2 supply endpoints per bucket;
+- first complex active graph cold-cache decision under the explicit
+  `ROUTE_PERF_COMPLEX_GRAPH_COLD_*` budgets;
+- complex active graph hot and distinct-model routing under separate average
+  CPU, CPU QPS, and retained-memory budgets;
+- complex active graph failure-overlay reselection without choosing a disabled
+  target;
 - bounded runtime caches at 4,096 model-candidate entries and 4,096 route-match
   entries;
-- retained routing heap growth under 64 MiB and final gate heap under 256 MiB
-  while running Node with `--max-old-space-size=384`.
+- retained routing heap growth under 64 MiB, retained routing RSS growth under
+  160 MiB, and final gate heap under 256 MiB while running Node with
+  `--max-old-space-size=384`.
 - server startup succeeds without reading a 128 MiB persisted active compiled
   graph payload, with the child process running under a 256 MiB heap cap.
 

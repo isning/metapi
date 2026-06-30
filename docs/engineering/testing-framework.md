@@ -106,7 +106,13 @@ Guidelines:
 - keep route-runtime budgets measured before upstream network I/O
 - keep server startup covered with a persisted large active graph fixture so
   startup repair hooks cannot hydrate full graph JSON under a bounded heap
+- keep complex active graph routing covered with a real compiled
+  `candidate_selector` fixture; default CI uses
+  `ROUTE_PERF_COMPLEX_GRAPH_GROUPS=1024`, and heavier local runs can raise the
+  complex graph group, distinct sample, and width environment variables
 - publish CPU milliseconds, elapsed QPS, CPU QPS, cache size, and memory data
+- publish active graph source/compiled/router bundle byte sizes in the
+  performance report
 - keep `test:performance` deterministic; use benchmark scripts for capacity
   planning, not larger fixed-width guesses
 - keep heap pressure bounded with `--max-old-space-size=384` and explicit GC
