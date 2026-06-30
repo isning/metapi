@@ -253,7 +253,7 @@ export async function handleGenericSurfaceRequest(
       requestBody: request.body,
     });
 
-    const initialGraphSelection = await evaluateActiveRouteGraphForModel(requestedModel, { bootstrapIfMissing: false });
+    const initialGraphSelection = await evaluateActiveRouteGraphForModel(requestedModel);
     if (initialGraphSelection?.terminalKind === 'synthetic_endpoint') {
       const statusCode = initialGraphSelection.syntheticResponse?.statusCode || 503;
       const payload = {

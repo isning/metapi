@@ -46,8 +46,6 @@ export const ROUTE_GRAPH_EDGE_KINDS = Object.freeze([
   'route_flow',
 ]);
 export const ROUTE_GRAPH_MACRO_KINDS = Object.freeze(['candidate_selector']);
-export const ROUTE_PROGRAM_BUNDLE_VERSION = 1;
-export const ROUTE_FLAT_PROGRAM_BUNDLE_VERSION = 1;
 export const ROUTE_COMPILED_ROUTER_BUNDLE_VERSION = 2;
 export const ROUTE_GRAPH_CANDIDATE_SELECTOR_INPUT_KINDS = Object.freeze([
   'route_endpoints',
@@ -1382,7 +1380,10 @@ function compiledEndpointTargetsForRouteEndpointNode(targetNode, endpointId, rou
       ...(target.siteId !== undefined ? { siteId: target.siteId } : {}),
       ...(Number.isFinite(Number(target.weight)) ? { weight: Number(target.weight) } : {}),
       ...(Number.isFinite(Number(target.priority)) ? { priority: Number(target.priority) } : {}),
-      ...(isPlainObject(target.metadata) ? { metadata: target.metadata } : {}),
+      metadata: {
+        ...(isPlainObject(target.metadata) ? target.metadata : {}),
+        originalTargetId: rawTargetId || String(index),
+      },
       ...(isPlainObject(target.compatibilityPolicy)
         ? { compatibilityPolicy: target.compatibilityPolicy }
         : (isPlainObject(targetNode.config?.compatibilityPolicy) ? { compatibilityPolicy: targetNode.config.compatibilityPolicy } : {})),
@@ -1826,7 +1827,7 @@ function buildRouteProgramOpsForEntry(input) {
   };
 }
 
-function buildRouteProgramBundle(input) {
+function buildCompiledRouterPlanSource(input) {
   const semanticSource = normalizeRouteGraphSource(input?.semanticSource);
   const primitiveSource = normalizeRouteGraphSource(input?.primitiveSource);
   const compiledGraph = isPlainObject(input?.compiledGraph) ? input.compiledGraph : {};
@@ -2019,192 +2020,11 @@ function buildRouteProgramBundle(input) {
   debug.sourceRefs = {};
 
   const bundleWithoutHash = {
-    version: ROUTE_PROGRAM_BUNDLE_VERSION,
+    version: 1,
     matcher,
     programs,
     endpointCatalog,
     debug,
-    diagnostics,
-  };
-  return {
-    ...bundleWithoutHash,
-    hash: stableHash(bundleWithoutHash),
-  };
-}
-
-function flatTerminalStats(terminal) {
-  if (!terminal) return { terminalKind: 'dispatch', targetCount: 0, enabledTargetCount: 0 };
-  if (terminal.kind === 'synthetic') return { terminalKind: 'synthetic', targetCount: 0, enabledTargetCount: 0 };
-  const targets = Array.isArray(terminal.targets) ? terminal.targets : [];
-  return {
-    terminalKind: 'supply',
-    targetCount: targets.length,
-    enabledTargetCount: targets.filter((target) => target.enabled !== false).length,
-  };
-}
-
-function flatDecisionStats(decision) {
-  if (!decision) return { terminalKind: 'dispatch', targetCount: 0, enabledTargetCount: 0 };
-  if (decision.kind === 'terminal') return flatTerminalStats(decision.terminal);
-  const candidates = Array.isArray(decision.dispatch?.candidates) ? decision.dispatch.candidates : [];
-  return {
-    terminalKind: 'dispatch',
-    targetCount: candidates.reduce((sum, candidate) => sum + (Number(candidate.targetCount) || 0), 0),
-    enabledTargetCount: candidates.reduce((sum, candidate) => sum + (Number(candidate.enabledTargetCount) || 0), 0),
-  };
-}
-
-function buildFlatTerminalFromRouteProgramOp(op) {
-  if (!op) return null;
-  if (op.op === 'synthetic') {
-    return {
-      kind: 'synthetic',
-      nodeId: op.nodeId,
-      statusCode: op.statusCode === 429 ? 429 : 503,
-      message: op.message || 'No route is available.',
-      sourceRef: op.sourceRef || {},
-    };
-  }
-  if (op.op === 'select_supply') {
-    return {
-      kind: 'supply',
-      endpointId: op.endpointId,
-      nodeId: op.nodeId,
-      routeId: normalizePositiveInteger(op.routeId) || null,
-      ...(normalizeString(op.routeEndpointId) ? { routeEndpointId: normalizeString(op.routeEndpointId) } : {}),
-      ...(normalizeString(op.terminalModel) ? { terminalModel: normalizeString(op.terminalModel) } : {}),
-      targetSelectionPolicy: isPlainObject(op.targetSelectionPolicy) ? op.targetSelectionPolicy : { strategy: 'weighted' },
-      targets: Array.isArray(op.targets) ? op.targets : [],
-      ...(isPlainObject(op.compatibilityPolicy) ? { compatibilityPolicy: op.compatibilityPolicy } : {}),
-      sourceRef: op.sourceRef || {},
-    };
-  }
-  return null;
-}
-
-function buildFlatDecisionFromRouteProgramOps(input) {
-  const { program, opsById, opId, diagnostics } = input;
-  let currentOpId = normalizeString(opId);
-  const filterStages = [];
-  const visited = new Set(input.visited || []);
-  while (currentOpId) {
-    if (visited.has(currentOpId)) {
-      addDiagnostic(diagnostics, 'error', 'flat_program.cycle', `Flat route program ${program.id} contains a cycle at ${currentOpId}.`);
-      return null;
-    }
-    visited.add(currentOpId);
-    const op = opsById.get(currentOpId);
-    if (!op) {
-      addDiagnostic(diagnostics, 'error', 'flat_program.missing_op', `Flat route program ${program.id} references missing op ${currentOpId}.`);
-      return null;
-    }
-    if (op.op === 'filter') {
-      filterStages.push({
-        nodeId: op.nodeId,
-        phase: op.phase,
-        operations: Array.isArray(op.operations) ? op.operations : [],
-        sourceRef: op.sourceRef || {},
-      });
-      currentOpId = normalizeString(op.nextOpId);
-      continue;
-    }
-    if (op.op === 'call_product') {
-      currentOpId = normalizeString(op.nextOpId);
-      continue;
-    }
-    if (op.op === 'dispatch') {
-      const candidates = (Array.isArray(op.candidates) ? op.candidates : []).map((candidate, index) => {
-        const next = buildFlatDecisionFromRouteProgramOps({
-          program,
-          opsById,
-          opId: candidate.targetOpId,
-          diagnostics,
-          visited: new Set(visited),
-        });
-        if (!next) return null;
-        const stats = flatDecisionStats(next);
-        return {
-          id: candidate.id,
-          kind: op.mode === 'flow' ? 'bidirect' : (op.mode === 'target' ? 'target' : 'route'),
-          ...(normalizeString(candidate.nodeId) ? { nodeId: normalizeString(candidate.nodeId) } : {}),
-          ...(normalizeString(candidate.edgeId) ? { edgeId: normalizeString(candidate.edgeId) } : {}),
-          ...(normalizeString(candidate.endpointId) ? { endpointId: normalizeString(candidate.endpointId) } : {}),
-          enabled: candidate.enabled !== false,
-          weight: Number.isFinite(Number(candidate.weight)) ? Number(candidate.weight) : 1,
-          priority: Number.isFinite(Number(candidate.priority)) ? Number(candidate.priority) : 0,
-          order: index,
-          ...(isPlainObject(candidate.metadata) ? { metadata: candidate.metadata } : {}),
-          sourceRef: candidate.sourceRef || {},
-          next,
-          ...stats,
-        };
-      }).filter(Boolean);
-      return {
-        kind: 'dispatch',
-        filterStages,
-        dispatch: {
-          id: op.id,
-          nodeId: op.nodeId,
-          mode: op.mode,
-          policy: isPlainObject(op.policy) ? op.policy : { strategy: 'weighted' },
-          candidates,
-          enabledCandidateCount: candidates.filter((candidate) => candidate.enabled !== false).length,
-          sourceRef: op.sourceRef || {},
-        },
-      };
-    }
-    const terminal = buildFlatTerminalFromRouteProgramOp(op);
-    if (terminal) {
-      return {
-        kind: 'terminal',
-        filterStages,
-        terminal,
-      };
-    }
-    addDiagnostic(diagnostics, 'error', 'flat_program.unsupported_op', `Flat route program ${program.id} cannot compile op ${currentOpId}.`);
-    return null;
-  }
-  addDiagnostic(diagnostics, 'error', 'flat_program.empty_path', `Flat route program ${program.id} has an empty execution path.`);
-  return null;
-}
-
-function buildRouteFlatProgramBundle(bundle) {
-  const diagnostics = Array.isArray(bundle?.diagnostics) ? [...bundle.diagnostics] : [];
-  const programs = [];
-  for (const program of Array.isArray(bundle?.programs) ? bundle.programs : []) {
-    const opsById = new Map((Array.isArray(program.ops) ? program.ops : []).map((op) => [op.id, op]));
-    const start = normalizeString(program.startOpId)
-      ? buildFlatDecisionFromRouteProgramOps({
-        program,
-        opsById,
-        opId: program.startOpId,
-        diagnostics,
-      })
-      : null;
-    if (!start) {
-      addDiagnostic(diagnostics, 'error', 'flat_program.entry_without_program', `Public entry ${program.entryNodeId} did not compile to a flat route program.`, program.entryNodeId);
-    }
-    programs.push({
-      id: program.id,
-      entryNodeId: program.entryNodeId,
-      publicModelName: program.publicModelName,
-      enabled: program.enabled !== false,
-      ...(normalizeString(program.rootEndpointId) ? { rootEndpointId: normalizeString(program.rootEndpointId) } : {}),
-      start,
-      sourceRef: program.sourceRef || {},
-    });
-  }
-  const bundleWithoutHash = {
-    version: ROUTE_FLAT_PROGRAM_BUNDLE_VERSION,
-    matcher: bundle?.matcher || { exact: {}, normalizedExact: {}, patterns: [] },
-    programs,
-    endpointCatalog: { byId: {}, productToProgram: {}, supplyTargets: {} },
-    debug: {
-      sourceHash: '',
-      primitiveHash: '',
-      sourceRefs: {},
-      generatedByMacro: {},
-    },
     diagnostics,
   };
   return {
@@ -2418,17 +2238,17 @@ function buildCompiledRouterPlanFromRouteProgram(program, diagnostics) {
   };
 }
 
-function buildCompiledRouterBundle(programBundle) {
+function buildCompiledRouterBundle(planSource) {
   const diagnostics = [];
   const plans = [];
-  for (const program of Array.isArray(programBundle?.programs) ? programBundle.programs : []) {
+  for (const program of Array.isArray(planSource?.programs) ? planSource.programs : []) {
     const plan = buildCompiledRouterPlanFromRouteProgram(program, diagnostics);
     if (plan) plans.push(plan);
   }
   const planIds = new Set(plans.map((plan) => plan.id));
   const bundleWithoutHash = {
     version: ROUTE_COMPILED_ROUTER_BUNDLE_VERSION,
-    matcher: buildCompiledRouterMatcher(programBundle?.matcher, planIds),
+    matcher: buildCompiledRouterMatcher(planSource?.matcher, planIds),
     plans,
     diagnostics,
   };
@@ -3337,7 +3157,6 @@ function compilePrimitiveRouteGraph(sourceInput, preDiagnostics = []) {
 }
 
 function compileRouteGraph(sourceInput, options = {}) {
-  const includeLegacyBundles = options.includeLegacyBundles !== false;
   const lowered = lowerRouteGraphSource(sourceInput);
   const compiled = compilePrimitiveRouteGraph(lowered.primitiveSource, lowered.diagnostics);
   const nextCompiledGraph = {
@@ -3348,27 +3167,16 @@ function compileRouteGraph(sourceInput, options = {}) {
       macros: lowered.semanticSource.macros,
     }),
   };
-  const programBundle = buildRouteProgramBundle({
+  const routerPlanSource = buildCompiledRouterPlanSource({
     semanticSource: lowered.semanticSource,
     primitiveSource: lowered.primitiveSource,
     compiledGraph: nextCompiledGraph,
   });
-  const compiledRouterBundle = buildCompiledRouterBundle(programBundle);
-  const flatProgramBundle = includeLegacyBundles ? buildRouteFlatProgramBundle(programBundle) : null;
+  const compiledRouterBundle = buildCompiledRouterBundle(routerPlanSource);
   const diagnostics = [
     ...compiled.diagnostics,
-    ...(Array.isArray(programBundle.diagnostics) ? programBundle.diagnostics : []),
-    ...(Array.isArray(flatProgramBundle?.diagnostics) ? flatProgramBundle.diagnostics.filter((diagnostic) => (
-      String(diagnostic?.code || '').startsWith('flat_program.')
-    )) : []),
+    ...(Array.isArray(routerPlanSource.diagnostics) ? routerPlanSource.diagnostics : []),
   ];
-  if (!includeLegacyBundles) {
-    programBundle.programs = [];
-    programBundle.matcher = { exact: {}, normalizedExact: {}, patterns: [] };
-    programBundle.endpointCatalog = { byId: {}, productToProgram: {}, supplyTargets: {} };
-    programBundle.debug = { generatedByMacro: {}, sourceRefs: {} };
-    programBundle.diagnostics = [];
-  }
   return {
     ...compiled,
     source: lowered.semanticSource,
@@ -3378,7 +3186,6 @@ function compileRouteGraph(sourceInput, options = {}) {
     compiled: {
       ...nextCompiledGraph,
       compiledRouterBundle,
-      ...(includeLegacyBundles ? { programBundle, flatProgramBundle } : {}),
     },
   };
 }

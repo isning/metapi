@@ -2550,7 +2550,6 @@ export class TokenRouter {
     const failureOverlay = routeExecutionFailureOverlayForExcludedTargets(scope, excludeTargetIds);
     const rerunGraphSelection = await evaluateActiveRouteGraphForModel(scope.requestedModel, {
       failureOverlay,
-      bootstrapIfMissing: false,
     });
     if (routeGraphSelectionIsInsideScope(scope, rerunGraphSelection)) {
       const scopedGraphSelection = rerunGraphSelection;
@@ -3804,7 +3803,7 @@ export class TokenRouter {
       !!route && (!allowedRouteSet || allowedRouteSet.has(route.id))
     );
 
-    const graphSelection = await evaluateActiveRouteGraphForModel(model, { bootstrapIfMissing: false });
+    const graphSelection = await evaluateActiveRouteGraphForModel(model);
     const selectedGraphRouteId = graphSelection?.matchedRouteId ?? graphSelection?.selectedRouteId ?? null;
     if (graphSelection?.terminalKind === 'route_endpoint' && selectedGraphRouteId) {
       const graphRoute = (await loadEnabledRouteRowsByIds([selectedGraphRouteId])).get(selectedGraphRouteId);

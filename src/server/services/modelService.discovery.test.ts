@@ -2410,13 +2410,14 @@ describe('refreshModelsForAccount credential discovery', () => {
     expect(compiled.compiled.publicModels).toEqual(expect.arrayContaining([
       expect.objectContaining({ nodeId: 'macro:auto-model:gpt-5.4:entry', model: 'gpt-5.4' }),
     ]));
-    expect(compiled.compiled.programBundle.endpointCatalog.byId).toMatchObject({
-      'route-endpoint:product:auto-model:gpt-5.4': expect.objectContaining({
+    expect(compiled.compiled.routeEndpoints).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        endpointId: 'route-endpoint:product:auto-model:gpt-5.4',
         endpointKind: 'route_product',
         exposure: 'public',
         routeId: generatedRoute!.id,
       }),
-    });
+    ]));
 
     const selection = await evaluateActiveRouteGraphForModel('gpt-5.4');
     expect(selection).toMatchObject({

@@ -3,7 +3,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
-import { compileRouteGraphSource } from '../../shared/routeGraph.js';
+import { compileRouteGraphSource, type CompiledRouteGraph } from '../../shared/routeGraph.js';
 
 type DbModule = typeof import('../db/index.js');
 type RouteGraphServiceModule = typeof import('./routeGraphService.js');
@@ -27,6 +27,7 @@ describe('routeGraphService ownership guards', () => {
   let listRouteEndpointCatalogPage: RouteGraphServiceModule['listRouteEndpointCatalogPage'];
   let syncRouteBindingProjectionsFromRouteGraphSource: RouteGraphServiceModule['syncRouteBindingProjectionsFromRouteGraphSource'];
   let invalidateRouteGraphReadCaches: RouteGraphServiceModule['invalidateRouteGraphReadCaches'];
+  let buildRouteGraphRuntimeStorageArtifact: RouteGraphServiceModule['buildRouteGraphRuntimeStorageArtifact'];
   let loadRouteBindingProjectionMap: RouteTableProjectionModule['loadRouteBindingProjectionMap'];
   let dataDir = '';
 
@@ -81,6 +82,7 @@ describe('routeGraphService ownership guards', () => {
     listRouteEndpointCatalogPage = serviceModule.listRouteEndpointCatalogPage;
     syncRouteBindingProjectionsFromRouteGraphSource = serviceModule.syncRouteBindingProjectionsFromRouteGraphSource;
     invalidateRouteGraphReadCaches = serviceModule.invalidateRouteGraphReadCaches;
+    buildRouteGraphRuntimeStorageArtifact = serviceModule.buildRouteGraphRuntimeStorageArtifact;
     loadRouteBindingProjectionMap = projectionModule.loadRouteBindingProjectionMap;
   });
 
@@ -537,7 +539,7 @@ describe('routeGraphService ownership guards', () => {
     expect(compileRouteGraphSource(draft.workingGraph).ok).toBe(true);
   });
 
-  it('compacts cached active graph JSON to the compiled router bundle', async () => {
+  it('stores and reads active graph JSON as a compact compiled router artifact', async () => {
     const sourceGraph = {
       version: 1,
       nodes: [
@@ -574,11 +576,22 @@ describe('routeGraphService ownership guards', () => {
     expect(JSON.parse(initiallyStored?.compiledGraphJson || '{}').programBundle).toBeUndefined();
     expect(JSON.parse(initiallyStored?.compiledGraphJson || '{}').flatProgramBundle).toBeUndefined();
 
-    const legacyCompiled = compileRouteGraphSource(sourceGraph).compiled as unknown as Record<string, unknown>;
-    delete legacyCompiled.compiledRouterBundle;
-    await db.update(schema.routeGraphVersions).set({
-      compiledGraphJson: JSON.stringify(legacyCompiled),
-    }).where(eq(schema.routeGraphVersions.id, published.version.id)).run();
+    const runtime = await getActiveRouteGraphRuntimeVersion();
+    expect(runtime?.compiledGraph.compiledRouterBundle).toMatchObject({
+      version: 2,
+      matcher: {
+        exact: {
+          'cached-model': expect.objectContaining({ programId: 'program:entry.cached' }),
+        },
+      },
+    });
+
+    const runtimeStored = await db.select().from(schema.routeGraphVersions)
+      .where(eq(schema.routeGraphVersions.id, published.version.id))
+      .get();
+    expect(JSON.parse(runtimeStored?.compiledGraphJson || '{}').compiledRouterBundle).toMatchObject({ version: 2 });
+    expect(JSON.parse(runtimeStored?.compiledGraphJson || '{}').programBundle).toBeUndefined();
+    expect(JSON.parse(runtimeStored?.compiledGraphJson || '{}').flatProgramBundle).toBeUndefined();
     invalidateRouteGraphReadCaches();
 
     const active = await getActiveRouteGraphVersion();
@@ -610,6 +623,79 @@ describe('routeGraphService ownership guards', () => {
       .get();
     expect(JSON.parse(compactedStored?.compiledGraphJson || '{}').programBundle).toBeUndefined();
     expect(JSON.parse(compactedStored?.compiledGraphJson || '{}').flatProgramBundle).toBeUndefined();
+  });
+
+  it('bounds persisted runtime artifacts before writing oversized compiled router bundles', () => {
+    const artifact = buildRouteGraphRuntimeStorageArtifact({
+      hash: 'oversized-runtime-artifact',
+      compiledRouterBundle: {
+        version: 2,
+        matcher: { exact: {}, normalizedExact: {}, patterns: [] },
+        plans: [],
+        diagnostics: [],
+        padding: 'x'.repeat(17 * 1024 * 1024),
+      },
+    } as unknown as CompiledRouteGraph);
+
+    expect(artifact).toEqual({ version: 1 });
+    expect(Buffer.byteLength(JSON.stringify(artifact), 'utf8')).toBeLessThan(1024);
+  });
+
+  it('does not compile source graph on the runtime path when persisted compiled cache is too large', async () => {
+    const sourceGraph = {
+      version: 1,
+      nodes: [
+        {
+          id: 'entry.large-runtime-cache',
+          type: 'entry',
+          enabled: true,
+          visibility: 'public',
+          ownership: 'manual',
+          match: { requestedModelPattern: 'large-runtime-cache-model' },
+        },
+        {
+          id: 'endpoint.large-runtime-cache',
+          type: 'route_endpoint',
+          enabled: true,
+          visibility: 'internal',
+          ownership: 'manual',
+          legacyRouteId: 701,
+          config: { targets: [{ targetId: '701', model: 'large-runtime-cache-model' }] },
+        },
+      ],
+      edges: [
+        { id: 'entry-large-runtime-cache-endpoint', sourceNodeId: 'entry.large-runtime-cache', sourcePortId: 'bidirect.out', targetNodeId: 'endpoint.large-runtime-cache', targetPortId: 'bidirect.in', kind: 'bidirect_flow', ownership: 'manual' },
+      ],
+      macros: [],
+    };
+    const published = await publishRouteGraphSource({ sourceGraph, createdBy: 'test' });
+    expect(published.ok).toBe(true);
+    if (!published.ok) return;
+
+    const oversizedCompiledCache = JSON.stringify({
+      version: 1,
+      legacyCompiledCacheMarker: 'oversized-runtime-cache',
+      padding: 'x'.repeat(17 * 1024 * 1024),
+    });
+    await db.update(schema.routeGraphVersions).set({
+      compiledGraphJson: oversizedCompiledCache,
+    }).where(eq(schema.routeGraphVersions.id, published.version.id)).run();
+    invalidateRouteGraphReadCaches();
+
+    const runtime = await getActiveRouteGraphRuntimeVersion();
+    expect(runtime).toMatchObject({
+      id: published.version.id,
+      version: published.version.version,
+      compiledGraph: { version: 1 },
+    });
+    expect(runtime?.compiledGraph.compiledRouterBundle).toBeUndefined();
+
+    const stored = await db.select({
+      compiledGraphJson: schema.routeGraphVersions.compiledGraphJson,
+    }).from(schema.routeGraphVersions)
+      .where(eq(schema.routeGraphVersions.id, published.version.id))
+      .get();
+    expect(stored?.compiledGraphJson).toBe(oversizedCompiledCache);
   });
 
   it('preserves manual edges that reuse generated endpoints and semantic macros during active graph reconciliation', async () => {

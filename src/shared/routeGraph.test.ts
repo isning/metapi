@@ -52,8 +52,9 @@ describe('routeGraph port-native source', () => {
     ]));
     expect(compileRouteGraphSource(source).ok).toBe(true);
     const compiled = compileRouteGraphSource(source);
-    expect(compiled.compiled.programBundle).toMatchObject({
-      version: 1,
+    const router = compiled.compiled.compiledRouterBundle;
+    expect(router).toMatchObject({
+      version: 2,
       matcher: {
         exact: {
           'gpt-4o': expect.objectContaining({
@@ -69,94 +70,33 @@ describe('routeGraph port-native source', () => {
           }),
         },
       },
-      endpointCatalog: {
-        productToProgram: {
-          'route-endpoint:product:route:11': 'program:entry:legacy:11',
-        },
-        byId: {
-          'route-endpoint:product:route:11': expect.objectContaining({
-            endpointKind: 'route_product',
-            exposure: 'public',
-            routeId: 11,
-          }),
-        },
-      },
     });
-    expect(compiled.compiled.flatProgramBundle).toMatchObject({
-      version: 1,
-      matcher: {
-        exact: {
-          'gpt-4o': expect.objectContaining({
-            programId: 'program:entry:legacy:11',
-            entryNodeId: 'entry:legacy:11',
-            publicModelName: 'gpt-4o',
-            rootEndpointId: 'route-endpoint:product:route:11',
-          }),
-        },
-      },
-      programs: [
-        expect.objectContaining({
-          id: 'program:entry:legacy:11',
-          start: expect.objectContaining({
-            kind: 'dispatch',
-            dispatch: expect.objectContaining({
-              nodeId: 'dispatcher:legacy:11',
-              candidates: [
-                expect.objectContaining({
-                  endpointId: 'route-endpoint:supply:route:11',
-                  terminalKind: 'supply',
-                  targetCount: 1,
-                  next: expect.objectContaining({
-                    kind: 'terminal',
-                    terminal: expect.objectContaining({
-                      kind: 'supply',
-                      endpointId: 'route-endpoint:supply:route:11',
-                      routeId: 11,
-                      targets: [
-                        expect.objectContaining({
-                          endpointId: 'route-endpoint:supply:route:11',
-                          routeId: 11,
-                          model: 'gpt-4o',
-                        }),
-                      ],
-                    }),
-                  }),
-                }),
-              ],
-            }),
-          }),
-        }),
-      ],
-    });
-    expect(compiled.compiled.programBundle.programs).toEqual([
+    expect(router?.plans).toEqual([
       expect.objectContaining({
         id: 'program:entry:legacy:11',
         entryNodeId: 'entry:legacy:11',
         publicModelName: 'gpt-4o',
         rootEndpointId: 'route-endpoint:product:route:11',
-        startOpId: 'program:entry:legacy:11:op:dispatcher:legacy:11:dispatch-route',
-        ops: expect.arrayContaining([
-          expect.objectContaining({
-            id: 'program:entry:legacy:11:op:dispatcher:legacy:11:dispatch-route',
-            op: 'dispatch',
-            mode: 'route',
-            nodeId: 'dispatcher:legacy:11',
-            candidates: [
-              expect.objectContaining({
-                nodeId: 'route-endpoint:supply:route:11',
-                endpointId: 'route-endpoint:supply:route:11',
-                targetOpId: 'program:entry:legacy:11:op:route-endpoint:supply:route:11:select-supply',
-              }),
-            ],
-          }),
-          expect.objectContaining({
-            id: 'program:entry:legacy:11:op:route-endpoint:supply:route:11:select-supply',
-            op: 'select_supply',
+        selectorLevels: [expect.objectContaining({
+          nodeId: 'dispatcher:legacy:11',
+          mode: 'route',
+          groups: [expect.objectContaining({
             endpointId: 'route-endpoint:supply:route:11',
-            nodeId: 'route-endpoint:supply:route:11',
+            terminalCandidateIndexes: [0],
+          })],
+        })],
+        candidates: [expect.objectContaining({
+          terminal: expect.objectContaining({
+            kind: 'supply',
+            endpointId: 'route-endpoint:supply:route:11',
             routeId: 11,
+            targetIndexes: [0],
           }),
-        ]),
+        })],
+        targets: [expect.objectContaining({
+          targetId: 'route-endpoint:supply:route:11:target:0:11',
+          model: 'gpt-4o',
+        })],
       }),
     ]);
   });
@@ -290,21 +230,11 @@ describe('routeGraph port-native source', () => {
       { nodeId: 'macro:auto-model:glm-5.1:entry', model: 'GLM-5.1' },
     ]);
     expect(result.compiled.routeEndpoints.filter((endpoint) => endpoint.publicModelName.toLowerCase() === 'glm-5.1')).toHaveLength(1);
-    expect(result.compiled.programBundle.matcher.exact['GLM-5.1']).toEqual(expect.objectContaining({
+    const router = result.compiled.compiledRouterBundle;
+    expect(router?.matcher.exact['GLM-5.1']).toEqual(expect.objectContaining({
       programId: 'program:macro:auto-model:glm-5.1:entry',
       rootEndpointId: 'route-endpoint:product:auto-model:glm-5.1',
     }));
-    expect(result.compiled.programBundle.endpointCatalog.productToProgram).toMatchObject({
-      'route-endpoint:product:auto-model:glm-5.1': 'program:macro:auto-model:glm-5.1:entry',
-    });
-    expect(result.compiled.programBundle.endpointCatalog.supplyTargets['route-endpoint:supply:route:11']).toEqual([
-      expect.objectContaining({
-        endpointId: 'route-endpoint:supply:route:11',
-        nodeId: 'route-endpoint:supply:route:11',
-        model: 'GLM-5.1',
-        routeId: 11,
-      }),
-    ]);
     expect(result.primitiveSource.nodes.some((node) => node.id.startsWith('macro:auto-model:glm-5.1:candidate:') && node.type === 'route_endpoint')).toBe(false);
     expect(result.primitiveSource.edges).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -316,38 +246,46 @@ describe('routeGraph port-native source', () => {
         }),
       }),
     ]));
-    expect(result.compiled.programBundle.programs[0].ops).toEqual(expect.arrayContaining([
+    const plan = router?.plans.find((item) => item.id === 'program:macro:auto-model:glm-5.1:entry');
+    expect(plan?.rootEndpointId).toBe('route-endpoint:product:auto-model:glm-5.1');
+    expect(plan?.selectorLevels[0]?.groups).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        id: 'program:macro:auto-model:glm-5.1:entry:op:macro:auto-model:glm-5.1:dispatcher:dispatch-route',
-        op: 'dispatch',
-        candidates: expect.arrayContaining([
-          expect.objectContaining({
-            nodeId: 'route-endpoint:supply:route:11',
-            endpointId: 'route-endpoint:supply:route:11',
-            priority: 0,
-            targetOpId: 'program:macro:auto-model:glm-5.1:entry:op:route-endpoint:supply:route:11:select-supply',
-          }),
-          expect.objectContaining({
-            nodeId: 'route-endpoint:supply:route:22',
-            endpointId: 'route-endpoint:supply:route:22',
-            priority: 0,
-            targetOpId: 'program:macro:auto-model:glm-5.1:entry:op:route-endpoint:supply:route:22:select-supply',
-          }),
-        ]),
+        nodeId: 'route-endpoint:supply:route:11',
+        endpointId: 'route-endpoint:supply:route:11',
+        priority: 0,
       }),
       expect.objectContaining({
-        id: 'program:macro:auto-model:glm-5.1:entry:op:route-endpoint:supply:route:11:select-supply',
-        op: 'select_supply',
-        endpointId: 'route-endpoint:supply:route:11',
-        nodeId: 'route-endpoint:supply:route:11',
-        routeId: 11,
-        targets: expect.arrayContaining([
-          expect.objectContaining({ nodeId: 'route-endpoint:supply:route:11', model: 'GLM-5.1' }),
-        ]),
+        nodeId: 'route-endpoint:supply:route:22',
+        endpointId: 'route-endpoint:supply:route:22',
+        priority: 0,
       }),
     ]));
-    expect(result.compiled.programBundle.debug.generatedByMacro['auto-model:glm-5.1'].nodeIds).toEqual(expect.arrayContaining([
+    expect(plan?.candidates).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        terminal: expect.objectContaining({
+          kind: 'supply',
+          endpointId: 'route-endpoint:supply:route:11',
+          nodeId: 'route-endpoint:supply:route:11',
+          routeId: 11,
+          targetIndexes: expect.any(Array),
+        }),
+      }),
+    ]));
+    const firstSupplyCandidate = plan?.candidates.find((candidate) => candidate.terminal.kind === 'supply' && candidate.terminal.endpointId === 'route-endpoint:supply:route:11');
+    const firstSupplyTargetIndexes = firstSupplyCandidate?.terminal.kind === 'supply' ? firstSupplyCandidate.terminal.targetIndexes : [];
+    expect(firstSupplyCandidate?.terminal).toEqual(expect.objectContaining({
+      kind: 'supply',
+      endpointId: 'route-endpoint:supply:route:11',
+      nodeId: 'route-endpoint:supply:route:11',
+      routeId: 11,
+    }));
+    expect(firstSupplyTargetIndexes.map((index) => plan?.targets[index])).toEqual(expect.arrayContaining([
+      expect.objectContaining({ model: 'GLM-5.1' }),
+    ]));
+    expect(plan?.sourceRef.generatedNodeIds).toEqual(expect.arrayContaining([
       'macro:auto-model:glm-5.1:entry',
+    ]));
+    expect(plan?.selectorLevels[0]?.sourceRef.generatedNodeIds).toEqual(expect.arrayContaining([
       'macro:auto-model:glm-5.1:dispatcher',
     ]));
   });
@@ -453,16 +391,12 @@ describe('routeGraph port-native source', () => {
 
     expect(compiled.ok).toBe(true);
     expect(compiled.compiled.hash).toMatch(/^[a-f0-9]{16}$/);
-    expect(compiled.compiled.programBundle.hash).toMatch(/^[a-f0-9]{16}$/);
-    expect(compiled.compiled.flatProgramBundle.hash).toMatch(/^[a-f0-9]{16}$/);
     expect(compiled.compiled.compiledRouterBundle?.hash).toMatch(/^[a-f0-9]{16}$/);
-    expect(compiled.compiled.programBundle.debug.sourceRefs).toEqual({});
-    expect(compiled.compiled.flatProgramBundle.endpointCatalog).toEqual({ byId: {}, productToProgram: {}, supplyTargets: {} });
     expect(compiled.compiled.compiledRouterBundle?.plans).toHaveLength(24);
+    const compiledGraphJson = JSON.stringify(compiled.compiled);
+    expect(compiledGraphJson).not.toContain('"programBundle"');
+    expect(compiledGraphJson).not.toContain('"flatProgramBundle"');
     expect(JSON.stringify(compiled.compiled.compiledRouterBundle)).not.toContain('"next"');
-    const flatProgramBytes = Buffer.byteLength(JSON.stringify(compiled.compiled.flatProgramBundle), 'utf8');
-    const compiledRouterBytes = Buffer.byteLength(JSON.stringify(compiled.compiled.compiledRouterBundle), 'utf8');
-    expect(compiledRouterBytes).toBeLessThan(flatProgramBytes);
     const firstCompiledRouterPlan = compiled.compiled.compiledRouterBundle?.plans[0];
     expect(firstCompiledRouterPlan?.targets.length).toBeGreaterThan(0);
     expect(firstCompiledRouterPlan?.targets[0]).not.toHaveProperty('endpointId');
@@ -1519,8 +1453,8 @@ describe('routeGraph port-native source', () => {
     expect(result.compiled.publicModels).toEqual(expect.arrayContaining([
       expect.objectContaining({ model: 'public-group' }),
     ]));
-    const program = result.compiled.flatProgramBundle.programs.find((item) => item.id === 'program:macro:model-group:public:entry');
-    expect(program?.start.filterStages).toEqual([
+    const plan = result.compiled.compiledRouterBundle?.plans.find((item) => item.id === 'program:macro:model-group:public:entry');
+    expect(plan?.filterStages).toEqual([
       expect.objectContaining({
         nodeId: 'macro:model-group:public:filter',
         phase: 'pre_selection',
@@ -1854,8 +1788,8 @@ describe('routeGraph port-native source', () => {
     });
 
     expect(result.ok).toBe(true);
-    const dispatch = result.compiled.programBundle.programs[0].ops.find((op) => op.op === 'dispatch');
-    expect(dispatch?.candidates).toEqual([
+    const plan = result.compiled.compiledRouterBundle?.plans[0];
+    expect(plan?.selectorLevels[0]?.groups).toEqual([
       expect.objectContaining({
         nodeId: 'route-endpoint:supply:route:11',
         endpointId: 'route-endpoint:supply:route:11',

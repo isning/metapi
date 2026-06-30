@@ -56,11 +56,13 @@ export type ActiveRouteGraphSourceVersion = Omit<ActiveRouteGraphVersion, 'compi
 export type ActiveRouteGraphRuntimeVersion = {
   id: number;
   version: number;
-  compiledGraph: {
-    hash?: string;
-    compiledRouterBundle?: CompiledRouterBundle;
-    flatProgramBundle?: CompiledRouteGraph['flatProgramBundle'];
-  };
+  compiledGraph: RouteGraphRuntimeStorageArtifact;
+};
+
+export type RouteGraphRuntimeStorageArtifact = {
+  version: 1;
+  hash?: string;
+  compiledRouterBundle?: CompiledRouterBundle;
 };
 
 export type ActiveRouteGraphSummary = {
@@ -198,8 +200,11 @@ function parseJsonObject<T>(raw: string | null | undefined, fallback: T): T {
   }
 }
 
-const EMPTY_COMPILED_ROUTE_GRAPH = compileRouteGraphSource(null).compiled;
-const EMPTY_ROUTE_GRAPH_SOURCE = parseRouteGraphSource(null);
+const STORED_COMPILED_GRAPH_PARSE_BYTE_LIMIT = 16 * 1024 * 1024;
+
+function emptyRouteGraphRuntimeStorageArtifact(): RouteGraphRuntimeStorageArtifact {
+  return { version: 1 };
+}
 
 let activeRouteGraphCache: {
   versionId: number;
@@ -288,6 +293,35 @@ function summarizeActiveRouteGraphVersion(input: ActiveRouteGraphSourceVersion, 
   };
 }
 
+function countPublicModelEntriesInSourceGraph(sourceGraph: RouteGraphSource): number {
+  const names = new Set<string>();
+  for (const node of sourceGraph.nodes) {
+    if (
+      node.type !== 'entry'
+      || node.enabled === false
+      || node.visibility !== 'public'
+    ) {
+      continue;
+    }
+    const modelName = deriveLegacyModelPatternFromSpecs(node.match, { kind: 'supply' }).trim();
+    if (modelName) names.add(modelName.toLowerCase());
+  }
+  for (const macro of sourceGraph.macros || []) {
+    if (
+      macro.kind !== 'candidate_selector'
+      || macro.enabled === false
+      || macro.visibility !== 'public'
+      || macro.config?.surface?.entry?.kind !== 'external'
+    ) {
+      continue;
+    }
+    const modelName = deriveLegacyModelPatternFromSpecs(macro.config.surface.entry.match, { kind: 'supply' }).trim()
+      || String(macro.name || '').trim();
+    if (modelName) names.add(modelName.toLowerCase());
+  }
+  return names.size;
+}
+
 function sourceVersionFromActiveVersion(input: ActiveRouteGraphVersion): ActiveRouteGraphSourceVersion {
   return {
     id: input.id,
@@ -299,20 +333,42 @@ function sourceVersionFromActiveVersion(input: ActiveRouteGraphVersion): ActiveR
   };
 }
 
-function runtimeVersionFromActiveVersion(input: ActiveRouteGraphVersion): ActiveRouteGraphRuntimeVersion {
-  const runtimeCompiledGraph: ActiveRouteGraphRuntimeVersion['compiledGraph'] = {
-    hash: input.compiledGraph.hash,
+function runtimeArtifactFromCompiledRouteGraph(compiledGraph: CompiledRouteGraph): RouteGraphRuntimeStorageArtifact {
+  const runtimeCompiledGraph: RouteGraphRuntimeStorageArtifact = {
+    version: 1,
+    hash: compiledGraph.hash,
   };
-  if (input.compiledGraph.compiledRouterBundle) {
-    runtimeCompiledGraph.compiledRouterBundle = input.compiledGraph.compiledRouterBundle;
-  } else if (input.compiledGraph.flatProgramBundle) {
-    runtimeCompiledGraph.flatProgramBundle = input.compiledGraph.flatProgramBundle;
+  if (compiledGraph.compiledRouterBundle) {
+    runtimeCompiledGraph.compiledRouterBundle = compiledGraph.compiledRouterBundle;
   }
+  return runtimeCompiledGraph;
+}
+
+function boundRouteGraphRuntimeStorageArtifact(artifact: RouteGraphRuntimeStorageArtifact): RouteGraphRuntimeStorageArtifact {
+  const artifactJson = JSON.stringify(artifact);
+  return Buffer.byteLength(artifactJson, 'utf8') <= STORED_COMPILED_GRAPH_PARSE_BYTE_LIMIT
+    ? artifact
+    : emptyRouteGraphRuntimeStorageArtifact();
+}
+
+function runtimeVersionFromCompiledArtifact(input: {
+  id: number;
+  version: number;
+  artifact: RouteGraphRuntimeStorageArtifact;
+}): ActiveRouteGraphRuntimeVersion {
   return {
     id: input.id,
     version: input.version,
-    compiledGraph: runtimeCompiledGraph,
+    compiledGraph: input.artifact,
   };
+}
+
+function runtimeVersionFromActiveVersion(input: ActiveRouteGraphVersion): ActiveRouteGraphRuntimeVersion {
+  return runtimeVersionFromCompiledArtifact({
+    id: input.id,
+    version: input.version,
+    artifact: runtimeArtifactFromCompiledRouteGraph(input.compiledGraph),
+  });
 }
 
 function cacheActiveSourceVersion(input: ActiveRouteGraphSourceVersion, needsRouteTableReconciliation?: boolean): void {
@@ -358,75 +414,6 @@ async function getActiveRouteGraphVersionId(): Promise<number | null> {
   return await loadTask;
 }
 
-function hasRouteProgramBundle(compiledGraph: CompiledRouteGraph | null | undefined): boolean {
-  const candidateGraph = compiledGraph as { programBundle?: unknown; flatProgramBundle?: unknown } | null | undefined;
-  const bundle = candidateGraph?.programBundle;
-  if (!bundle || typeof bundle !== 'object' || Array.isArray(bundle)) return false;
-  const candidate = bundle as {
-    version?: unknown;
-    matcher?: unknown;
-    programs?: unknown;
-    diagnostics?: unknown;
-  };
-  if (candidate.version !== 1 || !candidate.matcher || typeof candidate.matcher !== 'object' || !Array.isArray(candidate.programs)) {
-    return false;
-  }
-  if (Array.isArray(candidate.diagnostics) && candidate.diagnostics.some((diagnostic) => (
-    diagnostic
-    && typeof diagnostic === 'object'
-    && !Array.isArray(diagnostic)
-    && (diagnostic as { severity?: unknown }).severity === 'error'
-    && String((diagnostic as { code?: unknown }).code || '').startsWith('program.')
-  ))) {
-    return false;
-  }
-  const hasOperationProgram = candidate.programs.some((program) => (
-    program
-    && typeof program === 'object'
-    && !Array.isArray(program)
-    && typeof (program as { startOpId?: unknown }).startOpId === 'string'
-    && !!String((program as { startOpId?: unknown }).startOpId).trim()
-    && Array.isArray((program as { ops?: unknown }).ops)
-  ));
-  if (!hasOperationProgram) return false;
-
-  const flatBundle = candidateGraph?.flatProgramBundle;
-  if (!flatBundle || typeof flatBundle !== 'object' || Array.isArray(flatBundle)) return false;
-  const flatCandidate = flatBundle as {
-    version?: unknown;
-    matcher?: unknown;
-    programs?: unknown;
-    diagnostics?: unknown;
-  };
-  if (flatCandidate.version !== 1 || !flatCandidate.matcher || typeof flatCandidate.matcher !== 'object' || !Array.isArray(flatCandidate.programs)) {
-    return false;
-  }
-  if (Array.isArray(flatCandidate.diagnostics) && flatCandidate.diagnostics.some((diagnostic) => (
-    diagnostic
-    && typeof diagnostic === 'object'
-    && !Array.isArray(diagnostic)
-    && (diagnostic as { severity?: unknown }).severity === 'error'
-    && (
-      String((diagnostic as { code?: unknown }).code || '').startsWith('program.')
-      || String((diagnostic as { code?: unknown }).code || '').startsWith('flat_program.')
-    )
-  ))) {
-    return false;
-  }
-  const hasFlatProgram = flatCandidate.programs.some((program) => (
-    program
-    && typeof program === 'object'
-    && !Array.isArray(program)
-    && !!(program as { start?: unknown }).start
-  ));
-  return hasFlatProgram;
-}
-
-function hasLegacyRouteProgramBundles(compiledGraph: CompiledRouteGraph | null | undefined): boolean {
-  const candidateGraph = compiledGraph as { programBundle?: unknown; flatProgramBundle?: unknown } | null | undefined;
-  return candidateGraph?.programBundle !== undefined || candidateGraph?.flatProgramBundle !== undefined;
-}
-
 function hasCompiledRouterBundle(compiledGraph: CompiledRouteGraph | null | undefined): boolean {
   const candidateGraph = compiledGraph as { compiledRouterBundle?: unknown } | null | undefined;
   const bundle = candidateGraph?.compiledRouterBundle;
@@ -450,6 +437,133 @@ function hasCompiledRouterBundle(compiledGraph: CompiledRouteGraph | null | unde
     return false;
   }
   return true;
+}
+
+function hasFullCompiledGraphDebugPayload(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const graph = value as Partial<CompiledRouteGraph>;
+  return !!((Array.isArray(graph.entries) && graph.entries.length > 0)
+    || (Array.isArray(graph.routeEndpoints) && graph.routeEndpoints.length > 0)
+    || (Array.isArray(graph.terminals) && graph.terminals.length > 0)
+    || (Array.isArray(graph.publicModels) && graph.publicModels.length > 0)
+    || (graph.nodesById && Object.keys(graph.nodesById).length > 0)
+    || (graph.edgesBySource && Object.keys(graph.edgesBySource).length > 0)
+    || (graph.edgesByFromPort && Object.keys(graph.edgesByFromPort).length > 0));
+}
+
+function isRouteGraphRuntimeStorageArtifact(value: unknown): value is RouteGraphRuntimeStorageArtifact {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const artifact = value as RouteGraphRuntimeStorageArtifact;
+  if (artifact.version !== 1) return false;
+  return hasCompiledRouterBundle(artifact as unknown as CompiledRouteGraph);
+}
+
+export function buildRouteGraphRuntimeStorageArtifact(compiledGraph: CompiledRouteGraph): RouteGraphRuntimeStorageArtifact {
+  return boundRouteGraphRuntimeStorageArtifact(runtimeArtifactFromCompiledRouteGraph(compiledGraph));
+}
+
+function serializeRouteGraphRuntimeStorageArtifact(compiledGraph: CompiledRouteGraph): string {
+  return JSON.stringify(buildRouteGraphRuntimeStorageArtifact(compiledGraph));
+}
+
+async function selectStoredCompiledGraphByteLength(versionId: number): Promise<number> {
+  const row = await db.select({
+    bytes: sql<number>`length(${schema.routeGraphVersions.compiledGraphJson})`,
+  })
+    .from(schema.routeGraphVersions)
+    .where(eq(schema.routeGraphVersions.id, versionId))
+    .get();
+  const bytes = Number(row?.bytes || 0);
+  return Number.isFinite(bytes) && bytes > 0 ? bytes : 0;
+}
+
+async function selectStoredCompiledGraphJson(versionId: number): Promise<string | null> {
+  const row = await db.select({
+    compiledGraphJson: schema.routeGraphVersions.compiledGraphJson,
+  })
+    .from(schema.routeGraphVersions)
+    .where(eq(schema.routeGraphVersions.id, versionId))
+    .get();
+  return row?.compiledGraphJson ?? null;
+}
+
+async function selectStoredSourceGraphByteLength(versionId: number): Promise<number> {
+  const row = await db.select({
+    bytes: sql<number>`length(${schema.routeGraphVersions.sourceGraphJson})`,
+  })
+    .from(schema.routeGraphVersions)
+    .where(eq(schema.routeGraphVersions.id, versionId))
+    .get();
+  const bytes = Number(row?.bytes || 0);
+  return Number.isFinite(bytes) && bytes > 0 ? bytes : 0;
+}
+
+async function selectStoredSourceGraphJson(versionId: number): Promise<string | null> {
+  const row = await db.select({
+    sourceGraphJson: schema.routeGraphVersions.sourceGraphJson,
+  })
+    .from(schema.routeGraphVersions)
+    .where(eq(schema.routeGraphVersions.id, versionId))
+    .get();
+  return row?.sourceGraphJson ?? null;
+}
+
+async function storeRouteGraphRuntimeArtifact(
+  versionId: number,
+  compiledGraph: CompiledRouteGraph,
+): Promise<RouteGraphRuntimeStorageArtifact> {
+  const artifact = buildRouteGraphRuntimeStorageArtifact(compiledGraph);
+  await db.update(schema.routeGraphVersions).set({
+    compiledGraphJson: JSON.stringify(artifact),
+  }).where(eq(schema.routeGraphVersions.id, versionId)).run();
+  return artifact;
+}
+
+async function rebuildRouteGraphRuntimeArtifactFromSource(versionId: number): Promise<RouteGraphRuntimeStorageArtifact> {
+  const sourceBytes = await selectStoredSourceGraphByteLength(versionId);
+  if (sourceBytes <= 0 || sourceBytes > STORED_COMPILED_GRAPH_PARSE_BYTE_LIMIT) {
+    return emptyRouteGraphRuntimeStorageArtifact();
+  }
+
+  const sourceGraphJson = await selectStoredSourceGraphJson(versionId);
+  if (!sourceGraphJson) return emptyRouteGraphRuntimeStorageArtifact();
+
+  try {
+    const sourceGraph = parseRouteGraphSource(sourceGraphJson);
+    const compiled = compileRouteGraphSource(sourceGraph, { includePrimitiveSource: false });
+    if (compiled.diagnostics.some((diagnostic) => diagnostic.severity === 'error')) {
+      return emptyRouteGraphRuntimeStorageArtifact();
+    }
+    return await storeRouteGraphRuntimeArtifact(versionId, compiled.compiled);
+  } catch {
+    return emptyRouteGraphRuntimeStorageArtifact();
+  }
+}
+
+async function loadRouteGraphRuntimeArtifactForVersion(input: {
+  versionId: number;
+  compiledGraphByteLength?: number | null;
+}): Promise<RouteGraphRuntimeStorageArtifact> {
+  const storedBytes = input.compiledGraphByteLength == null
+    ? await selectStoredCompiledGraphByteLength(input.versionId)
+    : Math.max(0, Math.trunc(Number(input.compiledGraphByteLength) || 0));
+
+  if (storedBytes > 0 && storedBytes <= STORED_COMPILED_GRAPH_PARSE_BYTE_LIMIT) {
+    const raw = await selectStoredCompiledGraphJson(input.versionId);
+    const parsed = parseJsonObject<unknown>(raw, null);
+    if (isRouteGraphRuntimeStorageArtifact(parsed) && !hasFullCompiledGraphDebugPayload(parsed)) {
+      return parsed;
+    }
+    if (parsed && hasCompiledRouterBundle(parsed as CompiledRouteGraph)) {
+      const artifact = buildRouteGraphRuntimeStorageArtifact(parsed as CompiledRouteGraph);
+      await db.update(schema.routeGraphVersions).set({
+        compiledGraphJson: JSON.stringify(artifact),
+      }).where(eq(schema.routeGraphVersions.id, input.versionId)).run();
+      return artifact;
+    }
+  }
+
+  return emptyRouteGraphRuntimeStorageArtifact();
 }
 
 function hasCompactedRouteEndpointIdentity(sourceGraph: RouteGraphSource): boolean {
@@ -717,7 +831,7 @@ function appendOwnershipDiagnostics(input: {
 }
 
 async function getNextGraphVersionNumber(): Promise<number> {
-  const latest = await db.select().from(schema.routeGraphVersions)
+  const latest = await db.select({ version: schema.routeGraphVersions.version }).from(schema.routeGraphVersions)
     .orderBy(desc(schema.routeGraphVersions.version))
     .limit(1)
     .get();
@@ -781,14 +895,16 @@ function routeIdFromRouteTableCandidateNode(node: { id?: string; type?: string; 
   if (!node) return null;
   const direct = Number(node.legacyRouteId);
   if (Number.isFinite(direct) && direct > 0) return Math.trunc(direct);
+  const directRouteId = Number((node as { routeId?: number | null }).routeId);
+  if (Number.isFinite(directRouteId) && directRouteId > 0) return Math.trunc(directRouteId);
   if (node.type === 'entry') {
     const matchRouteId = Number(node.match?.routeId);
     if (Number.isFinite(matchRouteId) && matchRouteId > 0) return Math.trunc(matchRouteId);
   }
   const match = /^(?:entry|dispatcher):legacy:(\d+)$/.exec(String(node.id || ''));
   if (!match) return null;
-  const routeId = Number(match[1]);
-  return Number.isFinite(routeId) && routeId > 0 ? routeId : null;
+  const legacyRouteId = Number(match[1]);
+  return Number.isFinite(legacyRouteId) && legacyRouteId > 0 ? legacyRouteId : null;
 }
 
 function routeIdsFromRouteTableCandidateNode(node: {
@@ -829,27 +945,33 @@ function collectMatchAndBackendByLegacyRouteId(source: RouteGraphSource | null |
     if (!routeId) continue;
     macroVisibilityByRouteId.set(routeId, macro.visibility === 'internal' ? 'internal' : 'public');
   }
-  const compiled = compileRouteGraphSource(source);
-  for (const endpoint of compiled.compiled.routeEndpoints || []) {
-    if (endpoint.endpointKind !== 'route_product') continue;
-    const routeId = Number(endpoint.routeId || routeIdFromLegacyGraphNodeId(endpoint.nodeId));
-    if (!Number.isFinite(routeId) || routeId <= 0) continue;
-    const backend = normalizeSelfRouteProductBackend(endpoint.backend, routeId);
+  for (const node of source.nodes) {
+    if (node.type !== 'route_endpoint' || node.endpointKind !== 'route_product') continue;
+    const routeId = routeIdFromRouteTableCandidateNode(node);
+    if (routeId == null) continue;
+    const backend = normalizeSelfRouteProductBackend(node.backend, routeId);
     result.set(routeId, {
-      match: endpoint.match,
+      match: normalizeRouteGraphMatchSpec({
+        ...node.match,
+        routeId,
+      }),
       backend,
-      visibility: macroVisibilityByRouteId.get(routeId) || (endpoint.exposure === 'internal' ? 'internal' : 'public'),
+      visibility: macroVisibilityByRouteId.get(routeId) || (node.exposure === 'internal' ? 'internal' : 'public'),
     });
   }
-  for (const entry of compiled.compiled.entries) {
-    const routeId = Number(entry.match.routeId || routeIdFromLegacyGraphNodeId(entry.nodeId));
-    if (!Number.isFinite(routeId) || routeId <= 0) continue;
+  for (const node of source.nodes) {
+    if (!isEntryNode(node)) continue;
+    const routeId = routeIdFromRouteTableCandidateNode(node);
+    if (routeId == null) continue;
     if (result.has(routeId)) continue;
-    const backend = normalizeSelfRouteProductBackend(entry.backend, routeId);
+    const backend = normalizeSelfRouteProductBackend((node as { backend?: RouteGraphBackendSpec }).backend || { kind: 'supply' }, routeId);
     result.set(routeId, {
-      match: entry.match,
+      match: normalizeRouteGraphMatchSpec({
+        ...node.match,
+        routeId,
+      }),
       backend,
-      visibility: macroVisibilityByRouteId.get(routeId) || entry.visibility || 'public',
+      visibility: macroVisibilityByRouteId.get(routeId) || node.visibility || 'public',
     });
   }
   return result;
@@ -1158,7 +1280,7 @@ export async function reconcileActiveGraphWithRouteTable(
   });
   if (JSON.stringify(nextSource) === JSON.stringify(active.sourceGraph)) {
     if (!options.allowDiagnostics) {
-      const compiled = compileRouteGraphSource(nextSource);
+      const compiled = compileRouteGraphSource(nextSource, { includePrimitiveSource: false });
       if (!compiled.ok) {
         throw new RouteGraphSyncValidationError(compiled.diagnostics);
       }
@@ -1194,7 +1316,7 @@ export async function publishRouteGraphSource(input: {
   createdBy?: string;
   allowDiagnostics?: boolean;
 }): Promise<{ ok: true; version: ActiveRouteGraphVersion; diagnostics: RouteGraphDiagnostic[] } | { ok: false; diagnostics: RouteGraphDiagnostic[] }> {
-  const compiled = compileRouteGraphSource(input.sourceGraph, { includeLegacyBundles: false, includePrimitiveSource: false });
+  const compiled = compileRouteGraphSource(input.sourceGraph, { includePrimitiveSource: false });
   if (!compiled.ok && !input.allowDiagnostics) {
     return { ok: false, diagnostics: compiled.diagnostics };
   }
@@ -1207,7 +1329,7 @@ export async function publishRouteGraphSource(input: {
   const inserted = await db.insert(schema.routeGraphVersions).values({
     version: versionNumber,
     sourceGraphJson: JSON.stringify(compiled.source),
-    compiledGraphJson: JSON.stringify(compiled.compiled),
+    compiledGraphJson: serializeRouteGraphRuntimeStorageArtifact(compiled.compiled),
     status: 'active',
     createdBy: input.createdBy || 'system',
     createdAt: timestamp,
@@ -1299,18 +1421,20 @@ export async function getActiveRouteGraphVersion(): Promise<ActiveRouteGraphVers
   if (cachedActive && cachedActive.versionId === pointer.versionId) {
     return cachedActive.version;
   }
-  const row = await db.select().from(schema.routeGraphVersions)
+  const row = await db.select({
+    id: schema.routeGraphVersions.id,
+    version: schema.routeGraphVersions.version,
+    sourceGraphJson: schema.routeGraphVersions.sourceGraphJson,
+    status: schema.routeGraphVersions.status,
+    createdAt: schema.routeGraphVersions.createdAt,
+    activatedAt: schema.routeGraphVersions.activatedAt,
+  }).from(schema.routeGraphVersions)
     .where(eq(schema.routeGraphVersions.id, pointer.versionId))
     .get();
   if (!row) return null;
   const sourceGraph = parseRouteGraphSource(row.sourceGraphJson);
-  let compiledGraph = parseJsonObject<CompiledRouteGraph>(row.compiledGraphJson, EMPTY_COMPILED_ROUTE_GRAPH);
-  if (!hasCompiledRouterBundle(compiledGraph) || hasLegacyRouteProgramBundles(compiledGraph)) {
-    compiledGraph = compileRouteGraphSource(sourceGraph, { includeLegacyBundles: false, includePrimitiveSource: false }).compiled;
-    await db.update(schema.routeGraphVersions).set({
-      compiledGraphJson: JSON.stringify(compiledGraph),
-    }).where(eq(schema.routeGraphVersions.id, row.id)).run();
-  }
+  const compiledGraph = compileRouteGraphSource(sourceGraph, { includePrimitiveSource: false }).compiled;
+  await storeRouteGraphRuntimeArtifact(row.id, compiledGraph);
   const version = {
     id: row.id,
     version: row.version,
@@ -1380,7 +1504,16 @@ export async function getActiveRouteGraphSourceVersion(): Promise<ActiveRouteGra
 export async function ensureActiveRouteGraphSourceVersion(): Promise<ActiveRouteGraphSourceVersion> {
   const active = await getActiveRouteGraphSourceVersion();
   if (active) return active;
-  return sourceVersionFromActiveVersion(await ensureActiveRouteGraphVersion());
+  const sourceGraph = await loadLegacyRouteGraphSource();
+  const published = await publishRouteGraphSource({
+    sourceGraph,
+    createdBy: 'legacy-migration',
+    allowDiagnostics: true,
+  });
+  if (!published.ok) {
+    throw new Error(`Cannot bootstrap route graph source: ${published.diagnostics.map((item) => item.message).join('; ')}`);
+  }
+  return sourceVersionFromActiveVersion(published.version);
 }
 
 export async function getActiveRouteGraphRuntimeVersion(): Promise<ActiveRouteGraphRuntimeVersion | null> {
@@ -1397,35 +1530,22 @@ export async function getActiveRouteGraphRuntimeVersion(): Promise<ActiveRouteGr
   const row = await db.select({
     id: schema.routeGraphVersions.id,
     version: schema.routeGraphVersions.version,
-    sourceGraphJson: schema.routeGraphVersions.sourceGraphJson,
-    compiledGraphJson: schema.routeGraphVersions.compiledGraphJson,
+    compiledGraphByteLength: sql<number>`length(${schema.routeGraphVersions.compiledGraphJson})`,
   })
     .from(schema.routeGraphVersions)
     .where(eq(schema.routeGraphVersions.id, versionId))
     .get();
   if (!row) return null;
 
-  let compiledGraph = parseJsonObject<CompiledRouteGraph>(row.compiledGraphJson, EMPTY_COMPILED_ROUTE_GRAPH);
-  if (!hasCompiledRouterBundle(compiledGraph) || hasLegacyRouteProgramBundles(compiledGraph)) {
-    const sourceGraph = parseRouteGraphSource(row.sourceGraphJson);
-    compiledGraph = compileRouteGraphSource(sourceGraph, { includeLegacyBundles: false, includePrimitiveSource: false }).compiled;
-    await db.update(schema.routeGraphVersions).set({
-      compiledGraphJson: JSON.stringify(compiledGraph),
-    }).where(eq(schema.routeGraphVersions.id, row.id)).run();
-  }
-  const runtimeVersion: ActiveRouteGraphRuntimeVersion = {
+  const artifact = await loadRouteGraphRuntimeArtifactForVersion({
+    versionId: row.id,
+    compiledGraphByteLength: row.compiledGraphByteLength,
+  });
+  const runtimeVersion = runtimeVersionFromCompiledArtifact({
     id: row.id,
     version: row.version,
-    compiledGraph: runtimeVersionFromActiveVersion({
-      id: row.id,
-      version: row.version,
-      sourceGraph: EMPTY_ROUTE_GRAPH_SOURCE,
-      compiledGraph,
-      status: 'active',
-      createdAt: null,
-      activatedAt: null,
-    }).compiledGraph,
-  };
+    artifact,
+  });
   activeRouteGraphRuntimeCache = { versionId: row.id, version: runtimeVersion };
   return runtimeVersion;
 }
@@ -1511,13 +1631,20 @@ export async function getRouteGraphRouteTableSummary(): Promise<ActiveRouteGraph
 }
 
 export async function listRouteGraphVersions(limit = 20): Promise<RouteGraphVersionSummary[]> {
-  const rows = await db.select().from(schema.routeGraphVersions)
+  const rows = await db.select({
+    id: schema.routeGraphVersions.id,
+    version: schema.routeGraphVersions.version,
+    sourceGraphJson: schema.routeGraphVersions.sourceGraphJson,
+    status: schema.routeGraphVersions.status,
+    createdBy: schema.routeGraphVersions.createdBy,
+    createdAt: schema.routeGraphVersions.createdAt,
+    activatedAt: schema.routeGraphVersions.activatedAt,
+  }).from(schema.routeGraphVersions)
     .orderBy(desc(schema.routeGraphVersions.version))
     .limit(Math.max(1, Math.min(100, limit)))
     .all();
   return rows.map((row) => {
     const sourceGraph = parseRouteGraphSource(row.sourceGraphJson);
-    const compiledGraph = parseJsonObject<CompiledRouteGraph>(row.compiledGraphJson, compileRouteGraphSource(sourceGraph).compiled);
     return {
       id: row.id,
       version: row.version,
@@ -1529,7 +1656,7 @@ export async function listRouteGraphVersions(limit = 20): Promise<RouteGraphVers
         nodes: sourceGraph.nodes.length,
         edges: sourceGraph.edges.length,
         macros: (sourceGraph.macros || []).length,
-        publicModels: Array.isArray(compiledGraph.publicModels) ? compiledGraph.publicModels.length : 0,
+        publicModels: countPublicModelEntriesInSourceGraph(sourceGraph),
       },
     };
   });
@@ -1543,7 +1670,7 @@ async function getLatestRouteGraphDraftRow() {
 }
 
 export async function getRouteGraphDraft(): Promise<RouteGraphDraftState> {
-  const active = await ensureActiveRouteGraphVersion();
+  const active = await ensureActiveRouteGraphSourceVersion();
   const draft = await getLatestRouteGraphDraftRow();
   if (!draft) {
     return {
@@ -1568,9 +1695,9 @@ export async function getRouteGraphDraft(): Promise<RouteGraphDraftState> {
 }
 
 export async function saveRouteGraphDraft(sourceGraph: unknown): Promise<RouteGraphDraftState> {
-  const active = await ensureActiveRouteGraphVersion();
+  const active = await ensureActiveRouteGraphSourceVersion();
   const normalized = normalizeRouteGraphSource(sourceGraph);
-  const validation: RouteGraphCompileResult = compileRouteGraphSource(normalized);
+  const validation: RouteGraphCompileResult = compileRouteGraphSource(normalized, { includePrimitiveSource: false });
   appendOwnershipDiagnostics({
     baseGraph: active.sourceGraph,
     candidateGraph: normalized,
@@ -1601,11 +1728,11 @@ export async function saveRouteGraphDraft(sourceGraph: unknown): Promise<RouteGr
 }
 
 export async function validateRouteGraphDraft(sourceGraph: unknown): Promise<RouteGraphCompileResult> {
-  return compileRouteGraphSource(sourceGraph);
+  return compileRouteGraphSource(sourceGraph, { includePrimitiveSource: false });
 }
 
 export async function publishRouteGraphDraft(): Promise<{ ok: true; version: ActiveRouteGraphVersion; diagnostics: RouteGraphDiagnostic[] } | { ok: false; stale?: boolean; diagnostics: RouteGraphDiagnostic[] }> {
-  const active = await ensureActiveRouteGraphVersion();
+  const active = await ensureActiveRouteGraphSourceVersion();
   const draft = await getRouteGraphDraft();
   if (draft.stale || draft.baseVersion !== active.id) {
     return {
@@ -1618,7 +1745,7 @@ export async function publishRouteGraphDraft(): Promise<{ ok: true; version: Act
       }],
     };
   }
-  const validation = compileRouteGraphSource(draft.workingGraph);
+  const validation = compileRouteGraphSource(draft.workingGraph, { includePrimitiveSource: false });
   appendOwnershipDiagnostics({
     baseGraph: active.sourceGraph,
     candidateGraph: draft.workingGraph,
@@ -1652,7 +1779,7 @@ export async function discardRouteGraphDraft(): Promise<void> {
 }
 
 export async function rebaseRouteGraphDraft(): Promise<RouteGraphDraftState> {
-  const active = await ensureActiveRouteGraphVersion();
+  const active = await ensureActiveRouteGraphSourceVersion();
   const draftRow = await getLatestRouteGraphDraftRow();
   if (!draftRow) {
     return await saveRouteGraphDraft({
@@ -2537,9 +2664,12 @@ export async function syncRouteBindingProjectionsFromRouteGraphSource(
 export async function syncRouteBindingProjectionsFromActiveRouteGraph(
   options: { repairOnly?: boolean; includeCompiledFallback?: boolean } = {},
 ): Promise<{ checked: number; upserted: number }> {
-  const active = await getActiveRouteGraphVersion();
+  const active = await getActiveRouteGraphSourceVersion();
   if (!active) return { checked: 0, upserted: 0 };
-  return await syncRouteBindingProjectionsFromRouteGraphSource(active.sourceGraph, options);
+  return await syncRouteBindingProjectionsFromRouteGraphSource(active.sourceGraph, {
+    repairOnly: options.repairOnly,
+    includeCompiledFallback: options.includeCompiledFallback,
+  });
 }
 
 export async function loadActiveRouteGraphRouteBindings(): Promise<Map<number, RouteGraphRouteBinding>> {
@@ -2558,106 +2688,26 @@ export async function loadActiveRouteGraphRouteBindings(): Promise<Map<number, R
       return sourceBindings;
     }
   }
-  const active = await ensureActiveRouteGraphVersion();
-  if (activeRouteGraphBindingsCache?.versionId === active.id) {
-    return new Map(activeRouteGraphBindingsCache.bindings);
-  }
-  const compiledGraph = active.compiledGraph;
-  const macroVisibilityByRouteId = new Map<number, RouteGraphVisibility>();
-  for (const macro of active.sourceGraph.macros || []) {
-    const routeId = routeIdFromRouteTableMacroId(macro.id);
-    if (!routeId) continue;
-    macroVisibilityByRouteId.set(routeId, macro.visibility === 'internal' ? 'internal' : 'public');
-  }
-  const primitiveNodes = Object.values(compiledGraph.nodesById);
-  const primitiveEdges = Object.values(compiledGraph.edgesByFromPort).flat();
-  const byEntryId = new Map(primitiveNodes.map((node) => [node.id, node]));
-  const outgoing = new Map<string, typeof primitiveEdges>();
-  const incoming = new Map<string, typeof primitiveEdges>();
-  for (const edge of primitiveEdges) {
-    if (!outgoing.has(edge.sourceNodeId)) outgoing.set(edge.sourceNodeId, []);
-    outgoing.get(edge.sourceNodeId)!.push(edge);
-    if (!incoming.has(edge.targetNodeId)) incoming.set(edge.targetNodeId, []);
-    incoming.get(edge.targetNodeId)!.push(edge);
-  }
-  const binding = new Map<number, RouteGraphRouteBinding>();
-  for (const endpoint of compiledGraph.routeEndpoints) {
-    if (endpoint.endpointKind !== 'route_product') continue;
-    const routeId = Number(endpoint.routeId);
-    if (!Number.isFinite(routeId) || routeId <= 0) continue;
-    const node = byEntryId.get(endpoint.nodeId) || null;
-    const targetEdges = [
-      ...(outgoing.get(endpoint.nodeId) || []).filter((edge) => edge.sourcePortId === 'route.out'),
-      ...(outgoing.get(legacyRouteIdToRouteGraphEntryNodeId(routeId)) || []).filter((edge) => edge.sourcePortId === 'bidirect.out'),
-    ];
-    const sourceRouteIds: number[] = [];
-    for (const edge of targetEdges) {
-      const targetId = edge.targetNodeId;
-      const target = byEntryId.get(targetId);
-      if (!target) continue;
-      if (target.type === 'dispatcher' && target.mode === 'route') {
-        const routeCandidateEdges = (incoming.get(target.id) || [])
-          .filter((candidateEdge) => candidateEdge.targetPortId === 'route.in');
-        for (const candidateEdge of routeCandidateEdges) {
-          const source = byEntryId.get(candidateEdge.sourceNodeId);
-          sourceRouteIds.push(...routeIdsFromRouteTableCandidateNode(source));
-        }
-        continue;
-      }
-    }
-    const uniqueSourceRouteIds = Array.from(new Set(sourceRouteIds));
-    const endpointBackend = endpoint.backend;
-    const groupSourceRouteIds = endpoint.sourceKind === 'automatic_model_group'
-      ? []
-      : endpointBackend.kind === 'routes'
-      ? endpointBackend.routeIds
-      : uniqueSourceRouteIds.filter((sourceRouteId) => sourceRouteId !== routeId);
-    const routeMode = endpoint.sourceKind === 'automatic_model_group'
-      ? 'pattern'
-      : (endpointBackend.kind === 'routes' || groupSourceRouteIds.length > 0 ? 'explicit_group' : 'pattern');
-    const modelPattern = routeMode === 'explicit_group'
-      ? (endpoint.match.displayName || endpoint.match.requestedModelPattern || '')
-      : (endpoint.match.requestedModelPattern || endpoint.match.displayName || '');
-    binding.set(routeId, {
-      routeId,
-      entryNodeId: endpoint.nodeId,
-      match: endpoint.match,
-      backend: routeMode === 'explicit_group'
-        ? { kind: 'routes', routeIds: groupSourceRouteIds }
-        : { kind: 'supply' },
-      visibility: macroVisibilityByRouteId.get(routeId) || (endpoint.exposure === 'internal' ? 'internal' : 'public'),
-      sourceRouteIds: routeMode === 'explicit_group' ? groupSourceRouteIds : [],
-      exposedModelName: modelPattern,
-      exactModelName: routeMode === 'explicit_group' ? '' : (endpoint.match.requestedModelPattern || ''),
-      routeMode,
+  const tableBindings = await loadRouteGraphRouteTableBindings();
+  const bindings = new Map<number, RouteGraphRouteBinding>();
+  for (const binding of tableBindings.values()) {
+    bindings.set(binding.routeId, {
+      routeId: binding.routeId,
+      entryNodeId: binding.entryNodeId,
+      match: binding.match,
+      backend: binding.backend,
+      visibility: binding.visibility,
+      sourceRouteIds: binding.sourceRouteIds,
+      exposedModelName: deriveLegacyModelPatternFromSpecs(binding.match, binding.backend),
+      exactModelName: binding.backend.kind === 'routes' ? '' : (binding.match.requestedModelPattern || ''),
+      routeMode: binding.routeMode,
     });
   }
-  if (binding.size > 0) {
+  if (activeSource) {
     activeRouteGraphBindingsCache = {
-      versionId: active.id,
-      bindings: new Map(binding),
+      versionId: activeSource.id,
+      bindings: new Map(bindings),
     };
-    return binding;
   }
-  for (const node of primitiveNodes) {
-    if (node.type !== 'entry') continue;
-    const routeId = Number(node.match.routeId || String(node.id).replace(/^entry:legacy:/, ''));
-    if (!Number.isFinite(routeId) || routeId <= 0) continue;
-    binding.set(routeId, {
-      routeId,
-      entryNodeId: node.id,
-      match: node.match,
-      backend: { kind: 'supply' },
-      visibility: 'public',
-      sourceRouteIds: [],
-      exposedModelName: node.match.requestedModelPattern || node.match.displayName || '',
-      exactModelName: node.match.requestedModelPattern || '',
-      routeMode: 'pattern',
-    });
-  }
-  activeRouteGraphBindingsCache = {
-    versionId: active.id,
-    bindings: new Map(binding),
-  };
-  return binding;
+  return bindings;
 }

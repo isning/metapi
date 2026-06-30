@@ -7,11 +7,7 @@ import {
   applyRouteGraphPostBuildFilters,
   evaluateCompiledRouteGraph,
   evaluateCompiledRouterBundle,
-  evaluateFlatRouteProgramBundle,
-  hydrateFlatRouteProgramBundle,
   hydrateCompiledRouterBundle,
-  evaluateRouteProgramBundle,
-  hydrateRouteProgramBundle,
 } from './routeGraphRuntimeService.js';
 import { __selectorEngineTestUtils } from './selectorEngine.js';
 
@@ -122,10 +118,7 @@ describe('route graph runtime evaluator', () => {
     ]);
 
     const selection = evaluateCompiledRouteGraph({
-      graph: {
-        ...compiled.compiled,
-        flatProgramBundle: undefined as unknown as typeof compiled.compiled.flatProgramBundle,
-      },
+      graph: compiled.compiled,
       requestedModel: 'deepseek-v4-pro-max',
     });
 
@@ -348,10 +341,7 @@ describe('route graph runtime evaluator', () => {
     });
     const compiled = compileRouteGraphSource(source);
     expect(compiled.ok).toBe(true);
-    const graphWithoutFlatBundle = {
-      ...compiled.compiled,
-      flatProgramBundle: undefined as unknown as typeof compiled.compiled.flatProgramBundle,
-    };
+    const graphWithoutFlatBundle = compiled.compiled;
 
     expect(evaluateCompiledRouteGraph({
       graph: graphWithoutFlatBundle,
@@ -390,10 +380,7 @@ describe('route graph runtime evaluator', () => {
     });
 
     expect(compiled.ok).toBe(true);
-    const graphWithoutFlatBundle = {
-      ...compiled.compiled,
-      flatProgramBundle: undefined as unknown as typeof compiled.compiled.flatProgramBundle,
-    };
+    const graphWithoutFlatBundle = compiled.compiled;
     expect(evaluateCompiledRouteGraph({
       graph: graphWithoutFlatBundle,
       requestedModel: 'a',
@@ -526,10 +513,7 @@ describe('route graph runtime evaluator', () => {
     expect(utils.celPlanCacheSize()).toBe(0);
 
     expect(evaluateCompiledRouteGraph({
-      graph: {
-        ...compiled.compiled,
-        flatProgramBundle: undefined as unknown as typeof compiled.compiled.flatProgramBundle,
-      },
+      graph: compiled.compiled,
       requestedModel: 'prehydrated-model',
     })).toMatchObject({
       selectedRouteId: 31,
@@ -792,10 +776,7 @@ describe('route graph runtime evaluator', () => {
     });
 
     expect(compiled.ok).toBe(true);
-    const graphWithoutFlatBundle = {
-      ...compiled.compiled,
-      flatProgramBundle: undefined as unknown as typeof compiled.compiled.flatProgramBundle,
-    };
+    const graphWithoutFlatBundle = compiled.compiled;
     expect(evaluateCompiledRouteGraph({
       graph: graphWithoutFlatBundle,
       requestedModel: 'a',
@@ -1210,7 +1191,7 @@ describe('route graph runtime evaluator', () => {
     })?.selectedRouteId).toBe(1);
   });
 
-  it('hydrates program bundles for direct evaluation and refuses unusable bundles at runtime', () => {
+  it('hydrates compiled router bundles for direct evaluation and refuses unusable bundles at runtime', () => {
     const compiled = compileRouteGraphSource({
       version: 1,
       nodes: [
@@ -1231,52 +1212,9 @@ describe('route graph runtime evaluator', () => {
     });
     expect(compiled.ok).toBe(true);
 
-    const firstHydrated = hydrateRouteProgramBundle(compiled.compiled.programBundle);
-    const secondHydrated = hydrateRouteProgramBundle(compiled.compiled.programBundle);
-    expect(firstHydrated).toBe(secondHydrated);
     const firstCompiledRouter = hydrateCompiledRouterBundle(compiled.compiled.compiledRouterBundle!);
     const secondCompiledRouter = hydrateCompiledRouterBundle(compiled.compiled.compiledRouterBundle!);
     expect(firstCompiledRouter).toBe(secondCompiledRouter);
-    expect(evaluateRouteProgramBundle({
-      bundle: compiled.compiled.programBundle,
-      requestedModel: 'program-model',
-    })).toMatchObject({
-      matchedEntryNodeId: 'entry.program',
-      selectedRouteId: 42,
-      trace: {
-        path: expect.arrayContaining([
-          expect.objectContaining({
-            programId: 'program:entry.program',
-            opId: expect.stringContaining('endpoint.program:select-supply'),
-            sourceRef: expect.objectContaining({ nodeId: 'endpoint.program' }),
-          }),
-        ]),
-      },
-    });
-
-    const programBundleWithoutRouteEndpointId = structuredClone(compiled.compiled.programBundle);
-    delete (programBundleWithoutRouteEndpointId.programs[0].ops[0] as Record<string, unknown>).routeEndpointId;
-    expect(evaluateRouteProgramBundle({
-      bundle: programBundleWithoutRouteEndpointId,
-      requestedModel: 'program-model',
-    })).toMatchObject({
-      selectedEntryNodeId: 'endpoint.program',
-      selectedRouteId: 42,
-    });
-
-    const flatBundleWithoutRouteEndpointId = structuredClone(compiled.compiled.flatProgramBundle);
-    const flatTerminal = flatBundleWithoutRouteEndpointId.programs[0].start.kind === 'terminal'
-      ? flatBundleWithoutRouteEndpointId.programs[0].start.terminal
-      : null;
-    expect(flatTerminal).toBeTruthy();
-    delete (flatTerminal as Record<string, unknown>).routeEndpointId;
-    expect(evaluateFlatRouteProgramBundle({
-      bundle: flatBundleWithoutRouteEndpointId,
-      requestedModel: 'program-model',
-    })).toMatchObject({
-      selectedEntryNodeId: 'endpoint.program',
-      selectedRouteId: 42,
-    });
 
     const compiledRouterBundleWithoutRouteEndpointId = structuredClone(compiled.compiled.compiledRouterBundle!);
     delete (compiledRouterBundleWithoutRouteEndpointId.plans[0].candidates[0].terminal as Record<string, unknown>).routeEndpointId;
@@ -1290,14 +1228,6 @@ describe('route graph runtime evaluator', () => {
 
     const graphWithoutUsableProgram = {
       ...compiled.compiled,
-      programBundle: {
-        ...compiled.compiled.programBundle,
-        programs: [],
-      },
-      flatProgramBundle: {
-        ...compiled.compiled.flatProgramBundle,
-        programs: [],
-      },
       compiledRouterBundle: {
         ...compiled.compiled.compiledRouterBundle!,
         plans: [],
@@ -1309,35 +1239,11 @@ describe('route graph runtime evaluator', () => {
     })).toBe(null);
 
     expect(evaluateCompiledRouteGraph({
-      graph: {
-        ...compiled.compiled,
-        flatProgramBundle: undefined as unknown as typeof compiled.compiled.flatProgramBundle,
-      },
+      graph: compiled.compiled,
       requestedModel: 'program-model',
     })).toMatchObject({
       matchedEntryNodeId: 'entry.program',
       selectedRouteId: 42,
     });
-
-    expect(hydrateRouteProgramBundle({
-      ...compiled.compiled.programBundle,
-      diagnostics: [{
-        severity: 'error',
-        code: 'program.unsupported_shape',
-        message: 'unsupported',
-      }],
-    })).toBe(null);
-
-    expect(hydrateRouteProgramBundle({
-      ...compiled.compiled.programBundle,
-      matcher: {
-        ...compiled.compiled.programBundle.matcher,
-        patterns: [{
-          ...compiled.compiled.programBundle.matcher.exact['program-model'],
-          pattern: 're:(a+)+',
-          patternKind: 'regex',
-        }],
-      },
-    })).toBe(null);
   });
 });

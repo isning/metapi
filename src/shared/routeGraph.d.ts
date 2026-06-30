@@ -335,214 +335,15 @@ export type CompiledEndpointTarget = {
   sourceRef: RouteProgramSourceRef;
 };
 
-export type RouteProgramCandidate = {
-  id: string;
-  kind?: 'route' | 'bidirect' | 'target';
-  nodeId?: string;
-  edgeId?: string;
-  endpointId?: string;
-  targetOpId?: string;
-  targetRef?: CompiledEndpointTarget;
-  enabled: boolean;
-  weight: number;
-  priority: number;
-  metadata?: Record<string, unknown>;
-  sourceRef: RouteProgramSourceRef;
-};
-
-export type RouteProgramOp =
-  | {
-      id: string;
-      op: 'filter';
-      phase: 'pre_selection' | 'post_build';
-      nodeId: string;
-      operations: RouteFilter[];
-      nextOpId?: string | null;
-      sourceRef: RouteProgramSourceRef;
-    }
-  | {
-      id: string;
-      op: 'dispatch';
-      mode: 'route' | 'flow' | 'target';
-      nodeId: string;
-      policy: DispatcherPolicy;
-      candidates: RouteProgramCandidate[];
-      sourceRef: RouteProgramSourceRef;
-    }
-  | {
-      id: string;
-      op: 'call_product';
-      endpointId: string;
-      nextOpId?: string | null;
-      sourceRef: RouteProgramSourceRef;
-    }
-  | {
-      id: string;
-      op: 'select_supply';
-      endpointId: string;
-      nodeId: string;
-      routeId: number | null;
-      routeEndpointId?: string | null;
-      terminalModel?: string;
-      targetSelectionPolicy?: Record<string, unknown>;
-      targets: CompiledEndpointTarget[];
-      compatibilityPolicy?: Record<string, unknown>;
-      sourceRef: RouteProgramSourceRef;
-    }
-  | {
-      id: string;
-      op: 'synthetic';
-      nodeId: string;
-      statusCode: number;
-      message: string;
-      sourceRef: RouteProgramSourceRef;
-    };
-
-export type RouteProgram = {
-  id: string;
-  entryNodeId: string;
-  publicModelName: string;
-  enabled: boolean;
-  rootEndpointId?: string | null;
-  startOpId?: string | null;
-  ops: RouteProgramOp[];
-  sourceRef: RouteProgramSourceRef;
-};
-
-export type RouteProgramEndpoint = {
-  endpointId: string;
-  nodeId: string;
-  enabled: boolean;
-  endpointKind: RouteGraphEndpointKind;
-  exposure: RouteGraphEndpointExposure;
-  resolutionStatus: RouteGraphEndpointResolutionStatus;
-  ownerKind: 'automatic_route' | 'manual_route' | 'macro';
-  sourceKind: RouteGraphEndpointSourceKind;
-  routeId: number | null;
-  publicModelName: string;
-  match: RouteGraphMatchSpec;
-  backend: RouteGraphBackendSpec;
-  resolvesTo?: {
-    kind: 'route_builder' | 'synthetic' | 'external';
-    id: string;
-  };
-  targetRefs: string[];
-  sourceRef: RouteProgramSourceRef;
-};
-
-export type RouteProgramEndpointCatalog = {
-  byId: Record<string, RouteProgramEndpoint>;
-  productToProgram: Record<string, string>;
-  supplyTargets: Record<string, CompiledEndpointTarget[]>;
-};
-
-export type RouteProgramDiagnostic = RouteGraphDiagnostic & {
+export type CompiledRouterDiagnostic = RouteGraphDiagnostic & {
   sourceRef?: RouteProgramSourceRef;
 };
 
-export type RouteProgramDebugInfo = {
-  sourceHash: string;
-  primitiveHash: string;
-  sourceRefs: Record<string, RouteProgramSourceRef>;
-  generatedByMacro: Record<string, { nodeIds: string[]; edgeIds: string[] }>;
-};
-
-export type RouteProgramBundle = {
-  version: 1;
-  hash: string;
-  matcher: RouteMatcherTable;
-  programs: RouteProgram[];
-  endpointCatalog: RouteProgramEndpointCatalog;
-  debug: RouteProgramDebugInfo;
-  diagnostics: RouteProgramDiagnostic[];
-};
-
-export type RouteFlatFilterStage = {
+export type CompiledRouterFilterStage = {
   nodeId: string;
   phase: 'pre_selection' | 'post_build';
   operations: RouteFilter[];
   sourceRef: RouteProgramSourceRef;
-};
-
-export type RouteFlatTerminal =
-  | {
-      kind: 'supply';
-      endpointId: string;
-      nodeId: string;
-      routeId: number | null;
-      routeEndpointId?: string | null;
-      terminalModel?: string;
-      targetSelectionPolicy?: Record<string, unknown>;
-      targets: CompiledEndpointTarget[];
-      compatibilityPolicy?: Record<string, unknown>;
-      sourceRef: RouteProgramSourceRef;
-    }
-  | {
-      kind: 'synthetic';
-      nodeId: string;
-      statusCode: 429 | 503;
-      message: string;
-      sourceRef: RouteProgramSourceRef;
-    };
-
-export type RouteFlatDecision =
-  | {
-      kind: 'dispatch';
-      filterStages: RouteFlatFilterStage[];
-      dispatch: RouteFlatDispatchPlan;
-    }
-  | {
-      kind: 'terminal';
-      filterStages: RouteFlatFilterStage[];
-      terminal: RouteFlatTerminal;
-    };
-
-export type RouteFlatCandidate = {
-  id: string;
-  kind: 'route' | 'bidirect' | 'target';
-  nodeId?: string;
-  edgeId?: string;
-  endpointId?: string;
-  enabled: boolean;
-  weight: number;
-  priority: number;
-  order: number;
-  metadata?: Record<string, unknown>;
-  sourceRef: RouteProgramSourceRef;
-  next: RouteFlatDecision;
-  terminalKind: 'supply' | 'synthetic' | 'dispatch';
-  targetCount: number;
-  enabledTargetCount: number;
-};
-
-export type RouteFlatDispatchPlan = {
-  id: string;
-  nodeId: string;
-  mode: 'route' | 'flow' | 'target';
-  policy: DispatcherPolicy;
-  candidates: RouteFlatCandidate[];
-  enabledCandidateCount: number;
-  sourceRef: RouteProgramSourceRef;
-};
-
-export type RouteFlatProgram = {
-  id: string;
-  entryNodeId: string;
-  publicModelName: string;
-  enabled: boolean;
-  rootEndpointId?: string | null;
-  start: RouteFlatDecision | null;
-  sourceRef: RouteProgramSourceRef;
-};
-
-export type RouteFlatProgramBundle = {
-  version: 1;
-  hash: string;
-  matcher: RouteMatcherTable;
-  programs: RouteFlatProgram[];
-  endpointCatalog: RouteProgramEndpointCatalog;
-  debug: RouteProgramDebugInfo;
-  diagnostics: RouteProgramDiagnostic[];
 };
 
 export type CompiledRouterSelectorGroup = {
@@ -615,7 +416,7 @@ export type CompiledRouterPlan = {
   enabled: boolean;
   rootEndpointId?: string | null;
   sourceRef: RouteProgramSourceRef;
-  filterStages: RouteFlatFilterStage[];
+  filterStages: CompiledRouterFilterStage[];
   targets: CompiledRouterTarget[];
   selectorLevels: CompiledRouterSelectorLevel[];
   candidates: CompiledRouterTerminalCandidate[];
@@ -626,14 +427,12 @@ export type CompiledRouterBundle = {
   hash: string;
   matcher: RouteMatcherTable;
   plans: CompiledRouterPlan[];
-  diagnostics: RouteProgramDiagnostic[];
+  diagnostics: CompiledRouterDiagnostic[];
 };
 
 export type CompiledRouteGraph = {
   version: 1;
   hash: string;
-  programBundle: RouteProgramBundle;
-  flatProgramBundle: RouteFlatProgramBundle;
   compiledRouterBundle?: CompiledRouterBundle;
   entries: Array<{
     nodeId: string;
@@ -687,8 +486,6 @@ export type RouteGraphCompileResult = {
 };
 
 export const ROUTE_GRAPH_SCHEMA_VERSION: 1;
-export const ROUTE_PROGRAM_BUNDLE_VERSION: 1;
-export const ROUTE_FLAT_PROGRAM_BUNDLE_VERSION: 1;
 export const ROUTE_COMPILED_ROUTER_BUNDLE_VERSION: 2;
 export const ROUTE_GRAPH_MATCH_KIND_MODEL: 'model';
 export const ROUTE_GRAPH_BACKEND_KIND_SUPPLY: 'supply';
@@ -759,6 +556,6 @@ export function parseRouteGraphSource(raw: string | null | undefined): RouteGrap
 export function stringifyRouteGraphSource(source: unknown): string;
 export function lowerRouteGraphSource(sourceInput: unknown): { semanticSource: RouteGraphSource; primitiveSource: RouteGraphSource; diagnostics: RouteGraphDiagnostic[] };
 export function validateRouteGraphSource(sourceInput: unknown): { ok: boolean; diagnostics: RouteGraphDiagnostic[] };
-export function compileRouteGraphSource(sourceInput: unknown, options?: { includeLegacyBundles?: boolean; includePrimitiveSource?: boolean }): RouteGraphCompileResult;
+export function compileRouteGraphSource(sourceInput: unknown, options?: { includePrimitiveSource?: boolean }): RouteGraphCompileResult;
 export function findRouteGraphEntryForModel(compiledGraph: unknown, model: string): CompiledRouteGraph['entries'][number] | null;
 export function buildRouteGraphSourceFromLegacyRoutes(routesInput: unknown): RouteGraphSource;

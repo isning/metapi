@@ -6,17 +6,8 @@ import {
   type CompiledRouterTerminalCandidate,
   type CompiledRouteGraph,
   type CompiledEndpointTarget,
+  type CompiledRouterFilterStage,
   type RouteFilter,
-  type RouteFlatCandidate,
-  type RouteFlatDecision,
-  type RouteFlatDispatchPlan,
-  type RouteFlatFilterStage,
-  type RouteFlatTerminal,
-  type RouteProgram,
-  type RouteProgramBundle,
-  type RouteFlatProgramBundle,
-  type RouteProgramCandidate,
-  type RouteProgramOp,
   type RouteProgramSourceRef,
 } from '../../shared/routeGraph.js';
 import {
@@ -34,7 +25,6 @@ import {
   type UpstreamCompatibilityPolicy,
 } from '../contracts/upstreamCompatibilityPolicy.js';
 import {
-  ensureActiveRouteGraphVersion,
   getActiveRouteGraphRuntimeVersion,
   getCachedActiveRouteGraphRuntimeVersion,
 } from './routeGraphService.js';
@@ -146,23 +136,6 @@ type DispatcherCandidate = RuntimeSelectorCandidate & {
   kind: 'route' | 'bidirect' | 'target';
 };
 
-export type HydratedRouteProgramBundle = {
-  bundle: RouteProgramBundle;
-  programsById: Map<string, RouteProgram>;
-  opsByProgramId: Map<string, Map<string, RouteProgramOp>>;
-  exact: Map<string, NonNullable<RouteProgramBundle['matcher']['exact'][string]>>;
-  normalizedExact: Map<string, NonNullable<RouteProgramBundle['matcher']['normalizedExact'][string]>>;
-  patterns: RouteProgramBundle['matcher']['patterns'];
-};
-
-export type HydratedFlatRouteProgramBundle = {
-  bundle: RouteFlatProgramBundle;
-  programsById: Map<string, RouteFlatProgramBundle['programs'][number]>;
-  exact: Map<string, NonNullable<RouteFlatProgramBundle['matcher']['exact'][string]>>;
-  normalizedExact: Map<string, NonNullable<RouteFlatProgramBundle['matcher']['normalizedExact'][string]>>;
-  patterns: RouteFlatProgramBundle['matcher']['patterns'];
-};
-
 export type HydratedCompiledRouterBundle = {
   bundle: CompiledRouterBundle;
   plans: CompiledRouterPlan[];
@@ -173,8 +146,6 @@ export type HydratedCompiledRouterBundle = {
 };
 
 const DEFAULT_ROUTE_GRAPH_MAX_HOPS = 8;
-const hydratedRouteProgramCache = new WeakMap<RouteProgramBundle, HydratedRouteProgramBundle>();
-const hydratedFlatRouteProgramCache = new WeakMap<RouteFlatProgramBundle, HydratedFlatRouteProgramBundle>();
 const hydratedCompiledRouterCache = new WeakMap<CompiledRouterBundle, HydratedCompiledRouterBundle>();
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -226,87 +197,6 @@ function isTargetDisabledByOverlay(targetId: unknown, overlay?: RouteGraphRuntim
       : NaN;
   return Number.isSafeInteger(normalized)
     && normalizeFailureOverlay(overlay).disabledTargetIds.includes(normalized);
-}
-
-function flatTerminalDisabledByOverlay(
-  terminal: RouteFlatTerminal,
-  overlay?: RouteGraphRuntimeFailureOverlay | null,
-): boolean {
-  const normalized = normalizeFailureOverlay(overlay);
-  if (normalized.disabledEndpointIds.includes(terminal.nodeId)) return true;
-  if (terminal.kind === 'synthetic') return false;
-  const endpointIds = [
-    terminal.endpointId,
-    terminal.routeEndpointId,
-    terminal.sourceRef?.endpointId,
-    terminal.sourceRef?.nodeId,
-  ].map(asTrimmedString).filter(Boolean);
-  if (endpointIds.some((endpointId) => normalized.disabledEndpointIds.includes(endpointId))) return true;
-  const targets = Array.isArray(terminal.targets) ? terminal.targets : [];
-  return targets.length > 0 && targets.every((target) => isTargetDisabledByOverlay(target.targetId, overlay));
-}
-
-function flatDecisionDisabledByOverlay(
-  decision: RouteFlatDecision,
-  overlay?: RouteGraphRuntimeFailureOverlay | null,
-): boolean {
-  if (decision.kind === 'terminal') return flatTerminalDisabledByOverlay(decision.terminal, overlay);
-  const candidates = decision.dispatch.candidates || [];
-  return candidates.length > 0 && candidates.every((candidate) => flatCandidateDisabledByOverlay(candidate, overlay));
-}
-
-function flatCandidateDisabledByOverlay(
-  candidate: RouteFlatCandidate,
-  overlay?: RouteGraphRuntimeFailureOverlay | null,
-): boolean {
-  const normalized = normalizeFailureOverlay(overlay);
-  const candidateIds = [
-    candidate.id,
-    candidate.nodeId,
-    candidate.edgeId,
-    candidate.endpointId,
-    candidate.sourceRef?.endpointId,
-    candidate.sourceRef?.nodeId,
-  ].map(asTrimmedString).filter(Boolean);
-  return candidateIds.some((candidateId) => normalized.disabledCandidateIds.includes(candidateId))
-    || candidateIds.some((candidateId) => normalized.disabledEndpointIds.includes(candidateId))
-    || flatDecisionDisabledByOverlay(candidate.next, overlay);
-}
-
-function collectTargetIdsFromFlatDecision(decision: RouteFlatDecision): number[] {
-  if (decision.kind === 'dispatch') {
-    return Array.from(new Set((decision.dispatch.candidates || []).flatMap((candidate) => collectTargetIdsFromFlatDecision(candidate.next))));
-  }
-  const terminal = decision.terminal;
-  if (terminal.kind !== 'supply') return [];
-  return (terminal.targets || [])
-    .map((target) => Number(target.targetId))
-    .filter((targetId) => Number.isSafeInteger(targetId) && targetId > 0);
-}
-
-function routeIdFromFlatDecision(decision: RouteFlatDecision): number | null {
-  if (decision.kind === 'terminal') {
-    return decision.terminal.kind === 'supply' ? decision.terminal.routeId : null;
-  }
-  for (const candidate of decision.dispatch.candidates || []) {
-    const routeId = routeIdFromFlatDecision(candidate.next);
-    if (routeId != null) return routeId;
-  }
-  return null;
-}
-
-function flatCandidateSnapshot(candidate: RouteFlatCandidate): RouteGraphRuntimeCandidateSnapshot {
-  return {
-    candidateId: candidate.id,
-    nodeId: candidate.nodeId ?? null,
-    endpointId: candidate.endpointId ?? candidate.sourceRef?.endpointId ?? null,
-    routeId: routeIdFromFlatDecision(candidate.next),
-    targetIds: collectTargetIdsFromFlatDecision(candidate.next),
-    priority: candidate.priority,
-    weight: candidate.weight,
-    enabled: candidate.enabled !== false,
-    sourceRef: candidate.sourceRef,
-  };
 }
 
 function mergeRuntimeCandidateSnapshots(
@@ -380,37 +270,6 @@ function collectPostBuildFilter(target: RouteGraphPostBuildFilters, operation: R
   }
 }
 
-function hasUsableRouteProgramBundle(value: unknown): value is RouteProgramBundle {
-  if (!isRecord(value) || value.version !== 1 || !isRecord(value.matcher) || !Array.isArray(value.programs)) {
-    return false;
-  }
-  if (Array.isArray(value.diagnostics) && value.diagnostics.some((diagnostic) => (
-    isRecord(diagnostic)
-    && diagnostic.severity === 'error'
-    && asTrimmedString(diagnostic.code).startsWith('program.')
-  ))) {
-    return false;
-  }
-  return value.programs.some((program) => isRecord(program) && asTrimmedString(program.startOpId) && Array.isArray(program.ops));
-}
-
-function hasUsableFlatRouteProgramBundle(value: unknown): value is RouteFlatProgramBundle {
-  if (!isRecord(value) || value.version !== 1 || !isRecord(value.matcher) || !Array.isArray(value.programs)) {
-    return false;
-  }
-  if (Array.isArray(value.diagnostics) && value.diagnostics.some((diagnostic) => (
-    isRecord(diagnostic)
-    && diagnostic.severity === 'error'
-    && (
-      asTrimmedString(diagnostic.code).startsWith('program.')
-      || asTrimmedString(diagnostic.code).startsWith('flat_program.')
-    )
-  ))) {
-    return false;
-  }
-  return value.programs.some((program) => isRecord(program) && isRecord(program.start));
-}
-
 function hasUsableCompiledRouterBundle(value: unknown): value is CompiledRouterBundle {
   if (!isRecord(value) || value.version !== 2 || !isRecord(value.matcher) || !Array.isArray(value.plans)) {
     return false;
@@ -425,32 +284,6 @@ function hasUsableCompiledRouterBundle(value: unknown): value is CompiledRouterB
   return value.plans.some((plan) => isRecord(plan) && Array.isArray(plan.candidates));
 }
 
-function hydrateRouteProgramSelectorPlans(program: RouteProgram): void {
-  for (const op of program.ops || []) {
-    if (op.op === 'dispatch') {
-      hydrateRuntimeSelectorPlan(isRecord(op.policy) ? op.policy : { strategy: 'weighted' });
-      continue;
-    }
-    if (op.op === 'select_supply' && isRecord(op.targetSelectionPolicy)) {
-      hydrateRuntimeSelectorPlan(op.targetSelectionPolicy);
-    }
-  }
-}
-
-function hydrateFlatDecisionSelectorPlans(decision: RouteFlatDecision | null | undefined): void {
-  if (!decision) return;
-  if (decision.kind === 'dispatch') {
-    hydrateRuntimeSelectorPlan(isRecord(decision.dispatch.policy) ? decision.dispatch.policy : { strategy: 'weighted' });
-    for (const candidate of decision.dispatch.candidates || []) {
-      hydrateFlatDecisionSelectorPlans(candidate.next);
-    }
-    return;
-  }
-  if (decision.terminal.kind === 'supply' && isRecord(decision.terminal.targetSelectionPolicy)) {
-    hydrateRuntimeSelectorPlan(decision.terminal.targetSelectionPolicy);
-  }
-}
-
 function hydrateCompiledRouterSelectorPlans(plan: CompiledRouterPlan): void {
   for (const level of plan.selectorLevels || []) {
     hydrateRuntimeSelectorPlan(isRecord(level.policy) ? level.policy : { strategy: 'weighted' });
@@ -461,68 +294,6 @@ function hydrateCompiledRouterSelectorPlans(plan: CompiledRouterPlan): void {
       hydrateRuntimeSelectorPlan(terminal.targetSelectionPolicy);
     }
   }
-}
-
-export function hydrateRouteProgramBundle(bundle: RouteProgramBundle): HydratedRouteProgramBundle | null {
-  if (!hasUsableRouteProgramBundle(bundle)) return null;
-  const cached = hydratedRouteProgramCache.get(bundle);
-  if (cached) return cached;
-  const programsById = new Map<string, RouteProgram>();
-  const opsByProgramId = new Map<string, Map<string, RouteProgramOp>>();
-  for (const program of bundle.programs) {
-    const programId = asTrimmedString(program.id);
-    const startOpId = asTrimmedString(program.startOpId);
-    if (!programId || !startOpId || !Array.isArray(program.ops)) return null;
-    const opsById = new Map((program.ops || []).map((op) => [op.id, op]));
-    if (!opsById.has(startOpId)) return null;
-    hydrateRouteProgramSelectorPlans(program);
-    programsById.set(program.id, program);
-    opsByProgramId.set(program.id, opsById);
-  }
-  const patterns = Array.isArray(bundle.matcher?.patterns) ? bundle.matcher.patterns : [];
-  for (const pattern of patterns) {
-    if (pattern.patternKind !== 'regex') continue;
-    const parsed = parseTokenRouteRegexPattern(pattern.pattern);
-    if (parsed.error) return null;
-  }
-  const hydrated: HydratedRouteProgramBundle = {
-    bundle,
-    programsById,
-    opsByProgramId,
-    exact: new Map(Object.entries(bundle.matcher?.exact || {})),
-    normalizedExact: new Map(Object.entries(bundle.matcher?.normalizedExact || {})),
-    patterns,
-  };
-  hydratedRouteProgramCache.set(bundle, hydrated);
-  return hydrated;
-}
-
-export function hydrateFlatRouteProgramBundle(bundle: RouteFlatProgramBundle): HydratedFlatRouteProgramBundle | null {
-  if (!hasUsableFlatRouteProgramBundle(bundle)) return null;
-  const cached = hydratedFlatRouteProgramCache.get(bundle);
-  if (cached) return cached;
-  const programsById = new Map<string, RouteFlatProgramBundle['programs'][number]>();
-  for (const program of bundle.programs) {
-    const programId = asTrimmedString(program.id);
-    if (!programId || !isRecord(program.start)) return null;
-    hydrateFlatDecisionSelectorPlans(program.start);
-    programsById.set(programId, program);
-  }
-  const patterns = Array.isArray(bundle.matcher?.patterns) ? bundle.matcher.patterns : [];
-  for (const pattern of patterns) {
-    if (pattern.patternKind !== 'regex') continue;
-    const parsed = parseTokenRouteRegexPattern(pattern.pattern);
-    if (parsed.error) return null;
-  }
-  const hydrated: HydratedFlatRouteProgramBundle = {
-    bundle,
-    programsById,
-    exact: new Map(Object.entries(bundle.matcher?.exact || {})),
-    normalizedExact: new Map(Object.entries(bundle.matcher?.normalizedExact || {})),
-    patterns,
-  };
-  hydratedFlatRouteProgramCache.set(bundle, hydrated);
-  return hydrated;
 }
 
 export function hydrateCompiledRouterBundle(bundle: CompiledRouterBundle): HydratedCompiledRouterBundle | null {
@@ -551,21 +322,6 @@ export function hydrateCompiledRouterBundle(bundle: CompiledRouterBundle): Hydra
   return hydrated;
 }
 
-function matchRouteProgramBundle(hydrated: HydratedRouteProgramBundle, requestedModel: string): { program: RouteProgram; entryNodeId: string; routeId: number | null } | null {
-  const target = hydrated.exact.get(requestedModel)
-    || hydrated.normalizedExact.get(requestedModel.toLowerCase())
-    || hydrated.patterns.find((pattern) => matchesTokenRouteModelPattern(requestedModel, pattern.pattern));
-  if (!target?.programId) return null;
-  const program = hydrated.programsById.get(target.programId);
-  if (!program || program.enabled === false) return null;
-  const routeId = Number(target.sourceRef?.routeId ?? program.sourceRef?.routeId);
-  return {
-    program,
-    entryNodeId: target.entryNodeId || program.entryNodeId,
-    routeId: Number.isFinite(routeId) && routeId > 0 ? Math.trunc(routeId) : null,
-  };
-}
-
 function findCompiledRouterPlanById(hydrated: HydratedCompiledRouterBundle, planId: string): CompiledRouterPlan | null {
   const normalizedPlanId = asTrimmedString(planId);
   if (!normalizedPlanId) return null;
@@ -591,152 +347,9 @@ function matchCompiledRouterBundle(hydrated: HydratedCompiledRouterBundle, reque
   };
 }
 
-function matchFlatRouteProgramBundle(hydrated: HydratedFlatRouteProgramBundle, requestedModel: string): { program: RouteFlatProgramBundle['programs'][number]; entryNodeId: string; routeId: number | null } | null {
-  const target = hydrated.exact.get(requestedModel)
-    || hydrated.normalizedExact.get(requestedModel.toLowerCase())
-    || hydrated.patterns.find((pattern) => matchesTokenRouteModelPattern(requestedModel, pattern.pattern));
-  if (!target?.programId) return null;
-  const program = hydrated.programsById.get(target.programId);
-  if (!program || program.enabled === false) return null;
-  const routeId = Number(target.sourceRef?.routeId ?? program.sourceRef?.routeId);
-  return {
-    program,
-    entryNodeId: target.entryNodeId || program.entryNodeId,
-    routeId: Number.isFinite(routeId) && routeId > 0 ? Math.trunc(routeId) : null,
-  };
-}
-
-function dispatcherCandidateFromProgramCandidate(candidate: RouteProgramCandidate, index: number, mode: 'route' | 'flow' | 'target'): DispatcherCandidate {
-  const metadata = isRecord(candidate.metadata) ? candidate.metadata : {};
-  return {
-    idx: index,
-    kind: mode === 'flow' ? 'bidirect' : (mode === 'target' ? 'target' : 'route'),
-    nodeId: candidate.nodeId,
-    edgeId: candidate.edgeId,
-    metadata,
-    runtime: {},
-    enabled: candidate.enabled !== false,
-    weight: numberOrFallback(candidate.weight, 1),
-    priority: numberOrFallback(candidate.priority, 0),
-    score: numberOrFallback(candidate.weight, 1),
-    order: index,
-  };
-}
-
-function dispatcherCandidateFromFlatCandidate(candidate: RouteFlatCandidate, index: number): DispatcherCandidate {
-  const metadata = isRecord(candidate.metadata) ? candidate.metadata : {};
-  return {
-    idx: index,
-    kind: candidate.kind,
-    nodeId: candidate.nodeId,
-    edgeId: candidate.edgeId,
-    metadata,
-    runtime: {},
-    enabled: candidate.enabled !== false,
-    weight: numberOrFallback(candidate.weight, 1),
-    priority: numberOrFallback(candidate.priority, 0),
-    score: numberOrFallback(candidate.weight, 1),
-    order: Number.isFinite(Number(candidate.order)) ? Number(candidate.order) : index,
-  };
-}
-
 function targetRefToRuntimeTarget(target: CompiledEndpointTarget | null | undefined): RouteGraphRuntimeSelection['selectedEndpointTarget'] {
   if (!target) return null;
   return endpointTargetForSelection(target as unknown as Record<string, unknown>);
-}
-
-function selectProgramEndpointTarget(input: {
-  op: Extract<RouteProgramOp, { op: 'select_supply' }>;
-  state: RouteGraphRuntimeState;
-}): RouteGraphRuntimeSelection['selectedEndpointTarget'] {
-  const policy = isRecord(input.op.targetSelectionPolicy) ? input.op.targetSelectionPolicy : { strategy: 'weighted' };
-  if (policy.strategy === 'defer_to_router') return null;
-  const targets = Array.isArray(input.op.targets) ? input.op.targets : [];
-  const candidates: DispatcherCandidate[] = targets.map((target, index) => {
-    const metadata = {
-      ...(isRecord(target.metadata) ? target.metadata : {}),
-      targetId: target.targetId,
-      model: target.model,
-      modelSource: target.modelSource || 'fixed',
-      accountId: target.accountId ?? null,
-      tokenId: target.tokenId ?? null,
-      siteId: target.siteId ?? null,
-    };
-    return {
-      idx: index,
-      kind: 'target',
-      metadata,
-      runtime: {},
-      enabled: target.enabled !== false,
-      weight: numberOrFallback(target.weight, 1),
-      priority: numberOrFallback(target.priority, 0),
-      score: numberOrFallback(target.weight, 1),
-      order: index,
-    };
-  });
-  const selected = selectRuntimeCandidate({
-    selectorId: input.op.nodeId,
-    policy,
-    candidates,
-    state: {
-      requestedModel: input.state.requestedModel,
-      currentModel: input.state.currentModel,
-      upstreamModel: input.state.upstreamModel,
-      endpointPreference: input.state.endpointPreference,
-      stateStore: input.state.stateStore,
-    },
-  });
-  if (!selected) return null;
-  return targetRefToRuntimeTarget(targets[selected.idx]);
-}
-
-function selectFlatEndpointTarget(input: {
-  terminal: Extract<RouteFlatTerminal, { kind: 'supply' }>;
-  state: RouteGraphRuntimeState;
-  failureOverlay?: RouteGraphRuntimeFailureOverlay | null;
-  random?: () => number;
-}): RouteGraphRuntimeSelection['selectedEndpointTarget'] {
-  const policy = isRecord(input.terminal.targetSelectionPolicy) ? input.terminal.targetSelectionPolicy : { strategy: 'weighted' };
-  if (policy.strategy === 'defer_to_router') return null;
-  const targets = (Array.isArray(input.terminal.targets) ? input.terminal.targets : [])
-    .filter((target) => target.enabled !== false && !isTargetDisabledByOverlay(target.targetId, input.failureOverlay));
-  const candidates: DispatcherCandidate[] = targets.map((target, index) => {
-    const metadata = {
-      ...(isRecord(target.metadata) ? target.metadata : {}),
-      targetId: target.targetId,
-      model: target.model,
-      modelSource: target.modelSource || 'fixed',
-      accountId: target.accountId ?? null,
-      tokenId: target.tokenId ?? null,
-      siteId: target.siteId ?? null,
-    };
-    return {
-      idx: index,
-      kind: 'target',
-      metadata,
-      runtime: {},
-      enabled: target.enabled !== false,
-      weight: numberOrFallback(target.weight, 1),
-      priority: numberOrFallback(target.priority, 0),
-      score: numberOrFallback(target.weight, 1),
-      order: index,
-    };
-  });
-  const selected = selectRuntimeCandidate({
-    selectorId: input.terminal.nodeId,
-    policy,
-    candidates,
-    state: {
-      requestedModel: input.state.requestedModel,
-      currentModel: input.state.currentModel,
-      upstreamModel: input.state.upstreamModel,
-      endpointPreference: input.state.endpointPreference,
-      stateStore: input.state.stateStore,
-    },
-    random: input.random,
-  });
-  if (!selected) return null;
-  return targetRefToRuntimeTarget(targets[selected.idx]);
 }
 
 function selectCompiledRouterEndpointTarget(input: {
@@ -792,11 +405,11 @@ function selectCompiledRouterEndpointTarget(input: {
 function resolveCompiledRouterFilterStages(
   plan: CompiledRouterPlan,
   indexes: number[] | null | undefined,
-): RouteFlatFilterStage[] {
+): CompiledRouterFilterStage[] {
   const stages = Array.isArray(plan.filterStages) ? plan.filterStages : [];
   return (Array.isArray(indexes) ? indexes : [])
     .map((index) => stages[index])
-    .filter((stage): stage is RouteFlatFilterStage => !!stage);
+    .filter((stage): stage is CompiledRouterFilterStage => !!stage);
 }
 
 function resolveCompiledRouterTerminalTargets(
@@ -920,21 +533,21 @@ function compiledRouterGroupSnapshot(
   };
 }
 
-function consumeFlatHop(budget: { hops: number; maxHops: number }): boolean {
+function consumeCompiledRouterHop(budget: { hops: number; maxHops: number }): boolean {
   budget.hops += 1;
   return budget.hops <= budget.maxHops;
 }
 
-function applyFlatFilterStages(input: {
-  stages: RouteFlatFilterStage[];
-  programId: string;
+function applyCompiledRouterFilterStages(input: {
+  stages: CompiledRouterFilterStage[];
+  planId: string;
   state: RouteGraphRuntimeState;
   postBuildFilters: RouteGraphPostBuildFilters;
   trace: RouteGraphRuntimeTrace;
   budget: { hops: number; maxHops: number };
 }): boolean {
   for (const stage of input.stages || []) {
-    if (!consumeFlatHop(input.budget)) return false;
+    if (!consumeCompiledRouterHop(input.budget)) return false;
     const appliedFilters: string[] = [];
     for (const operation of stage.operations || []) {
       if (stage.phase === 'pre_selection' && filterMatchesOperationPhase(operation, 'pre_selection')) {
@@ -948,7 +561,7 @@ function applyFlatFilterStages(input: {
     input.trace.path.push({
       nodeId: stage.nodeId,
       nodeType: 'filter',
-      programId: input.programId,
+      programId: input.planId,
       enteredPortId: stage.phase === 'pre_selection' ? 'bidirect.in' : undefined,
       exitedPortId: 'bidirect.out',
       appliedFilters,
@@ -957,189 +570,6 @@ function applyFlatFilterStages(input: {
     });
   }
   return true;
-}
-
-function applyCompiledRouterFilterStages(input: {
-  stages: RouteFlatFilterStage[];
-  planId: string;
-  state: RouteGraphRuntimeState;
-  postBuildFilters: RouteGraphPostBuildFilters;
-  trace: RouteGraphRuntimeTrace;
-  budget: { hops: number; maxHops: number };
-}): boolean {
-  return applyFlatFilterStages({
-    stages: input.stages,
-    programId: input.planId,
-    state: input.state,
-    postBuildFilters: input.postBuildFilters,
-    trace: input.trace,
-    budget: input.budget,
-  });
-}
-
-function evaluateFlatTerminal(input: {
-  terminal: RouteFlatTerminal;
-  program: RouteFlatProgramBundle['programs'][number];
-  entryNodeId: string;
-  matchedRouteId: number | null;
-  state: RouteGraphRuntimeState;
-  postBuildFilters: RouteGraphPostBuildFilters;
-  trace: RouteGraphRuntimeTrace;
-  budget: { hops: number; maxHops: number };
-  failureOverlay?: RouteGraphRuntimeFailureOverlay | null;
-}): RouteGraphRuntimeSelection | null {
-  if (!consumeFlatHop(input.budget)) return null;
-  const terminal = input.terminal;
-  if (flatTerminalDisabledByOverlay(terminal, input.failureOverlay)) return null;
-  if (terminal.kind === 'synthetic') {
-    input.trace.path.push({
-      nodeId: terminal.nodeId,
-      nodeType: 'synthetic_endpoint',
-      programId: input.program.id,
-      appliedFilters: [],
-      decision: 'synthetic_response',
-      sourceRef: terminal.sourceRef,
-    });
-    input.trace.terminalNodeId = terminal.nodeId;
-    return {
-      matchedEntryNodeId: input.entryNodeId,
-      selectedEntryNodeId: terminal.nodeId,
-      matchedRouteId: input.matchedRouteId,
-      selectedRouteId: null,
-      selectedEndpointTarget: null,
-      terminalNodeId: terminal.nodeId,
-      terminalKind: 'synthetic_endpoint',
-      syntheticResponse: {
-        statusCode: terminal.statusCode === 429 ? 429 : 503,
-        message: terminal.message || 'No route is available.',
-      },
-      requestedModel: input.state.requestedModel,
-      currentModel: input.state.currentModel,
-      upstreamModel: input.state.upstreamModel || undefined,
-      postBuildFilters: {
-        ...input.postBuildFilters,
-        endpointPreference: input.postBuildFilters.endpointPreference || input.state.endpointPreference,
-      },
-      trace: input.trace,
-    };
-  }
-
-  const selectedEndpointTarget = selectFlatEndpointTarget({ terminal, state: input.state, failureOverlay: input.failureOverlay });
-  const terminalModel = asTrimmedString(terminal.terminalModel);
-  const selectedTargetModel = selectedEndpointTarget?.modelSource === 'request'
-    ? (terminalModel || input.state.currentModel)
-    : selectedEndpointTarget?.model;
-  const currentModel = selectedTargetModel || terminalModel || input.state.currentModel;
-  input.trace.path.push({
-    nodeId: terminal.nodeId,
-    nodeType: 'route_endpoint',
-    programId: input.program.id,
-    appliedFilters: [],
-    decision: 'terminal',
-    sourceRef: terminal.sourceRef,
-  });
-  input.trace.terminalNodeId = terminal.nodeId;
-  return {
-    matchedEntryNodeId: input.entryNodeId,
-    selectedEntryNodeId: asTrimmedString(terminal.routeEndpointId) || terminal.nodeId,
-    matchedRouteId: input.matchedRouteId,
-    selectedRouteId: terminal.routeId,
-    routeEndpointCompatibilityPolicy: isRecord(terminal.compatibilityPolicy)
-      ? normalizeUpstreamCompatibilityPolicy(terminal.compatibilityPolicy)
-      : undefined,
-    selectedEndpointTarget,
-    terminalNodeId: terminal.nodeId,
-    terminalKind: 'route_endpoint',
-    requestedModel: input.state.requestedModel,
-    currentModel,
-    upstreamModel: input.state.upstreamModel || selectedTargetModel || terminalModel || undefined,
-    postBuildFilters: {
-      ...input.postBuildFilters,
-      endpointPreference: input.postBuildFilters.endpointPreference || input.state.endpointPreference,
-    },
-    trace: input.trace,
-  };
-}
-
-function evaluateFlatDecision(input: {
-  decision: RouteFlatDecision;
-  program: RouteFlatProgramBundle['programs'][number];
-  entryNodeId: string;
-  matchedRouteId: number | null;
-  state: RouteGraphRuntimeState;
-  postBuildFilters: RouteGraphPostBuildFilters;
-  trace: RouteGraphRuntimeTrace;
-  budget: { hops: number; maxHops: number };
-  failureOverlay?: RouteGraphRuntimeFailureOverlay | null;
-}): RouteGraphRuntimeSelection | null {
-  if (!applyFlatFilterStages({
-    stages: input.decision.filterStages || [],
-    programId: input.program.id,
-    state: input.state,
-    postBuildFilters: input.postBuildFilters,
-    trace: input.trace,
-    budget: input.budget,
-  })) {
-    return null;
-  }
-
-  if (input.decision.kind === 'terminal') {
-    return evaluateFlatTerminal({
-      terminal: input.decision.terminal,
-      program: input.program,
-      entryNodeId: input.entryNodeId,
-      matchedRouteId: input.matchedRouteId,
-      state: input.state,
-      postBuildFilters: input.postBuildFilters,
-      trace: input.trace,
-      budget: input.budget,
-      failureOverlay: input.failureOverlay,
-    });
-  }
-
-  if (!consumeFlatHop(input.budget)) return null;
-  const dispatch: RouteFlatDispatchPlan = input.decision.dispatch;
-  const selectableFlatCandidates = (dispatch.candidates || [])
-    .filter((candidate) => candidate.enabled !== false && !flatCandidateDisabledByOverlay(candidate, input.failureOverlay));
-  const candidates = selectableFlatCandidates.map(dispatcherCandidateFromFlatCandidate);
-  const selected = selectRuntimeCandidate({
-    selectorId: dispatch.nodeId,
-    policy: isRecord(dispatch.policy) ? dispatch.policy : { strategy: 'weighted' },
-    candidates,
-    state: {
-      requestedModel: input.state.requestedModel,
-      currentModel: input.state.currentModel,
-      upstreamModel: input.state.upstreamModel,
-      endpointPreference: input.state.endpointPreference,
-      stateStore: input.state.stateStore,
-    },
-  });
-  const selectedFlatCandidate = selected ? selectableFlatCandidates[selected.idx] : undefined;
-  input.trace.path.push({
-    nodeId: dispatch.nodeId,
-    nodeType: 'dispatcher',
-    programId: input.program.id,
-    exitedPortId: selected ? (dispatch.mode === 'flow' ? 'bidirect[1...].out' : 'route.in') : undefined,
-    appliedFilters: [],
-    decision: dispatch.mode === 'flow' ? 'dispatcher_selected_flow' : 'dispatcher_selected_route',
-    selectedCandidateId: selectedFlatCandidate?.id,
-    sourceRef: dispatch.sourceRef,
-    candidateSourceRef: selectedFlatCandidate?.sourceRef,
-  });
-  if (!selectedFlatCandidate) return null;
-  const childSelection = evaluateFlatDecision({
-    ...input,
-    decision: selectedFlatCandidate.next,
-    failureOverlay: input.failureOverlay,
-  });
-  if (!childSelection) return null;
-  return {
-    ...childSelection,
-    candidateSnapshots: mergeRuntimeCandidateSnapshots(
-      selectableFlatCandidates.map(flatCandidateSnapshot),
-      childSelection.candidateSnapshots,
-    ),
-  };
 }
 
 function evaluateCompiledRouterTerminal(input: {
@@ -1289,7 +719,7 @@ export function evaluateCompiledRouterBundle(input: {
     })) {
       return null;
     }
-    if (!consumeFlatHop(budget)) return null;
+    if (!consumeCompiledRouterHop(budget)) return null;
     const dispatcherCandidates = selectableGroups.map(compiledRouterGroupCandidate);
     const selected = selectRuntimeCandidate({
       selectorId: level.nodeId || level.selectorId,
@@ -1341,7 +771,7 @@ export function evaluateCompiledRouterBundle(input: {
   })) {
     return null;
   }
-  if (!consumeFlatHop(budget)) return null;
+  if (!consumeCompiledRouterHop(budget)) return null;
   const selection = evaluateCompiledRouterTerminal({
     terminal: selectedCandidate.terminal,
     plan,
@@ -1358,267 +788,6 @@ export function evaluateCompiledRouterBundle(input: {
     ...selection,
     candidateSnapshots: mergeRuntimeCandidateSnapshots(candidateSnapshots, selection.candidateSnapshots),
   };
-}
-
-export function evaluateFlatRouteProgramBundle(input: {
-  bundle: RouteFlatProgramBundle;
-  requestedModel: string;
-  maxHops?: number;
-  stateStore?: Record<string, unknown>;
-  failureOverlay?: RouteGraphRuntimeFailureOverlay | null;
-}): RouteGraphRuntimeSelection | null {
-  const hydrated = hydrateFlatRouteProgramBundle(input.bundle);
-  if (!hydrated) return null;
-  const matched = matchFlatRouteProgramBundle(hydrated, input.requestedModel);
-  if (!matched || !matched.program.start) return null;
-  const state: RouteGraphRuntimeState = {
-    requestedModel: input.requestedModel,
-    currentModel: input.requestedModel,
-    headers: {},
-    stateStore: buildRouteExecutionStateStore(input.stateStore, input.failureOverlay),
-  };
-  const postBuildFilters: RouteGraphPostBuildFilters = { payload: [], headers: [] };
-  const trace: RouteGraphRuntimeTrace = {
-    path: [{
-      nodeId: matched.entryNodeId,
-      nodeType: 'entry',
-      programId: matched.program.id,
-      exitedPortId: 'request.out',
-      appliedFilters: [],
-      decision: 'matched_entry',
-      sourceRef: matched.program.sourceRef,
-    }],
-    edges: [],
-    terminalNodeId: null,
-  };
-  return evaluateFlatDecision({
-    decision: matched.program.start,
-    program: matched.program,
-    entryNodeId: matched.entryNodeId,
-    matchedRouteId: matched.routeId,
-    state,
-    postBuildFilters,
-    trace,
-    budget: {
-      hops: 0,
-      maxHops: Math.max(1, Math.trunc(input.maxHops || DEFAULT_ROUTE_GRAPH_MAX_HOPS)),
-    },
-    failureOverlay: input.failureOverlay,
-  });
-}
-
-function evaluateRouteProgram(input: {
-  program: RouteProgram;
-  opsById: Map<string, RouteProgramOp>;
-  entryNodeId: string;
-  matchedRouteId: number | null;
-  requestedModel: string;
-  maxHops: number;
-  stateStore: Record<string, unknown>;
-}): RouteGraphRuntimeSelection | null {
-  let opId = asTrimmedString(input.program.startOpId);
-  if (!opId) return null;
-  const state: RouteGraphRuntimeState = {
-    requestedModel: input.requestedModel,
-    currentModel: input.requestedModel,
-    headers: {},
-    stateStore: input.stateStore,
-  };
-  let postBuildFilters: RouteGraphPostBuildFilters = { payload: [], headers: [] };
-  const trace: RouteGraphRuntimeTrace = {
-    path: [{
-      nodeId: input.entryNodeId,
-      nodeType: 'entry',
-      programId: input.program.id,
-      exitedPortId: 'request.out',
-      appliedFilters: [],
-      decision: 'matched_entry',
-      sourceRef: input.program.sourceRef,
-    }],
-    edges: [],
-    terminalNodeId: null,
-  };
-  const visited = new Set<string>();
-  let hops = 0;
-  while (opId && hops <= input.maxHops) {
-    if (visited.has(opId)) return null;
-    visited.add(opId);
-    hops += 1;
-    if (hops > input.maxHops) return null;
-    const op = input.opsById.get(opId);
-    if (!op) return null;
-
-    if (op.op === 'filter') {
-      const appliedFilters: string[] = [];
-      for (const operation of op.operations || []) {
-        if (op.phase === 'pre_selection' && filterMatchesOperationPhase(operation, 'pre_selection')) {
-          const applied = applyPreSelectionFilter(state, operation);
-          if (applied) appliedFilters.push(applied);
-        } else if (op.phase === 'post_build' && filterMatchesOperationPhase(operation, 'post_build')) {
-          collectPostBuildFilter(postBuildFilters, operation);
-          appliedFilters.push(operation.type);
-        }
-      }
-      trace.path.push({
-        nodeId: op.nodeId,
-        nodeType: 'filter',
-        programId: input.program.id,
-        opId: op.id,
-        enteredPortId: op.phase === 'pre_selection' ? 'bidirect.in' : undefined,
-        exitedPortId: op.nextOpId ? 'bidirect.out' : undefined,
-        appliedFilters,
-        decision: 'applied_filter',
-        sourceRef: op.sourceRef,
-      });
-      opId = asTrimmedString(op.nextOpId);
-      continue;
-    }
-
-    if (op.op === 'dispatch') {
-      const candidates = (op.candidates || []).map((candidate, index) => dispatcherCandidateFromProgramCandidate(candidate, index, op.mode));
-      const selected = selectRuntimeCandidate({
-        selectorId: op.nodeId,
-        policy: op.policy,
-        candidates,
-        state: {
-          requestedModel: state.requestedModel,
-          currentModel: state.currentModel,
-          upstreamModel: state.upstreamModel,
-          endpointPreference: state.endpointPreference,
-          stateStore: state.stateStore,
-        },
-      });
-      const selectedProgramCandidate = selected ? op.candidates[selected.idx] : undefined;
-      trace.path.push({
-        nodeId: op.nodeId,
-        nodeType: 'dispatcher',
-        programId: input.program.id,
-        opId: op.id,
-        exitedPortId: selected ? (op.mode === 'flow' ? 'bidirect[1...].out' : 'route.in') : undefined,
-        appliedFilters: [],
-        decision: op.mode === 'flow' ? 'dispatcher_selected_flow' : 'dispatcher_selected_route',
-        selectedCandidateId: selectedProgramCandidate?.id,
-        sourceRef: op.sourceRef,
-        candidateSourceRef: selectedProgramCandidate?.sourceRef,
-      });
-      if (!selected) return null;
-      opId = asTrimmedString(selectedProgramCandidate?.targetOpId);
-      continue;
-    }
-
-    if (op.op === 'call_product') {
-      trace.path.push({
-        nodeId: op.sourceRef.nodeId || op.endpointId,
-        nodeType: 'route_endpoint',
-        programId: input.program.id,
-        opId: op.id,
-        exitedPortId: op.nextOpId ? 'route.out' : undefined,
-        appliedFilters: [],
-        decision: 'dispatcher_selected_route',
-        sourceRef: op.sourceRef,
-      });
-      opId = asTrimmedString(op.nextOpId);
-      continue;
-    }
-
-    if (op.op === 'synthetic') {
-      const statusCode = op.statusCode === 429 ? 429 : 503;
-      trace.path.push({
-        nodeId: op.nodeId,
-        nodeType: 'synthetic_endpoint',
-        programId: input.program.id,
-        opId: op.id,
-        appliedFilters: [],
-        decision: 'synthetic_response',
-        sourceRef: op.sourceRef,
-      });
-      trace.terminalNodeId = op.nodeId;
-      return {
-        matchedEntryNodeId: input.entryNodeId,
-        selectedEntryNodeId: op.nodeId,
-        matchedRouteId: input.matchedRouteId,
-        selectedRouteId: null,
-        selectedEndpointTarget: null,
-        terminalNodeId: op.nodeId,
-        terminalKind: 'synthetic_endpoint',
-        syntheticResponse: {
-          statusCode,
-          message: op.message || 'No route is available.',
-        },
-        requestedModel: state.requestedModel,
-        currentModel: state.currentModel,
-        upstreamModel: state.upstreamModel || undefined,
-        postBuildFilters: {
-          ...postBuildFilters,
-          endpointPreference: postBuildFilters.endpointPreference || state.endpointPreference,
-        },
-        trace,
-      };
-    }
-
-    if (op.op === 'select_supply') {
-      const selectedEndpointTarget = selectProgramEndpointTarget({ op, state });
-      const terminalModel = asTrimmedString(op.terminalModel);
-      const selectedTargetModel = selectedEndpointTarget?.modelSource === 'request'
-        ? (terminalModel || state.currentModel)
-        : selectedEndpointTarget?.model;
-      const currentModel = selectedTargetModel || terminalModel || state.currentModel;
-      trace.path.push({
-        nodeId: op.nodeId,
-        nodeType: 'route_endpoint',
-        programId: input.program.id,
-        opId: op.id,
-        appliedFilters: [],
-        decision: 'terminal',
-        sourceRef: op.sourceRef,
-      });
-      trace.terminalNodeId = op.nodeId;
-      return {
-        matchedEntryNodeId: input.entryNodeId,
-        selectedEntryNodeId: asTrimmedString(op.routeEndpointId) || op.nodeId,
-        matchedRouteId: input.matchedRouteId,
-        selectedRouteId: op.routeId,
-        routeEndpointCompatibilityPolicy: isRecord(op.compatibilityPolicy)
-          ? normalizeUpstreamCompatibilityPolicy(op.compatibilityPolicy)
-          : undefined,
-        selectedEndpointTarget,
-        terminalNodeId: op.nodeId,
-        terminalKind: 'route_endpoint',
-        requestedModel: state.requestedModel,
-        currentModel,
-        upstreamModel: state.upstreamModel || selectedTargetModel || terminalModel || undefined,
-        postBuildFilters: {
-          ...postBuildFilters,
-          endpointPreference: postBuildFilters.endpointPreference || state.endpointPreference,
-        },
-        trace,
-      };
-    }
-  }
-  return null;
-}
-
-export function evaluateRouteProgramBundle(input: {
-  bundle: RouteProgramBundle;
-  requestedModel: string;
-  maxHops?: number;
-  stateStore?: Record<string, unknown>;
-}): RouteGraphRuntimeSelection | null {
-  const hydrated = hydrateRouteProgramBundle(input.bundle);
-  if (!hydrated) return null;
-  const matched = matchRouteProgramBundle(hydrated, input.requestedModel);
-  if (!matched) return null;
-  const opsById = hydrated.opsByProgramId.get(matched.program.id);
-  if (!opsById) return null;
-  return evaluateRouteProgram({
-    program: matched.program,
-    opsById,
-    entryNodeId: matched.entryNodeId,
-    matchedRouteId: matched.routeId,
-    requestedModel: input.requestedModel,
-    maxHops: Math.max(1, Math.trunc(input.maxHops || DEFAULT_ROUTE_GRAPH_MAX_HOPS)),
-    stateStore: input.stateStore || {},
-  });
 }
 
 export function evaluateCompiledRouteGraph(input: {
@@ -1640,15 +809,6 @@ export function evaluateCompiledRouteGraph(input: {
     });
     if (selection) return selection;
   }
-  if (hasUsableFlatRouteProgramBundle(input.graph.flatProgramBundle)) {
-    return evaluateFlatRouteProgramBundle({
-      bundle: input.graph.flatProgramBundle,
-      requestedModel: input.requestedModel,
-      maxHops: input.maxHops,
-      stateStore: input.stateStore,
-      failureOverlay: input.failureOverlay,
-    });
-  }
   return null;
 }
 
@@ -1656,12 +816,10 @@ export async function evaluateActiveRouteGraphForModel(
   requestedModel: string,
   options: {
     failureOverlay?: RouteGraphRuntimeFailureOverlay | null;
-    bootstrapIfMissing?: boolean;
   } = {},
 ): Promise<RouteGraphRuntimeSelection | null> {
   const cachedActive = getCachedActiveRouteGraphRuntimeVersion();
-  const active = (cachedActive === undefined ? await getActiveRouteGraphRuntimeVersion() : cachedActive)
-    ?? (options.bootstrapIfMissing === false ? null : await ensureActiveRouteGraphVersion());
+  const active = cachedActive === undefined ? await getActiveRouteGraphRuntimeVersion() : cachedActive;
   if (!active) return null;
   const selection = evaluateCompiledRouteGraph({
     graph: active.compiledGraph as CompiledRouteGraph,

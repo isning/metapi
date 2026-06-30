@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { compileRouteGraphSource } from '../../shared/routeGraph.js';
-import type { RouteProgramBundle } from '../../shared/routeGraph.js';
+import type { CompiledRouterBundle } from '../../shared/routeGraph.js';
 
 const quoteEndpointPricingMock = vi.hoisted(() => vi.fn());
 const quoteReferencePricingMock = vi.hoisted(() => vi.fn());
@@ -44,198 +44,88 @@ function mockEndpointQuotes() {
   });
 }
 
-function bundleWithWeightedTargets(): RouteProgramBundle {
-  return {
-    version: 1,
-    matcher: {
-      exact: {
-        'public-model': {
-          programId: 'program:public-model',
-          entryNodeId: 'entry:public-model',
-          publicModelName: 'public-model',
-          sourceRef: {},
-        },
-      },
-      normalizedExact: {},
-      patterns: [],
-    },
-    programs: [{
-      id: 'program:public-model',
-      entryNodeId: 'entry:public-model',
-      publicModelName: 'public-model',
-      enabled: true,
-      startOpId: 'select:supply',
-      sourceRef: {},
-      ops: [{
-        id: 'select:supply',
-        op: 'select_supply',
-        endpointId: 'endpoint:public-model',
-        nodeId: 'route-endpoint:public-model',
-        routeId: null,
-        targetSelectionPolicy: { strategy: 'weighted' },
-        targets: [
-          {
-            endpointId: 'endpoint:public-model',
-            nodeId: 'route-endpoint:public-model',
-            targetId: '101',
-            model: 'upstream-a',
-            enabled: true,
-            siteId: 1,
-            accountId: 11,
-            tokenId: 111,
-            weight: 1,
-            priority: 0,
-            sourceRef: {},
-          },
-          {
-            endpointId: 'endpoint:public-model',
-            nodeId: 'route-endpoint:public-model',
-            targetId: '102',
-            model: 'upstream-b',
-            enabled: true,
-            siteId: 2,
-            accountId: 22,
-            tokenId: 222,
-            weight: 3,
-            priority: 0,
-            sourceRef: {},
-          },
-        ],
-        sourceRef: {},
-      }],
-    }],
-    endpointCatalog: {
-      byId: {},
-      publicEntries: {},
-      supplyTargets: {},
-    },
-    debug: {
-      sourceRefs: {},
-    },
-    diagnostics: [],
-  };
+function compileBundle(source: unknown): CompiledRouterBundle {
+  const compiled = compileRouteGraphSource(source);
+  expect(compiled.ok).toBe(true);
+  expect(compiled.compiled.compiledRouterBundle).toBeTruthy();
+  return compiled.compiled.compiledRouterBundle!;
 }
 
-function bundleWithTargetPolicy(policy: Record<string, unknown>): RouteProgramBundle {
+function bundleWithWeightedTargets(): CompiledRouterBundle {
+  return compileBundle({
+    version: 1,
+    nodes: [
+      { id: 'entry.public', type: 'entry', enabled: true, visibility: 'public', ownership: 'manual', match: { requestedModelPattern: 'public-model' } },
+      {
+        id: 'endpoint.public',
+        type: 'route_endpoint',
+        enabled: true,
+        visibility: 'internal',
+        ownership: 'manual',
+        config: {
+          targets: [
+            { targetId: '101', model: 'upstream-a', enabled: true, siteId: 1, accountId: 11, tokenId: 111, weight: 1 },
+            { targetId: '102', model: 'upstream-b', enabled: true, siteId: 2, accountId: 22, tokenId: 222, weight: 3 },
+          ],
+          targetSelection: { strategy: 'weighted' },
+        },
+      },
+    ],
+    edges: [
+      { id: 'entry-endpoint', sourceNodeId: 'entry.public', sourcePortId: 'bidirect.out', targetNodeId: 'endpoint.public', targetPortId: 'bidirect.in', kind: 'bidirect_flow', ownership: 'manual' },
+    ],
+  });
+}
+
+function bundleWithTargetPolicy(policy: Record<string, unknown>): CompiledRouterBundle {
   const bundle = bundleWithWeightedTargets();
-  const selectSupply = bundle.programs[0]?.ops[0];
-  if (selectSupply?.op === 'select_supply') {
-    selectSupply.targetSelectionPolicy = policy;
-    selectSupply.targets[0]!.metadata = { quality: 5, costRank: 1 };
-    selectSupply.targets[1]!.metadata = { quality: 10, costRank: 2 };
-  }
+  const plan = bundle.plans[0];
+  const terminal = plan?.candidates[0]?.terminal;
+  if (terminal?.kind === 'supply') terminal.targetSelectionPolicy = policy;
+  if (plan?.targets[0]) plan.targets[0].metadata = { quality: 5, costRank: 1 };
+  if (plan?.targets[1]) plan.targets[1].metadata = { quality: 10, costRank: 2 };
   return bundle;
 }
 
-function bundleWithDynamicDispatchPolicy(): RouteProgramBundle {
-  return {
+function bundleWithDynamicDispatchPolicy(): CompiledRouterBundle {
+  return compileBundle({
     version: 1,
-    matcher: {
-      exact: {
-        'public-model': {
-          programId: 'program:public-model',
-          entryNodeId: 'entry:public-model',
-          publicModelName: 'public-model',
-          sourceRef: {},
-        },
+    nodes: [
+      { id: 'entry.public', type: 'entry', enabled: true, visibility: 'public', ownership: 'manual', match: { requestedModelPattern: 'public-model' } },
+      {
+        id: 'dispatcher.public',
+        type: 'dispatcher',
+        enabled: true,
+        visibility: 'internal',
+        ownership: 'manual',
+        mode: 'route',
+        policy: { strategy: 'weighted', score: 'payload.currentModel == "fast" ? candidate.weight : 1' },
       },
-      normalizedExact: {},
-      patterns: [],
-    },
-    programs: [{
-      id: 'program:public-model',
-      entryNodeId: 'entry:public-model',
-      publicModelName: 'public-model',
-      enabled: true,
-      startOpId: 'dispatch:route',
-      sourceRef: {},
-      ops: [
-        {
-          id: 'dispatch:route',
-          op: 'dispatch',
-          mode: 'route',
-          nodeId: 'dispatcher:public-model',
-          policy: { strategy: 'weighted', score: 'payload.currentModel == "fast" ? candidate.weight : 1' },
-          candidates: [
-            {
-              id: 'route:a',
-              kind: 'route',
-              enabled: true,
-              weight: 1,
-              priority: 0,
-              targetOpId: 'select:a',
-              metadata: {},
-              sourceRef: {},
-            },
-            {
-              id: 'route:b',
-              kind: 'route',
-              enabled: true,
-              weight: 3,
-              priority: 0,
-              targetOpId: 'select:b',
-              metadata: {},
-              sourceRef: {},
-            },
-          ],
-          sourceRef: {},
-        },
-        {
-          id: 'select:a',
-          op: 'select_supply',
-          endpointId: 'endpoint:a',
-          nodeId: 'route-endpoint:a',
-          routeId: null,
-          targetSelectionPolicy: { strategy: 'weighted' },
-          targets: [{
-            endpointId: 'endpoint:a',
-            nodeId: 'route-endpoint:a',
-            targetId: '101',
-            model: 'upstream-a',
-            enabled: true,
-            siteId: 1,
-            accountId: 11,
-            tokenId: 111,
-            weight: 1,
-            priority: 0,
-            sourceRef: {},
-          }],
-          sourceRef: {},
-        },
-        {
-          id: 'select:b',
-          op: 'select_supply',
-          endpointId: 'endpoint:b',
-          nodeId: 'route-endpoint:b',
-          routeId: null,
-          targetSelectionPolicy: { strategy: 'weighted' },
-          targets: [{
-            endpointId: 'endpoint:b',
-            nodeId: 'route-endpoint:b',
-            targetId: '102',
-            model: 'upstream-b',
-            enabled: true,
-            siteId: 2,
-            accountId: 22,
-            tokenId: 222,
-            weight: 1,
-            priority: 0,
-            sourceRef: {},
-          }],
-          sourceRef: {},
-        },
-      ],
-    }],
-    endpointCatalog: {
-      byId: {},
-      publicEntries: {},
-      supplyTargets: {},
-    },
-    debug: {
-      sourceRefs: {},
-    },
-    diagnostics: [],
-  };
+      {
+        id: 'endpoint.a',
+        type: 'route_endpoint',
+        enabled: true,
+        visibility: 'internal',
+        ownership: 'manual',
+        metadata: { weight: 1 },
+        config: { targets: [{ targetId: '101', model: 'upstream-a', enabled: true, siteId: 1, accountId: 11, tokenId: 111, weight: 1 }] },
+      },
+      {
+        id: 'endpoint.b',
+        type: 'route_endpoint',
+        enabled: true,
+        visibility: 'internal',
+        ownership: 'manual',
+        metadata: { weight: 3 },
+        config: { targets: [{ targetId: '102', model: 'upstream-b', enabled: true, siteId: 2, accountId: 22, tokenId: 222, weight: 1 }] },
+      },
+    ],
+    edges: [
+      { id: 'entry-dispatcher', sourceNodeId: 'entry.public', sourcePortId: 'bidirect.out', targetNodeId: 'dispatcher.public', targetPortId: 'bidirect.in', kind: 'bidirect_flow', ownership: 'manual' },
+      { id: 'a-dispatcher', sourceNodeId: 'endpoint.a', sourcePortId: 'route.out', targetNodeId: 'dispatcher.public', targetPortId: 'route.in', kind: 'route_flow', ownership: 'manual' },
+      { id: 'b-dispatcher', sourceNodeId: 'endpoint.b', sourcePortId: 'route.out', targetNodeId: 'dispatcher.public', targetPortId: 'route.in', kind: 'route_flow', ownership: 'manual' },
+    ],
+  });
 }
 
 describe('routeEntryPricingService', () => {

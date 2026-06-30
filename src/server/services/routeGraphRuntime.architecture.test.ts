@@ -21,8 +21,10 @@ describe('route graph runtime architecture', () => {
     expect(source).toContain('compiledRouterBundle');
     expect(source).toContain('random?: () => number');
     expect(source).toContain('random: input.random');
-    expect(source).toContain('evaluateFlatRouteProgramBundle');
-    expect(source).toContain('flatProgramBundle');
+    expect(source).not.toContain('evaluateFlatRouteProgramBundle');
+    expect(source).not.toContain('evaluateRouteProgramBundle');
+    expect(source).not.toContain('flatProgramBundle');
+    expect(source).not.toContain('programBundle');
     expect(source).toContain("from './selectorEngine.js'");
     expect(source).toContain('selectRuntimeCandidate');
     expect(source).not.toContain('Math.random');
@@ -41,13 +43,15 @@ describe('route graph runtime architecture', () => {
     const tokenRouterSource = readTokenRouterSource();
     const orchestratorSource = readGenericProxyOrchestratorSource();
 
-    expect(runtimeSource).toContain('bootstrapIfMissing?: boolean');
     expect(runtimeSource).toContain("from './routeGraphService.js'");
     expect(runtimeSource).toContain('getCachedActiveRouteGraphRuntimeVersion()');
-    expect(runtimeSource).toContain("options.bootstrapIfMissing === false ? null : await ensureActiveRouteGraphVersion()");
+    expect(runtimeSource).toContain('getActiveRouteGraphRuntimeVersion()');
+    expect(runtimeSource).not.toContain('bootstrapIfMissing');
+    expect(runtimeSource).not.toContain('ensureActiveRouteGraphVersion');
     expect(runtimeSource).not.toContain("await import('./routeGraphService.js')");
-    expect(tokenRouterSource).toContain("evaluateActiveRouteGraphForModel(model, { bootstrapIfMissing: false })");
-    expect(tokenRouterSource).toContain('bootstrapIfMissing: false');
-    expect(orchestratorSource).toContain("evaluateActiveRouteGraphForModel(requestedModel, { bootstrapIfMissing: false })");
+    expect(tokenRouterSource).toContain('evaluateActiveRouteGraphForModel(model)');
+    expect(tokenRouterSource).not.toContain('bootstrapIfMissing');
+    expect(orchestratorSource).toContain('evaluateActiveRouteGraphForModel(requestedModel)');
+    expect(orchestratorSource).not.toContain('bootstrapIfMissing');
   });
 });
