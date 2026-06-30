@@ -7,6 +7,9 @@ const sqliteMigrationSource = () => readFileSync(new URL('../../db/migrate.ts', 
 const routeGraphServiceSource = () => readFileSync(new URL('../../services/routeGraphService.ts', import.meta.url), 'utf8');
 const routeTableProjectionServiceSource = () => readFileSync(new URL('../../services/routeTableProjectionService.ts', import.meta.url), 'utf8');
 const statsSource = () => readFileSync(new URL('./stats.ts', import.meta.url), 'utf8');
+const routeFlowServiceSource = () => readFileSync(new URL('../../services/routeFlowService.ts', import.meta.url), 'utf8');
+const backupServiceSource = () => readFileSync(new URL('../../services/backupService.ts', import.meta.url), 'utf8');
+const dummyUpstreamSeedServiceSource = () => readFileSync(new URL('../../services/dummyUpstreamSeedService.ts', import.meta.url), 'utf8');
 
 describe('route graph active route architecture', () => {
   it('keeps the default active graph read path lightweight', () => {
@@ -130,6 +133,19 @@ describe('route graph active route architecture', () => {
     expect(text).not.toContain('route_binding_projection_v1');
   });
 
+  it('keeps route-table source rebuilds from compiling the base graph', () => {
+    const text = routeGraphServiceSource();
+    const collectorStart = text.indexOf('function collectMatchAndBackendByLegacyRouteId');
+    const collectorEnd = text.indexOf('function normalizeSelfRouteProductBackend', collectorStart);
+    const collectorBlock = text.slice(collectorStart, collectorEnd);
+
+    expect(collectorStart).toBeGreaterThanOrEqual(0);
+    expect(collectorEnd).toBeGreaterThan(collectorStart);
+    expect(collectorBlock).toContain('for (const node of source.nodes)');
+    expect(collectorBlock).toContain("node.endpointKind !== 'route_product'");
+    expect(collectorBlock).not.toContain('compileRouteGraphSource');
+  });
+
   it('keeps server startup from hydrating full active graph JSON', () => {
     const text = serverEntrySource();
 
@@ -155,7 +171,7 @@ describe('route graph active route architecture', () => {
     expect(block).not.toContain("SELECT id, working_graph_json FROM route_graph_drafts').all()");
   });
 
-  it('keeps persisted active graphs compact by excluding legacy program bundles', () => {
+  it('keeps persisted active graphs compact with a single compiled router artifact', () => {
     const text = routeGraphServiceSource();
     const publishStart = text.indexOf('export async function publishRouteGraphSource');
     const publishEnd = text.indexOf('export async function ensureActiveRouteGraphVersion', publishStart);
@@ -163,11 +179,89 @@ describe('route graph active route architecture', () => {
     const activeLoadStart = text.indexOf('export async function getActiveRouteGraphVersion');
     const activeLoadEnd = text.indexOf('export async function getActiveRouteGraphSourceVersion', activeLoadStart);
     const activeLoadBlock = text.slice(activeLoadStart, activeLoadEnd);
+    const runtimeLoadStart = text.indexOf('export async function getActiveRouteGraphRuntimeVersion');
+    const runtimeLoadEnd = text.indexOf('export async function getActiveRouteGraphSummary', runtimeLoadStart);
+    const runtimeLoadBlock = text.slice(runtimeLoadStart, runtimeLoadEnd);
 
-    expect(publishBlock).toContain('includeLegacyBundles: false');
+    expect(text).not.toContain('includeLegacyBundles');
+    expect(publishBlock).not.toContain('programBundle');
+    expect(publishBlock).not.toContain('flatProgramBundle');
     expect(publishBlock).toContain('includePrimitiveSource: false');
-    expect(activeLoadBlock).toContain('hasLegacyRouteProgramBundles');
-    expect(activeLoadBlock).toContain('includeLegacyBundles: false');
-    expect(activeLoadBlock).toContain('compiledGraphJson: JSON.stringify(compiledGraph)');
+    expect(publishBlock).toContain('serializeRouteGraphRuntimeStorageArtifact');
+    expect(activeLoadBlock).not.toContain('programBundle');
+    expect(activeLoadBlock).not.toContain('flatProgramBundle');
+    expect(activeLoadBlock).toContain('storeRouteGraphRuntimeArtifact');
+    expect(runtimeLoadStart).toBeGreaterThanOrEqual(0);
+    expect(runtimeLoadEnd).toBeGreaterThan(runtimeLoadStart);
+    expect(runtimeLoadBlock).toContain('loadRouteGraphRuntimeArtifactForVersion');
+    expect(runtimeLoadBlock).toContain('compiledGraphByteLength');
+    expect(runtimeLoadBlock).not.toContain('sourceGraphJson');
+    expect(runtimeLoadBlock).not.toContain('compileRouteGraphSource');
+  });
+
+  it('keeps draft and history reads off compiled graph hydration', () => {
+    const text = routeGraphServiceSource();
+    const historyStart = text.indexOf('export async function listRouteGraphVersions');
+    const historyEnd = text.indexOf('async function getLatestRouteGraphDraftRow', historyStart);
+    const historyBlock = text.slice(historyStart, historyEnd);
+    const draftStart = text.indexOf('export async function getRouteGraphDraft');
+    const draftEnd = text.indexOf('export async function validateRouteGraphDraft', draftStart);
+    const draftBlock = text.slice(draftStart, draftEnd);
+
+    expect(historyStart).toBeGreaterThanOrEqual(0);
+    expect(historyEnd).toBeGreaterThan(historyStart);
+    expect(draftStart).toBeGreaterThanOrEqual(0);
+    expect(draftEnd).toBeGreaterThan(draftStart);
+    expect(historyBlock).not.toContain('compiledGraphJson');
+    expect(historyBlock).not.toContain('compileRouteGraphSource');
+    expect(historyBlock).toContain('countPublicModelEntriesInSourceGraph');
+    expect(draftBlock).toContain('ensureActiveRouteGraphSourceVersion');
+    expect(draftBlock).not.toContain('ensureActiveRouteGraphVersion');
+  });
+
+  it('keeps backup import/export from preserving full compiled graph cache blobs', () => {
+    const text = backupServiceSource();
+    const exportStart = text.indexOf('async function exportRouteGraphVersionRows');
+    const exportEnd = text.indexOf('async function exportAccountsSection', exportStart);
+    const exportBlock = text.slice(exportStart, exportEnd);
+    const importStart = text.indexOf('if (shouldRestoreRouteGraph)');
+    const importEnd = text.indexOf('await tx.insert(schema.routeGraphActiveVersion)', importStart);
+    const importBlock = text.slice(importStart, importEnd);
+    const normalizeStart = text.indexOf('async function normalizeImportedRouteGraphRows');
+    const normalizeEnd = text.indexOf('function buildModelAvailabilityIdentityKey', normalizeStart);
+    const normalizeBlock = text.slice(normalizeStart, normalizeEnd);
+
+    expect(exportStart).toBeGreaterThanOrEqual(0);
+    expect(exportEnd).toBeGreaterThan(exportStart);
+    expect(normalizeStart).toBeGreaterThanOrEqual(0);
+    expect(normalizeEnd).toBeGreaterThan(normalizeStart);
+    expect(exportBlock).not.toContain('schema.routeGraphVersions.compiledGraphJson');
+    expect(exportBlock).toContain('buildRouteGraphRuntimeArtifactJsonForSource');
+    expect(text).not.toContain('db.select().from(schema.routeGraphVersions).orderBy');
+    expect(normalizeBlock).toContain('where(gt(schema.routeGraphVersions.id, lastVersionId))');
+    expect(normalizeBlock).toContain('where(gt(schema.routeGraphDrafts.id, lastDraftId))');
+    expect(normalizeBlock).not.toContain('from(schema.routeGraphDrafts).all()');
+    expect(importBlock).toContain('buildRouteGraphRuntimeArtifactJsonForSource');
+    expect(importBlock).not.toContain('row.compiledGraphJson');
+  });
+
+  it('keeps dummy upstream seeding on route-table projections instead of active graph hydration', () => {
+    const text = dummyUpstreamSeedServiceSource();
+
+    expect(text).toContain('routeTableProjectionService.js');
+    expect(text).not.toContain('ensureActiveRouteGraphVersion');
+    expect(text).not.toContain('compileRouteGraphSource');
+  });
+
+  it('keeps route-flow on runtime bundles instead of full active graph hydration', () => {
+    const text = routeFlowServiceSource();
+    const start = text.indexOf('export async function compileModelRouteFlow');
+    const block = text.slice(start);
+
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(text).toContain('getActiveRouteGraphRuntimeVersion');
+    expect(text).not.toContain('ensureActiveRouteGraphVersion');
+    expect(block).not.toContain('activeGraph.compiledGraph.programBundle');
+    expect(block).not.toContain('activeGraph.compiledGraph.flatProgramBundle');
   });
 });

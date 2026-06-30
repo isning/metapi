@@ -169,14 +169,16 @@ describe('POST /api/routes/decision/refresh', () => {
 
     const routesResponse = await app.inject({
       method: 'GET',
-      url: '/api/routes',
+      url: '/api/routes/summary?page=1&pageSize=50',
     });
 
     expect(routesResponse.statusCode).toBe(200);
-    const routes = routesResponse.json() as Array<{
-      id: number;
-      decisionSnapshot?: { matched?: boolean; routeId?: number; candidates?: Array<unknown> } | null;
-    }>;
+    const routes = (routesResponse.json() as {
+      items: Array<{
+        id: number;
+        decisionSnapshot?: { matched?: boolean; routeId?: number; candidates?: Array<unknown> } | null;
+      }>;
+    }).items;
 
     const refreshedExactRoute = routes.find((route) => route.id === exactRoute.id);
     const refreshedDuplicateExactRoute = routes.find((route) => route.id === duplicateExactRoute.id);

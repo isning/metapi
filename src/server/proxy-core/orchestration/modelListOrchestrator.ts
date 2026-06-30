@@ -3,7 +3,7 @@ import { and, eq } from 'drizzle-orm';
 import { fetch } from 'undici';
 import { db, schema } from '../../db/index.js';
 import { isModelAllowedByPolicyOrAllowedRoutes } from '../../services/downstreamApiKeyService.js';
-import { ensureActiveRouteGraphVersion } from '../../services/routeGraphService.js';
+import { listPublicRouteModelNames } from '../../services/routeTableProjectionService.js';
 import { tokenRouter } from '../../services/tokenRouter.js';
 import * as routeRefreshWorkflow from '../../services/routeRefreshWorkflow.js';
 import { readRuntimeResponseText } from '../executors/types.js';
@@ -69,10 +69,7 @@ async function readRouteAwareModels(request: FastifyRequest): Promise<ListedMode
       eq(schema.sites.status, 'active'),
     ))
     .all();
-  const activeGraph = await ensureActiveRouteGraphVersion();
-  const publicGraphModels = (activeGraph.compiledGraph.publicModels || [])
-    .map((item) => String(item.model || '').trim())
-    .filter(Boolean);
+  const publicGraphModels = (await listPublicRouteModelNames()).map((item) => item.modelName);
   const routableModels = typeof tokenRouter.getAvailableModels === 'function'
     ? await tokenRouter.getAvailableModels()
     : [];

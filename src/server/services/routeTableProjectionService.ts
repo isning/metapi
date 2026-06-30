@@ -4,6 +4,7 @@ import {
   deriveLegacyModelPatternFromSpecs,
   deriveLegacyRouteModeFromBackendSpec,
   deriveLegacySourceRouteIdsFromBackendSpec,
+  getRouteGraphExposedModelName,
   normalizeRouteGraphBackendSpec,
   normalizeRouteGraphMatchSpec,
   type RouteGraphBackendSpec,
@@ -37,6 +38,11 @@ type RouteBindingProjectionInsert = typeof schema.routeBindingProjections.$infer
 export type EnabledRouteBindingProjectionMatch = {
   route: typeof schema.tokenRoutes.$inferSelect;
   projection: RouteBindingProjection;
+};
+
+export type PublicRouteModelName = {
+  routeId: number;
+  modelName: string;
 };
 
 function normalizeRouteIds(routeIdsInput: number[]): number[] {
@@ -190,6 +196,32 @@ export async function loadEnabledRouteBindingProjectionsByModelPattern(
     route: row.token_routes,
     projection: hydrateRouteBindingProjection(row.route_binding_projections),
   }));
+}
+
+export async function listPublicRouteModelNames(): Promise<PublicRouteModelName[]> {
+  const rows = await db.select()
+    .from(schema.routeBindingProjections)
+    .innerJoin(schema.tokenRoutes, eq(schema.routeBindingProjections.routeId, schema.tokenRoutes.id))
+    .where(and(
+      eq(schema.routeBindingProjections.visibility, 'public'),
+      eq(schema.tokenRoutes.enabled, true),
+    ))
+    .all();
+
+  const deduped = new Map<string, PublicRouteModelName>();
+  for (const row of rows) {
+    const projection = hydrateRouteBindingProjection(row.route_binding_projections);
+    const modelName = getRouteGraphExposedModelName(projection.match, projection.backend).trim();
+    if (!modelName) continue;
+    const key = modelName.toLowerCase();
+    if (!deduped.has(key)) {
+      deduped.set(key, {
+        routeId: projection.routeId,
+        modelName,
+      });
+    }
+  }
+  return Array.from(deduped.values()).sort((left, right) => left.modelName.localeCompare(right.modelName));
 }
 
 export async function upsertRouteBindingProjections(input: RouteBindingProjectionInput[]): Promise<void> {

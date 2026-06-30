@@ -2,11 +2,12 @@ import { and, desc, eq, gte, inArray, or } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import { getLocalRangeStartUtc } from './localTimeService.js';
 import { evaluateActiveRouteGraphForModel, type RouteGraphRuntimeTraceStep } from './routeGraphRuntimeService.js';
-import { ensureActiveRouteGraphVersion } from './routeGraphService.js';
+import { getActiveRouteGraphRuntimeVersion } from './routeGraphService.js';
 import {
   estimateRouteEntryPricing,
   type EntryPricingEstimate,
 } from './routeEntryPricingService.js';
+import { tokenRouter, type RouteDecisionExplanation } from './tokenRouter.js';
 import {
   resolveDispatchUpstreamCompatibilityPolicy,
 } from './upstreamCompatibilityPolicyResolver.js';
@@ -193,12 +194,160 @@ function candidateRuntimeTargetId(candidate: NonNullable<EntryPricingEstimate>['
   return Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : null;
 }
 
+function pricingEstimateFromRouteDecision(
+  explanation: RouteDecisionExplanation,
+  requestedModel: string,
+): EntryPricingEstimate | null {
+  if (!explanation.matched || explanation.candidates.length === 0) return null;
+  return {
+    inputPerMillion: null,
+    outputPerMillion: null,
+    totalCostUsd: null,
+    inputMultiplier: null,
+    outputMultiplier: null,
+    totalMultiplier: null,
+    effectiveCost: null,
+    reference: null,
+    sourceCount: explanation.candidates.length,
+    estimateLevel: 'incomplete',
+    strategy: null,
+    diagnostics: [{
+      level: 'info',
+      message: 'Route-table fallback estimate uses current router candidate probabilities.',
+    }],
+    candidates: explanation.candidates.map((candidate) => ({
+      targetId: String(candidate.targetId),
+      endpointId: `route-table-target:${candidate.targetId}`,
+      nodeId: `route-table-target:${candidate.targetId}`,
+      siteId: null,
+      accountId: candidate.accountId,
+      tokenId: null,
+      modelName: requestedModel,
+      probability: candidate.probability == null ? null : candidate.probability / 100,
+      weight: candidate.weight,
+      priority: candidate.priority,
+      inputPerMillion: null,
+      outputPerMillion: null,
+      totalCostUsd: null,
+      effectiveCost: null,
+      pricingId: null,
+      matchedScope: candidate.eligible ? 'route_table' : 'ineligible',
+      sourceRef: {
+        endpointId: `route-table-target:${candidate.targetId}`,
+        routeId: explanation.routeId ?? null,
+      },
+    })),
+  };
+}
+
 function candidateMatchesSelectedEndpoint(input: {
   candidate: NonNullable<EntryPricingEstimate>['candidates'][number];
   target: NonNullable<Awaited<ReturnType<typeof evaluateActiveRouteGraphForModel>>>['selectedEndpointTarget'];
 }): boolean {
   const targetEndpointId = targetIdentityValue(input.target?.sourceRef?.endpointId) || targetIdentityValue(input.target?.endpointId);
   return !!targetEndpointId && candidateEndpointIdentity(input.candidate) === targetEndpointId;
+}
+
+async function appendRouteTableCandidateFlow(input: {
+  nodes: RouteFlowNode[];
+  edges: RouteFlowEdge[];
+  explanation: RouteDecisionExplanation;
+  pricing: EntryPricingEstimate | null;
+  requestedModel: string;
+}): Promise<void> {
+  const routeNodeId = input.explanation.routeId ? `route:${input.explanation.routeId}` : 'route:matched';
+  input.nodes.push({
+    id: routeNodeId,
+    kind: 'dispatcher',
+    visibility: 'internal',
+    label: input.explanation.modelPattern || `route #${input.explanation.routeId ?? '?'}`,
+    subtitle: 'route table projection',
+    status: 'active',
+    badges: ['route-table'],
+    metrics: {},
+    history: [],
+  });
+  input.edges.push({
+    id: `request-route-table-${routeNodeId}`,
+    source: 'request',
+    target: routeNodeId,
+    label: 'match',
+  });
+
+  const targetIds = input.explanation.candidates
+    .map((candidate) => candidate.targetId)
+    .filter((targetId) => Number.isFinite(targetId) && targetId > 0);
+  const [runtimeStatsSources, runtimeHealthBySourceId, runtimeCredentialIdentities] = await Promise.all([
+    loadRuntimeStatsSources(targetIds),
+    loadRuntimeEndpointHealth(input.requestedModel, targetIds),
+    loadRuntimeCredentialIdentities(targetIds),
+  ]);
+  const pricingByTargetId = new Map((input.pricing?.candidates || [])
+    .map((candidate) => [candidateRuntimeTargetId(candidate), candidate])
+    .filter((entry): entry is [number, NonNullable<EntryPricingEstimate>['candidates'][number]] => entry[0] != null));
+
+  for (const candidate of input.explanation.candidates) {
+    const targetId = candidate.targetId;
+    const pricingCandidate = pricingByTargetId.get(targetId);
+    const runtimeStatsSource = runtimeStatsSources.get(targetId);
+    const runtimeCredentialIdentity = runtimeCredentialIdentities.get(targetId);
+    const health = runtimeHealthBySourceId.get(targetId) || {
+      successCount: 0,
+      failureCount: 0,
+      totalCalls: 0,
+      avgLatencyMs: null,
+      history: [],
+    };
+    const nodeId = `route-table-target:${targetId}`;
+    const label = runtimeCredentialIdentity
+      ? `${runtimeCredentialIdentity.siteName || runtimeCredentialIdentity.siteUrl} · ${runtimeCredentialIdentity.accountUsername || `account #${runtimeCredentialIdentity.accountId}`}`
+      : `${candidate.siteName} · ${candidate.username}`;
+    const subtitle = [
+      runtimeCredentialIdentity?.sourceModel || input.requestedModel,
+      `target ${targetId}`,
+      runtimeCredentialIdentity?.sitePlatform || null,
+    ].filter((item): item is string => !!item).join(' · ');
+    input.nodes.push({
+      id: nodeId,
+      kind: 'route_endpoint',
+      visibility: 'internal',
+      label,
+      subtitle,
+      status: input.explanation.selectedTargetId === targetId
+        ? 'selected'
+        : (candidate.eligible ? 'available' : 'blocked'),
+      badges: Array.from(new Set([
+        'supply',
+        'route-table',
+        candidate.priority != null ? `P${candidate.priority}` : null,
+        candidate.weight != null ? `W${candidate.weight}` : null,
+        candidate.probability == null ? null : `${Math.round(candidate.probability * 10) / 10}%`,
+      ].filter((badge): badge is string => !!badge))),
+      metrics: {
+        successRate: roundRate(health.successCount, health.totalCalls),
+        totalCalls: health.totalCalls,
+        recentSuccessCount: health.successCount,
+        recentFailureCount: health.failureCount,
+        avgLatencyMs: health.avgLatencyMs,
+        probability: pricingCandidate?.probability == null ? candidate.probability : pricingCandidate.probability * 100,
+        priority: candidate.priority,
+        weight: candidate.weight,
+        failCount: runtimeStatsSource?.failCount ?? null,
+        consecutiveFailureCount: runtimeStatsSource?.consecutiveFailCount ?? null,
+        lastUsedAt: runtimeStatsSource?.lastUsedAt ?? null,
+        lastSelectedAt: runtimeStatsSource?.lastSelectedAt ?? null,
+        lastFailureAt: runtimeStatsSource?.lastFailAt ?? null,
+        cooldownUntil: runtimeStatsSource?.cooldownUntil ?? null,
+      },
+      history: health.history,
+    });
+    input.edges.push({
+      id: `route-table-candidate-${targetId}`,
+      source: nodeId,
+      target: routeNodeId,
+      label: candidate.probability == null ? 'N/A' : `${Math.round(candidate.probability * 10) / 10}%`,
+    });
+  }
 }
 
 function routeFlowNodeStatusForCandidate(input: {
@@ -474,20 +623,56 @@ async function resolveGraphCompatibilityPolicy(input: {
   };
 }
 
+async function resolveRouteTableCompatibilityPolicy(
+  explanation: RouteDecisionExplanation,
+): Promise<CompiledRouteFlow['compatibilityPolicy']> {
+  const targetId = Number(explanation.selectedTargetId);
+  if (!Number.isFinite(targetId) || targetId <= 0) return undefined;
+
+  const row = await db.select({
+    siteCompatibilityPolicy: schema.sites.compatibilityPolicy,
+    accountExtraConfig: schema.accounts.extraConfig,
+    tokenCompatibilityPolicy: schema.accountTokens.compatibilityPolicy,
+  })
+    .from(schema.routeEndpointTargets)
+    .innerJoin(schema.accounts, eq(schema.routeEndpointTargets.accountId, schema.accounts.id))
+    .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
+    .leftJoin(schema.accountTokens, eq(schema.routeEndpointTargets.tokenId, schema.accountTokens.id))
+    .where(eq(schema.routeEndpointTargets.id, Math.trunc(targetId)))
+    .get();
+
+  if (!row) return undefined;
+  const site = { compatibilityPolicy: row.siteCompatibilityPolicy };
+  const account = { extraConfig: row.accountExtraConfig };
+  const token = row.tokenCompatibilityPolicy == null ? null : { compatibilityPolicy: row.tokenCompatibilityPolicy };
+  return {
+    resolved: resolveDispatchUpstreamCompatibilityPolicy({
+      site,
+      account,
+      token,
+    }),
+    layers: [
+      { source: 'site', configured: !!row.siteCompatibilityPolicy },
+      { source: 'account', configured: !!row.accountExtraConfig },
+      { source: 'token', configured: !!row.tokenCompatibilityPolicy },
+      { source: 'endpoint_policy', configured: false },
+      { source: 'target', configured: false },
+    ],
+  };
+}
+
 export async function compileModelRouteFlow(model: string): Promise<CompiledRouteFlow> {
   const requestedModel = model.trim();
   const compiledAt = new Date().toISOString();
-  const activeGraph = await ensureActiveRouteGraphVersion();
-  const [graphSelection, staticEntryPricing] = await Promise.all([
+  const activeGraph = await getActiveRouteGraphRuntimeVersion();
+  const routeBundle = activeGraph?.compiledGraph.compiledRouterBundle || null;
+  const [graphSelection, staticEntryPricing, routeTableExplanation] = await Promise.all([
     evaluateActiveRouteGraphForModel(requestedModel),
-    estimateRouteEntryPricing({
-      bundle: activeGraph.compiledGraph.compiledRouterBundle
-        || activeGraph.compiledGraph.flatProgramBundle
-        || activeGraph.compiledGraph.programBundle,
-      requestedModel,
-    }),
+    routeBundle ? estimateRouteEntryPricing({ bundle: routeBundle, requestedModel }) : Promise.resolve(null),
+    tokenRouter.explainSelection(requestedModel),
   ]);
-  const theoreticalEntryPricing = staticEntryPricing;
+  const routeTablePricing = graphSelection ? null : pricingEstimateFromRouteDecision(routeTableExplanation, requestedModel);
+  const theoreticalEntryPricing = staticEntryPricing || routeTablePricing;
 
   const nodes: RouteFlowNode[] = [{
     id: 'request',
@@ -495,7 +680,7 @@ export async function compileModelRouteFlow(model: string): Promise<CompiledRout
     visibility: 'public',
     label: requestedModel,
     subtitle: 'client request model',
-    status: graphSelection ? 'active' : 'blocked',
+    status: graphSelection || routeTableExplanation.matched ? 'active' : 'blocked',
     badges: ['public'],
     metrics: {},
     history: [],
@@ -709,6 +894,35 @@ export async function compileModelRouteFlow(model: string): Promise<CompiledRout
       diagnostics,
       entryPricing: {
         theoretical: theoreticalEntryPricing,
+      },
+      compatibilityPolicy,
+      compiledAt,
+    };
+  }
+
+  if (routeTableExplanation.matched) {
+    const compatibilityPolicy = await resolveRouteTableCompatibilityPolicy(routeTableExplanation);
+    await appendRouteTableCandidateFlow({
+      nodes,
+      edges,
+      explanation: routeTableExplanation,
+      pricing: routeTablePricing,
+      requestedModel,
+    });
+    return {
+      version: 1,
+      requestedModel,
+      actualModel: routeTableExplanation.actualModel,
+      matched: true,
+      selectedRouteId: routeTableExplanation.routeId ?? null,
+      selectedAccountId: routeTableExplanation.selectedAccountId ?? null,
+      routePattern: routeTableExplanation.modelPattern ?? null,
+      summary: routeTableExplanation.summary,
+      nodes,
+      edges,
+      diagnostics,
+      entryPricing: {
+        theoretical: routeTablePricing,
       },
       compatibilityPolicy,
       compiledAt,

@@ -310,12 +310,12 @@ describe('/api/route-graph lifecycle', () => {
 
     const response = await app.inject({
       method: 'GET',
-      url: '/api/routes/summary?all=1',
+      url: '/api/routes/summary?page=1&pageSize=50',
       headers: app.adminHeaders(),
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual(expect.arrayContaining([
+    expect((response.json() as { items: unknown[] }).items).toEqual(expect.arrayContaining([
       expect.objectContaining({
         id: seeded.route.id,
         match: expect.objectContaining({ requestedModelPattern: 'source-projected-summary-model' }),
@@ -651,12 +651,12 @@ describe('/api/route-graph lifecycle', () => {
 
     const response = await app.inject({
       method: 'GET',
-      url: '/api/route-endpoints?all=1',
+      url: '/api/route-endpoints?page=1&pageSize=100',
       headers: app.adminHeaders(),
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual(expect.arrayContaining([
+    expect((response.json() as { items: unknown[] }).items).toEqual(expect.arrayContaining([
       expect.objectContaining({
         endpointId: 'route-endpoint:product:auto-model:source-projected-catalog-model',
         routeId: seeded.route.id,
@@ -888,12 +888,12 @@ describe('/api/route-graph lifecycle', () => {
 
     const response = await app.inject({
       method: 'GET',
-      url: '/api/route-endpoints?all=1',
+      url: '/api/route-endpoints?page=1&pageSize=100',
       headers: app.adminHeaders(),
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toEqual(expect.arrayContaining([
+    expect((response.json() as { items: unknown[] }).items).toEqual(expect.arrayContaining([
       expect.objectContaining({
         endpointId: 'route-endpoint:product:auto-model:catalog-model',
         routeId: seeded.route.id,
@@ -1085,12 +1085,14 @@ describe('/api/route-graph lifecycle', () => {
 
     const response = await app.inject({
       method: 'GET',
-      url: '/api/route-endpoints?all=1',
+      url: '/api/route-endpoints?page=1&pageSize=100',
       headers: app.adminHeaders(),
     });
 
     expect(response.statusCode).toBe(200);
-    const endpoints = response.json() as Array<{ endpointKind: string; routeId: number | null; siteNames: string[]; upstreamModels: string[]; targetCount?: number }>;
+    const endpoints = (response.json() as {
+      items: Array<{ endpointKind: string; routeId: number | null; siteNames: string[]; upstreamModels: string[]; targetCount?: number }>;
+    }).items;
     const productEndpoint = endpoints.find((endpoint) => (
       endpoint.endpointKind === 'route_product'
       && endpoint.routeId === seeded.route.id

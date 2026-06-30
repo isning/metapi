@@ -55,7 +55,7 @@ describe('route decision snapshots', () => {
     delete process.env.DATA_DIR;
   });
 
-  it('persists exact-route decision snapshots and exposes them from getRoutes', async () => {
+  it('persists exact-route decision snapshots and exposes them from paged route summaries', async () => {
     const site = await db.insert(schema.sites).values({
       name: 'snapshot-site',
       url: 'https://snapshot-site.example.com',
@@ -100,15 +100,17 @@ describe('route decision snapshots', () => {
 
     const routesResponse = await app.inject({
       method: 'GET',
-      url: '/api/routes',
+      url: '/api/routes/summary?page=1&pageSize=50',
     });
 
     expect(routesResponse.statusCode).toBe(200);
-    const body = routesResponse.json() as Array<{
-      id: number;
-      decisionSnapshot?: { matched: boolean; candidates: Array<unknown> } | null;
-      decisionRefreshedAt?: string | null;
-    }>;
+    const body = (routesResponse.json() as {
+      items: Array<{
+        id: number;
+        decisionSnapshot?: { matched: boolean; candidates: Array<unknown> } | null;
+        decisionRefreshedAt?: string | null;
+      }>;
+    }).items;
     const refreshedRoute = body.find((item) => item.id === route.id);
 
     expect(refreshedRoute?.decisionSnapshot?.matched).toBe(true);
@@ -117,7 +119,7 @@ describe('route decision snapshots', () => {
     expect(typeof refreshedRoute?.decisionRefreshedAt).toBe('string');
   });
 
-  it('persists wildcard route-wide decision snapshots and exposes them from getRoutes', async () => {
+  it('persists wildcard route-wide decision snapshots and exposes them from paged route summaries', async () => {
     const site = await db.insert(schema.sites).values({
       name: 'wildcard-snapshot-site',
       url: 'https://wildcard-snapshot-site.example.com',
@@ -174,15 +176,17 @@ describe('route decision snapshots', () => {
 
     const routesResponse = await app.inject({
       method: 'GET',
-      url: '/api/routes',
+      url: '/api/routes/summary?page=1&pageSize=50',
     });
 
     expect(routesResponse.statusCode).toBe(200);
-    const body = routesResponse.json() as Array<{
-      id: number;
-      decisionSnapshot?: { matched: boolean; routeId?: number } | null;
-      decisionRefreshedAt?: string | null;
-    }>;
+    const body = (routesResponse.json() as {
+      items: Array<{
+        id: number;
+        decisionSnapshot?: { matched: boolean; routeId?: number } | null;
+        decisionRefreshedAt?: string | null;
+      }>;
+    }).items;
     const refreshedRoute = body.find((item) => item.id === route.id);
 
     expect(refreshedRoute?.decisionSnapshot?.matched).toBe(true);

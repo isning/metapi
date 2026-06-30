@@ -10,6 +10,7 @@ type ProxyRouterModule = typeof import('./router.js');
 type TokenRouterModule = typeof import('../../services/tokenRouter.js');
 type TokensRoutesModule = typeof import('../api/tokens.js');
 type ConfigModule = typeof import('../../config.js');
+type RouteTableProjectionModule = typeof import('../../services/routeTableProjectionService.js');
 
 describe('/v1/models route', () => {
   let db: DbModule['db'];
@@ -17,6 +18,7 @@ describe('/v1/models route', () => {
   let proxyRoutes: ProxyRouterModule['proxyRoutes'];
   let tokensRoutes: TokensRoutesModule['tokensRoutes'];
   let invalidateTokenRouterCache: TokenRouterModule['invalidateTokenRouterCache'];
+  let syncRouteBindingProjectionsFromRouteTable: RouteTableProjectionModule['syncRouteBindingProjectionsFromRouteTable'];
   let config: ConfigModule['config'];
   let app: FastifyInstance;
   let dataDir = '';
@@ -31,12 +33,14 @@ describe('/v1/models route', () => {
     const tokenRouterModule = await import('../../services/tokenRouter.js');
     const tokensRoutesModule = await import('../api/tokens.js');
     const configModule = await import('../../config.js');
+    const routeTableProjectionModule = await import('../../services/routeTableProjectionService.js');
 
     db = dbModule.db;
     schema = dbModule.schema;
     proxyRoutes = proxyRouterModule.proxyRoutes;
     tokensRoutes = tokensRoutesModule.tokensRoutes;
     invalidateTokenRouterCache = tokenRouterModule.invalidateTokenRouterCache;
+    syncRouteBindingProjectionsFromRouteTable = routeTableProjectionModule.syncRouteBindingProjectionsFromRouteTable;
     config = configModule.config;
     config.proxyToken = 'sk-global-proxy-token';
 
@@ -48,6 +52,9 @@ describe('/v1/models route', () => {
   beforeEach(async () => {
     invalidateTokenRouterCache();
     await db.delete(schema.routeEndpointTargets).run();
+    await db.delete(schema.routeBindingProjections).run();
+    await db.delete(schema.routeGraphActiveVersion).run();
+    await db.delete(schema.routeGraphVersions).run();
     await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.tokenModelAvailability).run();
     await db.delete(schema.modelAvailability).run();
@@ -192,6 +199,80 @@ describe('/v1/models route', () => {
     };
 
     expect(body.data.map((item) => item.id)).toContain('global-routable-model');
+  });
+
+  it('lists projection-backed models without hydrating persisted active compiled graph', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'projection-models-site',
+      url: 'https://projection-models.example.com',
+      platform: 'openai',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      accessToken: 'projection-models-access-token',
+      status: 'active',
+    }).returning().get();
+
+    const token = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'default',
+      token: 'projection-models-api-token',
+      enabled: true,
+      isDefault: true,
+    }).returning().get();
+
+    await db.insert(schema.modelAvailability).values({
+      accountId: account.id,
+      modelName: 'projection-routable-model',
+      available: true,
+    }).run();
+
+    const route = await db.insert(schema.tokenRoutes).values({
+      ...tokenRouteFixture({ modelPattern: 'projection-routable-model' }),
+      enabled: true,
+    }).returning().get();
+
+    await db.insert(schema.routeEndpointTargets).values({
+      routeId: route.id,
+      accountId: account.id,
+      tokenId: token.id,
+      sourceModel: 'projection-routable-model',
+      enabled: true,
+    }).run();
+    await syncRouteBindingProjectionsFromRouteTable([route.id]);
+
+    await db.insert(schema.routeGraphVersions).values({
+      id: 1,
+      version: 1,
+      sourceGraphJson: JSON.stringify({ version: 1, nodes: [], edges: [], macros: [] }),
+      compiledGraphJson: '{',
+      status: 'active',
+      createdBy: 'bad-compiled-fixture',
+      createdAt: new Date().toISOString(),
+      activatedAt: new Date().toISOString(),
+    }).run();
+    await db.insert(schema.routeGraphActiveVersion).values({
+      id: 1,
+      versionId: 1,
+      updatedAt: new Date().toISOString(),
+    }).run();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/models',
+      headers: {
+        authorization: 'Bearer sk-global-proxy-token',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as {
+      object: 'list';
+      data: Array<{ id: string }>;
+    };
+    expect(body.data.map((item) => item.id)).toContain('projection-routable-model');
   });
 
   it('returns only whitelist models for managed key with supportedModels policy', async () => {

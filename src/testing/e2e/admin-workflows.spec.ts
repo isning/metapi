@@ -35,8 +35,11 @@ async function seedManualModelRoute(adminApi: {
   });
 
   await expect.poll(async () => {
-    const routes = await adminApi.getJson<Array<{ modelPattern?: string; match?: { requestedModelPattern?: string } }>>('/api/routes');
-    return routes.some((route) => (
+    const routes = await adminApi.getJson<{
+      items?: Array<{ modelPattern?: string; match?: { requestedModelPattern?: string } }>;
+    }>(`/api/routes/summary?page=1&pageSize=50&q=${encodeURIComponent(modelName)}`);
+    const items = Array.isArray(routes.items) ? routes.items : [];
+    return items.some((route) => (
       route.modelPattern === modelName
       || route.match?.requestedModelPattern === modelName
     ));

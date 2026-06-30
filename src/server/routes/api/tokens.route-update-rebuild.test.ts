@@ -206,30 +206,19 @@ describe('PUT /api/routes/:id route rebuild', () => {
   it('rate limits repeated route overview reads', async () => {
     resetTokenRouteReadLimitersForTests({
       summaryPoints: 1,
-      listPoints: 1,
     });
 
     const firstSummary = await app.inject({
       method: 'GET',
-      url: '/api/routes/summary?all=1',
+      url: '/api/routes/summary?page=1&pageSize=10',
     });
     const secondSummary = await app.inject({
       method: 'GET',
-      url: '/api/routes/summary?all=1',
-    });
-    const firstRoutes = await app.inject({
-      method: 'GET',
-      url: '/api/routes',
-    });
-    const secondRoutes = await app.inject({
-      method: 'GET',
-      url: '/api/routes',
+      url: '/api/routes/summary?page=1&pageSize=10',
     });
 
     expect(firstSummary.statusCode).toBe(200);
     expect(secondSummary.statusCode).toBe(429);
-    expect(firstRoutes.statusCode).toBe(200);
-    expect(secondRoutes.statusCode).toBe(429);
   });
 
   it('exposes persisted automatic route group metadata in route summary', async () => {
@@ -240,9 +229,9 @@ describe('PUT /api/routes/:id route rebuild', () => {
     const rebuild = await workflow.rebuildRoutesOnly();
     expect(rebuild.models).toBe(1);
 
-    const summary = await app.inject({ method: 'GET', url: '/api/routes/summary?all=1' });
+    const summary = await app.inject({ method: 'GET', url: '/api/routes/summary?page=1&pageSize=50' });
     expect(summary.statusCode).toBe(200);
-    const rows = summary.json() as Array<Record<string, any>>;
+    const rows = (summary.json() as { items: Array<Record<string, any>> }).items;
     const row = rows.find((item) => item.match?.requestedModelPattern === model || item.presentation?.displayName === model);
     expect(row).toBeDefined();
     expect(row?.routeGroup).toMatchObject({
@@ -318,10 +307,10 @@ describe('PUT /api/routes/:id route rebuild', () => {
 
     const summaryResponse = await app.inject({
       method: 'GET',
-      url: '/api/routes/summary?all=1',
+      url: '/api/routes/summary?page=1&pageSize=50',
     });
     expect(summaryResponse.statusCode).toBe(200);
-    expect(summaryResponse.json()).toContainEqual(expect.objectContaining({
+    expect((summaryResponse.json() as { items: unknown[] }).items).toContainEqual(expect.objectContaining({
       id: createdRouteId,
       backend: { kind: 'routes', routeIds: [exactRouteA.id, exactRouteB.id] },
       targetCount: 2,
@@ -909,16 +898,16 @@ describe('PUT /api/routes/:id route rebuild', () => {
     });
     expect(disableResponse.statusCode).toBe(200);
 
-    const summary = await app.inject({ method: 'GET', url: '/api/routes/summary?all=1' });
+    const summary = await app.inject({ method: 'GET', url: '/api/routes/summary?page=1&pageSize=50' });
     expect(summary.statusCode).toBe(200);
-    expect(summary.json()).toContainEqual(expect.objectContaining({
+    expect((summary.json() as { items: unknown[] }).items).toContainEqual(expect.objectContaining({
       id: exactRoute.id,
       enabled: false,
     }));
 
-    const endpointCatalog = await app.inject({ method: 'GET', url: '/api/route-endpoints?all=1' });
+    const endpointCatalog = await app.inject({ method: 'GET', url: '/api/route-endpoints?page=1&pageSize=100' });
     expect(endpointCatalog.statusCode).toBe(200);
-    expect(endpointCatalog.json()).toContainEqual(expect.objectContaining({
+    expect((endpointCatalog.json() as { items: unknown[] }).items).toContainEqual(expect.objectContaining({
       routeId: exactRoute.id,
       endpointKind: 'route_product',
       enabled: false,
@@ -945,9 +934,9 @@ describe('PUT /api/routes/:id route rebuild', () => {
       manualOverride: false,
     }).returning().get();
 
-    const initialCatalog = await app.inject({ method: 'GET', url: '/api/route-endpoints?all=1' });
+    const initialCatalog = await app.inject({ method: 'GET', url: '/api/route-endpoints?page=1&pageSize=100' });
     expect(initialCatalog.statusCode).toBe(200);
-    const initialSupplyItems = initialCatalog.json().filter((item: Record<string, unknown>) => (
+    const initialSupplyItems = (initialCatalog.json() as { items: Array<Record<string, unknown>> }).items.filter((item) => (
       item.endpointKind === 'supply' && item.routeId === exactRoute.id
     ));
     expect(initialSupplyItems).toHaveLength(1);
@@ -966,9 +955,9 @@ describe('PUT /api/routes/:id route rebuild', () => {
     expect(createTarget.statusCode).toBe(200);
     const createdTargetId = createTarget.json().id;
 
-    const catalogAfterCreate = await app.inject({ method: 'GET', url: '/api/route-endpoints?all=1' });
+    const catalogAfterCreate = await app.inject({ method: 'GET', url: '/api/route-endpoints?page=1&pageSize=100' });
     expect(catalogAfterCreate.statusCode).toBe(200);
-    const supplyItemsAfterCreate = catalogAfterCreate.json().filter((item: Record<string, unknown>) => (
+    const supplyItemsAfterCreate = (catalogAfterCreate.json() as { items: Array<Record<string, unknown>> }).items.filter((item) => (
       item.endpointKind === 'supply' && item.routeId === exactRoute.id
     ));
     expect(supplyItemsAfterCreate).toHaveLength(2);
@@ -980,9 +969,9 @@ describe('PUT /api/routes/:id route rebuild', () => {
     });
     expect(updateTarget.statusCode).toBe(200);
 
-    const catalogAfterUpdate = await app.inject({ method: 'GET', url: '/api/route-endpoints?all=1' });
+    const catalogAfterUpdate = await app.inject({ method: 'GET', url: '/api/route-endpoints?page=1&pageSize=100' });
     expect(catalogAfterUpdate.statusCode).toBe(200);
-    const updatedSupplyItem = catalogAfterUpdate.json().find((item: Record<string, any>) => (
+    const updatedSupplyItem = (catalogAfterUpdate.json() as { items: Array<Record<string, any>> }).items.find((item) => (
       item.endpointKind === 'supply'
       && item.routeId === exactRoute.id
       && item.metadata?.routeTargetId === createdTargetId
@@ -998,9 +987,9 @@ describe('PUT /api/routes/:id route rebuild', () => {
     const deleteTarget = await app.inject({ method: 'DELETE', url: `/api/targets/${createdTargetId}` });
     expect(deleteTarget.statusCode).toBe(200);
 
-    const catalogAfterDelete = await app.inject({ method: 'GET', url: '/api/route-endpoints?all=1' });
+    const catalogAfterDelete = await app.inject({ method: 'GET', url: '/api/route-endpoints?page=1&pageSize=100' });
     expect(catalogAfterDelete.statusCode).toBe(200);
-    const supplyItemsAfterDelete = catalogAfterDelete.json().filter((item: Record<string, any>) => (
+    const supplyItemsAfterDelete = (catalogAfterDelete.json() as { items: Array<Record<string, any>> }).items.filter((item) => (
       item.endpointKind === 'supply' && item.routeId === exactRoute.id
     ));
     expect(supplyItemsAfterDelete).toHaveLength(1);
@@ -1034,9 +1023,9 @@ describe('PUT /api/routes/:id route rebuild', () => {
     expect(internalResponse.statusCode).toBe(200);
     expect(internalResponse.json()).toMatchObject({ success: true, updatedCount: 1 });
 
-    const internalSummary = await app.inject({ method: 'GET', url: '/api/routes/summary?all=1' });
+    const internalSummary = await app.inject({ method: 'GET', url: '/api/routes/summary?page=1&pageSize=50' });
     expect(internalSummary.statusCode).toBe(200);
-    expect(internalSummary.json()).toContainEqual(expect.objectContaining({
+    expect((internalSummary.json() as { items: unknown[] }).items).toContainEqual(expect.objectContaining({
       id: exactRoute.id,
       visibility: 'internal',
     }));
@@ -1056,9 +1045,9 @@ describe('PUT /api/routes/:id route rebuild', () => {
     expect(publicResponse.statusCode).toBe(200);
     expect(publicResponse.json()).toMatchObject({ success: true, updatedCount: 1 });
 
-    const publicSummary = await app.inject({ method: 'GET', url: '/api/routes/summary?all=1' });
+    const publicSummary = await app.inject({ method: 'GET', url: '/api/routes/summary?page=1&pageSize=50' });
     expect(publicSummary.statusCode).toBe(200);
-    expect(publicSummary.json()).toContainEqual(expect.objectContaining({
+    expect((publicSummary.json() as { items: unknown[] }).items).toContainEqual(expect.objectContaining({
       id: exactRoute.id,
       visibility: 'public',
     }));

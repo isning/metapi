@@ -84,6 +84,9 @@ describe('route refresh workflow architecture boundaries', () => {
 
     expectImportsRouteRefreshWorkflow(modelListOrchestratorSource);
     expect(modelListOrchestratorSource).toMatch(/\bselectModelListTarget\s*\(/);
+    expect(modelListOrchestratorSource).not.toContain('routeGraphService.js');
+    expect(modelListOrchestratorSource).not.toContain('ensureActiveRouteGraphVersion');
+    expect(modelListOrchestratorSource).toContain('routeTableProjectionService.js');
     expect(geminiAdapterSource).toContain('modelListModelProbes: GEMINI_MODEL_PROBES');
   });
 

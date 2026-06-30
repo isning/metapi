@@ -18,6 +18,7 @@ const invalidateTokenRouterCacheMock = vi.fn();
 const authorizeDownstreamTokenMock = vi.fn();
 const consumeManagedKeyRequestMock = vi.fn();
 const isModelAllowedByPolicyOrAllowedRoutesMock = vi.fn();
+const listPublicRouteModelNamesMock = vi.fn();
 const dbSelectAllMock = vi.fn();
 const dbSelectGetMock = vi.fn();
 const dbInsertValuesMock = vi.fn((_values?: unknown) => ({
@@ -86,6 +87,10 @@ vi.mock('../../services/downstreamApiKeyService.js', () => ({
   authorizeDownstreamToken: (...args: unknown[]) => authorizeDownstreamTokenMock(...args),
   consumeManagedKeyRequest: (...args: unknown[]) => consumeManagedKeyRequestMock(...args),
   isModelAllowedByPolicyOrAllowedRoutes: (...args: unknown[]) => isModelAllowedByPolicyOrAllowedRoutesMock(...args),
+}));
+
+vi.mock('../../services/routeTableProjectionService.js', () => ({
+  listPublicRouteModelNames: (...args: unknown[]) => listPublicRouteModelNamesMock(...args),
 }));
 
 vi.mock('../../services/routeGraphRuntimeService.js', async (importOriginal) => ({
@@ -229,6 +234,7 @@ describe('gemini native proxy routes', () => {
     authorizeDownstreamTokenMock.mockReset();
     consumeManagedKeyRequestMock.mockReset();
     isModelAllowedByPolicyOrAllowedRoutesMock.mockReset();
+    listPublicRouteModelNamesMock.mockReset();
     dbInsertMock.mockClear();
     dbInsertValuesMock.mockClear();
     dbSelectAllMock.mockReset();
@@ -280,6 +286,7 @@ describe('gemini native proxy routes', () => {
     resetUpstreamEndpointRuntimeState();
     explainSelectionMock.mockResolvedValue({ selectedTargetId: 11 });
     isModelAllowedByPolicyOrAllowedRoutesMock.mockResolvedValue(true);
+    listPublicRouteModelNamesMock.mockResolvedValue([]);
   });
 
   afterAll(async () => {
@@ -474,10 +481,10 @@ describe('gemini native proxy routes', () => {
       .mockResolvedValueOnce([
         { modelName: 'gpt-4.1' },
         { modelName: 'claude-sonnet-4-5-20250929' },
-      ])
-      .mockResolvedValueOnce([
-        { displayName: 'gemini-2.5-flash' },
       ]);
+    listPublicRouteModelNamesMock.mockResolvedValue([
+      { routeId: 22, modelName: 'gemini-2.5-flash' },
+    ]);
 
     const response = await app.inject({
       method: 'GET',

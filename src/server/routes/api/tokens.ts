@@ -107,14 +107,11 @@ function createTokenRouteReadLimiter(keyPrefix: string, points = 60) {
 }
 
 let routeSummaryReadLimiter = createTokenRouteReadLimiter('token-routes-summary-read');
-let routeListReadLimiter = createTokenRouteReadLimiter('token-routes-list-read');
 
 export function resetTokenRouteReadLimitersForTests(options: {
   summaryPoints?: number;
-  listPoints?: number;
 } = {}): void {
   routeSummaryReadLimiter = createTokenRouteReadLimiter('token-routes-summary-read', options.summaryPoints ?? 60);
-  routeListReadLimiter = createTokenRouteReadLimiter('token-routes-list-read', options.listPoints ?? 60);
   routeSummaryReadModelCache = null;
   invalidateRouteGraphReadCaches();
 }
@@ -1614,7 +1611,6 @@ export async function tokensRoutes(app: FastifyInstance) {
   app.get<{
     Querystring: {
       paged?: string;
-      all?: string;
       page?: string;
       pageSize?: string;
       endpointKind?: string;
@@ -1634,24 +1630,13 @@ export async function tokensRoutes(app: FastifyInstance) {
       siteId: Number(request.query.siteId),
       q: request.query.q,
     };
-    if (request.query.all === '1' || request.query.all === 'true') {
-      return await listRouteEndpointCatalog(query);
-    }
     return await listRouteEndpointCatalogPage(query);
-  });
-
-  // List routes with basic info only (lightweight for selectors)
-  app.get('/api/routes/lite', async () => {
-    return (await listRoutesWithSources()).map((route) => ({
-      ...routeToGraphResponseBase(route),
-    }));
   });
 
   // Route summary (no target details) for first-screen rendering
   app.get<{
     Querystring: {
       paged?: string;
-      all?: string;
       page?: string;
       pageSize?: string;
     } & RouteSummaryProjectionQuery;
@@ -1661,9 +1646,6 @@ export async function tokensRoutes(app: FastifyInstance) {
     } catch (error) {
       sendTokenRouteRateLimit(reply, error);
       return;
-    }
-    if (request.query.all === '1' || request.query.all === 'true') {
-      return await loadCachedRouteSummaryRows();
     }
     if (hasRouteSummaryProjectionQuery(request.query)) {
       const rows = await loadCachedRouteSummaryRows();
@@ -1773,27 +1755,6 @@ export async function tokensRoutes(app: FastifyInstance) {
     }
 
     return { success: true, created, skipped, errors };
-  });
-
-  // List all routes
-  app.get('/api/routes', async (request, reply) => {
-    try {
-      await routeListReadLimiter.consume(request.ip);
-    } catch (error) {
-      sendTokenRouteRateLimit(reply, error);
-      return;
-    }
-    const routes = await listRoutesWithSources();
-    if (routes.length === 0) return [];
-
-    const targetsByRoute = await fetchTargetsForRouteRows(routes);
-
-    return routes.map((route) => ({
-      ...routeToGraphResponseBase(route),
-      decisionSnapshot: parseRouteDecisionSnapshot(route.decisionSnapshot),
-      decisionRefreshedAt: route.decisionRefreshedAt ?? null,
-      targets: targetsByRoute.get(route.id) || [],
-    }));
   });
 
   app.get<{ Querystring: { model?: string } }>('/api/routes/decision', async (request, reply) => {
