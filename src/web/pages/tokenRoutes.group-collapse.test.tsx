@@ -663,7 +663,7 @@ describe('TokenRoutes grouped source models', () => {
     }
   });
 
-  it('sends route list search and sort state to the paged route summary endpoint', async () => {
+  it('sends route list search only to the active tab and keeps tab counts stable', async () => {
     apiMock.getRouteSummaryPage.mockImplementation((options: { q?: string; page?: number; pageSize?: number }) => Promise.resolve({
       ...routeSummaryPage([
         routeFixture(options.q ? 50_000 : 1, {
@@ -678,7 +678,7 @@ describe('TokenRoutes grouped source models', () => {
         brands: [{ name: 'OpenAI', icon: 'openai', count: options.q ? 1 : 50_000 }],
         otherBrandCount: 0,
         sites: [{ name: 'site-a', count: options.q ? 1 : 50_000, siteId: 0 }],
-        tabs: { public: options.q ? 1 : 50_000, internal: 0, manual: 0 },
+        tabs: { public: 50_000, internal: 7, manual: 3 },
         enabled: { enabled: options.q ? 1 : 50_000, disabled: 0 },
       },
     }));
@@ -721,8 +721,19 @@ describe('TokenRoutes grouped source models', () => {
         }));
         const normalizedText = collectText(root.root).replace(/\s+/g, '');
         expect(normalizedText).toContain('共1条路由');
+        expect(normalizedText).toContain('公开路由组50000');
+        expect(normalizedText).toContain('内部路由组7');
+        expect(normalizedText).toContain('手动路由3');
         expect(normalizedText).toContain('tail-route-model');
       });
+      expect(apiMock.getRouteSummaryPage).toHaveBeenCalledTimes(2);
+      expect(apiMock.getRouteSummaryPage.mock.calls.map(([options]) => options)).toEqual([
+        expect.objectContaining({ tab: 'public', q: '' }),
+        expect.objectContaining({ tab: 'public', q: 'tail-route-model' }),
+      ]);
+      expect(apiMock.getRouteSummaryPage.mock.calls.some(([options]) => (
+        options?.tab === 'internal' || options?.tab === 'manual'
+      ))).toBe(false);
     } finally {
       root?.unmount();
     }

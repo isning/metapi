@@ -1526,11 +1526,14 @@ export default function TokenRoutes() {
   }, [baseFilteredRoutes, enabledFilter, routeSummaryFacetsAreRemote]);
 
   const routePageHasRemoteTotal = routeSummaryFacetsAreRemote;
+  const remoteRouteGroupTabCount = routeSummaryHasRemoteFacets
+    ? routeSummaryFacets.tabs[routeGroupListTab] ?? routePageInfo.totalCount
+    : routePageInfo.totalCount;
   const displayedRouteTotalCount = routePageHasRemoteTotal
-    ? (routeSummaryHasRemoteFacets ? routeSummaryFacets.tabs[routeGroupListTab] ?? routePageInfo.totalCount : routePageInfo.totalCount)
+    ? (routeListLoading ? remoteRouteGroupTabCount : routePageInfo.totalCount)
     : filteredRoutes.length;
   const displayedBaseRouteTotalCount = routePageHasRemoteTotal
-    ? (routeSummaryHasRemoteFacets ? displayedRouteTotalCount : routePageInfo.totalCount)
+    ? (routeListLoading ? remoteRouteGroupTabCount : routePageInfo.totalCount)
     : baseFilteredRoutes.length;
   const displayedRouteSummaryTotalCount = routeSummaryHasRemoteFacets
     ? getRouteSummaryTabTotal(routeSummaryFacets.tabs)

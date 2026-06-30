@@ -44,6 +44,8 @@ type NormalizedRouteSummaryProjectionQuery = {
   sortDir: "asc" | "desc";
 };
 
+type RouteSummaryTabFacets = Record<"public" | "internal" | "manual", number>;
+
 function normalizePositiveInteger(
   raw: string | number | null | undefined,
   fallback: number,
@@ -368,6 +370,7 @@ function buildFacets(
   routes: any[],
   context: Required<Pick<RouteSummaryProjectionContext, "endpointTypesByModel">>,
   routeLookup?: Map<number, any>,
+  overrides: { tabs?: RouteSummaryTabFacets } = {},
 ) {
   const brands = new Map<string, { name: string; icon?: string | null; color?: string | null; count: number }>();
   const sites = new Map<string, number>();
@@ -422,9 +425,19 @@ function buildFacets(
     endpointTypes: Array.from(endpointTypes.entries())
       .map(([name, count]) => ({ name, count }))
       .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name)),
-    tabs,
+    tabs: overrides.tabs || tabs,
     enabled,
   };
+}
+
+function buildRouteTabFacets(routes: any[]): RouteSummaryTabFacets {
+  const tabs = { public: 0, internal: 0, manual: 0 };
+  for (const route of routes) {
+    if (isManualRoute(route)) tabs.manual += 1;
+    else if (route?.visibility === "internal") tabs.internal += 1;
+    else tabs.public += 1;
+  }
+  return tabs;
 }
 
 export function hasRouteSummaryProjectionQuery(query: RouteSummaryProjectionQuery): boolean {
@@ -455,8 +468,9 @@ export function buildRouteSummaryProjectionPage(
   const routesById = new Map(allRoutes.map((route) => [Number(route?.id), route]));
   const endpointTypesCache = new Map<number, string[]>();
   const visibleRoutes = buildVisibleRouteList(allRoutes);
+  const tabFacets = buildRouteTabFacets(visibleRoutes);
   const searchFiltered = visibleRoutes.filter((route) => routeMatchesSearch(route, normalized.search));
-  const facets = buildFacets(searchFiltered, { endpointTypesByModel }, routesById);
+  const facets = buildFacets(searchFiltered, { endpointTypesByModel }, routesById, { tabs: tabFacets });
   const filtered = searchFiltered
     .filter((route) => routeMatchesTab(route, normalized.tab))
     .filter((route) => routeMatchesGroup(route, normalized.group))
