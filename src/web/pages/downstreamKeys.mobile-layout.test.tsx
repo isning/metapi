@@ -8,7 +8,7 @@ const { apiMock } = vi.hoisted(() => ({
   apiMock: {
     getDownstreamApiKeysSummary: vi.fn(),
     getDownstreamApiKeys: vi.fn(),
-    getRoutesLite: vi.fn(),
+    getRouteSummaryPage: vi.fn(),
     getDownstreamApiKeyOverview: vi.fn(),
     getDownstreamApiKeyTrend: vi.fn(),
     createDownstreamApiKey: vi.fn(),
@@ -151,15 +151,16 @@ describe('DownstreamKeys mobile layout', () => {
       success: true,
       items: [buildRawItem(1), buildRawItem(2)],
     });
-    apiMock.getRoutesLite.mockResolvedValue([
-      {
+    apiMock.getRouteSummaryPage.mockResolvedValue({
+      items: [{
         id: 11,
         match: { kind: 'model', requestedModelPattern: 'claude-*', displayName: '默认群组' },
         backend: { kind: 'supply' },
         presentation: { displayName: '默认群组', displayIcon: null },
         enabled: true,
-      },
-    ]);
+      }],
+      pageInfo: { page: 1, pageSize: 500, totalCount: 1, hasMore: false },
+    });
     apiMock.getDownstreamApiKeyOverview.mockResolvedValue({
       success: true,
       item: buildSummaryItem(1),

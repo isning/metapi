@@ -24,6 +24,7 @@ describe('route projection paging architecture', () => {
     const tokenRoutes = source('src/web/pages/TokenRoutes.tsx');
     const modelTester = source('src/web/pages/ModelTester.tsx');
     const graphWorkbench = source('src/web/pages/token-routes/RouteGraphWorkbench.tsx');
+    const downstreamKeys = source('src/web/pages/DownstreamKeys.tsx');
     const combined = [tokenRoutes, modelTester, graphWorkbench].join('\n');
 
     expect(tokenRoutes).toContain('api.getRouteSummaryPage<RouteSummaryRow>');
@@ -39,6 +40,9 @@ describe('route projection paging architecture', () => {
     expect(graphWorkbench).toContain('onSearchRouteEndpoints');
     expect(graphWorkbench).toContain('onLoadMoreRouteEndpoints');
     expect(graphWorkbench).toContain('loadMoreEndpoints');
+    expect(downstreamKeys).toContain('api.getRouteSummaryPage<RouteSelectorItem>');
+    expect(downstreamKeys).toContain('loadAllRouteSummaryRows');
+    expect(downstreamKeys).not.toContain('getRoutesLite');
     expect(combined).not.toContain('api.getRoutes()');
   });
 

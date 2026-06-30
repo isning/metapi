@@ -1330,7 +1330,6 @@ export const api = {
       method: "POST",
       body: JSON.stringify(graph),
     }),
-  getRoutesLite: () => request("/api/routes/lite"),
   getRouteSummaryPage: <T = any>(options: {
     page: number;
     pageSize: number;

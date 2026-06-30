@@ -10,7 +10,7 @@ const { apiMock } = vi.hoisted(() => ({
     getAuthInfo: vi.fn(),
     getRuntimeSettings: vi.fn(),
     getDownstreamApiKeys: vi.fn(),
-    getRoutesLite: vi.fn(),
+    getRouteSummaryPage: vi.fn(),
     getRuntimeDatabaseConfig: vi.fn(),
     getBrandList: vi.fn(),
     updateRuntimeSettings: vi.fn(),
@@ -62,7 +62,7 @@ describe('Settings log cleanup schedule', () => {
       systemProxyUrl: '',
     });
     apiMock.getDownstreamApiKeys.mockResolvedValue({ items: [] });
-    apiMock.getRoutesLite.mockResolvedValue([]);
+    apiMock.getRouteSummaryPage.mockResolvedValue({ items: [], pageInfo: { page: 1, pageSize: 500, totalCount: 0, hasMore: false } });
     apiMock.getBrandList.mockResolvedValue({ brands: [] });
     apiMock.getRuntimeDatabaseConfig.mockResolvedValue({
       active: { dialect: 'sqlite', connection: '(default sqlite path)', ssl: false },

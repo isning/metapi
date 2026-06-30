@@ -229,6 +229,27 @@ function buildSearchMatcher(search: string): ((haystack: string) => boolean) | n
   return (haystack: string) => haystack.toLowerCase().includes(normalized);
 }
 
+async function loadAllRouteSummaryRows(): Promise<RouteSelectorItem[]> {
+  const pageSize = 500;
+  const rows: RouteSelectorItem[] = [];
+  let page = 1;
+  let hasMore = true;
+
+  while (hasMore) {
+    const response = await api.getRouteSummaryPage<RouteSelectorItem>({
+      page,
+      pageSize,
+    });
+    const items = Array.isArray(response?.items) ? response.items : [];
+    rows.push(...items);
+    hasMore = response?.pageInfo?.hasMore === true;
+    page += 1;
+    if (items.length === 0) break;
+  }
+
+  return rows;
+}
+
 function splitSearchInput(value: string): { textSearch: string; inlineTags: string[] } {
   const raw = value.trim();
   if (!raw) return { textSearch: '', inlineTags: [] };
@@ -573,11 +594,11 @@ export default function DownstreamKeys() {
       const [summaryRes, rawRes, routesRes] = await Promise.all([
         api.getDownstreamApiKeysSummary({ range }),
         api.getDownstreamApiKeys(),
-        api.getRoutesLite(),
+        loadAllRouteSummaryRows(),
       ]);
       setSummaryItems(Array.isArray(summaryRes?.items) ? summaryRes.items : []);
       setRawItems(Array.isArray(rawRes?.items) ? rawRes.items : []);
-      setRouteOptions((Array.isArray(routesRes) ? routesRes : []) as RouteSelectorItem[]);
+      setRouteOptions(routesRes);
     } catch (err: any) {
       toast.error(err?.message || tr('pages.downstreamKeys.downstreamKeysFailed'));
     } finally {

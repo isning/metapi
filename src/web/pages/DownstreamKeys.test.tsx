@@ -9,7 +9,7 @@ const { apiMock } = vi.hoisted(() => ({
   apiMock: {
     getDownstreamApiKeysSummary: vi.fn(),
     getDownstreamApiKeys: vi.fn(),
-    getRoutesLite: vi.fn(),
+    getRouteSummaryPage: vi.fn(),
     getAccounts: vi.fn(),
     getAccountsSnapshot: vi.fn(),
     getAccountTokens: vi.fn(),
@@ -65,6 +65,19 @@ function collectText(node: ReactTestInstance): string {
 
 function routeSummaryRows(rows: any[]): any[] {
   return rows.map((row) => routeSummaryFixture(row as any));
+}
+
+function routeSummaryPage(rows: any[]): { items: any[]; pageInfo: { page: number; pageSize: number; totalCount: number; hasMore: boolean } } {
+  const items = routeSummaryRows(rows);
+  return {
+    items,
+    pageInfo: {
+      page: 1,
+      pageSize: 500,
+      totalCount: items.length,
+      hasMore: false,
+    },
+  };
 }
 
 async function flushMicrotasks() {
@@ -140,7 +153,7 @@ beforeEach(() => {
   };
   apiMock.getDownstreamApiKeysSummary.mockResolvedValue({ success: true, items: [buildSummaryItem()] });
   apiMock.getDownstreamApiKeys.mockResolvedValue({ success: true, items: [buildRawItem()] });
-  apiMock.getRoutesLite.mockResolvedValue(routeSummaryRows([
+  apiMock.getRouteSummaryPage.mockResolvedValue(routeSummaryPage([
     { id: 11, enabled: true ,
         match: { kind: 'model', requestedModelPattern: 'claude-*', displayName: '默认群组' },
         backend: { kind: 'supply' },
@@ -239,7 +252,7 @@ describe('DownstreamKeys page', () => {
 
       expect(apiMock.getDownstreamApiKeysSummary).toHaveBeenCalledWith({ range: '24h' });
       expect(apiMock.getDownstreamApiKeys).toHaveBeenCalled();
-      expect(apiMock.getRoutesLite).toHaveBeenCalled();
+      expect(apiMock.getRouteSummaryPage).toHaveBeenCalled();
 
       const text = collectText(root!.root);
       expect(text).toContain('下游密钥');
@@ -550,7 +563,7 @@ describe('DownstreamKeys page', () => {
   });
 
   it('lets operators explicitly select all exact models and all group routes before saving', async () => {
-    apiMock.getRoutesLite.mockResolvedValue(routeSummaryRows([
+    apiMock.getRouteSummaryPage.mockResolvedValue(routeSummaryPage([
       { id: 11, enabled: true ,
         match: { kind: 'model', requestedModelPattern: 'claude-*', displayName: '默认群组' },
         backend: { kind: 'supply' },
@@ -635,7 +648,7 @@ describe('DownstreamKeys page', () => {
   });
 
   it('defaults new keys to all exact models and all group routes before saving', async () => {
-    apiMock.getRoutesLite.mockResolvedValue(routeSummaryRows([
+    apiMock.getRouteSummaryPage.mockResolvedValue(routeSummaryPage([
       { id: 11, enabled: true ,
         match: { kind: 'model', requestedModelPattern: 'claude-*', displayName: '默认群组' },
         backend: { kind: 'supply' },
