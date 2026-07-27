@@ -100,9 +100,7 @@ describe('Sites detect race handling', () => {
       const openAddButton = root.root.find((node) => (
         node.type === 'button'
         && typeof node.props.onClick === 'function'
-        && typeof node.props.className === 'string'
-        && node.props.className.includes('btn btn-primary')
-        && JSON.stringify(node.props.children).includes('添加站点')
+        && collectText(node).includes('添加站点')
       ));
 
       await act(async () => {
@@ -119,8 +117,6 @@ describe('Sites detect race handling', () => {
       const detectButton = root.root.findAll((node) => (
         node.type === 'button'
         && typeof node.props.onClick === 'function'
-        && typeof node.props.className === 'string'
-        && node.props.className.includes('btn btn-ghost')
         && collectText(node).trim() === '自动检测'
       )).at(-1);
       expect(detectButton).toBeTruthy();
@@ -180,9 +176,7 @@ describe('Sites detect race handling', () => {
       const openAddButton = root.root.find((node) => (
         node.type === 'button'
         && typeof node.props.onClick === 'function'
-        && typeof node.props.className === 'string'
-        && node.props.className.includes('btn btn-primary')
-        && JSON.stringify(node.props.children).includes('添加站点')
+        && collectText(node).includes('添加站点')
       ));
 
       await act(async () => {

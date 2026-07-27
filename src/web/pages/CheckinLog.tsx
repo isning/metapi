@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../api.js";
 import { MobileCard, MobileField } from "../components/MobileCard.js";
 import ResponsiveFilterPanel from "../components/ResponsiveFilterPanel.js";
+import SegmentedTabBar from "../components/SegmentedTabBar.js";
 import { useToast } from "../components/Toast.js";
 import { useIsMobile } from "../components/useIsMobile.js";
 import {
@@ -9,6 +10,25 @@ import {
   parseServerUtcDateTime,
 } from "./helpers/checkinLogTime.js";
 import { tr } from "../i18n.js";
+import { Button } from '../components/ui/button/index.js';
+import { LoaderCircle } from 'lucide-react';
+import { Skeleton } from '../components/ui/skeleton/index.js';
+import ToneBadge from '../components/ToneBadge.js';
+import EmptyStateBlock from '../components/EmptyStateBlock.js';
+import { Alert, AlertDescription } from '../components/ui/alert/index.js';
+import { Card, CardContent } from '../components/ui/card/index.js';
+import { Input } from '../components/ui/input/index.js';
+import { DataTable, DataTableEmpty, DataTableToolbar } from '../components/ui/data-table/index.js';
+import PageHeader from '../components/workspace/PageHeader.js';
+import PageShell from '../components/workspace/PageShell.js';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '../components/ui/table/index.js';
 
 type LogFilter = "all" | "success" | "failed" | "skipped";
 
@@ -144,7 +164,7 @@ export default function CheckinLog() {
       const data = await api.getCheckinLogs("limit=100");
       setLogs(Array.isArray(data) ? data : []);
     } catch (e: any) {
-      toast.error(e.message || "加载签到记录失败");
+      toast.error(e.message || tr('pages.checkinLog.failedLoadCheckRecords'));
     } finally {
       setLoading(false);
     }
@@ -159,28 +179,28 @@ export default function CheckinLog() {
     try {
       const res = await api.triggerCheckinAll();
       if (res?.queued) {
-        toast.info(res.message || "已开始签到，请稍后查看签到记录");
+        toast.info(res.message || tr('pages.checkinLog.signHasStartedPleaseCheckSignRecord'));
       } else {
-        toast.success(res?.message || "签到已执行");
+        toast.success(res?.message || tr('pages.checkinLog.signHasBeenExecuted'));
       }
       await load();
     } catch (e: any) {
-      toast.error(e.message || "触发签到失败");
+      toast.error(e.message || tr('pages.checkinLog.failedTriggerSign'));
     } finally {
       setTriggering(false);
     }
   };
 
   const statusLabel = (status: "success" | "failed" | "skipped") => {
-    if (status === "success") return "成功";
-    if (status === "skipped") return "跳过";
-    return "失败";
+    if (status === "success") return tr('pages.checkinLog.success');
+    if (status === "skipped") return tr('pages.checkinLog.jumpOver');
+    return tr('pages.checkinLog.failed');
   };
 
   const statusClass = (status: "success" | "failed" | "skipped") => {
-    if (status === "success") return "badge-success";
-    if (status === "skipped") return "badge-muted";
-    return "badge-error";
+    if (status === "success") return "success";
+    if (status === "skipped") return "muted";
+    return "error";
   };
 
   const getFailureReason = (log: any): FailureReason | null => {
@@ -190,153 +210,127 @@ export default function CheckinLog() {
   };
 
   const timeRangeControls = (
-    <div
-      style={{
-        display: "flex",
-        flexWrap: "wrap",
-        gap: 10,
-        alignItems: "center",
-      }}
-    >
-      <label className="proxy-logs-time-field">
-        <span>开始</span>
-        <input
+    <div className="flex flex-wrap items-end gap-3">
+      <label className="grid gap-1">
+        <span className="text-xs font-medium text-muted-foreground">{tr('pages.checkinLog.start')}</span>
+        <Input
           type="datetime-local"
           value={fromInput}
           max={toInput || undefined}
           onChange={(e) => setFromInput(e.target.value)}
         />
       </label>
-      <label className="proxy-logs-time-field">
-        <span>结束</span>
-        <input
+      <label className="grid gap-1">
+        <span className="text-xs font-medium text-muted-foreground">{tr('pages.checkinLog.end')}</span>
+        <Input
           type="datetime-local"
           value={toInput}
           min={fromInput || undefined}
           onChange={(e) => setToInput(e.target.value)}
         />
       </label>
-      <button
+      <Button variant="outline"
         type="button"
-        className="btn btn-ghost proxy-logs-filter-reset"
+       
         onClick={clearTimeRange}
       >
-        清空筛选
-      </button>
+        {tr('pages.checkinLog.clearfilter')}
+      </Button>
     </div>
   );
 
   const filterTabs = (
-    <div className="pill-tabs">
-      {[
-        { key: "all" as const, label: "全部", count: timeFilteredLogs.length },
-        { key: "success" as const, label: "成功", count: countBy("success") },
-        { key: "failed" as const, label: "失败", count: countBy("failed") },
-        { key: "skipped" as const, label: "跳过", count: countBy("skipped") },
-      ].map((tab) => (
-        <button
-          key={tab.key}
-          className={`pill-tab ${filter === tab.key ? "active" : ""}`}
-          onClick={() => setFilter(tab.key)}
-        >
-          {tab.label}{" "}
-          <span style={{ fontVariantNumeric: "tabular-nums", opacity: 0.7 }}>
-            {tab.count}
-          </span>
-        </button>
-      ))}
-    </div>
+    <SegmentedTabBar<LogFilter>
+      value={filter}
+      onValueChange={setFilter}
+      items={[
+        { value: "all", label: tr('components.notificationPanel.all'), count: timeFilteredLogs.length },
+        { value: "success", label: tr('pages.checkinLog.success'), count: countBy("success") },
+        { value: "failed", label: tr('pages.checkinLog.failed'), count: countBy("failed") },
+        { value: "skipped", label: tr('pages.checkinLog.jumpOver'), count: countBy("skipped") },
+      ]}
+    />
   );
 
   return (
-    <div className="animate-fade-in">
-      <div className="page-header">
-        <h2 className="page-title">{tr("签到记录")}</h2>
-        <button
+    <PageShell>
+      <PageHeader
+        title={tr('app.checkLogs')}
+        description={tr('pages.checkinLog.checkLogsSubtitle')}
+        actions={(
+        <Button type="button"
           onClick={handleTriggerAll}
           disabled={triggering}
-          className="btn btn-soft-primary"
+         
         >
           {triggering ? (
             <>
-              <span className="spinner spinner-sm" />
-              触发中...
+              <LoaderCircle className="size-4 animate-spin" />
+              {tr('pages.checkinLog.triggering')}
             </>
           ) : (
-            "运行所有签到"
+            tr('pages.checkinLog.runAllCheckIns')
           )}
-        </button>
-      </div>
+        </Button>
+        )}
+      />
 
       <ResponsiveFilterPanel
         isMobile={isMobile}
         mobileOpen={showFilters}
         onMobileOpen={() => setShowFilters(true)}
         onMobileClose={() => setShowFilters(false)}
-        mobileTitle="筛选签到记录"
+        mobileTitle={tr('pages.checkinLog.filtercheckLogs')}
         mobileContent={(
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div className="grid gap-3">
             {timeRangeControls}
             {hasInvalidTimeRange && (
-              <div className="alert alert-error">
-                结束时间必须晚于开始时间
-              </div>
+              <Alert variant="destructive">
+                <AlertDescription>{tr('pages.checkinLog.endtimeStarttime')}</AlertDescription>
+              </Alert>
             )}
             {filterTabs}
           </div>
         )}
         desktopContent={(
-          <div className="toolbar" style={{ marginBottom: "12px" }}>
-            <div style={{ minWidth: 280 }}>{filterTabs}</div>
-            <div
-              style={{
-                flex: "0 0 auto",
-                display: "flex",
-                alignItems: "center",
-                gap: 10,
-              }}
-            >
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="min-w-72">{filterTabs}</div>
+            <div className="flex flex-wrap items-center gap-3">
               {timeRangeControls}
             </div>
             {hasInvalidTimeRange && (
-              <div className="alert alert-error" style={{ width: "100%" }}>
-                结束时间必须晚于开始时间
+              <div className="w-full rounded-md border border-destructive/40 p-3 text-sm text-destructive">
+                {tr('pages.checkinLog.endtimeStarttime')}
               </div>
             )}
           </div>
         )}
       />
 
-      <div
-        className="card"
-        style={{
-          overflowX: "auto",
-          borderTopLeftRadius: 0,
-          borderTopRightRadius: 0,
-        }}
-      >
-        {loading ? (
-          <div
-            style={{
-              padding: 24,
-              display: "flex",
-              flexDirection: "column",
-              gap: 10,
-            }}
-          >
+      {loading ? (
+        <Card>
+          <CardContent className="grid gap-3 p-6">
             {[...Array(5)].map((_, i) => (
-              <div key={i} style={{ display: "flex", gap: 16 }}>
-                <div className="skeleton" style={{ width: 120, height: 16 }} />
-                <div className="skeleton" style={{ width: 80, height: 16 }} />
-                <div className="skeleton" style={{ width: 120, height: 16 }} />
-                <div className="skeleton" style={{ width: 70, height: 16 }} />
-                <div className="skeleton" style={{ flex: 1, height: 16 }} />
-                <div className="skeleton" style={{ width: 60, height: 16 }} />
+              <div key={i} className="flex gap-4">
+                <Skeleton className="h-4 w-28" />
+                <Skeleton className="h-4 w-20" />
+                <Skeleton className="h-4 w-28" />
+                <Skeleton className="h-4 w-16" />
+                <Skeleton className="h-4 flex-1" />
+                <Skeleton className="h-4 w-14" />
               </div>
             ))}
-          </div>
-        ) : isMobile ? (
-          <div className="mobile-card-list">
+          </CardContent>
+        </Card>
+      ) : filtered.length === 0 ? (
+        <DataTable>
+          <DataTableEmpty
+            title={tr('pages.checkinLog.nonecheckLogs')}
+            description={tr('pages.checkinLog.runAllCheckInsStart')}
+          />
+        </DataTable>
+      ) : isMobile ? (
+          <div className="grid gap-3">
             {filtered.map((log: any) => {
               const status = getStatus(log);
               const reason = getFailureReason(log);
@@ -346,88 +340,88 @@ export default function CheckinLog() {
               return (
                 <MobileCard
                   key={logId}
-                  title={log.accounts?.username || "未知"}
+                  title={log.accounts?.username || tr('pages.accounts.unknown2')}
                   headerActions={
-                    <span
-                      className={`badge ${statusClass(status)}`}
-                      style={{ fontSize: 10 }}
+                    <ToneBadge tone={statusClass(status)}
+                     
+                     
                     >
                       {statusLabel(status)}
-                    </span>
+                    </ToneBadge>
                   }
                   footerActions={
-                    <button
+                    <Button variant="ghost" size="sm"
                       type="button"
-                      className="btn btn-link"
+                     
                       onClick={() =>
                         setExpandedLogId(isExpanded ? null : logId)
                       }
                     >
-                      {isExpanded ? "收起" : "详情"}
-                    </button>
+                      {isExpanded ? tr('pages.accounts.collapse') : tr('pages.accounts.details')}
+                    </Button>
                   }
                 >
                   <MobileField
-                    label="时间"
+                    label={tr('pages.checkinLog.time')}
                     value={formatCheckinLogTime(
                       log.checkin_logs?.createdAt || log.createdAt,
                     )}
                   />
                   <MobileField
-                    label="站点"
+                    label={tr('components.searchModal.sites2')}
                     value={
                       log.sites?.url ? (
                         <a
                           href={log.sites.url}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="badge-link"
+                          className="inline-flex"
                         >
-                          <span
-                            className="badge badge-muted"
-                            style={{ fontSize: 11 }}
+                          <ToneBadge tone="-muted"
+                           
+                           
                           >
                             {log.sites?.name || "-"}
-                          </span>
+                          </ToneBadge>
                         </a>
                       ) : (
-                        <span
-                          className="badge badge-muted"
-                          style={{ fontSize: 11 }}
+                        <ToneBadge tone="-muted"
+                         
+                         
                         >
                           {log.sites?.name || "-"}
-                        </span>
+                        </ToneBadge>
                       )
                     }
                   />
                   <MobileField
-                    label="分类"
+                    label={tr('pages.checkinLog.category')}
                     value={
                       reason ? (
-                        <span
-                          className="badge badge-info"
+                        <ToneBadge tone="-info"
+                         
                           data-tooltip={reason.detailHint}
                         >
                           {reason.title}
-                        </span>
+                        </ToneBadge>
                       ) : (
-                        <span className="badge badge-muted">-</span>
+                        <ToneBadge tone="-muted">-</ToneBadge>
                       )
                     }
                   />
                   <MobileField
-                    label="奖励"
+                    label={tr('pages.checkinLog.reward')}
                     value={log.checkin_logs?.reward || "-"}
                   />
                   {isExpanded ? (
-                    <div className="mobile-card-extra">
+                    <div className="mt-3 grid gap-2">
                       <MobileField
-                        label="信息"
+                        label={tr('pages.checkinLog.info')}
                         stacked
                         value={log.checkin_logs?.message || log.message}
                       />
                       <MobileField
-                        label="建议"
+                        label={tr('pages.checkinLog.suggestion')}
                         stacked
                         value={reason?.actionHint || "-"}
                       />
@@ -438,134 +432,105 @@ export default function CheckinLog() {
             })}
           </div>
         ) : (
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>时间</th>
-                <th>账号</th>
-                <th>站点</th>
-                <th>状态</th>
-                <th>分类</th>
-                <th>信息</th>
-                <th>建议</th>
-                <th>奖励</th>
-              </tr>
-            </thead>
-            <tbody>
+          <DataTable minWidth={1120} density="compact">
+            <DataTableToolbar className="border-b bg-muted/30 px-4">
+              <div className="min-w-0">
+                <div className="text-sm font-semibold text-foreground">
+                  {filtered.length} {tr('pages.programLogs.items')}
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  {tr('pages.checkinLog.checkLogsSubtitle')}
+                </div>
+              </div>
+              <ToneBadge tone={hasInvalidTimeRange ? "-error" : "-muted"}>
+                {filter === 'all' ? tr('components.notificationPanel.all') : statusLabel(filter)}
+              </ToneBadge>
+            </DataTableToolbar>
+            <Table className="w-full text-sm">
+            <TableHeader>
+              <TableRow>
+                <TableHead>{tr('pages.checkinLog.time')}</TableHead>
+                <TableHead>{tr('components.searchModal.accounts2')}</TableHead>
+                <TableHead>{tr('components.searchModal.sites2')}</TableHead>
+                <TableHead>{tr('components.notificationPanel.status')}</TableHead>
+                <TableHead>{tr('pages.checkinLog.category')}</TableHead>
+                <TableHead>{tr('pages.checkinLog.info')}</TableHead>
+                <TableHead>{tr('pages.checkinLog.suggestion')}</TableHead>
+                <TableHead>{tr('pages.checkinLog.reward')}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {filtered.map((log: any) => {
                 const status = getStatus(log);
                 const reason = getFailureReason(log);
                 return (
-                  <tr key={log.checkin_logs?.id || log.id}>
-                    <td style={{ fontSize: 12, whiteSpace: "nowrap" }}>
+                  <TableRow key={log.checkin_logs?.id || log.id} className="row-selectable">
+                    <TableCell className="whitespace-nowrap text-xs">
                       {formatCheckinLogTime(
                         log.checkin_logs?.createdAt || log.createdAt,
                       )}
-                    </td>
-                    <td
-                      style={{
-                        fontWeight: 600,
-                        color: "var(--color-text-primary)",
-                      }}
-                    >
-                      {log.accounts?.username || "未知"}
-                    </td>
-                    <td>
+                    </TableCell>
+                    <TableCell className="font-semibold">
+                      {log.accounts?.username || tr('pages.accounts.unknown2')}
+                    </TableCell>
+                    <TableCell>
                       {log.sites?.url ? (
                         <a
                           href={log.sites.url}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="badge-link"
+                          className="inline-flex"
                         >
-                          <span
-                            className="badge badge-muted"
-                            style={{ fontSize: 11 }}
+                          <ToneBadge tone="-muted"
+                           
+                           
                           >
                             {log.sites?.name || "-"}
-                          </span>
+                          </ToneBadge>
                         </a>
                       ) : (
-                        <span
-                          className="badge badge-muted"
-                          style={{ fontSize: 11 }}
+                        <ToneBadge tone="-muted"
+                         
+                         
                         >
                           {log.sites?.name || "-"}
-                        </span>
+                        </ToneBadge>
                       )}
-                    </td>
-                    <td>
-                      <span className={`badge ${statusClass(status)}`}>
+                    </TableCell>
+                    <TableCell>
+                      <ToneBadge tone={statusClass(status)}>
                         {statusLabel(status)}
-                      </span>
-                    </td>
-                    <td>
+                      </ToneBadge>
+                    </TableCell>
+                    <TableCell>
                       {reason ? (
-                        <span
-                          className="badge badge-info"
+                        <ToneBadge tone="-info"
+                         
                           data-tooltip={reason.detailHint}
                         >
                           {reason.title}
-                        </span>
+                        </ToneBadge>
                       ) : (
-                        <span className="badge badge-muted">-</span>
+                        <ToneBadge tone="-muted">-</ToneBadge>
                       )}
-                    </td>
-                    <td style={{ maxWidth: 360 }}>
-                      <span
-                        style={{
-                          display: "block",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
+                    </TableCell>
+                    <TableCell className="max-w-sm truncate">
                         {log.checkin_logs?.message || log.message}
-                      </span>
-                    </td>
-                    <td style={{ maxWidth: 220 }}>
+                    </TableCell>
+                    <TableCell className="max-w-56 truncate text-xs text-muted-foreground" data-tooltip={reason?.detailHint || ""}>
                       <span
-                        style={{
-                          display: "block",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                          color: "var(--color-text-secondary)",
-                          fontSize: 12,
-                        }}
-                        data-tooltip={reason?.detailHint || ""}
                       >
                         {reason?.actionHint || "-"}
                       </span>
-                    </td>
-                    <td>{log.checkin_logs?.reward || "-"}</td>
-                  </tr>
+                    </TableCell>
+                    <TableCell>{log.checkin_logs?.reward || "-"}</TableCell>
+                  </TableRow>
                 );
               })}
-            </tbody>
-          </table>
+            </TableBody>
+            </Table>
+          </DataTable>
         )}
-
-        {!loading && filtered.length === 0 && (
-          <div className="empty-state">
-            <svg
-              className="empty-state-icon"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={1}
-                d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
-              />
-            </svg>
-            <div className="empty-state-title">暂无签到记录</div>
-            <div className="empty-state-desc">点击“运行所有签到”开始执行</div>
-          </div>
-        )}
-      </div>
-    </div>
+    </PageShell>
   );
 }

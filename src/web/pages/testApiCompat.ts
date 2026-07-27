@@ -20,6 +20,40 @@ type DashboardCompatApiMock = {
 
 const FIXTURE_GENERATED_AT = '2026-04-09T00:00:00.000Z';
 
+type GraphRouteSummaryFixture = {
+  id: number;
+  match: {
+    kind: 'model';
+    requestedModelPattern: string;
+    displayName?: string | null;
+  };
+  backend: { kind: 'supply' } | { kind: 'route_endpoints'; endpointIds: string[] };
+  presentation: {
+    displayName?: string | null;
+    displayIcon?: string | null;
+  };
+  [key: string]: unknown;
+};
+
+export function routeSummaryFixture(input: GraphRouteSummaryFixture): Record<string, unknown> {
+  return {
+    ...input,
+    id: input.id,
+    match: {
+      kind: 'model',
+      requestedModelPattern: input.match.requestedModelPattern,
+      displayName: input.match.displayName ?? null,
+    },
+    backend: input.backend.kind === 'route_endpoints'
+      ? { kind: 'route_endpoints', endpointIds: input.backend.endpointIds }
+      : { kind: 'supply' },
+    presentation: {
+      displayName: input.presentation.displayName ?? null,
+      displayIcon: input.presentation.displayIcon ?? null,
+    },
+  };
+}
+
 function buildDerivedSites(accounts: any[]): any[] {
   const siteMap = new Map<number, any>();
   for (const account of accounts) {

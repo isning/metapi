@@ -3,7 +3,7 @@ import { db, schema } from '../db/index.js';
 import { getLocalDayRangeUtc, formatLocalDateTime, getResolvedTimeZone } from './localTimeService.js';
 import { parseCheckinRewardAmount } from './checkinRewardParser.js';
 import { estimateRewardWithTodayIncomeFallback } from './todayIncomeRewardService.js';
-import { getProxyLogBaseSelectFields } from './proxyLogStore.js';
+import { listValuedRequestCostFacts } from './billingCostValuationService.js';
 
 export type DailySummaryMetrics = {
   localDay: string;
@@ -21,6 +21,9 @@ export type DailySummaryMetrics = {
   proxyFailed: number;
   proxyTotalTokens: number;
   todaySpend: number;
+  todaySpendUnit: string;
+  todaySpendUnknownObservationCount: number;
+  todaySpendIncompatibleObservationCount: number;
   todayReward: number;
 };
 
@@ -29,7 +32,6 @@ function round6(value: number): number {
 }
 
 export async function collectDailySummaryMetrics(now = new Date()): Promise<DailySummaryMetrics> {
-  const proxyLogBaseFields = getProxyLogBaseSelectFields();
   const { localDay, startUtc, endUtc } = getLocalDayRangeUtc(now);
 
   const accountRows = await db.select().from(schema.accounts)
@@ -69,24 +71,24 @@ export async function collectDailySummaryMetrics(now = new Date()): Promise<Dail
     parsedRewardCountByAccount[accountId] = (parsedRewardCountByAccount[accountId] || 0) + 1;
   }
 
-  const todayProxyRows = await db.select({
-    proxy_logs: proxyLogBaseFields,
-    accounts: schema.accounts,
-    sites: schema.sites,
-  }).from(schema.proxyLogs)
-    .leftJoin(schema.accounts, eq(schema.proxyLogs.accountId, schema.accounts.id))
-    .leftJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
+  const [todayProxyRequests, valuedCosts] = await Promise.all([
+    db.select({ request: schema.proxyRequests, site: schema.sites })
+    .from(schema.proxyRequests)
+    .innerJoin(schema.sites, eq(schema.proxyRequests.finalSiteId, schema.sites.id))
     .where(and(
-      gte(schema.proxyLogs.createdAt, startUtc),
-      lt(schema.proxyLogs.createdAt, endUtc),
+      gte(schema.proxyRequests.completedAt, startUtc),
+      lt(schema.proxyRequests.completedAt, endUtc),
       eq(schema.sites.status, 'active'),
     ))
-    .all();
-  const todayProxyLogs = todayProxyRows.map((row) => row.proxy_logs);
-  const proxySuccess = todayProxyLogs.filter((log) => log.status === 'success').length;
-  const proxyFailed = todayProxyLogs.filter((log) => log.status === 'failed').length;
-  const proxyTotalTokens = todayProxyLogs.reduce((sum, log) => sum + (log.totalTokens || 0), 0);
-  const todaySpend = todayProxyLogs.reduce((sum, log) => sum + (typeof log.estimatedCost === 'number' ? log.estimatedCost : 0), 0);
+    .all(),
+    listValuedRequestCostFacts({ fromDay: localDay, toDay: localDay }),
+  ]);
+  const activeSiteIds = new Set(accountRows.map((row) => row.sites.id));
+  const proxySuccess = todayProxyRequests.filter((row) => row.request.status === 'success').length;
+  const proxyFailed = todayProxyRequests.filter((row) => row.request.status === 'failure').length;
+  const proxyTotalTokens = todayProxyRequests.reduce((sum, row) => sum + (row.request.totalTokens || 0), 0);
+  const activeCostFacts = valuedCosts.facts.filter((fact) => activeSiteIds.has(fact.siteId));
+  const todaySpend = activeCostFacts.reduce((sum, fact) => sum + (fact.amount ?? 0), 0);
 
   const todayReward = accounts.reduce((sum, account) => sum + estimateRewardWithTodayIncomeFallback({
     day: localDay,
@@ -107,11 +109,14 @@ export async function collectDailySummaryMetrics(now = new Date()): Promise<Dail
     checkinSuccess: Math.max(0, checkinSuccess),
     checkinSkipped,
     checkinFailed,
-    proxyTotal: todayProxyLogs.length,
+    proxyTotal: todayProxyRequests.length,
     proxySuccess,
     proxyFailed,
     proxyTotalTokens,
     todaySpend: round6(todaySpend),
+    todaySpendUnit: valuedCosts.baseCostUnit,
+    todaySpendUnknownObservationCount: activeCostFacts.reduce((sum, fact) => sum + fact.unknownObservationCount, 0),
+    todaySpendIncompatibleObservationCount: activeCostFacts.reduce((sum, fact) => sum + fact.incompatibleObservationCount, 0),
     todayReward: round6(todayReward),
   };
 }
@@ -119,14 +124,18 @@ export async function collectDailySummaryMetrics(now = new Date()): Promise<Dail
 export function buildDailySummaryNotification(metrics: DailySummaryMetrics): { title: string; message: string } {
   const net = round6(metrics.todayReward - metrics.todaySpend);
   const title = `每日总结 ${metrics.localDay}`;
-  const message = [
+  const lines = [
     `日期: ${metrics.localDay}`,
     `生成时间: ${metrics.generatedAtLocal} (${metrics.timeZone})`,
     '',
-    `账号概览: 总计 ${metrics.totalAccounts} | 活跃 ${metrics.activeAccounts} | 低余额(<$1) ${metrics.lowBalanceAccounts}`,
+    `账号概览: 总计 ${metrics.totalAccounts} | 活跃 ${metrics.activeAccounts} | 低余额(<1) ${metrics.lowBalanceAccounts}`,
     `签到统计: 总计 ${metrics.checkinTotal} | 成功 ${metrics.checkinSuccess} | 跳过 ${metrics.checkinSkipped} | 失败 ${metrics.checkinFailed}`,
     `代理统计: 总计 ${metrics.proxyTotal} | 成功 ${metrics.proxySuccess} | 失败 ${metrics.proxyFailed} | Tokens ${metrics.proxyTotalTokens.toLocaleString()}`,
-    `费用统计: 支出 $${metrics.todaySpend.toFixed(6)} | 奖励 $${metrics.todayReward.toFixed(6)} | 净值 $${net.toFixed(6)}`,
-  ].join('\n');
+    `费用统计: 支出 ${metrics.todaySpend.toFixed(6)} ${metrics.todaySpendUnit} | 奖励 ${metrics.todayReward.toFixed(6)} ${metrics.todaySpendUnit} | 净值 ${net.toFixed(6)} ${metrics.todaySpendUnit}`,
+  ];
+  if (metrics.todaySpendUnknownObservationCount > 0 || metrics.todaySpendIncompatibleObservationCount > 0) {
+    lines.push(`费用覆盖: 未知 ${metrics.todaySpendUnknownObservationCount} | 单位不兼容 ${metrics.todaySpendIncompatibleObservationCount}`);
+  }
+  const message = lines.join('\n');
   return { title, message };
 }

@@ -1,9 +1,10 @@
 import { FastifyInstance } from 'fastify';
 import { db, schema } from '../../db/index.js';
-import { and, like, desc, eq, or } from 'drizzle-orm';
+import { like, desc, eq, or } from 'drizzle-orm';
 import { getProxyLogBaseSelectFields } from '../../services/proxyLogStore.js';
-import { getCredentialModeFromExtraConfig, supportsDirectAccountRoutingConnection } from '../../services/accountExtraConfig.js';
+import { getCredentialModeFromExtraConfig } from '../../services/accountExtraConfig.js';
 import { ACCOUNT_TOKEN_VALUE_STATUS_READY } from '../../services/accountTokenService.js';
+import { listActiveCompiledRuntimeModelInventory } from '../../services/compiledRuntimeInventoryService.js';
 
 function hasSessionTokenValue(value: string | null | undefined): boolean {
   return typeof value === 'string' && value.trim().length > 0;
@@ -120,68 +121,32 @@ export async function searchRoutes(app: FastifyInstance) {
       .orderBy(desc(schema.proxyLogs.createdAt))
       .limit(perCategory).all();
 
-    // Search models (only keep routable items)
-    const modelRows = await db.select({
-      modelName: schema.tokenModelAvailability.modelName,
-      tokenId: schema.accountTokens.id,
-      accountId: schema.accounts.id,
-      siteId: schema.sites.id,
-    })
-      .from(schema.tokenModelAvailability)
-      .innerJoin(schema.accountTokens, eq(schema.tokenModelAvailability.tokenId, schema.accountTokens.id))
-      .innerJoin(schema.accounts, eq(schema.accountTokens.accountId, schema.accounts.id))
-      .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
-      .where(
-        and(
-          like(schema.tokenModelAvailability.modelName, q),
-          eq(schema.tokenModelAvailability.available, true),
-          eq(schema.accountTokens.enabled, true),
-          eq(schema.accountTokens.valueStatus, ACCOUNT_TOKEN_VALUE_STATUS_READY),
-          eq(schema.accounts.status, 'active'),
-        ),
-      )
-      .limit(perCategory * 20)
-      .all();
-    const directAccountModelRows = await db.select({
-      modelName: schema.modelAvailability.modelName,
-      accountId: schema.accounts.id,
-      siteId: schema.sites.id,
-      accounts: schema.accounts,
-    })
-      .from(schema.modelAvailability)
-      .innerJoin(schema.accounts, eq(schema.modelAvailability.accountId, schema.accounts.id))
-      .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
-      .where(
-        and(
-          like(schema.modelAvailability.modelName, q),
-          eq(schema.modelAvailability.available, true),
-          eq(schema.accounts.status, 'active'),
-          eq(schema.sites.status, 'active'),
-        ),
-      )
-      .limit(perCategory * 20)
-      .all();
-
+    // Search routeable models from the active compiled runtime inventory.
+    const modelQuery = normalizeSearchQuery(query);
     const modelAgg = new Map<string, { tokenIds: Set<number>; accountIds: Set<number>; siteIds: Set<number> }>();
-    for (const row of modelRows) {
-      const key = row.modelName;
-      if (!modelAgg.has(key)) {
-        modelAgg.set(key, { tokenIds: new Set(), accountIds: new Set(), siteIds: new Set() });
-      }
+    const runtimeInventory = await listActiveCompiledRuntimeModelInventory();
+    for (const entrypoint of runtimeInventory) {
+      if (!normalizeSearchQuery(entrypoint.modelName).includes(modelQuery)) continue;
+      const key = entrypoint.modelName;
+      if (!modelAgg.has(key)) modelAgg.set(key, { tokenIds: new Set(), accountIds: new Set(), siteIds: new Set() });
       const agg = modelAgg.get(key)!;
-      agg.tokenIds.add(row.tokenId);
-      agg.accountIds.add(row.accountId);
-      agg.siteIds.add(row.siteId);
-    }
-    for (const row of directAccountModelRows) {
-      if (!supportsDirectAccountRoutingConnection(row.accounts)) continue;
-      const key = row.modelName;
-      if (!modelAgg.has(key)) {
-        modelAgg.set(key, { tokenIds: new Set(), accountIds: new Set(), siteIds: new Set() });
+      for (const attempt of entrypoint.executionAttempts) {
+        if (
+          !attempt.enabled ||
+          attempt.account.status !== 'active' ||
+          attempt.site.status !== 'active'
+        ) continue;
+        if (
+          attempt.token &&
+          (
+            !attempt.token.enabled ||
+            attempt.token.valueStatus !== ACCOUNT_TOKEN_VALUE_STATUS_READY
+          )
+        ) continue;
+        agg.accountIds.add(attempt.account.id);
+        agg.siteIds.add(attempt.site.id);
+        if (attempt.token) agg.tokenIds.add(attempt.token.id);
       }
-      const agg = modelAgg.get(key)!;
-      agg.accountIds.add(row.accountId);
-      agg.siteIds.add(row.siteId);
     }
 
     const models = Array.from(modelAgg.entries())

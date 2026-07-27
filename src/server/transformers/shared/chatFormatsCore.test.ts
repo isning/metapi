@@ -17,7 +17,39 @@ function parseOpenAiSsePayload(lines: string[]): Record<string, unknown> {
   return JSON.parse(dataLine.slice(6)) as Record<string, unknown>;
 }
 
+function parseClaudeSsePayloads(lines: string[]): Array<{ event: string; payload: Record<string, unknown> }> {
+  return lines
+    .map((line) => {
+      const eventMatch = /^event: ([^\n]+)\ndata: (.*)\n\n$/s.exec(line);
+      if (!eventMatch) return null;
+      return {
+        event: eventMatch[1],
+        payload: JSON.parse(eventMatch[2]) as Record<string, unknown>,
+      };
+    })
+    .filter((item): item is { event: string; payload: Record<string, unknown> } => !!item);
+}
+
 describe('chatFormatsCore inline think parsing', () => {
+  it('preserves leading and trailing whitespace in non-stream reasoning content', () => {
+    const normalized = normalizeUpstreamFinalResponse({
+      id: 'chatcmpl-reasoning-space',
+      model: 'deepseek-reasoner',
+      choices: [{
+        index: 0,
+        finish_reason: 'stop',
+        message: {
+          role: 'assistant',
+          content: {
+            reasoning_content: ' first token ',
+          },
+        },
+      }],
+    }, 'deepseek-reasoner');
+
+    expect(normalized.reasoningContent).toBe(' first token ');
+  });
+
   it('tracks split think tags across stream chunks', () => {
     const context = createStreamTransformContext('gpt-test');
 
@@ -80,6 +112,47 @@ describe('chatFormatsCore inline think parsing', () => {
     }, context, 'gpt-test')).toMatchObject({
       contentDelta: 'visible answer',
     });
+  });
+
+  it('normalizes OpenAI-compatible delta.thinking into downstream reasoning_content', () => {
+    const context = createStreamTransformContext('deepseek-reasoner');
+    const claudeContext = createClaudeDownstreamContext();
+
+    const event = normalizeUpstreamStreamEvent({
+      id: 'chatcmpl-thinking-delta',
+      model: 'deepseek-reasoner',
+      choices: [{
+        index: 0,
+        delta: {
+          role: 'assistant',
+          thinking: ' plan with spaces ',
+        },
+        finish_reason: null,
+      }],
+    }, context, 'deepseek-reasoner');
+
+    expect(event).toMatchObject({
+      role: 'assistant',
+      reasoningDelta: ' plan with spaces ',
+    });
+
+    const lines = serializeNormalizedStreamEvent(
+      'openai',
+      event,
+      context,
+      claudeContext,
+    );
+    const payload = parseOpenAiSsePayload(lines);
+
+    expect(payload).toMatchObject({
+      choices: [{
+        delta: {
+          role: 'assistant',
+          reasoning_content: ' plan with spaces ',
+        },
+      }],
+    });
+    expect(JSON.stringify(payload)).not.toContain('"thinking"');
   });
 
   it('treats response.reasoning_summary_text.done as reasoning-only stream output', () => {
@@ -650,6 +723,87 @@ describe('chatFormatsCore inline think parsing', () => {
   });
 });
 
+describe('chatFormatsCore Claude stream serialization', () => {
+  it('serializes OpenAI-compatible reasoning_content as Claude thinking deltas before text', () => {
+    const context = createStreamTransformContext('deepseek-reasoner');
+    const claudeContext = createClaudeDownstreamContext();
+
+    const reasoningEvent = normalizeUpstreamStreamEvent({
+      id: 'chatcmpl-deepseek-thinking',
+      model: 'deepseek-reasoner',
+      choices: [{
+        index: 0,
+        delta: {
+          role: 'assistant',
+          reasoning_content: 'first think',
+        },
+        finish_reason: null,
+      }],
+    }, context, 'deepseek-reasoner');
+
+    const textEvent = normalizeUpstreamStreamEvent({
+      id: 'chatcmpl-deepseek-thinking',
+      model: 'deepseek-reasoner',
+      choices: [{
+        index: 0,
+        delta: {
+          content: 'final answer',
+        },
+        finish_reason: null,
+      }],
+    }, context, 'deepseek-reasoner');
+
+    const payloads = parseClaudeSsePayloads([
+      ...serializeNormalizedStreamEvent('claude', reasoningEvent, context, claudeContext),
+      ...serializeNormalizedStreamEvent('claude', textEvent, context, claudeContext),
+    ]);
+
+    expect(payloads.map((item) => item.event)).toEqual([
+      'message_start',
+      'content_block_start',
+      'content_block_delta',
+      'content_block_stop',
+      'content_block_start',
+      'content_block_delta',
+    ]);
+    expect(payloads[1].payload).toMatchObject({
+      type: 'content_block_start',
+      content_block: { type: 'thinking', thinking: '' },
+    });
+    expect(payloads[2].payload).toMatchObject({
+      type: 'content_block_delta',
+      delta: { type: 'thinking_delta', thinking: 'first think' },
+    });
+    expect(payloads[4].payload).toMatchObject({
+      type: 'content_block_start',
+      content_block: { type: 'text', text: '' },
+    });
+    expect(payloads[5].payload).toMatchObject({
+      type: 'content_block_delta',
+      delta: { type: 'text_delta', text: 'final answer' },
+    });
+  });
+
+  it('drops incomplete tool-call stream deltas instead of emitting Claude placeholder tool_use blocks', () => {
+    const context = createStreamTransformContext('gpt-test');
+    const claudeContext = createClaudeDownstreamContext();
+
+    const lines = serializeNormalizedStreamEvent(
+      'claude',
+      {
+        toolCallDeltas: [{
+          index: 0,
+          argumentsDelta: '{"city":"Paris"}',
+        }],
+      },
+      context,
+      claudeContext,
+    );
+
+    expect(lines).toEqual([]);
+  });
+});
+
 describe('convertClaudeRequestToOpenAiBody', () => {
   it('keeps Claude tool_result content structured when a tool produces image blocks', () => {
     const payload = {
@@ -694,5 +848,30 @@ describe('convertClaudeRequestToOpenAiBody', () => {
     expect(toolMessage).toBeTruthy();
     expect(Array.isArray(toolMessage?.content)).toBe(true);
     expect(toolMessage?.content.some((part: any) => part?.type === 'image_url')).toBe(true);
+  });
+
+  it('drops Claude tool_use blocks without stable ids or names instead of synthesizing OpenAI tool calls', () => {
+    const { messages } = convertClaudeRequestToOpenAiBody({
+      model: 'gpt-test',
+      messages: [
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'tool_use',
+              name: 'lookup_weather',
+              input: { city: 'Paris' },
+            },
+            {
+              type: 'tool_use',
+              id: 'call_missing_name',
+              input: { city: 'Paris' },
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(messages).toEqual([]);
   });
 });

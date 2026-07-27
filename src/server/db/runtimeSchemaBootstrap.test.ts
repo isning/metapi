@@ -1,8 +1,8 @@
-import baselineContract from './generated/fixtures/2026-03-14-baseline.schemaContract.json' with { type: 'json' };
 import currentContract from './generated/schemaContract.json' with { type: 'json' };
-import { classifyLegacyCompatMutation } from './legacySchemaCompat.js';
+import { classifySchemaBootstrapMutation } from './schemaBootstrapCompatibility.js';
 import { generateUpgradeSql } from './schemaArtifactGenerator.js';
 import type { SchemaContract, SchemaContractColumn } from './schemaContract.js';
+import { makeCleanSchemaUpgradeBaselineContract } from './schemaContractTestFixtures.js';
 import { describe, expect, it } from 'vitest';
 import {
   __runtimeSchemaBootstrapTestUtils,
@@ -10,6 +10,8 @@ import {
   type RuntimeSchemaClient,
   type RuntimeSchemaDialect,
 } from './runtimeSchemaBootstrap.js';
+
+const cleanBaselineContract = makeCleanSchemaUpgradeBaselineContract(currentContract as SchemaContract);
 
 function createStubClient(dialect: RuntimeSchemaDialect, executedSql: string[]): RuntimeSchemaClient {
   return {
@@ -51,12 +53,12 @@ describe('runtime schema bootstrap', () => {
   it.each(['mysql', 'postgres'] as const)('executes live-schema upgrade statements for %s', async (dialect) => {
     const executedSql: string[] = [];
     const expectedUpgradeSql = __runtimeSchemaBootstrapTestUtils.splitSqlStatements(
-      generateUpgradeSql(dialect, currentContract, baselineContract),
+      generateUpgradeSql(dialect, currentContract as SchemaContract, cleanBaselineContract),
     );
 
     await ensureRuntimeDatabaseSchema(createStubClient(dialect, executedSql), {
       currentContract,
-      liveContract: baselineContract,
+      liveContract: cleanBaselineContract,
     });
 
     expect(executedSql.slice(0, expectedUpgradeSql.length)).toEqual(expectedUpgradeSql);
@@ -64,7 +66,7 @@ describe('runtime schema bootstrap', () => {
 
   it('skips external schema execution when live schema already matches the current contract', async () => {
     const executedSql: string[] = [];
-    const expectedUpgradeSql = __runtimeSchemaBootstrapTestUtils.buildExternalUpgradeStatements(
+    const expectedUpgradeSql = __runtimeSchemaBootstrapTestUtils.buildRuntimeUpgradeStatements(
       'mysql',
       currentContract,
       currentContract,
@@ -76,7 +78,7 @@ describe('runtime schema bootstrap', () => {
     });
 
     expect(expectedUpgradeSql).toEqual([]);
-    expect(executedSql.every((sqlText) => classifyLegacyCompatMutation(sqlText) === 'legacy')).toBe(true);
+    expect(executedSql.every((sqlText) => classifySchemaBootstrapMutation(sqlText) === 'registered')).toBe(true);
   });
 
   it('tolerates non-additive live-schema drift and still emits additive runtime patch statements', () => {
@@ -89,7 +91,7 @@ describe('runtime schema bootstrap', () => {
     driftedLiveContract.indexes = driftedLiveContract.indexes.filter((index) => index.name !== 'accounts_site_id_idx');
     driftedLiveContract.uniques = driftedLiveContract.uniques.filter((unique) => unique.name !== 'proxy_files_public_id_unique');
 
-    const statements = __runtimeSchemaBootstrapTestUtils.buildExternalUpgradeStatements(
+    const statements = __runtimeSchemaBootstrapTestUtils.buildRuntimeUpgradeStatements(
       'mysql',
       currentContract,
       driftedLiveContract,
@@ -103,10 +105,10 @@ describe('runtime schema bootstrap', () => {
   it('ignores duplicate mysql index and column errors when replaying additive schema statements', async () => {
     const executedSql: string[] = [];
     const duplicateColumnSql = __runtimeSchemaBootstrapTestUtils.splitSqlStatements(
-      generateUpgradeSql('mysql', currentContract, baselineContract),
+      generateUpgradeSql('mysql', currentContract as SchemaContract, cleanBaselineContract),
     ).find((sqlText) => sqlText.includes('ALTER TABLE `model_availability` ADD COLUMN `is_manual`'));
     const duplicateIndexSql = __runtimeSchemaBootstrapTestUtils.splitSqlStatements(
-      generateUpgradeSql('mysql', currentContract, baselineContract),
+      generateUpgradeSql('mysql', currentContract as SchemaContract, cleanBaselineContract),
     ).find((sqlText) => sqlText.includes('proxy_files_public_id_unique'));
 
     expect(duplicateColumnSql).toBeDefined();
@@ -130,7 +132,7 @@ describe('runtime schema bootstrap', () => {
       },
     }, {
       currentContract,
-      liveContract: baselineContract,
+      liveContract: cleanBaselineContract,
     });
 
     expect(executedSql).toContain(duplicateColumnSql);
@@ -140,7 +142,7 @@ describe('runtime schema bootstrap', () => {
   it('ignores postgres relation-already-exists errors when replaying additive schema statements', async () => {
     const executedSql: string[] = [];
     const targetSql = __runtimeSchemaBootstrapTestUtils.splitSqlStatements(
-      generateUpgradeSql('postgres', currentContract, baselineContract),
+      generateUpgradeSql('postgres', currentContract as SchemaContract, cleanBaselineContract),
     ).find((sqlText) => sqlText.includes('proxy_files_public_id_unique'));
 
     expect(targetSql).toBeDefined();
@@ -158,7 +160,7 @@ describe('runtime schema bootstrap', () => {
       },
     }, {
       currentContract,
-      liveContract: baselineContract,
+      liveContract: cleanBaselineContract,
     });
 
     expect(executedSql).toContain(targetSql);

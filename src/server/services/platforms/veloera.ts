@@ -1,4 +1,9 @@
 import { BasePlatformAdapter, CheckinResult, BalanceInfo } from './base.js';
+import {
+  normalizeCommonPricingPayload,
+  type UpstreamPricingCatalog,
+  type UpstreamPricingCredential,
+} from '../upstreamPricingCatalog.js';
 
 export class VeloeraAdapter extends BasePlatformAdapter {
   readonly platformName = 'veloera';
@@ -58,5 +63,17 @@ export class VeloeraAdapter extends BasePlatformAdapter {
       headers: { Authorization: `Bearer ${apiToken}` },
     });
     return (res?.data || []).map((m: any) => m.id).filter(Boolean);
+  }
+
+  async getPricingCatalog(
+    baseUrl: string,
+    credential: UpstreamPricingCredential,
+  ): Promise<UpstreamPricingCatalog | null> {
+    const token = (credential.token || '').trim();
+    const headers = token
+      ? this.veloeraHeaders(token, credential.platformUserId)
+      : {};
+    const payload = await this.fetchJson<any>(`${baseUrl}/api/pricing`, { headers });
+    return normalizeCommonPricingPayload(payload);
   }
 }

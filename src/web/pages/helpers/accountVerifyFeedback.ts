@@ -1,3 +1,4 @@
+import { tr } from '../../i18n.js';
 type VerifyResultLike = {
   success?: boolean;
   needsUserId?: boolean;
@@ -21,18 +22,18 @@ export function isTimeoutFailureMessage(message: unknown): boolean {
   const lowered = normalizeMessageText(message).toLowerCase();
   return lowered.includes('timed out')
     || lowered.includes('timeout')
-    || lowered.includes('请求超时');
+    || lowered.includes(tr('pages.helpers.accountVerifyFeedback.requestTimeout'));
 }
 
 export function normalizeVerifyFailureMessage(message: unknown): string {
   const text = normalizeMessageText(message);
-  if (!text) return '验证失败';
+  if (!text) return tr('pages.helpers.accountVerifyFeedback.authenticationFailed');
   const lowered = text.toLowerCase();
   if (isNetworkFailureMessage(text)) {
-    return '无法连接到 metapi 服务端，请检查服务状态或网络连接';
+    return tr('pages.helpers.accountVerifyFeedback.metapiUnreachableCheckStatus');
   }
   if (lowered.includes('user id mismatch') || lowered.includes('does not match this token')) {
-    return '填写的用户 ID 与当前 Token / Cookie 不匹配';
+    return tr('pages.helpers.accountVerifyFeedback.idTokenCookieMatch');
   }
   return text;
 }
@@ -40,33 +41,33 @@ export function normalizeVerifyFailureMessage(message: unknown): string {
 export function buildVerifyFailureHint(result: VerifyResultLike): string | null {
   if (!result || result.success || result.needsUserId) return null;
   if (result.invalidUserId) {
-    return '这不是 Token 错误判断。请检查填写的用户 ID 是否与当前 Token / Cookie 属于同一账号。';
+    return tr('pages.helpers.accountVerifyFeedback.tokenNotLikelyUserIdMismatch');
   }
   if (isNetworkFailureMessage(result.message)) {
-    return '这不是 Token 错误判断。请检查 metapi 服务是否在线，以及目标站点或代理是否可达。';
+    return tr('pages.helpers.accountVerifyFeedback.tokenNotLikelyCheckMetapiSiteProxy');
   }
   if (isTimeoutFailureMessage(result.message)) {
-    return '这不是 Token 错误判断。目标站点响应超时，请稍后重试或检查代理/网络。';
+    return tr('pages.helpers.accountVerifyFeedback.tokenNotLikelyTargetTimeout');
   }
-  return '请检查 Token 是否正确';
+  return tr('pages.accounts.checkToken');
 }
 
 export function buildAddAccountPrereqHint(result: VerifyResultLike): string {
   if (!result) {
-    return '请先点击“验证 Token”，验证成功后才能添加账号。';
+    return tr('pages.helpers.accountVerifyFeedback.verifyTokenBeforeAdd');
   }
   if (result.success) return '';
   if (result.needsUserId) {
-    return '请先补充用户 ID 并重新验证，验证成功后才能添加账号。';
+    return tr('pages.helpers.accountVerifyFeedback.enterUserIdBeforeAdd');
   }
   if (result.invalidUserId) {
-    return '请先修正用户 ID 并重新验证，验证成功后才能添加账号。';
+    return tr('pages.helpers.accountVerifyFeedback.fixUserIdBeforeAdd');
   }
   if (isNetworkFailureMessage(result.message)) {
-    return '验证请求未成功完成，请先检查 metapi 服务、站点网络或代理配置。';
+    return tr('pages.helpers.accountVerifyFeedback.verificationIncompleteCheckNetwork');
   }
   if (isTimeoutFailureMessage(result.message)) {
-    return '验证请求超时，请先检查站点或代理连通性后再添加账号。';
+    return tr('pages.helpers.accountVerifyFeedback.verificationTimeoutCheckNetwork');
   }
-  return '请先点击“验证 Token”，验证成功后才能添加账号。';
+  return tr('pages.helpers.accountVerifyFeedback.verifyTokenBeforeAdd');
 }

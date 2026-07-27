@@ -11,6 +11,11 @@ describe('TooltipLayer component', () => {
     expect(source).toContain('[data-tooltip]');
     expect(source).toContain("position: 'fixed'");
     expect(source).toContain('document.body.dataset.tooltipPortal');
+    expect(source).toContain('const activeTooltipRef = useRef<ActiveTooltip | null>(null);');
+    expect(source).toContain('const current = activeTooltipRef.current;');
+    expect(source).toContain('activeTooltipRef.current = next;');
+    expect(source).toContain('const active = activeTooltipRef.current;');
+    expect(source).toContain('const handlePointerDown = (_event: Event)');
     expect(appSource).toContain("import TooltipLayer from './components/TooltipLayer.js'");
     expect(appSource).toContain('<TooltipLayer />');
   });

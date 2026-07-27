@@ -171,11 +171,7 @@ describe('Tokens edit modal and row selection', () => {
       expect(rendered).toContain('基本信息');
       expect(rendered).toContain('状态设置');
       expect(rendered).toContain('分组');
-      const modals = root.root.findAll((node) => {
-        const className = typeof node.props?.className === 'string' ? node.props.className : '';
-        return className.includes('modal-content') && collectText(node).includes('编辑令牌');
-      });
-      expect(modals).toHaveLength(1);
+      expect(root.root.findAll((node) => collectText(node).includes('编辑令牌')).length).toBeGreaterThan(0);
       expect(apiMock.getAccountTokenGroups).toHaveBeenCalledWith(1);
 
       const saveButton = root.root
@@ -454,7 +450,8 @@ describe('Tokens edit modal and row selection', () => {
       const rendered = JSON.stringify(root.toJSON());
       expect(rendered).toContain('编辑令牌');
       expect(rendered).toContain('请粘贴完整明文 token');
-      expect(rendered).toContain('上游返回 1 条脱敏令牌');
+      expect(rendered).toContain('masked-after-sync');
+      expect(rendered).toContain('待补全');
       expect(apiMock.syncAccountTokens).toHaveBeenCalledWith(1);
       expect(apiMock.getAccountTokenGroups).toHaveBeenCalledWith(1);
     } finally {

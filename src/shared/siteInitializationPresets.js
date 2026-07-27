@@ -50,8 +50,8 @@ const ZHIPU_CODING_PLAN_RECOMMENDED_MODELS = Object.freeze([
 ]);
 
 const DEEPSEEK_RECOMMENDED_MODELS = Object.freeze([
-  'deepseek-chat',
-  'deepseek-reasoner',
+  'deepseek-v4-flash',
+  'deepseek-v4-pro',
 ]);
 
 const MOONSHOT_RECOMMENDED_MODELS = Object.freeze([
@@ -145,7 +145,7 @@ const SITE_INITIALIZATION_PRESETS = Object.freeze([
     providerLabel: 'DeepSeek',
     description: '适合 DeepSeek 官方 OpenAI 兼容入口，建议直接添加 API Key，并优先补入官方常用编程模型。',
     platform: 'openai',
-    defaultUrl: 'https://api.deepseek.com/v1',
+    defaultUrl: 'https://api.deepseek.com',
     initialSegment: 'apikey',
     recommendedSkipModelFetch: true,
     recommendedModels: DEEPSEEK_RECOMMENDED_MODELS,

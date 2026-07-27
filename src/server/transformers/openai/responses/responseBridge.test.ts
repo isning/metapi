@@ -211,7 +211,7 @@ describe('openai responses response bridge', () => {
     });
   });
 
-  it('generates unique synthetic ids within the same millisecond fallback window', () => {
+  it('generates unique synthetic message ids within the same millisecond fallback window', () => {
     const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(1700000000);
     try {
       const first = buildNormalizedFinalToOpenAiResponsesPayload({
@@ -219,12 +219,6 @@ describe('openai responses response bridge', () => {
           id: '',
           model: 'gpt-5',
           output: [
-            {
-              id: '',
-              type: 'function_call',
-              name: 'lookup_weather',
-              arguments: '{"city":"Paris"}',
-            },
             {
               id: '',
               type: 'message',
@@ -241,11 +235,7 @@ describe('openai responses response bridge', () => {
           content: 'first',
           reasoningContent: '',
           finishReason: 'stop',
-          toolCalls: [{
-            id: '',
-            name: 'lookup_weather',
-            arguments: '{"city":"Paris"}',
-          }],
+          toolCalls: [],
         },
         usage: {
           promptTokens: 1,
@@ -286,10 +276,64 @@ describe('openai responses response bridge', () => {
       expect(first.id).not.toBe(second.id);
       const firstOutput = first.output as Array<Record<string, unknown>>;
       const secondOutput = second.output as Array<Record<string, unknown>>;
-      expect(firstOutput[1]?.id).not.toBe(secondOutput[0]?.id);
+      expect(firstOutput[0]?.id).not.toBe(secondOutput[0]?.id);
     } finally {
       nowSpy.mockRestore();
     }
+  });
+
+  it('drops upstream Responses function_call items without stable call ids or names', () => {
+    const payload = buildNormalizedFinalToOpenAiResponsesPayload({
+      upstreamPayload: {
+        id: 'opaque_invalid_tool_call',
+        model: 'gpt-5',
+        output: [
+          {
+            id: '',
+            type: 'function_call',
+            name: 'lookup_weather',
+            arguments: '{"city":"Paris"}',
+          },
+          {
+            id: 'fc_missing_name',
+            type: 'function_call',
+            call_id: 'call_missing_name',
+            arguments: '{"city":"Paris"}',
+          },
+          {
+            id: 'msg_1',
+            type: 'message',
+            role: 'assistant',
+            status: 'completed',
+            content: [{ type: 'output_text', text: 'done' }],
+          },
+        ],
+      },
+      normalized: {
+        id: 'opaque_invalid_tool_call',
+        model: 'gpt-5',
+        created: 1700000000,
+        content: 'done',
+        reasoningContent: '',
+        finishReason: 'stop',
+        toolCalls: [],
+      },
+      usage: {
+        promptTokens: 1,
+        completionTokens: 1,
+        totalTokens: 2,
+      },
+    });
+
+    expect(payload.output).toEqual([
+      {
+        id: 'msg_1',
+        type: 'message',
+        role: 'assistant',
+        status: 'completed',
+        content: [{ type: 'output_text', text: 'done' }],
+      },
+    ]);
   });
 
   it('uses fc_* item ids while keeping call_* ids for synthesized function_call outputs', () => {

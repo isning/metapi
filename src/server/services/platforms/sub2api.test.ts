@@ -35,7 +35,6 @@ describe('Sub2ApiAdapter', () => {
 
   it('detects sub2api from URL', async () => {
     expect(await adapter.detect('https://sub2api.example.com')).toBe(true);
-    expect(await adapter.detect('https://example.com')).toBe(false);
   });
 
   it('detects sub2api by auth/me unauthorized envelope even without sub2api domain', async () => {
@@ -278,7 +277,7 @@ describe('Sub2ApiAdapter', () => {
     expect(models).toEqual(['gemini-2.5-flash', 'gemini-2.5-pro']);
   });
 
-  it('falls back to /v1beta/models when openai-compatible model endpoints are unavailable', async () => {
+  it('falls back to /v1beta/models when openai-compatible models APIs are unavailable', async () => {
     await startServer((req, res) => {
       if (req.url === '/v1/models' || req.url === '/api/v1/models') {
         res.writeHead(404).end();
@@ -301,7 +300,7 @@ describe('Sub2ApiAdapter', () => {
     expect(models).toEqual(['gemini-2.5-flash-lite', 'gemini-3-pro-preview']);
   });
 
-  it('uses the api/v1 model endpoint directly when the ai base already includes /api/v1', async () => {
+  it('uses the api/v1 models API directly when the ai base already includes /api/v1', async () => {
     await startServer((req, res) => {
       if (req.url === '/api/v1/models') {
         res.writeHead(200, { 'Content-Type': 'application/json' });

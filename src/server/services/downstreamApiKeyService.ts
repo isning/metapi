@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { minimatch } from 'minimatch';
 import { db, schema } from '../db/index.js';
 import { config } from '../config.js';
@@ -7,6 +7,9 @@ import {
   type DownstreamExcludedCredentialRef,
   type DownstreamRoutingPolicy,
 } from './downstreamPolicyTypes.js';
+import { listActiveCompiledRuntimeModelEntrypoints } from './compiledRuntimeInventoryService.js';
+import { valueBillingDetailsRowsInBaseUnit } from './billingCostValuationService.js';
+import type { BaseCostSummary } from '../../shared/billingCost.js';
 
 export type DownstreamApiKeyRow = typeof schema.downstreamApiKeys.$inferSelect;
 
@@ -25,7 +28,7 @@ export type DownstreamApiKeyPolicyView = {
   maxRequests: number | null;
   usedRequests: number;
   supportedModels: string[];
-  allowedRouteIds: number[];
+  allowedPlanIds: string[];
   siteWeightMultipliers: Record<number, number>;
   excludedSiteIds: number[];
   excludedCredentialRefs: DownstreamExcludedCredentialRef[];
@@ -74,10 +77,6 @@ function maskSecret(value: string): string {
   if (!value) return '';
   if (value.length <= 8) return '****';
   return `${value.slice(0, 4)}****${value.slice(-4)}`;
-}
-
-function getExposedRouteName(route: { modelPattern: string; displayName: string | null }): string {
-  return (route.displayName || '').trim() || route.modelPattern.trim();
 }
 
 function normalizePositiveNumberOrNull(value: unknown): number | null {
@@ -162,22 +161,20 @@ export function normalizeSupportedModelsInput(input: unknown): string[] {
   return [];
 }
 
-export function normalizeAllowedRouteIdsInput(input: unknown): number[] {
+export function normalizeAllowedPlanIdsInput(input: unknown): string[] {
   const rawValues = Array.isArray(input)
     ? input
     : (typeof input === 'string' ? input.split(/\r?\n|,/g) : []);
 
-  const routeIds: number[] = [];
+  const planIds: string[] = [];
   for (const item of rawValues) {
-    const n = Number(item);
-    if (!Number.isFinite(n)) continue;
-    const normalized = Math.trunc(n);
-    if (normalized <= 0 || routeIds.includes(normalized)) continue;
-    routeIds.push(normalized);
-    if (routeIds.length >= 500) break;
+    const normalized = String(item || '').trim();
+    if (!normalized || planIds.includes(normalized)) continue;
+    planIds.push(normalized);
+    if (planIds.length >= 500) break;
   }
 
-  return routeIds;
+  return planIds;
 }
 
 export function normalizeSiteWeightMultipliersInput(input: unknown): Record<number, number> {
@@ -306,44 +303,37 @@ export function isModelAllowedByPolicy(model: string, policy: DownstreamRoutingP
   return patterns.some((pattern) => matchesDownstreamModelPattern(model, pattern));
 }
 
-async function isModelMatchedByAllowedRoutes(model: string, allowedRouteIds: number[]): Promise<boolean> {
-  if (allowedRouteIds.length === 0) return false;
-
-  const routes = await db.select({
-    id: schema.tokenRoutes.id,
-    modelPattern: schema.tokenRoutes.modelPattern,
-    displayName: schema.tokenRoutes.displayName,
-  })
-    .from(schema.tokenRoutes)
-    .where(and(
-      inArray(schema.tokenRoutes.id, allowedRouteIds),
-      eq(schema.tokenRoutes.enabled, true),
-    ))
-    .all();
-
-  return routes.some((route) => getExposedRouteName(route) === model);
+async function isModelMatchedByAllowedPlans(model: string, allowedPlanIds: string[]): Promise<boolean> {
+  if (allowedPlanIds.length === 0) return false;
+  const normalizedModel = model.toLowerCase();
+  const allowedPlanIdSet = new Set(allowedPlanIds);
+  const entrypoints = await listActiveCompiledRuntimeModelEntrypoints();
+  return entrypoints.some((entrypoint) => (
+    entrypoint.modelName.toLowerCase() === normalizedModel
+    && allowedPlanIdSet.has(entrypoint.planId)
+  ));
 }
 
-export async function isModelAllowedByPolicyOrAllowedRoutes(model: string, policy: DownstreamRoutingPolicy): Promise<boolean> {
+export async function isModelAllowedByPolicyOrAllowedPlans(model: string, policy: DownstreamRoutingPolicy): Promise<boolean> {
   const patterns = normalizeSupportedModelsInput(policy.supportedModels);
-  const allowedRouteIds = normalizeAllowedRouteIdsInput(policy.allowedRouteIds);
+  const allowedPlanIds = normalizeAllowedPlanIdsInput(policy.allowedPlanIds);
   const hasPatternRules = patterns.length > 0;
-  const hasRouteRules = allowedRouteIds.length > 0;
+  const hasPlanRules = allowedPlanIds.length > 0;
 
-  if (!hasPatternRules && !hasRouteRules) return policy.denyAllWhenEmpty === true ? false : true;
+  if (!hasPatternRules && !hasPlanRules) return policy.denyAllWhenEmpty === true ? false : true;
 
   if (hasPatternRules && patterns.some((pattern) => matchesDownstreamModelPattern(model, pattern))) {
     return true;
   }
 
-  if (!hasRouteRules) return false;
+  if (!hasPlanRules) return false;
 
-  return await isModelMatchedByAllowedRoutes(model, allowedRouteIds);
+  return await isModelMatchedByAllowedPlans(model, allowedPlanIds);
 }
 
 export function toDownstreamApiKeyPolicyView(row: DownstreamApiKeyRow): DownstreamApiKeyPolicyView {
   const supportedModels = normalizeSupportedModelsInput(parseJson(row.supportedModels));
-  const allowedRouteIds = normalizeAllowedRouteIdsInput(parseJson(row.allowedRouteIds));
+  const allowedPlanIds = normalizeAllowedPlanIdsInput(parseJson(row.allowedPlanIds));
   const siteWeightMultipliers = normalizeSiteWeightMultipliersInput(parseJson(row.siteWeightMultipliers));
   const excludedSiteIds = normalizeExcludedSiteIdsInput(parseJson(row.excludedSiteIds));
   const excludedCredentialRefs = normalizeExcludedCredentialRefsInput(parseJson(row.excludedCredentialRefs));
@@ -363,7 +353,7 @@ export function toDownstreamApiKeyPolicyView(row: DownstreamApiKeyRow): Downstre
     maxRequests: row.maxRequests ?? null,
     usedRequests: Number(row.usedRequests || 0),
     supportedModels,
-    allowedRouteIds,
+    allowedPlanIds,
     siteWeightMultipliers,
     excludedSiteIds,
     excludedCredentialRefs,
@@ -373,10 +363,10 @@ export function toDownstreamApiKeyPolicyView(row: DownstreamApiKeyRow): Downstre
   };
 }
 
-export function toPolicyFromView(view: Pick<DownstreamApiKeyPolicyView, 'supportedModels' | 'allowedRouteIds' | 'siteWeightMultipliers' | 'excludedSiteIds' | 'excludedCredentialRefs'>): DownstreamRoutingPolicy {
+export function toPolicyFromView(view: Pick<DownstreamApiKeyPolicyView, 'supportedModels' | 'allowedPlanIds' | 'siteWeightMultipliers' | 'excludedSiteIds' | 'excludedCredentialRefs'>): DownstreamRoutingPolicy {
   return {
     supportedModels: normalizeSupportedModelsInput(view.supportedModels),
-    allowedRouteIds: normalizeAllowedRouteIdsInput(view.allowedRouteIds),
+    allowedPlanIds: normalizeAllowedPlanIdsInput(view.allowedPlanIds),
     siteWeightMultipliers: normalizeSiteWeightMultipliersInput(view.siteWeightMultipliers),
     excludedSiteIds: normalizeExcludedSiteIdsInput(view.excludedSiteIds),
     excludedCredentialRefs: normalizeExcludedCredentialRefsInput(view.excludedCredentialRefs),
@@ -504,7 +494,7 @@ export async function consumeManagedKeyRequest(keyId: number): Promise<void> {
   }).where(eq(schema.downstreamApiKeys.id, keyId)).run();
 }
 
-export async function recordManagedKeyCostUsage(keyId: number, estimatedCost: number): Promise<void> {
+async function recordManagedKeyCostUsage(keyId: number, estimatedCost: number): Promise<void> {
   const cost = Number(estimatedCost);
   if (!Number.isFinite(cost) || cost <= 0) return;
   const nowIso = new Date().toISOString();
@@ -514,6 +504,23 @@ export async function recordManagedKeyCostUsage(keyId: number, estimatedCost: nu
     lastUsedAt: nowIso,
     updatedAt: nowIso,
   }).where(eq(schema.downstreamApiKeys.id, keyId)).run();
+}
+
+export async function recordManagedKeyBillingUsage(input: {
+  keyId: number;
+  billingDetails: unknown;
+  siteId: number | null;
+  accountId: number | null;
+}): Promise<BaseCostSummary> {
+  const cost = await valueBillingDetailsRowsInBaseUnit([{
+    billingDetails: input.billingDetails,
+    siteId: input.siteId,
+    accountId: input.accountId,
+  }]);
+  if (cost.knownObservationCount > 0 && cost.incompatibleObservationCount === 0) {
+    await recordManagedKeyCostUsage(input.keyId, cost.amount);
+  }
+  return cost;
 }
 
 export function normalizeDownstreamApiKeyPayload(input: {
@@ -527,7 +534,7 @@ export function normalizeDownstreamApiKeyPayload(input: {
   maxCost?: unknown;
   maxRequests?: unknown;
   supportedModels?: unknown;
-  allowedRouteIds?: unknown;
+  allowedPlanIds?: unknown;
   siteWeightMultipliers?: unknown;
   excludedSiteIds?: unknown;
   excludedCredentialRefs?: unknown;
@@ -556,7 +563,7 @@ export function normalizeDownstreamApiKeyPayload(input: {
   const maxCost = normalizePositiveNumberOrNull(input.maxCost);
   const maxRequests = normalizePositiveIntegerOrNull(input.maxRequests);
   const supportedModels = normalizeSupportedModelsInput(input.supportedModels);
-  const allowedRouteIds = normalizeAllowedRouteIdsInput(input.allowedRouteIds);
+  const allowedPlanIds = normalizeAllowedPlanIdsInput(input.allowedPlanIds);
   const siteWeightMultipliers = normalizeSiteWeightMultipliersInput(input.siteWeightMultipliers);
   const excludedSiteIds = normalizeExcludedSiteIdsInput(input.excludedSiteIds);
   const excludedCredentialRefs = normalizeExcludedCredentialRefsInput(input.excludedCredentialRefs);
@@ -572,7 +579,7 @@ export function normalizeDownstreamApiKeyPayload(input: {
     maxCost,
     maxRequests,
     supportedModels,
-    allowedRouteIds,
+    allowedPlanIds,
     siteWeightMultipliers,
     excludedSiteIds,
     excludedCredentialRefs,

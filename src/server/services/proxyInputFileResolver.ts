@@ -1,6 +1,6 @@
 import type { ProxyResourceOwner } from '../middleware/auth.js';
 import { getProxyFileByPublicIdForOwner, LOCAL_PROXY_FILE_ID_PREFIX } from './proxyFileStore.js';
-import { ensureBase64DataUrl } from '../transformers/shared/inputFile.js';
+import { ensureBase64DataUrl } from '../shared/inputFileDataUrl.js';
 import { summarizeConversationFileInputsInOpenAiBody } from '../proxy-core/capabilities/conversationFileCapabilities.js';
 import {
   isSupportedConversationFileMimeType,

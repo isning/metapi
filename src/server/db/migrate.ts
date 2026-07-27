@@ -1,708 +1,584 @@
 import Database from 'better-sqlite3';
+import { createHash, randomUUID } from 'node:crypto';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
-import { config } from '../config.js';
-import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync } from 'node:fs';
+import { readMigrationFiles } from 'drizzle-orm/migrator';
+import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-type MigrationJournalEntry = {
-  tag: string;
-  when: number;
-};
-
-type MigrationJournalFile = {
-  entries?: MigrationJournalEntry[];
-};
-
-type SchemaMarker = {
-  table: string;
-  column?: string;
-};
-
-type MigrationRecord = {
-  createdAt: number;
-  hash: string;
-};
-
-type RecoveryMigrationRecord = MigrationRecord & {
-  tag: string;
-};
-
-type RecoveryMigration = RecoveryMigrationRecord & {
-  statements: string[];
-};
-
-type SqliteMigrationRecoveryLoopInput = {
-  runMigrate: () => void;
-  recoverDuplicateColumnMigrationError: (error: unknown) => DuplicateColumnRecoveryResult | null;
-  isSitesPlatformUrlUniqueConflictError: (error: unknown) => boolean;
-  deduplicateLegacySitesForUniqueIndex: () => boolean;
-  closeSqlite: () => void;
-  retryBudget?: number;
-};
-
-type LegacySiteRow = {
-  id: number;
-  platform: string;
-  url: string;
-};
-
-const VERIFIED_BOOTSTRAP_TAG = '0012_account_token_value_status';
-const SQLITE_MIGRATION_RECOVERY_RETRY_BUDGET = 64;
-const VERIFIED_SCHEMA_MARKERS: SchemaMarker[] = [
-  { table: 'sites' },
-  { table: 'settings' },
-  { table: 'accounts' },
-  { table: 'checkin_logs' },
-  { table: 'model_availability' },
-  { table: 'proxy_logs' },
-  { table: 'token_routes' },
-  { table: 'route_channels', column: 'token_id' },
-  { table: 'account_tokens' },
-  { table: 'token_model_availability' },
-  { table: 'events' },
-  { table: 'sites', column: 'is_pinned' },
-  { table: 'sites', column: 'sort_order' },
-  { table: 'accounts', column: 'is_pinned' },
-  { table: 'accounts', column: 'sort_order' },
-  // 0006: site_disabled_models table
-  { table: 'site_disabled_models' },
-  // 0007: token_group column on account_tokens
-  { table: 'account_tokens', column: 'token_group' },
-  // 0009: is_manual column on model_availability
-  { table: 'model_availability', column: 'is_manual' },
-  // 0010: downstream_api_key_id column on proxy_logs
-  { table: 'proxy_logs', column: 'downstream_api_key_id' },
-  // 0011: downstream key metadata columns
-  { table: 'downstream_api_keys', column: 'group_name' },
-  { table: 'downstream_api_keys', column: 'tags' },
-  // 0012: value_status column on account_tokens
-  { table: 'account_tokens', column: 'value_status' },
-  // 0019: proxy log stream/timing columns
-  { table: 'proxy_logs', column: 'is_stream' },
-  { table: 'proxy_logs', column: 'first_byte_latency_ms' },
-];
-
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { config } from '../config.js';
+import { resolveSqliteDatabasePath } from './sqlitePath.js';
+import { bootstrapRuntimeDatabaseSchema } from './runtimeSchemaBootstrap.js';
+import currentSchemaContract from './generated/schemaContract.json' with { type: 'json' };
+import { generateBootstrapSql } from './schemaArtifactGenerator.js';
+import type { SchemaContract } from './schemaContract.js';
+import {
+  compileRouteGraphSource,
+  normalizeRouteGraphSource,
+  type RouteGraphMacro,
+  type RouteGraphSource,
+} from '../../shared/routeGraph.js';
+import { getCompiledRouterExecutionTargetIds } from '../../shared/compiledRuntime.js';
+import { isExactModelPattern } from '../../shared/modelPatternMatcher.js';
+import { stableRoutingIdentityJson } from '../../shared/routingIdentity.js';
+import { buildRouteRuntimeStorageArtifact } from '../services/routeRuntimeArtifactService.js';
+import { migrateImportedRouteGraphSourceJson } from '../services/backupImportMigration.js';
 
 function resolveSqliteDbPath(): string {
-  const raw = (config.dbUrl || '').trim();
-  if (!raw) return resolve(`${config.dataDir}/hub.db`);
-  if (raw === ':memory:') return raw;
-  if (raw.startsWith('file://')) {
-    const parsed = new URL(raw);
-    return decodeURIComponent(parsed.pathname);
-  }
-  if (raw.startsWith('sqlite://')) {
-    return resolve(raw.slice('sqlite://'.length).trim());
-  }
-  return resolve(raw);
+  return resolveSqliteDatabasePath({ dbUrl: config.dbUrl, dataDir: config.dataDir });
 }
 
 function resolveMigrationsFolder(): string {
   return resolve(dirname(fileURLToPath(import.meta.url)), '../../../drizzle');
 }
 
-function tableExists(sqlite: Database.Database, table: string): boolean {
-  const row = sqlite.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1").get(table);
+function hasExistingApplicationSchema(sqlite: Database.Database): boolean {
+  const row = sqlite.prepare(`
+    SELECT 1
+    FROM sqlite_master
+    WHERE type = 'table'
+      AND name NOT LIKE 'sqlite_%'
+      AND name != '__drizzle_migrations'
+    LIMIT 1
+  `).get();
   return !!row;
 }
 
-function columnExists(sqlite: Database.Database, table: string, column: string): boolean {
-  if (!tableExists(sqlite, table)) return false;
-  const rows = sqlite.prepare(`PRAGMA table_info("${table}")`).all() as Array<{ name?: string }>;
-  return rows.some((row) => row.name === column);
-}
+type CurrentSchemaContract = SchemaContract;
 
-function hasRecordedDrizzleMigrations(sqlite: Database.Database): boolean {
-  if (!tableExists(sqlite, '__drizzle_migrations')) return false;
-  const row = sqlite.prepare('SELECT 1 FROM __drizzle_migrations LIMIT 1').get();
-  return !!row;
-}
-
-function hasVerifiedLegacySchema(sqlite: Database.Database): boolean {
-  return VERIFIED_SCHEMA_MARKERS.every((marker) => (
-    marker.column
-      ? columnExists(sqlite, marker.table, marker.column)
-      : tableExists(sqlite, marker.table)
-  ));
-}
-
-function readVerifiedMigrationRecords(migrationsFolder: string): MigrationRecord[] {
-  const journalPath = resolve(migrationsFolder, 'meta', '_journal.json');
-  const journal = JSON.parse(readFileSync(journalPath, 'utf8')) as MigrationJournalFile;
-  const records: MigrationRecord[] = [];
-
-  for (const entry of journal.entries ?? []) {
-    const migrationSql = readFileSync(resolve(migrationsFolder, `${entry.tag}.sql`), 'utf8');
-    records.push({
-      createdAt: Number(entry.when),
-      hash: createHash('sha256').update(migrationSql).digest('hex'),
-    });
-
-    if (entry.tag === VERIFIED_BOOTSTRAP_TAG) {
-      return records;
-    }
-  }
-
-  return [];
-}
-
-function splitMigrationStatements(sqlText: string): string[] {
+function splitSqlStatements(sqlText: string): string[] {
   return sqlText
-    .split('--> statement-breakpoint')
+    .split(';')
     .map((statement) => statement.trim())
-    .filter((statement) => statement.length > 0);
+    .filter(Boolean);
 }
 
-function normalizeSqlForMatch(sqlText: string): string {
-  return sqlText
-    .replace(/[\n\r\t]+/g, ' ')
-    .replace(/["`]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .replace(/;+$/g, '')
-    .toLowerCase();
+function quotedIdentifier(identifier: string): string {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(identifier)) {
+    throw new Error(`Invalid SQLite identifier: ${identifier}`);
+  }
+  return `\`${identifier}\``;
 }
 
-function extractFailedSqlFromError(error: unknown): string | null {
-  const message = normalizeSchemaErrorMessage(error);
-  const matched = message.match(/Failed to run the query '([\s\S]*?)'/i);
-  const sqlText = matched?.[1]?.trim();
-  return sqlText && sqlText.length > 0 ? sqlText : null;
+function hasTable(sqlite: Database.Database, table: string): boolean {
+  return !!sqlite.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+  ).get(table);
 }
 
-function findMatchingSingleStatementMigration(
-  migrationsFolder: string,
-  failedSqlText: string,
-): RecoveryMigrationRecord | null {
-  const journalPath = resolve(migrationsFolder, 'meta', '_journal.json');
-  const journal = JSON.parse(readFileSync(journalPath, 'utf8')) as MigrationJournalFile;
-  const normalizedFailedSql = normalizeSqlForMatch(failedSqlText);
-
-  for (const entry of journal.entries ?? []) {
-    const migrationSql = readFileSync(resolve(migrationsFolder, `${entry.tag}.sql`), 'utf8');
-    const statements = splitMigrationStatements(migrationSql);
-    if (statements.length !== 1) {
-      continue;
-    }
-
-    if (normalizeSqlForMatch(statements[0]) !== normalizedFailedSql) {
-      continue;
-    }
-
-    return {
-      tag: entry.tag,
-      createdAt: Number(entry.when),
-      hash: createHash('sha256').update(migrationSql).digest('hex'),
-    };
-  }
-
-  return null;
+function tableColumns(sqlite: Database.Database, table: string): string[] {
+  return (sqlite.prepare(`PRAGMA table_info(${quotedIdentifier(table)})`).all() as Array<{ name?: string }>)
+    .flatMap((row) => typeof row.name === 'string' && row.name ? [row.name] : []);
 }
 
-function findMatchingMigrationByStatement(
-  migrationsFolder: string,
-  failedSqlText: string,
-): RecoveryMigrationRecord | null {
-  const normalizedFailedSql = normalizeSqlForMatch(failedSqlText);
-  const migrations = readRecoveryMigrations(migrationsFolder);
-
-  for (const migration of migrations) {
-    if (!migration.statements.some((statement) => normalizeSqlForMatch(statement) === normalizedFailedSql)) {
-      continue;
-    }
-
-    return {
-      tag: migration.tag,
-      createdAt: migration.createdAt,
-      hash: migration.hash,
-    };
-  }
-
-  return null;
-}
-
-function findMatchingMigrationByErrorMessage(
-  migrationsFolder: string,
-  error: unknown,
-): RecoveryMigrationRecord | null {
-  const normalizedErrorMessage = normalizeSqlForMatch(normalizeSchemaErrorMessage(error));
-  const migrations = readRecoveryMigrations(migrationsFolder);
-
-  for (const migration of migrations) {
-    if (!migration.statements.some((statement) => normalizedErrorMessage.includes(normalizeSqlForMatch(statement)))) {
-      continue;
-    }
-
-    return {
-      tag: migration.tag,
-      createdAt: migration.createdAt,
-      hash: migration.hash,
-    };
-  }
-
-  return null;
-}
-
-function readRecoveryMigrations(migrationsFolder: string): RecoveryMigration[] {
-  const journalPath = resolve(migrationsFolder, 'meta', '_journal.json');
-  const journal = JSON.parse(readFileSync(journalPath, 'utf8')) as MigrationJournalFile;
-
-  return (journal.entries ?? []).map((entry) => {
-    const migrationSql = readFileSync(resolve(migrationsFolder, `${entry.tag}.sql`), 'utf8');
-    return {
-      tag: entry.tag,
-      createdAt: Number(entry.when),
-      hash: createHash('sha256').update(migrationSql).digest('hex'),
-      statements: splitMigrationStatements(migrationSql),
-    };
-  });
-}
-
-function ensureDrizzleMigrationsTable(sqlite: Database.Database): void {
-  sqlite.exec(`
-    CREATE TABLE IF NOT EXISTS "__drizzle_migrations" (
-      id SERIAL PRIMARY KEY,
-      hash text NOT NULL,
-      created_at numeric
-    )
-  `);
-}
-
-function markMigrationRecordIfMissing(sqlite: Database.Database, record: MigrationRecord): boolean {
-  ensureDrizzleMigrationsTable(sqlite);
-  const existing = sqlite
-    .prepare('SELECT rowid, "created_at" FROM "__drizzle_migrations" WHERE "hash" = ? ORDER BY "created_at" DESC LIMIT 1')
-    .get(record.hash) as { rowid?: number; created_at?: number } | undefined;
-  if (existing) {
-    if (Number(existing.created_at) === record.createdAt) {
-      return false;
-    }
-
-    sqlite
-      .prepare('UPDATE "__drizzle_migrations" SET "created_at" = ? WHERE rowid = ?')
-      .run(record.createdAt, existing.rowid);
-    return true;
-  }
-
-  sqlite
-    .prepare('INSERT INTO "__drizzle_migrations" ("hash", "created_at") VALUES (?, ?)')
-    .run(record.hash, record.createdAt);
-
-  return true;
-}
-
-function hasMigrationRecord(sqlite: Database.Database, record: MigrationRecord): boolean {
-  if (!tableExists(sqlite, '__drizzle_migrations')) return false;
-  const row = sqlite
-    .prepare('SELECT 1 FROM "__drizzle_migrations" WHERE "hash" = ? LIMIT 1')
-    .get(record.hash);
-  return !!row;
-}
-
-function normalizeSchemaErrorMessage(error: unknown): string {
-  if (!error || typeof error !== 'object') {
-    return String(error || '');
-  }
-
-  const collected: string[] = [];
-  let cursor: unknown = error;
-  let depth = 0;
-
-  while (cursor && typeof cursor === 'object' && depth < 8) {
-    const current = cursor as { message?: unknown; cause?: unknown };
-    if (current.message !== undefined && current.message !== null) {
-      const text = String(current.message).trim();
-      if (text.length > 0) {
-        collected.push(text);
-      }
-    }
-
-    cursor = current.cause;
-    depth += 1;
-  }
-
-  if (collected.length > 0) {
-    return collected.join(' | ');
-  }
-
-  return String(error || '');
-}
-
-function isDuplicateColumnError(error: unknown): boolean {
-  const lowered = normalizeSchemaErrorMessage(error).toLowerCase();
-  return lowered.includes('duplicate column')
-    || lowered.includes('already exists')
-    || lowered.includes('duplicate column name');
-}
-
-function isRecoverableSchemaConflictError(error: unknown): boolean {
-  const lowered = normalizeSchemaErrorMessage(error).toLowerCase();
-  return lowered.includes('duplicate column')
-    || lowered.includes('duplicate column name')
-    || lowered.includes('already exists');
-}
-
-function isSitesPlatformUrlUniqueConflictError(error: unknown): boolean {
-  const lowered = normalizeSchemaErrorMessage(error).toLowerCase();
-  if (!lowered.includes('unique constraint failed: sites.platform, sites.url')) {
-    return false;
-  }
-
-  const failedSqlText = extractFailedSqlFromError(error);
-  if (!failedSqlText) {
-    return true;
-  }
-
-  return normalizeSqlForMatch(failedSqlText)
-    === normalizeSqlForMatch('CREATE UNIQUE INDEX `sites_platform_url_unique` ON `sites` (`platform`,`url`);');
-}
-
-function replayMigrationStatements(sqlite: Database.Database, statements: string[]): void {
-  for (const statement of statements) {
-    try {
-      sqlite.exec(statement);
-    } catch (error) {
-      if (isRecoverableSchemaConflictError(error)) {
-        continue;
-      }
-
-      if (isSitesPlatformUrlUniqueConflictError(error) && deduplicateLegacySitesForUniqueIndex(sqlite)) {
-        try {
-          sqlite.exec(statement);
-          continue;
-        } catch (retryError) {
-          if (isRecoverableSchemaConflictError(retryError)) {
-            continue;
-          }
-          throw retryError;
-        }
-      }
-
-      throw error;
-    }
-  }
-}
-
-function recoverMigrationSequence(
-  sqlite: Database.Database,
-  migrationsFolder: string,
-  failedMigrationTag: string,
-): number {
-  const migrations = readRecoveryMigrations(migrationsFolder);
-  const failedMigrationIndex = migrations.findIndex((migration) => migration.tag === failedMigrationTag);
-  if (failedMigrationIndex < 0) {
-    return 0;
-  }
-
-  let recoveredCount = 0;
-  for (const migration of migrations.slice(0, failedMigrationIndex + 1)) {
-    if (hasMigrationRecord(sqlite, migration)) {
-      if (markMigrationRecordIfMissing(sqlite, migration)) {
-        recoveredCount += 1;
-      }
-      continue;
-    }
-
-    replayMigrationStatements(sqlite, migration.statements);
-    if (markMigrationRecordIfMissing(sqlite, migration)) {
-      recoveredCount += 1;
-    }
-  }
-
-  return recoveredCount;
-}
-
-function backfillMissingRecordedMigrations(sqlite: Database.Database, migrationsFolder: string): number {
-  if (!tableExists(sqlite, '__drizzle_migrations')) return 0;
-
-  let recoveredCount = 0;
-  for (const migration of readRecoveryMigrations(migrationsFolder)) {
-    if (hasMigrationRecord(sqlite, migration)) {
-      if (markMigrationRecordIfMissing(sqlite, migration)) {
-        recoveredCount += 1;
-      }
-      continue;
-    }
-
-    replayMigrationStatements(sqlite, migration.statements);
-    if (markMigrationRecordIfMissing(sqlite, migration)) {
-      recoveredCount += 1;
-    }
-  }
-
-  if (recoveredCount > 0) {
-    console.warn(`[db] Backfilled ${recoveredCount} missing drizzle migration record(s).`);
-  }
-
-  return recoveredCount;
-}
-
-type DuplicateColumnRecoveryResult = {
-  tag: string;
-  recoveredCount: number;
-};
-
-function recoverDuplicateColumnMigrationError(
-  sqlite: Database.Database,
-  migrationsFolder: string,
-  error: unknown,
-): DuplicateColumnRecoveryResult | null {
-  if (!isDuplicateColumnError(error)) {
-    return null;
-  }
-
-  const failedSqlText = extractFailedSqlFromError(error);
-  const matchedMigration = failedSqlText
-    ? findMatchingMigrationByStatement(migrationsFolder, failedSqlText)
-      ?? findMatchingMigrationByErrorMessage(migrationsFolder, error)
-    : findMatchingMigrationByErrorMessage(migrationsFolder, error);
-  if (!matchedMigration) {
-    return null;
-  }
-
-  const recoveredCount = recoverMigrationSequence(sqlite, migrationsFolder, matchedMigration.tag);
-  if (recoveredCount > 0) {
-    console.warn(`[db] Recovered duplicate-column migration sequence through ${matchedMigration.tag}.`);
-  }
+function currentTableStatements(table: string): {
+  create: string;
+  indexes: string[];
+  columns: string[];
+} {
+  const contract = currentSchemaContract as unknown as CurrentSchemaContract;
+  const tableContract = contract.tables[table];
+  if (!tableContract) throw new Error(`Current schema is missing table ${table}`);
+  const scopedContract = {
+    tables: { [table]: tableContract },
+    indexes: contract.indexes.filter((index) => index.table === table),
+    uniques: contract.uniques.filter((unique) => unique.table === table),
+    foreignKeys: contract.foreignKeys.filter((foreignKey) => foreignKey.table === table),
+  };
+  const statements = splitSqlStatements(generateBootstrapSql('sqlite', scopedContract));
+  const tablePattern = table.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const create = statements.find((statement) => new RegExp(
+    `^CREATE TABLE IF NOT EXISTS [\"\\\`]${tablePattern}[\"\\\`]`,
+  ).test(statement));
+  if (!create) throw new Error(`Current schema bootstrap does not define ${table}`);
   return {
-    tag: matchedMigration.tag,
-    recoveredCount,
+    create,
+    indexes: statements.filter((statement) => statement !== create),
+    columns: Object.keys(tableContract.columns),
   };
 }
 
-function buildSqliteMigrationRetryBudgetError(error: unknown, retryBudget: number): Error {
-  const detail = normalizeSchemaErrorMessage(error);
-  return new Error(
-    detail
-      ? `[db] Migration recovery exceeded retry budget (${retryBudget} attempts): ${detail}`
-      : `[db] Migration recovery exceeded retry budget (${retryBudget} attempts).`,
+/** Rebuilds a SQLite table from the generated current schema while preserving shared columns and row ids. */
+function rebuildTableFromCurrentSchema(input: {
+  sqlite: Database.Database;
+  table: string;
+  additionalValues?: (row: Record<string, unknown>) => Record<string, unknown>;
+}): void {
+  const { sqlite, table } = input;
+  if (!hasTable(sqlite, table)) return;
+  const current = currentTableStatements(table);
+  const existingColumns = new Set(tableColumns(sqlite, table));
+  const additionalColumns = Object.keys(input.additionalValues?.({}) || {});
+  const columns = current.columns.filter((column) => existingColumns.has(column) || additionalColumns.includes(column));
+  if (columns.length !== current.columns.length) {
+    const missing = current.columns.filter((column) => !columns.includes(column));
+    throw new Error(`Cannot rebuild ${table}: required columns are absent (${missing.join(', ')})`);
+  }
+  const rows = sqlite.prepare(
+    `SELECT ${current.columns.filter((column) => existingColumns.has(column)).map(quotedIdentifier).join(', ')} FROM ${quotedIdentifier(table)}`,
+  ).all() as Array<Record<string, unknown>>;
+  const temporaryTable = `__metapi_migration_${table}`;
+  const tablePattern = table.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const create = current.create.replace(
+    new RegExp(`^CREATE TABLE IF NOT EXISTS [\"\\\`]${tablePattern}[\"\\\`]`),
+    `CREATE TABLE IF NOT EXISTS \`${temporaryTable}\``,
   );
-}
-
-function runSqliteMigrationRecoveryLoop(input: SqliteMigrationRecoveryLoopInput): void {
-  const retryBudget = Math.max(1, Math.trunc(input.retryBudget ?? SQLITE_MIGRATION_RECOVERY_RETRY_BUDGET));
-  let recoveryRetries = 0;
-
-  while (true) {
-    try {
-      input.runMigrate();
-      return;
-    } catch (error) {
-      const duplicateColumnRecovery = input.recoverDuplicateColumnMigrationError(error);
-      if (duplicateColumnRecovery && duplicateColumnRecovery.recoveredCount > 0) {
-        recoveryRetries += 1;
-        if (recoveryRetries > retryBudget) {
-          input.closeSqlite();
-          throw buildSqliteMigrationRetryBudgetError(error, retryBudget);
-        }
-        continue;
-      }
-      if (duplicateColumnRecovery) {
-        input.closeSqlite();
-        throw error;
-      }
-
-      const recoveredDuplicateSites = (
-        input.isSitesPlatformUrlUniqueConflictError(error)
-        && input.deduplicateLegacySitesForUniqueIndex()
+  sqlite.pragma('foreign_keys = OFF');
+  try {
+    sqlite.transaction(() => {
+      sqlite.exec(`DROP TABLE IF EXISTS ${quotedIdentifier(temporaryTable)}`);
+      sqlite.exec(create);
+      const insert = sqlite.prepare(
+        `INSERT INTO ${quotedIdentifier(temporaryTable)} (${current.columns.map(quotedIdentifier).join(', ')}) VALUES (${current.columns.map(() => '?').join(', ')})`,
       );
-      if (recoveredDuplicateSites) {
-        recoveryRetries += 1;
-        if (recoveryRetries > retryBudget) {
-          input.closeSqlite();
-          throw buildSqliteMigrationRetryBudgetError(error, retryBudget);
-        }
-        continue;
+      for (const row of rows) {
+        const additional = input.additionalValues?.(row) || {};
+        insert.run(...current.columns.map((column) => (
+          Object.hasOwn(additional, column) ? additional[column] : row[column]
+        )));
       }
-
-      input.closeSqlite();
-      throw error;
-    }
+      sqlite.exec(`DROP TABLE ${quotedIdentifier(table)}`);
+      sqlite.exec(`ALTER TABLE ${quotedIdentifier(temporaryTable)} RENAME TO ${quotedIdentifier(table)}`);
+      for (const statement of current.indexes) sqlite.exec(statement);
+    })();
+  } finally {
+    sqlite.pragma('foreign_keys = ON');
+  }
+  const foreignKeyErrors = sqlite.prepare('PRAGMA foreign_key_check').all();
+  if (foreignKeyErrors.length > 0) {
+    throw new Error(`Foreign-key validation failed after rebuilding ${table}`);
   }
 }
 
-function tryRecoverDuplicateColumnMigrationError(
-  sqlite: Database.Database,
-  migrationsFolder: string,
-  error: unknown,
-): boolean {
-  const recovery = recoverDuplicateColumnMigrationError(sqlite, migrationsFolder, error);
-  return (recovery?.recoveredCount ?? 0) > 0;
-}
-
-function rewriteDownstreamSiteWeightMultipliers(
-  sqlite: Database.Database,
-  siteIdMapping: Map<number, number>,
-): void {
-  if (siteIdMapping.size <= 0) return;
-  if (!tableExists(sqlite, 'downstream_api_keys')) return;
-  if (!columnExists(sqlite, 'downstream_api_keys', 'site_weight_multipliers')) return;
-
-  const rows = sqlite.prepare(`
-    SELECT id, site_weight_multipliers
-    FROM downstream_api_keys
-    WHERE site_weight_multipliers IS NOT NULL
-      AND TRIM(site_weight_multipliers) <> ''
-  `).all() as Array<{ id: number; site_weight_multipliers: string | null }>;
-
-  const update = sqlite.prepare('UPDATE downstream_api_keys SET site_weight_multipliers = ? WHERE id = ?');
-  for (const row of rows) {
-    if (!row.site_weight_multipliers) continue;
-
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(row.site_weight_multipliers);
-    } catch {
-      continue;
-    }
-
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue;
-    const nextValue = { ...(parsed as Record<string, unknown>) };
-    let changed = false;
-
-    for (const [fromSiteId, toSiteId] of siteIdMapping.entries()) {
-      const fromKey = String(fromSiteId);
-      const toKey = String(toSiteId);
-      if (!(fromKey in nextValue)) continue;
-      if (!(toKey in nextValue)) {
-        nextValue[toKey] = nextValue[fromKey];
-      }
-      delete nextValue[fromKey];
-      changed = true;
-    }
-
-    if (!changed) continue;
-    update.run(JSON.stringify(nextValue), row.id);
-  }
-}
-
-function deduplicateLegacySitesForUniqueIndex(sqlite: Database.Database): boolean {
-  const duplicateGroups = sqlite.prepare(`
-    SELECT platform, url
-    FROM sites
-    GROUP BY platform, url
-    HAVING COUNT(*) > 1
-  `).all() as Array<{ platform: string; url: string }>;
-
-  if (duplicateGroups.length <= 0) {
-    return false;
-  }
-
-  const selectSitesByIdentity = sqlite.prepare(`
-    SELECT id, platform, url
-    FROM sites
-    WHERE platform = ? AND url = ?
-    ORDER BY id ASC
-  `);
-  const rebindAccounts = sqlite.prepare('UPDATE accounts SET site_id = ? WHERE site_id = ?');
-  const mergeDisabledModels = sqlite.prepare(`
-    INSERT OR IGNORE INTO site_disabled_models (site_id, model_name, created_at)
-    SELECT ?, model_name, created_at
-    FROM site_disabled_models
-    WHERE site_id = ?
-  `);
-  const deleteDisabledModels = sqlite.prepare('DELETE FROM site_disabled_models WHERE site_id = ?');
-  const deleteSite = sqlite.prepare('DELETE FROM sites WHERE id = ?');
-
-  const siteIdMapping = new Map<number, number>();
-
-  const transaction = sqlite.transaction(() => {
-    for (const group of duplicateGroups) {
-      const sites = selectSitesByIdentity.all(group.platform, group.url) as LegacySiteRow[];
-      if (sites.length <= 1) continue;
-
-      const canonicalSiteId = sites[0]!.id;
-      for (const site of sites.slice(1)) {
-        mergeDisabledModels.run(canonicalSiteId, site.id);
-        deleteDisabledModels.run(site.id);
-        rebindAccounts.run(canonicalSiteId, site.id);
-        siteIdMapping.set(site.id, canonicalSiteId);
-        deleteSite.run(site.id);
-      }
-    }
-
-    rewriteDownstreamSiteWeightMultipliers(sqlite, siteIdMapping);
+function migrateLegacyExecutionTargetSourceRefs(sqlite: Database.Database): void {
+  if (!hasTable(sqlite, 'runtime_execution_targets')) return;
+  if (tableColumns(sqlite, 'runtime_execution_targets').includes('source_ref')) return;
+  rebuildTableFromCurrentSchema({
+    sqlite,
+    table: 'runtime_execution_targets',
+    additionalValues: () => ({ source_ref: randomUUID() }),
   });
-
-  transaction();
-  if (siteIdMapping.size > 0) {
-    console.warn(`[db] Deduplicated ${siteIdMapping.size} legacy site entries before applying sites_platform_url_unique.`);
-  }
-  return siteIdMapping.size > 0;
 }
 
-export const __migrateTestUtils = {
-  splitMigrationStatements,
-  normalizeSqlForMatch,
-  extractFailedSqlFromError,
-  findMatchingSingleStatementMigration,
-  findMatchingMigrationByStatement,
-  findMatchingMigrationByErrorMessage,
-  readRecoveryMigrations,
-  markMigrationRecordIfMissing,
-  recoverMigrationSequence,
-  tryRecoverDuplicateColumnMigrationError,
-  isSitesPlatformUrlUniqueConflictError,
-  deduplicateLegacySitesForUniqueIndex,
-  runSqliteMigrationRecoveryLoop,
-  sqliteMigrationRecoveryRetryBudget: SQLITE_MIGRATION_RECOVERY_RETRY_BUDGET,
+function sha256(value: string): string {
+  return `sha256:${createHash('sha256').update(value).digest('hex')}`;
+}
+
+function sourceGraphHash(source: RouteGraphSource): string {
+  return sha256(stableRoutingIdentityJson(normalizeRouteGraphSource(source)));
+}
+
+function text(value: unknown): string {
+  return String(value || '').trim();
+}
+
+function automaticMacroCanonicalModel(macro: RouteGraphMacro): string | null {
+  const metadataModel = text(macro.metadata?.canonicalModel);
+  if (metadataModel) return metadataModel;
+  const entry = macro.config.surface.entry;
+  if (entry.kind !== 'external') return null;
+  const entryModel = text(entry.match.requestedModelPattern);
+  return entryModel && isExactModelPattern(entryModel) ? entryModel : null;
+}
+
+type CandidateSourceShapeMigration = {
+  source: RouteGraphSource;
+  changed: boolean;
 };
 
-function bootstrapLegacyDrizzleMigrations(sqlite: Database.Database, migrationsFolder: string): boolean {
-  if (hasRecordedDrizzleMigrations(sqlite)) return false;
-  if (!hasVerifiedLegacySchema(sqlite)) return false;
+/**
+ * Converts the unreleased automatic Route Group facade shape into the native
+ * candidate-selector contract. Only system-owned macros with an authoritative
+ * canonical model are eligible; manual and ambiguous Graph authoring is left
+ * untouched rather than inferred.
+ */
+function migrateAutomaticCandidateSourceShape(input: unknown): CandidateSourceShapeMigration {
+  const source = normalizeRouteGraphSource(input);
+  let changed = false;
+  const macros = (source.macros || []).map((macro) => {
+    const isRouteGroupAutomaticSource = (
+      macro.metadata?.managementOwner === 'availability-rebuild'
+      || macro.metadata?.importedFrom === 'legacy_route_backup'
+    );
+    if (
+      macro.kind !== 'candidate_selector'
+      || macro.ownership !== 'system'
+      || !isRouteGroupAutomaticSource
+    ) return macro;
+    const canonicalModel = automaticMacroCanonicalModel(macro);
+    if (!canonicalModel) {
+      throw new Error(`Cannot migrate automatic candidate selector ${macro.id}: canonical model is missing or not exact`);
+    }
+    const primaryStageId = macro.config.groups.find(
+      (stage) => stage.metadata?.generationRole === 'generated_primary',
+    )?.id || macro.config.groups[0]?.id;
+    if (!primaryStageId) {
+      throw new Error(`Cannot migrate automatic candidate selector ${macro.id}: primary fallback stage is missing`);
+    }
+    const needsMigration = (
+      macro.config.candidateSource?.kind !== 'model_pattern'
+      || macro.config.candidateSource.pattern !== canonicalModel
+      || macro.config.groups.some((stage) => (
+        stage.input.kind !== 'synthetic'
+        || (stage.id === primaryStageId
+          ? stage.acceptUnassigned !== true
+          : stage.acceptUnassigned === true)
+      ))
+    );
+    if (!needsMigration) return macro;
+    changed = true;
+    return {
+      ...macro,
+      config: {
+        ...macro.config,
+        candidateSource: { kind: 'model_pattern' as const, pattern: canonicalModel },
+        groups: macro.config.groups.map((stage) => ({
+          ...stage,
+          input: {
+            kind: 'synthetic' as const,
+            statusCode: 503 as const,
+            message: 'No route is available.',
+          },
+          ...(stage.id === primaryStageId
+            ? { acceptUnassigned: true }
+            : { acceptUnassigned: undefined }),
+        })),
+      },
+    };
+  });
+  return {
+    source: changed ? normalizeRouteGraphSource({ ...source, macros }) : source,
+    changed,
+  };
+}
 
-  const records = readVerifiedMigrationRecords(migrationsFolder);
-  if (records.length === 0) return false;
+function migrateWorkspaceOperationJson(value: string): { value: string; changed: boolean } {
+  const parsed = JSON.parse(value) as unknown;
+  if (!Array.isArray(parsed)) throw new Error('Route Graph workspace operations must be an array');
+  let changed = false;
+  const operations = parsed.map((operation) => {
+    if (!operation || typeof operation !== 'object' || Array.isArray(operation)) return operation;
+    const record = operation as Record<string, unknown>;
+    if (record.kind !== 'upsert_macro' || !record.macro) return operation;
+    const migrated = migrateAutomaticCandidateSourceShape({ nodes: [], edges: [], macros: [record.macro] });
+    if (!migrated.changed) return operation;
+    changed = true;
+    const macro = migrated.source.macros?.[0];
+    if (!macro) throw new Error('Migrated Route Graph workspace macro is missing');
+    return { ...record, macro };
+  });
+  return { value: changed ? JSON.stringify(operations) : value, changed };
+}
 
+/**
+ * Migrates current-schema Graph data and its replay records atomically. Every
+ * changed published Graph is compiled and target-preflighted before any row is
+ * written. Existing artifact identity and active pointers remain unchanged.
+ */
+function migrateCurrentCandidateSourceShape(sqlite: Database.Database): void {
+  if (
+    !hasTable(sqlite, 'route_graph_versions')
+    || !hasTable(sqlite, 'compiled_runtime_artifacts')
+    || !hasTable(sqlite, 'runtime_execution_targets')
+  ) return;
+  sqlite.transaction(() => {
+    const targetIds = new Set((sqlite.prepare(
+      'SELECT id FROM runtime_execution_targets',
+    ).all() as Array<{ id: number }>).map((row) => row.id));
+    const versionRows = sqlite.prepare(`
+      SELECT id, source_graph_json
+      FROM route_graph_versions
+      ORDER BY id ASC
+    `).all() as Array<{ id: number; source_graph_json: string }>;
+    const preparedVersions = versionRows.flatMap((row) => {
+      const migrated = migrateAutomaticCandidateSourceShape(JSON.parse(row.source_graph_json));
+      if (!migrated.changed) return [];
+      const compiled = compileRouteGraphSource(migrated.source, { compactRuntimeBundle: true });
+      if (!compiled.ok) {
+        throw new Error(`Cannot migrate Source Graph ${row.id}: ${compiled.diagnostics.map((item) => item.message).join('; ')}`);
+      }
+      const artifact = buildRouteRuntimeStorageArtifact(compiled.compiled);
+      const missingTargetIds = getCompiledRouterExecutionTargetIds(artifact.compiledRouterBundle)
+        .filter((id) => !targetIds.has(id));
+      if (missingTargetIds.length > 0) {
+        throw new Error(`Cannot migrate Source Graph ${row.id}: execution targets are missing (${missingTargetIds.join(', ')})`);
+      }
+      const artifactRow = sqlite.prepare(`
+        SELECT id
+        FROM compiled_runtime_artifacts
+        WHERE source_graph_version_id = ?
+      `).get(row.id) as { id: string } | undefined;
+      if (!artifactRow) {
+        throw new Error(`Cannot migrate Source Graph ${row.id}: compiled runtime artifact is missing`);
+      }
+      return [{
+        id: row.id,
+        sourceGraphJson: JSON.stringify(compiled.source),
+        sourceGraphHash: sourceGraphHash(compiled.source),
+        artifactId: artifactRow.id,
+        artifactJson: JSON.stringify(artifact),
+        bundleHash: artifact.compiledRouterBundle?.hash || artifact.hash || '',
+      }];
+    });
+
+    let draftRows: Array<{ id: number; working_graph_json: string }> = [];
+    if (hasTable(sqlite, 'route_graph_drafts')) {
+      draftRows = sqlite.prepare(
+        'SELECT id, working_graph_json FROM route_graph_drafts',
+      ).all() as Array<{ id: number; working_graph_json: string }>;
+    }
+    const preparedDrafts = draftRows.flatMap((row) => {
+      const migrated = migrateAutomaticCandidateSourceShape(JSON.parse(row.working_graph_json));
+      return migrated.changed
+        ? [{ id: row.id, workingGraphJson: JSON.stringify(migrated.source) }]
+        : [];
+    });
+
+    const operationRows = hasTable(sqlite, 'route_graph_workspace_operation_batches')
+      ? sqlite.prepare(`
+          SELECT id, forward_operations_json, inverse_operations_json
+          FROM route_graph_workspace_operation_batches
+        `).all() as Array<{
+          id: number;
+          forward_operations_json: string;
+          inverse_operations_json: string;
+        }>
+      : [];
+    const preparedOperations = operationRows.flatMap((row) => {
+      const forward = migrateWorkspaceOperationJson(row.forward_operations_json);
+      const inverse = migrateWorkspaceOperationJson(row.inverse_operations_json);
+      return forward.changed || inverse.changed
+        ? [{ id: row.id, forward: forward.value, inverse: inverse.value }]
+        : [];
+    });
+
+    const updateVersion = sqlite.prepare(
+      'UPDATE route_graph_versions SET source_graph_json = ? WHERE id = ?',
+    );
+    const updateArtifact = sqlite.prepare(`
+      UPDATE compiled_runtime_artifacts
+      SET artifact_json = ?, bundle_hash = ?, source_graph_hash = ?
+      WHERE id = ?
+    `);
+    for (const row of preparedVersions) {
+      updateVersion.run(row.sourceGraphJson, row.id);
+      updateArtifact.run(row.artifactJson, row.bundleHash, row.sourceGraphHash, row.artifactId);
+    }
+    const updateDraft = sqlite.prepare(
+      'UPDATE route_graph_drafts SET working_graph_json = ? WHERE id = ?',
+    );
+    for (const row of preparedDrafts) updateDraft.run(row.workingGraphJson, row.id);
+    const updateOperations = sqlite.prepare(`
+      UPDATE route_graph_workspace_operation_batches
+      SET forward_operations_json = ?, inverse_operations_json = ?
+      WHERE id = ?
+    `);
+    for (const row of preparedOperations) updateOperations.run(row.forward, row.inverse, row.id);
+  })();
+}
+
+type PreparedLegacyCompiledRuntimeArtifacts = {
+  rows: Array<{
+    id: number;
+    sourceGraphJson: string;
+    createdAt: string | null;
+    artifactId: string;
+    artifactJson: string;
+    bundleHash: string;
+  }>;
+  activeArtifactId: string | null;
+};
+
+/** Validates the complete historical Graph/artifact conversion without mutating the database. */
+function prepareLegacyCompiledRuntimeArtifacts(
+  sqlite: Database.Database,
+): PreparedLegacyCompiledRuntimeArtifacts | null {
+  if (!hasTable(sqlite, 'route_graph_versions')) return null;
+  const graphColumns = tableColumns(sqlite, 'route_graph_versions');
+  if (!graphColumns.includes('compiled_graph_json')) return null;
+  const rows = sqlite.prepare(`
+    SELECT id, source_graph_json, created_at
+    FROM route_graph_versions
+    ORDER BY id ASC
+  `).all() as Array<{ id: number; source_graph_json: string; created_at: string | null }>;
+  const targetIds = new Set((sqlite.prepare('SELECT id FROM runtime_execution_targets').all() as Array<{ id: number }>)
+    .map((row) => row.id));
+  const prepared = rows.map((row) => {
+    const sourceGraphJson = migrateImportedRouteGraphSourceJson(row.source_graph_json);
+    const compiled = compileRouteGraphSource(JSON.parse(sourceGraphJson));
+    if (!compiled.ok) {
+      throw new Error(`Cannot migrate Source Graph ${row.id}: ${compiled.diagnostics.map((item) => item.message).join('; ')}`);
+    }
+    const artifact = buildRouteRuntimeStorageArtifact(compiled.compiled);
+    const missingTargetIds = getCompiledRouterExecutionTargetIds(artifact.compiledRouterBundle)
+      .filter((id) => !targetIds.has(id));
+    if (missingTargetIds.length > 0) {
+      throw new Error(`Cannot migrate Source Graph ${row.id}: execution targets are missing (${missingTargetIds.join(', ')})`);
+    }
+    return {
+      ...row,
+      sourceGraphJson,
+      artifactId: randomUUID(),
+      artifactJson: JSON.stringify(artifact),
+      bundleHash: artifact.compiledRouterBundle?.hash || artifact.hash || '',
+    };
+  });
+  const activeVersion = sqlite.prepare(
+    'SELECT version_id FROM route_graph_active_version WHERE id = 1',
+  ).get() as { version_id?: number } | undefined;
+  const active = prepared.find((row) => row.id === activeVersion?.version_id);
+  if (activeVersion && !active) {
+    throw new Error(`Cannot migrate active Source Graph ${activeVersion.version_id}`);
+  }
+  return {
+    rows: prepared.map((row) => ({
+      id: row.id,
+      sourceGraphJson: row.sourceGraphJson,
+      createdAt: row.created_at,
+      artifactId: row.artifactId,
+      artifactJson: row.artifactJson,
+      bundleHash: row.bundleHash,
+    })),
+    activeArtifactId: active?.artifactId || null,
+  };
+}
+
+function writePreparedLegacyCompiledRuntimeArtifacts(
+  sqlite: Database.Database,
+  prepared: PreparedLegacyCompiledRuntimeArtifacts | null,
+): void {
+  if (!prepared) return;
+  sqlite.transaction(() => {
+    sqlite.exec('DELETE FROM compiled_runtime_active_artifact');
+    sqlite.exec('DELETE FROM compiled_runtime_artifacts');
+    const updateGraph = sqlite.prepare('UPDATE route_graph_versions SET source_graph_json = ? WHERE id = ?');
+    const insertArtifact = sqlite.prepare(`
+      INSERT INTO compiled_runtime_artifacts
+        (id, artifact_json, bundle_hash, source_graph_version_id, source_graph_hash, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
+    for (const row of prepared.rows) {
+      updateGraph.run(row.sourceGraphJson, row.id);
+      insertArtifact.run(
+        row.artifactId,
+        row.artifactJson,
+        row.bundleHash,
+        row.id,
+        sha256(row.sourceGraphJson),
+        row.createdAt || new Date().toISOString(),
+      );
+    }
+    if (prepared.activeArtifactId) {
+      sqlite.prepare(`
+        INSERT INTO compiled_runtime_active_artifact (id, artifact_id, updated_at)
+        VALUES (1, ?, ?)
+      `).run(prepared.activeArtifactId, new Date().toISOString());
+    }
+  })();
+  rebuildTableFromCurrentSchema({ sqlite, table: 'route_graph_versions' });
+}
+
+function migrateLegacySqliteRouteRuntime(dbPath: string): void {
+  const sqlite = new Database(dbPath);
+  try {
+    migrateLegacyExecutionTargetSourceRefs(sqlite);
+  } finally {
+    sqlite.close();
+  }
+}
+
+function adoptCurrentDrizzleBaseline(sqlite: Database.Database, migrationsFolder: string): boolean {
+  const migrations = readMigrationFiles({ migrationsFolder });
+  const baseline = migrations.at(-1);
+  if (!baseline) throw new Error('Current Drizzle baseline migration is missing');
   sqlite.exec(`
-    CREATE TABLE IF NOT EXISTS "__drizzle_migrations" (
-      id SERIAL PRIMARY KEY,
-      hash text NOT NULL,
-      created_at numeric
+    CREATE TABLE IF NOT EXISTS __drizzle_migrations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+      hash TEXT NOT NULL,
+      created_at NUMERIC
     )
   `);
-
-  const insert = sqlite.prepare('INSERT INTO "__drizzle_migrations" ("hash", "created_at") VALUES (?, ?)');
-  const applyBootstrap = sqlite.transaction((migrations: MigrationRecord[]) => {
-    for (const migrationRecord of migrations) {
-      insert.run(migrationRecord.hash, migrationRecord.createdAt);
-    }
-  });
-
-  applyBootstrap(records);
-  console.log('[db] Bootstrapped drizzle migration journal for existing SQLite schema.');
+  const exists = sqlite.prepare(
+    'SELECT 1 FROM __drizzle_migrations WHERE hash = ? AND created_at = ? LIMIT 1',
+  ).get(baseline.hash, baseline.folderMillis);
+  if (exists) return false;
+  sqlite.prepare(
+    'INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)',
+  ).run(baseline.hash, baseline.folderMillis);
   return true;
 }
 
-export function runSqliteMigrations(): void {
+function hasCurrentDrizzleBaseline(sqlite: Database.Database, migrationsFolder: string): boolean {
+  const table = sqlite.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '__drizzle_migrations' LIMIT 1",
+  ).get();
+  if (!table) return false;
+  const baseline = readMigrationFiles({ migrationsFolder }).at(-1);
+  if (!baseline) throw new Error('Current Drizzle baseline migration is missing');
+  return !!sqlite.prepare(
+    'SELECT 1 FROM __drizzle_migrations WHERE hash = ? AND created_at = ? LIMIT 1',
+  ).get(baseline.hash, baseline.folderMillis);
+}
+
+/**
+ * Applies the current Drizzle baseline. Existing application databases first
+ * receive the generated current-schema upgrade and then adopt that baseline;
+ * this is the only owner of the unreleased baseline transition.
+ */
+export async function runSqliteMigrations(): Promise<void> {
   const dbPath = resolveSqliteDbPath();
   const migrationsFolder = resolveMigrationsFolder();
   if (dbPath !== ':memory:') {
     mkdirSync(dirname(dbPath), { recursive: true });
   }
 
+  let needsBaselineAdoption = false;
   const sqlite = new Database(dbPath);
-  bootstrapLegacyDrizzleMigrations(sqlite, migrationsFolder);
-  backfillMissingRecordedMigrations(sqlite, migrationsFolder);
-
-  runSqliteMigrationRecoveryLoop({
-    runMigrate: () => {
-      migrate(drizzle(sqlite), { migrationsFolder });
-    },
-    recoverDuplicateColumnMigrationError: (error) => (
-      recoverDuplicateColumnMigrationError(sqlite, migrationsFolder, error)
-    ),
-    isSitesPlatformUrlUniqueConflictError,
-    deduplicateLegacySitesForUniqueIndex: () => deduplicateLegacySitesForUniqueIndex(sqlite),
-    closeSqlite: () => sqlite.close(),
-  });
-
-  sqlite.close();
+  try {
+    needsBaselineAdoption = hasExistingApplicationSchema(sqlite)
+      && !hasCurrentDrizzleBaseline(sqlite, migrationsFolder);
+  } finally {
+    sqlite.close();
+  }
+  if (needsBaselineAdoption) {
+    const preflight = new Database(dbPath, { readonly: true });
+    let preparedArtifacts: PreparedLegacyCompiledRuntimeArtifacts | null;
+    try {
+      preparedArtifacts = prepareLegacyCompiledRuntimeArtifacts(preflight);
+    } finally {
+      preflight.close();
+    }
+    migrateLegacySqliteRouteRuntime(dbPath);
+    await bootstrapRuntimeDatabaseSchema({ dialect: 'sqlite', connectionString: dbPath });
+    const runtimeMigration = new Database(dbPath);
+    try {
+      writePreparedLegacyCompiledRuntimeArtifacts(runtimeMigration, preparedArtifacts);
+    } finally {
+      runtimeMigration.close();
+    }
+    const adoption = new Database(dbPath);
+    try {
+      adoption.transaction(() => adoptCurrentDrizzleBaseline(adoption, migrationsFolder))();
+    } finally {
+      adoption.close();
+    }
+  }
+  const migrated = new Database(dbPath);
+  try {
+    const database = drizzle(migrated);
+    migrate(database, { migrationsFolder });
+    migrateCurrentCandidateSourceShape(migrated);
+  } finally {
+    migrated.close();
+  }
   console.log('Migration complete.');
 }
 
-runSqliteMigrations();
+function isCliEntrypoint(): boolean {
+  const entrypoint = process.argv[1];
+  return !!entrypoint && import.meta.url === pathToFileURL(entrypoint).href;
+}
+
+if (isCliEntrypoint()) {
+  void runSqliteMigrations();
+}

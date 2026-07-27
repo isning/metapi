@@ -3,6 +3,8 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
+import { compileRouteGraphSource } from '../../shared/routeGraph.js';
+import { clearRouteGroupMemberTestData, listAllRouteGroupMembers } from '../../testing/routeGroupMemberTestUtils.js';
 
 const getApiTokenMock = vi.fn();
 const getModelsMock = vi.fn();
@@ -40,13 +42,25 @@ vi.mock('./oauth/refreshSingleflight.js', () => ({
 
 type DbModule = typeof import('../db/index.js');
 type ModelServiceModule = typeof import('./modelService.js');
+type RouteGraphServiceModule = typeof import('./routeGraphService.js');
+type RouteRuntimeExecutionModule = typeof import('./routeRuntimeExecutionService.js');
+type RouteGroupManagementModule = typeof import('./routeGroupManagementService.js');
+type RouteGroupManagementReadModelModule = typeof import('./routeGroupManagementReadModelService.js');
+type RouteGroupFallbackStageModule = typeof import('./routeGroupFallbackStageService.js');
 
 describe('refreshModelsForAccount credential discovery', () => {
   let db: DbModule['db'];
   let schema: DbModule['schema'];
   let refreshModelsForAccount: ModelServiceModule['refreshModelsForAccount'];
   let refreshModelsAndRebuildRoutes: ModelServiceModule['refreshModelsAndRebuildRoutes'];
-  let rebuildTokenRoutesFromAvailability: ModelServiceModule['rebuildTokenRoutesFromAvailability'];
+  let rebuildManagedRouteGroupsFromAvailability: ModelServiceModule['rebuildManagedRouteGroupsFromAvailability'];
+  let ensureActiveRouteGraphVersion: RouteGraphServiceModule['ensureActiveRouteGraphVersion'];
+  let invalidateRouteGraphReadCaches: RouteGraphServiceModule['invalidateRouteGraphReadCaches'];
+  let evaluateRouteRuntimeForModel: RouteRuntimeExecutionModule['evaluateRouteRuntimeForModel'];
+  let selectRouteRuntimeExecutionAttempt: RouteRuntimeExecutionModule['selectRouteRuntimeExecutionAttempt'];
+  let updateRouteGroupFromPayload: RouteGroupManagementModule['updateRouteGroupFromPayload'];
+  let loadRouteGroupManagementReadModel: RouteGroupManagementReadModelModule['loadRouteGroupManagementReadModel'];
+  let listRouteGroupFallbackStages: RouteGroupFallbackStageModule['listRouteGroupFallbackStages'];
   let dataDir = '';
 
   beforeAll(async () => {
@@ -56,12 +70,24 @@ describe('refreshModelsForAccount credential discovery', () => {
     await import('../db/migrate.js');
     const dbModule = await import('../db/index.js');
     const modelService = await import('./modelService.js');
+    const routeGraphService = await import('./routeGraphService.js');
+    const routeRuntimeExecutionService = await import('./routeRuntimeExecutionService.js');
+    const routeGroupManagement = await import('./routeGroupManagementService.js');
+    const routeGroupManagementReadModel = await import('./routeGroupManagementReadModelService.js');
+    const routeGroupFallbackStage = await import('./routeGroupFallbackStageService.js');
 
     db = dbModule.db;
     schema = dbModule.schema;
     refreshModelsForAccount = modelService.refreshModelsForAccount;
     refreshModelsAndRebuildRoutes = modelService.refreshModelsAndRebuildRoutes;
-    rebuildTokenRoutesFromAvailability = modelService.rebuildTokenRoutesFromAvailability;
+    rebuildManagedRouteGroupsFromAvailability = modelService.rebuildManagedRouteGroupsFromAvailability;
+    ensureActiveRouteGraphVersion = routeGraphService.ensureActiveRouteGraphVersion;
+    invalidateRouteGraphReadCaches = routeGraphService.invalidateRouteGraphReadCaches;
+    evaluateRouteRuntimeForModel = routeRuntimeExecutionService.evaluateRouteRuntimeForModel;
+    selectRouteRuntimeExecutionAttempt = routeRuntimeExecutionService.selectRouteRuntimeExecutionAttempt;
+    updateRouteGroupFromPayload = routeGroupManagement.updateRouteGroupFromPayload;
+    loadRouteGroupManagementReadModel = routeGroupManagementReadModel.loadRouteGroupManagementReadModel;
+    listRouteGroupFallbackStages = routeGroupFallbackStage.listRouteGroupFallbackStages;
   });
 
   beforeEach(async () => {
@@ -71,8 +97,15 @@ describe('refreshModelsForAccount credential discovery', () => {
     proxyAgentCtorMock.mockReset();
     refreshOauthAccessTokenSingleflightMock.mockReset();
 
-    await db.delete(schema.routeChannels).run();
-    await db.delete(schema.tokenRoutes).run();
+    await clearRouteGroupMemberTestData();
+    await db.delete(schema.routeGraphDrafts).run();
+    await db.delete(schema.routeGraphActiveVersion).run();
+    await db.delete(schema.compiledRuntimeActiveArtifact).run();
+    await db.delete(schema.compiledRuntimeArtifacts).run();
+    await db.delete(schema.routeGraphVersions).run();
+    invalidateRouteGraphReadCaches('test-reset');
+    await db.delete(schema.runtimeExecutionTargetState).run();
+    await db.delete(schema.runtimeExecutionTargets).run();
     await db.delete(schema.tokenModelAvailability).run();
     await db.delete(schema.modelAvailability).run();
     await db.delete(schema.accountTokens).run();
@@ -180,6 +213,74 @@ describe('refreshModelsForAccount credential discovery', () => {
     expect(getModelsMock).toHaveBeenCalledWith('https://api.example.com', 'session-token', undefined);
   });
 
+  it('discovers models from the configured model catalog source before adapter probing', async () => {
+    getApiTokenMock.mockResolvedValue(null);
+    getModelsMock.mockResolvedValue(['adapter-model']);
+    undiciFetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        data: [
+          { id: 'catalog-model-a' },
+          { id: 'catalog-model-b' },
+        ],
+      }),
+    });
+
+    const site = await db.insert(schema.sites).values({
+      name: 'catalog-site',
+      url: 'https://catalog.example.com',
+      platform: 'openai',
+      status: 'active',
+    }).returning().get();
+
+    const catalogSource = await db.insert(schema.modelCatalogSources).values({
+      siteId: site.id,
+      sourceKey: 'catalog-api',
+      label: 'Catalog API',
+      discoveryMethod: 'GET',
+      discoveryUrl: 'https://models.example.com/v1/models',
+      parser: 'openai_models',
+      credentialScope: 'credential',
+      enabled: true,
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'catalog-user',
+      accessToken: 'session-token',
+      apiToken: null,
+      status: 'active',
+    }).returning().get();
+
+    const result = await refreshModelsForAccount(account.id);
+
+    expect(result).toMatchObject({
+      accountId: account.id,
+      refreshed: true,
+      status: 'success',
+      modelCount: 2,
+      modelsPreview: ['catalog-model-a', 'catalog-model-b'],
+      discoveredByCredential: true,
+    });
+    expect(getModelsMock).not.toHaveBeenCalled();
+    expect(undiciFetchMock).toHaveBeenCalledWith(
+      'https://models.example.com/v1/models',
+      expect.objectContaining({
+        method: 'GET',
+        headers: expect.objectContaining({
+          Authorization: 'Bearer session-token',
+        }),
+      }),
+    );
+
+    const source = await db.select().from(schema.modelCatalogSources)
+      .where(eq(schema.modelCatalogSources.id, catalogSource.id))
+      .get();
+    expect(source?.lastModelCount).toBe(2);
+    expect(source?.lastRefreshAt).toBeTruthy();
+    expect(source?.lastError).toBeNull();
+  });
+
   it('deduplicates discovered model names before writing availability rows', async () => {
     getApiTokenMock.mockResolvedValue(null);
     getModelsMock.mockResolvedValue(['? ', '?', 'GPT-4.1', 'gpt-4.1']);
@@ -276,6 +377,68 @@ describe('refreshModelsForAccount credential discovery', () => {
       .where(eq(schema.tokenModelAvailability.tokenId, token!.id))
       .all();
     expect(tokenRows.map((row) => row.modelName)).toEqual(['gpt-5-nano']);
+  });
+
+  it('updates existing token model availability rows during refresh and rebuild', async () => {
+    getApiTokenMock.mockResolvedValue(null);
+    getModelsMock.mockImplementation(async (_baseUrl: string, token: string) => (
+      token === 'sk-refresh-token'
+        ? ['claude-haiku-4-5-20251001', 'claude-opus-4-6']
+        : []
+    ));
+
+    const site = await db.insert(schema.sites).values({
+      name: 'site-token-availability-upsert',
+      url: 'https://site-token-availability-upsert.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'token-availability-upsert-user',
+      accessToken: '',
+      apiToken: '',
+      status: 'active',
+      extraConfig: JSON.stringify({ credentialMode: 'session' }),
+    }).returning().get();
+
+    const token = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'default',
+      token: 'sk-refresh-token',
+      source: 'manual',
+      enabled: true,
+      isDefault: true,
+    }).returning().get();
+
+    await db.insert(schema.tokenModelAvailability).values({
+      tokenId: token.id,
+      modelName: 'claude-haiku-4-5-20251001',
+      available: false,
+      latencyMs: 9999,
+      checkedAt: '2026-01-01T00:00:00.000Z',
+    }).run();
+
+    const result = await refreshModelsAndRebuildRoutes();
+    expect(result.refresh).toHaveLength(1);
+    expect(result.refresh[0]).toMatchObject({
+      accountId: account.id,
+      status: 'success',
+      modelCount: 2,
+    });
+
+    const tokenRows = await db.select().from(schema.tokenModelAvailability)
+      .where(eq(schema.tokenModelAvailability.tokenId, token.id))
+      .all();
+    expect(tokenRows.map((row) => row.modelName).sort()).toEqual([
+      'claude-haiku-4-5-20251001',
+      'claude-opus-4-6',
+    ]);
+    expect(tokenRows.find((row) => row.modelName === 'claude-haiku-4-5-20251001')).toMatchObject({
+      available: true,
+      latencyMs: expect.any(Number),
+    });
   });
 
   it('marks runtime health unhealthy when model discovery fails', async () => {
@@ -392,7 +555,7 @@ describe('refreshModelsForAccount credential discovery', () => {
   it('does not scan hidden managed tokens for direct apikey connections', async () => {
     getApiTokenMock.mockResolvedValue(null);
     getModelsMock.mockImplementation(async (_baseUrl: string, token: string) => (
-      token === 'sk-direct-credential' ? ['gpt-4.1'] : ['legacy-should-not-be-used']
+      token === 'sk-direct-credential' ? ['gpt-4.1'] : ['hidden-should-not-be-used']
     ));
 
     const site = await db.insert(schema.sites).values({
@@ -413,9 +576,9 @@ describe('refreshModelsForAccount credential discovery', () => {
 
     const hiddenToken = await db.insert(schema.accountTokens).values({
       accountId: account.id,
-      name: 'legacy-hidden',
-      token: 'sk-legacy-hidden',
-      source: 'legacy',
+      name: 'migration-hidden',
+      token: 'sk-migration-hidden',
+      source: 'migration',
       enabled: true,
       isDefault: true,
     }).returning().get();
@@ -2220,13 +2383,100 @@ describe('refreshModelsForAccount credential discovery', () => {
       { unitId: routeUnit.id, accountId: accountB.id, sortOrder: 1 },
     ]).run();
 
-    const rebuild = await rebuildTokenRoutesFromAvailability();
-    expect(rebuild.createdChannels).toBe(1);
+    const rebuild = await rebuildManagedRouteGroupsFromAvailability();
+    expect(rebuild.createdRouteGroupCandidates).toBe(1);
 
-    const channels = await db.select().from(schema.routeChannels).all();
-    expect(channels).toHaveLength(1);
-    expect(channels[0]).toMatchObject({
-      oauthRouteUnitId: routeUnit.id,
+    const routes = await loadRouteGroupManagementReadModel();
+    const generatedRoute = routes.find((route) => route.presentation.displayName === 'gpt-5.4' || route.model.upstreamName === 'gpt-5.4');
+    expect(generatedRoute).toBeDefined();
+    if (!generatedRoute) throw new Error('generated route group missing');
+    const updatedRoute = await updateRouteGroupFromPayload(generatedRoute.id, {
+      dispatcherPolicy: { kind: 'builtin', builtin: 'stable_first' },
     });
+    expect(updatedRoute?.dispatcherPolicy).toEqual({ kind: 'builtin', builtin: 'stable_first' });
+    const [fallbackStage] = await listRouteGroupFallbackStages(generatedRoute.id);
+    const pooledCandidate = fallbackStage?.candidates[0];
+    expect(fallbackStage?.candidates).toHaveLength(1);
+    expect(pooledCandidate).toMatchObject({
+      kind: 'execution_endpoint',
+      targets: [
+        expect.objectContaining({ accountId: accountA.id }),
+        expect.objectContaining({ accountId: accountB.id }),
+      ],
+    });
+    if (pooledCandidate?.kind !== 'execution_endpoint') {
+      throw new Error('Generated pooled endpoint candidate missing');
+    }
+    const executionTargetIds = pooledCandidate.targets.map((target) => target.id);
+
+    const activeGraph = await ensureActiveRouteGraphVersion();
+    const compiled = compileRouteGraphSource(activeGraph.sourceGraph);
+    expect(compiled.ok).toBe(true);
+    const targetEndpoint = activeGraph.sourceGraph.nodes.find((node) => (
+      node.type === 'route_endpoint'
+      && node.config?.targets?.some(
+        (target) => executionTargetIds.includes(target.transportBinding?.executionTargetId || -1),
+      )
+    ));
+    expect(targetEndpoint).toMatchObject({
+      type: 'route_endpoint',
+      endpointKind: 'supply',
+      exposure: 'none',
+      ownership: 'derived',
+      ownerKind: 'macro',
+      sourceKind: 'upstream_model',
+    });
+    if (!targetEndpoint || targetEndpoint.type !== 'route_endpoint') {
+      throw new Error('Execution target source-Graph endpoint missing');
+    }
+    expect(targetEndpoint.config).toMatchObject({
+      targetSelection: { kind: 'builtin', builtin: 'round_robin' },
+    });
+    expect(targetEndpoint.config?.targets).toHaveLength(2);
+    expect(activeGraph.sourceGraph.nodes).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: targetEndpoint.id,
+        type: 'route_endpoint',
+        endpointKind: 'supply',
+        exposure: 'none',
+        ownership: 'derived',
+        ownerKind: 'macro',
+        sourceKind: 'upstream_model',
+      }),
+    ]));
+    expect(activeGraph.sourceGraph.nodes).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ endpointKind: 'route_product' }),
+    ]));
+    expect(activeGraph.sourceGraph.macros).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: generatedRoute.id,
+        kind: 'candidate_selector',
+        ownership: 'system',
+        config: expect.objectContaining({
+          policy: { kind: 'builtin', builtin: 'stable_first' },
+          groups: expect.arrayContaining([
+            expect.objectContaining({ id: fallbackStage?.id }),
+          ]),
+        }),
+      }),
+    ]));
+    const routerPlan = compiled.compiled.compiledRouterBundle?.plans.find((plan) => plan.publicModelName === 'gpt-5.4');
+    expect(routerPlan).toEqual(expect.objectContaining({
+      publicModelName: 'gpt-5.4',
+    }));
+    expect(compiled.compiled.compiledRouterBundle?.matcher.exact['gpt-5.4']).toEqual(expect.objectContaining({
+      publicModelName: 'gpt-5.4',
+      programId: routerPlan?.id,
+    }));
+
+    const evaluation = await evaluateRouteRuntimeForModel('gpt-5.4');
+    expect(evaluation.selection).toMatchObject({
+      terminalKind: 'endpoint',
+    });
+    const first = await selectRouteRuntimeExecutionAttempt({ requestedModel: 'gpt-5.4' });
+    const second = await selectRouteRuntimeExecutionAttempt({ requestedModel: 'gpt-5.4' });
+    expect(new Set([first?.account.id, second?.account.id])).toEqual(
+      new Set([accountA.id, accountB.id]),
+    );
   });
 });

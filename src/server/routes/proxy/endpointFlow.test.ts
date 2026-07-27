@@ -81,6 +81,36 @@ describe('executeEndpointFlow', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('uses executable request urls from api attempts', async () => {
+    fetchMock.mockResolvedValueOnce(toUndiciResponse(new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    })));
+
+    const result = await executeEndpointFlow({
+      siteUrl: 'https://site-url.example.com',
+      endpointCandidates: ['chat'],
+      apiAttempts: [{
+        id: 'api-attempt:deepseek-chat',
+        variantId: 'api-variant:deepseek-chat',
+        supplyTargetId: 'supply-target:deepseek',
+        apiType: 'openai_chat_completions',
+        upstreamEndpoint: 'chat',
+        requestMethod: 'POST',
+        requestUrl: 'https://api.deepseek.com/chat/completions',
+        adapterId: 'openai_chat_completions',
+        credentialEndpointBindingId: 'credential-endpoint:key-a:deepseek-chat',
+        apiEndpointProfileId: 'deepseek-chat',
+        reason: ['credential_binding_supported'],
+        downgradeAllowed: true,
+      }],
+      buildRequest: () => ({ ...requestFor('/v1/chat/completions'), endpoint: 'chat' }),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://api.deepseek.com/chat/completions');
+  });
+
   it('avoids duplicated /v1 when base url already ends with /v1', async () => {
     fetchMock.mockResolvedValueOnce(toUndiciResponse(new Response(JSON.stringify({ ok: true }), {
       status: 200,
@@ -226,6 +256,50 @@ describe('executeEndpointFlow', () => {
     expect(onAttemptFailure.mock.calls[0]?.[0]?.request?.path).toBe('/v1/responses');
     expect(onAttemptSuccess).toHaveBeenCalledTimes(1);
     expect(onAttemptSuccess.mock.calls[0]?.[0]?.request?.path).toBe('/v1/chat/completions');
+  });
+
+  it('normalizes dispatch exceptions into failed attempts instead of escaping the flow', async () => {
+    const onAttemptFailure = vi.fn();
+    const result = await executeEndpointFlow({
+      siteUrl: 'https://example.com',
+      endpointCandidates: ['responses'],
+      buildRequest: () => requestFor('/v1/responses'),
+      dispatchRequest: async () => {
+        throw new Error('fetch failed');
+      },
+      onAttemptFailure,
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.status).toBe(502);
+      expect(result.errText).toContain('[upstream:/v1/responses]');
+      expect(result.errText).toContain('fetch failed');
+    }
+    expect(onAttemptFailure).toHaveBeenCalledTimes(1);
+    expect(onAttemptFailure.mock.calls[0]?.[0]?.response?.status).toBe(502);
+    expect(onAttemptFailure.mock.calls[0]?.[0]?.rawErrText).toBe('fetch failed');
+  });
+
+  it('allows network dispatch failures to abort same-site endpoint fallback', async () => {
+    const result = await executeEndpointFlow({
+      siteUrl: 'https://example.com',
+      endpointCandidates: ['responses', 'chat'],
+      buildRequest: (endpoint) => endpoint === 'responses'
+        ? requestFor('/v1/responses')
+        : { ...requestFor('/v1/chat/completions'), endpoint },
+      dispatchRequest: async () => {
+        throw new Error('fetch failed');
+      },
+      shouldAbortRemainingEndpoints: () => true,
+      shouldDowngrade: () => true,
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.status).toBe(502);
+      expect(result.errText).toContain('fetch failed');
+    }
   });
 
   it('stops same-site endpoint fallback when the failure is classified as a site outage', async () => {

@@ -1,7 +1,12 @@
 import { anthropicMessagesTransformer } from '../../anthropic/messages/index.js';
 import { createProxyStreamLifecycle } from '../../shared/protocolLifecycle.js';
 import { type DownstreamFormat, type ParsedSseEvent } from '../../shared/normalized.js';
-import { createOpenAiChatAggregateState, applyOpenAiChatStreamEvent, finalizeOpenAiChatAggregate } from './aggregator.js';
+import {
+  createOpenAiChatAggregateState,
+  applyOpenAiChatStreamEvent,
+  finalizeOpenAiChatAggregate,
+  OpenAiChatStreamAggregateLimitError,
+} from './aggregator.js';
 import {
   buildNormalizedFinalToOpenAiChatChunks,
   normalizeOpenAiChatFinalToNormalized,
@@ -20,6 +25,7 @@ type ChatProxyStreamSessionInput = {
   modelName: string;
   successfulUpstreamPath: string;
   onParsedPayload?: (payload: unknown) => void;
+  onMeaningfulOutput?: () => void;
   writeLines: (lines: string[]) => void;
   writeRaw: (chunk: string) => void;
 };
@@ -32,6 +38,65 @@ type ChatProxyStreamResult = {
   status: 'completed' | 'failed';
   errorMessage: string | null;
 };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function hasText(value: unknown): boolean {
+  return typeof value === 'string' && value.length > 0;
+}
+
+function hasMeaningfulClaudeContentBlock(block: unknown): boolean {
+  if (!isRecord(block)) return false;
+  const blockType = typeof block.type === 'string' ? block.type : '';
+  if (blockType === 'text') return hasText(block.text);
+  if (blockType === 'thinking') return hasText(block.thinking ?? block.text);
+  if (blockType === 'redacted_thinking') return hasText(block.data);
+  if (blockType === 'tool_use') {
+    if (hasText(block.id) || hasText(block.name)) return true;
+    if (isRecord(block.input)) return Object.keys(block.input).length > 0;
+    return hasText(block.input);
+  }
+  return false;
+}
+
+function hasMeaningfulClaudePayload(payload: unknown): boolean {
+  if (!isRecord(payload)) return false;
+  const payloadType = typeof payload.type === 'string' ? payload.type : '';
+  if (payloadType === 'message_start' && isRecord(payload.message)) {
+    const content = payload.message.content;
+    return Array.isArray(content) && content.some(hasMeaningfulClaudeContentBlock);
+  }
+  if (payloadType === 'content_block_start') {
+    return hasMeaningfulClaudeContentBlock(payload.content_block);
+  }
+  if (payloadType !== 'content_block_delta' || !isRecord(payload.delta)) return false;
+
+  const delta = payload.delta;
+  const deltaType = typeof delta.type === 'string' ? delta.type : '';
+  if (deltaType === 'text_delta') return hasText(delta.text);
+  if (deltaType === 'thinking_delta') return hasText(delta.thinking ?? delta.text);
+  if (deltaType === 'input_json_delta') return hasText(delta.partial_json);
+  return false;
+}
+
+function hasMeaningfulNormalizedStreamEvent(event: {
+  contentDelta?: string;
+  reasoningDelta?: string;
+  redactedReasoningContent?: string;
+  toolCallDeltas?: Array<{ id?: string; name?: string; argumentsDelta?: string }>;
+}): boolean {
+  if (hasText(event.contentDelta)) return true;
+  if (hasText(event.reasoningDelta)) return true;
+  if (hasText(event.redactedReasoningContent)) return true;
+  return Array.isArray(event.toolCallDeltas)
+    && event.toolCallDeltas.some((toolCall) => (
+      hasText(toolCall.id)
+      || hasText(toolCall.name)
+      || hasText(toolCall.argumentsDelta)
+    ));
+}
 
 export function createChatProxyStreamSession(input: ChatProxyStreamSessionInput) {
   const downstreamTransformer = input.downstreamFormat === 'claude'
@@ -46,7 +111,12 @@ export function createChatProxyStreamSession(input: ChatProxyStreamSessionInput)
   const streamContext = downstreamTransformer.createStreamContext(input.modelName);
   const claudeContext = anthropicMessagesTransformer.createDownstreamContext();
   const chatAggregateState = input.downstreamFormat === 'openai'
-    ? createOpenAiChatAggregateState()
+    ? createOpenAiChatAggregateState({
+      maxReasoningBytes: config.proxyStreamMaxReasoningBytes,
+      maxContentBytes: config.proxyStreamMaxContentBytes,
+      maxToolArgumentBytes: config.proxyStreamMaxToolArgumentBytes,
+      maxAggregateBytes: config.proxyStreamMaxAggregateBytes,
+    })
     : null;
   let finalized = false;
   let terminalResult: ChatProxyStreamResult = {
@@ -55,6 +125,9 @@ export function createChatProxyStreamSession(input: ChatProxyStreamSessionInput)
   };
   let terminalNormalizedFinal: ReturnType<typeof normalizeOpenAiChatFinalToNormalized> | null = null;
   let forwardedDownstreamOutput = false;
+  let openAiStreamHasMeaningfulOutput = false;
+  let claudeStreamHasMeaningfulOutput = false;
+  let meaningfulOutputObserved = false;
   const pendingWrites: string[] = [];
 
   const extractFailureMessage = (payload: unknown, fallback = 'upstream stream failed'): string => {
@@ -116,9 +189,18 @@ export function createChatProxyStreamSession(input: ChatProxyStreamSessionInput)
     pendingWrites.length = 0;
   };
 
+  const shouldBufferUntilMeaningfulOutput = (): boolean => (
+    config.proxyEmptyContentFailEnabled
+    && (input.downstreamFormat === 'openai' || input.downstreamFormat === 'claude')
+  );
+
   const emitLines = (lines: string[], options?: { meaningful?: boolean; force?: boolean }) => {
     if (lines.length <= 0) return;
-    if (input.downstreamFormat !== 'openai') {
+    if (options?.meaningful && !meaningfulOutputObserved) {
+      meaningfulOutputObserved = true;
+      input.onMeaningfulOutput?.();
+    }
+    if (!shouldBufferUntilMeaningfulOutput()) {
       input.writeLines(lines);
       return;
     }
@@ -143,7 +225,11 @@ export function createChatProxyStreamSession(input: ChatProxyStreamSessionInput)
 
   const emitRaw = (chunk: string, options?: { meaningful?: boolean; force?: boolean }) => {
     if (!chunk) return;
-    if (input.downstreamFormat !== 'openai') {
+    if (options?.meaningful && !meaningfulOutputObserved) {
+      meaningfulOutputObserved = true;
+      input.onMeaningfulOutput?.();
+    }
+    if (!shouldBufferUntilMeaningfulOutput()) {
       input.writeRaw(chunk);
       return;
     }
@@ -168,12 +254,16 @@ export function createChatProxyStreamSession(input: ChatProxyStreamSessionInput)
 
   const shouldFailEmptyChatCompletion = (): boolean => {
     if (!config.proxyEmptyContentFailEnabled) return false;
-    if (input.downstreamFormat !== 'openai') return false;
     if (terminalResult.status === 'failed') return false;
-    if (hasMeaningfulChatAggregateOutput()) return false;
+    if (input.downstreamFormat === 'openai' && (openAiStreamHasMeaningfulOutput || hasMeaningfulChatAggregateOutput())) return false;
+    if (input.downstreamFormat === 'claude' && claudeStreamHasMeaningfulOutput) return false;
     if (hasMeaningfulNormalizedFinalOutput()) return false;
     return true;
   };
+
+  const hasMeaningfulOpenAiOutput = (): boolean => (
+    openAiStreamHasMeaningfulOutput || hasMeaningfulChatAggregateOutput()
+  );
 
   const finalize = () => {
     if (finalized) return;
@@ -188,7 +278,7 @@ export function createChatProxyStreamSession(input: ChatProxyStreamSessionInput)
       return;
     }
 
-    if (input.downstreamFormat === 'openai' && !forwardedDownstreamOutput) {
+    if (shouldBufferUntilMeaningfulOutput() && !forwardedDownstreamOutput) {
       forwardedDownstreamOutput = true;
       flushPendingWrites();
     }
@@ -221,12 +311,16 @@ export function createChatProxyStreamSession(input: ChatProxyStreamSessionInput)
           }),
         ).slice(-1)[0];
         if (terminalChunk) {
-          emitLines([`data: ${JSON.stringify(terminalChunk)}\n\n`], { meaningful: true });
+          emitLines([`data: ${JSON.stringify(terminalChunk)}\n\n`], { meaningful: hasMeaningfulOpenAiOutput() });
         }
       }
     }
 
-    emitLines(downstreamTransformer.serializeDone(streamContext, claudeContext), { meaningful: true });
+    emitLines(downstreamTransformer.serializeDone(streamContext, claudeContext), {
+      meaningful: input.downstreamFormat === 'claude'
+        ? claudeStreamHasMeaningfulOutput
+        : hasMeaningfulOpenAiOutput(),
+    });
   };
 
   const handleEventBlock = async (eventBlock: ParsedSseEvent): Promise<boolean> => {
@@ -246,9 +340,25 @@ export function createChatProxyStreamSession(input: ChatProxyStreamSessionInput)
       parsedPayload = consumed.parsedPayload;
       if (parsedPayload && typeof parsedPayload === 'object') {
         input.onParsedPayload?.(parsedPayload);
+        if (hasMeaningfulClaudePayload(parsedPayload)) {
+          claudeStreamHasMeaningfulOutput = true;
+        }
       }
       if (consumed.handled) {
-        input.writeLines(consumed.lines);
+        const payloadType = isRecord(parsedPayload) && typeof parsedPayload.type === 'string'
+          ? parsedPayload.type
+          : '';
+        const isFailurePayload = payloadType === 'error';
+        if (isFailurePayload) {
+          markFailed(parsedPayload);
+        }
+        emitLines(consumed.lines, {
+          meaningful: claudeStreamHasMeaningfulOutput,
+          force: isFailurePayload,
+        });
+        if (consumed.done) {
+          finalize();
+        }
         return consumed.done;
       }
     } else {
@@ -271,13 +381,36 @@ export function createChatProxyStreamSession(input: ChatProxyStreamSessionInput)
         markFailed(parsedPayload);
       }
       const normalizedEvent = downstreamTransformer.transformStreamEvent(parsedPayload, streamContext, input.modelName);
+      const normalizedHasMeaningfulOutput = hasMeaningfulNormalizedStreamEvent(normalizedEvent);
+      if (normalizedHasMeaningfulOutput) {
+        if (input.downstreamFormat === 'claude') {
+          claudeStreamHasMeaningfulOutput = true;
+        } else if (input.downstreamFormat === 'openai') {
+          openAiStreamHasMeaningfulOutput = true;
+        }
+      }
       if (input.downstreamFormat === 'openai' && chatAggregateState) {
-        applyOpenAiChatStreamEvent(chatAggregateState, normalizedEvent);
+        try {
+          applyOpenAiChatStreamEvent(chatAggregateState, normalizedEvent);
+        } catch (error) {
+          if (error instanceof OpenAiChatStreamAggregateLimitError) {
+            markFailed({
+              error: {
+                message: error.message,
+                type: 'upstream_response_too_large',
+              },
+            }, error.message);
+            return true;
+          }
+          throw error;
+        }
       }
       emitLines(
         downstreamTransformer.serializeStreamEvent(normalizedEvent, streamContext, claudeContext),
         {
-          meaningful: hasMeaningfulChatAggregateOutput(),
+          meaningful: input.downstreamFormat === 'claude'
+            ? claudeStreamHasMeaningfulOutput
+            : hasMeaningfulOpenAiOutput(),
           force: isFailurePayload,
         },
       );
@@ -289,9 +422,10 @@ export function createChatProxyStreamSession(input: ChatProxyStreamSessionInput)
       return false;
     }
 
-    input.writeLines(anthropicMessagesTransformer.serializeStreamEvent({
+    claudeStreamHasMeaningfulOutput = true;
+    emitLines(anthropicMessagesTransformer.serializeStreamEvent({
       contentDelta: eventBlock.data,
-    }, streamContext, claudeContext));
+    }, streamContext, claudeContext), { meaningful: true });
     return claudeContext.doneSent;
   };
 
@@ -317,7 +451,7 @@ export function createChatProxyStreamSession(input: ChatProxyStreamSessionInput)
         emitLines(
           buildNormalizedFinalToOpenAiChatChunks(normalizedFinal)
             .map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`),
-          { meaningful: true },
+          { meaningful: hasMeaningfulNormalizedFinalOutput() },
         );
       } else {
         emitLines(
@@ -342,6 +476,15 @@ export function createChatProxyStreamSession(input: ChatProxyStreamSessionInput)
         pullEvents: (buffer) => downstreamTransformer.pullSseEvents(buffer),
         handleEvent: handleEventBlock,
         onEof: finalize,
+        maxBufferBytes: config.proxyStreamMaxSseBufferBytes,
+        onLimitExceeded: (message) => {
+          markFailed({
+            error: {
+              message,
+              type: 'upstream_response_too_large',
+            },
+          }, message);
+        },
       });
       await lifecycle.run();
       return terminalResult;

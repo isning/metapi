@@ -161,6 +161,55 @@ describe('anthropic messages response bridge', () => {
     ]);
   });
 
+  it('drops responses function_call items without stable ids or names when serializing to anthropic blocks', () => {
+    const normalized = normalizeAnthropicMessagesFinalToNormalized({
+      id: 'resp_invalid_tool_1',
+      object: 'response',
+      model: 'gpt-5',
+      status: 'completed',
+      output: [
+        {
+          id: '',
+          type: 'function_call',
+          name: 'lookup_weather',
+          arguments: '{"city":"Paris"}',
+        },
+        {
+          id: 'fc_missing_name',
+          type: 'function_call',
+          call_id: 'call_missing_name',
+          arguments: '{"city":"Paris"}',
+        },
+        {
+          id: 'msg_invalid_tool_1',
+          type: 'message',
+          role: 'assistant',
+          status: 'completed',
+          content: [
+            { type: 'output_text', text: 'done' },
+          ],
+        },
+      ],
+      usage: {
+        input_tokens: 12,
+        output_tokens: 6,
+      },
+    }, 'gpt-5');
+
+    const payload = buildNormalizedFinalToAnthropicMessagesBody(normalized, {
+      promptTokens: 12,
+      completionTokens: 6,
+      totalTokens: 18,
+    });
+
+    expect(payload.content).toEqual([
+      {
+        type: 'text',
+        text: 'done',
+      },
+    ]);
+  });
+
   it('maps responses web_search_call items into anthropic server tool blocks', () => {
     const normalized = normalizeAnthropicMessagesFinalToNormalized({
       id: 'resp_search_1',

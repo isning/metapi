@@ -197,7 +197,7 @@ Metapi 当前有三类主要配置入口：
 
 | 变量名 | 说明 | 默认值 |
 |--------|------|--------|
-| `TOKEN_ROUTER_CACHE_TTL_MS` | Token 路由缓存 TTL（毫秒） | `1500` |
+| `ROUTE_RUNTIME_CACHE_TTL_MS` | 编译路由运行时缓存 TTL（毫秒） | `1500` |
 | `PROXY_LOG_RETENTION_DAYS` | 代理日志保留天数 | `30` |
 | `PROXY_LOG_RETENTION_PRUNE_INTERVAL_MINUTES` | 代理日志清理任务执行间隔（分钟） | `30` |
 | `MODEL_AVAILABILITY_PROBE_INTERVAL_MS` | 批量测活间隔（毫秒） | `1800000` |

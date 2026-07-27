@@ -56,7 +56,56 @@ function resolveMysqlIndexPrefix(
   return column ? escapeMysqlTextPrefix(column.logicalType) : '';
 }
 
-function mapColumnType(dialect: SqlDialect, columnName: string, column: SchemaContractColumn): string {
+const MYSQL_INDEX_MAX_BYTES = 3072;
+const MYSQL_INDEX_CHAR_BYTES = 4;
+const MYSQL_DEFAULT_INDEX_CHARS = 191;
+
+function mysqlFixedIndexBytes(columnType: LogicalColumnType): number {
+  if (columnType === 'integer') return 4;
+  if (columnType === 'real') return 8;
+  if (columnType === 'boolean') return 1;
+  return 0;
+}
+
+function buildMysqlIndexColumns(
+  tableName: string,
+  columnNames: string[],
+  contract: SchemaContract,
+  options?: SqlGenerationOptions,
+): string {
+  const variableColumns = columnNames.filter((columnName) => {
+    const type = contract.tables[tableName]?.columns[columnName]?.logicalType;
+    return type === 'text' || type === 'datetime';
+  });
+  const fixedBytes = columnNames.reduce((total, columnName) => {
+    const type = contract.tables[tableName]?.columns[columnName]?.logicalType;
+    return total + (type ? mysqlFixedIndexBytes(type) : 0);
+  }, 0);
+  const requestedBytes = fixedBytes + (variableColumns.length * MYSQL_DEFAULT_INDEX_CHARS * MYSQL_INDEX_CHAR_BYTES);
+  const allocatedChars = requestedBytes > MYSQL_INDEX_MAX_BYTES && variableColumns.length > 0
+    ? Math.floor((MYSQL_INDEX_MAX_BYTES - fixedBytes) / MYSQL_INDEX_CHAR_BYTES / variableColumns.length)
+    : MYSQL_DEFAULT_INDEX_CHARS;
+
+  if (allocatedChars < 1) {
+    throw new Error(`MySQL index on ${tableName} exceeds the key budget.`);
+  }
+
+  return columnNames.map((columnName) => {
+    const type = contract.tables[tableName]?.columns[columnName]?.logicalType;
+    const needsBudgetPrefix = (type === 'text' || type === 'datetime') && allocatedChars < MYSQL_DEFAULT_INDEX_CHARS;
+    const suffix = needsBudgetPrefix
+      ? `(${allocatedChars})`
+      : resolveMysqlIndexPrefix(tableName, columnName, contract, options);
+    return `${quoteIdentifier('mysql', columnName)}${suffix}`;
+  }).join(', ');
+}
+
+function mapColumnType(
+  dialect: SqlDialect,
+  columnName: string,
+  column: SchemaContractColumn,
+  mysqlBoundedText = false,
+): string {
   if (dialect === 'sqlite') {
     switch (column.logicalType) {
       case 'boolean':
@@ -85,7 +134,7 @@ function mapColumnType(dialect: SqlDialect, columnName: string, column: SchemaCo
       case 'json':
         return 'JSON';
       case 'text':
-        return column.primaryKey || column.defaultValue != null ? 'VARCHAR(191)' : 'TEXT';
+        return column.primaryKey || column.defaultValue != null || mysqlBoundedText ? 'VARCHAR(191)' : 'TEXT';
       default:
         return 'TEXT';
     }
@@ -132,10 +181,16 @@ function formatDefaultValue(dialect: SqlDialect, column: SchemaContractColumn): 
 
 function buildColumnDefinition(
   dialect: SqlDialect,
+  tableName: string,
   columnName: string,
   column: SchemaContractColumn,
+  contract: SchemaContract,
 ): string {
-  const sqlType = mapColumnType(dialect, columnName, column);
+  const mysqlBoundedText = dialect === 'mysql' && column.logicalType === 'text' && contract.foreignKeys.some((foreignKey) => (
+    (foreignKey.table === tableName && foreignKey.columns.includes(columnName))
+    || (foreignKey.referencedTable === tableName && foreignKey.referencedColumns.includes(columnName))
+  ));
+  const sqlType = mapColumnType(dialect, columnName, column, mysqlBoundedText);
   const notNull = column.notNull ? ' NOT NULL' : '';
   const defaultValue = formatDefaultValue(dialect, column);
   const primaryKey = column.primaryKey ? ' PRIMARY KEY' : '';
@@ -194,7 +249,7 @@ function buildCreateTableStatement(
   const columnEntries = Object.entries(table.columns);
   const foreignKeys = contract.foreignKeys.filter((foreignKey) => foreignKey.table === tableName);
   const parts = [
-    ...columnEntries.map(([columnName, column]) => buildColumnDefinition(dialect, columnName, column)),
+    ...columnEntries.map(([columnName, column]) => buildColumnDefinition(dialect, tableName, columnName, column, contract)),
     ...foreignKeys.map((foreignKey) => buildForeignKeyClause(dialect, foreignKey)),
   ];
   return `CREATE TABLE IF NOT EXISTS ${quoteIdentifier(dialect, tableName)} (${parts.join(', ')})`;
@@ -206,14 +261,9 @@ function buildUniqueIndexStatement(
   contract: SchemaContract,
   options?: SqlGenerationOptions,
 ): string {
-  const columns = uniqueIndex.columns
-    .map((columnName) => {
-      const suffix = dialect === 'mysql'
-        ? resolveMysqlIndexPrefix(uniqueIndex.table, columnName, contract, options)
-        : '';
-      return `${quoteIdentifier(dialect, columnName)}${suffix}`;
-    })
-    .join(', ');
+  const columns = dialect === 'mysql'
+    ? buildMysqlIndexColumns(uniqueIndex.table, uniqueIndex.columns, contract, options)
+    : uniqueIndex.columns.map((columnName) => quoteIdentifier(dialect, columnName)).join(', ');
   return `CREATE UNIQUE INDEX ${quoteIdentifier(dialect, uniqueIndex.name)} ON ${quoteIdentifier(dialect, uniqueIndex.table)} (${columns})`;
 }
 
@@ -223,14 +273,9 @@ function buildIndexStatement(
   contract: SchemaContract,
   options?: SqlGenerationOptions,
 ): string {
-  const columns = index.columns
-    .map((columnName) => {
-      const suffix = dialect === 'mysql'
-        ? resolveMysqlIndexPrefix(index.table, columnName, contract, options)
-        : '';
-      return `${quoteIdentifier(dialect, columnName)}${suffix}`;
-    })
-    .join(', ');
+  const columns = dialect === 'mysql'
+    ? buildMysqlIndexColumns(index.table, index.columns, contract, options)
+    : index.columns.map((columnName) => quoteIdentifier(dialect, columnName)).join(', ');
   return `CREATE INDEX ${quoteIdentifier(dialect, index.name)} ON ${quoteIdentifier(dialect, index.table)} (${columns})`;
 }
 
@@ -261,7 +306,10 @@ function serializeForeignKey(foreignKey: SchemaContractForeignKey): string {
   ].join('|');
 }
 
-function assertAdditiveSchemaDiff(currentContract: SchemaContract, previousContract: SchemaContract): void {
+function assertAdditiveSchemaDiff(
+  currentContract: SchemaContract,
+  previousContract: SchemaContract,
+): void {
   const violations: string[] = [];
 
   for (const [tableName, previousTable] of Object.entries(previousContract.tables)) {
@@ -318,6 +366,7 @@ function assertAdditiveSchemaDiff(currentContract: SchemaContract, previousContr
   if (violations.length > 0) {
     throw new Error(`Non-additive schema diff detected:\n- ${violations.join('\n- ')}`);
   }
+
 }
 
 export function generateBootstrapSql(dialect: SqlDialect, contract: SchemaContract): string {
@@ -344,8 +393,9 @@ function buildAddColumnStatement(
   tableName: string,
   columnName: string,
   column: SchemaContractColumn,
+  contract: SchemaContract,
 ): string {
-  return `ALTER TABLE ${quoteIdentifier(dialect, tableName)} ADD COLUMN ${buildColumnDefinition(dialect, columnName, column)}`;
+  return `ALTER TABLE ${quoteIdentifier(dialect, tableName)} ADD COLUMN ${buildColumnDefinition(dialect, tableName, columnName, column, contract)}`;
 }
 
 export function generateUpgradeSql(
@@ -384,7 +434,7 @@ export function generateUpgradeSql(
       if (previousColumns[columnName]) {
         continue;
       }
-      addColumnStatements.push(buildAddColumnStatement(dialect, tableName, columnName, column));
+      addColumnStatements.push(buildAddColumnStatement(dialect, tableName, columnName, column, currentContract));
     }
   }
 
@@ -404,7 +454,12 @@ export function generateUpgradeSql(
     .sort((left, right) => left.name.localeCompare(right.name, 'en'))
     .map((index) => buildIndexStatement(dialect, index, currentContract, options));
 
-  const statements = [...addedTableStatements, ...addColumnStatements, ...uniqueStatements, ...indexStatements];
+  const statements = [
+    ...addedTableStatements,
+    ...addColumnStatements,
+    ...uniqueStatements,
+    ...indexStatements,
+  ];
   if (statements.length === 0) {
     return `-- no schema changes detected for ${dialect}\n`;
   }

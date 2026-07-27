@@ -3,10 +3,15 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import {
+  createGraphNativeRouteFixture,
+  publishCurrentGraphNativeRouteFixtures,
+  resetGraphNativeRouteFixtures,
+} from '../../test/graphNativeRouteFixtures.js';
+import { clearRouteGroupMemberTestData, insertRouteGroupMember, insertRouteGroupMembers } from '../../../testing/routeGroupMemberTestUtils.js';
 
 type DbModule = typeof import('../../db/index.js');
 type ProxyRouterModule = typeof import('./router.js');
-type TokenRouterModule = typeof import('../../services/tokenRouter.js');
 type TokensRoutesModule = typeof import('../api/tokens.js');
 type ConfigModule = typeof import('../../config.js');
 
@@ -15,8 +20,8 @@ describe('/v1/models route', () => {
   let schema: DbModule['schema'];
   let proxyRoutes: ProxyRouterModule['proxyRoutes'];
   let tokensRoutes: TokensRoutesModule['tokensRoutes'];
-  let invalidateTokenRouterCache: TokenRouterModule['invalidateTokenRouterCache'];
   let config: ConfigModule['config'];
+  let invalidateRouteRuntimeArtifactReadCaches: () => void;
   let app: FastifyInstance;
   let dataDir = '';
 
@@ -24,19 +29,20 @@ describe('/v1/models route', () => {
     dataDir = mkdtempSync(join(tmpdir(), 'metapi-models-route-'));
     process.env.DATA_DIR = dataDir;
 
-    await import('../../db/migrate.js');
+    const migrate = await import('../../db/migrate.js');
+    await migrate.runSqliteMigrations();
     const dbModule = await import('../../db/index.js');
     const proxyRouterModule = await import('./router.js');
-    const tokenRouterModule = await import('../../services/tokenRouter.js');
     const tokensRoutesModule = await import('../api/tokens.js');
     const configModule = await import('../../config.js');
+    const routeRuntimeArtifactService = await import('../../services/routeRuntimeArtifactService.js');
 
     db = dbModule.db;
     schema = dbModule.schema;
     proxyRoutes = proxyRouterModule.proxyRoutes;
     tokensRoutes = tokensRoutesModule.tokensRoutes;
-    invalidateTokenRouterCache = tokenRouterModule.invalidateTokenRouterCache;
     config = configModule.config;
+    invalidateRouteRuntimeArtifactReadCaches = routeRuntimeArtifactService.invalidateRouteRuntimeArtifactReadCaches;
     config.proxyToken = 'sk-global-proxy-token';
 
     app = Fastify();
@@ -45,15 +51,22 @@ describe('/v1/models route', () => {
   });
 
   beforeEach(async () => {
-    invalidateTokenRouterCache();
-    await db.delete(schema.routeChannels).run();
-    await db.delete(schema.tokenRoutes).run();
+    resetGraphNativeRouteFixtures();
+    await clearRouteGroupMemberTestData();
+    await db.delete(schema.routeGraphDrafts).run();
+    await db.delete(schema.routeGraphActiveVersion).run();
+    await db.delete(schema.compiledRuntimeActiveArtifact).run();
+    await db.delete(schema.compiledRuntimeArtifacts).run();
+    await db.delete(schema.routeGraphVersions).run();
+    await db.delete(schema.runtimeExecutionTargetState).run();
+    await db.delete(schema.runtimeExecutionTargets).run();
     await db.delete(schema.tokenModelAvailability).run();
     await db.delete(schema.modelAvailability).run();
     await db.delete(schema.accountTokens).run();
     await db.delete(schema.accounts).run();
     await db.delete(schema.sites).run();
     await db.delete(schema.downstreamApiKeys).run();
+    invalidateRouteRuntimeArtifactReadCaches();
   });
 
   afterAll(async () => {
@@ -61,7 +74,15 @@ describe('/v1/models route', () => {
     delete process.env.DATA_DIR;
   });
 
-  it('hides models that have no routable channel even if model availability contains them', async () => {
+  async function compiledPlanIdForModel(modelName: string): Promise<string> {
+    const { listActiveCompiledRuntimeModelEntrypoints } = await import('../../services/compiledRuntimeInventoryService.js');
+    const entrypoint = (await listActiveCompiledRuntimeModelEntrypoints())
+      .find((item) => item.modelName === modelName);
+    if (!entrypoint) throw new Error(`Missing compiled plan for ${modelName}`);
+    return entrypoint.planId;
+  }
+
+  it('hides models that have no routable target even if model availability contains them', async () => {
     const site = await db.insert(schema.sites).values({
       name: 'test-site',
       url: 'https://upstream.example.com',
@@ -96,18 +117,16 @@ describe('/v1/models route', () => {
       },
     ]).run();
 
-    const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'routable-model',
-      enabled: true,
-    }).returning().get();
+    const route = await createGraphNativeRouteFixture({ modelPattern: 'routable-model' });
 
-    await db.insert(schema.routeChannels).values({
-      routeId: route.id,
+    await insertRouteGroupMember({
+      groupId: route.id,
       accountId: account.id,
       tokenId: token.id,
       sourceModel: 'routable-model',
       enabled: true,
-    }).run();
+    });
+    await publishCurrentGraphNativeRouteFixtures();
 
     await db.insert(schema.downstreamApiKeys).values({
       name: 'managed-key',
@@ -163,18 +182,16 @@ describe('/v1/models route', () => {
       available: true,
     }).run();
 
-    const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'global-routable-model',
-      enabled: true,
-    }).returning().get();
+    const route = await createGraphNativeRouteFixture({ modelPattern: 'global-routable-model' });
 
-    await db.insert(schema.routeChannels).values({
-      routeId: route.id,
+    await insertRouteGroupMember({
+      groupId: route.id,
       accountId: account.id,
       tokenId: token.id,
       sourceModel: 'global-routable-model',
       enabled: true,
-    }).run();
+    });
+    await publishCurrentGraphNativeRouteFixtures();
 
     const response = await app.inject({
       method: 'GET',
@@ -192,6 +209,72 @@ describe('/v1/models route', () => {
 
     expect(body.data.map((item) => item.id)).toContain('global-routable-model');
   });
+
+  it('surfaces an invalid compiled runtime instead of converting it into an empty model list', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'projection-models-site',
+      url: 'https://projection-models.example.com',
+      platform: 'openai',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      accessToken: 'projection-models-access-token',
+      status: 'active',
+    }).returning().get();
+
+    const token = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'default',
+      token: 'projection-models-api-token',
+      enabled: true,
+      isDefault: true,
+    }).returning().get();
+
+    await db.insert(schema.modelAvailability).values({
+      accountId: account.id,
+      modelName: 'projection-routable-model',
+      available: true,
+    }).run();
+
+    await db.insert(schema.routeGraphVersions).values({
+      id: 1,
+      version: 1,
+      sourceGraphJson: JSON.stringify({ nodes: [], edges: [], macros: [] }),
+      status: 'active',
+      createdBy: 'bad-compiled-fixture',
+      createdAt: new Date().toISOString(),
+      activatedAt: new Date().toISOString(),
+    }).run();
+    await db.insert(schema.compiledRuntimeArtifacts).values({
+      id: 'runtime-artifact-invalid-models',
+      artifactJson: '{',
+      bundleHash: 'invalid-models',
+      sourceGraphVersionId: 1,
+      sourceGraphHash: 'sha256:invalid-models',
+    }).run();
+    await db.insert(schema.compiledRuntimeActiveArtifact).values({
+      id: 1,
+      artifactId: 'runtime-artifact-invalid-models',
+    }).run();
+    await db.insert(schema.routeGraphActiveVersion).values({
+      id: 1,
+      versionId: 1,
+      updatedAt: new Date().toISOString(),
+    }).run();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/models',
+      headers: {
+        authorization: 'Bearer sk-global-proxy-token',
+      },
+    });
+
+    expect(response.statusCode).toBe(500);
+    expect(response.body).toContain('invalid');
+  }, 15_000);
 
   it('returns only whitelist models for managed key with supportedModels policy', async () => {
     const site = await db.insert(schema.sites).values({
@@ -228,31 +311,26 @@ describe('/v1/models route', () => {
       },
     ]).run();
 
-    const allowedRoute = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'allowed-model',
-      enabled: true,
-    }).returning().get();
-    const blockedRoute = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'blocked-model',
-      enabled: true,
-    }).returning().get();
+    const allowedRoute = await createGraphNativeRouteFixture({ modelPattern: 'allowed-model' });
+    const blockedRoute = await createGraphNativeRouteFixture({ modelPattern: 'blocked-model' });
 
-    await db.insert(schema.routeChannels).values([
+    await insertRouteGroupMembers([
       {
-        routeId: allowedRoute.id,
+        groupId: allowedRoute.id,
         accountId: account.id,
         tokenId: token.id,
         sourceModel: 'allowed-model',
         enabled: true,
       },
       {
-        routeId: blockedRoute.id,
+        groupId: blockedRoute.id,
         accountId: account.id,
         tokenId: token.id,
         sourceModel: 'blocked-model',
         enabled: true,
       },
-    ]).run();
+    ]);
+    await publishCurrentGraphNativeRouteFixtures();
 
     await db.insert(schema.downstreamApiKeys).values({
       name: 'managed-key',
@@ -279,7 +357,7 @@ describe('/v1/models route', () => {
     expect(ids).not.toContain('blocked-model');
   });
 
-  it('returns only selected group route alias for managed key with allowedRouteIds policy', async () => {
+  it('returns only the selected compiled plan public model for a managed key', async () => {
     const site = await db.insert(schema.sites).values({
       name: 'test-site',
       url: 'https://upstream.example.com',
@@ -314,24 +392,25 @@ describe('/v1/models route', () => {
       },
     ]).run();
 
-    const groupRoute = await db.insert(schema.tokenRoutes).values({
+    const groupRoute = await createGraphNativeRouteFixture({
       modelPattern: 're:^claude-(opus|sonnet)-4-5$',
       displayName: 'claude-opus-4-6',
-      enabled: true,
-    }).returning().get();
+    });
 
-    await db.insert(schema.routeChannels).values({
-      routeId: groupRoute.id,
+    await insertRouteGroupMember({
+      groupId: groupRoute.id,
       accountId: account.id,
       tokenId: token.id,
+      sourceModel: 'claude-sonnet-4-5',
       enabled: true,
-    }).run();
+    });
+    await publishCurrentGraphNativeRouteFixtures();
 
     await db.insert(schema.downstreamApiKeys).values({
       name: 'managed-key',
       key: 'sk-managed-group-only',
       enabled: true,
-      allowedRouteIds: JSON.stringify([groupRoute.id]),
+      allowedPlanIds: JSON.stringify([await compiledPlanIdForModel('claude-opus-4-6')]),
     }).run();
 
     const response = await app.inject({
@@ -386,7 +465,7 @@ describe('/v1/models route', () => {
       key: 'sk-managed-deny-all',
       enabled: true,
       supportedModels: JSON.stringify([]),
-      allowedRouteIds: JSON.stringify([]),
+      allowedPlanIds: JSON.stringify([]),
     }).run();
 
     const response = await app.inject({
@@ -404,9 +483,9 @@ describe('/v1/models route', () => {
     };
 
     expect(body.data).toEqual([]);
-  });
+  }, 15_000);
 
-  it('returns only explicit-group public name while hiding source exact routes', async () => {
+  it('returns only an explicit public compiled plan while hiding source entries', async () => {
     const site = await db.insert(schema.sites).values({
       name: 'explicit-group-site',
       url: 'https://explicit-group.example.com',
@@ -441,49 +520,51 @@ describe('/v1/models route', () => {
       },
     ]).run();
 
-    const sourceRouteA = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'claude-opus-4-5',
-      enabled: true,
-    }).returning().get();
-    const sourceRouteB = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'claude-sonnet-4-5',
-      enabled: true,
-    }).returning().get();
+    const sourceEndpointRouteA = await createGraphNativeRouteFixture({ modelPattern: 'claude-opus-4-5' });
+    const sourceEndpointRouteB = await createGraphNativeRouteFixture({ modelPattern: 'claude-sonnet-4-5' });
 
-    await db.insert(schema.routeChannels).values([
+    await insertRouteGroupMembers([
       {
-        routeId: sourceRouteA.id,
+        groupId: sourceEndpointRouteA.id,
         accountId: account.id,
         tokenId: token.id,
         sourceModel: 'claude-opus-4-5',
         enabled: true,
       },
       {
-        routeId: sourceRouteB.id,
+        groupId: sourceEndpointRouteB.id,
         accountId: account.id,
         tokenId: token.id,
         sourceModel: 'claude-sonnet-4-5',
         enabled: true,
       },
-    ]).run();
-
+    ]);
+    await publishCurrentGraphNativeRouteFixtures();
     const groupResponse = await app.inject({
       method: 'POST',
-      url: '/api/routes',
+      url: '/api/route-groups',
       payload: {
-        routeMode: 'explicit_group',
-        displayName: 'claude-opus-4-6',
-        sourceRouteIds: [sourceRouteA.id, sourceRouteB.id],
+        model: {
+          publicName: 'claude-opus-4-6',
+        },
+        sourceSelection: { kind: 'explicit', sources: [
+          { kind: 'route_group', id: sourceEndpointRouteA.id },
+          { kind: 'route_group', id: sourceEndpointRouteB.id },
+        ] },
+        presentation: {
+          displayName: 'claude-opus-4-6',
+        },
       },
     });
     expect(groupResponse.statusCode).toBe(200);
-    const groupId = (groupResponse.json() as { id: number }).id;
+    const groupKey = (groupResponse.json() as { id: string }).id;
+    expect(groupKey).toBeTruthy();
 
     await db.insert(schema.downstreamApiKeys).values({
       name: 'managed-explicit-group-key',
       key: 'sk-managed-explicit-group',
       enabled: true,
-      allowedRouteIds: JSON.stringify([groupId]),
+      allowedPlanIds: JSON.stringify([await compiledPlanIdForModel('claude-opus-4-6')]),
     }).run();
 
     const response = await app.inject({
@@ -504,6 +585,105 @@ describe('/v1/models route', () => {
     expect(ids).toContain('claude-opus-4-6');
     expect(ids).not.toContain('claude-opus-4-5');
     expect(ids).not.toContain('claude-sonnet-4-5');
+  });
+
+  it('does not expose an unrelated public plan when a source plan is selected', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'explicit-source-policy-site',
+      url: 'https://explicit-source-policy.example.com',
+      platform: 'openai',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      accessToken: 'explicit-source-policy-access-token',
+      status: 'active',
+    }).returning().get();
+
+    const token = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'default',
+      token: 'explicit-source-policy-api-token',
+      enabled: true,
+      isDefault: true,
+    }).returning().get();
+
+    await db.insert(schema.modelAvailability).values([
+      {
+        accountId: account.id,
+        modelName: 'source-only-a',
+        available: true,
+      },
+      {
+        accountId: account.id,
+        modelName: 'source-only-b',
+        available: true,
+      },
+    ]).run();
+
+    const sourceEndpointRouteA = await createGraphNativeRouteFixture({ modelPattern: 'source-only-a' });
+    const sourceEndpointRouteB = await createGraphNativeRouteFixture({ modelPattern: 'source-only-b' });
+
+    await insertRouteGroupMembers([
+      {
+        groupId: sourceEndpointRouteA.id,
+        accountId: account.id,
+        tokenId: token.id,
+        sourceModel: 'source-only-a',
+        enabled: true,
+      },
+      {
+        groupId: sourceEndpointRouteB.id,
+        accountId: account.id,
+        tokenId: token.id,
+        sourceModel: 'source-only-b',
+        enabled: true,
+      },
+    ]);
+    await publishCurrentGraphNativeRouteFixtures();
+    const groupResponse = await app.inject({
+      method: 'POST',
+      url: '/api/route-groups',
+      payload: {
+        model: {
+          publicName: 'public-source-group',
+        },
+        sourceSelection: { kind: 'explicit', sources: [
+          { kind: 'route_group', id: sourceEndpointRouteA.id },
+          { kind: 'route_group', id: sourceEndpointRouteB.id },
+        ] },
+        presentation: {
+          displayName: 'public-source-group',
+        },
+      },
+    });
+    expect(groupResponse.statusCode).toBe(200);
+
+    await db.insert(schema.downstreamApiKeys).values({
+      name: 'managed-source-only-key',
+      key: 'sk-managed-source-only',
+      enabled: true,
+      allowedPlanIds: JSON.stringify([await compiledPlanIdForModel('source-only-a')]),
+    }).run();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/models',
+      headers: {
+        authorization: 'Bearer sk-managed-source-only',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as {
+      object: 'list';
+      data: Array<{ id: string }>;
+    };
+    const ids = body.data.map((item) => item.id);
+    expect(ids).toContain('source-only-a');
+    expect(ids).not.toContain('source-only-b');
+    expect(ids).not.toContain('public-source-group');
   });
 
   it('filters search pseudo models out of /v1/models', async () => {
@@ -546,32 +726,26 @@ describe('/v1/models route', () => {
       },
     ]).run();
 
-    const searchRoute = await db.insert(schema.tokenRoutes).values({
-      modelPattern: '__search',
-      enabled: true,
-    }).returning().get();
+    const searchRoute = await createGraphNativeRouteFixture({ modelPattern: '__search' });
+    const llmRoute = await createGraphNativeRouteFixture({ modelPattern: 'gpt-4.1' });
 
-    const llmRoute = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-4.1',
-      enabled: true,
-    }).returning().get();
-
-    await db.insert(schema.routeChannels).values([
+    await insertRouteGroupMembers([
       {
-        routeId: searchRoute.id,
+        groupId: searchRoute.id,
         accountId: account.id,
         tokenId: token.id,
         sourceModel: '__search',
         enabled: true,
       },
       {
-        routeId: llmRoute.id,
+        groupId: llmRoute.id,
         accountId: account.id,
         tokenId: token.id,
         sourceModel: 'gpt-4.1',
         enabled: true,
       },
-    ]).run();
+    ]);
+    await publishCurrentGraphNativeRouteFixtures();
 
     await db.insert(schema.downstreamApiKeys).values({
       name: 'search-key',
@@ -597,5 +771,121 @@ describe('/v1/models route', () => {
     expect(ids).toContain('gpt-4.1');
     expect(ids).not.toContain('__search');
     expect(ids).not.toContain('__tavily_search');
+  });
+
+  it('retrieves a single model through /v1/models/:model', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'single-model-site',
+      url: 'https://single-model.example.com',
+      platform: 'openai',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      accessToken: 'single-model-access-token',
+      status: 'active',
+    }).returning().get();
+
+    const token = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'default',
+      token: 'single-model-api-token',
+      enabled: true,
+      isDefault: true,
+    }).returning().get();
+
+    await db.insert(schema.modelAvailability).values({
+      accountId: account.id,
+      modelName: 'gpt-4.1',
+      available: true,
+    }).run();
+
+    const route = await createGraphNativeRouteFixture({ modelPattern: 'gpt-4.1' });
+
+    await insertRouteGroupMember({
+      groupId: route.id,
+      accountId: account.id,
+      tokenId: token.id,
+      sourceModel: 'gpt-4.1',
+      enabled: true,
+    });
+    await publishCurrentGraphNativeRouteFixtures();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/models/gpt-4.1',
+      headers: {
+        authorization: 'Bearer sk-global-proxy-token',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      id: 'gpt-4.1',
+      object: 'model',
+      owned_by: 'metapi',
+    });
+  });
+
+  it('exposes /v1beta/openai/models as an OpenAI model list alias', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'gemini-openai-models-site',
+      url: 'https://gemini-openai-models.example.com',
+      platform: 'openai',
+      status: 'active',
+    }).returning().get();
+
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      accessToken: 'gemini-openai-models-access-token',
+      status: 'active',
+    }).returning().get();
+
+    const token = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: 'default',
+      token: 'gemini-openai-models-api-token',
+      enabled: true,
+      isDefault: true,
+    }).returning().get();
+
+    await db.insert(schema.modelAvailability).values({
+      accountId: account.id,
+      modelName: 'gpt-4.1',
+      available: true,
+    }).run();
+
+    const route = await createGraphNativeRouteFixture({ modelPattern: 'gpt-4.1' });
+
+    await insertRouteGroupMember({
+      groupId: route.id,
+      accountId: account.id,
+      tokenId: token.id,
+      sourceModel: 'gpt-4.1',
+      enabled: true,
+    });
+    await publishCurrentGraphNativeRouteFixtures();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1beta/openai/models',
+      headers: {
+        authorization: 'Bearer sk-global-proxy-token',
+        'x-api-key': 'anthropic-style-header-must-not-change-format',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      object: 'list',
+      data: [
+        {
+          id: 'gpt-4.1',
+          object: 'model',
+          owned_by: 'metapi',
+        },
+      ],
+    });
   });
 });

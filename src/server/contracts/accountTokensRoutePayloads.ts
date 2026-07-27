@@ -14,6 +14,7 @@ const accountTokenCreatePayloadSchema = z.object({
   allowIps: z.string().optional(),
   modelLimitsEnabled: z.boolean().optional(),
   modelLimits: z.string().optional(),
+  compatibilityPolicy: z.unknown().optional(),
 }).passthrough();
 
 const accountTokenBatchPayloadSchema = z.object({
@@ -28,6 +29,7 @@ const accountTokenUpdatePayloadSchema = z.object({
   enabled: z.boolean().optional(),
   isDefault: z.boolean().optional(),
   source: z.string().optional(),
+  compatibilityPolicy: z.unknown().optional(),
 }).passthrough();
 
 const accountTokenSyncAllPayloadSchema = z.object({

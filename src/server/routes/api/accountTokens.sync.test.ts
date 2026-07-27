@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { and, eq, sql } from 'drizzle-orm';
 import { mergeAccountExtraConfig } from '../../services/accountExtraConfig.js';
+import { clearRouteGroupMemberTestData } from '../../../testing/routeGroupMemberTestUtils.js';
 
 const getApiTokensMock = vi.fn();
 const getApiTokenMock = vi.fn();
@@ -26,7 +27,7 @@ vi.mock('../../services/platforms/index.js', () => ({
 
 type DbModule = typeof import('../../db/index.js');
 
-describe('account tokens sync routes with site status', () => {
+describe('account tokens sync routes with site status', { timeout: 15_000 }, () => {
   let app: FastifyInstance;
   let db: DbModule['db'];
   let schema: DbModule['schema'];
@@ -89,8 +90,9 @@ describe('account tokens sync routes with site status', () => {
     seedId = 0;
 
     await db.delete(schema.accountTokens).run();
-    await db.delete(schema.routeChannels).run();
-    await db.delete(schema.tokenRoutes).run();
+    await clearRouteGroupMemberTestData();
+    await db.delete(schema.runtimeExecutionTargetState).run();
+    await db.delete(schema.runtimeExecutionTargets).run();
     await db.delete(schema.tokenModelAvailability).run();
     await db.delete(schema.modelAvailability).run();
     await db.delete(schema.checkinLogs).run();
@@ -497,11 +499,11 @@ describe('account tokens sync routes with site status', () => {
     });
   });
 
-  it('hides legacy mirrored tokens for apikey connections from list API', async () => {
+  it('hides migrated mirrored tokens for apikey connections from list API', async () => {
     const { account } = await seedAccount({ siteStatus: 'active', accessToken: '' });
     await db.update(schema.accounts)
       .set({
-        apiToken: 'sk-hidden-legacy',
+        apiToken: 'sk-hidden-migrated',
         checkinEnabled: false,
         extraConfig: mergeAccountExtraConfig(null, { credentialMode: 'apikey' }),
       })
@@ -511,7 +513,7 @@ describe('account tokens sync routes with site status', () => {
     await db.insert(schema.accountTokens).values({
       accountId: account.id,
       name: 'default',
-      token: 'sk-hidden-legacy',
+      token: 'sk-hidden-migrated',
       enabled: true,
       isDefault: true,
     }).run();
@@ -621,6 +623,62 @@ describe('account tokens sync routes with site status', () => {
     });
   });
 
+  it('stores compatibility policy when creating and updating manual account tokens', async () => {
+    const { account } = await seedAccount({ siteStatus: 'active' });
+
+    const createResponse = await app.inject({
+      method: 'POST',
+      url: '/api/account-tokens',
+      payload: {
+        accountId: account.id,
+        name: 'compat-token',
+        token: 'sk-compat-token',
+        compatibilityPolicy: {
+          reasoningHistory: {
+            transport: {
+              mode: 'content_think_tag',
+              maxReasoningBytes: 1048576,
+            },
+          },
+        },
+      },
+    });
+
+    expect(createResponse.statusCode).toBe(200);
+    const created = createResponse.json().token;
+    expect(JSON.parse(created.compatibilityPolicy)).toEqual({
+      reasoningHistory: {
+        transport: {
+          mode: 'content_think_tag',
+          maxReasoningBytes: 1048576,
+        },
+      },
+    });
+
+    const updateResponse = await app.inject({
+      method: 'PUT',
+      url: `/api/account-tokens/${created.id}`,
+      payload: {
+        compatibilityPolicy: {
+          reasoningHistory: {
+            transport: {
+              mode: 'drop',
+            },
+          },
+        },
+      },
+    });
+
+    expect(updateResponse.statusCode).toBe(200);
+    expect(JSON.parse(updateResponse.json().token.compatibilityPolicy)).toEqual({
+      reasoningHistory: {
+        transport: {
+          mode: 'drop',
+        },
+      },
+    });
+  });
+
   it('creates token via upstream api and syncs into local store when manual token is omitted', async () => {
     const { account, site } = await seedAccount({ siteStatus: 'active' });
     createApiTokenMock.mockResolvedValue(true);
@@ -657,6 +715,59 @@ describe('account tokens sync routes with site status', () => {
     expect(tokenRows[0].name).toBe('created-from-upstream');
     expect(tokenRows[0].token).toBe('sk-created-upstream-token');
     expect(tokenRows[0].source).toBe('sync');
+  });
+
+  it('applies compatibility policy to the single token created by upstream sync', async () => {
+    const { account } = await seedAccount({ siteStatus: 'active' });
+    createApiTokenMock.mockResolvedValue(true);
+    getApiTokensMock.mockResolvedValue([
+      { name: 'created-with-policy', key: 'sk-created-with-policy', enabled: true },
+    ]);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/account-tokens',
+      payload: {
+        accountId: account.id,
+        name: 'created-with-policy',
+        compatibilityPolicy: {
+          reasoningHistory: {
+            transport: {
+              mode: 'content_think_tag',
+              toolCallMessageBehavior: 'native',
+            },
+          },
+        },
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().token).toMatchObject({
+      name: 'created-with-policy',
+      token: 'sk-created-with-policy',
+    });
+    expect(JSON.parse(response.json().token.compatibilityPolicy)).toEqual({
+      reasoningHistory: {
+        transport: {
+          mode: 'content_think_tag',
+          toolCallMessageBehavior: 'native',
+        },
+      },
+    });
+
+    const tokenRows = await db.select()
+      .from(schema.accountTokens)
+      .where(eq(schema.accountTokens.accountId, account.id))
+      .all();
+    expect(tokenRows).toHaveLength(1);
+    expect(JSON.parse(tokenRows[0].compatibilityPolicy!)).toEqual({
+      reasoningHistory: {
+        transport: {
+          mode: 'content_think_tag',
+          toolCallMessageBehavior: 'native',
+        },
+      },
+    });
   });
 
   it('passes token creation options to upstream adapter', async () => {

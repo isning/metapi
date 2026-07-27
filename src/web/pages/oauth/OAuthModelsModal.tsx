@@ -1,6 +1,12 @@
 import React from 'react';
 import CenteredModal from '../../components/CenteredModal.js';
+import { Button } from '../../components/ui/button/index.js';
+import { LoaderCircle } from 'lucide-react';
+import ToneBadge from '../../components/ToneBadge.js';
+import { Card, CardContent } from '../../components/ui/card/index.js';
+import EmptyStateBlock from '../../components/EmptyStateBlock.js';
 
+import { tr } from '../../i18n.js';
 export type OAuthModelItem = {
   name: string;
   latencyMs: number | null;
@@ -43,54 +49,55 @@ export default function OAuthModelsModal({
       maxWidth={620}
       footer={(
         <>
-          <button type="button" className="btn btn-ghost" onClick={onClose}>
-            关闭
-          </button>
-          <button
+          <Button variant="outline" type="button" onClick={onClose}>
+            {tr('pages.accounts.close')}
+          </Button>
+          <Button
             type="button"
-            className="btn btn-primary"
+           
             onClick={() => void onRefresh()}
             disabled={loading || refreshing}
           >
-            {refreshing ? <><span className="spinner spinner-sm" />刷新中...</> : '刷新模型'}
-          </button>
+            {refreshing ? <><LoaderCircle className="size-4 animate-spin" />{tr('pages.downstreamKeys.refreshing')}</> : tr('pages.accounts.accountModelsModal.refreshModels')}
+          </Button>
         </>
       )}
     >
       {loading ? (
-        <div className="oauth-models-empty">
-          <span className="spinner" />
-          <span className="oauth-models-empty-copy">正在加载模型列表...</span>
+        <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
+          <LoaderCircle className="size-5 animate-spin" />
+          <span>{tr('pages.oauth.oAuthModelsModal.loadingModelList')}</span>
         </div>
       ) : (
-        <div className="oauth-models-layout">
-          <div className="oauth-models-summary">
-            <div className="oauth-models-summary-title">
+        <div className="grid gap-3">
+          <Card>
+            <CardContent className="grid gap-1 p-3">
+            <div className="text-sm font-semibold">
               {siteName ? `${siteName} · 共 ${totalCount} 个模型` : `共 ${totalCount} 个模型`}
             </div>
-            <div className="oauth-models-summary-copy">
-              已启用 {enabledCount} 个，已禁用 {disabledCount} 个。点击“刷新模型”可重新拉取当前账号支持的模型列表。
+            <div className="text-sm text-muted-foreground">
+              {tr('pages.settings.enabled2')} {enabledCount} {tr('pages.sites.disabled2')} {disabledCount} {tr('pages.oauth.oAuthModelsModal.itemsRefreshModelsAccountssupportedmodels')}
             </div>
-          </div>
+            </CardContent>
+          </Card>
 
           {models.length === 0 ? (
-            <div className="oauth-models-empty">
-              <div className="oauth-models-empty-title">暂无模型</div>
-              <div className="oauth-models-empty-copy">当前账号还没有同步到可用模型，可点击右下角“刷新模型”重试。</div>
-            </div>
+            <EmptyStateBlock title={tr('pages.modelTester.noModelYet')} description={tr('pages.oauth.oAuthModelsModal.accountsSyncAvailablemodelRefreshModelsRetry')} />
           ) : (
-            <div className="oauth-models-list">
+            <div className="grid max-h-[420px] gap-2 overflow-y-auto">
               {models.map((model) => (
-                <div key={model.name} className={`oauth-models-item ${model.disabled ? 'is-disabled' : ''}`.trim()}>
-                  <div className="oauth-models-item-main">
-                    <div className="oauth-models-item-name">{model.name}</div>
-                    <div className="oauth-models-item-meta">
-                      {model.latencyMs != null ? <span>{model.latencyMs}ms</span> : null}
-                      {model.isManual ? <span className="badge badge-info oauth-models-badge">手动</span> : null}
-                      {model.disabled ? <span className="badge badge-warning oauth-models-badge">禁用</span> : null}
+                <Card key={model.name} className={model.disabled ? 'opacity-60' : undefined}>
+                  <CardContent className="flex items-start justify-between gap-3 p-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="break-all font-mono text-sm font-semibold">{model.name}</div>
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        {model.latencyMs != null ? <span className="text-xs text-muted-foreground">{model.latencyMs}ms</span> : null}
+                        {model.isManual ? <ToneBadge tone="-info">{tr('pages.accounts.accountModelsModal.manual')}</ToneBadge> : null}
+                        {model.disabled ? <ToneBadge tone="-warning">{tr('pages.downstreamKeys.disabled')}</ToneBadge> : null}
+                      </div>
                     </div>
-                  </div>
-                </div>
+                  </CardContent>
+                </Card>
               ))}
             </div>
           )}

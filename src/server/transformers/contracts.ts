@@ -10,6 +10,7 @@ import type {
   NormalizedStreamEvent,
   StreamTransformContext,
 } from './shared/normalized.js';
+import type { ResolvedUpstreamCompatibilityPolicy } from '../contracts/upstreamCompatibilityPolicy.js';
 
 export type ProtocolParseContext = {
   cliProfile?: CanonicalCliProfile;
@@ -22,6 +23,7 @@ export type ProtocolParseContext = {
 
 export type ProtocolBuildContext = {
   cliProfile?: CanonicalCliProfile;
+  compatibilityPolicy?: ResolvedUpstreamCompatibilityPolicy;
 };
 
 export type ProtocolResponseContext = {

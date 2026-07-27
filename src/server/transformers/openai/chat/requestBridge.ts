@@ -1,6 +1,6 @@
 import { canonicalRequestFromOpenAiBody, canonicalRequestToOpenAiChatBody } from '../../canonical/openAiRequestBridge.js';
 import type { CanonicalRequestEnvelope } from '../../canonical/types.js';
-import type { ProtocolParseContext } from '../../contracts.js';
+import type { ProtocolBuildContext, ProtocolParseContext } from '../../contracts.js';
 import { openAiChatInbound } from './inbound.js';
 
 export function parseOpenAiChatRequestToCanonical(
@@ -40,6 +40,9 @@ export function parseOpenAiChatRequestToCanonical(
 
 export function buildCanonicalRequestToOpenAiChatBody(
   request: CanonicalRequestEnvelope,
+  ctx?: ProtocolBuildContext,
 ): Record<string, unknown> {
-  return canonicalRequestToOpenAiChatBody(request);
+  return canonicalRequestToOpenAiChatBody(request, {
+    compatibilityPolicy: ctx?.compatibilityPolicy,
+  });
 }

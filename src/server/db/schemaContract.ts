@@ -107,11 +107,28 @@ function splitMigrationStatements(sqlText: string): string[] {
     .filter((statement) => statement.length > 0);
 }
 
-function applySqliteMigrations(sqlite: Database.Database, migrationsFolder: string): void {
+function isRecoverableSchemaConflictError(error: unknown): boolean {
+  const message = typeof error === 'object' && error && 'message' in error
+    ? String((error as { message?: unknown }).message || '')
+    : String(error || '');
+  const lowered = message.toLowerCase();
+  return lowered.includes('duplicate column')
+    || lowered.includes('duplicate column name')
+    || lowered.includes('already exists');
+}
+
+export function applySqliteMigrations(sqlite: Database.Database, migrationsFolder: string): void {
   for (const migrationFile of resolveMigrationFiles(migrationsFolder)) {
     const sqlText = readFileSync(join(migrationsFolder, migrationFile), 'utf8');
     for (const statement of splitMigrationStatements(sqlText)) {
-      sqlite.exec(statement);
+      try {
+        sqlite.exec(statement);
+      } catch (error) {
+        if (isRecoverableSchemaConflictError(error)) {
+          continue;
+        }
+        throw error;
+      }
     }
   }
 }

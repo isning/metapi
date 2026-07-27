@@ -9,6 +9,13 @@ describe('CheckinLog mobile layout', () => {
     expect(source).toContain('<ResponsiveFilterPanel');
   });
 
+  it('uses the shared segmented tab bar for status filtering', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/web/pages/CheckinLog.tsx'), 'utf8');
+    expect(source).toMatch(/import\s+SegmentedTabBar\s+from\s+['"]\.\.\/components\/SegmentedTabBar\.js['"]/);
+    expect(source).toContain('<SegmentedTabBar<LogFilter>');
+    expect(source).not.toContain("from '../components/ui/tabs/index.js'");
+  });
+
   it('uses the shared mobile card header and footer action slots', () => {
     const source = readFileSync(resolve(process.cwd(), 'src/web/pages/CheckinLog.tsx'), 'utf8');
     expect(source).toContain('const isMobile = useIsMobile();');

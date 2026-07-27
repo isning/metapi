@@ -155,6 +155,25 @@ function buildGeminiToolConfig(toolChoice: unknown): Record<string, unknown> | u
     }
     return { functionCallingConfig: { mode: 'AUTO' } };
   }
+  if (isRecord(toolChoice) && toolChoice.type === 'tool' && typeof toolChoice.name === 'string' && toolChoice.name.trim()) {
+    return {
+      functionCallingConfig: {
+        mode: 'ANY',
+        allowedFunctionNames: [toolChoice.name.trim()],
+      },
+    };
+  }
+  if (isRecord(toolChoice) && toolChoice.type === 'function' && isRecord(toolChoice.function)) {
+    const name = asTrimmedString(toolChoice.function.name);
+    if (name) {
+      return {
+        functionCallingConfig: {
+          mode: 'ANY',
+          allowedFunctionNames: [name],
+        },
+      };
+    }
+  }
   return undefined;
 }
 
@@ -212,7 +231,8 @@ export function convertOpenAiBodyToGeminiGenerateContentRequest(input: {
     }
     if (role === 'tool') {
       const toolCallId = asTrimmedString(message.tool_call_id);
-      const name = toolNameById.get(toolCallId) || 'unknown';
+      const name = toolNameById.get(toolCallId);
+      if (!name) continue;
       const result = normalizeFunctionResponseResult(message.content);
       request.contents = [
         ...(Array.isArray(request.contents) ? request.contents : []),

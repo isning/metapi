@@ -79,4 +79,53 @@ describe('modelPricingService anyrouter pricing', () => {
     expect(fetchMock.mock.calls[1][1]?.headers?.Cookie || '').toContain('cdn_sec_tc=challenge-seed');
     expect(fetchMock.mock.calls[1][1]?.headers?.Cookie || '').toContain(`acw_sc__v2=${ANYROUTER_CHALLENGE_ACW}`);
   });
+
+  it('uses platform user headers when fetching new-api pricing catalogs', async () => {
+    fetchMock
+      .mockImplementationOnce(async (_url: string, init: any) => {
+        if (init?.headers?.['New-API-User'] !== '42') {
+          return new Response(JSON.stringify({ success: false, message: 'missing new-api-user' }), {
+            status: 403,
+            headers: { 'content-type': 'application/json; charset=utf-8' },
+          });
+        }
+
+        return new Response(JSON.stringify({
+          data: [{
+            model_name: 'gpt-4o-mini',
+            quota_type: 0,
+            model_ratio: 1.5,
+            completion_ratio: 2,
+            enable_groups: ['default'],
+          }],
+          group_ratio: { default: 1 },
+        }), {
+          status: 200,
+          headers: { 'content-type': 'application/json; charset=utf-8' },
+        });
+      });
+
+    const catalog = await fetchModelPricingCatalog({
+      site: {
+        id: 903,
+        url: 'https://newapi.example.com',
+        platform: 'new-api',
+      },
+      account: {
+        id: 78,
+        extraConfig: JSON.stringify({ platformUserId: 42 }),
+        accessToken: 'session-token',
+      },
+      modelName: 'gpt-4o-mini',
+      totalTokens: 0,
+    });
+
+    expect(catalog?.models[0]?.groupPricing?.default).toMatchObject({
+      inputPerMillion: 3,
+      outputPerMillion: 6,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][1]?.headers?.['New-API-User']).toBe('42');
+    expect(fetchMock.mock.calls[0][1]?.headers?.Authorization).toBe('Bearer session-token');
+  });
 });

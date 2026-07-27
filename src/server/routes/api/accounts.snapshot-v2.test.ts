@@ -3,17 +3,22 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { clearRouteGroupMemberTestData } from '../../../testing/routeGroupMemberTestUtils.js';
 import {
   formatLocalDate,
   formatUtcSqlDateTime,
 } from "../../services/localTimeService.js";
 
 type DbModule = typeof import("../../db/index.js");
+type BillingFixtureModule = typeof import('../../../testing/canonicalBillingRequestFixture.js');
+type UsageProjectionModule = typeof import('../../services/usageAggregationService.js');
 
 describe("accounts snapshot v2", () => {
   let app: FastifyInstance;
   let db: DbModule["db"];
   let schema: DbModule["schema"];
+  let insertCanonicalTerminalRequest: BillingFixtureModule['insertCanonicalTerminalRequest'];
+  let runUsageAggregationProjectionPass: UsageProjectionModule['runUsageAggregationProjectionPass'];
   let dataDir = "";
   let previousDataDir: string | undefined;
 
@@ -25,8 +30,12 @@ describe("accounts snapshot v2", () => {
     await import("../../db/migrate.js");
     const dbModule = await import("../../db/index.js");
     const routesModule = await import("./accounts.js");
+    const billingFixture = await import('../../../testing/canonicalBillingRequestFixture.js');
+    const usageProjection = await import('../../services/usageAggregationService.js');
     db = dbModule.db;
     schema = dbModule.schema;
+    insertCanonicalTerminalRequest = billingFixture.insertCanonicalTerminalRequest;
+    runUsageAggregationProjectionPass = usageProjection.runUsageAggregationProjectionPass;
 
     app = Fastify();
     await app.register(routesModule.accountsRoutes);
@@ -34,10 +43,14 @@ describe("accounts snapshot v2", () => {
 
   beforeEach(async () => {
     await db.delete(schema.adminSnapshots).run();
+    await db.delete(schema.analyticsProjectionCheckpoints).run();
+    await db.delete(schema.billingCostAggregates).run();
     await db.delete(schema.proxyLogs).run();
+    await db.delete(schema.proxyRequests).run();
     await db.delete(schema.checkinLogs).run();
-    await db.delete(schema.routeChannels).run();
-    await db.delete(schema.tokenRoutes).run();
+    await clearRouteGroupMemberTestData();
+    await db.delete(schema.runtimeExecutionTargetState).run();
+    await db.delete(schema.runtimeExecutionTargets).run();
     await db.delete(schema.tokenModelAvailability).run();
     await db.delete(schema.modelAvailability).run();
     await db.delete(schema.accountTokens).run();
@@ -87,15 +100,14 @@ describe("accounts snapshot v2", () => {
       .returning()
       .get();
 
-    await db
-      .insert(schema.proxyLogs)
-      .values({
-        accountId: account.id,
-        status: "success",
-        estimatedCost: 1.25,
-        createdAt: formatUtcSqlDateTime(new Date()),
-      })
-      .run();
+    await insertCanonicalTerminalRequest({
+      id: 'accounts-snapshot-request',
+      siteId: site.id,
+      accountId: account.id,
+      completedAt: formatUtcSqlDateTime(new Date()),
+      amount: 1.25,
+    });
+    await runUsageAggregationProjectionPass();
 
     await db
       .insert(schema.checkinLogs)

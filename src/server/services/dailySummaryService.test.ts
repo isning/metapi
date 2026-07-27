@@ -19,6 +19,9 @@ describe('dailySummaryService', () => {
       proxyFailed: 6,
       proxyTotalTokens: 987654,
       todaySpend: 12.345678,
+      todaySpendUnit: 'CNY',
+      todaySpendUnknownObservationCount: 2,
+      todaySpendIncompatibleObservationCount: 1,
       todayReward: 3.210987,
     };
 
@@ -27,6 +30,8 @@ describe('dailySummaryService', () => {
     expect(message).toContain('生成时间: 2026-02-27 23:58:00 (Asia/Shanghai)');
     expect(message).toContain('签到统计: 总计 7 | 成功 5 | 跳过 1 | 失败 1');
     expect(message).toContain('代理统计: 总计 120 | 成功 114 | 失败 6');
-    expect(message).toContain('费用统计: 支出 $12.345678 | 奖励 $3.210987 | 净值 $-9.134691');
+    expect(message).toContain('费用统计: 支出 12.345678 CNY | 奖励 3.210987 CNY | 净值 -9.134691 CNY');
+    expect(message).toContain('费用覆盖: 未知 2 | 单位不兼容 1');
+    expect(message).not.toContain('$');
   });
 });

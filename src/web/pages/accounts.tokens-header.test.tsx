@@ -75,11 +75,11 @@ describe('Accounts tokens embedded header', () => {
       });
       await flushMicrotasks();
 
-      const pageHeaders = root.root.findAll((node) => {
+      const legacyPageHeaders = root.root.findAll((node) => {
         const className = node.props?.className;
         return typeof className === 'string' && className.split(/\s+/).includes('page-header');
       });
-      expect(pageHeaders).toHaveLength(1);
+      expect(legacyPageHeaders).toHaveLength(0);
 
       const buttonTexts = root.root
         .findAll((node) => node.type === 'button')
