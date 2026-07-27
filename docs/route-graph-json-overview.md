@@ -4,11 +4,8 @@
 
 ## 顶层结构
 
-Route Graph source 当前使用 `version: 1`。
-
 ```json
 {
-  "version": 1,
   "nodes": [],
   "edges": [],
   "macros": [],
@@ -18,7 +15,6 @@ Route Graph source 当前使用 `version: 1`。
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `version` | `1` | Route Graph source 版本 |
 | `nodes` | `RouteGraphNode[]` | 语义节点和少量手动 primitive |
 | `edges` | `RouteGraphEdge[]` | 节点或 macro port 间的语义连接 |
 | `macros` | `RouteGraphMacro[]` | 可 lower 的高级语义对象 |
@@ -32,7 +28,6 @@ Route Graph source 当前使用 `version: 1`。
 
 ```json
 {
-  "version": 1,
   "nodes": [
     {
       "id": "entry:public-model",
@@ -108,7 +103,12 @@ Route Graph source 当前使用 `version: 1`。
           "displayName": "premium-chat"
         }
       },
-      "output": "route"
+      "output": "route",
+      "ports": [
+        { "id": "bidirect.in", "label": "incoming flow", "direction": "input", "kind": "bidirect", "multiple": true, "manualEdgePolicy": "allow" },
+        { "id": "candidates.in", "label": "candidate inputs", "direction": "input", "kind": "route", "multiple": true, "collection": { "type": "set", "min": 1 }, "manualEdgePolicy": "allow" },
+        { "id": "route.out", "label": "candidate targets", "direction": "output", "kind": "route", "multiple": true, "collection": { "type": "set", "min": 1 }, "manualEdgePolicy": "allow" }
+      ]
     },
     "policy": { "kind": "builtin", "builtin": "weighted" },
     "groups": [
@@ -162,14 +162,19 @@ Route Graph source 当前使用 `version: 1`。
 
 由路由组投影产生的对象通过路由组和 fallback-stage API 修改；不要直接伪造其 ID 或在图中修改其 generated primitive。
 
-## 验证和发布 API
+## Workspace、验证和发布 API
 
 | API | 作用 |
 |-----|------|
 | `GET /api/route-graph/active` | 获取当前生效 source graph 与编译信息 |
 | `GET /api/route-graph/draft` | 获取或创建草稿 |
-| `POST /api/route-graph/validate` | 验证 source graph 并返回 diagnostics |
-| `POST /api/route-graph/compile` | 编译任意 source graph，用于调试 |
+| `GET /api/route-graph/workspace-index` | 分页读取 graph focus 索引 |
+| `GET /api/route-graph/workspace?focusKind=...&focusId=...` | 读取一个 focus 的局部图窗口 |
+| `POST /api/route-graph/workspace/nodes/reserve` | 为本地草稿节点预留服务端 ID，不持久化 |
+| `POST /api/route-graph/workspace/connections/draft` | 基于本地 operation overlay 校验并分配 edge ID，不持久化 |
+| `POST /api/route-graph/workspace/operations` | 原子保存本地 node/edge/macro 操作 |
+| `POST /api/route-graph/validate` | 验证 authoring command 并返回 diagnostics/compiled graph |
+| `POST /api/route-graph/workspace/validate` | 验证当前 revision 加本地 operation overlay |
 | `PUT /api/route-graph/draft` | 保存草稿 |
 | `POST /api/route-graph/draft/publish` | 发布草稿 |
 | `POST /api/route-graph/draft/rebase` | 基于最新 active graph 重放草稿 |
@@ -178,16 +183,16 @@ Route Graph source 当前使用 `version: 1`。
 典型流程：
 
 ```text
-GET draft
-  -> 修改 JSON
-  -> POST validate
-  -> PUT draft
-  -> POST publish
+打开 workspace focus
+  -> 本地编辑 operations
+  -> POST workspace/validate
+  -> POST workspace/operations
+  -> 发布 draft
 ```
 
-## 编译产物
+## 验证产物
 
-`POST /api/route-graph/compile` 返回：
+`POST /api/route-graph/validate` 和 workspace validate 返回：
 
 | 字段 | 说明 |
 |------|------|
@@ -197,19 +202,15 @@ GET draft
 | `diagnostics` | 验证与编译诊断 |
 | `ok` | 是否没有 error 级诊断 |
 
-`primitiveSource` 仅用于 inspector、生成视图和调试。请求路径执行 `compiled.compiledRouterBundle`，不会读取 route-group 管理表或编辑器布局。
+`primitiveSource` 仅用于 inspector、生成视图和调试。请求路径执行
+`compiled.compiledRouterBundle`，不会读取 Route Group 管理投影或编辑器布局。
 
 ## ID 规则
 
-手写对象需要稳定 ID，但调用方不应从显示文本、模型名或数字 ID 拼接系统对象 ID。对已有 supply endpoint、route product 或 macro，请从 endpoint catalog、source graph 或管理 API 获取其实际 ID；让路由组投影和图编辑器生成其所拥有的 ID。
+所有 durable graph ID 都由服务端分配。Workspace 中新增 node 使用
+`/nodes/reserve` 获取正式 ID；批量 authoring 命令使用 `localRef` 引用本次
+请求内的新对象，服务端在保存时分配其 ID。调用方不得从模型名、显示文本、
+数字 ID 或 macro 规则拼接 node、macro、endpoint 或 edge ID。
 
-手写的全新 semantic node 可以使用稳定、可读的自有 ID，例如：
-
-```text
-entry:premium-chat
-macro:premium-chat
-filter:rewrite-model
-synthetic:no-route
-```
-
-避免临时 ID、显示名引用和猜测系统生成的 endpoint ID。
+JSON 备份中的已有 ID 只能原样引用；新对象使用 API 的 `localRef`/reservation
+流程，不使用临时字符串冒充 durable ID。

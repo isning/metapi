@@ -1,7 +1,10 @@
 # ADR-0011: Route Flat Program Bundle
 
-Status: Accepted
+Status: Superseded
 Date: 2026-06-23
+
+> Superseded on 2026-07-28 by [Graph Routing](../graph-routing.md). The active
+> data plane uses `CompiledRouterBundle`, not `RouteFlatProgramBundle`.
 
 ## Context
 

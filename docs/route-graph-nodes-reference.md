@@ -31,10 +31,12 @@
 | `required` | boolean | 是否必需 |
 | `multiple` | boolean | 是否允许多条连接 |
 | `collection` | object | `single`、`arr` 或 `set` |
-| `readonly` | boolean | 是否只读 |
+| `manualEdgePolicy` | `allow`/`deny` | 是否允许手工 edge 附着到该 port |
 | `enabled` | boolean | 是否启用 |
 
-edge 必须从 output port 连接到 input port，且两侧 `kind` 必须一致。
+edge 必须从 output port 连接到 input port，且两侧 `kind` 必须一致。创建
+手工 edge 时两端 `manualEdgePolicy` 都必须为 `allow`。它不控制 node/macro
+自身能否修改：该权限由 `ownership` 决定。
 
 ## 默认 Port
 
@@ -60,25 +62,24 @@ edge 必须从 output port 连接到 input port，且两侧 `kind` 必须一致�
 
 一个公开模型名只能解析到一个 entry。分支选择属于 entry 下游的 `dispatcher`，不属于 matcher。
 
-内部复用不要创建 `entry`，应使用 `route_endpoint` 的 `route_product`。
+内部组合不要创建额外下游 `entry`；使用 embedded macro surface、filter 和
+dispatcher edge 连接已有图路径。
 
 ## route_endpoint
 
 `route_endpoint` 是可连接的路由端点。
 
-| `endpointKind` | 说明 |
-|----------------|------|
-| `supply` | 实际可调用的上游模型端点 |
-| `route_product` | 可被其他 graph path 复用的路由结果 |
+`route_endpoint.endpointKind` 当前固定为 `supply`，表示实际可调用的上游
+模型端点。
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `routeEndpointId` | string | 稳定端点引用 |
-| `endpointKind` | `supply`/`route_product` | 端点语义 |
-| `exposure` | `none`/`public`/`internal` | route product 的暴露状态 |
+| `endpointKind` | `supply` | 端点语义 |
+| `exposure` | `none`/`public`/`internal` | 管理与诊断暴露标记；不创建下游 ingress |
 | `resolutionStatus` | `resolved`/`degraded`/`unresolved` | 是否已解析为可执行路径 |
 | `ownerKind` | `manual`/`macro` | source graph 内的所有者 |
-| `sourceKind` | `upstream_model`/`route_product`/`synthetic`/`inline` | 通用来源类型 |
+| `sourceKind` | `upstream_model`/`synthetic`/`inline` | 端点来源类型 |
 | `backend` | `{kind:"supply"}` 或 `{kind:"route_endpoints",endpointIds:string[]}` | 后端语义 |
 | `config.targets` | `RouteExecutableTarget[]` | supply 的可执行 target |
 | `config.targetSelection` | native policy 或 `defer_to_router` | target 的选择规则 |
@@ -108,32 +109,6 @@ Supply endpoint 示例：
       }
     ],
     "targetSelection": { "kind": "inherit_default" }
-  }
-}
-```
-
-Route product 示例：
-
-```json
-{
-  "id": "route-endpoint:product:premium-chat",
-  "type": "route_endpoint",
-  "enabled": true,
-  "ownership": "manual",
-  "routeEndpointId": "route-endpoint:product:premium-chat",
-  "endpointKind": "route_product",
-  "exposure": "internal",
-  "resolutionStatus": "resolved",
-  "ownerKind": "manual",
-  "sourceKind": "route_product",
-  "backend": {
-    "kind": "route_endpoints",
-    "endpointIds": ["route-endpoint:supply:site-a-gpt-4o"]
-  },
-  "match": {
-    "kind": "model",
-    "requestedModelPattern": "premium-chat",
-    "displayName": "premium-chat"
   }
 }
 ```
@@ -201,13 +176,13 @@ Route product 示例：
 | 字段 | 说明 |
 |------|------|
 | `config.surface` | `external`、`embedded` 或 `none` 入口，以及 `route`/`bidirect` 输出 |
+| `config.surface.ports` | macro surface 的显式 port 合同；每个 port 必须声明 `manualEdgePolicy` |
 | `config.policy` | stage 未覆盖时继承的 native dispatcher policy |
 | `config.groups` | 按数组顺序排列的 fallback stages |
 | `groups[].policy` | 可选的 stage-local policy |
 | `groups[].input` | stage 的候选来源 |
 | `groups[].members` | 显式成员及 stage-local weight/metadata |
 | `groups[].defaults` | 成员默认 enabled/weight/metadata |
-| `candidateOverrides` | 对已物化 endpoint 的 enabled、weight、excluded 或 stage 归属覆盖 |
 
 支持的 `groups[].input.kind`：
 

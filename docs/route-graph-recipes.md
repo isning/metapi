@@ -8,7 +8,6 @@
 
 ```json
 {
-  "version": 1,
   "nodes": [
     {
       "id": "entry:demo",
@@ -75,7 +74,12 @@
           "displayName": "balanced-chat"
         }
       },
-      "output": "route"
+      "output": "route",
+      "ports": [
+        { "id": "bidirect.in", "label": "incoming flow", "direction": "input", "kind": "bidirect", "multiple": true, "manualEdgePolicy": "allow" },
+        { "id": "candidates.in", "label": "candidate inputs", "direction": "input", "kind": "route", "multiple": true, "collection": { "type": "set", "min": 1 }, "manualEdgePolicy": "allow" },
+        { "id": "route.out", "label": "candidate targets", "direction": "output", "kind": "route", "multiple": true, "collection": { "type": "set", "min": 1 }, "manualEdgePolicy": "allow" }
+      ]
     },
     "policy": { "kind": "builtin", "builtin": "weighted" },
     "groups": [
@@ -143,9 +147,10 @@ stage 的数组位置就是 fallback order。当前 stage 中没有 eligible exe
 
 不要用 numeric priority 表达主备。`priority`、`priority_order`、`routingStrategy` 和旧 `{ "strategy": ... }` policy 都会被拒绝。
 
-## 4. 组合 Internal Route Product
+## 4. 组合已有 Macro
 
-任意 route product 都可以成为一个 stage 的候选。该形态不区分自动或手动管理来源。
+一个 stage 可以通过 `graph_references` 引用另一个 macro。该形态不区分自动或
+手动管理来源，且不会创建已废弃的 route product endpoint。
 
 ```json
 {
@@ -164,7 +169,12 @@ stage 的数组位置就是 fallback order。当前 stage 中没有 eligible exe
           "displayName": "premium-claude"
         }
       },
-      "output": "route"
+      "output": "route",
+      "ports": [
+        { "id": "bidirect.in", "label": "incoming flow", "direction": "input", "kind": "bidirect", "multiple": true, "manualEdgePolicy": "allow" },
+        { "id": "candidates.in", "label": "candidate inputs", "direction": "input", "kind": "route", "multiple": true, "collection": { "type": "set", "min": 1 }, "manualEdgePolicy": "allow" },
+        { "id": "route.out", "label": "candidate targets", "direction": "output", "kind": "route", "multiple": true, "collection": { "type": "set", "min": 1 }, "manualEdgePolicy": "allow" }
+      ]
     },
     "policy": { "kind": "registry", "policyId": "platform-default" },
     "groups": [
@@ -173,15 +183,13 @@ stage 的数组位置就是 fallback order。当前 stage 中没有 eligible exe
         "label": "Products",
         "enabled": true,
         "input": {
-          "kind": "route_endpoints",
-          "endpointIds": [
-            "route-endpoint:product:claude-sonnet",
-            "route-endpoint:product:claude-opus"
-          ]
+          "kind": "graph_references",
+          "endpointIds": [],
+          "macroIds": ["macro:claude-sonnet", "macro:claude-opus"]
         },
         "members": [
-          { "endpointId": "route-endpoint:product:claude-sonnet", "weight": 8 },
-          { "endpointId": "route-endpoint:product:claude-opus", "weight": 2 }
+          { "macroId": "macro:claude-sonnet", "weight": 8 },
+          { "macroId": "macro:claude-opus", "weight": 2 }
         ]
       }
     ]

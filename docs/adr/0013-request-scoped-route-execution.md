@@ -1,7 +1,10 @@
 # ADR-0013: Request-Scoped Route Execution
 
-Status: Proposed
+Status: Superseded
 Date: 2026-06-23
+
+> Superseded on 2026-07-28 by [Graph Routing](../graph-routing.md) and the
+> current compiled runtime execution session model.
 
 ## Context
 

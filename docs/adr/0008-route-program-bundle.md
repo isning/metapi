@@ -1,7 +1,11 @@
 # ADR-0008: Route Program Bundle
 
-Status: Accepted
+Status: Superseded
 Date: 2026-06-21
+
+> Superseded on 2026-07-28 by [Graph Routing](../graph-routing.md) and the
+> current `CompiledRouterBundle`. `RouteProgramBundle` is not a current runtime
+> contract.
 
 ## Context
 

@@ -1,7 +1,11 @@
 # ADR-0012: Compiled Selector Runtime
 
-Status: Accepted
+Status: Superseded
 Date: 2026-06-23
+
+> Superseded on 2026-07-28 by [Graph Routing](../graph-routing.md). Selector
+> state and execution are now owned by the compiled runtime boundary, not a
+> token-router handoff.
 
 ## Context
 

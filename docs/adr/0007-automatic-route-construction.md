@@ -1,7 +1,11 @@
 # ADR-0007: Automatic Route Construction With Unified Route Endpoints
 
-Status: Proposed
+Status: Superseded
 Date: 2026-06-21
+
+> Superseded on 2026-07-28 by [Graph Routing](../graph-routing.md). Automatic
+> discovery now feeds the same Source Graph/compiled-runtime model; this ADR's
+> route-product terminology is historical only.
 
 ## Context
 

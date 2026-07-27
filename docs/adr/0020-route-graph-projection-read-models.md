@@ -1,7 +1,11 @@
 # ADR-0020: Route Graph Projection Read Models
 
-Status: Proposed
+Status: Superseded
 Date: 2026-06-29
+
+> Superseded on 2026-07-28 by [Graph Routing](../graph-routing.md). Current
+> read models project compiled runtime and execution observations; the
+> route-product and token-router projections in this proposal are historical.
 
 ## Context
 

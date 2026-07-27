@@ -1,7 +1,11 @@
 # ADR-0015: Persisted Route Groups
 
-Status: Proposed
+Status: Superseded
 Date: 2026-06-24
+
+> Superseded on 2026-07-28 by [Graph Routing](../graph-routing.md) and
+> [Route Groups](../route-groups-guide.md). Route Groups are now a graph-backed
+> command/read facade; the token-route bridge and its legacy tables are removed.
 
 ## Context
 

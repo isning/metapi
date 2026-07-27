@@ -1,7 +1,11 @@
 # ADR-0006: Route Endpoint Graph Semantics
 
-Status: Proposed
+Status: Superseded
 Date: 2026-06-21
+
+> Superseded on 2026-07-28 by [Graph Routing](../graph-routing.md). The current
+> graph has supply endpoints and graph composition; it does not retain the
+> route-product endpoint layer proposed here.
 
 ## Context
 

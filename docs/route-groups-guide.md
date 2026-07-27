@@ -16,10 +16,9 @@ discovery lifecycle only.
 Both kinds are projections of the same graph shape:
 
 ```text
-route_product endpoint
-  + candidate_selector macro
+candidate_selector macro
   + ordered fallback stages
-  + supply endpoints or route-product members
+  + supply endpoints or referenced route groups
 ```
 
 The compiled graph and proxy have no automatic/manual branch.
@@ -94,7 +93,7 @@ define the fallback order.
 | Candidate          | Meaning                                                         |
 | ------------------ | --------------------------------------------------------------- |
 | Supply endpoint    | A concrete upstream model, account, credential, and API surface |
-| Route product      | Another reusable graph route result                             |
+| Referenced group   | Another Route Group projected through a graph reference          |
 | Synthetic response | A configured terminal such as an unavailable response           |
 
 Avoid adding a supply endpoint directly and through a route product in the

@@ -1,7 +1,11 @@
 # ADR-0019: Single-Pass Compiled Router
 
-Status: Accepted
+Status: Superseded
 Date: 2026-06-29
+
+> Superseded on 2026-07-28 by [Graph Routing](../graph-routing.md). The current
+> bundle is organized around execution alternatives and fallback stages rather
+> than the selector-level/candidate structures described here.
 
 ## Context
 

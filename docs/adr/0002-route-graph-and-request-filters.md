@@ -1,7 +1,12 @@
 # ADR-0002: Graph-Native Model Routing
 
-Status: Proposed
+Status: Superseded
 Date: 2026-06-15
+
+> Superseded on 2026-07-28 by the graph-native Source Graph and compiled
+> runtime model documented in [Graph Routing](../graph-routing.md). This ADR is
+> historical; its `token_routes`, route-product, token-router, versioned-source,
+> and legacy-projection details are not current.
 
 ## Context
 

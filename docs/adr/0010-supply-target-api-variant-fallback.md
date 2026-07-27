@@ -1,7 +1,10 @@
 # ADR-0010: Supply Target API Variants And Fallback Planning
 
-Status: Proposed
+Status: Superseded
 Date: 2026-06-22
+
+> Superseded on 2026-07-28 by [Graph Routing](../graph-routing.md) and the
+> compiled execution-attempt/API-attempt model.
 
 ## Context
 

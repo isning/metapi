@@ -35,11 +35,28 @@ supply 默认折叠，避免候选较多时遮蔽拓扑。展开只影响编辑�
 | `filter` | 多条 graph path 共享请求变换 |
 | `dispatcher` | primitive 级调试或特殊 flow |
 | `route_endpoint` `supply` | 手动定义 inline 上游端点 |
-| `route_endpoint` `route_product` | 手动定义可复用 route product |
 | `synthetic_endpoint` | 返回固定错误或 fallback 响应 |
 | `candidate_selector` | 新建带 stage 的语义 selector |
 
 对日常模型与凭证管理，优先使用路由组操作界面；图编辑适合组合、调试和高级 source graph。
+
+## Focus 与草稿事务
+
+图编辑器不加载整张图。它围绕当前 focus 显示一个局部窗口；跨窗口连接显示为
+portal，点击 portal 可打开相邻 focus 或一个较大的集合窗口。portal 只是视图边界，
+不是 graph node，也不会改变运行时。
+
+一个 focus 内的编辑使用单一的本地 operation overlay：
+
+1. 新 node 先向服务端预留 durable ID，但不会立即写入 source graph。
+2. 新 edge 按当前 overlay 在服务端校验并分配 durable ID，也不会立即持久化。
+3. 属性修改、删除、移动和连接都先进入本地 operations。
+4. **保存草稿**会原子写入这些 operations，并保留为未发布 Source Graph draft。
+5. **发布**才会编译并激活新的 runtime artifact。
+
+因此可以先创建 node、再创建连接、最后一次保存；不需要为了通过中间校验而先保存
+一个未连接的 node。若 graph revision 发生变化，服务端返回 stale revision，编辑器必须
+重新加载后再继续。
 
 ## Port 类型
 
@@ -56,6 +73,11 @@ supply 默认折叠，避免候选较多时遮蔽拓扑。展开只影响编辑�
 - 两端的 `kind` 必须一致；
 - 非 `multiple` input 只能有一条入边；
 - dispatcher 的可用 port 取决于 `mode`。
+- 两端 port 的 `manualEdgePolicy` 都必须为 `allow`；`deny` port 仍会显示
+  既有拓扑，但不能附着新的手工 edge。
+
+元素所有权和端口人工边策略是独立概念。自动生成的 endpoint 或 macro
+可以保持配置、删除和移动只读，同时让其特定 port 允许连接其他图元素。
 
 ## 常见连接
 

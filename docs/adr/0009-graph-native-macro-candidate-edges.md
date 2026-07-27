@@ -1,7 +1,11 @@
 # ADR-0009: Graph-Native Macro Candidate Edges
 
-Status: Proposed
+Status: Superseded
 Date: 2026-06-22
+
+> Superseded on 2026-07-28 by [Graph Routing](../graph-routing.md). The current
+> graph has no `route_product` endpoint kind; macro references use the current
+> Source Graph contracts.
 
 ## Context
 
