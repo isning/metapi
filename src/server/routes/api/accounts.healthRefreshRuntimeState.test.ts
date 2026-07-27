@@ -3,6 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { clearRouteGroupMemberTestData } from '../../../testing/routeGroupMemberTestUtils.js';
 
 const refreshBalanceMock = vi.fn();
 
@@ -42,8 +43,9 @@ describe('accounts health refresh runtime state', () => {
     resetBackgroundTasks?.();
     await db.delete(schema.proxyLogs).run();
     await db.delete(schema.checkinLogs).run();
-    await db.delete(schema.routeChannels).run();
-    await db.delete(schema.tokenRoutes).run();
+    await clearRouteGroupMemberTestData();
+    await db.delete(schema.runtimeExecutionTargetState).run();
+    await db.delete(schema.runtimeExecutionTargets).run();
     await db.delete(schema.tokenModelAvailability).run();
     await db.delete(schema.modelAvailability).run();
     await db.delete(schema.accountTokens).run();
@@ -163,7 +165,7 @@ describe('accounts health refresh runtime state', () => {
       const events = await db.select().from(schema.events).all();
       if (events.length > 0) {
         expect(events[0]).toMatchObject({
-          title: '刷新全部账号运行健康状态已开始',
+          title: '刷新全部账号运行健康状态 已开始',
           message: '刷新全部账号运行健康状态 已开始执行',
           level: 'info',
           type: 'status',

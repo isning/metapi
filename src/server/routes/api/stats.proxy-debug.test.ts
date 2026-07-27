@@ -69,6 +69,8 @@ describe('stats proxy debug api', () => {
       recoverApplied: false,
       downgradeDecision: false,
       downgradeReason: null,
+      fallbackScope: null,
+      failureClass: null,
       memoryWrite: { action: 'success', preferredEndpoint: 'chat' },
     });
     await store.finalizeProxyDebugTrace(trace.id, {
@@ -95,7 +97,7 @@ describe('stats proxy debug api', () => {
     expect(detailResponse.statusCode).toBe(200);
     const detailBody = detailResponse.json() as {
       trace?: { requestedModel?: string; sessionId?: string };
-      attempts?: Array<{ endpoint?: string; responseStatus?: number }>;
+      attempts?: Array<{ endpoint?: string; responseStatus?: number; fallbackScope?: string | null; failureClass?: string | null }>;
     };
     expect(detailBody.trace).toMatchObject({
       requestedModel: 'gpt-4.1',
@@ -104,6 +106,8 @@ describe('stats proxy debug api', () => {
     expect(detailBody.attempts?.[0]).toMatchObject({
       endpoint: 'chat',
       responseStatus: 200,
+      fallbackScope: null,
+      failureClass: null,
     });
   });
 });

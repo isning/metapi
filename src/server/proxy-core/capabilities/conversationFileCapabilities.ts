@@ -1,5 +1,5 @@
-import { inferInputFileMimeType, normalizeInputFileBlock } from '../../transformers/shared/inputFile.js';
 import { classifyConversationFileMimeType } from '../../../shared/conversationFileTypes.js';
+import { protocolAdapters } from '../formats/protocolAdapters.js';
 
 export type ConversationFileTransport = 'unsupported' | 'inline_only' | 'native';
 export type ConversationFileEndpoint = 'chat' | 'messages' | 'responses';
@@ -30,9 +30,9 @@ function appendConversationFileSummary(
   summary: ConversationFileInputSummary,
   item: Record<string, unknown>,
 ): void {
-  const normalizedFile = normalizeInputFileBlock(item);
+  const normalizedFile = protocolAdapters.inputFile.normalizeBlock(item);
   if (normalizedFile) {
-    const mimeType = inferInputFileMimeType(normalizedFile);
+    const mimeType = protocolAdapters.inputFile.inferMimeType(normalizedFile);
     const family = classifyConversationFileMimeType(mimeType);
     if (family === 'image') {
       summary.hasImage = true;
@@ -114,6 +114,18 @@ export function summarizeConversationFileInputsInResponsesBody(
     appendConversationFileSummary(summary, input);
   }
   return summary;
+}
+
+export function carriesResponsesFileUrlInput(value: unknown): boolean {
+  if (Array.isArray(value)) {
+    return value.some((item) => carriesResponsesFileUrlInput(item));
+  }
+  if (!isRecord(value)) return false;
+
+  const normalizedFile = protocolAdapters.inputFile.normalizeBlock(value);
+  if (normalizedFile?.fileUrl) return true;
+
+  return Object.values(value).some((entry) => carriesResponsesFileUrlInput(entry));
 }
 
 export function resolveConversationFileEndpointCapability(input: {

@@ -1,10 +1,11 @@
 import { FastifyInstance } from 'fastify';
 import cron from 'node-cron';
 import { fetch } from 'undici';
-import { config, normalizeTokenRouterFailureCooldownMaxSec } from '../../config.js';
+import { config, normalizeRouteFailureCooldownMaxSec, normalizeRouteRuntimeCacheTtlMs } from '../../config.js';
 import { db, runtimeDbDialect, schema } from '../../db/index.js';
 import { upsertSetting } from '../../db/upsertSetting.js';
 import * as routeRefreshWorkflow from '../../services/routeRefreshWorkflow.js';
+import { advanceRouteGroupManagementCatalogRevision } from '../../services/routeGroupManagementCatalogRevisionService.js';
 import { getAllBrandNames } from '../../services/brandMatcher.js';
 import { updateBalanceRefreshCron, updateCheckinSchedule, updateLogCleanupSettings } from '../../services/checkinScheduler.js';
 import { sendNotification } from '../../services/notifyService.js';
@@ -17,6 +18,7 @@ import {
   reloadBackupWebdavScheduler,
   saveBackupWebdavConfig,
   type BackupExportType,
+  type BackupImportResult,
 } from '../../services/backupService.js';
 import { startBackgroundTask } from '../../services/backgroundTaskService.js';
 import {
@@ -34,7 +36,7 @@ import {
   parseBackupWebdavConfigPayload,
   parseBackupWebdavExportPayload,
 } from '../../contracts/settingsRoutePayloads.js';
-import { formatUtcSqlDateTime, getResolvedTimeZone } from '../../services/localTimeService.js';
+import { getResolvedTimeZone } from '../../services/localTimeService.js';
 import { extractClientIp, findInvalidIpAllowlistEntries, isIpAllowed } from '../../middleware/auth.js';
 import { invalidateSiteProxyCache, normalizeSiteProxyUrl, withExplicitProxyRequestInit } from '../../services/siteProxy.js';
 import { performFactoryReset } from '../../services/factoryResetService.js';
@@ -44,27 +46,32 @@ import {
   startModelAvailabilityProbeScheduler,
   stopModelAvailabilityProbeScheduler,
 } from '../../services/modelAvailabilityProbeService.js';
-import { parsePayloadRulesConfigInput } from '../../services/payloadRules.js';
+import { emitInboxItem } from '../../services/inboxService.js';
+import { normalizeDispatchPolicyRegistry } from '../../services/dispatchPolicyService.js';
+import type { DispatchPolicyRegistry } from '../../services/dispatchPolicyTypes.js';
+import {
+  DispatchPolicyRegistryConflictError,
+  DispatchPolicyRegistryValidationError,
+  saveDispatchPolicyRegistry,
+} from '../../services/dispatchPolicyRegistryMutationService.js';
 
-type RoutingWeights = typeof config.routingWeights;
 
 interface RuntimeSettingsBody {
   proxyToken?: string;
   systemProxyUrl?: string;
-  payloadRules?: unknown;
   modelAvailabilityProbeEnabled?: boolean;
   codexUpstreamWebsocketEnabled?: boolean;
   responsesCompactFallbackToResponsesEnabled?: boolean;
   disableCrossProtocolFallback?: boolean;
-  proxySessionChannelConcurrencyLimit?: number;
-  proxySessionChannelQueueWaitMs?: number;
+  proxySessionTargetConcurrencyLimit?: number;
+  proxySessionTargetQueueWaitMs?: number;
   proxyDebugTraceEnabled?: boolean;
   proxyDebugCaptureHeaders?: boolean;
   proxyDebugCaptureBodies?: boolean;
   proxyDebugCaptureStreamChunks?: boolean;
-  proxyDebugTargetSessionId?: string;
-  proxyDebugTargetClientKind?: string;
-  proxyDebugTargetModel?: string;
+  proxyDebugFilterSessionId?: string;
+  proxyDebugFilterClientKind?: string;
+  proxyDebugFilterModel?: string;
   proxyDebugRetentionHours?: number;
   proxyDebugMaxBodyBytes?: number;
   checkinCron?: string;
@@ -97,10 +104,10 @@ interface RuntimeSettingsBody {
   smtpTo?: string;
   notifyCooldownSec?: number;
   adminIpAllowlist?: string[] | string;
-  routingFallbackUnitCost?: number;
   proxyFirstByteTimeoutSec?: number;
-  tokenRouterFailureCooldownMaxSec?: number;
-  routingWeights?: Partial<RoutingWeights>;
+  routeFailureCooldownMaxSec?: number;
+  routeRuntimeCacheTtlMs?: number;
+  dispatchPolicyRegistry?: DispatchPolicyRegistry;
   proxyErrorKeywords?: string[] | string;
   proxyEmptyContentFailEnabled?: boolean;
   globalBlockedBrands?: string[];
@@ -161,15 +168,257 @@ async function appendSettingsEvent(input: {
   level?: 'info' | 'warning' | 'error';
 }) {
   try {
-    const createdAt = formatUtcSqlDateTime(new Date());
-    await db.insert(schema.events).values({
+    await emitInboxItem({
+      scope: 'activity',
+      category: 'settings',
       type: input.type,
       title: input.title,
+      summary: input.message,
       message: input.message,
       level: input.level || 'info',
+      subject: { type: 'settings', label: input.title },
+      source: 'settings',
       relatedType: 'settings',
-      createdAt,
-    }).run();
+    });
+  } catch { }
+}
+
+type BackupImportNotificationSource = 'manual' | 'webdav';
+
+function backupImportSourceKey(source: BackupImportNotificationSource): string {
+  return source === 'webdav'
+    ? 'backupImport.source.webdav'
+    : 'backupImport.source.manual';
+}
+
+function backupImportMetrics(result: BackupImportResult) {
+  const summary = result.summary;
+  return {
+    sites: summary?.importedSites ?? 0,
+    accounts: summary?.importedAccounts ?? 0,
+    profiles: summary?.importedProfiles ?? 0,
+    apiKeyConnections: summary?.importedApiKeyConnections ?? 0,
+    skippedAccounts: summary?.skippedAccounts ?? 0,
+    settings: result.appliedSettings.length,
+    warnings: result.warnings?.length ?? 0,
+  };
+}
+
+function joinNoticeLines(values: Array<string | null | undefined>): string {
+  const lines = Array.from(new Set(values.map((value) => String(value || '').trim()).filter(Boolean)));
+  return lines.length > 0 ? lines.join('\n') : '-';
+}
+
+function backupImportCoalescedNoticeRows(result: BackupImportResult): string[][] {
+  const grouped = new Map<string, {
+    sourceNames: string[];
+    groupKeys: string[];
+    actions: string[];
+  }>();
+  for (const notice of result.notices || []) {
+    if (notice.code !== 'automatic_model_normalized_coalesced') continue;
+    const normalized = notice.normalizedModelName;
+    const current = grouped.get(normalized) || { sourceNames: [], groupKeys: [], actions: [] };
+    current.sourceNames.push(...(notice.sourceNames || []));
+    current.groupKeys.push(notice.groupKey || '');
+    current.actions.push(notice.action);
+    grouped.set(normalized, current);
+  }
+  return Array.from(grouped.entries()).map(([normalizedModelName, row]) => [
+    normalizedModelName,
+    joinNoticeLines(row.sourceNames),
+    joinNoticeLines(row.groupKeys),
+    joinNoticeLines(row.actions),
+  ]);
+}
+
+function backupImportPublicConflictNoticeRows(result: BackupImportResult): string[][] {
+  const grouped = new Map<string, {
+    demotedGroups: string[];
+    keptGroups: string[];
+    actions: string[];
+  }>();
+  for (const notice of result.notices || []) {
+    if (notice.code !== 'public_model_conflict_demoted') continue;
+    const normalized = notice.normalizedModelName;
+    const current = grouped.get(normalized) || { demotedGroups: [], keptGroups: [], actions: [] };
+    current.demotedGroups.push(notice.demotedGroup || '');
+    current.keptGroups.push(notice.keptGroup || '');
+    current.actions.push(notice.action);
+    grouped.set(normalized, current);
+  }
+  return Array.from(grouped.entries()).map(([normalizedModelName, row]) => [
+    normalizedModelName,
+    joinNoticeLines(row.demotedGroups),
+    joinNoticeLines(row.keptGroups),
+    joinNoticeLines(row.actions),
+  ]);
+}
+
+function backupImportUnresolvedMemberNoticeRows(result: BackupImportResult): string[][] {
+  return (result.notices || [])
+    .filter((notice) => notice.code === 'route_member_unresolved')
+    .map((notice) => [
+      notice.groupLabel,
+      notice.groupKey,
+      `backupImport.memberReferenceKind.${notice.memberReferenceKind}`,
+      notice.memberReference,
+      `backupImport.unresolvedReason.${notice.reason}`,
+      'backupImport.unresolvedAction.skipped',
+    ]);
+}
+
+async function appendBackupImportEvent(input: {
+  source: BackupImportNotificationSource;
+  result: BackupImportResult;
+}) {
+  const metrics = backupImportMetrics(input.result);
+  const warningItems = (input.result.warnings || []).slice(0, 12);
+  const coalescedNoticeRows = backupImportCoalescedNoticeRows(input.result).slice(0, 24);
+  const publicConflictNoticeRows = backupImportPublicConflictNoticeRows(input.result).slice(0, 24);
+  const unresolvedMemberNoticeRows = backupImportUnresolvedMemberNoticeRows(input.result).slice(0, 48);
+  const hasStructuredNotices = coalescedNoticeRows.length > 0
+    || publicConflictNoticeRows.length > 0
+    || unresolvedMemberNoticeRows.length > 0;
+  const hasWarnings = metrics.warnings > 0;
+  try {
+    await emitInboxItem({
+      scope: 'notification',
+      category: 'settings',
+      type: 'backup_import',
+      title: hasWarnings ? '备份导入已完成，存在提示' : '备份导入已完成',
+      summary: hasWarnings ? '备份导入已完成，存在提示' : '备份导入已完成',
+      message: hasWarnings ? '备份导入已完成，存在提示' : '备份导入已完成',
+      severity: hasWarnings ? 'warning' : 'success',
+      subject: { type: 'backup_import', label: 'backup import' },
+      relatedType: 'settings_import_export',
+      source: 'settings.backup_import',
+      details: [
+        {
+          type: 'i18n',
+          titleKey: hasWarnings
+            ? 'backupImport.notification.completedWithWarningsTitle'
+            : 'backupImport.notification.completedTitle',
+          summaryKey: hasWarnings
+            ? 'backupImport.notification.completedWithWarningsMessage'
+            : 'backupImport.notification.completedMessage',
+          messageKey: hasWarnings
+            ? 'backupImport.notification.completedWithWarningsMessage'
+            : 'backupImport.notification.completedMessage',
+          params: metrics,
+          paramKeys: {
+            source: backupImportSourceKey(input.source),
+          },
+        },
+        {
+          type: 'metrics',
+          title: 'backupImport.details.importedCounts',
+          items: [
+            { label: 'backupImport.details.sites', value: String(metrics.sites) },
+            { label: 'backupImport.details.accounts', value: String(metrics.accounts) },
+            { label: 'backupImport.details.apiKeyConnections', value: String(metrics.apiKeyConnections) },
+            { label: 'backupImport.details.profiles', value: String(metrics.profiles) },
+            { label: 'backupImport.details.settings', value: String(metrics.settings) },
+            { label: 'backupImport.details.warnings', value: String(metrics.warnings), tone: hasWarnings ? 'warning' : 'success' },
+          ],
+        },
+        ...(coalescedNoticeRows.length > 0 ? [{
+          type: 'text' as const,
+          title: 'backupImport.details.coalescedNormalizationNotices',
+          text: 'backupImport.noticeReason.automaticModelNameNormalizedSame',
+        }] : []),
+        ...(coalescedNoticeRows.length > 0 ? [{
+          type: 'table' as const,
+          title: 'backupImport.details.coalescedNormalizationNotices',
+          columns: [
+            'backupImport.details.normalizedModelName',
+            'backupImport.details.sourceNames',
+            'backupImport.details.resultTarget',
+            'backupImport.details.action',
+          ],
+          rows: coalescedNoticeRows,
+        }] : []),
+        ...(publicConflictNoticeRows.length > 0 ? [{
+          type: 'text' as const,
+          title: 'backupImport.details.publicConflictNotices',
+          text: 'backupImport.noticeReason.publicModelNameConflict',
+        }] : []),
+        ...(publicConflictNoticeRows.length > 0 ? [{
+          type: 'table' as const,
+          title: 'backupImport.details.publicConflictNotices',
+          columns: [
+            'backupImport.details.normalizedModelName',
+            'backupImport.details.demotedGroup',
+            'backupImport.details.keptGroup',
+            'backupImport.details.action',
+          ],
+          rows: publicConflictNoticeRows,
+        }] : []),
+        ...(unresolvedMemberNoticeRows.length > 0 ? [{
+          type: 'text' as const,
+          title: 'backupImport.details.unresolvedRouteMembers',
+          text: 'backupImport.noticeReason.routeMemberUnresolved',
+        }] : []),
+        ...(unresolvedMemberNoticeRows.length > 0 ? [{
+          type: 'table' as const,
+          title: 'backupImport.details.unresolvedRouteMembers',
+          columns: [
+            'backupImport.details.routeGroup',
+            'backupImport.details.groupKey',
+            'backupImport.details.memberReferenceKind',
+            'backupImport.details.memberReference',
+            'backupImport.details.reason',
+            'backupImport.details.action',
+          ],
+          rows: unresolvedMemberNoticeRows,
+        }] : []),
+        ...(!hasStructuredNotices && warningItems.length > 0 ? [{
+          type: 'list' as const,
+          title: 'backupImport.details.warnings',
+          items: warningItems,
+        }] : []),
+      ],
+    });
+  } catch { }
+}
+
+async function appendBackupImportFailureEvent(input: {
+  source: BackupImportNotificationSource;
+  error: unknown;
+}) {
+  const message = input.error instanceof Error && input.error.message
+    ? input.error.message
+    : String((input.error as any)?.message || input.error || '导入失败');
+  try {
+    await emitInboxItem({
+      scope: 'notification',
+      category: 'settings',
+      type: 'backup_import',
+      title: '备份导入失败',
+      summary: message,
+      message,
+      severity: 'critical',
+      subject: { type: 'backup_import', label: 'backup import' },
+      relatedType: 'settings_import_export',
+      source: 'settings.backup_import',
+      details: [
+        {
+          type: 'i18n',
+          titleKey: 'backupImport.notification.failedTitle',
+          summaryKey: 'backupImport.notification.failedMessage',
+          messageKey: 'backupImport.notification.failedMessage',
+          params: { error: message },
+          paramKeys: {
+            source: backupImportSourceKey(input.source),
+          },
+        },
+        {
+          type: 'text',
+          title: 'backupImport.details.error',
+          text: message,
+        },
+      ],
+    });
   } catch { }
 }
 
@@ -446,16 +695,16 @@ function applyImportedSettingToRuntime(key: string, value: unknown) {
       }
       return;
     }
-    case 'proxy_session_channel_concurrency_limit': {
+    case 'proxy_session_target_concurrency_limit': {
       const limit = Number(value);
       if (!Number.isFinite(limit) || limit < 0) return;
-      config.proxySessionChannelConcurrencyLimit = Math.trunc(limit);
+      config.proxySessionTargetConcurrencyLimit = Math.trunc(limit);
       return;
     }
-    case 'proxy_session_channel_queue_wait_ms': {
+    case 'proxy_session_target_queue_wait_ms': {
       const queueWaitMs = Number(value);
       if (!Number.isFinite(queueWaitMs) || queueWaitMs < 0) return;
-      config.proxySessionChannelQueueWaitMs = Math.trunc(queueWaitMs);
+      config.proxySessionTargetQueueWaitMs = Math.trunc(queueWaitMs);
       return;
     }
     case 'proxy_debug_trace_enabled': {
@@ -490,16 +739,16 @@ function applyImportedSettingToRuntime(key: string, value: unknown) {
       }
       return;
     }
-    case 'proxy_debug_target_session_id': {
-      config.proxyDebugTargetSessionId = typeof value === 'string' ? value.trim() : '';
+    case 'proxy_debug_filter_session_id': {
+      config.proxyDebugFilterSessionId = typeof value === 'string' ? value.trim() : '';
       return;
     }
-    case 'proxy_debug_target_client_kind': {
-      config.proxyDebugTargetClientKind = typeof value === 'string' ? value.trim() : '';
+    case 'proxy_debug_filter_client_kind': {
+      config.proxyDebugFilterClientKind = typeof value === 'string' ? value.trim() : '';
       return;
     }
-    case 'proxy_debug_target_model': {
-      config.proxyDebugTargetModel = typeof value === 'string' ? value.trim() : '';
+    case 'proxy_debug_filter_model': {
+      config.proxyDebugFilterModel = typeof value === 'string' ? value.trim() : '';
       return;
     }
     case 'proxy_debug_retention_hours': {
@@ -672,34 +921,16 @@ function applyImportedSettingToRuntime(key: string, value: unknown) {
       config.adminIpAllowlist = toStringList(value);
       return;
     }
-    case 'routing_weights': {
-      if (!value || typeof value !== 'object') return;
-      const rw = value as Partial<RoutingWeights>;
-      config.routingWeights = {
-        baseWeightFactor: toPositiveNumberOrFallback(rw.baseWeightFactor, config.routingWeights.baseWeightFactor),
-        valueScoreFactor: toPositiveNumberOrFallback(rw.valueScoreFactor, config.routingWeights.valueScoreFactor),
-        costWeight: toPositiveNumberOrFallback(rw.costWeight, config.routingWeights.costWeight),
-        balanceWeight: toPositiveNumberOrFallback(rw.balanceWeight, config.routingWeights.balanceWeight),
-        usageWeight: toPositiveNumberOrFallback(rw.usageWeight, config.routingWeights.usageWeight),
-      };
-      return;
-    }
-    case 'routing_fallback_unit_cost': {
-      const n = Number(value);
-      if (!Number.isFinite(n) || n <= 0) return;
-      config.routingFallbackUnitCost = Math.max(1e-6, n);
-      return;
-    }
     case 'proxy_first_byte_timeout_sec': {
       const n = Number(value);
       if (!Number.isFinite(n) || n < 0) return;
       config.proxyFirstByteTimeoutSec = Math.max(0, Math.trunc(n));
       return;
     }
-    case 'token_router_failure_cooldown_max_sec': {
-      const normalized = normalizeTokenRouterFailureCooldownMaxSec(value);
+    case 'route_failure_cooldown_max_sec': {
+      const normalized = normalizeRouteFailureCooldownMaxSec(value);
       if (normalized == null) return;
-      config.tokenRouterFailureCooldownMaxSec = normalized;
+      config.routeFailureCooldownMaxSec = normalized;
       return;
     }
     case 'post_refresh_probe_enabled':
@@ -725,21 +956,21 @@ function getRuntimeSettingsResponse(currentAdminIp = '') {
     codexUpstreamWebsocketEnabled: config.codexUpstreamWebsocketEnabled,
     responsesCompactFallbackToResponsesEnabled: config.responsesCompactFallbackToResponsesEnabled,
     disableCrossProtocolFallback: config.disableCrossProtocolFallback,
-    proxySessionChannelConcurrencyLimit: config.proxySessionChannelConcurrencyLimit,
-    proxySessionChannelQueueWaitMs: config.proxySessionChannelQueueWaitMs,
+    proxySessionTargetConcurrencyLimit: config.proxySessionTargetConcurrencyLimit,
+    proxySessionTargetQueueWaitMs: config.proxySessionTargetQueueWaitMs,
     proxyDebugTraceEnabled: config.proxyDebugTraceEnabled,
     proxyDebugCaptureHeaders: config.proxyDebugCaptureHeaders,
     proxyDebugCaptureBodies: config.proxyDebugCaptureBodies,
     proxyDebugCaptureStreamChunks: config.proxyDebugCaptureStreamChunks,
-    proxyDebugTargetSessionId: config.proxyDebugTargetSessionId,
-    proxyDebugTargetClientKind: config.proxyDebugTargetClientKind,
-    proxyDebugTargetModel: config.proxyDebugTargetModel,
+    proxyDebugFilterSessionId: config.proxyDebugFilterSessionId,
+    proxyDebugFilterClientKind: config.proxyDebugFilterClientKind,
+    proxyDebugFilterModel: config.proxyDebugFilterModel,
     proxyDebugRetentionHours: config.proxyDebugRetentionHours,
     proxyDebugMaxBodyBytes: config.proxyDebugMaxBodyBytes,
-    routingFallbackUnitCost: config.routingFallbackUnitCost,
     proxyFirstByteTimeoutSec: config.proxyFirstByteTimeoutSec,
-    tokenRouterFailureCooldownMaxSec: config.tokenRouterFailureCooldownMaxSec,
-    routingWeights: config.routingWeights,
+    routeFailureCooldownMaxSec: config.routeFailureCooldownMaxSec,
+    routeRuntimeCacheTtlMs: config.routeRuntimeCacheTtlMs,
+    dispatchPolicyRegistry: config.dispatchPolicyRegistry,
     webhookUrl: config.webhookUrl,
     barkUrl: config.barkUrl,
     webhookEnabled: config.webhookEnabled,
@@ -765,7 +996,6 @@ function getRuntimeSettingsResponse(currentAdminIp = '') {
     currentAdminIp,
     serverTimeZone: getResolvedTimeZone(),
     systemProxyUrl: config.systemProxyUrl,
-    payloadRules: config.payloadRules,
     proxyErrorKeywords: config.proxyErrorKeywords,
     proxyEmptyContentFailEnabled: config.proxyEmptyContentFailEnabled,
     proxyTokenMasked: maskSecret(config.proxyToken),
@@ -844,7 +1074,7 @@ function buildRuntimeDatabaseState(saved: RuntimeDatabaseConfig | null) {
 
 export async function settingsRoutes(app: FastifyInstance) {
   await app.get('/api/settings/runtime', async (request) => {
-    const currentAdminIp = extractClientIp(request.ip, request.headers['x-forwarded-for']);
+    const currentAdminIp = extractClientIp(request.ip);
     return getRuntimeSettingsResponse(currentAdminIp);
   });
 
@@ -908,9 +1138,7 @@ export async function settingsRoutes(app: FastifyInstance) {
 
     const body = parsedBody.data as RuntimeSettingsBody;
     const changedLabels: string[] = [];
-    const currentRequestIp = extractClientIp(request.ip, request.headers['x-forwarded-for']);
-    let pendingPayloadRules: typeof config.payloadRules | undefined;
-
+    const currentRequestIp = extractClientIp(request.ip);
     const webhookTouched = body.webhookUrl !== undefined || body.webhookEnabled !== undefined;
     const nextWebhookUrl = body.webhookUrl !== undefined
       ? String(body.webhookUrl || '').trim()
@@ -1140,23 +1368,6 @@ export async function settingsRoutes(app: FastifyInstance) {
       invalidateSiteProxyCache();
     }
 
-    if (body.payloadRules !== undefined) {
-      const parsedPayloadRules = parsePayloadRulesConfigInput(body.payloadRules);
-      if (!parsedPayloadRules.success) {
-        return reply.code(400).send({
-          success: false,
-          message: parsedPayloadRules.message,
-        });
-      }
-
-      const previousRules = JSON.stringify(config.payloadRules);
-      const nextRules = JSON.stringify(parsedPayloadRules.normalized);
-      if (previousRules !== nextRules) {
-        changedLabels.push('Payload 规则');
-      }
-      pendingPayloadRules = parsedPayloadRules.normalized;
-    }
-
     if (body.modelAvailabilityProbeEnabled !== undefined) {
       let nextValue = false;
       try {
@@ -1234,30 +1445,30 @@ export async function settingsRoutes(app: FastifyInstance) {
       upsertSetting('disable_cross_protocol_fallback', config.disableCrossProtocolFallback);
     }
 
-    if (body.proxySessionChannelConcurrencyLimit !== undefined) {
-      const limit = Number(body.proxySessionChannelConcurrencyLimit);
+    if (body.proxySessionTargetConcurrencyLimit !== undefined) {
+      const limit = Number(body.proxySessionTargetConcurrencyLimit);
       if (!Number.isFinite(limit) || limit < 0) {
-        return reply.code(400).send({ success: false, message: '会话通道并发上限必须是大于等于 0 的整数' });
+        return reply.code(400).send({ success: false, message: '会话目标并发上限必须是大于等于 0 的整数' });
       }
       const nextLimit = Math.trunc(limit);
-      if (nextLimit !== config.proxySessionChannelConcurrencyLimit) {
-        changedLabels.push(`会话通道并发上限（${config.proxySessionChannelConcurrencyLimit} -> ${nextLimit}）`);
+      if (nextLimit !== config.proxySessionTargetConcurrencyLimit) {
+        changedLabels.push(`会话目标并发上限（${config.proxySessionTargetConcurrencyLimit} -> ${nextLimit}）`);
       }
-      config.proxySessionChannelConcurrencyLimit = nextLimit;
-      upsertSetting('proxy_session_channel_concurrency_limit', config.proxySessionChannelConcurrencyLimit);
+      config.proxySessionTargetConcurrencyLimit = nextLimit;
+      upsertSetting('proxy_session_target_concurrency_limit', config.proxySessionTargetConcurrencyLimit);
     }
 
-    if (body.proxySessionChannelQueueWaitMs !== undefined) {
-      const rawQueueWaitMs = Number(body.proxySessionChannelQueueWaitMs);
+    if (body.proxySessionTargetQueueWaitMs !== undefined) {
+      const rawQueueWaitMs = Number(body.proxySessionTargetQueueWaitMs);
       if (!Number.isFinite(rawQueueWaitMs) || rawQueueWaitMs < 0) {
-        return reply.code(400).send({ success: false, message: '会话通道排队等待时间必须是大于等于 0 的整数毫秒' });
+        return reply.code(400).send({ success: false, message: '会话目标排队等待时间必须是大于等于 0 的整数毫秒' });
       }
       const nextQueueWaitMs = Math.trunc(rawQueueWaitMs);
-      if (nextQueueWaitMs !== config.proxySessionChannelQueueWaitMs) {
-        changedLabels.push(`会话通道排队等待（${config.proxySessionChannelQueueWaitMs}ms -> ${nextQueueWaitMs}ms）`);
+      if (nextQueueWaitMs !== config.proxySessionTargetQueueWaitMs) {
+        changedLabels.push(`会话目标排队等待（${config.proxySessionTargetQueueWaitMs}ms -> ${nextQueueWaitMs}ms）`);
       }
-      config.proxySessionChannelQueueWaitMs = nextQueueWaitMs;
-      upsertSetting('proxy_session_channel_queue_wait_ms', config.proxySessionChannelQueueWaitMs);
+      config.proxySessionTargetQueueWaitMs = nextQueueWaitMs;
+      upsertSetting('proxy_session_target_queue_wait_ms', config.proxySessionTargetQueueWaitMs);
     }
 
     if (body.proxyDebugTraceEnabled !== undefined) {
@@ -1328,31 +1539,31 @@ export async function settingsRoutes(app: FastifyInstance) {
       upsertSetting('proxy_debug_capture_stream_chunks', config.proxyDebugCaptureStreamChunks);
     }
 
-    if (body.proxyDebugTargetSessionId !== undefined) {
-      const nextValue = String(body.proxyDebugTargetSessionId || '').trim();
-      if (nextValue !== config.proxyDebugTargetSessionId) {
+    if (body.proxyDebugFilterSessionId !== undefined) {
+      const nextValue = String(body.proxyDebugFilterSessionId || '').trim();
+      if (nextValue !== config.proxyDebugFilterSessionId) {
         changedLabels.push('代理调试目标会话');
       }
-      config.proxyDebugTargetSessionId = nextValue;
-      upsertSetting('proxy_debug_target_session_id', config.proxyDebugTargetSessionId);
+      config.proxyDebugFilterSessionId = nextValue;
+      upsertSetting('proxy_debug_filter_session_id', config.proxyDebugFilterSessionId);
     }
 
-    if (body.proxyDebugTargetClientKind !== undefined) {
-      const nextValue = String(body.proxyDebugTargetClientKind || '').trim();
-      if (nextValue !== config.proxyDebugTargetClientKind) {
+    if (body.proxyDebugFilterClientKind !== undefined) {
+      const nextValue = String(body.proxyDebugFilterClientKind || '').trim();
+      if (nextValue !== config.proxyDebugFilterClientKind) {
         changedLabels.push('代理调试目标客户端');
       }
-      config.proxyDebugTargetClientKind = nextValue;
-      upsertSetting('proxy_debug_target_client_kind', config.proxyDebugTargetClientKind);
+      config.proxyDebugFilterClientKind = nextValue;
+      upsertSetting('proxy_debug_filter_client_kind', config.proxyDebugFilterClientKind);
     }
 
-    if (body.proxyDebugTargetModel !== undefined) {
-      const nextValue = String(body.proxyDebugTargetModel || '').trim();
-      if (nextValue !== config.proxyDebugTargetModel) {
+    if (body.proxyDebugFilterModel !== undefined) {
+      const nextValue = String(body.proxyDebugFilterModel || '').trim();
+      if (nextValue !== config.proxyDebugFilterModel) {
         changedLabels.push('代理调试目标模型');
       }
-      config.proxyDebugTargetModel = nextValue;
-      upsertSetting('proxy_debug_target_model', config.proxyDebugTargetModel);
+      config.proxyDebugFilterModel = nextValue;
+      upsertSetting('proxy_debug_filter_model', config.proxyDebugFilterModel);
     }
 
     if (body.proxyDebugRetentionHours !== undefined) {
@@ -1669,32 +1880,20 @@ export async function settingsRoutes(app: FastifyInstance) {
       upsertSetting('admin_ip_allowlist', nextAllowlist);
     }
 
-    if (body.routingWeights !== undefined) {
-      const nextWeights: RoutingWeights = {
-        baseWeightFactor: toPositiveNumberOrFallback(body.routingWeights.baseWeightFactor, config.routingWeights.baseWeightFactor),
-        valueScoreFactor: toPositiveNumberOrFallback(body.routingWeights.valueScoreFactor, config.routingWeights.valueScoreFactor),
-        costWeight: toPositiveNumberOrFallback(body.routingWeights.costWeight, config.routingWeights.costWeight),
-        balanceWeight: toPositiveNumberOrFallback(body.routingWeights.balanceWeight, config.routingWeights.balanceWeight),
-        usageWeight: toPositiveNumberOrFallback(body.routingWeights.usageWeight, config.routingWeights.usageWeight),
-      };
-      if (JSON.stringify(nextWeights) !== JSON.stringify(config.routingWeights)) {
-        changedLabels.push('路由权重');
+    if (body.dispatchPolicyRegistry !== undefined) {
+      try {
+        const changed = JSON.stringify(body.dispatchPolicyRegistry) !== JSON.stringify(config.dispatchPolicyRegistry);
+        await saveDispatchPolicyRegistry(body.dispatchPolicyRegistry);
+        if (changed) changedLabels.push('默认调度策略');
+      } catch (error) {
+        if (error instanceof DispatchPolicyRegistryValidationError) {
+          return reply.code(400).send({ success: false, message: error.message, diagnostics: error.diagnostics });
+        }
+        if (error instanceof DispatchPolicyRegistryConflictError) {
+          return reply.code(409).send({ success: false, message: error.message, diagnostics: error.diagnostics });
+        }
+        throw error;
       }
-      config.routingWeights = nextWeights;
-      upsertSetting('routing_weights', nextWeights);
-    }
-
-    if (body.routingFallbackUnitCost !== undefined) {
-      const nextRoutingFallbackUnitCost = Number(body.routingFallbackUnitCost);
-      if (!Number.isFinite(nextRoutingFallbackUnitCost) || nextRoutingFallbackUnitCost <= 0) {
-        return reply.code(400).send({ success: false, message: '无价模型默认单价必须是大于 0 的数字' });
-      }
-      const normalized = Math.max(1e-6, nextRoutingFallbackUnitCost);
-      if (Math.abs(normalized - config.routingFallbackUnitCost) > 1e-12) {
-        changedLabels.push(`无价模型默认单价（${config.routingFallbackUnitCost} -> ${normalized}）`);
-      }
-      config.routingFallbackUnitCost = normalized;
-      upsertSetting('routing_fallback_unit_cost', normalized);
     }
 
     if (body.proxyFirstByteTimeoutSec !== undefined) {
@@ -1710,21 +1909,22 @@ export async function settingsRoutes(app: FastifyInstance) {
       upsertSetting('proxy_first_byte_timeout_sec', normalized);
     }
 
-    if (body.tokenRouterFailureCooldownMaxSec !== undefined) {
-      const normalized = normalizeTokenRouterFailureCooldownMaxSec(body.tokenRouterFailureCooldownMaxSec);
+    if (body.routeFailureCooldownMaxSec !== undefined) {
+      const normalized = normalizeRouteFailureCooldownMaxSec(body.routeFailureCooldownMaxSec);
       if (normalized == null) {
         return reply.code(400).send({ success: false, message: '路由失败冷却上限必须是大于 0 的数字（秒）' });
       }
-      if (normalized !== config.tokenRouterFailureCooldownMaxSec) {
-        changedLabels.push(`路由失败冷却上限（${config.tokenRouterFailureCooldownMaxSec}s -> ${normalized}s）`);
+      if (normalized !== config.routeFailureCooldownMaxSec) {
+        changedLabels.push(`路由失败冷却上限（${config.routeFailureCooldownMaxSec}s -> ${normalized}s）`);
       }
-      config.tokenRouterFailureCooldownMaxSec = normalized;
-      upsertSetting('token_router_failure_cooldown_max_sec', normalized);
+      config.routeFailureCooldownMaxSec = normalized;
+      upsertSetting('route_failure_cooldown_max_sec', normalized);
     }
 
-    if (pendingPayloadRules !== undefined) {
-      config.payloadRules = pendingPayloadRules;
-      await upsertSetting('payload_rules', pendingPayloadRules);
+    if (body.routeRuntimeCacheTtlMs !== undefined) {
+      const normalized = normalizeRouteRuntimeCacheTtlMs(body.routeRuntimeCacheTtlMs);
+      config.routeRuntimeCacheTtlMs = normalized;
+      upsertSetting('route_runtime_cache_ttl_ms', normalized);
     }
 
     if (changedLabels.length > 0) {
@@ -1834,7 +2034,7 @@ export async function settingsRoutes(app: FastifyInstance) {
       appendSettingsEvent({
         type: 'status',
         title: '数据库迁移已完成',
-        message: `目标 ${result.dialect}，已迁移站点 ${result.rows.sites}、账号 ${result.rows.accounts}、令牌 ${result.rows.accountTokens}、路由 ${result.rows.tokenRoutes}、通道 ${result.rows.routeChannels}、设置 ${result.rows.settings}`,
+        message: `目标 ${result.dialect}，已迁移站点 ${result.rows.sites}、账号 ${result.rows.accounts}、令牌 ${result.rows.accountTokens}、路由图版本 ${result.rows.routeGraphVersions}、执行端点 ${result.rows.runtimeExecutionTargets}、设置 ${result.rows.settings}`,
       });
       return {
         success: true,
@@ -1872,12 +2072,14 @@ export async function settingsRoutes(app: FastifyInstance) {
       if (result.appliedSettings.some((item) => item.key === 'backup_webdav_config_v1')) {
         await reloadBackupWebdavScheduler();
       }
+      await appendBackupImportEvent({ source: 'manual', result });
       return {
         success: true,
         message: '导入完成',
         ...result,
       };
     } catch (err: any) {
+      await appendBackupImportFailureEvent({ source: 'manual', error: err });
       return reply.code(400).send({
         success: false,
         message: err?.message || '导入失败',
@@ -1951,8 +2153,10 @@ export async function settingsRoutes(app: FastifyInstance) {
       if (result.appliedSettings.some((item) => item.key === 'backup_webdav_config_v1')) {
         await reloadBackupWebdavScheduler();
       }
+      await appendBackupImportEvent({ source: 'webdav', result });
       return result;
     } catch (err: any) {
+      await appendBackupImportFailureEvent({ source: 'webdav', error: err });
       return reply.code(400).send({
         success: false,
         message: err?.message || 'WebDAV 导入失败',
@@ -1986,21 +2190,42 @@ export async function settingsRoutes(app: FastifyInstance) {
 
   app.post('/api/settings/maintenance/clear-cache', async (_, reply) => {
     const deletedModelAvailability = (await db.delete(schema.modelAvailability).run()).changes;
-    const deletedRouteChannels = (await db.delete(schema.routeChannels).run()).changes;
-    const deletedTokenRoutes = (await db.delete(schema.tokenRoutes).run()).changes;
+    await db.delete(schema.runtimeExecutionTargetState).run();
+    const deletedRuntimeExecutionTargets = (await db.delete(schema.runtimeExecutionTargets).run()).changes;
+    await advanceRouteGroupManagementCatalogRevision();
 
     const { task, reused } = startBackgroundTask(
       {
         type: 'maintenance',
         title: '清理缓存并重建路由',
+        titleKey: 'backgroundTask.task.clearCacheAndRebuildRoutes',
         dedupeKey: 'refresh-models-and-rebuild-routes',
         notifyOnFailure: true,
         successMessage: (currentTask) => {
           const rebuild = (currentTask.result as any)?.rebuild;
-          if (!rebuild) return '缓存清理后重建路由已完成';
-          return `缓存清理后重建完成：新增路由 ${rebuild.createdRoutes}，移除旧路由 ${rebuild.removedRoutes ?? 0}，新增通道 ${rebuild.createdChannels}，移除通道 ${rebuild.removedChannels}`;
+          if (!rebuild) return '缓存清理后重建路由 已完成';
+          const createdTargets = rebuild.createdRuntimeExecutionTargets ?? 0;
+          const removedTargets = rebuild.removedRuntimeExecutionTargets ?? 0;
+          return `缓存清理后重建完成：新增路由 ${rebuild.createdRoutes ?? 0}，移除旧路由 ${rebuild.removedRoutes ?? 0}，新增执行端点 ${createdTargets}，移除执行端点 ${removedTargets}`;
         },
-        failureMessage: (currentTask) => `缓存清理后重建失败：${currentTask.error || 'unknown error'}`,
+        successMessageI18n: (currentTask) => {
+          const rebuild = (currentTask.result as any)?.rebuild;
+          if (!rebuild) return { key: 'backgroundTask.message.clearCacheRebuild.completedNoRebuild' };
+          return {
+            key: 'backgroundTask.message.clearCacheRebuild.completedWithRebuild',
+            params: {
+              createdRoutes: rebuild.createdRoutes ?? 0,
+              removedRoutes: rebuild.removedRoutes ?? 0,
+              createdCandidates: rebuild.createdRuntimeExecutionTargets ?? 0,
+              removedCandidates: rebuild.removedRuntimeExecutionTargets ?? 0,
+            },
+          };
+        },
+        failureMessage: (currentTask) => `缓存清理后重建 失败：${currentTask.error || 'unknown error'}`,
+        failureMessageI18n: (currentTask) => ({
+          key: 'backgroundTask.lifecycle.failedMessage',
+          params: { error: currentTask.error || 'unknown error' },
+        }),
       },
       async () => routeRefreshWorkflow.refreshModelsAndRebuildRoutes(),
     );
@@ -2012,15 +2237,14 @@ export async function settingsRoutes(app: FastifyInstance) {
       jobId: task.id,
       message: '缓存已清理，重建路由已开始执行',
       deletedModelAvailability,
-      deletedRouteChannels,
-      deletedTokenRoutes,
+      deletedRuntimeExecutionTargets,
     });
   });
 
   app.post('/api/settings/maintenance/clear-usage', async () => {
     const deletedProxyLogs = (await db.delete(schema.proxyLogs).run()).changes;
 
-    await db.update(schema.routeChannels).set({
+    await db.update(schema.runtimeExecutionTargetState).set({
       successCount: 0,
       failCount: 0,
       totalLatencyMs: 0,
@@ -2031,6 +2255,7 @@ export async function settingsRoutes(app: FastifyInstance) {
       consecutiveFailCount: 0,
       cooldownLevel: 0,
       cooldownUntil: null,
+      updatedAt: new Date().toISOString(),
     }).run();
 
     await db.update(schema.accounts).set({

@@ -46,10 +46,9 @@ describe('testRoutes proxy tester transport', () => {
 
     expect(response.statusCode).toBe(400);
     expect(response.json()).toEqual({
-      error: {
-        message: 'path is not allowed: /api/accounts',
-        type: 'validation_error',
-      },
+      success: false,
+      code: 'model_tester_path_not_allowed',
+      params: { path: '/api/accounts' },
     });
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -73,7 +72,7 @@ describe('testRoutes proxy tester transport', () => {
         stream: false,
         jobMode: false,
         rawMode: true,
-        forcedChannelId: 77,
+        forcedExecutionAttemptId: 'ea_25',
         rawJsonText: JSON.stringify({
           model: 'gpt-4o-mini',
           include: ['reasoning.encrypted_content'],
@@ -88,7 +87,7 @@ describe('testRoutes proxy tester transport', () => {
     expect(url).toMatch(/\/v1\/responses$/);
     expect(requestInit.headers).toMatchObject({
       'x-metapi-tester-request': '1',
-      'x-metapi-tester-forced-channel-id': '77',
+      'x-metapi-tester-forced-execution-attempt-id': 'ea_25',
     });
     expect(JSON.parse(String(requestInit.body))).toEqual({
       model: 'gpt-4o-mini',
@@ -99,10 +98,78 @@ describe('testRoutes proxy tester transport', () => {
     });
   });
 
-  it('translates legacy claude chat tests through the compatibility wrapper', async () => {
+  it('forwards raw json text exactly without restricting the JSON root type', async () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify({
       type: 'message',
-      content: [{ type: 'text', text: 'pong' }],
+      content: [{ type: 'text', text: 'ok' }],
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const rawPayload = {
+      model: 'deepseek-ai/DeepSeek-V4-Flash',
+      stream: true,
+      messages: [{
+        role: 'user',
+        content: [{
+          type: 'text',
+          text: 'hello',
+          cache_control: { type: 'ephemeral' },
+        }],
+      }],
+      max_tokens: 4096,
+      temperature: 0.7,
+    };
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/test/proxy',
+      payload: {
+        method: 'POST',
+        path: '/v1/messages',
+        requestKind: 'json',
+        stream: true,
+        jobMode: false,
+        rawMode: true,
+        rawJsonText: JSON.stringify(JSON.stringify(rawPayload)),
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const [, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(String(requestInit.body))).toBe(JSON.stringify(rawPayload));
+  });
+
+  it('preserves a string JSON root outside raw JSON mode', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/test/proxy',
+      payload: {
+        method: 'POST',
+        path: '/v1/messages',
+        requestKind: 'json',
+        stream: false,
+        jobMode: false,
+        rawMode: false,
+        jsonBody: 'custom JSON root',
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const [, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(String(requestInit.body))).toBe('custom JSON root');
+  });
+
+  it('allows raw json text with a primitive JSON root', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      type: 'message',
+      content: [{ type: 'text', text: 'ok' }],
     }), {
       status: 200,
       headers: { 'content-type': 'application/json' },
@@ -110,34 +177,21 @@ describe('testRoutes proxy tester transport', () => {
 
     const response = await app.inject({
       method: 'POST',
-      url: '/api/test/chat',
+      url: '/api/test/proxy',
       payload: {
-        model: 'claude-3-7-sonnet',
-        targetFormat: 'claude',
-        forcedChannelId: 55,
-        messages: [
-          { role: 'system', content: 'be concise' },
-          { role: 'user', content: 'ping' },
-        ],
+        method: 'POST',
+        path: '/v1/messages',
+        requestKind: 'json',
+        stream: true,
+        jobMode: false,
+        rawMode: true,
+        rawJsonText: JSON.stringify('not an object'),
       },
     });
 
     expect(response.statusCode).toBe(200);
-    const [url, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toMatch(/\/v1\/messages$/);
-    expect(requestInit.headers).toMatchObject({
-      'x-metapi-tester-request': '1',
-      'x-metapi-tester-forced-channel-id': '55',
-    });
-    expect(JSON.parse(String(requestInit.body))).toEqual({
-      model: 'claude-3-7-sonnet',
-      stream: false,
-      max_tokens: 4096,
-      system: 'be concise',
-      messages: [
-        { role: 'user', content: 'ping' },
-      ],
-    });
+    const [, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(String(requestInit.body))).toBe('not an object');
   });
 
   it('accepts stream=true when creating proxy jobs and stores a pending job', async () => {
@@ -360,7 +414,7 @@ describe('testRoutes proxy tester transport', () => {
     expect(response.statusCode).toBe(200);
     expect(response.headers['content-type']).toContain('text/event-stream');
     expect(response.payload).toContain('event: error');
-    expect(response.payload).toContain('"message":"boom"');
+    expect(response.payload).toContain('"code":"model_tester_transport_failed"');
     expect(cancel).toHaveBeenCalledTimes(1);
     expect(releaseLock).toHaveBeenCalledTimes(1);
   });

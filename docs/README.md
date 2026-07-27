@@ -28,7 +28,7 @@ npm run docs:build
 |------|--------|------------|
 | 对外第一印象、产品定位、核心入口 | [文档首页](/) | 需要调整公开落地页信息架构、首页 CTA 或首屏导航时 |
 | 新用户部署与首条请求 | [快速上手](./getting-started.md) | 新安装流程、默认端口、首次调用步骤变化时 |
-| 上游平台选择与接法 | [上游接入](./upstream-integration.md) | 平台支持范围、官方预设、API 请求地址池、自动识别规则变化时 |
+| 上游平台选择与接法 | [上游接入](./upstream-integration.md) / [上游 Endpoint、模型目录与兼容性](./upstream-endpoint-compatibility.md) | 平台支持范围、官方预设、Endpoint Profile、模型目录、自动识别规则变化时 |
 | Provider OAuth 授权 | [OAuth 管理](./oauth.md) | 支持的 OAuth provider、授权流程、回调方式或自动重绑能力变化时 |
 | 生产部署与回滚 | [部署指南](./deployment.md) | Docker Compose、反向代理、升级回滚策略变更时 |
 | K3s / Helm 高级升级面板 | [K3s 更新中心（高级）](./k3s-update-center.md) | 需要说明谁适合使用更新中心、helper 怎么配、K3s/Helm 发布链路怎么接入时 |
@@ -38,7 +38,7 @@ npm run docs:build
 | 运维排障与日常维护 | [运维手册](./operations.md) / [常见问题](./faq.md) | 新排障案例、备份恢复、健康检查、典型报错变化时 |
 | FAQ / 教程协作沉淀 | [FAQ/教程贡献规范](./community/faq-tutorial-guidelines.md) | 需要新增教程、FAQ 模板、内容提交流程时 |
 | 仓库目录与组织约定 | [目录规范](./project-structure.md) | 目录结构、归档策略或命名约定变化时 |
-| 工程守则与漂移治理 | [Harness Engineering](./engineering/harness-engineering.md) | 需要更新仓库级黄金原则、自动巡检范围或垃圾回收流程时 |
+| 工程守则与漂移治理 | [Harness Engineering](./engineering/harness-engineering.md) / [Testing Framework](./engineering/testing-framework.md) | 需要更新仓库级黄金原则、自动巡检范围、测试分层或 mock/harness 约定时 |
 
 ## 维护约定
 

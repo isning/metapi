@@ -37,9 +37,9 @@ describe('proxyAuthMiddleware', () => {
       source: 'managed',
       token: 'sk-managed-001',
       key: { id: 12, name: 'project-key' },
-      policy: { supportedModels: ['gpt-5.2'], allowedRouteIds: [3], siteWeightMultipliers: { 1: 1.2 } },
+      policy: { supportedModels: ['gpt-5.2'], allowedPlanIds: [3], siteWeightMultipliers: { 1: 1.2 } },
     });
-    consumeManagedKeyRequestMock.mockResolvedValue(undefined);
+    consumeManagedKeyRequestMock.mockResolvedValue(true);
 
     const { proxyAuthMiddleware, getProxyAuthContext, getProxyResourceOwner } = await import('./auth.js');
     const app = Fastify();
@@ -65,7 +65,7 @@ describe('proxyAuthMiddleware', () => {
         keyName: 'project-key',
         policy: {
           supportedModels: ['gpt-5.2'],
-          allowedRouteIds: [3],
+          allowedPlanIds: [3],
           siteWeightMultipliers: { 1: 1.2 },
         },
       },
@@ -74,6 +74,32 @@ describe('proxyAuthMiddleware', () => {
         ownerId: '12',
       },
     });
+    await app.close();
+  });
+
+  it('rejects a managed key when its atomic quota reservation fails', async () => {
+    authorizeDownstreamTokenMock.mockResolvedValue({
+      ok: true,
+      source: 'managed',
+      token: 'sk-managed-limited',
+      key: { id: 13, name: 'limited-key' },
+      policy: { supportedModels: [], allowedPlanIds: [], siteWeightMultipliers: {} },
+    });
+    consumeManagedKeyRequestMock.mockResolvedValue(false);
+
+    const { proxyAuthMiddleware } = await import('./auth.js');
+    const app = Fastify();
+    app.addHook('onRequest', proxyAuthMiddleware);
+    app.get('/v1/ping', async () => ({ ok: true }));
+
+    const res = await app.inject({
+      method: 'GET',
+      url: '/v1/ping',
+      headers: { Authorization: 'Bearer sk-managed-limited' },
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toMatchObject({ error: expect.stringContaining('quota') });
     await app.close();
   });
 });

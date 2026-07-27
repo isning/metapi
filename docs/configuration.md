@@ -132,7 +132,10 @@ Metapi 当前有三类主要配置入口：
 | `PORT` | 服务监听端口 | `4000` |
 | `DATA_DIR` | 数据目录（SQLite 数据库存储位置） | `./data` |
 | `TZ` | 时区 | `Asia/Shanghai` |
+| `TRUST_PROXY` | 可信反向代理 IP/CIDR，多个值用逗号分隔 | 空（不信任转发头） |
 | `ACCOUNT_CREDENTIAL_SECRET` | 账号凭证加密密钥（用于加密存储的上游账号密码） | 默认使用 `AUTH_TOKEN` |
+
+只有请求确实经过受控反向代理时才设置 `TRUST_PROXY`，例如 `TRUST_PROXY=127.0.0.1,10.0.0.0/8`。不要配置为任意来源，否则 `ADMIN_IP_ALLOWLIST` 会失去可靠的客户端地址边界。
 
 ### 2. OAuth 与 Provider 登录
 
@@ -197,7 +200,7 @@ Metapi 当前有三类主要配置入口：
 
 | 变量名 | 说明 | 默认值 |
 |--------|------|--------|
-| `TOKEN_ROUTER_CACHE_TTL_MS` | Token 路由缓存 TTL（毫秒） | `1500` |
+| `ROUTE_RUNTIME_CACHE_TTL_MS` | 编译路由运行时缓存 TTL（毫秒） | `1500` |
 | `PROXY_LOG_RETENTION_DAYS` | 代理日志保留天数 | `30` |
 | `PROXY_LOG_RETENTION_PRUNE_INTERVAL_MINUTES` | 代理日志清理任务执行间隔（分钟） | `30` |
 | `MODEL_AVAILABILITY_PROBE_INTERVAL_MS` | 批量测活间隔（毫秒） | `1800000` |

@@ -1,1 +1,1 @@
--- no schema changes detected for mysql
+-- no previous schema contract available for mysql additive upgrade generation

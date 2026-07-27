@@ -28,4 +28,11 @@ describe('release workflow', () => {
     expect(workflow).toContain("if: runner.os == 'Linux'");
     expect(workflow).toContain('sudo apt-get install --no-install-recommends -y rpm');
   });
+
+  it('uses Electron Builder environment variables without passing unsupported npm config', () => {
+    const workflow = readFileSync(resolve(process.cwd(), '.github/workflows/release.yml'), 'utf8');
+
+    expect(workflow).toContain('ELECTRON_BUILDER_BINARIES_MIRROR');
+    expect(workflow).not.toContain('npm_config_electron_builder_binaries_mirror');
+  });
 });

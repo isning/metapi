@@ -566,7 +566,7 @@ describe('NewApiAdapter', () => {
     });
   });
 
-  it('falls back to session model endpoint when /v1/models rejects token', async () => {
+  it('falls back to session models API when /v1/models rejects token', async () => {
     const adapter = new NewApiAdapter();
     const models = await adapter.getModels(baseUrl, 'session-token', 11494);
 

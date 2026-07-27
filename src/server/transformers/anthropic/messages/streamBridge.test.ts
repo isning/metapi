@@ -27,6 +27,75 @@ describe('anthropic messages stream bridge', () => {
     expect(result.lines.join('')).toContain('event: message_stop');
   });
 
+  it('patches raw message_delta usage from earlier anthropic stream usage fields', () => {
+    const streamContext = anthropicMessagesStream.createContext('claude-test');
+    const downstreamContext = anthropicMessagesStream.createDownstreamContext();
+
+    consumeAnthropicSseEvent(
+      {
+        event: 'message_start',
+        data: JSON.stringify({
+          type: 'message_start',
+          message: {
+            id: 'msg_usage_patch',
+            type: 'message',
+            role: 'assistant',
+            model: 'claude-test',
+            content: [],
+            stop_reason: null,
+            stop_sequence: null,
+            usage: {
+              input_tokens: 120,
+              output_tokens: 1,
+              cache_read_input_tokens: 30,
+              cache_creation_input_tokens: 12,
+              cache_creation: {
+                ephemeral_5m_input_tokens: 7,
+                ephemeral_1h_input_tokens: 5,
+              },
+            },
+          },
+        }),
+      },
+      streamContext,
+      downstreamContext,
+      'claude-test',
+    );
+
+    const delta = consumeAnthropicSseEvent(
+      {
+        event: 'message_delta',
+        data: JSON.stringify({
+          type: 'message_delta',
+          delta: {
+            stop_reason: 'end_turn',
+            stop_sequence: null,
+          },
+          usage: {
+            output_tokens: 9,
+          },
+        }),
+      },
+      streamContext,
+      downstreamContext,
+      'claude-test',
+    );
+
+    const parsed = anthropicMessagesStream.pullSseEvents(delta.lines.join('')).events;
+    expect(parsed).toHaveLength(1);
+    const payload = JSON.parse(parsed[0]!.data);
+    expect(payload.usage).toEqual({
+      output_tokens: 9,
+      input_tokens: 120,
+      cache_read_input_tokens: 30,
+      cache_creation_input_tokens: 12,
+      cache_creation: {
+        ephemeral_5m_input_tokens: 7,
+        ephemeral_1h_input_tokens: 5,
+      },
+    });
+  });
+
   it('serializes normalized upstream finals back into anthropic SSE blocks', () => {
     const streamContext = anthropicMessagesStream.createContext('claude-test');
     const downstreamContext = anthropicMessagesStream.createDownstreamContext();
@@ -230,5 +299,24 @@ describe('anthropic messages stream bridge', () => {
     expect(serialized).toContain('"tool_use_id":"srvtoolu_ws_stream_1"');
     expect(serialized.indexOf('"type":"web_search_tool_result"')).toBeGreaterThan(serialized.indexOf('"type":"server_tool_use"'));
     expect(serialized).toContain('"text":"It is sunny."');
+  });
+
+  it('drops normalized tool-call deltas without stable ids or names instead of emitting placeholder tool_use blocks', () => {
+    const streamContext = anthropicMessagesStream.createContext('claude-test');
+    const downstreamContext = anthropicMessagesStream.createDownstreamContext();
+
+    const lines = anthropicMessagesStream.serializeEvent(
+      {
+        toolCallDeltas: [{
+          index: 0,
+          argumentsDelta: '{"city":"Paris"}',
+        }],
+      },
+      streamContext,
+      downstreamContext,
+    );
+
+    expect(lines.some((line) => line.includes('"type":"tool_use"'))).toBe(false);
+    expect(lines.some((line) => line.includes('"name":'))).toBe(false);
   });
 });

@@ -12,6 +12,7 @@ const { apiMock } = vi.hoisted(() => ({
     getSites: vi.fn(),
     batchUpdateAccounts: vi.fn(),
     refreshAccountHealth: vi.fn(),
+    updateAccount: vi.fn(),
   },
 }));
 
@@ -24,6 +25,26 @@ async function flushMicrotasks() {
     await Promise.resolve();
     await Promise.resolve();
   });
+}
+
+function toggleCheckbox(node: { props: Record<string, any> }, checked = true) {
+  if (typeof node.props.onCheckedChange === 'function') {
+    node.props.onCheckedChange(checked);
+    return;
+  }
+  if (typeof node.props.onChange === 'function') {
+    node.props.onChange({ target: { checked } });
+    return;
+  }
+  if (typeof node.props.onClick === 'function') {
+    node.props.onClick({ stopPropagation: vi.fn(), target: { checked } });
+  }
+}
+
+function collectText(node: any): string {
+  if (typeof node === 'string' || typeof node === 'number') return String(node);
+  if (!node || !Array.isArray(node.children)) return '';
+  return node.children.map(collectText).join('');
 }
 
 describe('Accounts batch actions', () => {
@@ -57,6 +78,7 @@ describe('Accounts batch actions', () => {
       failedItems: [],
     });
     apiMock.refreshAccountHealth.mockResolvedValue({ success: true });
+    apiMock.updateAccount.mockResolvedValue({});
   });
 
   afterEach(() => {
@@ -80,8 +102,8 @@ describe('Accounts batch actions', () => {
       const checkboxA = root.root.find((node) => node.props['data-testid'] === 'account-select-1');
       const checkboxB = root.root.find((node) => node.props['data-testid'] === 'account-select-2');
       await act(async () => {
-        checkboxA.props.onChange({ target: { checked: true } });
-        checkboxB.props.onChange({ target: { checked: true } });
+        toggleCheckbox(checkboxA);
+        toggleCheckbox(checkboxB);
       });
 
       const batchButton = root.root.find((node) => node.props['data-testid'] === 'accounts-batch-refresh-balance');
@@ -121,6 +143,43 @@ describe('Accounts batch actions', () => {
 
       const checkbox = root.root.find((node) => node.props['data-testid'] === 'account-select-1');
       expect(checkbox.props.checked).toBe(true);
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('reorders accounts by dragging the leading row handle', async () => {
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/accounts']}>
+            <ToastProvider>
+              <Accounts />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const dragContext = root.root.find((node) => typeof node.props?.onDragEnd === 'function');
+      await act(async () => {
+        dragContext.props.onDragStart({
+          active: { id: 2 },
+        });
+      });
+      expect(collectText(root.root)).toContain('beta');
+
+      await act(async () => {
+        await dragContext.props.onDragEnd({
+          active: { id: 2 },
+          over: { id: 1 },
+        });
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.updateAccount).toHaveBeenCalledWith(2, { sortOrder: 0 });
+      expect(apiMock.updateAccount).toHaveBeenCalledWith(1, { sortOrder: 1 });
     } finally {
       root?.unmount();
     }

@@ -4,13 +4,16 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { formatUtcSqlDateTime } from "../../services/localTimeService.js";
+import { clearRouteGroupMemberTestData } from '../../../testing/routeGroupMemberTestUtils.js';
 
 type DbModule = typeof import("../../db/index.js");
+type BillingFixtureModule = typeof import('../../../testing/canonicalBillingRequestFixture.js');
 
 describe("stats snapshot v2 routes", () => {
   let app: FastifyInstance;
   let db: DbModule["db"];
   let schema: DbModule["schema"];
+  let insertCanonicalTerminalRequest: BillingFixtureModule['insertCanonicalTerminalRequest'];
   let dataDir = "";
   let previousDataDir: string | undefined;
 
@@ -23,8 +26,10 @@ describe("stats snapshot v2 routes", () => {
     const dbModule = await import("../../db/index.js");
     const routesModule = await import("./stats.js");
     const sitesRoutesModule = await import("./sites.js");
+    const billingFixture = await import('../../../testing/canonicalBillingRequestFixture.js');
     db = dbModule.db;
     schema = dbModule.schema;
+    insertCanonicalTerminalRequest = billingFixture.insertCanonicalTerminalRequest;
 
     app = Fastify();
     await app.register(routesModule.statsRoutes);
@@ -33,10 +38,14 @@ describe("stats snapshot v2 routes", () => {
 
   beforeEach(async () => {
     await db.delete(schema.adminSnapshots).run();
+    await db.delete(schema.analyticsProjectionCheckpoints).run();
+    await db.delete(schema.billingCostAggregates).run();
     await db.delete(schema.proxyLogs).run();
+    await db.delete(schema.proxyRequests).run();
     await db.delete(schema.checkinLogs).run();
-    await db.delete(schema.routeChannels).run();
-    await db.delete(schema.tokenRoutes).run();
+    await clearRouteGroupMemberTestData();
+    await db.delete(schema.runtimeExecutionTargetState).run();
+    await db.delete(schema.runtimeExecutionTargets).run();
     await db.delete(schema.tokenModelAvailability).run();
     await db.delete(schema.modelAvailability).run();
     await db.delete(schema.accountTokens).run();
@@ -77,6 +86,24 @@ describe("stats snapshot v2 routes", () => {
       .returning()
       .get();
 
+    await db.insert(schema.walletAcquisitionProfiles).values({
+      scope: 'site',
+      scopeKey: `site|site:${site.id}|account:-|token:-`,
+      siteId: site.id,
+      inheritance: 'override',
+      walletUnit: 'POINTS',
+      faceValuePrice: 1,
+      rechargeDiscount: 0.5,
+      confidence: 'estimated',
+    }).run();
+    await db.insert(schema.fxRateSnapshots).values({
+      fromCurrency: 'POINTS',
+      toCurrency: 'USD',
+      rate: 0.01,
+      source: 'manual',
+      capturedAt: new Date().toISOString(),
+    }).run();
+
     await db
       .insert(schema.proxyLogs)
       .values([
@@ -115,6 +142,12 @@ describe("stats snapshot v2 routes", () => {
       ])
       .run();
 
+    await Promise.all([
+      insertCanonicalTerminalRequest({ id: 'stats-snapshot-request-success', siteId: site.id, accountId: account.id, completedAt: recentLogCreatedAt, amount: 0.5, model: 'gpt-4o' }),
+      insertCanonicalTerminalRequest({ id: 'stats-snapshot-request-failure', siteId: site.id, accountId: account.id, completedAt: recentLogCreatedAt, amount: 0.25, model: 'gpt-4o-mini', status: 'failure' }),
+      insertCanonicalTerminalRequest({ id: 'stats-snapshot-request-old', siteId: site.id, accountId: account.id, completedAt: formatUtcSqlDateTime(new Date(Date.now() - (24 * 60 + 30) * 60_000)), amount: 0.1, model: 'gpt-4.1-mini' }),
+    ]);
+
     const summaryResponse = await app.inject({
       method: "GET",
       url: "/api/stats/dashboard?view=summary",
@@ -124,10 +157,20 @@ describe("stats snapshot v2 routes", () => {
     const summary = summaryResponse.json() as {
       generatedAt: string;
       totalBalance: number;
+      rawBalance: number;
+      rawBalanceUnit: string | null;
+      rawBalanceUnitMixed: boolean;
+      baseCostUnit: string;
+      valuedAccountCount: number;
       proxy24h: { total: number };
     };
     expect(Date.parse(summary.generatedAt)).not.toBeNaN();
-    expect(summary.totalBalance).toBe(42);
+    expect(summary.totalBalance).toBe(0.21);
+    expect(summary.rawBalance).toBe(42);
+    expect(summary.rawBalanceUnit).toBe('POINTS');
+    expect(summary.rawBalanceUnitMixed).toBe(false);
+    expect(summary.baseCostUnit).toBe('USD');
+    expect(summary.valuedAccountCount).toBe(1);
     expect(summary.proxy24h.total).toBe(2);
 
     const insightsResponse = await app.inject({
@@ -138,13 +181,30 @@ describe("stats snapshot v2 routes", () => {
     const insights = insightsResponse.json() as {
       generatedAt: string;
       siteAvailability: Array<{ siteId: number }>;
-      modelAnalysis: { totals: { calls: number } };
+      modelAnalysis: {
+        costUnit: string;
+        valuation: {
+          source: string;
+          valuedRows: number;
+          totalRows: number;
+          warningCount: number;
+        };
+        totals: { calls: number; spend: number };
+      };
     };
     expect(Date.parse(insights.generatedAt)).not.toBeNaN();
     expect(insights.siteAvailability).toEqual([
       expect.objectContaining({ siteId: site.id }),
     ]);
     expect(insights.modelAnalysis.totals.calls).toBe(3);
+    expect(insights.modelAnalysis.costUnit).toBe('USD');
+    expect(insights.modelAnalysis.valuation).toMatchObject({
+      source: 'wallet_valuation',
+      valuedRows: 3,
+      totalRows: 3,
+      warningCount: 0,
+    });
+    expect(insights.modelAnalysis.totals.spend).toBe(0.85);
 
     const siteDistributionResponse = await app.inject({
       method: "GET",
@@ -152,10 +212,26 @@ describe("stats snapshot v2 routes", () => {
     });
     expect(siteDistributionResponse.statusCode).toBe(200);
     const siteDistribution = siteDistributionResponse.json() as {
-      distribution: Array<{ siteId: number; totalSpend: number }>;
+      distribution: Array<{
+        siteId: number;
+        totalBalance: number;
+        rawBalance: number;
+        rawBalanceUnit: string | null;
+        rawBalanceUnitMixed: boolean;
+        totalSpend: number;
+        valuedAccountCount: number;
+      }>;
     };
     expect(siteDistribution.distribution).toEqual([
-      expect.objectContaining({ siteId: site.id, totalSpend: 0.85 }),
+      expect.objectContaining({
+        siteId: site.id,
+        totalBalance: 0.21,
+        rawBalance: 42,
+        rawBalanceUnit: 'POINTS',
+        rawBalanceUnitMixed: false,
+        totalSpend: 0.85,
+        valuedAccountCount: 1,
+      }),
     ]);
 
     const siteTrendResponse = await app.inject({

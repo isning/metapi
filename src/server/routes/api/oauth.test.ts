@@ -4,6 +4,12 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import {
+  clearRouteGroupMemberTestData,
+  insertRouteGroupMember,
+  listAllRouteGroupEndpointMembers,
+  listAllRouteGroupMembers,
+} from '../../../testing/routeGroupMemberTestUtils.js';
 
 const fetchMock = vi.fn();
 const undiciAgentCtorMock = vi.fn();
@@ -25,6 +31,9 @@ vi.mock('undici', () => ({
 
 type DbModule = typeof import('../../db/index.js');
 type RouteRefreshWorkflowModule = typeof import('../../services/routeRefreshWorkflow.js');
+type RouteGraphServiceModule = typeof import('../../services/routeGraphService.js');
+type RouteGroupManagementModule = typeof import('../../services/routeGroupManagementService.js');
+type RouteGroupManagementReadModelModule = typeof import('../../services/routeGroupManagementReadModelService.js');
 
 function buildJwt(payload: Record<string, unknown>) {
   const encode = (value: unknown) => Buffer.from(JSON.stringify(value))
@@ -64,6 +73,9 @@ describe('oauth routes', { timeout: 15_000 }, () => {
   let db: DbModule['db'];
   let schema: DbModule['schema'];
   let rebuildRoutesOnly: RouteRefreshWorkflowModule['rebuildRoutesOnly'];
+  let routeGraphService: RouteGraphServiceModule;
+  let createRouteGroupFromPayload: RouteGroupManagementModule['createRouteGroupFromPayload'];
+  let loadRouteGroupManagementReadModel: RouteGroupManagementReadModelModule['loadRouteGroupManagementReadModel'];
   let config: typeof import('../../config.js').config;
   let dataDir = '';
 
@@ -72,14 +84,20 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     process.env.DATA_DIR = dataDir;
     vi.resetModules();
 
-    await import('../../db/migrate.js');
+    const migrate = await import('../../db/migrate.js');
+    await migrate.runSqliteMigrations();
     const dbModule = await import('../../db/index.js');
     const routesModule = await import('./oauth.js');
     const routeRefreshWorkflow = await import('../../services/routeRefreshWorkflow.js');
+    routeGraphService = await import('../../services/routeGraphService.js');
+    const routeGroupManagement = await import('../../services/routeGroupManagementService.js');
+    const routeGroupManagementReadModel = await import('../../services/routeGroupManagementReadModelService.js');
     const configModule = await import('../../config.js');
     db = dbModule.db;
     schema = dbModule.schema;
     rebuildRoutesOnly = routeRefreshWorkflow.rebuildRoutesOnly;
+    createRouteGroupFromPayload = routeGroupManagement.createRouteGroupFromPayload;
+    loadRouteGroupManagementReadModel = routeGroupManagementReadModel.loadRouteGroupManagementReadModel;
     config = configModule.config;
 
     app = Fastify();
@@ -95,12 +113,20 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     const { resetOauthSensitiveRouteLimiterForTests } = await import('./oauth.js');
     resetRequestRateLimitStore();
     resetOauthSensitiveRouteLimiterForTests();
-    await db.delete(schema.routeChannels).run();
-    await db.delete(schema.tokenRoutes).run();
+    await clearRouteGroupMemberTestData();
     await db.delete(schema.tokenModelAvailability).run();
     await db.delete(schema.modelAvailability).run();
     await db.delete(schema.accountTokens).run();
     await db.delete(schema.accounts).run();
+    await db.delete(schema.routeGraphWorkspaceOperationBatches).run();
+    await db.delete(schema.routeGraphDrafts).run();
+    await db.delete(schema.routeGraphActiveVersion).run();
+    await db.delete(schema.compiledRuntimeActiveArtifact).run();
+    await db.delete(schema.compiledRuntimeArtifacts).run();
+    await db.delete(schema.routeGraphVersions).run();
+    routeGraphService.invalidateRouteGraphReadCaches('test-reset');
+    await db.delete(schema.runtimeExecutionTargetState).run();
+    await db.delete(schema.runtimeExecutionTargets).run();
     await db.delete(schema.settings).run();
     await db.delete(schema.sites).run();
     const { invalidateSiteProxyCache } = await import('../../services/siteProxy.js');
@@ -996,7 +1022,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
       }),
     ]));
 
-    const routeRows = await db.select().from(schema.routeChannels).all();
+    const routeRows = await listAllRouteGroupMembers();
     expect(routeRows).toHaveLength(1);
 
     const connectionsResponse = await app.inject({
@@ -1082,8 +1108,8 @@ describe('oauth routes', { timeout: 15_000 }, () => {
       },
     });
 
-    const routes = await db.select().from(schema.tokenRoutes).all();
-    const channels = await db.select().from(schema.routeChannels).all();
+    const routes = await loadRouteGroupManagementReadModel();
+    const channels = await listAllRouteGroupMembers();
     expect(routes).toHaveLength(1);
     expect(channels).toHaveLength(1);
     expect(channels[0]).toMatchObject({
@@ -2076,19 +2102,23 @@ describe('oauth routes', { timeout: 15_000 }, () => {
       checkedAt: '2026-03-17T08:00:00.000Z',
     }).run();
 
-    const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-5.2-codex',
+    const route = await createRouteGroupFromPayload({
+      model: { publicName: 'gpt-5.2-codex' },
+      presentation: { displayName: 'gpt-5.2-codex' },
       enabled: true,
-    }).returning().get();
-    await db.insert(schema.routeChannels).values({
-      routeId: route.id,
+      visibility: 'public',
+      dispatcherPolicy: { kind: 'builtin', builtin: 'weighted' },
+    });
+    await insertRouteGroupMember({
+      groupId: route.id,
       accountId: account.id,
       tokenId: null,
-      priority: 0,
+      sourceModel: 'gpt-5.2-codex',
+      fallbackStageOrder: 0,
       weight: 10,
       enabled: true,
       manualOverride: false,
-    }).run();
+    });
 
     const listResponse = await app.inject({
       method: 'GET',
@@ -2599,7 +2629,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
         available: true,
       }),
     ]));
-    const routeRows = await db.select().from(schema.routeChannels).all();
+    const routeRows = await listAllRouteGroupMembers();
     expect(routeRows).toHaveLength(1);
     expect(routeRows[0]).toMatchObject({
       accountId: accounts[0]?.id,
@@ -2674,7 +2704,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
 
     const modelRows = await db.select().from(schema.modelAvailability).all();
     expect(modelRows).toHaveLength(2);
-    const routeRows = await db.select().from(schema.routeChannels).all();
+    const routeRows = await listAllRouteGroupMembers();
     expect(routeRows).toHaveLength(2);
   });
 
@@ -2764,7 +2794,6 @@ describe('oauth routes', { timeout: 15_000 }, () => {
       payload: {
         data: {
           type: 'sub2api-data',
-          version: 1,
           accounts: [],
           proxies: [],
         },
@@ -3012,7 +3041,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
 
     const { rebuildRoutesOnly } = await import('../../services/routeRefreshWorkflow.js');
     await rebuildRoutesOnly();
-    expect(await db.select().from(schema.routeChannels).all()).toHaveLength(2);
+    expect(await listAllRouteGroupMembers()).toHaveLength(2);
 
     const createResponse = await app.inject({
       method: 'POST',
@@ -3034,11 +3063,16 @@ describe('oauth routes', { timeout: 15_000 }, () => {
       }),
     });
 
-    const groupedChannels = await db.select().from(schema.routeChannels).all();
+    const groupedChannels = await listAllRouteGroupEndpointMembers();
     expect(groupedChannels).toHaveLength(1);
     expect(groupedChannels[0]).toMatchObject({
-      oauthRouteUnitId: expect.any(Number),
+      targetSelection: { kind: 'builtin', builtin: 'round_robin' },
+      targets: [
+        expect.objectContaining({ accountId: accountA.id }),
+        expect.objectContaining({ accountId: accountB.id }),
+      ],
     });
+    const routeUnitId = createResponse.json().routeUnit?.id as number;
 
     const listResponse = await app.inject({
       method: 'GET',
@@ -3068,12 +3102,12 @@ describe('oauth routes', { timeout: 15_000 }, () => {
 
     const deleteResponse = await app.inject({
       method: 'DELETE',
-      url: `/api/oauth/route-units/${groupedChannels[0]?.oauthRouteUnitId}`,
+      url: `/api/oauth/route-units/${routeUnitId}`,
     });
     expect(deleteResponse.statusCode).toBe(200);
     expect(deleteResponse.json()).toMatchObject({ success: true });
 
-    const splitChannels = await db.select().from(schema.routeChannels).all();
+    const splitChannels = await listAllRouteGroupMembers();
     expect(splitChannels).toHaveLength(2);
     expect(splitChannels.every((row) => row.oauthRouteUnitId == null)).toBe(true);
   });
@@ -3150,9 +3184,9 @@ describe('oauth routes', { timeout: 15_000 }, () => {
       });
       expect(await db.select().from(schema.oauthRouteUnits).all()).toHaveLength(0);
       expect(await db.select().from(schema.oauthRouteUnitMembers).all()).toHaveLength(0);
-      const routeChannels = await db.select().from(schema.routeChannels).all();
-      expect(routeChannels).toHaveLength(2);
-      expect(routeChannels.every((row) => row.oauthRouteUnitId == null)).toBe(true);
+      const routeGroupCandidates = await listAllRouteGroupMembers();
+      expect(routeGroupCandidates).toHaveLength(2);
+      expect(routeGroupCandidates.every((row) => row.oauthRouteUnitId == null)).toBe(true);
     } finally {
       rebuildSpy.mockRestore();
     }
@@ -3241,9 +3275,9 @@ describe('oauth routes', { timeout: 15_000 }, () => {
       expect(routeUnits).toHaveLength(1);
       const members = await db.select().from(schema.oauthRouteUnitMembers).all();
       expect(members).toHaveLength(2);
-      const routeChannels = await db.select().from(schema.routeChannels).all();
-      expect(routeChannels).toHaveLength(1);
-      expect(routeChannels[0]?.oauthRouteUnitId).toBe(routeUnitId);
+      const routeGroupCandidates = await listAllRouteGroupEndpointMembers();
+      expect(routeGroupCandidates).toHaveLength(1);
+      expect(routeGroupCandidates[0]?.targets).toHaveLength(2);
     } finally {
       rebuildSpy.mockRestore();
     }
@@ -3332,9 +3366,9 @@ describe('oauth routes', { timeout: 15_000 }, () => {
       expect(routeUnits).toHaveLength(1);
       const members = await db.select().from(schema.oauthRouteUnitMembers).all();
       expect(members).toHaveLength(2);
-      const routeChannels = await db.select().from(schema.routeChannels).all();
-      expect(routeChannels).toHaveLength(1);
-      expect(routeChannels[0]?.oauthRouteUnitId).toBe(routeUnitId);
+      const routeGroupCandidates = await listAllRouteGroupEndpointMembers();
+      expect(routeGroupCandidates).toHaveLength(1);
+      expect(routeGroupCandidates[0]?.targets).toHaveLength(2);
     } finally {
       rebuildSpy.mockRestore();
     }
@@ -3408,6 +3442,26 @@ describe('oauth routes', { timeout: 15_000 }, () => {
         strategy: 'stick_until_unavailable',
       }),
     });
+    const routeUnitId = createResponse.json().routeUnit?.id as number;
+    const [stableEndpoint] = await listAllRouteGroupEndpointMembers();
+    expect(stableEndpoint?.targetSelection).toEqual({
+      kind: 'builtin',
+      builtin: 'stable_first',
+    });
+    const targetIds = stableEndpoint?.targets.map((target) => target.id);
+
+    const updateResponse = await app.inject({
+      method: 'PATCH',
+      url: `/api/oauth/route-units/${routeUnitId}`,
+      payload: { strategy: 'round_robin' },
+    });
+    expect(updateResponse.statusCode).toBe(200);
+    const [roundRobinEndpoint] = await listAllRouteGroupEndpointMembers();
+    expect(roundRobinEndpoint?.targetSelection).toEqual({
+      kind: 'builtin',
+      builtin: 'round_robin',
+    });
+    expect(roundRobinEndpoint?.targets.map((target) => target.id)).toEqual(targetIds);
   });
 
   it('imports multiple oauth json objects in one batch and applies the explicit system proxy setting', async () => {
@@ -3461,7 +3515,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
       }),
     ]));
 
-    const routeRows = await db.select().from(schema.routeChannels).all();
+    const routeRows = await listAllRouteGroupMembers();
     expect(routeRows).toHaveLength(1);
   });
 
@@ -3522,7 +3576,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     const routeRefreshWorkflow = await import('../../services/routeRefreshWorkflow.js');
     await routeRefreshWorkflow.rebuildRoutesOnly();
 
-    expect(await db.select().from(schema.routeChannels).all()).toHaveLength(2);
+    expect(await listAllRouteGroupMembers()).toHaveLength(2);
 
     const createResponse = await app.inject({
       method: 'POST',
@@ -3544,8 +3598,9 @@ describe('oauth routes', { timeout: 15_000 }, () => {
       },
     });
 
-    const routeRows = await db.select().from(schema.routeChannels).all();
+    const routeRows = await listAllRouteGroupEndpointMembers();
     expect(routeRows).toHaveLength(1);
+    expect(routeRows[0]?.targets).toHaveLength(2);
 
     const connectionsResponse = await app.inject({
       method: 'GET',
@@ -3582,7 +3637,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     expect(deleteResponse.json()).toMatchObject({
       success: true,
     });
-    expect(await db.select().from(schema.routeChannels).all()).toHaveLength(2);
+    expect(await listAllRouteGroupMembers()).toHaveLength(2);
   });
 
   it('updates oauth account proxy settings without starting a new oauth session and refreshes routes', async () => {
@@ -3652,14 +3707,12 @@ describe('oauth routes', { timeout: 15_000 }, () => {
       }),
     ]));
 
-    const routeRows = await db.select().from(schema.tokenRoutes).all();
-    expect(routeRows).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        modelPattern: 'gpt-5.4',
-      }),
+    const routeRows = await loadRouteGroupManagementReadModel();
+    expect(routeRows.map((row) => row.model.upstreamName || row.presentation.displayName)).toEqual(expect.arrayContaining([
+      'gpt-5.4',
     ]));
-    const routeChannels = await db.select().from(schema.routeChannels).all();
-    expect(routeChannels).toHaveLength(1);
+    const routeGroupCandidates = await listAllRouteGroupMembers();
+    expect(routeGroupCandidates).toHaveLength(1);
   });
 
   it('imports multiple native oauth json objects in one batch request and applies shared system proxy settings', async () => {
@@ -3732,10 +3785,10 @@ describe('oauth routes', { timeout: 15_000 }, () => {
       expect.objectContaining({ modelName: 'gpt-5.4-mini', available: true }),
     ]));
 
-    const routeRows = await db.select().from(schema.tokenRoutes).all();
-    expect(routeRows.map((row) => row.modelPattern).sort()).toEqual(['gpt-5.4', 'gpt-5.4-mini']);
-    const routeChannels = await db.select().from(schema.routeChannels).all();
-    expect(routeChannels).toHaveLength(2);
+    const routeRows = await loadRouteGroupManagementReadModel();
+    expect(routeRows.map((row) => row.model.upstreamName || row.presentation.displayName).sort()).toEqual(['gpt-5.4', 'gpt-5.4-mini']);
+    const routeGroupCandidates = await listAllRouteGroupMembers();
+    expect(routeGroupCandidates).toHaveLength(2);
   });
 
   it('creates an oauth route unit and collapses multiple oauth accounts into one route channel', async () => {
@@ -3797,7 +3850,7 @@ describe('oauth routes', { timeout: 15_000 }, () => {
     ]).run();
     await rebuildRoutesOnly();
 
-    expect(await db.select().from(schema.routeChannels).all()).toHaveLength(2);
+    expect(await listAllRouteGroupMembers()).toHaveLength(2);
 
     const response = await app.inject({
       method: 'POST',
@@ -3819,8 +3872,9 @@ describe('oauth routes', { timeout: 15_000 }, () => {
       },
     });
 
-    const routeChannels = await db.select().from(schema.routeChannels).all();
-    expect(routeChannels).toHaveLength(1);
+    const routeGroupCandidates = await listAllRouteGroupEndpointMembers();
+    expect(routeGroupCandidates).toHaveLength(1);
+    expect(routeGroupCandidates[0]?.targets).toHaveLength(2);
 
     const connectionsResponse = await app.inject({
       method: 'GET',
@@ -3933,8 +3987,8 @@ describe('oauth routes', { timeout: 15_000 }, () => {
       success: true,
     });
 
-    const routeChannels = await db.select().from(schema.routeChannels).all();
-    expect(routeChannels).toHaveLength(2);
+    const routeGroupCandidates = await listAllRouteGroupMembers();
+    expect(routeGroupCandidates).toHaveLength(2);
 
     const connectionsResponse = await app.inject({
       method: 'GET',

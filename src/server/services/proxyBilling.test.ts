@@ -1,10 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 
-const estimateProxyCostMock = vi.fn();
 const buildProxyBillingDetailsMock = vi.fn();
 
 vi.mock('./modelPricingService.js', () => ({
-  estimateProxyCost: (...args: unknown[]) => estimateProxyCostMock(...args),
   buildProxyBillingDetails: (...args: unknown[]) => buildProxyBillingDetailsMock(...args),
 }));
 
@@ -12,8 +10,17 @@ import { resolveProxyLogBilling } from './proxyBilling.js';
 
 describe('resolveProxyLogBilling', () => {
   it('uses self-log billing metadata for detail breakdown while preserving quota-derived total cost', async () => {
-    estimateProxyCostMock.mockResolvedValue(0.010001);
     buildProxyBillingDetailsMock.mockResolvedValue({
+      quote: {
+        amount: 0.010001,
+        unit: 'quota',
+        currency: null,
+        source: 'billing_override',
+        sourceId: null,
+        matchedScope: null,
+        estimateLevel: 'exact',
+        planFingerprint: null,
+      },
       usage: {
         cacheReadTokens: 145692,
         cacheCreationTokens: 945,
@@ -72,7 +79,7 @@ describe('resolveProxyLogBilling', () => {
       },
     });
 
-    expect(estimateProxyCostMock).toHaveBeenCalledWith(expect.objectContaining({
+    expect(buildProxyBillingDetailsMock).toHaveBeenCalledWith(expect.objectContaining({
       cacheReadTokens: 145692,
       cacheCreationTokens: 945,
       promptTokensIncludeCache: true,
@@ -86,6 +93,12 @@ describe('resolveProxyLogBilling', () => {
     }));
     expect(result.estimatedCost).toBe(0.083056);
     expect(result.billingDetails).toMatchObject({
+      quote: {
+        amount: 0.083056,
+        unit: 'quota',
+        currency: null,
+        source: 'self_log_quota',
+      },
       usage: {
         cacheReadTokens: 145692,
         cacheCreationTokens: 945,

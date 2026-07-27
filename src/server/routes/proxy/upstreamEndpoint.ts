@@ -1,21 +1,3 @@
-import {
-  buildMinimalJsonHeadersForCompatibility,
-  isEndpointDispatchDeniedError,
-  isEndpointDowngradeError,
-  isUnsupportedMediaTypeError,
-  promoteResponsesCandidateAfterLegacyChatError,
-  shouldPreferResponsesAfterLegacyChatError,
-} from '../../transformers/shared/endpointCompatibility.js';
-
-export {
-  buildMinimalJsonHeadersForCompatibility,
-  isEndpointDispatchDeniedError,
-  isEndpointDowngradeError,
-  isUnsupportedMediaTypeError,
-  promoteResponsesCandidateAfterLegacyChatError,
-  shouldPreferResponsesAfterLegacyChatError,
-};
-
 export type { UpstreamEndpoint } from '../../proxy-core/orchestration/upstreamRequest.js';
 export {
   buildClaudeCountTokensUpstreamRequest,

@@ -38,6 +38,7 @@ type ResponsesProxyStreamSessionInput = {
     promptTokensIncludeCache: boolean | null;
   };
   onParsedPayload?: (payload: unknown) => void;
+  onMeaningfulOutput?: () => void;
   writeLines: (lines: string[]) => void;
   writeRaw: (chunk: string) => void;
 };
@@ -95,9 +96,16 @@ export function createResponsesProxyStreamSession(input: ResponsesProxyStreamSes
     || input.successfulUpstreamPath.endsWith('/responses/compact');
   let finalized = false;
   let terminalEventSeen = false;
+  let meaningfulOutputObserved = false;
   let terminalResult: ResponsesProxyStreamResult = {
     status: 'completed',
     errorMessage: null,
+  };
+
+  const markMeaningfulOutput = () => {
+    if (meaningfulOutputObserved) return;
+    meaningfulOutputObserved = true;
+    input.onMeaningfulOutput?.();
   };
 
   const finalize = () => {
@@ -206,6 +214,9 @@ export function createResponsesProxyStreamSession(input: ResponsesProxyStreamSes
         }, 'Upstream returned empty content');
         return true;
       }
+      if (convertedLines.length > 0 && hasMeaningfulAggregateOutput(responsesState)) {
+        markMeaningfulOutput();
+      }
       input.writeLines(convertedLines);
       if (eventBlock.event === 'response.completed' || payloadType === 'response.completed' || isIncompleteEvent) {
         terminalEventSeen = true;
@@ -214,6 +225,7 @@ export function createResponsesProxyStreamSession(input: ResponsesProxyStreamSes
       return false;
     }
 
+    markMeaningfulOutput();
     input.writeLines(serializeConvertedResponsesEvents({
       state: responsesState,
       streamContext,
@@ -268,6 +280,9 @@ export function createResponsesProxyStreamSession(input: ResponsesProxyStreamSes
         status: 'completed',
         errorMessage: null,
       };
+      if (hasMeaningfulResponsesPayloadOutput(streamPayload)) {
+        markMeaningfulOutput();
+      }
       input.writeLines(lines);
       response?.end();
       return terminalResult;
@@ -279,6 +294,16 @@ export function createResponsesProxyStreamSession(input: ResponsesProxyStreamSes
         pullEvents: (buffer) => openAiResponsesStream.pullSseEvents(buffer),
         handleEvent: handleEventBlock,
         onEof: closeOut,
+        maxBufferBytes: config.proxyStreamMaxSseBufferBytes,
+        onLimitExceeded: (message) => {
+          fail({
+            type: 'response.failed',
+            error: {
+              message,
+              type: 'upstream_response_too_large',
+            },
+          }, message);
+        },
       });
       await lifecycle.run();
       return terminalResult;

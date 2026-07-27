@@ -2,33 +2,46 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { and, eq } from 'drizzle-orm';
 
 type DbModule = typeof import('../db/index.js');
 type ModelServiceModule = typeof import('./modelService.js');
+type RouteGroupManagementModule = typeof import('./routeGroupManagementService.js');
+type RouteGroupCandidateModule = typeof import('./routeGroupCandidateService.js');
 
-describe('rebuildTokenRoutesFromAvailability with site disabled models', () => {
+describe('rebuildManagedRouteGroupsFromAvailability with site disabled models', () => {
     let db: DbModule['db'];
     let schema: DbModule['schema'];
-    let rebuildTokenRoutesFromAvailability: ModelServiceModule['rebuildTokenRoutesFromAvailability'];
+    let rebuildManagedRouteGroupsFromAvailability: ModelServiceModule['rebuildManagedRouteGroupsFromAvailability'];
+    let loadRouteGroupManagementSummaries: RouteGroupManagementModule['loadRouteGroupManagementSummaries'];
+    let listRouteGroupCandidatesByGroupKeys: RouteGroupCandidateModule['listRouteGroupCandidatesByGroupKeys'];
     let dataDir = '';
 
     beforeAll(async () => {
         dataDir = mkdtempSync(join(tmpdir(), 'metapi-site-disabled-models-'));
         process.env.DATA_DIR = dataDir;
 
-        await import('../db/migrate.js');
+        const migrate = await import('../db/migrate.js');
+        await migrate.runSqliteMigrations();
         const dbModule = await import('../db/index.js');
         const modelService = await import('./modelService.js');
+        const routeGroupManagement = await import('./routeGroupManagementService.js');
+        const routeGroupCandidates = await import('./routeGroupCandidateService.js');
 
         db = dbModule.db;
         schema = dbModule.schema;
-        rebuildTokenRoutesFromAvailability = modelService.rebuildTokenRoutesFromAvailability;
+        rebuildManagedRouteGroupsFromAvailability = modelService.rebuildManagedRouteGroupsFromAvailability;
+        loadRouteGroupManagementSummaries = routeGroupManagement.loadRouteGroupManagementSummaries;
+        listRouteGroupCandidatesByGroupKeys = routeGroupCandidates.listRouteGroupCandidatesByGroupKeys;
     });
 
     beforeEach(async () => {
-        await db.delete(schema.routeChannels).run();
-        await db.delete(schema.tokenRoutes).run();
+        await db.delete(schema.routeGraphDrafts).run();
+        await db.delete(schema.routeGraphActiveVersion).run();
+        await db.delete(schema.compiledRuntimeActiveArtifact).run();
+        await db.delete(schema.compiledRuntimeArtifacts).run();
+        await db.delete(schema.routeGraphVersions).run();
+    await db.delete(schema.runtimeExecutionTargetState).run();
+    await db.delete(schema.runtimeExecutionTargets).run();
         await db.delete(schema.tokenModelAvailability).run();
         await db.delete(schema.modelAvailability).run();
         await db.delete(schema.siteDisabledModels).run();
@@ -71,13 +84,12 @@ describe('rebuildTokenRoutesFromAvailability with site disabled models', () => {
             modelName: 'gpt-4o',
         }).run();
 
-        const rebuild = await rebuildTokenRoutesFromAvailability();
+        const rebuild = await rebuildManagedRouteGroupsFromAvailability();
 
         expect(rebuild.models).toBe(0);
 
-        const routes = await db.select().from(schema.tokenRoutes)
-            .where(eq(schema.tokenRoutes.modelPattern, 'gpt-4o'))
-            .all();
+        const routes = (await loadRouteGroupManagementSummaries())
+            .filter((group) => group.model.normalizedName === 'gpt-4o');
         expect(routes).toHaveLength(0);
     });
 
@@ -124,22 +136,22 @@ describe('rebuildTokenRoutesFromAvailability with site disabled models', () => {
             modelName: 'claude-sonnet-4-5-20250929',
         }).run();
 
-        const rebuild = await rebuildTokenRoutesFromAvailability();
+        const rebuild = await rebuildManagedRouteGroupsFromAvailability();
 
         expect(rebuild.models).toBe(1);
 
-        const route = await db.select().from(schema.tokenRoutes)
-            .where(eq(schema.tokenRoutes.modelPattern, 'claude-sonnet-4-5-20250929'))
-            .get();
+        const route = (await loadRouteGroupManagementSummaries())
+            .find((group) => group.model.normalizedName === 'claude-sonnet-4-5-20250929');
         expect(route).toBeDefined();
 
-        const channels = await db.select().from(schema.routeChannels)
-            .where(eq(schema.routeChannels.routeId, route!.id))
-            .all();
+        const channels = (await listRouteGroupCandidatesByGroupKeys([route!.id])).get(route!.id) || [];
 
         // Only site B's channel should exist
         expect(channels).toHaveLength(1);
-        expect(channels[0]?.accountId).toBe(accountB.id);
+        expect(channels[0]).toMatchObject({
+            kind: 'execution_endpoint',
+            targets: [expect.objectContaining({ accountId: accountB.id })],
+        });
     });
 
     it('allows model when no disabled models are configured', async () => {
@@ -165,13 +177,12 @@ describe('rebuildTokenRoutesFromAvailability with site disabled models', () => {
             latencyMs: 200,
         }).run();
 
-        const rebuild = await rebuildTokenRoutesFromAvailability();
+        const rebuild = await rebuildManagedRouteGroupsFromAvailability();
 
         expect(rebuild.models).toBe(1);
 
-        const route = await db.select().from(schema.tokenRoutes)
-            .where(eq(schema.tokenRoutes.modelPattern, 'gpt-5'))
-            .get();
+        const route = (await loadRouteGroupManagementSummaries())
+            .find((group) => group.model.normalizedName === 'gpt-5');
         expect(route).toBeDefined();
     });
 });

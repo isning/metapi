@@ -145,7 +145,6 @@ jobs:
           ELECTRON_CACHE: ${{ runner.temp }}/.cache/electron
           ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/.cache/electron-builder
           ELECTRON_BUILDER_BINARIES_MIRROR: https://github.com/electron-userland/electron-builder-binaries/releases/download/
-          npm_config_electron_builder_binaries_mirror: https://github.com/electron-userland/electron-builder-binaries/releases/download/
           WIN_CSC_LINK_INPUT: ${{ secrets.CSC_LINK }}
           WIN_CSC_KEY_PASSWORD_INPUT: ${{ secrets.CSC_KEY_PASSWORD }}
         run: |
@@ -190,7 +189,6 @@ jobs:
           ELECTRON_CACHE: ${{ runner.temp }}/.cache/electron
           ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/.cache/electron-builder
           ELECTRON_BUILDER_BINARIES_MIRROR: https://github.com/electron-userland/electron-builder-binaries/releases/download/
-          npm_config_electron_builder_binaries_mirror: https://github.com/electron-userland/electron-builder-binaries/releases/download/
         run: |
           set -euo pipefail
           for attempt in 1 2; do
@@ -213,7 +211,6 @@ jobs:
           ELECTRON_CACHE: ${{ runner.temp }}/.cache/electron
           ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/.cache/electron-builder
           ELECTRON_BUILDER_BINARIES_MIRROR: https://github.com/electron-userland/electron-builder-binaries/releases/download/
-          npm_config_electron_builder_binaries_mirror: https://github.com/electron-userland/electron-builder-binaries/releases/download/
           APPLE_ID_INPUT: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD_INPUT: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID_INPUT: ${{ secrets.APPLE_TEAM_ID }}

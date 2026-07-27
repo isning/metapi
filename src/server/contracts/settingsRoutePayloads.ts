@@ -14,6 +14,7 @@ const runtimeSettingsPayloadSchema = z.object({
   smtpSecure: z.boolean().optional(),
   logCleanupUsageLogsEnabled: z.boolean().optional(),
   logCleanupProgramLogsEnabled: z.boolean().optional(),
+  routeRuntimeCacheTtlMs: z.number().int().min(100).max(60_000).optional(),
 }).passthrough();
 
 const systemProxyTestPayloadSchema = z.object({

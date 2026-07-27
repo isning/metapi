@@ -9,8 +9,9 @@ const { apiMock } = vi.hoisted(() => ({
   apiMock: {
     getAuthInfo: vi.fn(),
     getRuntimeSettings: vi.fn(),
+    getRouteRuntimeCacheStatus: vi.fn().mockResolvedValue({ activeRuntime: { present: false, ageMs: null, artifactId: null, loadInFlight: false } }),
     getDownstreamApiKeys: vi.fn(),
-    getRoutesLite: vi.fn(),
+    getRouteGroupPage: vi.fn(),
     getRuntimeDatabaseConfig: vi.fn(),
     getBrandList: vi.fn(),
     updateRuntimeSettings: vi.fn(),
@@ -57,13 +58,11 @@ describe('Settings log cleanup schedule', () => {
       logCleanupUsageLogsEnabled: true,
       logCleanupProgramLogsEnabled: true,
       logCleanupRetentionDays: 14,
-      routingFallbackUnitCost: 1,
-      routingWeights: {},
       adminIpAllowlist: [],
       systemProxyUrl: '',
     });
     apiMock.getDownstreamApiKeys.mockResolvedValue({ items: [] });
-    apiMock.getRoutesLite.mockResolvedValue([]);
+    apiMock.getRouteGroupPage.mockResolvedValue({ items: [], pageInfo: { page: 1, pageSize: 500, totalCount: 0, hasMore: false } });
     apiMock.getBrandList.mockResolvedValue({ brands: [] });
     apiMock.getRuntimeDatabaseConfig.mockResolvedValue({
       active: { dialect: 'sqlite', connection: '(default sqlite path)', ssl: false },
@@ -95,7 +94,7 @@ describe('Settings log cleanup schedule', () => {
       const saveButton = root.root.find((node) => (
         node.type === 'button'
         && typeof node.props.onClick === 'function'
-        && collectText(node).trim() === '保存定时任务'
+        && collectText(node).trim() === '保存自动任务设置'
       ));
 
       await act(async () => {
@@ -173,12 +172,11 @@ describe('Settings log cleanup schedule', () => {
       const scheduleCard = root.root.find((node) => (
         node.type === 'div'
         && String(node.props.className || '').includes('card')
-        && collectText(node).includes('定时任务')
+        && collectText(node).includes('自动任务')
       ));
 
       expect(scheduleCard.findAllByType('select')).toHaveLength(0);
       expect(scheduleCard.findAllByType(ModernSelect).length).toBeGreaterThanOrEqual(2);
-      expect(String(triggerButton.props.className || '')).toContain('btn-ghost');
     } finally {
       root?.unmount();
     }

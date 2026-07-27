@@ -56,21 +56,22 @@ describe('proxyDebugTraceStore', () => {
 
     await store.updateProxyDebugTraceSelection(trace.id, {
       stickySessionKey: 'key:7|codex|/v1/responses|gpt-4o|sess-1',
-      stickyHitChannelId: 12,
-      selectedChannelId: 12,
-      selectedRouteId: 99,
+      stickyHitExecutionAttemptId: 'ea_c',
+      selectedExecutionAttemptId: 'ea_c',
+      routeEntrypointId: 'entry:debug:gpt-4o',
+      runtimeEndpointId: 'endpoint:debug:primary',
       selectedAccountId: 33,
       selectedSiteId: 8,
       selectedSitePlatform: 'codex',
     });
 
-    await store.updateProxyDebugTraceCandidates(trace.id, {
-      endpointCandidates: ['responses', 'chat'],
-      endpointRuntimeState: {
+    await store.updateProxyDebugTraceRuntime(trace.id, {
+      protocol: { endpointCandidates: ['responses', 'chat'] },
+      runtimeState: {
         preferredEndpoint: 'responses',
         blockedEndpoints: [],
       },
-      decisionSummary: {
+      context: {
         reason: 'platform default + sticky session',
       },
     });
@@ -102,6 +103,8 @@ describe('proxyDebugTraceStore', () => {
       recoverApplied: false,
       downgradeDecision: true,
       downgradeReason: '[upstream:/responses] forbidden',
+      fallbackScope: 'api_variant',
+      failureClass: 'protocol_mismatch',
       memoryWrite: {
         action: 'failure',
         blockedEndpoint: 'responses',
@@ -131,7 +134,7 @@ describe('proxyDebugTraceStore', () => {
       downstreamPath: '/v1/responses',
       clientKind: 'codex',
       sessionId: 'sess-1',
-      selectedChannelId: 12,
+      selectedExecutionAttemptId: 'ea_c',
       finalStatus: 'failed',
       finalHttpStatus: 503,
       finalUpstreamPath: '/responses',
@@ -141,6 +144,8 @@ describe('proxyDebugTraceStore', () => {
     expect(detail?.trace.requestHeadersJson || '').toContain('Bearer developer-token');
     expect(detail?.trace.requestBodyJson || '').toContain('"hello"');
     expect(detail?.trace.finalResponseBodyJson || '').toContain('Channel busy');
+    expect(detail?.trace.routeEntrypointId).toBe('entry:debug:gpt-4o');
+    expect(detail?.trace.runtimeEndpointId).toBe('endpoint:debug:primary');
     expect(detail?.attempts).toHaveLength(1);
     expect(detail?.attempts[0]?.requestHeadersJson || '').toContain('developer-token');
     expect(detail?.attempts[0]?.responseBodyJson || '').toContain('forbidden');
@@ -149,6 +154,9 @@ describe('proxyDebugTraceStore', () => {
       runtimeExecutor: 'codex',
       responseStatus: 403,
       downgradeDecision: true,
+      downgradeReason: '[upstream:/responses] forbidden',
+      fallbackScope: 'api_variant',
+      failureClass: 'protocol_mismatch',
     });
   });
 

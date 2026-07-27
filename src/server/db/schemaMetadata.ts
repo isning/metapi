@@ -48,7 +48,7 @@ function isJsonLikeColumn(columnName: string): boolean {
     || normalizedColumn.includes('details')
     || normalizedColumn.includes('meta')
     || normalizedColumn.includes('models')
-    || normalizedColumn.includes('route_ids')
+    || normalizedColumn.includes('route_group_ids')
     || normalizedColumn.includes('multipliers');
 }
 

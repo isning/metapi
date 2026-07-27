@@ -9,6 +9,11 @@ import {
   readOpenAiCompatibleContinuation,
 } from './continuationBridge.js';
 import { normalizeCanonicalReasoningRequest } from './reasoning.js';
+import {
+  DEFAULT_RESOLVED_UPSTREAM_COMPATIBILITY_POLICY,
+  type ResolvedUpstreamCompatibilityPolicy,
+} from '../../contracts/upstreamCompatibilityPolicy.js';
+import { applyOpenAiChatReasoningHistoryTransport } from './openAiChatReasoningHistoryTransport.js';
 import type { CanonicalTool, CanonicalToolChoice } from './tools.js';
 import type {
   CanonicalContentPart,
@@ -32,8 +37,16 @@ type CanonicalRequestFromOpenAiBodyInput = {
   continuation?: CanonicalContinuation;
 };
 
+type CanonicalRequestToOpenAiChatBodyOptions = {
+  compatibilityPolicy?: ResolvedUpstreamCompatibilityPolicy;
+};
+
 function asTrimmedString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function asString(value: unknown): string {
+  return typeof value === 'string' ? value : '';
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -62,8 +75,7 @@ function safeJsonStringify(value: unknown): string {
 
 function joinNonEmpty(parts: string[]): string {
   return parts
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0)
+    .filter((part) => part.trim().length > 0)
     .join('\n\n');
 }
 
@@ -140,8 +152,8 @@ function appendAssistantReasoningPart(
   rawMessage: Record<string, unknown>,
 ): void {
   const directReasoning = joinNonEmpty([
-    asTrimmedString(rawMessage.reasoning_content),
-    asTrimmedString(rawMessage.reasoning),
+    asString(rawMessage.reasoning_content),
+    asString(rawMessage.reasoning),
   ]);
   if (!directReasoning) return;
 
@@ -282,11 +294,23 @@ export function canonicalRequestFromOpenAiBody(
       const resultText = typeof rawContent === 'string'
         ? rawContent
         : (!Array.isArray(rawContent) && !isRecord(rawContent) ? safeJsonStringify(rawContent ?? '') : '');
+      if (!toolCallId) {
+        if (resultText) {
+          messages.push({
+            role: 'user',
+            parts: [{
+              type: 'text',
+              text: `[tool_output_missing_call_id] ${resultText}`,
+            }],
+          });
+        }
+        continue;
+      }
       messages.push({
         role: 'tool',
         parts: [{
           type: 'tool_result',
-          toolCallId: toolCallId || 'tool',
+          toolCallId,
           ...(resultText ? { resultText } : {}),
           ...(Array.isArray(rawContent)
             ? { resultContent: cloneJsonValue(rawContent) as Array<string | Record<string, unknown>> }
@@ -311,10 +335,10 @@ export function canonicalRequestFromOpenAiBody(
       const argumentsJson = typeof fn.arguments === 'string'
         ? fn.arguments
         : safeJsonStringify(fn.arguments ?? toolCall.arguments ?? {});
-      if (!name) continue;
+      if (!id || !name) continue;
       parts.push({
         type: 'tool_call',
-        id: id || `tool_${parts.length}`,
+        id,
         name,
         argumentsJson,
       });
@@ -464,6 +488,7 @@ function canonicalToolChoiceToOpenAi(toolChoice: CanonicalToolChoice | undefined
 
 export function canonicalRequestToOpenAiChatBody(
   request: CanonicalRequestEnvelope,
+  options: CanonicalRequestToOpenAiChatBodyOptions = {},
 ): Record<string, unknown> {
   const messages: Array<Record<string, unknown>> = [];
 
@@ -560,5 +585,8 @@ export function canonicalRequestToOpenAiChatBody(
     }
   }
 
-  return body;
+  return applyOpenAiChatReasoningHistoryTransport(
+    body,
+    options.compatibilityPolicy ?? DEFAULT_RESOLVED_UPSTREAM_COMPATIBILITY_POLICY,
+  );
 }

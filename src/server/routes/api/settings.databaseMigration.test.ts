@@ -4,6 +4,7 @@ import { mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import Database from 'better-sqlite3';
+import { clearRouteGroupMemberTestData } from '../../../testing/routeGroupMemberTestUtils.js';
 
 type DbModule = typeof import('../../db/index.js');
 
@@ -29,8 +30,9 @@ describe('settings database migration api', () => {
   });
 
   beforeEach(async () => {
-    await db.delete(schema.routeChannels).run();
-    await db.delete(schema.tokenRoutes).run();
+    await clearRouteGroupMemberTestData();
+    await db.delete(schema.runtimeExecutionTargetState).run();
+    await db.delete(schema.runtimeExecutionTargets).run();
     await db.delete(schema.accountTokens).run();
     await db.delete(schema.accounts).run();
     await db.delete(schema.sites).run();
@@ -93,17 +95,14 @@ describe('settings database migration api', () => {
       updatedAt: new Date().toISOString(),
     }).run();
 
-    await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-4o-mini',
-      modelMapping: null,
-      enabled: true,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    }).run();
-
     await db.insert(schema.settings).values({
-      key: 'routing_fallback_unit_cost',
-      value: JSON.stringify(0.25),
+      key: 'platform_pricing_config_v1',
+      value: JSON.stringify({
+        upstreamDefaultPricing: {
+          inputPerMillion: 1,
+          outputPerMillion: 1,
+        },
+      }),
     }).run();
 
     const targetPath = join(dataDir, 'target-migrate.db');
@@ -134,6 +133,19 @@ describe('settings database migration api', () => {
       expect(targetSites.cnt).toBe(1);
       expect(targetAccounts.cnt).toBe(1);
       expect(targetSettings.cnt).toBe(1);
+      const legacyFallback = targetDb
+        .prepare("SELECT value FROM settings WHERE key = 'routing_fallback_unit_cost'")
+        .get();
+      const platformPricing = targetDb
+        .prepare("SELECT value FROM settings WHERE key = 'platform_pricing_config_v1'")
+        .get() as { value: string } | undefined;
+      expect(legacyFallback).toBeUndefined();
+      expect(JSON.parse(platformPricing?.value || '{}')).toMatchObject({
+        upstreamDefaultPricing: {
+          inputPerMillion: 1,
+          outputPerMillion: 1,
+        },
+      });
     } finally {
       targetDb.close();
     }

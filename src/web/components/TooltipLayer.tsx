@@ -43,6 +43,7 @@ function resolveTooltipTarget(eventTarget: EventTarget | null): HTMLElement | nu
 export default function TooltipLayer() {
   const [activeTooltip, setActiveTooltip] = useState<ActiveTooltip | null>(null);
   const [position, setPosition] = useState<TooltipPosition | null>(null);
+  const activeTooltipRef = useRef<ActiveTooltip | null>(null);
   const bubbleRef = useRef<HTMLDivElement | null>(null);
   const rafRef = useRef<number | null>(null);
 
@@ -54,8 +55,10 @@ export default function TooltipLayer() {
 
   const hideTooltip = useCallback(() => {
     cancelFrame();
+    if (activeTooltipRef.current === null) return;
+    activeTooltipRef.current = null;
     setActiveTooltip(null);
-    setPosition(null);
+    setPosition((current) => current === null ? current : null);
   }, [cancelFrame]);
 
   const showTooltipForTarget = useCallback((target: HTMLElement | null) => {
@@ -69,12 +72,20 @@ export default function TooltipLayer() {
       return;
     }
 
-    setActiveTooltip({
-      target,
-      text,
-      side: readTooltipSide(target),
-      align: readTooltipAlign(target),
-    });
+    const side = readTooltipSide(target);
+    const align = readTooltipAlign(target);
+    const current = activeTooltipRef.current;
+    if (
+      current?.target === target
+      && current.text === text
+      && current.side === side
+      && current.align === align
+    ) return;
+
+    const next = { target, text, side, align };
+    activeTooltipRef.current = next;
+    setPosition(null);
+    setActiveTooltip(next);
   }, [hideTooltip]);
 
   const refreshPosition = useCallback(() => {
@@ -106,12 +117,21 @@ export default function TooltipLayer() {
     const targetCenter = targetRect.left + targetRect.width / 2;
     const arrowLeft = clamp(targetCenter - left, 14, bubbleRect.width - 14);
 
-    setPosition({
+    const next = {
       left,
       top,
       arrowLeft,
       side: activeTooltip.side,
-    });
+    };
+    setPosition((current) => (
+      current
+      && current.left === next.left
+      && current.top === next.top
+      && current.arrowLeft === next.arrowLeft
+      && current.side === next.side
+        ? current
+        : next
+    ));
   }, [activeTooltip, hideTooltip]);
 
   const scheduleRefresh = useCallback(() => {
@@ -143,24 +163,25 @@ export default function TooltipLayer() {
     };
 
     const handleMouseOut = (event: MouseEvent) => {
-      if (!activeTooltip) return;
+      const active = activeTooltipRef.current;
+      if (!active) return;
       const nextTarget = resolveTooltipTarget(event.relatedTarget);
-      if (nextTarget === activeTooltip.target) return;
-      if (event.relatedTarget instanceof Node && activeTooltip.target.contains(event.relatedTarget)) return;
+      if (nextTarget === active.target) return;
+      if (event.relatedTarget instanceof Node && active.target.contains(event.relatedTarget)) return;
       hideTooltip();
     };
 
     const handleFocusOut = (event: FocusEvent) => {
-      if (!activeTooltip) return;
+      const active = activeTooltipRef.current;
+      if (!active) return;
       const nextTarget = resolveTooltipTarget(event.relatedTarget);
-      if (nextTarget === activeTooltip.target) return;
-      if (event.relatedTarget instanceof Node && activeTooltip.target.contains(event.relatedTarget)) return;
+      if (nextTarget === active.target) return;
+      if (event.relatedTarget instanceof Node && active.target.contains(event.relatedTarget)) return;
       hideTooltip();
     };
 
-    const handlePointerDown = (event: Event) => {
-      if (!activeTooltip) return;
-      if (event.target instanceof Node && activeTooltip.target.contains(event.target)) return;
+    const handlePointerDown = (_event: Event) => {
+      if (!activeTooltipRef.current) return;
       hideTooltip();
     };
 
@@ -177,11 +198,11 @@ export default function TooltipLayer() {
       document.removeEventListener('focusout', handleFocusOut);
       document.removeEventListener('pointerdown', handlePointerDown);
     };
-  }, [activeTooltip, hideTooltip, showTooltipForTarget]);
+  }, [hideTooltip, showTooltipForTarget]);
 
   useLayoutEffect(() => {
     if (!activeTooltip) return;
-    setPosition(null);
+    setPosition((current) => current === null ? current : null);
     scheduleRefresh();
   }, [activeTooltip, scheduleRefresh]);
 

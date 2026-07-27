@@ -1,6 +1,6 @@
 import { canonicalRequestFromOpenAiBody, canonicalRequestToOpenAiChatBody } from '../../canonical/openAiRequestBridge.js';
 import type { CanonicalRequestEnvelope } from '../../canonical/types.js';
-import type { ProtocolParseContext } from '../../contracts.js';
+import type { ProtocolBuildContext, ProtocolParseContext } from '../../contracts.js';
 import { anthropicMessagesInbound } from './inbound.js';
 import { convertOpenAiBodyToAnthropicMessagesBody } from './conversion.js';
 
@@ -41,7 +41,10 @@ export function parseAnthropicMessagesRequestToCanonical(
 
 export function buildCanonicalRequestToAnthropicMessagesBody(
   request: CanonicalRequestEnvelope,
+  ctx?: ProtocolBuildContext,
 ): Record<string, unknown> {
-  const openAiBody = canonicalRequestToOpenAiChatBody(request);
+  const openAiBody = canonicalRequestToOpenAiChatBody(request, {
+    compatibilityPolicy: ctx?.compatibilityPolicy,
+  });
   return convertOpenAiBodyToAnthropicMessagesBody(openAiBody, request.requestedModel, request.stream);
 }

@@ -86,6 +86,39 @@ describe('proxyUsageFallbackService', () => {
     });
   });
 
+  it('does not synthesize cache billing ratios when self-log only reports cache token counts', () => {
+    const payload = {
+      data: {
+        items: [
+          {
+            model_name: 'gpt-4o',
+            prompt_tokens: 1000,
+            completion_tokens: 100,
+            quota: 1100,
+            created_at: 1_772_790_705,
+            request_time: 100,
+            other: JSON.stringify({
+              cache_tokens: 300,
+              cache_creation_tokens: 40,
+              model_ratio: 2,
+              completion_ratio: 3,
+            }),
+          },
+        ],
+      },
+    };
+
+    const logs = extractSelfLogItems(payload);
+    expect(logs[0]?.billingMeta).toMatchObject({
+      cacheReadTokens: 300,
+      cacheCreationTokens: 40,
+      cacheRatio: 0,
+      cacheCreationRatio: 0,
+      completionRatio: 3,
+      modelRatio: 2,
+    });
+  });
+
   it('matches best log by model + time window + request time', () => {
     const logs: SelfLogItem[] = [
       {

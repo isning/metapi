@@ -4,8 +4,8 @@ export function failureActionOf(result: AttemptFailure): AttemptFailureAction {
   return result.action;
 }
 
-export function shouldRetrySameChannel(action: AttemptFailureAction): boolean {
-  return action === 'retry_same_channel';
+export function shouldRetrySameTarget(action: AttemptFailureAction): boolean {
+  return action === 'retry_same_target';
 }
 
 export function shouldRefreshAuth(action: AttemptFailureAction): boolean {

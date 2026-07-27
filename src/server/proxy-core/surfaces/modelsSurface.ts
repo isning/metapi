@@ -7,19 +7,18 @@ function isSearchPseudoModel(modelName: string): boolean {
 type ModelsSurfaceInput = {
   downstreamPolicy: unknown;
   responseFormat: 'openai' | 'claude';
-  tokenRouter: {
-    getAvailableModels(): Promise<string[]>;
-    explainSelection(modelName: string, excludeChannelIds: number[], downstreamPolicy: unknown): Promise<{
-      selectedChannelId?: number | null;
-    }>;
-  };
-  refreshModelsAndRebuildRoutes(): Promise<unknown>;
+  listModelNames(): Promise<string[]>;
+  canSelectModel(modelName: string, downstreamPolicy: unknown): Promise<boolean>;
   isModelAllowed(modelName: string, downstreamPolicy: unknown): Promise<boolean>;
   now?: () => Date;
 };
 
+type RetrieveModelSurfaceInput = ModelsSurfaceInput & {
+  modelId: string;
+};
+
 async function readVisibleModels(input: ModelsSurfaceInput): Promise<string[]> {
-  const deduped = Array.from(new Set(await input.tokenRouter.getAvailableModels()))
+  const deduped = Array.from(new Set(await input.listModelNames()))
     .filter((modelName) => !isSearchPseudoModel(modelName))
     .sort();
   const allowed: string[] = [];
@@ -27,8 +26,8 @@ async function readVisibleModels(input: ModelsSurfaceInput): Promise<string[]> {
     if (!await input.isModelAllowed(modelName, input.downstreamPolicy)) {
       continue;
     }
-    const decision = await input.tokenRouter.explainSelection(modelName, [], input.downstreamPolicy);
-    if (typeof decision.selectedChannelId === 'number') {
+    const canSelect = await input.canSelectModel(modelName, input.downstreamPolicy);
+    if (canSelect) {
       allowed.push(modelName);
     }
   }
@@ -36,11 +35,7 @@ async function readVisibleModels(input: ModelsSurfaceInput): Promise<string[]> {
 }
 
 export async function listModelsSurface(input: ModelsSurfaceInput) {
-  let models = await readVisibleModels(input);
-  if (models.length === 0) {
-    await input.refreshModelsAndRebuildRoutes();
-    models = await readVisibleModels(input);
-  }
+  const models = await readVisibleModels(input);
 
   const now = input.now?.() ?? new Date();
   if (input.responseFormat === 'claude') {
@@ -66,5 +61,69 @@ export async function listModelsSurface(input: ModelsSurfaceInput) {
       created: Math.floor(now.getTime() / 1000),
       owned_by: 'metapi',
     })),
+  };
+}
+
+function createModelPayload(id: string, responseFormat: 'openai' | 'claude', now: Date) {
+  if (responseFormat === 'claude') {
+    return {
+      id,
+      type: 'model' as const,
+      display_name: id,
+      created_at: now.toISOString(),
+    };
+  }
+
+  return {
+    id,
+    object: 'model' as const,
+    created: Math.floor(now.getTime() / 1000),
+    owned_by: 'metapi',
+  };
+}
+
+function modelNotFoundPayload(modelId: string) {
+  return {
+    error: {
+      message: `Model '${modelId}' not found`,
+      type: 'invalid_request_error',
+      code: 'model_not_found',
+    },
+  };
+}
+
+export async function retrieveModelSurface(input: RetrieveModelSurfaceInput) {
+  const modelId = input.modelId.trim();
+  if (!modelId) {
+    return {
+      statusCode: 400,
+      payload: {
+        error: {
+          message: 'model is required',
+          type: 'invalid_request_error',
+        },
+      },
+    };
+  }
+
+  if (isSearchPseudoModel(modelId) || !await input.isModelAllowed(modelId, input.downstreamPolicy)) {
+    return {
+      statusCode: 404,
+      payload: modelNotFoundPayload(modelId),
+    };
+  }
+
+  const canSelect = await input.canSelectModel(modelId, input.downstreamPolicy);
+
+  if (!canSelect) {
+    return {
+      statusCode: 404,
+      payload: modelNotFoundPayload(modelId),
+    };
+  }
+
+  return {
+    statusCode: 200,
+    payload: createModelPayload(modelId, input.responseFormat, input.now?.() ?? new Date()),
   };
 }
