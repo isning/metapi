@@ -7,6 +7,8 @@ import Models from './Models.js';
 const { apiMock } = vi.hoisted(() => ({
   apiMock: {
     getModelsMarketplace: vi.fn(),
+    getModelRouteFlow: vi.fn(),
+    getModelRuntimeObservability: vi.fn(),
   },
 }));
 
@@ -19,6 +21,14 @@ function collectText(node: ReactTestInstance): string {
     if (typeof child === 'string') return child;
     return collectText(child);
   }).join('');
+}
+
+function findButtonByText(root: ReactTestInstance, text: string): ReactTestInstance {
+  return root.find((node) => (
+    node.type === 'button'
+    && typeof node.props.onClick === 'function'
+    && collectText(node).includes(text)
+  ));
 }
 
 async function flushMicrotasks() {
@@ -36,6 +46,55 @@ describe('Models mobile layout', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    apiMock.getModelRouteFlow.mockResolvedValue({ flow: null });
+    apiMock.getModelRuntimeObservability.mockResolvedValue({
+      observability: {
+        requestedModel: 'gpt-4o',
+        matched: false,
+        entry: null,
+        health: {
+          status: 'unknown',
+          successRate: null,
+          totalCalls: 0,
+          successCalls: 0,
+          failedCalls: 0,
+          avgLatencyMs: null,
+          latencySamples: 0,
+          avgFirstTokenLatencyMs: null,
+          firstTokenLatencySamples: 0,
+          avgOutputTokensPerSecond: null,
+          outputTokens: 0,
+          outputTokenDurationMs: 0,
+          outputTokenSamples: 0,
+          source: 'test',
+          window: {
+            range: '6h',
+            windowDays: 1,
+            fromLocalDay: '2026-04-08',
+            toLocalDay: '2026-04-08',
+          },
+        },
+        capabilitySummary: {
+          supportedEndpointTypes: [],
+          inputModalities: [],
+          outputModalities: [],
+          capabilities: [],
+          contextLength: null,
+          maxOutputTokens: null,
+          source: 'test',
+          partial: false,
+        },
+        executionAttempts: [],
+        endpoints: [],
+        history: {
+          range: '6h',
+          buckets: [],
+          granularity: 'minute',
+          emptyReason: 'unmatched',
+        },
+        diagnostics: [],
+      },
+    });
     globalThis.document = {
       documentElement: {
         getAttribute: () => 'light',
@@ -129,7 +188,7 @@ describe('Models mobile layout', () => {
     }
   });
 
-  it('renders stacked account detail cards instead of tables when a mobile card expands', async () => {
+  it('renders stacked account detail cards instead of tables when a mobile model opens', async () => {
     let root!: WebTestRenderer;
 
     try {
@@ -144,12 +203,7 @@ describe('Models mobile layout', () => {
       });
       await flushMicrotasks();
 
-      const modelCard = root!.root.find((node) => (
-        node.type === 'div'
-        && typeof node.props.className === 'string'
-        && node.props.className.includes('model-card')
-        && typeof node.props.onClick === 'function'
-      ));
+      const modelCard = findButtonByText(root!.root, 'gpt-4o');
 
       await act(async () => {
         modelCard.props.onClick();

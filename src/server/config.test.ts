@@ -87,7 +87,7 @@ describe('buildConfig', () => {
   });
 
   it('trusts forwarded client IP headers for reverse-proxy deployments', async () => {
-    const app = Fastify(buildFastifyOptions(buildConfig({})));
+    const app = Fastify(buildFastifyOptions(buildConfig({ TRUST_PROXY: '10.0.0.8' })));
 
     app.get('/ip', async (request) => ({
       ip: request.ip,
@@ -104,6 +104,23 @@ describe('buildConfig', () => {
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ ip: '203.0.113.5' });
+    await app.close();
+  });
+
+  it('does not trust forwarded client IP headers by default', async () => {
+    const app = Fastify(buildFastifyOptions(buildConfig({})));
+
+    app.get('/ip', async (request) => ({ ip: request.ip }));
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/ip',
+      remoteAddress: '10.0.0.8',
+      headers: { 'x-forwarded-for': '203.0.113.5' },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ ip: '10.0.0.8' });
     await app.close();
   });
 });

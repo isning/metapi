@@ -1,6 +1,10 @@
 import { createHash } from 'node:crypto';
 import type { RequestInit as UndiciRequestInit } from 'undici';
 import { withSiteProxyRequestInit } from '../siteProxy.js';
+import type {
+  UpstreamPricingCatalog,
+  UpstreamPricingCredential,
+} from '../upstreamPricingCatalog.js';
 
 export interface CheckinResult {
   success: boolean;
@@ -103,6 +107,7 @@ export interface PlatformAdapter {
   getApiTokens(baseUrl: string, accessToken: string, platformUserId?: number): Promise<ApiTokenInfo[]>;
   getSiteAnnouncements(baseUrl: string, accessToken: string, platformUserId?: number): Promise<SiteAnnouncement[]>;
   getUserGroups(baseUrl: string, accessToken: string, platformUserId?: number): Promise<string[]>;
+  getPricingCatalog?(baseUrl: string, credential: UpstreamPricingCredential): Promise<UpstreamPricingCatalog | null>;
   createApiToken(baseUrl: string, accessToken: string, platformUserId?: number, options?: CreateApiTokenOptions): Promise<boolean>;
   deleteApiToken(baseUrl: string, accessToken: string, tokenKey: string, platformUserId?: number): Promise<boolean>;
 }
@@ -208,6 +213,13 @@ export abstract class BasePlatformAdapter implements PlatformAdapter {
     _platformUserId?: number,
   ): Promise<string[]> {
     return ['default'];
+  }
+
+  async getPricingCatalog(
+    _baseUrl: string,
+    _credential: UpstreamPricingCredential,
+  ): Promise<UpstreamPricingCatalog | null> {
+    return null;
   }
 
   async deleteApiToken(

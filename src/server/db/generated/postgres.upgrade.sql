@@ -1,1 +1,1 @@
--- no schema changes detected for postgres
+-- no previous schema contract available for postgres additive upgrade generation

@@ -116,6 +116,14 @@ describe('schema artifact generator', () => {
     expect(artifacts.mysqlBootstrap).not.toContain('CREATE TABLE IF NOT EXISTS `settings` (`key` TEXT NOT NULL PRIMARY KEY, `value` TEXT)');
   });
 
+  it('uses matching bounded mysql types for text foreign keys', () => {
+    const artifacts = generateDialectArtifacts(readSchemaContract());
+
+    expect(artifacts.mysqlBootstrap).toContain('`artifact_id` VARCHAR(191) NOT NULL');
+    expect(artifacts.mysqlBootstrap).toContain('FOREIGN KEY (`artifact_id`) REFERENCES `compiled_runtime_artifacts`(`id`)');
+    expect(artifacts.mysqlBootstrap).not.toContain('`artifact_id` TEXT NOT NULL');
+  });
+
   it('does not add mysql text prefixes to non-text index columns', () => {
     const artifacts = generateDialectArtifacts(readSchemaContract());
 
@@ -123,6 +131,17 @@ describe('schema artifact generator', () => {
     expect(artifacts.mysqlBootstrap).toContain('CREATE INDEX `events_read_created_at_idx` ON `events` (`read`, `created_at`)');
     expect(artifacts.mysqlBootstrap).not.toContain('`created_at`(191)');
     expect(artifacts.mysqlBootstrap).not.toContain('`read`(191)');
+  });
+
+  it('budgets mysql string prefixes across wide composite indexes', () => {
+    const artifacts = generateDialectArtifacts(readSchemaContract());
+
+    expect(artifacts.mysqlBootstrap).toContain(
+      'CREATE UNIQUE INDEX `billing_cost_aggregates_dimension_unique` ON `billing_cost_aggregates` (`observation_grain`(64), `bucket_kind`(64), `bucket_start`(64)',
+    );
+    expect(artifacts.mysqlBootstrap).toContain(
+      'CREATE INDEX `billing_cost_aggregates_subject_bucket_idx` ON `billing_cost_aggregates` (`observation_grain`(153), `subject_kind`(153), `subject_key`(153), `bucket_kind`(153), `bucket_start`(153))',
+    );
   });
 
   it('allows mysql upgrade generation to force prefix lengths for live text-backed columns', () => {

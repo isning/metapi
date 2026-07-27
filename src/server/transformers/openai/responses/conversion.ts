@@ -234,16 +234,16 @@ export function extractTextContent(value: unknown): string {
   }
   if (!isRecord(value)) return '';
 
-  const direct = asTrimmedString(
+  const direct = (
     value.text
     ?? value.content
     ?? value.input_text
     ?? value.output_text
     ?? value.reasoning
     ?? value.reasoning_content
-    ?? value.thinking,
+    ?? value.thinking
   );
-  if (direct) return direct;
+  if (typeof direct === 'string' && direct.trim().length > 0) return direct;
 
   if (Array.isArray(value.parts)) return extractTextContent(value.parts);
   if (Array.isArray(value.content)) return extractTextContent(value.content);
@@ -608,13 +608,13 @@ export function convertOpenAiBodyToResponsesBody(
         item.reasoning_content
         ?? item.reasoning
         ?? item.thinking,
-      ).trim();
+      );
       const reasoningSignature = asTrimmedString(item.reasoning_signature);
-      if (reasoningContent || reasoningSignature) {
+      if (reasoningContent.trim().length > 0 || reasoningSignature) {
         const reasoningItem: Record<string, unknown> = {
           type: 'reasoning',
         };
-        if (reasoningContent) {
+        if (reasoningContent.trim().length > 0) {
           reasoningItem.summary = [{
             type: 'summary_text',
             text: reasoningContent,
@@ -648,12 +648,12 @@ export function convertOpenAiBodyToResponsesBody(
           inputItems.push(mcpItem);
           continue;
         }
-        const callId = asTrimmedString(toolCall.id) || `call_${Date.now()}_${index}`;
+        const callId = asTrimmedString(toolCall.id);
         const name = (
           asTrimmedString(functionPart.name)
           || asTrimmedString(toolCall.name)
-          || `tool_${index}`
         );
+        if (!callId || !name) continue;
         const argumentsValue = normalizeOpenAiToolArguments(
           functionPart.arguments ?? toolCall.arguments,
         );
@@ -799,14 +799,13 @@ type OpenAiToolCall = {
   };
 };
 
-function toOpenAiToolCall(item: Record<string, unknown>, fallbackIndex: number): OpenAiToolCall | null {
+function toOpenAiToolCall(item: Record<string, unknown>): OpenAiToolCall | null {
   const callId = (
     asTrimmedString(item.call_id)
     || asTrimmedString(item.id)
-    || `call_${Date.now()}_${fallbackIndex}`
   );
   const name = asTrimmedString(item.name);
-  if (!name) return null;
+  if (!callId || !name) return null;
 
   return {
     id: callId,
@@ -1006,7 +1005,7 @@ export function convertResponsesBodyToOpenAiBody(
 
     const itemType = asTrimmedString(item.type).toLowerCase();
     if (itemType.startsWith('mcp_') && isResponsesMcpItem(item)) {
-      const toolCall = toResponsesMcpCompatToolCall(item, `call_${Date.now()}_${functionCallIndex}`);
+      const toolCall = toResponsesMcpCompatToolCall(item);
       if (toolCall) {
         pendingToolCalls.push(toolCall as OpenAiToolCall);
         functionCallIndex += 1;
@@ -1015,7 +1014,7 @@ export function convertResponsesBodyToOpenAiBody(
     }
 
     if (itemType === 'function_call' || itemType === 'custom_tool_call') {
-      const toolCall = toOpenAiToolCall(item, functionCallIndex);
+      const toolCall = toOpenAiToolCall(item);
       functionCallIndex += 1;
       if (toolCall) pendingToolCalls.push(toolCall);
       return;
@@ -1040,8 +1039,13 @@ export function convertResponsesBodyToOpenAiBody(
 
       const message: Record<string, unknown> = {
         role: 'assistant',
-        content: reasoningContent,
       };
+      if (hasReasoningContent) {
+        message.content = '';
+        message.reasoning_content = reasoningContent;
+      } else {
+        message.content = '';
+      }
       if (reasoningSignature) {
         message.reasoning_signature = reasoningSignature;
       }

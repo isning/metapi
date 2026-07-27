@@ -53,28 +53,21 @@ describe('settings and auth events', () => {
     config.logCleanupProgramLogsEnabled = false;
     config.logCleanupRetentionDays = 30;
     config.codexUpstreamWebsocketEnabled = false;
-    config.proxySessionChannelConcurrencyLimit = 2;
-    config.proxySessionChannelQueueWaitMs = 1500;
+    config.proxySessionTargetConcurrencyLimit = 2;
+    config.proxySessionTargetQueueWaitMs = 1500;
     (config as any).proxyDebugTraceEnabled = false;
     (config as any).proxyDebugCaptureHeaders = true;
     (config as any).proxyDebugCaptureBodies = false;
     (config as any).proxyDebugCaptureStreamChunks = false;
-    (config as any).proxyDebugTargetSessionId = '';
-    (config as any).proxyDebugTargetClientKind = '';
-    (config as any).proxyDebugTargetModel = '';
+    (config as any).proxyDebugFilterSessionId = '';
+    (config as any).proxyDebugFilterClientKind = '';
+    (config as any).proxyDebugFilterModel = '';
     (config as any).proxyDebugRetentionHours = 24;
     (config as any).proxyDebugMaxBodyBytes = 262144;
     config.routingFallbackUnitCost = 1;
     (config as any).proxyFirstByteTimeoutSec = 0;
-    (config as any).tokenRouterFailureCooldownMaxSec = 30 * 24 * 60 * 60;
+    (config as any).routeFailureCooldownMaxSec = 30 * 24 * 60 * 60;
     (config as any).disableCrossProtocolFallback = false;
-    (config as any).payloadRules = {
-      default: [],
-      defaultRaw: [],
-      override: [],
-      overrideRaw: [],
-      filter: [],
-    };
     (config as any).telegramEnabled = false;
     (config as any).telegramApiBaseUrl = 'https://api.telegram.org';
     (config as any).telegramBotToken = '';
@@ -141,27 +134,27 @@ describe('settings and auth events', () => {
       url: '/api/settings/runtime',
       payload: {
         codexUpstreamWebsocketEnabled: true,
-        proxySessionChannelConcurrencyLimit: 6,
-        proxySessionChannelQueueWaitMs: 4200,
+        proxySessionTargetConcurrencyLimit: 6,
+        proxySessionTargetQueueWaitMs: 4200,
       },
     });
 
     expect(updateResponse.statusCode).toBe(200);
     const updated = updateResponse.json() as {
       codexUpstreamWebsocketEnabled?: boolean;
-      proxySessionChannelConcurrencyLimit?: number;
-      proxySessionChannelQueueWaitMs?: number;
+      proxySessionTargetConcurrencyLimit?: number;
+      proxySessionTargetQueueWaitMs?: number;
     };
     expect(updated.codexUpstreamWebsocketEnabled).toBe(true);
-    expect(updated.proxySessionChannelConcurrencyLimit).toBe(6);
-    expect(updated.proxySessionChannelQueueWaitMs).toBe(4200);
+    expect(updated.proxySessionTargetConcurrencyLimit).toBe(6);
+    expect(updated.proxySessionTargetQueueWaitMs).toBe(4200);
     expect(config.codexUpstreamWebsocketEnabled).toBe(true);
-    expect(config.proxySessionChannelConcurrencyLimit).toBe(6);
-    expect(config.proxySessionChannelQueueWaitMs).toBe(4200);
+    expect(config.proxySessionTargetConcurrencyLimit).toBe(6);
+    expect(config.proxySessionTargetQueueWaitMs).toBe(4200);
 
     const savedWebsocket = await db.select().from(schema.settings).where(eq(schema.settings.key, 'codex_upstream_websocket_enabled')).get();
-    const savedConcurrency = await db.select().from(schema.settings).where(eq(schema.settings.key, 'proxy_session_channel_concurrency_limit')).get();
-    const savedQueueWait = await db.select().from(schema.settings).where(eq(schema.settings.key, 'proxy_session_channel_queue_wait_ms')).get();
+    const savedConcurrency = await db.select().from(schema.settings).where(eq(schema.settings.key, 'proxy_session_target_concurrency_limit')).get();
+    const savedQueueWait = await db.select().from(schema.settings).where(eq(schema.settings.key, 'proxy_session_target_queue_wait_ms')).get();
     expect(savedWebsocket?.value).toBe(JSON.stringify(true));
     expect(savedConcurrency?.value).toBe(JSON.stringify(6));
     expect(savedQueueWait?.value).toBe(JSON.stringify(4200));
@@ -176,9 +169,9 @@ describe('settings and auth events', () => {
         proxyDebugCaptureHeaders: true,
         proxyDebugCaptureBodies: true,
         proxyDebugCaptureStreamChunks: true,
-        proxyDebugTargetSessionId: 'sess-debug-1',
-        proxyDebugTargetClientKind: 'codex',
-        proxyDebugTargetModel: 'gpt-4o',
+        proxyDebugFilterSessionId: 'sess-debug-1',
+        proxyDebugFilterClientKind: 'codex',
+        proxyDebugFilterModel: 'gpt-4o',
         proxyDebugRetentionHours: 12,
         proxyDebugMaxBodyBytes: 131072,
       },
@@ -190,9 +183,9 @@ describe('settings and auth events', () => {
       proxyDebugCaptureHeaders?: boolean;
       proxyDebugCaptureBodies?: boolean;
       proxyDebugCaptureStreamChunks?: boolean;
-      proxyDebugTargetSessionId?: string;
-      proxyDebugTargetClientKind?: string;
-      proxyDebugTargetModel?: string;
+      proxyDebugFilterSessionId?: string;
+      proxyDebugFilterClientKind?: string;
+      proxyDebugFilterModel?: string;
       proxyDebugRetentionHours?: number;
       proxyDebugMaxBodyBytes?: number;
     };
@@ -201,9 +194,9 @@ describe('settings and auth events', () => {
       proxyDebugCaptureHeaders: true,
       proxyDebugCaptureBodies: true,
       proxyDebugCaptureStreamChunks: true,
-      proxyDebugTargetSessionId: 'sess-debug-1',
-      proxyDebugTargetClientKind: 'codex',
-      proxyDebugTargetModel: 'gpt-4o',
+      proxyDebugFilterSessionId: 'sess-debug-1',
+      proxyDebugFilterClientKind: 'codex',
+      proxyDebugFilterModel: 'gpt-4o',
       proxyDebugRetentionHours: 12,
       proxyDebugMaxBodyBytes: 131072,
     });
@@ -212,9 +205,9 @@ describe('settings and auth events', () => {
     const savedHeaders = await db.select().from(schema.settings).where(eq(schema.settings.key, 'proxy_debug_capture_headers')).get();
     const savedBodies = await db.select().from(schema.settings).where(eq(schema.settings.key, 'proxy_debug_capture_bodies')).get();
     const savedStreamChunks = await db.select().from(schema.settings).where(eq(schema.settings.key, 'proxy_debug_capture_stream_chunks')).get();
-    const savedTargetSessionId = await db.select().from(schema.settings).where(eq(schema.settings.key, 'proxy_debug_target_session_id')).get();
-    const savedTargetClientKind = await db.select().from(schema.settings).where(eq(schema.settings.key, 'proxy_debug_target_client_kind')).get();
-    const savedTargetModel = await db.select().from(schema.settings).where(eq(schema.settings.key, 'proxy_debug_target_model')).get();
+    const savedTargetSessionId = await db.select().from(schema.settings).where(eq(schema.settings.key, 'proxy_debug_filter_session_id')).get();
+    const savedTargetClientKind = await db.select().from(schema.settings).where(eq(schema.settings.key, 'proxy_debug_filter_client_kind')).get();
+    const savedTargetModel = await db.select().from(schema.settings).where(eq(schema.settings.key, 'proxy_debug_filter_model')).get();
     const savedRetentionHours = await db.select().from(schema.settings).where(eq(schema.settings.key, 'proxy_debug_retention_hours')).get();
     const savedMaxBodyBytes = await db.select().from(schema.settings).where(eq(schema.settings.key, 'proxy_debug_max_body_bytes')).get();
     expect(savedEnabled?.value).toBe(JSON.stringify(true));
@@ -228,102 +221,7 @@ describe('settings and auth events', () => {
     expect(savedMaxBodyBytes?.value).toBe(JSON.stringify(131072));
   });
 
-  it('persists payload rules and returns the normalized runtime value', async () => {
-    const response = await app.inject({
-      method: 'PUT',
-      url: '/api/settings/runtime',
-      payload: {
-        payloadRules: {
-          override: [
-            {
-              models: [{ name: 'gpt-*', protocol: 'codex' }],
-              params: {
-                'reasoning.effort': 'high',
-              },
-            },
-          ],
-          'override-raw': [
-            {
-              models: [{ name: 'gpt-*', protocol: 'codex' }],
-              params: {
-                response_format: '{"type":"json_schema"}',
-              },
-            },
-          ],
-        },
-      },
-    });
-
-    expect(response.statusCode).toBe(200);
-    const payload = response.json() as {
-      payloadRules?: {
-        default?: unknown[];
-        defaultRaw?: unknown[];
-        override?: Array<{ params?: Record<string, unknown> }>;
-        overrideRaw?: Array<{ params?: Record<string, unknown> }>;
-        filter?: unknown[];
-      };
-    };
-    expect(payload.payloadRules).toEqual({
-      default: [],
-      defaultRaw: [],
-      override: [
-        {
-          models: [{ name: 'gpt-*', protocol: 'codex' }],
-          params: {
-            'reasoning.effort': 'high',
-          },
-        },
-      ],
-      overrideRaw: [
-        {
-          models: [{ name: 'gpt-*', protocol: 'codex' }],
-          params: {
-            response_format: '{"type":"json_schema"}',
-          },
-        },
-      ],
-      filter: [],
-    });
-
-    const saved = await db.select().from(schema.settings).where(eq(schema.settings.key, 'payload_rules')).get();
-    expect(saved).toBeTruthy();
-    expect(JSON.parse(String(saved?.value))).toEqual(payload.payloadRules);
-    expect(config.payloadRules).toEqual(payload.payloadRules);
-
-    const events = await db.select().from(schema.events).all();
-    expect(events.some((event) => (event.message || '').includes('Payload 规则'))).toBe(true);
-  });
-
-  it('rejects invalid payload raw rules with a clear message', async () => {
-    const response = await app.inject({
-      method: 'PUT',
-      url: '/api/settings/runtime',
-      payload: {
-        payloadRules: {
-          'override-raw': [
-            {
-              models: [{ name: 'gpt-*', protocol: 'codex' }],
-              params: {
-                response_format: '{broken-json',
-              },
-            },
-          ],
-        },
-      },
-    });
-
-    expect(response.statusCode).toBe(400);
-    expect(response.json()).toMatchObject({
-      success: false,
-      message: 'Payload 规则 override-raw 第 1 条的 response_format 不是合法 JSON',
-    });
-
-    const saved = await db.select().from(schema.settings).where(eq(schema.settings.key, 'payload_rules')).get();
-    expect(saved).toBeFalsy();
-  });
-
-  it('returns current recognized admin IP in runtime settings response', async () => {
+  it('returns the trusted request IP and ignores forwarded headers by default', async () => {
     const response = await app.inject({
       method: 'GET',
       url: '/api/settings/runtime',
@@ -335,7 +233,7 @@ describe('settings and auth events', () => {
 
     expect(response.statusCode).toBe(200);
     const body = response.json() as { currentAdminIp?: string; serverTimeZone?: string };
-    expect(body.currentAdminIp).toBe('203.0.113.5');
+    expect(body.currentAdminIp).toBe('10.0.0.8');
     expect(typeof body.serverTimeZone).toBe('string');
     expect((body.serverTimeZone || '').length).toBeGreaterThan(0);
   });
@@ -540,48 +438,21 @@ describe('settings and auth events', () => {
     expect((config as any).telegramUseSystemProxy).toBe(false);
   });
 
-  it('persists and returns routing fallback unit cost from runtime settings', async () => {
+  it('persists and returns route failure cooldown cap from runtime settings', async () => {
     const updateResponse = await app.inject({
       method: 'PUT',
       url: '/api/settings/runtime',
       payload: {
-        routingFallbackUnitCost: 0.25,
+        routeFailureCooldownMaxSec: 2 * 24 * 60 * 60,
       },
     });
 
     expect(updateResponse.statusCode).toBe(200);
-    const updated = updateResponse.json() as { routingFallbackUnitCost?: number };
-    expect(updated.routingFallbackUnitCost).toBe(0.25);
-    expect(config.routingFallbackUnitCost).toBe(0.25);
+    const updated = updateResponse.json() as { routeFailureCooldownMaxSec?: number };
+    expect(updated.routeFailureCooldownMaxSec).toBe(2 * 24 * 60 * 60);
+    expect((config as any).routeFailureCooldownMaxSec).toBe(2 * 24 * 60 * 60);
 
-    const saved = await db.select().from(schema.settings).where(eq(schema.settings.key, 'routing_fallback_unit_cost')).get();
-    expect(saved).toBeTruthy();
-    expect(saved?.value).toBe(JSON.stringify(0.25));
-
-    const getResponse = await app.inject({
-      method: 'GET',
-      url: '/api/settings/runtime',
-    });
-    expect(getResponse.statusCode).toBe(200);
-    const runtime = getResponse.json() as { routingFallbackUnitCost?: number };
-    expect(runtime.routingFallbackUnitCost).toBe(0.25);
-  });
-
-  it('persists and returns token router failure cooldown cap from runtime settings', async () => {
-    const updateResponse = await app.inject({
-      method: 'PUT',
-      url: '/api/settings/runtime',
-      payload: {
-        tokenRouterFailureCooldownMaxSec: 2 * 24 * 60 * 60,
-      },
-    });
-
-    expect(updateResponse.statusCode).toBe(200);
-    const updated = updateResponse.json() as { tokenRouterFailureCooldownMaxSec?: number };
-    expect(updated.tokenRouterFailureCooldownMaxSec).toBe(2 * 24 * 60 * 60);
-    expect((config as any).tokenRouterFailureCooldownMaxSec).toBe(2 * 24 * 60 * 60);
-
-    const saved = await db.select().from(schema.settings).where(eq(schema.settings.key, 'token_router_failure_cooldown_max_sec')).get();
+    const saved = await db.select().from(schema.settings).where(eq(schema.settings.key, 'route_failure_cooldown_max_sec')).get();
     expect(saved?.value).toBe(JSON.stringify(2 * 24 * 60 * 60));
 
     const getResponse = await app.inject({
@@ -589,27 +460,27 @@ describe('settings and auth events', () => {
       url: '/api/settings/runtime',
     });
     expect(getResponse.statusCode).toBe(200);
-    const runtime = getResponse.json() as { tokenRouterFailureCooldownMaxSec?: number };
-    expect(runtime.tokenRouterFailureCooldownMaxSec).toBe(2 * 24 * 60 * 60);
+    const runtime = getResponse.json() as { routeFailureCooldownMaxSec?: number };
+    expect(runtime.routeFailureCooldownMaxSec).toBe(2 * 24 * 60 * 60);
   });
 
-  it('clamps token router failure cooldown cap to the supported ceiling', async () => {
+  it('clamps route failure cooldown cap to the supported ceiling', async () => {
     const ninetyDaysSec = 90 * 24 * 60 * 60;
     const thirtyDaysSec = 30 * 24 * 60 * 60;
     const updateResponse = await app.inject({
       method: 'PUT',
       url: '/api/settings/runtime',
       payload: {
-        tokenRouterFailureCooldownMaxSec: ninetyDaysSec,
+        routeFailureCooldownMaxSec: ninetyDaysSec,
       },
     });
 
     expect(updateResponse.statusCode).toBe(200);
-    const updated = updateResponse.json() as { tokenRouterFailureCooldownMaxSec?: number };
-    expect(updated.tokenRouterFailureCooldownMaxSec).toBe(thirtyDaysSec);
-    expect((config as any).tokenRouterFailureCooldownMaxSec).toBe(thirtyDaysSec);
+    const updated = updateResponse.json() as { routeFailureCooldownMaxSec?: number };
+    expect(updated.routeFailureCooldownMaxSec).toBe(thirtyDaysSec);
+    expect((config as any).routeFailureCooldownMaxSec).toBe(thirtyDaysSec);
 
-    const saved = await db.select().from(schema.settings).where(eq(schema.settings.key, 'token_router_failure_cooldown_max_sec')).get();
+    const saved = await db.select().from(schema.settings).where(eq(schema.settings.key, 'route_failure_cooldown_max_sec')).get();
     expect(saved?.value).toBe(JSON.stringify(thirtyDaysSec));
   });
 

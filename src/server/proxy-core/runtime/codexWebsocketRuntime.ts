@@ -1,12 +1,6 @@
 import type { IncomingMessage } from 'node:http';
 import WebSocket from 'ws';
-import {
-  extractResponsesTerminalResponseId,
-  isResponsesPreviousResponseNotFoundError,
-  shouldInferResponsesPreviousResponseId,
-  stripResponsesPreviousResponseId,
-  withResponsesPreviousResponseId,
-} from '../../transformers/openai/responses/continuation.js';
+import { protocolAdapters } from '../formats/protocolAdapters.js';
 import {
   buildCodexWebsocketHandshakeHeaders,
   buildCodexWebsocketRequestBody,
@@ -207,14 +201,14 @@ function buildContinuationAwareRuntimeBody(
   body: Record<string, unknown>,
 ): Record<string, unknown> {
   const rememberedResponseId = getCodexSessionResponseId(sessionId);
-  if (!shouldInferResponsesPreviousResponseId(body, rememberedResponseId)) {
+  if (!protocolAdapters.responses.shouldInferPreviousResponseId(body, rememberedResponseId)) {
     return body;
   }
-  return withResponsesPreviousResponseId(body, rememberedResponseId);
+  return protocolAdapters.responses.withPreviousResponseId(body, rememberedResponseId);
 }
 
 function rememberSessionResponseId(sessionId: string, payload: unknown): void {
-  const responseId = extractResponsesTerminalResponseId(payload);
+  const responseId = protocolAdapters.responses.extractTerminalResponseId(payload);
   if (!responseId) return;
   setCodexSessionResponseId(sessionId, responseId);
 }
@@ -295,7 +289,7 @@ async function sendSessionRequestAttempt(
         if (settled) return;
         if (
           isRuntimeErrorEvent(parsed)
-          || isResponsesPreviousResponseNotFoundError({
+          || protocolAdapters.responses.isPreviousResponseNotFoundError({
             payload: parsed,
             rawErrText: extractTerminalErrorMessage(parsed),
           })
@@ -362,7 +356,7 @@ async function sendSessionRequest(
       if (
         previousResponseRecoveryTried
         || !(error instanceof CodexWebsocketRuntimeError)
-        || !isResponsesPreviousResponseNotFoundError({
+        || !protocolAdapters.responses.isPreviousResponseNotFoundError({
           payload: error.payload ?? error.events[error.events.length - 1],
           rawErrText: error.message,
         })
@@ -370,7 +364,7 @@ async function sendSessionRequest(
         throw error;
       }
 
-      const previousResponseRecovery = stripResponsesPreviousResponseId(currentBody);
+      const previousResponseRecovery = protocolAdapters.responses.stripPreviousResponseId(currentBody);
       if (!previousResponseRecovery.removed) {
         throw error;
       }

@@ -5,6 +5,7 @@ export default defineConfig({
     exclude: [
       ...configDefaults.exclude,
       '.worktrees/**',
+      'src/testing/e2e/**',
     ],
     // Many of our web tests rely on React's test utilities (act, etc.).
     // If NODE_ENV is accidentally set to "production" in the environment,
@@ -13,5 +14,6 @@ export default defineConfig({
     env: {
       NODE_ENV: process.env.NODE_ENV && process.env.NODE_ENV !== 'production' ? process.env.NODE_ENV : 'test',
     },
+    setupFiles: ['./src/testing/vitest.setup.ts'],
   },
 });

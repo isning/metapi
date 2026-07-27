@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, create, type ReactTestInstance } from 'react-test-renderer';
 import { MemoryRouter } from 'react-router-dom';
 import { ToastProvider } from '../components/Toast.js';
+import ModernSelect from '../components/ModernSelect.js';
+import { Switch } from '../components/ui/switch/index.js';
 import ProgramLogs from './ProgramLogs.js';
 
 const { apiMock } = vi.hoisted(() => ({
@@ -73,8 +75,8 @@ describe('ProgramLogs status label', () => {
     const tds = targetRow!.findAll((node) => node.type === 'td');
     const statusCell = tds[5];
     expect(collectText(statusCell).trim()).toBe('成功');
-    const statusBadge = statusCell.find((node) => node.type === 'span');
-    expect(String(statusBadge.props.className || '')).toContain('badge-success');
+    const statusBadge = statusCell.find((node) => node.props['data-tone'] === 'success');
+    expect(statusBadge).toBeTruthy();
   });
 
   it('treats parenthesized counts with failed=0 as success', async () => {
@@ -109,7 +111,64 @@ describe('ProgramLogs status label', () => {
     const tds = targetRow!.findAll((node) => node.type === 'td');
     const statusCell = tds[5];
     expect(collectText(statusCell).trim()).toBe('成功');
-    const statusBadge = statusCell.find((node) => node.type === 'span');
-    expect(String(statusBadge.props.className || '')).toContain('badge-success');
+    const statusBadge = statusCell.find((node) => node.props['data-tone'] === 'success');
+    expect(statusBadge).toBeTruthy();
+  });
+
+  it('hydrates every event filter from a deep link and sends it to the API', async () => {
+    apiMock.getEvents.mockResolvedValue([]);
+
+    let root!: WebTestRenderer;
+    await act(async () => {
+      root = create(
+        <MemoryRouter initialEntries={['/events?type=proxy&scope=attention&state=open&read=false']}>
+          <ToastProvider>
+            <ProgramLogs />
+          </ToastProvider>
+        </MemoryRouter>,
+      );
+    });
+    await flushMicrotasks();
+
+    expect(apiMock.getEvents).toHaveBeenLastCalledWith(
+      'type=proxy&scope=attention&state=open&read=false&limit=50&offset=0',
+    );
+    expect(root.root.findAllByType(ModernSelect).map((select) => select.props.value)).toEqual([
+      'proxy',
+      'attention',
+      'open',
+    ]);
+    expect(root.root.findByType(Switch).props.checked).toBe(true);
+    root.unmount();
+  });
+
+  it('updates the routed API query when type and unread filters change', async () => {
+    apiMock.getEvents.mockResolvedValue([]);
+
+    let root!: WebTestRenderer;
+    await act(async () => {
+      root = create(
+        <MemoryRouter initialEntries={['/events?type=proxy&read=false']}>
+          <ToastProvider>
+            <ProgramLogs />
+          </ToastProvider>
+        </MemoryRouter>,
+      );
+    });
+    await flushMicrotasks();
+
+    const typeFilter = root.root.findAllByType(ModernSelect).find((select) => select.props.value === 'proxy')!;
+    await act(async () => {
+      typeFilter.props.onChange('token');
+    });
+    await flushMicrotasks();
+    expect(apiMock.getEvents).toHaveBeenLastCalledWith('type=token&read=false&limit=50&offset=0');
+
+    await act(async () => {
+      root.root.findByType(Switch).props.onCheckedChange(false);
+    });
+    await flushMicrotasks();
+    expect(apiMock.getEvents).toHaveBeenLastCalledWith('type=token&limit=50&offset=0');
+    root.unmount();
   });
 });

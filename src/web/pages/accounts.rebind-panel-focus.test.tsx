@@ -74,23 +74,32 @@ describe('Accounts rebind modal', () => {
       });
       await flushMicrotasks();
 
-      const rebindButton = root.root.find((node) => (
+      const moreActionsButton = root.root.find((node) => (
         node.type === 'button'
-        && typeof node.props.onClick === 'function'
-        && collectText(node).trim() === '重新绑定'
+        && node.props['aria-label'] === '更多操作'
       ));
 
       await act(async () => {
-        rebindButton.props.onClick();
+        moreActionsButton.props.onPointerDown?.({
+          button: 0,
+          ctrlKey: false,
+          preventDefault: () => {},
+          stopPropagation: () => {},
+        });
       });
       await flushMicrotasks();
 
-      const modal = root.root.find((node) => (
-        node.type === 'div'
-        && typeof node.props.className === 'string'
-        && node.props.className.includes('modal-content')
+      const rebindButton = root.root.find((node) => (
+        (node.type === 'button' || node.props.role === 'menuitem')
+        && (typeof node.props.onClick === 'function' || typeof node.props.onSelect === 'function')
+        && collectText(node).includes('重新绑定')
       ));
-      expect(String(modal.props.className)).toContain('modal-content');
+
+      await act(async () => {
+        (rebindButton.props.onClick ?? rebindButton.props.onSelect)();
+      });
+      await flushMicrotasks();
+
       expect(JSON.stringify(root.toJSON())).toContain('重新绑定 Session Token');
       expect(JSON.stringify(root.toJSON())).toContain('粘贴新的 Session Token');
     } finally {

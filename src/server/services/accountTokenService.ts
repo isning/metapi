@@ -158,8 +158,14 @@ function sameTokenGroup(
   return normalizeTokenGroup(leftGroup, leftName) === normalizeTokenGroup(rightGroup, rightName);
 }
 
-async function updateAccountApiToken(accountId: number, tokenValue: string | null) {
-  await db.update(schema.accounts)
+type AccountTokenDb = typeof db;
+
+async function updateAccountApiToken(
+  accountId: number,
+  tokenValue: string | null,
+  connection: AccountTokenDb = db,
+) {
+  await connection.update(schema.accounts)
     .set({ apiToken: tokenValue || null, updatedAt: new Date().toISOString() })
     .where(eq(schema.accounts.id, accountId))
     .run();
@@ -194,103 +200,108 @@ export async function ensureDefaultTokenForAccount(
   if (isMaskedTokenValue(normalizedToken)) return null;
   const tokenGroup = normalizeTokenGroup(options?.tokenGroup, options?.name) || 'default';
 
-  const now = new Date().toISOString();
-  const tokens = await db.select()
-    .from(schema.accountTokens)
-    .where(eq(schema.accountTokens.accountId, accountId))
-    .all();
+  return db.transaction(async (tx: AccountTokenDb) => {
+    const now = new Date().toISOString();
+    const tokens = await tx.select()
+      .from(schema.accountTokens)
+      .where(eq(schema.accountTokens.accountId, accountId))
+      .all();
 
-  let target = tokens.find((t) => t.token === normalizedToken) || null;
-  if (!target) {
-    const inserted = await db.insert(schema.accountTokens)
-      .values({
-        accountId,
-        name: normalizeTokenName(options?.name, tokens.length + 1),
-        token: normalizedToken,
-        tokenGroup,
-        valueStatus: ACCOUNT_TOKEN_VALUE_STATUS_READY,
-        source: options?.source || 'manual',
-        enabled: options?.enabled ?? true,
-        isDefault: true,
-        createdAt: now,
-        updatedAt: now,
-      })
+    let target = tokens.find((t) => t.token === normalizedToken) || null;
+    if (!target) {
+      const inserted = await tx.insert(schema.accountTokens)
+        .values({
+          accountId,
+          name: normalizeTokenName(options?.name, tokens.length + 1),
+          token: normalizedToken,
+          tokenGroup,
+          valueStatus: ACCOUNT_TOKEN_VALUE_STATUS_READY,
+          source: options?.source || 'manual',
+          enabled: options?.enabled ?? true,
+          isDefault: true,
+          createdAt: now,
+          updatedAt: now,
+        })
+        .run();
+      const insertedId = getInsertedRowId(inserted);
+      target = insertedId != null
+        ? (await tx.select().from(schema.accountTokens).where(eq(schema.accountTokens.id, insertedId)).get()) ?? null
+        : null;
+      if (!target) return null;
+    } else {
+      await tx.update(schema.accountTokens)
+        .set({
+          name: options?.name ? normalizeTokenName(options.name) : target.name,
+          tokenGroup,
+          valueStatus: ACCOUNT_TOKEN_VALUE_STATUS_READY,
+          source: options?.source || target.source || 'manual',
+          enabled: options?.enabled ?? target.enabled,
+          isDefault: true,
+          updatedAt: now,
+        })
+        .where(eq(schema.accountTokens.id, target.id))
+        .run();
+    }
+
+    await tx.update(schema.accountTokens)
+      .set({ isDefault: false, updatedAt: now })
+      .where(and(eq(schema.accountTokens.accountId, accountId), ne(schema.accountTokens.id, target.id)))
       .run();
-    const insertedId = getInsertedRowId(inserted);
-    target = insertedId != null
-      ? (await db.select().from(schema.accountTokens).where(eq(schema.accountTokens.id, insertedId)).get()) ?? null
-      : null;
-    if (!target) return null;
-  } else {
-    await db.update(schema.accountTokens)
-      .set({
-        name: options?.name ? normalizeTokenName(options.name) : target.name,
-        tokenGroup,
-        valueStatus: ACCOUNT_TOKEN_VALUE_STATUS_READY,
-        source: options?.source || target.source || 'manual',
-        enabled: options?.enabled ?? target.enabled,
-        isDefault: true,
-        updatedAt: now,
-      })
-      .where(eq(schema.accountTokens.id, target.id))
-      .run();
-  }
 
-  await db.update(schema.accountTokens)
-    .set({ isDefault: false, updatedAt: now })
-    .where(and(eq(schema.accountTokens.accountId, accountId), ne(schema.accountTokens.id, target.id)))
-    .run();
-
-  await updateAccountApiToken(accountId, normalizedToken);
-  return target.id;
+    await updateAccountApiToken(accountId, normalizedToken, tx);
+    return target.id;
+  });
 }
 
 export async function setDefaultToken(tokenId: number): Promise<boolean> {
-  const target = await db.select().from(schema.accountTokens).where(eq(schema.accountTokens.id, tokenId)).get();
-  if (!target || !isUsableAccountToken(target)) return false;
+  return db.transaction(async (tx: AccountTokenDb) => {
+    const target = await tx.select().from(schema.accountTokens).where(eq(schema.accountTokens.id, tokenId)).get();
+    if (!target || !isUsableAccountToken(target)) return false;
+    const now = new Date().toISOString();
+    await tx.update(schema.accountTokens)
+      .set({ isDefault: false, updatedAt: now })
+      .where(eq(schema.accountTokens.accountId, target.accountId))
+      .run();
 
-  const now = new Date().toISOString();
-  await db.update(schema.accountTokens)
-    .set({ isDefault: false, updatedAt: now })
-    .where(eq(schema.accountTokens.accountId, target.accountId))
-    .run();
+    await tx.update(schema.accountTokens)
+      .set({ isDefault: true, enabled: true, updatedAt: now })
+      .where(eq(schema.accountTokens.id, tokenId))
+      .run();
 
-  await db.update(schema.accountTokens)
-    .set({ isDefault: true, enabled: true, updatedAt: now })
-    .where(eq(schema.accountTokens.id, tokenId))
-    .run();
-
-  await updateAccountApiToken(target.accountId, target.token);
-  return true;
+    await updateAccountApiToken(target.accountId, target.token, tx);
+    return true;
+  });
 }
 
 export async function repairDefaultToken(accountId: number) {
-  const tokens = await db.select()
-    .from(schema.accountTokens)
-    .where(eq(schema.accountTokens.accountId, accountId))
-    .all();
+  return db.transaction(async (tx: AccountTokenDb) => {
+    const tokens = await tx.select()
+      .from(schema.accountTokens)
+      .where(eq(schema.accountTokens.accountId, accountId))
+      .all();
 
-  const enabled = tokens.filter(isUsableAccountToken);
-  if (enabled.length === 0) {
-    await updateAccountApiToken(accountId, null);
-    return null;
-  }
+    const enabled = tokens.filter(isUsableAccountToken);
+    if (enabled.length === 0) {
+      await updateAccountApiToken(accountId, null, tx);
+      return null;
+    }
 
-  const currentDefault = enabled.find((t) => t.isDefault) || enabled[0];
-  const now = new Date().toISOString();
+    const currentDefault = enabled.find((t) => t.isDefault) || enabled[0];
+    const now = new Date().toISOString();
 
-  await db.update(schema.accountTokens)
-    .set({ isDefault: false, updatedAt: now })
-    .where(eq(schema.accountTokens.accountId, accountId))
-    .run();
+    await tx.update(schema.accountTokens)
+      .set({ isDefault: false, updatedAt: now })
+      .where(eq(schema.accountTokens.accountId, accountId))
+      .run();
 
-  await db.update(schema.accountTokens)
-    .set({ isDefault: true, enabled: true, updatedAt: now })
-    .where(eq(schema.accountTokens.id, currentDefault.id))
-    .run();
+    await tx.update(schema.accountTokens)
+      .set({ isDefault: true, enabled: true, updatedAt: now })
+      .where(eq(schema.accountTokens.id, currentDefault.id))
+      .run();
 
-  await updateAccountApiToken(accountId, currentDefault.token);
-  return currentDefault;
+    await updateAccountApiToken(accountId, currentDefault.token, tx);
+    return currentDefault;
+  });
 }
 
 export async function syncTokensFromUpstream(accountId: number, upstreamTokens: UpstreamApiToken[]) {

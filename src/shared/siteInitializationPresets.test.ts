@@ -69,11 +69,11 @@ describe('siteInitializationPresets', () => {
     expect(deepseekPreset).toMatchObject({
       id: 'deepseek-openai',
       platform: 'openai',
-      defaultUrl: 'https://api.deepseek.com/v1',
+      defaultUrl: 'https://api.deepseek.com',
       initialSegment: 'apikey',
       recommendedSkipModelFetch: true,
     });
-    expect(deepseekPreset?.recommendedModels).toEqual(['deepseek-chat', 'deepseek-reasoner']);
+    expect(deepseekPreset?.recommendedModels).toEqual(['deepseek-v4-flash', 'deepseek-v4-pro']);
 
     const moonshotPreset = getSiteInitializationPreset('moonshot-openai');
     expect(moonshotPreset).toMatchObject({

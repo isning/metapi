@@ -24,11 +24,23 @@ features:
     details: 从部署到第一条请求，按步骤完成最小可用环境搭建。
     link: /getting-started
   - title: 上游接入
-    details: 按平台类型、官方预设和 API 请求地址池的现状，快速判断站点该怎么接。
+    details: 按平台类型、官方预设、Endpoint Profile 和模型目录，快速判断站点该怎么接。
     link: /upstream-integration
   - title: OAuth 管理
     details: 直接接入 Codex、Claude、Gemini CLI、Antigravity 等 provider 授权账号。
     link: /oauth
+  - title: Graph Routing
+    details: 理解路由组、图编辑、候选端点、请求过滤器和编译执行计划之间的关系。
+    link: /graph-routing
+  - title: 模型工作区
+    details: 查看模型详情、编译路由流程、候选端点、API 能力和运行时指标。
+    link: /model-intelligence-workspace
+  - title: 成本目录
+    details: 维护参考价格数据库，用于模型参考倍率和价格基线对比。
+    link: /cost-catalog
+  - title: Inbox 活跃问题
+    details: 理解通知、仪表盘活跃问题、系统日志和结构化诊断的统一事件模型。
+    link: /inbox-attention-events
   - title: 问题排查
     details: 汇总高频报错、根因定位和标准修复路径，降低重复沟通成本。
     link: /faq

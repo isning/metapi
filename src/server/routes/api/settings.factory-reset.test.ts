@@ -4,10 +4,13 @@ import { mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { eq } from 'drizzle-orm';
+import { clearRouteGroupMemberTestData, insertRouteGroupMember, listAllRouteGroupMembers } from '../../../testing/routeGroupMemberTestUtils.js';
 
 type DbModule = typeof import('../../db/index.js');
 type ConfigModule = typeof import('../../config.js');
 type ServiceModule = typeof import('../../services/factoryResetService.js');
+type RouteGroupManagementModule = typeof import('../../services/routeGroupManagementService.js');
+type RouteGroupManagementReadModelModule = typeof import('../../services/routeGroupManagementReadModelService.js');
 
 describe('settings factory reset api', () => {
   let app: FastifyInstance;
@@ -15,29 +18,36 @@ describe('settings factory reset api', () => {
   let schema: DbModule['schema'];
   let config: ConfigModule['config'];
   let FACTORY_RESET_ADMIN_TOKEN: ServiceModule['FACTORY_RESET_ADMIN_TOKEN'];
+  let createRouteGroupFromPayload: RouteGroupManagementModule['createRouteGroupFromPayload'];
+  let loadRouteGroupManagementReadModel: RouteGroupManagementReadModelModule['loadRouteGroupManagementReadModel'];
   let dataDir = '';
 
   beforeAll(async () => {
     dataDir = mkdtempSync(join(tmpdir(), 'metapi-settings-factory-reset-'));
     process.env.DATA_DIR = dataDir;
 
-    await import('../../db/migrate.js');
+    const migrate = await import('../../db/migrate.js');
+    await migrate.runSqliteMigrations();
     const dbModule = await import('../../db/index.js');
     const configModule = await import('../../config.js');
     const serviceModule = await import('../../services/factoryResetService.js');
+    const routeGroupManagementModule = await import('../../services/routeGroupManagementService.js');
+    const routeGroupManagementReadModelModule = await import('../../services/routeGroupManagementReadModelService.js');
     const settingsRoutesModule = await import('./settings.js');
 
     db = dbModule.db;
     schema = dbModule.schema;
     config = configModule.config;
     FACTORY_RESET_ADMIN_TOKEN = serviceModule.FACTORY_RESET_ADMIN_TOKEN;
+    createRouteGroupFromPayload = routeGroupManagementModule.createRouteGroupFromPayload;
+    loadRouteGroupManagementReadModel = routeGroupManagementReadModelModule.loadRouteGroupManagementReadModel;
 
     app = Fastify();
     await app.register(settingsRoutesModule.settingsRoutes);
   });
 
   beforeEach(async () => {
-    await db.delete(schema.routeChannels).run();
+    await clearRouteGroupMemberTestData();
     await db.delete(schema.tokenModelAvailability).run();
     await db.delete(schema.modelAvailability).run();
     await db.delete(schema.proxyLogs).run();
@@ -45,7 +55,8 @@ describe('settings factory reset api', () => {
     await db.delete(schema.checkinLogs).run();
     await db.delete(schema.accountTokens).run();
     await db.delete(schema.accounts).run();
-    await db.delete(schema.tokenRoutes).run();
+    await db.delete(schema.runtimeExecutionTargetState).run();
+    await db.delete(schema.runtimeExecutionTargets).run();
     await db.delete(schema.sites).run();
     await db.delete(schema.downstreamApiKeys).run();
     await db.delete(schema.events).run();
@@ -86,18 +97,20 @@ describe('settings factory reset api', () => {
     }).run();
     const tokenId = Number(tokenInsert.lastInsertRowid);
 
-    const routeInsert = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-*',
+    const group = await createRouteGroupFromPayload({
+      model: { publicName: 'gpt-*' },
+      presentation: { displayName: 'gpt-*' },
       enabled: true,
-    }).run();
-    const routeId = Number(routeInsert.lastInsertRowid);
+      dispatcherPolicy: { kind: 'builtin', builtin: 'weighted' },
+    });
 
-    await db.insert(schema.routeChannels).values({
-      routeId,
+    await insertRouteGroupMember({
+      groupId: group.id,
       accountId,
       tokenId,
+      sourceModel: 'gpt-4.1',
       enabled: true,
-    }).run();
+    });
     await db.insert(schema.modelAvailability).values({
       accountId,
       modelName: 'gpt-4.1',
@@ -176,8 +189,8 @@ describe('settings factory reset api', () => {
 
     expect(await db.select().from(schema.accounts).all()).toHaveLength(0);
     expect(await db.select().from(schema.accountTokens).all()).toHaveLength(0);
-    expect(await db.select().from(schema.tokenRoutes).all()).toHaveLength(0);
-    expect(await db.select().from(schema.routeChannels).all()).toHaveLength(0);
+    expect(await loadRouteGroupManagementReadModel()).toHaveLength(0);
+    expect(await listAllRouteGroupMembers()).toHaveLength(0);
     expect(await db.select().from(schema.modelAvailability).all()).toHaveLength(0);
     expect(await db.select().from(schema.tokenModelAvailability).all()).toHaveLength(0);
     expect(await db.select().from(schema.proxyLogs).all()).toHaveLength(0);

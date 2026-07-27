@@ -1,26 +1,21 @@
 import {
   formatLocalDate,
-  parseStoredUtcDateTime,
-  type StoredUtcDateTimeInput,
 } from './localTimeService.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-
-interface ProxyLogLike {
-  createdAt: StoredUtcDateTimeInput;
-  modelActual: string | null;
-  modelRequested: string | null;
-  status: string | null;
-  latencyMs: number | null;
-  totalTokens: number | null;
-  estimatedCost: number | null;
-}
 
 interface ModelAnalysisResult {
   window: {
     start: string;
     end: string;
     days: number;
+  };
+  costUnit: string;
+  valuation: {
+    source: 'raw' | 'wallet_valuation';
+    valuedRows: number;
+    totalRows: number;
+    warningCount: number;
   };
   totals: {
     calls: number;
@@ -55,6 +50,8 @@ interface BuildOptions {
   now?: Date;
   days?: number;
   maxModels?: number;
+  costUnit?: string;
+  valuation?: Partial<ModelAnalysisResult['valuation']>;
 }
 
 export interface ModelAnalysisDailyUsageRow {
@@ -101,24 +98,14 @@ function toPositiveInt(value: unknown): number {
   return Math.max(0, Math.round(toSafeNumber(value)));
 }
 
+function normalizeCostUnit(value: unknown): string {
+  const text = String(value || '').trim();
+  return text ? text.toUpperCase() : 'USD';
+}
+
 function round(value: number, digits = 2): number {
   const factor = 10 ** digits;
   return Math.round(value * factor) / factor;
-}
-
-function resolveModelName(log: ProxyLogLike): string {
-  const raw = (log.modelActual || log.modelRequested || '').trim();
-  return raw.length > 0 ? raw : 'unknown';
-}
-
-export function resolveModelAnalysisSpend(
-  log: Pick<ProxyLogLike, 'estimatedCost'>,
-  tokens: number,
-): number {
-  const explicit = toSafeNumber(log.estimatedCost);
-  if (explicit > 0) return explicit;
-  if (tokens <= 0) return 0;
-  return tokens / 500000;
 }
 
 function finalizeModelAnalysis(
@@ -126,6 +113,7 @@ function finalizeModelAnalysis(
   dayKeys: string[],
   spendTrendMap: Map<string, number>,
   maxModels: number,
+  options: Pick<BuildOptions, 'costUnit' | 'valuation'> = {},
 ): ModelAnalysisResult {
   const totalCalls = stats.reduce((sum, item) => sum + item.calls, 0);
   const totalTokens = stats.reduce((sum, item) => sum + item.tokens, 0);
@@ -172,6 +160,13 @@ function finalizeModelAnalysis(
       end: dayKeys[dayKeys.length - 1],
       days: dayKeys.length,
     },
+    costUnit: normalizeCostUnit(options.costUnit),
+    valuation: {
+      source: options.valuation?.source === 'wallet_valuation' ? 'wallet_valuation' : 'raw',
+      valuedRows: toPositiveInt(options.valuation?.valuedRows),
+      totalRows: toPositiveInt(options.valuation?.totalRows),
+      warningCount: toPositiveInt(options.valuation?.warningCount),
+    },
     totals: {
       calls: totalCalls,
       tokens: totalTokens,
@@ -182,61 +177,6 @@ function finalizeModelAnalysis(
     callsDistribution,
     callRanking,
   };
-}
-
-export function buildModelAnalysis(
-  logs: ProxyLogLike[],
-  options: BuildOptions = {},
-): ModelAnalysisResult {
-  const now = options.now ?? new Date();
-  const days = Math.max(1, options.days ?? 7);
-  const maxModels = Math.max(1, options.maxModels ?? 10);
-
-  const endDay = startOfLocalDay(now);
-  const startDay = new Date(endDay.getTime() - (days - 1) * DAY_MS);
-  const dayKeys: string[] = [];
-  for (let i = 0; i < days; i += 1) {
-    dayKeys.push(dayKey(new Date(startDay.getTime() + i * DAY_MS)));
-  }
-
-  const daySet = new Set(dayKeys);
-  const spendTrendMap = new Map<string, number>(dayKeys.map((key) => [key, 0]));
-  const modelMap = new Map<string, MutableModelStats>();
-
-  for (const log of logs) {
-    if (!log?.createdAt) continue;
-    const createdAt = parseStoredUtcDateTime(log.createdAt);
-    if (!createdAt) continue;
-
-    const createdAtDay = dayKey(createdAt);
-    if (!daySet.has(createdAtDay)) continue;
-
-    const model = resolveModelName(log);
-    const tokens = toPositiveInt(log.totalTokens);
-    const spend = Math.max(0, resolveModelAnalysisSpend(log, tokens));
-    const latency = toPositiveInt(log.latencyMs);
-    const isSuccess = (log.status || '').toLowerCase() === 'success';
-
-    const stat = modelMap.get(model) ?? {
-      model,
-      calls: 0,
-      success: 0,
-      latencyTotal: 0,
-      tokens: 0,
-      spend: 0,
-    };
-
-    stat.calls += 1;
-    stat.success += isSuccess ? 1 : 0;
-    stat.latencyTotal += latency;
-    stat.tokens += tokens;
-    stat.spend += spend;
-    modelMap.set(model, stat);
-
-    spendTrendMap.set(createdAtDay, (spendTrendMap.get(createdAtDay) ?? 0) + spend);
-  }
-
-  return finalizeModelAnalysis(Array.from(modelMap.values()), dayKeys, spendTrendMap, maxModels);
 }
 
 export function buildModelAnalysisFromDailyUsage(
@@ -288,5 +228,13 @@ export function buildModelAnalysisFromDailyUsage(
     spendTrendMap.set(aggregateDay, (spendTrendMap.get(aggregateDay) ?? 0) + spend);
   }
 
-  return finalizeModelAnalysis(Array.from(modelMap.values()), dayKeys, spendTrendMap, maxModels);
+  return finalizeModelAnalysis(Array.from(modelMap.values()), dayKeys, spendTrendMap, maxModels, {
+    costUnit: options.costUnit,
+    valuation: {
+      source: options.valuation?.source ?? 'raw',
+      valuedRows: options.valuation?.valuedRows ?? rows.length,
+      totalRows: options.valuation?.totalRows ?? rows.length,
+      warningCount: options.valuation?.warningCount ?? 0,
+    },
+  });
 }

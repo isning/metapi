@@ -107,8 +107,6 @@ describe('Sites edit behavior', () => {
       const openAddButton = root.root.find((node) => (
         node.type === 'button'
         && typeof node.props.onClick === 'function'
-        && typeof node.props.className === 'string'
-        && node.props.className.includes('btn btn-primary')
         && collectText(node).includes('添加站点')
       ));
 
@@ -117,23 +115,21 @@ describe('Sites edit behavior', () => {
       });
       await flushMicrotasks();
 
-      const closeModalButton = root.root.find((node) => (
+      const cancelButtons = root.root.findAll((node) => (
         node.type === 'button'
         && typeof node.props.onClick === 'function'
-        && typeof node.props.className === 'string'
-        && node.props.className.includes('btn btn-ghost')
         && collectText(node).trim() === '取消'
       ));
+      const closeModalButton = cancelButtons.at(-1);
+      expect(closeModalButton).toBeTruthy();
 
       await act(async () => {
-        closeModalButton.props.onClick();
+        closeModalButton!.props.onClick();
       });
       await flushMicrotasks();
 
       const headerAddButton = root.root.find((node) => (
         node.type === 'button'
-        && typeof node.props.className === 'string'
-        && node.props.className.includes('btn btn-primary')
         && collectText(node).includes('添加站点')
       ));
 

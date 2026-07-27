@@ -1,6 +1,9 @@
-import CenteredModal from './CenteredModal.js';
 import { getSiteInitializationPreset } from '../../shared/siteInitializationPresets.js';
+import { Alert, AlertDescription, AlertTitle } from './ui/alert/index.js';
+import { Button } from './ui/button/index.js';
+import * as Dialog from './ui/dialog/index.js';
 
+import { tr } from '../i18n.js';
 type NextStepChoice = 'session' | 'apikey' | 'later';
 
 type Props = {
@@ -16,7 +19,7 @@ export default function SiteCreatedModal({
   siteName,
   initializationPresetId,
   initialSegment = 'session',
-  sessionLabel = '添加账号（用户名密码登录）',
+  sessionLabel = tr('components.siteCreatedModal.addAccountUsernamepasswordsign'),
   onChoice,
   onClose,
 }: Props) {
@@ -24,12 +27,12 @@ export default function SiteCreatedModal({
   const apiKeyFirst = initialSegment === 'apikey';
   const helperText = preset?.description
     || (apiKeyFirst
-      ? '该平台更适合直接通过 Base URL + API Key 接入，后续再补模型初始化。'
-      : '接下来您可以继续补充登录连接或 API Key。');
+      ? tr('components.siteCreatedModal.platformBaseUrlApiKeyModel')
+      : tr('components.siteCreatedModal.signApiKey'));
   const primaryAction = apiKeyFirst
     ? {
       choice: 'apikey' as const,
-      label: '添加 API Key（推荐）',
+      label: tr('components.siteCreatedModal.addApiKeyRecommended'),
     }
     : {
       choice: 'session' as const,
@@ -42,62 +45,51 @@ export default function SiteCreatedModal({
     }
     : {
       choice: 'apikey' as const,
-      label: '添加 API Key',
+      label: tr('components.siteCreatedModal.addApiKey'),
     };
 
   return (
-    <CenteredModal
-      open
-      onClose={onClose}
-      title="站点创建成功"
-      maxWidth={520}
-      closeOnBackdrop
-      closeOnEscape
-      bodyStyle={{ display: 'flex', flexDirection: 'column', gap: 12 }}
-      footer={(
-        <>
-          <button onClick={() => onChoice('later')} className="btn btn-ghost">
-            稍后配置
-          </button>
-          <button
-            onClick={() => onChoice(secondaryAction.choice)}
-            className="btn btn-ghost"
-            style={{ border: '1px solid var(--color-border)' }}
-          >
+    <Dialog.Root open onOpenChange={(nextOpen) => { if (!nextOpen) onClose(); }}>
+      <Dialog.Content className="w-[min(92vw,520px)]">
+        <Dialog.Header>
+          <Dialog.Title>{tr('components.siteCreatedModal.sitesSuccess')}</Dialog.Title>
+          <Dialog.Description>{tr('components.siteCreatedModal.infoSiteManagementconfiguration')}</Dialog.Description>
+        </Dialog.Header>
+        <div className="grid gap-3">
+          <Alert>
+            <AlertTitle>{tr('components.siteCreatedModal.sitesAddsuccess')}</AlertTitle>
+            <AlertDescription>
+          {tr('components.searchModal.sites2')} <strong>"{siteName}"</strong> {tr('components.siteCreatedModal.nowInfo')}
+            </AlertDescription>
+          </Alert>
+
+          {preset ? (
+            <Alert>
+              <AlertTitle>{preset.label}</AlertTitle>
+              <AlertDescription>{helperText}</AlertDescription>
+            </Alert>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              {helperText}
+            </p>
+          )}
+
+          <p className="text-xs text-muted-foreground">
+            {tr('components.siteCreatedModal.tipSiteManagementAccountsApiKey')}
+          </p>
+        </div>
+        <Dialog.Footer>
+          <Button type="button" variant="ghost" onClick={() => onChoice('later')}>
+            {tr('components.siteCreatedModal.configuration')}
+          </Button>
+          <Button type="button" variant="outline" onClick={() => onChoice(secondaryAction.choice)}>
             {secondaryAction.label}
-          </button>
-          <button
-            onClick={() => onChoice(primaryAction.choice)}
-            className="btn btn-primary"
-          >
+          </Button>
+          <Button type="button" onClick={() => onChoice(primaryAction.choice)}>
             {primaryAction.label}
-          </button>
-        </>
-      )}
-    >
-      <div className="alert alert-success animate-scale-in" style={{ margin: 0 }}>
-        <div className="alert-title">站点已添加成功</div>
-        <div className="site-created-summary">
-          站点 <strong>"{siteName}"</strong> 已加入列表，您现在可以继续补充连接信息。
-        </div>
-      </div>
-
-      {preset ? (
-        <div className="alert alert-info" style={{ margin: 0 }}>
-          <div className="alert-title">{preset.label}</div>
-          <div className="site-created-helper-text">
-            {helperText}
-          </div>
-        </div>
-      ) : (
-        <p className="site-created-helper-text">
-          {helperText}
-        </p>
-      )}
-
-      <p className="site-created-note">
-        提示：您可以随时在“站点管理”页面补充账号或 API Key。
-      </p>
-    </CenteredModal>
+          </Button>
+        </Dialog.Footer>
+      </Dialog.Content>
+    </Dialog.Root>
   );
 }

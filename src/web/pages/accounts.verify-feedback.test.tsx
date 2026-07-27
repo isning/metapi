@@ -72,8 +72,7 @@ describe('Accounts verify feedback', () => {
       const addButton = root.root.find((node) => (
         node.type === 'button'
         && typeof node.props.onClick === 'function'
-        && typeof node.props.className === 'string'
-        && node.props.className.includes('btn btn-primary')
+        && collectText(node).includes('添加连接')
       ));
 
       await act(async () => {
@@ -98,9 +97,7 @@ describe('Accounts verify feedback', () => {
       const verifyButton = root.root.find((node) => (
         node.type === 'button'
         && typeof node.props.onClick === 'function'
-        && typeof node.props.className === 'string'
-        && node.props.className.includes('btn btn-ghost')
-        && collectText(node).includes('Token')
+        && collectText(node).trim() === '验证 Token'
       ));
 
       await act(async () => {

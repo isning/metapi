@@ -8,6 +8,19 @@ import { PgDialect } from 'drizzle-orm/pg-core';
 
 type DbModule = typeof import('../../db/index.js');
 
+function billingDetails(amount: number) {
+  return JSON.stringify({ quote: {
+    amount,
+    unit: 'currency',
+    currency: 'USD',
+    source: 'provider_catalog',
+    sourceId: 'catalog:downstream-route-test',
+    matchedScope: 'provider_catalog',
+    estimateLevel: 'exact',
+    planFingerprint: 'sha256:downstream-route-test',
+  } });
+}
+
 describe('downstream api keys routes', () => {
   let app: FastifyInstance;
   let db: DbModule['db'];
@@ -30,8 +43,10 @@ describe('downstream api keys routes', () => {
 
   beforeEach(async () => {
     await db.delete(schema.proxyLogs).run();
+    await db.delete(schema.proxyRequests).run();
     await db.delete(schema.downstreamApiKeys).run();
-    await db.delete(schema.tokenRoutes).run();
+    await db.delete(schema.runtimeExecutionTargetState).run();
+    await db.delete(schema.runtimeExecutionTargets).run();
     await db.delete(schema.sites).run();
   });
 
@@ -45,7 +60,7 @@ describe('downstream api keys routes', () => {
 
     expect(typeof trendServiceModule.buildBucketTsExpressionForDialect).toBe('function');
 
-    const expression = trendServiceModule.buildBucketTsExpressionForDialect('postgres', schema.proxyLogs.createdAt, 3600);
+    const expression = trendServiceModule.buildBucketTsExpressionForDialect('postgres', schema.proxyRequests.completedAt, 3600);
     const rendered = new PgDialect().sqlToQuery(expression).sql;
 
     expect(rendered).toContain('date_trunc');
@@ -60,12 +75,6 @@ describe('downstream api keys routes', () => {
       status: 'active',
       platform: 'openai',
     }).returning().get();
-    const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-5.2',
-      displayName: 'portal-route',
-      enabled: true,
-    }).returning().get();
-
     const createRes = await app.inject({
       method: 'POST',
       url: '/api/downstream-keys',
@@ -79,7 +88,6 @@ describe('downstream api keys routes', () => {
         maxCost: 12.5,
         maxRequests: 500,
         supportedModels: ['gpt-5.2', 'claude-sonnet-4-5'],
-        allowedRouteIds: [route.id],
         siteWeightMultipliers: { [site.id]: 1.2 },
       },
     });
@@ -95,7 +103,6 @@ describe('downstream api keys routes', () => {
       maxCost: 12.5,
       maxRequests: 500,
       supportedModels: ['gpt-5.2', 'claude-sonnet-4-5'],
-      allowedRouteIds: [route.id],
     });
 
     const keyId = createdBody.item.id as number;
@@ -262,19 +269,12 @@ describe('downstream api keys routes', () => {
       valueStatus: 'ready',
     }).returning().get();
 
-    const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-5.2',
-      displayName: 'portal-route',
-      enabled: true,
-    }).returning().get();
-
     const createRes = await app.inject({
       method: 'POST',
       url: '/api/downstream-keys',
       payload: {
         name: 'exclude-key',
         key: 'sk-exclude-key-001',
-        allowedRouteIds: [route.id],
         excludedSiteIds: [siteB.id],
         excludedCredentialRefs: [
           { kind: 'default_api_key', siteId: siteB.id, accountId: accountB.id },
@@ -660,7 +660,7 @@ describe('downstream api keys routes', () => {
     });
   });
 
-  it('returns summary, overview and trend aggregated from proxy logs', async () => {
+  it('returns summary, overview and trend aggregated from terminal proxy requests', async () => {
     const inserted = await db.insert(schema.downstreamApiKeys).values({
       name: 'analytics-key',
       key: 'sk-analytics-key-001',
@@ -675,34 +675,46 @@ describe('downstream api keys routes', () => {
     const within7d = new Date(now - 2 * 24 * 60 * 60 * 1000).toISOString();
     const outside7d = new Date(now - 10 * 24 * 60 * 60 * 1000).toISOString();
 
-    await db.insert(schema.proxyLogs).values([
+    await db.insert(schema.proxyRequests).values([
       {
+        id: 'analytics-request-1',
+        downstreamPath: '/v1/chat/completions',
         downstreamApiKeyId: inserted.id,
         status: 'success',
         totalTokens: 1200,
         estimatedCost: 0.12,
-        createdAt: within24h,
+        billingDetails: billingDetails(0.12),
+        completedAt: within24h,
       },
       {
+        id: 'analytics-request-2',
+        downstreamPath: '/v1/chat/completions',
         downstreamApiKeyId: inserted.id,
-        status: 'failed',
+        status: 'failure',
         totalTokens: 300,
         estimatedCost: 0.03,
-        createdAt: within24h,
+        billingDetails: billingDetails(0.03),
+        completedAt: within24h,
       },
       {
+        id: 'analytics-request-3',
+        downstreamPath: '/v1/chat/completions',
         downstreamApiKeyId: inserted.id,
         status: 'success',
         totalTokens: 600,
         estimatedCost: 0.06,
-        createdAt: within7d,
+        billingDetails: billingDetails(0.06),
+        completedAt: within7d,
       },
       {
+        id: 'analytics-request-4',
+        downstreamPath: '/v1/chat/completions',
         downstreamApiKeyId: inserted.id,
         status: 'success',
         totalTokens: 900,
         estimatedCost: 0.09,
-        createdAt: outside7d,
+        billingDetails: billingDetails(0.09),
+        completedAt: outside7d,
       },
     ]).run();
 
@@ -730,7 +742,7 @@ describe('downstream api keys routes', () => {
             failedRequests: 1,
             successRate: 50,
             totalTokens: 1500,
-            totalCost: 0.15,
+            cost: { amount: 0.15, unit: 'USD' },
           },
         },
       ],
@@ -751,21 +763,21 @@ describe('downstream api keys routes', () => {
           successRequests: 1,
           failedRequests: 1,
           totalTokens: 1500,
-          totalCost: 0.15,
+          cost: { amount: 0.15, unit: 'USD' },
         },
         last7d: {
           totalRequests: 3,
           successRequests: 2,
           failedRequests: 1,
           totalTokens: 2100,
-          totalCost: 0.21,
+          cost: { amount: 0.21, unit: 'USD' },
         },
         all: {
           totalRequests: 4,
           successRequests: 3,
           failedRequests: 1,
           totalTokens: 3000,
-          totalCost: 0.3,
+          cost: { amount: 0.3, unit: 'USD' },
         },
       },
     });
@@ -797,27 +809,36 @@ describe('downstream api keys routes', () => {
       usedRequests: 0,
     }).returning().get();
 
-    await db.insert(schema.proxyLogs).values([
+    await db.insert(schema.proxyRequests).values([
       {
+        id: 'local-day-request-1',
+        downstreamPath: '/v1/chat/completions',
         downstreamApiKeyId: inserted.id,
         status: 'success',
         totalTokens: 100,
         estimatedCost: 0.01,
-        createdAt: '2026-04-05T23:30:00.000Z',
+        billingDetails: billingDetails(0.01),
+        completedAt: '2026-04-05T23:30:00.000Z',
       },
       {
+        id: 'local-day-request-2',
+        downstreamPath: '/v1/chat/completions',
         downstreamApiKeyId: inserted.id,
-        status: 'failed',
+        status: 'failure',
         totalTokens: 200,
         estimatedCost: 0.02,
-        createdAt: '2026-04-06T01:00:00.000Z',
+        billingDetails: billingDetails(0.02),
+        completedAt: '2026-04-06T01:00:00.000Z',
       },
       {
+        id: 'local-day-request-3',
+        downstreamPath: '/v1/chat/completions',
         downstreamApiKeyId: inserted.id,
         status: 'success',
         totalTokens: 300,
         estimatedCost: 0.03,
-        createdAt: '2026-04-06T16:30:00.000Z',
+        billingDetails: billingDetails(0.03),
+        completedAt: '2026-04-06T16:30:00.000Z',
       },
     ]).run();
 
@@ -838,7 +859,7 @@ describe('downstream api keys routes', () => {
           successRequests: 1,
           failedRequests: 1,
           totalTokens: 300,
-          totalCost: 0.03,
+          cost: { amount: 0.03, unit: 'USD' },
         },
         {
           startUtc: '2026-04-06T16:00:00.000Z',
@@ -846,7 +867,7 @@ describe('downstream api keys routes', () => {
           successRequests: 1,
           failedRequests: 0,
           totalTokens: 300,
-          totalCost: 0.03,
+          cost: { amount: 0.03, unit: 'USD' },
         },
       ],
     });
@@ -859,13 +880,13 @@ describe('downstream api keys routes', () => {
       payload: {
         name: 'invalid-policy',
         key: 'sk-invalid-policy-001',
-        allowedRouteIds: [999],
+        allowedPlanIds: ['missing-route-group'],
       },
     });
     expect(createRes.statusCode).toBe(400);
     expect(createRes.json()).toMatchObject({
       success: false,
-      message: 'allowedRouteIds 包含不存在的路由: 999',
+      message: 'allowedPlanIds 包含当前已编译运行时中不存在的计划: missing-route-group',
     });
 
     const site = await db.insert(schema.sites).values({
@@ -874,17 +895,12 @@ describe('downstream api keys routes', () => {
       status: 'active',
       platform: 'openai',
     }).returning().get();
-    const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-5.2',
-      enabled: true,
-    }).returning().get();
     const created = await app.inject({
       method: 'POST',
       url: '/api/downstream-keys',
       payload: {
         name: 'valid-policy',
         key: 'sk-valid-policy-001',
-        allowedRouteIds: [route.id],
         siteWeightMultipliers: { [site.id]: 1.2 },
       },
     });

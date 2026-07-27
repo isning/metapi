@@ -10,7 +10,7 @@ export async function runSqliteRuntimeMigrations(): Promise<void> {
   if (!sqliteMigrationsBootstrapped) {
     sqliteMigrationsBootstrapped = true;
   }
-  migrateModule.runSqliteMigrations();
+  await migrateModule.runSqliteMigrations();
 }
 
 type EnsureRuntimeDatabaseReadyInput = {

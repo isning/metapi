@@ -4,6 +4,7 @@ import { requireInsertedRowId } from '../db/insertHelpers.js';
 import { getAdapter } from './platforms/index.js';
 import { sendNotification } from './notifyService.js';
 import { formatUtcSqlDateTime } from './localTimeService.js';
+import { emitInboxItem } from './inboxService.js';
 import type { SiteAnnouncement } from './platforms/base.js';
 
 export type SiteAnnouncementSyncResult = {
@@ -140,15 +141,23 @@ export async function syncSiteAnnouncements(options?: { siteId?: number | null }
 
         const title = `站点公告：${site.name}`;
         const message = buildAnnouncementMessage(announcement);
-        await db.insert(schema.events).values({
+        await emitInboxItem({
+          scope: 'announcement',
+          category: 'site',
           type: 'site_notice',
           title,
+          summary: announcement.title || message,
+          description: message,
           message,
           level: announcement.level,
+          subject: { type: 'site_announcement', id: announcementId, label: site.name },
+          actions: [
+            { id: 'open-announcement', label: '查看公告', kind: 'navigate', href: `/site-announcements?focusAnnouncementId=${announcementId}`, placement: 'primary' },
+          ],
+          source: 'site_announcement',
           relatedId: announcementId,
           relatedType: 'site_announcement',
-          createdAt: seenAt,
-        }).run();
+        });
         result.events += 1;
 
         await sendNotification(title, message, announcement.level);

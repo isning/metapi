@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { buildCustomReorderUpdates, sortItemsForDisplay, type SortMode } from './listSorting.js';
+import {
+  buildCustomReorderToTargetUpdates,
+  buildCustomReorderUpdates,
+  sortItemsForDisplay,
+  type SortMode,
+} from './listSorting.js';
 
 type Item = {
   id: number;
@@ -57,5 +62,34 @@ describe('buildCustomReorderUpdates', () => {
       { id: 21, sortOrder: 0 },
       { id: 20, sortOrder: 1 },
     ]);
+  });
+});
+
+describe('buildCustomReorderToTargetUpdates', () => {
+  const list: Item[] = [
+    { id: 10, isPinned: true, sortOrder: 0 },
+    { id: 11, isPinned: true, sortOrder: 1 },
+    { id: 20, isPinned: false, sortOrder: 0 },
+    { id: 21, isPinned: false, sortOrder: 1 },
+    { id: 22, isPinned: false, sortOrder: 2 },
+  ];
+
+  it('moves an item to the target position inside the same pinned group', () => {
+    const updates = buildCustomReorderToTargetUpdates(list, 22, 20);
+    expect(updates).toEqual([
+      { id: 22, sortOrder: 0 },
+      { id: 20, sortOrder: 1 },
+      { id: 21, sortOrder: 2 },
+    ]);
+  });
+
+  it('does not move items across pinned groups', () => {
+    const updates = buildCustomReorderToTargetUpdates(list, 20, 11);
+    expect(updates).toEqual([]);
+  });
+
+  it('does not update when dropped on itself', () => {
+    const updates = buildCustomReorderToTargetUpdates(list, 20, 20);
+    expect(updates).toEqual([]);
   });
 });

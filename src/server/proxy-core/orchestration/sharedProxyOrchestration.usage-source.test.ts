@@ -1,0 +1,153 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const formatUtcSqlDateTimeMock = vi.fn();
+const composeProxyLogMessageMock = vi.fn();
+const insertProxyLogMock = vi.fn();
+
+const runtimeIdentity = {
+  executionAttemptId: 'ea_11',
+  routeEntrypointId: 'entry:gpt-5.2',
+  runtimeEndpointId: 'endpoint:gpt-5.2:upstream',
+  runtimeArtifactId: 'runtime-artifact-42',
+  executionTargetId: 11,
+};
+
+vi.mock('../../services/localTimeService.js', () => ({
+  formatUtcSqlDateTime: (...args: unknown[]) => formatUtcSqlDateTimeMock(...args),
+}));
+
+vi.mock('../../services/siteProxy.js', () => ({
+  resolveChannelProxyUrl: vi.fn(),
+  withSiteRecordProxyRequestInit: vi.fn(),
+}));
+
+vi.mock('../../services/routeRuntimeExecutionService.js', () => ({
+  createRouteRuntimeDecisionSession: vi.fn(),
+  selectRouteRuntimeDecisionInSession: vi.fn(),
+  previewRouteRuntimeDecisionInSession: vi.fn(),
+  selectRouteRuntimeDecision: vi.fn(),
+  previewRouteRuntimeDecision: vi.fn(),
+  selectRouteRuntimeExecutionAttempt: vi.fn(),
+  recordRouteRuntimeExecutionAttemptStarted: vi.fn(),
+  recordRouteRuntimeExecutionAttemptFailure: vi.fn(),
+  recordRouteRuntimeExecutionAttemptSuccess: vi.fn(),
+}));
+
+vi.mock('../../services/proxyUsageFallbackService.js', () => ({
+  resolveProxyUsageWithSelfLogFallback: vi.fn(),
+}));
+
+vi.mock('../../services/alertService.js', () => ({
+  reportProxyAllFailed: vi.fn(),
+  reportTokenExpired: vi.fn(),
+}));
+
+vi.mock('../../services/alertRules.js', () => ({
+  isTokenExpiredError: vi.fn(() => false),
+}));
+
+vi.mock('../../services/proxyRetryPolicy.js', () => ({
+  shouldRetryProxyRequest: vi.fn(() => false),
+}));
+
+vi.mock('../../services/proxyLogMessage.js', () => ({
+  composeProxyLogMessage: (...args: unknown[]) => composeProxyLogMessageMock(...args),
+}));
+
+vi.mock('../../services/proxyBilling.js', () => ({
+  resolveProxyLogBilling: vi.fn(),
+}));
+
+vi.mock('../../services/proxyLogStore.js', () => ({
+  insertProxyLog: (...args: unknown[]) => insertProxyLogMock(...args),
+}));
+
+vi.mock('../../services/runtimeDispatch.js', () => ({
+  dispatchRuntimeRequest: vi.fn(),
+}));
+
+vi.mock('../orchestration/upstreamRequest.js', () => ({
+  buildUpstreamUrl: vi.fn(),
+}));
+
+vi.mock('../../services/oauth/quota.js', () => ({
+  recordOauthQuotaHeadersSnapshot: vi.fn(),
+  recordOauthQuotaResetHint: vi.fn(),
+}));
+
+vi.mock('../../services/oauth/refreshSingleflight.js', () => ({
+  refreshOauthAccessTokenSingleflight: vi.fn(),
+}));
+
+vi.mock('../../services/proxyTargetCoordinator.js', () => ({
+  proxyTargetCoordinator: {
+    buildStickySessionKey: vi.fn(),
+    getStickyTargetId: vi.fn(),
+    bindStickyTarget: vi.fn(),
+    clearStickyTarget: vi.fn(),
+    acquireTargetLease: vi.fn(),
+  },
+}));
+
+vi.mock('../executors/types.js', () => ({
+  readRuntimeResponseText: vi.fn(),
+}));
+
+describe('shared surface usage source logging', () => {
+  beforeEach(() => {
+    formatUtcSqlDateTimeMock.mockReset();
+    composeProxyLogMessageMock.mockReset();
+    insertProxyLogMock.mockReset();
+  });
+
+  it('forwards usage source through the failure toolkit log wrapper', async () => {
+    formatUtcSqlDateTimeMock.mockReturnValue('2026-04-05 21:00:00');
+    composeProxyLogMessageMock.mockReturnValue('normalized error');
+    insertProxyLogMock.mockResolvedValue(undefined);
+
+    const { createSurfaceFailureToolkit } = await import('./sharedProxyOrchestration.js');
+    const toolkit = createSurfaceFailureToolkit({
+      warningScope: 'responses',
+      downstreamPath: '/v1/responses',
+      clientContext: {
+        clientKind: 'codex',
+        sessionId: 'turn-1',
+        traceHint: 'trace-1',
+      },
+      downstreamApiKeyId: null,
+    });
+
+    await toolkit.log({
+      selected: {
+        target: { id: 11, routeId: 22 },
+        account: { id: 33, username: 'oauth-user' },
+        site: { name: 'Codex OAuth' },
+        actualModel: 'upstream-model',
+        ...runtimeIdentity,
+      },
+      modelRequested: 'gpt-5.2',
+      status: 'success',
+      httpStatus: 200,
+      latencyMs: 320,
+      errorMessage: null,
+      retryCount: 0,
+      promptTokens: 12,
+      completionTokens: 4,
+      totalTokens: 16,
+      usageSource: 'self-log',
+      upstreamPath: '/v1/messages',
+    });
+
+    expect(composeProxyLogMessageMock).toHaveBeenCalledWith(expect.objectContaining({
+      downstreamPath: '/v1/responses',
+      upstreamPath: '/v1/messages',
+      usageSource: 'self-log',
+      sessionId: 'turn-1',
+      traceHint: 'trace-1',
+    }));
+    expect(insertProxyLogMock).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'success',
+      errorMessage: 'normalized error',
+    }));
+  });
+});

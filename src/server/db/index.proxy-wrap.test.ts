@@ -104,6 +104,26 @@ describe('db proxy query wrapper', () => {
     });
   });
 
+  it('discovers Graph tables with numeric ids from the Drizzle schema', async () => {
+    const query = vi.fn(async () => ({
+      rows: [{ id: 19 }],
+      rowCount: 1,
+    }));
+
+    const result = await testUtils.pgProxyQuery(
+      { query } as any,
+      'insert into "route_graph_versions" ("version", "source_graph_json") values ($1, $2)',
+      [1, '{}'],
+      'execute',
+    );
+
+    expect(query).toHaveBeenCalledWith({
+      text: 'insert into "route_graph_versions" ("version", "source_graph_json") values ($1, $2) returning id',
+      values: [1, '{}'],
+    });
+    expect(result).toEqual({ rows: [{ changes: 1, lastInsertRowid: 19 }] });
+  });
+
   it('builds mysql pool options with jsonStrings enabled', () => {
     expect(testUtils.buildMysqlPoolOptions('mysql://root:pass@db.example.com:3306/metapi', false)).toMatchObject({
       uri: 'mysql://root:pass@db.example.com:3306/metapi',

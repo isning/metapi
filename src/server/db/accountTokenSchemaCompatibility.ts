@@ -13,6 +13,11 @@ export type AccountTokenColumnCompatibilitySpec = {
   addSql: Record<AccountTokenSchemaDialect, string>;
 };
 
+export type AccountTokenDataCompatibilitySpec = {
+  requiredTables: ['accounts', 'account_tokens'];
+  sql: Record<AccountTokenSchemaDialect, string>;
+};
+
 export const ACCOUNT_TOKEN_COLUMN_COMPATIBILITY_SPECS: AccountTokenColumnCompatibilitySpec[] = [
   {
     table: 'account_tokens',
@@ -30,6 +35,92 @@ export const ACCOUNT_TOKEN_COLUMN_COMPATIBILITY_SPECS: AccountTokenColumnCompati
       sqlite: "ALTER TABLE account_tokens ADD COLUMN value_status text NOT NULL DEFAULT 'ready';",
       mysql: "ALTER TABLE `account_tokens` ADD COLUMN `value_status` VARCHAR(191) NOT NULL DEFAULT 'ready'",
       postgres: "ALTER TABLE \"account_tokens\" ADD COLUMN \"value_status\" TEXT NOT NULL DEFAULT 'ready'",
+    },
+  },
+  {
+    table: 'account_tokens',
+    column: 'compatibility_policy',
+    addSql: {
+      sqlite: 'ALTER TABLE account_tokens ADD COLUMN compatibility_policy text;',
+      mysql: 'ALTER TABLE `account_tokens` ADD COLUMN `compatibility_policy` TEXT NULL',
+      postgres: 'ALTER TABLE "account_tokens" ADD COLUMN "compatibility_policy" TEXT',
+    },
+  },
+];
+
+export const ACCOUNT_TOKEN_DATA_COMPATIBILITY_SPECS: AccountTokenDataCompatibilitySpec[] = [
+  {
+    requiredTables: ['accounts', 'account_tokens'],
+    sql: {
+      sqlite: `
+        INSERT INTO account_tokens (account_id, name, token, source, enabled, is_default, created_at, updated_at)
+        SELECT
+          a.id,
+          'default',
+          a.api_token,
+          'migration',
+          true,
+          true,
+          datetime('now'),
+          datetime('now')
+        FROM accounts AS a
+        WHERE
+          a.api_token IS NOT NULL
+          AND trim(a.api_token) <> ''
+          AND a.access_token IS NOT NULL
+          AND trim(a.access_token) <> ''
+          AND NOT EXISTS (
+            SELECT 1 FROM account_tokens AS t
+            WHERE t.account_id = a.id
+            AND t.token = a.api_token
+          );
+      `,
+      mysql: `
+        INSERT INTO \`account_tokens\` (\`account_id\`, \`name\`, \`token\`, \`source\`, \`enabled\`, \`is_default\`, \`created_at\`, \`updated_at\`)
+        SELECT
+          a.\`id\`,
+          'default',
+          a.\`api_token\`,
+          'migration',
+          true,
+          true,
+          DATE_FORMAT(NOW(), '%Y-%m-%d %H:%i:%s'),
+          DATE_FORMAT(NOW(), '%Y-%m-%d %H:%i:%s')
+        FROM \`accounts\` AS a
+        WHERE
+          a.\`api_token\` IS NOT NULL
+          AND TRIM(a.\`api_token\`) <> ''
+          AND a.\`access_token\` IS NOT NULL
+          AND TRIM(a.\`access_token\`) <> ''
+          AND NOT EXISTS (
+            SELECT 1 FROM \`account_tokens\` AS t
+            WHERE t.\`account_id\` = a.\`id\`
+            AND t.\`token\` = a.\`api_token\`
+          )
+      `,
+      postgres: `
+        INSERT INTO "account_tokens" ("account_id", "name", "token", "source", "enabled", "is_default", "created_at", "updated_at")
+        SELECT
+          a."id",
+          'default',
+          a."api_token",
+          'migration',
+          true,
+          true,
+          to_char(timezone('UTC', CURRENT_TIMESTAMP), 'YYYY-MM-DD HH24:MI:SS'),
+          to_char(timezone('UTC', CURRENT_TIMESTAMP), 'YYYY-MM-DD HH24:MI:SS')
+        FROM "accounts" AS a
+        WHERE
+          a."api_token" IS NOT NULL
+          AND TRIM(a."api_token") <> ''
+          AND a."access_token" IS NOT NULL
+          AND TRIM(a."access_token") <> ''
+          AND NOT EXISTS (
+            SELECT 1 FROM "account_tokens" AS t
+            WHERE t."account_id" = a."id"
+            AND t."token" = a."api_token"
+          )
+      `,
     },
   },
 ];
@@ -68,6 +159,15 @@ export async function ensureAccountTokenSchemaCompatibility(inspector: AccountTo
     const hasColumn = await inspector.columnExists(spec.table, spec.column);
     if (!hasColumn) {
       await executeAddColumn(inspector, spec.addSql[inspector.dialect]);
+    }
+  }
+
+  for (const spec of ACCOUNT_TOKEN_DATA_COMPATIBILITY_SPECS) {
+    const hasRequiredTables = await Promise.all(
+      spec.requiredTables.map((table) => inspector.tableExists(table)),
+    );
+    if (hasRequiredTables.every(Boolean)) {
+      await inspector.execute(spec.sql[inspector.dialect]);
     }
   }
 }

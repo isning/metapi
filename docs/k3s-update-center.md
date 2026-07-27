@@ -36,7 +36,7 @@ K3s 更新中心的日常入口位于：
 | 是否启用更新中心 | UI：设置 → 更新中心 | 日常使用优先在 UI 操作 |
 | Deploy Helper URL | UI：设置 → 更新中心 | 例如集群内 Service 地址 |
 | Namespace / Release Name / Chart Ref / Image Repository | UI：设置 → 更新中心 | 都是页面里直接填的部署配置 |
-| GitHub Releases / Docker Hub / 默认部署来源 | UI：设置 → 更新中心 | 属于页面里的版本来源策略 |
+| GitHub Releases / Docker Hub / 默认部署来源 | UI：设置 → 更新中心 | 更新中心的版本来源策略 |
 | 主 Metapi 到 helper 的认证 token | 主 Metapi 环境变量 | `DEPLOY_HELPER_TOKEN` 或 `UPDATE_CENTER_HELPER_TOKEN` |
 | helper 自己监听在哪个地址和端口 | helper 环境变量 / manifest | `DEPLOY_HELPER_HOST` / `DEPLOY_HELPER_PORT` |
 | helper 自己的 Bearer Token | helper 环境变量 / manifest | `DEPLOY_HELPER_TOKEN`，且必须与主服务一致 |

@@ -11,4 +11,9 @@ describe('normalizeLogCleanupRetentionDays', () => {
     expect(normalizeLogCleanupRetentionDays('oops', 7)).toBe(7);
     expect(normalizeLogCleanupRetentionDays(-1, 7)).toBe(7);
   });
+
+  it('uses the built-in default when both value and fallback are invalid', () => {
+    expect(normalizeLogCleanupRetentionDays(0, 0)).toBe(30);
+    expect(normalizeLogCleanupRetentionDays(Number.NaN, Number.NaN)).toBe(30);
+  });
 });

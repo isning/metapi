@@ -17,13 +17,27 @@ const updateSetMock = vi.fn();
 vi.mock('../db/index.js', () => {
   const selectChain = {
     all: () => selectAllMock(),
+    get: () => ({
+      id: 1,
+      type: 'checkin_result',
+      title: 'checkin',
+      summary: 'checkin',
+      message: 'checkin',
+      level: 'info',
+      severity: 'info',
+      scope: 'activity',
+      state: 'unread',
+      read: false,
+      createdAt: '2026-01-01 00:00:00',
+      updatedAt: '2026-01-01 00:00:00',
+    }),
     where: () => selectChain,
     innerJoin: () => selectChain,
     from: () => selectChain,
   };
 
   const insertChain = {
-    run: () => ({}),
+    run: () => ({ lastInsertRowid: 1, changes: 1 }),
     values: (...args: unknown[]) => {
       insertValuesMock(...args);
       return insertChain;
@@ -369,7 +383,10 @@ describe('checkinService auto relogin', () => {
 
     expect(result.success).toBe(true);
     expect(result.status).toBe('skipped');
-    expect(updateSetMock).not.toHaveBeenCalled();
+    expect(updateSetMock).toHaveBeenCalledTimes(1);
+    const accountUpdatePayload = updateSetMock.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(String(accountUpdatePayload?.extraConfig || '')).toContain('"runtimeHealth"');
+    expect(String(accountUpdatePayload?.extraConfig || '')).toContain('站点不支持签到接口');
     const firstInsertPayload = insertValuesMock.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(firstInsertPayload?.status).toBe('skipped');
   });

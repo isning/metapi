@@ -1,6 +1,6 @@
-import { openAiResponsesTransformer } from '../../transformers/openai/responses/index.js';
 import { mergeProxyUsage, parseProxyUsage } from '../../services/proxyUsageParser.js';
 import { readRuntimeResponseText } from '../executors/types.js';
+import { protocolAdapters } from '../formats/protocolAdapters.js';
 
 type ResponsesTerminalStatus = 'completed' | 'incomplete';
 
@@ -101,7 +101,7 @@ function collectResponsesOutputText(payload: Record<string, unknown>): string {
 }
 
 function rememberStreamResponseEnvelope(
-  streamContext: ReturnType<typeof openAiResponsesTransformer.createStreamContext>,
+  streamContext: ReturnType<typeof protocolAdapters.responses.createStreamContext>,
   payload: Record<string, unknown>,
 ): void {
   const responsePayload = isRecord(payload.response) ? payload.response : payload;
@@ -155,8 +155,8 @@ function cloneAggregateOutputItem(
 }
 
 function materializeTerminalPayloadFromAggregate(
-  aggregateState: ReturnType<typeof openAiResponsesTransformer.aggregator.createState>,
-  streamContext: ReturnType<typeof openAiResponsesTransformer.createStreamContext>,
+  aggregateState: ReturnType<typeof protocolAdapters.responses.aggregator.createState>,
+  streamContext: ReturnType<typeof protocolAdapters.responses.createStreamContext>,
   usage: ReturnType<typeof parseProxyUsage>,
   terminalStatus: ResponsesTerminalStatus,
 ): Record<string, unknown> {
@@ -190,8 +190,8 @@ function materializeTerminalPayloadFromAggregate(
 
 function enrichTerminalPayload(
   payload: Record<string, unknown>,
-  aggregateState: ReturnType<typeof openAiResponsesTransformer.aggregator.createState>,
-  streamContext: ReturnType<typeof openAiResponsesTransformer.createStreamContext>,
+  aggregateState: ReturnType<typeof protocolAdapters.responses.aggregator.createState>,
+  streamContext: ReturnType<typeof protocolAdapters.responses.createStreamContext>,
   usage: ReturnType<typeof parseProxyUsage>,
   terminalStatus: ResponsesTerminalStatus,
 ): Record<string, unknown> {
@@ -252,7 +252,7 @@ function mergeMissingResponsesTerminalFields(
 }
 
 export function looksLikeResponsesSseText(rawText: string): boolean {
-  const { events, rest } = openAiResponsesTransformer.pullSseEvents(rawText);
+  const { events, rest } = protocolAdapters.responses.pullSseEvents(rawText);
   if (events.length === 0 || rest.trim().length > 0) return false;
   return events.some((event) => {
     if (event.data === '[DONE]') return true;
@@ -288,9 +288,9 @@ export function collectResponsesFinalPayloadFromSseText(
   rawText: string,
   modelName: string,
 ): { payload: Record<string, unknown>; rawText: string } {
-  const { events } = openAiResponsesTransformer.pullSseEvents(rawText);
-  const streamContext = openAiResponsesTransformer.createStreamContext(modelName);
-  const aggregateState = openAiResponsesTransformer.aggregator.createState(modelName);
+  const { events } = protocolAdapters.responses.pullSseEvents(rawText);
+  const streamContext = protocolAdapters.responses.createStreamContext(modelName);
+  const aggregateState = protocolAdapters.responses.aggregator.createState(modelName);
   let usage = {
     promptTokens: 0,
     completionTokens: 0,
@@ -325,7 +325,7 @@ export function collectResponsesFinalPayloadFromSseText(
 
   const captureCompletedPayloadFromLines = (lines: string[]) => {
     if (completedPayload) return;
-    const parsed = openAiResponsesTransformer.pullSseEvents(lines.join(''));
+    const parsed = protocolAdapters.responses.pullSseEvents(lines.join(''));
     for (const event of parsed.events) {
       if (event.data === '[DONE]') continue;
       const payload = parseResponsesSsePayload(event.data);
@@ -351,12 +351,12 @@ export function collectResponsesFinalPayloadFromSseText(
     if (completedPayload) {
       continue;
     }
-    const normalizedEvent = openAiResponsesTransformer.transformStreamEvent(
+    const normalizedEvent = protocolAdapters.responses.transformStreamEvent(
       payload,
       streamContext,
       modelName,
     );
-    captureCompletedPayloadFromLines(openAiResponsesTransformer.aggregator.serialize({
+    captureCompletedPayloadFromLines(protocolAdapters.responses.aggregator.serialize({
       state: aggregateState,
       streamContext,
       event: normalizedEvent,

@@ -11,8 +11,7 @@ describe('ResponsiveBatchActionBar', () => {
       </ResponsiveBatchActionBar>,
     );
 
-    const bar = root.root.find((node) => node.props.className === 'mobile-actions-bar mobile-batch-bar');
-    expect(bar).toBeTruthy();
+    expect(root.root.find((node) => node.props['data-slot'] === 'card')).toBeTruthy();
     expect(root.root.findByType('button').children).toContain('批量启用');
   });
 
@@ -23,8 +22,8 @@ describe('ResponsiveBatchActionBar', () => {
       </ResponsiveBatchActionBar>,
     );
 
-    const card = root.root.find((node) => node.props.className === 'card');
-    expect(card).toBeTruthy();
+    expect(root.root.find((node) => node.props['data-slot'] === 'card')).toBeTruthy();
+    expect(root.root.findAll((node) => node.props.className === 'card')).toHaveLength(0);
     expect(root.root.findAllByType('span').some((node) => node.children.includes('已选 3 项'))).toBe(true);
   });
 });

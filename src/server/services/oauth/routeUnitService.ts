@@ -2,7 +2,8 @@ import { and, eq, inArray, sql } from 'drizzle-orm';
 import { db, schema } from '../../db/index.js';
 import { insertAndGetById } from '../../db/insertHelpers.js';
 import * as routeRefreshWorkflow from '../routeRefreshWorkflow.js';
-import { invalidateTokenRouterCache } from '../tokenRouter.js';
+import { advanceRouteGroupManagementCatalogRevision } from '../routeGroupManagementCatalogRevisionService.js';
+import { invalidateRouteGraphReadCaches } from '../routeGraphService.js';
 
 export type OAuthRouteUnitStrategy = 'round_robin' | 'stick_until_unavailable';
 
@@ -138,8 +139,8 @@ export async function listOauthRouteUnitMembersByUnitIds(unitIds: number[]): Pro
 
 async function rollbackCreatedOauthRouteUnit(routeUnitId: number): Promise<void> {
   await db.transaction(async (tx) => {
-    await tx.delete(schema.routeChannels)
-      .where(eq(schema.routeChannels.oauthRouteUnitId, routeUnitId))
+    await tx.delete(schema.runtimeExecutionTargets)
+      .where(eq(schema.runtimeExecutionTargets.oauthRouteUnitId, routeUnitId))
       .run();
     await tx.delete(schema.oauthRouteUnitMembers)
       .where(eq(schema.oauthRouteUnitMembers.unitId, routeUnitId))
@@ -147,13 +148,15 @@ async function rollbackCreatedOauthRouteUnit(routeUnitId: number): Promise<void>
     await tx.delete(schema.oauthRouteUnits)
       .where(eq(schema.oauthRouteUnits.id, routeUnitId))
       .run();
+    await advanceRouteGroupManagementCatalogRevision(tx);
   });
 }
 
 async function restoreDeletedOauthRouteUnit(snapshot: {
   unit: typeof schema.oauthRouteUnits.$inferSelect;
   members: Array<typeof schema.oauthRouteUnitMembers.$inferSelect>;
-  channels: Array<typeof schema.routeChannels.$inferSelect>;
+  supplyEndpoints?: Array<typeof schema.runtimeExecutionTargets.$inferSelect>;
+  supplyEndpointStates?: Array<typeof schema.runtimeExecutionTargetState.$inferSelect>;
 }): Promise<void> {
   await db.transaction(async (tx) => {
     await tx.insert(schema.oauthRouteUnits).values({
@@ -178,30 +181,45 @@ async function restoreDeletedOauthRouteUnit(snapshot: {
       }))).run();
     }
 
-    if (snapshot.channels.length > 0) {
-      await tx.insert(schema.routeChannels).values(snapshot.channels.map((channel) => ({
-        id: channel.id,
-        routeId: channel.routeId,
-        accountId: channel.accountId,
-        tokenId: channel.tokenId,
-        oauthRouteUnitId: channel.oauthRouteUnitId,
-        sourceModel: channel.sourceModel,
-        priority: channel.priority,
-        weight: channel.weight,
-        enabled: channel.enabled,
-        manualOverride: channel.manualOverride,
-        successCount: channel.successCount,
-        failCount: channel.failCount,
-        totalLatencyMs: channel.totalLatencyMs,
-        totalCost: channel.totalCost,
-        lastUsedAt: channel.lastUsedAt,
-        lastSelectedAt: channel.lastSelectedAt,
-        lastFailAt: channel.lastFailAt,
-        consecutiveFailCount: channel.consecutiveFailCount,
-        cooldownLevel: channel.cooldownLevel,
-        cooldownUntil: channel.cooldownUntil,
+    if ((snapshot.supplyEndpoints || []).length > 0) {
+      await tx.insert(schema.runtimeExecutionTargets).values(snapshot.supplyEndpoints!.map((endpoint) => ({
+        id: endpoint.id,
+        executionKey: endpoint.executionKey,
+        siteId: endpoint.siteId,
+        accountId: endpoint.accountId,
+        tokenId: endpoint.tokenId,
+        oauthRouteUnitId: endpoint.oauthRouteUnitId,
+        credentialBindingId: endpoint.credentialBindingId,
+        endpointProfileId: endpoint.endpointProfileId,
+        upstreamModelName: endpoint.upstreamModelName,
+        normalizedModelName: endpoint.normalizedModelName,
+        enabled: endpoint.enabled,
+        discovered: endpoint.discovered,
+        source: endpoint.source,
+        metadataJson: endpoint.metadataJson,
+        createdAt: endpoint.createdAt,
+        updatedAt: endpoint.updatedAt,
       }))).run();
     }
+
+    if ((snapshot.supplyEndpointStates || []).length > 0) {
+      await tx.insert(schema.runtimeExecutionTargetState).values(snapshot.supplyEndpointStates!.map((state) => ({
+        id: state.id,
+        executionTargetId: state.executionTargetId,
+        successCount: state.successCount,
+        failCount: state.failCount,
+        totalLatencyMs: state.totalLatencyMs,
+        lastUsedAt: state.lastUsedAt,
+        lastSelectedAt: state.lastSelectedAt,
+        lastFailAt: state.lastFailAt,
+        consecutiveFailCount: state.consecutiveFailCount,
+        cooldownLevel: state.cooldownLevel,
+        cooldownUntil: state.cooldownUntil,
+        updatedAt: state.updatedAt,
+      }))).run();
+    }
+    await advanceRouteGroupManagementCatalogRevision(tx);
+
   });
 }
 
@@ -359,7 +377,24 @@ export async function updateOauthRouteUnit(input: {
     .where(eq(schema.oauthRouteUnits.id, input.routeUnitId))
     .run();
 
-  invalidateTokenRouterCache();
+  if (input.strategy !== undefined && input.strategy !== existing.strategy) {
+    try {
+      await routeRefreshWorkflow.rebuildRoutesOnly();
+    } catch (error) {
+      await db.update(schema.oauthRouteUnits).set({
+        strategy: existing.strategy,
+        updatedAt: existing.updatedAt,
+      }).where(eq(schema.oauthRouteUnits.id, input.routeUnitId)).run();
+      try {
+        await routeRefreshWorkflow.rebuildRoutesOnly();
+      } catch {
+        // Best-effort restore of the previously published endpoint policy.
+      }
+      throw error;
+    }
+  } else {
+    invalidateRouteGraphReadCaches();
+  }
 
   const memberCountRow = await db.select({
     count: sql<number>`COUNT(*)`,
@@ -399,12 +434,18 @@ export async function deleteOauthRouteUnit(routeUnitId: number) {
   const existingMembers = await db.select().from(schema.oauthRouteUnitMembers)
     .where(eq(schema.oauthRouteUnitMembers.unitId, routeUnitId))
     .all();
-  const existingChannels = await db.select().from(schema.routeChannels)
-    .where(eq(schema.routeChannels.oauthRouteUnitId, routeUnitId))
+  const existingSupplyEndpoints = await db.select().from(schema.runtimeExecutionTargets)
+    .where(eq(schema.runtimeExecutionTargets.oauthRouteUnitId, routeUnitId))
     .all();
+  const existingExecutionTargetIds = existingSupplyEndpoints.map((endpoint) => endpoint.id);
+  const existingSupplyEndpointStates = existingExecutionTargetIds.length > 0
+    ? await db.select().from(schema.runtimeExecutionTargetState)
+      .where(inArray(schema.runtimeExecutionTargetState.executionTargetId, existingExecutionTargetIds))
+      .all()
+    : [];
 
-  await db.delete(schema.routeChannels)
-    .where(eq(schema.routeChannels.oauthRouteUnitId, routeUnitId))
+  await db.delete(schema.runtimeExecutionTargets)
+    .where(eq(schema.runtimeExecutionTargets.oauthRouteUnitId, routeUnitId))
     .run();
   await db.delete(schema.oauthRouteUnitMembers)
     .where(eq(schema.oauthRouteUnitMembers.unitId, routeUnitId))
@@ -412,6 +453,7 @@ export async function deleteOauthRouteUnit(routeUnitId: number) {
   await db.delete(schema.oauthRouteUnits)
     .where(eq(schema.oauthRouteUnits.id, routeUnitId))
     .run();
+  await advanceRouteGroupManagementCatalogRevision();
 
   try {
     await routeRefreshWorkflow.rebuildRoutesOnly();
@@ -419,7 +461,8 @@ export async function deleteOauthRouteUnit(routeUnitId: number) {
     await restoreDeletedOauthRouteUnit({
       unit: existing,
       members: existingMembers,
-      channels: existingChannels,
+      supplyEndpoints: existingSupplyEndpoints,
+      supplyEndpointStates: existingSupplyEndpointStates,
     });
     try {
       await routeRefreshWorkflow.rebuildRoutesOnly();

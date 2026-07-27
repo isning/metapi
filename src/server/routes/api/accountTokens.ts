@@ -15,6 +15,10 @@ import {
   resolveAccountTokenValueStatus,
   setDefaultToken,
 } from '../../services/accountTokenService.js';
+import {
+  deleteAccountTokenById,
+  runAccountTokenBatchCommand,
+} from '../../services/accountTokenCommandService.js';
 import { getAdapter } from '../../services/platforms/index.js';
 import { getCredentialModeFromExtraConfig, getProxyUrlFromExtraConfig, resolvePlatformUserId } from '../../services/accountExtraConfig.js';
 import { startBackgroundTask } from '../../services/backgroundTaskService.js';
@@ -31,6 +35,8 @@ import {
   parseAccountTokenSyncAllPayload,
   parseAccountTokenUpdatePayload,
 } from '../../contracts/accountTokensRoutePayloads.js';
+import { normalizeCompatibilityPolicyStorageInput } from '../../services/upstreamCompatibilityPolicyStorage.js';
+import { emitInboxItem } from '../../services/inboxService.js';
 
 type AccountWithSiteRow = {
   accounts: typeof schema.accounts.$inferSelect;
@@ -180,6 +186,37 @@ function normalizeBatchIds(input: unknown): number[] {
     .filter((id) => Number.isFinite(id) && id > 0);
 }
 
+async function listAccountTokenIds(accountId: number): Promise<Set<number>> {
+  const rows = await db.select({ id: schema.accountTokens.id })
+    .from(schema.accountTokens)
+    .where(eq(schema.accountTokens.accountId, accountId))
+    .all();
+  return new Set(rows.map((row) => row.id));
+}
+
+async function applyCompatibilityPolicyToSingleNewSyncedToken(input: {
+  accountId: number;
+  beforeIds: Set<number>;
+  compatibilityPolicy: string | null;
+}): Promise<typeof schema.accountTokens.$inferSelect | null> {
+  const rows = await db.select()
+    .from(schema.accountTokens)
+    .where(eq(schema.accountTokens.accountId, input.accountId))
+    .all();
+  const createdRows = rows.filter((row) => !input.beforeIds.has(row.id));
+  if (createdRows.length !== 1) return null;
+  const [created] = createdRows;
+  await db.update(schema.accountTokens)
+    .set({
+      compatibilityPolicy: input.compatibilityPolicy,
+      updatedAt: new Date().toISOString(),
+    })
+    .where(eq(schema.accountTokens.id, created.id))
+    .run();
+  const updated = await db.select().from(schema.accountTokens).where(eq(schema.accountTokens.id, created.id)).get();
+  return updated || null;
+}
+
 async function withTimeout<T>(fn: () => Promise<T>, timeoutMs: number, timeoutMessage: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | null = null;
   try {
@@ -234,40 +271,6 @@ async function executeAccountTokenSync(row: AccountWithSiteRow): Promise<SyncExe
   }
 
   if (!row.accounts.accessToken) {
-    if (row.accounts.apiToken) {
-      try {
-        const convergence = await convergeAccountMutation({
-          accountId,
-          preferredApiToken: row.accounts.apiToken,
-          defaultTokenSource: 'legacy',
-        });
-        if (convergence.defaultTokenId != null) {
-          return {
-            ...base,
-            status: 'synced',
-            reason: 'legacy_default_token_restored',
-            message: 'restored local default token from legacy api token',
-            synced: true,
-            created: 0,
-            updated: 0,
-            total: 0,
-            defaultTokenId: convergence.defaultTokenId,
-          };
-        }
-      } catch (error: any) {
-        return {
-          ...base,
-          status: 'failed',
-          reason: 'sync_error',
-          message: error?.message || 'sync failed',
-          synced: false,
-          created: 0,
-          updated: 0,
-          total: 0,
-          defaultTokenId: null,
-        };
-      }
-    }
     return {
       ...base,
       status: 'skipped',
@@ -379,15 +382,22 @@ async function appendTokenSyncEvent(result: SyncExecutionResult) {
     : (result.message || result.reason || 'sync skipped');
 
   try {
-    await db.insert(schema.events).values({
+    await emitInboxItem({
+      scope: result.status === 'synced' ? 'activity' : 'notification',
+      category: 'auth',
       type: 'token',
       title,
+      summary: `${result.accountName} @ ${result.siteName}: ${detail}`,
       message: `${result.accountName} @ ${result.siteName}: ${detail}`,
       level,
+      subject: { type: 'account', id: result.accountId, label: `${result.accountName} @ ${result.siteName}` },
+      actions: result.status === 'synced' ? [] : [
+        { id: 'open-account', label: '打开账号', kind: 'navigate', href: `/accounts?focusAccountId=${result.accountId}&segment=tokens`, placement: 'primary' },
+      ],
+      source: 'account_tokens',
       relatedId: result.accountId,
       relatedType: 'account',
-      createdAt: new Date().toISOString(),
-    }).run();
+    });
   } catch {}
 }
 
@@ -498,6 +508,10 @@ export async function accountTokensRoutes(app: FastifyInstance) {
 
     const tokenValue = (body.token || '').trim();
     if (tokenValue) {
+      const normalizedCompatibilityPolicy = normalizeCompatibilityPolicyStorageInput(body.compatibilityPolicy);
+      if (!normalizedCompatibilityPolicy.ok) {
+        return reply.code(400).send({ success: false, message: normalizedCompatibilityPolicy.error });
+      }
       const now = new Date().toISOString();
       const existing = await db.select().from(schema.accountTokens)
         .where(eq(schema.accountTokens.accountId, body.accountId))
@@ -520,6 +534,7 @@ export async function accountTokensRoutes(app: FastifyInstance) {
           name: (body.name || '').trim() || (existing.length === 0 ? 'default' : `token-${existing.length + 1}`),
           token: tokenValue,
           tokenGroup: (body.group || '').trim() || null,
+          compatibilityPolicy: normalizedCompatibilityPolicy.present ? normalizedCompatibilityPolicy.value : null,
           valueStatus,
           source: body.source || 'manual',
           enabled,
@@ -553,6 +568,11 @@ export async function accountTokensRoutes(app: FastifyInstance) {
 
     if (!account.accessToken?.trim()) {
       return reply.code(400).send({ success: false, message: '账号缺少访问令牌，无法创建站点令牌' });
+    }
+
+    const normalizedCompatibilityPolicy = normalizeCompatibilityPolicyStorageInput(body.compatibilityPolicy);
+    if (!normalizedCompatibilityPolicy.ok) {
+      return reply.code(400).send({ success: false, message: normalizedCompatibilityPolicy.error });
     }
 
     const adapter = getAdapter(site.platform);
@@ -592,6 +612,9 @@ export async function accountTokensRoutes(app: FastifyInstance) {
     }
 
     const platformUserId = resolvePlatformUserId(account.extraConfig, account.username);
+    const beforeTokenIds = normalizedCompatibilityPolicy.present
+      ? await listAccountTokenIds(account.id)
+      : null;
     const createdViaUpstream = await withAccountProxyOverride(
       getProxyUrlFromExtraConfig(account.extraConfig),
       () => adapter.createApiToken(
@@ -623,6 +646,13 @@ export async function accountTokensRoutes(app: FastifyInstance) {
     if (syncResult.status === 'skipped') {
       return reply.code(502).send({ success: false, message: syncResult.message || '站点未返回可用令牌' });
     }
+    const policyAppliedToken = beforeTokenIds
+      ? await applyCompatibilityPolicyToSingleNewSyncedToken({
+        accountId: account.id,
+        beforeIds: beforeTokenIds,
+        compatibilityPolicy: normalizedCompatibilityPolicy.value ?? null,
+      })
+      : null;
     const coverageRefresh = await refreshCoverageForAccounts([account.id]);
 
     const preferred = await db.select().from(schema.accountTokens)
@@ -632,63 +662,16 @@ export async function accountTokensRoutes(app: FastifyInstance) {
       .where(eq(schema.accountTokens.accountId, account.id))
       .all())
       .slice(-1)[0] || null;
+    const responseToken = policyAppliedToken || token;
 
     return {
       success: true,
       createdViaUpstream: true,
       ...syncResult,
       coverageRefresh,
-      token,
+      token: responseToken,
     };
   });
-
-  const deleteAccountTokenById = async (tokenId: number): Promise<{ success: boolean; message?: string }> => {
-    const row = await db.select()
-      .from(schema.accountTokens)
-      .innerJoin(schema.accounts, eq(schema.accountTokens.accountId, schema.accounts.id))
-      .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
-      .where(eq(schema.accountTokens.id, tokenId))
-      .get();
-    if (!row) {
-      return { success: false, message: '令牌不存在' };
-    }
-
-    if (isApiKeyConnection(row.accounts)) {
-      return { success: false, message: 'API Key 连接不支持管理账号令牌' };
-    }
-
-    const existing = row.account_tokens;
-    const account = row.accounts;
-    const site = row.sites;
-    const adapter = getAdapter(site.platform);
-    const shouldDeleteUpstream = !isMaskedPendingAccountToken(existing)
-      && !isSiteDisabled(site.status)
-      && !!account.accessToken?.trim()
-      && !!adapter;
-
-    if (shouldDeleteUpstream) {
-      const platformUserId = resolvePlatformUserId(account.extraConfig, account.username);
-      const upstreamDeleted = await withAccountProxyOverride(
-        getProxyUrlFromExtraConfig(account.extraConfig),
-        () => adapter!.deleteApiToken(
-          site.url,
-          account.accessToken,
-          existing.token,
-          platformUserId,
-        ),
-      );
-      if (!upstreamDeleted) {
-        return { success: false, message: '站点删除令牌失败，本地未删除' };
-      }
-    }
-
-    await db.delete(schema.accountTokens).where(eq(schema.accountTokens.id, tokenId)).run();
-    if (existing.isDefault) {
-      repairDefaultToken(existing.accountId);
-    }
-
-    return { success: true };
-  };
 
   app.post<{ Body: unknown }>('/api/account-tokens/batch', async (request, reply) => {
     const parsedBody = parseAccountTokenBatchPayload(request.body);
@@ -705,55 +688,10 @@ export async function accountTokensRoutes(app: FastifyInstance) {
       return reply.code(400).send({ message: 'Invalid action' });
     }
 
-    const successIds: number[] = [];
-    const failedItems: Array<{ id: number; message: string }> = [];
-
-    for (const id of ids) {
-      try {
-        const existing = await db.select().from(schema.accountTokens).where(eq(schema.accountTokens.id, id)).get();
-        if (!existing) {
-          failedItems.push({ id, message: 'Token not found' });
-          continue;
-        }
-
-        const owner = await db.select().from(schema.accounts).where(eq(schema.accounts.id, existing.accountId)).get();
-        if (!owner) {
-          failedItems.push({ id, message: 'Account not found' });
-          continue;
-        }
-        if (isApiKeyConnection(owner)) {
-          failedItems.push({ id, message: 'API Key 连接不支持管理账号令牌' });
-          continue;
-        }
-
-        if (action === 'delete') {
-          const result = await deleteAccountTokenById(id);
-          if (!result.success) {
-            failedItems.push({ id, message: result.message || 'Batch operation failed' });
-            continue;
-          }
-        } else {
-          if (isMaskedPendingAccountToken(existing)) {
-            failedItems.push({ id, message: '待补全令牌不能修改启用状态，请先补全明文 token' });
-            continue;
-          }
-          await db.update(schema.accountTokens)
-            .set({
-              enabled: action === 'enable',
-              updatedAt: new Date().toISOString(),
-            })
-            .where(eq(schema.accountTokens.id, id))
-            .run();
-          if (existing.isDefault && action === 'disable') {
-            repairDefaultToken(existing.accountId);
-          }
-        }
-
-        successIds.push(id);
-      } catch (error: any) {
-        failedItems.push({ id, message: error?.message || 'Batch operation failed' });
-      }
-    }
+    const { successIds, failedItems } = await runAccountTokenBatchCommand(
+      ids,
+      action as 'enable' | 'disable' | 'delete',
+    );
 
     return {
       success: true,
@@ -818,6 +756,13 @@ export async function accountTokensRoutes(app: FastifyInstance) {
       if (body.isDefault !== undefined) updates.isDefault = body.isDefault;
     }
     if (body.source !== undefined) updates.source = body.source;
+    const normalizedCompatibilityPolicy = normalizeCompatibilityPolicyStorageInput(body.compatibilityPolicy);
+    if (!normalizedCompatibilityPolicy.ok) {
+      return reply.code(400).send({ success: false, message: normalizedCompatibilityPolicy.error });
+    }
+    if (normalizedCompatibilityPolicy.present) {
+      updates.compatibilityPolicy = normalizedCompatibilityPolicy.value;
+    }
 
     await db.update(schema.accountTokens).set(updates).where(eq(schema.accountTokens.id, tokenId)).run();
 

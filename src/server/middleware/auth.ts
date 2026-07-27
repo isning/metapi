@@ -79,15 +79,7 @@ export function findInvalidIpAllowlistEntries(allowlist: string[]): string[] {
   return allowlist.filter((item) => parseAllowlistEntry(item) === null);
 }
 
-export function extractClientIp(remoteIp: string | null | undefined, xForwardedFor?: string | string[] | undefined): string {
-  if (Array.isArray(xForwardedFor)) {
-    const first = xForwardedFor.find((item) => item && item.trim().length > 0);
-    if (first) {
-      return normalizeIp(first.split(',')[0]);
-    }
-  } else if (typeof xForwardedFor === 'string' && xForwardedFor.trim().length > 0) {
-    return normalizeIp(xForwardedFor.split(',')[0]);
-  }
+export function extractClientIp(remoteIp: string | null | undefined): string {
   return normalizeIp(remoteIp);
 }
 
@@ -107,20 +99,20 @@ export function isIpAllowed(clientIp: string, allowlist: string[]): boolean {
 }
 
 export async function authMiddleware(request: FastifyRequest, reply: FastifyReply) {
-  const clientIp = extractClientIp(request.ip, request.headers['x-forwarded-for']);
+  const clientIp = extractClientIp(request.ip);
   if (!isIpAllowed(clientIp, config.adminIpAllowlist)) {
-    reply.code(403).send({ error: 'IP not allowed' });
+    reply.header('x-metapi-auth-failure', 'admin').code(403).send({ error: 'IP not allowed' });
     return;
   }
 
   const auth = request.headers.authorization;
   if (!auth) {
-    reply.code(401).send({ error: 'Missing Authorization header' });
+    reply.header('x-metapi-auth-failure', 'admin').code(401).send({ error: 'Missing Authorization header' });
     return;
   }
   const token = auth.replace('Bearer ', '');
   if (token !== config.authToken) {
-    reply.code(403).send({ error: 'Invalid token' });
+    reply.header('x-metapi-auth-failure', 'admin').code(403).send({ error: 'Invalid token' });
     return;
   }
 }
@@ -158,7 +150,11 @@ export async function proxyAuthMiddleware(request: FastifyRequest, reply: Fastif
   }
 
   if (authResult.source === 'managed' && authResult.key) {
-    await consumeManagedKeyRequest(authResult.key.id);
+    const consumed = await consumeManagedKeyRequest(authResult.key.id);
+    if (!consumed) {
+      reply.code(403).send({ error: 'API key has exceeded its quota or is no longer active' });
+      return;
+    }
   }
 
   proxyAuthContextByRequest.set(request, {

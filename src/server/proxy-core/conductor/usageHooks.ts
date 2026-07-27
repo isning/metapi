@@ -2,10 +2,10 @@ import type { ProxyConductorDependencies } from './types.js';
 
 export async function recordSuccessfulAttempt(
   deps: ProxyConductorDependencies,
-  channelId: number,
+  targetId: number,
   metrics: { latencyMs?: number | null; cost?: number | null },
 ): Promise<void> {
-  await deps.recordSuccess?.(channelId, {
+  await deps.recordSuccess?.(targetId, {
     latencyMs: metrics.latencyMs ?? null,
     cost: metrics.cost ?? null,
   });
@@ -13,8 +13,8 @@ export async function recordSuccessfulAttempt(
 
 export async function recordFailedAttempt(
   deps: ProxyConductorDependencies,
-  channelId: number,
+  targetId: number,
   failure: { status?: number; rawErrorText?: string },
 ): Promise<void> {
-  await deps.recordFailure?.(channelId, failure);
+  await deps.recordFailure?.(targetId, failure);
 }

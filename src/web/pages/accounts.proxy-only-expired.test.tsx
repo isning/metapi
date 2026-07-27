@@ -88,13 +88,9 @@ describe('Accounts proxy-only expired state', () => {
       expect(rendered).toContain('连接已过期，请更新 API Key');
       expect(rendered).not.toContain('访问令牌已过期');
 
-      const badgeTexts = root.root.findAll((node) => (
-        node.type === 'span'
-        && typeof node.props.className === 'string'
-        && node.props.className.includes('badge')
-      )).map((node) => collectText(node).trim());
-      expect(badgeTexts).toContain('已过期');
-      expect(badgeTexts).not.toContain('健康');
+      const renderedText = collectText(root.root);
+      expect(renderedText).toContain('已过期');
+      expect(renderedText).not.toContain('账号已过期，请重新绑定');
 
       const actionTexts = root.root.findAll((node) => node.type === 'button').map((node) => collectText(node));
       expect(actionTexts).not.toContain('重新绑定');

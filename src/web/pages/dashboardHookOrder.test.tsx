@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, create } from 'react-test-renderer';
+import { MemoryRouter } from 'react-router-dom';
 import { ToastProvider } from '../components/Toast.js';
 import Dashboard from './Dashboard.js';
 import { installDashboardSnapshotCompat } from './testApiCompat.js';
@@ -15,7 +16,7 @@ const { apiMock } = vi.hoisted(() => ({
     getSites: vi.fn(),
     getAccounts: vi.fn(),
     getAccountTokens: vi.fn(),
-    getRoutes: vi.fn(),
+    getEvents: vi.fn(),
     startTestChatJob: vi.fn(),
     getTestChatJob: vi.fn(),
   },
@@ -35,7 +36,7 @@ describe('Dashboard hook order', () => {
     apiMock.getSites.mockResolvedValue([]);
     apiMock.getAccounts.mockResolvedValue([]);
     apiMock.getAccountTokens.mockResolvedValue([]);
-    apiMock.getRoutes.mockResolvedValue([]);
+    apiMock.getEvents.mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -72,9 +73,11 @@ describe('Dashboard hook order', () => {
     try {
       await act(async () => {
         root = create(
-          <ToastProvider>
-            <Dashboard />
-          </ToastProvider>,
+          <MemoryRouter initialEntries={['/']}>
+            <ToastProvider>
+              <Dashboard />
+            </ToastProvider>
+          </MemoryRouter>,
         );
       });
 
