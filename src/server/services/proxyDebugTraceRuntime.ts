@@ -8,7 +8,7 @@ import {
   normalizeProxyDebugResponseHeaders,
   startProxyDebugTraceSession,
   updateProxyDebugAttempt,
-  updateProxyDebugTraceCandidates,
+  updateProxyDebugTraceRuntime,
   updateProxyDebugTraceSelection,
   type ProxyDebugTraceSession,
 } from './proxyDebugTraceStore.js';
@@ -56,13 +56,13 @@ export async function safeUpdateSurfaceProxyDebugSelection(
   }
 }
 
-export async function safeUpdateSurfaceProxyDebugCandidates(
+export async function safeUpdateSurfaceProxyDebugRuntime(
   session: ProxyDebugTraceSession | null,
-  input: Parameters<typeof updateProxyDebugTraceCandidates>[1],
+  input: Parameters<typeof updateProxyDebugTraceRuntime>[1],
 ): Promise<void> {
   if (!session) return;
   try {
-    await updateProxyDebugTraceCandidates(session.traceId, input);
+    await updateProxyDebugTraceRuntime(session.traceId, input);
   } catch (error) {
     console.warn('[proxy-debug] failed to update endpoint candidates', error);
   }
@@ -127,7 +127,14 @@ export async function safeUpdateSurfaceProxyDebugAttempt(
 ): Promise<void> {
   if (!session) return;
   try {
-    await updateProxyDebugAttempt(session.traceId, attemptIndex, input);
+    await updateProxyDebugAttempt(session.traceId, attemptIndex, {
+      ...input,
+      ...(input.requestHeaders !== undefined ? { requestHeaders: session.options.captureHeaders ? input.requestHeaders : null } : {}),
+      ...(input.requestBody !== undefined ? { requestBody: session.options.captureBodies ? input.requestBody : null } : {}),
+      ...(input.responseHeaders !== undefined ? { responseHeaders: session.options.captureHeaders ? input.responseHeaders : null } : {}),
+      ...(input.responseBody !== undefined ? { responseBody: session.options.captureBodies ? input.responseBody : null } : {}),
+      maxBodyBytes: session.options.maxBodyBytes,
+    });
   } catch (error) {
     console.warn('[proxy-debug] failed to update attempt', error);
   }

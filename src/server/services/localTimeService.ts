@@ -1,5 +1,6 @@
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
+const MINUTE_MS = 60 * 1000;
 
 export type StoredUtcDateTimeInput = string | number | Date | null | undefined;
 
@@ -163,6 +164,11 @@ export function getLocalHourRangeStartUtc(hours: number, now = new Date()): stri
   const localAnchor = getLocalHourAnchor(now);
   const start = new Date(localAnchor.getTime() - (normalizedHours - 1) * HOUR_MS);
   return formatUtcSqlDateTime(start);
+}
+
+export function getRecentMinuteRangeStartUtc(minutes: number, now = new Date()): string {
+  const normalizedMinutes = Math.max(1, Math.floor(minutes || 1));
+  return formatUtcSqlDateTime(new Date(now.getTime() - normalizedMinutes * MINUTE_MS));
 }
 
 export function getUtcHourRangeFromStoredStart(hourStartUtc: string): {

@@ -14,6 +14,7 @@ on:
 
 permissions:
   contents: read
+  packages: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -68,10 +69,153 @@ jobs:
       - name: Install dependencies
         run: npm ci --prefer-offline --no-audit --no-fund
 
-      - name: Run tests
+      - name: Run unit tests
+        run: npm run test:unit
+
+  test-integration:
+    name: Test Integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit --no-fund
+
+      - name: Run integration tests
+        run: npm run test:integration
+
+  test-architecture:
+    name: Test Architecture
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit --no-fund
+
+      - name: Run architecture tests
+        run: npm run test:architecture
+
+  test-performance:
+    name: Test Performance
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit --no-fund
+
+      - name: Run route runtime performance gate
+        run: npm run test:performance
+
+      - name: Run route runtime throughput benchmark report
+        continue-on-error: true
         env:
-          DB_PARITY_SKIP_LIVE_SCHEMA: 'true'
-        run: npm test
+          ROUTE_THROUGHPUT_REPORT_DIR: test-results/performance/throughput
+          ROUTE_THROUGHPUT_GROUPS: 2048
+          ROUTE_THROUGHPUT_MODEL_CARDINALITY: 2048
+          ROUTE_THROUGHPUT_CONCURRENCY_SWEEP: 1,16,128,512
+          ROUTE_THROUGHPUT_REPEATS: 1
+          ROUTE_THROUGHPUT_WARMUP_MS: 250
+          ROUTE_THROUGHPUT_DURATION_MS: 750
+        run: npm run bench:performance:throughput
+
+      - name: Run route HTTP RPS benchmark report
+        continue-on-error: true
+        env:
+          ROUTE_HTTP_RPS_REPORT_DIR: test-results/performance/http-rps
+          ROUTE_HTTP_RPS_GROUPS: 1024
+          ROUTE_HTTP_RPS_MODEL_CARDINALITY: 1024
+          ROUTE_HTTP_RPS_CONNECTION_SWEEP: 1,16,64
+          ROUTE_HTTP_RPS_REPEATS: 1
+          ROUTE_HTTP_RPS_WARMUP_SECONDS: 1
+          ROUTE_HTTP_RPS_DURATION_SECONDS: 2
+          ROUTE_HTTP_RPS_WORKERS: 1
+        run: npm run bench:performance:http
+
+      - name: Run route runtime performance matrix report
+        continue-on-error: true
+        env:
+          ROUTE_PERF_MATRIX_VCPUS: 1,2
+          ROUTE_PERF_MATRIX_WORKERS: 1,2
+          ROUTE_PERF_MATRIX_REPORT_DIR: test-results/performance/matrix
+          ROUTE_PERF_GROUPS: 10000
+          ROUTE_PERF_CONCURRENCY: 1024
+          ROUTE_PERF_HOT_ITERATIONS: 5000
+          ROUTE_PERF_DISTINCT_SAMPLES: 1000
+          ROUTE_PERF_DISTINCT_CONCURRENT_SAMPLES: 10000
+          ROUTE_PERF_DISTINCT_CONCURRENT_WIDTH: 10000
+        run: npm run bench:performance:matrix
+
+      - name: Publish performance step summary
+        if: always()
+        shell: bash
+        run: |
+          if [ -f test-results/performance/route-runtime-performance-report.md ]; then
+            cat test-results/performance/route-runtime-performance-report.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Route runtime performance report was not generated." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f test-results/performance/startup/route-startup-memory-report.md ]; then
+            printf '\n' >> "$GITHUB_STEP_SUMMARY"
+            cat test-results/performance/startup/route-startup-memory-report.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf '\nRoute startup memory report was not generated.\n' >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f test-results/performance/throughput/route-runtime-throughput-benchmark-report.md ]; then
+            printf '\n' >> "$GITHUB_STEP_SUMMARY"
+            cat test-results/performance/throughput/route-runtime-throughput-benchmark-report.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf '\nRoute runtime throughput benchmark report was not generated.\n' >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f test-results/performance/http-rps/route-http-rps-benchmark-report.md ]; then
+            printf '\n' >> "$GITHUB_STEP_SUMMARY"
+            cat test-results/performance/http-rps/route-http-rps-benchmark-report.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf '\nRoute HTTP RPS benchmark report was not generated.\n' >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f test-results/performance/matrix/route-runtime-performance-matrix-report.md ]; then
+            printf '\n' >> "$GITHUB_STEP_SUMMARY"
+            cat test-results/performance/matrix/route-runtime-performance-matrix-report.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf '\nRoute runtime performance matrix report was not generated.\n' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload performance report
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: route-runtime-performance-report
+          path: test-results/performance/
+          if-no-files-found: warn
+          retention-days: 14
 
   build-web:
     name: Build Web
@@ -93,6 +237,41 @@ jobs:
 
       - name: Build web
         run: npm run build:web
+
+  test-e2e:
+    name: Test E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit --no-fund
+
+      - name: Install Playwright browser
+        run: npm run test:e2e:install
+
+      - name: Run E2E smoke
+        run: npm run test:e2e
+
+      - name: Upload E2E artifacts
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: e2e-artifacts
+          path: |
+            playwright-report/
+            test-results/e2e/
+          if-no-files-found: ignore
+          retention-days: 7
 
   build-server:
     name: Build Server
@@ -247,6 +426,9 @@ jobs:
       - name: Run mysql runtime schema bootstrap
         run: npm run test:schema:runtime
 
+      - name: Run mysql route publication atomicity
+        run: npm run test:routing:publication-live
+
   schema-postgres:
     name: Schema Check (Postgres)
     runs-on: ubuntu-latest
@@ -290,6 +472,9 @@ jobs:
 
       - name: Run postgres runtime schema bootstrap
         run: npm run test:schema:runtime
+
+      - name: Run postgres route publication atomicity
+        run: npm run test:routing:publication-live
 
   docs-build:
     name: Build Docs
@@ -350,7 +535,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     env:
-      DOCKERHUB_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/metapi
+      GHCR_IMAGE: ghcr.io/${{ github.repository }}
     strategy:
       fail-fast: false
       matrix:
@@ -369,13 +554,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Ensure Docker Hub secrets are configured
-        run: |
-          if [ -z "${{ secrets.DOCKERHUB_USERNAME }}" ] || [ -z "${{ secrets.DOCKERHUB_TOKEN }}" ]; then
-            echo "Missing Docker Hub secrets: DOCKERHUB_USERNAME / DOCKERHUB_TOKEN"
-            exit 1
-          fi
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
@@ -383,17 +561,18 @@ jobs:
         if: matrix.arch == 'armv7'
         uses: docker/setup-qemu-action@v4
 
-      - name: Log in to Docker Hub
+      - name: Log in to GitHub Container Registry
         uses: docker/login-action@v4
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Extract Docker metadata
         id: meta
         uses: docker/metadata-action@v6
         with:
-          images: ${{ env.DOCKERHUB_IMAGE }}
+          images: ${{ env.GHCR_IMAGE }}
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=ref,event=branch
@@ -434,33 +613,27 @@ jobs:
     needs: publish-docker-arch
     timeout-minutes: 15
     env:
-      DOCKERHUB_IMAGE: ${{ secrets.DOCKERHUB_USERNAME }}/metapi
+      GHCR_IMAGE: ghcr.io/${{ github.repository }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Ensure Docker Hub secrets are configured
-        run: |
-          if [ -z "${{ secrets.DOCKERHUB_USERNAME }}" ] || [ -z "${{ secrets.DOCKERHUB_TOKEN }}" ]; then
-            echo "Missing Docker Hub secrets: DOCKERHUB_USERNAME / DOCKERHUB_TOKEN"
-            exit 1
-          fi
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
-      - name: Log in to Docker Hub
+      - name: Log in to GitHub Container Registry
         uses: docker/login-action@v4
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Extract Docker metadata
         id: meta
         uses: docker/metadata-action@v6
         with:
-          images: ${{ env.DOCKERHUB_IMAGE }}
+          images: ${{ env.GHCR_IMAGE }}
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=ref,event=branch

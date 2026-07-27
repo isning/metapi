@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync } from 'node:fs';
 import mysql from 'mysql2/promise';
 import { tmpdir } from 'node:os';
 import pg from 'pg';
@@ -18,7 +18,7 @@ import type {
   SchemaContractTable,
   SchemaContractUnique,
 } from './schemaContract.js';
-import { resolveMigrationsFolder } from './schemaContract.js';
+import { applySqliteMigrations, resolveMigrationsFolder } from './schemaContract.js';
 import { installPostgresJsonTextParsers } from './postgresJsonTextParsers.js';
 import {
   normalizeLogicalColumnType,
@@ -138,6 +138,34 @@ export function readMySqlField<T>(row: Record<string, unknown>, field: string): 
 
   const matchedKey = Object.keys(row).find((key) => key.toLowerCase() === field.toLowerCase());
   return matchedKey ? row[matchedKey] as T : undefined;
+}
+
+function hasSameColumns(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((column, index) => column === right[index]);
+}
+
+export function isMySqlImplicitForeignKeyIndex(
+  index: SchemaContractIndex,
+  foreignKeys: SchemaContractForeignKey[],
+): boolean {
+  if (index.unique || index.columns.length === 0) {
+    return false;
+  }
+
+  return foreignKeys.some((foreignKey) => (
+    foreignKey.table === index.table
+    && index.name === foreignKey.columns[0]
+    && hasSameColumns(index.columns, foreignKey.columns)
+  ));
+}
+
+export function normalizeMySqlIndexes(
+  indexes: SchemaContractIndex[],
+  foreignKeys: SchemaContractForeignKey[],
+): SchemaContractIndex[] {
+  return indexes
+    .filter((index) => !isMySqlImplicitForeignKeyIndex(index, foreignKeys))
+    .sort((left, right) => left.name.localeCompare(right.name, 'en'));
 }
 
 function splitMigrationStatements(sqlText: string): string[] {
@@ -475,12 +503,6 @@ async function introspectMySqlSchema(input: SchemaIntrospectionInput): Promise<S
       });
     }
 
-    const indexes = [...indexGroups.values()].sort((left, right) => left.name.localeCompare(right.name, 'en'));
-    const uniques = indexes
-      .filter((index) => index.unique)
-      .map((index) => ({ name: index.name, table: index.table, columns: [...index.columns] }))
-      .sort((left, right) => left.name.localeCompare(right.name, 'en'));
-
     const [foreignKeyRows] = await connection.query(`
       SELECT
         kcu.table_name AS table_name,
@@ -525,11 +547,18 @@ async function introspectMySqlSchema(input: SchemaIntrospectionInput): Promise<S
       });
     }
 
+    const foreignKeys = sortForeignKeys([...foreignKeyGroups.values()]);
+    const indexes = normalizeMySqlIndexes([...indexGroups.values()], foreignKeys);
+    const uniques = indexes
+      .filter((index) => index.unique)
+      .map((index) => ({ name: index.name, table: index.table, columns: [...index.columns] }))
+      .sort((left, right) => left.name.localeCompare(right.name, 'en'));
+
     return {
       tables,
       indexes,
       uniques,
-      foreignKeys: sortForeignKeys([...foreignKeyGroups.values()]),
+      foreignKeys,
     };
   } finally {
     await connection.end();
@@ -728,20 +757,6 @@ async function resetPostgresSchema(client: pg.Client): Promise<void> {
   }
 }
 
-function applySqliteMigrations(sqlite: Database.Database): void {
-  const migrationsFolder = resolveMigrationsFolder();
-  const migrationFiles = readdirSync(migrationsFolder)
-    .filter((entry) => entry.endsWith('.sql'))
-    .sort((left, right) => left.localeCompare(right, 'en'));
-
-  for (const migrationFile of migrationFiles) {
-    const sqlText = readFileSync(join(migrationsFolder, migrationFile), 'utf8');
-    for (const statement of splitMigrationStatements(sqlText)) {
-      sqlite.exec(statement);
-    }
-  }
-}
-
 function createTemporarySqlitePath(): string {
   const tempDir = mkdtempSync(join(tmpdir(), 'metapi-schema-parity-'));
   return resolve(tempDir, `${randomUUID()}.db`);
@@ -816,7 +831,7 @@ export async function materializeFreshSchema(
     const sqlite = new Database(sqlitePath);
     sqlite.pragma('foreign_keys = ON');
     try {
-      applySqliteMigrations(sqlite);
+      applySqliteMigrations(sqlite, resolveMigrationsFolder());
     } finally {
       sqlite.close();
     }

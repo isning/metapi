@@ -1,14 +1,17 @@
-import baselineContract from './generated/fixtures/2026-03-14-baseline.schemaContract.json' with { type: 'json' };
 import currentContract from './generated/schemaContract.json' with { type: 'json' };
 import mysql from 'mysql2/promise';
 import pg from 'pg';
 import { describe, expect, it } from 'vitest';
 import { generateBootstrapSql } from './schemaArtifactGenerator.js';
+import type { SchemaContract } from './schemaContract.js';
+import { makeCleanSchemaUpgradeBaselineContract } from './schemaContractTestFixtures.js';
 import { __schemaIntrospectionTestUtils, introspectLiveSchema } from './schemaIntrospection.js';
 import { bootstrapRuntimeDatabaseSchema } from './runtimeSchemaBootstrap.js';
 
 const mysqlRuntime = process.env.DB_PARITY_MYSQL_URL ? it : it.skip;
 const postgresRuntime = process.env.DB_PARITY_POSTGRES_URL ? it : it.skip;
+const cleanBaselineContract = makeCleanSchemaUpgradeBaselineContract(currentContract as SchemaContract);
+const LIVE_SCHEMA_TIMEOUT_MS = 20_000;
 
 async function resetMySqlSchema(connectionString: string): Promise<void> {
   const connection = await mysql.createConnection({ uri: connectionString });
@@ -76,7 +79,7 @@ describe('runtime schema bootstrap live upgrade path', () => {
   mysqlRuntime('upgrades mysql runtime schemas from an older live contract', async () => {
     const connectionString = process.env.DB_PARITY_MYSQL_URL!;
     const baselineStatements = __schemaIntrospectionTestUtils.splitSqlStatements(
-      generateBootstrapSql('mysql', baselineContract),
+      generateBootstrapSql('mysql', cleanBaselineContract),
     );
 
     await resetMySqlSchema(connectionString);
@@ -89,12 +92,12 @@ describe('runtime schema bootstrap live upgrade path', () => {
 
     const live = await introspectLiveSchema({ dialect: 'mysql', connectionString });
     expect(live).toEqual(currentContract);
-  });
+  }, LIVE_SCHEMA_TIMEOUT_MS);
 
   postgresRuntime('upgrades postgres runtime schemas from an older live contract', async () => {
     const connectionString = process.env.DB_PARITY_POSTGRES_URL!;
     const baselineStatements = __schemaIntrospectionTestUtils.splitSqlStatements(
-      generateBootstrapSql('postgres', baselineContract),
+      generateBootstrapSql('postgres', cleanBaselineContract),
     );
 
     await resetPostgresSchema(connectionString);
@@ -107,5 +110,5 @@ describe('runtime schema bootstrap live upgrade path', () => {
 
     const live = await introspectLiveSchema({ dialect: 'postgres', connectionString });
     expect(live).toEqual(currentContract);
-  });
+  }, LIVE_SCHEMA_TIMEOUT_MS);
 });

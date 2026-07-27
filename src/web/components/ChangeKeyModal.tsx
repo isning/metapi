@@ -1,12 +1,15 @@
-import React, { useEffect, useState } from 'react';
-import { createPortal } from 'react-dom';
+import React, { useState } from 'react';
 import { api } from '../api.js';
 import { useToast } from './Toast.js';
 import { persistAuthSession } from '../authSession.js';
-import { useAnimatedVisibility } from './useAnimatedVisibility.js';
+import { Alert, AlertDescription } from './ui/alert/index.js';
+import { Button } from './ui/button/index.js';
+import * as Dialog from './ui/dialog/index.js';
+import { Input } from './ui/input/index.js';
+import { Label } from './ui/label/index.js';
 
+import { tr } from '../i18n.js';
 export default function ChangeKeyModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const presence = useAnimatedVisibility(open, 200);
   const [oldToken, setOldToken] = useState('');
   const [newToken, setNewToken] = useState('');
   const [confirmToken, setConfirmToken] = useState('');
@@ -14,27 +17,18 @@ export default function ChangeKeyModal({ open, onClose }: { open: boolean; onClo
   const [error, setError] = useState('');
   const toast = useToast();
 
-  useEffect(() => {
-    if (!open || typeof document === 'undefined') return;
-    const previous = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = previous;
-    };
-  }, [open]);
-
   const handleSubmit = async () => {
     setError('');
     if (!oldToken || !newToken || !confirmToken) {
-      setError('请填写所有字段');
+      setError(tr('components.changeKeyModal.pleaseFillAllFields'));
       return;
     }
     if (newToken !== confirmToken) {
-      setError('两次输入的新 Token 不一致');
+      setError(tr('components.changeKeyModal.newTokenEnteredTwiceInconsistent'));
       return;
     }
     if (newToken.length < 6) {
-      setError('新 Token 至少 6 个字符');
+      setError(tr('components.changeKeyModal.newTokenMustLeast6CharactersLong'));
       return;
     }
 
@@ -42,83 +36,73 @@ export default function ChangeKeyModal({ open, onClose }: { open: boolean; onClo
     try {
       const res = await api.changeAuthToken(oldToken, newToken);
       if (res.success) {
-        toast.success('Token 已更新，请使用新 Token 重新登录');
+        toast.success(tr('components.changeKeyModal.tokenHasBeenUpdatedPleaseUseNew'));
         persistAuthSession(localStorage, newToken);
         onClose();
         setOldToken('');
         setNewToken('');
         setConfirmToken('');
       } else {
-        setError(res.message || '更新失败');
+        setError(res.message || tr('components.changeKeyModal.updateFailed'));
       }
     } catch (e: any) {
-      setError(e.message || '更新失败');
+      setError(e.message || tr('components.changeKeyModal.updateFailed'));
     } finally {
       setSaving(false);
     }
   };
 
-  if (!presence.shouldRender) return null;
-
-  const inputStyle: React.CSSProperties = {
-    width: '100%', padding: '10px 14px', border: '1px solid var(--color-border)',
-    borderRadius: 'var(--radius-sm)', fontSize: 13, outline: 'none',
-    background: 'var(--color-bg)', color: 'var(--color-text-primary)',
-  };
-
-  const modal = (
-    <div className={`modal-backdrop ${presence.isVisible ? '' : 'is-closing'}`.trim()} onClick={onClose}>
-      <div className={`modal-content ${presence.isVisible ? '' : 'is-closing'}`.trim()} onClick={e => e.stopPropagation()} style={{ maxWidth: 420 }}>
-        <div className="modal-header">修改管理员 Token</div>
-
-        <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <div>
-            <label style={{ fontSize: 12, fontWeight: 500, color: 'var(--color-text-secondary)', display: 'block', marginBottom: 6 }}>旧 Token</label>
-            <input
+  return (
+    <Dialog.Root open={open} onOpenChange={(nextOpen) => { if (!nextOpen) onClose(); }}>
+      <Dialog.Content className="w-[min(92vw,420px)]">
+        <Dialog.Header>
+          <Dialog.Title>{tr('components.changeKeyModal.adminToken')}</Dialog.Title>
+          <Dialog.Description>{tr('components.changeKeyModal.saveToken')}</Dialog.Description>
+        </Dialog.Header>
+        <div className="grid gap-3">
+          <div className="grid gap-1.5">
+            <Label htmlFor="old-admin-token">{tr('components.changeKeyModal.token')}</Label>
+            <Input
+              id="old-admin-token"
               type="password"
               value={oldToken}
               onChange={e => { setOldToken(e.target.value); setError(''); }}
-              placeholder="输入当前 Token"
-              style={inputStyle}
+              placeholder={tr('components.changeKeyModal.enterCurrentToken')}
             />
           </div>
-          <div>
-            <label style={{ fontSize: 12, fontWeight: 500, color: 'var(--color-text-secondary)', display: 'block', marginBottom: 6 }}>新 Token</label>
-            <input
+          <div className="grid gap-1.5">
+            <Label htmlFor="new-admin-token">{tr('components.changeKeyModal.token3')}</Label>
+            <Input
+              id="new-admin-token"
               type="password"
               value={newToken}
               onChange={e => { setNewToken(e.target.value); setError(''); }}
-              placeholder="输入新 Token (至少 6 位)"
-              style={inputStyle}
+              placeholder={tr('components.changeKeyModal.enterNewTokenLeast6Digits')}
             />
           </div>
-          <div>
-            <label style={{ fontSize: 12, fontWeight: 500, color: 'var(--color-text-secondary)', display: 'block', marginBottom: 6 }}>确认新 Token</label>
-            <input
+          <div className="grid gap-1.5">
+            <Label htmlFor="confirm-admin-token">{tr('components.changeKeyModal.token2')}</Label>
+            <Input
+              id="confirm-admin-token"
               type="password"
               value={confirmToken}
               onChange={e => { setConfirmToken(e.target.value); setError(''); }}
-              placeholder="再次输入新 Token"
-              style={inputStyle}
+              placeholder={tr('components.changeKeyModal.enterNewTokenAgain')}
             />
           </div>
-
-          {error && (
-            <div className="alert alert-error">
-              {error}
-            </div>
-          )}
+          {error ? (
+            <Alert variant="destructive">
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          ) : null}
         </div>
-
-        <div className="modal-footer">
-          <button onClick={onClose} className="btn btn-ghost">取消</button>
-          <button onClick={handleSubmit} disabled={saving} className="btn btn-primary">
-            {saving ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} />更新中...</> : '确认修改'}
-          </button>
-        </div>
-      </div>
-    </div>
+        <Dialog.Footer>
+          <Button type="button" variant="outline" onClick={onClose}>{tr('app.cancel')}</Button>
+          <Button type="button" onClick={handleSubmit} disabled={saving}>
+            {saving ? tr('components.changeKeyModal.updating') : tr('components.changeKeyModal.confirmChanges')}
+          </Button>
+        </Dialog.Footer>
+      </Dialog.Content>
+    </Dialog.Root>
   );
-
-  return typeof document !== 'undefined' ? createPortal(modal, document.body) : modal;
 }

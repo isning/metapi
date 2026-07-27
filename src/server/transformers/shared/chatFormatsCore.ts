@@ -36,6 +36,7 @@ export type ClaudeDownstreamContext = {
   contentBlockStarted: boolean;
   doneSent: boolean;
   textBlockIndex: number | null;
+  thinkingBlockIndex: number | null;
   nextContentBlockIndex: number;
   toolBlocks: Record<number, {
     contentIndex: number;
@@ -107,7 +108,7 @@ function ensureIntegerTimestamp(value: unknown, fallback: number): number {
 }
 
 function joinNonEmpty(parts: string[]): string {
-  return parts.map((item) => item.trim()).filter((item) => item.length > 0).join('\n\n');
+  return parts.filter((item) => item.trim().length > 0).join('\n\n');
 }
 
 function joinIndexedResponsesText(partsByIndex: Record<number, string>): string {
@@ -294,6 +295,7 @@ export function createClaudeDownstreamContext(): ClaudeDownstreamContext {
     contentBlockStarted: false,
     doneSent: false,
     textBlockIndex: null,
+    thinkingBlockIndex: null,
     nextContentBlockIndex: 0,
     toolBlocks: {},
   };
@@ -575,16 +577,14 @@ function collectToolCallsFromOpenAiChoice(choice: any): Array<{ id: string; name
     const rawToolCall = rawToolCalls[index];
     if (!isRecord(rawToolCall)) continue;
     const fn = isRecord(rawToolCall.function) ? rawToolCall.function : {};
-    const id = (
-      typeof rawToolCall.id === 'string' && rawToolCall.id.trim().length > 0
-        ? rawToolCall.id.trim()
-        : `call_${index}`
-    );
+    const id = typeof rawToolCall.id === 'string' ? rawToolCall.id.trim() : '';
+    if (!id) continue;
     const name = (
       typeof fn.name === 'string' && fn.name.trim().length > 0
         ? fn.name.trim()
         : (typeof rawToolCall.name === 'string' ? rawToolCall.name.trim() : '')
     );
+    if (!name) continue;
     const argumentsText = (
       typeof fn.arguments === 'string'
         ? fn.arguments
@@ -609,12 +609,10 @@ function collectToolCallsFromClaudeContent(content: unknown): Array<{ id: string
     if (!isRecord(block)) continue;
     if (block.type !== 'tool_use') continue;
 
-    const id = (
-      typeof block.id === 'string' && block.id.trim().length > 0
-        ? block.id.trim()
-        : `toolu_${index}`
-    );
+    const id = typeof block.id === 'string' ? block.id.trim() : '';
+    if (!id) continue;
     const name = typeof block.name === 'string' ? block.name.trim() : '';
+    if (!name) continue;
     const argumentsText = stringifyUnknownValue(block.input);
     toolCalls.push({
       id,
@@ -638,9 +636,11 @@ function collectToolCallsFromResponsesPayload(payload: Record<string, unknown>):
     const id = (
       typeof item.call_id === 'string' && item.call_id.trim().length > 0
         ? item.call_id.trim()
-        : (typeof item.id === 'string' && item.id.trim().length > 0 ? item.id.trim() : `call_${index}`)
+        : (typeof item.id === 'string' && item.id.trim().length > 0 ? item.id.trim() : '')
     );
+    if (!id) continue;
     const name = typeof item.name === 'string' ? item.name.trim() : '';
+    if (!name) continue;
     const argumentsText = (
       typeof item.arguments === 'string'
         ? item.arguments
@@ -672,9 +672,11 @@ function collectIndexedToolCallsFromResponsesPayload(
     const id = (
       typeof item.call_id === 'string' && item.call_id.trim().length > 0
         ? item.call_id.trim()
-        : (typeof item.id === 'string' && item.id.trim().length > 0 ? item.id.trim() : `call_${index}`)
+        : (typeof item.id === 'string' && item.id.trim().length > 0 ? item.id.trim() : '')
     );
+    if (!id) continue;
     const name = typeof item.name === 'string' ? item.name.trim() : '';
+    if (!name) continue;
     const argumentsText = (
       typeof item.arguments === 'string'
         ? item.arguments
@@ -1174,8 +1176,9 @@ export function convertClaudeRequestToOpenAiBody(body: Record<string, unknown>):
       if (mappedRole === 'assistant' && blockType === 'tool_use') {
         const id = typeof block.id === 'string' && block.id.trim().length > 0
           ? block.id.trim()
-          : `call_${toolCalls.length}`;
+          : '';
         const name = typeof block.name === 'string' ? block.name.trim() : '';
+        if (!id || !name) continue;
         const rawInput = block.input;
         const args = (
           typeof rawInput === 'string'
@@ -1183,13 +1186,13 @@ export function convertClaudeRequestToOpenAiBody(body: Record<string, unknown>):
             : stringifyUnknownValue(rawInput) || '{}'
         );
 
-        const fn: Record<string, unknown> = { arguments: args };
-        if (name) fn.name = name;
-
         toolCalls.push({
           id,
           type: 'function',
-          function: fn,
+          function: {
+            name,
+            arguments: args,
+          },
         });
         continue;
       }
@@ -2051,6 +2054,39 @@ function closeClaudeTextBlock(
   })];
 }
 
+function ensureClaudeThinkingBlockStart(
+  claudeContext: ClaudeDownstreamContext,
+): string[] {
+  if (claudeContext.contentBlockStarted && claudeContext.thinkingBlockIndex !== null) return [];
+  const contentIndex = claudeContext.nextContentBlockIndex;
+  claudeContext.nextContentBlockIndex += 1;
+  claudeContext.contentBlockStarted = true;
+  claudeContext.thinkingBlockIndex = contentIndex;
+
+  return [serializeSse('content_block_start', {
+    type: 'content_block_start',
+    index: contentIndex,
+    content_block: {
+      type: 'thinking',
+      thinking: '',
+    },
+  })];
+}
+
+function closeClaudeThinkingBlock(
+  claudeContext: ClaudeDownstreamContext,
+): string[] {
+  if (!claudeContext.contentBlockStarted || claudeContext.thinkingBlockIndex === null) return [];
+
+  const contentIndex = claudeContext.thinkingBlockIndex;
+  claudeContext.contentBlockStarted = false;
+  claudeContext.thinkingBlockIndex = null;
+  return [serializeSse('content_block_stop', {
+    type: 'content_block_stop',
+    index: contentIndex,
+  })];
+}
+
 function normalizeToolContentIndex(raw: unknown): number {
   if (typeof raw === 'number' && Number.isFinite(raw)) {
     return Math.max(0, Math.trunc(raw));
@@ -2065,12 +2101,13 @@ function ensureClaudeToolBlockStart(
   const toolSlot = normalizeToolContentIndex(toolDelta.index);
   let state = claudeContext.toolBlocks[toolSlot];
   if (!state) {
-    const fallbackId = `toolu_meta_${toolSlot}`;
-    const fallbackName = `tool_${toolSlot}`;
+    if (!toolDelta.id || !toolDelta.name) {
+      return { events: [], contentIndex: -1 };
+    }
     state = {
       contentIndex: claudeContext.nextContentBlockIndex,
-      id: toolDelta.id || fallbackId,
-      name: toolDelta.name || fallbackName,
+      id: toolDelta.id,
+      name: toolDelta.name,
       open: false,
     };
     claudeContext.nextContentBlockIndex += 1;
@@ -2135,6 +2172,7 @@ function buildClaudeDoneEvents(
   events.push(...ensureClaudeStartEvents(context, claudeContext));
 
   events.push(...closeClaudeTextBlock(claudeContext));
+  events.push(...closeClaudeThinkingBlock(claudeContext));
   events.push(...closeClaudeToolBlocks(claudeContext));
 
   events.push(serializeSse('message_delta', {
@@ -2169,15 +2207,26 @@ export function serializeNormalizedStreamEvent(
     events.push(...ensureClaudeStartEvents(context, claudeContext));
   }
 
-  const mergedText = joinNonEmpty([
-    event.reasoningDelta || '',
-    event.contentDelta || '',
-  ]);
+  if (event.reasoningDelta) {
+    events.push(...closeClaudeToolBlocks(claudeContext));
+    events.push(...closeClaudeTextBlock(claudeContext));
+    events.push(...ensureClaudeThinkingBlockStart(claudeContext));
+    events.push(serializeSse('content_block_delta', {
+      type: 'content_block_delta',
+      index: claudeContext.thinkingBlockIndex ?? 0,
+      delta: {
+        type: 'thinking_delta',
+        thinking: event.reasoningDelta,
+      },
+    }));
+  }
 
   if (Array.isArray(event.toolCallDeltas) && event.toolCallDeltas.length > 0) {
     events.push(...closeClaudeTextBlock(claudeContext));
+    events.push(...closeClaudeThinkingBlock(claudeContext));
     for (const toolDelta of event.toolCallDeltas) {
       const toolBlock = ensureClaudeToolBlockStart(claudeContext, toolDelta);
+      if (toolBlock.contentIndex < 0) continue;
       events.push(...toolBlock.events);
 
       if (toolDelta.argumentsDelta !== undefined && toolDelta.argumentsDelta.length > 0) {
@@ -2193,15 +2242,16 @@ export function serializeNormalizedStreamEvent(
     }
   }
 
-  if (mergedText) {
+  if (event.contentDelta) {
     events.push(...closeClaudeToolBlocks(claudeContext));
+    events.push(...closeClaudeThinkingBlock(claudeContext));
     events.push(...ensureClaudeTextBlockStart(claudeContext));
     events.push(serializeSse('content_block_delta', {
       type: 'content_block_delta',
       index: claudeContext.textBlockIndex ?? 0,
       delta: {
         type: 'text_delta',
-        text: mergedText,
+        text: event.contentDelta,
       },
     }));
   }
@@ -2231,15 +2281,17 @@ export function serializeStreamDone(
 function toOpenAiToolCalls(
   toolCalls: Array<{ id: string; name: string; arguments: string }>,
 ): Array<Record<string, unknown>> {
-  return toolCalls.map((toolCall, index) => ({
-    index,
-    id: toolCall.id || `call_${index}`,
-    type: 'function',
-    function: {
-      name: toolCall.name || '',
-      arguments: toolCall.arguments || '',
-    },
-  }));
+  return toolCalls
+    .filter((toolCall) => toolCall.id.trim().length > 0 && toolCall.name.trim().length > 0)
+    .map((toolCall, index) => ({
+      index,
+      id: toolCall.id,
+      type: 'function',
+      function: {
+        name: toolCall.name,
+        arguments: toolCall.arguments || '',
+      },
+    }));
 }
 
 export function serializeFinalResponse(
@@ -2281,10 +2333,11 @@ export function serializeFinalResponse(
     }
     for (let index = 0; index < toolCalls.length; index += 1) {
       const toolCall = toolCalls[index];
+      if (!asTrimmedString(toolCall.id) || !asTrimmedString(toolCall.name)) continue;
       contentBlocks.push({
         type: 'tool_use',
-        id: toolCall.id || `toolu_${index}`,
-        name: toolCall.name || `tool_${index}`,
+        id: toolCall.id,
+        name: toolCall.name,
         input: parseJsonLike(toolCall.arguments || ''),
       });
     }

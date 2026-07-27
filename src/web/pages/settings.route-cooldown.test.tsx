@@ -9,8 +9,9 @@ const { apiMock } = vi.hoisted(() => ({
   apiMock: {
     getAuthInfo: vi.fn(),
     getRuntimeSettings: vi.fn(),
+    getRouteRuntimeCacheStatus: vi.fn().mockResolvedValue({ activeRuntime: { present: false, ageMs: null, artifactId: null, loadInFlight: false } }),
     getDownstreamApiKeys: vi.fn(),
-    getRoutesLite: vi.fn(),
+    getRouteGroupPage: vi.fn(),
     getRuntimeDatabaseConfig: vi.fn(),
     getBrandList: vi.fn(),
     updateRuntimeSettings: vi.fn(),
@@ -56,15 +57,13 @@ describe('Settings route cooldown cap', () => {
       logCleanupUsageLogsEnabled: true,
       logCleanupProgramLogsEnabled: true,
       logCleanupRetentionDays: 14,
-      routingFallbackUnitCost: 1,
       proxyFirstByteTimeoutSec: 0,
-      routingWeights: {},
-      tokenRouterFailureCooldownMaxSec: 30 * 24 * 60 * 60,
+      routeFailureCooldownMaxSec: 30 * 24 * 60 * 60,
       adminIpAllowlist: [],
       systemProxyUrl: '',
     });
     apiMock.getDownstreamApiKeys.mockResolvedValue({ items: [] });
-    apiMock.getRoutesLite.mockResolvedValue([]);
+    apiMock.getRouteGroupPage.mockResolvedValue({ items: [], pageInfo: { page: 1, pageSize: 500, totalCount: 0, hasMore: false } });
     apiMock.getBrandList.mockResolvedValue({ brands: [] });
     apiMock.getRuntimeDatabaseConfig.mockResolvedValue({
       active: { dialect: 'sqlite', connection: '(default sqlite path)', ssl: false },
@@ -120,16 +119,12 @@ describe('Settings route cooldown cap', () => {
       await flushMicrotasks();
 
       expect(apiMock.updateRuntimeSettings).toHaveBeenCalledWith({
-        routingWeights: {
-          baseWeightFactor: 0.5,
-          valueScoreFactor: 0.5,
-          costWeight: 0.4,
-          balanceWeight: 0.3,
-          usageWeight: 0.3,
-        },
-        routingFallbackUnitCost: 1,
+        dispatchPolicyRegistry: expect.objectContaining({
+          defaultPolicyId: 'platform-default',
+        }),
         proxyFirstByteTimeoutSec: 0,
-        tokenRouterFailureCooldownMaxSec: 10,
+        routeFailureCooldownMaxSec: 10,
+        routeRuntimeCacheTtlMs: 1500,
         disableCrossProtocolFallback: false,
       });
     } finally {
@@ -147,10 +142,8 @@ describe('Settings route cooldown cap', () => {
       logCleanupUsageLogsEnabled: true,
       logCleanupProgramLogsEnabled: true,
       logCleanupRetentionDays: 14,
-      routingFallbackUnitCost: 1,
       proxyFirstByteTimeoutSec: 0,
-      routingWeights: {},
-      tokenRouterFailureCooldownMaxSec: 10,
+      routeFailureCooldownMaxSec: 10,
       adminIpAllowlist: [],
       systemProxyUrl: '',
     });
@@ -221,16 +214,12 @@ describe('Settings route cooldown cap', () => {
       await flushMicrotasks();
 
       expect(apiMock.updateRuntimeSettings).toHaveBeenCalledWith({
-        routingWeights: {
-          baseWeightFactor: 0.5,
-          valueScoreFactor: 0.5,
-          costWeight: 0.4,
-          balanceWeight: 0.3,
-          usageWeight: 0.3,
-        },
-        routingFallbackUnitCost: 1,
+        dispatchPolicyRegistry: expect.objectContaining({
+          defaultPolicyId: 'platform-default',
+        }),
         proxyFirstByteTimeoutSec: 7,
-        tokenRouterFailureCooldownMaxSec: 30 * 24 * 60 * 60,
+        routeFailureCooldownMaxSec: 30 * 24 * 60 * 60,
+        routeRuntimeCacheTtlMs: 1500,
         disableCrossProtocolFallback: false,
       });
     } finally {

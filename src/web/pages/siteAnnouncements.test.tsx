@@ -119,7 +119,7 @@ describe('SiteAnnouncements page', () => {
 
       const highlightedRows = root!.root.findAll((node) => {
         const className = typeof node.props.className === 'string' ? node.props.className : '';
-        return className.includes('row-focus-highlight') && collectText(node).includes('Maintenance');
+        return className.includes('bg-muted') && collectText(node).includes('Maintenance');
       });
       expect(highlightedRows).toHaveLength(1);
 

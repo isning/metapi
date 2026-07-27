@@ -1,74 +1,56 @@
+// @vitest-environment jsdom
+
+import { act } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
 import { describe, expect, it, vi } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
-import { act, create } from 'react-test-renderer';
 import MobileDrawer from './MobileDrawer.js';
 
-vi.mock('react-dom', () => ({
-  createPortal: (node: unknown) => node,
-}));
-
 describe('MobileDrawer', () => {
-  it('renders content, locks body scroll, and exposes explicit close affordances', async () => {
-    const onClose = vi.fn();
-    let root!: WebTestRenderer;
-    vi.stubGlobal('document', {
-      body: {
-        style: {
-          overflow: '',
-        },
-      },
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
+  async function renderDrawer(onClose = vi.fn()) {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    let root: Root | undefined;
+
+    await act(async () => {
+      root = createRoot(host);
+      root.render(
+        <MobileDrawer open onClose={onClose} title="导航菜单">
+          <div>DrawerContent</div>
+        </MobileDrawer>,
+      );
     });
 
-    try {
-      await act(async () => {
-        root = create(
-          <MobileDrawer open onClose={onClose} title="导航菜单">
-            <div>DrawerContent</div>
-          </MobileDrawer>,
-        );
-      });
-
-      const text = root.root.findAll(() => true)
-        .flatMap((instance) => instance.children)
-        .filter((child): child is string => typeof child === 'string')
-        .join('');
-
-      expect(text).toContain('DrawerContent');
-      expect(text).toContain('导航菜单');
-      expect(document.body.style.overflow).toBe('hidden');
-
-      const backdrop = root.root.find((node) => node.props.className === 'mobile-drawer-backdrop');
-      expect(backdrop.type).toBe('div');
-
-      const closeButton = root.root.find((node) => (
-        node.type === 'button'
-        && node.props.className === 'mobile-drawer-close'
-      ));
-      await act(async () => {
-        closeButton.props.onClick();
-      });
-
-      expect(onClose).toHaveBeenCalledTimes(1);
-    } finally {
-      if (root) {
+    return {
+      onClose,
+      cleanup: async () => {
         await act(async () => {
-          root.unmount();
+          root!.unmount();
         });
-      }
-      expect(document.body.style.overflow).toBe('');
-      vi.unstubAllGlobals();
-    }
+        host.remove();
+      },
+    };
+  }
+
+  it('renders content through the shadcn sheet shell', async () => {
+    const rendered = await renderDrawer();
+
+    expect(document.body.querySelector('[role="dialog"]')).not.toBeNull();
+    expect(document.body.querySelector('[data-slot="sheet-content"]')).not.toBeNull();
+    expect(document.body.textContent).toContain('导航菜单');
+    expect(document.body.textContent).toContain('DrawerContent');
+
+    await rendered.cleanup();
   });
 
-  it('defines independent right-side drawer animations in shared css', () => {
-    const css = readFileSync(resolve(process.cwd(), 'src/web/index.css'), 'utf8').replace(/\r\n/g, '\n');
+  it('closes through the sheet close control', async () => {
+    const onClose = vi.fn();
+    const rendered = await renderDrawer(onClose);
 
-    expect(css).toContain('@keyframes drawer-slide-in-right');
-    expect(css).toContain('@keyframes drawer-slide-out-right');
-    expect(css).toMatch(/\.mobile-drawer-panel-right\s*\{[\s\S]*animation:\s*drawer-slide-in-right/);
-    expect(css).toMatch(/\.mobile-drawer-root\.is-closing \.mobile-drawer-panel-right\s*\{[\s\S]*animation:\s*drawer-slide-out-right/);
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('button[data-slot="sheet-close"]')!.click();
+    });
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    await rendered.cleanup();
   });
 });

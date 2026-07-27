@@ -3,10 +3,10 @@ import { db, schema } from '../../db/index.js';
 import { getInsertedRowId } from '../../db/insertHelpers.js';
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import { detectSite } from '../../services/siteDetector.js';
-import { invalidateSiteProxyCache, parseSiteProxyUrlInput } from '../../services/siteProxy.js';
-import { formatUtcSqlDateTime } from '../../services/localTimeService.js';
-import { invalidateTokenRouterCache } from '../../services/tokenRouter.js';
+import { parseSiteProxyUrlInput } from '../../services/siteProxy.js';
+import { recordSiteCatalogMutation } from '../../services/siteCatalogMutationService.js';
 import { parseSiteCustomHeadersInput } from '../../services/siteCustomHeaders.js';
+import { normalizeCompatibilityPolicyStorageInput } from '../../services/upstreamCompatibilityPolicyStorage.js';
 import { getSub2ApiSubscriptionFromExtraConfig } from '../../services/accountExtraConfig.js';
 import {
   parseSiteBatchPayload,
@@ -19,6 +19,15 @@ import { getSiteInitializationPreset } from '../../../shared/siteInitializationP
 import { normalizeSiteApiEndpointBaseUrl } from '../../services/siteApiEndpointService.js';
 import { analyzePrimarySiteUrl } from '../../../shared/sitePrimaryUrl.js';
 import { probeSiteModels } from '../../services/modelService.js';
+import {
+  listCredentialEndpointMatrix,
+  replaceCredentialEndpointBindings,
+  updateApiEndpointProfiles,
+  type ApiEndpointProfileUpdate,
+  type CredentialEndpointBindingUpdate,
+} from '../../services/credentialEndpointBindingService.js';
+import { valueWalletBalanceInBaseUnit } from '../../services/walletBalanceValuationService.js';
+import { emitInboxItem } from '../../services/inboxService.js';
 
 function sseWrite(raw: import('http').ServerResponse, event: string, data: unknown) {
   try { raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch { /* ignore */ }
@@ -112,6 +121,12 @@ type SiteApiEndpointInputRow = {
   url: string;
   enabled: boolean;
   sortOrder: number;
+};
+
+type SiteRouteDbTransaction = {
+  insert: typeof db.insert;
+  update: typeof db.update;
+  delete: typeof db.delete;
 };
 
 function normalizeSiteApiEndpointBoolean(input: unknown): boolean | null {
@@ -224,6 +239,172 @@ function normalizeSiteApiEndpointsInput(input: unknown): {
   }
 
   return { valid: true, present: true, apiEndpoints };
+}
+
+function parseCredentialEndpointBindingUpdates(input: unknown): {
+  valid: boolean;
+  bindings: CredentialEndpointBindingUpdate[];
+  error?: string;
+} {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    return { valid: false, bindings: [], error: 'Invalid body. Expected an object.' };
+  }
+  const rawBindings = (input as { bindings?: unknown }).bindings;
+  if (!Array.isArray(rawBindings)) {
+    return { valid: false, bindings: [], error: 'bindings must be an array.' };
+  }
+
+  const seenProfileIds = new Set<number>();
+  const bindings: CredentialEndpointBindingUpdate[] = [];
+  for (let index = 0; index < rawBindings.length; index += 1) {
+    const row = rawBindings[index];
+    if (!row || typeof row !== 'object' || Array.isArray(row)) {
+      return { valid: false, bindings: [], error: `Invalid binding at index ${index}.` };
+    }
+    const record = row as Record<string, unknown>;
+    const profileId = Number.parseInt(String(record.apiEndpointProfileId ?? ''), 10);
+    if (!Number.isFinite(profileId) || profileId <= 0) {
+      return { valid: false, bindings: [], error: `Invalid apiEndpointProfileId at index ${index}.` };
+    }
+    if (seenProfileIds.has(profileId)) {
+      return { valid: false, bindings: [], error: `Duplicate apiEndpointProfileId: ${profileId}.` };
+    }
+    seenProfileIds.add(profileId);
+
+    const enabled = normalizePinnedFlag(record.enabled);
+    if (record.enabled !== undefined && enabled === null) {
+      return { valid: false, bindings: [], error: `Invalid enabled value at index ${index}.` };
+    }
+
+    const support = typeof record.support === 'string' ? record.support.trim() : undefined;
+    if (
+      support !== undefined
+      && support !== 'supported'
+      && support !== 'unsupported'
+      && support !== 'unknown'
+      && support !== 'blocked'
+    ) {
+      return { valid: false, bindings: [], error: `Invalid support value at index ${index}.` };
+    }
+
+    const priority = record.priority === undefined || record.priority === null || record.priority === ''
+      ? index
+      : Number.parseInt(String(record.priority), 10);
+    if (!Number.isFinite(priority)) {
+      return { valid: false, bindings: [], error: `Invalid priority at index ${index}.` };
+    }
+
+    bindings.push({
+      apiEndpointProfileId: profileId,
+      ...(enabled !== null ? { enabled } : {}),
+      support: (support || 'supported') as CredentialEndpointBindingUpdate['support'],
+      priority,
+    });
+  }
+
+  return { valid: true, bindings };
+}
+
+function parseHeaderRecord(input: unknown, index: number): Record<string, string> | null {
+  if (input === undefined || input === null || input === '') return null;
+  if (typeof input === 'string') {
+    try {
+      const parsed = JSON.parse(input);
+      return parseHeaderRecord(parsed, index);
+    } catch {
+      throw new Error(`Invalid defaultHeaders JSON at index ${index}.`);
+    }
+  }
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw new Error(`Invalid defaultHeaders at index ${index}.`);
+  }
+  const headers: Record<string, string> = {};
+  for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
+    if (typeof value !== 'string') {
+      throw new Error(`Invalid defaultHeaders value for ${key} at index ${index}.`);
+    }
+    headers[key] = value;
+  }
+  return headers;
+}
+
+function parseApiEndpointProfileUpdates(input: unknown): {
+  valid: boolean;
+  profiles: ApiEndpointProfileUpdate[];
+  error?: string;
+} {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    return { valid: false, profiles: [], error: 'Invalid body. Expected an object.' };
+  }
+  const rawProfiles = (input as { profiles?: unknown }).profiles;
+  if (!Array.isArray(rawProfiles)) {
+    return { valid: false, profiles: [], error: 'profiles must be an array.' };
+  }
+
+  const seenProfileIds = new Set<number>();
+  const profiles: ApiEndpointProfileUpdate[] = [];
+  try {
+    for (let index = 0; index < rawProfiles.length; index += 1) {
+      const row = rawProfiles[index];
+      if (!row || typeof row !== 'object' || Array.isArray(row)) {
+        return { valid: false, profiles: [], error: `Invalid profile at index ${index}.` };
+      }
+      const record = row as Record<string, unknown>;
+      const id = Number.parseInt(String(record.id ?? ''), 10);
+      if (!Number.isFinite(id) || id <= 0) {
+        return { valid: false, profiles: [], error: `Invalid profile id at index ${index}.` };
+      }
+      if (seenProfileIds.has(id)) {
+        return { valid: false, profiles: [], error: `Duplicate profile id: ${id}.` };
+      }
+      seenProfileIds.add(id);
+
+      const enabled = normalizePinnedFlag(record.enabled);
+      if (record.enabled !== undefined && enabled === null) {
+        return { valid: false, profiles: [], error: `Invalid enabled value at index ${index}.` };
+      }
+      const requestMethod = record.requestMethod === undefined || record.requestMethod === null || record.requestMethod === ''
+        ? undefined
+        : String(record.requestMethod).trim().toUpperCase();
+      if (requestMethod !== undefined && requestMethod !== 'POST' && requestMethod !== 'GET') {
+        return { valid: false, profiles: [], error: `Invalid requestMethod at index ${index}.` };
+      }
+      const priority = record.priority === undefined || record.priority === null || record.priority === ''
+        ? undefined
+        : Number.parseInt(String(record.priority), 10);
+      if (priority !== undefined && !Number.isFinite(priority)) {
+        return { valid: false, profiles: [], error: `Invalid priority at index ${index}.` };
+      }
+      const catalogSourceId = record.modelCatalogSourceId === undefined
+        ? undefined
+        : (record.modelCatalogSourceId === null || record.modelCatalogSourceId === ''
+          ? null
+          : Number.parseInt(String(record.modelCatalogSourceId), 10));
+      if (catalogSourceId !== undefined && catalogSourceId !== null && !Number.isFinite(catalogSourceId)) {
+        return { valid: false, profiles: [], error: `Invalid modelCatalogSourceId at index ${index}.` };
+      }
+
+      profiles.push({
+        id,
+        ...(record.label !== undefined ? { label: String(record.label || '').trim() } : {}),
+        ...(requestMethod !== undefined ? { requestMethod: requestMethod as 'POST' | 'GET' } : {}),
+        ...(record.requestUrl !== undefined ? { requestUrl: record.requestUrl === null ? null : String(record.requestUrl || '').trim() } : {}),
+        ...(record.defaultHeaders !== undefined ? { defaultHeaders: parseHeaderRecord(record.defaultHeaders, index) } : {}),
+        ...(catalogSourceId !== undefined ? { modelCatalogSourceId: catalogSourceId } : {}),
+        ...(record.capabilityDefaults !== undefined ? { capabilityDefaults: record.capabilityDefaults as ApiEndpointProfileUpdate['capabilityDefaults'] } : {}),
+        ...(enabled !== null ? { enabled } : {}),
+        ...(priority !== undefined ? { priority } : {}),
+      });
+    }
+  } catch (error) {
+    return {
+      valid: false,
+      profiles: [],
+      error: error instanceof Error ? error.message : 'Invalid endpoint profile payload.',
+    };
+  }
+
+  return { valid: true, profiles };
 }
 
 async function loadSiteApiEndpointsBySiteIds(siteIds: number[]) {
@@ -375,11 +556,6 @@ function aggregateSiteSubscription(
 }
 
 export async function sitesRoutes(app: FastifyInstance) {
-  function invalidateSiteCaches() {
-    invalidateSiteProxyCache();
-    invalidateTokenRouterCache();
-  }
-
   async function applySiteStatusSideEffects(
     siteId: number,
     existingSiteName: string,
@@ -393,16 +569,19 @@ export async function sitesRoutes(app: FastifyInstance) {
         .run();
 
       try {
-        const createdAt = formatUtcSqlDateTime(new Date());
-        await db.insert(schema.events).values({
+        await emitInboxItem({
+          scope: 'activity',
+          category: 'site',
           type: 'status',
           title: '站点已禁用',
+          summary: `${existingSiteName} 已禁用`,
           message: `${existingSiteName} 已禁用，关联账号已全部置为禁用`,
           level: 'warning',
+          subject: { type: 'site', id: siteId, label: existingSiteName },
+          source: 'site',
           relatedId: siteId,
           relatedType: 'site',
-          createdAt,
-        }).run();
+        });
       } catch { }
       return;
     }
@@ -413,16 +592,19 @@ export async function sitesRoutes(app: FastifyInstance) {
       .run();
 
     try {
-      const createdAt = formatUtcSqlDateTime(new Date());
-      await db.insert(schema.events).values({
+      await emitInboxItem({
+        scope: 'activity',
+        category: 'site',
         type: 'status',
         title: '站点已启用',
+        summary: `${existingSiteName} 已启用`,
         message: `${existingSiteName} 已启用，关联禁用账号已恢复为活跃`,
         level: 'info',
+        subject: { type: 'site', id: siteId, label: existingSiteName },
+        source: 'site',
         relatedId: siteId,
         relatedType: 'site',
-        createdAt,
-      }).run();
+      });
     } catch { }
   }
 
@@ -438,21 +620,67 @@ export async function sitesRoutes(app: FastifyInstance) {
     const siteRows = await db.select().from(schema.sites).all();
     const siteRowsWithApiEndpoints = await attachSiteApiEndpoints(siteRows);
     const accountRows = await db.select({
+      id: schema.accounts.id,
       siteId: schema.accounts.siteId,
       balance: schema.accounts.balance,
       extraConfig: schema.accounts.extraConfig,
     }).from(schema.accounts).all();
 
-    const totalBalanceBySiteId: Record<number, number> = {};
+    const balanceBySiteId: Record<number, {
+      totalBalance: number;
+      rawBalance: number;
+      rawBalanceUnits: Set<string>;
+      baseCostUnit: string;
+      valuedAccountCount: number;
+      accountCount: number;
+      valuationWarningCount: number;
+    }> = {};
     const subscriptionBySiteId: Record<number, SiteSubscriptionAggregate | undefined> = {};
-    for (const row of accountRows) {
-      totalBalanceBySiteId[row.siteId] = roundMetric((totalBalanceBySiteId[row.siteId] || 0) + Number(row.balance || 0));
+
+    const balanceValuations = await Promise.all(accountRows.map(async (row: typeof schema.accounts.$inferSelect) => ({
+      row,
+      valuation: await valueWalletBalanceInBaseUnit({
+        siteId: row.siteId,
+        accountId: row.id,
+        balance: row.balance,
+      }),
+    })));
+
+    for (const { row, valuation } of balanceValuations) {
+      const current = balanceBySiteId[row.siteId] || {
+        totalBalance: 0,
+        rawBalance: 0,
+        rawBalanceUnits: new Set<string>(),
+        baseCostUnit: valuation.baseCostUnit,
+        valuedAccountCount: 0,
+        accountCount: 0,
+        valuationWarningCount: 0,
+      };
+      current.accountCount += 1;
+      current.rawBalance = roundMetric(current.rawBalance + valuation.balance);
+      if (valuation.walletUnit) current.rawBalanceUnits.add(valuation.walletUnit);
+      current.baseCostUnit = valuation.baseCostUnit || current.baseCostUnit;
+      if (valuation.normalizedValue != null) {
+        current.totalBalance = roundMetric(current.totalBalance + valuation.normalizedValue);
+        current.valuedAccountCount += 1;
+      }
+      current.valuationWarningCount += valuation.diagnostics.filter((item: { level?: string }) => item.level !== 'info').length;
+      balanceBySiteId[row.siteId] = current;
       subscriptionBySiteId[row.siteId] = aggregateSiteSubscription(subscriptionBySiteId[row.siteId], row.extraConfig);
     }
 
     return siteRowsWithApiEndpoints.map((site) => ({
       ...site,
-      totalBalance: Math.round((totalBalanceBySiteId[site.id] || 0) * 1_000_000) / 1_000_000,
+      totalBalance: Math.round((balanceBySiteId[site.id]?.totalBalance || 0) * 1_000_000) / 1_000_000,
+      rawBalance: Math.round((balanceBySiteId[site.id]?.rawBalance || 0) * 1_000_000) / 1_000_000,
+      rawBalanceUnit: balanceBySiteId[site.id]?.rawBalanceUnits.size === 1
+        ? [...balanceBySiteId[site.id]!.rawBalanceUnits][0]
+        : null,
+      rawBalanceUnitMixed: (balanceBySiteId[site.id]?.rawBalanceUnits.size || 0) > 1,
+      baseCostUnit: balanceBySiteId[site.id]?.baseCostUnit || 'USD',
+      valuedAccountCount: balanceBySiteId[site.id]?.valuedAccountCount || 0,
+      accountCount: balanceBySiteId[site.id]?.accountCount || 0,
+      balanceValuationWarningCount: balanceBySiteId[site.id]?.valuationWarningCount || 0,
       subscriptionSummary: subscriptionBySiteId[site.id] || null,
     }));
   });
@@ -472,6 +700,7 @@ export async function sitesRoutes(app: FastifyInstance) {
       proxyUrl,
       useSystemProxy,
       customHeaders,
+      compatibilityPolicy,
       externalCheckinUrl,
       status,
       isPinned,
@@ -511,6 +740,10 @@ export async function sitesRoutes(app: FastifyInstance) {
     if (!normalizedCustomHeaders.valid) {
       return reply.code(400).send({ error: normalizedCustomHeaders.error || 'Invalid customHeaders.' });
     }
+    const normalizedCompatibilityPolicy = normalizeCompatibilityPolicyStorageInput(compatibilityPolicy);
+    if (!normalizedCompatibilityPolicy.ok) {
+      return reply.code(400).send({ error: normalizedCompatibilityPolicy.error });
+    }
     const explicitInitializationPreset = initializationPresetId == null || initializationPresetId === ''
       ? null
       : getSiteInitializationPreset(initializationPresetId);
@@ -523,7 +756,7 @@ export async function sitesRoutes(app: FastifyInstance) {
     }
 
     const existingSites = await db.select().from(schema.sites).all();
-    const maxSortOrder = existingSites.reduce((max, site) => Math.max(max, site.sortOrder || 0), -1);
+    const maxSortOrder = existingSites.reduce((max: number, site: typeof schema.sites.$inferSelect) => Math.max(max, site.sortOrder || 0), -1);
     const analyzedPrimarySiteUrl = analyzePrimarySiteUrl(url);
     const canonicalUrl = analyzedPrimarySiteUrl.persistedUrl;
     const detectionUrl = analyzedPrimarySiteUrl.canonicalUrl || canonicalUrl;
@@ -552,7 +785,7 @@ export async function sitesRoutes(app: FastifyInstance) {
 
     let inserted;
     try {
-      inserted = await db.transaction(async (tx) => {
+      inserted = await db.transaction(async (tx: SiteRouteDbTransaction) => {
         const siteInsert = await tx.insert(schema.sites).values({
           name,
           url: canonicalUrl,
@@ -560,6 +793,7 @@ export async function sitesRoutes(app: FastifyInstance) {
           proxyUrl: normalizedProxyUrl.proxyUrl,
           useSystemProxy: normalizedUseSystemProxy ?? false,
           customHeaders: normalizedCustomHeaders.customHeaders,
+          compatibilityPolicy: normalizedCompatibilityPolicy.present ? normalizedCompatibilityPolicy.value : null,
           externalCheckinUrl: normalizedExternalCheckinUrl.url,
           status: normalizedStatus ?? 'active',
           isPinned: normalizedPinned ?? false,
@@ -593,7 +827,7 @@ export async function sitesRoutes(app: FastifyInstance) {
     if (!result) {
       return reply.code(500).send({ error: 'Create site failed' });
     }
-    invalidateSiteCaches();
+    await recordSiteCatalogMutation();
     return {
       ...result,
       ...(responseInitializationPresetId ? { initializationPresetId: responseInitializationPresetId } : {}),
@@ -651,6 +885,10 @@ export async function sitesRoutes(app: FastifyInstance) {
     if (!normalizedCustomHeaders.valid) {
       return reply.code(400).send({ error: normalizedCustomHeaders.error || 'Invalid customHeaders.' });
     }
+    const normalizedCompatibilityPolicy = normalizeCompatibilityPolicyStorageInput((body as Record<string, unknown>).compatibilityPolicy);
+    if (!normalizedCompatibilityPolicy.ok) {
+      return reply.code(400).send({ error: normalizedCompatibilityPolicy.error });
+    }
     const normalizedApiEndpoints = normalizeSiteApiEndpointsInput(body.apiEndpoints);
     if (!normalizedApiEndpoints.valid) {
       return reply.code(400).send({ error: normalizedApiEndpoints.error || 'Invalid apiEndpoints.' });
@@ -683,6 +921,7 @@ export async function sitesRoutes(app: FastifyInstance) {
     if (normalizedProxyUrl.present) updates.proxyUrl = normalizedProxyUrl.proxyUrl;
     if (body.useSystemProxy !== undefined) updates.useSystemProxy = normalizedUseSystemProxy;
     if (normalizedCustomHeaders.present) updates.customHeaders = normalizedCustomHeaders.customHeaders;
+    if (normalizedCompatibilityPolicy.present) updates.compatibilityPolicy = normalizedCompatibilityPolicy.value;
     if (normalizedExternalCheckinUrl.present) updates.externalCheckinUrl = normalizedExternalCheckinUrl.url;
     if (body.status !== undefined) updates.status = normalizedStatus;
     if (body.isPinned !== undefined) updates.isPinned = normalizedPinned;
@@ -698,7 +937,7 @@ export async function sitesRoutes(app: FastifyInstance) {
     }
     updates.updatedAt = new Date().toISOString();
     try {
-      await db.transaction(async (tx) => {
+      await db.transaction(async (tx: SiteRouteDbTransaction) => {
         await tx.update(schema.sites).set(updates).where(eq(schema.sites.id, id)).run();
         if (normalizedApiEndpoints.present) {
           await tx.delete(schema.siteApiEndpoints)
@@ -727,7 +966,7 @@ export async function sitesRoutes(app: FastifyInstance) {
       await applySiteStatusSideEffects(id, existingSite.name, normalizedStatus);
     }
 
-    invalidateSiteCaches();
+    await recordSiteCatalogMutation();
 
     return await loadSiteWithApiEndpoints(id);
   });
@@ -736,9 +975,100 @@ export async function sitesRoutes(app: FastifyInstance) {
   app.delete<{ Params: { id: string } }>('/api/sites/:id', async (request) => {
     const id = parseInt(request.params.id);
     await db.delete(schema.sites).where(eq(schema.sites.id, id)).run();
-    invalidateSiteCaches();
+    await recordSiteCatalogMutation();
     return { success: true };
   });
+
+  app.get<{ Params: { id: string } }>('/api/sites/:id/endpoint-bindings', async (request, reply) => {
+    const id = parseInt(request.params.id);
+    if (Number.isNaN(id)) {
+      return reply.code(400).send({ error: 'Invalid site id' });
+    }
+    const existingSite = await db.select({ id: schema.sites.id }).from(schema.sites).where(eq(schema.sites.id, id)).get();
+    if (!existingSite) {
+      return reply.code(404).send({ error: 'Site not found' });
+    }
+    return listCredentialEndpointMatrix(id);
+  });
+
+  app.put<{ Params: { id: string }; Body: unknown }>(
+    '/api/sites/:id/endpoint-profiles',
+    async (request, reply) => {
+      const id = parseInt(request.params.id);
+      if (Number.isNaN(id)) {
+        return reply.code(400).send({ error: 'Invalid site id' });
+      }
+      const existingSite = await db.select({ id: schema.sites.id }).from(schema.sites).where(eq(schema.sites.id, id)).get();
+      if (!existingSite) {
+        return reply.code(404).send({ error: 'Site not found' });
+      }
+
+      const parsed = parseApiEndpointProfileUpdates(request.body);
+      if (!parsed.valid) {
+        return reply.code(400).send({ error: parsed.error || 'Invalid endpoint profile payload.' });
+      }
+
+      try {
+        const result = await updateApiEndpointProfiles({
+          siteId: id,
+          profiles: parsed.profiles,
+        });
+        await recordSiteCatalogMutation();
+        return result;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to update endpoint profiles.';
+        if (
+          message.includes('does not belong to this site')
+          || message.includes('URL')
+          || message.includes('Header')
+          || message.includes('label')
+          || message.includes('capabilityDefaults')
+          || message.includes('capability state')
+        ) {
+          return reply.code(400).send({ error: message });
+        }
+        throw error;
+      }
+    },
+  );
+
+  app.put<{ Params: { id: string; credentialKey: string }; Body: unknown }>(
+    '/api/sites/:id/endpoint-bindings/:credentialKey',
+    async (request, reply) => {
+      const id = parseInt(request.params.id);
+      if (Number.isNaN(id)) {
+        return reply.code(400).send({ error: 'Invalid site id' });
+      }
+      const existingSite = await db.select({ id: schema.sites.id }).from(schema.sites).where(eq(schema.sites.id, id)).get();
+      if (!existingSite) {
+        return reply.code(404).send({ error: 'Site not found' });
+      }
+
+      const parsed = parseCredentialEndpointBindingUpdates(request.body);
+      if (!parsed.valid) {
+        return reply.code(400).send({ error: parsed.error || 'Invalid endpoint binding payload.' });
+      }
+
+      try {
+        const result = await replaceCredentialEndpointBindings({
+          siteId: id,
+          credentialKey: request.params.credentialKey,
+          bindings: parsed.bindings,
+        });
+        await recordSiteCatalogMutation();
+        return result;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to update endpoint bindings.';
+        if (message.includes('Endpoint profile') && message.includes('does not belong to this site')) {
+          return reply.code(400).send({ error: message });
+        }
+        if (message.includes('does not belong to this site')) {
+          return reply.code(404).send({ error: message });
+        }
+        throw error;
+      }
+    },
+  );
 
   app.post<{ Body: unknown }>('/api/sites/batch', async (request, reply) => {
     const parsedBody = parseSiteBatchPayload(request.body);
@@ -792,7 +1122,7 @@ export async function sitesRoutes(app: FastifyInstance) {
       }
     }
 
-    invalidateSiteCaches();
+    await recordSiteCatalogMutation();
     return {
       success: true,
       successIds,
@@ -814,7 +1144,7 @@ export async function sitesRoutes(app: FastifyInstance) {
       .from(schema.siteDisabledModels)
       .where(eq(schema.siteDisabledModels.siteId, id))
       .all();
-    return { siteId: id, models: rows.map((r) => r.modelName) };
+    return { siteId: id, models: rows.map((r: { modelName: string }) => r.modelName) };
   });
 
   // Update disabled models for a site (full replace)
@@ -852,7 +1182,7 @@ export async function sitesRoutes(app: FastifyInstance) {
       ).run();
     }
 
-    invalidateSiteCaches();
+    await recordSiteCatalogMutation();
     return { siteId: id, models: uniqueModels };
   });
 
@@ -893,8 +1223,8 @@ export async function sitesRoutes(app: FastifyInstance) {
       .all();
 
     const models = Array.from(new Set([
-      ...accountModels.map((r) => r.modelName.trim()),
-      ...tokenModels.map((r) => r.modelName.trim()),
+      ...accountModels.map((r: { modelName: string }) => r.modelName.trim()),
+      ...tokenModels.map((r: { modelName: string }) => r.modelName.trim()),
     ])).filter((m) => m.length > 0).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
 
     return { siteId: id, models };

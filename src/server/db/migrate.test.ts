@@ -1,15 +1,16 @@
 import Database from 'better-sqlite3';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { ensureRouteGraphExecutionTargetEndpoint } from '../services/routeGraphExecutionTargetEndpointService.js';
+import { createRouteGroupFacadeMacro } from '../services/routeGroupGraphFacadeService.js';
+import { validateCompiledRouterBundle } from '../../shared/compiledRuntime.js';
+import { compileRouteGraphSource } from '../../shared/routeGraph.js';
+import { buildRouteRuntimeStorageArtifact } from '../services/routeRuntimeArtifactService.js';
 
-type MigrationJournalEntry = {
-  tag: string;
-  when: number;
-};
+type MigrationJournalEntry = { tag: string; when: number };
 
 const migrationsDir = resolve(dirname(fileURLToPath(import.meta.url)), '../../../drizzle');
 
@@ -19,615 +20,566 @@ function readMigrationJournalEntries(): MigrationJournalEntry[] {
   return journal.entries ?? [];
 }
 
-function applyMigrationSql(sqlite: Database.Database, sqlText: string) {
-  const statements = sqlText
-    .split('--> statement-breakpoint')
-    .map((statement) => statement.trim())
-    .filter((statement) => statement.length > 0);
-
-  for (const statement of statements) {
-    sqlite.exec(statement);
-  }
+function readMigrationSql(tag: string): string {
+  return readFileSync(join(migrationsDir, `${tag}.sql`), 'utf8');
 }
 
-function recordAppliedMigrations(
-  sqlite: Database.Database,
-  journalEntries: MigrationJournalEntry[],
-) {
-  sqlite.exec(`
-    CREATE TABLE IF NOT EXISTS "__drizzle_migrations" (
-      id SERIAL PRIMARY KEY,
-      hash text NOT NULL,
-      created_at numeric
-    )
-  `);
-
-  const insert = sqlite.prepare('INSERT INTO "__drizzle_migrations" ("hash", "created_at") VALUES (?, ?)');
-  for (const entry of journalEntries) {
-    const sqlText = readFileSync(join(migrationsDir, `${entry.tag}.sql`), 'utf8');
-    const hash = createHash('sha256').update(sqlText).digest('hex');
-    insert.run(hash, entry.when);
-  }
-}
-
-const STALE_JOURNAL_TIMESTAMP_DRIFT_MS = 4_196_930;
-
-describe('sqlite migrate bootstrap', () => {
+describe('sqlite migration baseline', () => {
   afterEach(() => {
     delete process.env.DATA_DIR;
     delete process.env.DB_URL;
     vi.resetModules();
   });
 
-  it('accepts an already-synced sqlite schema with an empty drizzle journal', async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), 'metapi-migrate-'));
-    const dbPath = join(dataDir, 'hub.db');
-    const sqlite = new Database(dbPath);
-    const journalEntries = readMigrationJournalEntries();
+  it('uses one clean Drizzle baseline without unreleased legacy history', () => {
+    const entries = readMigrationJournalEntries();
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.tag).toBe('0000_current_route_runtime_baseline');
+    const sql = readMigrationSql(entries[0]!.tag);
+    for (const table of [
+      'route_groups',
+      'route_group_graph_bindings',
+      'route_group_fallback_stages',
+      'route_group_fallback_stage_graph_bindings',
+      'route_group_candidates',
+    ]) {
+      expect(sql).not.toContain(`CREATE TABLE \`${table}\``);
+      expect(sql).not.toContain(`DROP TABLE \`${table}\``);
+    }
+    expect(sql).toContain('CREATE TABLE `compiled_runtime_artifacts`');
+    expect(sql).toContain('CREATE TABLE `compiled_runtime_active_artifact`');
+    expect(sql).not.toContain('compiled_graph_json');
+  });
 
-    for (const entry of journalEntries) {
-      const sqlText = readFileSync(join(migrationsDir, `${entry.tag}.sql`), 'utf8');
-      applyMigrationSql(sqlite, sqlText);
+  it('creates the Graph-native route runtime schema without retired Route Group storage', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'metapi-migrate-baseline-'));
+    const dbPath = join(dataDir, 'hub.db');
+    process.env.DATA_DIR = dataDir;
+    vi.resetModules();
+
+    const migrateModule = await import('./migrate.js');
+    await migrateModule.runSqliteMigrations();
+
+    const sqlite = new Database(dbPath, { readonly: true });
+    try {
+      const tableRows = sqlite
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+        .all() as Array<{ name: string }>;
+      const tableNames = new Set(tableRows.map((row) => row.name));
+
+      for (const table of [
+        'route_groups',
+        'route_group_graph_bindings',
+        'route_group_fallback_stages',
+        'route_group_fallback_stage_graph_bindings',
+        'route_group_candidates',
+        'route_graph_execution_target_bindings',
+        'route_group_buckets',
+      ]) {
+        expect(tableNames.has(table)).toBe(false);
+      }
+      expect(tableNames.has('runtime_execution_targets')).toBe(true);
+      expect(tableNames.has('runtime_execution_target_state')).toBe(true);
+      expect(tableNames.has('route_graph_versions')).toBe(true);
+      expect(tableNames.has('route_graph_drafts')).toBe(true);
+      expect(tableNames.has('compiled_runtime_artifacts')).toBe(true);
+      expect(tableNames.has('compiled_runtime_active_artifact')).toBe(true);
+      expect(tableNames.has('route_runtime_day_usage')).toBe(true);
+    } finally {
+      sqlite.close();
+    }
+  });
+
+  it('does not let SQLite bootstrap compatibility create tables before the baseline migration', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'metapi-empty-bootstrap-'));
+    const dbPath = join(dataDir, 'hub.db');
+    process.env.DATA_DIR = dataDir;
+    vi.resetModules();
+
+    const dbModule = await import('./index.js');
+    expect(existsSync(dbPath)).toBe(true);
+
+    const sqlite = new Database(dbPath, { readonly: true });
+    try {
+      const tableRows = sqlite
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
+        .all() as Array<{ name: string }>;
+      expect(tableRows).toEqual([]);
+    } finally {
+      sqlite.close();
+      await dbModule.closeDbConnections();
     }
 
-    sqlite.close();
+    const migrateModule = await import('./migrate.js');
+    await migrateModule.runSqliteMigrations();
 
+    const migrated = new Database(dbPath, { readonly: true });
+    try {
+      const tableRows = migrated
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'downstream_api_keys'")
+        .all() as Array<{ name: string }>;
+      expect(tableRows).toEqual([{ name: 'downstream_api_keys' }]);
+    } finally {
+      migrated.close();
+    }
+  });
+
+  it('upgrades an existing Drizzle lineage before adopting the current baseline', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'metapi-migrate-adoption-'));
+    const dbPath = join(dataDir, 'hub.db');
     process.env.DATA_DIR = dataDir;
     vi.resetModules();
 
-    await expect(import('./migrate.js')).resolves.toMatchObject({
-      runSqliteMigrations: expect.any(Function),
+    const migrateModule = await import('./migrate.js');
+    await migrateModule.runSqliteMigrations();
+
+    const existing = new Database(dbPath);
+    try {
+      existing.exec('DROP TABLE compiled_runtime_active_artifact;');
+      existing.exec('DROP TABLE compiled_runtime_artifacts;');
+      existing.exec('DELETE FROM __drizzle_migrations;');
+      existing.prepare('INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)')
+        .run('retired-baseline', readMigrationJournalEntries()[0]!.when - 1);
+    } finally {
+      existing.close();
+    }
+
+    await migrateModule.runSqliteMigrations();
+
+    const upgraded = new Database(dbPath, { readonly: true });
+    try {
+      const tableNames = new Set((upgraded
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+        .all() as Array<{ name: string }>)
+        .map((row) => row.name));
+      expect(tableNames.has('compiled_runtime_artifacts')).toBe(true);
+      expect(tableNames.has('compiled_runtime_active_artifact')).toBe(true);
+      const currentMigration = upgraded.prepare(
+        'SELECT hash, created_at FROM __drizzle_migrations ORDER BY created_at DESC LIMIT 1',
+      ).get() as { hash: string; created_at: number };
+      expect(currentMigration.created_at).toBe(readMigrationJournalEntries()[0]!.when);
+      expect(currentMigration.hash).not.toBe('retired-baseline');
+    } finally {
+      upgraded.close();
+    }
+  });
+
+  it('losslessly upgrades legacy target bindings and compiled Graph storage into the current runtime', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'metapi-migrate-legacy-runtime-'));
+    const dbPath = join(dataDir, 'hub.db');
+    process.env.DATA_DIR = dataDir;
+    vi.resetModules();
+
+    const migrateModule = await import('./migrate.js');
+    await migrateModule.runSqliteMigrations();
+
+    const seededEndpoint = ensureRouteGraphExecutionTargetEndpoint({ nodes: [], edges: [], macros: [] }, {
+      id: 1,
+      upstreamModelName: 'legacy-model',
+      enabled: true,
     });
+    const seededGraph = createRouteGroupFacadeMacro(seededEndpoint.source, {
+      id: 'macro:legacy',
+      kind: 'manual',
+      modelName: 'legacy-model',
+      stages: [{ members: [{ kind: 'endpoint', endpointId: seededEndpoint.endpoint.routeEndpointId }] }],
+    }).source;
+    const legacyEndpoint = seededGraph.nodes.find((node) => node.type === 'route_endpoint');
+    if (legacyEndpoint?.type !== 'route_endpoint') throw new Error('Legacy migration fixture is missing an endpoint');
+    const legacyTarget = legacyEndpoint.config.targets[0]!;
+    delete legacyTarget.transportBinding;
+    legacyTarget.metadata = { executionTargetId: 1 };
+    legacyEndpoint.metadata = { executionTargetId: 1, upstreamModel: 'legacy-model' };
 
-    const verified = new Database(dbPath, { readonly: true });
-    const appliedRows = verified
-      .prepare('select created_at from __drizzle_migrations order by created_at asc')
-      .all() as Array<{ created_at: number }>;
+    const legacy = new Database(dbPath);
+    try {
+      legacy.pragma('foreign_keys = OFF');
+      legacy.exec('DROP TABLE runtime_execution_targets;');
+      legacy.exec(`
+        CREATE TABLE runtime_execution_targets (
+          id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+          execution_key TEXT NOT NULL,
+          site_id INTEGER NOT NULL,
+          account_id INTEGER,
+          token_id INTEGER,
+          oauth_route_unit_id INTEGER,
+          credential_binding_id INTEGER,
+          endpoint_profile_id INTEGER,
+          upstream_model_name TEXT NOT NULL,
+          normalized_model_name TEXT NOT NULL,
+          enabled INTEGER NOT NULL DEFAULT true,
+          discovered INTEGER NOT NULL DEFAULT true,
+          source TEXT NOT NULL DEFAULT 'availability_rebuild',
+          metadata_json TEXT,
+          created_at TEXT,
+          updated_at TEXT
+        );
+      `);
+      legacy.exec("INSERT INTO sites (id, name, url, platform, status) VALUES (1, 'legacy', 'https://legacy.test', 'openai', 'active');");
+      legacy.exec("INSERT INTO runtime_execution_targets (id, execution_key, site_id, upstream_model_name, normalized_model_name) VALUES (1, 'legacy-target', 1, 'legacy-model', 'legacy-model');");
+      legacy.exec('DROP TABLE route_graph_versions;');
+      legacy.exec(`
+        CREATE TABLE route_graph_versions (
+          id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+          version INTEGER NOT NULL,
+          source_graph_json TEXT NOT NULL,
+          compiled_graph_json TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'archived',
+          created_by TEXT,
+          created_at TEXT,
+          activated_at TEXT
+        );
+      `);
+      legacy.prepare(`
+        INSERT INTO route_graph_versions
+          (id, version, source_graph_json, compiled_graph_json, status, created_by, created_at, activated_at)
+        VALUES (1, 1, ?, '{}', 'active', 'legacy-fixture', '2026-07-27T00:00:00.000Z', '2026-07-27T00:00:00.000Z')
+      `).run(JSON.stringify(seededGraph));
+      legacy.exec("INSERT INTO route_graph_active_version (id, version_id, updated_at) VALUES (1, 1, '2026-07-27T00:00:00.000Z');");
+      legacy.exec('DELETE FROM __drizzle_migrations;');
+      legacy.prepare('INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)')
+        .run('retired-baseline', readMigrationJournalEntries()[0]!.when - 1);
+      legacy.pragma('foreign_keys = ON');
+    } finally {
+      legacy.close();
+    }
 
-    expect(appliedRows.map((row) => Number(row.created_at))).toEqual(
-      journalEntries.map((entry) => entry.when),
-    );
+    await migrateModule.runSqliteMigrations();
 
-    verified.close();
+    const upgraded = new Database(dbPath, { readonly: true });
+    try {
+      const target = upgraded.prepare('SELECT source_ref FROM runtime_execution_targets WHERE id = 1').get() as { source_ref: string };
+      expect(target.source_ref).toMatch(/^[0-9a-f-]{36}$/);
+      const graphColumns = upgraded.prepare('PRAGMA table_info(route_graph_versions)').all() as Array<{ name: string }>;
+      expect(graphColumns.map((column) => column.name)).not.toContain('compiled_graph_json');
+      const graph = JSON.parse((upgraded.prepare('SELECT source_graph_json FROM route_graph_versions WHERE id = 1').get() as { source_graph_json: string }).source_graph_json);
+      const endpoint = graph.nodes.find((node: { type: string }) => node.type === 'route_endpoint');
+      expect(endpoint.config.targets[0].transportBinding).toEqual({ kind: 'execution_target', executionTargetId: 1 });
+      const artifactRow = upgraded.prepare(`
+        SELECT artifact_json, source_graph_version_id
+        FROM compiled_runtime_artifacts
+        WHERE source_graph_version_id = 1
+      `).get() as { artifact_json: string; source_graph_version_id: number };
+      const artifact = JSON.parse(artifactRow.artifact_json);
+      expect(validateCompiledRouterBundle(artifact.compiledRouterBundle).ok).toBe(true);
+      const pointer = upgraded.prepare(`
+        SELECT artifact_id FROM compiled_runtime_active_artifact WHERE id = 1
+      `).get() as { artifact_id: string };
+      expect(pointer.artifact_id).toBeTruthy();
+    } finally {
+      upgraded.close();
+    }
   });
 
-  it('recovers from duplicate-column errors for single-statement migrations', async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), 'metapi-migrate-recover-'));
+  it('is idempotent after a legacy runtime upgrade', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'metapi-migrate-idempotent-runtime-'));
+    const dbPath = join(dataDir, 'hub.db');
     process.env.DATA_DIR = dataDir;
     vi.resetModules();
 
     const migrateModule = await import('./migrate.js');
-    const { __migrateTestUtils } = migrateModule;
+    await migrateModule.runSqliteMigrations();
 
-    const sqlite = new Database(':memory:');
-    sqlite.exec(`
-      CREATE TABLE account_tokens (
-        id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
-        token_group text
-      );
-    `);
+    const seededEndpoint = ensureRouteGraphExecutionTargetEndpoint({ nodes: [], edges: [], macros: [] }, {
+      id: 1,
+      upstreamModelName: 'legacy-idempotent-model',
+      enabled: true,
+    });
+    const seededGraph = createRouteGroupFacadeMacro(seededEndpoint.source, {
+      id: 'macro:legacy-idempotent',
+      kind: 'manual',
+      modelName: 'legacy-idempotent-model',
+      stages: [{ members: [{ kind: 'endpoint', endpointId: seededEndpoint.endpoint.routeEndpointId }] }],
+    }).source;
+    const endpoint = seededGraph.nodes.find((node) => node.type === 'route_endpoint');
+    if (endpoint?.type !== 'route_endpoint') throw new Error('Legacy idempotency fixture is missing an endpoint');
+    const target = endpoint.config.targets[0]!;
+    delete target.transportBinding;
+    target.metadata = { executionTargetId: 1 };
 
-    const tempMigrationsDir = mkdtempSync(join(tmpdir(), 'metapi-migration-files-'));
-    mkdirSync(join(tempMigrationsDir, 'meta'), { recursive: true });
+    const legacy = new Database(dbPath);
+    try {
+      legacy.pragma('foreign_keys = OFF');
+      legacy.exec('DROP TABLE runtime_execution_targets;');
+      legacy.exec(`
+        CREATE TABLE runtime_execution_targets (
+          id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+          execution_key TEXT NOT NULL,
+          site_id INTEGER NOT NULL,
+          account_id INTEGER,
+          token_id INTEGER,
+          oauth_route_unit_id INTEGER,
+          credential_binding_id INTEGER,
+          endpoint_profile_id INTEGER,
+          upstream_model_name TEXT NOT NULL,
+          normalized_model_name TEXT NOT NULL,
+          enabled INTEGER NOT NULL DEFAULT true,
+          discovered INTEGER NOT NULL DEFAULT true,
+          source TEXT NOT NULL DEFAULT 'availability_rebuild',
+          metadata_json TEXT,
+          created_at TEXT,
+          updated_at TEXT
+        );
+      `);
+      legacy.exec("INSERT INTO sites (id, name, url, platform, status) VALUES (1, 'legacy-idempotent', 'https://legacy-idempotent.test', 'openai', 'active');");
+      legacy.exec("INSERT INTO runtime_execution_targets (id, execution_key, site_id, upstream_model_name, normalized_model_name) VALUES (1, 'legacy-idempotent-target', 1, 'legacy-idempotent-model', 'legacy-idempotent-model');");
+      legacy.exec('DROP TABLE route_graph_versions;');
+      legacy.exec(`
+        CREATE TABLE route_graph_versions (
+          id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+          version INTEGER NOT NULL,
+          source_graph_json TEXT NOT NULL,
+          compiled_graph_json TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'archived',
+          created_by TEXT,
+          created_at TEXT,
+          activated_at TEXT
+        );
+      `);
+      legacy.prepare(`
+        INSERT INTO route_graph_versions
+          (id, version, source_graph_json, compiled_graph_json, status, created_by, created_at, activated_at)
+        VALUES (1, 1, ?, '{}', 'active', 'legacy-fixture', '2026-07-27T00:00:00.000Z', '2026-07-27T00:00:00.000Z')
+      `).run(JSON.stringify(seededGraph));
+      legacy.exec("INSERT INTO route_graph_active_version (id, version_id, updated_at) VALUES (1, 1, '2026-07-27T00:00:00.000Z');");
+      legacy.exec('DELETE FROM __drizzle_migrations;');
+      legacy.prepare('INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)')
+        .run('retired-baseline', readMigrationJournalEntries()[0]!.when - 1);
+      legacy.pragma('foreign_keys = ON');
+    } finally {
+      legacy.close();
+    }
 
-    writeFileSync(
-      join(tempMigrationsDir, 'meta', '_journal.json'),
-      JSON.stringify({
-        entries: [
-          {
-            tag: '0007_account_token_group',
-            when: 1772500000000,
-          },
-        ],
-      }),
-    );
+    await migrateModule.runSqliteMigrations();
+    const first = new Database(dbPath, { readonly: true });
+    let firstSourceRef: string;
+    let firstArtifactId: string;
+    let firstArtifactJson: string;
+    try {
+      firstSourceRef = (first.prepare('SELECT source_ref FROM runtime_execution_targets WHERE id = 1').get() as { source_ref: string }).source_ref;
+      const artifact = first.prepare('SELECT id, artifact_json FROM compiled_runtime_artifacts WHERE source_graph_version_id = 1').get() as { id: string; artifact_json: string };
+      firstArtifactId = artifact.id;
+      firstArtifactJson = artifact.artifact_json;
+    } finally {
+      first.close();
+    }
 
-    writeFileSync(
-      join(tempMigrationsDir, '0007_account_token_group.sql'),
-      'ALTER TABLE `account_tokens` ADD `token_group` text;\n',
-    );
+    await migrateModule.runSqliteMigrations();
 
-    const duplicateColumnError = new Error(
-      "DrizzleError: Failed to run the query 'ALTER TABLE `account_tokens` ADD `token_group` text;\n' duplicate column name: token_group",
-    );
-
-    const recovered = __migrateTestUtils.tryRecoverDuplicateColumnMigrationError(
-      sqlite,
-      tempMigrationsDir,
-      duplicateColumnError,
-    );
-
-    expect(recovered).toBe(true);
-
-    const applied = sqlite
-      .prepare('SELECT hash, created_at FROM __drizzle_migrations')
-      .all() as Array<{ hash: string; created_at: number }>;
-
-    expect(applied).toHaveLength(1);
-    expect(Number(applied[0].created_at)).toBe(1772500000000);
-
-    sqlite.close();
+    const second = new Database(dbPath, { readonly: true });
+    try {
+      expect((second.prepare('SELECT source_ref FROM runtime_execution_targets WHERE id = 1').get() as { source_ref: string }).source_ref)
+        .toBe(firstSourceRef!);
+      expect(second.prepare('SELECT id, artifact_json FROM compiled_runtime_artifacts WHERE source_graph_version_id = 1').get())
+        .toEqual({ id: firstArtifactId!, artifact_json: firstArtifactJson! });
+      expect(second.prepare('SELECT artifact_id FROM compiled_runtime_active_artifact WHERE id = 1').get())
+        .toEqual({ artifact_id: firstArtifactId! });
+    } finally {
+      second.close();
+    }
   });
 
-  it('recovers when duplicate-column message appears only in error cause', async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), 'metapi-migrate-recover-cause-'));
+  it('does not mutate an old database when Graph artifact preflight fails', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'metapi-migrate-preflight-failure-'));
+    const dbPath = join(dataDir, 'hub.db');
     process.env.DATA_DIR = dataDir;
     vi.resetModules();
 
     const migrateModule = await import('./migrate.js');
-    const { __migrateTestUtils } = migrateModule;
+    await migrateModule.runSqliteMigrations();
 
-    const sqlite = new Database(':memory:');
-    sqlite.exec(`
-      CREATE TABLE account_tokens (
-        id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
-        token_group text
-      );
-    `);
+    const seededEndpoint = ensureRouteGraphExecutionTargetEndpoint({ nodes: [], edges: [], macros: [] }, {
+      id: 999,
+      upstreamModelName: 'missing-target-model',
+      enabled: true,
+    });
+    const seededGraph = createRouteGroupFacadeMacro(seededEndpoint.source, {
+      id: 'macro:missing-target',
+      kind: 'manual',
+      modelName: 'missing-target-model',
+      stages: [{ members: [{ kind: 'endpoint', endpointId: seededEndpoint.endpoint.routeEndpointId }] }],
+    }).source;
 
-    const tempMigrationsDir = mkdtempSync(join(tmpdir(), 'metapi-migration-files-cause-'));
-    mkdirSync(join(tempMigrationsDir, 'meta'), { recursive: true });
+    const legacy = new Database(dbPath);
+    try {
+      legacy.pragma('foreign_keys = OFF');
+      legacy.exec('DROP TABLE runtime_execution_targets;');
+      legacy.exec(`
+        CREATE TABLE runtime_execution_targets (
+          id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+          execution_key TEXT NOT NULL,
+          site_id INTEGER NOT NULL,
+          account_id INTEGER,
+          token_id INTEGER,
+          oauth_route_unit_id INTEGER,
+          credential_binding_id INTEGER,
+          endpoint_profile_id INTEGER,
+          upstream_model_name TEXT NOT NULL,
+          normalized_model_name TEXT NOT NULL,
+          enabled INTEGER NOT NULL DEFAULT true,
+          discovered INTEGER NOT NULL DEFAULT true,
+          source TEXT NOT NULL DEFAULT 'availability_rebuild',
+          metadata_json TEXT,
+          created_at TEXT,
+          updated_at TEXT
+        );
+      `);
+      legacy.exec("INSERT INTO sites (id, name, url, platform, status) VALUES (1, 'missing-target', 'https://missing-target.test', 'openai', 'active');");
+      legacy.exec("INSERT INTO runtime_execution_targets (id, execution_key, site_id, upstream_model_name, normalized_model_name) VALUES (1, 'existing-target', 1, 'existing-model', 'existing-model');");
+      legacy.exec('DROP TABLE route_graph_versions;');
+      legacy.exec(`
+        CREATE TABLE route_graph_versions (
+          id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+          version INTEGER NOT NULL,
+          source_graph_json TEXT NOT NULL,
+          compiled_graph_json TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'archived',
+          created_by TEXT,
+          created_at TEXT,
+          activated_at TEXT
+        );
+      `);
+      legacy.prepare(`
+        INSERT INTO route_graph_versions
+          (id, version, source_graph_json, compiled_graph_json, status, created_by, created_at, activated_at)
+        VALUES (1, 1, ?, '{}', 'active', 'legacy-fixture', '2026-07-27T00:00:00.000Z', '2026-07-27T00:00:00.000Z')
+      `).run(JSON.stringify(seededGraph));
+      legacy.exec("INSERT INTO route_graph_active_version (id, version_id, updated_at) VALUES (1, 1, '2026-07-27T00:00:00.000Z');");
+      legacy.exec('DELETE FROM __drizzle_migrations;');
+      legacy.prepare('INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)')
+        .run('retired-baseline', readMigrationJournalEntries()[0]!.when - 1);
+      legacy.pragma('foreign_keys = ON');
+    } finally {
+      legacy.close();
+    }
 
-    writeFileSync(
-      join(tempMigrationsDir, 'meta', '_journal.json'),
-      JSON.stringify({
-        entries: [
-          {
-            tag: '0007_account_token_group',
-            when: 1772500000001,
-          },
-        ],
-      }),
-    );
+    await expect(migrateModule.runSqliteMigrations()).rejects.toThrow('execution targets are missing (999)');
 
-    writeFileSync(
-      join(tempMigrationsDir, '0007_account_token_group.sql'),
-      'ALTER TABLE `account_tokens` ADD `token_group` text;\n',
-    );
+    const unchanged = new Database(dbPath, { readonly: true });
+    try {
+      expect(unchanged.prepare('PRAGMA table_info(runtime_execution_targets)').all())
+        .not.toContainEqual(expect.objectContaining({ name: 'source_ref' }));
+      expect(unchanged.prepare('PRAGMA table_info(route_graph_versions)').all())
+        .toContainEqual(expect.objectContaining({ name: 'compiled_graph_json' }));
+      expect(unchanged.prepare('SELECT hash FROM __drizzle_migrations').get())
+        .toEqual({ hash: 'retired-baseline' });
+    } finally {
+      unchanged.close();
+    }
+  });
 
-    const drizzleLikeError = {
-      message: "DrizzleError: Failed to run the query 'ALTER TABLE `account_tokens` ADD `token_group` text;\n'",
-      cause: {
-        message: 'SqliteError: duplicate column name: token_group',
-      },
+  it('migrates current automatic candidate sources without changing manual Graph or artifact identity', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'metapi-migrate-current-candidate-source-'));
+    const dbPath = join(dataDir, 'hub.db');
+    process.env.DATA_DIR = dataDir;
+    vi.resetModules();
+
+    const migrateModule = await import('./migrate.js');
+    await migrateModule.runSqliteMigrations();
+
+    const ensured = ensureRouteGraphExecutionTargetEndpoint({ nodes: [], edges: [], macros: [] }, {
+      id: 1,
+      upstreamModelName: 'candidate-source-model',
+      enabled: true,
+    });
+    const endpointId = ensured.endpoint.routeEndpointId;
+    const automatic = createRouteGroupFacadeMacro(ensured.source, {
+      id: 'route:managed:automatic-fixture',
+      kind: 'automatic',
+      modelName: 'candidate-source-model',
+      stages: [{
+        id: 'fallback-stage:managed:primary-fixture',
+        members: [{
+          kind: 'endpoint',
+          memberId: 'dispatcher-member:managed:automatic-fixture',
+          endpointId,
+          weight: 13,
+          enabled: false,
+          metadata: { manualOverride: true },
+        }],
+      }],
+      metadata: { managementOwner: 'availability-rebuild' },
+    });
+    automatic.macro.config.candidateSource = {
+      kind: 'model_pattern',
+      pattern: 'candidate-source-model',
     };
-
-    const recovered = __migrateTestUtils.tryRecoverDuplicateColumnMigrationError(
-      sqlite,
-      tempMigrationsDir,
-      drizzleLikeError,
-    );
-
-    expect(recovered).toBe(true);
-
-    const applied = sqlite
-      .prepare('SELECT hash, created_at FROM __drizzle_migrations')
-      .all() as Array<{ hash: string; created_at: number }>;
-
-    expect(applied).toHaveLength(1);
-    expect(Number(applied[0].created_at)).toBe(1772500000001);
-
-    sqlite.close();
-  });
-
-  it('updates only the latest matching migration record when reconciling stale timestamps', async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), 'metapi-migrate-rowid-reconcile-'));
-    process.env.DATA_DIR = dataDir;
-    vi.resetModules();
-
-    const migrateModule = await import('./migrate.js');
-    const { __migrateTestUtils } = migrateModule;
-
-    const sqlite = new Database(':memory:');
-    sqlite.exec(`
-      CREATE TABLE "__drizzle_migrations" (
-        id SERIAL PRIMARY KEY,
-        hash text NOT NULL,
-        created_at numeric
-      );
-    `);
-    sqlite.prepare('INSERT INTO "__drizzle_migrations" ("hash", "created_at") VALUES (?, ?)').run('same-hash', 10);
-    sqlite.prepare('INSERT INTO "__drizzle_migrations" ("hash", "created_at") VALUES (?, ?)').run('same-hash', 20);
-
-    const changed = __migrateTestUtils.markMigrationRecordIfMissing(sqlite, {
-      hash: 'same-hash',
-      createdAt: 30,
+    const manual = createRouteGroupFacadeMacro(automatic.source, {
+      id: 'route:managed:manual-fixture',
+      kind: 'manual',
+      modelName: 'manual-model',
+      visibility: 'internal',
+      stages: [{ members: [{ kind: 'endpoint', endpointId }] }],
     });
+    const source = manual.source;
+    const compiled = compileRouteGraphSource(source, { compactRuntimeBundle: true });
+    expect(compiled.ok).toBe(true);
+    const artifact = buildRouteRuntimeStorageArtifact(compiled.compiled);
+    const automaticMacro = source.macros?.find((macro) => macro.id === 'route:managed:automatic-fixture');
+    if (!automaticMacro) throw new Error('Automatic fixture macro is missing');
 
-    const records = sqlite
-      .prepare('SELECT rowid, hash, created_at FROM "__drizzle_migrations" ORDER BY rowid ASC')
-      .all() as Array<{ rowid: number; hash: string; created_at: number }>;
-
-    expect(changed).toBe(true);
-    expect(records).toEqual([
-      { rowid: 1, hash: 'same-hash', created_at: 10 },
-      { rowid: 2, hash: 'same-hash', created_at: 30 },
-    ]);
-
-    sqlite.close();
-  });
-
-  it('recovers duplicate-column errors when the failed SQL contains quoted literals', async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), 'metapi-migrate-recover-quoted-'));
-    process.env.DATA_DIR = dataDir;
-    vi.resetModules();
-
-    const migrateModule = await import('./migrate.js');
-    const { __migrateTestUtils } = migrateModule;
-
-    const sqlite = new Database(':memory:');
-    sqlite.exec(`
-      CREATE TABLE account_tokens (
-        id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
-        value_status text DEFAULT 'ready' NOT NULL
-      );
-    `);
-
-    const tempMigrationsDir = mkdtempSync(join(tmpdir(), 'metapi-migration-files-quoted-'));
-    mkdirSync(join(tempMigrationsDir, 'meta'), { recursive: true });
-
-    writeFileSync(
-      join(tempMigrationsDir, 'meta', '_journal.json'),
-      JSON.stringify({
-        entries: [
-          {
-            tag: '0012_account_token_value_status',
-            when: 1773665311013,
-          },
-        ],
-      }),
-    );
-
-    writeFileSync(
-      join(tempMigrationsDir, '0012_account_token_value_status.sql'),
-      "ALTER TABLE `account_tokens` ADD `value_status` text DEFAULT 'ready' NOT NULL;\n",
-    );
-
-    const duplicateColumnError = new Error(
-      "DrizzleError: Failed to run the query 'ALTER TABLE `account_tokens` ADD `value_status` text DEFAULT 'ready' NOT NULL;\n' duplicate column name: value_status",
-    );
-
-    const recovered = __migrateTestUtils.tryRecoverDuplicateColumnMigrationError(
-      sqlite,
-      tempMigrationsDir,
-      duplicateColumnError,
-    );
-
-    expect(recovered).toBe(true);
-
-    const applied = sqlite
-      .prepare('SELECT hash, created_at FROM __drizzle_migrations')
-      .all() as Array<{ hash: string; created_at: number }>;
-
-    expect(applied).toHaveLength(1);
-    expect(Number(applied[0].created_at)).toBe(1773665311013);
-
-    sqlite.close();
-  });
-
-  it('recovers duplicate-column errors inside multi-statement migrations by replaying the full migration', async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), 'metapi-migrate-recover-multi-'));
-    process.env.DATA_DIR = dataDir;
-    vi.resetModules();
-
-    const migrateModule = await import('./migrate.js');
-    const { __migrateTestUtils } = migrateModule;
-
-    const sqlite = new Database(':memory:');
-    sqlite.exec(`
-      CREATE TABLE account_tokens (
-        id integer PRIMARY KEY AUTOINCREMENT NOT NULL,
-        token_group text
-      );
-    `);
-
-    const tempMigrationsDir = mkdtempSync(join(tmpdir(), 'metapi-migration-files-multi-'));
-    mkdirSync(join(tempMigrationsDir, 'meta'), { recursive: true });
-
-    writeFileSync(
-      join(tempMigrationsDir, 'meta', '_journal.json'),
-      JSON.stringify({
-        entries: [
-          {
-            tag: '0009_model_availability_is_manual',
-            when: 1772600000000,
-          },
-        ],
-      }),
-    );
-
-    writeFileSync(
-      join(tempMigrationsDir, '0009_model_availability_is_manual.sql'),
-      [
-        'CREATE TABLE IF NOT EXISTS `downstream_api_keys` (`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL);',
-        'ALTER TABLE `account_tokens` ADD `token_group` text;',
-      ].join('\n--> statement-breakpoint\n'),
-    );
-
-    const duplicateColumnError = new Error(
-      "DrizzleError: Failed to run the query 'ALTER TABLE `account_tokens` ADD `token_group` text;\n' duplicate column name: token_group",
-    );
-
-    const recovered = __migrateTestUtils.tryRecoverDuplicateColumnMigrationError(
-      sqlite,
-      tempMigrationsDir,
-      duplicateColumnError,
-    );
-
-    expect(recovered).toBe(true);
-
-    const createdTable = sqlite
-      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'downstream_api_keys'")
-      .get() as { name?: string } | undefined;
-    const applied = sqlite
-      .prepare('SELECT hash, created_at FROM __drizzle_migrations')
-      .all() as Array<{ hash: string; created_at: number }>;
-
-    expect(createdTable?.name).toBe('downstream_api_keys');
-    expect(applied).toHaveLength(1);
-    expect(Number(applied[0].created_at)).toBe(1772600000000);
-
-    sqlite.close();
-  });
-
-  it('replays missing migrations before marking a duplicate-column migration as applied', async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), 'metapi-migrate-partial-journal-'));
-    const dbPath = join(dataDir, 'hub.db');
     const sqlite = new Database(dbPath);
-    const journalEntries = readMigrationJournalEntries();
-    const missingTags = new Set([
-      '0006_site_disabled_models',
-      '0007_account_token_group',
-      '0008_sqlite_schema_backfill',
-      '0009_model_availability_is_manual',
-      '0010_proxy_logs_downstream_api_key',
-      '0011_downstream_api_key_metadata',
-      '0012_account_token_value_status',
-      '0013_oauth_multi_provider',
-      // 0008 creates downstream_api_keys, so later table-dependent migrations
-      // must stay missing in this partial-journal fixture too.
-      '0020_downstream_api_key_exclusions',
-    ]);
-    const appliedEntries = journalEntries.filter((entry) => !missingTags.has(entry.tag));
-
-    for (const entry of appliedEntries) {
-      const sqlText = readFileSync(join(migrationsDir, `${entry.tag}.sql`), 'utf8');
-      applyMigrationSql(sqlite, sqlText);
-    }
-    recordAppliedMigrations(sqlite, appliedEntries);
-
-    // Simulate legacy compatibility code adding token_group before the formal 0007 migration ran.
-    sqlite.exec('ALTER TABLE account_tokens ADD COLUMN token_group text;');
-    sqlite.close();
-
-    process.env.DATA_DIR = dataDir;
-    vi.resetModules();
-
-    await expect(import('./migrate.js')).resolves.toMatchObject({
-      runSqliteMigrations: expect.any(Function),
-    });
-
-    const verified = new Database(dbPath, { readonly: true });
-    const appliedRows = verified
-      .prepare('SELECT created_at FROM __drizzle_migrations ORDER BY created_at ASC')
-      .all() as Array<{ created_at: number }>;
-    const disabledModelsTable = verified
-      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'site_disabled_models'")
-      .get() as { name?: string } | undefined;
-    const downstreamApiKeysTable = verified
-      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'downstream_api_keys'")
-      .get() as { name?: string } | undefined;
-
-    expect(disabledModelsTable?.name).toBe('site_disabled_models');
-    expect(downstreamApiKeysTable?.name).toBe('downstream_api_keys');
-    expect(appliedRows.map((row) => Number(row.created_at))).toEqual(
-      journalEntries.map((entry) => entry.when),
-    );
-
-    verified.close();
-  });
-
-  it('recovers sequential duplicate-column migrations when a legacy sqlite schema predates the drizzle journal', async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), 'metapi-migrate-legacy-schema-'));
-    const dbPath = join(dataDir, 'hub.db');
-    const sqlite = new Database(dbPath);
-    const journalEntries = readMigrationJournalEntries();
-    const appliedEntries = journalEntries.filter((entry) => entry.tag !== '0019_proxy_logs_stream_timing');
-
-    for (const entry of appliedEntries) {
-      const sqlText = readFileSync(join(migrationsDir, `${entry.tag}.sql`), 'utf8');
-      applyMigrationSql(sqlite, sqlText);
+    try {
+      sqlite.exec("INSERT INTO sites (id, name, url, platform, status) VALUES (1, 'current-shape', 'https://current-shape.test', 'openai', 'active')");
+      sqlite.exec("INSERT INTO runtime_execution_targets (id, source_ref, execution_key, site_id, upstream_model_name, normalized_model_name) VALUES (1, 'source-ref-current-shape', 'execution-key-current-shape', 1, 'candidate-source-model', 'candidate-source-model')");
+      sqlite.prepare("INSERT INTO route_graph_versions (id, version, source_graph_json, status, created_by) VALUES (1, 1, ?, 'active', 'fixture')").run(JSON.stringify(source));
+      sqlite.exec("INSERT INTO route_graph_active_version (id, version_id) VALUES (1, 1)");
+      sqlite.prepare("INSERT INTO compiled_runtime_artifacts (id, artifact_json, bundle_hash, source_graph_version_id, source_graph_hash) VALUES ('artifact-current-shape', ?, ?, 1, 'sha256:before')")
+        .run(JSON.stringify(artifact), artifact.compiledRouterBundle?.hash || artifact.hash || '');
+      sqlite.exec("INSERT INTO compiled_runtime_active_artifact (id, artifact_id) VALUES (1, 'artifact-current-shape')");
+      sqlite.prepare("INSERT INTO route_graph_drafts (id, base_version, revision, working_graph_json, status) VALUES (1, 1, 2, ?, 'active')").run(JSON.stringify(source));
+      const operations = JSON.stringify([{ kind: 'upsert_macro', macro: automaticMacro }]);
+      sqlite.prepare('INSERT INTO route_graph_workspace_operation_batches (id, draft_id, source_revision, result_revision, forward_operations_json, inverse_operations_json) VALUES (1, 1, 1, 2, ?, ?)')
+        .run(operations, operations);
+    } finally {
+      sqlite.close();
     }
 
-    // Simulate SQLite legacy compatibility code partially adding the latest proxy log columns
-    // before drizzle creates its own migration journal.
-    sqlite.exec('ALTER TABLE proxy_logs ADD COLUMN is_stream integer;');
-    sqlite.close();
+    await migrateModule.runSqliteMigrations();
 
-    process.env.DATA_DIR = dataDir;
-    vi.resetModules();
-
-    await expect(import('./migrate.js')).resolves.toMatchObject({
-      runSqliteMigrations: expect.any(Function),
-    });
-
-    const verified = new Database(dbPath, { readonly: true });
-    const appliedRows = verified
-      .prepare('SELECT created_at FROM __drizzle_migrations ORDER BY created_at ASC')
-      .all() as Array<{ created_at: number }>;
-    const proxyLogColumns = verified
-      .prepare('PRAGMA table_info("proxy_logs")')
-      .all() as Array<{ name: string }>;
-
-    expect(appliedRows.map((row) => Number(row.created_at))).toEqual(
-      journalEntries.map((entry) => entry.when),
-    );
-    expect(proxyLogColumns.some((column) => column.name === 'is_stream')).toBe(true);
-    expect(proxyLogColumns.some((column) => column.name === 'first_byte_latency_ms')).toBe(true);
-
-    verified.close();
-  });
-
-  it('reconciles stale migration timestamps when the latest migration hash already exists', async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), 'metapi-migrate-stale-timestamp-'));
-    const dbPath = join(dataDir, 'hub.db');
-    const sqlite = new Database(dbPath);
-    const journalEntries = readMigrationJournalEntries();
-
-    for (const entry of journalEntries) {
-      const sqlText = readFileSync(join(migrationsDir, `${entry.tag}.sql`), 'utf8');
-      applyMigrationSql(sqlite, sqlText);
-    }
-    recordAppliedMigrations(sqlite, journalEntries);
-
-    const latestEntry = journalEntries.at(-1);
-    const latestSqlText = latestEntry
-      ? readFileSync(join(migrationsDir, `${latestEntry.tag}.sql`), 'utf8')
-      : '';
-    const latestHash = createHash('sha256').update(latestSqlText).digest('hex');
-    // Introduce about 70 minutes of timestamp drift so journal reconciliation has work to do.
-    sqlite
-      .prepare('UPDATE __drizzle_migrations SET created_at = ? WHERE hash = ?')
-      .run((latestEntry?.when ?? 0) - STALE_JOURNAL_TIMESTAMP_DRIFT_MS, latestHash);
-    sqlite.close();
-
-    process.env.DATA_DIR = dataDir;
-    vi.resetModules();
-
-    await expect(import('./migrate.js')).resolves.toMatchObject({
-      runSqliteMigrations: expect.any(Function),
-    });
-
-    const verified = new Database(dbPath, { readonly: true });
-    const latestApplied = verified
-      .prepare('SELECT created_at FROM __drizzle_migrations WHERE hash = ? LIMIT 1')
-      .get(latestHash) as { created_at: number } | undefined;
-
-    expect(Number(latestApplied?.created_at)).toBe(latestEntry?.when);
-
-    verified.close();
-  });
-
-  it('deduplicates legacy duplicate sites before applying the oauth site unique index', async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), 'metapi-migrate-duplicate-sites-'));
-    const dbPath = join(dataDir, 'hub.db');
-    const sqlite = new Database(dbPath);
-    const journalEntries = readMigrationJournalEntries();
-    const appliedEntries = journalEntries.filter((entry) => entry.tag !== '0013_oauth_multi_provider');
-
-    for (const entry of appliedEntries) {
-      const sqlText = readFileSync(join(migrationsDir, `${entry.tag}.sql`), 'utf8');
-      applyMigrationSql(sqlite, sqlText);
-    }
-    recordAppliedMigrations(sqlite, appliedEntries);
-
-    sqlite.exec(`
-      INSERT INTO sites (id, name, url, platform, status, is_pinned, sort_order, global_weight)
-      VALUES
-        (101, 'Primary Codex', 'https://chatgpt.com/backend-api/codex', 'codex', 'active', 0, 0, 1),
-        (202, 'Duplicate Codex', 'https://chatgpt.com/backend-api/codex', 'codex', 'disabled', 1, 9, 3);
-
-      INSERT INTO accounts (site_id, username, access_token, status, checkin_enabled)
-      VALUES
-        (101, 'first@example.com', 'token-a', 'active', 0),
-        (202, 'second@example.com', 'token-b', 'disabled', 0);
-
-      INSERT INTO site_disabled_models (site_id, model_name)
-      VALUES
-        (101, 'gpt-5'),
-        (202, 'gpt-5'),
-        (202, 'gpt-5-mini');
-    `);
-
-    sqlite.close();
-
-    process.env.DATA_DIR = dataDir;
-    vi.resetModules();
-
-    await expect(import('./migrate.js')).resolves.toMatchObject({
-      runSqliteMigrations: expect.any(Function),
-    });
-
-    const verified = new Database(dbPath, { readonly: true });
-    const sites = verified
-      .prepare('SELECT id, name, url, platform, status, is_pinned, sort_order, global_weight FROM sites ORDER BY id ASC')
-      .all() as Array<{
-      id: number;
-      name: string;
-      url: string;
-      platform: string;
-      status: string;
-      is_pinned: number;
-      sort_order: number;
-      global_weight: number;
-    }>;
-    const accounts = verified
-      .prepare('SELECT username, site_id FROM accounts ORDER BY username ASC')
-      .all() as Array<{ username: string; site_id: number }>;
-    const disabledModels = verified
-      .prepare('SELECT site_id, model_name FROM site_disabled_models ORDER BY site_id ASC, model_name ASC')
-      .all() as Array<{ site_id: number; model_name: string }>;
-
-    expect(sites).toEqual([
-      expect.objectContaining({
-        id: 101,
-        name: 'Primary Codex',
-        url: 'https://chatgpt.com/backend-api/codex',
-        platform: 'codex',
-      }),
-    ]);
-    expect(accounts).toEqual([
-      { username: 'first@example.com', site_id: 101 },
-      { username: 'second@example.com', site_id: 101 },
-    ]);
-    expect(disabledModels).toEqual([
-      { site_id: 101, model_name: 'gpt-5' },
-      { site_id: 101, model_name: 'gpt-5-mini' },
-    ]);
-
-    verified.close();
-  });
-
-  it('fails fast when duplicate-column recovery exceeds the retry budget', async () => {
-    const dataDir = mkdtempSync(join(tmpdir(), 'metapi-migrate-retry-budget-'));
-    process.env.DATA_DIR = dataDir;
-    vi.resetModules();
-
-    const migrateModule = await import('./migrate.js');
-    const { __migrateTestUtils } = migrateModule as {
-      __migrateTestUtils: Record<string, unknown>;
+    const readState = () => {
+      const current = new Database(dbPath, { readonly: true });
+      try {
+        const graphJson = (current.prepare('SELECT source_graph_json FROM route_graph_versions WHERE id = 1').get() as { source_graph_json: string }).source_graph_json;
+        const draftJson = (current.prepare('SELECT working_graph_json FROM route_graph_drafts WHERE id = 1').get() as { working_graph_json: string }).working_graph_json;
+        const batch = current.prepare('SELECT forward_operations_json, inverse_operations_json FROM route_graph_workspace_operation_batches WHERE id = 1').get() as { forward_operations_json: string; inverse_operations_json: string };
+        const artifactRow = current.prepare('SELECT id, artifact_json, source_graph_hash FROM compiled_runtime_artifacts WHERE source_graph_version_id = 1').get() as { id: string; artifact_json: string; source_graph_hash: string };
+        const pointer = current.prepare('SELECT artifact_id FROM compiled_runtime_active_artifact WHERE id = 1').get() as { artifact_id: string };
+        return { graphJson, draftJson, batch, artifactRow, pointer };
+      } finally {
+        current.close();
+      }
     };
+    const first = readState();
+    const graph = JSON.parse(first.graphJson);
+    const migratedAutomatic = graph.macros.find((macro: { id: string }) => macro.id === 'route:managed:automatic-fixture');
+    const migratedManual = graph.macros.find((macro: { id: string }) => macro.id === 'route:managed:manual-fixture');
+    expect(migratedAutomatic.config.candidateSource).toEqual({ kind: 'model_pattern', pattern: 'candidate-source-model' });
+    expect(migratedAutomatic.config.groups[0]).toEqual(expect.objectContaining({
+      id: 'fallback-stage:managed:primary-fixture',
+      acceptUnassigned: true,
+      members: [expect.objectContaining({
+        memberId: 'dispatcher-member:managed:automatic-fixture',
+        endpointId,
+        weight: 13,
+        enabled: false,
+        metadata: { manualOverride: true },
+      })],
+    }));
+    expect(migratedManual.config).not.toHaveProperty('candidateSource');
+    expect(JSON.parse(first.draftJson).macros.find((macro: { id: string }) => macro.id === 'route:managed:automatic-fixture').config.candidateSource)
+      .toEqual({ kind: 'model_pattern', pattern: 'candidate-source-model' });
+    for (const operationsJson of [first.batch.forward_operations_json, first.batch.inverse_operations_json]) {
+      expect(JSON.parse(operationsJson)[0].macro.config.candidateSource)
+        .toEqual({ kind: 'model_pattern', pattern: 'candidate-source-model' });
+    }
+    expect(first.artifactRow.id).toBe('artifact-current-shape');
+    expect(first.artifactRow.source_graph_hash).toMatch(/^sha256:/);
+    expect(first.artifactRow.source_graph_hash).not.toBe('sha256:before');
+    expect(validateCompiledRouterBundle(JSON.parse(first.artifactRow.artifact_json).compiledRouterBundle).ok).toBe(true);
+    expect(first.pointer).toEqual({ artifact_id: 'artifact-current-shape' });
 
-    const runSqliteMigrationRecoveryLoop = __migrateTestUtils
-      .runSqliteMigrationRecoveryLoop as ((input: {
-        runMigrate: () => void;
-        recoverDuplicateColumnMigrationError: (error: unknown) => { tag: string; recoveredCount: number } | null;
-        isSitesPlatformUrlUniqueConflictError: (error: unknown) => boolean;
-        deduplicateLegacySitesForUniqueIndex: () => boolean;
-        closeSqlite: () => void;
-      }) => void) | undefined;
-    const retryBudget = __migrateTestUtils.sqliteMigrationRecoveryRetryBudget as number | undefined;
-
-    const runMigrate = vi.fn(() => {
-      throw new Error('duplicate column name: token_group');
-    });
-    const closeSqlite = vi.fn();
-
-    expect(runSqliteMigrationRecoveryLoop).toBeTypeOf('function');
-    expect(typeof retryBudget).toBe('number');
-
-    expect(() => runSqliteMigrationRecoveryLoop!({
-      runMigrate,
-      recoverDuplicateColumnMigrationError: () => ({
-        tag: '0007_account_token_group',
-        recoveredCount: 1,
-      }),
-      isSitesPlatformUrlUniqueConflictError: () => false,
-      deduplicateLegacySitesForUniqueIndex: () => false,
-      closeSqlite,
-    })).toThrow(/retry budget/i);
-
-    expect(runMigrate).toHaveBeenCalledTimes((retryBudget ?? 0) + 1);
-    expect(closeSqlite).toHaveBeenCalledTimes(1);
+    await migrateModule.runSqliteMigrations();
+    expect(readState()).toEqual(first);
   });
 });

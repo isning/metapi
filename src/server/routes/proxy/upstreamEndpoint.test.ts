@@ -9,12 +9,16 @@ vi.mock('../../services/modelPricingService.js', () => ({
 
 import {
   buildClaudeCountTokensUpstreamRequest,
-  buildMinimalJsonHeadersForCompatibility,
   buildUpstreamEndpointRequest,
-  isUnsupportedMediaTypeError,
-  isEndpointDowngradeError,
+} from '../../services/upstreamRequestBuilder.js';
+import {
   resolveUpstreamEndpointCandidates,
-} from './upstreamEndpoint.js';
+} from '../../services/upstreamEndpointDerivation.js';
+import {
+  buildMinimalJsonHeadersForCompatibility,
+  isEndpointDowngradeError,
+  isUnsupportedMediaTypeError,
+} from '../../transformers/shared/endpointCompatibility.js';
 import {
   recordUpstreamEndpointFailure,
   recordUpstreamEndpointSuccess,
@@ -24,6 +28,9 @@ import {
   MAX_ENDPOINT_RUNTIME_MODEL_KEY_LENGTH,
   MODEL_KEY_HASH_SUFFIX_LENGTH,
 } from '../../services/upstreamEndpointRuntimeMemory.js';
+import {
+  extractSafePassthroughHeaders,
+} from '../../proxy-core/formats/headerPassthrough.js';
 
 const CODEX_DEFAULT_INSTRUCTIONS = 'You are a helpful coding assistant.';
 
@@ -49,13 +56,6 @@ describe('resolveUpstreamEndpointCandidates', () => {
     (config as any).codexHeaderDefaults = {
       userAgent: '',
       betaFeatures: '',
-    };
-    (config as any).payloadRules = {
-      default: [],
-      defaultRaw: [],
-      override: [],
-      overrideRaw: [],
-      filter: [],
     };
   });
   afterEach(() => {
@@ -229,7 +229,7 @@ describe('resolveUpstreamEndpointCandidates', () => {
       undefined,
       undefined,
       {
-        requestKind: 'responses-compact',
+        operationHint: 'responses-compact',
       },
     );
 
@@ -297,7 +297,7 @@ describe('resolveUpstreamEndpointCandidates', () => {
       endpoint: 'responses',
       downstreamFormat: 'openai',
       modelName: 'gpt-5.3',
-      requestCapabilities: {
+      surfaceCapabilityHints: {
         conversationFileSummary: {
           hasImage: true,
           hasAudio: false,
@@ -334,7 +334,7 @@ describe('resolveUpstreamEndpointCandidates', () => {
       endpoint: 'responses',
       downstreamFormat: 'openai',
       modelName: 'gpt-5.3',
-      requestCapabilities: {
+      surfaceCapabilityHints: {
         conversationFileSummary: {
           hasImage: true,
           hasAudio: false,
@@ -348,7 +348,7 @@ describe('resolveUpstreamEndpointCandidates', () => {
       siteId: baseContext.site.id,
       downstreamFormat: 'openai',
       modelName: 'gpt-5.3',
-      requestCapabilities: {
+      surfaceCapabilityHints: {
         conversationFileSummary: {
           hasImage: true,
           hasAudio: false,
@@ -392,7 +392,7 @@ describe('resolveUpstreamEndpointCandidates', () => {
       endpoint: 'messages',
       downstreamFormat: 'openai',
       modelName: 'gpt-5.3',
-      requestCapabilities: {
+      surfaceCapabilityHints: {
         hasNonImageFileInput: true,
         conversationFileSummary: {
           hasImage: false,
@@ -495,7 +495,7 @@ describe('resolveUpstreamEndpointCandidates', () => {
       endpoint: 'chat',
       downstreamFormat: 'openai',
       modelName: 'gpt-5.3',
-      requestCapabilities: {
+      surfaceCapabilityHints: {
         hasNonImageFileInput: true,
         conversationFileSummary: {
           hasImage: false,
@@ -822,6 +822,22 @@ describe('buildUpstreamEndpointRequest', () => {
   });
 
   it('applies a sub2api-style allowlist to generic passthrough headers', () => {
+    const downstreamHeaders = {
+      accept: 'application/json',
+      'accept-language': 'zh-CN',
+      'user-agent': 'client-ua/1.0',
+      originator: 'codex_cli_rs',
+      session_id: 'session-123',
+      conversation_id: 'conversation-123',
+      'x-codex-turn-state': 'turn-state',
+      'x-codex-turn-metadata': 'turn-metadata',
+      origin: 'https://client.example',
+      referer: 'https://client.example/chat',
+      'x-forwarded-for': '203.0.113.1',
+      'x-real-ip': '203.0.113.2',
+      version: '0.202.0',
+      'x-test-header': 'drop-me',
+    };
     const request = buildUpstreamEndpointRequest({
       endpoint: 'chat',
       modelName: 'upstream-gpt',
@@ -834,22 +850,8 @@ describe('buildUpstreamEndpointRequest', () => {
         messages: [{ role: 'user', content: 'hello' }],
       },
       downstreamFormat: 'openai',
-      downstreamHeaders: {
-        accept: 'application/json',
-        'accept-language': 'zh-CN',
-        'user-agent': 'client-ua/1.0',
-        originator: 'codex_cli_rs',
-        session_id: 'session-123',
-        conversation_id: 'conversation-123',
-        'x-codex-turn-state': 'turn-state',
-        'x-codex-turn-metadata': 'turn-metadata',
-        origin: 'https://client.example',
-        referer: 'https://client.example/chat',
-        'x-forwarded-for': '203.0.113.1',
-        'x-real-ip': '203.0.113.2',
-        version: '0.202.0',
-        'x-test-header': 'drop-me',
-      },
+      downstreamHeaders,
+      passthroughHeaders: extractSafePassthroughHeaders(downstreamHeaders),
     });
 
     expect(request.headers.accept).toBe('application/json');
@@ -870,6 +872,16 @@ describe('buildUpstreamEndpointRequest', () => {
   });
 
   it('preserves codex compatibility headers while stripping browser and ip passthrough headers', () => {
+    const downstreamHeaders = {
+      'user-agent': 'OpenClaw/1.0',
+      version: '0.202.0',
+      session_id: 'session-from-client',
+      'x-responsesapi-include-timing-metrics': '1',
+      origin: 'https://openclaw.example',
+      referer: 'https://openclaw.example/app',
+      'x-forwarded-for': '203.0.113.1',
+      'x-real-ip': '203.0.113.2',
+    };
     const request = buildUpstreamEndpointRequest({
       endpoint: 'responses',
       modelName: 'gpt-5.2-codex',
@@ -883,17 +895,9 @@ describe('buildUpstreamEndpointRequest', () => {
         input: 'hello codex',
       },
       downstreamFormat: 'openai',
-      downstreamHeaders: {
-        'user-agent': 'OpenClaw/1.0',
-        version: '0.202.0',
-        session_id: 'session-from-client',
-        'x-responsesapi-include-timing-metrics': '1',
-        origin: 'https://openclaw.example',
-        referer: 'https://openclaw.example/app',
-        'x-forwarded-for': '203.0.113.1',
-        'x-real-ip': '203.0.113.2',
-      },
-      providerHeaders: {
+      downstreamHeaders,
+      passthroughHeaders: extractSafePassthroughHeaders(downstreamHeaders),
+      platformHeaders: {
         Originator: 'codex_cli_rs',
       },
     } as any);
@@ -925,7 +929,7 @@ describe('buildUpstreamEndpointRequest', () => {
         service_tier: 'auto',
       },
       downstreamFormat: 'openai',
-      providerHeaders: {
+      platformHeaders: {
         Originator: 'codex_cli_rs',
         'Chatgpt-Account-Id': 'chatgpt-account-123',
       },
@@ -970,7 +974,7 @@ describe('buildUpstreamEndpointRequest', () => {
         messages: [{ role: 'user', content: 'hello codex' }],
       },
       downstreamFormat: 'openai',
-      providerHeaders: {
+      platformHeaders: {
         Originator: 'codex_cli_rs',
       },
       codexSessionCacheKey: 'gpt-5.4:user-123',
@@ -988,7 +992,7 @@ describe('buildUpstreamEndpointRequest', () => {
         messages: [{ role: 'user', content: 'hello again codex' }],
       },
       downstreamFormat: 'openai',
-      providerHeaders: {
+      platformHeaders: {
         Originator: 'codex_cli_rs',
       },
       codexSessionCacheKey: 'gpt-5.4:user-123',
@@ -1013,7 +1017,7 @@ describe('buildUpstreamEndpointRequest', () => {
         model: 'gpt-5.4',
         input: 'hello codex',
       },
-      providerHeaders: {
+      platformHeaders: {
         Originator: 'codex_cli_rs',
       },
     } as any);
@@ -1038,7 +1042,7 @@ describe('buildUpstreamEndpointRequest', () => {
         prompt_cache_key: 'codex-cache-123',
         input: 'hello codex',
       },
-      providerHeaders: {
+      platformHeaders: {
         Originator: 'codex_cli_rs',
       },
     } as any);
@@ -1072,7 +1076,7 @@ describe('buildUpstreamEndpointRequest', () => {
         max_tokens: 128,
         max_output_tokens: 512,
       },
-      providerHeaders: {
+      platformHeaders: {
         Originator: 'codex_cli_rs',
       },
       codexSessionCacheKey: 'gpt-5.4:user-456',
@@ -1116,7 +1120,7 @@ describe('buildUpstreamEndpointRequest', () => {
       downstreamHeaders: {
         'x-metapi-responses-websocket-transport': '1',
       },
-      providerHeaders: {
+      platformHeaders: {
         Originator: 'codex_cli_rs',
       },
     } as any);
@@ -1142,7 +1146,7 @@ describe('buildUpstreamEndpointRequest', () => {
         'user-agent': 'client-ua/2.0',
         'x-codex-beta-features': 'client-beta',
       },
-      providerHeaders: {
+      platformHeaders: {
         Originator: 'codex_cli_rs',
       },
     } as any);
@@ -1163,7 +1167,7 @@ describe('buildUpstreamEndpointRequest', () => {
         messages: [{ role: 'user', content: 'plain http codex' }],
       },
       downstreamFormat: 'openai',
-      providerHeaders: {
+      platformHeaders: {
         Originator: 'codex_cli_rs',
       },
     } as any);
@@ -1192,77 +1196,16 @@ describe('buildUpstreamEndpointRequest', () => {
       downstreamFormat: 'openai',
       downstreamHeaders: {
         'x-metapi-responses-websocket-transport': '1',
-        'x-metapi-tester-forced-channel-id': '77',
+        'x-metapi-tester-forced-execution-attempt-id': 'ea_25',
       },
-      providerHeaders: {
+      platformHeaders: {
         Originator: 'codex_cli_rs',
       },
     } as any);
 
     expect(request.headers['x-codex-beta-features']).toBe('multi_agent');
     expect(request.headers['x-metapi-responses-websocket-transport']).toBeUndefined();
-    expect(request.headers['x-metapi-tester-forced-channel-id']).toBeUndefined();
-  });
-
-  it('applies configured payload rules before preparing codex responses requests while forcing store false', () => {
-    (config as any).payloadRules = {
-      default: [
-        {
-          models: [{ name: 'gpt-*', protocol: 'codex' }],
-          params: {
-            'reasoning.effort': 'high',
-          },
-        },
-      ],
-      defaultRaw: [],
-      override: [
-        {
-          models: [{ name: 'gpt-5.4', protocol: 'codex' }],
-          params: {
-            'text.verbosity': 'low',
-            max_completion_tokens: 48,
-            max_tokens: 32,
-            max_output_tokens: 64,
-            store: true,
-          },
-        },
-      ],
-      overrideRaw: [],
-      filter: [
-        {
-          models: [{ name: 'gpt-5.4', protocol: 'codex' }],
-          params: ['safety_identifier'],
-        },
-      ],
-    };
-
-    const request = buildUpstreamEndpointRequest({
-      endpoint: 'responses',
-      modelName: 'gpt-5.4',
-      stream: false,
-      tokenValue: 'oauth-access-token',
-      oauthProvider: 'codex',
-      sitePlatform: 'codex',
-      siteUrl: 'https://chatgpt.com/backend-api/codex',
-      openaiBody: {
-        model: 'gpt-5.4',
-        messages: [{ role: 'user', content: 'hello codex' }],
-        verbosity: 'high',
-        safety_identifier: 'drop-me',
-      },
-      downstreamFormat: 'openai',
-      providerHeaders: {
-        Originator: 'codex_cli_rs',
-      },
-    } as any);
-
-    expect(request.body.reasoning).toEqual({ effort: 'high' });
-    expect(request.body.text).toEqual({ verbosity: 'low' });
-    expect(request.body.safety_identifier).toBeUndefined();
-    expect(request.body.max_completion_tokens).toBeUndefined();
-    expect(request.body.max_tokens).toBeUndefined();
-    expect(request.body.max_output_tokens).toBeUndefined();
-    expect(request.body.store).toBe(false);
+    expect(request.headers['x-metapi-tester-forced-execution-attempt-id']).toBeUndefined();
   });
 
   it('builds gemini-cli native requests with project envelope and bearer headers', () => {
@@ -1284,7 +1227,7 @@ describe('buildUpstreamEndpointRequest', () => {
         temperature: 0.4,
       },
       downstreamFormat: 'openai',
-      providerHeaders: {
+      platformHeaders: {
         'User-Agent': 'GeminiCLI/0.31.0/unknown (win32; x64)',
         'X-Goog-Api-Client': 'google-genai-sdk/1.41.0 gl-node/v22.19.0',
       },
@@ -1330,7 +1273,7 @@ describe('buildUpstreamEndpointRequest', () => {
         ],
       },
       downstreamFormat: 'openai',
-      providerHeaders: {
+      platformHeaders: {
         'User-Agent': 'google-api-nodejs-client/9.15.1',
         'X-Goog-Api-Client': 'google-cloud-sdk vscode_cloudshelleditor/0.1',
       },
@@ -1423,6 +1366,58 @@ describe('buildUpstreamEndpointRequest', () => {
     expect(request.headers['anthropic-beta']).toContain('context-management-2025-06-27');
     expect(request.headers.Accept).toBe('application/json');
     expect(request.headers['Accept-Encoding']).toBe('gzip, deflate, br, zstd');
+  });
+
+  it('uses standard anthropic-compatible headers for claude api-key upstream requests', () => {
+    const request = buildUpstreamEndpointRequest({
+      endpoint: 'messages',
+      modelName: 'deepseek-ai/DeepSeek-V4-Flash',
+      stream: true,
+      tokenValue: 'ms-api-key',
+      oauthProvider: '',
+      sitePlatform: 'claude',
+      siteUrl: 'https://api-inference.modelscope.cn',
+      openaiBody: {
+        model: 'deepseek-ai/DeepSeek-V4-Flash',
+        stream: true,
+        messages: [{ role: 'user', content: 'hello' }],
+      },
+      downstreamFormat: 'openai',
+    });
+
+    expect(request.path).toBe('/v1/messages');
+    expect(request.headers['x-api-key']).toBe('ms-api-key');
+    expect(request.headers.Authorization).toBeUndefined();
+    expect(request.headers['Content-Type']).toBe('application/json');
+    expect(request.headers['content-type']).toBeUndefined();
+    expect(request.headers['anthropic-version']).toBe('2023-06-01');
+    expect(request.headers.Accept).toBe('text/event-stream');
+    expect(request.headers['anthropic-beta']).toContain('claude-code-20250219');
+    expect(request.headers['anthropic-beta']).toContain('context-management-2025-06-27');
+    expect(request.headers['anthropic-beta']).not.toContain('oauth-2025-04-20');
+    expect(request.headers['anthropic-beta']).not.toContain('token-counting-2024-11-01');
+    expect(request.headers['Anthropic-Dangerous-Direct-Browser-Access']).toBeUndefined();
+    expect(request.headers['X-App']).toBeUndefined();
+    expect(request.headers['X-Stainless-Retry-Count']).toBeUndefined();
+    expect(request.headers['User-Agent']).toBeUndefined();
+    expect(request.headers['Accept-Encoding']).toBeUndefined();
+    expect(request.body).toEqual({
+      model: 'deepseek-ai/DeepSeek-V4-Flash',
+      stream: true,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: 'hello',
+              cache_control: { type: 'ephemeral' },
+            },
+          ],
+        },
+      ],
+      max_tokens: 4096,
+    });
   });
 
   it('extracts system input into top-level instructions in native codex responses bodies', () => {

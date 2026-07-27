@@ -8,8 +8,9 @@ const { apiMock } = vi.hoisted(() => ({
   apiMock: {
     getAuthInfo: vi.fn(),
     getRuntimeSettings: vi.fn(),
+    getRouteRuntimeCacheStatus: vi.fn().mockResolvedValue({ activeRuntime: { present: false, ageMs: null, artifactId: null, loadInFlight: false } }),
     getDownstreamApiKeys: vi.fn(),
-    getRoutesLite: vi.fn(),
+    getRouteGroupPage: vi.fn(),
     getRuntimeDatabaseConfig: vi.fn(),
     getBrandList: vi.fn(),
     factoryReset: vi.fn(),
@@ -72,13 +73,11 @@ describe('Settings factory reset', () => {
       logCleanupUsageLogsEnabled: false,
       logCleanupProgramLogsEnabled: false,
       logCleanupRetentionDays: 30,
-      routingFallbackUnitCost: 1,
-      routingWeights: {},
       adminIpAllowlist: [],
       systemProxyUrl: '',
     });
     apiMock.getDownstreamApiKeys.mockResolvedValue({ items: [] });
-    apiMock.getRoutesLite.mockResolvedValue([]);
+    apiMock.getRouteGroupPage.mockResolvedValue({ items: [], pageInfo: { page: 1, pageSize: 500, totalCount: 0, hasMore: false } });
     apiMock.getBrandList.mockResolvedValue({ brands: [] });
     apiMock.getRuntimeDatabaseConfig.mockResolvedValue({
       active: { dialect: 'sqlite', connection: '(default sqlite path)', ssl: false },
@@ -148,7 +147,6 @@ describe('Settings factory reset', () => {
       const lockedConfirmButton = root.root.find((node) => (
         node.type === 'button'
         && collectText(node).includes('确认重新初始化系统')
-        && node.props.className === 'btn btn-danger'
       ));
       expect(lockedConfirmButton.props.disabled).toBe(true);
       expect(collectText(lockedConfirmButton)).toContain('3s');
@@ -161,7 +159,6 @@ describe('Settings factory reset', () => {
       const confirmButton = root.root.find((node) => (
         node.type === 'button'
         && collectText(node).trim() === '确认重新初始化系统'
-        && node.props.className === 'btn btn-danger'
       ));
       expect(confirmButton.props.disabled).toBe(false);
 

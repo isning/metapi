@@ -1,11 +1,13 @@
-import { and, asc, eq, sql, type SQL, type SQLWrapper } from 'drizzle-orm';
-import { db, runtimeDbDialect, schema } from '../db/index.js';
+import { and, asc, eq, inArray, isNotNull, sql, type SQL, type SQLWrapper } from 'drizzle-orm';
+import { db, schema } from '../db/index.js';
 import {
   formatUtcSqlDateTime,
   getResolvedTimeZone,
   parseStoredUtcDateTime,
   type StoredUtcDateTimeInput,
 } from './localTimeService.js';
+import { valueBillingDetailsRowsInBaseUnit } from './billingCostValuationService.js';
+import type { BaseCostSummary } from '../../shared/billingCost.js';
 
 export type DownstreamKeyTrendRange = '24h' | '7d' | 'all';
 
@@ -16,15 +18,17 @@ export type DownstreamKeyTrendBucket = {
   failedRequests: number;
   successRate: number | null;
   totalTokens: number;
-  totalCost: number;
+  cost: BaseCostSummary;
 };
 
-type DownstreamTrendLogRow = {
-  id: number;
+type DownstreamTrendRequestRow = {
+  id: string;
   createdAt: StoredUtcDateTimeInput;
   status: string | null;
   totalTokens: number | null;
-  totalCost: number | null;
+  billingDetails: string | null;
+  siteId: number | null;
+  accountId: number | null;
 };
 
 type DownstreamTrendBucketAccumulator = {
@@ -33,7 +37,11 @@ type DownstreamTrendBucketAccumulator = {
   successRequests: number;
   failedRequests: number;
   totalTokens: number;
-  totalCost: number;
+  billingRows: Array<{
+    billingDetails: string | null;
+    siteId: number | null;
+    accountId: number | null;
+  }>;
 };
 
 type TimeZoneDateTimeParts = {
@@ -47,7 +55,7 @@ type TimeZoneDateTimeParts = {
 
 type DownstreamTrendCursor = {
   createdAt: StoredUtcDateTimeInput;
-  id: number;
+  id: string;
 };
 
 const ALL_RANGE_CHUNK_SIZE = 5_000;
@@ -79,10 +87,6 @@ export function buildBucketTsExpressionForDialect(
     return sql<number>`extract(epoch from date_trunc('hour', ${createdAtTimestamp}))::bigint`;
   }
   return sql<number>`cast(cast(strftime('%s', ${createdAtColumn}) as integer) / ${bucketSeconds} as integer) * ${bucketSeconds}`;
-}
-
-function resolveBucketTsExpression(bucketSeconds: number) {
-  return buildBucketTsExpressionForDialect(runtimeDbDialect, schema.proxyLogs.createdAt, bucketSeconds);
 }
 
 export function resolveDownstreamTrendTimeZone(raw?: string | null): string {
@@ -174,7 +178,7 @@ function resolveLocalBucketStartUtc(
 
 function accumulateTrendRows(
   accumulator: Map<string, DownstreamTrendBucketAccumulator>,
-  rows: DownstreamTrendLogRow[],
+  rows: DownstreamTrendRequestRow[],
   bucketSeconds: number,
   timeZone: string,
 ) {
@@ -187,36 +191,40 @@ function accumulateTrendRows(
       successRequests: 0,
       failedRequests: 0,
       totalTokens: 0,
-      totalCost: 0,
+      billingRows: [],
     };
-    const isSuccess = (row.status || '').trim().toLowerCase() === 'success';
+    const isSuccess = row.status === 'success';
     bucket.totalRequests += 1;
     bucket.successRequests += isSuccess ? 1 : 0;
     bucket.failedRequests += isSuccess ? 0 : 1;
     bucket.totalTokens += Number(row.totalTokens || 0);
-    bucket.totalCost += Number(row.totalCost || 0);
+    bucket.billingRows.push({
+      billingDetails: row.billingDetails,
+      siteId: row.siteId,
+      accountId: row.accountId,
+    });
     accumulator.set(startUtc, bucket);
   }
 }
 
-function finalizeTrendBuckets(accumulator: Map<string, DownstreamTrendBucketAccumulator>): DownstreamKeyTrendBucket[] {
-  return Array.from(accumulator.values())
+async function finalizeTrendBuckets(accumulator: Map<string, DownstreamTrendBucketAccumulator>): Promise<DownstreamKeyTrendBucket[]> {
+  return await Promise.all(Array.from(accumulator.values())
     .sort((left, right) => left.startUtc.localeCompare(right.startUtc))
-    .map((bucket) => ({
+    .map(async (bucket) => ({
       startUtc: bucket.startUtc,
       totalRequests: bucket.totalRequests,
       successRequests: bucket.successRequests,
       failedRequests: bucket.failedRequests,
       successRate: bucket.totalRequests > 0 ? Math.round((bucket.successRequests / bucket.totalRequests) * 1000) / 10 : null,
       totalTokens: bucket.totalTokens,
-      totalCost: Math.round(bucket.totalCost * 1_000_000) / 1_000_000,
-    }));
+      cost: await valueBillingDetailsRowsInBaseUnit(bucket.billingRows),
+    })));
 }
 
 function buildTrendCursorClause(cursor: DownstreamTrendCursor): SQL {
   return sql`(
-    ${schema.proxyLogs.createdAt} > ${cursor.createdAt}
-    or (${schema.proxyLogs.createdAt} = ${cursor.createdAt} and ${schema.proxyLogs.id} > ${cursor.id})
+    ${schema.proxyRequests.completedAt} > ${cursor.createdAt}
+    or (${schema.proxyRequests.completedAt} = ${cursor.createdAt} and ${schema.proxyRequests.id} > ${cursor.id})
   )`;
 }
 
@@ -230,24 +238,30 @@ async function readAllRangeTrendBuckets(
   let cursor: DownstreamTrendCursor | null = null;
 
   for (;;) {
-    const whereClauses: SQL[] = [eq(schema.proxyLogs.downstreamApiKeyId, downstreamApiKeyId)];
+    const whereClauses: SQL[] = [
+      eq(schema.proxyRequests.downstreamApiKeyId, downstreamApiKeyId),
+      isNotNull(schema.proxyRequests.completedAt),
+      inArray(schema.proxyRequests.status, ['success', 'failure']),
+    ];
     if (sinceUtc) {
-      whereClauses.push(sql`${schema.proxyLogs.createdAt} >= ${sinceUtc}`);
+      whereClauses.push(sql`${schema.proxyRequests.completedAt} >= ${sinceUtc}`);
     }
     if (cursor) {
       whereClauses.push(buildTrendCursorClause(cursor));
     }
 
     const rows = await db.select({
-      id: schema.proxyLogs.id,
-      createdAt: schema.proxyLogs.createdAt,
-      status: schema.proxyLogs.status,
-      totalTokens: schema.proxyLogs.totalTokens,
-      totalCost: schema.proxyLogs.estimatedCost,
+      id: schema.proxyRequests.id,
+      createdAt: schema.proxyRequests.completedAt,
+      status: schema.proxyRequests.status,
+      totalTokens: schema.proxyRequests.totalTokens,
+      billingDetails: schema.proxyRequests.billingDetails,
+      siteId: schema.proxyRequests.finalSiteId,
+      accountId: schema.proxyRequests.finalAccountId,
     })
-      .from(schema.proxyLogs)
+      .from(schema.proxyRequests)
       .where(and(...whereClauses))
-      .orderBy(asc(schema.proxyLogs.createdAt), asc(schema.proxyLogs.id))
+      .orderBy(asc(schema.proxyRequests.completedAt), asc(schema.proxyRequests.id))
       .limit(ALL_RANGE_CHUNK_SIZE)
       .all();
 
@@ -261,53 +275,7 @@ async function readAllRangeTrendBuckets(
     };
   }
 
-  return finalizeTrendBuckets(accumulator);
-}
-
-async function readWindowedTrendBuckets(
-  downstreamApiKeyId: number,
-  bucketSeconds: number,
-  sinceUtc: string | null,
-  timeZone: string,
-): Promise<DownstreamKeyTrendBucket[]> {
-  if (timeZone.toUpperCase() !== 'UTC') {
-    return readAllRangeTrendBuckets(downstreamApiKeyId, bucketSeconds, timeZone, sinceUtc);
-  }
-
-  const bucketTs = resolveBucketTsExpression(bucketSeconds);
-  const whereClauses: SQL[] = [eq(schema.proxyLogs.downstreamApiKeyId, downstreamApiKeyId)];
-  if (sinceUtc) {
-    whereClauses.push(sql`${schema.proxyLogs.createdAt} >= ${sinceUtc}`);
-  }
-
-  const rows = await db.select({
-    bucketTs,
-    totalRequests: sql<number>`count(*)`,
-    successRequests: sql<number>`coalesce(sum(case when ${schema.proxyLogs.status} = 'success' then 1 else 0 end), 0)`,
-    failedRequests: sql<number>`coalesce(sum(case when ${schema.proxyLogs.status} = 'success' then 0 else 1 end), 0)`,
-    totalTokens: sql<number>`coalesce(sum(coalesce(${schema.proxyLogs.totalTokens}, 0)), 0)`,
-    totalCost: sql<number>`coalesce(sum(coalesce(${schema.proxyLogs.estimatedCost}, 0)), 0)`,
-  })
-    .from(schema.proxyLogs)
-    .where(and(...whereClauses))
-    .groupBy(bucketTs)
-    .orderBy(bucketTs)
-    .all();
-
-  return rows.map((row: any) => {
-    const tsSeconds = Number(row.bucketTs || 0);
-    const totalRequests = Number(row.totalRequests || 0);
-    const successRequests = Number(row.successRequests || 0);
-    return {
-      startUtc: tsSeconds > 0 ? new Date(tsSeconds * 1000).toISOString() : null,
-      totalRequests,
-      successRequests,
-      failedRequests: Number(row.failedRequests || 0),
-      successRate: totalRequests > 0 ? Math.round((successRequests / totalRequests) * 1000) / 10 : null,
-      totalTokens: Number(row.totalTokens || 0),
-      totalCost: Math.round(Number(row.totalCost || 0) * 1_000_000) / 1_000_000,
-    };
-  });
+  return await finalizeTrendBuckets(accumulator);
 }
 
 export async function readDownstreamApiKeyTrendBuckets(input: {
@@ -322,9 +290,12 @@ export async function readDownstreamApiKeyTrendBuckets(input: {
   const bucketSeconds = resolveDownstreamTrendBucketSeconds(input.range);
   const sinceUtc = resolveDownstreamTrendRangeSinceUtc(input.range);
   const timeZone = resolveDownstreamTrendTimeZone(input.timeZone);
-  const buckets = input.range === 'all'
-    ? await readAllRangeTrendBuckets(input.downstreamApiKeyId, bucketSeconds, timeZone, sinceUtc)
-    : await readWindowedTrendBuckets(input.downstreamApiKeyId, bucketSeconds, sinceUtc, timeZone);
+  const buckets = await readAllRangeTrendBuckets(
+    input.downstreamApiKeyId,
+    bucketSeconds,
+    timeZone,
+    sinceUtc,
+  );
 
   return {
     bucketSeconds,

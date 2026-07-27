@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, create, type ReactTestInstance } from 'react-test-renderer';
 import { MemoryRouter } from 'react-router-dom';
-import ModernSelect from '../components/ModernSelect.js';
 import { ToastProvider } from '../components/Toast.js';
 import ProxyLogs from './ProxyLogs.js';
 
@@ -10,7 +9,7 @@ const { apiMock } = vi.hoisted(() => ({
     getProxyLogs: vi.fn(),
     getProxyLogsQuery: vi.fn(),
     getProxyLogsMeta: vi.fn(),
-    getProxyLogDetail: vi.fn(),
+    getProxyRequestLogDetail: vi.fn(),
     getProxyDebugTraces: vi.fn(),
     getProxyDebugTraceDetail: vi.fn(),
     getRuntimeSettings: vi.fn(),
@@ -38,6 +37,86 @@ async function flushMicrotasks() {
   });
 }
 
+function costSummary(amount: number) {
+  return {
+    amounts: [{
+      amount,
+      unit: 'currency' as const,
+      currency: 'USD',
+      source: 'provider_catalog',
+      sourceId: null,
+      estimateLevel: 'exact',
+      planFingerprint: 'plan:test',
+      observationCount: 1,
+    }],
+    knownObservationCount: 1,
+    unknownObservationCount: 0,
+  };
+}
+
+function buildProxyRequestFixture(input: Record<string, any>) {
+  const {
+    id,
+    createdAt,
+    modelRequested,
+    status,
+    latencyMs,
+    firstTokenLatencyMs,
+    isStream,
+    promptTokens,
+    completionTokens,
+    totalTokens,
+    estimatedCost,
+    errorMessage,
+    decisionSnapshot,
+    runtimeUsage,
+    billingDetails,
+    ...attemptFacts
+  } = input;
+  const executionAttemptId = String(input.executionAttemptId || `attempt:test:${id}`);
+  return {
+    id: `request:test:${id}`,
+    downstreamPath: '/v1/chat/completions',
+    requestedModel: modelRequested,
+    routeEntrypointId: input.routeEntrypointId || 'entry:test',
+    runtimeEndpointId: input.runtimeEndpointId || 'endpoint:test',
+    finalExecutionAttemptId: executionAttemptId,
+    runtimeBundleHash: 'bundle:test',
+    status,
+    httpStatus: status === 'success' ? 200 : 502,
+    isStream: isStream ?? null,
+    latencyMs: latencyMs ?? null,
+    firstTokenLatencyMs: firstTokenLatencyMs ?? null,
+    promptTokens: promptTokens ?? null,
+    completionTokens: completionTokens ?? null,
+    totalTokens: totalTokens ?? null,
+    estimatedCost: estimatedCost ?? null,
+    errorMessage: errorMessage ?? null,
+    startedAt: createdAt,
+    completedAt: createdAt,
+    attempts: [{
+      ...attemptFacts,
+      id,
+      createdAt,
+      modelRequested,
+      status,
+      latencyMs,
+      firstTokenLatencyMs,
+      isStream,
+      promptTokens,
+      completionTokens,
+      totalTokens,
+      estimatedCost,
+      errorMessage,
+      executionAttemptId,
+      billingDetails,
+    }],
+    decisionSnapshot,
+    runtimeUsage,
+    billingDetails,
+  };
+}
+
 function buildListResponse(overrides?: Partial<{
   items: any[];
   total: number;
@@ -47,13 +126,13 @@ function buildListResponse(overrides?: Partial<{
     totalCount: number;
     successCount: number;
     failedCount: number;
-    totalCost: number;
+    cost: ReturnType<typeof costSummary>;
     totalTokensAll: number;
   };
 }>) {
   return {
     items: [
-      {
+      buildProxyRequestFixture({
         id: 101,
         createdAt: '2026-03-09 16:00:00',
         modelRequested: 'gpt-4o',
@@ -61,6 +140,7 @@ function buildListResponse(overrides?: Partial<{
         status: 'success',
         latencyMs: 120,
         firstByteLatencyMs: 35,
+        firstTokenLatencyMs: 80,
         isStream: true,
         promptTokens: 10,
         completionTokens: 5,
@@ -78,16 +158,16 @@ function buildListResponse(overrides?: Partial<{
         downstreamKeyName: '移动端灰度',
         downstreamKeyGroupName: '项目A',
         downstreamKeyTags: ['VIP', '灰度'],
-      },
+      }),
     ],
     total: 1,
     page: 1,
-    pageSize: 50,
+    pageSize: 20,
     summary: {
       totalCount: 12,
       successCount: 8,
       failedCount: 4,
-      totalCost: 1.23,
+      cost: costSummary(1.23),
       totalTokensAll: 15,
     },
     clientOptions: [
@@ -136,9 +216,9 @@ describe('ProxyLogs server-driven page', () => {
       proxyDebugCaptureHeaders: true,
       proxyDebugCaptureBodies: false,
       proxyDebugCaptureStreamChunks: false,
-      proxyDebugTargetSessionId: '',
-      proxyDebugTargetClientKind: '',
-      proxyDebugTargetModel: '',
+      proxyDebugFilterSessionId: '',
+      proxyDebugFilterClientKind: '',
+      proxyDebugFilterModel: '',
       proxyDebugRetentionHours: 24,
       proxyDebugMaxBodyBytes: 262144,
     });
@@ -154,7 +234,7 @@ describe('ProxyLogs server-driven page', () => {
         { id: 2, name: 'backup-site', status: 'active' },
       ],
     });
-    apiMock.getProxyLogDetail.mockResolvedValue({
+    apiMock.getProxyRequestLogDetail.mockResolvedValue(buildProxyRequestFixture({
       id: 101,
       createdAt: '2026-03-09 16:00:00',
       modelRequested: 'gpt-4o',
@@ -162,6 +242,7 @@ describe('ProxyLogs server-driven page', () => {
       status: 'success',
       latencyMs: 120,
       firstByteLatencyMs: 35,
+      firstTokenLatencyMs: 80,
       isStream: true,
       promptTokens: 10,
       completionTokens: 5,
@@ -179,6 +260,139 @@ describe('ProxyLogs server-driven page', () => {
       downstreamKeyName: '移动端灰度',
       downstreamKeyGroupName: '项目A',
       downstreamKeyTags: ['VIP', '灰度'],
+      decisionSnapshot: {
+        source: 'snapshot',
+        capturedAt: '2026-03-09 15:56:30',
+        request: {
+          downstreamPath: '/v1/chat/completions',
+          stream: true,
+        },
+        compiledRuntime: {
+          runtimeArtifactId: 'runtime-artifact-8',
+
+          bundleHash: 'hash-proxy-log',
+        },
+        match: {
+          requestedModel: 'gpt-4o',
+          actualModel: 'gpt-4o',
+          planId: 'plan:gpt-4o',
+          entryId: 'entry:gpt-4o',
+          terminalKind: 'endpoint',
+          publicModelName: 'gpt-4o',
+        },
+        endpoint: {
+          endpointId: 'endpoint:gpt-4o',
+          executionTargetId: 12,
+          compatibilityPolicy: null,
+        },
+        executionAttempt: {
+          executionAttemptId: 'attempt:gpt-4o:primary',
+          model: 'gpt-4o',
+          executionTargetId: 12,
+          accountId: 3,
+          tokenId: 8,
+          siteId: 2,
+          credential: {
+            site: {
+              id: 2,
+              name: 'main-site',
+              url: 'https://main-site.example.com',
+              platform: 'new-api',
+            },
+            account: {
+              id: 3,
+              username: 'tester',
+              status: 'active',
+            },
+            token: {
+              id: 8,
+              name: 'Premium Token',
+              tokenGroup: 'premium',
+              enabled: true,
+              valueStatus: 'ready',
+              source: 'manual',
+            },
+            oauthRouteUnitId: null,
+          },
+        },
+        state: {
+          failureOverlay: {
+            disabledExecutionAttemptIds: [],
+            disabledExecutionTargetIds: [],
+          },
+          executionAttemptState: {
+            executionTargetId: 12,
+            successCount: 11,
+            failCount: 2,
+            totalLatencyMs: 3000,
+            totalCost: 0.4,
+            consecutiveFailCount: 1,
+            cooldownLevel: 0,
+            cooldownUntil: null,
+            lastUsedAt: '2026-03-09 15:55:00',
+            lastSelectedAt: '2026-03-09 15:56:00',
+            lastFailAt: null,
+          },
+        },
+        filters: {
+          endpointPreference: 'chat',
+          postBuild: null,
+        },
+        syntheticResponse: null,
+      },
+      runtimeUsage: {
+        windowDays: 30,
+        fromLocalDay: '2026-02-08',
+        toLocalDay: '2026-03-09',
+        entry: {
+          scope: 'entry',
+          identity: '31',
+          totalCalls: 120,
+          successCalls: 108,
+          failedCalls: 12,
+          successRate: 90,
+          totalTokens: 64000,
+          cost: costSummary(4.2),
+          averageLatencyMs: 240,
+          latencyCount: 120,
+        },
+        endpoint: {
+          scope: 'endpoint',
+          identity: 'endpoint:gpt-4o',
+          totalCalls: 88,
+          successCalls: 77,
+          failedCalls: 11,
+          successRate: 87.5,
+          totalTokens: 42000,
+          cost: costSummary(2.8),
+          averageLatencyMs: 260,
+          latencyCount: 88,
+        },
+        executionAttempt: {
+          scope: 'executionAttempt',
+          identity: 'attempt:gpt-4o:primary',
+          totalCalls: 80,
+          successCalls: 72,
+          failedCalls: 8,
+          successRate: 90,
+          totalTokens: 39000,
+          cost: costSummary(2.4),
+          averageLatencyMs: 230,
+          latencyCount: 80,
+        },
+        model: {
+          scope: 'model',
+          identity: 'gpt-4o',
+          totalCalls: 160,
+          successCalls: 140,
+          failedCalls: 20,
+          successRate: 87.5,
+          totalTokens: 88000,
+          cost: costSummary(5.6),
+          averageLatencyMs: 250,
+          latencyCount: 160,
+        },
+      },
       billingDetails: {
         breakdown: {
           inputPerMillion: 1,
@@ -208,7 +422,7 @@ describe('ProxyLogs server-driven page', () => {
           promptTokensIncludeCache: false,
         },
       },
-    });
+    }));
     apiMock.getProxyDebugTraces.mockResolvedValue({
       items: [
         {
@@ -228,9 +442,45 @@ describe('ProxyLogs server-driven page', () => {
         id: 701,
         requestedModel: 'gpt-4o',
         sessionId: 'sess-debug-1',
+        downstreamPath: '/v1/responses',
+        finalStatus: 'failed',
+        finalHttpStatus: 502,
+        finalUpstreamPath: '/responses',
+        clientKind: 'codex',
+        selectedExecutionAttemptId: 'ea_2j',
+        routeEntrypointId: 'entry:gpt-4o',
+        runtimeEndpointId: 'endpoint:gpt-4o:responses',
+        selectedSiteId: 12,
+        selectedSitePlatform: 'new-api',
+        selectedSiteDisplay: {
+          id: 12,
+          label: 'main-site',
+          platform: 'new-api',
+          url: 'https://upstream.example.com',
+        },
         requestHeadersJson: '{\n  "authorization": "Bearer demo"\n}',
+        runtimeTraceJson: '{\n  "context": { "downstreamFormat": "openai/responses" }\n}',
       },
-      attempts: [],
+      attempts: [
+        {
+          id: 9001,
+          attemptIndex: 0,
+          endpoint: 'openai/responses',
+          requestPath: '/v1/responses',
+          targetUrl: 'https://upstream.example.com/responses',
+          runtimeExecutor: 'default',
+          requestHeadersJson: '{\n  "content-type": "application/json"\n}',
+          requestBodyJson: '{\n  "model": "gpt-4o"\n}',
+          responseStatus: 502,
+          responseHeadersJson: '{\n  "x-request-id": "req_1"\n}',
+          responseBodyJson: '{\n  "error": "bad gateway"\n}',
+          rawErrorText: 'bad gateway',
+          recoverApplied: true,
+          downgradeDecision: false,
+          downgradeReason: null,
+          memoryWriteJson: '{\n  "blocked": ["responses"]\n}',
+        },
+      ],
     });
     apiMock.updateRuntimeSettings.mockResolvedValue({
       success: true,
@@ -238,9 +488,9 @@ describe('ProxyLogs server-driven page', () => {
       proxyDebugCaptureHeaders: true,
       proxyDebugCaptureBodies: true,
       proxyDebugCaptureStreamChunks: false,
-      proxyDebugTargetSessionId: 'sess-debug-1',
-      proxyDebugTargetClientKind: 'codex',
-      proxyDebugTargetModel: 'gpt-4o',
+      proxyDebugFilterSessionId: 'sess-debug-1',
+      proxyDebugFilterClientKind: 'codex',
+      proxyDebugFilterModel: 'gpt-4o',
       proxyDebugRetentionHours: 12,
       proxyDebugMaxBodyBytes: 131072,
     });
@@ -266,14 +516,14 @@ describe('ProxyLogs server-driven page', () => {
       await flushMicrotasks();
 
       expect(apiMock.getProxyLogs).toHaveBeenCalledWith({
-        limit: 50,
+        limit: 20,
         offset: 0,
         status: 'all',
         search: '',
       });
 
       const text = collectText(root!.root);
-      expect(text).toContain('消耗总额 $1.2300');
+      expect(text).toContain('花费USD 1.23');
       expect(text).toContain('全部 12');
       expect(text).toContain('成功 8');
       expect(text).toContain('失败 4');
@@ -282,7 +532,8 @@ describe('ProxyLogs server-driven page', () => {
       expect(text).toContain('推测');
       expect(text).toContain('下游 Key: 移动端灰度');
       expect(text).toContain('流式');
-      expect(text).toContain('首字');
+      expect(text).toContain('首字延迟');
+      expect(text).toContain('80ms');
     } finally {
       await act(async () => {
         root?.unmount();
@@ -322,14 +573,12 @@ describe('ProxyLogs server-driven page', () => {
       await flushMicrotasks();
 
       const traceEnabledToggle = root.root.find((node) => (
-        node.type === 'input'
-        && node.props.type === 'checkbox'
-        && node.props['data-debug-setting'] === 'trace-enabled'
+        node.props['data-debug-setting'] === 'trace-enabled'
+        && typeof node.props.onCheckedChange === 'function'
       ));
       const captureBodiesToggle = root.root.find((node) => (
-        node.type === 'input'
-        && node.props.type === 'checkbox'
-        && node.props['data-debug-setting'] === 'capture-bodies'
+        node.props['data-debug-setting'] === 'capture-bodies'
+        && typeof node.props.onCheckedChange === 'function'
       ));
       const sessionInput = root.root.find((node) => (
         node.type === 'input'
@@ -341,8 +590,8 @@ describe('ProxyLogs server-driven page', () => {
       ));
 
       await act(async () => {
-        traceEnabledToggle.props.onChange({ target: { checked: true } });
-        captureBodiesToggle.props.onChange({ target: { checked: true } });
+        traceEnabledToggle.props.onCheckedChange(true);
+        captureBodiesToggle.props.onCheckedChange(true);
         sessionInput.props.onChange({ target: { value: 'sess-debug-1' } });
         retentionInput.props.onChange({ target: { value: '12' } });
       });
@@ -361,7 +610,7 @@ describe('ProxyLogs server-driven page', () => {
       expect(apiMock.updateRuntimeSettings).toHaveBeenCalledWith(expect.objectContaining({
         proxyDebugTraceEnabled: true,
         proxyDebugCaptureBodies: true,
-        proxyDebugTargetSessionId: 'sess-debug-1',
+        proxyDebugFilterSessionId: 'sess-debug-1',
         proxyDebugRetentionHours: 12,
       }));
     } finally {
@@ -585,7 +834,13 @@ describe('ProxyLogs server-driven page', () => {
 
       expect(apiMock.getProxyDebugTraceDetail).toHaveBeenCalledWith(701);
       expect(collectText(root.root)).toContain('原始下游请求头');
-      expect(collectText(root.root)).toContain('Attempt 记录');
+      expect(collectText(root.root)).toContain('Attempt 时间线');
+      expect(collectText(root.root)).toContain('ea_2j');
+      expect(collectText(root.root)).toContain('gpt-4o');
+      expect(collectText(root.root)).not.toContain('GPT-4o production route (#31)');
+      expect(collectText(root.root)).toContain('main-site · new-api');
+      expect(collectText(root.root)).not.toContain('main-site · new-api (#12)');
+      expect(collectText(root.root)).toContain('运行时状态更新');
     } finally {
       root?.unmount();
     }
@@ -598,9 +853,9 @@ describe('ProxyLogs server-driven page', () => {
       proxyDebugCaptureHeaders: true,
       proxyDebugCaptureBodies: false,
       proxyDebugCaptureStreamChunks: false,
-      proxyDebugTargetSessionId: '',
-      proxyDebugTargetClientKind: '',
-      proxyDebugTargetModel: '',
+      proxyDebugFilterSessionId: '',
+      proxyDebugFilterClientKind: '',
+      proxyDebugFilterModel: '',
       proxyDebugRetentionHours: 24,
       proxyDebugMaxBodyBytes: 262144,
     });
@@ -643,9 +898,9 @@ describe('ProxyLogs server-driven page', () => {
       proxyDebugCaptureHeaders: true,
       proxyDebugCaptureBodies: false,
       proxyDebugCaptureStreamChunks: false,
-      proxyDebugTargetSessionId: '',
-      proxyDebugTargetClientKind: '',
-      proxyDebugTargetModel: '',
+      proxyDebugFilterSessionId: '',
+      proxyDebugFilterClientKind: '',
+      proxyDebugFilterModel: '',
       proxyDebugRetentionHours: 24,
       proxyDebugMaxBodyBytes: 262144,
     });
@@ -760,7 +1015,7 @@ describe('ProxyLogs server-driven page', () => {
       ));
 
       await act(async () => {
-        expandHeadersButton.props.onClick();
+        expandHeadersButton.props.onClick({ defaultPrevented: false });
       });
       await flushMicrotasks();
 
@@ -804,7 +1059,7 @@ describe('ProxyLogs server-driven page', () => {
         && node.props.style?.display === 'inline-flex'
       ));
 
-      expect(modelBadge.props.style?.alignSelf).toBe('flex-start');
+      expect(modelBadge.props.style?.whiteSpace).toBe('nowrap');
     } finally {
       root?.unmount();
     }
@@ -813,7 +1068,7 @@ describe('ProxyLogs server-driven page', () => {
   it('renders explicit client self-reports before protocol-family fallback labels', async () => {
     apiMock.getProxyLogs.mockResolvedValue(buildListResponse({
       items: [
-        {
+        buildProxyRequestFixture({
           id: 101,
           createdAt: '2026-03-09 16:00:00',
           modelRequested: 'gpt-4o',
@@ -838,7 +1093,7 @@ describe('ProxyLogs server-driven page', () => {
           downstreamKeyName: '移动端灰度',
           downstreamKeyGroupName: '项目A',
           downstreamKeyTags: ['VIP', '灰度'],
-        },
+        }),
       ],
     }));
 
@@ -857,7 +1112,7 @@ describe('ProxyLogs server-driven page', () => {
       await flushMicrotasks();
 
       const row = root!.root.find((node) => (
-        node.type === 'tr' && node.props['data-testid'] === 'proxy-log-row-101'
+        node.type === 'tr' && node.props['data-testid'] === 'proxy-log-row-request:test:101'
       ));
       const rowText = collectText(row);
       expect(rowText).toContain('openclaw');
@@ -891,12 +1146,22 @@ describe('ProxyLogs server-driven page', () => {
       });
       await flushMicrotasks();
 
-      const selects = root!.root.findAllByType(ModernSelect);
-      const clientSelect = selects.find((node) => node.props.placeholder === '全部客户端');
-      expect(clientSelect).toBeDefined();
+      const clientSelectTrigger = root!.root.findAll((node) => (
+        node.type === 'button'
+        && node.props.role === 'combobox'
+      ))[0];
+      expect(clientSelectTrigger).toBeDefined();
 
       await act(async () => {
-        clientSelect!.props.onChange('app:cherry_studio');
+        clientSelectTrigger.props.onClick();
+      });
+      const clientOption = root!.root.find((node) => (
+        node.type === 'button'
+        && node.props.role === 'option'
+        && collectText(node).includes('应用 · Cherry Studio')
+      ));
+      await act(async () => {
+        clientOption.props.onClick();
       });
       await flushMicrotasks();
 
@@ -909,20 +1174,20 @@ describe('ProxyLogs server-driven page', () => {
       await flushMicrotasks();
 
       expect(apiMock.getProxyLogs).toHaveBeenNthCalledWith(2, {
-        limit: 50,
+        limit: 20,
         offset: 0,
         status: 'failed',
         search: '',
       });
       expect(apiMock.getProxyLogs).toHaveBeenNthCalledWith(3, {
-        limit: 50,
+        limit: 20,
         offset: 0,
         status: 'failed',
         search: '',
         client: 'app:cherry_studio',
       });
       expect(apiMock.getProxyLogs).toHaveBeenLastCalledWith({
-        limit: 50,
+        limit: 20,
         offset: 0,
         status: 'failed',
         search: 'mini',
@@ -949,7 +1214,7 @@ describe('ProxyLogs server-driven page', () => {
       await flushMicrotasks();
 
       const row = root!.root.find((node) => (
-        node.type === 'tr' && node.props['data-testid'] === 'proxy-log-row-101'
+        node.type === 'tr' && node.props['data-testid'] === 'proxy-log-row-request:test:101'
       ));
 
       await act(async () => {
@@ -957,7 +1222,26 @@ describe('ProxyLogs server-driven page', () => {
       });
       await flushMicrotasks();
 
-      expect(apiMock.getProxyLogDetail).toHaveBeenCalledTimes(1);
+      expect(apiMock.getProxyRequestLogDetail).toHaveBeenCalledTimes(1);
+      const expandedText = collectText(root.root);
+      expect(expandedText).toContain('路由决策快照');
+      expect(expandedText).toContain('请求时记录');
+      expect(expandedText).toContain('plan:gpt-4o');
+      expect(expandedText).toContain('endpoint:gpt-4o');
+      expect(expandedText).toContain('Premium Token');
+      expect(expandedText).toContain('attempt:gpt-4o:primary');
+      expect(expandedText).not.toContain('dispatcher:gpt-4o');
+      expect(expandedText).not.toContain('arg:gpt-4o');
+      expect(expandedText).not.toContain('entry:legacy');
+      expect(expandedText).toContain('运行时统计');
+      expect(expandedText).toContain('近 30 天');
+      expect(expandedText).toContain('执行目标');
+      expect(expandedText).toContain('#12');
+      expect(expandedText).toContain('公开模型');
+      expect(expandedText).toContain('Premium Token');
+      expect(expandedText).toContain('main-site');
+      expect(expandedText).toContain('87.5%');
+      expect(expandedText).toContain('230ms');
 
       await act(async () => {
         row.props.onClick();
@@ -969,8 +1253,8 @@ describe('ProxyLogs server-driven page', () => {
       });
       await flushMicrotasks();
 
-      expect(apiMock.getProxyLogDetail).toHaveBeenCalledTimes(1);
-      expect(apiMock.getProxyLogDetail).toHaveBeenCalledWith(101);
+      expect(apiMock.getProxyRequestLogDetail).toHaveBeenCalledTimes(1);
+      expect(apiMock.getProxyRequestLogDetail).toHaveBeenCalledWith('request:test:101');
     } finally {
       root?.unmount();
     }
@@ -979,7 +1263,7 @@ describe('ProxyLogs server-driven page', () => {
   it('renders unknown usage as -- instead of 0 in the server-driven table', async () => {
     apiMock.getProxyLogs.mockResolvedValue(buildListResponse({
       items: [
-        {
+        buildProxyRequestFixture({
           id: 101,
           createdAt: '2026-03-09 16:00:00',
           modelRequested: 'gpt-5',
@@ -1000,13 +1284,13 @@ describe('ProxyLogs server-driven page', () => {
           clientAppId: 'cherry_studio',
           clientAppName: 'Cherry Studio',
           clientConfidence: 'heuristic',
-        },
+        }),
       ],
       summary: {
         totalCount: 1,
         successCount: 1,
         failedCount: 0,
-        totalCost: 0,
+        cost: costSummary(0),
         totalTokensAll: 0,
       },
     }));
@@ -1026,7 +1310,7 @@ describe('ProxyLogs server-driven page', () => {
       await flushMicrotasks();
 
       const row = root!.root.find((node) => (
-        node.type === 'tr' && node.props['data-testid'] === 'proxy-log-row-101'
+        node.type === 'tr' && node.props['data-testid'] === 'proxy-log-row-request:test:101'
       ));
       const rowText = collectText(row);
       expect(rowText).toContain('--');
@@ -1054,7 +1338,7 @@ describe('ProxyLogs server-driven page', () => {
       const expectedFrom = new Date(2026, 2, 9, 8, 0).toISOString();
       const expectedTo = new Date(2026, 2, 9, 9, 0).toISOString();
       expect(apiMock.getProxyLogs).toHaveBeenCalledWith({
-        limit: 50,
+        limit: 20,
         offset: 0,
         status: 'all',
         search: '',

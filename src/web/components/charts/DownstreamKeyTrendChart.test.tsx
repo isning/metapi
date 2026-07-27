@@ -59,7 +59,13 @@ describe('DownstreamKeyTrendChart', () => {
               startUtc: bucketStart,
               totalRequests: 2,
               totalTokens: 2128425,
-              totalCost: 2.128425,
+              cost: {
+                amount: 2.128425,
+                unit: 'USD',
+                knownObservationCount: 2,
+                unknownObservationCount: 0,
+                incompatibleObservationCount: 0,
+              },
               successRate: 100,
             },
           ]}
@@ -105,7 +111,13 @@ describe('DownstreamKeyTrendChart', () => {
               startUtc: bucketStart,
               totalRequests: 3,
               totalTokens: 600,
-              totalCost: 0.06,
+              cost: {
+                amount: 0.06,
+                unit: 'USD',
+                knownObservationCount: 3,
+                unknownObservationCount: 0,
+                incompatibleObservationCount: 0,
+              },
               successRate: 66.7,
             },
           ]}

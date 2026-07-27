@@ -4,12 +4,13 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { waitForBackgroundTaskToReachTerminalState } from '../../test-fixtures/backgroundTaskTestUtils.js';
+import { clearRouteGroupMemberTestData } from '../../../testing/routeGroupMemberTestUtils.js';
 
 const verifyTokenMock = vi.fn();
 const getApiTokensMock = vi.fn();
 const refreshBalanceMock = vi.fn();
 const refreshModelsForAccountMock = vi.fn();
-const rebuildTokenRoutesFromAvailabilityMock = vi.fn();
+const rebuildManagedRouteGroupsFromAvailabilityMock = vi.fn();
 const ensureDefaultTokenForAccountMock = vi.fn();
 const syncTokensFromUpstreamMock = vi.fn();
 
@@ -26,7 +27,7 @@ vi.mock('../../services/balanceService.js', () => ({
 
 vi.mock('../../services/modelService.js', () => ({
   refreshModelsForAccount: (...args: unknown[]) => refreshModelsForAccountMock(...args),
-  rebuildTokenRoutesFromAvailability: (...args: unknown[]) => rebuildTokenRoutesFromAvailabilityMock(...args),
+  rebuildManagedRouteGroupsFromAvailability: (...args: unknown[]) => rebuildManagedRouteGroupsFromAvailabilityMock(...args),
 }));
 
 vi.mock('../../services/accountTokenService.js', () => ({
@@ -66,15 +67,16 @@ describe('accounts background initialization', () => {
     getApiTokensMock.mockReset();
     refreshBalanceMock.mockReset();
     refreshModelsForAccountMock.mockReset();
-    rebuildTokenRoutesFromAvailabilityMock.mockReset();
+    rebuildManagedRouteGroupsFromAvailabilityMock.mockReset();
     ensureDefaultTokenForAccountMock.mockReset();
     syncTokensFromUpstreamMock.mockReset();
     resetBackgroundTasks?.();
 
     await db.delete(schema.proxyLogs).run();
     await db.delete(schema.checkinLogs).run();
-    await db.delete(schema.routeChannels).run();
-    await db.delete(schema.tokenRoutes).run();
+    await clearRouteGroupMemberTestData();
+    await db.delete(schema.runtimeExecutionTargetState).run();
+    await db.delete(schema.runtimeExecutionTargets).run();
     await db.delete(schema.tokenModelAvailability).run();
     await db.delete(schema.modelAvailability).run();
     await db.delete(schema.accountTokens).run();
@@ -108,7 +110,7 @@ describe('accounts background initialization', () => {
     ensureDefaultTokenForAccountMock.mockResolvedValue(undefined);
     refreshBalanceMock.mockResolvedValue({ balance: 1, used: 0, quota: 1 });
     refreshModelsForAccountMock.mockResolvedValue(undefined);
-    rebuildTokenRoutesFromAvailabilityMock.mockResolvedValue(undefined);
+    rebuildManagedRouteGroupsFromAvailabilityMock.mockResolvedValue(undefined);
     syncTokensFromUpstreamMock.mockResolvedValue(undefined);
 
     let releaseTokens: ((value: Array<{ name: string; value: string }>) => void) | null = null;
@@ -168,7 +170,7 @@ describe('accounts background initialization', () => {
       expect(syncTokensFromUpstreamMock).toHaveBeenCalledTimes(1);
       expect(refreshBalanceMock).toHaveBeenCalledTimes(1);
       expect(refreshModelsForAccountMock).toHaveBeenCalledTimes(1);
-      expect(rebuildTokenRoutesFromAvailabilityMock).toHaveBeenCalledTimes(1);
+      expect(rebuildManagedRouteGroupsFromAvailabilityMock).toHaveBeenCalledTimes(1);
       expect(task).toMatchObject({ status: 'succeeded' });
     } finally {
       releaseTokens?.([]);

@@ -17,6 +17,7 @@ import {
 } from "./snapshotCacheService.js";
 import { estimateRewardWithTodayIncomeFallback } from "./todayIncomeRewardService.js";
 import { createAdminSnapshotPersistence } from "./adminSnapshotStore.js";
+import { listValuedRequestCostFacts } from "./billingCostValuationService.js";
 
 export type AccountCapabilities = {
   canCheckin: boolean;
@@ -29,6 +30,10 @@ export type AccountOverviewRow = typeof schema.accounts.$inferSelect & {
   credentialMode: AccountCredentialMode;
   capabilities: AccountCapabilities;
   todaySpend: number;
+  todaySpendUnit: string;
+  todaySpendKnownObservationCount: number;
+  todaySpendUnknownObservationCount: number;
+  todaySpendIncompatibleObservationCount: number;
   todayReward: number;
   runtimeHealth: RuntimeHealthInfo;
 };
@@ -111,21 +116,8 @@ async function loadAccountsSnapshotPayload(): Promise<AccountsSnapshotPayload> {
 
   const { localDay, startUtc, endUtc } = getLocalDayRangeUtc();
 
-  const [todaySpendRows, modelCountRows, todayCheckins] = await Promise.all([
-    db
-      .select({
-        accountId: schema.proxyLogs.accountId,
-        totalSpend: sql<number>`coalesce(sum(${schema.proxyLogs.estimatedCost}), 0)`,
-      })
-      .from(schema.proxyLogs)
-      .where(
-        and(
-          gte(schema.proxyLogs.createdAt, startUtc),
-          lt(schema.proxyLogs.createdAt, endUtc),
-        ),
-      )
-      .groupBy(schema.proxyLogs.accountId)
-      .all(),
+  const [valuedCosts, modelCountRows, todayCheckins] = await Promise.all([
+    listValuedRequestCostFacts({ fromDay: localDay, toDay: localDay }),
     db
       .select({
         accountId: schema.modelAvailability.accountId,
@@ -152,10 +144,14 @@ async function loadAccountsSnapshotPayload(): Promise<AccountsSnapshotPayload> {
       .all(),
   ]);
 
-  const spendByAccount: Record<number, number> = {};
-  for (const row of todaySpendRows) {
-    if (row.accountId == null) continue;
-    spendByAccount[row.accountId] = Number(row.totalSpend || 0);
+  const spendByAccount = new Map<number, { amount: number; known: number; unknown: number; incompatible: number }>();
+  for (const fact of valuedCosts.facts) {
+    const current = spendByAccount.get(fact.accountId) || { amount: 0, known: 0, unknown: 0, incompatible: 0 };
+    current.amount += fact.amount ?? 0;
+    current.known += fact.knownObservationCount;
+    current.unknown += fact.unknownObservationCount;
+    current.incompatible += fact.incompatibleObservationCount;
+    spendByAccount.set(fact.accountId, current);
   }
 
   const modelCountByAccount: Record<number, number> = {};
@@ -189,9 +185,11 @@ async function loadAccountsSnapshotPayload(): Promise<AccountsSnapshotPayload> {
         site: row.sites,
         credentialMode,
         capabilities,
-        todaySpend:
-          Math.round((spendByAccount[row.accounts.id] || 0) * 1_000_000) /
-          1_000_000,
+        todaySpend: Math.round((spendByAccount.get(row.accounts.id)?.amount || 0) * 1_000_000) / 1_000_000,
+        todaySpendUnit: valuedCosts.baseCostUnit,
+        todaySpendKnownObservationCount: spendByAccount.get(row.accounts.id)?.known || 0,
+        todaySpendUnknownObservationCount: spendByAccount.get(row.accounts.id)?.unknown || 0,
+        todaySpendIncompatibleObservationCount: spendByAccount.get(row.accounts.id)?.incompatible || 0,
         todayReward:
           Math.round(
             estimateRewardWithTodayIncomeFallback({

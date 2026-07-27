@@ -119,7 +119,7 @@ describe('Accounts CodingPlan initialization', () => {
 
   it('preloads vendor-specific recommendations for new code presets such as DeepSeek', async () => {
     apiMock.getSites.mockResolvedValue([
-      { id: 11, name: 'DeepSeek Official', url: 'https://api.deepseek.com/v1', platform: 'openai', status: 'active' },
+      { id: 11, name: 'DeepSeek Official', url: 'https://api.deepseek.com', platform: 'openai', status: 'active' },
     ]);
     apiMock.addAccount.mockResolvedValue({
       id: 19,
@@ -143,8 +143,8 @@ describe('Accounts CodingPlan initialization', () => {
 
       const rendered = JSON.stringify(root.toJSON());
       expect(rendered).toContain('DeepSeek / OpenAI');
-      expect(rendered).toContain('deepseek-chat');
-      expect(rendered).toContain('deepseek-reasoner');
+      expect(rendered).toContain('deepseek-v4-flash');
+      expect(rendered).toContain('deepseek-v4-pro');
 
       const tokenInput = root.root.find((node) => (
         node.type === 'textarea'
@@ -173,7 +173,7 @@ describe('Accounts CodingPlan initialization', () => {
       }));
       expect(apiMock.addAccountAvailableModels).toHaveBeenCalledWith(
         19,
-        ['deepseek-chat', 'deepseek-reasoner'],
+        ['deepseek-v4-flash', 'deepseek-v4-pro'],
       );
     } finally {
       root?.unmount();

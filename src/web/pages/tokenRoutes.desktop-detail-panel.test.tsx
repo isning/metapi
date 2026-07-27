@@ -1,382 +1,449 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, create, type ReactTestInstance, type ReactTestRenderer } from 'react-test-renderer';
-import { MemoryRouter } from 'react-router-dom';
-import { ToastProvider } from '../components/Toast.js';
-import TokenRoutes, { DesktopDetailPanelPresence } from './TokenRoutes.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, create, type ReactTestInstance } from "react-test-renderer";
+import { MemoryRouter } from "react-router-dom";
+import { ToastProvider } from "../components/Toast.js";
+import TokenRoutes from "./TokenRoutes.js";
 
-const { apiMock, getBrandMock } = vi.hoisted(() => ({
+const { apiMock } = vi.hoisted(() => ({
   apiMock: {
-    getRoutesSummary: vi.fn(),
-    getRouteChannels: vi.fn(),
-    getModelTokenCandidates: vi.fn(),
-    getRouteDecision: vi.fn(),
-    getRouteDecisionsBatch: vi.fn(),
-    getRouteWideDecisionsBatch: vi.fn(),
-    updateRoute: vi.fn(),
-    rebuildRoutes: vi.fn(),
-    deleteRoute: vi.fn(),
-    deleteChannel: vi.fn(),
+    getRouteGroupPage: vi.fn(),
+    getRouteGroupOverview: vi.fn(),
+    getRouteGroupFallbackStages: vi.fn(),
+    getRouteGroupSourceCatalog: vi.fn(),
+    getRuntimeSettings: vi.fn(),
+    getAccountTokens: vi.fn(),
+    updateRouteGroup: vi.fn(),
+    deleteRouteGroup: vi.fn(),
+    restoreAutomaticRouteGroupCandidate: vi.fn(),
+    restoreAutomaticRouteGroupCandidates: vi.fn(),
   },
-  getBrandMock: vi.fn(),
 }));
 
-vi.mock('../api.js', () => ({
-  api: apiMock,
+vi.mock("../api.js", () => ({ api: apiMock }));
+vi.mock("react-dom", async () => ({
+  ...(await vi.importActual<typeof import("react-dom")>("react-dom")),
+  createPortal: (node: unknown) => node,
 }));
+vi.mock("../components/useIsMobile.js", () => ({ useIsMobile: () => false }));
 
-vi.mock('react-dom', async () => {
-  const actual = await vi.importActual<typeof import('react-dom')>('react-dom');
-  return {
-    ...actual,
-    createPortal: (node: unknown) => node,
-  };
-});
-
-vi.mock('../components/useIsMobile.js', () => ({
-  useIsMobile: () => false,
-}));
-
-vi.mock('../components/BrandIcon.js', () => ({
-  BrandGlyph: ({ brand, icon, model }: { brand?: { name?: string } | null; icon?: string | null; model?: string | null }) => (
-    <span>{brand?.name || icon || model || ''}</span>
-  ),
-  InlineBrandIcon: ({ model }: { model: string }) => model ? <span>{model}</span> : null,
-  getBrand: (...args: unknown[]) => getBrandMock(...args),
-  hashColor: () => 'linear-gradient(135deg,#4f46e5,#818cf8)',
-  normalizeBrandIconKey: (icon: string) => icon,
-}));
-
-function collectText(node: ReactTestInstance): string {
-  return (node.children || []).map((child) => {
-    if (typeof child === 'string') return child;
-    return collectText(child);
-  }).join('');
+function text(node: ReactTestInstance): string {
+  return (node.children || [])
+    .map((child) => (typeof child === "string" ? child : text(child)))
+    .join("");
 }
 
-async function flushMicrotasks() {
+async function flush() {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 180));
+  });
   await act(async () => {
     await Promise.resolve();
     await Promise.resolve();
   });
 }
 
-describe('TokenRoutes desktop detail panel', () => {
-  const originalIntersectionObserver = globalThis.IntersectionObserver;
-  const originalMatchMedia = globalThis.matchMedia;
+const group = {
+  id: "route-group:manual:desktop-detail",
+  kind: "manual" as const,
+  sourceMode: "manual" as const,
+  model: {
+    publicName: "desktop-detail-model",
+    upstreamName: "desktop-detail-model",
+    normalizedName: "desktop-detail-model",
+  },
+  presentation: { displayName: "Desktop detail model", displayIcon: null },
+  filters: null,
+  dispatcherPolicy: { kind: "builtin" as const, builtin: "weighted" as const },
+  visibility: "internal" as const,
+  enabled: true,
+  sourceSelection: { kind: "explicit" as const, sources: [] },
+  candidateCount: 1,
+  enabledCandidateCount: 1,
+  siteNames: ["site-a"],
+};
 
-  beforeEach(() => {
-    vi.clearAllMocks();
-    globalThis.IntersectionObserver = class {
-      observe() {}
-      disconnect() {}
-      unobserve() {}
-      takeRecords() { return []; }
-      readonly root = null;
-      readonly rootMargin = '0px';
-      readonly thresholds = [];
-    } as unknown as typeof IntersectionObserver;
-    const defaultMatchMedia = vi.fn().mockImplementation((query: string) => ({
-      matches: false,
-      media: query,
-      onchange: null,
-      addListener: vi.fn(),
-      removeListener: vi.fn(),
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-      dispatchEvent: vi.fn(() => false),
-    }));
-    globalThis.matchMedia = defaultMatchMedia as unknown as typeof matchMedia;
-    if (typeof window !== 'undefined') {
-      window.matchMedia = defaultMatchMedia as unknown as typeof window.matchMedia;
-    }
-    getBrandMock.mockReset();
-    getBrandMock.mockReturnValue(null);
-    apiMock.getRoutesSummary.mockResolvedValue([
+const automaticGroup = {
+  ...group,
+  id: "route-group:auto:desktop-detail",
+  kind: "automatic" as const,
+  sourceMode: "auto" as const,
+  visibility: "public" as const,
+  model: {
+    publicName: "automatic-detail-model",
+    upstreamName: "automatic-detail-model",
+    normalizedName: "automatic-detail-model",
+  },
+  presentation: { displayName: "Automatic detail model", displayIcon: null },
+};
+
+const automaticStages = [
+  {
+    id: "stage:auto:primary",
+    label: "Primary",
+    order: 0,
+    enabled: true,
+    candidateManagement: "explicit" as const,
+    dispatcherPolicy: {
+      kind: "builtin" as const,
+      builtin: "weighted" as const,
+    },
+    candidates: [
       {
-        id: 1,
-        modelPattern: 'gpt-4o-mini',
-        displayName: 'gpt-4o-mini',
-        displayIcon: null,
-        modelMapping: null,
-        routingStrategy: 'weighted',
+        id: "member:auto:primary",
+        routeGroupId: automaticGroup.id,
+        routeGroupKey: automaticGroup.id,
+        kind: "execution_endpoint" as const,
+        fallbackStageId: "stage:auto:primary",
+        fallbackStageLabel: "Primary",
+        fallbackStageOrder: 0,
+        sortOrder: 0,
+        weight: 10,
         enabled: true,
-        channelCount: 1,
-        enabledChannelCount: 1,
-        siteNames: ['site-a'],
-        decisionSnapshot: null,
-        decisionRefreshedAt: null,
-      },
-      {
-        id: 2,
-        modelPattern: 'claude-3.7-sonnet',
-        displayName: 'claude-3.7-sonnet',
-        displayIcon: null,
-        modelMapping: null,
-        routingStrategy: 'weighted',
-        enabled: true,
-        channelCount: 1,
-        enabledChannelCount: 1,
-        siteNames: ['site-b'],
-        decisionSnapshot: null,
-        decisionRefreshedAt: null,
-      },
-    ]);
-    apiMock.getRouteChannels.mockResolvedValue([
-      {
-        id: 11,
-        accountId: 101,
-        tokenId: 1001,
-        sourceModel: 'gpt-4o-mini',
-        priority: 0,
-        weight: 1,
-        enabled: true,
-        manualOverride: false,
+        manualOverride: true,
         successCount: 0,
         failCount: 0,
-        account: { username: 'user_a' },
-        site: { id: 1, name: 'site-a', platform: 'openai' },
-        token: { id: 1001, name: 'token-a', accountId: 101, enabled: true, isDefault: true },
+        cooldownUntil: null,
+        modelName: "automatic-detail-model",
+        targetSelection: { kind: "builtin" as const, builtin: "stable_first" as const },
+        targets: [{
+          id: 1,
+          sourceRef: "67d54dd0-45c8-4d98-b7b9-7ac550192ec7",
+          accountId: 1,
+          tokenId: null,
+          sourceModel: "automatic-detail-model",
+          account: { username: "automatic-account" },
+          site: { id: 1, name: "automatic-site", platform: "openai" },
+          token: null,
+          enabled: true,
+          successCount: 0,
+          failCount: 0,
+          cooldownUntil: null,
+        }],
       },
-    ]);
-    apiMock.getModelTokenCandidates.mockResolvedValue({ models: {} });
-    apiMock.getRouteDecision.mockResolvedValue({ decision: null });
-    apiMock.getRouteDecisionsBatch.mockResolvedValue({ decisions: {} });
-    apiMock.getRouteWideDecisionsBatch.mockResolvedValue({ decisions: {} });
-    apiMock.updateRoute.mockResolvedValue({});
-    apiMock.rebuildRoutes.mockResolvedValue({ rebuild: { createdRoutes: 0, createdChannels: 0 } });
-    apiMock.deleteRoute.mockResolvedValue({});
-    apiMock.deleteChannel.mockResolvedValue({});
-  });
+    ],
+  },
+];
 
-  afterEach(() => {
+describe("TokenRoutes desktop detail panel", () => {
+  beforeEach(() => {
     vi.clearAllMocks();
-    globalThis.IntersectionObserver = originalIntersectionObserver;
-    globalThis.matchMedia = originalMatchMedia;
-    if (typeof window !== 'undefined') {
-      window.matchMedia = originalMatchMedia as typeof window.matchMedia;
-    }
+    apiMock.getRouteGroupPage.mockResolvedValue({
+      items: [group],
+      pageInfo: { page: 1, pageSize: 20, totalCount: 1, hasMore: false },
+    });
+    apiMock.getRouteGroupOverview.mockResolvedValue({
+      brands: [],
+      sites: [],
+      endpointTypes: [],
+      tabs: { public: 1, internal: 1, manual: 1 },
+      enabled: { enabled: 1, disabled: 0 },
+    });
+    apiMock.getRouteGroupSourceCatalog.mockResolvedValue([]);
+    apiMock.getRuntimeSettings.mockResolvedValue({
+      dispatchPolicyRegistry: {
+        defaultPolicyId: "platform-default",
+        policies: [
+          {
+            id: "platform-default",
+            name: "Platform default",
+            kind: "cel",
+            selectionMode: "weighted",
+            contributionExpression: "1.0",
+          },
+          {
+            id: "cost-first",
+            name: "Cost first",
+            kind: "cel",
+            selectionMode: "weighted",
+            contributionExpression:
+              "runtime.routingSignals.normalizedCostScore",
+          },
+        ],
+      },
+    });
+    apiMock.getAccountTokens.mockResolvedValue([]);
+    apiMock.getRouteGroupFallbackStages.mockResolvedValue({ stages: [] });
+    apiMock.updateRouteGroup.mockResolvedValue({});
+    apiMock.restoreAutomaticRouteGroupCandidate.mockResolvedValue({
+      success: true,
+      restoredCount: 1,
+      stages: automaticStages.map((stage) => ({
+        ...stage,
+        candidates: stage.candidates.map((candidate) => ({
+          ...candidate,
+          manualOverride: false,
+        })),
+      })),
+    });
+    apiMock.restoreAutomaticRouteGroupCandidates.mockResolvedValue({
+      success: true,
+      restoredCount: 1,
+      stages: [],
+    });
   });
 
-  it('keeps summary cards stable and opens a separate desktop detail panel', async () => {
-    let root!: ReactTestRenderer;
+  afterEach(() => vi.clearAllMocks());
 
+  it("uses one native fallback-stage detail card for the selected Route Group", async () => {
+    let root: ReturnType<typeof create> | undefined;
     try {
       await act(async () => {
         root = create(
-          <MemoryRouter initialEntries={['/routes']}>
+          <MemoryRouter>
             <ToastProvider>
               <TokenRoutes />
             </ToastProvider>
           </MemoryRouter>,
         );
       });
-      await flushMicrotasks();
+      await flush();
 
-      expect(root.root.findAll((node) => (
-        node.type === 'div'
-        && String(node.props.className || '').includes('route-card-collapsed')
-      ))).toHaveLength(2);
-
-      const firstSummaryCard = root.root.find((node) => (
-        node.type === 'div'
-        && String(node.props.className || '').includes('route-card-collapsed')
-        && collectText(node).includes('gpt-4o-mini')
-      ));
-
+      const summary = root!.root.find((node) =>
+        String(node.props.className || "").includes("route-card-collapsed"),
+      );
+      expect(summary.props["aria-expanded"]).toBe(false);
       await act(async () => {
-        await firstSummaryCard.props.onClick();
+        summary.props.onClick();
       });
-      await flushMicrotasks();
+      await flush();
 
-      const collapsedCardsAfterExpand = root.root.findAll((node) => (
-        node.type === 'div'
-        && String(node.props.className || '').includes('route-card-collapsed')
-      ));
-      expect(collapsedCardsAfterExpand).toHaveLength(2);
+      expect(summary.props["aria-expanded"]).toBe(true);
+      expect(text(root!.root)).toContain("在图中打开");
+      expect(text(root!.root)).toContain("回退阶段");
+      const detailCards = root!.root.findAll(
+        (node) =>
+          node.type === "div" &&
+          String(node.props.className || "").includes(
+            "route-group-detail-card",
+          ),
+      );
+      expect(detailCards).toHaveLength(1);
+      expect(String(detailCards[0]!.props.className)).toContain(
+        "route--expanded",
+      );
+      expect(String(detailCards[0]!.props.className)).toContain(
+        "route--detail-panel",
+      );
+      expect(
+        root!.root.findAll(
+          (node) =>
+            String(node.props.className || "").includes("route-workbench") &&
+            String(node.props.className || "").includes(
+              "rounded-lg border bg-card p-3",
+            ),
+        ),
+      ).toHaveLength(0);
+      expect(apiMock.updateRouteGroup).not.toHaveBeenCalled();
 
-      const detailPanels = root.root.findAll((node) => (
-        node.type === 'div'
-        && String(node.props.className || '').includes('route-card-detail-panel')
-      ));
-      expect(detailPanels).toHaveLength(1);
-      const detailPanelText = collectText(detailPanels[0]!);
-      expect(detailPanelText).toContain('gpt-4o-mini');
-      expect(detailPanelText).toContain('路由策略');
+      const policySelect = root!.root.find(
+        (node) =>
+          node.props.value === "builtin:weighted" &&
+          typeof node.props.onValueChange === "function",
+      );
+      await act(async () => {
+        await policySelect.props.onValueChange("registry:cost-first");
+      });
+      expect(apiMock.updateRouteGroup).toHaveBeenCalledWith(group.id, {
+        dispatcherPolicy: { kind: "registry", policyId: "cost-first" },
+      });
+
+      const edit = root!.root.find(
+        (node) => node.props["data-testid"] === "route-group-detail-edit",
+      );
+      await act(async () => {
+        await edit.props.onClick();
+      });
+      expect(
+        root!.root.find(
+          (node) => node.props["data-testid"] === "route-group-form-save",
+        ),
+      ).toBeTruthy();
     } finally {
       root?.unmount();
     }
   });
 
-  it('animates the desktop detail panel closed before unmounting it', async () => {
-    vi.useFakeTimers();
-    let root!: ReactTestRenderer;
-
+  it("keeps candidate sources immutable while exposing dispatcher-member controls", async () => {
+    apiMock.getRouteGroupPage.mockResolvedValue({
+      items: [automaticGroup],
+      pageInfo: { page: 1, pageSize: 20, totalCount: 1, hasMore: false },
+    });
+    apiMock.getRouteGroupFallbackStages.mockResolvedValue({
+      stages: automaticStages,
+    });
+    let root: ReturnType<typeof create> | undefined;
     try {
       await act(async () => {
         root = create(
-          <MemoryRouter initialEntries={['/routes']}>
+          <MemoryRouter>
             <ToastProvider>
               <TokenRoutes />
             </ToastProvider>
           </MemoryRouter>,
         );
       });
-      await flushMicrotasks();
-
-      const firstSummaryCard = root.root.find((node) => (
-        node.type === 'div'
-        && String(node.props.className || '').includes('route-card-collapsed')
-        && collectText(node).includes('gpt-4o-mini')
-      ));
-
+      await flush();
+      const summary = root!.root.find((node) =>
+        String(node.props.className || "").includes("route-card-collapsed"),
+      );
       await act(async () => {
-        await firstSummaryCard.props.onClick();
+        summary.props.onClick();
       });
-      await flushMicrotasks();
+      await flush();
 
-      const closeButton = root.root.find((node) => (
-        node.type === 'button'
-        && collectText(node).includes('收起详情')
-      ));
-
+      const edit = root!.root.find(
+        (node) =>
+          node.props["data-testid"] ===
+          "route-group-candidate-edit-member:auto:primary",
+      );
       await act(async () => {
-        await closeButton.props.onClick();
-      });
-      await flushMicrotasks();
-
-      let detailPanelPresence = root.root.findAll((node) => (
-        node.type === 'div'
-        && String(node.props.className || '').includes('route-detail-panel-presence')
-      ));
-      expect(detailPanelPresence).toHaveLength(1);
-      expect(String(detailPanelPresence[0]!.props.className || '')).not.toContain('anim-collapse');
-      expect(String(detailPanelPresence[0]!.props.className || '')).not.toContain('is-open');
-      expect(String(detailPanelPresence[0]!.props.className || '')).toContain('is-closing');
-      const detailPanelsWhileClosing = root.root.findAll((node) => (
-        node.type === 'div'
-        && String(node.props.className || '').includes('route-card-detail-panel')
-      ));
-      expect(detailPanelsWhileClosing).toHaveLength(1);
-      const summaryCardWhileClosing = root.root.find((node) => (
-        node.type === 'div'
-        && String(node.props.className || '').includes('route-card-collapsed')
-        && collectText(node).includes('gpt-4o-mini')
-      ));
-      expect(String(summaryCardWhileClosing.props.className || '')).toContain('is-active');
-
-      await act(async () => {
-        vi.advanceTimersByTime(260);
+        edit.props.onClick();
       });
 
-      detailPanelPresence = root.root.findAll((node) => (
-        node.type === 'div'
-        && String(node.props.className || '').includes('route-detail-panel-presence')
-      ));
-      expect(detailPanelPresence).toHaveLength(0);
-      const summaryCardAfterClosing = root.root.find((node) => (
-        node.type === 'div'
-        && String(node.props.className || '').includes('route-card-collapsed')
-        && collectText(node).includes('gpt-4o-mini')
-      ));
-      expect(String(summaryCardAfterClosing.props.className || '')).not.toContain('is-active');
+      const sourceInputs = root!.root.findAll(
+        (node) => node.props["aria-label"] === "上游模型",
+      );
+      expect(sourceInputs).toHaveLength(0);
+      const weightInput = root!.root.find(
+        (node) => node.props["aria-label"] === "权重",
+      );
+      expect(weightInput.props.disabled).toBe(false);
+      const stageSelect = root!.root.find(
+        (node) => node.props["aria-label"] === "回退阶段",
+      );
+      expect(stageSelect.props.disabled).not.toBe(true);
     } finally {
       root?.unmount();
-      vi.useRealTimers();
     }
   });
 
-  it('does not schedule a close timer before the desktop detail panel has ever opened', async () => {
-    vi.useFakeTimers();
-    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
-    let root!: ReactTestRenderer;
-
+  it("edits a regex source selection through the Route Group form", async () => {
+    const patternGroup = {
+      ...group,
+      id: "route-group:manual:pattern",
+      dispatcherPolicy: {
+        kind: "registry" as const,
+        policyId: "cost-first",
+      },
+      sourceSelection: {
+        kind: "model_pattern" as const,
+        pattern: "re:^deepseek-v4",
+      },
+    };
+    apiMock.getRouteGroupPage.mockResolvedValue({
+      items: [patternGroup],
+      pageInfo: { page: 1, pageSize: 20, totalCount: 1, hasMore: false },
+    });
+    let root: ReturnType<typeof create> | undefined;
     try {
       await act(async () => {
         root = create(
-          <DesktopDetailPanelPresence open={false}>
-            {() => <div>detail</div>}
-          </DesktopDetailPanelPresence>,
-        );
-      });
-      await flushMicrotasks();
-
-      expect(root.toJSON()).toBeNull();
-      expect(setTimeoutSpy).not.toHaveBeenCalled();
-    } finally {
-      root?.unmount();
-      vi.useRealTimers();
-    }
-  });
-
-  it('closes the desktop detail panel immediately when reduced motion is preferred', async () => {
-    vi.useFakeTimers();
-    const reducedMotionMatchMedia = vi.fn().mockImplementation((query: string) => ({
-      matches: query === '(prefers-reduced-motion: reduce)',
-      media: query,
-      onchange: null,
-      addListener: vi.fn(),
-      removeListener: vi.fn(),
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-      dispatchEvent: vi.fn(() => false),
-    }));
-    globalThis.matchMedia = reducedMotionMatchMedia as unknown as typeof matchMedia;
-    if (typeof window !== 'undefined') {
-      window.matchMedia = reducedMotionMatchMedia as unknown as typeof window.matchMedia;
-    }
-    let root!: ReactTestRenderer;
-
-    try {
-      await act(async () => {
-        root = create(
-          <MemoryRouter initialEntries={['/routes']}>
+          <MemoryRouter>
             <ToastProvider>
               <TokenRoutes />
             </ToastProvider>
           </MemoryRouter>,
         );
       });
-      await flushMicrotasks();
-
-      const firstSummaryCard = root.root.find((node) => (
-        node.type === 'div'
-        && String(node.props.className || '').includes('route-card-collapsed')
-        && collectText(node).includes('gpt-4o-mini')
-      ));
-
-      await act(async () => {
-        await firstSummaryCard.props.onClick();
-      });
-      await flushMicrotasks();
-
-      const closeButton = root.root.find((node) => (
-        node.type === 'button'
-        && collectText(node).includes('收起详情')
-      ));
-
-      await act(async () => {
-        await closeButton.props.onClick();
-      });
-      await flushMicrotasks();
-      await act(async () => {
-        vi.advanceTimersByTime(1);
-      });
-      await flushMicrotasks();
-
-      const detailPanelPresence = root.root.findAll((node) => (
-        node.type === 'div'
-        && String(node.props.className || '').includes('route-detail-panel-presence')
-      ));
-      expect(detailPanelPresence).toHaveLength(0);
-      const summaryCardAfterClosing = root.root.find((node) => (
-        node.type === 'div'
-        && String(node.props.className || '').includes('route-card-collapsed')
-        && collectText(node).includes('gpt-4o-mini')
-      ));
-      expect(String(summaryCardAfterClosing.props.className || '')).not.toContain('is-active');
+      await flush();
+      const summary = root!.root.find((node) =>
+        String(node.props.className || "").includes("route-card-collapsed"),
+      );
+      await act(async () => summary.props.onClick());
+      await flush();
+      const edit = root!.root.find(
+        (node) => node.props["data-testid"] === "route-group-detail-edit",
+      );
+      await act(async () => edit.props.onClick());
+      const sourceStep = root!.root.find(
+        (node) =>
+          node.type === "button" &&
+          String(node.props.className || "").includes("min-w-36") &&
+          text(node).includes("来源"),
+      );
+      await act(async () => sourceStep.props.onClick());
+      const patternInput = root!.root.find(
+        (node) =>
+          node.type === "input" && node.props.value === "re:^deepseek-v4",
+      );
+      await act(async () =>
+        patternInput.props.onChange({
+          currentTarget: { value: "re:^deepseek-v[34]-flash$" },
+        }),
+      );
+      const save = root!.root.find(
+        (node) => node.props["data-testid"] === "route-group-form-save",
+      );
+      await act(async () => save.props.onClick());
+      await flush();
+      expect(apiMock.updateRouteGroup).toHaveBeenCalledWith(
+        patternGroup.id,
+        expect.objectContaining({
+          sourceSelection: {
+            kind: "model_pattern",
+            pattern: "re:^deepseek-v[34]-flash$",
+          },
+          dispatcherPolicy: { kind: "registry", policyId: "cost-first" },
+        }),
+      );
     } finally {
       root?.unmount();
-      vi.useRealTimers();
+    }
+  });
+
+  it("restores one adjusted automatic candidate through the native command", async () => {
+    apiMock.getRouteGroupPage.mockResolvedValue({
+      items: [automaticGroup],
+      pageInfo: { page: 1, pageSize: 20, totalCount: 1, hasMore: false },
+    });
+    apiMock.getRouteGroupFallbackStages.mockResolvedValue({
+      stages: automaticStages,
+    });
+    let root: ReturnType<typeof create> | undefined;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter>
+            <ToastProvider>
+              <TokenRoutes />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flush();
+      const summary = root!.root.find((node) =>
+        String(node.props.className || "").includes("route-card-collapsed"),
+      );
+      await act(async () => summary.props.onClick());
+      await flush();
+
+      expect(
+        root!.root.find(
+          (node) =>
+            node.props["data-testid"] === "route-group-restore-all-automatic",
+        ),
+      ).toBeTruthy();
+      const restore = root!.root.find(
+        (node) =>
+          node.props["data-testid"] ===
+          "route-group-candidate-restore-member:auto:primary",
+      );
+      await act(async () => restore.props.onClick());
+      await flush();
+
+      expect(apiMock.restoreAutomaticRouteGroupCandidate).toHaveBeenCalledWith(
+        automaticGroup.id,
+        "member:auto:primary",
+      );
+      expect(
+        root!.root.findAll(
+          (node) =>
+            node.props["data-testid"] ===
+            "route-group-candidate-restore-member:auto:primary",
+        ),
+      ).toHaveLength(0);
+    } finally {
+      root?.unmount();
     }
   });
 });

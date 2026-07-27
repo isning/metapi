@@ -8,7 +8,7 @@ const { apiMock } = vi.hoisted(() => ({
   apiMock: {
     getDownstreamApiKeysSummary: vi.fn(),
     getDownstreamApiKeys: vi.fn(),
-    getRoutesLite: vi.fn(),
+    getDownstreamCompiledPlans: vi.fn(),
     getDownstreamApiKeyOverview: vi.fn(),
     getDownstreamApiKeyTrend: vi.fn(),
     createDownstreamApiKey: vi.fn(),
@@ -71,7 +71,7 @@ function buildSummaryItem(id: number, overrides?: Partial<any>) {
     maxRequests: null,
     usedRequests: 0,
     supportedModels: ['gpt-4.1-mini'],
-    allowedRouteIds: [11],
+    allowedPlanIds: ['program:entry:claude'],
     siteWeightMultipliers: {},
     lastUsedAt: '2026-03-15T08:27:25.378Z',
     createdAt: '2026-03-15T08:27:25.378Z',
@@ -82,10 +82,14 @@ function buildSummaryItem(id: number, overrides?: Partial<any>) {
       failedRequests: 1,
       successRate: 66.7,
       totalTokens: 4200,
-      totalCost: 0.42,
+      cost: testCost(0.42),
     },
     ...overrides,
   };
+}
+
+function testCost(amount: number) {
+  return { amount, unit: 'USD', knownObservationCount: 1, unknownObservationCount: 0, incompatibleObservationCount: 0 };
 }
 
 function buildRawItem(id: number, overrides?: Partial<any>) {
@@ -104,7 +108,7 @@ function buildRawItem(id: number, overrides?: Partial<any>) {
     maxRequests: null,
     usedRequests: 0,
     supportedModels: ['gpt-4.1-mini'],
-    allowedRouteIds: [11],
+    allowedPlanIds: ['program:entry:claude'],
     siteWeightMultipliers: {},
     lastUsedAt: '2026-03-15T08:27:25.378Z',
     ...overrides,
@@ -151,16 +155,17 @@ describe('DownstreamKeys mobile layout', () => {
       success: true,
       items: [buildRawItem(1), buildRawItem(2)],
     });
-    apiMock.getRoutesLite.mockResolvedValue([
-      { id: 11, modelPattern: 'claude-*', displayName: '默认群组', enabled: true },
-    ]);
+    apiMock.getDownstreamCompiledPlans.mockResolvedValue({
+      success: true,
+      items: [{ id: 'program:entry:claude', modelName: 'claude-4-6-group' }],
+    });
     apiMock.getDownstreamApiKeyOverview.mockResolvedValue({
       success: true,
       item: buildSummaryItem(1),
       usage: {
-        last24h: { totalRequests: 3, successRequests: 2, failedRequests: 1, successRate: 66.7, totalTokens: 4200, totalCost: 0.42 },
-        last7d: { totalRequests: 9, successRequests: 8, failedRequests: 1, successRate: 88.9, totalTokens: 12400, totalCost: 1.24 },
-        all: { totalRequests: 20, successRequests: 18, failedRequests: 2, successRate: 90, totalTokens: 55200, totalCost: 5.52 },
+        last24h: { totalRequests: 3, successRequests: 2, failedRequests: 1, successRate: 66.7, totalTokens: 4200, cost: testCost(0.42) },
+        last7d: { totalRequests: 9, successRequests: 8, failedRequests: 1, successRate: 88.9, totalTokens: 12400, cost: testCost(1.24) },
+        all: { totalRequests: 20, successRequests: 18, failedRequests: 2, successRate: 90, totalTokens: 55200, cost: testCost(5.52) },
       },
     });
     apiMock.getDownstreamApiKeyTrend.mockResolvedValue({
@@ -197,7 +202,7 @@ describe('DownstreamKeys mobile layout', () => {
       expect(collectText(root!.root)).toContain('筛选');
       expect(collectText(root!.root)).toContain('全选可见');
 
-      const mobileCards = root!.root.findAll((node) => node.props?.className === 'mobile-card');
+      const mobileCards = root!.root.findAll((node) => node.type === 'div' && node.props?.['data-mobile-list-item'] === 'true');
       expect(mobileCards).toHaveLength(2);
 
       const selectAllButton = findButtonByText(root!.root, '全选可见');

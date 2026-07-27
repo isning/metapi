@@ -1,9 +1,10 @@
 import Fastify, { type FastifyInstance } from 'fastify';
+import { executionDecisionFromTargetMocks } from '../../../testing/routeRuntimeDecisionMock.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const fetchMock = vi.fn();
-const selectChannelMock = vi.fn();
-const selectNextChannelMock = vi.fn();
+const selectTargetMock = vi.fn();
+const selectNextTargetMock = vi.fn();
 const recordSuccessMock = vi.fn();
 const recordFailureMock = vi.fn();
 const refreshModelsAndRebuildRoutesMock = vi.fn();
@@ -32,13 +33,41 @@ vi.mock('undici', async () => {
   };
 });
 
-vi.mock('../../services/tokenRouter.js', () => ({
-  tokenRouter: {
-    selectChannel: (...args: unknown[]) => selectChannelMock(...args),
-    selectNextChannel: (...args: unknown[]) => selectNextChannelMock(...args),
-    recordSuccess: (...args: unknown[]) => recordSuccessMock(...args),
-    recordFailure: (...args: unknown[]) => recordFailureMock(...args),
+
+vi.mock('../../services/routeRuntimeExecutionService.js', () => ({
+  createRouteRuntimeDecisionSession: async (input: any) => input,
+  selectRouteRuntimeDecisionInSession: (session: any, input: any) => executionDecisionFromTargetMocks(
+    { ...session, ...input }, selectTargetMock, selectNextTargetMock,
+  ),
+  previewRouteRuntimeDecisionInSession: (session: any, input: any) => executionDecisionFromTargetMocks(
+    { ...session, ...input }, selectNextTargetMock,
+  ),
+  selectRouteRuntimeDecision: (input: any) => executionDecisionFromTargetMocks(input, selectTargetMock, selectNextTargetMock),
+  selectRouteRuntimeExecutionAttempt: async (input: any) => {
+    const excluded = Array.isArray(input?.disabledExecutionTargetIds) ? input.disabledExecutionTargetIds : [];
+    const selected = excluded.length > 0
+      ? await selectNextTargetMock(input.requestedModel, excluded, input.downstreamPolicy)
+      : await selectTargetMock(input?.requestedModel, input?.downstreamPolicy);
+    if (!selected) return selected;
+    if (!selected.executionAttemptId || !selected.executionTargetId) {
+      throw new Error('Test selected route runtime attempt must include executionAttemptId and executionTargetId');
+    }
+    return selected;
   },
+  resolveRouteRuntimeSyntheticResponse: async () => null,
+  recordRouteRuntimeExecutionAttemptStarted: async () => undefined,
+  recordRouteRuntimeExecutionAttemptSuccess: (input: any) =>
+    recordSuccessMock(input.executionTargetId, input.latencyMs, input.modelName),
+  recordRouteRuntimeExecutionAttemptFailure: (input: any) =>
+    recordFailureMock(input.executionTargetId, { status: input.status, errorText: input.errorText }),
+  recordRouteRuntimeExecutionAttemptSelected: async () => undefined,
+}));
+
+vi.mock('../../services/compiledRuntimeExecutionSessionService.js', () => ({
+  startCompiledRuntimeExecutionSession: async () => ({ requestId: 'request:client-context-test', startedAtMs: Date.now() }),
+  resumeCompiledRuntimeExecutionSession: async () => null,
+  bindCompiledRuntimeExecutionDecision: async () => undefined,
+  completeCompiledRuntimeExecutionSession: async () => undefined,
 }));
 
 vi.mock('../../services/modelService.js', () => ({
@@ -68,6 +97,17 @@ vi.mock('../../services/proxyRetryPolicy.js', () => ({
 
 vi.mock('../../services/proxyUsageFallbackService.js', () => ({
   resolveProxyUsageWithSelfLogFallback: (arg: any) => resolveProxyUsageWithSelfLogFallbackMock(arg),
+}));
+
+vi.mock('../../services/routeRuntimeEvaluatorService.js', async () => {
+  const actual = await vi.importActual<typeof import('../../services/routeRuntimeEvaluatorService.js')>('../../services/routeRuntimeEvaluatorService.js');
+  return {
+    ...actual,
+  };
+});
+
+vi.mock('../../services/credentialEndpointBindingService.js', () => ({
+  loadCredentialApiVariantConfig: async () => null,
 }));
 
 vi.mock('../../db/index.js', () => ({
@@ -108,17 +148,18 @@ describe('downstream client context route logging', () => {
   let app: FastifyInstance;
 
   beforeAll(async () => {
-    const { claudeMessagesProxyRoute } = await import('./chat.js');
-    const { responsesProxyRoute } = await import('./responses.js');
+    const { registerDownstreamProtocolSurface } = await import('../../proxy-core/surfaces/downstreamProtocolSurface.js');
+    const { claudeProtocolAdapter } = await import('../../proxy-core/formats/claude.js');
+    const { responsesProtocolAdapter } = await import('../../proxy-core/formats/responses.js');
     app = Fastify();
-    await app.register(claudeMessagesProxyRoute);
-    await app.register(responsesProxyRoute);
+    await registerDownstreamProtocolSurface(app, claudeProtocolAdapter);
+    await registerDownstreamProtocolSurface(app, responsesProtocolAdapter);
   });
 
   beforeEach(() => {
     fetchMock.mockReset();
-    selectChannelMock.mockReset();
-    selectNextChannelMock.mockReset();
+    selectTargetMock.mockReset();
+    selectNextTargetMock.mockReset();
     recordSuccessMock.mockReset();
     recordFailureMock.mockReset();
     refreshModelsAndRebuildRoutesMock.mockReset();
@@ -130,16 +171,17 @@ describe('downstream client context route logging', () => {
     resolveProxyUsageWithSelfLogFallbackMock.mockClear();
     dbInsertMock.mockClear();
     dbValuesMock.mockClear();
-
-    selectChannelMock.mockReturnValue({
-      channel: { id: 11, routeId: 22 },
+    selectTargetMock.mockReturnValue({
+      target: { id: 11, routeId: 22 },
+      executionTargetId: 11,
+      executionAttemptId: 'ea_11',
       site: { id: 44, name: 'demo-site', url: 'https://upstream.example.com', platform: 'openai' },
       account: { id: 33, username: 'demo-user' },
       tokenName: 'default',
       tokenValue: 'sk-demo',
       actualModel: 'upstream-gpt',
     });
-    selectNextChannelMock.mockReturnValue(null);
+    selectNextTargetMock.mockReturnValue(null);
     fetchModelPricingCatalogMock.mockResolvedValue(null);
   });
 

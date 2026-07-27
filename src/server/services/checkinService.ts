@@ -18,6 +18,7 @@ import { decryptAccountPassword } from './accountCredentialService.js';
 import { setAccountRuntimeHealth } from './accountHealthService.js';
 import { formatUtcSqlDateTime } from './localTimeService.js';
 import { withAccountProxyOverride } from './siteProxy.js';
+import { emitInboxItem } from './inboxService.js';
 
 type CheckinExecutionStatus = 'success' | 'failed' | 'skipped';
 
@@ -148,15 +149,19 @@ export async function checkinAccount(accountId: number, options?: { skipEvent?: 
     }).run();
 
     if (!options?.skipEvent) {
-      await db.insert(schema.events).values({
+      await emitInboxItem({
+        scope: 'activity',
+        category: 'auth',
         type: 'checkin',
         title: 'checkin skipped',
+        summary: `${account.username || 'ID:' + accountId} @ ${site.name}: site disabled`,
         message: `${account.username || 'ID:' + accountId} @ ${site.name}: site disabled`,
         level: 'info',
+        subject: { type: 'account', id: accountId, label: `${account.username || 'ID:' + accountId} @ ${site.name}` },
+        source: 'checkin',
         relatedId: accountId,
         relatedType: 'account',
-        createdAt,
-      }).run();
+      });
     }
 
     return {
@@ -266,17 +271,24 @@ export async function checkinAccount(accountId: number, options?: { skipEvent?: 
   }).run();
 
   if (!options?.skipEvent) {
-    await db.insert(schema.events).values({
+    await emitInboxItem({
+      scope: effectiveSuccess ? 'activity' : 'notification',
+      category: 'auth',
       type: 'checkin',
       title: effectiveSuccess
         ? (normalizedStatus === 'skipped' ? 'checkin skipped' : 'checkin success')
         : (isCloudflare ? 'checkin failed (cloudflare challenge)' : 'checkin failed'),
+      summary: `${account.username || 'ID:' + accountId} @ ${site.name}: ${logMessage}`,
       message: `${account.username || 'ID:' + accountId} @ ${site.name}: ${logMessage}`,
       level: effectiveSuccess ? 'info' : 'error',
+      subject: { type: 'account', id: accountId, label: `${account.username || 'ID:' + accountId} @ ${site.name}` },
+      actions: effectiveSuccess ? [] : [
+        { id: 'open-account', label: '打开账号', kind: 'navigate', href: `/accounts?focusAccountId=${accountId}`, placement: 'primary' },
+      ],
+      source: 'checkin',
       relatedId: accountId,
       relatedType: 'account',
-      createdAt,
-    }).run();
+    });
   }
 
   if (!effectiveSuccess) {

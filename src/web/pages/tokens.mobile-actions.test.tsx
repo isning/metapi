@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, create } from 'react-test-renderer';
+import { act, create, type ReactTestInstance } from 'react-test-renderer';
 import { MemoryRouter } from 'react-router-dom';
 import { ToastProvider } from '../components/Toast.js';
 import { TokensPanel } from './Tokens.js';
@@ -28,6 +28,13 @@ async function flushMicrotasks() {
     await Promise.resolve();
     await Promise.resolve();
   });
+}
+
+function collectText(node: ReactTestInstance): string {
+  return (node.children || []).map((child) => {
+    if (typeof child === 'string') return child;
+    return collectText(child);
+  }).join('');
 }
 
 describe('Tokens mobile actions', () => {
@@ -108,14 +115,14 @@ describe('Tokens mobile actions', () => {
         selectAllButton.props.onClick();
       });
       await flushMicrotasks();
-      expect(Array.isArray(selectAllButton.children) ? selectAllButton.children.join('') : '').toContain('取消全选');
+      expect(collectText(root.root.find((node) => node.props['data-testid'] === 'tokens-mobile-select-all'))).toContain('取消全选');
 
       const clearVisibleButton = root.root.find((node) => node.props['data-testid'] === 'tokens-mobile-select-all');
       await act(async () => {
         clearVisibleButton.props.onClick();
       });
       await flushMicrotasks();
-      expect(Array.isArray(clearVisibleButton.children) ? clearVisibleButton.children.join('') : '').toContain('全选可见项');
+      expect(collectText(root.root.find((node) => node.props['data-testid'] === 'tokens-mobile-select-all'))).toContain('全选可见项');
 
       const reselectVisibleButton = root.root.find((node) => node.props['data-testid'] === 'tokens-mobile-select-all');
       await act(async () => {

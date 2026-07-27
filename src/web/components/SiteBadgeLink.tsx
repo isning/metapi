@@ -1,5 +1,6 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
+import ToneBadge from './ToneBadge.js';
 
 type SiteBadgeLinkProps = {
   siteId?: number | null;
@@ -12,8 +13,8 @@ type SiteBadgeLinkProps = {
 export default function SiteBadgeLink({
   siteId,
   siteName,
-  className = 'badge-link',
-  badgeClassName = 'badge badge-muted',
+  className = 'inline-flex',
+  badgeClassName = 'muted',
   badgeStyle,
 }: SiteBadgeLinkProps) {
   const label = String(siteName || '').trim() || '-';
@@ -21,17 +22,17 @@ export default function SiteBadgeLink({
 
   if (!Number.isFinite(normalizedSiteId) || normalizedSiteId <= 0) {
     return (
-      <span className={badgeClassName} style={badgeStyle}>
+      <ToneBadge tone={badgeClassName} style={badgeStyle}>
         {label}
-      </span>
+      </ToneBadge>
     );
   }
 
   return (
     <Link to={`/sites?focusSiteId=${Math.trunc(normalizedSiteId)}`} className={className}>
-      <span className={badgeClassName} style={badgeStyle}>
+      <ToneBadge tone={badgeClassName} style={badgeStyle}>
         {label}
-      </span>
+      </ToneBadge>
     </Link>
   );
 }

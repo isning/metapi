@@ -1,6 +1,6 @@
-import { db, schema } from '../db/index.js';
 import { formatUtcSqlDateTime } from './localTimeService.js';
 import { sendNotification } from './notifyService.js';
+import { emitInboxItem } from './inboxService.js';
 import { refreshUpdateCenterStatusCache } from './updateCenterStatusService.js';
 import { loadUpdateCenterRuntimeState, saveUpdateCenterRuntimeState } from './updateCenterRuntimeStateService.js';
 import type { UpdateReminderCandidate } from './updateCenterReminderService.js';
@@ -44,14 +44,22 @@ async function runSyncOnce() {
     if (candidate && candidate.candidateKey !== previousRuntime.lastNotifiedCandidateKey) {
       const reminderEvent = buildReminderEvent(candidate);
       if (reminderEvent) {
-        await db.insert(schema.events).values({
+        await emitInboxItem({
+          scope: 'notification',
+          category: 'settings',
           type: 'status',
           title: reminderEvent.title,
+          summary: reminderEvent.message,
           message: reminderEvent.message,
           level: 'info',
+          subject: { type: 'update_center', id: candidate.candidateKey, label: candidate.displayVersion },
+          actions: [
+            { id: 'open-update-center', label: '打开更新中心', kind: 'navigate', href: '/settings', placement: 'primary' },
+          ],
+          dedupeKey: `update-center:${candidate.candidateKey}`,
+          source: 'update_center',
           relatedType: 'update_center',
-          createdAt: checkedAt,
-        }).run();
+        });
         await saveUpdateCenterRuntimeState({
           ...runtime,
           lastNotifiedCandidateKey: candidate.candidateKey,

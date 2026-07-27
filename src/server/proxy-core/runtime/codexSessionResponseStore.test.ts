@@ -27,20 +27,20 @@ describe('codexSessionResponseStore', () => {
     resetCodexSessionResponseStore();
   });
 
-  it('namespaces identical downstream session ids by channel scope', () => {
+  it('namespaces identical downstream session ids by target scope', () => {
     resetCodexSessionResponseStore();
 
     const keyA = buildCodexSessionResponseStoreKey({
       sessionId: 'session-1',
       siteId: 10,
       accountId: 20,
-      channelId: 30,
+      targetId: 30,
     });
     const keyB = buildCodexSessionResponseStoreKey({
       sessionId: 'session-1',
       siteId: 10,
       accountId: 21,
-      channelId: 31,
+      targetId: 31,
     });
 
     setCodexSessionResponseId(keyA, 'resp-a');
@@ -52,20 +52,20 @@ describe('codexSessionResponseStore', () => {
     resetCodexSessionResponseStore();
   });
 
-  it('falls back to the bare downstream session id across channel scope drift', () => {
+  it('falls back to the bare downstream session id across target scope drift', () => {
     resetCodexSessionResponseStore();
 
     const originalScopedKey = buildCodexSessionResponseStoreKey({
       sessionId: 'session-drift',
       siteId: 10,
       accountId: 20,
-      channelId: 30,
+      targetId: 30,
     });
     const driftedScopedKey = buildCodexSessionResponseStoreKey({
       sessionId: 'session-drift',
       siteId: 10,
       accountId: 21,
-      channelId: 31,
+      targetId: 31,
     });
 
     setCodexSessionResponseId(originalScopedKey, 'resp-drift');
@@ -83,19 +83,19 @@ describe('codexSessionResponseStore', () => {
       sessionId: 'session-delimited|tail',
       siteId: 10,
       accountId: 20,
-      channelId: 30,
+      targetId: 30,
     });
     const delimitedDriftedScopedKey = buildCodexSessionResponseStoreKey({
       sessionId: 'session-delimited|tail',
       siteId: 10,
       accountId: 21,
-      channelId: 31,
+      targetId: 31,
     });
     const plainScopedKey = buildCodexSessionResponseStoreKey({
       sessionId: 'session-delimited',
       siteId: 10,
       accountId: 22,
-      channelId: 32,
+      targetId: 32,
     });
 
     setCodexSessionResponseId(delimitedScopedKey, 'resp-delimited');
@@ -114,13 +114,13 @@ describe('codexSessionResponseStore', () => {
       sessionId: 'session-clear',
       siteId: 10,
       accountId: 20,
-      channelId: 30,
+      targetId: 30,
     });
     const driftedScopedKey = buildCodexSessionResponseStoreKey({
       sessionId: 'session-clear',
       siteId: 10,
       accountId: 21,
-      channelId: 31,
+      targetId: 31,
     });
 
     setCodexSessionResponseId(originalScopedKey, 'resp-clear');
@@ -139,13 +139,13 @@ describe('codexSessionResponseStore', () => {
       sessionId: 'session-roundtrip',
       siteId: 10,
       accountId: 20,
-      channelId: 30,
+      targetId: 30,
     });
     const driftedScopedKey = buildCodexSessionResponseStoreKey({
       sessionId: 'session-roundtrip',
       siteId: 10,
       accountId: 21,
-      channelId: 31,
+      targetId: 31,
     });
 
     setCodexSessionResponseId(originalScopedKey, 'resp-roundtrip-1');

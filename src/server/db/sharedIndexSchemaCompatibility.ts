@@ -13,7 +13,7 @@ type SharedIndexCompatibilitySpec = {
 };
 
 // Contract-defined indexes are owned by generated schema artifacts and
-// runtimeSchemaBootstrap. This legacy hook is intentionally empty so startup
+// runtimeSchemaBootstrap. This compatibility hook is intentionally empty so startup
 // does not maintain a second static source of index SQL.
 export const SHARED_INDEX_COMPATIBILITY_SPECS: SharedIndexCompatibilitySpec[] = [];
 

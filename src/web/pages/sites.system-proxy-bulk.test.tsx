@@ -8,6 +8,7 @@ const { apiMock } = vi.hoisted(() => ({
   apiMock: {
     getSites: vi.fn(),
     batchUpdateSites: vi.fn(),
+    updateSite: vi.fn(),
   },
 }));
 
@@ -20,6 +21,26 @@ async function flushMicrotasks() {
     await Promise.resolve();
     await Promise.resolve();
   });
+}
+
+function collectText(node: any): string {
+  if (typeof node === 'string' || typeof node === 'number') return String(node);
+  if (!node || !Array.isArray(node.children)) return '';
+  return node.children.map(collectText).join('');
+}
+
+function toggleCheckbox(node: { props: Record<string, any> }, checked = true) {
+  if (typeof node.props.onCheckedChange === 'function') {
+    node.props.onCheckedChange(checked);
+    return;
+  }
+  if (typeof node.props.onChange === 'function') {
+    node.props.onChange({ target: { checked } });
+    return;
+  }
+  if (typeof node.props.onClick === 'function') {
+    node.props.onClick({ stopPropagation: vi.fn(), target: { checked } });
+  }
 }
 
 describe('Sites system proxy bulk actions', () => {
@@ -48,6 +69,7 @@ describe('Sites system proxy bulk actions', () => {
       successIds: [1, 2],
       failedItems: [],
     });
+    apiMock.updateSite.mockResolvedValue({});
   });
 
   afterEach(() => {
@@ -72,8 +94,8 @@ describe('Sites system proxy bulk actions', () => {
       const checkboxB = root.root.find((node) => node.props['data-testid'] === 'site-select-2');
 
       await act(async () => {
-        checkboxA.props.onChange({ target: { checked: true } });
-        checkboxB.props.onChange({ target: { checked: true } });
+        toggleCheckbox(checkboxA);
+        toggleCheckbox(checkboxB);
       });
 
       const batchButton = root.root.find((node) => node.props['data-testid'] === 'sites-batch-enable-system-proxy');
@@ -113,6 +135,43 @@ describe('Sites system proxy bulk actions', () => {
 
       const checkbox = root.root.find((node) => node.props['data-testid'] === 'site-select-1');
       expect(checkbox.props.checked).toBe(true);
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('reorders sites by dragging the row handle', async () => {
+    let root!: WebTestRenderer;
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/sites']}>
+            <ToastProvider>
+              <Sites />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      const dragContext = root.root.find((node) => typeof node.props?.onDragEnd === 'function');
+      await act(async () => {
+        dragContext.props.onDragStart({
+          active: { id: 2 },
+        });
+      });
+      expect(collectText(root.root)).toContain('Site B');
+
+      await act(async () => {
+        await dragContext.props.onDragEnd({
+          active: { id: 2 },
+          over: { id: 1 },
+        });
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.updateSite).toHaveBeenCalledWith(2, { sortOrder: 0 });
+      expect(apiMock.updateSite).toHaveBeenCalledWith(1, { sortOrder: 1 });
     } finally {
       root?.unmount();
     }

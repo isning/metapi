@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   calculateModelUsageBreakdown,
   calculateModelUsageCost,
-  fallbackTokenCost,
   type PricingModel,
 } from './modelPricingService.js';
 
@@ -179,8 +178,4 @@ describe('modelPricingService', () => {
     expect(cost).toBe(0.00372);
   });
 
-  it('uses platform-specific fallback token divisor', () => {
-    expect(fallbackTokenCost(1500, 'new-api')).toBe(0.003);
-    expect(fallbackTokenCost(1500, 'veloera')).toBe(0.0015);
-  });
 });

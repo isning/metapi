@@ -3,6 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { clearRouteGroupMemberTestData } from '../../../testing/routeGroupMemberTestUtils.js';
 
 const getModelsMock = vi.fn();
 
@@ -39,8 +40,9 @@ describe('accounts skipModelFetch behavior', () => {
 
     await db.delete(schema.proxyLogs).run();
     await db.delete(schema.checkinLogs).run();
-    await db.delete(schema.routeChannels).run();
-    await db.delete(schema.tokenRoutes).run();
+    await clearRouteGroupMemberTestData();
+    await db.delete(schema.runtimeExecutionTargetState).run();
+    await db.delete(schema.runtimeExecutionTargets).run();
     await db.delete(schema.tokenModelAvailability).run();
     await db.delete(schema.modelAvailability).run();
     await db.delete(schema.accountTokens).run();
@@ -112,14 +114,13 @@ describe('accounts skipModelFetch behavior', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    // getModels is called TWICE: once for block validation, once asynchronously by refreshModelsForAccount
-    expect(getModelsMock).toHaveBeenCalledTimes(2);
+    expect(getModelsMock).toHaveBeenCalledTimes(1);
 
     const accounts = await db.select().from(schema.accounts).all();
     expect(accounts).toHaveLength(1);
     expect(accounts[0]?.apiToken).toBe('sk-test-normal-fetch');
 
     // Model availability should be populated since getModels was called (which refreshModels uses later or handled directly)
-    // Actually our POST /api/accounts triggers rebuildTokenRoutesFromAvailability and refreshModelsForAccount asynchronously, so models might not be populated synchronously, but the mock should be called.
+    // Actually our POST /api/accounts triggers rebuildManagedRouteGroupsFromAvailability and refreshModelsForAccount asynchronously, so models might not be populated synchronously, but the mock should be called.
   });
 });

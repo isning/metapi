@@ -131,6 +131,33 @@ describe('proxyUsageParser', () => {
     });
   });
 
+  it('parses llama.cpp compatible cache_n timing usage', () => {
+    const usage = parseProxyUsage({
+      usage: {
+        prompt_tokens: 64,
+        completion_tokens: 16,
+        total_tokens: 80,
+      },
+      timings: {
+        cache_n: 42,
+      },
+    });
+
+    expect(usage).toEqual({
+      promptTokens: 64,
+      completionTokens: 16,
+      totalTokens: 80,
+      cacheReadTokens: 42,
+      cacheCreationTokens: 0,
+      promptTokensIncludeCache: null,
+    });
+    expect(hasProxyUsagePayload({
+      timings: {
+        cache_n: 42,
+      },
+    })).toBe(true);
+  });
+
   it('merges usage snapshots by keeping richer values', () => {
     const merged = mergeProxyUsage(
       {

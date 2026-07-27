@@ -16,9 +16,10 @@ import {
   type RequestInit as UndiciRequestInit,
   type Response as UndiciResponse,
 } from 'undici';
+import type { UpstreamEndpoint } from '../orchestration/upstreamRequest.js';
 
 export type ProxyRuntimeRequest = {
-  endpoint: 'chat' | 'messages' | 'responses';
+  endpoint: UpstreamEndpoint;
   path: string;
   headers: Record<string, string>;
   body: Record<string, unknown>;
@@ -76,10 +77,11 @@ export async function performFetch(
   const combinedSignal = input.signal && init.signal
     ? AbortSignal.any([input.signal, init.signal as AbortSignal])
     : (input.signal ?? init.signal);
-  return fetch(requestUrl, {
+  const res = await fetch(requestUrl, {
     ...init,
     signal: combinedSignal,
   });
+  return res;
 }
 
 function hasZstdContentEncoding(contentEncoding: string | null): boolean {

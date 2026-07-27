@@ -10,8 +10,9 @@ const { apiMock } = vi.hoisted(() => ({
   apiMock: {
     getAuthInfo: vi.fn(),
     getRuntimeSettings: vi.fn(),
+    getRouteRuntimeCacheStatus: vi.fn().mockResolvedValue({ activeRuntime: { present: false, ageMs: null, artifactId: null, loadInFlight: false } }),
     getDownstreamApiKeys: vi.fn(),
-    getRoutesLite: vi.fn(),
+    getRouteGroupPage: vi.fn(),
     getRuntimeDatabaseConfig: vi.fn(),
     getBrandList: vi.fn(),
     updateRuntimeSettings: vi.fn(),
@@ -58,13 +59,11 @@ describe('Settings model availability probe confirmation', () => {
       logCleanupProgramLogsEnabled: true,
       logCleanupRetentionDays: 14,
       modelAvailabilityProbeEnabled: false,
-      routingFallbackUnitCost: 1,
-      routingWeights: {},
       adminIpAllowlist: [],
       systemProxyUrl: '',
     });
     apiMock.getDownstreamApiKeys.mockResolvedValue({ items: [] });
-    apiMock.getRoutesLite.mockResolvedValue([]);
+    apiMock.getRouteGroupPage.mockResolvedValue({ items: [], pageInfo: { page: 1, pageSize: 500, totalCount: 0, hasMore: false } });
     apiMock.getBrandList.mockResolvedValue({ brands: [] });
     apiMock.getRuntimeDatabaseConfig.mockResolvedValue({
       active: { dialect: 'sqlite', connection: '(default sqlite path)', ssl: false },
@@ -103,15 +102,15 @@ describe('Settings model availability probe confirmation', () => {
       expect(collectText(probeCard)).toContain('已关闭');
       expect(collectText(probeCard)).toContain('高风险操作');
 
-      const toggleLabel = root.root.find((node) => (
-        node.type === 'label'
-        && collectText(node).includes('允许 metapi 后台主动批量测活')
+      const toggle = root.root.find((node) => (
+        node.props['aria-label'] === '允许 metapi 后台主动批量测活'
+        && (typeof node.props.onClick === 'function' || typeof node.props.onCheckedChange === 'function')
       ));
-      const toggle = toggleLabel.findByType('input');
-      expect(toggle.props.checked).toBe(false);
+      expect(toggle.props['aria-checked'] ?? toggle.props.checked).toBe(false);
 
       await act(async () => {
-        toggle.props.onChange({ target: { checked: true } });
+        if (typeof toggle.props.onClick === 'function') toggle.props.onClick();
+        else toggle.props.onCheckedChange(true);
       });
 
       expect(collectText(probeCard)).toContain('待保存');
@@ -132,7 +131,6 @@ describe('Settings model availability probe confirmation', () => {
       const confirmButtonBeforeTyping = root.root.find((node) => (
         node.type === 'button'
         && collectText(node).trim() === '确认开启批量测活'
-        && node.props.className === 'btn btn-danger'
       ));
       expect(confirmButtonBeforeTyping.props.disabled).toBe(true);
 
@@ -147,7 +145,6 @@ describe('Settings model availability probe confirmation', () => {
       const confirmButton = root.root.find((node) => (
         node.type === 'button'
         && collectText(node).trim() === '确认开启批量测活'
-        && node.props.className === 'btn btn-danger'
       ));
       expect(confirmButton.props.disabled).toBe(false);
 

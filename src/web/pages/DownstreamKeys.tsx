@@ -15,6 +15,7 @@ import DownstreamKeyEditorModal, {
   type DownstreamExcludedCredentialRef,
   type DownstreamKeyEditorForm,
   type DownstreamSiteOption,
+  type CompiledPlanOption,
 } from './downstream-keys/DownstreamKeyEditorModal.js';
 import DownstreamKeyDrawer from './downstream-keys/DownstreamKeyDrawer.js';
 import {
@@ -27,6 +28,29 @@ import {
   type Range,
   type SummaryItem,
 } from './downstream-keys/shared.js';
+import { Button } from '../components/ui/button/index.js';
+import { ButtonGroup } from '../components/ui/button-group/index.js';
+import { Ellipsis, Eye, LoaderCircle, Pencil, Power, PowerOff, RotateCcw, Tags, Trash2 } from 'lucide-react';
+import { Skeleton } from '../components/ui/skeleton/index.js';
+import ToneBadge from '../components/ToneBadge.js';
+import InfoNote from '../components/InfoNote.js';
+import SearchInput from '../components/SearchInput.js';
+import PageHeader from '../components/workspace/PageHeader.js';
+import PageShell from '../components/workspace/PageShell.js';
+import {
+  CreateActionButton,
+  PageActionBar,
+  SecondaryActionButton,
+  TableActionBar,
+} from '../components/workspace/ActionBar.js';
+import { Card } from '../components/ui/card/index.js';
+import { Badge } from '../components/ui/badge/index.js';
+import EmptyStateBlock from '../components/EmptyStateBlock.js';
+import { DataTable, DataTableToolbar } from '../components/ui/data-table/index.js';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table/index.js';
+import { Checkbox } from '../components/ui/checkbox/index.js';
+import { Input } from '../components/ui/input/index.js';
+import * as DropdownMenu from '../components/ui/dropdown-menu/index.js';
 
 type Status = 'all' | 'enabled' | 'disabled';
 
@@ -45,7 +69,7 @@ type DownstreamApiKeyItem = {
   maxRequests: number | null;
   usedRequests: number;
   supportedModels: string[];
-  allowedRouteIds: number[];
+  allowedPlanIds: string[];
   siteWeightMultipliers: Record<number, number>;
   excludedSiteIds: number[];
   excludedCredentialRefs: DownstreamExcludedCredentialRef[];
@@ -54,13 +78,6 @@ type DownstreamApiKeyItem = {
 
 type ManagedItem = SummaryItem & {
   key?: string;
-};
-
-type RouteSelectorItem = {
-  id: number;
-  modelPattern: string;
-  displayName?: string | null;
-  enabled: boolean;
 };
 
 type DeleteConfirmState =
@@ -77,7 +94,7 @@ type BatchMetadataForm = {
   tags: string[];
 };
 
-type DefaultRouteSelections = Pick<DownstreamKeyEditorForm, 'selectedModels' | 'selectedGroupRouteIds'>;
+type DefaultPlanSelections = Pick<DownstreamKeyEditorForm, 'selectedModels' | 'selectedPlanIds'>;
 function toDateTimeLocal(isoString: string | null | undefined): string {
   if (!isoString) return '';
   const ts = Date.parse(isoString);
@@ -89,22 +106,6 @@ function toDateTimeLocal(isoString: string | null | undefined): string {
   const hh = String(date.getHours()).padStart(2, '0');
   const mi = String(date.getMinutes()).padStart(2, '0');
   return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
-}
-
-function isExactModelPattern(modelPattern: string): boolean {
-  const normalized = modelPattern.trim();
-  if (!normalized) return false;
-  if (normalized.toLowerCase().startsWith('re:')) return false;
-  return !/[\*\?]/.test(normalized);
-}
-
-function routeTitle(route: RouteSelectorItem): string {
-  const displayName = (route.displayName || '').trim();
-  return displayName || route.modelPattern;
-}
-
-function isGroupRouteOption(route: RouteSelectorItem): boolean {
-  return !isExactModelPattern(route.modelPattern);
 }
 
 function uniqStrings(values: string[]): string[] {
@@ -129,6 +130,10 @@ function normalizeTags(values: string[]): string[] {
 
 function uniqIds(values: number[]): number[] {
   return [...new Set(values.map((value) => Number(value)).filter((value) => Number.isFinite(value) && value > 0).map((value) => Math.trunc(value)))];
+}
+
+function uniqPlanIds(values: string[]): string[] {
+  return [...new Set(values.map((value) => String(value || '').trim()).filter(Boolean))];
 }
 
 function buildExcludedCredentialRefKey(ref: DownstreamExcludedCredentialRef): string {
@@ -166,18 +171,13 @@ function normalizeExcludedCredentialRefs(values: DownstreamExcludedCredentialRef
   return Array.from(deduped.values()).sort((left, right) => buildExcludedCredentialRefKey(left).localeCompare(buildExcludedCredentialRefKey(right)));
 }
 
-function buildDefaultRouteSelections(routeOptions: RouteSelectorItem[]): DefaultRouteSelections {
+function buildDefaultPlanSelections(compiledPlanOptions: CompiledPlanOption[]): DefaultPlanSelections {
   return {
     selectedModels: uniqStrings(
-      routeOptions
-        .filter((item) => isExactModelPattern(item.modelPattern))
-        .map((item) => item.modelPattern),
+      compiledPlanOptions
+        .map((item) => item.modelName),
     ).sort((a, b) => a.localeCompare(b)),
-    selectedGroupRouteIds: uniqIds(
-      routeOptions
-        .filter(isGroupRouteOption)
-        .map((item) => item.id),
-    ),
+    selectedPlanIds: uniqPlanIds(compiledPlanOptions.map((item) => item.id)),
   };
 }
 
@@ -210,6 +210,20 @@ function buildSearchMatcher(search: string): ((haystack: string) => boolean) | n
   }
   const normalized = text.toLowerCase();
   return (haystack: string) => haystack.toLowerCase().includes(normalized);
+}
+
+async function loadCompiledPlanOptions(): Promise<CompiledPlanOption[]> {
+  const response = await api.getDownstreamCompiledPlans();
+  const items = Array.isArray(response?.items) ? response.items : [];
+  return items
+    .filter((item): item is CompiledPlanOption => (
+      typeof item?.id === 'string'
+      && item.id.trim().length > 0
+      && typeof item?.modelName === 'string'
+      && item.modelName.trim().length > 0
+    ))
+    .map((item) => ({ id: item.id.trim(), modelName: item.modelName.trim() }))
+    .sort((left, right) => left.modelName.localeCompare(right.modelName));
 }
 
 function splitSearchInput(value: string): { textSearch: string; inlineTags: string[] } {
@@ -267,28 +281,12 @@ function DownstreamKeyCopyIconButton({ fullKey }: { fullKey: string | undefined 
   const release = () => setPressed(false);
 
   return (
-    <button
+    <Button
       type="button"
-      title="复制完整密钥"
-      aria-label="复制完整密钥"
-      style={{
-        display: 'inline-flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: 2,
-        lineHeight: 0,
-        flexShrink: 0,
-        border: 'none',
-        background: 'transparent',
-        color: disabled
-          ? 'var(--color-text-muted)'
-          : pressed
-            ? 'var(--color-text-primary)'
-            : 'var(--color-text-muted)',
-        cursor: disabled ? 'not-allowed' : 'pointer',
-        opacity: disabled ? 0.4 : 1,
-        borderRadius: 'var(--radius-sm)',
-      }}
+      variant="ghost"
+      size="icon"
+      title={tr('pages.downstreamKeys.copyKey')}
+      aria-label={tr('pages.downstreamKeys.copyKey')}
       disabled={disabled}
       onMouseDown={() => {
         if (!disabled) setPressed(true);
@@ -304,38 +302,38 @@ function DownstreamKeyCopyIconButton({ fullKey }: { fullKey: string | undefined 
         e.stopPropagation();
         const full = fullKey?.trim();
         if (!full) {
-          toast.info('完整密钥暂不可用，请刷新页面后重试');
+          toast.info(tr('pages.downstreamKeys.keyNotAvailableRefreshRetry'));
           return;
         }
         try {
           await copyToClipboard(full);
-          toast.success('已复制到剪贴板');
+          toast.success(tr('pages.downstreamKeys.copy'));
         } catch {
-          toast.error('复制失败');
+          toast.error(tr('pages.downstreamKeys.copyfailed'));
         }
       }}
     >
       <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5} aria-hidden>
         <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
       </svg>
-    </button>
+    </Button>
   );
 }
 
 function buildEditorForm(
   item?: ManagedItem | DownstreamApiKeyItem | null,
-  routeOptions: RouteSelectorItem[] = [],
+  compiledPlanOptions: CompiledPlanOption[] = [],
   selectAllByDefault = false,
 ): DownstreamKeyEditorForm {
   const defaultSelections = selectAllByDefault
-    ? buildDefaultRouteSelections(routeOptions)
-    : { selectedModels: [], selectedGroupRouteIds: [] };
+    ? buildDefaultPlanSelections(compiledPlanOptions)
+    : { selectedModels: [], selectedPlanIds: [] };
   const selectedModels = Array.isArray(item?.supportedModels)
     ? item.supportedModels
     : defaultSelections.selectedModels;
-  const selectedGroupRouteIds = Array.isArray(item?.allowedRouteIds)
-    ? item.allowedRouteIds
-    : defaultSelections.selectedGroupRouteIds;
+  const selectedPlanIds = Array.isArray(item?.allowedPlanIds)
+    ? item.allowedPlanIds
+    : defaultSelections.selectedPlanIds;
 
   return {
     name: item?.name || '',
@@ -348,7 +346,7 @@ function buildEditorForm(
     expiresAt: toDateTimeLocal(item?.expiresAt),
     enabled: item?.enabled ?? true,
     selectedModels: uniqStrings(selectedModels),
-    selectedGroupRouteIds: uniqIds(selectedGroupRouteIds),
+    selectedPlanIds: uniqPlanIds(selectedPlanIds),
     siteWeightMultipliersText: JSON.stringify(item?.siteWeightMultipliers || {}, null, 2),
     excludedSiteIds: normalizeExcludedSiteIds(Array.isArray(item?.excludedSiteIds) ? item.excludedSiteIds : []),
     excludedCredentialRefs: normalizeExcludedCredentialRefs(Array.isArray(item?.excludedCredentialRefs) ? item.excludedCredentialRefs : []),
@@ -356,31 +354,31 @@ function buildEditorForm(
 }
 
 function summarizeModelLimit(models: string[]): string {
-  if (!Array.isArray(models) || models.length === 0) return '未授权模型';
+  if (!Array.isArray(models) || models.length === 0) return tr('pages.downstreamKeys.model2');
   if (models.length === 1) return models[0];
   return `${models[0]} +${models.length - 1}`;
 }
 
-function summarizeRouteLimit(routeIds: number[], routeMap: Map<number, RouteSelectorItem>): string {
-  if (!Array.isArray(routeIds) || routeIds.length === 0) return '未授权群组';
-  const names = routeIds
-    .map((id) => routeMap.get(id))
+function summarizePlanLimit(planIds: string[], compiledPlanMap: Map<string, CompiledPlanOption>): string {
+  if (!Array.isArray(planIds) || planIds.length === 0) return tr('pages.downstreamKeys.compiledPlansNone');
+  const names = planIds
+    .map((id) => compiledPlanMap.get(id))
     .filter(Boolean)
-    .map((item) => routeTitle(item!));
-  if (names.length === 0) return `${routeIds.length} 个群组`;
+    .map((item) => item!.modelName);
+  if (names.length === 0) return `${planIds.length} ${tr('pages.downstreamKeys.compiledPlansUnavailable')}`;
   if (names.length === 1) return names[0];
   return `${names[0]} +${names.length - 1}`;
 }
 
 function summarizeSiteWeightMultipliers(weights: Record<number, number> | undefined): string {
   const entries = Object.entries(weights || {});
-  if (entries.length === 0) return '默认倍率';
+  if (entries.length === 0) return tr('pages.downstreamKeys.defaultmultiplier');
   if (entries.length === 1) return `${entries[0][0]} => ${entries[0][1]}`;
   return `${entries[0][0]} => ${entries[0][1]} +${entries.length - 1}`;
 }
 
 function summarizeTags(tags: string[]): string {
-  if (!Array.isArray(tags) || tags.length === 0) return '无标签';
+  if (!Array.isArray(tags) || tags.length === 0) return tr('pages.downstreamKeys.noTags');
   if (tags.length === 1) return tags[0];
   return `${tags[0]} +${tags.length - 1}`;
 }
@@ -393,10 +391,109 @@ function SummaryMetric({
   value: string;
 }) {
   return (
-    <div style={{ minWidth: 112, display: 'grid', gap: 4 }}>
-      <span style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>{label}</span>
-      <strong style={{ fontSize: 14, color: 'var(--color-text-primary)', fontWeight: 700 }}>{value}</strong>
+    <div className="grid min-w-28 gap-1">
+      <span className="text-xs text-muted-foreground">{label}</span>
+      <strong className="text-sm font-bold text-foreground">{value}</strong>
     </div>
+  );
+}
+
+function DownstreamKeysLoadingSkeleton({ isMobile }: { isMobile: boolean }) {
+  if (isMobile) {
+    return (
+      <div className="grid gap-3" aria-busy="true">
+        {Array.from({ length: 4 }).map((_, index) => (
+          <MobileCard
+            key={index}
+            className={`animate-slide-up stagger-${Math.min(index + 1, 5)}`}
+            title={<Skeleton className="h-5 w-40" />}
+            headerActions={<Skeleton className="h-5 w-16 rounded-full" />}
+          >
+            <div className="grid gap-3">
+              <Skeleton className="h-4 w-48" />
+              <Skeleton className="h-4 w-36" />
+              <Skeleton className="h-4 w-56 max-w-full" />
+              <div className="flex flex-wrap gap-2">
+                <Skeleton className="h-5 w-20 rounded-full" />
+                <Skeleton className="h-5 w-24 rounded-full" />
+                <Skeleton className="h-5 w-16 rounded-full" />
+              </div>
+              <div className="flex flex-wrap justify-end gap-2">
+                <Skeleton className="h-8 w-14" />
+                <Skeleton className="h-8 w-14" />
+                <Skeleton className="h-8 w-20" />
+              </div>
+            </div>
+          </MobileCard>
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <DataTable minWidth={1120} density="compact" aria-busy="true">
+      <DataTableToolbar className="border-b bg-muted/30 px-4">
+        <div className="grid gap-1">
+          <Skeleton className="h-4 w-32" />
+          <Skeleton className="h-3 w-56" />
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Skeleton className="h-8 w-24" />
+          <Skeleton className="h-8 w-20" />
+          <Skeleton className="h-8 w-20" />
+        </div>
+      </DataTableToolbar>
+      <Table className="w-full text-sm">
+        <TableHeader>
+          <TableRow>
+            <TableHead className="w-[42px]" />
+            <TableHead>{tr('pages.downstreamKeys.keyinfo')}</TableHead>
+            <TableHead>{tr('pages.downstreamKeys.authorizationScope')}</TableHead>
+            <TableHead className="text-right">{tr('pages.downstreamKeys.quota')}</TableHead>
+            <TableHead className="text-right">{tr('pages.downstreamKeys.usage')}</TableHead>
+            <TableHead>{tr('pages.downstreamKeys.recentUsage')}</TableHead>
+            <TableHead className="text-right">{tr('pages.accounts.actions2')}</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {Array.from({ length: 6 }).map((_, index) => (
+            <TableRow key={index} className={`animate-slide-up stagger-${Math.min(index + 1, 5)}`}>
+              <TableCell><Skeleton className="size-4" /></TableCell>
+              <TableCell>
+                <div className="grid gap-2">
+                  <div className="flex items-center gap-2">
+                    <Skeleton className="h-4 w-36" />
+                    <Skeleton className="h-5 w-14 rounded-full" />
+                  </div>
+                  <Skeleton className="h-3 w-44" />
+                  <div className="flex flex-wrap gap-2">
+                    <Skeleton className="h-5 w-24 rounded-full" />
+                    <Skeleton className="h-5 w-16 rounded-full" />
+                  </div>
+                </div>
+              </TableCell>
+              <TableCell>
+                <div className="grid gap-2">
+                  <Skeleton className="h-3 w-48" />
+                  <Skeleton className="h-3 w-40" />
+                  <Skeleton className="h-3 w-32" />
+                </div>
+              </TableCell>
+              <TableCell><Skeleton className="ml-auto h-5 w-20" /></TableCell>
+              <TableCell><Skeleton className="ml-auto h-5 w-20" /></TableCell>
+              <TableCell><Skeleton className="h-4 w-28" /></TableCell>
+              <TableCell>
+                <div className="flex justify-end gap-1">
+                  <Skeleton className="h-8 w-16" />
+                  <Skeleton className="h-8 w-14" />
+                  <Skeleton className="size-8" />
+                </div>
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </DataTable>
   );
 }
 
@@ -408,48 +505,24 @@ function InlineToggle({
   onChange: (value: TagMatchMode) => void;
 }) {
   const options: Array<{ value: TagMatchMode; label: string }> = [
-    { value: 'any', label: '匹配任一标签' },
-    { value: 'all', label: '匹配全部标签' },
+    { value: 'any', label: tr('pages.downstreamKeys.matchAnyTag') },
+    { value: 'all', label: tr('pages.downstreamKeys.matchalltags') },
   ];
 
-  const base: React.CSSProperties = {
-    padding: '6px 12px',
-    fontSize: 12,
-    fontWeight: 600,
-    border: '1px solid var(--color-border)',
-    background: 'var(--color-bg-card)',
-    color: 'var(--color-text-muted)',
-    cursor: 'pointer',
-  };
-
-  const active: React.CSSProperties = {
-    background: 'var(--color-primary)',
-    color: '#fff',
-    borderColor: 'var(--color-primary)',
-  };
-
   return (
-    <div style={{ display: 'inline-flex', borderRadius: 'var(--radius-sm)', overflow: 'hidden' }}>
-      {options.map((option, index) => (
-        <button
+    <ButtonGroup>
+      {options.map((option) => (
+        <Button
           key={option.value}
           type="button"
+          variant={value === option.value ? 'secondary' : 'outline'}
+          size="sm"
           onClick={() => onChange(option.value)}
-          style={{
-            ...base,
-            ...(value === option.value ? active : {}),
-            ...(index === 0
-              ? { borderRight: 'none' }
-              : { borderTopRightRadius: 'var(--radius-sm)', borderBottomRightRadius: 'var(--radius-sm)' }),
-            ...(index === 0
-              ? { borderTopLeftRadius: 'var(--radius-sm)', borderBottomLeftRadius: 'var(--radius-sm)' }
-              : {}),
-          }}
         >
           {option.label}
-        </button>
+        </Button>
       ))}
-    </div>
+    </ButtonGroup>
   );
 }
 
@@ -464,7 +537,7 @@ export default function DownstreamKeys() {
   const [tagMatchMode, setTagMatchMode] = useState<TagMatchMode>('any');
   const [summaryItems, setSummaryItems] = useState<SummaryItem[]>([]);
   const [rawItems, setRawItems] = useState<DownstreamApiKeyItem[]>([]);
-  const [routeOptions, setRouteOptions] = useState<RouteSelectorItem[]>([]);
+  const [compiledPlanOptions, setCompiledPlanOptions] = useState<CompiledPlanOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [batchActionLoading, setBatchActionLoading] = useState(false);
@@ -497,18 +570,13 @@ export default function DownstreamKeys() {
       const [summaryRes, rawRes, routesRes] = await Promise.all([
         api.getDownstreamApiKeysSummary({ range }),
         api.getDownstreamApiKeys(),
-        api.getRoutesLite(),
+        loadCompiledPlanOptions(),
       ]);
       setSummaryItems(Array.isArray(summaryRes?.items) ? summaryRes.items : []);
       setRawItems(Array.isArray(rawRes?.items) ? rawRes.items : []);
-      setRouteOptions((Array.isArray(routesRes) ? routesRes : []).map((row: any) => ({
-        id: Number(row.id),
-        modelPattern: String(row.modelPattern || ''),
-        displayName: row.displayName,
-        enabled: !!row.enabled,
-      })));
+      setCompiledPlanOptions(routesRes);
     } catch (err: any) {
-      toast.error(err?.message || '加载下游密钥列表失败');
+      toast.error(err?.message || tr('pages.downstreamKeys.downstreamKeysFailed'));
     } finally {
       setLoading(false);
     }
@@ -559,7 +627,7 @@ export default function DownstreamKeys() {
           ref: { kind: 'default_api_key', siteId: Math.trunc(siteId), accountId: Math.trunc(accountId) },
           siteName: String(account?.site?.name || `站点 ${siteId}`).trim() || `站点 ${siteId}`,
           accountName: String(account?.username || `账号 ${accountId}`).trim() || `账号 ${accountId}`,
-          label: '默认 API Key',
+          label: tr('pages.downstreamKeys.defaultApiKey'),
           detail: `使用账号默认 API Key (${apiToken.slice(0, 6)}...)`,
         });
       }
@@ -589,7 +657,7 @@ export default function DownstreamKeys() {
       );
       setExclusionSourceLoaded(true);
     } catch (err: any) {
-      toast.error(err?.message || '加载可排除站点与令牌失败');
+      toast.error(err?.message || tr('pages.downstreamKeys.sitesTokenfailed'));
     } finally {
       setExclusionSourceLoading(false);
     }
@@ -605,7 +673,7 @@ export default function DownstreamKeys() {
   }, [editorOpen]);
 
   const rawItemMap = useMemo(() => new Map(rawItems.map((item) => [item.id, item])), [rawItems]);
-  const routeMap = useMemo(() => new Map(routeOptions.map((item) => [item.id, item])), [routeOptions]);
+  const compiledPlanMap = useMemo(() => new Map(compiledPlanOptions.map((item) => [item.id, item])), [compiledPlanOptions]);
 
   const managedItems = useMemo<ManagedItem[]>(() => (
     summaryItems.map((item) => {
@@ -624,7 +692,7 @@ export default function DownstreamKeys() {
         maxRequests: raw?.maxRequests ?? item.maxRequests,
         usedRequests: raw?.usedRequests ?? item.usedRequests,
         supportedModels: raw?.supportedModels ?? item.supportedModels,
-        allowedRouteIds: raw?.allowedRouteIds ?? item.allowedRouteIds,
+        allowedPlanIds: raw?.allowedPlanIds ?? item.allowedPlanIds,
         siteWeightMultipliers: raw?.siteWeightMultipliers ?? item.siteWeightMultipliers,
         excludedSiteIds: raw?.excludedSiteIds ?? item.excludedSiteIds,
         excludedCredentialRefs: raw?.excludedCredentialRefs ?? item.excludedCredentialRefs,
@@ -645,8 +713,8 @@ export default function DownstreamKeys() {
 
   const groupFilterOptions = useMemo(
     () => [
-      { value: '__all__', label: '全部主分组' },
-      { value: '__ungrouped__', label: '未分组' },
+      { value: '__all__', label: tr('pages.downstreamKeys.allprimaryGroup') },
+      { value: '__ungrouped__', label: tr('pages.downstreamKeys.ungrouped') },
       ...groupSuggestions.map((group) => ({ value: group, label: group })),
     ],
     [groupSuggestions],
@@ -679,7 +747,10 @@ export default function DownstreamKeys() {
       item.groupName || '',
       ...(item.tags || []),
       ...(item.supportedModels || []),
-      ...((item.allowedRouteIds || []).map((id) => routeTitle(routeMap.get(id) || { id, modelPattern: String(id), enabled: true } as RouteSelectorItem))),
+      ...((item.allowedPlanIds || []).map((id) => {
+        const plan = compiledPlanMap.get(id);
+        return plan ? plan.modelName : String(id);
+      })),
     ].join(' ');
     return searchMatcher(haystack);
   }).sort((a, b) => {
@@ -688,7 +759,7 @@ export default function DownstreamKeys() {
     const lastB = b.lastUsedAt ? Date.parse(b.lastUsedAt) : 0;
     if (lastA !== lastB) return lastB - lastA;
     return a.name.localeCompare(b.name);
-  }), [activeTagFilters, groupFilter, managedItems, routeMap, searchMatcher, status, tagMatchMode]);
+  }), [activeTagFilters, groupFilter, managedItems, compiledPlanMap, searchMatcher, status, tagMatchMode]);
 
   const visibleIds = useMemo(() => visibleItems.map((item) => item.id), [visibleItems]);
   const selectedVisibleCount = useMemo(() => selectedIds.filter((id) => visibleIds.includes(id)).length, [selectedIds, visibleIds]);
@@ -710,45 +781,46 @@ export default function DownstreamKeys() {
   );
 
   const statusOptions = useMemo(() => [
-    { value: 'all', label: '全部状态' },
-    { value: 'enabled', label: '仅启用' },
-    { value: 'disabled', label: '仅禁用' },
+    { value: 'all', label: tr('pages.downstreamKeys.allstatus') },
+    { value: 'enabled', label: tr('pages.downstreamKeys.enabled2') },
+    { value: 'disabled', label: tr('pages.downstreamKeys.disabled2') },
   ], []);
 
   const totals = useMemo(() => visibleItems.reduce((acc, item) => {
     acc.tokens += Number(item.rangeUsage?.totalTokens || 0);
     acc.requests += Number(item.rangeUsage?.totalRequests || 0);
-    acc.cost += Number(item.rangeUsage?.totalCost || 0);
+    acc.cost += Number(item.rangeUsage?.cost.amount || 0);
+    if (!acc.costUnit && item.rangeUsage?.cost.unit) acc.costUnit = item.rangeUsage.cost.unit;
     if (item.enabled) acc.enabled += 1;
     return acc;
-  }, { tokens: 0, requests: 0, cost: 0, enabled: 0 }), [visibleItems]);
+  }, { tokens: 0, requests: 0, cost: 0, costUnit: '', enabled: 0 }), [visibleItems]);
 
   useEffect(() => {
     if (!editorOpen || editingId !== null || !createDefaultsPending) {
       return;
     }
 
-    const defaultSelections = buildDefaultRouteSelections(routeOptions);
-    if (defaultSelections.selectedModels.length === 0 && defaultSelections.selectedGroupRouteIds.length === 0) {
+    const defaultSelections = buildDefaultPlanSelections(compiledPlanOptions);
+    if (defaultSelections.selectedModels.length === 0 && defaultSelections.selectedPlanIds.length === 0) {
       return;
     }
 
     setEditorForm((prev) => {
-      if (prev.selectedModels.length > 0 || prev.selectedGroupRouteIds.length > 0) {
+      if (prev.selectedModels.length > 0 || prev.selectedPlanIds.length > 0) {
         return prev;
       }
       return {
         ...prev,
         selectedModels: defaultSelections.selectedModels,
-        selectedGroupRouteIds: defaultSelections.selectedGroupRouteIds,
+        selectedPlanIds: defaultSelections.selectedPlanIds,
       };
     });
     setCreateDefaultsPending(false);
-  }, [createDefaultsPending, editorOpen, editingId, routeOptions]);
+  }, [createDefaultsPending, editorOpen, editingId, compiledPlanOptions]);
 
   const openCreate = () => {
     setEditingId(null);
-    setEditorForm(buildEditorForm(null, routeOptions, true));
+    setEditorForm(buildEditorForm(null, compiledPlanOptions, true));
     setCreateDefaultsPending(true);
     setEditorOpen(true);
   };
@@ -789,15 +861,15 @@ export default function DownstreamKeys() {
     const name = editorForm.name.trim();
     const key = editorForm.key.trim();
     if (!name) {
-      toast.info('请填写密钥名称');
+      toast.info(tr('pages.downstreamKeys.keyname'));
       return;
     }
     if (!key) {
-      toast.info('请填写下游密钥');
+      toast.info(tr('pages.downstreamKeys.enterDownstreamKey'));
       return;
     }
     if (!key.startsWith('sk-')) {
-      toast.info('下游密钥必须以 sk- 开头');
+      toast.info(tr('pages.downstreamKeys.downstreamKeysSk'));
       return;
     }
 
@@ -807,7 +879,7 @@ export default function DownstreamKeys() {
       try {
         const parsed = JSON.parse(rawWeights);
         if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-          toast.info('站点倍率必须是 JSON 对象');
+          toast.info(tr('pages.downstreamKeys.sitesmultiplierJson'));
           return;
         }
         siteWeightMultipliers = Object.fromEntries(
@@ -816,7 +888,7 @@ export default function DownstreamKeys() {
             .filter(([siteId, value]) => Number.isFinite(siteId) && siteId > 0 && Number.isFinite(value) && value > 0),
         ) as Record<number, number>;
       } catch {
-        toast.info('站点倍率 JSON 解析失败');
+        toast.info(tr('pages.downstreamKeys.sitesmultiplierJsonFailed'));
         return;
       }
     }
@@ -834,22 +906,22 @@ export default function DownstreamKeys() {
         maxCost: editorForm.maxCost.trim() ? Number(editorForm.maxCost.trim()) : null,
         maxRequests: editorForm.maxRequests.trim() ? Number(editorForm.maxRequests.trim()) : null,
         supportedModels: uniqStrings(editorForm.selectedModels),
-        allowedRouteIds: uniqIds(editorForm.selectedGroupRouteIds).filter((id) => routeMap.has(id) && isGroupRouteOption(routeMap.get(id)!)),
+        allowedPlanIds: uniqPlanIds(editorForm.selectedPlanIds).filter((id) => compiledPlanMap.has(id)),
         siteWeightMultipliers,
         excludedSiteIds: normalizeExcludedSiteIds(editorForm.excludedSiteIds),
         excludedCredentialRefs: normalizeExcludedCredentialRefs(editorForm.excludedCredentialRefs),
       };
       if (editingId) {
         await api.updateDownstreamApiKey(editingId, payload);
-        toast.success('下游密钥已更新');
+        toast.success(tr('pages.downstreamKeys.downstreamKeyUpdated'));
       } else {
         await api.createDownstreamApiKey(payload);
-        toast.success('下游密钥已创建');
+        toast.success(tr('pages.downstreamKeys.downstreamKeyCreated'));
       }
       closeEditor();
       await load();
     } catch (err: any) {
-      toast.error(err?.message || '保存下游密钥失败');
+      toast.error(err?.message || tr('pages.downstreamKeys.savedownstreamKeysfailed'));
     } finally {
       setSaving(false);
     }
@@ -867,22 +939,25 @@ export default function DownstreamKeys() {
     setSelectedIds((current) => uniqIds([...current, ...visibleIds]));
   };
 
-  const batchRun = async (label: string, ids: number[]) => {
+  const batchRun = async (
+    action: 'enable' | 'disable' | 'delete' | 'resetUsage' | 'updateMetadata',
+    ids: number[],
+  ) => {
     if (ids.length === 0) return;
     setBatchActionLoading(true);
+    const actionLabel = action === 'enable'
+      ? tr('pages.accounts.enabled')
+      : action === 'disable'
+        ? tr('pages.accounts.disabled')
+        : action === 'delete'
+          ? tr('pages.accounts.delete2')
+          : action === 'resetUsage'
+            ? tr('pages.downstreamKeys.clearUsageBatch')
+            : tr('pages.downstreamKeys.batchGroup');
     try {
-      const action = label === '批量启用'
-        ? 'enable'
-        : label === '批量禁用'
-          ? 'disable'
-          : label === '批量删除'
-            ? 'delete'
-            : label === '批量清零用量'
-              ? 'resetUsage'
-              : 'updateMetadata';
       const payload = action === 'updateMetadata'
         ? {
-          ids,
+            ids,
           action,
           groupOperation: batchMetadataForm.groupOperation,
           groupName: batchMetadataForm.groupOperation === 'set' ? batchMetadataForm.groupName.trim() : undefined,
@@ -896,9 +971,9 @@ export default function DownstreamKeys() {
       const failedIds = failedItems.map((item: any) => Number(item.id)).filter((id: number) => Number.isFinite(id) && id > 0);
       const successCount = successIds.length;
       if (failedIds.length > 0) {
-        toast.info(`${label}完成：成功 ${successCount}，失败 ${failedIds.length}`);
+        toast.info(`${actionLabel}完成：成功 ${successCount}，失败 ${failedIds.length}`);
       } else {
-        toast.success(`${label}完成：成功 ${successCount}`);
+        toast.success(`${actionLabel}完成：成功 ${successCount}`);
       }
       setSelectedIds(failedIds);
       if (action === 'updateMetadata' && failedIds.length === 0) {
@@ -907,7 +982,7 @@ export default function DownstreamKeys() {
       }
       await load();
     } catch (err: any) {
-      toast.error(err?.message || `${label}失败`);
+      toast.error(err?.message || `${actionLabel}失败`);
     } finally {
       setBatchActionLoading(false);
     }
@@ -917,7 +992,7 @@ export default function DownstreamKeys() {
     await withRowLoading(`toggle-${item.id}`, async () => {
       await api.updateDownstreamApiKey(item.id, { enabled: !item.enabled });
       await load();
-      toast.success(item.enabled ? '已禁用该密钥' : '已启用该密钥');
+      toast.success(item.enabled ? tr('pages.downstreamKeys.disabledKey') : tr('pages.downstreamKeys.enabledKey'));
     });
   };
 
@@ -925,7 +1000,7 @@ export default function DownstreamKeys() {
     await withRowLoading(`reset-${item.id}`, async () => {
       await api.resetDownstreamApiKeyUsage(item.id);
       await load();
-      toast.success('已清零该密钥用量');
+      toast.success(tr('pages.downstreamKeys.keyUsageCleared'));
     });
   };
 
@@ -937,13 +1012,13 @@ export default function DownstreamKeys() {
     if (target.mode === 'single') {
       await withRowLoading(`delete-${target.item.id}`, async () => {
         await api.deleteDownstreamApiKey(target.item.id);
-        toast.success('下游密钥已删除');
+        toast.success(tr('pages.downstreamKeys.downstreamKeysdeleted'));
         await load();
       });
       return;
     }
 
-    await batchRun('批量删除', target.ids);
+    await batchRun('delete', target.ids);
   };
 
   const addTagFilter = (raw: string) => {
@@ -960,52 +1035,48 @@ export default function DownstreamKeys() {
 
   const runBatchMetadata = async () => {
     if (batchMetadataForm.groupOperation === 'set' && !batchMetadataForm.groupName.trim()) {
-      toast.info('请填写批量主分组');
+      toast.info(tr('pages.downstreamKeys.enterBatchPrimaryGroup'));
       return;
     }
     if (batchMetadataForm.tagOperation === 'append' && normalizeTags(batchMetadataForm.tags).length === 0) {
-      toast.info('请至少填写一个批量标签');
+      toast.info(tr('pages.downstreamKeys.enterLeastOneBatchTag'));
       return;
     }
-    await batchRun('批量归类', selectedIds);
+    await batchRun('updateMetadata', selectedIds);
   };
 
   const filterControls = (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-      <div className="toolbar" style={{ marginBottom: 0, alignItems: 'center' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: '1 1 420px', minWidth: 280, flexWrap: 'wrap' }}>
-          <div className="toolbar-search" style={{ maxWidth: 'unset', flex: '1 1 320px' }}>
-            <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
-            <input
-              value={searchInput}
-              onChange={(e) => setSearchInput(e.target.value)}
-              placeholder="搜索名称、备注、模型、主分组或标签"
-            />
-          </div>
+    <div className="flex flex-col gap-2.5">
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex min-w-[280px] flex-[1_1_420px] flex-wrap items-center gap-2">
+          <SearchInput
+            className="flex-[1_1_320px]"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            placeholder={tr('pages.downstreamKeys.searchnameNotesModelPrimaryGroupTags')}
+          />
           <InlineToggle value={tagMatchMode} onChange={setTagMatchMode} />
         </div>
-        <div style={{ minWidth: 170 }}>
+        <div className="min-w-[170px]">
           <ModernSelect value={status} onChange={(value) => setStatus((value as Status) || 'all')} options={statusOptions} />
         </div>
-        <div style={{ minWidth: 170 }}>
+        <div className="min-w-[170px]">
           <ModernSelect value={groupFilter} onChange={(value) => setGroupFilter(String(value || '__all__'))} options={groupFilterOptions} />
         </div>
-        <button className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={() => { setSearchInput(''); setStatus('all'); setGroupFilter('__all__'); setSelectedTags([]); setTagMatchMode('any'); }}>
-          重置筛选
-        </button>
+        <Button type="button" variant="outline" onClick={() => { setSearchInput(''); setStatus('all'); setGroupFilter('__all__'); setSelectedTags([]); setTagMatchMode('any'); }}>
+          {tr('pages.downstreamKeys.resetfilter')}
+        </Button>
       </div>
 
       {(activeTagFilters.length > 0 || tagSuggestions.length > 0) ? (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+        <div className="flex flex-wrap gap-1.5">
           {activeTagFilters.map((tag) => {
             const fromPinnedTags = selectedTags.some((item) => item.toLowerCase() === tag.toLowerCase());
             return (
-              <button
+              <Button type="button" variant="outline"
                 key={tag}
-                className="btn btn-ghost"
-                style={{ ...tagChipStyle('accent'), cursor: 'pointer', opacity: fromPinnedTags ? 1 : 0.82 }}
+
+
                 onClick={() => {
                   if (fromPinnedTags) {
                     setSelectedTags((current) => current.filter((item) => item.toLowerCase() !== tag.toLowerCase()));
@@ -1020,13 +1091,13 @@ export default function DownstreamKeys() {
                 }}
               >
                 {tag} ×
-              </button>
+              </Button>
             );
           })}
           {tagSuggestions.filter((tag) => !activeTagFilters.some((current) => current.toLowerCase() === tag.toLowerCase())).slice(0, 8).map((tag) => (
-            <button key={tag} className="btn btn-ghost" style={tagChipStyle()} onClick={() => addTagFilter(tag)}>
+            <Button type="button" variant="outline" key={tag} onClick={() => addTagFilter(tag)}>
               {tag}
-            </button>
+            </Button>
           ))}
         </div>
       ) : null}
@@ -1036,82 +1107,92 @@ export default function DownstreamKeys() {
   const empty = !loading && visibleItems.length === 0;
 
   return (
-    <div className="animate-fade-in" style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <div className="page-header" style={{ marginBottom: 0 }}>
-        <div>
-          <h2 className="page-title">下游密钥</h2>
-          <div className="page-subtitle">统一管理分发给下游项目的密钥、主分组、标签、额度、模型白名单、群组范围与历史用量。</div>
-        </div>
-        <div className="page-actions">
-          <RangeToggle range={range} onChange={setRange} />
-          <button className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={() => void load()} disabled={loading}>
-            {loading ? <><span className="spinner spinner-sm" /> 刷新中...</> : '刷新'}
-          </button>
-          <button className="btn btn-primary" onClick={openCreate}>+ 新增下游密钥</button>
-        </div>
-      </div>
+    <PageShell>
+      <PageHeader
+        title={tr('app.downstreamKeys')}
+        description={tr('pages.downstreamKeys.keyPrimaryGroupTagsQuotaModelGroups')}
+        actions={(
+          <PageActionBar>
+            <RangeToggle range={range} onChange={setRange} />
+            <SecondaryActionButton
+              type="button"
+              icon={RotateCcw}
+              loading={loading}
+              loadingLabel={tr('pages.downstreamKeys.refreshing')}
+              onClick={() => void load()}
+              disabled={loading}
+            >
+              {tr('pages.accounts.refresh')}
+            </SecondaryActionButton>
+            <CreateActionButton
+              type="button"
+              label={tr('pages.downstreamKeys.newDownstreamKey')}
+              onClick={openCreate}
+            />
+          </PageActionBar>
+        )}
+      />
 
-      <div className="card" style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+      <Card className="flex flex-col gap-3 p-3.5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>范围概览</div>
-            <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 4 }}>
-              基于当前筛选范围查看密钥规模、使用量和成本概况。
+            <div className="text-sm font-semibold text-foreground">{tr('pages.downstreamKeys.rangeOverview')}</div>
+            <div className="mt-1 text-xs text-muted-foreground">
+              {tr('pages.downstreamKeys.filterViewingkeyUsageCost')}
             </div>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-            <span className="kpi-chip">当前范围</span>
-            <span className="kpi-chip kpi-chip-success">
-              {range === '24h' ? '最近 24 小时' : range === '7d' ? '最近 7 天' : '全部历史'}
-            </span>
-            <span className="kpi-chip kpi-chip-warning">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="secondary">{tr('pages.downstreamKeys.currentRange')}</Badge>
+            <Badge variant="success">
+              {range === '24h' ? tr('pages.downstreamKeys.24Hours') : range === '7d' ? tr('pages.downstreamKeys.7Days') : tr('pages.downstreamKeys.all')}
+            </Badge>
+            <Badge variant="warning">
               Tokens {formatCompactTokens(totals.tokens)}
-            </span>
+            </Badge>
           </div>
         </div>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px 18px', alignItems: 'center' }}>
-          <SummaryMetric label="可见密钥" value={String(visibleItems.length)} />
-          <SummaryMetric label="启用中" value={String(totals.enabled)} />
-          <SummaryMetric label="已选中" value={String(selectedIds.length)} />
-          <SummaryMetric label="请求数" value={totals.requests.toLocaleString()} />
-          <SummaryMetric label="累计成本" value={formatMoney(totals.cost)} />
-          <SummaryMetric label="筛选状态" value={statusOptions.find((item) => item.value === status)?.label || '全部状态'} />
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
+          <SummaryMetric label={tr('pages.downstreamKeys.visibleKey')} value={String(visibleItems.length)} />
+          <SummaryMetric label={tr('pages.downstreamKeys.enabledCount')} value={String(totals.enabled)} />
+          <SummaryMetric label={tr('pages.downstreamKeys.selectedCount')} value={String(selectedIds.length)} />
+          <SummaryMetric label={tr('components.charts.downstreamKeyTrendChart.requests')} value={totals.requests.toLocaleString()} />
+          <SummaryMetric label={tr('pages.downstreamKeys.cost')} value={`${formatMoney(totals.cost)}${totals.costUnit ? ` ${totals.costUnit}` : ''}`} />
+          <SummaryMetric label={tr('pages.downstreamKeys.filterstatus')} value={statusOptions.find((item) => item.value === status)?.label || tr('pages.downstreamKeys.allstatus')} />
         </div>
-      </div>
+      </Card>
 
-      {selectedIds.length > 0 ? (
+      {isMobile && selectedIds.length > 0 ? (
         <ResponsiveBatchActionBar
           isMobile={isMobile}
           info={`已选 ${selectedIds.length} 个密钥`}
-          infoStyle={{ color: 'var(--color-text-primary)' }}
         >
-          <button className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={openBatchMetadata} disabled={batchActionLoading}>{isMobile ? '归类/标签' : '批量归类/标签'}</button>
-          <button className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={() => void batchRun('批量启用', selectedIds)} disabled={batchActionLoading}>{isMobile ? '启用' : '批量启用'}</button>
-          <button className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={() => void batchRun('批量禁用', selectedIds)} disabled={batchActionLoading}>{isMobile ? '禁用' : '批量禁用'}</button>
-          <button className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={() => void batchRun('批量清零用量', selectedIds)} disabled={batchActionLoading}>{isMobile ? '清零' : '批量清零用量'}</button>
-          <button className="btn btn-link btn-link-danger" onClick={() => setDeleteConfirm({ mode: 'batch', ids: [...selectedIds] })} disabled={batchActionLoading}>{isMobile ? '删除' : '批量删除'}</button>
+          <Button type="button" variant="outline" onClick={openBatchMetadata} disabled={batchActionLoading}>{isMobile ? tr('pages.downstreamKeys.groupTags') : tr('pages.downstreamKeys.batchGroupTags')}</Button>
+          <Button type="button" variant="outline" onClick={() => void batchRun('enable', selectedIds)} disabled={batchActionLoading}>{isMobile ? tr('pages.downstreamKeys.enabled') : tr('pages.accounts.enabled')}</Button>
+          <Button type="button" variant="outline" onClick={() => void batchRun('disable', selectedIds)} disabled={batchActionLoading}>{isMobile ? tr('pages.downstreamKeys.disabled') : tr('pages.accounts.disabled')}</Button>
+          <Button type="button" variant="outline" onClick={() => void batchRun('resetUsage', selectedIds)} disabled={batchActionLoading}>{isMobile ? tr('pages.downstreamKeys.clear') : tr('pages.downstreamKeys.clearUsageBatch')}</Button>
+          <Button type="button" variant="destructive" size="sm" onClick={() => setDeleteConfirm({ mode: 'batch', ids: [...selectedIds] })} disabled={batchActionLoading}>{isMobile ? tr('pages.accounts.delete3') : tr('pages.accounts.delete2')}</Button>
         </ResponsiveBatchActionBar>
       ) : null}
 
-      <div className="card" style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+      <section className="grid gap-3">
+        <div className="flex flex-col gap-2.5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--color-text-primary)' }}>筛选与列表</div>
-              <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 4 }}>按名称、状态、主分组和标签快速定位下游密钥。</div>
+              <div className="text-sm font-semibold text-foreground">{tr('pages.downstreamKeys.filter')}</div>
+              <div className="mt-1 text-xs text-muted-foreground">{tr('pages.downstreamKeys.nameStatusPrimaryGroupTagsDownstreamKeys')}</div>
             </div>
             {isMobile && (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
-                <button className="btn btn-ghost" style={{ border: '1px solid var(--color-border)' }} onClick={() => setShowFilters(true)}>
-                  筛选
-                </button>
-                <button
-                  className="btn btn-ghost"
-                  style={{ border: '1px solid var(--color-border)' }}
+              <div className="flex flex-wrap items-center gap-2">
+                <Button type="button" variant="outline" onClick={() => setShowFilters(true)}>
+                  {tr('components.mobileFilterSheet.filter')}
+                </Button>
+                <Button type="button" variant="outline"
+
+
                   onClick={() => toggleSelectAllVisible(!allVisibleSelected)}
                 >
-                  {allVisibleSelected ? '取消全选' : '全选可见'}
-                </button>
+                  {allVisibleSelected ? tr('pages.accounts.cancelselectAll') : tr('pages.downstreamKeys.selectVisible')}
+                </Button>
               </div>
             )}
           </div>
@@ -1119,22 +1200,19 @@ export default function DownstreamKeys() {
             isMobile={isMobile}
             mobileOpen={showFilters}
             onMobileClose={() => setShowFilters(false)}
-            mobileTitle="筛选下游密钥"
+            mobileTitle={tr('pages.downstreamKeys.filterdownstreamKeys')}
             mobileContent={filterControls}
             desktopContent={filterControls}
           />
         </div>
 
         {loading ? (
-          <div className="skeleton" style={{ width: '100%', height: 280, borderRadius: 'var(--radius-sm)' }} />
+          <DownstreamKeysLoadingSkeleton isMobile={isMobile} />
         ) : empty ? (
-          <div className="empty-state" style={{ padding: 40 }}>
-            <div className="empty-state-title">暂无下游密钥</div>
-            <div className="empty-state-desc">可以先新增一条密钥，或调整筛选条件查看已有数据。</div>
-          </div>
+          <EmptyStateBlock title={tr('pages.downstreamKeys.noDownstreamKeys')} description={tr('pages.downstreamKeys.itemskeyFilteritemsViewing')} />
         ) : isMobile ? (
-          <div className="mobile-card-list">
-            {visibleItems.map((row) => {
+          <div className="grid gap-3">
+            {visibleItems.map((row, index) => {
               const loadingToggle = !!rowLoading[`toggle-${row.id}`];
               const loadingReset = !!rowLoading[`reset-${row.id}`];
               const loadingDelete = !!rowLoading[`delete-${row.id}`];
@@ -1142,131 +1220,207 @@ export default function DownstreamKeys() {
               return (
                 <MobileCard
                   key={row.id}
+                  className={`animate-slide-up stagger-${Math.min(index + 1, 5)}`}
                   title={row.name}
                   headerActions={(
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <div className="flex items-center gap-2">
                       <StatusBadge enabled={row.enabled} />
-                      <input
-                        type="checkbox"
+                      <Checkbox
+
                         aria-label={`选择 ${row.name}`}
                         checked={checked}
-                        onChange={(e) => toggleSelection(row.id, e.target.checked)}
-                      />
+                        onCheckedChange={(checked) => toggleSelection(row.id, checked === true)}          />
                     </div>
                   )}
                   footerActions={(
                     <>
-                      <button className="btn btn-link" onClick={() => { setSelectedId(row.id); setDrawerOpen(true); }}>查看</button>
-                      <button className="btn btn-link" onClick={() => openEdit(row)}>编辑</button>
-                      <button className="btn btn-link" onClick={() => void toggleEnabled(row)} disabled={loadingToggle}>{loadingToggle ? '处理中...' : (row.enabled ? '禁用' : '启用')}</button>
-                      <button className="btn btn-link" onClick={() => void resetUsage(row)} disabled={loadingReset}>{loadingReset ? '处理中...' : '清零用量'}</button>
-                      <button className="btn btn-link btn-link-danger" onClick={() => setDeleteConfirm({ mode: 'single', item: row })} disabled={loadingDelete}>{loadingDelete ? '处理中...' : '删除'}</button>
+                      <Button type="button" variant="ghost" size="sm" onClick={() => { setSelectedId(row.id); setDrawerOpen(true); }}>{tr('pages.downstreamKeys.viewing')}</Button>
+                      <Button type="button" variant="ghost" size="sm" onClick={() => openEdit(row)}>{tr('pages.accounts.edit')}</Button>
+                      <Button type="button" variant="ghost" size="sm" onClick={() => void toggleEnabled(row)} disabled={loadingToggle}>{loadingToggle ? tr('pages.downstreamKeys.processing') : (row.enabled ? tr('pages.downstreamKeys.disabled') : tr('pages.downstreamKeys.enabled'))}</Button>
+                      <Button type="button" variant="ghost" size="sm" onClick={() => void resetUsage(row)} disabled={loadingReset}>{loadingReset ? tr('pages.downstreamKeys.processing') : tr('pages.downstreamKeys.clearUsage')}</Button>
+                      <Button type="button" variant="destructive" size="sm" onClick={() => setDeleteConfirm({ mode: 'single', item: row })} disabled={loadingDelete}>{loadingDelete ? tr('pages.downstreamKeys.processing') : tr('pages.accounts.delete3')}</Button>
                     </>
                   )}
                 >
                   <MobileField
-                    label="密钥"
+                    label={tr('pages.downstreamKeys.key')}
                     value={(
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--color-text-muted)' }}>{row.keyMasked}</span>
+                      <span className="inline-flex flex-wrap items-center gap-1.5">
+                        <span className="font-mono text-xs text-muted-foreground">{row.keyMasked}</span>
                         <DownstreamKeyCopyIconButton fullKey={row.key} />
                       </span>
                     )}
                     stacked
                   />
-                  {row.description ? <MobileField label="备注" value={row.description} stacked /> : null}
-                  <MobileField label="主分组" value={row.groupName || '未分组'} />
-                  <MobileField label="标签" value={summarizeTags(row.tags || [])} stacked />
-                  <MobileField label="模型" value={summarizeModelLimit(row.supportedModels || [])} stacked />
-                  <MobileField label="群组" value={summarizeRouteLimit(row.allowedRouteIds || [], routeMap)} stacked />
-                  <MobileField label="倍率" value={summarizeSiteWeightMultipliers(row.siteWeightMultipliers || {})} stacked />
-                  <MobileField label="额度" value={`${row.maxRequests == null ? '不限' : row.maxRequests.toLocaleString()} / ${row.maxCost == null ? '成本不限' : formatMoney(row.maxCost)}`} stacked />
-                  <MobileField label="用量" value={`${(row.rangeUsage?.totalRequests || 0).toLocaleString()} 请求 · ${formatCompactTokens(row.rangeUsage?.totalTokens || 0)}`} stacked />
-                  <MobileField label="最近使用" value={formatIso(row.lastUsedAt)} stacked />
+                  {row.description ? <MobileField label={tr('pages.downstreamKeys.notes')} value={row.description} stacked /> : null}
+                  <MobileField label={tr('pages.downstreamKeys.primaryGroup')} value={row.groupName || tr('pages.downstreamKeys.ungrouped')} />
+                  <MobileField label={tr('pages.downstreamKeys.tags2')} value={summarizeTags(row.tags || [])} stacked />
+                  <MobileField label={tr('components.modelAnalysisPanel.model')} value={summarizeModelLimit(row.supportedModels || [])} stacked />
+                  <MobileField label={tr('pages.downstreamKeys.compiledPlans')} value={summarizePlanLimit(row.allowedPlanIds || [], compiledPlanMap)} stacked />
+                  <MobileField label={tr('pages.downstreamKeys.multiplier2')} value={summarizeSiteWeightMultipliers(row.siteWeightMultipliers || {})} stacked />
+                  <MobileField label={tr('pages.downstreamKeys.quota')} value={`${row.maxRequests == null ? tr('pages.downstreamKeys.unlimited') : row.maxRequests.toLocaleString()} / ${row.maxCost == null ? tr('pages.downstreamKeys.costunlimited') : formatMoney(row.maxCost)}`} stacked />
+                  <MobileField label={tr('pages.downstreamKeys.usage')} value={`${(row.rangeUsage?.totalRequests || 0).toLocaleString()} 请求 · ${formatCompactTokens(row.rangeUsage?.totalTokens || 0)}`} stacked />
+                  <MobileField label={tr('pages.downstreamKeys.recentUsage')} value={formatIso(row.lastUsedAt)} stacked />
                 </MobileCard>
               );
             })}
           </div>
         ) : (
-          <div style={{ overflowX: 'auto' }}>
-            <table className="data-table" style={{ width: '100%' }}>
-              <thead>
-                <tr>
-                  <th style={{ width: 42 }}>
-                    <input type="checkbox" checked={allVisibleSelected} onChange={(e) => toggleSelectAllVisible(e.target.checked)} />
-                  </th>
-                  <th>密钥信息</th>
-                  <th>授权范围</th>
-                  <th style={{ textAlign: 'right' }}>额度</th>
-                  <th style={{ textAlign: 'right' }}>用量</th>
-                  <th>最近使用</th>
-                  <th style={{ textAlign: 'right' }}>操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {visibleItems.map((row) => {
+          <DataTable minWidth={1120} density="compact">
+            <DataTableToolbar className="border-b bg-muted/30 px-4">
+              <div className="min-w-0">
+                <div className="text-sm font-semibold text-foreground">
+                  {selectedIds.length > 0
+                    ? `已选 ${selectedIds.length} 个密钥 / 共 ${visibleItems.length} 个`
+                    : `${visibleItems.length} 个密钥`}
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  {tr('pages.downstreamKeys.nameStatusPrimaryGroupTagsDownstreamKeys')}
+                </div>
+              </div>
+              <TableActionBar>
+                {selectedIds.length > 0 ? (
+                  <>
+                    <Button type="button" variant="outline" size="sm" onClick={openBatchMetadata} disabled={batchActionLoading}>
+                      <Tags className="size-4" />
+                      <span className="sr-only">{tr('pages.downstreamKeys.batchGroupTags')}</span>
+                      {tr('pages.downstreamKeys.groupTags')}
+                    </Button>
+                    <Button type="button" variant="outline" size="sm" onClick={() => void batchRun('enable', selectedIds)} disabled={batchActionLoading}>
+                      <Power className="size-4" />
+                      {tr('pages.accounts.enabled')}
+                    </Button>
+                    <Button type="button" variant="outline" size="sm" onClick={() => void batchRun('disable', selectedIds)} disabled={batchActionLoading}>
+                      <PowerOff className="size-4" />
+                      {tr('pages.accounts.disabled')}
+                    </Button>
+                    <Button type="button" variant="outline" size="sm" onClick={() => void batchRun('resetUsage', selectedIds)} disabled={batchActionLoading}>
+                      <RotateCcw className="size-4" />
+                      {tr('pages.downstreamKeys.clearUsageBatch')}
+                    </Button>
+                    <Button type="button" variant="ghost" size="sm" onClick={() => setSelectedIds([])} disabled={batchActionLoading}>
+                      {tr('pages.accounts.cancelselectAll')}
+                    </Button>
+                    <Button type="button" variant="destructive" size="sm" onClick={() => setDeleteConfirm({ mode: 'batch', ids: [...selectedIds] })} disabled={batchActionLoading}>
+                      <Trash2 className="size-4" />
+                      {tr('pages.accounts.delete2')}
+                    </Button>
+                  </>
+                ) : (
+                  <Button type="button" variant="outline" size="sm" onClick={() => toggleSelectAllVisible(true)} disabled={visibleItems.length === 0}>
+                    {tr('pages.downstreamKeys.selectVisible')}
+                  </Button>
+                )}
+              </TableActionBar>
+            </DataTableToolbar>
+            <Table className="w-full text-sm">
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-[42px]">
+                    <Checkbox checked={allVisibleSelected} onCheckedChange={(checked) => toggleSelectAllVisible(checked === true)} />
+                  </TableHead>
+                  <TableHead>{tr('pages.downstreamKeys.keyinfo')}</TableHead>
+                  <TableHead>{tr('pages.downstreamKeys.authorizationScope')}</TableHead>
+                  <TableHead className="text-right">{tr('pages.downstreamKeys.quota')}</TableHead>
+                  <TableHead className="text-right">{tr('pages.downstreamKeys.usage')}</TableHead>
+                  <TableHead>{tr('pages.downstreamKeys.recentUsage')}</TableHead>
+                  <TableHead className="text-right">{tr('pages.accounts.actions2')}</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {visibleItems.map((row, index) => {
                   const loadingToggle = !!rowLoading[`toggle-${row.id}`];
                   const loadingReset = !!rowLoading[`reset-${row.id}`];
                   const loadingDelete = !!rowLoading[`delete-${row.id}`];
                   const checked = selectedIds.includes(row.id);
                   return (
-                    <tr key={row.id} className={`row-selectable ${checked ? 'row-selected' : ''}`.trim()} onClick={() => { setSelectedId(row.id); setDrawerOpen(true); }}>
-                      <td onClick={(e) => e.stopPropagation()}>
-                        <input type="checkbox" checked={checked} onChange={(e) => toggleSelection(row.id, e.target.checked)} />
-                      </td>
-                      <td>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                          <strong style={{ color: 'var(--color-text-primary)' }}>{row.name}</strong>
+                    <TableRow
+                      key={row.id}
+                      className={`animate-slide-up stagger-${Math.min(index + 1, 5)} row-selectable ${checked ? 'row-selected' : ''}`.trim()}
+                      data-state={checked ? 'selected' : undefined}
+                      onClick={() => { setSelectedId(row.id); setDrawerOpen(true); }}
+                    >
+                      <TableCell onClick={(e) => e.stopPropagation()}>
+                        <Checkbox checked={checked} onCheckedChange={(checked) => toggleSelection(row.id, checked === true)} />
+                      </TableCell>
+                      <TableCell>
+                        <div className="mb-1.5 flex items-center gap-2">
+                          <strong className="text-foreground">{row.name}</strong>
                           <StatusBadge enabled={row.enabled} />
                         </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 4 }}>
-                          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--color-text-muted)' }}>{row.keyMasked}</span>
+                        <div className="mb-1 flex flex-wrap items-center gap-1.5">
+                          <span className="font-mono text-xs text-muted-foreground">{row.keyMasked}</span>
                           <DownstreamKeyCopyIconButton fullKey={row.key} />
                         </div>
-                        {row.description ? <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', maxWidth: 320 }}>{row.description}</div> : null}
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
-                          <span className={`badge ${row.groupName ? 'badge-info' : 'badge-muted'}`} style={{ fontSize: 11 }}>
-                            {row.groupName ? `主分组 · ${row.groupName}` : '未分组'}
-                          </span>
+                        {row.description ? <div className="max-w-80 text-xs text-muted-foreground">{row.description}</div> : null}
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          <ToneBadge tone={row.groupName ? 'info' : 'muted'}>
+                            {row.groupName ? `主分组 · ${row.groupName}` : tr('pages.downstreamKeys.ungrouped')}
+                          </ToneBadge>
                           <TagChips tags={row.tags || []} maxVisible={3} />
                         </div>
-                      </td>
-                      <td>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                          <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>模型：<span style={{ color: 'var(--color-text-primary)' }}>{summarizeModelLimit(row.supportedModels || [])}</span></div>
-                          <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>群组：<span style={{ color: 'var(--color-text-primary)' }}>{summarizeRouteLimit(row.allowedRouteIds || [], routeMap)}</span></div>
-                          <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>标签：<span style={{ color: 'var(--color-text-primary)' }}>{summarizeTags(row.tags || [])}</span></div>
-                          <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>倍率：<span style={{ color: 'var(--color-text-primary)' }}>{summarizeSiteWeightMultipliers(row.siteWeightMultipliers || {})}</span></div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-col gap-1.5">
+                          <div className="text-xs text-muted-foreground">{tr('pages.downstreamKeys.model')}<span className="text-foreground">{summarizeModelLimit(row.supportedModels || [])}</span></div>
+                          <div className="text-xs text-muted-foreground">{tr('pages.downstreamKeys.compiledPlansLabel')}<span className="text-foreground">{summarizePlanLimit(row.allowedPlanIds || [], compiledPlanMap)}</span></div>
+                          <div className="text-xs text-muted-foreground">{tr('pages.downstreamKeys.tags')}<span className="text-foreground">{summarizeTags(row.tags || [])}</span></div>
+                          <div className="text-xs text-muted-foreground">{tr('pages.downstreamKeys.multiplier')}<span className="text-foreground">{summarizeSiteWeightMultipliers(row.siteWeightMultipliers || {})}</span></div>
                         </div>
-                      </td>
-                      <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                        <div style={{ color: 'var(--color-text-primary)', fontWeight: 700 }}>{row.maxRequests == null ? '不限' : row.maxRequests.toLocaleString()}</div>
-                        <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 4 }}>{row.maxCost == null ? '成本不限' : `成本 ${formatMoney(row.maxCost)}`}</div>
-                        <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 4 }}>{row.expiresAt ? `到期 ${formatIso(row.expiresAt)}` : '永久有效'}</div>
-                      </td>
-                      <td style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                        <div style={{ color: 'var(--color-text-primary)', fontWeight: 700 }}>{formatCompactTokens(row.rangeUsage?.totalTokens || 0)}</div>
-                        <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 4 }}>{(row.rangeUsage?.totalRequests || 0).toLocaleString()} 请求</div>
-                        <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 4 }}>{row.rangeUsage?.successRate == null ? '--' : `成功率 ${row.rangeUsage.successRate}%`}</div>
-                      </td>
-                      <td style={{ color: 'var(--color-text-muted)' }}>{formatIso(row.lastUsedAt)}</td>
-                      <td onClick={(e) => e.stopPropagation()}>
-                        <div className="accounts-row-actions" style={{ justifyContent: 'flex-end' }}>
-                          <button className="btn btn-link" onClick={() => { setSelectedId(row.id); setDrawerOpen(true); }}>查看</button>
-                          <button className="btn btn-link" onClick={() => openEdit(row)}>编辑</button>
-                          <button className="btn btn-link" onClick={() => void toggleEnabled(row)} disabled={loadingToggle}>{loadingToggle ? '处理中...' : (row.enabled ? '禁用' : '启用')}</button>
-                          <button className="btn btn-link" onClick={() => void resetUsage(row)} disabled={loadingReset}>{loadingReset ? '处理中...' : '清零用量'}</button>
-                          <button className="btn btn-link btn-link-danger" onClick={() => setDeleteConfirm({ mode: 'single', item: row })} disabled={loadingDelete}>{loadingDelete ? '处理中...' : '删除'}</button>
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        <div className="font-bold text-foreground">{row.maxRequests == null ? tr('pages.downstreamKeys.unlimited') : row.maxRequests.toLocaleString()}</div>
+                        <div className="mt-1 text-xs text-muted-foreground">{row.maxCost == null ? tr('pages.downstreamKeys.costunlimited') : `成本 ${formatMoney(row.maxCost)}`}</div>
+                        <div className="mt-1 text-xs text-muted-foreground">{row.expiresAt ? `到期 ${formatIso(row.expiresAt)}` : tr('pages.downstreamKeys.neverExpires')}</div>
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        <div className="font-bold text-foreground">{formatCompactTokens(row.rangeUsage?.totalTokens || 0)}</div>
+                        <div className="mt-1 text-xs text-muted-foreground">{(row.rangeUsage?.totalRequests || 0).toLocaleString()} {tr('pages.downstreamKeys.request')}</div>
+                        <div className="mt-1 text-xs text-muted-foreground">{row.rangeUsage?.successRate == null ? '--' : `成功率 ${row.rangeUsage.successRate}%`}</div>
+                      </TableCell>
+                      <TableCell className="text-muted-foreground">{formatIso(row.lastUsedAt)}</TableCell>
+                      <TableCell onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center justify-end gap-1">
+                          <Button type="button" variant="ghost" size="sm" onClick={() => { setSelectedId(row.id); setDrawerOpen(true); }}>
+                            <Eye className="size-4" />
+                            {tr('pages.downstreamKeys.viewing')}
+                          </Button>
+                          <Button type="button" variant="ghost" size="sm" onClick={() => openEdit(row)}>
+                            <Pencil className="size-4" />
+                            {tr('pages.accounts.edit')}
+                          </Button>
+                          <DropdownMenu.Root>
+                            <DropdownMenu.Trigger asChild>
+                              <Button type="button" variant="ghost" size="icon" aria-label={tr('pages.accounts.actions2')}>
+                                <Ellipsis className="size-4" />
+                              </Button>
+                            </DropdownMenu.Trigger>
+                            <DropdownMenu.Content align="end">
+                              <DropdownMenu.Item onSelect={() => void toggleEnabled(row)} disabled={loadingToggle}>
+                                {row.enabled ? <PowerOff className="size-4" /> : <Power className="size-4" />}
+                                {loadingToggle ? tr('pages.downstreamKeys.processing') : (row.enabled ? tr('pages.downstreamKeys.disabled') : tr('pages.downstreamKeys.enabled'))}
+                              </DropdownMenu.Item>
+                              <DropdownMenu.Item onSelect={() => void resetUsage(row)} disabled={loadingReset}>
+                                <RotateCcw className="size-4" />
+                                {loadingReset ? tr('pages.downstreamKeys.processing') : tr('pages.downstreamKeys.clearUsage')}
+                              </DropdownMenu.Item>
+                              <DropdownMenu.Separator />
+                              <DropdownMenu.Item variant="destructive" onSelect={() => setDeleteConfirm({ mode: 'single', item: row })} disabled={loadingDelete}>
+                                <Trash2 className="size-4" />
+                                {loadingDelete ? tr('pages.downstreamKeys.processing') : tr('pages.accounts.delete3')}
+                              </DropdownMenu.Item>
+                            </DropdownMenu.Content>
+                          </DropdownMenu.Root>
                         </div>
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   );
                 })}
-              </tbody>
-            </table>
-          </div>
+              </TableBody>
+            </Table>
+          </DataTable>
         )}
-      </div>
+      </section>
 
       <DownstreamKeyEditorModal
         open={editorOpen}
@@ -1276,7 +1430,7 @@ export default function DownstreamKeys() {
         onClose={closeEditor}
         onSave={() => void saveKey()}
         saving={saving}
-        routeOptions={routeOptions}
+        compiledPlanOptions={compiledPlanOptions}
         groupSuggestions={groupSuggestions}
         tagSuggestions={tagSuggestions}
         exclusionSourceLoading={exclusionSourceLoading}
@@ -1287,58 +1441,57 @@ export default function DownstreamKeys() {
       <CenteredModal
         open={batchMetadataOpen}
         onClose={() => { setBatchMetadataOpen(false); resetBatchMetadataForm(); }}
-        title="批量归类 / 标签"
+        title={tr('pages.downstreamKeys.batchGroupTags2')}
         maxWidth={720}
         bodyStyle={{ display: 'flex', flexDirection: 'column', gap: 12 }}
         footer={(
           <>
-            <button className="btn btn-ghost" onClick={() => { setBatchMetadataOpen(false); resetBatchMetadataForm(); }} disabled={batchActionLoading}>取消</button>
-            <button className="btn btn-primary" onClick={() => void runBatchMetadata()} disabled={batchActionLoading}>
-              {batchActionLoading ? <><span className="spinner spinner-sm" style={{ borderTopColor: 'white', borderColor: 'rgba(255,255,255,0.3)' }} /> 保存中...</> : '应用到所选密钥'}
-            </button>
+            <Button type="button" variant="outline" onClick={() => { setBatchMetadataOpen(false); resetBatchMetadataForm(); }} disabled={batchActionLoading}>{tr('app.cancel')}</Button>
+            <Button type="button" onClick={() => void runBatchMetadata()} disabled={batchActionLoading}>
+              {batchActionLoading ? <><LoaderCircle className="size-4 animate-spin" /> {tr('pages.accounts.saving')}</> : tr('pages.downstreamKeys.applySelectedKeys')}
+            </Button>
           </>
         )}
       >
-        <div className="info-tip" style={{ marginBottom: 0 }}>
-          本次会对已选中的 {selectedIds.length} 个密钥批量设置主分组，并追加标签。不会改动模型白名单、群组范围、额度和倍率。
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>主分组操作</div>
+        <InfoNote>
+          {tr('pages.downstreamKeys.selectedActionPrefix')} {selectedIds.length} {tr('pages.downstreamKeys.keySettingsprimaryGroupAppendTagsModelGroups')}
+        </InfoNote>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="flex flex-col gap-2">
+            <div className="text-xs text-muted-foreground">{tr('pages.downstreamKeys.primaryGroupactions')}</div>
             <ModernSelect
               value={batchMetadataForm.groupOperation}
               onChange={(value) => setBatchMetadataForm((prev) => ({ ...prev, groupOperation: String(value) as BatchMetadataForm['groupOperation'] }))}
               options={[
-                { value: 'keep', label: '不改动主分组' },
-                { value: 'set', label: '统一设为主分组' },
-                { value: 'clear', label: '清空主分组' },
+                { value: 'keep', label: tr('pages.downstreamKeys.doNotChangePrimaryGroup') },
+                { value: 'set', label: tr('pages.downstreamKeys.setAllPrimaryGroup') },
+                { value: 'clear', label: tr('pages.downstreamKeys.clearprimaryGroup') },
               ]}
             />
-            <input
+            <Input
               value={batchMetadataForm.groupName}
               onChange={(e) => setBatchMetadataForm((prev) => ({ ...prev, groupName: e.target.value }))}
               disabled={batchMetadataForm.groupOperation !== 'set'}
-              placeholder="例如：VIP / 内部项目"
+              placeholder={tr('pages.downstreamKeys.vip')}
               list="downstream-group-suggestions"
-              style={{ width: '100%', padding: '10px 12px', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-sm)', background: 'var(--color-bg)', color: 'var(--color-text-primary)' }}
             />
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>标签操作</div>
+          <div className="flex flex-col gap-2">
+            <div className="text-xs text-muted-foreground">{tr('pages.downstreamKeys.tagsactions')}</div>
             <ModernSelect
               value={batchMetadataForm.tagOperation}
               onChange={(value) => setBatchMetadataForm((prev) => ({ ...prev, tagOperation: String(value) as BatchMetadataForm['tagOperation'] }))}
               options={[
-                { value: 'keep', label: '不改动标签' },
-                { value: 'append', label: '追加标签' },
+                { value: 'keep', label: tr('pages.downstreamKeys.doNotChangeTags') },
+                { value: 'append', label: tr('pages.downstreamKeys.appendTags') },
               ]}
             />
-            <div style={{ opacity: batchMetadataForm.tagOperation === 'append' ? 1 : 0.6, pointerEvents: batchMetadataForm.tagOperation === 'append' ? 'auto' : 'none' }}>
+            <div className={batchMetadataForm.tagOperation === 'append' ? '' : 'pointer-events-none opacity-60'}>
               <TagInput
                 tags={batchMetadataForm.tags}
                 onChange={(tags) => setBatchMetadataForm((prev) => ({ ...prev, tags }))}
                 suggestions={tagSuggestions}
-                placeholder="批量追加标签"
+                placeholder={tr('pages.downstreamKeys.appendTagsBatch')}
               />
             </div>
           </div>
@@ -1349,12 +1502,12 @@ export default function DownstreamKeys() {
         open={Boolean(deleteConfirm)}
         onClose={() => setDeleteConfirm(null)}
         onConfirm={() => void confirmDelete()}
-        title="确认删除下游密钥"
-        confirmText="确认删除"
+        title={tr('pages.downstreamKeys.deletedownstreamKeys')}
+        confirmText={tr('components.deleteConfirmModal.delete')}
         loading={batchActionLoading || (deleteConfirm?.mode === 'single' && !!rowLoading[`delete-${deleteConfirm.item.id}`])}
         description={deleteConfirm?.mode === 'single'
-          ? <>确定要删除密钥 <strong>{deleteConfirm.item.name}</strong> 吗？</>
-          : <>确定要删除选中的 <strong>{deleteConfirm?.ids.length || 0}</strong> 个密钥吗？</>}
+          ? <>{tr('pages.downstreamKeys.deletekey')} <strong>{deleteConfirm.item.name}</strong> {tr('pages.accounts.textqcmnqj')}</>
+          : <>{tr('pages.accounts.confirmDeleteSelectedPrefix')} <strong>{deleteConfirm?.ids.length || 0}</strong> {tr('pages.downstreamKeys.keys')}</>}
       />
 
       <DownstreamKeyDrawer
@@ -1363,6 +1516,6 @@ export default function DownstreamKeys() {
         item={selectedItem}
         initialRange={range}
       />
-    </div>
+    </PageShell>
   );
 }
