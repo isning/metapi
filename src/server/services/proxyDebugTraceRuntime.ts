@@ -8,7 +8,7 @@ import {
   normalizeProxyDebugResponseHeaders,
   startProxyDebugTraceSession,
   updateProxyDebugAttempt,
-  updateProxyDebugTraceCandidates,
+  updateProxyDebugTraceRuntime,
   updateProxyDebugTraceSelection,
   type ProxyDebugTraceSession,
 } from './proxyDebugTraceStore.js';
@@ -56,13 +56,13 @@ export async function safeUpdateSurfaceProxyDebugSelection(
   }
 }
 
-export async function safeUpdateSurfaceProxyDebugCandidates(
+export async function safeUpdateSurfaceProxyDebugRuntime(
   session: ProxyDebugTraceSession | null,
-  input: Parameters<typeof updateProxyDebugTraceCandidates>[1],
+  input: Parameters<typeof updateProxyDebugTraceRuntime>[1],
 ): Promise<void> {
   if (!session) return;
   try {
-    await updateProxyDebugTraceCandidates(session.traceId, input);
+    await updateProxyDebugTraceRuntime(session.traceId, input);
   } catch (error) {
     console.warn('[proxy-debug] failed to update endpoint candidates', error);
   }

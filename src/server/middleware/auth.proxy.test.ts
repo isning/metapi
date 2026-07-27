@@ -37,7 +37,7 @@ describe('proxyAuthMiddleware', () => {
       source: 'managed',
       token: 'sk-managed-001',
       key: { id: 12, name: 'project-key' },
-      policy: { supportedModels: ['gpt-5.2'], allowedRouteIds: [3], siteWeightMultipliers: { 1: 1.2 } },
+      policy: { supportedModels: ['gpt-5.2'], allowedPlanIds: [3], siteWeightMultipliers: { 1: 1.2 } },
     });
     consumeManagedKeyRequestMock.mockResolvedValue(undefined);
 
@@ -65,7 +65,7 @@ describe('proxyAuthMiddleware', () => {
         keyName: 'project-key',
         policy: {
           supportedModels: ['gpt-5.2'],
-          allowedRouteIds: [3],
+          allowedPlanIds: [3],
           siteWeightMultipliers: { 1: 1.2 },
         },
       },

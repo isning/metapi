@@ -1,9 +1,13 @@
-import { eq, sql } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
 import { requireInsertedRowId } from '../db/insertHelpers.js';
 import { ACCOUNT_TOKEN_VALUE_STATUS_READY } from './accountTokenService.js';
 import * as routeRefreshWorkflow from './routeRefreshWorkflow.js';
-import { loadEnabledRouteBindingProjectionsByModelPattern } from './routeTableProjectionService.js';
+import { getActiveRouteGraphSourceVersion, publishRouteGraphSource } from './routeGraphService.js';
+import {
+  replaceRouteGroupFacadeMacroInSource,
+  routeGroupFacadeModelName,
+} from './routeGroupGraphFacadeAccessService.js';
 
 const DUMMY_SITE_NAME = 'Metapi Dummy Upstreams';
 const DUMMY_SITE_URL = 'https://dummy-upstreams.metapi.local';
@@ -11,9 +15,9 @@ const DUMMY_SITE_PLATFORM = 'new-api';
 const DUMMY_ACCOUNT_USERNAME = 'dummy-upstream';
 
 const DUMMY_UPSTREAM_MODELS = [
-  { name: 'dummy-openai-chat', tokenName: 'dummy-openai', priority: 0, weight: 30 },
-  { name: 'dummy-claude-messages', tokenName: 'dummy-claude', priority: 1, weight: 20 },
-  { name: 'dummy-gemini-generate-content', tokenName: 'dummy-gemini', priority: 2, weight: 10 },
+  { name: 'dummy-openai-chat', tokenName: 'dummy-openai', weight: 30 },
+  { name: 'dummy-claude-messages', tokenName: 'dummy-claude', weight: 20 },
+  { name: 'dummy-gemini-generate-content', tokenName: 'dummy-gemini', weight: 10 },
 ] as const;
 
 export type DummyUpstreamSeedSummary = {
@@ -156,41 +160,44 @@ async function ensureTokenModelAvailability(tokenId: number, modelName: string):
   }).run();
 }
 
-async function applyDummyRouteWeights(modelName: string, priority: number, weight: number): Promise<void> {
-  const projectedRoutes = await loadEnabledRouteBindingProjectionsByModelPattern(modelName);
-  let routeId = Number(projectedRoutes[0]?.route.id || 0);
-  if (!Number.isFinite(routeId) || routeId <= 0) {
-    const route = await db.select({ id: schema.tokenRoutes.id })
-      .from(schema.tokenRoutes)
-      .where(eq(schema.tokenRoutes.displayName, modelName))
-      .get();
-    routeId = Number(route?.id || 0);
+async function applyDummyRouteWeights(): Promise<void> {
+  const active = await getActiveRouteGraphSourceVersion();
+  if (!active) return;
+  let source = active.sourceGraph;
+  let changed = false;
+  for (const definition of DUMMY_UPSTREAM_MODELS) {
+    const modelName = definition.name.toLowerCase();
+    const macro = (source.macros || []).find((candidate) => (
+      candidate.kind === 'candidate_selector'
+      && routeGroupFacadeModelName(candidate).toLowerCase() === modelName
+    ));
+    if (!macro) continue;
+    const nextMacro = {
+      ...macro,
+      config: {
+        ...macro.config,
+        groups: macro.config.groups.map((stage) => ({
+          ...stage,
+          members: (stage.members || []).map((member) => ({ ...member, weight: definition.weight })),
+        })),
+      },
+    };
+    source = replaceRouteGroupFacadeMacroInSource(source, nextMacro);
+    changed = true;
   }
-  if (!Number.isFinite(routeId) || routeId <= 0) return;
-
-  const channels = await db.select().from(schema.routeEndpointTargets)
-    .where(eq(schema.routeEndpointTargets.routeId, Math.trunc(routeId)))
-    .all();
-  for (const channel of channels) {
-    await db.update(schema.routeEndpointTargets)
-      .set({ priority, weight })
-      .where(eq(schema.routeEndpointTargets.id, channel.id))
-      .run();
+  if (!changed) return;
+  const published = await publishRouteGraphSource({ sourceGraph: source, createdBy: 'dummy-upstream-seed' });
+  if (!published.ok) {
+    throw new Error(`Failed to apply dummy route weights: ${published.diagnostics.map((item) => item.message).join('; ')}`);
   }
 }
 
-async function loadRouteTableGraphSummary(): Promise<{ graphNodes: number; graphEdges: number }> {
-  const [routeCountRow, targetCountRow, sourceCountRow] = await Promise.all([
-    db.select({ count: sql<number>`count(*)` }).from(schema.tokenRoutes).get(),
-    db.select({ count: sql<number>`count(*)` }).from(schema.routeEndpointTargets).get(),
-    db.select({ count: sql<number>`count(*)` }).from(schema.routeGroupSources).get(),
-  ]);
-  const routeCount = Number(routeCountRow?.count || 0);
-  const targetCount = Number(targetCountRow?.count || 0);
-  const sourceCount = Number(sourceCountRow?.count || 0);
+async function loadRouteRuntimeGraphSummary(): Promise<{ graphNodes: number; graphEdges: number }> {
+  const active = await getActiveRouteGraphSourceVersion();
+  if (!active) return { graphNodes: 0, graphEdges: 0 };
   return {
-    graphNodes: routeCount + targetCount,
-    graphEdges: targetCount + sourceCount,
+    graphNodes: active.sourceGraph.nodes.length + (active.sourceGraph.macros || []).length,
+    graphEdges: active.sourceGraph.edges.length,
   };
 }
 
@@ -205,11 +212,9 @@ export async function seedDummyUpstreamRoutes(): Promise<DummyUpstreamSeedSummar
 
   const rebuild = await routeRefreshWorkflow.rebuildRoutesOnly();
 
-  for (const model of DUMMY_UPSTREAM_MODELS) {
-    await applyDummyRouteWeights(model.name, model.priority, model.weight);
-  }
+  await applyDummyRouteWeights();
 
-  const routeTableSummary = await loadRouteTableGraphSummary();
+  const routeRuntimeSummary = await loadRouteRuntimeGraphSummary();
 
   return {
     siteId: site.id,
@@ -218,8 +223,8 @@ export async function seedDummyUpstreamRoutes(): Promise<DummyUpstreamSeedSummar
     modelNames: DUMMY_UPSTREAM_MODELS.map((model) => model.name),
     routes: DUMMY_UPSTREAM_MODELS.length,
     channels: tokenIds.length,
-    graphNodes: routeTableSummary.graphNodes,
-    graphEdges: routeTableSummary.graphEdges,
+    graphNodes: routeRuntimeSummary.graphNodes,
+    graphEdges: routeRuntimeSummary.graphEdges,
     rebuild,
   };
 }

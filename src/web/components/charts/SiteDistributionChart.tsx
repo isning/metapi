@@ -11,6 +11,8 @@ interface SiteDistributionData {
   platform: string;
   totalBalance: number;
   rawBalance?: number;
+  rawBalanceUnit?: string | null;
+  rawBalanceUnitMixed?: boolean;
   baseCostUnit?: string;
   valuedAccountCount?: number;
   valuationWarningCount?: number;
@@ -23,7 +25,7 @@ interface SiteDistributionChartProps {
   loading?: boolean;
 }
 
-type ViewMode = 'balance' | 'spend';
+type ViewMode = 'balance' | 'rawBalance' | 'spend';
 
 function coerceDatumRecord(datum: unknown): Record<string, unknown> {
   return datum && typeof datum === 'object' ? datum as Record<string, unknown> : {};
@@ -32,6 +34,30 @@ function coerceDatumRecord(datum: unknown): Record<string, unknown> {
 function safeNumber(value: unknown): number {
   if (typeof value !== 'number' || Number.isNaN(value) || !Number.isFinite(value)) return 0;
   return value;
+}
+
+function formatValue(value: number): string {
+  if (value >= 1000) return value.toFixed(2);
+  if (value >= 1) return value.toFixed(3);
+  return value.toFixed(6);
+}
+
+function normalizeUnit(value: unknown): string {
+  return String(value || '').trim();
+}
+
+function formatAmountWithUnit(value: number, unit: unknown): string {
+  const normalizedUnit = normalizeUnit(unit);
+  return normalizedUnit ? `${formatValue(value)} ${normalizedUnit}` : formatValue(value);
+}
+
+function formatRawBalance(value: number, unit: unknown, unitMixed: unknown): string {
+  const normalizedUnit = normalizeUnit(unit);
+  if (normalizedUnit) return `${formatValue(value)} ${normalizedUnit}`;
+  if (unitMixed) {
+    return `${formatValue(value)} ${tr('components.charts.siteDistributionChart.mixedUnits')}`;
+  }
+  return formatValue(value);
 }
 
 function SkeletonCircle() {
@@ -91,9 +117,17 @@ export default function SiteDistributionChart({ data, loading }: SiteDistributio
     return data.map((item) => ({
       siteName: item.siteName,
       platform: item.platform,
-      value: safeNumber(viewMode === 'balance' ? item.totalBalance : item.totalSpend),
+      value: safeNumber(
+        viewMode === 'balance'
+          ? item.totalBalance
+          : viewMode === 'rawBalance'
+            ? item.rawBalance
+            : item.totalSpend,
+      ),
       rawBalance: safeNumber(item.rawBalance),
-      baseCostUnit: item.baseCostUnit || 'USD',
+      rawBalanceUnit: item.rawBalanceUnit || '',
+      rawBalanceUnitMixed: Boolean(item.rawBalanceUnitMixed),
+      baseCostUnit: item.baseCostUnit || '',
       valuedAccountCount: safeNumber(item.valuedAccountCount),
       valuationWarningCount: safeNumber(item.valuationWarningCount),
       accountCount: safeNumber(item.accountCount),
@@ -126,8 +160,9 @@ export default function SiteDistributionChart({ data, loading }: SiteDistributio
               value: (datum: unknown) => {
                 const item = coerceDatumRecord(datum);
                 const val = safeNumber(item.value);
-                const unit = String(item.baseCostUnit || 'USD');
-                return viewMode === 'balance' ? `${formatValue(val)} ${unit}` : formatValue(val);
+                if (viewMode === 'balance') return formatAmountWithUnit(val, item.baseCostUnit);
+                if (viewMode === 'rawBalance') return formatRawBalance(val, item.rawBalanceUnit, item.rawBalanceUnitMixed);
+                return formatValue(val);
               },
             },
             {
@@ -139,11 +174,15 @@ export default function SiteDistributionChart({ data, loading }: SiteDistributio
               },
             },
             {
-              key: viewMode === 'balance' ? tr('components.charts.siteDistributionChart.rawBalance') : tr('components.charts.siteDistributionChart.sites'),
+              key: viewMode === 'spend' ? tr('components.charts.siteDistributionChart.sites') : tr('components.charts.siteDistributionChart.rawBalance'),
               value: (datum: unknown) => {
                 const item = coerceDatumRecord(datum);
-                if (viewMode !== 'balance') return String(item.accountCount || 0);
-                return `${formatValue(safeNumber(item.rawBalance))} raw`;
+                if (viewMode === 'spend') return String(item.accountCount || 0);
+                return formatRawBalance(
+                  safeNumber(item.rawBalance),
+                  item.rawBalanceUnit,
+                  item.rawBalanceUnitMixed,
+                );
               },
             },
             {
@@ -152,7 +191,7 @@ export default function SiteDistributionChart({ data, loading }: SiteDistributio
                 const item = coerceDatumRecord(datum);
                 const accountCount = safeNumber(item.accountCount);
                 const valuedAccountCount = safeNumber(item.valuedAccountCount);
-                if (viewMode !== 'balance') return '-';
+                if (viewMode === 'spend') return '-';
                 return `${valuedAccountCount}/${accountCount}`;
               },
             },
@@ -164,12 +203,6 @@ export default function SiteDistributionChart({ data, loading }: SiteDistributio
       background: 'transparent',
     };
   }, [chartData, chartPalette, hasData, labelColor, viewMode]);
-
-  const formatValue = (value: number): string => {
-    if (value >= 1000) return `$${value.toFixed(2)}`;
-    if (value >= 1) return `$${value.toFixed(3)}`;
-    return `$${value.toFixed(6)}`;
-  };
 
   return (
     <ChartShell
@@ -202,6 +235,7 @@ export default function SiteDistributionChart({ data, loading }: SiteDistributio
           value={viewMode}
           options={[
             { key: 'balance', label: tr('components.charts.siteDistributionChart.normalizedBalance') },
+            { key: 'rawBalance', label: tr('components.charts.siteDistributionChart.rawBalance') },
             { key: 'spend', label: tr('components.modelAnalysisPanel.consumptionDistribution') },
           ]}
           onChange={setViewMode}
@@ -222,10 +256,12 @@ export default function SiteDistributionChart({ data, loading }: SiteDistributio
                 <span className="max-w-[120px] truncate">{d.siteName}</span>
                 <span className="font-semibold tabular-nums text-foreground">
                   {viewMode === 'balance'
-                    ? `${formatValue(d.value)} ${d.baseCostUnit}`
-                    : formatValue(d.value)}
+                    ? formatAmountWithUnit(d.value, d.baseCostUnit)
+                    : viewMode === 'rawBalance'
+                      ? formatRawBalance(d.value, d.rawBalanceUnit, d.rawBalanceUnitMixed)
+                      : formatValue(d.value)}
                 </span>
-                {viewMode === 'balance' && d.valuationWarningCount > 0 ? (
+                {viewMode !== 'spend' && d.valuationWarningCount > 0 ? (
                   <span className="text-warning">!</span>
                 ) : null}
               </span>

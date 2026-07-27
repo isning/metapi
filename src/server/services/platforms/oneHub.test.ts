@@ -112,13 +112,57 @@ describe('OneHubAdapter', () => {
       quotaType: 0,
       modelRatio: 1,
       completionRatio: 3,
-      cacheRatio: 0.2,
-      cacheCreationRatio: 1.5,
-      modelPrice: { input: 0.5, output: 1.5 },
+      modelPrice: {
+        input: 0.5,
+        output: 1.5,
+        cacheRead: 0.1,
+        cacheWrite: 0.75,
+      },
       enableGroups: ['default', 'vip'],
       tags: ['vision'],
       ownerBy: 'openai',
     });
+    expect(model?.cacheRatio).toBeUndefined();
+    expect(model?.cacheCreationRatio).toBeUndefined();
+  });
+
+  it('does not synthesize cache ratios when available model cache prices are missing', async () => {
+    await startServer((req, res) => {
+      if (req.url === '/api/available_model') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          data: {
+            'gpt-4o-mini': {
+              price: {
+                type: 'tokens',
+                input: 0.15,
+                output: 0.6,
+              },
+            },
+          },
+        }));
+        return;
+      }
+      if (req.url === '/api/user_group_map') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ data: { default: 1 } }));
+        return;
+      }
+      res.writeHead(404).end();
+    });
+
+    const adapter = new OneHubAdapter();
+    const catalog = await adapter.getPricingCatalog(baseUrl, {
+      token: 'token',
+      tokenKind: 'api_token',
+    });
+
+    const model = catalog?.models.get('gpt-4o-mini');
+    expect(model).toMatchObject({
+      modelPrice: { input: 0.15, output: 0.6 },
+    });
+    expect(model?.cacheRatio).toBeUndefined();
+    expect(model?.cacheCreationRatio).toBeUndefined();
   });
 
   it('parses token list from {data: [...]} envelope', async () => {

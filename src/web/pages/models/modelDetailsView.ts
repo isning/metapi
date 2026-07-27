@@ -1,41 +1,36 @@
 import type { ModelRouteFlowData } from '../../components/ModelRouteFlow.js';
+import type { ModelRouteFlowDiagnostics } from '../../api.js';
+import type { ModelRuntimeObservability } from '../../api.js';
+import type {
+  ModelsMarketplaceAccount,
+  ModelsMarketplaceGroupPricing,
+  ModelsMarketplaceModel,
+  ModelsMarketplacePricingSource,
+  ModelsMarketplaceToken,
+} from '../../../shared/modelsMarketplace.js';
 import { tr } from '../../i18n.js';
 
-export type ModelTokenInfo = {
-  id: number;
-  name: string;
-  isDefault: boolean;
-};
-
-export type ModelGroupPricing = {
-  quotaType: number;
-  inputPerMillion?: number;
-  outputPerMillion?: number;
-  perCallInput?: number;
-  perCallOutput?: number;
-  perCallTotal?: number;
-};
-
-export type ModelPricingSource = {
-  siteId: number;
-  siteName: string;
-  accountId: number;
-  username: string | null;
-  ownerBy: string | null;
-  enableGroups: string[];
-  groupPricing: Record<string, ModelGroupPricing>;
-};
+export type ModelTokenInfo = ModelsMarketplaceToken;
+export type ModelGroupPricing = ModelsMarketplaceGroupPricing;
+export type ModelPricingSource = ModelsMarketplacePricingSource;
 
 type RouteFlowTheoreticalPricing = NonNullable<NonNullable<ModelRouteFlowData['entryPricing']>['theoretical']>;
-type ModelEntryPricingCandidate = RouteFlowTheoreticalPricing['candidates'][number];
+type ModelEntryPricingExecutionAttempt = RouteFlowTheoreticalPricing['executionAttempts'][number];
 
 export type ModelEntryPricing = {
+  currency?: string | null;
   inputPerMillion: number | null;
   outputPerMillion: number | null;
-  totalCostUsd?: number | null;
+  cacheReadPerMillion?: number | null;
+  cacheWritePerMillion?: number | null;
+  reasoningPerMillion?: number | null;
+  requestCost?: number | null;
+  totalCost?: number | null;
   inputMultiplier: number | null;
   outputMultiplier: number | null;
   totalMultiplier?: number | null;
+  components?: RouteFlowTheoreticalPricing['components'];
+  usage?: RouteFlowTheoreticalPricing['usage'];
   effectiveCost?: {
     walletCostBaseCurrency: number | null;
     baseCostUnit: string | null;
@@ -46,68 +41,105 @@ export type ModelEntryPricing = {
   } | null;
   sourceCount: number;
   estimateLevel?: 'exact' | 'static_estimate' | 'incomplete';
-  strategy?: string | null;
+  selectionMode?: 'weighted' | 'ordered' | 'round_robin' | 'direct' | 'mixed' | null;
   sampleCount?: number;
   lastMeasuredAt?: string | null;
   diagnostics?: Array<{ level: 'info' | 'warn' | 'error'; message: string }>;
-  candidates?: ModelEntryPricingCandidate[];
+  executionAttempts?: ModelEntryPricingExecutionAttempt[];
 };
 
-export type ModelAccountInfo = {
-  id: number;
-  site: string;
-  username: string | null;
-  latency: number | null;
-  balance: number;
-  tokens: ModelTokenInfo[];
-  managedTokenCount?: number;
-  credentialCount?: number;
-};
-
-export type ModelRow = {
-  name: string;
-  accountCount: number;
-  tokenCount: number;
-  managedTokenCount?: number;
-  credentialCount?: number;
-  endpointCount?: number;
-  avgLatency: number | null;
-  successRate: number | null;
-  description: string | null;
-  tags: string[];
-  supportedEndpointTypes: string[];
-  pricingSources: ModelPricingSource[];
-  measuredEntryPricing?: {
-    inputPerMillion: number | null;
-    outputPerMillion: number | null;
-    totalCostUsd?: number | null;
-    inputMultiplier?: number | null;
-    outputMultiplier?: number | null;
-    totalMultiplier?: number | null;
-    sampleCount: number;
-    lastMeasuredAt: string | null;
-  } | null;
-  accounts: ModelAccountInfo[];
-};
+export type ModelAccountInfo = ModelsMarketplaceAccount;
+export type ModelRow = ModelsMarketplaceModel;
 
 export type ModelDetailsTab = 'overview' | 'routing' | 'performance' | 'api' | 'diagnostics';
-export type ModelMetricsRange = '1h' | '24h' | '7d';
+export type ModelMetricsRange = '5m' | '15m' | '1h' | '6h' | '24h' | '7d' | '30d';
+type RuntimeHistoryBucket = ModelRuntimeObservability['history']['buckets'][number];
 
 export type ModelDetailsView = {
   model: ModelRow;
   brandName: string | null;
   status: 'healthy' | 'degraded' | 'unavailable' | 'unknown';
   routeFlow: ModelRouteFlowData | null;
+  routeFlowDiagnostics?: ModelRouteFlowDiagnostics | null;
   routeFlowLoading: boolean;
   routeFlowError: string;
+  observability: ModelRuntimeObservability | null;
+  observabilityLoading: boolean;
+  observabilityError: string;
+  performanceObservability: ModelRuntimeObservability | null;
+  performanceObservabilityLoading: boolean;
+  performanceObservabilityError: string;
   diagnostics: ModelRouteFlowData['diagnostics'];
+  diagnosticsPayload: ModelRouteFlowData | null;
   freshnessLabel: string;
   descriptionText: string;
+  overview: {
+    displayMetrics: {
+      successRate: number | null;
+      avgLatency: number | null;
+      avgFirstTokenLatency: number | null;
+      avgOutputTokensPerSecond: number | null;
+    };
+    supportedEndpointTypes: string[];
+    routeSummary: string[];
+    routeSummaryLoading: boolean;
+    routeSummaryRefreshing: boolean;
+    routeSummaryError: string;
+  };
+  routing: {
+    flow: ModelRouteFlowData | null;
+    loading: boolean;
+    refreshing: boolean;
+    error: string;
+    hasContent: boolean;
+  };
+  diagnosticsView: {
+    items: ModelRouteFlowData['diagnostics'];
+    itemsLoading: boolean;
+    payload: ModelRouteFlowData | null;
+    payloadLoading: boolean;
+    error: string;
+    payloadError: string;
+  };
+  performance: {
+    observability: ModelRuntimeObservability | null;
+    loading: boolean;
+    refreshing: boolean;
+    initialLoading: boolean;
+    error: string;
+    hasData: boolean;
+    attempts: ModelRuntimeObservability['executionAttempts'];
+    endpoints: ModelRuntimeObservability['endpoints'];
+    historyBuckets: RuntimeHistoryBucket[];
+    recentBuckets: RuntimeHistoryBucket[];
+    successRate: number | null;
+    avgLatency: number | null;
+    avgFirstTokenLatency: number | null;
+    avgOutputTokensPerSecond: number | null;
+  };
   pricing: {
     measured: ModelEntryPricing | null;
     theoretical: ModelEntryPricing | null;
   };
 };
+
+function formatTemplate(key: string, replacements: Record<string, string | number | null | undefined>): string {
+  let value = tr(key);
+  for (const [name, replacement] of Object.entries(replacements)) {
+    value = value.replace(`{${name}}`, replacement == null ? '' : String(replacement));
+  }
+  return value;
+}
+
+function runtimeInventoryIssueMessage(issue: NonNullable<ModelRow['runtimeInventoryIssues']>[number]): string {
+  const reasonKey = `pages.models.modelDiagnosticsTab.runtimeInventoryIssue.reason.${issue.reason}`;
+  const reason = tr(reasonKey);
+  return formatTemplate('pages.models.modelDiagnosticsTab.runtimeInventoryIssue', {
+    reason,
+    alternativeId: issue.alternativeId,
+    endpointId: issue.endpointId || tr('pages.models.modelDiagnosticsTab.runtimeInventoryIssue.unknownEndpoint'),
+  });
+}
 
 function normalizeFiniteNumber(value: unknown): number | null {
   if (value == null) return null;
@@ -121,11 +153,12 @@ export function buildMeasuredEntryPricing(model: ModelRow): ModelEntryPricing | 
   const inputPerMillion = normalizeFiniteNumber(measured.inputPerMillion);
   const outputPerMillion = normalizeFiniteNumber(measured.outputPerMillion);
   if (inputPerMillion == null && outputPerMillion == null) return null;
-  const totalCostUsd = normalizeFiniteNumber(measured.totalCostUsd);
+  const totalCost = normalizeFiniteNumber(measured.totalCost);
   return {
+    currency: measured.currency ?? null,
     inputPerMillion,
     outputPerMillion,
-    totalCostUsd,
+    totalCost,
     inputMultiplier: normalizeFiniteNumber(measured.inputMultiplier),
     outputMultiplier: normalizeFiniteNumber(measured.outputMultiplier),
     totalMultiplier: normalizeFiniteNumber(measured.totalMultiplier),
@@ -135,121 +168,209 @@ export function buildMeasuredEntryPricing(model: ModelRow): ModelEntryPricing | 
   };
 }
 
-export function buildTheoreticalEntryPricing(model: ModelRow): ModelEntryPricing | null {
-  const inputPrices: number[] = [];
-  const outputPrices: number[] = [];
-  let sourceCount = 0;
-
-  for (const source of model.pricingSources) {
-    for (const pricing of Object.values(source.groupPricing)) {
-      const input = normalizeFiniteNumber(pricing.inputPerMillion);
-      const output = normalizeFiniteNumber(pricing.outputPerMillion);
-      if (input == null && output == null) continue;
-      sourceCount += 1;
-      if (input != null) inputPrices.push(input);
-      if (output != null) outputPrices.push(output);
-    }
-  }
-
-  if (inputPrices.length === 0 && outputPrices.length === 0) return null;
-  const inputPerMillion = inputPrices.length > 0 ? Math.min(...inputPrices) : null;
-  const outputPerMillion = outputPrices.length > 0 ? Math.min(...outputPrices) : null;
-  return {
-    inputPerMillion,
-    outputPerMillion,
-    inputMultiplier: null,
-    outputMultiplier: null,
-    sourceCount,
-  };
-}
-
 export function buildRouteFlowTheoreticalEntryPricing(routeFlow: ModelRouteFlowData | null): ModelEntryPricing | null {
   const pricing = routeFlow?.entryPricing?.theoretical;
   if (!pricing) return null;
   const inputPerMillion = normalizeFiniteNumber(pricing.inputPerMillion);
   const outputPerMillion = normalizeFiniteNumber(pricing.outputPerMillion);
-  const totalCostUsd = normalizeFiniteNumber(pricing.totalCostUsd);
-  if (inputPerMillion == null && outputPerMillion == null && totalCostUsd == null) return null;
+  const totalCost = normalizeFiniteNumber(pricing.totalCost);
   return {
+    currency: pricing.currency ?? null,
     inputPerMillion,
     outputPerMillion,
-    totalCostUsd,
+    cacheReadPerMillion: normalizeFiniteNumber(pricing.cacheReadPerMillion),
+    cacheWritePerMillion: normalizeFiniteNumber(pricing.cacheWritePerMillion),
+    reasoningPerMillion: normalizeFiniteNumber(pricing.reasoningPerMillion),
+    requestCost: normalizeFiniteNumber(pricing.requestCost),
+    totalCost,
     inputMultiplier: normalizeFiniteNumber(pricing.inputMultiplier),
     outputMultiplier: normalizeFiniteNumber(pricing.outputMultiplier),
     totalMultiplier: normalizeFiniteNumber(pricing.totalMultiplier),
+    components: pricing.components,
+    usage: pricing.usage,
     effectiveCost: pricing.effectiveCost ?? null,
     sourceCount: pricing.sourceCount,
     estimateLevel: pricing.estimateLevel,
-    strategy: pricing.strategy,
+    selectionMode: pricing.selectionMode,
     diagnostics: pricing.diagnostics,
-    candidates: pricing.candidates,
+    executionAttempts: pricing.executionAttempts,
   };
 }
 
-export function resolveModelStatus(model: ModelRow): ModelDetailsView['status'] {
-  if (model.successRate == null && model.avgLatency == null) return 'unknown';
-  if (model.successRate != null && model.successRate < 60) return 'unavailable';
-  if (model.successRate != null && model.successRate < 90) return 'degraded';
-  if (model.avgLatency != null && model.avgLatency >= 3000) return 'degraded';
-  return 'healthy';
+function normalizeObservabilityRate(value: number | null | undefined): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+export function resolveModelDisplayMetrics(input: {
+  observability: ModelRuntimeObservability | null;
+}): {
+  successRate: number | null;
+  avgLatency: number | null;
+  avgFirstTokenLatency: number | null;
+  avgOutputTokensPerSecond: number | null;
+} {
+  const health = input.observability?.health;
+  const hasRuntimeSamples = (health?.totalCalls ?? 0) > 0;
+  return {
+    successRate: hasRuntimeSamples ? normalizeObservabilityRate(health?.successRate) : null,
+    avgLatency: hasRuntimeSamples ? normalizeObservabilityRate(health?.avgLatencyMs) : null,
+    avgFirstTokenLatency: hasRuntimeSamples ? normalizeObservabilityRate(health?.avgFirstTokenLatencyMs) : null,
+    avgOutputTokensPerSecond: hasRuntimeSamples ? normalizeObservabilityRate(health?.avgOutputTokensPerSecond) : null,
+  };
+}
+
+export function resolveVisiblePerformanceObservability(input: {
+  modelName: string;
+  current: ModelRuntimeObservability | null;
+  currentLoaded: boolean;
+  currentLoading: boolean;
+  currentError: string;
+  settledByModel: Record<string, ModelRuntimeObservability>;
+}): ModelRuntimeObservability | null {
+  if (input.current) return input.current;
+  if (!input.modelName || input.currentError) return null;
+  if (input.currentLoaded && !input.currentLoading) return null;
+  return input.settledByModel[input.modelName] ?? null;
+}
+
+function buildRouteSummary(routeFlow: ModelRouteFlowData | null): string[] {
+  const runtime = routeFlow?.compiledRuntime ?? null;
+  if (!runtime) return [];
+  const selectedAttempt = runtime.executionAttempts.find((attempt) => (
+    attempt.executionAttemptId === runtime.selected.executionAttemptId
+  )) || null;
+  return [
+    `${tr('components.modelRouteFlow.planId')}: ${runtime.match.planId}`,
+    `${tr('components.modelRouteFlow.entry')}: ${runtime.match.entryNodeId}`,
+    `${tr('components.modelRouteFlow.executionAttempts')}: ${runtime.executionAttempts.length}`,
+    selectedAttempt
+      ? `${tr('components.modelRouteFlow.selectedExecutionAttempt')}: ${selectedAttempt.accountLabel || selectedAttempt.accountId || 'N/A'} @ ${selectedAttempt.siteName || selectedAttempt.siteUrl || selectedAttempt.siteId || 'N/A'}`
+      : null,
+  ].filter((item): item is string => !!item);
 }
 
 export function buildModelDetailsView(input: {
   model: ModelRow;
   brandName: string | null;
   routeFlow: ModelRouteFlowData | null;
+  routeFlowDiagnostics?: ModelRouteFlowDiagnostics | null;
+  routeFlowDiagnosticsError?: string;
   routeFlowLoading: boolean;
   routeFlowError: string;
-  metadataHydrating: boolean;
+  observability: ModelRuntimeObservability | null;
+  observabilityLoading: boolean;
+  observabilityError: string;
+  performanceObservability?: ModelRuntimeObservability | null;
+  performanceObservabilityLoading?: boolean;
+  performanceObservabilityError?: string;
 }): ModelDetailsView {
   const hasOtherMetadata = input.model.tags.length > 0
-    || input.model.supportedEndpointTypes.length > 0
-    || input.model.pricingSources.length > 0;
+    || input.model.supportedEndpointTypes.length > 0;
+  const displayMetrics = resolveModelDisplayMetrics({
+    observability: input.observability,
+  });
+  const supportedEndpointTypes = input.observability?.capabilitySummary.supportedEndpointTypes.length
+    ? input.observability.capabilitySummary.supportedEndpointTypes
+    : input.model.supportedEndpointTypes;
+  const routeSummary = buildRouteSummary(input.routeFlow);
+  const routeDiagnostics = input.routeFlow?.diagnostics ?? input.routeFlowDiagnostics?.diagnostics ?? [];
+  const diagnosticsError = input.routeFlowError || input.routeFlowDiagnosticsError || '';
+  const runtimeInventoryDiagnostics = (input.model.runtimeInventoryIssues || []).map((issue) => ({
+    level: issue.level,
+    message: runtimeInventoryIssueMessage(issue),
+  }));
+  const diagnostics = [...runtimeInventoryDiagnostics, ...routeDiagnostics];
+  const performanceObservability = input.performanceObservability ?? input.observability;
+  const performanceLoading = input.performanceObservabilityLoading ?? input.observabilityLoading;
+  const performanceError = input.performanceObservabilityError ?? input.observabilityError;
+  const hasPerformanceData = !!performanceObservability;
+  const historyBuckets = performanceObservability?.history.buckets ?? [];
 
   return {
     model: input.model,
     brandName: input.brandName,
-    status: resolveModelStatus(input.model),
+    status: input.observability?.health?.status ?? 'unknown',
     routeFlow: input.routeFlow,
+    routeFlowDiagnostics: input.routeFlowDiagnostics ?? null,
     routeFlowLoading: input.routeFlowLoading,
     routeFlowError: input.routeFlowError,
-    diagnostics: input.routeFlow?.diagnostics ?? [],
-    freshnessLabel: input.metadataHydrating
-      ? tr('pages.models.modelDetailsView.updating')
-      : tr('pages.models.modelDetailsView.partialView'),
+    observability: input.observability,
+    observabilityLoading: input.observabilityLoading,
+    observabilityError: input.observabilityError,
+    performanceObservability,
+    performanceObservabilityLoading: performanceLoading,
+    performanceObservabilityError: performanceError,
+    diagnostics,
+    diagnosticsPayload: input.routeFlow,
+    freshnessLabel: tr('pages.models.modelDetailsView.partialView'),
     descriptionText: input.model.description?.trim()
-      || (input.metadataHydrating
-        ? tr('pages.models.modelDetailsView.loadingModelMetadata')
-        : hasOtherMetadata
-          ? tr('pages.models.modelDetailsView.notProvidedTextSynctagsCapabilitiesInfo')
-          : tr('pages.models.modelDetailsView.modelId')),
+      || (hasOtherMetadata
+        ? tr('pages.models.modelDetailsView.notProvidedTextSynctagsCapabilitiesInfo')
+        : tr('pages.models.modelDetailsView.modelId')),
+    overview: {
+      displayMetrics,
+      supportedEndpointTypes,
+      routeSummary,
+      routeSummaryLoading: input.routeFlowLoading && routeSummary.length === 0,
+      routeSummaryRefreshing: input.routeFlowLoading && routeSummary.length > 0,
+      routeSummaryError: input.routeFlowError,
+    },
+    routing: {
+      flow: input.routeFlow,
+      loading: input.routeFlowLoading,
+      refreshing: input.routeFlowLoading && !!input.routeFlow,
+      error: input.routeFlowError,
+      hasContent: !!input.routeFlow,
+    },
+    diagnosticsView: {
+      items: diagnostics,
+      itemsLoading: input.routeFlowLoading && !input.routeFlow && !input.routeFlowDiagnostics,
+      payload: input.routeFlow,
+      payloadLoading: input.routeFlowLoading && !input.routeFlow,
+      error: diagnosticsError,
+      payloadError: input.routeFlowError,
+    },
+    performance: {
+      observability: performanceObservability,
+      loading: performanceLoading,
+      refreshing: performanceLoading && hasPerformanceData,
+      initialLoading: performanceLoading && !hasPerformanceData,
+      error: performanceError,
+      hasData: hasPerformanceData,
+      attempts: performanceObservability?.executionAttempts ?? [],
+      endpoints: performanceObservability?.endpoints ?? [],
+      historyBuckets,
+      recentBuckets: historyBuckets.slice(-8).reverse(),
+      successRate: performanceObservability?.health.successRate ?? null,
+      avgLatency: performanceObservability?.health.avgLatencyMs ?? null,
+      avgFirstTokenLatency: performanceObservability?.health.avgFirstTokenLatencyMs ?? null,
+      avgOutputTokensPerSecond: performanceObservability?.health.avgOutputTokensPerSecond ?? null,
+    },
     pricing: {
       measured: buildMeasuredEntryPricing(input.model),
-      theoretical: buildRouteFlowTheoreticalEntryPricing(input.routeFlow) || buildTheoreticalEntryPricing(input.model),
+      theoretical: buildRouteFlowTheoreticalEntryPricing(input.routeFlow),
     },
   };
 }
 
 export function getModelManagedTokenCount(model: ModelRow): number {
-  const explicit = normalizeFiniteNumber(model.managedTokenCount);
-  if (explicit != null) return explicit;
-  return normalizeFiniteNumber(model.tokenCount) ?? 0;
+  return model.managedTokenCount;
 }
 
 export function getAccountCredentialCount(account: ModelAccountInfo): number {
-  const explicit = normalizeFiniteNumber(account.credentialCount);
-  if (explicit != null) return explicit;
-  return account.tokens.length;
+  return account.credentialCount;
 }
 
 export function getModelCredentialCount(model: ModelRow): number {
-  const explicit = normalizeFiniteNumber(model.credentialCount);
-  if (explicit != null) return explicit;
-  return model.accounts.reduce((sum, account) => sum + getAccountCredentialCount(account), 0);
+  return model.credentialCount;
 }
 
 export function formatLatencyValue(latency: number | null): string {
   return typeof latency === 'number' && Number.isFinite(latency) ? `${latency}ms` : tr('common.notAvailable');
+}
+
+export function formatTokenSpeedValue(value: number | null): string {
+  return typeof value === 'number' && Number.isFinite(value) ? `${value.toFixed(value >= 10 ? 1 : 2)} tok/s` : tr('common.notAvailable');
 }
 
 export function formatSuccessRate(value: number | null): string {

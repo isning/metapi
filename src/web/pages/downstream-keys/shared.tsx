@@ -6,6 +6,7 @@ import { Card, CardContent } from '../../components/ui/card/index.js';
 import { Skeleton } from '../../components/ui/skeleton/index.js';
 
 import { tr } from '../../i18n.js';
+import type { BaseCostSummary } from '../../../shared/billingCost.js';
 export type Range = '24h' | '7d' | 'all';
 
 export type SummaryItem = {
@@ -22,7 +23,7 @@ export type SummaryItem = {
   maxRequests: number | null;
   usedRequests: number;
   supportedModels: string[];
-  allowedRouteIds: number[];
+  allowedPlanIds: string[];
   siteWeightMultipliers: Record<number, number>;
   excludedSiteIds: number[];
   excludedCredentialRefs: Array<
@@ -38,7 +39,7 @@ export type SummaryItem = {
     failedRequests: number;
     successRate: number | null;
     totalTokens: number;
-    totalCost: number;
+    cost: BaseCostSummary;
   };
 };
 
@@ -48,7 +49,7 @@ export type AggregateUsage = {
   failedRequests: number;
   successRate: number | null;
   totalTokens: number;
-  totalCost: number;
+  cost: BaseCostSummary;
 };
 
 export type OverviewResponse = {
@@ -71,9 +72,9 @@ export function formatIso(value: string | null | undefined): string {
 }
 
 export function formatMoney(value: number): string {
-  if (!Number.isFinite(value)) return '$0';
-  if (value >= 1) return `$${value.toFixed(3)}`;
-  return `$${value.toFixed(6)}`;
+  if (!Number.isFinite(value)) return '0';
+  if (value >= 1) return value.toFixed(3);
+  return value.toFixed(6);
 }
 
 export function formatCompactTokens(value: number): string {

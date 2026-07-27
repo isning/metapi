@@ -23,11 +23,13 @@ import { estimateRewardWithTodayIncomeFallback } from "./todayIncomeRewardServic
 import { createAdminSnapshotPersistence } from "./adminSnapshotStore.js";
 import { runUsageAggregationProjectionPass } from "./usageAggregationService.js";
 import { valueWalletBalanceInBaseUnit } from "./walletBalanceValuationService.js";
-import { loadPlatformPricingConfig } from "./platformPricingConfigService.js";
+import { listValuedRequestCostFacts } from "./billingCostValuationService.js";
 
 export type DashboardSummaryPayload = {
   totalBalance: number;
   rawBalance: number;
+  rawBalanceUnit: string | null;
+  rawBalanceUnitMixed: boolean;
   baseCostUnit: string;
   valuedAccountCount: number;
   balanceValuationWarningCount: number;
@@ -71,20 +73,6 @@ const dashboardInsightsPersistence =
     key: "default",
   });
 
-function normalizeCostUnit(value: unknown): string {
-  const text = String(value || '').trim();
-  return text ? text.toUpperCase() : 'USD';
-}
-
-function isValuationWarning(diagnostic: { level: 'info' | 'warn' | 'error' }) {
-  return diagnostic.level === 'warn' || diagnostic.level === 'error';
-}
-
-async function resolveBaseCostUnit(): Promise<string> {
-  const platformConfig = await loadPlatformPricingConfig();
-  return normalizeCostUnit(platformConfig.baseCostUnit);
-}
-
 async function loadDashboardSummaryPayload(): Promise<DashboardSummaryPayload> {
   await runUsageAggregationProjectionPass();
 
@@ -111,6 +99,11 @@ async function loadDashboardSummaryPayload(): Promise<DashboardSummaryPayload> {
     (sum, item) => sum + item.valuation.balance,
     0,
   );
+  const rawBalanceUnits = new Set(
+    balanceValuations
+      .map((item) => item.valuation.walletUnit)
+      .filter((unit): unit is string => !!unit),
+  );
   const valuedAccountCount = balanceValuations.filter((item) => item.valuation.normalizedValue != null).length;
   const balanceValuationWarningCount = balanceValuations.reduce(
     (sum, item) => sum + item.valuation.diagnostics.filter((diagnostic) => diagnostic.level === 'warn' || diagnostic.level === 'error').length,
@@ -129,13 +122,13 @@ async function loadDashboardSummaryPayload(): Promise<DashboardSummaryPayload> {
   const nowTs = Date.now();
   const last24hDate = formatUtcSqlDateTime(new Date(nowTs - 86_400_000));
   const lastMinuteDate = formatUtcSqlDateTime(new Date(nowTs - 60_000));
+  const activeSiteIds = new Set(accountRows.map((row) => row.sites.id));
 
   const [
     todayCheckinRows,
-    totalUsedRow,
     proxy24hRow,
     proxyPerformanceRow,
-    todaySpendRow,
+    valuedCosts,
   ] = await Promise.all([
     db
       .select()
@@ -153,14 +146,6 @@ async function loadDashboardSummaryPayload(): Promise<DashboardSummaryPayload> {
         ),
       )
       .all(),
-    db
-      .select({
-        totalUsed: sql<number>`coalesce(sum(coalesce(${schema.siteDayUsage.totalSiteSpend}, 0)), 0)`,
-      })
-      .from(schema.siteDayUsage)
-      .innerJoin(schema.sites, eq(schema.siteDayUsage.siteId, schema.sites.id))
-      .where(eq(schema.sites.status, "active"))
-      .get(),
     db
       .select({
         total: sql<number>`count(*)`,
@@ -199,19 +184,7 @@ async function loadDashboardSummaryPayload(): Promise<DashboardSummaryPayload> {
         ),
       )
       .get(),
-    db
-      .select({
-        todaySpend: sql<number>`coalesce(sum(coalesce(${schema.siteDayUsage.totalSiteSpend}, 0)), 0)`,
-      })
-      .from(schema.siteDayUsage)
-      .innerJoin(schema.sites, eq(schema.siteDayUsage.siteId, schema.sites.id))
-      .where(
-        and(
-          eq(schema.siteDayUsage.localDay, today),
-          eq(schema.sites.status, "active"),
-        ),
-      )
-      .get(),
+    listValuedRequestCostFacts(),
   ]);
 
   const todayCheckins = todayCheckinRows.map((row) => row.checkin_logs);
@@ -244,8 +217,11 @@ async function loadDashboardSummaryPayload(): Promise<DashboardSummaryPayload> {
   const totalTokens = Number(proxy24hRow?.totalTokens || 0);
   const requestsPerMinute = Number(proxyPerformanceRow?.total || 0);
   const tokensPerMinute = Number(proxyPerformanceRow?.totalTokens || 0);
-  const totalUsed = Number(totalUsedRow?.totalUsed || 0);
-  const todaySpend = Number(todaySpendRow?.todaySpend || 0);
+  const activeCostFacts = valuedCosts.facts.filter((fact) => activeSiteIds.has(fact.siteId));
+  const totalUsed = activeCostFacts.reduce((sum, fact) => sum + (fact.amount ?? 0), 0);
+  const todaySpend = activeCostFacts
+    .filter((fact) => fact.bucketStart === today)
+    .reduce((sum, fact) => sum + (fact.amount ?? 0), 0);
   const todayReward = accounts.reduce(
     (sum, account) =>
       sum +
@@ -262,6 +238,8 @@ async function loadDashboardSummaryPayload(): Promise<DashboardSummaryPayload> {
   return {
     totalBalance: toRoundedMicroNumber(totalBalance),
     rawBalance: toRoundedMicroNumber(rawBalance),
+    rawBalanceUnit: rawBalanceUnits.size === 1 ? [...rawBalanceUnits][0] : null,
+    rawBalanceUnitMixed: rawBalanceUnits.size > 1,
     baseCostUnit,
     valuedAccountCount,
     balanceValuationWarningCount,
@@ -298,7 +276,7 @@ async function loadDashboardInsightsPayload(): Promise<DashboardInsightsPayload>
   const modelAnalysisSinceDay = getLocalRangeStartDayKey(7);
   await runUsageAggregationProjectionPass();
 
-  const [activeSites, siteAvailabilityRows, modelDayRows, baseCostUnit] =
+  const [activeSites, siteAvailabilityRows, modelDayRows, valuedModelCosts] =
     await Promise.all([
       db
         .select({
@@ -322,7 +300,7 @@ async function loadDashboardInsightsPayload(): Promise<DashboardInsightsPayload>
         .from(schema.modelDayUsage)
         .where(gte(schema.modelDayUsage.localDay, modelAnalysisSinceDay))
         .all(),
-      resolveBaseCostUnit(),
+      listValuedRequestCostFacts({ fromDay: modelAnalysisSinceDay }),
     ]);
 
   const sortedSites = activeSites.sort(
@@ -337,50 +315,37 @@ async function loadDashboardInsightsPayload(): Promise<DashboardInsightsPayload>
     },
   );
   const activeSiteIdSet = new Set(sortedSites.map((site) => site.id));
-  const accountValuationMultiplierByKey = new Map<
-    string,
-    {
-      multiplier: number | null;
-      warningCount: number;
-    }
-  >();
-  const getAccountValuationMultiplier = async (siteId: number, accountId: number) => {
-    const key = `${siteId}:${accountId}`;
-    const cached = accountValuationMultiplierByKey.get(key);
-    if (cached) return cached;
-    const valuation = await valueWalletBalanceInBaseUnit({
-      siteId,
-      accountId,
-      balance: 1,
-    });
-    const next = {
-      multiplier: valuation.normalizedValue,
-      warningCount: valuation.diagnostics.filter(isValuationWarning).length,
-    };
-    accountValuationMultiplierByKey.set(key, next);
-    return next;
-  };
-
   const modelRowsInActiveSites = modelDayRows.filter((row) => activeSiteIdSet.has(row.siteId));
-  const modelRowsWithValuedSpend = await Promise.all(
-    modelRowsInActiveSites.map(async (row) => {
-      const valuation = await getAccountValuationMultiplier(row.siteId, row.accountId);
+  const valuedCostByModelDimension = new Map<string, { amount: number; valued: boolean }>();
+  for (const fact of valuedModelCosts.facts) {
+    if (!fact.model || !activeSiteIdSet.has(fact.siteId)) continue;
+    const key = JSON.stringify([fact.bucketStart, fact.siteId, fact.accountId, fact.model]);
+    const current = valuedCostByModelDimension.get(key) || { amount: 0, valued: false };
+    if (fact.amount != null) {
+      current.amount += fact.amount;
+      current.valued = true;
+    }
+    valuedCostByModelDimension.set(key, current);
+  }
+  const modelRowsWithValuedSpend = modelRowsInActiveSites.map((row) => {
+      const valuedCost = valuedCostByModelDimension.get(JSON.stringify([
+        row.localDay,
+        row.siteId,
+        row.accountId,
+        row.model,
+      ]));
       return {
         localDay: row.localDay,
         model: row.model,
         totalCalls: row.totalCalls,
         successCalls: row.successCalls,
         totalTokens: row.totalTokens,
-        totalSpend: valuation.multiplier == null
-          ? 0
-          : toRoundedMicroNumber(Number(row.totalSpend || 0) * valuation.multiplier),
+        totalSpend: toRoundedMicroNumber(valuedCost?.amount ?? 0),
         totalLatencyMs: row.totalLatencyMs,
-        valued: valuation.multiplier != null,
+        valued: valuedCost?.valued ?? false,
       };
-    }),
-  );
-  const modelValuationWarningCount = Array.from(accountValuationMultiplierByKey.values())
-    .reduce((sum, item) => sum + item.warningCount, 0);
+    });
+  const modelValuationWarningCount = valuedModelCosts.valuationWarningCount;
   const modelValuedRows = modelRowsWithValuedSpend.filter((row) => row.valued).length;
 
   return {
@@ -403,7 +368,7 @@ async function loadDashboardInsightsPayload(): Promise<DashboardInsightsPayload>
       modelRowsWithValuedSpend,
       {
         days: 7,
-        costUnit: baseCostUnit,
+        costUnit: valuedModelCosts.baseCostUnit,
         valuation: {
           source: 'wallet_valuation',
           valuedRows: modelValuedRows,

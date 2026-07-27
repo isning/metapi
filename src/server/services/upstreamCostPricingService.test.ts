@@ -8,6 +8,10 @@ const fetchUpstreamPricingCatalogMock = vi.hoisted(() => vi.fn());
 
 vi.mock('./upstreamPricingCatalogService.js', () => ({
   fetchUpstreamPricingCatalog: fetchUpstreamPricingCatalogMock,
+  fetchUpstreamPricingCatalogWithMetadata: async (input: unknown) => {
+    const catalog = await fetchUpstreamPricingCatalogMock(input);
+    return catalog ? { catalog, credentialKind: 'access_token' } : null;
+  },
 }));
 
 type DbModule = typeof import('../db/index.js');
@@ -29,6 +33,7 @@ describe('upstreamCostPricingService', () => {
   beforeEach(async () => {
     fetchUpstreamPricingCatalogMock.mockReset();
     await db.delete(schema.settings).run();
+    await db.delete(schema.providerPricingCatalogCaches).run();
     await db.delete(schema.upstreamModelCostPricings).run();
     await db.delete(schema.accountTokens).run();
     await db.delete(schema.accounts).run();
@@ -126,13 +131,13 @@ describe('upstreamCostPricingService', () => {
       },
     });
 
-    expect(result?.evaluation.totalCostUsd).toBe(0.0051375);
+    expect(result?.evaluation.totalCost).toBe(0.0051375);
     expect(result?.evaluation.source).toBe('user_override');
     expect(result?.evaluation.components).toEqual(expect.arrayContaining([
-      expect.objectContaining({ kind: 'input_tokens', costUsd: 0.003 }),
-      expect.objectContaining({ kind: 'output_tokens', costUsd: 0.0015 }),
-      expect.objectContaining({ kind: 'cache_read_tokens', costUsd: 0.0006 }),
-      expect.objectContaining({ kind: 'cache_write_tokens', costUsd: 0.0000375 }),
+      expect.objectContaining({ kind: 'input_tokens', cost: 0.003 }),
+      expect.objectContaining({ kind: 'output_tokens', cost: 0.0015 }),
+      expect.objectContaining({ kind: 'cache_read_tokens', cost: 0.0006 }),
+      expect.objectContaining({ kind: 'cache_write_tokens', cost: 0.0000375 }),
     ]));
   });
 
@@ -158,6 +163,7 @@ describe('upstreamCostPricingService', () => {
       tokenId: token.id,
       tokenGroup: 'premium',
       modelName: 'GPT-5.5',
+      providerCatalogMode: 'refresh',
       usage: {
         inputTokens: 1_000_000,
         outputTokens: 1_000_000,
@@ -190,8 +196,8 @@ describe('upstreamCostPricingService', () => {
     });
     expect(result?.evaluation.source).toBe('upstream_catalog');
     expect(result?.evaluation.components).toEqual(expect.arrayContaining([
-      expect.objectContaining({ kind: 'input_tokens', unitPriceUsd: 2, costUsd: 2 }),
-      expect.objectContaining({ kind: 'output_tokens', unitPriceUsd: 8, costUsd: 8 }),
+      expect.objectContaining({ kind: 'input_tokens', unitPrice: 2, cost: 2 }),
+      expect.objectContaining({ kind: 'output_tokens', unitPrice: 8, cost: 8 }),
     ]));
   });
 
@@ -216,6 +222,7 @@ describe('upstreamCostPricingService', () => {
       accountId: account.id,
       tokenId: token.id,
       modelName: 'deepseek-v4-flash',
+      providerCatalogMode: 'refresh',
       usage: {
         inputTokens: 1_000_000,
         outputTokens: 1_000_000,
@@ -223,12 +230,133 @@ describe('upstreamCostPricingService', () => {
     });
 
     expect(result?.evaluation.components).toEqual([
-      expect.objectContaining({ kind: 'input_tokens', unitPriceUsd: 0.7, costUsd: 0.7 }),
+      expect.objectContaining({ kind: 'input_tokens', unitPrice: 0.7, cost: 0.7 }),
     ]);
     expect(result?.evaluation.components.some((component) => component.kind === 'output_tokens')).toBe(false);
     expect(result?.evaluation.components.some((component) => component.kind === 'cache_read_tokens')).toBe(false);
     expect(result?.evaluation.components.some((component) => component.kind === 'cache_write_tokens')).toBe(false);
-    expect(result?.evaluation.totalCostUsd).toBe(0.7);
+    expect(result?.evaluation.totalCost).toBe(0.7);
+  });
+
+  it('treats missing provider catalog cache ratios as zero-priced cache usage', async () => {
+    const { site, account, token } = await seedSupply(db, schema);
+    fetchUpstreamPricingCatalogMock.mockResolvedValue({
+      models: new Map([['ratio-model-without-cache', {
+        modelName: 'ratio-model-without-cache',
+        quotaType: 0,
+        modelRatio: 2,
+        completionRatio: 3,
+        modelPrice: null,
+        enableGroups: ['default'],
+      }]]),
+      groupRatio: { default: 1 },
+    });
+
+    const result = await service.evaluateUpstreamCostPricing({
+      siteId: site.id,
+      accountId: account.id,
+      tokenId: token.id,
+      modelName: 'ratio-model-without-cache',
+      providerCatalogMode: 'refresh',
+      usage: {
+        inputTokens: 1_000_000,
+        outputTokens: 1_000_000,
+        cacheReadTokens: 1_000_000,
+        cacheWriteTokens: 1_000_000,
+      },
+    });
+
+    expect(result?.evaluation.components).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'input_tokens', unitPrice: 4, cost: 4 }),
+      expect.objectContaining({ kind: 'output_tokens', unitPrice: 12, cost: 12 }),
+    ]));
+    expect(result?.evaluation.components.some((component) => component.kind === 'cache_read_tokens')).toBe(false);
+    expect(result?.evaluation.components.some((component) => component.kind === 'cache_write_tokens')).toBe(false);
+    expect(result?.evaluation.totalCost).toBe(16);
+  });
+
+  it('preserves explicit zero provider catalog cache prices as pricing components', async () => {
+    const { site, account, token } = await seedSupply(db, schema);
+    fetchUpstreamPricingCatalogMock.mockResolvedValue({
+      models: new Map([['explicit-zero-cache-model', {
+        modelName: 'explicit-zero-cache-model',
+        quotaType: 0,
+        modelRatio: 2,
+        completionRatio: 3,
+        cacheRatio: 0,
+        cacheCreationRatio: 0,
+        modelPrice: null,
+        enableGroups: ['default'],
+      }]]),
+      groupRatio: { default: 1 },
+    });
+
+    const result = await service.evaluateUpstreamCostPricing({
+      siteId: site.id,
+      accountId: account.id,
+      tokenId: token.id,
+      modelName: 'explicit-zero-cache-model',
+      providerCatalogMode: 'refresh',
+      usage: {
+        inputTokens: 1_000_000,
+        outputTokens: 1_000_000,
+        cacheReadTokens: 1_000_000,
+        cacheWriteTokens: 1_000_000,
+      },
+    });
+
+    expect(result?.evaluation.components).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'input_tokens', unitPrice: 4, cost: 4 }),
+      expect.objectContaining({ kind: 'output_tokens', unitPrice: 12, cost: 12 }),
+      expect.objectContaining({ kind: 'cache_read_tokens', unitPrice: 0, cost: 0 }),
+      expect.objectContaining({ kind: 'cache_write_tokens', unitPrice: 0, cost: 0 }),
+    ]));
+    expect(result?.evaluation.totalCost).toBe(16);
+  });
+
+  it('preserves direct upstream catalog cache read and write prices', async () => {
+    const { site, account, token } = await seedSupply(db, schema);
+    fetchUpstreamPricingCatalogMock.mockResolvedValue({
+      models: new Map([['onehub-cache-model', {
+        modelName: 'onehub-cache-model',
+        quotaType: 0,
+        modelRatio: 1,
+        completionRatio: 1,
+        cacheRatio: 0.2,
+        cacheCreationRatio: 1.5,
+        modelPrice: {
+          input: 0.5,
+          output: 1.5,
+          cacheRead: 0.1,
+          cacheWrite: 0.75,
+        },
+        enableGroups: ['default', 'vip'],
+      }]]),
+      groupRatio: { default: 1, vip: 0.8 },
+    });
+
+    const result = await service.evaluateUpstreamCostPricing({
+      siteId: site.id,
+      accountId: account.id,
+      tokenId: token.id,
+      tokenGroup: 'vip',
+      modelName: 'onehub-cache-model',
+      providerCatalogMode: 'refresh',
+      usage: {
+        inputTokens: 1_000_000,
+        outputTokens: 1_000_000,
+        cacheReadTokens: 1_000_000,
+        cacheWriteTokens: 1_000_000,
+      },
+    });
+
+    expect(result?.evaluation.components).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'input_tokens', unitPrice: 0.4, cost: 0.4 }),
+      expect.objectContaining({ kind: 'output_tokens', unitPrice: 1.2, cost: 1.2 }),
+      expect.objectContaining({ kind: 'cache_read_tokens', unitPrice: 0.08, cost: 0.08 }),
+      expect.objectContaining({ kind: 'cache_write_tokens', unitPrice: 0.6, cost: 0.6 }),
+    ]));
+    expect(result?.evaluation.totalCost).toBe(2.28);
   });
 
   it('uses upstream catalog fallback as default platform pricing source', async () => {
@@ -268,12 +396,84 @@ describe('upstreamCostPricingService', () => {
       tokenId: token.id,
       tokenGroup: 'premium',
       modelName: 'gpt-5.5',
+      providerCatalogMode: 'refresh',
     });
 
     expect(result).toMatchObject({
       matchedScope: 'provider_catalog',
       pricing: {
         sourceType: 'provider_catalog',
+      },
+    });
+    expect(fetchUpstreamPricingCatalogMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not refresh provider catalog from the default cache-only read path', async () => {
+    const { site, account, token } = await seedSupply(db, schema);
+    fetchUpstreamPricingCatalogMock.mockResolvedValue({
+      models: new Map([['gpt-5.5', {
+        modelName: 'gpt-5.5',
+        quotaType: 0,
+        modelRatio: 2,
+        completionRatio: 3,
+        cacheRatio: 1,
+        cacheCreationRatio: 1,
+        modelPrice: null,
+        enableGroups: ['premium'],
+      }]]),
+      groupRatio: { premium: 1 },
+    });
+
+    const result = await service.resolveUpstreamCostPricing({
+      siteId: site.id,
+      accountId: account.id,
+      tokenId: token.id,
+      tokenGroup: 'premium',
+      modelName: 'gpt-5.5',
+    });
+
+    expect(result).toMatchObject({
+      matchedScope: 'system_default',
+      pricing: {
+        sourceType: 'system_default',
+      },
+    });
+    expect(fetchUpstreamPricingCatalogMock).not.toHaveBeenCalled();
+  });
+
+  it('does not refresh provider catalog again while a failure cache is fresh', async () => {
+    const { site, account, token } = await seedSupply(db, schema);
+    fetchUpstreamPricingCatalogMock.mockResolvedValue(null);
+
+    const first = await service.resolveUpstreamCostPricing({
+      siteId: site.id,
+      accountId: account.id,
+      tokenId: token.id,
+      tokenGroup: 'premium',
+      modelName: 'gpt-5.5',
+      providerCatalogMode: 'refresh',
+    });
+
+    expect(first).toMatchObject({
+      matchedScope: 'system_default',
+      pricing: {
+        sourceType: 'system_default',
+      },
+    });
+    expect(fetchUpstreamPricingCatalogMock).toHaveBeenCalledTimes(1);
+
+    const second = await service.resolveUpstreamCostPricing({
+      siteId: site.id,
+      accountId: account.id,
+      tokenId: token.id,
+      tokenGroup: 'premium',
+      modelName: 'gpt-5.5',
+    });
+
+    expect(second).toMatchObject({
+      matchedScope: 'system_default',
+      pricing: {
+        sourceType: 'system_default',
       },
     });
     expect(fetchUpstreamPricingCatalogMock).toHaveBeenCalledTimes(1);

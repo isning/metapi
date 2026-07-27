@@ -5,23 +5,23 @@ import {
   shouldRefreshAuth,
   shouldRetrySameTarget,
 } from './retryPolicy.js';
-import type { ExecuteInput, ExecuteResult, ProxyConductorDependencies, SelectedTargetLike } from './types.js';
+import type { ExecuteInput, ExecuteResult, ProxyConductorDependencies, SelectedExecutionAttemptLike } from './types.js';
 import { recordFailedAttempt, recordSuccessfulAttempt } from './usageHooks.js';
 
 export class DefaultProxyConductor {
   constructor(private readonly deps: ProxyConductorDependencies) {}
 
-  async previewSelectedTarget(requestedModel: string, downstreamPolicy?: unknown): Promise<SelectedTargetLike | null> {
-    if (this.deps.previewSelectedTarget) {
-      return this.deps.previewSelectedTarget(requestedModel, downstreamPolicy);
+  async previewExecutionAttempt(requestedModel: string, downstreamPolicy?: unknown): Promise<SelectedExecutionAttemptLike | null> {
+    if (this.deps.previewExecutionAttempt) {
+      return this.deps.previewExecutionAttempt(requestedModel, downstreamPolicy);
     }
-    return this.deps.selectTarget(requestedModel, downstreamPolicy);
+    return this.deps.selectExecutionAttempt(requestedModel, downstreamPolicy);
   }
 
   async execute(input: ExecuteInput): Promise<ExecuteResult> {
     const excludeTargetIds: number[] = [];
     let attempts = 0;
-    let selected = await this.deps.selectTarget(input.requestedModel, input.downstreamPolicy);
+    let selected = await this.deps.selectExecutionAttempt(input.requestedModel, input.downstreamPolicy);
     if (!selected) {
       return {
         ok: false,
@@ -89,7 +89,7 @@ export class DefaultProxyConductor {
 
       if (shouldFailover(action)) {
         excludeTargetIds.push(selected.target.id);
-        const next = await this.deps.selectNextTarget(
+        const next = await this.deps.selectNextExecutionAttempt(
           input.requestedModel,
           excludeTargetIds,
           input.downstreamPolicy,

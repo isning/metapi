@@ -10,6 +10,7 @@ import FactoryResetModal from './settings/FactoryResetModal.js';
 import ModelAvailabilityProbeConfirmModal from './settings/ModelAvailabilityProbeConfirmModal.js';
 import UpdateCenterSection from './settings/UpdateCenterSection.js';
 import CostPolicySettingsSection from './settings/CostPolicySettingsSection.js';
+import DispatchPolicyEditor from './settings/DispatchPolicyEditor.js';
 import {
   SettingsCard,
   SettingsCode,
@@ -19,17 +20,13 @@ import {
   SettingsSubsection,
   SettingsToggleRow,
 } from './settings/SettingsLayout.js';
-import {
-  applyRoutingProfilePreset,
-  resolveRoutingProfilePreset,
-  type RoutingWeights,
-} from './helpers/routingProfiles.js';
+import type { DispatchPolicyRegistryPayload } from '../api.js';
 import { clearAuthSession } from '../authSession.js';
 import { clearAppInstallationState } from '../appLocalState.js';
 import { tr } from '../i18n.js';
 import { generateDownstreamSkKey } from './helpers/generateDownstreamSkKey.js';
 import { Button } from '../components/ui/button/index.js';
-import { Database, KeyRound, LoaderCircle, RotateCcw, ShieldCheck, SlidersHorizontal, Timer, Wrench } from 'lucide-react';
+import { Database, KeyRound, LoaderCircle, RefreshCw, RotateCcw, ShieldCheck, SlidersHorizontal, Timer, Wrench } from 'lucide-react';
 import { Skeleton } from '../components/ui/skeleton/index.js';
 import ToneBadge from '../components/ToneBadge.js';
 import { Alert, AlertDescription, AlertTitle } from '../components/ui/alert/index.js';
@@ -86,7 +83,8 @@ type RuntimeSettings = {
   proxyFirstByteTimeoutSec: number;
   routeFailureCooldownMaxValue: number;
   routeFailureCooldownMaxUnit: RouteCooldownUnit;
-  routingWeights: RoutingWeights;
+  routeRuntimeCacheTtlMs: number;
+  dispatchPolicyRegistry: DispatchPolicyRegistryPayload;
   systemProxyUrl: string;
   proxyErrorKeywords: string[];
   proxyEmptyContentFailEnabled: boolean;
@@ -117,9 +115,8 @@ type DatabaseMigrationSummary = {
     siteDisabledModels?: number;
     accounts: number;
     accountTokens: number;
-    tokenRoutes: number;
-    routeEndpointTargets: number;
-    routeGroupSources?: number;
+    routeGraphVersions?: number;
+    runtimeExecutionTargets?: number;
     checkinLogs?: number;
     modelAvailability?: number;
     tokenModelAvailability?: number;
@@ -154,12 +151,15 @@ type ShorthandConnection = {
   database: string;
 };
 
-const defaultWeights: RoutingWeights = {
-  baseWeightFactor: 0.5,
-  valueScoreFactor: 0.5,
-  costWeight: 0.4,
-  balanceWeight: 0.3,
-  usageWeight: 0.3,
+const defaultDispatchPolicyRegistry: DispatchPolicyRegistryPayload = {
+  defaultPolicyId: 'platform-default',
+  policies: [{
+    id: 'platform-default',
+    name: 'Platform default',
+    kind: 'cel',
+    selectionMode: 'weighted',
+    contributionExpression: '(runtime.routingSignals.normalizedCostScore != null ? 0.40 : 0.0) + (runtime.routingSignals.normalizedBalanceScore != null ? 0.30 : 0.0) + (runtime.routingSignals.normalizedUsageScore != null ? 0.30 : 0.0) > 0.0 ? ((runtime.routingSignals.normalizedCostScore != null ? 0.40 * runtime.routingSignals.normalizedCostScore : 0.0) + (runtime.routingSignals.normalizedBalanceScore != null ? 0.30 * runtime.routingSignals.normalizedBalanceScore : 0.0) + (runtime.routingSignals.normalizedUsageScore != null ? 0.30 * runtime.routingSignals.normalizedUsageScore : 0.0)) / ((runtime.routingSignals.normalizedCostScore != null ? 0.40 : 0.0) + (runtime.routingSignals.normalizedBalanceScore != null ? 0.30 : 0.0) + (runtime.routingSignals.normalizedUsageScore != null ? 0.30 : 0.0)) : 1.0',
+  }],
 };
 
 function getDialectDefaults(dialect: DbDialect) {
@@ -242,7 +242,8 @@ export default function Settings() {
     proxyFirstByteTimeoutSec: 0,
     routeFailureCooldownMaxValue: 30,
     routeFailureCooldownMaxUnit: 'day',
-    routingWeights: defaultWeights,
+    routeRuntimeCacheTtlMs: 1500,
+    dispatchPolicyRegistry: defaultDispatchPolicyRegistry,
     systemProxyUrl: '',
     proxyErrorKeywords: [],
     proxyEmptyContentFailEnabled: false,
@@ -261,11 +262,12 @@ export default function Settings() {
   const [systemProxyTestState, setSystemProxyTestState] = useState<SystemProxyTestState>(null);
   const [savingProxyFailureRules, setSavingProxyFailureRules] = useState(false);
   const [savingRouting, setSavingRouting] = useState(false);
-  const [showAdvancedRouting, setShowAdvancedRouting] = useState(false);
+  const [refreshingRouteRuntimeCache, setRefreshingRouteRuntimeCache] = useState(false);
+  const [routeRuntimeCacheStatus, setRouteRuntimeCacheStatus] = useState<Awaited<ReturnType<typeof api.getRouteRuntimeCacheStatus>> | null>(null);
   const [allBrandNames, setAllBrandNames] = useState<string[] | null>(null);
   const [blockedBrands, setBlockedBrands] = useState<string[]>([]);
   const [savingBrandFilter, setSavingBrandFilter] = useState(false);
-  const [availableModels, setAvailableModels] = useState<string[] | null>(null);
+  const [discoveredModels, setDiscoveredModels] = useState<string[] | null>(null);
   const [allowedModels, setAllowedModels] = useState<string[]>([]);
   const [allowedModelsInput, setAllowedModelsInput] = useState('');
   const [savingAllowedModels, setSavingAllowedModels] = useState(false);
@@ -303,10 +305,6 @@ export default function Settings() {
   const [activeSettingsSection, setActiveSettingsSection] = useState<SettingsNavSectionId>('settings-runtime');
   const toast = useToast();
 
-  const activeRoutingProfile = useMemo(
-    () => resolveRoutingProfilePreset(runtime.routingWeights),
-    [runtime.routingWeights],
-  );
 
   const generatedConnectionString = useMemo(() => (
     buildShorthandConnectionString(migrationDialect, shorthandConnection)
@@ -366,13 +364,15 @@ export default function Settings() {
   const loadSettings = async () => {
     setLoading(true);
     try {
-      const [authInfo, runtimeInfo, runtimeDatabaseInfo] = await Promise.all([
+      const [authInfo, runtimeInfo, runtimeDatabaseInfo, runtimeCacheInfo] = await Promise.all([
         api.getAuthInfo(),
         api.getRuntimeSettings(),
         api.getRuntimeDatabaseConfig(),
+        api.getRouteRuntimeCacheStatus(),
       ]);
+      setRouteRuntimeCacheStatus(runtimeCacheInfo);
       setMaskedToken(authInfo.masked || '****');
-      const routeCooldownInput = resolveRouteCooldownInput(runtimeInfo.tokenRouterFailureCooldownMaxSec);
+      const routeCooldownInput = resolveRouteCooldownInput(runtimeInfo.routeFailureCooldownMaxSec);
       setRuntime({
         checkinCron: runtimeInfo.checkinCron || '0 8 * * *',
         checkinScheduleMode: runtimeInfo.checkinScheduleMode === 'interval' ? 'interval' : 'cron',
@@ -401,10 +401,10 @@ export default function Settings() {
           : 0,
         routeFailureCooldownMaxValue: routeCooldownInput.value,
         routeFailureCooldownMaxUnit: routeCooldownInput.unit,
-        routingWeights: {
-          ...defaultWeights,
-          ...(runtimeInfo.routingWeights || {}),
-        },
+        routeRuntimeCacheTtlMs: Number(runtimeInfo.routeRuntimeCacheTtlMs) >= 100
+          ? Math.trunc(Number(runtimeInfo.routeRuntimeCacheTtlMs))
+          : 1500,
+        dispatchPolicyRegistry: runtimeInfo.dispatchPolicyRegistry || defaultDispatchPolicyRegistry,
         systemProxyUrl: typeof runtimeInfo.systemProxyUrl === 'string' ? runtimeInfo.systemProxyUrl : '',
         proxyErrorKeywords: Array.isArray(runtimeInfo.proxyErrorKeywords)
           ? runtimeInfo.proxyErrorKeywords.filter((item: unknown) => typeof item === 'string')
@@ -459,14 +459,14 @@ export default function Settings() {
     api.getBrandList()
       .then((res: any) => setAllBrandNames(Array.isArray(res?.brands) ? res.brands : []))
       .catch(() => setAllBrandNames([]));
-    // Load available models in background (non-blocking, best-effort)
+    // Load discovered upstream models in background (non-blocking, best-effort)
     api.getModelTokenCandidates()
       .then((res: any) => {
         const models = res?.models || {};
         const modelNames = Object.keys(models);
-        setAvailableModels(modelNames.sort());
+        setDiscoveredModels(modelNames.sort());
       })
-      .catch(() => setAvailableModels([]));
+      .catch(() => setDiscoveredModels([]));
   };
 
   useEffect(() => {
@@ -706,17 +706,18 @@ export default function Settings() {
     setSavingRouting(true);
     try {
       await api.updateRuntimeSettings({
-        routingWeights: runtime.routingWeights,
+        dispatchPolicyRegistry: runtime.dispatchPolicyRegistry,
         proxyFirstByteTimeoutSec: Number.isFinite(runtime.proxyFirstByteTimeoutSec)
           ? Math.max(0, Math.trunc(runtime.proxyFirstByteTimeoutSec))
           : 0,
-        tokenRouterFailureCooldownMaxSec: toRouteCooldownSeconds(
+        routeFailureCooldownMaxSec: toRouteCooldownSeconds(
           runtime.routeFailureCooldownMaxValue,
           runtime.routeFailureCooldownMaxUnit,
         ),
+        routeRuntimeCacheTtlMs: runtime.routeRuntimeCacheTtlMs,
         disableCrossProtocolFallback: runtime.disableCrossProtocolFallback,
       });
-      toast.success('Routing weights saved');
+      toast.success(tr('pages.settings.saveRoutingPolicy'));
     } catch (err: any) {
       toast.error(err?.message || tr('pages.accounts.saveFailed'));
     } finally {
@@ -724,12 +725,19 @@ export default function Settings() {
     }
   };
 
-  const applyRoutingPreset = (preset: 'balanced' | 'stable' | 'cost') => {
-    setRuntime((prev) => ({
-      ...prev,
-      routingWeights: applyRoutingProfilePreset(preset),
-    }));
+  const refreshRouteRuntimeCache = async () => {
+    setRefreshingRouteRuntimeCache(true);
+    try {
+      await api.refreshRouteRuntimeCache();
+      toast.info(tr('pages.settings.routeRuntimeCacheRefreshQueued'));
+      setRouteRuntimeCacheStatus(await api.getRouteRuntimeCacheStatus());
+    } catch (error: any) {
+      toast.error(error?.message || tr('pages.settings.routeRuntimeCacheRefreshFailed'));
+    } finally {
+      setRefreshingRouteRuntimeCache(false);
+    }
   };
+
 
   const handleSaveBrandFilter = async () => {
     setSavingBrandFilter(true);
@@ -1247,6 +1255,61 @@ export default function Settings() {
         <CostPolicySettingsSection />
 
         <SettingsCard
+          title={tr('pages.settings.routeRuntimeCache')}
+          description={tr('pages.settings.routeRuntimeCacheDescription')}
+          actions={routeRuntimeCacheStatus ? (
+            <ToneBadge tone={routeRuntimeCacheStatus.activeRuntime.present ? 'primary' : 'muted'}>
+              {routeRuntimeCacheStatus.activeRuntime.present
+                ? tr('pages.settings.routeRuntimeCacheReady')
+                : tr('pages.settings.routeRuntimeCacheEmpty')}
+            </ToneBadge>
+          ) : undefined}
+        >
+          <ResponsiveFormGrid columns={2}>
+            <SettingsField
+              label={tr('pages.settings.routeRuntimeCacheTtl')}
+              hint={tr('pages.settings.routeRuntimeCacheTtlHint')}
+              controlId="route-runtime-cache-ttl"
+            >
+              <Input
+                id="route-runtime-cache-ttl"
+                type="number"
+                min={100}
+                max={60000}
+                step={100}
+                value={runtime.routeRuntimeCacheTtlMs}
+                onChange={(event) => setRuntime((current) => ({
+                  ...current,
+                  routeRuntimeCacheTtlMs: Math.max(100, Math.min(60000, Math.trunc(Number(event.target.value) || 100))),
+                }))}
+              />
+            </SettingsField>
+            <SettingsField
+              label={tr('pages.settings.routeRuntimeCacheStatus')}
+              hint={routeRuntimeCacheStatus?.activeRuntime.ageMs == null
+                ? tr('pages.settings.routeRuntimeCacheNoAge')
+                : tr('pages.settings.routeRuntimeCacheAge').replace('{age}', String(routeRuntimeCacheStatus.activeRuntime.ageMs))}
+            >
+              <div className="flex h-10 items-center text-sm text-foreground">
+                {routeRuntimeCacheStatus?.activeRuntime.artifactId == null
+                  ? tr('pages.settings.routeRuntimeCacheNoArtifact')
+                  : (
+                    <span className="truncate font-mono" title={routeRuntimeCacheStatus.activeRuntime.artifactId}>
+                      {tr('pages.settings.routeRuntimeCacheArtifact').replace('{id}', routeRuntimeCacheStatus.activeRuntime.artifactId)}
+                    </span>
+                  )}
+              </div>
+            </SettingsField>
+          </ResponsiveFormGrid>
+          <div>
+            <Button type="button" variant="outline" onClick={refreshRouteRuntimeCache} disabled={refreshingRouteRuntimeCache}>
+              <RefreshCw className={cn('size-4', refreshingRouteRuntimeCache && 'animate-spin')} />
+              {tr('pages.settings.routeRuntimeCacheRefresh')}
+            </Button>
+          </div>
+        </SettingsCard>
+
+        <SettingsCard
           dataSettingsCard="proxy-transport"
           title={tr('pages.settings.codex')}
           description={tr('pages.settings.defaultHttpTurnMetapiCodexRequestWebsocket')}
@@ -1369,7 +1432,7 @@ export default function Settings() {
           </div>
         </SettingsCard>
 
-        <SettingsCard title={tr('pages.settings.routingStrategy')} description={tr('pages.settings.selectStrategyExpandAdvancedParameters')}>
+        <SettingsCard title={tr('pages.settings.dispatchPolicyDefault')} description={tr('pages.settings.dispatchPolicyDefaultHint')}>
           <SettingsField
             label={tr('pages.settings.failedcooldown')}
             hint={tr('pages.settings.supportedsecondsMinutesHoursDaysFailedRoundRobin')}
@@ -1411,36 +1474,6 @@ export default function Settings() {
               </div>
             </div>
           </SettingsField>
-          <div className="flex flex-wrap gap-2">
-            <Button type="button" variant="outline"
-              onClick={() => applyRoutingPreset('balanced')}
-             
-             
-            >
-              {tr('pages.settings.balanced')}
-            </Button>
-            <Button type="button" variant="outline"
-              onClick={() => applyRoutingPreset('stable')}
-             
-             
-            >
-              {tr('pages.settings.stableFirst')}
-            </Button>
-            <Button type="button" variant="outline"
-              onClick={() => applyRoutingPreset('cost')}
-             
-             
-            >
-              {tr('pages.settings.cost')}
-            </Button>
-            <Button type="button" variant="outline"
-              onClick={() => setShowAdvancedRouting((prev) => !prev)}
-             
-             
-            >
-              {showAdvancedRouting ? tr('pages.settings.closeAdvancedParameters') : tr('pages.settings.expandAdvancedParameters')}
-            </Button>
-          </div>
 
           <SettingsToggleRow
             title={tr('pages.settings.failedOtherprotocol')}
@@ -1474,38 +1507,10 @@ export default function Settings() {
             />
           </SettingsField>
 
-          <div className={`anim-collapse ${showAdvancedRouting ? 'is-open' : ''}`.trim()}>
-            <div className="anim-collapse-inner pt-0.5">
-              <div className="grid gap-3 md:grid-cols-2">
-              {([
-                ['baseWeightFactor', tr('pages.settings.basicWeightFactor')],
-                ['valueScoreFactor', tr('pages.settings.valueFactor')],
-                ['costWeight', tr('pages.settings.costWeight')],
-                ['balanceWeight', tr('pages.settings.balanceWeight')],
-                ['usageWeight', tr('pages.settings.useFrequencyWeight')],
-              ] as Array<[keyof RoutingWeights, string]>).map(([key, label]) => (
-                <SettingsField key={key} label={label}>
-                  <Input
-                    type="number"
-                    min={0}
-                    step={0.1}
-                    value={runtime.routingWeights[key]}
-                    onChange={(e) => {
-                      const v = Number(e.target.value);
-                      setRuntime((prev) => ({
-                        ...prev,
-                        routingWeights: {
-                          ...prev.routingWeights,
-                          [key]: Number.isFinite(v) ? v : 0,
-                        },
-                      }));
-                    }}
-                  />
-                </SettingsField>
-              ))}
-              </div>
-            </div>
-          </div>
+          <DispatchPolicyEditor
+            value={runtime.dispatchPolicyRegistry}
+            onChange={(dispatchPolicyRegistry) => setRuntime((prev) => ({ ...prev, dispatchPolicyRegistry }))}
+          />
 
           <div>
             <Button type="button" onClick={saveRouting} disabled={savingRouting}>
@@ -1637,13 +1642,13 @@ export default function Settings() {
                 {tr('pages.oAuthManagement.add')}
               </Button>
             </div>
-            {availableModels && availableModels.length > 0 && (
+            {discoveredModels && discoveredModels.length > 0 && (
               <div className="grid gap-2">
                 <div className="text-xs text-muted-foreground">
                   {tr('pages.settings.availableModelSelectHint')}
                 </div>
                 <div className="flex max-h-32 flex-wrap gap-2 overflow-y-auto rounded-md border p-2">
-                  {availableModels.map((model) => {
+                  {discoveredModels.map((model) => {
                     const isAllowed = allowedModels.includes(model);
                     return (
                       <Button
@@ -1891,7 +1896,7 @@ export default function Settings() {
             <div className="grid gap-1 rounded-md border p-3 text-sm text-muted-foreground">
               <div>{tr('pages.settings.target')}{migrationSummary.dialect}（{migrationSummary.connection}）</div>
               <div>{tr('pages.importExport.version')}{migrationSummary.version}{tr('pages.importExport.time')}{new Date(migrationSummary.timestamp).toLocaleString()}</div>
-              <div>{tr('pages.settings.sites')} {migrationSummary.rows.sites} {tr('pages.importExport.accounts')} {migrationSummary.rows.accounts} {tr('pages.importExport.token')} {migrationSummary.rows.accountTokens} {tr('pages.importExport.routes')} {migrationSummary.rows.tokenRoutes} {tr('pages.importExport.targets')} {migrationSummary.rows.routeEndpointTargets} {tr('pages.importExport.settings')} {migrationSummary.rows.settings}</div>
+              <div>{tr('pages.settings.sites')} {migrationSummary.rows.sites} {tr('pages.importExport.accounts')} {migrationSummary.rows.accounts} {tr('pages.importExport.token')} {migrationSummary.rows.accountTokens} {tr('pages.importExport.routes')} {migrationSummary.rows.routeGraphVersions ?? 0} {tr('pages.importExport.targets')} {migrationSummary.rows.runtimeExecutionTargets ?? 0} {tr('pages.importExport.settings')} {migrationSummary.rows.settings}</div>
             </div>
           )}
         </SettingsCard>

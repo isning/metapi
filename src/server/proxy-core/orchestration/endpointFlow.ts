@@ -121,23 +121,10 @@ async function runEndpointFlowHook<T>(
 }
 
 export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Promise<EndpointFlowResult> {
-  const plannedAttempts = input.apiAttempts && input.apiAttempts.length > 0
+  const plannedApiAttempts = input.apiAttempts && input.apiAttempts.length > 0
     ? input.apiAttempts
-    : input.endpointCandidates.map((endpoint, index) => ({
-        id: `endpoint-candidate-attempt:${index}:${endpoint}`,
-        variantId: `endpoint-candidate-variant:${index}:${endpoint}`,
-        supplyTargetId: 'endpoint-candidate',
-        apiType: 'custom_http',
-        upstreamEndpoint: endpoint,
-        requestMethod: 'POST',
-        requestUrl: '',
-        adapterId: 'legacy',
-        credentialEndpointBindingId: '',
-        apiEndpointProfileId: '',
-        reason: ['derived_endpoint_order'],
-        downgradeAllowed: true,
-      } as ApiAttempt));
-  const endpointCount = plannedAttempts.length;
+    : null;
+  const endpointCount = plannedApiAttempts?.length ?? input.endpointCandidates.length;
   if (endpointCount <= 0) {
     return {
       ok: false,
@@ -151,12 +138,12 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
   let finalRawErrText: string | undefined;
 
   for (let endpointIndex = 0; endpointIndex < endpointCount; endpointIndex += 1) {
-    const attempt = plannedAttempts[endpointIndex]!;
-    const endpoint = attempt.upstreamEndpoint as UpstreamEndpoint;
-    const request = input.buildRequest(endpoint, endpointIndex, attempt);
+    const apiAttempt = plannedApiAttempts?.[endpointIndex];
+    const endpoint = (apiAttempt?.upstreamEndpoint ?? input.endpointCandidates[endpointIndex]) as UpstreamEndpoint;
+    const request = input.buildRequest(endpoint, endpointIndex, apiAttempt);
     const defaultTarget = buildUpstreamUrl(input.siteUrl, request.path);
     const targetUrl = request.targetUrl
-      || attempt.requestUrl
+      || apiAttempt?.requestUrl
       || (input.proxyUrl
         ? buildUpstreamUrl(input.proxyUrl, request.path)
         : defaultTarget);
@@ -188,7 +175,7 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
       await runEndpointFlowHook(input.onAttemptSuccess, {
         endpointIndex,
         endpointCount,
-        apiAttempt: attempt,
+        apiAttempt,
         request,
         targetUrl,
         response,
@@ -205,7 +192,7 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
     const baseContext: EndpointAttemptContext = {
       endpointIndex,
       endpointCount,
-      apiAttempt: attempt,
+      apiAttempt,
       request,
       targetUrl,
       response,
@@ -246,7 +233,7 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
         await runEndpointFlowHook(input.onAttemptSuccess, {
           endpointIndex,
           endpointCount,
-          apiAttempt: attempt,
+          apiAttempt,
           request: recoveredRequest,
           targetUrl: recoveredTargetUrl,
           response: recovered.upstream,

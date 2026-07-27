@@ -6,12 +6,19 @@ import {
   type IsolatedRuntimeDbHandle,
 } from '../../../testing/dbHarness.js';
 import { waitForBackgroundTaskToReachTerminalState } from '../../test-fixtures/backgroundTaskTestUtils.js';
+import { clearRouteGroupMemberTestData } from '../../../testing/routeGroupMemberTestUtils.js';
 
-const getModelsMock = vi.fn();
-const undiciFetchMock = vi.fn();
-
-class MockProxyAgent {}
-class MockAgent {}
+const {
+  getModelsMock,
+  undiciFetchMock,
+  MockProxyAgent,
+  MockAgent,
+} = vi.hoisted(() => ({
+  getModelsMock: vi.fn(),
+  undiciFetchMock: vi.fn(),
+  MockProxyAgent: class MockProxyAgent {},
+  MockAgent: class MockAgent {},
+}));
 
 vi.mock('../../services/platforms/index.js', () => ({
   getAdapter: () => ({
@@ -57,8 +64,9 @@ describe('accounts model catalog source discovery', () => {
     undiciFetchMock.mockReset();
     backgroundTasks.__resetBackgroundTasksForTests();
 
-    await db.delete(schema.routeEndpointTargets).run();
-    await db.delete(schema.tokenRoutes).run();
+    await clearRouteGroupMemberTestData();
+    await db.delete(schema.runtimeExecutionTargetState).run();
+    await db.delete(schema.runtimeExecutionTargets).run();
     await db.delete(schema.tokenModelAvailability).run();
     await db.delete(schema.modelAvailability).run();
     await db.delete(schema.accountTokens).run();

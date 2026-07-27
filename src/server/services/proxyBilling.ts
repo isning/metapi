@@ -1,6 +1,5 @@
 import {
   buildProxyBillingDetails,
-  estimateProxyCost,
   type ProxyBillingDetails,
   type ProxyBillingPricingOverride,
 } from './modelPricingService.js';
@@ -58,7 +57,7 @@ function toPricingOverride(meta: SelfLogBillingMeta | null): ProxyBillingPricing
 
 export async function resolveProxyLogBilling(
   input: ResolveProxyLogBillingInput,
-): Promise<{ estimatedCost: number; billingDetails: ProxyBillingDetails | null }> {
+): Promise<{ estimatedCost: number | null; billingDetails: ProxyBillingDetails | null }> {
   const selfLogMeta = input.resolvedUsage.selfLogBillingMeta;
   const billingPricingOverride = toPricingOverride(selfLogMeta);
   const cacheReadTokens = selfLogMeta?.cacheReadTokens ?? input.parsedUsage.cacheReadTokens;
@@ -81,14 +80,32 @@ export async function resolveProxyLogBilling(
     billingPricingOverride,
   };
 
-  let estimatedCost = await estimateProxyCost(billingInput);
-  const billingDetails = await buildProxyBillingDetails(billingInput);
+  let billingDetails = await buildProxyBillingDetails(billingInput);
+  let estimatedCost = billingDetails?.quote.amount ?? null;
 
   if (
     input.resolvedUsage.estimatedCostFromQuota > 0
-    && (input.resolvedUsage.recoveredFromSelfLog || estimatedCost <= 0)
+    && (
+      input.resolvedUsage.recoveredFromSelfLog
+      || estimatedCost == null
+      || estimatedCost <= 0
+    )
   ) {
     estimatedCost = input.resolvedUsage.estimatedCostFromQuota;
+    if (billingDetails) {
+      billingDetails = {
+        ...billingDetails,
+        quote: {
+          ...billingDetails.quote,
+          amount: estimatedCost,
+          unit: 'quota',
+          currency: null,
+          source: 'self_log_quota',
+          sourceId: null,
+          matchedScope: null,
+        },
+      };
+    }
   }
 
   return {

@@ -125,14 +125,19 @@ describe('harness workflows', () => {
     expect(performanceGate).toContain("readPositiveInteger('ROUTE_PERF_DISTINCT_CONCURRENT_SAMPLES', 12_800)");
     expect(performanceGate).toContain("readPositiveInteger('ROUTE_PERF_DISTINCT_CONCURRENT_WIDTH', 2_048)");
     expect(performanceGate).toContain("readPositiveInteger('ROUTE_PERF_COMPLEX_GRAPH_GROUPS', 1_024)");
+    expect(performanceGate).toContain("readPositiveInteger('ROUTE_PERF_COMPLEX_GRAPH_FALLBACK_STAGES', 3)");
+    expect(performanceGate).toContain("readPositiveInteger('ROUTE_PERF_COMPLEX_GRAPH_ENDPOINTS_PER_STAGE', 2)");
     expect(performanceGate).toContain('publishComplexActiveRouteGraphFixture');
+    expect(performanceGate).toContain('migrateRouteRuntimeDatabase');
     expect(performanceGate).toContain('complex active graph distinct models');
     expect(throughputBenchmark).toContain("readPositiveInteger('ROUTE_THROUGHPUT_GROUPS', 100_000)");
     expect(throughputBenchmark).toContain("readPositiveInteger('ROUTE_THROUGHPUT_MODEL_CARDINALITY', 100_000)");
     expect(throughputBenchmark).toContain("readPositiveInteger('ROUTE_THROUGHPUT_MAX_CONCURRENCY', 10_000)");
+    expect(throughputBenchmark).toContain('migrateRouteRuntimeDatabase');
     expect(httpBenchmark).toContain("readPositiveInteger('ROUTE_HTTP_RPS_GROUPS', 10_000)");
     expect(httpBenchmark).toContain("readPositiveInteger('ROUTE_HTTP_RPS_MODEL_CARDINALITY', 10_000)");
     expect(httpBenchmark).toContain("readPositiveInteger('ROUTE_HTTP_RPS_MAX_CONNECTIONS', 1_024)");
+    expect(httpBenchmark).toContain('migrateRouteRuntimeDatabase');
     expect(httpBenchmark).toContain("autocannon.js");
 
     expect(testingFrameworkDoc).toContain('## Unit');

@@ -7,10 +7,16 @@ import {
   createUpstreamMock,
   type UpstreamMockHandle,
 } from './upstreamMock.js';
-import { tokenRouteFixture } from '../server/test/routeGraphFixtures.js';
+import {
+  createGraphNativeRouteFixture,
+  publishCurrentGraphNativeRouteFixtures,
+  resetGraphNativeRouteFixtures,
+} from '../server/test/graphNativeRouteFixtures.js';
+import { getCompiledRouterPlanById } from '../shared/compiledRuntime.js';
 
 type DbModule = typeof import('../server/db/index.js');
-type TokenRouterModule = typeof import('../server/services/tokenRouter.js');
+type RouteGraphServiceModule = typeof import('../server/services/routeGraphService.js');
+type RouteGroupCandidateTestUtilsModule = typeof import('./routeGroupMemberTestUtils.js');
 
 export type SeedProxyRouteInput = {
   model?: string;
@@ -19,7 +25,7 @@ export type SeedProxyRouteInput = {
   tokenValue?: string;
   accountExtraConfig?: Record<string, unknown>;
   routeEnabled?: boolean;
-  targetEnabled?: boolean;
+  candidateEnabled?: boolean;
 };
 
 export type SeedProxyRouteResult = {
@@ -27,7 +33,7 @@ export type SeedProxyRouteResult = {
   account: any;
   token: any;
   route: any;
-  target: any;
+  candidate: any;
   managedKey: any;
 };
 
@@ -53,7 +59,8 @@ export async function createProxyRelayHarness(prefix = 'metapi-proxy-relay-'): P
   const runtimeDb = await bootIsolatedRuntimeDb(prefix);
   const dbModule = runtimeDb.dbModule;
   const proxyRouterModule = await import('../server/routes/proxy/router.js');
-  const tokenRouterModule: TokenRouterModule = await import('../server/services/tokenRouter.js');
+  const routeGraphServiceModule: RouteGraphServiceModule = await import('../server/services/routeGraphService.js');
+  const routeGroupMemberTestUtils: RouteGroupCandidateTestUtilsModule = await import('./routeGroupMemberTestUtils.js');
   const db = dbModule.db;
   const schema = dbModule.schema;
   let upstream = createUpstreamMock();
@@ -80,17 +87,16 @@ export async function createProxyRelayHarness(prefix = 'metapi-proxy-relay-'): P
     await db.delete(schema.credentialEndpointBindings).run();
     await db.delete(schema.apiEndpointProfiles).run();
     await db.delete(schema.modelCatalogSources).run();
+    await routeGroupMemberTestUtils.clearRouteGroupMemberTestData();
     await db.delete(schema.routeGraphDrafts).run();
     await db.delete(schema.routeGraphActiveVersion).run();
     await db.delete(schema.routeGraphVersions).run();
-    await db.delete(schema.routeBindingProjections).run();
-    await db.delete(schema.routeEndpointTargets).run();
-    await db.delete(schema.tokenRoutes).run();
     await db.delete(schema.downstreamApiKeys).run();
     await db.delete(schema.accountTokens).run();
     await db.delete(schema.accounts).run();
     await db.delete(schema.sites).run();
-    tokenRouterModule.invalidateTokenRouterCache();
+    resetGraphNativeRouteFixtures();
+    routeGraphServiceModule.invalidateRouteGraphReadCaches('test-reset');
   }
 
   async function seedRoute(input: SeedProxyRouteInput = {}) {
@@ -120,27 +126,53 @@ export async function createProxyRelayHarness(prefix = 'metapi-proxy-relay-'): P
       enabled: true,
       isDefault: true,
     }).returning().get();
-    const route = await db.insert(schema.tokenRoutes).values({
-      ...tokenRouteFixture({ modelPattern: model }),
+    const route = await createGraphNativeRouteFixture({
+      modelPattern: model,
+      displayName: model,
       enabled: input.routeEnabled ?? true,
-    }).returning().get();
-    const target = await db.insert(schema.routeEndpointTargets).values({
-      routeId: route.id,
+    });
+    const candidate = await routeGroupMemberTestUtils.insertRouteGroupMember({
+      groupId: route.id,
       accountId: account.id,
       tokenId: token.id,
       sourceModel: model,
-      priority: 0,
+      fallbackStageOrder: 0,
       weight: 10,
-      enabled: input.targetEnabled ?? true,
-    }).returning().get();
+      enabled: input.candidateEnabled ?? true,
+    });
+    const executionTargetId = await routeGroupMemberTestUtils.getExecutionTargetIdForMember(candidate.id);
+    if (!executionTargetId) {
+      throw new Error('Failed to resolve execution target for proxy relay fixture');
+    }
+    const published = await publishCurrentGraphNativeRouteFixtures();
+    const bundle = published.compiledGraph.compiledRouterBundle;
+    if (!bundle) throw new Error('Published proxy relay fixture has no compiled runtime bundle');
+    const executionAttempt = bundle.plans
+      .flatMap((storedPlan) => getCompiledRouterPlanById(bundle, storedPlan.id)?.executionAlternatives || [])
+      .map((alternative) => alternative.executionAttempt)
+      .find((attempt) => attempt?.transportBinding?.executionTargetId === executionTargetId);
+    if (!executionAttempt?.executionAttemptId) {
+      throw new Error('Compiler did not issue an execution attempt identity for proxy relay fixture');
+    }
     const managedKey = await db.insert(schema.downstreamApiKeys).values({
       name: `${model}-managed-key`,
       key: `${model}-managed-key-value`,
       enabled: true,
       supportedModels: JSON.stringify([model]),
     }).returning().get();
-    tokenRouterModule.invalidateTokenRouterCache();
-    return { site, account, token, route, target, managedKey };
+    routeGraphServiceModule.invalidateRouteGraphReadCaches('test-reset');
+    return {
+      site,
+      account,
+      token,
+      route,
+      candidate: {
+        ...candidate,
+        executionTargetId,
+        executionAttemptId: executionAttempt.executionAttemptId,
+      },
+      managedKey,
+    };
   }
 
   return {
@@ -160,7 +192,7 @@ export async function createProxyRelayHarness(prefix = 'metapi-proxy-relay-'): P
     resetData,
     close: async () => {
       upstream.restore();
-      tokenRouterModule.invalidateTokenRouterCache();
+      routeGraphServiceModule.invalidateRouteGraphReadCaches('test-reset');
       await app.close();
       await runtimeDb.cleanup();
     },

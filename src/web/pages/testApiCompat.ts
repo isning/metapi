@@ -27,7 +27,7 @@ type GraphRouteSummaryFixture = {
     requestedModelPattern: string;
     displayName?: string | null;
   };
-  backend: { kind: 'supply' } | { kind: 'routes'; routeIds: number[] };
+  backend: { kind: 'supply' } | { kind: 'route_endpoints'; endpointIds: string[] };
   presentation: {
     displayName?: string | null;
     displayIcon?: string | null;
@@ -44,8 +44,8 @@ export function routeSummaryFixture(input: GraphRouteSummaryFixture): Record<str
       requestedModelPattern: input.match.requestedModelPattern,
       displayName: input.match.displayName ?? null,
     },
-    backend: input.backend.kind === 'routes'
-      ? { kind: 'routes', routeIds: input.backend.routeIds }
+    backend: input.backend.kind === 'route_endpoints'
+      ? { kind: 'route_endpoints', endpointIds: input.backend.endpointIds }
       : { kind: 'supply' },
     presentation: {
       displayName: input.presentation.displayName ?? null,

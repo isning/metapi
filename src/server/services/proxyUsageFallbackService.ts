@@ -290,14 +290,14 @@ function parseSelfLogBillingMeta(rawOther: unknown): SelfLogBillingMeta | null {
   );
   const cacheRatio = normalizePositiveRatio(
     other.cache_ratio ?? other.cacheRatio,
-    1,
+    0,
   );
   const cacheCreationRatio = normalizePositiveRatio(
     other.cache_creation_ratio
       ?? other.cacheCreationRatio
       ?? other.create_cache_ratio
       ?? other.createCacheRatio,
-    1,
+    0,
   );
   const groupRatio = normalizePositiveRatio(other.group_ratio ?? other.groupRatio, 1);
   const cacheReadTokens = toPositiveInt(
@@ -315,8 +315,8 @@ function parseSelfLogBillingMeta(rawOther: unknown): SelfLogBillingMeta | null {
     || cacheCreationTokens > 0
     || modelRatio !== 1
     || completionRatio !== 1
-    || cacheRatio !== 1
-    || cacheCreationRatio !== 1
+    || cacheRatio !== 0
+    || cacheCreationRatio !== 0
     || groupRatio !== 1
   );
   if (!hasMeaningfulData) return null;

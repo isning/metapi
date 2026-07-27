@@ -4,15 +4,36 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mkdtempSync } from "node:fs";
 import { eq } from "drizzle-orm";
-import { formatUtcSqlDateTime } from "../../services/localTimeService.js";
+import {
+  formatUtcSqlDateTime,
+  getLocalDayRangeUtc,
+} from "../../services/localTimeService.js";
 
 type DbModule = typeof import("../../db/index.js");
+
+function expectedCostSummary(amount: number, observationCount: number) {
+  return {
+    amounts: [{
+      amount,
+      unit: "currency",
+      currency: "USD",
+      source: "provider_catalog",
+      sourceId: null,
+      estimateLevel: "exact",
+      planFingerprint: "plan:stats-test",
+      observationCount,
+    }],
+    knownObservationCount: observationCount,
+    unknownObservationCount: 0,
+  };
+}
 
 describe("stats proxy logs routes", () => {
   let app: FastifyInstance;
   let db: DbModule["db"];
   let schema: DbModule["schema"];
   let dataDir = "";
+  let requestSequence = 0;
 
   beforeAll(async () => {
     dataDir = mkdtempSync(join(tmpdir(), "metapi-stats-proxy-logs-"));
@@ -29,11 +50,91 @@ describe("stats proxy logs routes", () => {
   });
 
   beforeEach(async () => {
+    await db.delete(schema.analyticsProjectionCheckpoints).run();
+    await db.delete(schema.billingCostAggregates).run();
+    await db.delete(schema.routeRuntimeDayUsage).run();
+    await db.delete(schema.modelDayUsage).run();
+    await db.delete(schema.siteHourUsage).run();
+    await db.delete(schema.siteDayUsage).run();
     await db.delete(schema.proxyLogs).run();
+    await db.delete(schema.proxyRequests).run();
     await db.delete(schema.downstreamApiKeys).run();
     await db.delete(schema.accounts).run();
     await db.delete(schema.sites).run();
+    requestSequence = 0;
   });
+
+  async function insertRequestAttempts(values: Array<Record<string, any>>) {
+    const inserted: Array<{ requestId: string; logId: number }> = [];
+    for (const attempt of values) {
+      requestSequence += 1;
+      const requestId = `request:stats-test:${requestSequence}`;
+      const startedAt = String(attempt.createdAt || formatUtcSqlDateTime(new Date()));
+      const terminalStatus = attempt.status === "success" ? "success" : "failure";
+      const account = attempt.accountId == null
+        ? null
+        : await db.select({ id: schema.accounts.id, siteId: schema.accounts.siteId })
+          .from(schema.accounts)
+          .where(eq(schema.accounts.id, attempt.accountId))
+          .get();
+      let billingDetails: Record<string, unknown> | null = null;
+      if (attempt.billingDetails) {
+        try {
+          billingDetails = JSON.parse(String(attempt.billingDetails));
+        } catch {
+          billingDetails = null;
+        }
+      }
+      if (typeof attempt.estimatedCost === "number") {
+        billingDetails = {
+          ...(billingDetails || {}),
+          quote: {
+            amount: attempt.estimatedCost,
+            unit: "currency",
+            currency: "USD",
+            source: "provider_catalog",
+            sourceId: null,
+            matchedScope: "provider_catalog",
+            estimateLevel: "exact",
+            planFingerprint: "plan:stats-test",
+          },
+        };
+      }
+      const serializedBillingDetails = billingDetails ? JSON.stringify(billingDetails) : null;
+      await db.insert(schema.proxyRequests).values({
+        id: requestId,
+        downstreamPath: "/v1/chat/completions",
+        requestedModel: attempt.modelRequested ?? null,
+        actualModel: attempt.modelActual ?? null,
+        finalSiteId: account?.siteId ?? null,
+        finalAccountId: account?.id ?? null,
+        downstreamApiKeyId: attempt.downstreamApiKeyId ?? null,
+        routeEntrypointId: attempt.routeEntrypointId ?? null,
+        runtimeEndpointId: attempt.runtimeEndpointId ?? null,
+        finalExecutionAttemptId: attempt.executionAttemptId ?? null,
+        status: terminalStatus,
+        httpStatus: attempt.httpStatus ?? (terminalStatus === "success" ? 200 : 502),
+        isStream: attempt.isStream ?? null,
+        latencyMs: attempt.latencyMs ?? null,
+        firstTokenLatencyMs: attempt.firstTokenLatencyMs ?? null,
+        promptTokens: attempt.promptTokens ?? null,
+        completionTokens: attempt.completionTokens ?? null,
+        totalTokens: attempt.totalTokens ?? null,
+        estimatedCost: attempt.estimatedCost ?? null,
+        billingDetails: serializedBillingDetails,
+        errorMessage: attempt.errorMessage ?? null,
+        startedAt,
+        completedAt: startedAt,
+      }).run();
+      const result = await db.insert(schema.proxyLogs).values({
+        ...attempt,
+        billingDetails: serializedBillingDetails,
+        requestId,
+      }).run();
+      inserted.push({ requestId, logId: Number(result.lastInsertRowid || 0) });
+    }
+    return inserted;
+  }
 
   afterAll(async () => {
     await app.close();
@@ -81,9 +182,7 @@ describe("stats proxy logs routes", () => {
       formatUtcSqlDateTime(new Date("2026-03-09T08:03:00.000Z")),
     ];
 
-    await db
-      .insert(schema.proxyLogs)
-      .values([
+    await insertRequestAttempts([
         {
           accountId: account.id,
           downstreamApiKeyId: downstreamKey.id,
@@ -147,8 +246,7 @@ describe("stats proxy logs routes", () => {
           createdAt: timestamps[3],
           billingDetails: JSON.stringify({ id: "success-claude" }),
         },
-      ])
-      .run();
+      ]);
 
     const response = await app.inject({
       method: "GET",
@@ -165,7 +263,7 @@ describe("stats proxy logs routes", () => {
         totalCount: number;
         successCount: number;
         failedCount: number;
-        totalCost: number;
+        cost: ReturnType<typeof expectedCostSummary>;
         totalTokensAll: number;
       };
       clientOptions: Array<{
@@ -178,18 +276,19 @@ describe("stats proxy logs routes", () => {
     expect(body.pageSize).toBe(1);
     expect(body.total).toBe(2);
     expect(body.items).toHaveLength(1);
-    expect(body.items[0]?.modelRequested).toBe("gpt-4o-mini");
-    expect(body.items[0]?.status).toBe("failed");
-    expect(body.items[0]?.downstreamKeyName).toBe("项目A-Key");
-    expect(body.items[0]?.downstreamKeyGroupName).toBe("项目A");
-    expect(body.items[0]?.downstreamKeyTags).toEqual(["VIP", "灰度"]);
-    expect(body.items[0]?.clientFamily).toBe("codex");
-    expect(body.items[0]?.clientAppId).toBe(null);
-    expect(body.items[0]?.clientAppName).toBe(null);
-    expect(body.items[0]?.clientConfidence).toBe(null);
+    expect(body.items[0]?.requestedModel).toBe("gpt-4o-mini");
+    expect(body.items[0]?.status).toBe("failure");
+    const listedAttempt = body.items[0]?.attempts as Array<Record<string, unknown>>;
+    expect(listedAttempt[0]?.downstreamKeyName).toBe("项目A-Key");
+    expect(listedAttempt[0]?.downstreamKeyGroupName).toBe("项目A");
+    expect(listedAttempt[0]?.downstreamKeyTags).toEqual(["VIP", "灰度"]);
+    expect(listedAttempt[0]?.clientFamily).toBe("codex");
+    expect(listedAttempt[0]?.clientAppId).toBe(null);
+    expect(listedAttempt[0]?.clientAppName).toBe(null);
+    expect(listedAttempt[0]?.clientConfidence).toBe(null);
     expect(body.items[0]?.isStream).toBe(false);
-    expect(body.items[0]?.firstByteLatencyMs).toBe(12);
-    expect(body.items[0]).not.toHaveProperty("billingDetails");
+    expect(listedAttempt[0]?.firstByteLatencyMs).toBe(12);
+    expect(listedAttempt[0]).not.toHaveProperty("billingDetails");
     expect(body.clientOptions).toEqual([
       { value: "family:codex", label: "协议 · Codex" },
     ]);
@@ -197,7 +296,7 @@ describe("stats proxy logs routes", () => {
       totalCount: 3,
       successCount: 1,
       failedCount: 2,
-      totalCost: 0.6,
+      cost: expectedCostSummary(0.6, 3),
       totalTokensAll: 49,
     });
   });
@@ -236,47 +335,6 @@ describe("stats proxy logs routes", () => {
       .returning()
       .get();
 
-    const route = await db
-      .insert(schema.tokenRoutes)
-      .values({
-        displayName: "detail-route",
-        displayIcon: "route",
-        routingStrategy: "stable_first",
-        enabled: true,
-        decisionSnapshot: JSON.stringify({
-          match: {
-            kind: "model",
-            requestedModelPattern: "gpt-5",
-          },
-          backend: {
-            kind: "routes",
-            routeIds: [],
-          },
-        }),
-        decisionRefreshedAt: formatUtcSqlDateTime(
-          new Date("2026-03-09T08:00:00.000Z"),
-        ),
-      })
-      .returning()
-      .get();
-
-    await db
-      .update(schema.tokenRoutes)
-      .set({
-        decisionSnapshot: JSON.stringify({
-          match: {
-            kind: "model",
-            requestedModelPattern: "gpt-5",
-          },
-          backend: {
-            kind: "routes",
-            routeIds: [route.id],
-          },
-        }),
-      })
-      .where(eq(schema.tokenRoutes.id, route.id))
-      .run();
-
     const targetToken = await db
       .insert(schema.accountTokens)
       .values({
@@ -291,39 +349,16 @@ describe("stats proxy logs routes", () => {
       .returning()
       .get();
 
-    const routeTarget = await db
-      .insert(schema.routeEndpointTargets)
-      .values({
-        routeId: route.id,
-        routeEndpointId: `entry:legacy:${route.id}`,
-        accountId: account.id,
-        tokenId: targetToken.id,
-        sourceModel: "gpt-5",
-        priority: 7,
-        weight: 13,
-        enabled: true,
-        manualOverride: true,
-        successCount: 5,
-        failCount: 2,
-        totalLatencyMs: 300,
-        totalCost: 0.42,
-        lastSelectedAt: formatUtcSqlDateTime(
-          new Date("2026-03-09T08:03:00.000Z"),
-        ),
-        consecutiveFailCount: 1,
-        cooldownLevel: 2,
-        cooldownUntil: formatUtcSqlDateTime(
-          new Date("2026-03-09T08:30:00.000Z"),
-        ),
-      })
-      .returning()
-      .get();
-
-    const inserted = await db
-      .insert(schema.proxyLogs)
-      .values({
-        routeId: route.id,
-        targetId: routeTarget.id,
+    const executionTargetId = 77;
+    const routeEntrypointId = "entry:test:gpt-5";
+    const runtimeEndpointId = "endpoint:gpt-5";
+    const executionAttemptId = "attempt:gpt-5:primary";
+    const requestId = "request:proxy-log-detail";
+    const logFixture = {
+        routeEntrypointId,
+        runtimeEndpointId: runtimeEndpointId,
+        executionTargetId: executionTargetId,
+        executionAttemptId,
         accountId: account.id,
         downstreamApiKeyId: downstreamKey.id,
         modelRequested: "gpt-5",
@@ -340,89 +375,177 @@ describe("stats proxy logs routes", () => {
         totalTokens: 120,
         estimatedCost: 0.12,
         errorMessage: "downstream: /v1/chat upstream: /api/chat",
-        createdAt: formatUtcSqlDateTime(new Date("2026-03-09T08:05:00.000Z")),
-        routeDecisionSnapshot: JSON.stringify({
-          schemaVersion: 1,
+        createdAt: formatUtcSqlDateTime(new Date()),
+        decisionSnapshot: JSON.stringify({
           capturedAt: formatUtcSqlDateTime(
             new Date("2026-03-09T08:05:00.000Z"),
           ),
-          requestedModel: "gpt-5",
-          actualModel: "gpt-5",
-          route: {
-            id: route.id,
-            displayName: "snapshot-route",
-            displayIcon: "route",
-            routingStrategy: "stable_first",
-            enabled: true,
-            decisionRefreshedAt: formatUtcSqlDateTime(
-              new Date("2026-03-09T08:00:00.000Z"),
-            ),
-            snapshotSummary: {
-              matchKind: "model",
-              requestedModelPattern: "gpt-5",
-              backendKind: "routes",
-              sourceRouteIds: [route.id],
+          request: {
+            downstreamPath: "/v1/chat",
+            stream: true,
+          },
+          compiledRuntime: {
+            runtimeArtifactId: 'runtime-artifact-12',
+
+            bundleHash: "compiled-hash",
+            program: {
+              id: "plan:gpt-5",
+              entryNodeId: routeEntrypointId,
+              publicModelName: "gpt-5",
+              enabled: true,
+              filterStages: [],
+              executionAlternatives: [],
             },
           },
-          target: {
-            id: routeTarget.id,
-            routeEndpointId: `entry:legacy:${route.id}`,
+          match: {
+            requestedModel: "gpt-5",
+            actualModel: "gpt-5",
+            planId: "plan:gpt-5",
+            entryId: routeEntrypointId,
+            publicModelName: "gpt-5",
+            terminalKind: "endpoint",
+          },
+          metadata: {
+            graph: { tier: "prod" },
+            plan: { entry: "gpt-5" },
+            selection: null,
+            endpoint: { endpoint: "primary" },
+            executionAttempt: { tokenGroup: "premium" },
+          },
+          endpoint: {
+            endpointId: runtimeEndpointId,
+            executionTargetId,
+            compatibilityPolicy: null,
+          },
+          executionAttempt: {
+            executionAttemptId,
+            model: "gpt-5",
+            executionTargetId,
             accountId: account.id,
             tokenId: targetToken.id,
-            oauthRouteUnitId: null,
-            sourceModel: "gpt-5",
-            priority: 7,
-            weight: 13,
-            enabled: true,
-            manualOverride: true,
-            successCount: 5,
-            failCount: 2,
-            totalLatencyMs: 300,
-            totalCost: 0.42,
-            lastUsedAt: null,
-            lastSelectedAt: formatUtcSqlDateTime(
-              new Date("2026-03-09T08:03:00.000Z"),
-            ),
-            lastFailAt: null,
-            consecutiveFailCount: 1,
-            cooldownLevel: 2,
-            cooldownUntil: formatUtcSqlDateTime(
-              new Date("2026-03-09T08:30:00.000Z"),
-            ),
+            siteId: site.id,
+            credential: {
+              site: {
+                id: site.id,
+                name: "detail-site",
+                url: "https://detail-site.example.com",
+                platform: "new-api",
+              },
+              account: {
+                id: account.id,
+                username: "detail-user",
+                status: "active",
+              },
+              token: {
+                id: targetToken.id,
+                name: "snapshot-token-name",
+                tokenGroup: "premium",
+                enabled: true,
+                valueStatus: "ready",
+                source: "manual",
+              },
+              oauthRouteUnitId: null,
+            },
           },
-          token: {
-            id: targetToken.id,
-            name: "snapshot-token-name",
-            tokenGroup: "premium",
-            enabled: true,
-            valueStatus: "ready",
-            source: "manual",
+          state: {
+            failureOverlay: {
+              disabledExecutionAttemptIds: [],
+              disabledExecutionTargetIds: [],
+            },
+            executionAttemptState: {
+              executionTargetId,
+              successCount: 5,
+              failCount: 2,
+              totalLatencyMs: 300,
+              latencySampleCount: 5,
+              consecutiveFailCount: 1,
+              cooldownLevel: 2,
+              cooldownUntil: formatUtcSqlDateTime(
+                new Date("2026-03-09T08:30:00.000Z"),
+              ),
+              lastUsedAt: null,
+              lastSelectedAt: formatUtcSqlDateTime(
+                new Date("2026-03-09T08:03:00.000Z"),
+              ),
+              lastFailAt: null,
+            },
           },
+          filters: {
+            endpointPreference: null,
+            postBuild: null,
+          },
+          requestUsage: {
+            inputBytes: 128,
+            maxOutputTokens: 256,
+          },
+          syntheticResponse: null,
         }),
         billingDetails: JSON.stringify({
+          quote: {
+            amount: 0.12,
+            unit: "currency",
+            currency: "USD",
+            source: "provider_catalog",
+            sourceId: null,
+            matchedScope: "provider_catalog",
+            estimateLevel: "exact",
+            planFingerprint: "plan:detail",
+          },
           breakdown: { totalCost: 0.12 },
           usage: { promptTokens: 100, completionTokens: 20 },
         }),
-      })
-      .run();
+      };
+    const { decisionSnapshot, ...attemptValues } = logFixture;
+    await db.insert(schema.proxyRequests).values({
+      id: requestId,
+      downstreamPath: "/v1/chat",
+      requestedModel: "gpt-5",
+      actualModel: "gpt-5",
+      finalSiteId: site.id,
+      finalAccountId: account.id,
+      downstreamApiKeyId: downstreamKey.id,
+      routeEntrypointId,
+      runtimeEndpointId,
+      finalExecutionAttemptId: executionAttemptId,
+      runtimeBundleHash: "compiled-hash",
+      status: "success",
+      httpStatus: 200,
+      isStream: true,
+      latencyMs: 128,
+      totalTokens: 120,
+      estimatedCost: 0.12,
+      billingDetails: logFixture.billingDetails,
+      decisionSnapshot,
+      startedAt: formatUtcSqlDateTime(new Date("2026-03-09T08:05:00.000Z")),
+      completedAt: logFixture.createdAt,
+    }).run();
+    const inserted = await db.insert(schema.proxyLogs).values({
+      ...attemptValues,
+      requestId,
+    }).run();
 
-    const logId = Number(inserted.lastInsertRowid || 0);
+    const localDay = getLocalDayRangeUtc().localDay;
     await db
-      .update(schema.tokenRoutes)
-      .set({
-        displayName: "mutated-route",
-        routingStrategy: "weighted",
-      })
-      .where(eq(schema.tokenRoutes.id, route.id))
-      .run();
-    await db
-      .update(schema.routeEndpointTargets)
-      .set({
-        priority: 99,
-        weight: 99,
-        successCount: 999,
-      })
-      .where(eq(schema.routeEndpointTargets.id, routeTarget.id))
+      .insert(schema.routeRuntimeDayUsage)
+      .values([
+        {
+          localDay,
+          runtimeIdentityKey: "test:noise-runtime",
+          routeEntrypointId: "entry:noise",
+          runtimeEndpointId: "endpoint:noise",
+          executionTargetId: executionTargetId + 1000,
+          executionAttemptId: "attempt:noise",
+          siteId: site.id,
+          accountId: account.id,
+          model: "gpt-5",
+          totalCalls: 99,
+          successCalls: 1,
+          failedCalls: 98,
+          totalTokens: 9999,
+          totalLatencyMs: 9999,
+          latencyCount: 99,
+        },
+      ])
       .run();
     await db
       .update(schema.accountTokens)
@@ -435,80 +558,167 @@ describe("stats proxy logs routes", () => {
 
     const response = await app.inject({
       method: "GET",
-      url: `/api/stats/proxy-logs/${logId}`,
+      url: `/api/stats/proxy-logs/${requestId}`,
     });
 
     expect(response.statusCode).toBe(200);
     const body = response.json() as {
-      id: number;
-      siteName: string | null;
-      username: string | null;
-      downstreamKeyName: string | null;
-      downstreamKeyGroupName: string | null;
-      downstreamKeyTags: string[];
-      clientFamily: string | null;
-      clientAppId: string | null;
-      clientAppName: string | null;
-      clientConfidence: string | null;
+      id: string;
+      attempts: Array<Record<string, any>>;
       isStream: boolean | null;
       firstByteLatencyMs: number | null;
+      firstTokenLatencyMs: number | null;
+      runtimeEndpointId: string | null;
+      executionTargetId: number | null;
       billingDetails: Record<string, unknown> | null;
-      routeDecision: Record<string, any>;
+      decisionSnapshot: Record<string, any>;
+      runtimeUsage: Record<string, any>;
     };
 
-    expect(body.id).toBe(logId);
-    expect(body.siteName).toBe("detail-site");
-    expect(body.username).toBe("detail-user");
-    expect(body.downstreamKeyName).toBe("detail-key");
-    expect(body.downstreamKeyGroupName).toBe("测试项目");
-    expect(body.downstreamKeyTags).toEqual(["回归", "日志"]);
-    expect(body.clientFamily).toBe("codex");
-    expect(body.clientAppId).toBe("cherry_studio");
-    expect(body.clientAppName).toBe("Cherry Studio");
-    expect(body.clientConfidence).toBe("exact");
+    expect(body.id).toBe(requestId);
+    const detailAttempt = body.attempts[0]!;
+    expect(detailAttempt.siteName).toBe("detail-site");
+    expect(detailAttempt.username).toBe("detail-user");
+    expect(detailAttempt.downstreamKeyName).toBe("detail-key");
+    expect(detailAttempt.downstreamKeyGroupName).toBe("测试项目");
+    expect(detailAttempt.downstreamKeyTags).toEqual(["回归", "日志"]);
+    expect(detailAttempt.clientFamily).toBe("codex");
+    expect(detailAttempt.clientAppId).toBe("cherry_studio");
+    expect(detailAttempt.clientAppName).toBe("Cherry Studio");
+    expect(detailAttempt.clientConfidence).toBe("exact");
     expect(body.isStream).toBe(true);
-    expect(body.firstByteLatencyMs).toBe(64);
+    expect(detailAttempt.firstByteLatencyMs).toBe(64);
+    expect(body.firstTokenLatencyMs).toBeNull();
+    expect(body.routeEntrypointId).toBe(routeEntrypointId);
+    expect(body.runtimeEndpointId).toBe(runtimeEndpointId);
+    expect(detailAttempt.executionTargetId).toBe(executionTargetId);
     expect(body.billingDetails).toMatchObject({
       breakdown: { totalCost: 0.12 },
       usage: { promptTokens: 100, completionTokens: 20 },
     });
-    expect(body.routeDecision).toMatchObject({
+    expect(body.decisionSnapshot).toMatchObject({
       source: "snapshot",
       capturedAt: formatUtcSqlDateTime(new Date("2026-03-09T08:05:00.000Z")),
-      route: {
-        id: route.id,
-        displayName: "snapshot-route",
-        routingStrategy: "stable_first",
-        enabled: true,
-        snapshotSummary: {
-          matchKind: "model",
-          requestedModelPattern: "gpt-5",
-          backendKind: "routes",
-          sourceRouteIds: [route.id],
+      request: {
+        downstreamPath: "/v1/chat",
+        stream: true,
+      },
+      compiledRuntime: {
+        runtimeArtifactId: 'runtime-artifact-12',
+
+        bundleHash: "compiled-hash",
+      },
+      match: {
+        requestedModel: "gpt-5",
+        actualModel: "gpt-5",
+        planId: "plan:gpt-5",
+        entryId: routeEntrypointId,
+        publicModelName: "gpt-5",
+        terminalKind: "endpoint",
+      },
+      metadata: {
+        graph: { tier: "prod" },
+        plan: { entry: "gpt-5" },
+        endpoint: { endpoint: "primary" },
+        executionAttempt: { tokenGroup: "premium" },
+      },
+      endpoint: {
+        endpointId: "endpoint:gpt-5",
+        executionTargetId,
+      },
+      executionAttempt: {
+        executionAttemptId,
+        executionTargetId,
+        tokenId: targetToken.id,
+        credential: {
+          token: {
+            id: targetToken.id,
+            name: "snapshot-token-name",
+            tokenGroup: "premium",
+            enabled: true,
+            valueStatus: "ready",
+            source: "manual",
+          },
         },
       },
-      target: {
-        id: routeTarget.id,
-        routeEndpointId: `entry:legacy:${route.id}`,
-        tokenId: targetToken.id,
-        sourceModel: "gpt-5",
-        priority: 7,
-        weight: 13,
-        enabled: true,
-        manualOverride: true,
-        successCount: 5,
-        failCount: 2,
-        consecutiveFailCount: 1,
-        cooldownLevel: 2,
+      state: {
+        executionAttemptState: {
+          executionTargetId,
+          successCount: 5,
+          failCount: 2,
+          consecutiveFailCount: 1,
+          cooldownLevel: 2,
+        },
       },
-      token: {
-        id: targetToken.id,
-        name: "snapshot-token-name",
-        tokenGroup: "premium",
-        enabled: true,
-        valueStatus: "ready",
-        source: "manual",
+    });
+    const runtimeSnapshotJson = JSON.stringify(body.decisionSnapshot);
+    expect(body.decisionSnapshot.compiledRuntime.program).toMatchObject({
+      id: "plan:gpt-5",
+      entryNodeId: routeEntrypointId,
+      publicModelName: "gpt-5",
+    });
+    expect(runtimeSnapshotJson).not.toContain("totalCost");
+    expect(runtimeSnapshotJson).not.toContain("routeGroups");
+    expect(runtimeSnapshotJson).not.toContain("dispatcherNodeId");
+    expect(runtimeSnapshotJson).not.toContain("selectedArgRef");
+    expect(runtimeSnapshotJson).not.toContain("entry:legacy:");
+    const expectedCost = {
+      amounts: [expect.objectContaining({
+        amount: 0.12,
+        unit: "currency",
+        currency: "USD",
+        observationCount: 1,
+      })],
+      knownObservationCount: 1,
+      unknownObservationCount: 0,
+    };
+    const expectedAttemptMetric = {
+      totalCalls: 1,
+      successCalls: 1,
+      failedCalls: 0,
+      successRate: 100,
+      totalTokens: 120,
+      cost: expectedCost,
+      averageLatencyMs: null,
+      latencyCount: 0,
+    };
+    const expectedRequestMetric = {
+      totalCalls: 1,
+      successCalls: 1,
+      failedCalls: 0,
+      successRate: 100,
+      totalTokens: 120,
+      cost: expectedCost,
+      averageLatencyMs: 128,
+      latencyCount: 1,
+    };
+    const runtimeEntryId = body.decisionSnapshot?.match?.entryId;
+    expect(runtimeEntryId).toBeTruthy();
+    expect(body.runtimeUsage).toMatchObject({
+      windowDays: 30,
+      fromLocalDay: expect.any(String),
+      toLocalDay: localDay,
+      entry: {
+        scope: "entry",
+        identity: runtimeEntryId,
+        ...expectedRequestMetric,
       },
+      endpoint: {
+        scope: "endpoint",
+        identity: runtimeEndpointId,
+        ...expectedAttemptMetric,
+      },
+      executionAttempt: {
+        scope: "executionAttempt",
+        identity: executionAttemptId,
+        ...expectedAttemptMetric,
+      },
+      model: {
+        scope: "model",
+        identity: "gpt-5",
+        ...expectedRequestMetric,
+      },
+      diagnostics: {},
     });
   });
 
@@ -558,9 +768,7 @@ describe("stats proxy logs routes", () => {
       .returning()
       .get();
 
-    await db
-      .insert(schema.proxyLogs)
-      .values([
+    await insertRequestAttempts([
         {
           accountId: account.id,
           downstreamApiKeyId: alphaKey.id,
@@ -581,8 +789,7 @@ describe("stats proxy logs routes", () => {
           estimatedCost: 0.22,
           createdAt: formatUtcSqlDateTime(new Date("2026-03-09T10:05:00.000Z")),
         },
-      ])
-      .run();
+      ]);
 
     const response = await app.inject({
       method: "GET",
@@ -596,8 +803,9 @@ describe("stats proxy logs routes", () => {
     };
 
     expect(body.total).toBe(1);
-    expect(body.items[0]?.downstreamKeyName).toBe("渠道-A");
-    expect(body.items[0]?.downstreamKeyGroupName).toBe("项目甲");
+    const attempt = body.items[0]?.attempts as Array<Record<string, unknown>>;
+    expect(attempt[0]?.downstreamKeyName).toBe("渠道-A");
+    expect(attempt[0]?.downstreamKeyGroupName).toBe("项目甲");
   });
 
   it("filters proxy logs by site and time range", async () => {
@@ -641,9 +849,7 @@ describe("stats proxy logs routes", () => {
       .returning()
       .get();
 
-    await db
-      .insert(schema.proxyLogs)
-      .values([
+    await insertRequestAttempts([
         {
           accountId: alphaAccount.id,
           modelRequested: "gpt-4o",
@@ -680,8 +886,7 @@ describe("stats proxy logs routes", () => {
           estimatedCost: 0.44,
           createdAt: formatUtcSqlDateTime(new Date("2026-03-09T08:30:00.000Z")),
         },
-      ])
-      .run();
+      ]);
 
     const response = await app.inject({
       method: "GET",
@@ -696,18 +901,18 @@ describe("stats proxy logs routes", () => {
         totalCount: number;
         successCount: number;
         failedCount: number;
-        totalCost: number;
+        cost: ReturnType<typeof expectedCostSummary>;
         totalTokensAll: number;
       };
     };
 
     expect(body.total).toBe(2);
     expect(body.items).toHaveLength(2);
-    expect(body.items.map((item) => item.siteId)).toEqual([
+    expect(body.items.map((item) => (item.attempts as Array<Record<string, unknown>>)[0]?.siteId)).toEqual([
       alphaSite.id,
       alphaSite.id,
     ]);
-    expect(body.items.map((item) => item.siteName)).toEqual([
+    expect(body.items.map((item) => (item.attempts as Array<Record<string, unknown>>)[0]?.siteName)).toEqual([
       "alpha-site",
       "alpha-site",
     ]);
@@ -715,7 +920,7 @@ describe("stats proxy logs routes", () => {
       totalCount: 2,
       successCount: 1,
       failedCount: 1,
-      totalCost: 0.33,
+      cost: expectedCostSummary(0.33, 2),
       totalTokensAll: 30,
     });
   });
@@ -742,9 +947,7 @@ describe("stats proxy logs routes", () => {
       .returning()
       .get();
 
-    await db
-      .insert(schema.proxyLogs)
-      .values([
+    await insertRequestAttempts([
         {
           accountId: account.id,
           modelRequested: "gpt-4o",
@@ -768,8 +971,7 @@ describe("stats proxy logs routes", () => {
           estimatedCost: 0.22,
           createdAt: formatUtcSqlDateTime(new Date("2026-03-09T11:05:00.000Z")),
         },
-      ])
-      .run();
+      ]);
 
     const response = await app.inject({
       method: "GET",
@@ -787,7 +989,7 @@ describe("stats proxy logs routes", () => {
     };
 
     expect(body.total).toBe(1);
-    expect(body.items[0]?.clientAppId).toBe("cherry_studio");
+    expect((body.items[0]?.attempts as Array<Record<string, unknown>>)[0]?.clientAppId).toBe("cherry_studio");
     expect(body.clientOptions).toEqual([
       { value: "app:cherry_studio", label: "应用 · Cherry Studio" },
       { value: "family:codex", label: "协议 · Codex" },
@@ -816,9 +1018,7 @@ describe("stats proxy logs routes", () => {
       .returning()
       .get();
 
-    const inserted = await db
-      .insert(schema.proxyLogs)
-      .values({
+    const [inserted] = await insertRequestAttempts([{
         accountId: account.id,
         modelRequested: "gpt-4o",
         modelActual: "gpt-4o",
@@ -828,17 +1028,15 @@ describe("stats proxy logs routes", () => {
         totalTokens: 9,
         estimatedCost: 0.09,
         createdAt: formatUtcSqlDateTime(new Date("2026-03-09T12:00:00.000Z")),
-      })
-      .run();
+      }]);
 
-    const logId = Number(inserted.lastInsertRowid || 0);
     const listResponse = await app.inject({
       method: "GET",
       url: "/api/stats/proxy-logs",
     });
     const detailResponse = await app.inject({
       method: "GET",
-      url: `/api/stats/proxy-logs/${logId}`,
+      url: `/api/stats/proxy-logs/${inserted.requestId}`,
     });
 
     expect(listResponse.statusCode).toBe(200);
@@ -849,12 +1047,12 @@ describe("stats proxy logs routes", () => {
     };
     const detailBody = detailResponse.json() as Record<string, unknown>;
 
-    expect(listBody.items[0]?.clientFamily).toBe("codex");
-    expect(listBody.items[0]?.clientAppId).toBe(null);
-    expect(listBody.items[0]?.clientAppName).toBe(null);
-    expect(detailBody.clientFamily).toBe("codex");
-    expect(detailBody.clientAppId).toBe(null);
-    expect(detailBody.clientAppName).toBe(null);
+    expect((listBody.items[0]?.attempts as Array<Record<string, unknown>>)[0]?.clientFamily).toBe("codex");
+    expect((listBody.items[0]?.attempts as Array<Record<string, unknown>>)[0]?.clientAppId).toBe(null);
+    expect((listBody.items[0]?.attempts as Array<Record<string, unknown>>)[0]?.clientAppName).toBe(null);
+    expect((detailBody.attempts as Array<Record<string, unknown>>)[0]?.clientFamily).toBe("codex");
+    expect((detailBody.attempts as Array<Record<string, unknown>>)[0]?.clientAppId).toBe(null);
+    expect((detailBody.attempts as Array<Record<string, unknown>>)[0]?.clientAppName).toBe(null);
   });
 
   it("returns unknown usage source and nullable token fields for logs without recovered usage", async () => {
@@ -879,9 +1077,7 @@ describe("stats proxy logs routes", () => {
       .returning()
       .get();
 
-    await db
-      .insert(schema.proxyLogs)
-      .values({
+    await insertRequestAttempts([{
         accountId: account.id,
         modelRequested: "gpt-5",
         modelActual: "gpt-5",
@@ -893,8 +1089,7 @@ describe("stats proxy logs routes", () => {
         errorMessage:
           "[downstream:/v1/chat/completions] [upstream:/v1/chat/completions] [usage:unknown]",
         createdAt: formatUtcSqlDateTime(new Date("2026-03-09T12:30:00.000Z")),
-      })
-      .run();
+      }]);
 
     const response = await app.inject({
       method: "GET",
@@ -904,19 +1099,19 @@ describe("stats proxy logs routes", () => {
     expect(response.statusCode).toBe(200);
     const body = response.json() as {
       items: Array<{
-        usageSource: string | null;
+        attempts: Array<{
+          usageSource: string | null;
+        }>;
         promptTokens: number | null;
         completionTokens: number | null;
         totalTokens: number | null;
       }>;
     };
 
-    expect(body.items[0]).toMatchObject({
+    expect(body.items[0]?.attempts[0]).toMatchObject({
       usageSource: "unknown",
-      promptTokens: null,
-      completionTokens: null,
-      totalTokens: null,
     });
+    expect(body.items[0]).toMatchObject({ promptTokens: null, completionTokens: null, totalTokens: null });
   });
 
   it("supports split query/meta endpoints for progressive loading", async () => {
@@ -941,9 +1136,7 @@ describe("stats proxy logs routes", () => {
       .returning()
       .get();
 
-    await db
-      .insert(schema.proxyLogs)
-      .values([
+    await insertRequestAttempts([
         {
           accountId: account.id,
           modelRequested: "gpt-4.1",
@@ -966,8 +1159,7 @@ describe("stats proxy logs routes", () => {
           estimatedCost: 0.11,
           createdAt: formatUtcSqlDateTime(new Date("2026-03-09T13:01:00.000Z")),
         },
-      ])
-      .run();
+      ]);
 
     const queryResponse = await app.inject({
       method: "GET",
@@ -976,7 +1168,7 @@ describe("stats proxy logs routes", () => {
 
     expect(queryResponse.statusCode).toBe(200);
     const queryBody = queryResponse.json() as {
-      items: Array<{ modelRequested: string }>;
+      items: Array<{ requestedModel: string }>;
       total: number;
       page: number;
       pageSize: number;
@@ -998,7 +1190,7 @@ describe("stats proxy logs routes", () => {
         totalCount: number;
         successCount: number;
         failedCount: number;
-        totalCost: number;
+        cost: ReturnType<typeof expectedCostSummary>;
         totalTokensAll: number;
       };
       sites: Array<{ id: number; name: string }>;
@@ -1014,7 +1206,7 @@ describe("stats proxy logs routes", () => {
       totalCount: 2,
       successCount: 1,
       failedCount: 1,
-      totalCost: 0.32,
+      cost: expectedCostSummary(0.32, 2),
       totalTokensAll: 32,
     });
     expect(metaBody.sites).toEqual(

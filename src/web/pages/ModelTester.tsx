@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { api } from '../api.js';
-import { normalizePagedResponse } from '../pagedResponse.js';
+import { api, type ModelRouteFlowRuntimeRequest } from '../api.js';
+import type { CompiledRuntimeJsonValue } from '../../shared/compiledRuntimeRequest.js';
+import type { ModelTesterProxyJob } from '../../shared/modelTesterProxy.js';
 import { clearAuthSession, getAuthToken } from '../authSession.js';
 import {
   DEBUG_TABS,
@@ -17,9 +18,10 @@ import {
   buildImagesGenerationsRequestEnvelope,
   buildRawProxyRequestEnvelope,
   buildSearchRequestEnvelope,
+  buildStructuredJsonProxyRequestEnvelope,
   buildVideoCreateRequestEnvelope,
   buildVideoInspectRequestEnvelope,
-  attachForcedTargetToEnvelope,
+  attachForcedExecutionAttemptToEnvelope,
   countConversationTurns,
   collectModelTesterModelNames,
   createLoadingAssistantMessage,
@@ -29,6 +31,7 @@ import {
   filterModelTesterModelNames,
   finalizeIncompleteMessage,
   findLastLoadingAssistantIndex,
+  isValidCustomRequestJson,
   parseCustomRequestBody,
   parseModelTesterSession,
   processThinkTags,
@@ -77,13 +80,6 @@ import { Input } from '../components/ui/input/index.js';
 import { Checkbox } from '../components/ui/checkbox/index.js';
 import { Slider } from '../components/ui/slider/index.js';
 
-type ChatJobResponse = {
-  jobId: string;
-  status: 'pending' | 'succeeded' | 'failed' | 'cancelled';
-  result?: unknown;
-  error?: unknown;
-};
-
 type DebugTimelineEntry = {
   at: string;
   level: 'info' | 'warn' | 'error';
@@ -97,7 +93,7 @@ type UploadState = {
 };
 
 type ConversationFileState = ConversationDraftFile;
-type ForcedTargetOption = {
+type ForcedExecutionAttemptOption = {
   value: string;
   label: string;
   description?: string;
@@ -109,19 +105,6 @@ const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, 
 
 const createConversationFileLocalId = () =>
   `draft-file-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-
-type ModelTesterRouteSummaryItem = {
-  modelPattern?: unknown;
-  enabled?: unknown;
-  visibility?: unknown;
-  match?: {
-    requestedModelPattern?: unknown;
-    displayName?: unknown;
-  } | null;
-  presentation?: {
-    displayName?: unknown;
-  } | null;
-};
 
 const summarizeModeRequest = (
   mode: PlaygroundMode,
@@ -161,6 +144,93 @@ const formatJson = (value: unknown): string => {
     return String(value);
   }
 };
+
+function parseJsonValue(value: string | null | undefined): CompiledRuntimeJsonValue | undefined {
+  const text = String(value || '').trim();
+  if (!text) return undefined;
+  try {
+    return JSON.parse(text) as CompiledRuntimeJsonValue;
+  } catch {
+    return undefined;
+  }
+}
+
+function conversationRoutePath(protocol: ModelTesterInputs['protocol']): string {
+  if (protocol === 'claude') return '/v1/messages';
+  if (protocol === 'responses') return '/v1/responses';
+  return '/v1/chat/completions';
+}
+
+function queryRecordFromPath(path: string): Record<string, unknown> | null {
+  const queryStart = path.indexOf('?');
+  if (queryStart < 0) return null;
+  const params = new URLSearchParams(path.slice(queryStart + 1));
+  const query: Record<string, unknown> = {};
+  for (const [key, value] of params.entries()) {
+    query[key] = value;
+  }
+  return Object.keys(query).length > 0 ? query : null;
+}
+
+function requestPayloadFromPreview(preview: Record<string, unknown>): CompiledRuntimeJsonValue | undefined {
+  if (preview.rawMode === true) {
+    const rawJsonText = typeof preview.rawJsonText === 'string' ? preview.rawJsonText.trim() : '';
+    if (!rawJsonText) return undefined;
+    return parseJsonValue(rawJsonText);
+  }
+  if (preview.jsonBody !== undefined) {
+    return preview.jsonBody as CompiledRuntimeJsonValue;
+  }
+  if (
+    preview.requestKind === 'multipart'
+    && preview.multipartFields
+    && typeof preview.multipartFields === 'object'
+    && !Array.isArray(preview.multipartFields)
+  ) {
+    return preview.multipartFields as Record<string, string>;
+  }
+  if (preview.requestKind === 'empty' || typeof preview.path === 'string' || typeof preview.method === 'string') {
+    return undefined;
+  }
+  return preview as { [key: string]: CompiledRuntimeJsonValue };
+}
+
+function routeFlowRuntimeRequestFromPreview(input: {
+  model: string;
+  inputs: ModelTesterInputs;
+  previewPayload: unknown;
+}): ModelRouteFlowRuntimeRequest | null {
+  const requestedModel = input.model.trim();
+  if (!requestedModel || !input.previewPayload || typeof input.previewPayload !== 'object' || Array.isArray(input.previewPayload)) {
+    return null;
+  }
+  const preview = input.previewPayload as Record<string, unknown>;
+  const method = typeof preview.method === 'string' ? preview.method : 'POST';
+  const path = typeof preview.path === 'string' && preview.path.trim()
+    ? preview.path.trim()
+    : conversationRoutePath(input.inputs.protocol);
+  const jsonBody = requestPayloadFromPreview(preview);
+  if (preview.rawMode === true && typeof preview.rawJsonText === 'string' && preview.rawJsonText.trim() && jsonBody === undefined) {
+    return null;
+  }
+  return {
+    requestedModel,
+    method,
+    path,
+    query: queryRecordFromPath(path),
+    payload: jsonBody,
+    normalizedPayload: jsonBody,
+    headers: {},
+  };
+}
+
+function formatModelTesterTemplate(key: string, replacements: Record<string, string | number>) {
+  let value = tr(key);
+  for (const [name, replacement] of Object.entries(replacements)) {
+    value = value.replace(`{${name}}`, String(replacement));
+  }
+  return value;
+}
 
 const extractErrorMessage = (error: unknown): string => {
   const data = error as any;
@@ -681,11 +751,8 @@ export default function ModelTester() {
   const [inputs, setInputs] = useState<ModelTesterInputs>(DEFAULT_INPUTS);
   const [modeState, setModeState] = useState<ModelTesterModeState>(DEFAULT_MODE_STATE);
   const [parameterEnabled, setParameterEnabled] = useState<ParameterEnabled>(DEFAULT_PARAMETER_ENABLED);
-  const [forcedTargetId, setForcedTargetId] = useState<number | null>(null);
-  const [forcedTargetOptions, setForcedTargetOptions] = useState<ForcedTargetOption[]>([]);
-  const [loadingForcedTargets, setLoadingForcedTargets] = useState(false);
-  const [forcedTargetHint, setForcedTargetHint] = useState('');
-  const [forcedTargetHydrationReady, setForcedTargetHydrationReady] = useState(false);
+  const [forcedExecutionAttemptId, setForcedExecutionAttemptId] = useState<string | null>(null);
+  const [modelHydrationReady, setModelHydrationReady] = useState(false);
   const [routeFlow, setRouteFlow] = useState<ModelRouteFlowData | null>(null);
   const [routeFlowLoading, setRouteFlowLoading] = useState(false);
   const [routeFlowError, setRouteFlowError] = useState('');
@@ -789,7 +856,7 @@ export default function ModelTester() {
     setParameterEnabled(restored.parameterEnabled);
     setPendingPayload(restored.pendingPayload);
     setPendingJobId(restored.pendingJobId || null);
-    setForcedTargetId(restored.forcedTargetId ?? null);
+    setForcedExecutionAttemptId(restored.forcedExecutionAttemptId ?? null);
     setCustomRequestMode(restored.customRequestMode);
     setCustomRequestBody(restored.customRequestBody);
     setShowDebugPanel(restored.showDebugPanel);
@@ -817,28 +884,13 @@ export default function ModelTester() {
     const fetchModels = async () => {
       setLoadingModels(true);
       try {
-        const [marketResult, routesResult] = await Promise.allSettled([
-          api.getModelsMarketplace({
-            page: 1,
-            pageSize: MODEL_TESTER_ROUTE_MODEL_PAGE_SIZE,
-            includePricing: false,
-          }),
-          api.getRouteSummaryPage({
-            page: 1,
-            pageSize: MODEL_TESTER_ROUTE_MODEL_PAGE_SIZE,
-          }),
-        ]);
+        const marketResult = await api.getModelsMarketplace({
+          page: 1,
+          pageSize: MODEL_TESTER_ROUTE_MODEL_PAGE_SIZE,
+          includePricing: false,
+        });
 
-        if (marketResult.status === 'rejected' && routesResult.status === 'rejected') {
-          throw marketResult.reason || routesResult.reason || new Error('failed to fetch models');
-        }
-
-        const names = collectModelTesterModelNames(
-          marketResult.status === 'fulfilled' ? marketResult.value : null,
-          routesResult.status === 'fulfilled'
-            ? normalizePagedResponse<ModelTesterRouteSummaryItem>(routesResult.value).items
-            : null,
-        );
+        const names = collectModelTesterModelNames(marketResult);
         setModels(names);
 
         const restoredModel = restoredSessionRef.current?.inputs.model || '';
@@ -857,7 +909,7 @@ export default function ModelTester() {
         pushDebug('error', tr('pages.modelTester.failedGetModelList'));
       } finally {
         setLoadingModels(false);
-        setForcedTargetHydrationReady(true);
+        setModelHydrationReady(true);
       }
     };
 
@@ -866,105 +918,19 @@ export default function ModelTester() {
   }, []);
 
   useEffect(() => {
-    if (!forcedTargetHydrationReady) return;
-
-    if (!inputs.model) {
-      setForcedTargetOptions([]);
-      setForcedTargetHint('');
-      setForcedTargetId(null);
-      return;
+    if (!modelHydrationReady) return;
+    if (!inputs.model || customRequestMode || inputs.mode === 'videos.inspect') {
+      setForcedExecutionAttemptId(null);
     }
-
-    if (customRequestMode) {
-      setForcedTargetOptions([]);
-      setForcedTargetHint(tr('pages.modelTester.customRequestmodeTargetsnotAvailable'));
-      setForcedTargetId(null);
-      return;
-    }
-
-    if (inputs.mode === 'videos.inspect') {
-      setForcedTargetOptions([]);
-      setForcedTargetHint(tr('pages.modelTester.deleteTargets'));
-      setForcedTargetId(null);
-      return;
-    }
-
-    let cancelled = false;
-    setLoadingForcedTargets(true);
-    setForcedTargetHint('');
-
-    void api.getRouteDecision(inputs.model)
-      .then((result) => {
-        if (cancelled) return;
-        const candidates = Array.isArray((result as any)?.decision?.candidates)
-          ? (result as any).decision.candidates as Array<Record<string, unknown>>
-          : [];
-        const nextOptions = candidates
-          .filter((candidate) => candidate?.eligible === true && typeof candidate?.targetId === 'number')
-          .map((candidate) => {
-            const accountLabel = candidate.username || (candidate.accountId ? `account-${candidate.accountId}` : tr('pages.proxyLogs.unknownAccount'));
-            const siteLabel = candidate.siteName || tr('pages.proxyLogs.unknownSite');
-            const tokenLabel = candidate.tokenName || tr('pages.tokens.default');
-            return {
-              value: String(candidate.targetId),
-              label: `${accountLabel} @ ${siteLabel} / ${tokenLabel} (P${candidate.priority ?? 0})`,
-              description: typeof candidate.reason === 'string' && candidate.reason.trim().length > 0
-                ? candidate.reason
-                : undefined,
-            };
-          });
-        setForcedTargetOptions(nextOptions);
-        if (nextOptions.length === 0) {
-          setForcedTargetHint(tr('pages.modelTester.modelnoneTargets2'));
-        }
-        if (typeof forcedTargetId === 'number' && !nextOptions.some((option) => option.value === String(forcedTargetId))) {
-          setForcedTargetId(null);
-        }
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setForcedTargetOptions([]);
-        setForcedTargetHint(tr('pages.modelTester.targetsFailed'));
-        setForcedTargetId(null);
-      })
-      .finally(() => {
-        if (!cancelled) setLoadingForcedTargets(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [customRequestMode, forcedTargetHydrationReady, inputs.mode, inputs.model]);
+  }, [customRequestMode, inputs.mode, inputs.model, modelHydrationReady]);
 
   useEffect(() => {
-    if (!forcedTargetHydrationReady || !inputs.model || customRequestMode) {
-      setRouteFlow(null);
-      setRouteFlowError('');
-      setRouteFlowLoading(false);
-      return;
+    if (!forcedExecutionAttemptId || routeFlowLoading || !routeFlow) return;
+    const attempts = routeFlow?.compiledRuntime?.executionAttempts || [];
+    if (attempts.length === 0 || !attempts.some((attempt) => attempt.executionAttemptId === forcedExecutionAttemptId)) {
+      setForcedExecutionAttemptId(null);
     }
-
-    let cancelled = false;
-    setRouteFlowLoading(true);
-    setRouteFlowError('');
-    void api.getModelRouteFlow(inputs.model)
-      .then((result) => {
-        if (cancelled) return;
-        setRouteFlow((result as { flow?: ModelRouteFlowData }).flow || null);
-      })
-      .catch((loadError) => {
-        if (cancelled) return;
-        setRouteFlow(null);
-        setRouteFlowError(extractErrorMessage(loadError) || tr('pages.modelTester.routesFailed'));
-      })
-      .finally(() => {
-        if (!cancelled) setRouteFlowLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [customRequestMode, forcedTargetHydrationReady, inputs.model]);
+  }, [forcedExecutionAttemptId, routeFlow, routeFlowLoading]);
 
   useEffect(() => {
     if (!inputs.model) return;
@@ -987,7 +953,7 @@ export default function ModelTester() {
       },
       pendingPayload,
       pendingJobId,
-      forcedTargetId,
+      forcedExecutionAttemptId,
       customRequestMode,
       customRequestBody,
       showDebugPanel,
@@ -997,7 +963,7 @@ export default function ModelTester() {
     activeDebugTab,
     customRequestBody,
     customRequestMode,
-    forcedTargetId,
+    forcedExecutionAttemptId,
     input,
     inputs,
     messages,
@@ -1247,39 +1213,30 @@ export default function ModelTester() {
             ? '/v1/responses'
             : '/v1/chat/completions';
 
-      return {
-        method: 'POST',
+      return buildRawProxyRequestEnvelope(
+        'POST',
         path,
-        requestKind: 'json',
-        stream: inputs.stream,
-        jobMode: false,
-        rawMode: true,
-        rawJsonText: customRequestBody,
-      };
+        customRequestBody,
+        { stream: inputs.stream, jobMode: false },
+      );
     }
 
     if (inputs.protocol === 'claude') {
-      return {
-        method: 'POST',
-        path: '/v1/messages',
-        requestKind: 'json',
-        stream: inputs.stream,
-        jobMode: false,
-        rawMode: false,
-        jsonBody: buildClaudeBodyFromMessages(baseMessages),
-      };
+      return buildStructuredJsonProxyRequestEnvelope(
+        'POST',
+        '/v1/messages',
+        buildClaudeBodyFromMessages(baseMessages),
+        { stream: inputs.stream, jobMode: false },
+      );
     }
 
     if (inputs.protocol === 'responses') {
-      return {
-        method: 'POST',
-        path: '/v1/responses',
-        requestKind: 'json',
-        stream: inputs.stream,
-        jobMode: false,
-        rawMode: false,
-        jsonBody: buildResponsesBodyFromMessages(baseMessages),
-      };
+      return buildStructuredJsonProxyRequestEnvelope(
+        'POST',
+        '/v1/responses',
+        buildResponsesBodyFromMessages(baseMessages),
+        { stream: inputs.stream, jobMode: false },
+      );
     }
 
     if (inputs.protocol === 'gemini') {
@@ -1287,87 +1244,90 @@ export default function ModelTester() {
     }
 
     const openAiEnvelope = buildApiPayload(normalizedMessages, { ...inputs, protocol: 'openai' }, parameterEnabled);
-    const openAiPayload = (openAiEnvelope.jsonBody && typeof openAiEnvelope.jsonBody === 'object')
-      ? { ...(openAiEnvelope.jsonBody as Record<string, unknown>) }
-      : {};
-
-    return {
-      method: 'POST',
-      path: '/v1/chat/completions',
-      requestKind: 'json',
-      stream: inputs.stream,
-      jobMode: false,
-      rawMode: false,
-      jsonBody: openAiPayload,
-    };
+    return buildStructuredJsonProxyRequestEnvelope(
+      'POST',
+      '/v1/chat/completions',
+      { ...openAiEnvelope.jsonBody },
+      { stream: inputs.stream, jobMode: false },
+    );
   }, [buildApiPayload, buildClaudeBodyFromMessages, buildConversationMessagesWithSystem, buildResponsesBodyFromMessages, customRequestBody, customRequestMode, inputs, parameterEnabled]);
 
-  const forcedTargetSelectOptions = useMemo<ForcedTargetOption[]>(() => [
+  const forcedExecutionAttemptOptions = useMemo<ForcedExecutionAttemptOption[]>(() => {
+    const attempts = routeFlow?.compiledRuntime?.executionAttempts || [];
+    return attempts
+      .filter((attempt) => attempt.enabled !== false)
+      .map((attempt) => {
+        const accountLabel = attempt.accountLabel || (attempt.accountId
+          ? formatModelTesterTemplate('components.modelRouteFlow.accountIdentity', { id: attempt.accountId })
+          : tr('pages.proxyLogs.unknownAccount'));
+        const siteLabel = attempt.siteName || attempt.siteUrl || (attempt.siteId
+          ? formatModelTesterTemplate('components.modelRouteFlow.siteIdentity', { id: attempt.siteId })
+          : tr('pages.proxyLogs.unknownSite'));
+        const tokenLabel = attempt.tokenLabel || attempt.tokenGroup || (attempt.tokenId
+          ? formatModelTesterTemplate('components.modelRouteFlow.tokenIdentity', { id: attempt.tokenId })
+          : tr('pages.tokens.default'));
+        const probability = typeof attempt.probability === 'number' && Number.isFinite(attempt.probability)
+          ? `${Math.round(attempt.probability * 1000) / 10}%`
+          : 'N/A';
+        return {
+          value: attempt.executionAttemptId,
+          label: `${accountLabel} @ ${siteLabel} / ${tokenLabel}`,
+          description: [
+            attempt.model,
+            attempt.endpointId,
+            `W${attempt.weight ?? 1}`,
+            probability,
+          ].filter(Boolean).join(' · '),
+        };
+      });
+  }, [routeFlow]);
+
+  const forcedExecutionAttemptSelectOptions = useMemo<ForcedExecutionAttemptOption[]>(() => [
     {
       value: '__auto__',
       label: tr('pages.modelTester.automaticDefault'),
-      description: tr('pages.modelTester.routesnormalselecttargets'),
+      description: tr('pages.modelTester.routesNormalSelectExecutionAttempts'),
     },
-    ...forcedTargetOptions,
-  ], [forcedTargetOptions]);
+    ...forcedExecutionAttemptOptions,
+  ], [forcedExecutionAttemptOptions]);
 
-  const attachEnvelopeForcedTarget = useCallback((envelope: ProxyTestEnvelope) => (
-    attachForcedTargetToEnvelope(envelope, forcedTargetId)
-  ), [forcedTargetId]);
+  const attachEnvelopeForcedExecutionAttempt = useCallback((envelope: ProxyTestEnvelope) => (
+    attachForcedExecutionAttemptToEnvelope(envelope, forcedExecutionAttemptId)
+  ), [forcedExecutionAttemptId]);
 
   const buildModeProxyEnvelope = useCallback((): ProxyTestEnvelope | null => {
     if (inputs.mode === 'embeddings') {
       const trimmed = embeddingInputText.trim();
       if (!trimmed) return null;
-      return {
-        method: 'POST',
-        path: '/v1/embeddings',
-        requestKind: 'json',
-        stream: false,
-        jobMode: false,
-        rawMode: customRequestMode,
-        ...(customRequestMode
-          ? { rawJsonText: customRequestBody }
-          : { jsonBody: { model: inputs.model, input: trimmed } }),
-      };
+      if (customRequestMode) {
+        return buildRawProxyRequestEnvelope('POST', '/v1/embeddings', customRequestBody);
+      }
+      return buildStructuredJsonProxyRequestEnvelope('POST', '/v1/embeddings', { model: inputs.model, input: trimmed });
     }
 
     if (inputs.mode === 'search') {
       if (!searchQueryValue.trim()) return null;
-      return {
-        method: 'POST',
-        path: '/v1/search',
-        requestKind: 'json',
-        stream: false,
-        jobMode: false,
-        rawMode: customRequestMode,
-        ...(customRequestMode
-          ? { rawJsonText: customRequestBody }
-          : {
-            jsonBody: {
-              model: inputs.model || '__search',
-              query: searchQueryValue.trim(),
-              max_results: Math.max(1, Math.min(20, Math.trunc(searchMaxResults || 10))),
-              ...(splitCsvOrLines(searchAllowedDomains).length > 0 ? { allowed_domains: splitCsvOrLines(searchAllowedDomains) } : {}),
-              ...(splitCsvOrLines(searchBlockedDomains).length > 0 ? { blocked_domains: splitCsvOrLines(searchBlockedDomains) } : {}),
-            },
-          }),
-      };
+      if (customRequestMode) {
+        return buildRawProxyRequestEnvelope('POST', '/v1/search', customRequestBody);
+      }
+      return buildStructuredJsonProxyRequestEnvelope('POST', '/v1/search', {
+        model: inputs.model || '__search',
+        query: searchQueryValue.trim(),
+        max_results: Math.max(1, Math.min(20, Math.trunc(searchMaxResults || 10))),
+        ...(splitCsvOrLines(searchAllowedDomains).length > 0 ? { allowed_domains: splitCsvOrLines(searchAllowedDomains) } : {}),
+        ...(splitCsvOrLines(searchBlockedDomains).length > 0 ? { blocked_domains: splitCsvOrLines(searchBlockedDomains) } : {}),
+      });
     }
 
     if (inputs.mode === 'images.generate') {
       if (!assetPrompt.trim()) return null;
-      return {
-        method: 'POST',
-        path: '/v1/images/generations',
-        requestKind: 'json',
-        stream: false,
-        jobMode: false,
-        rawMode: customRequestMode,
-        ...(customRequestMode
-          ? { rawJsonText: customRequestBody }
-          : { jsonBody: { model: inputs.model, prompt: assetPrompt.trim() } }),
-      };
+      if (customRequestMode) {
+        return buildRawProxyRequestEnvelope('POST', '/v1/images/generations', customRequestBody);
+      }
+      return buildStructuredJsonProxyRequestEnvelope('POST', '/v1/images/generations', {
+        model: inputs.model,
+        prompt: assetPrompt.trim(),
+      });
     }
 
     if (inputs.mode === 'images.edit') {
@@ -1425,17 +1385,13 @@ export default function ModelTester() {
         };
       }
 
-      return {
-        method: 'POST',
-        path: '/v1/videos',
-        requestKind: 'json',
-        stream: false,
-        jobMode: false,
-        rawMode: customRequestMode,
-        ...(customRequestMode
-          ? { rawJsonText: customRequestBody }
-          : { jsonBody: { model: inputs.model, prompt: assetPrompt.trim() } }),
-      };
+      if (customRequestMode) {
+        return buildRawProxyRequestEnvelope('POST', '/v1/videos', customRequestBody);
+      }
+      return buildStructuredJsonProxyRequestEnvelope('POST', '/v1/videos', {
+        model: inputs.model,
+        prompt: assetPrompt.trim(),
+      });
     }
 
     if (inputs.mode === 'videos.inspect') {
@@ -1456,7 +1412,7 @@ export default function ModelTester() {
   const previewPayload = useMemo(() => {
     if (inputs.mode !== 'conversation') {
       const envelope = buildModeProxyEnvelope();
-      return envelope ? attachEnvelopeForcedTarget(envelope) : null;
+      return envelope ? attachEnvelopeForcedExecutionAttempt(envelope) : null;
     }
     if (customRequestMode) {
       const raw = customRequestBody.trim();
@@ -1468,14 +1424,60 @@ export default function ModelTester() {
       }
     }
     if (inputs.protocol === 'gemini') {
-      return attachEnvelopeForcedTarget(buildConversationProxyEnvelope(messages));
+      return attachEnvelopeForcedExecutionAttempt(buildConversationProxyEnvelope(messages));
     }
-    return attachEnvelopeForcedTarget(buildApiPayload(buildConversationMessagesWithSystem(messages), inputs, parameterEnabled));
-  }, [attachEnvelopeForcedTarget, buildConversationMessagesWithSystem, buildConversationProxyEnvelope, buildModeProxyEnvelope, customRequestBody, customRequestMode, inputs, messages, parameterEnabled]);
+    return attachEnvelopeForcedExecutionAttempt(buildApiPayload(buildConversationMessagesWithSystem(messages), inputs, parameterEnabled));
+  }, [attachEnvelopeForcedExecutionAttempt, buildConversationMessagesWithSystem, buildConversationProxyEnvelope, buildModeProxyEnvelope, customRequestBody, customRequestMode, inputs, messages, parameterEnabled]);
+
+  const routeFlowRequestPreviewPayload = useMemo(() => {
+    if (inputs.mode !== 'conversation') {
+      return buildModeProxyEnvelope();
+    }
+    return buildConversationProxyEnvelope(messages);
+  }, [buildConversationProxyEnvelope, buildModeProxyEnvelope, inputs.mode, messages]);
+
+  const routeFlowRuntimeRequest = useMemo(() => routeFlowRuntimeRequestFromPreview({
+    model: inputs.model,
+    inputs,
+    previewPayload: routeFlowRequestPreviewPayload,
+  }), [inputs, routeFlowRequestPreviewPayload]);
 
   useEffect(() => {
     setDebugPreview(formatJson(previewPayload));
   }, [previewPayload]);
+
+  useEffect(() => {
+    if (!modelHydrationReady || !inputs.model) {
+      setRouteFlow(null);
+      setRouteFlowError('');
+      setRouteFlowLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setRouteFlowLoading(true);
+    setRouteFlowError('');
+    void api.getModelRouteFlow(inputs.model, {
+      forcedExecutionAttemptId,
+      request: routeFlowRuntimeRequest,
+    })
+      .then((result) => {
+        if (cancelled) return;
+        setRouteFlow((result as { flow?: ModelRouteFlowData }).flow || null);
+      })
+      .catch((loadError) => {
+        if (cancelled) return;
+        setRouteFlow(null);
+        setRouteFlowError(extractErrorMessage(loadError) || tr('pages.modelTester.routesFailed'));
+      })
+      .finally(() => {
+        if (!cancelled) setRouteFlowLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [forcedExecutionAttemptId, inputs.model, modelHydrationReady, routeFlowRuntimeRequest]);
 
   const finalizeJob = useCallback((jobId: string) => {
     void api.deleteProxyTestJob(jobId).catch(() => { });
@@ -1490,7 +1492,7 @@ export default function ModelTester() {
     const pollTask = async () => {
       while (active) {
         try {
-          const status = await api.getProxyTestJob(pendingJobId) as ChatJobResponse;
+          const status: ModelTesterProxyJob = await api.getProxyTestJob(pendingJobId);
           if (!active) return;
 
           if (status.status === 'pending') {
@@ -1580,7 +1582,7 @@ export default function ModelTester() {
     try {
       setError('');
       setPendingPayload(payload);
-      const created = await api.startProxyTestJob(payload) as { jobId: string };
+      const created = await api.startProxyTestJob(payload);
       setPendingJobId(created.jobId);
       setSending(true);
       pushDebug('info', `已创建任务 ${created.jobId}。`);
@@ -1895,7 +1897,7 @@ export default function ModelTester() {
     payload: TestChatPayload,
     options?: { syncedCustomBody?: string },
   ) => {
-    const effectivePayload = attachEnvelopeForcedTarget(payload);
+    const effectivePayload = attachEnvelopeForcedExecutionAttempt(payload);
     setMessages(nextMessages);
     if (options?.syncedCustomBody !== undefined) {
       setCustomRequestBody(options.syncedCustomBody);
@@ -1912,13 +1914,13 @@ export default function ModelTester() {
     } else {
       await startChatJob(effectivePayload);
     }
-  }, [attachEnvelopeForcedTarget, startChatJob, startStream]);
+  }, [attachEnvelopeForcedExecutionAttempt, startChatJob, startStream]);
 
   const dispatchProxyEnvelope = useCallback(async (envelope: ProxyTestEnvelope, nextMessages?: ChatMessage[]) => {
-    const effectiveEnvelope = attachEnvelopeForcedTarget(envelope);
+    const effectiveEnvelope = attachEnvelopeForcedExecutionAttempt(envelope);
     setError('');
     setDebugRequest(formatJson(effectiveEnvelope.rawMode
-      ? { path: effectiveEnvelope.path, rawJsonText: effectiveEnvelope.rawJsonText, forcedTargetId: effectiveEnvelope.forcedTargetId }
+      ? { path: effectiveEnvelope.path, rawJsonText: effectiveEnvelope.rawJsonText, forcedExecutionAttemptId: effectiveEnvelope.forcedExecutionAttemptId }
       : effectiveEnvelope));
     setDebugResponse('');
     setActiveDebugTab(DEBUG_TABS.REQUEST);
@@ -1954,7 +1956,7 @@ export default function ModelTester() {
     } finally {
       setSending(false);
     }
-  }, [attachEnvelopeForcedTarget, pushDebug, startProxyStream]);
+  }, [attachEnvelopeForcedExecutionAttempt, pushDebug, startProxyStream]);
 
   const buildPayloadWithMessages = useCallback((nextMessages: ChatMessage[]): {
     payload: TestChatPayload | null;
@@ -1966,7 +1968,6 @@ export default function ModelTester() {
         ? buildRawProxyRequestEnvelope(
           'POST',
           buildConversationProxyEnvelope(effectiveMessages).path,
-          'json',
           customRequestBody,
           { stream: inputs.stream, jobMode: !inputs.stream },
         )
@@ -2080,8 +2081,7 @@ export default function ModelTester() {
     }
 
     if (!customRequestMode) return;
-    const payload = parseCustomRequestBody(customRequestBody);
-    if (!payload) {
+    if (!isValidCustomRequestJson(customRequestBody)) {
       setError(tr('pages.modelTester.customRequestBodyMustValidJsonContain'));
       pushDebug('error', tr('pages.modelTester.sendingBlockedInvalidCustomRequestBody'));
       return;
@@ -2093,7 +2093,6 @@ export default function ModelTester() {
       buildRawProxyRequestEnvelope(
         'POST',
         buildConversationProxyEnvelope(nextMessages).path,
-        'json',
         customRequestBody,
         { stream: inputs.stream, jobMode: !inputs.stream },
       ),
@@ -2548,29 +2547,31 @@ export default function ModelTester() {
 
           <div className="mb-3.5">
             <div className="mb-1.5 text-xs font-medium text-muted-foreground">
-              {tr('pages.modelTester.targets')}
+              {tr('pages.modelTester.forcedExecutionAttempt')}
             </div>
             <ModernSelect
-              value={typeof forcedTargetId === 'number' ? String(forcedTargetId) : '__auto__'}
+              value={forcedExecutionAttemptId || '__auto__'}
               onChange={(next) => {
                 if (!next || next === '__auto__') {
-                  setForcedTargetId(null);
+                  setForcedExecutionAttemptId(null);
                   return;
                 }
-                const parsed = Number.parseInt(next, 10);
-                setForcedTargetId(Number.isFinite(parsed) && parsed > 0 ? parsed : null);
+                setForcedExecutionAttemptId(next);
               }}
-              options={forcedTargetSelectOptions}
-              placeholder={loadingForcedTargets ? tr('pages.modelTester.loadingTargets') : tr('pages.modelTester.automaticDefault')}
-              disabled={customRequestMode || inputs.mode === 'videos.inspect' || loadingForcedTargets}
-              emptyLabel={tr('pages.modelTester.modelnoneTargets')}
+              options={forcedExecutionAttemptSelectOptions}
+              placeholder={routeFlowLoading ? tr('pages.modelTester.loadingExecutionAttempts') : tr('pages.modelTester.automaticDefault')}
+              disabled={customRequestMode || inputs.mode === 'videos.inspect' || routeFlowLoading}
+              emptyLabel={tr('pages.modelTester.modelnoneExecutionAttempts')}
               menuMaxHeight={300}
             />
             <div className="mt-1 text-xs text-muted-foreground">
-              {forcedTargetHint
-                || (typeof forcedTargetId === 'number'
-                  ? `已固定到目标 #${forcedTargetId}，失败不会自动切换。`
-                  : tr('pages.modelTester.defaultautomaticTargets'))}
+              {customRequestMode
+                ? tr('pages.modelTester.customRequestmodeExecutionAttemptsNotAvailable')
+                : inputs.mode === 'videos.inspect'
+                  ? tr('pages.modelTester.deleteExecutionAttempts')
+                  : forcedExecutionAttemptId
+                    ? tr('pages.modelTester.forcedExecutionAttemptHint')
+                    : tr('pages.modelTester.defaultautomaticExecutionAttempts')}
             </div>
           </div>
 

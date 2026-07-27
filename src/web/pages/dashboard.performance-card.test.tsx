@@ -80,6 +80,9 @@ describe('Dashboard performance stat card', () => {
   it('renders RPM and TPM inside a fifth stat card within the same dashboard grid', async () => {
     apiMock.getDashboard.mockResolvedValue({
       totalBalance: 0,
+      rawBalance: 42,
+      rawBalanceUnit: 'POINTS',
+      rawBalanceUnitMixed: false,
       totalUsed: 0,
       todaySpend: 0,
       todayReward: 0,
@@ -113,6 +116,7 @@ describe('Dashboard performance stat card', () => {
       const statGridText = statCards.map((card) => collectText(card)).join('');
 
       expect(statCards).toHaveLength(5);
+      expect(statGridText).toContain('原始余额: 42.00 POINTS');
       expect(statGridText).toContain('性能指标');
       expect(statGridText).toContain('RPM');
       expect(statGridText).toContain('17');

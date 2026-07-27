@@ -15,6 +15,7 @@ import DownstreamKeyEditorModal, {
   type DownstreamExcludedCredentialRef,
   type DownstreamKeyEditorForm,
   type DownstreamSiteOption,
+  type CompiledPlanOption,
 } from './downstream-keys/DownstreamKeyEditorModal.js';
 import DownstreamKeyDrawer from './downstream-keys/DownstreamKeyDrawer.js';
 import {
@@ -27,7 +28,6 @@ import {
   type Range,
   type SummaryItem,
 } from './downstream-keys/shared.js';
-import type { RouteSummaryRow } from './token-routes/types.js';
 import { Button } from '../components/ui/button/index.js';
 import { ButtonGroup } from '../components/ui/button-group/index.js';
 import { Ellipsis, Eye, LoaderCircle, Pencil, Power, PowerOff, RotateCcw, Tags, Trash2 } from 'lucide-react';
@@ -51,12 +51,6 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '.
 import { Checkbox } from '../components/ui/checkbox/index.js';
 import { Input } from '../components/ui/input/index.js';
 import * as DropdownMenu from '../components/ui/dropdown-menu/index.js';
-import {
-  getRouteRequestedModelPattern,
-  isExactModelPattern,
-  isRouteBackendReferences,
-  resolveRouteTitle,
-} from './token-routes/utils.js';
 
 type Status = 'all' | 'enabled' | 'disabled';
 
@@ -75,7 +69,7 @@ type DownstreamApiKeyItem = {
   maxRequests: number | null;
   usedRequests: number;
   supportedModels: string[];
-  allowedRouteIds: number[];
+  allowedPlanIds: string[];
   siteWeightMultipliers: Record<number, number>;
   excludedSiteIds: number[];
   excludedCredentialRefs: DownstreamExcludedCredentialRef[];
@@ -85,8 +79,6 @@ type DownstreamApiKeyItem = {
 type ManagedItem = SummaryItem & {
   key?: string;
 };
-
-type RouteSelectorItem = Pick<RouteSummaryRow, 'id' | 'match' | 'backend' | 'presentation' | 'enabled'>;
 
 type DeleteConfirmState =
   | null
@@ -102,7 +94,7 @@ type BatchMetadataForm = {
   tags: string[];
 };
 
-type DefaultRouteSelections = Pick<DownstreamKeyEditorForm, 'selectedModels' | 'selectedGroupRouteIds'>;
+type DefaultPlanSelections = Pick<DownstreamKeyEditorForm, 'selectedModels' | 'selectedPlanIds'>;
 function toDateTimeLocal(isoString: string | null | undefined): string {
   if (!isoString) return '';
   const ts = Date.parse(isoString);
@@ -114,14 +106,6 @@ function toDateTimeLocal(isoString: string | null | undefined): string {
   const hh = String(date.getHours()).padStart(2, '0');
   const mi = String(date.getMinutes()).padStart(2, '0');
   return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
-}
-
-function routeTitle(route: RouteSelectorItem): string {
-  return resolveRouteTitle(route);
-}
-
-function isGroupRouteOption(route: RouteSelectorItem): boolean {
-  return isRouteBackendReferences(route.backend) || !isExactModelPattern(getRouteRequestedModelPattern(route));
 }
 
 function uniqStrings(values: string[]): string[] {
@@ -146,6 +130,10 @@ function normalizeTags(values: string[]): string[] {
 
 function uniqIds(values: number[]): number[] {
   return [...new Set(values.map((value) => Number(value)).filter((value) => Number.isFinite(value) && value > 0).map((value) => Math.trunc(value)))];
+}
+
+function uniqPlanIds(values: string[]): string[] {
+  return [...new Set(values.map((value) => String(value || '').trim()).filter(Boolean))];
 }
 
 function buildExcludedCredentialRefKey(ref: DownstreamExcludedCredentialRef): string {
@@ -183,18 +171,13 @@ function normalizeExcludedCredentialRefs(values: DownstreamExcludedCredentialRef
   return Array.from(deduped.values()).sort((left, right) => buildExcludedCredentialRefKey(left).localeCompare(buildExcludedCredentialRefKey(right)));
 }
 
-function buildDefaultRouteSelections(routeOptions: RouteSelectorItem[]): DefaultRouteSelections {
+function buildDefaultPlanSelections(compiledPlanOptions: CompiledPlanOption[]): DefaultPlanSelections {
   return {
     selectedModels: uniqStrings(
-      routeOptions
-        .filter((item) => !isRouteBackendReferences(item.backend) && isExactModelPattern(getRouteRequestedModelPattern(item)))
-        .map((item) => getRouteRequestedModelPattern(item)),
+      compiledPlanOptions
+        .map((item) => item.modelName),
     ).sort((a, b) => a.localeCompare(b)),
-    selectedGroupRouteIds: uniqIds(
-      routeOptions
-        .filter(isGroupRouteOption)
-        .map((item) => item.id),
-    ),
+    selectedPlanIds: uniqPlanIds(compiledPlanOptions.map((item) => item.id)),
   };
 }
 
@@ -229,25 +212,18 @@ function buildSearchMatcher(search: string): ((haystack: string) => boolean) | n
   return (haystack: string) => haystack.toLowerCase().includes(normalized);
 }
 
-async function loadAllRouteSummaryRows(): Promise<RouteSelectorItem[]> {
-  const pageSize = 500;
-  const rows: RouteSelectorItem[] = [];
-  let page = 1;
-  let hasMore = true;
-
-  while (hasMore) {
-    const response = await api.getRouteSummaryPage<RouteSelectorItem>({
-      page,
-      pageSize,
-    });
-    const items = Array.isArray(response?.items) ? response.items : [];
-    rows.push(...items);
-    hasMore = response?.pageInfo?.hasMore === true;
-    page += 1;
-    if (items.length === 0) break;
-  }
-
-  return rows;
+async function loadCompiledPlanOptions(): Promise<CompiledPlanOption[]> {
+  const response = await api.getDownstreamCompiledPlans();
+  const items = Array.isArray(response?.items) ? response.items : [];
+  return items
+    .filter((item): item is CompiledPlanOption => (
+      typeof item?.id === 'string'
+      && item.id.trim().length > 0
+      && typeof item?.modelName === 'string'
+      && item.modelName.trim().length > 0
+    ))
+    .map((item) => ({ id: item.id.trim(), modelName: item.modelName.trim() }))
+    .sort((left, right) => left.modelName.localeCompare(right.modelName));
 }
 
 function splitSearchInput(value: string): { textSearch: string; inlineTags: string[] } {
@@ -346,18 +322,18 @@ function DownstreamKeyCopyIconButton({ fullKey }: { fullKey: string | undefined 
 
 function buildEditorForm(
   item?: ManagedItem | DownstreamApiKeyItem | null,
-  routeOptions: RouteSelectorItem[] = [],
+  compiledPlanOptions: CompiledPlanOption[] = [],
   selectAllByDefault = false,
 ): DownstreamKeyEditorForm {
   const defaultSelections = selectAllByDefault
-    ? buildDefaultRouteSelections(routeOptions)
-    : { selectedModels: [], selectedGroupRouteIds: [] };
+    ? buildDefaultPlanSelections(compiledPlanOptions)
+    : { selectedModels: [], selectedPlanIds: [] };
   const selectedModels = Array.isArray(item?.supportedModels)
     ? item.supportedModels
     : defaultSelections.selectedModels;
-  const selectedGroupRouteIds = Array.isArray(item?.allowedRouteIds)
-    ? item.allowedRouteIds
-    : defaultSelections.selectedGroupRouteIds;
+  const selectedPlanIds = Array.isArray(item?.allowedPlanIds)
+    ? item.allowedPlanIds
+    : defaultSelections.selectedPlanIds;
 
   return {
     name: item?.name || '',
@@ -370,7 +346,7 @@ function buildEditorForm(
     expiresAt: toDateTimeLocal(item?.expiresAt),
     enabled: item?.enabled ?? true,
     selectedModels: uniqStrings(selectedModels),
-    selectedGroupRouteIds: uniqIds(selectedGroupRouteIds),
+    selectedPlanIds: uniqPlanIds(selectedPlanIds),
     siteWeightMultipliersText: JSON.stringify(item?.siteWeightMultipliers || {}, null, 2),
     excludedSiteIds: normalizeExcludedSiteIds(Array.isArray(item?.excludedSiteIds) ? item.excludedSiteIds : []),
     excludedCredentialRefs: normalizeExcludedCredentialRefs(Array.isArray(item?.excludedCredentialRefs) ? item.excludedCredentialRefs : []),
@@ -383,13 +359,13 @@ function summarizeModelLimit(models: string[]): string {
   return `${models[0]} +${models.length - 1}`;
 }
 
-function summarizeRouteLimit(routeIds: number[], routeMap: Map<number, RouteSelectorItem>): string {
-  if (!Array.isArray(routeIds) || routeIds.length === 0) return tr('pages.downstreamKeys.groups2');
-  const names = routeIds
-    .map((id) => routeMap.get(id))
+function summarizePlanLimit(planIds: string[], compiledPlanMap: Map<string, CompiledPlanOption>): string {
+  if (!Array.isArray(planIds) || planIds.length === 0) return tr('pages.downstreamKeys.compiledPlansNone');
+  const names = planIds
+    .map((id) => compiledPlanMap.get(id))
     .filter(Boolean)
-    .map((item) => routeTitle(item!));
-  if (names.length === 0) return `${routeIds.length} 个群组`;
+    .map((item) => item!.modelName);
+  if (names.length === 0) return `${planIds.length} ${tr('pages.downstreamKeys.compiledPlansUnavailable')}`;
   if (names.length === 1) return names[0];
   return `${names[0]} +${names.length - 1}`;
 }
@@ -561,7 +537,7 @@ export default function DownstreamKeys() {
   const [tagMatchMode, setTagMatchMode] = useState<TagMatchMode>('any');
   const [summaryItems, setSummaryItems] = useState<SummaryItem[]>([]);
   const [rawItems, setRawItems] = useState<DownstreamApiKeyItem[]>([]);
-  const [routeOptions, setRouteOptions] = useState<RouteSelectorItem[]>([]);
+  const [compiledPlanOptions, setCompiledPlanOptions] = useState<CompiledPlanOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [batchActionLoading, setBatchActionLoading] = useState(false);
@@ -594,11 +570,11 @@ export default function DownstreamKeys() {
       const [summaryRes, rawRes, routesRes] = await Promise.all([
         api.getDownstreamApiKeysSummary({ range }),
         api.getDownstreamApiKeys(),
-        loadAllRouteSummaryRows(),
+        loadCompiledPlanOptions(),
       ]);
       setSummaryItems(Array.isArray(summaryRes?.items) ? summaryRes.items : []);
       setRawItems(Array.isArray(rawRes?.items) ? rawRes.items : []);
-      setRouteOptions(routesRes);
+      setCompiledPlanOptions(routesRes);
     } catch (err: any) {
       toast.error(err?.message || tr('pages.downstreamKeys.downstreamKeysFailed'));
     } finally {
@@ -697,7 +673,7 @@ export default function DownstreamKeys() {
   }, [editorOpen]);
 
   const rawItemMap = useMemo(() => new Map(rawItems.map((item) => [item.id, item])), [rawItems]);
-  const routeMap = useMemo(() => new Map(routeOptions.map((item) => [item.id, item])), [routeOptions]);
+  const compiledPlanMap = useMemo(() => new Map(compiledPlanOptions.map((item) => [item.id, item])), [compiledPlanOptions]);
 
   const managedItems = useMemo<ManagedItem[]>(() => (
     summaryItems.map((item) => {
@@ -716,7 +692,7 @@ export default function DownstreamKeys() {
         maxRequests: raw?.maxRequests ?? item.maxRequests,
         usedRequests: raw?.usedRequests ?? item.usedRequests,
         supportedModels: raw?.supportedModels ?? item.supportedModels,
-        allowedRouteIds: raw?.allowedRouteIds ?? item.allowedRouteIds,
+        allowedPlanIds: raw?.allowedPlanIds ?? item.allowedPlanIds,
         siteWeightMultipliers: raw?.siteWeightMultipliers ?? item.siteWeightMultipliers,
         excludedSiteIds: raw?.excludedSiteIds ?? item.excludedSiteIds,
         excludedCredentialRefs: raw?.excludedCredentialRefs ?? item.excludedCredentialRefs,
@@ -771,9 +747,9 @@ export default function DownstreamKeys() {
       item.groupName || '',
       ...(item.tags || []),
       ...(item.supportedModels || []),
-      ...((item.allowedRouteIds || []).map((id) => {
-        const route = routeMap.get(id);
-        return route ? routeTitle(route) : String(id);
+      ...((item.allowedPlanIds || []).map((id) => {
+        const plan = compiledPlanMap.get(id);
+        return plan ? plan.modelName : String(id);
       })),
     ].join(' ');
     return searchMatcher(haystack);
@@ -783,7 +759,7 @@ export default function DownstreamKeys() {
     const lastB = b.lastUsedAt ? Date.parse(b.lastUsedAt) : 0;
     if (lastA !== lastB) return lastB - lastA;
     return a.name.localeCompare(b.name);
-  }), [activeTagFilters, groupFilter, managedItems, routeMap, searchMatcher, status, tagMatchMode]);
+  }), [activeTagFilters, groupFilter, managedItems, compiledPlanMap, searchMatcher, status, tagMatchMode]);
 
   const visibleIds = useMemo(() => visibleItems.map((item) => item.id), [visibleItems]);
   const selectedVisibleCount = useMemo(() => selectedIds.filter((id) => visibleIds.includes(id)).length, [selectedIds, visibleIds]);
@@ -813,37 +789,38 @@ export default function DownstreamKeys() {
   const totals = useMemo(() => visibleItems.reduce((acc, item) => {
     acc.tokens += Number(item.rangeUsage?.totalTokens || 0);
     acc.requests += Number(item.rangeUsage?.totalRequests || 0);
-    acc.cost += Number(item.rangeUsage?.totalCost || 0);
+    acc.cost += Number(item.rangeUsage?.cost.amount || 0);
+    if (!acc.costUnit && item.rangeUsage?.cost.unit) acc.costUnit = item.rangeUsage.cost.unit;
     if (item.enabled) acc.enabled += 1;
     return acc;
-  }, { tokens: 0, requests: 0, cost: 0, enabled: 0 }), [visibleItems]);
+  }, { tokens: 0, requests: 0, cost: 0, costUnit: '', enabled: 0 }), [visibleItems]);
 
   useEffect(() => {
     if (!editorOpen || editingId !== null || !createDefaultsPending) {
       return;
     }
 
-    const defaultSelections = buildDefaultRouteSelections(routeOptions);
-    if (defaultSelections.selectedModels.length === 0 && defaultSelections.selectedGroupRouteIds.length === 0) {
+    const defaultSelections = buildDefaultPlanSelections(compiledPlanOptions);
+    if (defaultSelections.selectedModels.length === 0 && defaultSelections.selectedPlanIds.length === 0) {
       return;
     }
 
     setEditorForm((prev) => {
-      if (prev.selectedModels.length > 0 || prev.selectedGroupRouteIds.length > 0) {
+      if (prev.selectedModels.length > 0 || prev.selectedPlanIds.length > 0) {
         return prev;
       }
       return {
         ...prev,
         selectedModels: defaultSelections.selectedModels,
-        selectedGroupRouteIds: defaultSelections.selectedGroupRouteIds,
+        selectedPlanIds: defaultSelections.selectedPlanIds,
       };
     });
     setCreateDefaultsPending(false);
-  }, [createDefaultsPending, editorOpen, editingId, routeOptions]);
+  }, [createDefaultsPending, editorOpen, editingId, compiledPlanOptions]);
 
   const openCreate = () => {
     setEditingId(null);
-    setEditorForm(buildEditorForm(null, routeOptions, true));
+    setEditorForm(buildEditorForm(null, compiledPlanOptions, true));
     setCreateDefaultsPending(true);
     setEditorOpen(true);
   };
@@ -929,7 +906,7 @@ export default function DownstreamKeys() {
         maxCost: editorForm.maxCost.trim() ? Number(editorForm.maxCost.trim()) : null,
         maxRequests: editorForm.maxRequests.trim() ? Number(editorForm.maxRequests.trim()) : null,
         supportedModels: uniqStrings(editorForm.selectedModels),
-        allowedRouteIds: uniqIds(editorForm.selectedGroupRouteIds).filter((id) => routeMap.has(id) && isGroupRouteOption(routeMap.get(id)!)),
+        allowedPlanIds: uniqPlanIds(editorForm.selectedPlanIds).filter((id) => compiledPlanMap.has(id)),
         siteWeightMultipliers,
         excludedSiteIds: normalizeExcludedSiteIds(editorForm.excludedSiteIds),
         excludedCredentialRefs: normalizeExcludedCredentialRefs(editorForm.excludedCredentialRefs),
@@ -1179,7 +1156,7 @@ export default function DownstreamKeys() {
           <SummaryMetric label={tr('pages.downstreamKeys.enabledCount')} value={String(totals.enabled)} />
           <SummaryMetric label={tr('pages.downstreamKeys.selectedCount')} value={String(selectedIds.length)} />
           <SummaryMetric label={tr('components.charts.downstreamKeyTrendChart.requests')} value={totals.requests.toLocaleString()} />
-          <SummaryMetric label={tr('pages.downstreamKeys.cost')} value={formatMoney(totals.cost)} />
+          <SummaryMetric label={tr('pages.downstreamKeys.cost')} value={`${formatMoney(totals.cost)}${totals.costUnit ? ` ${totals.costUnit}` : ''}`} />
           <SummaryMetric label={tr('pages.downstreamKeys.filterstatus')} value={statusOptions.find((item) => item.value === status)?.label || tr('pages.downstreamKeys.allstatus')} />
         </div>
       </Card>
@@ -1279,7 +1256,7 @@ export default function DownstreamKeys() {
                   <MobileField label={tr('pages.downstreamKeys.primaryGroup')} value={row.groupName || tr('pages.downstreamKeys.ungrouped')} />
                   <MobileField label={tr('pages.downstreamKeys.tags2')} value={summarizeTags(row.tags || [])} stacked />
                   <MobileField label={tr('components.modelAnalysisPanel.model')} value={summarizeModelLimit(row.supportedModels || [])} stacked />
-                  <MobileField label={tr('pages.downstreamKeys.groups')} value={summarizeRouteLimit(row.allowedRouteIds || [], routeMap)} stacked />
+                  <MobileField label={tr('pages.downstreamKeys.compiledPlans')} value={summarizePlanLimit(row.allowedPlanIds || [], compiledPlanMap)} stacked />
                   <MobileField label={tr('pages.downstreamKeys.multiplier2')} value={summarizeSiteWeightMultipliers(row.siteWeightMultipliers || {})} stacked />
                   <MobileField label={tr('pages.downstreamKeys.quota')} value={`${row.maxRequests == null ? tr('pages.downstreamKeys.unlimited') : row.maxRequests.toLocaleString()} / ${row.maxCost == null ? tr('pages.downstreamKeys.costunlimited') : formatMoney(row.maxCost)}`} stacked />
                   <MobileField label={tr('pages.downstreamKeys.usage')} value={`${(row.rangeUsage?.totalRequests || 0).toLocaleString()} 请求 · ${formatCompactTokens(row.rangeUsage?.totalTokens || 0)}`} stacked />
@@ -1386,7 +1363,7 @@ export default function DownstreamKeys() {
                       <TableCell>
                         <div className="flex flex-col gap-1.5">
                           <div className="text-xs text-muted-foreground">{tr('pages.downstreamKeys.model')}<span className="text-foreground">{summarizeModelLimit(row.supportedModels || [])}</span></div>
-                          <div className="text-xs text-muted-foreground">{tr('pages.downstreamKeys.groups3')}<span className="text-foreground">{summarizeRouteLimit(row.allowedRouteIds || [], routeMap)}</span></div>
+                          <div className="text-xs text-muted-foreground">{tr('pages.downstreamKeys.compiledPlansLabel')}<span className="text-foreground">{summarizePlanLimit(row.allowedPlanIds || [], compiledPlanMap)}</span></div>
                           <div className="text-xs text-muted-foreground">{tr('pages.downstreamKeys.tags')}<span className="text-foreground">{summarizeTags(row.tags || [])}</span></div>
                           <div className="text-xs text-muted-foreground">{tr('pages.downstreamKeys.multiplier')}<span className="text-foreground">{summarizeSiteWeightMultipliers(row.siteWeightMultipliers || {})}</span></div>
                         </div>
@@ -1453,7 +1430,7 @@ export default function DownstreamKeys() {
         onClose={closeEditor}
         onSave={() => void saveKey()}
         saving={saving}
-        routeOptions={routeOptions}
+        compiledPlanOptions={compiledPlanOptions}
         groupSuggestions={groupSuggestions}
         tagSuggestions={tagSuggestions}
         exclusionSourceLoading={exclusionSourceLoading}

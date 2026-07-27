@@ -3,12 +3,15 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
+import { eq } from 'drizzle-orm';
 import {
   createRouteRuntimeDataDir,
   configureRouteRuntimeDataDir,
   heapLimitMiB,
   memory,
   memoryDelta,
+  migrateRouteRuntimeDatabase,
+  publishSeededRouteRuntimeFixture,
   readPositiveInteger,
   resolveReportDir,
   round,
@@ -25,6 +28,7 @@ type StartupMemoryReport = {
     groupCount: number;
     insertChunkSize: number;
     compiledGraphPaddingMiB: number;
+    effectiveCompiledGraphPaddingMiB: number;
     childHeapMiB: number;
     childRssLimitMiB: number;
     timeoutMs: number;
@@ -62,7 +66,8 @@ const reportDir = resolveReportDir(process.env.ROUTE_STARTUP_MEMORY_REPORT_DIR |
 const dataDir = createRouteRuntimeDataDir();
 const groupCount = readPositiveInteger('ROUTE_STARTUP_MEMORY_GROUPS', 1_000);
 const insertChunkSize = readPositiveInteger('ROUTE_STARTUP_MEMORY_INSERT_CHUNK_SIZE', 250);
-const compiledGraphPaddingMiB = readPositiveInteger('ROUTE_STARTUP_MEMORY_COMPILED_GRAPH_MIB', 128);
+const compiledGraphPaddingMiB = readPositiveInteger('ROUTE_STARTUP_MEMORY_COMPILED_GRAPH_MIB', 32);
+let effectiveCompiledGraphPaddingMiB = 0;
 const childHeapMiB = readPositiveInteger('ROUTE_STARTUP_MEMORY_CHILD_HEAP_MIB', 160);
 const childRssLimitMiB = readPositiveInteger('ROUTE_STARTUP_MEMORY_CHILD_RSS_MIB', 512);
 const timeoutMs = readPositiveInteger('ROUTE_STARTUP_MEMORY_TIMEOUT_MS', 20_000);
@@ -209,12 +214,12 @@ async function runHttpChecks(baseUrl: string): Promise<HttpCheckResult[]> {
     }),
     await runHttpCheck({
       baseUrl,
-      label: 'route-flow table fallback',
-      path: '/api/models/route-flow?model=perf-group-0',
+      label: 'route-flow graph runtime',
+      path: '/api/models/perf-group-0/route-flow',
       headers: adminHeaders,
       assertBody: (body) => {
-        if (!body.includes('"success":true') || !body.includes('"route-table"')) {
-          throw new Error('route-flow did not use the bounded route-table path');
+        if (!body.includes('"success":true') || !body.includes('"compiledRuntime"')) {
+          throw new Error(`route-flow did not return a compiled runtime: ${body.slice(0, 500)}`);
         }
       },
     }),
@@ -225,7 +230,7 @@ async function runHttpChecks(baseUrl: string): Promise<HttpCheckResult[]> {
       headers: proxyHeaders,
       assertBody: (body) => {
         if (!body.includes('perf-group-0')) {
-          throw new Error('proxy model list did not expose seeded route-table models');
+          throw new Error('proxy model list did not expose seeded compiled runtime models');
         }
       },
     }),
@@ -235,36 +240,63 @@ async function runHttpChecks(baseUrl: string): Promise<HttpCheckResult[]> {
 async function seedStartupDatabase(): Promise<number> {
   configureRouteRuntimeDataDir(dataDir);
   const started = performance.now();
-  await import('../../src/server/db/migrate.js');
+  await migrateRouteRuntimeDatabase();
   const dbModule: DbModule & { closeDbConnections: () => Promise<void> } = await import('../../src/server/db/index.js');
-  await seedRouteRuntimeFixture({
+  const seeded = await seedRouteRuntimeFixture({
     dbModule,
     groupCount,
     insertChunkSize,
   });
+  const { ROUTE_RUNTIME_STORAGE_ARTIFACT_BYTE_LIMIT } = await import('../../src/server/services/routeRuntimeArtifactService.js');
+  await publishSeededRouteRuntimeFixture(seeded, 'route-startup-memory-gate');
 
-  const createdAt = new Date().toISOString();
-  const sourceGraphJson = JSON.stringify({ version: 1, nodes: [], edges: [], macros: [] });
-  const compiledGraphJson = JSON.stringify({
-    version: 1,
-    hash: 'startup-memory-gate',
-    compiledRouterBundle: { version: 2, routes: [] },
-    padding: 'x'.repeat(compiledGraphPaddingMiB * 1024 * 1024),
-  });
-  const version = await dbModule.db.insert(dbModule.schema.routeGraphVersions).values({
-    version: 1,
-    sourceGraphJson,
-    compiledGraphJson,
-    status: 'active',
-    createdBy: 'startup-memory-gate',
-    createdAt,
-    activatedAt: createdAt,
-  }).returning().get();
-  await dbModule.db.insert(dbModule.schema.routeGraphActiveVersion).values({
-    id: 1,
-    versionId: version.id,
-    updatedAt: createdAt,
-  }).run();
+  const activePointer = await dbModule.db.select()
+    .from(dbModule.schema.routeGraphActiveVersion)
+    .where(eq(dbModule.schema.routeGraphActiveVersion.id, 1))
+    .get();
+  if (!activePointer) throw new Error('startup memory gate did not publish an active route graph');
+  const activeVersion = await dbModule.db.select()
+    .from(dbModule.schema.routeGraphVersions)
+    .where(eq(dbModule.schema.routeGraphVersions.id, activePointer.versionId))
+    .get();
+  if (!activeVersion) throw new Error('startup memory gate active Source Graph version is missing');
+  const runtimePointer = await dbModule.db.select()
+    .from(dbModule.schema.compiledRuntimeActiveArtifact)
+    .where(eq(dbModule.schema.compiledRuntimeActiveArtifact.id, 1))
+    .get();
+  if (!runtimePointer) throw new Error('startup memory gate has no active compiled runtime artifact');
+  const runtimeArtifact = await dbModule.db.select()
+    .from(dbModule.schema.compiledRuntimeArtifacts)
+    .where(eq(dbModule.schema.compiledRuntimeArtifacts.id, runtimePointer.artifactId))
+    .get();
+  if (!runtimeArtifact) throw new Error('startup memory gate active compiled runtime artifact is missing');
+
+  let compiledArtifact: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(runtimeArtifact.artifactJson);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('not an object');
+    compiledArtifact = parsed as Record<string, unknown>;
+  } catch (error) {
+    throw new Error(`startup memory gate could not parse the active compiled runtime artifact: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  const baseArtifactBytes = Buffer.byteLength(JSON.stringify({ ...compiledArtifact, startupMemoryPadding: '' }), 'utf8');
+  const requestedPaddingBytes = compiledGraphPaddingMiB * 1024 * 1024;
+  const artifactLimitBytes = Math.max(0, ROUTE_RUNTIME_STORAGE_ARTIFACT_BYTE_LIMIT - baseArtifactBytes - 1_024);
+  // JSON parsing temporarily retains both the source bytes and the decoded
+  // string. Keep the synthetic payload below a fifth of the child heap so the
+  // gate tests startup behavior rather than forcing a V8 allocation failure.
+  const heapSafePaddingBytes = Math.floor(childHeapMiB * 1024 * 1024 * 0.2);
+  const paddingBytes = Math.min(requestedPaddingBytes, artifactLimitBytes, heapSafePaddingBytes);
+  effectiveCompiledGraphPaddingMiB = paddingBytes / (1024 * 1024);
+  await dbModule.db.update(dbModule.schema.compiledRuntimeArtifacts)
+    .set({
+      artifactJson: JSON.stringify({
+        ...compiledArtifact,
+        startupMemoryPadding: 'x'.repeat(paddingBytes),
+      }),
+    })
+    .where(eq(dbModule.schema.compiledRuntimeArtifacts.id, runtimeArtifact.id))
+    .run();
   await dbModule.closeDbConnections();
   return round(performance.now() - started, 1);
 }
@@ -327,6 +359,7 @@ async function main(): Promise<void> {
       groupCount,
       insertChunkSize,
       compiledGraphPaddingMiB,
+      effectiveCompiledGraphPaddingMiB: round(effectiveCompiledGraphPaddingMiB),
       childHeapMiB,
       childRssLimitMiB,
       timeoutMs,

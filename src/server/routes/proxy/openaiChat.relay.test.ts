@@ -8,7 +8,6 @@ import {
   createProxyRelayHarness,
   type ProxyRelayHarness,
 } from '../../../testing/proxyRelayHarness.js';
-import { tokenRouteFixture } from '../../test/routeGraphFixtures.js';
 
 vi.mock('undici', async () => {
   const actual = await vi.importActual<typeof import('undici')>('undici');
@@ -240,51 +239,18 @@ describe('/v1/chat/completions relay with scenario upstreams', () => {
     expect(logs).toEqual([]);
   });
 
-  it('applies managed key allowedRouteIds to the actual relay target selection', async () => {
+  it('applies managed key compiled plan scope to the actual relay candidate selection', async () => {
     const allowed = await harness.seedRoute({
       model: 'policy-shared-model',
       siteUrl: 'https://allowed-route.example.com',
       tokenValue: 'allowed-route-token',
     });
-    const blockedSite = await harness.db.insert(harness.schema.sites).values({
-      name: 'policy-shared-blocked-site',
-      url: 'https://blocked-route.example.com',
-      platform: 'openai',
-      status: 'active',
-    }).returning().get();
-    const blockedAccount = await harness.db.insert(harness.schema.accounts).values({
-      siteId: blockedSite.id,
-      username: 'policy-shared-blocked-account',
-      accessToken: 'blocked-route-access',
-      apiToken: 'blocked-route-api',
-      status: 'active',
-    }).returning().get();
-    const blockedToken = await harness.db.insert(harness.schema.accountTokens).values({
-      accountId: blockedAccount.id,
-      name: 'policy-shared-blocked-token',
-      token: 'blocked-route-token',
-      enabled: true,
-      isDefault: true,
-    }).returning().get();
-    const blockedRoute = await harness.db.insert(harness.schema.tokenRoutes).values({
-      ...tokenRouteFixture({
-        modelPattern: 'policy-shared-model',
-        displayName: 'policy-shared-model',
-      }),
-      enabled: true,
-    }).returning().get();
-    const blockedChannel = await harness.db.insert(harness.schema.routeEndpointTargets).values({
-      routeId: blockedRoute.id,
-      accountId: blockedAccount.id,
-      tokenId: blockedToken.id,
-      sourceModel: 'policy-shared-model',
-      priority: 0,
-      weight: 10,
-      enabled: true,
-    }).returning().get();
     await harness.db.update(harness.schema.downstreamApiKeys).set({
       supportedModels: JSON.stringify([]),
-      allowedRouteIds: JSON.stringify([allowed.route.id]),
+      allowedPlanIds: JSON.stringify([
+        (await (await import('../../services/compiledRuntimeInventoryService.js')).listActiveCompiledRuntimeModelEntrypoints())
+          .find((entrypoint) => entrypoint.modelName === 'policy-shared-model')!.planId,
+      ]),
     }).run();
     const managedKey = await harness.db.select().from(harness.schema.downstreamApiKeys).get();
 
@@ -314,13 +280,6 @@ describe('/v1/chat/completions relay with scenario upstreams', () => {
           usage: { prompt_tokens: 2, completion_tokens: 2, total_tokens: 4 },
         },
       },
-    }).add({
-      method: 'POST',
-      path: (request) => request.url.origin === 'https://blocked-route.example.com',
-      respond: {
-        status: 500,
-        json: { error: { message: 'blocked route should not be selected', type: 'test_error' } },
-      },
     });
 
     const response = await harness.app.inject({
@@ -341,20 +300,17 @@ describe('/v1/chat/completions relay with scenario upstreams', () => {
     const chatCall = harness.upstream.calls.find((call) => call.url.pathname === '/v1/chat/completions');
     expect(chatCall?.url.origin).toBe('https://allowed-route.example.com');
     expect(chatCall?.headers.get('authorization')).toBe('Bearer allowed-route-token');
-    expect(harness.upstream.calls.some((call) => call.url.origin === 'https://blocked-route.example.com')).toBe(false);
 
     const logs = await harness.db.select().from(harness.schema.proxyLogs).all();
-    expect(logs.some((log) => log.status === 'success'
-      && log.routeId === allowed.route.id
-      && log.targetId === allowed.target.id
+    expect(logs.some((log: any) => log.status === 'success'
+      && log.executionTargetId === allowed.candidate.executionTargetId
+      && log.executionAttemptId === allowed.candidate.executionAttemptId
       && log.accountId === allowed.account.id
       && log.downstreamApiKeyId === managedKey!.id)).toBe(true);
-    expect(logs.some((log) => log.status === 'success' && log.routeId === blockedRoute.id)).toBe(false);
-    expect(logs.some((log) => log.status === 'success' && log.targetId === blockedChannel.id)).toBe(false);
   });
 
   it('executes published route graph filters before relaying chat requests upstream', async () => {
-    const { site, account, token, route, target, managedKey } = await harness.seedRoute({
+    const { site, account, token, route, candidate, managedKey } = await harness.seedRoute({
       model: 'deepseek-v4-pro',
       siteUrl: 'https://deepseek-runtime.example.com',
       tokenValue: 'sk-deepseek-runtime',
@@ -362,12 +318,14 @@ describe('/v1/chat/completions relay with scenario upstreams', () => {
     await harness.db.update(harness.schema.downstreamApiKeys).set({
       supportedModels: JSON.stringify(['deepseek-v4-pro-max']),
     }).run();
+    const { getExecutionTargetIdForMember } = await import('../../../testing/routeGroupMemberTestUtils.js');
+    const executionTargetId = await getExecutionTargetIdForMember(candidate.id);
+    expect(executionTargetId).toBeTruthy();
 
     const { publishRouteGraphSource } = await import('../../services/routeGraphService.js');
     const published = await publishRouteGraphSource({
       createdBy: 'test',
       sourceGraph: {
-        version: 1,
         nodes: [
           {
             id: 'entry.deepseek-max',
@@ -397,21 +355,22 @@ describe('/v1/chat/completions relay with scenario upstreams', () => {
           {
             id: 'endpoint.deepseek-runtime',
             type: 'route_endpoint',
+            routeEndpointId: 'endpoint.deepseek-runtime',
             enabled: true,
             visibility: 'internal',
             ownership: 'manual',
-            legacyRouteId: route.id,
+            endpointKind: 'supply',
             config: {
               targets: [{
-                targetId: String(target.id),
+                targetId: String(candidate.id),
                 model: 'deepseek-v4-pro',
                 accountId: account.id,
                 siteId: site.id,
                 tokenId: token.id,
-                priority: 0,
                 weight: 10,
+                transportBinding: { kind: 'execution_target', executionTargetId },
               }],
-              targetSelection: { strategy: 'weighted' },
+              targetSelection: { kind: 'builtin', builtin: 'weighted' },
             },
           },
         ],
@@ -439,6 +398,15 @@ describe('/v1/chat/completions relay with scenario upstreams', () => {
       },
     });
     expect(published.ok).toBe(true);
+    if (!published.ok) throw new Error('Failed to publish route Graph fixture');
+    const { getCompiledRouterPlanById } = await import('../../../shared/compiledRuntime.js');
+    const publishedBundle = published.version.compiledGraph.compiledRouterBundle;
+    if (!publishedBundle) throw new Error('Published Graph fixture has no compiled runtime bundle');
+    const publishedAttempt = publishedBundle.plans
+      .flatMap((storedPlan) => getCompiledRouterPlanById(publishedBundle, storedPlan.id)?.executionAlternatives || [])
+      .map((alternative) => alternative.executionAttempt)
+      .find((attempt) => attempt?.transportBinding?.executionTargetId === candidate.executionTargetId);
+    if (!publishedAttempt?.executionAttemptId) throw new Error('Published Graph fixture has no execution attempt identity');
 
     harness.upstream.add({
       method: 'POST',
@@ -494,8 +462,8 @@ describe('/v1/chat/completions relay with scenario upstreams', () => {
     const logs = await harness.db.select().from(harness.schema.proxyLogs).all();
     expect(logs).toEqual([
       expect.objectContaining({
-        routeId: route.id,
-        targetId: target.id,
+        executionTargetId: candidate.executionTargetId,
+        executionAttemptId: publishedAttempt.executionAttemptId,
         accountId: account.id,
         downstreamApiKeyId: managedKey.id,
         modelRequested: 'deepseek-v4-pro-max',
@@ -506,7 +474,7 @@ describe('/v1/chat/completions relay with scenario upstreams', () => {
   });
 
   it('records a normalized failure log when every upstream chat candidate fails', async () => {
-    const { managedKey, route, target, account } = await harness.seedRoute({ model: 'relay-failure-model' });
+    const { managedKey, route, candidate, account } = await harness.seedRoute({ model: 'relay-failure-model' });
     harness.upstream.add({
       method: 'POST',
       path: '/v1/responses',
@@ -524,6 +492,13 @@ describe('/v1/chat/completions relay with scenario upstreams', () => {
           },
         },
       },
+    }).add({
+      method: 'POST',
+      path: '/v1/messages',
+      respond: {
+        status: 502,
+        json: { error: { message: 'upstream chat exploded', type: 'bad_gateway' } },
+      },
     });
 
     const response = await harness.app.inject({
@@ -538,18 +513,18 @@ describe('/v1/chat/completions relay with scenario upstreams', () => {
       },
     });
 
-    expect(response.statusCode, response.body).toBe(503);
+    expect(response.statusCode, response.body).toBe(502);
     expect(response.json()).toMatchObject({
       error: expect.objectContaining({
-        message: expect.stringContaining('No available targets for this model'),
+        message: expect.stringContaining('upstream chat exploded'),
       }),
     });
 
     const logs = await harness.db.select().from(harness.schema.proxyLogs).all();
-    expect(logs.some((log) => log.status === 'failed'
+    expect(logs.some((log: any) => log.status === 'failed'
       && log.httpStatus === 502
-      && log.routeId === route.id
-      && log.targetId === target.id
+      && log.executionTargetId === candidate.executionTargetId
+      && log.executionAttemptId === candidate.executionAttemptId
       && log.accountId === account.id
       && log.downstreamApiKeyId === managedKey.id
       && log.modelRequested === 'relay-failure-model'

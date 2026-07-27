@@ -1,7 +1,7 @@
 import { TextDecoder } from 'node:util';
+import { performance } from 'node:perf_hooks';
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import { config } from '../../config.js';
-import { tokenRouter } from '../../services/tokenRouter.js';
 import type { RouteExecutionScope } from '../../services/routeExecutionScopeTypes.js';
 import { reportProxyAllFailed } from '../../services/alertService.js';
 import { hasProxyUsagePayload, mergeProxyUsage, parseProxyUsage } from '../../services/proxyUsageParser.js';
@@ -16,7 +16,7 @@ import {
 import {
   ensureModelAllowedForDownstreamKey,
   getDownstreamRoutingPolicy,
-  recordDownstreamCostUsage,
+  recordDownstreamBillingUsage,
 } from '../downstreamPolicy.js';
 import { executeEndpointFlow, type BuiltEndpointRequest } from './endpointFlow.js';
 import { detectProxyFailure } from '../../services/proxyFailureJudge.js';
@@ -28,7 +28,7 @@ import { getProxyMaxTargetRetries } from '../../services/proxyTargetRetry.js';
 import { shouldAbortSameSiteEndpointFallback } from '../../services/proxyRetryPolicy.js';
 import { applyOpenAiServiceTierPolicy } from '../serviceTierPolicy.js';
 import { maybeHandleWebSearchOnlySimulation } from '../webSearchSimulation.js';
-import { buildUpstreamUrl } from './upstreamRequest.js';
+import { buildUpstreamUrl, type UpstreamEndpoint } from './upstreamRequest.js';
 import {
   shouldForceResponsesUpstreamStream,
   sanitizeCompactResponsesRequestBody,
@@ -56,15 +56,17 @@ import {
   buildSurfaceTargetBusyMessage,
   buildSurfaceStickySessionKey,
   clearSurfaceStickyTarget,
+  createSurfaceRuntimeDecisionSession,
   createSurfaceFailureToolkit,
   createSurfaceDispatchRequest,
   getSurfaceStickyPreferredTargetId,
+  markSurfaceExecutionAttemptStarted,
+  previewSurfaceRuntimeDecisionInSession,
   recordSurfaceSuccess,
-  selectSurfaceTargetForAttempt,
+  selectSurfaceRuntimeDecisionInSession,
   trySurfaceOauthRefreshRecovery,
 } from './sharedProxyOrchestration.js';
 import { runWithSiteApiEndpointPool, SiteApiEndpointRequestError } from '../../services/siteApiEndpointService.js';
-import { evaluateActiveRouteGraphForModel } from '../../services/routeGraphRuntimeService.js';
 import { resolveDispatchUpstreamCompatibilityPolicy } from '../../services/upstreamCompatibilityPolicyResolver.js';
 import {
   classifyEndpointObservationFailure,
@@ -79,15 +81,18 @@ import {
   safeFinalizeSurfaceProxyDebugTrace,
   safeInsertSurfaceProxyDebugAttempt,
   safeUpdateSurfaceProxyDebugAttempt,
-  safeUpdateSurfaceProxyDebugCandidates,
+  safeUpdateSurfaceProxyDebugRuntime,
   safeUpdateSurfaceProxyDebugSelection,
   startSurfaceProxyDebugTrace,
 } from '../../services/proxyDebugTraceRuntime.js';
 import {
-  buildForcedTargetUnavailableMessage,
-  canRetryTargetSelection,
-  getTesterForcedTargetId,
-} from '../targetSelection.js';
+  buildForcedExecutionAttemptUnavailableMessage,
+  canRetryExecutionAttemptSelection,
+  getTesterForcedExecutionAttemptId,
+} from '../executionAttemptSelection.js';
+import {
+  recordRouteRuntimeExecutionAttemptFailure,
+} from '../../services/routeRuntimeExecutionService.js';
 import { resolvePlatformProfile } from '../platforms/registry.js';
 import type { DownstreamProtocolAdapter, TransformedDownstreamRequest } from '../formats/types.js';
 import { createConfiguredProtocolAdapter } from '../formats/configuredProtocolAdapter.js';
@@ -98,12 +103,23 @@ import {
   setCodexSessionResponseId,
 } from '../runtime/codexSessionResponseStore.js';
 import { getCodexSessionHeaderValue } from '../platforms/headers.js';
+import { buildCompiledRouteRuntimeRequestSnapshot } from './compiledRouteRuntimeRequest.js';
+import { runtimeCapabilityRequiresSingleNativeVariant } from '../capabilities/requestCapabilityRequirement.js';
+import {
+  bindCompiledRuntimeExecutionDecision,
+  completeCompiledRuntimeExecutionSession,
+  resumeCompiledRuntimeExecutionSession,
+  startCompiledRuntimeExecutionSession,
+} from '../../services/compiledRuntimeExecutionSessionService.js';
 
 const EMPTY_PROXY_USAGE = {
   promptTokens: 0,
   completionTokens: 0,
   totalTokens: 0,
 };
+
+const INTERNAL_RUNTIME_REQUEST_ID_HEADER = 'x-metapi-runtime-request-id';
+const RESPONSES_WEBSOCKET_TRANSPORT_HEADER = 'x-metapi-responses-websocket-transport';
 
 function finalizeRetryAsUpstreamFailure(status: number, message: string) {
   return {
@@ -155,14 +171,13 @@ export async function handleGenericSurfaceRequest(
   adapter: DownstreamProtocolAdapter,
   downstreamPath: string,
 ) {
-  try {
-    const clientContext = detectDownstreamClientContext({
+  const clientContext = detectDownstreamClientContext({
       downstreamPath,
       headers: request.headers as Record<string, unknown>,
       body: request.body,
     });
 
-    const downstreamPolicy = getDownstreamRoutingPolicy(request);
+    const downstreamPolicy = await getDownstreamRoutingPolicy(request);
     const adapterConfig = downstreamPolicy?.protocolAdapterConfigs?.[adapter.format] || {};
     adapter = createConfiguredProtocolAdapter(
       adapter,
@@ -194,6 +209,10 @@ export async function handleGenericSurfaceRequest(
       endpointCandidates: fixedEndpointCandidates,
       disableCrossProtocolFallback,
     } = transformed;
+    const usesProtocolAdapterRequest = !!(
+      adapter.buildUpstreamRequest
+      && transformed.upstreamRequestMode === 'protocol_adapter'
+    );
 
     const isCodexSite = isCodexResponsesSurface(request.headers);
     const defaultEncryptedReasoningInclude = isCodexSite;
@@ -209,20 +228,12 @@ export async function handleGenericSurfaceRequest(
     }
 
     if (!await ensureModelAllowedForDownstreamKey(request, reply, requestedModel)) return;
-    const forcedTargetId = getTesterForcedTargetId({
+    const forcedExecutionAttemptId = getTesterForcedExecutionAttemptId({
       headers: request.headers as Record<string, unknown>,
       clientIp: request.ip,
     });
     const downstreamApiKeyId = getProxyAuthContext(request)?.keyId ?? null;
     const maxRetries = getProxyMaxTargetRetries();
-    const failureToolkit = createSurfaceFailureToolkit({
-      warningScope: adapter.format,
-      downstreamPath,
-      maxRetries,
-      clientContext,
-      downstreamApiKeyId,
-    });
-
     const stickySessionKey = buildSurfaceStickySessionKey({
       clientContext,
       requestedModel,
@@ -241,6 +252,44 @@ export async function handleGenericSurfaceRequest(
     if (simulationHandled) return;
 
     const normalizedOpenAiBody = openAiBody;
+    const compiledRouteRequest = buildCompiledRouteRuntimeRequestSnapshot({
+      requestedModel,
+      payload: request.body,
+      normalizedPayload: normalizedOpenAiBody,
+      headers: request.headers as Record<string, unknown>,
+      method: request.method,
+      path: downstreamPath,
+      query: (request.query || {}) as Record<string, unknown>,
+      clientContext,
+      downstreamApiKeyId,
+    });
+    const resumedRequestId = String(request.headers[INTERNAL_RUNTIME_REQUEST_ID_HEADER] || '').trim();
+    const executionSession = (
+      String(request.headers[RESPONSES_WEBSOCKET_TRANSPORT_HEADER] || '') === '1'
+      && resumedRequestId
+        ? await resumeCompiledRuntimeExecutionSession(resumedRequestId)
+        : null
+    ) || await startCompiledRuntimeExecutionSession({
+      downstreamPath,
+      requestedModel,
+      isStream,
+      downstreamApiKeyId,
+    });
+    const runtimeDecisionSession = await createSurfaceRuntimeDecisionSession({
+      requestedModel,
+      request: compiledRouteRequest,
+      downstreamPolicy,
+      forcedExecutionAttemptId,
+      stickyExecutionTargetId: getSurfaceStickyPreferredTargetId(stickySessionKey),
+    });
+    const failureToolkit = createSurfaceFailureToolkit({
+      requestId: executionSession.requestId,
+      executionSession,
+      warningScope: adapter.format,
+      downstreamPath,
+      clientContext,
+      downstreamApiKeyId,
+    });
 
     const debugTrace = await startSurfaceProxyDebugTrace({
       downstreamPath,
@@ -253,61 +302,68 @@ export async function handleGenericSurfaceRequest(
       requestBody: request.body,
     });
 
-    const initialGraphSelection = await evaluateActiveRouteGraphForModel(requestedModel);
-    if (initialGraphSelection?.terminalKind === 'synthetic_endpoint') {
-      const statusCode = initialGraphSelection.syntheticResponse?.statusCode || 503;
-      const payload = {
-        error: {
-          message: initialGraphSelection.syntheticResponse?.message || 'No route is available.',
-          type: statusCode === 429 ? 'rate_limit_error' as const : 'server_error' as const,
-        },
-      };
-      await safeFinalizeSurfaceProxyDebugTrace(debugTrace, {
-        finalStatus: 'failure',
-        finalHttpStatus: statusCode,
-        finalResponseHeaders: {},
-        finalResponseBody: {
-          ...payload,
-          routeGraph: {
-            terminalNodeId: initialGraphSelection.terminalNodeId,
-            terminalKind: initialGraphSelection.terminalKind,
-            trace: initialGraphSelection.trace,
-          },
-        },
-      });
-      return reply.code(statusCode).send(payload);
-    }
-
     let retryCount = 0;
     const excludeTargetIds: number[] = [];
     let routeExecutionScope: RouteExecutionScope | null = null;
 
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const willContinueAfterFailure = async (status: number, errorText: string): Promise<boolean> => {
+      if (!failureToolkit.isRetryable(status, errorText)) return false;
+      if (!canRetryExecutionAttemptSelection(retryCount, forcedExecutionAttemptId)) return false;
+      return await previewSurfaceRuntimeDecisionInSession({
+        session: runtimeDecisionSession,
+        excludeTargetIds,
+        retryCount: retryCount + 1,
+        routeExecutionScope,
+      }) !== null;
+    };
+
+    try {
+      for (let attempt = 0; attempt <= maxRetries; attempt++) {
       const stickyPreferredTargetId = getSurfaceStickyPreferredTargetId(stickySessionKey);
 
-      const selected: any = adapter.selectChannel
-        ? await adapter.selectChannel({
-            requestedModel,
-            policy: downstreamPolicy,
-            excludeTargetIds,
-            forcedTargetId,
-            routeExecutionScope,
-          })
-        : await selectSurfaceTargetForAttempt({
-            requestedModel,
-            downstreamPolicy,
-            excludeTargetIds,
-            forcedTargetId,
-            retryCount: attempt,
-            stickySessionKey,
-            routeExecutionScope,
-          });
+      const decision = await selectSurfaceRuntimeDecisionInSession({
+        session: runtimeDecisionSession,
+        excludeTargetIds,
+        retryCount: attempt,
+        routeExecutionScope,
+      });
+
+      if (decision?.kind === 'synthetic_response') {
+        const statusCode = decision.statusCode;
+        const payload = {
+          error: {
+            message: decision.message,
+            type: statusCode === 429 ? 'rate_limit_error' as const : 'server_error' as const,
+          },
+        };
+        await safeFinalizeSurfaceProxyDebugTrace(debugTrace, {
+          finalStatus: 'failure',
+          finalHttpStatus: statusCode,
+          finalResponseHeaders: {},
+          finalResponseBody: {
+            ...payload,
+            compiledRuntime: {
+              terminalNodeId: decision.terminalNodeId,
+              terminalKind: decision.kind,
+              trace: decision.runtimeTrace,
+            },
+          },
+        });
+        await completeCompiledRuntimeExecutionSession(executionSession, {
+          status: 'failure',
+          httpStatus: statusCode,
+          isStream,
+          errorMessage: decision.message,
+        });
+        return reply.code(statusCode).send(payload);
+      }
+      const selected = decision?.kind === 'execution_attempt' ? decision.attempt : null;
 
       if (!selected) {
-        const noTargetMessage = buildForcedTargetUnavailableMessage(forcedTargetId);
+        const noTargetMessage = buildForcedExecutionAttemptUnavailableMessage(forcedExecutionAttemptId);
         await reportProxyAllFailed({
           model: requestedModel,
-          reason: forcedTargetId ? noTargetMessage : 'No available targets after retries',
+          reason: forcedExecutionAttemptId ? noTargetMessage : 'No available execution attempts after retries',
         });
         const payload = {
           error: { message: noTargetMessage, type: 'server_error' as const },
@@ -318,6 +374,12 @@ export async function handleGenericSurfaceRequest(
           finalResponseHeaders: {},
           finalResponseBody: payload,
         });
+        await completeCompiledRuntimeExecutionSession(executionSession, {
+          status: 'failure',
+          httpStatus: 503,
+          isStream,
+          errorMessage: noTargetMessage,
+        });
         return reply.code(503).send({
           error: { message: noTargetMessage, type: 'server_error' },
         });
@@ -325,30 +387,40 @@ export async function handleGenericSurfaceRequest(
 
       excludeTargetIds.push(selected.target.id);
       routeExecutionScope = selected.routeExecutionScope ?? routeExecutionScope;
+      const selectedExecutionAttemptId = selected.executionAttemptId;
+      await bindCompiledRuntimeExecutionDecision({
+        requestId: executionSession.requestId,
+        routeEntrypointId: selected.routeEntrypointId,
+        runtimeEndpointId: selected.runtimeEndpointId,
+        executionAttemptId: selected.executionAttemptId,
+        runtimeBundleHash: selected.routeRuntimeSnapshot.compiledRuntime.bundleHash,
+        decisionSnapshot: selected.routeRuntimeSnapshot,
+      });
       await safeUpdateSurfaceProxyDebugSelection(debugTrace, {
         stickySessionKey,
-        stickyHitTargetId: (
+        stickyHitExecutionAttemptId: (
           stickyPreferredTargetId && stickyPreferredTargetId === selected.target.id
-            ? stickyPreferredTargetId
+            ? selectedExecutionAttemptId
             : null
         ),
-        selectedTargetId: selected.target.id,
-        selectedRouteId: selected.target.routeId ?? null,
+        selectedExecutionAttemptId,
+        routeEntrypointId: selected.routeEntrypointId,
+        runtimeEndpointId: selected.runtimeEndpointId,
         selectedAccountId: selected.account.id,
         selectedSiteId: selected.site.id,
         selectedSitePlatform: selected.site.platform,
       });
 
-      const modelName = selected.actualModel || requestedModel;
-      const routeGraphFilters = selected.routeGraph?.postBuildFilters ?? null;
+      const modelName = selected.actualModel;
+      const runtimePostBuildFilters = selected.postBuildFilters ?? null;
       const platformProfile = resolvePlatformProfile(selected.site.platform);
       const compatibilityPolicy = resolveDispatchUpstreamCompatibilityPolicy({
         defaultCompatibilityPolicy: platformProfile?.defaultCompatibilityPolicy,
         site: selected.site,
         account: selected.account,
         token: selected.token,
-        routeEndpointCompatibilityPolicy: selected.routeGraph?.routeEndpointCompatibilityPolicy,
-        selectedEndpointTarget: selected.routeGraph?.selectedEndpointTarget,
+        routeEndpointCompatibilityPolicy: selected.routeEndpointCompatibilityPolicy,
+        executionAttemptCompatibilityPolicy: selected.executionAttemptCompatibilityPolicy,
       });
       const oauth = getOauthInfoFromAccount(selected.account);
 
@@ -365,6 +437,7 @@ export async function handleGenericSurfaceRequest(
         : null;
 
       const startTime = Date.now();
+      const startTimeMonotonicMs = performance.now();
       const leaseResult = await acquireSurfaceTargetLease({
         stickySessionKey,
         selected,
@@ -404,6 +477,7 @@ export async function handleGenericSurfaceRequest(
 
       const targetLease = leaseResult.lease;
       try {
+        await markSurfaceExecutionAttemptStarted({ selected });
         const debugAttemptIndex = attempt;
 
       const finalizeDebugSuccess = async (
@@ -450,7 +524,7 @@ export async function handleGenericSurfaceRequest(
         };
         const targetUrlForAttemptPath = (
           requestUrl: string | undefined,
-          endpoint: CompatibilityEndpoint,
+          endpoint: UpstreamEndpoint,
           requestPath: string,
         ): string | undefined => {
           const trimmed = String(requestUrl || '').trim();
@@ -462,7 +536,7 @@ export async function handleGenericSurfaceRequest(
           }
           return buildUpstreamUrl(siteApiBaseUrl, requestPath);
         };
-        const buildEndpointRequest = (endpoint: CompatibilityEndpoint, apiAttempt?: ApiAttempt) => {
+        const buildEndpointRequest = (endpoint: UpstreamEndpoint, apiAttempt?: ApiAttempt) => {
           const upstreamStream = isStream || (forceResponsesUpstreamStream && endpoint === 'responses');
           const passthroughHeaders = adapter.extractPassthroughHeaders(request.headers as Record<string, unknown>);
           const platformHeaders = buildOauthProviderHeaders({
@@ -470,7 +544,7 @@ export async function handleGenericSurfaceRequest(
             downstreamHeaders: request.headers as Record<string, unknown>,
           });
 
-          if (adapter.buildUpstreamRequest && transformed.requestKind) {
+          if (usesProtocolAdapterRequest && adapter.buildUpstreamRequest) {
             const currentOauth = getOauthInfoFromAccount(selected.account);
             const adapterRequest = adapter.buildUpstreamRequest({
               endpoint,
@@ -485,7 +559,7 @@ export async function handleGenericSurfaceRequest(
               passthroughHeaders,
               platformHeaders,
               transformed,
-              routeGraphFilters,
+              runtimePostBuildFilters,
               compatibilityPolicy,
             });
             return {
@@ -556,7 +630,7 @@ export async function handleGenericSurfaceRequest(
             passthroughHeaders,
             platformHeaders,
             codexExplicitSessionId: codexSessionId || null,
-            routeGraphFilters,
+            runtimePostBuildFilters,
             compatibilityPolicy,
           });
           const upstreamPath = (
@@ -622,13 +696,13 @@ export async function handleGenericSurfaceRequest(
           return baseDispatchRequest(endpointRequest, targetUrl, signal);
         };
 
-        const requestCapabilities = transformed.requestCapabilities || {};
-        const conversationFileSummary = requestCapabilities.conversationFileSummary;
-        const hasNonImageFileInput = requestCapabilities.hasNonImageFileInput === true;
-        const prefersNativeResponsesReasoning = requestCapabilities.wantsNativeResponsesReasoning === true;
-        const requiresNativeResponsesFileUrl = requestCapabilities.requiresNativeResponsesFileUrl === true;
+        const surfaceCapabilityHints = transformed.surfaceCapabilityHints || {};
+        const conversationFileSummary = surfaceCapabilityHints.conversationFileSummary;
+        const hasNonImageFileInput = surfaceCapabilityHints.hasNonImageFileInput === true;
+        const prefersNativeResponsesReasoning = surfaceCapabilityHints.wantsNativeResponsesReasoning === true;
+        const requiresNativeResponsesFileUrl = surfaceCapabilityHints.requiresNativeResponsesFileUrl === true;
 
-        const rawCandidates = fixedEndpointCandidates || (transformed.requestKind
+        const rawCandidates = fixedEndpointCandidates || (usesProtocolAdapterRequest
           ? await resolveUpstreamEndpointCandidates(
               { site: selected.site, account: selected.account },
               modelName,
@@ -640,8 +714,9 @@ export async function handleGenericSurfaceRequest(
                 wantsNativeResponsesReasoning: prefersNativeResponsesReasoning,
               },
               {
-                requestKind: transformed.requestKind as any,
+                operationHint: transformed.operationHint as any,
                 requiresNativeResponsesFileUrl,
+                runtimeCapabilityRequirement: transformed.runtimeCapabilityRequirement,
               },
             )
           : isCompactRequest
@@ -656,8 +731,9 @@ export async function handleGenericSurfaceRequest(
                 wantsNativeResponsesReasoning: prefersNativeResponsesReasoning,
               },
               {
-                requestKind: 'responses-compact',
+                operationHint: 'responses-compact',
                 requiresNativeResponsesFileUrl,
+                runtimeCapabilityRequirement: transformed.runtimeCapabilityRequirement,
               },
             )
           : await resolveUpstreamEndpointCandidates(
@@ -672,13 +748,19 @@ export async function handleGenericSurfaceRequest(
               },
               {
                 requiresNativeResponsesFileUrl,
+                runtimeCapabilityRequirement: transformed.runtimeCapabilityRequirement,
               },
             ));
         const candidates = prioritizeEndpointCandidates(
           rawCandidates,
-          routeGraphFilters?.endpointPreference,
+          runtimePostBuildFilters?.endpointPreference,
         );
-        const endpointFallbackDisabled = !!disableCrossProtocolFallback || isCompactRequest || config.disableCrossProtocolFallback;
+        const endpointFallbackDisabled = (
+          !!disableCrossProtocolFallback
+          || isCompactRequest
+          || config.disableCrossProtocolFallback
+          || runtimeCapabilityRequiresSingleNativeVariant(transformed.runtimeCapabilityRequirement)
+        );
         const apiVariantConfig = await loadCredentialApiVariantConfig({
           siteId: selected.site.id,
           accountId: selected.account.id,
@@ -701,6 +783,7 @@ export async function handleGenericSurfaceRequest(
           endpointModelObservations: apiVariantConfig?.endpointModelObservations,
           siteUrl: siteApiBaseUrl,
           disableCrossProtocolFallback: endpointFallbackDisabled,
+          runtimeCapabilityRequirement: transformed.runtimeCapabilityRequirement,
         });
         const plannedCandidates = endpointCandidatesFromApiAttemptPlan(apiAttemptPlan);
         const plannedAttempts = apiAttemptPlan.attempts;
@@ -717,19 +800,26 @@ export async function handleGenericSurfaceRequest(
         const endpointRuntimeContext = {
           siteId: selected.site.id,
           modelName,
-          downstreamFormat: (adapter.format === 'responses' ? 'responses' : (adapter.format.startsWith('openai') ? 'openai' : 'claude')) as any,
+          downstreamFormat: (adapter.format === 'responses'
+            ? 'responses'
+            : adapter.format === 'openai/chat'
+              ? 'openai'
+              : adapter.format) as any,
           requestedModelHint: requestedModel,
-          requestCapabilities: {
+          surfaceCapabilityHints: {
             hasNonImageFileInput,
             conversationFileSummary,
             wantsNativeResponsesReasoning: prefersNativeResponsesReasoning,
           },
         };
 
-        await safeUpdateSurfaceProxyDebugCandidates(debugTrace, {
-          endpointCandidates: plannedCandidates,
-          endpointRuntimeState: getUpstreamEndpointRuntimeStateSnapshot(endpointRuntimeContext),
-          decisionSummary: {
+        await safeUpdateSurfaceProxyDebugRuntime(debugTrace, {
+          protocol: {
+            endpointCandidates: plannedCandidates,
+            apiAttemptPlan: summarizeApiAttemptPlanForDebug(apiAttemptPlan),
+          },
+          runtimeState: getUpstreamEndpointRuntimeStateSnapshot(endpointRuntimeContext),
+          context: {
             retryCount,
             downstreamFormat: adapter.format,
             stickySessionKey,
@@ -738,7 +828,7 @@ export async function handleGenericSurfaceRequest(
             isCodexSite,
             isCompactRequest,
             credentialKey,
-            apiAttemptPlan: summarizeApiAttemptPlanForDebug(apiAttemptPlan),
+            runtimeCapabilityRequirement: transformed.runtimeCapabilityRequirement ?? null,
           },
         });
 
@@ -752,7 +842,7 @@ export async function handleGenericSurfaceRequest(
         const debugAttemptBase = reserveSurfaceProxyDebugAttemptBase(debugTrace, plannedCandidates.length);
         const getDebugAttemptIndex = (endpointIndex: number) => debugAttemptBase + endpointIndex;
 
-        const endpointStrategy = adapter.buildUpstreamRequest && transformed.requestKind
+        const endpointStrategy = usesProtocolAdapterRequest
           ? null
           : adapter.format === 'responses'
           ? protocolAdapters.responses.createEndpointStrategy({
@@ -877,18 +967,7 @@ export async function handleGenericSurfaceRequest(
             ctx.rawErrText || ctx.errText,
           ),
           onAttemptFailure: async (ctx) => {
-            const latency = Date.now() - startTime;
             const status = ctx.response.status || 502;
-            if (adapter.buildUpstreamRequest && transformed.requestKind) {
-              try {
-                await tokenRouter.recordFailure?.(selected.target.id, {
-                  status,
-                  errorText: ctx.rawErrText || ctx.errText,
-                });
-              } catch {
-                // best effort only
-              }
-            }
             const memoryWrite = recordUpstreamEndpointFailure({
               ...endpointRuntimeContext,
               endpoint: ctx.request.endpoint,
@@ -925,21 +1004,6 @@ export async function handleGenericSurfaceRequest(
               rawErrorText: ctx.rawErrText || ctx.errText,
               recoverApplied: ctx.recoverApplied === true,
               memoryWrite,
-            });
-            await failureToolkit.log({
-              selected,
-              modelRequested: requestedModel,
-              status: 'failed',
-              httpStatus: status,
-              errorMessage: adapter.buildUpstreamRequest && transformed.requestKind
-                ? (ctx.rawErrText || ctx.errText || 'Attempt failed')
-                : (ctx.errText || 'Attempt failed'),
-              retryCount,
-              latencyMs: latency,
-              promptTokens: 0,
-              completionTokens: 0,
-              totalTokens: 0,
-              upstreamPath: formatLoggedUpstreamPath(adapter, ctx.request.path),
             });
           },
           onAttemptSuccess: async (ctx) => {
@@ -978,7 +1042,7 @@ export async function handleGenericSurfaceRequest(
 
       let endpointResult: Awaited<ReturnType<typeof executeEndpointFlow>> | null = null;
       try {
-        const usesAdapterBuiltRequest = !!(adapter.buildUpstreamRequest && transformed.requestKind);
+        const usesAdapterBuiltRequest = usesProtocolAdapterRequest;
         endpointResult = !usesAdapterBuiltRequest && typeof selected.site.id === 'number'
           ? await runWithSiteApiEndpointPool(selected.site, async (target) => {
             const result = await executeEndpointResultForSiteApiBaseUrl(target.baseUrl);
@@ -1014,7 +1078,8 @@ export async function handleGenericSurfaceRequest(
             upstreamPath: '[proxy] request build failed',
           });
           try {
-            await tokenRouter.recordFailure?.(selected.target.id, {
+            await recordRouteRuntimeExecutionAttemptFailure({
+              executionTargetId: selected.executionTargetId,
               status: endpointFailureStatus,
               errorText: err.message || 'Upstream request build failed',
             });
@@ -1049,99 +1114,57 @@ export async function handleGenericSurfaceRequest(
         }
 
         if (isSiteApiEndpointFailure) {
+          const failureStatus = endpointFailureStatus || 502;
+          const failureMessage = err.message || 'unknown error';
           const failureOutcome = await failureToolkit.handleUpstreamFailure({
             selected,
             requestedModel,
             modelName,
-            status: endpointFailureStatus || 502,
-            errText: err.message || 'unknown error',
+            status: failureStatus,
+            errText: failureMessage,
             rawErrText: err.rawErrText || err.message || 'unknown error',
             isStream,
             latencyMs: Date.now() - startTime,
             retryCount,
+            willContinue: await willContinueAfterFailure(failureStatus, failureMessage),
           });
-          const terminalFailureOutcome = failureOutcome.action === 'retry'
-            ? (canRetryTargetSelection(retryCount, forcedTargetId)
-              ? null
-              : finalizeRetryAsUpstreamFailure(endpointFailureStatus || 502, err.message))
-            : failureOutcome;
-
-          if (!terminalFailureOutcome) {
+          if (failureOutcome.action === 'retry') {
             retryCount += 1;
             continue;
           }
           await finalizeDebugFailure(
-            terminalFailureOutcome.status,
-            terminalFailureOutcome.payload,
+            failureOutcome.status,
+            failureOutcome.payload,
             null,
           );
-          return reply.code(terminalFailureOutcome.status).send(terminalFailureOutcome.payload);
+          return reply.code(failureOutcome.status).send(failureOutcome.payload);
         }
 
-        const latency = Date.now() - startTime;
-        if (adapter.buildUpstreamRequest && transformed.requestKind) {
-          try {
-            await tokenRouter.recordFailure?.(selected.target.id, {
-              errorText: err.message || 'Upstream request failed',
-            });
-          } catch {
-            // best effort only
-          }
-          await failureToolkit.log({
-            selected,
-            modelRequested: requestedModel,
-            status: 'failed',
-            httpStatus: 502,
-            errorMessage: err.message,
-            retryCount,
-            latencyMs: latency,
-            promptTokens: 0,
-            completionTokens: 0,
-            totalTokens: 0,
-            upstreamPath: '[proxy] execution pool error',
-          });
-          if (canRetryTargetSelection(retryCount, forcedTargetId)) {
-            retryCount += 1;
-            continue;
-          }
-        }
-        await failureToolkit.log({
+        const failureOutcome = await failureToolkit.handleUpstreamFailure({
           selected,
-          modelRequested: requestedModel,
-          status: 'failed',
-          httpStatus: 502,
-          errorMessage: err.message,
+          requestedModel,
+          modelName,
+          status: 502,
+          errText: err.message || 'Upstream request failed',
+          rawErrText: err.message || 'Upstream request failed',
+          isStream,
+          latencyMs: Date.now() - startTime,
           retryCount,
-          latencyMs: latency,
-          promptTokens: 0,
-          completionTokens: 0,
-          totalTokens: 0,
-          upstreamPath: '[proxy] execution pool error',
+          willContinue: await willContinueAfterFailure(502, err.message || 'Upstream request failed'),
         });
         const outcome = finalizeRetryAsExecutionFailure(err.message);
-        await finalizeDebugFailure(outcome.status, outcome.payload, null);
-        if (attempt === maxRetries - 1) {
-          return reply.code(outcome.status).send(outcome.payload);
+        if (
+          failureOutcome.action === 'retry'
+          && canRetryExecutionAttemptSelection(retryCount, forcedExecutionAttemptId)
+        ) {
+          retryCount += 1;
+          continue;
         }
-        retryCount += 1;
-        continue;
+        await finalizeDebugFailure(outcome.status, outcome.payload, null);
+        return reply.code(outcome.status).send(outcome.payload);
       }
       if (!endpointResult!.ok) {
         const status = endpointResult!.status || 502;
-        if (adapter.buildUpstreamRequest && transformed.requestKind) {
-          if (canRetryTargetSelection(retryCount, forcedTargetId)) {
-            retryCount += 1;
-            continue;
-          }
-          const payload = {
-            error: {
-              message: endpointResult!.errText || 'Upstream request failed',
-              type: status === 503 ? 'server_error' as const : 'upstream_error' as const,
-            },
-          };
-          await finalizeDebugFailure(status, payload, null);
-          return reply.code(status).send(payload);
-        }
         const failureOutcome = await failureToolkit.handleUpstreamFailure({
           selected,
           requestedModel,
@@ -1152,14 +1175,12 @@ export async function handleGenericSurfaceRequest(
           isStream,
           latencyMs: Date.now() - startTime,
           retryCount,
+          willContinue: await willContinueAfterFailure(
+            status,
+            endpointResult!.errText || 'Upstream request failed',
+          ),
         });
-        const terminalFailureOutcome = failureOutcome.action === 'retry'
-          ? (canRetryTargetSelection(retryCount, forcedTargetId)
-            ? null
-            : finalizeRetryAsUpstreamFailure(status, endpointResult!.errText || 'Upstream request failed'))
-          : failureOutcome;
-
-        if (!terminalFailureOutcome) {
+        if (failureOutcome.action === 'retry') {
           retryCount += 1;
           continue;
         }
@@ -1169,8 +1190,8 @@ export async function handleGenericSurfaceRequest(
             type: status === 503 ? 'server_error' as const : 'upstream_error' as const,
           },
         };
-        await finalizeDebugFailure(terminalFailureOutcome.status, terminalFailureOutcome.payload || payload, null);
-        return reply.code(terminalFailureOutcome.status).send(terminalFailureOutcome.payload || payload);
+        await finalizeDebugFailure(failureOutcome.status, failureOutcome.payload || payload, null);
+        return reply.code(failureOutcome.status).send(failureOutcome.payload || payload);
       }
       const upstream = endpointResult!.upstream;
       const successfulUpstreamPath = endpointResult!.upstreamPath;
@@ -1179,16 +1200,21 @@ export async function handleGenericSurfaceRequest(
       if (isStream) {
         const upstreamContentType = (upstream.headers.get('content-type') || '').toLowerCase();
         let streamStarted = false;
-      const startSseResponse = () => {
-        if (streamStarted) return;
-        streamStarted = true;
-        reply.hijack();
-        reply.raw.statusCode = 200;
-        reply.raw.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
-        reply.raw.setHeader('Cache-Control', 'no-cache, no-transform');
-        reply.raw.setHeader('Connection', 'keep-alive');
-        reply.raw.setHeader('X-Accel-Buffering', 'no');
-      };
+        let firstTokenLatencyMs: number | null = null;
+        const markFirstToken = () => {
+          if (firstTokenLatencyMs != null) return;
+          firstTokenLatencyMs = Math.max(1, Math.round(performance.now() - startTimeMonotonicMs));
+        };
+        const startSseResponse = () => {
+          if (streamStarted) return;
+          streamStarted = true;
+          reply.hijack();
+          reply.raw.statusCode = 200;
+          reply.raw.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+          reply.raw.setHeader('Cache-Control', 'no-cache, no-transform');
+          reply.raw.setHeader('Connection', 'keep-alive');
+          reply.raw.setHeader('X-Accel-Buffering', 'no');
+        };
 
       let parsedUsage = {
         promptTokens: 0,
@@ -1210,13 +1236,12 @@ export async function handleGenericSurfaceRequest(
           requestStartedAtMs: startTime,
           isStream: true,
           firstByteLatencyMs,
+          firstTokenLatencyMs,
           latencyMs,
           retryCount,
           upstreamPath: formatLoggedUpstreamPath(adapter, successfulUpstreamPath),
           logSuccess: failureToolkit.log,
-          recordDownstreamCost: (estimatedCost) => {
-            recordDownstreamCostUsage(request, estimatedCost);
-          },
+          recordDownstreamBilling: (billing) => recordDownstreamBillingUsage(request, billing),
           bestEffortMetrics: {
             errorLabel: '[proxy/generic] failed to record success metrics',
           },
@@ -1253,6 +1278,7 @@ export async function handleGenericSurfaceRequest(
             parsedUsage = mergeProxyUsage(parsedUsage, parseProxyUsage(payload));
           }
         },
+        onMeaningfulOutput: markFirstToken,
         writeLines,
         writeRaw: (chunk: string | Buffer) => {
           startSseResponse();
@@ -1282,6 +1308,9 @@ export async function handleGenericSurfaceRequest(
               requestedModel,
               modelName,
               errorMessage: streamResult.errorMessage,
+              isStream: true,
+              firstByteLatencyMs,
+              firstTokenLatencyMs,
               latencyMs: latency,
               retryCount,
               promptTokens: parsedUsage.promptTokens,
@@ -1347,28 +1376,27 @@ export async function handleGenericSurfaceRequest(
             requestedModel,
             modelName,
             failure,
+            isStream: true,
+            firstByteLatencyMs,
+            firstTokenLatencyMs,
             latencyMs: latency,
             retryCount,
+            willContinue: await willContinueAfterFailure(failure.status, failure.reason),
             promptTokens: parsedUsage.promptTokens,
             completionTokens: parsedUsage.completionTokens,
             totalTokens: parsedUsage.totalTokens,
             upstreamPath: successfulUpstreamPath,
           });
-          const terminalFailureOutcome = failureOutcome.action === 'retry'
-            ? (canRetryTargetSelection(retryCount, forcedTargetId)
-              ? null
-              : finalizeRetryAsUpstreamFailure(failure.status, failure.reason))
-            : failureOutcome;
-          if (!terminalFailureOutcome) {
+          if (failureOutcome.action === 'retry') {
             retryCount += 1;
             continue;
           }
           await finalizeDebugFailure(
-            terminalFailureOutcome.status,
-            terminalFailureOutcome.payload,
+            failureOutcome.status,
+            failureOutcome.payload,
             successfulUpstreamPath,
           );
-          return reply.code(terminalFailureOutcome.status).send(terminalFailureOutcome.payload);
+          return reply.code(failureOutcome.status).send(failureOutcome.payload);
         }
 
         const streamResult = streamSession.consumeUpstreamFinalPayload(fallbackData, fallbackText, streamResponse);
@@ -1382,6 +1410,9 @@ export async function handleGenericSurfaceRequest(
             requestedModel,
             modelName,
             errorMessage: streamResult.errorMessage,
+            isStream: true,
+            firstByteLatencyMs,
+            firstTokenLatencyMs,
             latencyMs: latency,
             retryCount,
             promptTokens: parsedUsage.promptTokens,
@@ -1463,6 +1494,9 @@ export async function handleGenericSurfaceRequest(
             requestedModel,
             modelName,
             errorMessage: streamResult.errorMessage,
+            isStream: true,
+            firstByteLatencyMs,
+            firstTokenLatencyMs,
             latencyMs: latency,
             retryCount,
             promptTokens: parsedUsage.promptTokens,
@@ -1576,27 +1610,22 @@ export async function handleGenericSurfaceRequest(
           failure,
           latencyMs: latency,
           retryCount,
+          willContinue: await willContinueAfterFailure(failure.status, failure.reason),
           promptTokens: parsedUsage.promptTokens,
           completionTokens: parsedUsage.completionTokens,
           totalTokens: parsedUsage.totalTokens,
           upstreamPath: formatLoggedUpstreamPath(adapter, successfulUpstreamPath),
         });
-        const terminalFailureOutcome = failureOutcome.action === 'retry'
-          ? (canRetryTargetSelection(retryCount, forcedTargetId)
-            ? null
-            : finalizeRetryAsUpstreamFailure(failure.status, failure.reason))
-          : failureOutcome;
-
-        if (!terminalFailureOutcome) {
+        if (failureOutcome.action === 'retry') {
           retryCount += 1;
           continue;
         }
         await finalizeDebugFailure(
-          terminalFailureOutcome.status,
-          terminalFailureOutcome.payload,
+          failureOutcome.status,
+          failureOutcome.payload,
           successfulUpstreamPath,
         );
-        return reply.code(terminalFailureOutcome.status).send(terminalFailureOutcome.payload);
+        return reply.code(failureOutcome.status).send(failureOutcome.payload);
       }
 
       await recordSurfaceSuccess({
@@ -1609,18 +1638,17 @@ export async function handleGenericSurfaceRequest(
         requestStartedAtMs: startTime,
         isStream: false,
         firstByteLatencyMs,
+        firstTokenLatencyMs: null,
         latencyMs: latency,
         retryCount,
         upstreamPath: formatLoggedUpstreamPath(adapter, successfulUpstreamPath),
         logSuccess: failureToolkit.log,
-        recordDownstreamCost: (estimatedCost) => {
-          recordDownstreamCostUsage(request, estimatedCost);
+        recordDownstreamBilling: (billing) => recordDownstreamBillingUsage(request, billing),
+        bestEffortMetrics: {
+          errorLabel: '[proxy/generic] failed to record success metrics',
         },
-          bestEffortMetrics: {
-            errorLabel: '[proxy/generic] failed to record success metrics',
-          },
-          suppressLogUsageSource: adapter.format === 'gemini',
-        });
+        suppressLogUsageSource: adapter.format === 'gemini',
+      });
 
       const finalPayload = adapter.transformResponse
         ? adapter.transformResponse({
@@ -1630,7 +1658,7 @@ export async function handleGenericSurfaceRequest(
             fallbackText,
             defaultEncryptedReasoningInclude,
             isCompactRequest,
-            requestKind: transformed.requestKind,
+            operationHint: transformed.operationHint,
             extraContext: transformed.extraContext,
           })
         : rawData;
@@ -1657,13 +1685,28 @@ export async function handleGenericSurfaceRequest(
       });
 
       return reply.code(upstream.status).send(finalPayload);
+      }
+    } finally {
+      targetLease.release();
     }
-  } finally {
-    targetLease.release();
   }
-}
-  } catch (err: any) {
-    console.error('DIAGNOSTIC ERROR:', err.stack || err);
-    throw err;
-  }
+      const exhaustedMessage = 'Upstream execution attempts were exhausted';
+      await completeCompiledRuntimeExecutionSession(executionSession, {
+        status: 'failure',
+        httpStatus: 502,
+        isStream,
+        errorMessage: exhaustedMessage,
+      });
+      return reply.code(502).send({
+        error: { message: exhaustedMessage, type: 'upstream_error' },
+      });
+    } catch (error) {
+      await completeCompiledRuntimeExecutionSession(executionSession, {
+        status: 'failure',
+        httpStatus: 500,
+        isStream,
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
 }

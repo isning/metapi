@@ -37,14 +37,14 @@ describe('walletBalanceValuationService', () => {
         cacheReadPerMillion: null,
         cacheWritePerMillion: null,
         reasoningPerMillion: null,
-        requestUsd: null,
+        requestCost: null,
       },
       driftCheck: {
         enabled: false,
         windowHours: 24,
         minSampleSize: 20,
         relativeTolerance: 0.1,
-        absoluteToleranceUsd: 0.000001,
+        absoluteToleranceCost: 0.000001,
         notifyOnWarning: true,
       },
     });

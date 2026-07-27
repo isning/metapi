@@ -8,6 +8,7 @@ const { apiMock } = vi.hoisted(() => ({
   apiMock: {
     getModelsMarketplace: vi.fn(),
     getModelRouteFlow: vi.fn(),
+    getModelRuntimeObservability: vi.fn(),
   },
 }));
 
@@ -46,6 +47,54 @@ describe('Models mobile layout', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     apiMock.getModelRouteFlow.mockResolvedValue({ flow: null });
+    apiMock.getModelRuntimeObservability.mockResolvedValue({
+      observability: {
+        requestedModel: 'gpt-4o',
+        matched: false,
+        entry: null,
+        health: {
+          status: 'unknown',
+          successRate: null,
+          totalCalls: 0,
+          successCalls: 0,
+          failedCalls: 0,
+          avgLatencyMs: null,
+          latencySamples: 0,
+          avgFirstTokenLatencyMs: null,
+          firstTokenLatencySamples: 0,
+          avgOutputTokensPerSecond: null,
+          outputTokens: 0,
+          outputTokenDurationMs: 0,
+          outputTokenSamples: 0,
+          source: 'test',
+          window: {
+            range: '6h',
+            windowDays: 1,
+            fromLocalDay: '2026-04-08',
+            toLocalDay: '2026-04-08',
+          },
+        },
+        capabilitySummary: {
+          supportedEndpointTypes: [],
+          inputModalities: [],
+          outputModalities: [],
+          capabilities: [],
+          contextLength: null,
+          maxOutputTokens: null,
+          source: 'test',
+          partial: false,
+        },
+        executionAttempts: [],
+        endpoints: [],
+        history: {
+          range: '6h',
+          buckets: [],
+          granularity: 'minute',
+          emptyReason: 'unmatched',
+        },
+        diagnostics: [],
+      },
+    });
     globalThis.document = {
       documentElement: {
         getAttribute: () => 'light',

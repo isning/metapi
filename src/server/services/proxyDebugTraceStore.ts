@@ -104,9 +104,9 @@ function getCaptureOptions(): ProxyDebugCaptureOptions {
     captureHeaders: config.proxyDebugCaptureHeaders,
     captureBodies: config.proxyDebugCaptureBodies,
     captureStreamChunks: config.proxyDebugCaptureStreamChunks,
-    targetSessionId: (config.proxyDebugTargetSessionId || '').trim(),
-    targetClientKind: (config.proxyDebugTargetClientKind || '').trim(),
-    targetModel: (config.proxyDebugTargetModel || '').trim(),
+    targetSessionId: (config.proxyDebugFilterSessionId || '').trim(),
+    targetClientKind: (config.proxyDebugFilterClientKind || '').trim(),
+    targetModel: (config.proxyDebugFilterModel || '').trim(),
     retentionHours: Math.max(1, Math.trunc(config.proxyDebugRetentionHours || 24)),
     maxBodyBytes: Math.max(1024, Math.trunc(config.proxyDebugMaxBodyBytes || 262_144)),
   };
@@ -238,9 +238,10 @@ export async function startProxyDebugTraceSession(input: {
 
 export async function updateProxyDebugTraceSelection(traceId: number, input: {
   stickySessionKey?: string | null;
-  stickyHitTargetId?: number | null;
-  selectedTargetId?: number | null;
-  selectedRouteId?: number | null;
+  stickyHitExecutionAttemptId?: string | null;
+  selectedExecutionAttemptId?: string | null;
+  routeEntrypointId?: string | null;
+  runtimeEndpointId?: string | null;
   selectedAccountId?: number | null;
   selectedSiteId?: number | null;
   selectedSitePlatform?: string | null;
@@ -248,9 +249,10 @@ export async function updateProxyDebugTraceSelection(traceId: number, input: {
   const now = formatUtcSqlDateTime(new Date());
   await db.update(schema.proxyDebugTraces).set({
     stickySessionKey: input.stickySessionKey ?? null,
-    stickyHitTargetId: input.stickyHitTargetId ?? null,
-    selectedTargetId: input.selectedTargetId ?? null,
-    selectedRouteId: input.selectedRouteId ?? null,
+    stickyHitExecutionAttemptId: input.stickyHitExecutionAttemptId ?? null,
+    selectedExecutionAttemptId: input.selectedExecutionAttemptId ?? null,
+    routeEntrypointId: input.routeEntrypointId ?? null,
+    runtimeEndpointId: input.runtimeEndpointId ?? null,
     selectedAccountId: input.selectedAccountId ?? null,
     selectedSiteId: input.selectedSiteId ?? null,
     selectedSitePlatform: input.selectedSitePlatform ?? null,
@@ -258,16 +260,14 @@ export async function updateProxyDebugTraceSelection(traceId: number, input: {
   }).where(eq(schema.proxyDebugTraces.id, traceId)).run();
 }
 
-export async function updateProxyDebugTraceCandidates(traceId: number, input: {
-  endpointCandidates?: unknown;
-  endpointRuntimeState?: unknown;
-  decisionSummary?: unknown;
+export async function updateProxyDebugTraceRuntime(traceId: number, input: {
+  protocol?: unknown;
+  runtimeState?: unknown;
+  context?: unknown;
 }) {
   const now = formatUtcSqlDateTime(new Date());
   await db.update(schema.proxyDebugTraces).set({
-    endpointCandidatesJson: stringifyDebugValue(input.endpointCandidates, config.proxyDebugMaxBodyBytes),
-    endpointRuntimeStateJson: stringifyDebugValue(input.endpointRuntimeState, config.proxyDebugMaxBodyBytes),
-    decisionSummaryJson: stringifyDebugValue(input.decisionSummary, config.proxyDebugMaxBodyBytes),
+    runtimeTraceJson: stringifyDebugValue(input, config.proxyDebugMaxBodyBytes),
     updatedAt: now,
   }).where(eq(schema.proxyDebugTraces.id, traceId)).run();
 }
@@ -378,16 +378,29 @@ export async function finalizeProxyDebugTrace(traceId: number, input: {
   }).where(eq(schema.proxyDebugTraces.id, traceId)).run();
 }
 
+type ProxyDebugTraceListRow = {
+  id: number;
+  createdAt: string | null;
+  downstreamPath: string;
+  clientKind: string | null;
+  sessionId: string | null;
+  requestedModel: string | null;
+  selectedExecutionAttemptId: string | null;
+  finalStatus: string | null;
+  finalHttpStatus: number | null;
+  finalUpstreamPath: string | null;
+};
+
 export async function listProxyDebugTraces(input: { limit?: number }) {
   const limit = normalizeLimit(input.limit);
-  return await db.select({
+  const rows: ProxyDebugTraceListRow[] = await db.select({
     id: schema.proxyDebugTraces.id,
     createdAt: schema.proxyDebugTraces.createdAt,
     downstreamPath: schema.proxyDebugTraces.downstreamPath,
     clientKind: schema.proxyDebugTraces.clientKind,
     sessionId: schema.proxyDebugTraces.sessionId,
     requestedModel: schema.proxyDebugTraces.requestedModel,
-    selectedTargetId: schema.proxyDebugTraces.selectedTargetId,
+    selectedExecutionAttemptId: schema.proxyDebugTraces.selectedExecutionAttemptId,
     finalStatus: schema.proxyDebugTraces.finalStatus,
     finalHttpStatus: schema.proxyDebugTraces.finalHttpStatus,
     finalUpstreamPath: schema.proxyDebugTraces.finalUpstreamPath,
@@ -395,6 +408,7 @@ export async function listProxyDebugTraces(input: { limit?: number }) {
     .orderBy(desc(schema.proxyDebugTraces.createdAt), desc(schema.proxyDebugTraces.id))
     .limit(limit)
     .all();
+  return rows;
 }
 
 export async function getProxyDebugTraceDetail(traceId: number) {
@@ -402,38 +416,6 @@ export async function getProxyDebugTraceDetail(traceId: number) {
     .where(eq(schema.proxyDebugTraces.id, traceId))
     .get();
   if (!trace) return null;
-
-  const selectedRoute = trace.selectedRouteId
-    ? await db.select({
-      id: schema.tokenRoutes.id,
-      displayName: schema.tokenRoutes.displayName,
-      modelMapping: schema.tokenRoutes.modelMapping,
-      routingStrategy: schema.tokenRoutes.routingStrategy,
-    }).from(schema.tokenRoutes)
-      .where(eq(schema.tokenRoutes.id, trace.selectedRouteId))
-      .get()
-    : null;
-
-  const selectedTarget = trace.selectedTargetId
-    ? await db.select({
-      id: schema.routeEndpointTargets.id,
-      routeEndpointId: schema.routeEndpointTargets.routeEndpointId,
-      sourceModel: schema.routeEndpointTargets.sourceModel,
-      priority: schema.routeEndpointTargets.priority,
-      weight: schema.routeEndpointTargets.weight,
-      accountUsername: schema.accounts.username,
-      tokenName: schema.accountTokens.name,
-      tokenGroup: schema.accountTokens.tokenGroup,
-      siteId: schema.sites.id,
-      siteName: schema.sites.name,
-      sitePlatform: schema.sites.platform,
-    }).from(schema.routeEndpointTargets)
-      .leftJoin(schema.accounts, eq(schema.routeEndpointTargets.accountId, schema.accounts.id))
-      .leftJoin(schema.accountTokens, eq(schema.routeEndpointTargets.tokenId, schema.accountTokens.id))
-      .leftJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
-      .where(eq(schema.routeEndpointTargets.id, trace.selectedTargetId))
-      .get()
-    : null;
 
   const selectedSite = trace.selectedSiteId
     ? await db.select({
@@ -454,26 +436,6 @@ export async function getProxyDebugTraceDetail(traceId: number) {
   return {
     trace: {
       ...trace,
-      selectedRouteDisplay: selectedRoute ? {
-        id: selectedRoute.id,
-        label: selectedRoute.displayName || trace.requestedModel || null,
-        routingStrategy: selectedRoute.routingStrategy,
-      } : null,
-      selectedTargetDisplay: selectedTarget ? {
-        id: selectedTarget.id,
-        label: [
-          selectedTarget.accountUsername || null,
-          selectedTarget.siteName ? `@ ${selectedTarget.siteName}` : null,
-          selectedTarget.tokenName ? `/ ${selectedTarget.tokenName}` : null,
-        ].filter(Boolean).join(' ') || selectedTarget.sourceModel || selectedTarget.routeEndpointId || null,
-        sourceModel: selectedTarget.sourceModel,
-        routeEndpointId: selectedTarget.routeEndpointId,
-        tokenGroup: selectedTarget.tokenGroup,
-        priority: selectedTarget.priority,
-        weight: selectedTarget.weight,
-        siteName: selectedTarget.siteName,
-        sitePlatform: selectedTarget.sitePlatform,
-      } : null,
       selectedSiteDisplay: selectedSite ? {
         id: selectedSite.id,
         label: selectedSite.name,

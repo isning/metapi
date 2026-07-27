@@ -37,8 +37,6 @@ describe('ensureSharedIndexSchemaCompatibility', () => {
         'checkin_logs',
         'model_availability',
         'token_model_availability',
-        'token_routes',
-        'route_endpoint_targets',
         'proxy_logs',
         'proxy_video_tasks',
         'downstream_api_keys',

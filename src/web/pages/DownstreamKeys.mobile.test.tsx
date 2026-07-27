@@ -8,7 +8,7 @@ const { apiMock } = vi.hoisted(() => ({
   apiMock: {
     getDownstreamApiKeysSummary: vi.fn(),
     getDownstreamApiKeys: vi.fn(),
-    getRouteSummaryPage: vi.fn(),
+    getDownstreamCompiledPlans: vi.fn(),
     getDownstreamApiKeyOverview: vi.fn(),
     getDownstreamApiKeyTrend: vi.fn(),
     createDownstreamApiKey: vi.fn(),
@@ -88,6 +88,10 @@ async function flushMicrotasks() {
   });
 }
 
+function testCost(amount: number) {
+  return { amount, unit: 'USD', knownObservationCount: 1, unknownObservationCount: 0, incompatibleObservationCount: 0 };
+}
+
 function buildSummaryItem(id: number, overrides?: Partial<any>) {
   return {
     id,
@@ -103,7 +107,7 @@ function buildSummaryItem(id: number, overrides?: Partial<any>) {
     maxRequests: null,
     usedRequests: 0,
     supportedModels: ['gpt-4.1-mini'],
-    allowedRouteIds: [11],
+    allowedPlanIds: ['program:entry:claude'],
     siteWeightMultipliers: {},
     lastUsedAt: '2026-03-15T08:27:25.378Z',
     createdAt: '2026-03-15T08:27:25.378Z',
@@ -114,7 +118,7 @@ function buildSummaryItem(id: number, overrides?: Partial<any>) {
       failedRequests: 1,
       successRate: 66.7,
       totalTokens: 4200,
-      totalCost: 0.42,
+      cost: testCost(0.42),
     },
     ...overrides,
   };
@@ -136,7 +140,7 @@ function buildRawItem(id: number, overrides?: Partial<any>) {
     maxRequests: null,
     usedRequests: 0,
     supportedModels: ['gpt-4.1-mini'],
-    allowedRouteIds: [11],
+    allowedPlanIds: ['program:entry:claude'],
     siteWeightMultipliers: {},
     lastUsedAt: '2026-03-15T08:27:25.378Z',
     ...overrides,
@@ -159,29 +163,23 @@ describe('DownstreamKeys mobile layout', () => {
       success: true,
       items: [buildRawItem(1), buildRawItem(2)],
     });
-    apiMock.getRouteSummaryPage.mockResolvedValue({
-      items: [{
-        id: 11,
-        match: { kind: 'model', requestedModelPattern: 'gpt-4.1-mini', displayName: 'GPT 4.1 Mini' },
-        backend: { kind: 'supply' },
-        presentation: { displayName: 'GPT 4.1 Mini', displayIcon: null },
-        enabled: true,
-      }],
-      pageInfo: { page: 1, pageSize: 500, totalCount: 1, hasMore: false },
+    apiMock.getDownstreamCompiledPlans.mockResolvedValue({
+      success: true,
+      items: [{ id: 'program:entry:claude', modelName: 'gpt-4.1-mini' }],
     });
     apiMock.getDownstreamApiKeyOverview.mockResolvedValue({
       success: true,
       item: buildSummaryItem(1),
       usage: {
-        last24h: { totalRequests: 3, successRequests: 2, failedRequests: 1, successRate: 66.7, totalTokens: 4200, totalCost: 0.42 },
-        last7d: { totalRequests: 9, successRequests: 8, failedRequests: 1, successRate: 88.9, totalTokens: 12400, totalCost: 1.24 },
-        all: { totalRequests: 20, successRequests: 18, failedRequests: 2, successRate: 90, totalTokens: 55200, totalCost: 5.52 },
+        last24h: { totalRequests: 3, successRequests: 2, failedRequests: 1, successRate: 66.7, totalTokens: 4200, cost: testCost(0.42) },
+        last7d: { totalRequests: 9, successRequests: 8, failedRequests: 1, successRate: 88.9, totalTokens: 12400, cost: testCost(1.24) },
+        all: { totalRequests: 20, successRequests: 18, failedRequests: 2, successRate: 90, totalTokens: 55200, cost: testCost(5.52) },
       },
     });
     apiMock.getDownstreamApiKeyTrend.mockResolvedValue({
       success: true,
       buckets: [
-        { startUtc: '2026-03-15T08:00:00.000Z', totalRequests: 2, totalTokens: 1200, totalCost: 0.12, successRate: 100 },
+        { startUtc: '2026-03-15T08:00:00.000Z', totalRequests: 2, totalTokens: 1200, cost: testCost(0.12), successRate: 100 },
       ],
     });
     apiMock.createDownstreamApiKey.mockResolvedValue({ success: true });

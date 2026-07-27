@@ -113,6 +113,66 @@ describe('upstreamPricingCatalogService', () => {
     });
   });
 
+  it('continues to later credentials after a credential-specific pricing catalog failure', async () => {
+    const getPricingCatalog = vi.fn()
+      .mockRejectedValueOnce(new Error('session expired'))
+      .mockResolvedValueOnce({
+        models: new Map([['api-priced-model', {
+          modelName: 'api-priced-model',
+          quotaType: 0,
+          modelRatio: 1,
+          completionRatio: 1,
+          modelPrice: null,
+          enableGroups: ['default'],
+        }]]),
+        groupRatio: { default: 1 },
+      });
+    getAdapterMock.mockReturnValue({ getPricingCatalog });
+
+    const catalog = await fetchUpstreamPricingCatalog({
+      site: {
+        id: 1,
+        url: 'https://newapi.example.com/',
+        platform: 'newapi',
+        apiKey: null,
+      },
+      account: {
+        id: 2,
+        username: 'user-7788',
+        accessToken: 'expired-session-token',
+        apiToken: 'api-token',
+        extraConfig: JSON.stringify({ platformUserId: 42 }),
+      },
+    });
+
+    expect(catalog?.models.has('api-priced-model')).toBe(true);
+    expect(getPricingCatalog).toHaveBeenCalledTimes(2);
+  });
+
+  it('reports pricing catalog credential failures instead of returning unavailable', async () => {
+    const getPricingCatalog = vi.fn()
+      .mockRejectedValueOnce(new Error('session expired'))
+      .mockRejectedValueOnce(new Error('api key rejected'))
+      .mockResolvedValueOnce(null);
+    getAdapterMock.mockReturnValue({ getPricingCatalog });
+
+    await expect(fetchUpstreamPricingCatalog({
+      site: {
+        id: 1,
+        url: 'https://newapi.example.com/',
+        platform: 'newapi',
+        apiKey: null,
+      },
+      account: {
+        id: 2,
+        username: 'user-7788',
+        accessToken: 'expired-session-token',
+        apiToken: 'api-token',
+        extraConfig: JSON.stringify({ platformUserId: 42 }),
+      },
+    })).rejects.toThrow('access_token: session expired; api_token: api key rejected');
+  });
+
   it('preserves missing direct token prices instead of coercing them to zero', () => {
     const common = normalizeCommonPricingPayload({
       data: [{

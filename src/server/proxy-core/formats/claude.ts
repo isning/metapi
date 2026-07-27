@@ -4,7 +4,7 @@ import { anthropicMessagesTransformer } from '../../transformers/anthropic/messa
 import { openAiChatTransformer } from '../../transformers/openai/chat/index.js';
 import { parseProxyUsage } from '../../services/proxyUsageParser.js';
 import { buildClaudeCountTokensUpstreamRequest } from './upstreamRequestBuilder.js';
-import { applyRouteGraphPostBuildFilters } from '../../services/routeGraphRuntimeService.js';
+import { applyCompiledRuntimePostBuildFilters } from '../../services/compiledRuntimePostBuildFilters.js';
 
 export const claudeProtocolAdapter: DownstreamProtocolAdapter = {
   format: 'claude',
@@ -41,7 +41,8 @@ export const claudeProtocolAdapter: DownstreamProtocolAdapter = {
           isStream: false,
           openaiBody: rawBody,
           claudeOriginalBody: rawBody,
-          requestKind: 'claude-count-tokens',
+          upstreamRequestMode: 'protocol_adapter',
+          operationHint: 'claude-count-tokens',
           disableCrossProtocolFallback: true,
         },
       };
@@ -62,8 +63,8 @@ export const claudeProtocolAdapter: DownstreamProtocolAdapter = {
     };
   },
   buildUpstreamRequest(input: BuildUpstreamRequestInput) {
-    if (input.transformed.requestKind !== 'claude-count-tokens') {
-      throw new Error(`Claude adapter cannot build custom upstream request for ${input.transformed.requestKind || 'default operation'}`);
+    if (input.transformed.operationHint !== 'claude-count-tokens') {
+      throw new Error(`Claude adapter cannot build custom upstream request for ${input.transformed.operationHint || 'default operation'}`);
     }
     const upstreamRequest = buildClaudeCountTokensUpstreamRequest({
       modelName: input.modelName,
@@ -73,10 +74,10 @@ export const claudeProtocolAdapter: DownstreamProtocolAdapter = {
       claudeBody: input.transformed.claudeOriginalBody || input.transformed.openaiBody,
       downstreamHeaders: input.downstreamHeaders,
     });
-    const filtered = applyRouteGraphPostBuildFilters({
+    const filtered = applyCompiledRuntimePostBuildFilters({
       payload: upstreamRequest.body,
       headers: upstreamRequest.headers,
-      filters: input.routeGraphFilters,
+      filters: input.runtimePostBuildFilters,
     });
     return {
       endpoint: 'messages',
@@ -90,7 +91,7 @@ export const claudeProtocolAdapter: DownstreamProtocolAdapter = {
     return openAiChatTransformer.proxyStream.createSession(options);
   },
   transformResponse(options) {
-    if (options.requestKind === 'claude-count-tokens') {
+    if (options.operationHint === 'claude-count-tokens') {
       return options.upstreamBody;
     }
     const normalized = anthropicMessagesTransformer.transformFinalResponse(

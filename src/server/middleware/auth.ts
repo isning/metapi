@@ -109,18 +109,18 @@ export function isIpAllowed(clientIp: string, allowlist: string[]): boolean {
 export async function authMiddleware(request: FastifyRequest, reply: FastifyReply) {
   const clientIp = extractClientIp(request.ip, request.headers['x-forwarded-for']);
   if (!isIpAllowed(clientIp, config.adminIpAllowlist)) {
-    reply.code(403).send({ error: 'IP not allowed' });
+    reply.header('x-metapi-auth-failure', 'admin').code(403).send({ error: 'IP not allowed' });
     return;
   }
 
   const auth = request.headers.authorization;
   if (!auth) {
-    reply.code(401).send({ error: 'Missing Authorization header' });
+    reply.header('x-metapi-auth-failure', 'admin').code(401).send({ error: 'Missing Authorization header' });
     return;
   }
   const token = auth.replace('Bearer ', '');
   if (token !== config.authToken) {
-    reply.code(403).send({ error: 'Invalid token' });
+    reply.header('x-metapi-auth-failure', 'admin').code(403).send({ error: 'Invalid token' });
     return;
   }
 }

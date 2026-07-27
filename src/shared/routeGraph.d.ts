@@ -1,28 +1,24 @@
 export type RouteGraphMatchKind = 'model';
-export type RouteGraphBackendKind = 'supply' | 'routes';
+export type RouteGraphBackendKind = 'supply' | 'route_endpoints';
 export type RouteGraphNodeType =
   | 'entry'
   | 'route_endpoint'
   | 'filter'
   | 'dispatcher'
-  | 'synthetic_endpoint'
-  | 'auto_node';
-export type RouteGraphVisibility = 'public' | 'internal';
-export type RouteGraphEndpointKind = 'supply' | 'route_product';
+  | 'synthetic_endpoint';
+export type RouteGraphEndpointKind = 'supply';
 export type RouteGraphEndpointExposure = 'none' | 'public' | 'internal';
 export type RouteGraphEndpointResolutionStatus = 'resolved' | 'degraded' | 'unresolved';
 export type RouteGraphEndpointSourceKind =
   | 'upstream_model'
-  | 'automatic_model_group'
-  | 'manual_group'
   | 'synthetic'
   | 'inline';
-export type RouteGraphOwnership = 'manual' | 'auto_generated' | 'system' | 'derived';
-export type RouteGraphSelectionStrategy = 'priority_order' | 'weighted' | 'round_robin' | 'stable_first';
+export type RouteGraphOwnership = 'manual' | 'system' | 'derived';
 export type RouteGraphPortKind =
   | 'request'
   | 'bidirect'
   | 'route';
+export type RouteGraphManualEdgePolicy = 'allow' | 'deny';
 export type RouteGraphEdgeKind =
   | 'request_flow'
   | 'bidirect_flow'
@@ -35,7 +31,8 @@ export type RouteGraphPort = {
   required?: boolean;
   multiple?: boolean;
   collection?: { type: 'single' } | { type: 'arr'; min?: number; max?: number } | { type: 'set'; min?: number; max?: number };
-  readonly?: boolean;
+  /** Whether a manually authored edge may attach to this port. */
+  manualEdgePolicy: RouteGraphManualEdgePolicy;
   enabled?: boolean;
   description?: string;
 };
@@ -54,7 +51,6 @@ export type RouteGraphMatchSpec = {
   downstreamProtocol?: string | null;
   upstreamProtocol?: string | null;
   sitePlatform?: string | null;
-  routeId?: number | null;
   accountId?: number | null;
   tokenId?: number | null;
   siteId?: number | null;
@@ -62,14 +58,12 @@ export type RouteGraphMatchSpec = {
 
 export type RouteGraphBackendSpec =
   | { kind: 'supply' }
-  | { kind: 'routes'; routeIds: number[] };
+  | { kind: 'route_endpoints'; endpointIds: string[] };
 
 export type RouteNodeProvenance =
   | { source: 'manual' }
-  | { source: 'auto_model_availability'; modelName: string }
   | { source: 'preset'; presetId: string }
   | { source: 'import'; importId: string }
-  | { source: 'legacy'; routeId: number }
   | Record<string, unknown>;
 
 export type RouteGraphPosition = { x: number; y: number };
@@ -78,30 +72,25 @@ export type BaseRouteGraphNode = {
   type: RouteGraphNodeType;
   name?: string | null;
   enabled: boolean;
-  visibility: RouteGraphVisibility;
   ownership: RouteGraphOwnership;
   position?: RouteGraphPosition;
   provenance?: RouteNodeProvenance;
   dynamicPorts?: RouteGraphPort[];
+  metadata?: Record<string, unknown>;
 };
 
 export type EntryNode = BaseRouteGraphNode & {
   type: 'entry';
-  visibility: 'public';
   match: RouteGraphMatchSpec;
-  selectionStrategy: RouteGraphSelectionStrategy;
 };
 
 export type RouteEndpointNode = BaseRouteGraphNode & {
   type: 'route_endpoint';
   routeEndpointId: string;
-  endpointId?: string;
-  routeId?: number | null;
-  legacyRouteId?: number | null;
   endpointKind: RouteGraphEndpointKind;
   exposure: RouteGraphEndpointExposure;
   resolutionStatus: RouteGraphEndpointResolutionStatus;
-  ownerKind: 'automatic_route' | 'manual_route' | 'macro';
+  ownerKind: 'manual' | 'macro';
   sourceKind: RouteGraphEndpointSourceKind;
   resolvesTo?: {
     kind: 'route_builder' | 'synthetic' | 'external';
@@ -109,8 +98,7 @@ export type RouteEndpointNode = BaseRouteGraphNode & {
   };
   backend: RouteGraphBackendSpec;
   match?: RouteGraphMatchSpec;
-  config?: RouteExecutableTargetConfig | Record<string, unknown>;
-  metadata?: Record<string, unknown>;
+  config?: RouteEndpointConfig | Record<string, unknown>;
 };
 
 export type RouteFilter =
@@ -127,16 +115,34 @@ export type FilterNode = BaseRouteGraphNode & {
 };
 
 export type DispatcherPolicy =
+  | { kind: 'inherit_default' }
   | {
-      strategy: 'priority_order' | 'weighted' | 'round_robin' | 'stable_first';
-      score?: unknown;
-      fallback?: unknown;
+      kind: 'registry';
+      policyId: string;
     }
   | {
-      strategy: 'direct';
-      select: string;
-      fallback?: unknown;
+      kind: 'inline';
+      policy: Record<string, unknown>;
+    }
+  | {
+      kind: 'builtin';
+      builtin: 'weighted' | 'round_robin' | 'stable_first';
     };
+
+export function normalizeDispatcherPolicy(input: unknown): DispatcherPolicy;
+
+export type TargetSelectionPolicy = DispatcherPolicy | { kind: 'defer_to_router' };
+
+export function validateNativeDispatcherPolicy(input: unknown):
+  | { ok: true; value: DispatcherPolicy }
+  | { ok: false; error: string };
+export function requireNativeDispatcherPolicy(input: unknown): DispatcherPolicy;
+export function validateNativeTargetSelectionPolicy(input: unknown):
+  | { ok: true; value: TargetSelectionPolicy }
+  | { ok: false; error: string };
+export function validateNativeRouteGraphSourcePolicies(input: unknown): string[];
+
+export function normalizeTargetSelectionPolicy(input: unknown): TargetSelectionPolicy;
 
 export type DispatcherNode = BaseRouteGraphNode & {
   type: 'dispatcher';
@@ -154,19 +160,14 @@ export type RouteExecutableTarget = {
   accountId?: string | number | null;
   siteId?: string | number | null;
   weight?: number | null;
-  priority?: number | null;
+  transportBinding?: { kind: 'execution_target'; executionTargetId: number };
   metadata?: Record<string, unknown>;
   compatibilityPolicy?: Record<string, unknown>;
 };
 
-export type RouteExecutableTargetConfig = {
+export type RouteEndpointConfig = {
   targets: RouteExecutableTarget[];
-  targetSelection?: {
-    strategy: RouteGraphSelectionStrategy | 'direct' | 'defer_to_router';
-    score?: unknown;
-    fallback?: unknown;
-    select?: string;
-  };
+  targetSelection?: TargetSelectionPolicy;
   compatibilityPolicy?: Record<string, unknown>;
 };
 
@@ -178,20 +179,12 @@ export type SyntheticEndpointNode = BaseRouteGraphNode & {
   body?: unknown;
 };
 
-export type AutoNode = BaseRouteGraphNode & {
-  type: 'auto_node';
-  routeEndpointId?: string;
-  routingStrategy?: 'weighted' | 'round_robin' | 'stable_first';
-  legacyRouteId?: number | null;
-};
-
 export type RouteGraphNode =
   | EntryNode
   | RouteEndpointNode
   | FilterNode
   | DispatcherNode
-  | SyntheticEndpointNode
-  | AutoNode;
+  | SyntheticEndpointNode;
 
 export type RouteGraphEdge = {
   id: string;
@@ -207,25 +200,28 @@ export type RouteGraphEdge = {
 export type CandidateSelectorMacroConfig = {
   surface: {
     entry:
-      | { kind: 'external'; visibility: RouteGraphVisibility; match: RouteGraphMatchSpec }
-      | { kind: 'embedded'; input: 'request' | 'bidirect' };
+      | { kind: 'external'; match: RouteGraphMatchSpec }
+      | { kind: 'embedded'; input: 'request' | 'bidirect' }
+      | { kind: 'none' };
     output: 'route' | 'bidirect';
     ports: RouteGraphPort[];
   };
-  policy: {
-    strategy: RouteGraphSelectionStrategy | 'cel_select' | 'cel_score';
-    cel?: string;
-  };
+  policy: DispatcherPolicy;
   filters?: {
     operations: RouteFilter[];
   };
+  /** Optional macro-wide candidate universe. Fallback stages assign and override members from this universe. */
+  candidateSource?: { kind: 'model_pattern'; pattern: string };
   groups: Array<{
     id: string;
     label?: string;
     enabled: boolean;
-    priority: number;
+    /** Receives candidateSource matches that are not assigned to another stage member. */
+    acceptUnassigned?: boolean;
+    policy?: DispatcherPolicy;
     input:
       | { kind: 'route_endpoints'; endpointIds: string[] }
+      | { kind: 'graph_references'; endpointIds: string[]; macroIds: string[] }
       | { kind: 'model_pattern'; pattern: string }
       | { kind: 'metadata_query'; cel: string }
       | { kind: 'endpoint_query'; cel: string }
@@ -234,36 +230,31 @@ export type CandidateSelectorMacroConfig = {
     defaults?: {
       enabled?: boolean;
       weight?: number;
-      priority?: number;
       metadata?: Record<string, unknown>;
     };
+    members?: Array<{
+      /** Opaque identity scoped to this dispatcher group; not a global resource. */
+      memberId?: string;
+      endpointId?: string;
+      macroId?: string;
+      enabled?: boolean;
+      weight?: number;
+      metadata?: Record<string, unknown>;
+    }>;
     materialization?: {
-      sort?: 'route_id' | 'model_name' | 'health' | 'cel';
+      sort?: 'model_name' | 'health' | 'cel';
       limit?: number;
-      dedupeBy?: 'route_id' | 'endpoint_id' | 'model' | 'metadata';
+      dedupeBy?: 'endpoint_id' | 'model' | 'metadata';
     };
     metadata?: Record<string, unknown>;
   }>;
-  candidateOverrides?: {
-    bySupplyEndpointId?: Record<string, CandidateOverride>;
-    byEndpointId?: Record<string, CandidateOverride>;
-  };
   presentation?: { displayIcon?: string | null };
-};
-
-export type CandidateOverride = {
-  groupId?: string;
-  priority?: number;
-  weight?: number;
-  enabled?: boolean;
-  excluded?: boolean;
 };
 
 export type RouteGraphMacro = {
   id: string;
   kind: 'candidate_selector';
   enabled: boolean;
-  visibility: RouteGraphVisibility;
   ownership: Exclude<RouteGraphOwnership, 'derived'>;
   name?: string | null;
   config: CandidateSelectorMacroConfig;
@@ -272,7 +263,6 @@ export type RouteGraphMacro = {
 };
 
 export type RouteGraphSource = {
-  version: 1;
   nodes: RouteGraphNode[];
   edges: RouteGraphEdge[];
   macros?: RouteGraphMacro[];
@@ -292,7 +282,6 @@ export type RouteProgramSourceRef = {
   edgeId?: string;
   macroId?: string;
   endpointId?: string;
-  routeId?: number | null;
   generatedNodeIds?: string[];
   generatedEdgeIds?: string[];
 };
@@ -301,8 +290,7 @@ export type RouteMatcherTarget = {
   programId: string;
   entryNodeId: string;
   publicModelName: string;
-  rootEndpointId?: string | null;
-  sourceRef: RouteProgramSourceRef;
+  sourceRef?: RouteProgramSourceRef;
 };
 
 export type RouteMatcherPattern = RouteMatcherTarget & {
@@ -317,22 +305,22 @@ export type RouteMatcherTable = {
 };
 
 export type CompiledEndpointTarget = {
-  endpointId: string;
+  endpointId?: string;
+  executionAttemptId: string;
   targetId: string;
-  nodeId: string;
-  targetId: string;
+  nodeId?: string;
   model: string;
   modelSource?: 'fixed' | 'request';
   enabled: boolean;
-  routeId: number | null;
   accountId?: string | number | null;
   tokenId?: string | number | null;
   siteId?: string | number | null;
   weight?: number | null;
-  priority?: number | null;
+  transportBinding?: { kind: 'execution_target'; executionTargetId: number };
   metadata?: Record<string, unknown>;
+  runtime?: Record<string, unknown>;
   compatibilityPolicy?: Record<string, unknown>;
-  sourceRef: RouteProgramSourceRef;
+  sourceRef?: RouteProgramSourceRef;
 };
 
 export type CompiledRouterDiagnostic = RouteGraphDiagnostic & {
@@ -343,40 +331,6 @@ export type CompiledRouterFilterStage = {
   nodeId: string;
   phase: 'pre_selection' | 'post_build';
   operations: RouteFilter[];
-  sourceRef: RouteProgramSourceRef;
-};
-
-export type CompiledRouterSelectorGroup = {
-  groupId: string;
-  terminalCandidateIndexes: number[];
-  kind: 'route' | 'bidirect' | 'target' | string;
-  nodeId?: string;
-  edgeId?: string;
-  endpointId?: string;
-  enabled: boolean;
-  weight: number;
-  priority: number;
-  order: number;
-  metadata?: Record<string, unknown>;
-  sourceRef: RouteProgramSourceRef;
-};
-
-export type CompiledRouterSelectorLevel = {
-  selectorId: string;
-  nodeId: string;
-  mode: 'route' | 'flow' | 'target' | string;
-  policy: DispatcherPolicy;
-  filterStageIndexes: number[];
-  sourceRef: RouteProgramSourceRef;
-  groups: CompiledRouterSelectorGroup[];
-};
-
-export type CompiledRouterTarget = Omit<CompiledEndpointTarget, 'endpointId' | 'nodeId' | 'routeId' | 'enabled' | 'modelSource' | 'sourceRef'> & {
-  endpointId?: string;
-  nodeId?: string;
-  routeId?: number | null;
-  enabled?: boolean;
-  modelSource?: 'fixed' | 'request';
   sourceRef?: RouteProgramSourceRef;
 };
 
@@ -384,29 +338,71 @@ export type CompiledRouterTerminal =
   | {
       kind: 'supply';
       endpointId: string;
-      nodeId: string;
-      routeId: number | null;
-      routeEndpointId?: string | null;
-      terminalModel?: string;
-      targetSelectionPolicy?: Record<string, unknown>;
-      targetIndexes: number[];
-      compatibilityPolicy?: Record<string, unknown>;
-      sourceRef: RouteProgramSourceRef;
     }
   | {
       kind: 'synthetic';
       nodeId: string;
       statusCode: 429 | 503;
       message: string;
-      sourceRef: RouteProgramSourceRef;
+      metadata?: Record<string, unknown>;
+      runtime?: Record<string, unknown>;
+      sourceRef?: RouteProgramSourceRef;
     };
 
-export type CompiledRouterTerminalCandidate = {
-  candidateId: string;
+export type CompiledExecutionSelectionTerm = {
+  termId: string;
+  nodeId?: string | null;
+  mode: 'route' | 'flow' | 'target' | 'execution_attempt' | string;
+  policy: DispatcherPolicy;
+  optionId: string;
+  optionIndex: number;
+  optionKind: 'route' | 'bidirect' | 'target' | 'execution_attempt' | string;
   enabled: boolean;
-  selectorPath: Array<{ selectorId: string; groupId: string }>;
+  weight: number;
+  order: number;
+  controlOrder: number;
+  metadata?: Record<string, unknown>;
+  runtime?: Record<string, unknown>;
+  sourceRef?: RouteProgramSourceRef;
+};
+
+export type CompiledFallbackStage = {
+  fallbackId: string;
+  stageId: string;
+  stageIndex: number;
+  nodeId: string;
+  controlOrder: number;
+  sourceRef?: RouteProgramSourceRef;
+};
+
+export type CompiledExecutionAlternative = {
+  alternativeId: string;
+  kind: 'execution_attempt' | 'endpoint_delegation' | 'synthetic_response';
+  enabled: boolean;
   filterStageIndexes: number[];
+  selectionTerms: CompiledExecutionSelectionTerm[];
+  fallbackStages: CompiledFallbackStage[];
   terminal: CompiledRouterTerminal;
+  endpoint?: {
+    endpointId: string;
+    nodeId: string;
+    model: string | null;
+    compatibilityPolicy?: Record<string, unknown>;
+    metadata?: Record<string, unknown>;
+    runtime?: Record<string, unknown>;
+    sourceRef?: RouteProgramSourceRef;
+  } | null;
+  executionAttempt?: CompiledEndpointTarget | null;
+  syntheticResponse?: {
+    nodeId: string;
+    statusCode: 429 | 503;
+    message: string;
+    metadata?: Record<string, unknown>;
+    runtime?: Record<string, unknown>;
+    sourceRef?: RouteProgramSourceRef;
+  } | null;
+  metadata?: Record<string, unknown>;
+  runtime?: Record<string, unknown>;
 };
 
 export type CompiledRouterPlan = {
@@ -414,70 +410,34 @@ export type CompiledRouterPlan = {
   entryNodeId: string;
   publicModelName: string;
   enabled: boolean;
-  rootEndpointId?: string | null;
-  sourceRef: RouteProgramSourceRef;
+  sourceRef?: RouteProgramSourceRef;
+  metadata?: Record<string, unknown>;
+  runtime?: Record<string, unknown>;
   filterStages: CompiledRouterFilterStage[];
-  targets: CompiledRouterTarget[];
-  selectorLevels: CompiledRouterSelectorLevel[];
-  candidates: CompiledRouterTerminalCandidate[];
+  executionAlternatives: CompiledExecutionAlternative[];
 };
 
 export type CompiledRouterBundle = {
-  version: 2;
   hash: string;
   matcher: RouteMatcherTable;
   plans: CompiledRouterPlan[];
+  /** Maps a compiled program id to its immutable position in `plans`. */
+  planIndex: Record<string, number>;
   diagnostics: CompiledRouterDiagnostic[];
+  /** Compact immutable execution tables used only by persisted runtime artifacts. */
+  executionTable?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  runtime?: Record<string, unknown>;
 };
 
 export type CompiledRouteGraph = {
-  version: 1;
   hash: string;
+  metadata?: Record<string, unknown>;
+  runtime?: Record<string, unknown>;
   compiledRouterBundle?: CompiledRouterBundle;
-  entries: Array<{
-    nodeId: string;
-    enabled: boolean;
-    visibility: RouteGraphVisibility;
-    match: RouteGraphMatchSpec;
-    backend: RouteGraphBackendSpec;
-    selectionStrategy: RouteGraphSelectionStrategy;
-    publicModelName: string;
-  }>;
-  routeEndpoints: Array<{
-    nodeId: string;
-    endpointId: string;
-    routeId: number | null;
-    enabled: boolean;
-    endpointKind: RouteGraphEndpointKind;
-    exposure: RouteGraphEndpointExposure;
-    resolutionStatus: RouteGraphEndpointResolutionStatus;
-    ownerKind: 'automatic_route' | 'manual_route' | 'macro';
-    sourceKind: RouteGraphEndpointSourceKind;
-    resolvesTo?: {
-      kind: 'route_builder' | 'synthetic' | 'external';
-      id: string;
-    };
-    backend: RouteGraphBackendSpec;
-    match: RouteGraphMatchSpec;
-    publicModelName: string;
-  }>;
-  nodesById: Record<string, RouteGraphNode>;
-  edgesBySource: Record<string, string[]>;
-  edgesByFromPort: Record<string, RouteGraphEdge[]>;
-  terminals: Array<{
-    nodeId: string;
-    type: 'route_endpoint' | 'synthetic_endpoint' | 'auto_node';
-    routeEndpointId: string;
-    legacyRouteId: number | null;
-    routingStrategy: string;
-    statusCode: number | null;
-    message: string | null;
-  }>;
-  publicModels: Array<{ nodeId: string; model: string }>;
 };
 
 export type RouteGraphCompileResult = {
-  version: 1;
   source: RouteGraphSource;
   primitiveSource?: RouteGraphSource;
   compiled: CompiledRouteGraph;
@@ -485,15 +445,11 @@ export type RouteGraphCompileResult = {
   ok: boolean;
 };
 
-export const ROUTE_GRAPH_SCHEMA_VERSION: 1;
-export const ROUTE_COMPILED_ROUTER_BUNDLE_VERSION: 2;
 export const ROUTE_GRAPH_MATCH_KIND_MODEL: 'model';
 export const ROUTE_GRAPH_BACKEND_KIND_SUPPLY: 'supply';
-export const ROUTE_GRAPH_BACKEND_KIND_ROUTES: 'routes';
+export const ROUTE_GRAPH_BACKEND_KIND_ROUTE_ENDPOINTS: 'route_endpoints';
 export const ROUTE_GRAPH_NODE_TYPES: readonly RouteGraphNodeType[];
-export const ROUTE_GRAPH_TERMINAL_NODE_TYPES: readonly ('route_endpoint' | 'synthetic_endpoint' | 'auto_node')[];
-export const ROUTE_GRAPH_SELECTION_STRATEGIES: readonly RouteGraphSelectionStrategy[];
-export const ROUTE_GRAPH_VISIBILITIES: readonly RouteGraphVisibility[];
+export const ROUTE_GRAPH_TERMINAL_NODE_TYPES: readonly ('route_endpoint' | 'synthetic_endpoint')[];
 export const ROUTE_GRAPH_OWNERSHIPS: readonly RouteGraphOwnership[];
 export const ROUTE_GRAPH_PORT_KINDS: readonly RouteGraphPortKind[];
 export const ROUTE_GRAPH_EDGE_KINDS: readonly RouteGraphEdgeKind[];
@@ -505,48 +461,46 @@ export function parseRouteGraphMatchSpec(raw: string | null | undefined): RouteG
 export function parseRouteGraphBackendSpec(raw: string | null | undefined): RouteGraphBackendSpec;
 export function stringifyRouteGraphMatchSpec(spec: unknown): string;
 export function stringifyRouteGraphBackendSpec(spec: unknown): string;
-export function buildRouteGraphSpecsFromLegacyRoute(input: {
-  routeMode?: unknown;
-  modelPattern?: unknown;
-  displayName?: unknown;
-  sourceRouteIds?: unknown;
-}): { matchSpec: RouteGraphMatchSpec; backendSpec: RouteGraphBackendSpec };
-export function deriveLegacyRouteModeFromBackendSpec(backendSpec: unknown): 'pattern' | 'explicit_group';
-export function deriveLegacyModelPatternFromSpecs(matchSpec: unknown, backendSpec: unknown): string;
-export function deriveLegacySourceRouteIdsFromBackendSpec(backendSpec: unknown): number[];
+export function getRouteGraphModelPatternFromSpecs(matchSpec: unknown, backendSpec: unknown): string;
 export function getRouteGraphExposedModelName(matchSpec: unknown, backendSpec: unknown): string;
 export function isRouteGraphExactModelMatch(matchSpec: unknown, backendSpec: unknown): boolean;
 export function routeGraphMatchesRequestedModel(model: string, matchSpec: unknown, backendSpec: unknown): boolean;
-export function legacyRouteIdToRouteGraphEntryNodeId(routeId: number): string;
-export function routeGraphRouteProductEndpointIdFromRoute(routeId: number): string;
-export function routeGraphSupplyEndpointIdFromRoute(routeId: number): string;
-export function routeGraphSupplyEndpointIdFromIdentity(identity: unknown, fallbackRouteId: number): string;
-export function routeGraphAutoModelProductEndpointId(canonicalModelKey: string): string;
+export function routeGraphSupplyEndpointIdFromSupplyKey(supplyKey: unknown): string;
+export function routeGraphSupplyEndpointIdFromIdentity(identity: unknown): string;
 export function getRouteGraphNodePorts(nodeInput: unknown): RouteGraphPort[];
 export function getRouteGraphNodePort(nodeInput: unknown, portId: string): RouteGraphPort | null;
 export function getRouteGraphMacroPorts(macroInput: unknown): RouteGraphPort[];
 export function getRouteGraphMacroPort(macroInput: unknown, portId: string): RouteGraphPort | null;
+export function canAttachManualRouteGraphEdge(port: RouteGraphPort | null | undefined): boolean;
 export function getRouteGraphPortConnectionBounds(port: RouteGraphPort | null | undefined): RouteGraphPortConnectionBounds;
 export function normalizeRouteGraphNode(input: unknown): RouteGraphNode;
 export function normalizeRouteGraphEdge(input: unknown): RouteGraphEdge;
 export function normalizeRouteGraphMacro(input: unknown): RouteGraphMacro;
-export function buildCandidateSelectorMacroFromRouteBinding(input: {
-  id?: number;
+export function buildCandidateSelectorSurfacePorts(surface: Pick<CandidateSelectorMacroConfig['surface'], 'entry' | 'output'>): RouteGraphPort[];
+export function buildCandidateSelectorMacro(input: {
   stableId?: string | null;
   displayName?: string | null;
   displayIcon?: string | null;
-  visibility?: RouteGraphVisibility;
+  ingress?: 'external' | 'embedded' | 'none';
   enabled?: boolean;
-  routingStrategy?: RouteGraphSelectionStrategy;
+  policy?: DispatcherPolicy;
   match?: RouteGraphMatchSpec;
+  filters?: RouteGraphFilters;
   endpointIds?: string[];
-  candidateBands?: Array<{
+  fallbackStages?: Array<{
     id?: string;
     label?: string | null;
     enabled?: boolean;
-    priority?: number;
-    weight?: number;
-    endpointIds?: string[];
+    policy?: DispatcherPolicy;
+    members?: Array<{
+      /** Opaque identity scoped to this dispatcher group; not a global resource. */
+      memberId?: string;
+      endpointId?: string;
+      macroId?: string;
+      enabled?: boolean;
+      weight?: number;
+      metadata?: Record<string, unknown>;
+    }>;
   }>;
   ownership?: RouteGraphOwnership;
   metadata?: Record<string, unknown>;
@@ -556,6 +510,14 @@ export function parseRouteGraphSource(raw: string | null | undefined): RouteGrap
 export function stringifyRouteGraphSource(source: unknown): string;
 export function lowerRouteGraphSource(sourceInput: unknown): { semanticSource: RouteGraphSource; primitiveSource: RouteGraphSource; diagnostics: RouteGraphDiagnostic[] };
 export function validateRouteGraphSource(sourceInput: unknown): { ok: boolean; diagnostics: RouteGraphDiagnostic[] };
-export function compileRouteGraphSource(sourceInput: unknown, options?: { includePrimitiveSource?: boolean }): RouteGraphCompileResult;
-export function findRouteGraphEntryForModel(compiledGraph: unknown, model: string): CompiledRouteGraph['entries'][number] | null;
-export function buildRouteGraphSourceFromLegacyRoutes(routesInput: unknown): RouteGraphSource;
+export function compileRouteGraphSource(sourceInput: unknown, options?: {
+  includePrimitiveSource?: boolean;
+  compactRuntimeBundle?: boolean;
+}): RouteGraphCompileResult;
+export function findRouteGraphEntryForModel(compiledGraph: unknown, model: string): {
+  nodeId: string;
+  enabled: boolean;
+  match: RouteGraphMatchSpec;
+  backend: RouteGraphBackendSpec;
+  publicModelName: string;
+} | null;

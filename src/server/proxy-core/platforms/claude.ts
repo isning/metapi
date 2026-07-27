@@ -1,13 +1,18 @@
 import type { PreparedPlatformRequest, PreparePlatformRequestInput, PlatformProfile } from './types.js';
 import {
   buildClaudeRuntimeHeaders,
-  CLAUDE_API_KEY_DEFAULT_BETA_HEADER,
   CLAUDE_DEFAULT_BETA_HEADER,
   CLAUDE_TOKEN_COUNTING_BETA,
   getInputHeader,
 } from './headers.js';
 import { extractClaudePassthroughHeaders } from '../formats/headerPassthrough.js';
 import { nativeReasoningCompatibilityPolicy } from './compatibilityPolicy.js';
+
+const CLAUDE_API_KEY_DEFAULT_BETA_HEADER = CLAUDE_DEFAULT_BETA_HEADER
+  .split(',')
+  .map((entry) => entry.trim())
+  .filter((entry) => entry && !entry.startsWith('oauth-'))
+  .join(',');
 
 export const claudePlatformProfile: PlatformProfile = {
   id: 'claude',
@@ -43,7 +48,10 @@ export const claudePlatformProfile: PlatformProfile = {
         stream: isCountTokens ? false : input.stream,
         isClaudeOauthUpstream,
         tokenValue: input.tokenValue,
-        defaultBetaHeader: isClaudeOauthUpstream
+        headerProfile: isClaudeOauthUpstream ? 'claude-code' : 'anthropic-compatible',
+        defaultBetaHeader: isCountTokens
+          ? ''
+          : isClaudeOauthUpstream
           ? CLAUDE_DEFAULT_BETA_HEADER
           : CLAUDE_API_KEY_DEFAULT_BETA_HEADER,
         ...(isCountTokens ? { extraBetas: [CLAUDE_TOKEN_COUNTING_BETA] } : {}),

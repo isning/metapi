@@ -1,101 +1,91 @@
 # 运行时路由流
 
-模型广场和模型测试会为选中的 public model 展示运行时路由流。该视图来自已发布 Graph Routing 的编译结果，不是图编辑器画布的直接渲染。
+模型广场、模型测试和日志详情展示的是已发布 source graph 编译出的 runtime projection，不是图编辑器画布的直接渲染，也不是 route-group 管理表的读取结果。
 
 ## 数据来源
 
-运行时路由流由 flat program bundle 构建：
-
 ```text
-public model
+downstream request
   -> matcher
-  -> filter stages
-  -> selector / dispatcher
-  -> candidate endpoint
-  -> supply target or synthetic response
+  -> compiled plan
+  -> pre-selection filters
+  -> ordered fallback stages
+  -> stage-local dispatcher decision
+  -> execution alternative
+  -> endpoint
+  -> execution attempt
+  -> API attempt
 ```
 
-这样可以保证页面展示与真实请求执行一致。画布布局、supply 折叠控制和 generated preview 节点属于编辑器行为，不参与运行时路由流。
+每个层次都有不同职责：
 
-## 流程组成
-
-| 组成 | 含义 |
+| 层次 | 含义 |
 |------|------|
-| Entry | 下游请求匹配到的 public model ingress |
-| Filter | 上游派发前的请求改写阶段 |
-| Selector | 候选集合和选择策略 |
-| Candidate | 可被选择的一条候选路径 |
-| Supply endpoint | 具体上游模型端点 |
-| Route product | 可作为候选复用的路由组产物 |
-| Synthetic endpoint | 配置的合成响应终端 |
+| Matcher | 将请求模型匹配到一个 compiled plan |
+| Compiled plan | 该 public model 的静态执行结构 |
+| Filter | 请求模型、payload、header 和 API preference 的变换 |
+| Fallback stage | 明确的主备顺序；由数组顺序决定 |
+| Dispatcher decision | 在当前 stage 的可选项中按 policy 选择 |
+| Execution alternative | 一个可继续执行或产生 synthetic response 的完整路径 |
+| Endpoint | alternative 归属的 supply 或 route product |
+| Execution attempt | 实际 endpoint target、账号和凭证的调用单元 |
+| API attempt | 对上游 API variant 的一次协议尝试 |
 
-`Candidate` 是 selector 层面的路径。它可以解析到 supply endpoint、另一个 route product，或 synthetic endpoint。
+`candidate` 只是在 dispatcher 内部指一个局部 option，不是全局 runtime DTO。面向用户的流和日志使用 execution alternative、endpoint、execution attempt 和 API attempt。
 
-## 候选状态
+## Fallback 语义
+
+compiled runtime 从最低序号的 fallback stage 开始。当前 stage 没有 eligible execution alternative 时，或者重试失败覆盖层已排除其所有 alternative 时，才评估下一个 stage。
+
+```text
+Primary stage
+  -> eligible alternative selected and executed
+  -> failure overlay exhausts primary alternatives
+Backup stage
+  -> selected and executed
+Synthetic unavailable stage
+  -> returns configured response
+```
+
+stage 内使用 native dispatcher policy。权重、round robin、CEL contribution 和 ordered CEL 仅影响当前 stage；不存在跨 stage 的 numeric priority。
+
+## 状态和观测
 
 | 状态 | 含义 |
 |------|------|
-| `selected` | 当前样本或请求上下文中被选中的路径 |
+| `selected` | 当前请求或模拟中被选中的 alternative/attempt |
 | `available` | 当前可参与选择 |
 | `disabled` | 被配置禁用 |
-| `avoided` | 因失败、冷却或策略状态被临时规避 |
-| `degraded` | 可用但质量较低 |
-| `unavailable` | 没有可执行目标 |
+| `avoided` | 被失败、冷却或运行时策略暂时排除 |
+| `degraded` | 仍可执行，但健康或 capability 不完整 |
+| `unavailable` | 没有可执行 attempt |
 
-多个候选可以同时处于 `available` 状态。`selected` 只描述一次评估结果，不表示其它候选不可用。
+入口成功率描述一次下游调用在 fallback 后的最终结果。Endpoint 和 execution attempt 的成功率则记录各自的尝试结果；它们不应混作入口成功率。
 
-## 候选概率
+运行历史按最终结果和 execution attempt 两个粒度呈现。最终结果适合判断用户看到的可用性；attempt 数据适合诊断具体上游、账号、凭证、协议 variant、TTFT、吞吐和错误。
 
-候选概率由 selector runtime 计算。
+## 概率
 
-可以静态估算的策略包括：
+概率来自 compiled plan 中实际生效的 dispatcher policy。一个 stage 内的静态加权 policy 可以给出成员概率；整个 plan 的概率还取决于前序 stage 是否耗尽。读取请求、健康、冷却、余额、成本、负载或轮询状态的 policy 没有通用固定概率。
 
-- 固定权重；
-- round-robin；
-- stable-first；
-- priority-order；
-- 不读取请求 payload 或运行时状态的 score policy。
-
-动态策略或请求上下文相关策略可能在没有请求上下文时返回 `N/A`。典型情况包括读取 `payload` 的 CEL、读取 `stateStore` 的 selector，以及受健康、冷却、余额、成本或负载影响的候选。
-
-完整计算规则见 [概率与成本估算](./route-probability-cost.md)。
+模型广场可以展示无请求上下文下的静态结论；模型测试和日志详情应优先展示带当前请求和运行时状态的实际决策。完整规则见[概率与成本估算](./route-probability-cost.md)。
 
 ## 成本标注
 
-当成本信息可解析时，运行时路由流会为 candidate 和 entry 标注理论成本。
+当 execution attempt 的统一报价可用时，runtime projection 会提供原始报价、归一化有效成本和请求形状下的估计成本。选择 policy 读取的是明确注入的 runtime routing signals；raw price 仍可作为 metadata 供自定义 CEL 使用，但不会被隐式当作默认选路依据。
 
-成本来源顺序：
-
-```text
-manual upstream model cost
-  -> upstream platform catalog price
-  -> upstream default price
-```
-
-参考倍率只在参考价格数据库命中模型时计算。上游默认价格不作为参考价格使用。
-
-## 模型测试请求上下文
-
-模型广场通常展示默认编译结构。模型测试在真实请求后可以补充请求级证据：
-
-- 匹配到的 entry；
-- 实际选中的 candidate；
-- 实际选中的 upstream endpoint；
-- API endpoint variant attempt；
-- latency、error 和 response summary；
-- request trace。
-
-如果请求包含特殊 payload、metadata、forced target 或 endpoint preference，页面应标记该结果属于当前请求上下文。
+成本不完整时，页面必须显示缺失或动态状态，而不能把未知值变为零或固定比例。
 
 ## 诊断
 
-诊断信息应挂载到最接近的流程对象上。
+诊断挂在最接近的 runtime 对象上：
 
 | 分类 | 示例 |
 |------|------|
-| Compile diagnostics | missing port、duplicate public model、unsupported macro resolver |
-| Candidate diagnostics | disabled、excluded、unresolved endpoint |
-| Cost diagnostics | missing upstream price、missing wallet valuation |
-| Capability diagnostics | unsupported API endpoint、incompatible protocol policy |
+| Compile diagnostics | missing port、duplicate public model、unsupported resolver |
+| Alternative diagnostics | disabled、excluded、unresolved endpoint |
+| Execution-attempt diagnostics | credential、capability、cooldown、健康状态 |
+| API-attempt diagnostics | adapter、协议映射、上游 HTTP 错误 |
+| Pricing diagnostics | 缺少上游报价、钱包估值或计费维度 |
 
-运行时路由流应保留 source reference，便于定位到图编辑器中的 entry、macro、endpoint 或 generated primitive。
+runtime projection 保留 source reference 供诊断定位，但 proxy 执行不依赖 route-group provenance、编辑器布局或旧 route table 标识。

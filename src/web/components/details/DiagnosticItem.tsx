@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { AlertTriangle, Info, XCircle } from 'lucide-react';
 import { Badge } from '../ui/badge/index.js';
 import { Button } from '../ui/button/index.js';
+import { tr } from '../../i18n.js';
 
 type DiagnosticLevel = 'info' | 'warn' | 'error';
 
@@ -35,14 +36,14 @@ export default function DiagnosticItem({
       <span className="mt-0.5 inline-flex shrink-0 text-muted-foreground">{levelIcon[level]}</span>
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
-          <Badge variant={levelVariant[level]}>{level}</Badge>
+          <Badge variant={levelVariant[level]}>{tr(`components.diagnosticItem.level.${level}`)}</Badge>
           <div className="min-w-0 text-sm font-medium">{message}</div>
         </div>
         {detail ? <div className="mt-1 text-xs text-muted-foreground">{detail}</div> : null}
       </div>
       {onGoToTarget ? (
         <Button type="button" variant="outline" size="sm" onClick={onGoToTarget}>
-          Go to node
+          {tr('components.diagnosticItem.goToTarget')}
         </Button>
       ) : null}
     </div>

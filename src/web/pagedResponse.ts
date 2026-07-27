@@ -10,47 +10,38 @@ export type PagedResponse<T> = {
   pageInfo: PageInfo;
 };
 
-function normalizeNumber(
-  value: unknown,
-  fallback: unknown,
-  finalFallback: number,
-): number {
-  const parsed = Number(value);
-  if (Number.isFinite(parsed)) return parsed;
-  const fallbackParsed = Number(fallback);
-  return Number.isFinite(fallbackParsed) ? fallbackParsed : finalFallback;
+function requireFiniteNumber(value: unknown, field: string): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new Error(`Invalid paged response: ${field} must be a finite number`);
+  }
+  return value;
 }
 
 export function normalizePagedResponse<T>(
   response: unknown,
-  fallbackPageInfo: Partial<PageInfo> = {},
 ): PagedResponse<T> {
-  if (Array.isArray(response)) {
-    const pageInfo = (response as unknown as { pageInfo?: Partial<PageInfo> }).pageInfo || {};
-    return {
-      items: response as T[],
-      pageInfo: {
-        page: normalizeNumber(pageInfo.page, fallbackPageInfo.page, 1),
-        pageSize: normalizeNumber(pageInfo.pageSize, fallbackPageInfo.pageSize, response.length),
-        totalCount: normalizeNumber(pageInfo.totalCount, fallbackPageInfo.totalCount, response.length),
-        hasMore: Boolean(pageInfo.hasMore ?? fallbackPageInfo.hasMore),
-      },
-    };
+  if (!response || typeof response !== 'object' || Array.isArray(response)) {
+    throw new Error('Invalid paged response: expected an object');
   }
-
-  const record = response && typeof response === 'object'
-    ? response as { items?: unknown; pageInfo?: Partial<PageInfo> }
-    : {};
-  const items = Array.isArray(record.items) ? record.items as T[] : [];
-  const pageInfo = record.pageInfo || {};
+  const record = response as Record<string, unknown>;
+  if (!Array.isArray(record.items)) {
+    throw new Error('Invalid paged response: items must be an array');
+  }
+  if (!record.pageInfo || typeof record.pageInfo !== 'object' || Array.isArray(record.pageInfo)) {
+    throw new Error('Invalid paged response: pageInfo must be an object');
+  }
+  const pageInfo = record.pageInfo as Record<string, unknown>;
+  if (typeof pageInfo.hasMore !== 'boolean') {
+    throw new Error('Invalid paged response: pageInfo.hasMore must be a boolean');
+  }
   return {
     ...record,
-    items,
+    items: record.items as T[],
     pageInfo: {
-      page: normalizeNumber(pageInfo.page, fallbackPageInfo.page, 1),
-      pageSize: normalizeNumber(pageInfo.pageSize, fallbackPageInfo.pageSize, items.length),
-      totalCount: normalizeNumber(pageInfo.totalCount, fallbackPageInfo.totalCount, items.length),
-      hasMore: Boolean(pageInfo.hasMore ?? fallbackPageInfo.hasMore),
+      page: requireFiniteNumber(pageInfo.page, 'pageInfo.page'),
+      pageSize: requireFiniteNumber(pageInfo.pageSize, 'pageInfo.pageSize'),
+      totalCount: requireFiniteNumber(pageInfo.totalCount, 'pageInfo.totalCount'),
+      hasMore: pageInfo.hasMore,
     },
   };
 }

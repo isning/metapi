@@ -2384,6 +2384,43 @@ textarea {
   overflow-wrap: anywhere;
 }
 
+.proxy-log-decision-node-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.proxy-log-decision-node-details {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px 8px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--color-border) 68%, transparent);
+}
+
+.proxy-log-decision-node-detail {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.proxy-log-decision-node-detail span {
+  color: var(--color-text-muted);
+  font-size: 10px;
+  line-height: 1.15;
+}
+
+.proxy-log-decision-node-detail strong {
+  min-width: 0;
+  color: var(--color-text-primary);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
 .proxy-log-decision-connector {
   position: relative;
   display: grid;
@@ -2433,6 +2470,56 @@ textarea {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+.proxy-log-runtime-usage-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.proxy-log-runtime-usage-card {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+  border: 1px solid color-mix(in srgb, var(--color-border) 76%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--muted) 22%, transparent);
+  padding: 10px;
+}
+
+.proxy-log-runtime-usage-label {
+  color: var(--color-text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.proxy-log-runtime-usage-identity {
+  display: block;
+  margin-top: 4px;
+  color: var(--color-text-primary);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.proxy-log-runtime-usage-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 8px;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.proxy-log-runtime-usage-metrics strong {
+  color: var(--color-text-primary);
+  font-weight: 700;
 }
 
 .proxy-log-decision-snapshot {
@@ -3195,6 +3282,7 @@ textarea {
   .proxy-debug-summary-body,
   .proxy-log-detail-grid,
   .proxy-log-decision-grid,
+  .proxy-log-runtime-usage-grid,
   .proxy-log-decision-snapshot,
   .proxy-trace-detail-hero,
   .proxy-trace-detail-grid,
@@ -3495,6 +3583,24 @@ textarea {
   transform-origin: top center;
 }
 
+/* Route Group detail is rendered in the desktop workbench's right column.
+   Keep its card treatment, but never let the generic full-row route-card
+   selector create an implicit grid track in that column. */
+.route-group-detail-card {
+  border-radius: 16px;
+  border-color: color-mix(in srgb, var(--color-border) 82%, transparent);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--color-bg-card) 95%, white 5%), color-mix(in srgb, var(--color-bg-card) 99%, white 1%));
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.04);
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, background-color 0.18s ease;
+}
+
+[data-theme="dark"] .route-group-detail-card {
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--color-bg-card) 95%, #0b1220 5%), color-mix(in srgb, var(--color-bg-card) 99%, #020617 1%));
+  box-shadow: 0 18px 34px rgba(2, 6, 23, 0.24);
+}
+
 .route-detail-panel-presence {
   overflow: clip;
 }
@@ -3583,14 +3689,16 @@ textarea {
 
 .route-graph-workbench {
   height: calc(100vh - 188px);
-  grid-template-rows: 62px minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   overflow: hidden;
 }
 
 .route-graph-toolbar {
   min-height: 62px;
-  max-height: 62px;
-  overflow: hidden;
+}
+
+.route-graph-compiled-context {
+  max-width: min(620px, 100%);
 }
 
 .route-graph-toolbar,
@@ -3995,7 +4103,7 @@ textarea {
   align-self: start;
 }
 
-.route-graph-priority-band-preview-row {
+.route-graph-fallback-stage-preview-row {
   display: grid;
   min-width: 0;
   max-width: 100%;
@@ -4124,7 +4232,7 @@ textarea {
   @apply text-xs font-medium text-muted-foreground;
 }
 
-.route-graph-priority-band-card {
+.route-graph-fallback-stage-card {
   display: grid;
   min-width: 0;
   max-width: 100%;
@@ -4133,7 +4241,7 @@ textarea {
   padding-top: 10px;
 }
 
-.route-graph-priority-band-header {
+.route-graph-fallback-stage-header {
   display: flex;
   min-width: 0;
   align-items: center;
@@ -4141,11 +4249,11 @@ textarea {
   gap: 8px;
 }
 
-.route-graph-priority-band-fields {
+.route-graph-fallback-stage-fields {
   display: grid;
   min-width: 0;
   max-width: 100%;
-  grid-template-columns: minmax(0, 1fr) minmax(72px, 92px);
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
 }
 
@@ -4329,10 +4437,9 @@ textarea {
   @apply text-xs text-muted-foreground;
   min-width: 0;
   max-width: 100%;
-  overflow: hidden;
   line-height: 1.35;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .route-graph-endpoint-remove-button {
@@ -4345,7 +4452,7 @@ textarea {
   display: grid;
   min-width: 0;
   max-width: 100%;
-  grid-template-columns: minmax(58px, 0.72fr) minmax(58px, 0.72fr) minmax(0, 1fr);
+  grid-template-columns: minmax(58px, 0.72fr) minmax(0, 1fr);
   gap: 5px;
 }
 
@@ -4359,7 +4466,7 @@ textarea {
 }
 
 @media (max-width: 520px) {
-  .route-graph-priority-band-fields,
+  .route-graph-fallback-stage-fields,
   .route-graph-endpoint-override-grid {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -5180,6 +5287,174 @@ textarea {
 
 .route-graph-advanced-json .route-graph-json-editor {
   min-height: 560px;
+}
+
+.route-focus-port-row {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 20px;
+  align-items: center;
+  gap: 5px;
+  line-height: 1;
+}
+
+.route-graph-focus-resize-handle {
+  width: 9px;
+  flex: 0 0 9px;
+  background: transparent;
+  transition: background-color 120ms ease;
+}
+
+.route-graph-focus-resize-handle::before {
+  position: absolute;
+  inset-block: 0;
+  left: 4px;
+  width: 1px;
+  content: '';
+  background: var(--border);
+}
+
+.route-graph-focus-resize-handle:hover,
+.route-graph-focus-resize-handle:focus-visible,
+.route-graph-focus-resize-handle[data-resize-handle-active] {
+  background: color-mix(in srgb, var(--primary) 10%, transparent);
+}
+
+.route-graph-focus-resize-handle > div {
+  border-color: color-mix(in srgb, var(--primary) 24%, var(--border));
+  background: var(--background);
+  color: var(--muted-foreground);
+}
+
+.route-focus-port-row.is-output {
+  justify-content: flex-end;
+}
+
+.route-focus-port-kind {
+  flex: none;
+  border: 1px solid color-mix(in srgb, var(--route-focus-port-color) 38%, var(--border));
+  border-radius: 3px;
+  padding: 1px 4px;
+  color: color-mix(in srgb, var(--route-focus-port-color) 82%, var(--foreground));
+  background: color-mix(in srgb, var(--route-focus-port-color) 8%, var(--background));
+  font-size: 8px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.route-focus-port-row .react-flow__handle,
+.react-flow__node-portal .react-flow__handle {
+  position: absolute;
+  top: 50%;
+  width: 9px;
+  height: 9px;
+  border: 1px solid var(--background);
+  background: var(--route-focus-port-color, var(--primary));
+  pointer-events: auto;
+}
+
+.route-focus-port-row.is-input .react-flow__handle {
+  left: -13px;
+  transform: translate(-50%, -50%);
+}
+
+.route-focus-port-row.is-output .react-flow__handle {
+  right: -13px;
+  transform: translate(50%, -50%);
+}
+
+/* Locked ports remain visible so graph topology stays legible. They cannot
+ * start a direct manual connection or receive React Flow hit testing. */
+.route-focus-port-row.is-connection-locked {
+  color: hsl(var(--muted-foreground) / 0.62);
+}
+
+.route-focus-port-row.is-connection-locked .route-focus-port-handle {
+  cursor: not-allowed;
+  opacity: 0.48;
+  pointer-events: none;
+}
+
+.route-focus-port-row.is-connection-locked .route-focus-port-kind {
+  opacity: 0.62;
+}
+
+.route-focus-port-row .react-flow__handle[data-collection='arr'],
+.route-focus-port-row .react-flow__handle[data-collection='set'] {
+  width: 13px;
+  height: 13px;
+  border-color: var(--route-focus-port-color);
+  background: radial-gradient(circle at center, var(--route-focus-port-color) 0 2.5px, var(--background) 3px);
+}
+
+.route-focus-port-row .react-flow__handle[data-collection='set'] {
+  border-style: dashed;
+}
+
+.route-focus-handle-primary {
+  background: var(--primary);
+}
+
+.route-focus-handle-success {
+  background: var(--success);
+}
+
+.route-focus-resident-node {
+  border-top: 3px solid var(--route-focus-accent, var(--border));
+}
+
+.route-focus-portal-node {
+  border-left-color: var(--route-focus-accent, var(--border));
+}
+
+.route-focus-inspector-header {
+  border-top: 3px solid var(--route-focus-accent, var(--border));
+}
+
+.route-focus-accent-icon {
+  color: var(--route-focus-accent, var(--foreground));
+}
+
+.route-focus-node-icon {
+  color: var(--route-focus-accent, var(--foreground));
+  border-color: color-mix(in srgb, var(--route-focus-accent, var(--border)) 40%, var(--border));
+  background: color-mix(in srgb, var(--route-focus-accent, var(--background)) 9%, var(--background));
+}
+
+.route-focus-context-badge {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  border: 1px solid color-mix(in srgb, var(--route-focus-accent, var(--border)) 32%, var(--border));
+  border-radius: 4px;
+  padding: 1px 5px;
+  color: var(--muted-foreground);
+  background: color-mix(in srgb, var(--route-focus-accent, var(--background)) 6%, var(--background));
+  line-height: 1.35;
+}
+
+.route-focus-context-badge.is-success {
+  border-color: color-mix(in srgb, #16a34a 42%, var(--border));
+  color: #15803d;
+}
+
+.route-focus-context-badge.is-warning {
+  border-color: color-mix(in srgb, #d97706 48%, var(--border));
+  color: #b45309;
+}
+
+.route-focus-context-badge.is-danger {
+  border-color: color-mix(in srgb, var(--destructive) 48%, var(--border));
+  color: var(--destructive);
+}
+
+.dark .route-focus-context-badge.is-success {
+  color: #4ade80;
+}
+
+.dark .route-focus-context-badge.is-warning {
+  color: #fbbf24;
 }
 
 @keyframes model-route-flow-dash {

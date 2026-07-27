@@ -2,6 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { clearRouteGroupMemberTestData } from '../../testing/routeGroupMemberTestUtils.js';
 
 type DbModule = typeof import('../db/index.js');
 type ConfigModule = typeof import('../config.js');
@@ -30,7 +31,7 @@ describe('factoryResetService', () => {
   });
 
   beforeEach(async () => {
-    await db.delete(schema.routeEndpointTargets).run();
+    await clearRouteGroupMemberTestData();
     await db.delete(schema.tokenModelAvailability).run();
     await db.delete(schema.modelAvailability).run();
     await db.delete(schema.proxyLogs).run();
@@ -38,7 +39,8 @@ describe('factoryResetService', () => {
     await db.delete(schema.checkinLogs).run();
     await db.delete(schema.accountTokens).run();
     await db.delete(schema.accounts).run();
-    await db.delete(schema.tokenRoutes).run();
+    await db.delete(schema.runtimeExecutionTargetState).run();
+    await db.delete(schema.runtimeExecutionTargets).run();
     await db.delete(schema.sites).run();
     await db.delete(schema.downstreamApiKeys).run();
     await db.delete(schema.events).run();

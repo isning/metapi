@@ -13,12 +13,13 @@ import {
   buildGeminiNativeConversationProxyEnvelope,
   buildRawProxyRequestEnvelope,
   buildSearchRequestEnvelope,
-  attachForcedTargetToEnvelope,
+  attachForcedExecutionAttemptToEnvelope,
   collectModelTesterModelNames,
   countConversationTurns,
   createConversationUserMessage,
   extractConversationUploadedFilesFromMessage,
   filterModelTesterModelNames,
+  isValidCustomRequestJson,
   parseCustomRequestBody,
   parseModelTesterSession,
   serializeModelTesterSession,
@@ -75,11 +76,11 @@ describe('modelTesterSession', () => {
         stream: false,
         jobMode: false,
         rawMode: false,
-        forcedTargetId: 44,
+        forcedExecutionAttemptId: 'ea_18',
         jsonBody: { model: '__search', query: 'hello', max_results: 7 },
       },
       pendingJobId: 'job-1',
-      forcedTargetId: 44,
+      forcedExecutionAttemptId: 'ea_18',
       customRequestMode: true,
       customRequestBody: '{"model":"gemini-2.5-pro","contents":[]}',
       showDebugPanel: true,
@@ -122,6 +123,53 @@ describe('modelTesterSession', () => {
     expect(restored?.inputs.mode).toBe('conversation');
     expect(restored?.inputs.temperature).toBe(0.5);
     expect(restored?.parameterEnabled).toEqual(DEFAULT_PARAMETER_ENABLED);
+  });
+
+  it('drops invalid restored structured pending payloads with string jsonBody values', () => {
+    const jsonBody = {
+      model: 'deepseek-ai/DeepSeek-V4-Flash',
+      stream: true,
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }],
+    };
+    const restored = parseModelTesterSession(JSON.stringify({
+      input: 'hello',
+      inputs: { ...DEFAULT_INPUTS, model: 'deepseek-v4-flash-rerouted', protocol: 'claude' },
+      messages: [{ id: 'm1', role: 'user', content: 'hello', createAt: 1 }],
+      pendingPayload: {
+        method: 'POST',
+        path: '/v1/messages',
+        requestKind: 'json',
+        stream: true,
+        jobMode: false,
+        rawMode: false,
+        jsonBody: JSON.stringify(jsonBody),
+      },
+    }));
+
+    expect(restored?.pendingPayload).toBeNull();
+  });
+
+  it('preserves restored raw pending payloads with arbitrary JSON text', () => {
+    const restored = parseModelTesterSession(JSON.stringify({
+      input: 'hello',
+      inputs: { ...DEFAULT_INPUTS, model: 'deepseek-v4-flash-rerouted', protocol: 'claude' },
+      messages: [{ id: 'm1', role: 'user', content: 'hello', createAt: 1 }],
+      pendingPayload: {
+        method: 'POST',
+        path: '/v1/messages',
+        requestKind: 'json',
+        stream: true,
+        jobMode: false,
+        rawMode: true,
+        rawJsonText: JSON.stringify('not an object'),
+      },
+    }));
+
+    expect(restored?.pendingPayload).toMatchObject({
+      requestKind: 'json',
+      rawMode: true,
+      rawJsonText: JSON.stringify('not an object'),
+    });
   });
 
   it('returns null for malformed or missing session payload', () => {
@@ -191,13 +239,13 @@ describe('modelTesterSession', () => {
     });
   });
 
-  it('attaches a forced channel id to tester envelopes without mutating the request body', () => {
+  it('attaches a forced execution attempt id to tester envelopes without mutating the request body', () => {
     const base = buildEmbeddingsRequestEnvelope('hello', {
       ...DEFAULT_INPUTS,
       model: 'text-embedding-3-small',
     });
 
-    const payload = attachForcedTargetToEnvelope(base, 42);
+    const payload = attachForcedExecutionAttemptToEnvelope(base, 'ea_16');
 
     expect(payload).toEqual({
       method: 'POST',
@@ -206,7 +254,7 @@ describe('modelTesterSession', () => {
       stream: false,
       jobMode: false,
       rawMode: false,
-      forcedTargetId: 42,
+      forcedExecutionAttemptId: 'ea_16',
       jsonBody: {
         model: 'text-embedding-3-small',
         input: 'hello',
@@ -868,6 +916,13 @@ describe('modelTesterSession', () => {
     });
   });
 
+  it('allows custom request JSON roots that cannot be synced back into messages', () => {
+    expect(isValidCustomRequestJson('"literal body"')).toBe(true);
+    expect(isValidCustomRequestJson('[{"role":"user","content":"hello"}]')).toBe(true);
+    expect(isValidCustomRequestJson('not-json')).toBe(false);
+    expect(parseCustomRequestBody('"literal body"')).toBeNull();
+  });
+
   it('syncs messages into custom request body while preserving unknown fields', () => {
     const synced = syncMessagesToCustomRequestBody(
       '{"model":"legacy","metadata":{"trace":"keep"}}',
@@ -886,7 +941,7 @@ describe('modelTesterSession', () => {
   });
 
   it('builds raw proxy envelope for passthrough mode', () => {
-    expect(buildRawProxyRequestEnvelope('POST', '/v1/responses', 'json', '{"foo":1}', { stream: true })).toEqual({
+    expect(buildRawProxyRequestEnvelope('POST', '/v1/responses', '{"foo":1}', { stream: true })).toEqual({
       method: 'POST',
       path: '/v1/responses',
       requestKind: 'json',
@@ -897,7 +952,7 @@ describe('modelTesterSession', () => {
     });
   });
 
-  it('merges marketplace models with exact enabled graph route models for tester options', () => {
+  it('uses marketplace models only for tester options', () => {
     const modelNames = collectModelTesterModelNames(
       {
         models: [
@@ -905,55 +960,11 @@ describe('modelTesterSession', () => {
           { name: 'bge-large-en-v1.5' },
         ],
       },
-      [
-        { modelPattern: 'BAAI/bge-large-en-v1.5', enabled: true },
-        { modelPattern: 'claude-*', enabled: true },
-        { modelPattern: 'gemini-2.5-pro', enabled: false },
-        {
-          enabled: true,
-          visibility: 'public',
-          match: {
-            requestedModelPattern: 'graph-exact-model',
-            displayName: 'Graph Match Alias',
-          },
-          presentation: {
-            displayName: 'Public Alias',
-          },
-        },
-        {
-          enabled: true,
-          visibility: 'public',
-          match: {
-            requestedModelPattern: 'private-*',
-            displayName: 'Wildcard Alias',
-          },
-        },
-        {
-          enabled: true,
-          visibility: 'internal',
-          match: {
-            requestedModelPattern: 'internal-exact-model',
-            displayName: 'Internal Alias',
-          },
-        },
-        {
-          enabled: false,
-          visibility: 'public',
-          presentation: {
-            displayName: 'Disabled Alias',
-          },
-        },
-      ],
     );
 
     expect(modelNames).toEqual([
       'gpt-4o-mini',
       'bge-large-en-v1.5',
-      'BAAI/bge-large-en-v1.5',
-      'Public Alias',
-      'Graph Match Alias',
-      'graph-exact-model',
-      'Wildcard Alias',
     ]);
   });
 

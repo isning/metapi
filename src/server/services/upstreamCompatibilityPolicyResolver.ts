@@ -25,9 +25,7 @@ export function resolveDispatchUpstreamCompatibilityPolicy(input: {
   account?: AccountCarrier | null;
   token?: PolicyCarrier | null;
   routeEndpointCompatibilityPolicy?: UpstreamCompatibilityPolicy | null;
-  selectedEndpointTarget?: {
-    compatibilityPolicy?: UpstreamCompatibilityPolicy | null;
-  } | null;
+  executionAttemptCompatibilityPolicy?: UpstreamCompatibilityPolicy | null;
 }): ResolvedUpstreamCompatibilityPolicy {
   return resolveUpstreamCompatibilityPolicy(
     input.defaultCompatibilityPolicy || undefined,
@@ -35,6 +33,6 @@ export function resolveDispatchUpstreamCompatibilityPolicy(input: {
     getCompatibilityPolicyFromExtraConfig(input.account?.extraConfig),
     policyFromCarrier(input.token),
     input.routeEndpointCompatibilityPolicy || undefined,
-    input.selectedEndpointTarget?.compatibilityPolicy || undefined,
+    input.executionAttemptCompatibilityPolicy || undefined,
   );
 }

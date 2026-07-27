@@ -34,13 +34,13 @@ function balanceBurnFromEvaluation(evaluation: PricingEvaluation | null): number
   if (!evaluation) return null;
   const charge = evaluation.components
     .filter((component) => component.role === 'charge' || component.role === 'minimum')
-    .reduce((sum, component) => sum + Math.max(0, component.costUsd), 0);
+    .reduce((sum, component) => sum + Math.max(0, component.cost), 0);
   const discount = evaluation.components
     .filter((component) => component.role === 'discount' || component.role === 'credit' || component.role === 'maximum')
-    .reduce((sum, component) => sum + Math.abs(Math.min(0, component.costUsd)), 0);
-  const total = Math.max(0, charge - discount + Math.max(0, evaluation.adjustmentCostUsd));
+    .reduce((sum, component) => sum + Math.abs(Math.min(0, component.cost)), 0);
+  const total = Math.max(0, charge - discount + Math.max(0, evaluation.adjustmentCost));
   if (Number.isFinite(total)) return total;
-  return asNonNegativeFinite(evaluation.totalCostUsd);
+  return asNonNegativeFinite(evaluation.totalCost);
 }
 
 function profileEstimateLevel(profile: WalletAcquisitionProfile | null, diagnostics: PricingQuoteDiagnostic[]): EffectiveCostQuote['estimateLevel'] {

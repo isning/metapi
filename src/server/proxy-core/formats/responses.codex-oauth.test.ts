@@ -1,4 +1,5 @@
 import { zstdCompressSync } from 'node:zlib';
+import { executionDecisionFrom } from '../../../testing/routeRuntimeDecisionMock.js';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { config } from '../../config.js';
@@ -9,6 +10,7 @@ const fetchMock = vi.fn();
 const selectTargetMock = vi.fn();
 const selectNextTargetMock = vi.fn();
 const selectPreferredTargetMock = vi.fn();
+const selectRouteRuntimeExecutionAttemptInputMock = vi.fn();
 const recordSuccessMock = vi.fn();
 const recordFailureMock = vi.fn();
 const refreshModelsAndRebuildRoutesMock = vi.fn();
@@ -46,18 +48,95 @@ vi.mock('undici', async () => {
   };
 });
 
-vi.mock('../../services/tokenRouter.js', () => ({
-  tokenRouter: {
-    selectTarget: (...args: unknown[]) => selectTargetMock(...args),
-    selectNextTarget: (...args: unknown[]) => selectNextTargetMock(...args),
-    selectPreferredTarget: (...args: unknown[]) => selectPreferredTargetMock(...args),
-    recordSuccess: (...args: unknown[]) => recordSuccessMock(...args),
-    recordFailure: (...args: unknown[]) => recordFailureMock(...args),
-  },
+
+async function selectRouteRuntimeExecutionAttemptForTest(input: any) {
+    selectRouteRuntimeExecutionAttemptInputMock(input);
+    const excluded = Array.isArray(input?.disabledExecutionTargetIds) ? input.disabledExecutionTargetIds : [];
+    const normalizeSelected = (selected: any) => selected
+      ? {
+        ...selected,
+        executionAttemptId: selected.executionAttemptId,
+        executionTargetId: selected.executionTargetId,
+        routeRuntimeSnapshot: selected.routeRuntimeSnapshot || {
+          compiledRuntime: { bundleHash: 'responses-test-bundle' },
+        },
+      }
+      : selected;
+    if (input?.forcedExecutionAttemptId) {
+      return normalizeSelected(await selectPreferredTargetMock(
+        input.requestedModel,
+        input.forcedExecutionAttemptId,
+        input.downstreamPolicy,
+        excluded,
+      ));
+    }
+    if (excluded.length > 0) {
+      return normalizeSelected(await selectNextTargetMock(input.requestedModel, excluded, input.downstreamPolicy));
+    }
+    return normalizeSelected(await selectTargetMock(input?.requestedModel, input?.downstreamPolicy));
+}
+
+let hasPreviewedRouteRuntimeDecision = false;
+let previewedRouteRuntimeDecision: unknown = null;
+let previewedRouteRuntimeDecisionKey = '';
+
+function routeRuntimeDecisionKey(input: any): string {
+  return JSON.stringify({
+    requestedModel: input?.requestedModel || '',
+    forcedExecutionAttemptId: input?.forcedExecutionAttemptId || '',
+    disabledExecutionTargetIds: input?.disabledExecutionTargetIds || [],
+    disabledExecutionAttemptIds: input?.disabledExecutionAttemptIds || [],
+    retryCount: input?.retryCount || 0,
+  });
+}
+
+async function selectRouteRuntimeDecisionForTest(input: any) {
+  const key = routeRuntimeDecisionKey(input);
+  if (hasPreviewedRouteRuntimeDecision && previewedRouteRuntimeDecisionKey === key) {
+    hasPreviewedRouteRuntimeDecision = false;
+    previewedRouteRuntimeDecisionKey = '';
+    const decision = previewedRouteRuntimeDecision;
+    previewedRouteRuntimeDecision = null;
+    return decision;
+  }
+  return await executionDecisionFrom(selectRouteRuntimeExecutionAttemptForTest, input);
+}
+
+async function previewRouteRuntimeDecisionForTest(input: any) {
+  const key = routeRuntimeDecisionKey(input);
+  if (!hasPreviewedRouteRuntimeDecision || previewedRouteRuntimeDecisionKey !== key) {
+    previewedRouteRuntimeDecision = await selectRouteRuntimeDecisionForTest(input);
+    hasPreviewedRouteRuntimeDecision = true;
+    previewedRouteRuntimeDecisionKey = key;
+  }
+  return previewedRouteRuntimeDecision;
+}
+
+vi.mock('../../services/routeRuntimeExecutionService.js', () => ({
+  createRouteRuntimeDecisionSession: async (input: any) => input,
+  selectRouteRuntimeDecisionInSession: (session: any, input: any) => selectRouteRuntimeDecisionForTest({ ...session, ...input }),
+  previewRouteRuntimeDecisionInSession: (session: any, input: any) => previewRouteRuntimeDecisionForTest({ ...session, ...input }),
+  selectRouteRuntimeDecision: selectRouteRuntimeDecisionForTest,
+  previewRouteRuntimeDecision: previewRouteRuntimeDecisionForTest,
+  selectRouteRuntimeExecutionAttempt: selectRouteRuntimeExecutionAttemptForTest,
+  resolveRouteRuntimeSyntheticResponse: async () => null,
+  recordRouteRuntimeExecutionAttemptStarted: async () => undefined,
+  recordRouteRuntimeExecutionAttemptSuccess: (input: any) =>
+    recordSuccessMock(input.executionTargetId, input.latencyMs, input.modelName),
+  recordRouteRuntimeExecutionAttemptFailure: (input: any) =>
+    recordFailureMock(input.executionTargetId, { status: input.status, errorText: input.errorText }),
+  recordRouteRuntimeExecutionAttemptSelected: async () => undefined,
 }));
 
 vi.mock('../../services/modelService.js', () => ({
   refreshModelsAndRebuildRoutes: (...args: unknown[]) => refreshModelsAndRebuildRoutesMock(...args),
+}));
+
+vi.mock('../../services/compiledRuntimeExecutionSessionService.js', () => ({
+  startCompiledRuntimeExecutionSession: async () => ({ requestId: 'request:responses-test', startedAtMs: Date.now() }),
+  resumeCompiledRuntimeExecutionSession: async () => null,
+  bindCompiledRuntimeExecutionDecision: async () => undefined,
+  completeCompiledRuntimeExecutionSession: async () => true,
 }));
 
 vi.mock('../../services/alertService.js', () => ({
@@ -94,17 +173,12 @@ vi.mock('../../services/oauth/quota.js', () => ({
   recordOauthQuotaResetHint: async (input: unknown) => recordOauthQuotaResetHintMock(input),
 }));
 
-vi.mock('../../services/routeGraphRuntimeService.js', async (importOriginal) => ({
-  ...await importOriginal<typeof import('../../services/routeGraphRuntimeService.js')>(),
-  evaluateActiveRouteGraphForModel: async () => null,
+vi.mock('../../services/routeRuntimeEvaluatorService.js', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../services/routeRuntimeEvaluatorService.js')>(),
 }));
 
 vi.mock('../../services/credentialEndpointBindingService.js', () => ({
   loadCredentialApiVariantConfig: async () => null,
-}));
-
-vi.mock('../../services/proxyLogRouteDecisionSnapshot.js', () => ({
-  buildProxyLogRouteDecisionSnapshot: async () => null,
 }));
 
 vi.mock('../../db/index.js', () => ({
@@ -200,6 +274,9 @@ describe('responses proxy codex oauth refresh', () => {
   });
 
   beforeEach(() => {
+    hasPreviewedRouteRuntimeDecision = false;
+    previewedRouteRuntimeDecision = null;
+    previewedRouteRuntimeDecisionKey = '';
     resetCodexHttpSessionQueue();
     resetCodexSessionResponseStore();
     config.proxyEmptyContentFailEnabled = false;
@@ -211,6 +288,7 @@ describe('responses proxy codex oauth refresh', () => {
     selectTargetMock.mockReset();
     selectNextTargetMock.mockReset();
     selectPreferredTargetMock.mockReset();
+    selectRouteRuntimeExecutionAttemptInputMock.mockReset();
     recordSuccessMock.mockReset();
     recordFailureMock.mockReset();
     refreshModelsAndRebuildRoutesMock.mockReset();
@@ -222,9 +300,10 @@ describe('responses proxy codex oauth refresh', () => {
     recordOauthQuotaResetHintMock.mockClear();
     dbInsertMock.mockClear();
     insertedProxyLogs.length = 0;
-
     selectTargetMock.mockReturnValue({
       target: { id: 11, routeId: 22 },
+      executionTargetId: 11,
+      executionAttemptId: 'ea_11',
       site: { id: 44, name: 'codex-site', url: 'https://chatgpt.com/backend-api/codex', platform: 'codex' },
       account: {
         id: 33,
@@ -449,6 +528,8 @@ describe('responses proxy codex oauth refresh', () => {
   it('retries oauth responses requests with a normalized upstream URL after refresh', async () => {
     selectTargetMock.mockReturnValue({
       target: { id: 11, routeId: 22 },
+      executionTargetId: 11,
+      executionAttemptId: 'ea_11',
       site: { id: 44, name: 'openai-site', url: 'https://gateway.example.com/v1/', platform: 'openai' },
       account: {
         id: 33,
@@ -905,6 +986,8 @@ describe('responses proxy codex oauth refresh', () => {
   it('reuses previous_response_id for codex tool-output follow-up turns after channel/account drift on the same downstream session', async () => {
     const firstSelected = {
       target: { id: 11, routeId: 22 },
+      executionTargetId: 11,
+      executionAttemptId: 'codex-drift-attempt-a',
       site: { id: 44, name: 'codex-site', url: 'https://chatgpt.com/backend-api/codex', platform: 'codex' },
       account: {
         id: 33,
@@ -925,6 +1008,8 @@ describe('responses proxy codex oauth refresh', () => {
     };
     const secondSelected = {
       target: { id: 12, routeId: 23 },
+      executionTargetId: 12,
+      executionAttemptId: 'codex-drift-attempt-b',
       site: { id: 44, name: 'codex-site', url: 'https://chatgpt.com/backend-api/codex', platform: 'codex' },
       account: {
         id: 34,
@@ -1013,7 +1098,10 @@ describe('responses proxy codex oauth refresh', () => {
     expect(secondResponse.statusCode).toBe(200);
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(selectTargetMock).toHaveBeenCalledTimes(2);
-    expect(selectPreferredTargetMock).toHaveBeenCalledTimes(2);
+    expect(selectRouteRuntimeExecutionAttemptInputMock).toHaveBeenCalledTimes(2);
+    expect(selectRouteRuntimeExecutionAttemptInputMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      stickyExecutionTargetId: 11,
+    }));
 
     const [, firstOptions] = fetchMock.mock.calls[0] as [string, any];
     const [, secondOptions] = fetchMock.mock.calls[1] as [string, any];
@@ -1349,6 +1437,8 @@ describe('responses proxy codex oauth refresh', () => {
 
     const selected = {
       target: { id: 11, routeId: 22 },
+      executionTargetId: 11,
+      executionAttemptId: 'codex-sticky-attempt',
       site: { id: 44, name: 'codex-site', url: 'https://chatgpt.com/backend-api/codex', platform: 'codex' },
       account: {
         id: 33,
@@ -1410,9 +1500,10 @@ describe('responses proxy codex oauth refresh', () => {
     });
 
     expect(secondResponse.statusCode).toBe(200);
-    expect(selectPreferredTargetMock).toHaveBeenCalledTimes(1);
-    expect(selectPreferredTargetMock.mock.calls[0]?.[0]).toBe('gpt-5.4');
-    expect(selectPreferredTargetMock.mock.calls[0]?.[1]).toBe(11);
+    expect(selectRouteRuntimeExecutionAttemptInputMock).toHaveBeenLastCalledWith(expect.objectContaining({
+      requestedModel: 'gpt-5.4',
+      stickyExecutionTargetId: 11,
+    }));
   });
 
   it('decodes zstd-compressed codex responses SSE before relaying native downstream streams', async () => {

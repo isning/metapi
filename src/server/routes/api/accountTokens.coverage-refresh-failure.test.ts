@@ -4,13 +4,14 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
+import { clearRouteGroupMemberTestData } from '../../../testing/routeGroupMemberTestUtils.js';
 
 const refreshModelsForAccountMock = vi.fn();
-const rebuildTokenRoutesFromAvailabilityMock = vi.fn();
+const rebuildManagedRouteGroupsFromAvailabilityMock = vi.fn();
 
 vi.mock('../../services/modelService.js', () => ({
   refreshModelsForAccount: (...args: unknown[]) => refreshModelsForAccountMock(...args),
-  rebuildTokenRoutesFromAvailability: (...args: unknown[]) => rebuildTokenRoutesFromAvailabilityMock(...args),
+  rebuildManagedRouteGroupsFromAvailability: (...args: unknown[]) => rebuildManagedRouteGroupsFromAvailabilityMock(...args),
 }));
 
 type DbModule = typeof import('../../db/index.js');
@@ -37,12 +38,13 @@ describe('account token coverage refresh failure handling', () => {
 
   beforeEach(async () => {
     refreshModelsForAccountMock.mockReset();
-    rebuildTokenRoutesFromAvailabilityMock.mockReset();
+    rebuildManagedRouteGroupsFromAvailabilityMock.mockReset();
 
     await db.delete(schema.proxyLogs).run();
     await db.delete(schema.checkinLogs).run();
-    await db.delete(schema.routeEndpointTargets).run();
-    await db.delete(schema.tokenRoutes).run();
+    await clearRouteGroupMemberTestData();
+    await db.delete(schema.runtimeExecutionTargetState).run();
+    await db.delete(schema.runtimeExecutionTargets).run();
     await db.delete(schema.tokenModelAvailability).run();
     await db.delete(schema.modelAvailability).run();
     await db.delete(schema.accountTokens).run();
@@ -82,7 +84,7 @@ describe('account token coverage refresh failure handling', () => {
       discoveredByCredential: false,
       discoveredApiToken: false,
     });
-    rebuildTokenRoutesFromAvailabilityMock.mockRejectedValue(new Error('rebuild failed'));
+    rebuildManagedRouteGroupsFromAvailabilityMock.mockRejectedValue(new Error('rebuild failed'));
 
     const response = await app.inject({
       method: 'POST',

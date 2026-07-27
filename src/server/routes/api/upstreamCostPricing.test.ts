@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { eq } from 'drizzle-orm';
 import { createTestApp, type TestAppHandle } from '../../../testing/appHarness.js';
 import {
   bootIsolatedRuntimeDb,
@@ -6,18 +7,42 @@ import {
 } from '../../../testing/dbHarness.js';
 
 type DbModule = typeof import('../../db/index.js');
+type BackgroundTaskModule = typeof import('../../services/backgroundTaskService.js');
+
+async function waitForEventDetailsJson(
+  db: DbModule['db'],
+  schema: DbModule['schema'],
+  title: string,
+): Promise<unknown[]> {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const row = await db.select()
+      .from(schema.events)
+      .where(eq(schema.events.title, title))
+      .get();
+    if (row?.detailsJson) {
+      return JSON.parse(row.detailsJson);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`Event details were not written for ${title}`);
+}
 
 describe('upstream cost pricing routes', () => {
   let app: TestAppHandle;
   let runtimeDb: IsolatedRuntimeDbHandle;
   let db: DbModule['db'];
   let schema: DbModule['schema'];
+  let waitForBackgroundTaskCompletion: BackgroundTaskModule['waitForBackgroundTaskCompletion'];
+  let resetBackgroundTasks: BackgroundTaskModule['__resetBackgroundTasksForTests'];
 
   beforeAll(async () => {
     runtimeDb = await bootIsolatedRuntimeDb('metapi-upstream-cost-routes-');
     const routesModule = await import('./upstreamCostPricing.js');
+    const backgroundTaskModule = await import('../../services/backgroundTaskService.js');
     db = runtimeDb.dbModule.db;
     schema = runtimeDb.dbModule.schema;
+    waitForBackgroundTaskCompletion = backgroundTaskModule.waitForBackgroundTaskCompletion;
+    resetBackgroundTasks = backgroundTaskModule.__resetBackgroundTasksForTests;
     app = await createTestApp({
       routes: [routesModule.upstreamCostPricingRoutes],
       auth: 'admin-api',
@@ -29,8 +54,11 @@ describe('upstream cost pricing routes', () => {
   });
 
   beforeEach(async () => {
+    resetBackgroundTasks();
     await db.delete(schema.settings).run();
+    await db.delete(schema.events).run();
     await db.delete(schema.fxRateSnapshots).run();
+    await db.delete(schema.providerPricingCatalogCaches).run();
     await db.delete(schema.upstreamModelCostPricings).run();
     await db.delete(schema.accountTokens).run();
     await db.delete(schema.accounts).run();
@@ -38,6 +66,7 @@ describe('upstream cost pricing routes', () => {
   });
 
   afterAll(async () => {
+    resetBackgroundTasks?.();
     await app.close();
     await runtimeDb.cleanup();
   });
@@ -60,7 +89,7 @@ describe('upstream cost pricing routes', () => {
         simpleTokenPricing: {
           inputPerMillion: 2,
           outputPerMillion: 8,
-          requestUsd: 0.001,
+          requestCost: 0.001,
         },
       },
     });
@@ -112,7 +141,7 @@ describe('upstream cost pricing routes', () => {
     expect(preview.statusCode).toBe(200);
     expect(preview.json()).toMatchObject({
       evaluation: {
-        totalCostUsd: 0.007,
+        totalCost: 0.007,
         source: 'user_override',
       },
     });
@@ -308,7 +337,7 @@ describe('upstream cost pricing routes', () => {
       matchedScope: 'provider:openai',
       sourceType: 'imported',
       evaluation: {
-        totalCostUsd: 17,
+        totalCost: 17,
       },
     });
   });
@@ -327,6 +356,10 @@ describe('upstream cost pricing routes', () => {
         enabled: false,
         windowHours: 24,
         minSampleSize: 20,
+        notifyOnWarning: true,
+      },
+      providerCatalogCache: {
+        ttlHours: 6,
       },
     });
 
@@ -341,8 +374,11 @@ describe('upstream cost pricing routes', () => {
           windowHours: 12,
           minSampleSize: 5,
           relativeTolerance: 0.2,
-          absoluteToleranceUsd: 0.000002,
+          absoluteToleranceCost: 0.000002,
           notifyOnWarning: false,
+        },
+        providerCatalogCache: {
+          ttlHours: 2,
         },
       },
     });
@@ -355,10 +391,77 @@ describe('upstream cost pricing routes', () => {
         windowHours: 12,
         minSampleSize: 5,
         relativeTolerance: 0.2,
-        absoluteToleranceUsd: 0.000002,
+        absoluteToleranceCost: 0.000002,
         notifyOnWarning: false,
       },
+      providerCatalogCache: {
+        ttlHours: 2,
+      },
     });
+  });
+
+  it('refreshes provider pricing catalog caches on demand', async () => {
+    const result = await app.inject({
+      method: 'POST',
+      url: '/api/pricing/provider-catalog/refresh',
+      headers: app.adminHeaders(),
+      payload: {},
+    });
+
+    expect(result.statusCode).toBe(202);
+    expect(result.json()).toMatchObject({
+      success: true,
+      queued: true,
+      reused: false,
+      jobId: expect.any(String),
+    });
+
+    const task = await waitForBackgroundTaskCompletion(result.json().jobId);
+    expect(task).toMatchObject({
+      status: 'succeeded',
+      result: {
+        refreshed: 0,
+        succeeded: 0,
+        failed: 0,
+        errors: [],
+      },
+    });
+    expect(task?.message).toBe('供应商价格缓存刷新完成：没有可刷新对象');
+    expect(task?.result).toEqual({
+      refreshed: 0,
+      succeeded: 0,
+      failed: 0,
+      errors: [],
+    });
+
+    const details = await waitForEventDetailsJson(db, schema, '刷新供应商价格缓存 已完成');
+    expect(details).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'i18n',
+        titleKey: 'backgroundTask.lifecycle.completedTitle',
+        messageKey: 'backgroundTask.message.providerPricingCatalog.noSubjects',
+        paramKeys: expect.objectContaining({
+          title: 'backgroundTask.task.refreshProviderPricingCatalog',
+        }),
+      }),
+      expect.objectContaining({
+        type: 'kv',
+        title: 'backgroundTask.details.taskInfo',
+        rows: expect.arrayContaining([
+          expect.objectContaining({ label: 'backgroundTask.details.taskId', value: result.json().jobId }),
+          expect.objectContaining({ label: 'backgroundTask.details.status', value: 'succeeded' }),
+        ]),
+      }),
+      expect.objectContaining({
+        type: 'metrics',
+        title: 'backgroundTask.details.resultMetrics',
+        items: expect.arrayContaining([
+          expect.objectContaining({ label: 'refreshed', value: '0' }),
+          expect.objectContaining({ label: 'succeeded', value: '0' }),
+          expect.objectContaining({ label: 'failed', value: '0' }),
+        ]),
+      }),
+    ]));
   });
 
   it('rejects invalid or duplicate unit conversions', async () => {

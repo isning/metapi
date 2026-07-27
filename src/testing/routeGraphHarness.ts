@@ -49,7 +49,6 @@ export function compileRouteGraphOrThrow(source: unknown): RouteGraphCompileResu
 
 export function createRouteGraphBuilder(input: Partial<RouteGraphSource> = {}): RouteGraphBuilder {
   const source = normalizeRouteGraphSource({
-    version: 1,
     nodes: [],
     edges: [],
     macros: [],
@@ -61,7 +60,6 @@ export function createRouteGraphBuilder(input: Partial<RouteGraphSource> = {}): 
     node(nodeInput) {
       source.nodes.push(normalizeRouteGraphNode({
         enabled: true,
-        visibility: nodeInput.type === 'entry' ? 'public' : 'internal',
         ownership: 'manual',
         ...nodeInput,
       }));
@@ -103,24 +101,25 @@ export function createDirectModelRouteGraph(model = 'gpt-test'): RouteGraphSourc
         requestedModelPattern: model,
         displayName: model,
       },
-      selectionStrategy: 'weighted',
     })
     .node({
       id: 'dispatcher:test',
       type: 'dispatcher',
       mode: 'route',
-      policy: { strategy: 'weighted' },
+      policy: { kind: 'builtin', builtin: 'weighted' },
     })
     .node({
       id: 'endpoint:test',
       type: 'route_endpoint',
+      routeEndpointId: 'endpoint:test',
+      endpointKind: 'supply',
       config: {
         targets: [{
           targetId: 'test-channel',
           model,
           modelSource: 'fixed',
         }],
-        targetSelection: { strategy: 'defer_to_router' },
+        targetSelection: { kind: 'defer_to_router' },
       },
     })
     .edge({

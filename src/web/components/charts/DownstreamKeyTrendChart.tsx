@@ -5,6 +5,7 @@ import EmptyStateBlock from '../EmptyStateBlock.js';
 import { ChartFrame, ChartMetricToggle, ChartShell } from './ChartShell.js';
 
 import { tr } from '../../i18n.js';
+import type { BaseCostSummary } from '../../../shared/billingCost.js';
 type Metric = 'tokens' | 'requests' | 'cost';
 
 const METRIC_OPTIONS: Array<{ key: Metric; label: string }> = [
@@ -17,7 +18,7 @@ export type DownstreamKeyTrendBucket = {
   startUtc: string | null;
   totalRequests: number;
   totalTokens: number;
-  totalCost: number;
+  cost: BaseCostSummary;
   successRate: number | null;
 };
 
@@ -56,14 +57,18 @@ export default function DownstreamKeyTrendChart({
           ? Number(bucket.totalTokens || 0)
           : (metric === 'requests'
             ? Number(bucket.totalRequests || 0)
-            : Number(bucket.totalCost || 0));
+            : (bucket.cost.knownObservationCount > 0
+              ? Number(bucket.cost.amount)
+              : null));
         return {
           date: rawDate,
           tooltipDate: rawDate ? formatDateTimeMinuteLocal(rawDate) : '',
           value,
+          costUnit: bucket.cost.unit,
+          unknownCostCount: bucket.cost.unknownObservationCount + bucket.cost.incompatibleObservationCount,
         };
       })
-      .filter((row) => row.date.length > 0);
+      .filter((row) => row.date.length > 0 && row.value != null);
   }, [buckets, metric]);
 
   if (loading) {
@@ -125,7 +130,10 @@ export default function DownstreamKeyTrendChart({
             key: () => METRIC_OPTIONS.find((opt) => opt.key === metric)?.label || 'Value',
             value: (datum: Record<string, unknown>) => {
               const value = Number(datum?.value ?? 0);
-              if (metric === 'cost') return `$${value.toFixed(6)}`;
+              if (metric === 'cost') {
+                const unit = String(datum?.costUnit || '').trim();
+                return `${value.toFixed(6)}${unit ? ` ${unit}` : ''}`;
+              }
               return value.toLocaleString();
             },
           },

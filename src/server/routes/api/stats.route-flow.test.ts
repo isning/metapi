@@ -1,23 +1,123 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { eq } from 'drizzle-orm';
-import { compileRouteGraphSource } from '../../../shared/routeGraph.js';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   bootIsolatedRuntimeDb,
   type IsolatedRuntimeDbHandle,
 } from '../../../testing/dbHarness.js';
 import { createTestApp, type TestAppHandle } from '../../../testing/appHarness.js';
+import {
+  clearRouteGroupMemberTestData,
+  getExecutionTargetIdForMember,
+  insertRouteGroupMember,
+} from '../../../testing/routeGroupMemberTestUtils.js';
+import { formatUtcSqlDateTime } from '../../services/localTimeService.js';
 
 type DbModule = typeof import('../../db/index.js');
 type RouteGraphServiceModule = typeof import('../../services/routeGraphService.js');
-type RouteTableProjectionModule = typeof import('../../services/routeTableProjectionService.js');
+type RouteGroupManagementModule = typeof import('../../services/routeGroupManagementService.js');
+type RouteRuntimeExecutionIdentityModule = typeof import('../../services/routeRuntimeExecutionIdentityService.js');
+
+const fetchUpstreamPricingCatalogMock = vi.hoisted(() => vi.fn(async () => null));
+
+vi.mock('../../services/upstreamPricingCatalogService.js', () => ({
+  fetchUpstreamPricingCatalog: fetchUpstreamPricingCatalogMock,
+  fetchUpstreamPricingCatalogWithMetadata: async (input: unknown) => {
+    const catalog = await fetchUpstreamPricingCatalogMock(input);
+    return catalog ? { catalog, credentialKind: 'access_token' } : null;
+  },
+}));
+
+type RouteFlowResponse = {
+  success: boolean;
+  flow: {
+    requestedModel: string;
+    matched: boolean;
+    diagnostics: Array<{ level: string; message: string }>;
+    compiledRuntime: null | {
+      match: {
+        requestedModel: string;
+        planId: string;
+        entryNodeId: string;
+      };
+      selected: {
+        alternativeId: string | null;
+        endpointId: string | null;
+        executionAttemptId: string | null;
+        accountId: number | null;
+        selectionSource: string;
+        actualModel: string | null;
+      };
+      alternatives: Array<{
+        alternativeId: string;
+        kind: string;
+        probability: number | null;
+        executionAttemptIds: string[];
+        syntheticResponse?: { statusCode: number; message: string } | null;
+      }>;
+      endpoints: Array<{ endpointId: string; executionAttemptIds: string[] }>;
+      executionAttempts: Array<{
+        executionAttemptId: string;
+        alternativeId: string;
+        endpointId: string;
+        executionTargetId?: number | null;
+        model: string;
+        siteName?: string | null;
+        accountLabel?: string | null;
+        tokenLabel?: string | null;
+        probability: number | null;
+        routingSignals?: {
+          unitCost: number;
+          unitCostSource: string;
+          balance: number;
+          normalizedCostScore: number | null;
+          normalizedBalanceScore: number | null;
+          probability: number | null;
+          runtimeHealth: {
+            recentSuccessRate: number;
+            recentSampleCount: number;
+          };
+          historicalHealth: {
+            totalCalls: number;
+            successRate: number | null;
+          };
+        };
+        health: {
+          successRate: number | null;
+          totalCalls: number;
+          avgLatencyMs: number | null;
+        };
+      }>;
+      syntheticResponse?: { statusCode: number; message: string } | null;
+    };
+    entryPricing?: {
+      theoretical?: {
+        executionAttempts: Array<{ executionAttemptId: string; probability: number | null }>;
+      } | null;
+    };
+    compatibilityPolicy?: {
+      resolved: {
+        reasoningHistory: {
+          transport: {
+            mode: string;
+            thinkTag: { openTag: string; closeTag: string };
+          };
+        };
+      };
+      layers: Array<{ source: string; configured: boolean }>;
+    };
+    nodes?: unknown[];
+    edges?: unknown[];
+    summary?: unknown[];
+  };
+};
 
 describe('/api/models/route-flow', () => {
   let app: TestAppHandle | null = null;
   let db: DbModule['db'];
   let schema: DbModule['schema'];
   let publishRouteGraphSource: RouteGraphServiceModule['publishRouteGraphSource'] | null = null;
-  let ensureActiveRouteGraphVersion: RouteGraphServiceModule['ensureActiveRouteGraphVersion'] | null = null;
-  let syncRouteBindingProjectionsFromRouteTable: RouteTableProjectionModule['syncRouteBindingProjectionsFromRouteTable'] | null = null;
+  let invalidateRouteGraphReadCaches: RouteGraphServiceModule['invalidateRouteGraphReadCaches'];
+  let createRouteGroupFromPayload: RouteGroupManagementModule['createRouteGroupFromPayload'];
+  let invalidateRouteRuntimeExecutionIdentityCache: RouteRuntimeExecutionIdentityModule['invalidateRouteRuntimeExecutionIdentityCache'];
   let runtimeDb: IsolatedRuntimeDbHandle | null = null;
 
   beforeAll(async () => {
@@ -25,12 +125,14 @@ describe('/api/models/route-flow', () => {
     const dbModule = runtimeDb.dbModule;
     const routesModule = await import('./stats.js');
     const routeGraphServiceModule = await import('../../services/routeGraphService.js');
-    const routeTableProjectionModule = await import('../../services/routeTableProjectionService.js');
+    const routeGroupManagementModule = await import('../../services/routeGroupManagementService.js');
+    const routeRuntimeExecutionIdentityModule = await import('../../services/routeRuntimeExecutionIdentityService.js');
     db = dbModule.db;
     schema = dbModule.schema;
     publishRouteGraphSource = routeGraphServiceModule.publishRouteGraphSource;
-    ensureActiveRouteGraphVersion = routeGraphServiceModule.ensureActiveRouteGraphVersion;
-    syncRouteBindingProjectionsFromRouteTable = routeTableProjectionModule.syncRouteBindingProjectionsFromRouteTable;
+    invalidateRouteGraphReadCaches = routeGraphServiceModule.invalidateRouteGraphReadCaches;
+    createRouteGroupFromPayload = routeGroupManagementModule.createRouteGroupFromPayload;
+    invalidateRouteRuntimeExecutionIdentityCache = routeRuntimeExecutionIdentityModule.invalidateRouteRuntimeExecutionIdentityCache;
 
     app = await createTestApp({
       routes: [routesModule.statsRoutes],
@@ -39,13 +141,22 @@ describe('/api/models/route-flow', () => {
   });
 
   beforeEach(async () => {
+    fetchUpstreamPricingCatalogMock.mockReset();
+    fetchUpstreamPricingCatalogMock.mockResolvedValue(null);
     await db.delete(schema.proxyLogs).run();
+    await db.delete(schema.proxyRequests).run();
+    await db.delete(schema.routeRuntimeDayUsage).run();
+    await db.delete(schema.providerPricingCatalogCaches).run();
+    await db.delete(schema.upstreamModelCostPricings).run();
+    await clearRouteGroupMemberTestData();
     await db.delete(schema.routeGraphDrafts).run();
     await db.delete(schema.routeGraphActiveVersion).run();
+    await db.delete(schema.compiledRuntimeActiveArtifact).run();
+    await db.delete(schema.compiledRuntimeArtifacts).run();
     await db.delete(schema.routeGraphVersions).run();
-    await db.delete(schema.routeBindingProjections).run();
-    await db.delete(schema.routeEndpointTargets).run();
-    await db.delete(schema.tokenRoutes).run();
+    invalidateRouteGraphReadCaches('test-reset');
+    await db.delete(schema.runtimeExecutionTargetState).run();
+    await db.delete(schema.runtimeExecutionTargets).run();
     await db.delete(schema.accountTokens).run();
     await db.delete(schema.accounts).run();
     await db.delete(schema.sites).run();
@@ -56,53 +167,61 @@ describe('/api/models/route-flow', () => {
     await runtimeDb?.cleanup();
   });
 
-  async function persistCompactedActiveRouteEndpointIdentity(routeId: number): Promise<void> {
-    const active = await ensureActiveRouteGraphVersion!();
-    const badSourceGraph = {
-      ...active.sourceGraph,
-      nodes: active.sourceGraph.nodes.map((node) => {
-        if (
-          node.type !== 'route_endpoint'
-          || node.endpointKind !== 'supply'
-          || node.routeId !== routeId
-          || !node.metadata
-          || typeof node.metadata !== 'object'
-          || Array.isArray(node.metadata)
-        ) {
-          return node;
-        }
-        const metadata = node.metadata as Record<string, unknown>;
-        const endpointIdentity = metadata.endpointIdentity && typeof metadata.endpointIdentity === 'object' && !Array.isArray(metadata.endpointIdentity)
-          ? metadata.endpointIdentity as Record<string, unknown>
-          : {};
-        const compactedIdentity = { ...endpointIdentity };
-        delete compactedIdentity.targets;
-        return {
-          ...node,
-          metadata: {
-            ...metadata,
-            endpointIdentity: {
-              ...compactedIdentity,
-              targetCount: 1,
-              targetSetFingerprint: 'bad-persisted-fingerprint',
-            },
-          },
-        };
-      }),
-    };
-    const badCompiled = compileRouteGraphSource(badSourceGraph);
-    await db.update(schema.routeGraphVersions).set({
-      sourceGraphJson: JSON.stringify(badSourceGraph),
-      compiledGraphJson: JSON.stringify(badCompiled.compiled),
-    }).where(eq(schema.routeGraphVersions.id, active.id)).run();
+  async function createRouteGroup(input: {
+    model: string;
+    displayName?: string | null;
+    enabled?: boolean;
+    visibility?: string;
+  }) {
+    return await createRouteGroupFromPayload({
+      model: { publicName: input.model },
+      presentation: { displayName: input.displayName ?? input.model },
+      enabled: input.enabled ?? true,
+      visibility: input.visibility ?? 'public',
+      dispatcherPolicy: { kind: 'builtin', builtin: 'weighted' },
+    });
   }
 
-  it('uses graph-native route program while preserving supply endpoint metrics', async () => {
+  async function insertTerminalRequest(input: {
+    id: string;
+    routeEntrypointId: string;
+    requestedModel: string;
+    status: 'success' | 'failure';
+    httpStatus: number;
+    completedAt: string;
+    latencyMs?: number | null;
+    firstTokenLatencyMs?: number | null;
+    completionTokens?: number | null;
+    totalTokens?: number | null;
+  }) {
+    await db.insert(schema.proxyRequests).values({
+      id: input.id,
+      downstreamPath: '/v1/chat/completions',
+      requestedModel: input.requestedModel,
+      routeEntrypointId: input.routeEntrypointId,
+      status: input.status,
+      httpStatus: input.httpStatus,
+      latencyMs: input.latencyMs ?? null,
+      firstTokenLatencyMs: input.firstTokenLatencyMs ?? null,
+      completionTokens: input.completionTokens ?? null,
+      totalTokens: input.totalTokens ?? null,
+      startedAt: input.completedAt,
+      completedAt: input.completedAt,
+    }).run();
+  }
+
+  async function publishManagedRouteGroupsForTest(): Promise<void> {
+    const { getActiveRouteGraphSourceVersion } = await import('../../services/routeGraphService.js');
+    expect(await getActiveRouteGraphSourceVersion()).toBeTruthy();
+  }
+
+  it('returns a graph-native compiled runtime projection with execution attempt metrics', async () => {
     const site = await db.insert(schema.sites).values({
       name: 'flow-site',
       url: 'https://flow-site.example.com',
       platform: 'new-api',
       status: 'active',
+      globalWeight: 1.25,
       compatibilityPolicy: JSON.stringify({
         reasoningHistory: {
           transport: {
@@ -118,131 +237,113 @@ describe('/api/models/route-flow', () => {
       apiToken: 'sk-flow',
       accessToken: 'access-flow',
       status: 'active',
+      balance: 42,
     }).returning().get();
-    const route = await db.insert(schema.tokenRoutes).values({
-      displayName: 'gpt-4o-mini',
-      enabled: true,
-      routingStrategy: 'weighted',
-    }).returning().get();
-    const channel = await db.insert(schema.routeEndpointTargets).values({
-      routeId: route.id,
+    const route = await createRouteGroup({ model: 'gpt-4o-mini' });
+    const candidate = await insertRouteGroupMember({
+      groupId: route.id,
       accountId: account.id,
       tokenId: null,
       sourceModel: 'gpt-4o-mini',
-      priority: 0,
+      fallbackStageOrder: 0,
       weight: 10,
       enabled: true,
-      lastSelectedAt: '2026-06-01T00:00:00.000Z',
-    }).returning().get();
+      successCount: 4,
+      failCount: 1,
+      totalLatencyMs: 480,
+      totalCost: 0.02,
+    });
+    const executionTargetId = await getExecutionTargetIdForMember(candidate.id);
+    if (!executionTargetId) throw new Error('Expected graph-native execution target for test candidate');
+    await publishManagedRouteGroupsForTest();
+    const now = new Date();
+    const recentCreatedAt = formatUtcSqlDateTime(now);
     await db.insert(schema.proxyLogs).values([
       {
-        routeId: route.id,
-        targetId: channel.id,
         accountId: account.id,
         modelRequested: 'gpt-4o-mini',
         modelActual: 'gpt-4o-mini',
+        executionTargetId: executionTargetId,
         status: 'success',
         httpStatus: 200,
         latencyMs: 120,
-        createdAt: new Date().toISOString(),
+        createdAt: recentCreatedAt,
       },
       {
-        routeId: route.id,
-        targetId: channel.id,
         accountId: account.id,
         modelRequested: 'gpt-4o-mini',
         modelActual: 'gpt-4o-mini',
-        status: 'failed',
+        executionTargetId: executionTargetId,
+        status: 'retried',
         httpStatus: 502,
-        errorMessage: 'bad gateway',
-        createdAt: new Date().toISOString(),
+        createdAt: recentCreatedAt,
       },
     ]).run();
-    await syncRouteBindingProjectionsFromRouteTable!([route.id]);
 
     const response = await app!.inject({
       method: 'GET',
-      url: '/api/models/route-flow?model=gpt-4o-mini',
+      url: '/api/models/gpt-4o-mini/route-flow',
       headers: app!.adminHeaders(),
     });
 
     expect(response.statusCode).toBe(200);
-    const body = response.json() as {
-      success: boolean;
-      flow: {
-        matched: boolean;
-        selectedRouteId: number | null;
-        nodes: Array<{
-          id: string;
-          kind: string;
-          label: string;
-          subtitle?: string | null;
-          status: string;
-          badges: string[];
-          metrics: Record<string, unknown>;
-          history: unknown[];
-        }>;
-        edges: Array<{ source: string; target: string; label?: string | null }>;
-        compatibilityPolicy?: {
-          resolved: {
-            reasoningHistory: {
-              transport: {
-                mode: string;
-                thinkTag: { openTag: string; closeTag: string };
-              };
-            };
-          };
-        };
-      };
-    };
+    const body = response.json() as RouteFlowResponse;
     expect(body.success).toBe(true);
-    expect(body.flow.matched).toBe(true);
-    expect(body.flow.selectedRouteId).toBe(route.id);
-    expect('selectedTargetId' in body.flow).toBe(false);
-    expect(body.flow.nodes.find((node) => node.id === 'request')).toMatchObject({
-      status: 'active',
+    expect(body.flow).toMatchObject({
+      matched: true,
+      requestedModel: 'gpt-4o-mini',
     });
-    expect(body.flow.nodes.some((node) => node.id === `route:${route.id}` && node.kind === 'dispatcher')).toBe(true);
-    expect(body.flow.nodes.some((node) => node.badges?.includes?.('route-table'))).toBe(true);
-    expect(body.flow.nodes.some((node) => node.kind === 'pool' || node.kind === 'channel')).toBe(false);
-    expect(body.flow.nodes.some((node) => node.id.startsWith('pool:') || node.id.startsWith('channel:'))).toBe(false);
-    expect(body.flow.nodes.some((node) => node.kind === 'route_endpoint')).toBe(true);
-    expect(body.flow.nodes.some((node) => node.id.startsWith('target:'))).toBe(false);
-    expect(body.flow.edges.some((edge) => edge.source === 'request' && edge.target === `route:${route.id}`)).toBe(true);
-    const supplyNode = body.flow.nodes.find((node) => (
-      node.kind === 'route_endpoint'
-      && node.badges?.includes?.('supply')
-      && node.metrics.totalCalls === 2
-    ));
-    expect(supplyNode).toMatchObject({
-      kind: 'route_endpoint',
-      label: expect.stringContaining('flow-site'),
-      metrics: expect.objectContaining({
-        totalCalls: 2,
-        recentSuccessCount: 1,
-        recentFailureCount: 1,
-        avgLatencyMs: 120,
-      }),
-      history: expect.arrayContaining([
-        expect.objectContaining({ status: 'success' }),
-        expect.objectContaining({ status: 'failed' }),
-      ]),
+    expect(body.flow).not.toHaveProperty('actualModel');
+    expect(body.flow).not.toHaveProperty('entryId');
+    expect(body.flow).not.toHaveProperty('selectedEndpointId');
+    expect(body.flow).not.toHaveProperty('selectedAccountId');
+    expect(body.flow.nodes).toBeUndefined();
+    expect(body.flow.edges).toBeUndefined();
+    expect(body.flow.summary).toBeUndefined();
+
+    const runtime = body.flow.compiledRuntime;
+    expect(runtime).toBeTruthy();
+    expect(runtime?.match.requestedModel).toBe('gpt-4o-mini');
+    expect(runtime?.selected.accountId).toBe(account.id);
+    expect(runtime?.selected.executionAttemptId).toEqual(expect.any(String));
+    expect(runtime?.executionAttempts).toHaveLength(1);
+    expect(runtime?.executionAttempts[0]).toMatchObject({
+      executionTargetId,
+      endpointId: runtime?.selected.endpointId,
+      model: 'gpt-4o-mini',
+      siteName: 'flow-site',
+      accountLabel: 'flow-user',
+      probability: 1,
+      health: {
+        successRate: 0.5,
+          totalCalls: 2,
+          avgLatencyMs: 120,
+        },
+        routingSignals: {
+          referencePricing: {
+            scenario: 'routing_reference',
+            source: 'unavailable',
+            effectiveCost: null,
+          },
+          balance: 42,
+          rawBalance: 42,
+          normalizedCostScore: null,
+          normalizedBalanceScore: 0.5,
+          normalizedBalance: 0.5,
+        runtimeHealth: {
+          recentSuccessRate: 0.5,
+          recentSampleCount: 2,
+        },
+        historicalHealth: {
+          totalCalls: 5,
+          successRate: 0.8,
+        },
+      },
     });
-    expect(supplyNode?.label).toContain('flow-user');
-    expect(supplyNode?.subtitle).toContain(`target ${channel.id}`);
-    expect(body.flow.edges).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        source: supplyNode?.id,
-        target: `route:${route.id}`,
-      }),
-    ]));
-    const targetNode = body.flow.nodes.find((node) => (
-      node.kind === 'route_endpoint'
-      && node.status === 'selected'
-    ));
-    expect(targetNode).toMatchObject({
-      status: 'selected',
-    });
+    expect(runtime?.executionAttempts[0]?.routingSignals?.normalizedCostScore).toBeDefined();
+    expect(body.flow.entryPricing?.theoretical?.executionAttempts).toHaveLength(1);
+    expect('candidates' in (body.flow.entryPricing?.theoretical || {})).toBe(false);
+    expect(body.flow.compatibilityPolicy?.layers.map((layer) => layer.source)).toContain('execution_attempt');
     expect(body.flow.compatibilityPolicy?.resolved.reasoningHistory.transport).toMatchObject({
       mode: 'content_think_tag',
       thinkTag: {
@@ -252,468 +353,1186 @@ describe('/api/models/route-flow', () => {
     });
   });
 
-  it('renders each upstream target behind a supply endpoint as its own candidate node', async () => {
+  it('does not enrich route-flow execution attempts from stale compiled credential fields', async () => {
     const site = await db.insert(schema.sites).values({
-      name: 'multi-upstream-site',
-      url: 'https://multi-upstream.example.com',
+      name: 'missing-identity-site',
+      url: 'https://missing-identity.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'missing-identity-account',
+      apiToken: 'sk-missing-identity',
+      accessToken: 'access-missing-identity',
+      status: 'active',
+      balance: 100,
+    }).returning().get();
+    const route = await createRouteGroup({ model: 'missing-identity-flow-model' });
+    await insertRouteGroupMember({
+      groupId: route.id,
+      accountId: account.id,
+      tokenId: null,
+      sourceModel: 'missing-identity-flow-model',
+      fallbackStageOrder: 0,
+      weight: 10,
+      enabled: true,
+    });
+    await publishManagedRouteGroupsForTest();
+    await db.delete(schema.accounts).run();
+    invalidateRouteRuntimeExecutionIdentityCache();
+
+    const response = await app!.inject({
+      method: 'GET',
+      url: '/api/models/missing-identity-flow-model/route-flow',
+      headers: app!.adminHeaders(),
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as RouteFlowResponse;
+    const attempt = body.flow.compiledRuntime?.executionAttempts[0] as any;
+    expect((body.flow.compiledRuntime?.selected as any)?.accountId).toBeNull();
+    expect((body.flow.compiledRuntime?.selected as any)?.siteId).toBeNull();
+    expect(attempt).toMatchObject({
+      siteName: null,
+      accountLabel: null,
+      tokenLabel: null,
+      apiAttempts: [],
+      health: {
+        successRate: null,
+        totalCalls: 0,
+        avgLatencyMs: null,
+      },
+    });
+    expect(attempt.routingSignals).toBeUndefined();
+    expect(attempt.apiAttemptDiagnostics).toEqual([
+      expect.objectContaining({
+        code: 'compiled_runtime.execution_attempt_identity_missing',
+      }),
+    ]);
+  });
+
+  it('returns compiled runtime observability for route product entry health and history', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'observability-site',
+      url: 'https://observability-site.example.com',
+      platform: 'new-api',
+      status: 'active',
+      globalWeight: 1,
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'observability-user',
+      apiToken: 'sk-observability',
+      accessToken: 'access-observability',
+      status: 'active',
+      balance: 10,
+    }).returning().get();
+    const route = await createRouteGroup({ model: 'observed-rerouted-model' });
+    const candidate = await insertRouteGroupMember({
+      groupId: route.id,
+      accountId: account.id,
+      tokenId: null,
+      sourceModel: 'observed-upstream-model',
+      fallbackStageOrder: 0,
+      weight: 10,
+      enabled: true,
+    });
+    const executionTargetId = await getExecutionTargetIdForMember(candidate.id);
+    if (!executionTargetId) throw new Error('Expected execution target for observability candidate');
+    await publishManagedRouteGroupsForTest();
+
+    const flowResponse = await app!.inject({
+      method: 'GET',
+      url: '/api/models/observed-rerouted-model/route-flow',
+      headers: app!.adminHeaders(),
+    });
+    expect(flowResponse.statusCode).toBe(200);
+    const flowBody = flowResponse.json() as RouteFlowResponse;
+    const attempt = flowBody.flow.compiledRuntime?.executionAttempts[0];
+    expect(attempt?.executionAttemptId).toBeTruthy();
+    expect(attempt?.endpointId).toBeTruthy();
+
+    const now = new Date();
+    const recentCreatedAt = formatUtcSqlDateTime(now);
+    const staleCreatedAt = formatUtcSqlDateTime(new Date(now.getTime() - 10 * 60_000));
+    await db.insert(schema.proxyLogs).values([
+      {
+        routeEntrypointId: flowBody.flow.compiledRuntime!.match.entryNodeId,
+        runtimeEndpointId: attempt!.endpointId,
+        executionAttemptId: attempt!.executionAttemptId,
+        executionTargetId,
+        accountId: account.id,
+        modelRequested: 'observed-rerouted-model',
+        modelActual: 'observed-upstream-model',
+        status: 'failed',
+        httpStatus: 502,
+        latencyMs: 500,
+        totalTokens: 0,
+        estimatedCost: 0,
+        createdAt: staleCreatedAt,
+      },
+      {
+        routeEntrypointId: flowBody.flow.compiledRuntime!.match.entryNodeId,
+        runtimeEndpointId: attempt!.endpointId,
+        executionAttemptId: attempt!.executionAttemptId,
+        executionTargetId,
+        accountId: account.id,
+        modelRequested: 'observed-rerouted-model',
+        modelActual: 'observed-upstream-model',
+        status: 'success',
+        httpStatus: 200,
+        latencyMs: 240,
+        firstTokenLatencyMs: 0,
+        totalTokens: 300,
+        estimatedCost: 0.001,
+        createdAt: recentCreatedAt,
+      },
+      {
+        routeEntrypointId: flowBody.flow.compiledRuntime!.match.entryNodeId,
+        runtimeEndpointId: attempt!.endpointId,
+        executionAttemptId: attempt!.executionAttemptId,
+        executionTargetId,
+        accountId: account.id,
+        modelRequested: 'observed-rerouted-model',
+        modelActual: 'observed-upstream-model',
+        status: 'retried',
+        httpStatus: 502,
+        latencyMs: 120,
+        totalTokens: 0,
+        estimatedCost: 0,
+        createdAt: recentCreatedAt,
+      },
+    ]).run();
+    await insertTerminalRequest({
+      id: 'request:observed-stale-failure',
+      routeEntrypointId: flowBody.flow.compiledRuntime!.match.entryNodeId,
+      requestedModel: 'observed-rerouted-model',
+      status: 'failure',
+      httpStatus: 502,
+      latencyMs: 500,
+      completedAt: staleCreatedAt,
+    });
+    await insertTerminalRequest({
+      id: 'request:observed-recent-success',
+      routeEntrypointId: flowBody.flow.compiledRuntime!.match.entryNodeId,
+      requestedModel: 'observed-rerouted-model',
+      status: 'success',
+      httpStatus: 200,
+      latencyMs: 240,
+      completedAt: recentCreatedAt,
+    });
+
+    const response = await app!.inject({
+      method: 'GET',
+      url: '/api/models/observed-rerouted-model/runtime-observability?range=7d&refresh=true',
+      headers: app!.adminHeaders(),
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as {
+      success: boolean;
+      observability: {
+        matched: boolean;
+            entry: { entryId: string; requestedModel: string } | null;
+        health: {
+          status: string;
+          source: string;
+          totalCalls: number;
+          successCalls: number;
+          failedCalls: number;
+          successRate: number | null;
+          avgLatencyMs: number | null;
+          avgFirstTokenLatencyMs: number | null;
+        };
+        executionAttempts: Array<{
+          executionAttemptId: string;
+          health: { source: string; totalCalls: number; successRate: number | null; avgLatencyMs: number | null };
+        }>;
+        endpoints: Array<{
+          endpointId: string;
+          health: { source: string; totalCalls: number; successRate: number | null; avgLatencyMs: number | null };
+        }>;
+        history: {
+          range: string;
+          granularity: string;
+          buckets: Array<{
+            entry: { totalCalls: number };
+            endpoints: Array<{ endpointId: string; health: { totalCalls: number; successRate: number | null } }>;
+            executionAttempts: Array<{ executionAttemptId: string; health: { totalCalls: number; successRate: number | null } }>;
+          }>;
+          emptyReason: string | null;
+        };
+      };
+    };
+    expect(body.success).toBe(true);
+    expect(body.observability.matched).toBe(true);
+    expect(body.observability.entry).toMatchObject({
+      entryId: body.observability.entry?.entryId,
+      requestedModel: 'observed-rerouted-model',
+    });
+    expect(body.observability.health).toMatchObject({
+      status: 'degraded',
+      source: 'entry_projection',
+      totalCalls: 2,
+      successCalls: 1,
+      failedCalls: 1,
+      successRate: 50,
+      avgLatencyMs: 370,
+    });
+    expect(body.observability.executionAttempts[0]).toMatchObject({
+      executionAttemptId: attempt!.executionAttemptId,
+      health: {
+        source: 'execution_attempt_projection',
+        totalCalls: 3,
+        successRate: 33.33,
+        avgLatencyMs: 287,
+      },
+    });
+    expect(body.observability.history.emptyReason).toBeNull();
+    expect(body.observability.history.buckets[0]?.entry.totalCalls).toBe(2);
+    expect(body.observability.history.buckets[0]?.entry.successRate).toBe(50);
+    expect(body.observability.history.buckets[0]?.entry.status).toBe('degraded');
+    expect(body.observability.history.buckets[0]?.executionAttempts[0]).toMatchObject({
+      executionAttemptId: attempt!.executionAttemptId,
+      health: {
+        totalCalls: 3,
+        successRate: 33.33,
+      },
+    });
+
+    const realtimeResponse = await app!.inject({
+      method: 'GET',
+      url: '/api/models/observed-rerouted-model/runtime-observability?range=5m',
+      headers: app!.adminHeaders(),
+    });
+    expect(realtimeResponse.statusCode).toBe(200);
+    const realtimeBody = realtimeResponse.json() as typeof body;
+    expect(realtimeBody.observability.health).toMatchObject({
+      source: 'entry_projection',
+      totalCalls: 1,
+      successCalls: 1,
+      failedCalls: 0,
+      successRate: 100,
+      avgLatencyMs: 240,
+      avgFirstTokenLatencyMs: null,
+    });
+    expect(realtimeBody.observability.executionAttempts[0]).toMatchObject({
+      executionAttemptId: attempt!.executionAttemptId,
+      health: {
+        source: 'execution_attempt_projection',
+        totalCalls: 2,
+        successRate: 50,
+      },
+    });
+    expect(realtimeBody.observability.endpoints[0]).toMatchObject({
+      endpointId: attempt!.endpointId,
+      health: {
+        source: 'endpoint_projection',
+        totalCalls: 2,
+        successRate: 50,
+      },
+    });
+    expect(realtimeBody.observability.history.range).toBe('5m');
+    expect(realtimeBody.observability.history.granularity).toBe('minute');
+    expect(realtimeBody.observability.history.buckets.at(-1)?.entry.totalCalls).toBe(1);
+    expect(realtimeBody.observability.history.buckets.at(-1)?.executionAttempts[0]).toMatchObject({
+      executionAttemptId: attempt!.executionAttemptId,
+      health: {
+        totalCalls: 2,
+        successRate: 50,
+      },
+    });
+    expect(realtimeBody.observability.history.buckets.at(-1)?.endpoints[0]).toMatchObject({
+      endpointId: attempt!.endpointId,
+      health: {
+        totalCalls: 2,
+        successRate: 50,
+      },
+    });
+
+    const defaultRangeResponse = await app!.inject({
+      method: 'GET',
+      url: '/api/models/observed-rerouted-model/runtime-observability',
+      headers: app!.adminHeaders(),
+    });
+    expect(defaultRangeResponse.statusCode).toBe(200);
+    const defaultRangeBody = defaultRangeResponse.json() as typeof body;
+    expect(defaultRangeBody.observability.history.range).toBe('6h');
+    expect(defaultRangeBody.observability.history.granularity).toBe('minute');
+    expect(defaultRangeBody.observability.history.buckets.length).toBeGreaterThanOrEqual(2);
+    expect(defaultRangeBody.observability.history.buckets[0]?.entry.totalCalls).toBe(1);
+    expect(defaultRangeBody.observability.history.buckets.at(-1)?.entry.totalCalls).toBe(1);
+  });
+
+  it('keeps one-hour runtime history buckets at one-minute resolution', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'minute-history-site',
+      url: 'https://minute-history.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'minute-history-user',
+      apiToken: 'sk-minute-history',
+      accessToken: 'access-minute-history',
+      status: 'active',
+      balance: 10,
+    }).returning().get();
+    const route = await createRouteGroup({ model: 'minute-history-rerouted-model' });
+    const candidate = await insertRouteGroupMember({
+      groupId: route.id,
+      accountId: account.id,
+      tokenId: null,
+      sourceModel: 'minute-history-upstream-model',
+      fallbackStageOrder: 0,
+      weight: 10,
+      enabled: true,
+    });
+    const executionTargetId = await getExecutionTargetIdForMember(candidate.id);
+    if (!executionTargetId) throw new Error('Expected execution target for minute history candidate');
+    await publishManagedRouteGroupsForTest();
+
+    const flowResponse = await app!.inject({
+      method: 'GET',
+      url: '/api/models/minute-history-rerouted-model/route-flow',
+      headers: app!.adminHeaders(),
+    });
+    expect(flowResponse.statusCode).toBe(200);
+    const flowBody = flowResponse.json() as RouteFlowResponse;
+    const attempt = flowBody.flow.compiledRuntime?.executionAttempts[0];
+    expect(attempt?.executionAttemptId).toBeTruthy();
+    expect(attempt?.endpointId).toBeTruthy();
+
+    const now = Date.now();
+    const previousFiveMinuteBucketStart = Math.floor(now / (5 * 60_000)) * 5 * 60_000 - 5 * 60_000;
+    const firstCreatedAt = formatUtcSqlDateTime(new Date(previousFiveMinuteBucketStart + 60_000));
+    const secondCreatedAt = formatUtcSqlDateTime(new Date(previousFiveMinuteBucketStart + 2 * 60_000));
+    await db.insert(schema.proxyLogs).values([firstCreatedAt, secondCreatedAt].map((createdAt, index) => ({
+      routeEntrypointId: flowBody.flow.compiledRuntime!.match.entryNodeId,
+      runtimeEndpointId: attempt!.endpointId,
+      executionAttemptId: attempt!.executionAttemptId,
+      executionTargetId,
+      accountId: account.id,
+      modelRequested: 'minute-history-rerouted-model',
+      modelActual: 'minute-history-upstream-model',
+      status: 'success',
+      httpStatus: 200,
+      latencyMs: 100 + index,
+      totalTokens: 10,
+      estimatedCost: 0.001,
+      createdAt,
+    }))).run();
+    await Promise.all([firstCreatedAt, secondCreatedAt].map((completedAt, index) => insertTerminalRequest({
+      id: `request:minute-history:${index}`,
+      routeEntrypointId: flowBody.flow.compiledRuntime!.match.entryNodeId,
+      requestedModel: 'minute-history-rerouted-model',
+      status: 'success',
+      httpStatus: 200,
+      latencyMs: 100 + index,
+      completedAt,
+    })));
+
+    const response = await app!.inject({
+      method: 'GET',
+      url: '/api/models/minute-history-rerouted-model/runtime-observability?range=1h',
+      headers: app!.adminHeaders(),
+    });
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as {
+      observability: {
+        history: {
+          granularity: string;
+          buckets: Array<{ bucketStart: string; entry: { totalCalls: number } }>;
+        };
+      };
+    };
+
+    expect(body.observability.history.granularity).toBe('minute');
+    expect(body.observability.history.buckets.map((bucket) => bucket.bucketStart)).toEqual([
+      firstCreatedAt,
+      secondCreatedAt,
+    ]);
+    expect(body.observability.history.buckets.map((bucket) => bucket.entry.totalCalls)).toEqual([1, 1]);
+  });
+
+  it('counts entry success from final downstream trace instead of internal fallback attempts', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'terminal-trace-site',
+      url: 'https://terminal-trace.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'terminal-trace-user',
+      apiToken: 'sk-terminal-trace',
+      accessToken: 'access-terminal-trace',
+      status: 'active',
+      balance: 10,
+    }).returning().get();
+    const route = await createRouteGroup({ model: 'terminal-trace-rerouted-model' });
+    const candidate = await insertRouteGroupMember({
+      groupId: route.id,
+      accountId: account.id,
+      tokenId: null,
+      sourceModel: 'terminal-trace-upstream-model',
+      fallbackStageOrder: 0,
+      weight: 10,
+      enabled: true,
+    });
+    const executionTargetId = await getExecutionTargetIdForMember(candidate.id);
+    if (!executionTargetId) throw new Error('Expected execution target for terminal trace candidate');
+    await publishManagedRouteGroupsForTest();
+
+    const flowResponse = await app!.inject({
+      method: 'GET',
+      url: '/api/models/terminal-trace-rerouted-model/route-flow',
+      headers: app!.adminHeaders(),
+    });
+    expect(flowResponse.statusCode).toBe(200);
+    const flowBody = flowResponse.json() as RouteFlowResponse;
+    const attempt = flowBody.flow.compiledRuntime?.executionAttempts[0];
+    expect(attempt?.executionAttemptId).toBeTruthy();
+
+    const now = new Date();
+    const recentCreatedAt = formatUtcSqlDateTime(now);
+    await db.insert(schema.proxyLogs).values([
+      ...Array.from({ length: 4 }, (_, index) => ({
+        routeEntrypointId: flowBody.flow.compiledRuntime!.match.entryNodeId,
+        runtimeEndpointId: attempt!.endpointId,
+        executionAttemptId: attempt!.executionAttemptId,
+        executionTargetId,
+        accountId: account.id,
+        modelRequested: 'terminal-trace-rerouted-model',
+        modelActual: 'terminal-trace-upstream-model',
+        status: 'failed',
+        httpStatus: 502,
+        latencyMs: 100 + index,
+        totalTokens: 0,
+        estimatedCost: 0,
+        retryCount: 0,
+        createdAt: recentCreatedAt,
+      })),
+      {
+        routeEntrypointId: flowBody.flow.compiledRuntime!.match.entryNodeId,
+        runtimeEndpointId: attempt!.endpointId,
+        executionAttemptId: attempt!.executionAttemptId,
+        executionTargetId,
+        accountId: account.id,
+        modelRequested: 'terminal-trace-rerouted-model',
+        modelActual: 'terminal-trace-upstream-model',
+        status: 'success',
+        httpStatus: 200,
+        latencyMs: 4736,
+        firstByteLatencyMs: 736,
+        firstTokenLatencyMs: 1736,
+        completionTokens: 200,
+        totalTokens: 100,
+        estimatedCost: 0.001,
+        retryCount: 4,
+        createdAt: recentCreatedAt,
+      },
+    ]).run();
+    await insertTerminalRequest({
+      id: 'request:terminal-success',
+      routeEntrypointId: flowBody.flow.compiledRuntime!.match.entryNodeId,
+      requestedModel: 'terminal-trace-rerouted-model',
+      status: 'success',
+      httpStatus: 200,
+      latencyMs: 4736,
+      firstTokenLatencyMs: 1736,
+      completionTokens: 200,
+      totalTokens: 100,
+      completedAt: recentCreatedAt,
+    });
+
+    const response = await app!.inject({
+      method: 'GET',
+      url: '/api/models/terminal-trace-rerouted-model/runtime-observability?range=5m',
+      headers: app!.adminHeaders(),
+    });
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as {
+      observability: {
+        health: {
+          totalCalls: number;
+          successCalls: number;
+          failedCalls: number;
+          successRate: number | null;
+          avgLatencyMs: number | null;
+          avgFirstTokenLatencyMs: number | null;
+          avgOutputTokensPerSecond: number | null;
+        };
+        executionAttempts: Array<{ executionAttemptId: string; health: { totalCalls: number; successRate: number | null } }>;
+        history: { buckets: Array<{ entry: { totalCalls: number; successRate: number | null; avgLatencyMs: number | null; avgFirstTokenLatencyMs: number | null; avgOutputTokensPerSecond: number | null } }> };
+      };
+    };
+
+    expect(body.observability.health).toMatchObject({
+      totalCalls: 1,
+      successCalls: 1,
+      failedCalls: 0,
+      successRate: 100,
+      avgLatencyMs: 4736,
+      avgFirstTokenLatencyMs: 1736,
+      avgOutputTokensPerSecond: 66.67,
+    });
+    expect(body.observability.history.buckets.at(-1)?.entry).toMatchObject({
+      totalCalls: 1,
+      successRate: 100,
+      avgLatencyMs: 4736,
+      avgFirstTokenLatencyMs: 1736,
+      avgOutputTokensPerSecond: 66.67,
+    });
+    expect(body.observability.executionAttempts[0]).toMatchObject({
+      executionAttemptId: attempt!.executionAttemptId,
+      health: {
+        totalCalls: 5,
+        successRate: 20,
+      },
+    });
+  });
+
+  it('does not infer entry health from shared execution attempt samples', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'shared-attempt-site',
+      url: 'https://shared-attempt.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'shared-attempt-user',
+      apiToken: 'sk-shared-attempt',
+      accessToken: 'access-shared-attempt',
+      status: 'active',
+      balance: 10,
+    }).returning().get();
+    const nakedRoute = await createRouteGroup({ model: 'shared-upstream-model' });
+    await createRouteGroup({ model: 'shared-rerouted-model' });
+    const candidate = await insertRouteGroupMember({
+      groupId: nakedRoute.id,
+      accountId: account.id,
+      tokenId: null,
+      sourceModel: 'shared-upstream-model',
+      fallbackStageOrder: 0,
+      weight: 10,
+      enabled: true,
+    });
+    const executionTargetId = await getExecutionTargetIdForMember(candidate.id);
+    if (!executionTargetId) throw new Error('Expected execution target for shared attempt candidate');
+    await publishManagedRouteGroupsForTest();
+
+    const flowResponse = await app!.inject({
+      method: 'GET',
+      url: '/api/models/shared-upstream-model/route-flow',
+      headers: app!.adminHeaders(),
+    });
+    expect(flowResponse.statusCode).toBe(200);
+    const flowBody = flowResponse.json() as RouteFlowResponse;
+    const attempt = flowBody.flow.compiledRuntime?.executionAttempts[0];
+    expect(attempt?.executionAttemptId).toBeTruthy();
+    expect(attempt?.endpointId).toBeTruthy();
+
+    await db.insert(schema.proxyLogs).values({
+      routeEntrypointId: null,
+      runtimeEndpointId: attempt!.endpointId,
+      executionAttemptId: attempt!.executionAttemptId,
+      executionTargetId,
+      accountId: account.id,
+      modelRequested: 'shared-rerouted-model',
+      modelActual: 'shared-upstream-model',
+      status: 'failed',
+      httpStatus: 502,
+      latencyMs: 120,
+      totalTokens: 0,
+      estimatedCost: 0,
+      createdAt: formatUtcSqlDateTime(new Date()),
+    }).run();
+
+    const response = await app!.inject({
+      method: 'GET',
+      url: '/api/models/shared-upstream-model/runtime-observability?range=7d',
+      headers: app!.adminHeaders(),
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as {
+      success: boolean;
+      observability: {
+        health: {
+          status: string;
+          source: string;
+          totalCalls: number;
+          successRate: number | null;
+        };
+        diagnostics: Array<{ code: string }>;
+        alternatives: Array<{
+          health: { source: string; totalCalls: number; successRate: number | null };
+        }>;
+        executionAttempts: Array<{
+          executionAttemptId: string;
+          health: { source: string; totalCalls: number; successRate: number | null };
+        }>;
+      };
+    };
+    expect(body.success).toBe(true);
+    expect(body.observability.health).toMatchObject({
+      status: 'unknown',
+      source: 'none',
+      totalCalls: 0,
+      successRate: null,
+    });
+    expect(body.observability.diagnostics.map((item) => item.code)).toContain('entry_usage_missing');
+    expect(body.observability.alternatives[0]?.health).toMatchObject({
+      source: 'none',
+      totalCalls: 0,
+      successRate: null,
+    });
+    expect(body.observability.executionAttempts[0]).toMatchObject({
+      executionAttemptId: attempt!.executionAttemptId,
+      health: {
+        source: 'execution_attempt_projection',
+        totalCalls: 1,
+        successRate: 0,
+      },
+    });
+  });
+
+  it('projects multiple execution attempts without exposing route-group candidate ids', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'multi-site',
+      url: 'https://multi.example.com',
       platform: 'new-api',
       status: 'active',
     }).returning().get();
     const accounts = await Promise.all(Array.from({ length: 4 }, async (_unused, index) => (
       await db.insert(schema.accounts).values({
         siteId: site.id,
-        username: `multi-upstream-${index + 1}`,
+        username: `multi-${index + 1}`,
         apiToken: `sk-multi-${index + 1}`,
         accessToken: `access-multi-${index + 1}`,
         status: 'active',
+        balance: index === 0 ? 100 : 1,
+        unitCost: index === 0 ? 0.01 : (index === 1 ? 0.5 : 0.2),
       }).returning().get()
     )));
-    const route = await db.insert(schema.tokenRoutes).values({
-      displayName: 'multi-upstream-model',
+    const route = await createRouteGroup({ model: 'multi-model' });
+    const weights = [1, 3, 2, 4];
+    await Promise.all(accounts.map((account, index) => insertRouteGroupMember({
+      groupId: route.id,
+      accountId: account.id,
+      tokenId: null,
+      sourceModel: 'multi-model',
+      fallbackStageOrder: 0,
+      weight: weights[index]!,
       enabled: true,
-      routingStrategy: 'weighted',
-    }).returning().get();
-    const channels = await Promise.all(accounts.map(async (account) => (
-      await db.insert(schema.routeEndpointTargets).values({
-        routeId: route.id,
-        accountId: account.id,
-        tokenId: null,
-        sourceModel: 'multi-upstream-model',
-        priority: 0,
-        weight: 10,
-        enabled: true,
-      }).returning().get()
-    )));
-    await syncRouteBindingProjectionsFromRouteTable!([route.id]);
+      successCount: index === 0 ? 10 : 1,
+      failCount: index === 0 ? 0 : 1,
+      totalLatencyMs: 100,
+      totalCost: index === 0 ? 0.1 : 0,
+    })));
+    await publishManagedRouteGroupsForTest();
 
     const response = await app!.inject({
       method: 'GET',
-      url: '/api/models/route-flow?model=multi-upstream-model',
+      url: '/api/models/multi-model/route-flow',
       headers: app!.adminHeaders(),
     });
 
     expect(response.statusCode).toBe(200);
-    const body = response.json() as {
-      success: boolean;
-      flow: {
-        nodes: Array<{
-          id: string;
-          kind: string;
-          badges: string[];
-          metrics: Record<string, unknown>;
-        }>;
-        edges: Array<{ source: string; target: string; label?: string | null }>;
-        entryPricing?: {
-          theoretical?: {
-            candidates?: Array<{ targetId: string; probability: number }>;
-          } | null;
-        };
-      };
-    };
-
-    expect(body.success).toBe(true);
-    expect(body.flow.entryPricing?.theoretical?.candidates).toHaveLength(4);
-    const candidateTargetIds = body.flow.entryPricing?.theoretical?.candidates?.map((candidate) => candidate.targetId).sort() || [];
-    for (const channel of channels) {
-      expect(candidateTargetIds).toContain(String(channel.id));
-    }
-    expect(body.flow.entryPricing?.theoretical?.candidates?.map((candidate) => candidate.probability)).toEqual([0.25, 0.25, 0.25, 0.25]);
-    const targetNodes = body.flow.nodes.filter((node) => (
-      node.kind === 'route_endpoint'
-      && node.badges?.includes?.('route-table')
-    ));
-    expect(targetNodes).toHaveLength(4);
-    expect(targetNodes.map((node) => node.metrics.probability)).toEqual([25, 25, 25, 25]);
-    for (const node of targetNodes) {
-      expect(body.flow.edges).toEqual(expect.arrayContaining([
-        expect.objectContaining({
-          source: node.id,
-          label: '25%',
-        }),
-      ]));
-    }
-  });
-
-  it('uses route-table router probabilities for incomplete route-flow probabilities when graph selection is unavailable', async () => {
-    const route = await db.insert(schema.tokenRoutes).values({
-      displayName: 'runtime-prob-model',
-      enabled: true,
-      routingStrategy: 'weighted',
-    }).returning().get();
-    const cheapSite = await db.insert(schema.sites).values({
-      name: 'runtime-cheap-site',
-      url: 'https://runtime-cheap.example.com',
-      platform: 'new-api',
-      status: 'active',
-    }).returning().get();
-    const expensiveSite = await db.insert(schema.sites).values({
-      name: 'runtime-expensive-site',
-      url: 'https://runtime-expensive.example.com',
-      platform: 'new-api',
-      status: 'active',
-    }).returning().get();
-    const cheapAccount = await db.insert(schema.accounts).values({
-      siteId: cheapSite.id,
-      username: 'runtime-cheap-user',
-      apiToken: 'sk-runtime-cheap',
-      accessToken: 'access-runtime-cheap',
-      status: 'active',
-    }).returning().get();
-    const expensiveAccount = await db.insert(schema.accounts).values({
-      siteId: expensiveSite.id,
-      username: 'runtime-expensive-user',
-      apiToken: 'sk-runtime-expensive',
-      accessToken: 'access-runtime-expensive',
-      status: 'active',
-    }).returning().get();
-    const cheapChannel = await db.insert(schema.routeEndpointTargets).values({
-      routeId: route.id,
-      accountId: cheapAccount.id,
-      tokenId: null,
-      sourceModel: 'runtime-prob-model',
-      priority: 0,
-      weight: 10,
-      enabled: true,
-      successCount: 10,
-      failCount: 0,
-      totalCost: 0.01,
-    }).returning().get();
-    const expensiveChannel = await db.insert(schema.routeEndpointTargets).values({
-      routeId: route.id,
-      accountId: expensiveAccount.id,
-      tokenId: null,
-      sourceModel: 'runtime-prob-model',
-      priority: 0,
-      weight: 10,
-      enabled: true,
-      successCount: 10,
-      failCount: 0,
-      totalCost: 0.1,
-    }).returning().get();
-    await syncRouteBindingProjectionsFromRouteTable!([route.id]);
-
-    const response = await app!.inject({
-      method: 'GET',
-      url: '/api/models/route-flow?model=runtime-prob-model',
-      headers: app!.adminHeaders(),
+    const body = response.json() as RouteFlowResponse;
+    const attempts = body.flow.compiledRuntime?.executionAttempts || [];
+    expect(attempts).toHaveLength(4);
+    expect(attempts.every((attempt) => attempt.executionAttemptId.length > 0)).toBe(true);
+    expect(new Set(attempts.map((attempt) => attempt.executionAttemptId)).size).toBe(attempts.length);
+    expect(attempts.map((attempt) => attempt.probability)).toEqual([0.1, 0.3, 0.2, 0.4]);
+    expect(attempts[0]?.routingSignals).toMatchObject({
+      referencePricing: {
+        scenario: 'routing_reference',
+        source: 'unavailable',
+      },
+      normalizedCostScore: null,
+      normalizedBalanceScore: 1,
+      rawBalance: 100,
+      normalizedBalance: 1,
     });
-
-    expect(response.statusCode).toBe(200);
-    const body = response.json() as {
-      success: boolean;
-      flow: {
-        nodes: Array<{
-          id: string;
-          kind: string;
-          label: string;
-          subtitle?: string | null;
-          metrics: Record<string, unknown>;
-        }>;
-        edges: Array<{ source: string; target: string; label?: string | null }>;
-        entryPricing?: {
-          theoretical?: {
-            candidates?: Array<{ targetId: string; probability: number | null }>;
-          } | null;
-        };
-      };
-    };
-
-    expect(body.success).toBe(true);
-    const pricingCandidates = body.flow.entryPricing?.theoretical?.candidates || [];
-    expect(pricingCandidates).toHaveLength(2);
-    expect(pricingCandidates.map((candidate) => candidate.probability)).toEqual([0.6451, 0.3549]);
-
-    const cheapNode = body.flow.nodes.find((node) => node.kind === 'route_endpoint' && node.label.includes('runtime-cheap-user'));
-    const expensiveNode = body.flow.nodes.find((node) => node.kind === 'route_endpoint' && node.label.includes('runtime-expensive-user'));
-    expect(cheapNode?.metrics.probability).toBeCloseTo(64.51);
-    expect(expensiveNode?.metrics.probability).toBeCloseTo(35.49);
-
-    const cheapEdge = body.flow.edges.find((edge) => edge.source === cheapNode?.id);
-    const expensiveEdge = body.flow.edges.find((edge) => edge.source === expensiveNode?.id);
-    expect(cheapEdge?.label).toBe('64.5%');
-    expect(expensiveEdge?.label).toBe('35.5%');
+    expect(attempts[0]?.probability).toBeDefined();
+    expect(body.flow.compiledRuntime?.alternatives[0]?.probability).toBeDefined();
+    expect(body.flow.entryPricing?.theoretical?.executionAttempts[0]?.probability).toBeCloseTo(attempts[0]?.probability || 0, 5);
   });
 
-  it('repairs compacted persisted route endpoint identities before rendering route-flow metrics', async () => {
+  it('prices theoretical entry cost from compiled runtime execution attempts', async () => {
+    const upstreamCost = await import('../../services/upstreamCostPricingService.js');
     const site = await db.insert(schema.sites).values({
-      name: 'compacted-flow-site',
-      url: 'https://compacted-flow.example.com',
+      name: 'pricing-flow-site',
+      url: 'https://pricing-flow.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+    const accounts = await Promise.all([
+      db.insert(schema.accounts).values({
+        siteId: site.id,
+        username: 'pricing-flow-a',
+        apiToken: 'sk-pricing-flow-a',
+        accessToken: 'access-pricing-flow-a',
+        status: 'active',
+        balance: 100,
+        unitCost: 2,
+      }).returning().get(),
+      db.insert(schema.accounts).values({
+        siteId: site.id,
+        username: 'pricing-flow-b',
+        apiToken: 'sk-pricing-flow-b',
+        accessToken: 'access-pricing-flow-b',
+        status: 'active',
+        balance: 100,
+        unitCost: 6,
+      }).returning().get(),
+    ]);
+    const route = await createRouteGroup({ model: 'priced-flow-model' });
+
+    await upstreamCost.createUpstreamCostPricing({
+      scope: 'account_model',
+      siteId: site.id,
+      accountId: accounts[0]!.id,
+      modelName: 'priced-flow-model',
+      plan: upstreamCost.createSimpleTokenPricingPlan({
+        inputPerMillion: 2,
+        outputPerMillion: 4,
+      }),
+    });
+    await upstreamCost.createUpstreamCostPricing({
+      scope: 'account_model',
+      siteId: site.id,
+      accountId: accounts[1]!.id,
+      modelName: 'priced-flow-model',
+      plan: upstreamCost.createSimpleTokenPricingPlan({
+        inputPerMillion: 10,
+        outputPerMillion: 20,
+      }),
+    });
+
+    await Promise.all(accounts.map((account) => insertRouteGroupMember({
+      groupId: route.id,
+      accountId: account.id,
+      tokenId: null,
+      sourceModel: 'priced-flow-model',
+      fallbackStageOrder: 0,
+      weight: 10,
+      enabled: true,
+    })));
+    await publishManagedRouteGroupsForTest();
+
+    const response = await app!.inject({
+      method: 'GET',
+      url: '/api/models/priced-flow-model/route-flow',
+      headers: app!.adminHeaders(),
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as RouteFlowResponse & {
+      flow: {
+        entryPricing?: {
+          theoretical?: {
+            inputPerMillion: number | null;
+            outputPerMillion: number | null;
+            totalCost: number | null;
+            sourceCount: number;
+            executionAttempts: Array<{
+              executionAttemptId: string;
+              accountId: number | null;
+              inputPerMillion: number | null;
+              outputPerMillion: number | null;
+              totalCost: number | null;
+              probability: number | null;
+              matchedScope: string | null;
+            }>;
+          } | null;
+        };
+      };
+    };
+    const pricing = body.flow.entryPricing?.theoretical;
+    expect(pricing?.sourceCount).toBe(2);
+    expect(pricing?.executionAttempts).toHaveLength(2);
+    expect(pricing?.executionAttempts.map((attempt) => attempt.matchedScope)).toEqual(['account_model', 'account_model']);
+    expect(pricing?.executionAttempts.map((attempt) => attempt.inputPerMillion).sort((a, b) => (a || 0) - (b || 0))).toEqual([2, 10]);
+    expect(pricing?.executionAttempts.map((attempt) => attempt.outputPerMillion).sort((a, b) => (a || 0) - (b || 0))).toEqual([4, 20]);
+
+    const attempts = pricing?.executionAttempts || [];
+    const expectedInput = attempts.reduce((sum, attempt) => sum + (attempt.inputPerMillion || 0) * (attempt.probability || 0), 0);
+    const expectedOutput = attempts.reduce((sum, attempt) => sum + (attempt.outputPerMillion || 0) * (attempt.probability || 0), 0);
+    const expectedTotal = attempts.reduce((sum, attempt) => sum + (attempt.totalCost || 0) * (attempt.probability || 0), 0);
+    expect(pricing?.inputPerMillion).toBeCloseTo(expectedInput, 4);
+    expect(pricing?.outputPerMillion).toBeCloseTo(expectedOutput, 4);
+    expect(pricing?.totalCost).toBeCloseTo(expectedTotal, 4);
+    expect(pricing?.inputPerMillion).not.toBe(1);
+    expect(pricing?.outputPerMillion).not.toBe(1);
+    expect(pricing?.totalCost).not.toBe(1);
+  });
+
+  it('prices advanced route-flow usage components from the unified endpoint quote', async () => {
+    const upstreamCost = await import('../../services/upstreamCostPricingService.js');
+    const site = await db.insert(schema.sites).values({
+      name: 'advanced-pricing-flow-site',
+      url: 'https://advanced-pricing-flow.example.com',
       platform: 'new-api',
       status: 'active',
     }).returning().get();
     const account = await db.insert(schema.accounts).values({
       siteId: site.id,
-      username: 'compacted-flow-user',
-      apiToken: 'sk-compacted-flow',
-      accessToken: 'access-compacted-flow',
+      username: 'advanced-pricing-flow',
+      apiToken: 'sk-advanced-pricing-flow',
+      accessToken: 'access-advanced-pricing-flow',
       status: 'active',
+      balance: 100,
+      unitCost: 1,
+    }).returning().get();
+    const route = await createRouteGroup({ model: 'advanced-priced-flow-model' });
+
+    await upstreamCost.createUpstreamCostPricing({
+      scope: 'account_model',
+      siteId: site.id,
+      accountId: account.id,
+      modelName: 'advanced-priced-flow-model',
+      plan: upstreamCost.createSimpleTokenPricingPlan({
+        inputPerMillion: 2,
+        outputPerMillion: 4,
+        cacheReadPerMillion: 1,
+        cacheWritePerMillion: 3,
+        reasoningPerMillion: 5,
+        requestCost: 0.1,
+      }),
+    });
+    await insertRouteGroupMember({
+      groupId: route.id,
+      accountId: account.id,
+      tokenId: null,
+      sourceModel: 'advanced-priced-flow-model',
+      fallbackStageOrder: 0,
+      weight: 10,
+      enabled: true,
+    });
+    await publishManagedRouteGroupsForTest();
+
+    const pricingUsage = {
+      inputTokens: 1_000_000,
+      outputTokens: 2_000_000,
+      cacheReadTokens: 500_000,
+      cacheWriteTokens: 100_000,
+      reasoningTokens: 250_000,
+      requestCount: 1,
+    };
+    const response = await app!.inject({
+      method: 'POST',
+      url: '/api/models/advanced-priced-flow-model/route-flow',
+      headers: app!.adminHeaders(),
+      payload: { pricingUsage },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as RouteFlowResponse & {
+      flow: {
+        entryPricing?: {
+          theoretical?: {
+            inputPerMillion: number | null;
+            outputPerMillion: number | null;
+            cacheReadPerMillion: number | null;
+            cacheWritePerMillion: number | null;
+            reasoningPerMillion: number | null;
+            requestCost: number | null;
+            totalCost: number | null;
+            usage: Record<string, number>;
+            components: Array<{ kind: string; unitPrice: number | null; cost: number | null }>;
+            executionAttempts: Array<{
+              cacheReadPerMillion: number | null;
+              cacheWritePerMillion: number | null;
+              reasoningPerMillion: number | null;
+              requestCost: number | null;
+              components: Array<{ kind: string; unitPrice: number | null; cost: number | null }>;
+            }>;
+          } | null;
+        };
+      };
+    };
+    const pricing = body.flow.entryPricing?.theoretical;
+    expect(pricing).toMatchObject({
+      inputPerMillion: 2,
+      outputPerMillion: 4,
+      cacheReadPerMillion: 1,
+      cacheWritePerMillion: 3,
+      reasoningPerMillion: 5,
+      requestCost: 0.1,
+      totalCost: 12.15,
+      usage: expect.objectContaining(pricingUsage),
+    });
+    expect(pricing?.components).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'cache_read_tokens', unitPrice: 1, cost: 0.5 }),
+      expect.objectContaining({ kind: 'cache_write_tokens', unitPrice: 3, cost: 0.3 }),
+      expect.objectContaining({ kind: 'reasoning_tokens', unitPrice: 5, cost: 1.25 }),
+      expect.objectContaining({ kind: 'request', unitPrice: 0.1, cost: 0.1 }),
+    ]));
+    expect(pricing?.executionAttempts[0]).toMatchObject({
+      cacheReadPerMillion: 1,
+      cacheWritePerMillion: 3,
+      reasoningPerMillion: 5,
+      requestCost: 0.1,
+    });
+  });
+
+  it('does not expose system default cost as theoretical compiled runtime pricing', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'default-cost-flow-site',
+      url: 'https://default-cost-flow.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'default-cost-flow',
+      apiToken: 'sk-default-cost-flow',
+      accessToken: 'access-default-cost-flow',
+      status: 'active',
+      balance: 100,
+    }).returning().get();
+    const route = await createRouteGroup({ model: 'default-cost-flow-model' });
+    await insertRouteGroupMember({
+      groupId: route.id,
+      accountId: account.id,
+      tokenId: null,
+      sourceModel: 'default-cost-flow-model',
+      fallbackStageOrder: 0,
+      weight: 10,
+      enabled: true,
+    });
+    await publishManagedRouteGroupsForTest();
+
+    const response = await app!.inject({
+      method: 'GET',
+      url: '/api/models/default-cost-flow-model/route-flow',
+      headers: app!.adminHeaders(),
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as RouteFlowResponse & {
+      flow: {
+        entryPricing?: {
+          theoretical?: {
+            inputPerMillion: number | null;
+            outputPerMillion: number | null;
+            totalCost: number | null;
+            sourceCount: number;
+            executionAttempts: Array<{
+              inputPerMillion: number | null;
+              outputPerMillion: number | null;
+              totalCost: number | null;
+              matchedScope: string | null;
+            }>;
+          } | null;
+        };
+      };
+    };
+
+    expect(body.flow.entryPricing?.theoretical).toMatchObject({
+      inputPerMillion: null,
+      outputPerMillion: null,
+      totalCost: null,
+      sourceCount: 0,
+    });
+    expect(body.flow.entryPricing?.theoretical?.executionAttempts[0]).toMatchObject({
+      inputPerMillion: null,
+      outputPerMillion: null,
+      totalCost: null,
+      matchedScope: null,
+    });
+    expect(body.flow.compiledRuntime?.executionAttempts[0]?.routingSignals?.referencePricing.source).toBe('unavailable');
+  });
+
+  it('uses provider catalog pricing for compiled runtime theoretical entry pricing', async () => {
+    fetchUpstreamPricingCatalogMock.mockResolvedValue({
+      models: new Map([['catalog-flow-model', {
+        modelName: 'catalog-flow-model',
+        quotaType: 0,
+        modelRatio: 1,
+        completionRatio: 1,
+        cacheRatio: 1,
+        cacheCreationRatio: 1,
+        modelPrice: { input: 5, output: 7 },
+        enableGroups: ['premium-test'],
+      }]]),
+      groupRatio: { default: 1, 'premium-test': 2 },
+    });
+    const site = await db.insert(schema.sites).values({
+      name: 'catalog-flow-site',
+      url: 'https://catalog-flow.example.com',
+      platform: 'new-api',
+      status: 'active',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'catalog-flow',
+      apiToken: 'sk-catalog-flow',
+      accessToken: 'access-catalog-flow',
+      status: 'active',
+      balance: 100,
     }).returning().get();
     const token = await db.insert(schema.accountTokens).values({
       accountId: account.id,
-      name: 'compacted-flow-token',
-      token: 'sk-compacted-flow-token',
+      name: 'catalog-flow-token',
+      token: 'sk-catalog-flow-token',
+      tokenGroup: 'premium-test',
       valueStatus: 'ready',
       enabled: true,
       isDefault: true,
     }).returning().get();
-    const route = await db.insert(schema.tokenRoutes).values({
-      displayName: 'compacted-flow-model',
-      enabled: true,
-      routingStrategy: 'weighted',
-    }).returning().get();
-    const target = await db.insert(schema.routeEndpointTargets).values({
-      routeId: route.id,
+    const { refreshProviderPricingCatalog } = await import('../../services/providerPricingCatalogCacheService.js');
+    await expect(refreshProviderPricingCatalog({
+      siteId: site.id,
+      accountId: account.id,
+      reason: 'test-prime-cache',
+    })).resolves.toMatchObject({ status: 'success' });
+    fetchUpstreamPricingCatalogMock.mockClear();
+
+    const route = await createRouteGroup({ model: 'catalog-flow-model' });
+    await insertRouteGroupMember({
+      groupId: route.id,
       accountId: account.id,
       tokenId: token.id,
-      sourceModel: 'compacted-flow-model',
-      priority: 0,
+      sourceModel: 'catalog-flow-model',
+      fallbackStageOrder: 0,
       weight: 10,
       enabled: true,
-    }).returning().get();
-    await db.insert(schema.proxyLogs).values([
-      {
-        routeId: route.id,
-        targetId: target.id,
-        accountId: account.id,
-        modelRequested: 'compacted-flow-model',
-        modelActual: 'compacted-flow-model',
-        status: 'success',
-        httpStatus: 200,
-        latencyMs: 160,
-        createdAt: new Date().toISOString(),
-      },
-      {
-        routeId: route.id,
-        targetId: target.id,
-        accountId: account.id,
-        modelRequested: 'compacted-flow-model',
-        modelActual: 'compacted-flow-model',
-        status: 'failed',
-        httpStatus: 502,
-        errorMessage: 'bad gateway',
-        createdAt: new Date().toISOString(),
-      },
-    ]).run();
-    await persistCompactedActiveRouteEndpointIdentity(route.id);
+    });
+    await publishManagedRouteGroupsForTest();
 
     const response = await app!.inject({
       method: 'GET',
-      url: '/api/models/route-flow?model=compacted-flow-model',
+      url: '/api/models/catalog-flow-model/route-flow',
       headers: app!.adminHeaders(),
     });
 
     expect(response.statusCode).toBe(200);
-    const body = response.json() as {
-      success: boolean;
+    const body = response.json() as RouteFlowResponse & {
       flow: {
-        nodes: Array<{
-          kind: string;
-          label: string;
-          metrics: Record<string, unknown>;
-        }>;
+        entryPricing?: {
+          theoretical?: {
+            inputPerMillion: number | null;
+            outputPerMillion: number | null;
+            totalCost: number | null;
+            sourceCount: number;
+            executionAttempts: Array<{
+              inputPerMillion: number | null;
+              outputPerMillion: number | null;
+              totalCost: number | null;
+              matchedScope: string | null;
+            }>;
+          } | null;
+        };
       };
     };
-    const supplyNode = body.flow.nodes.find((node) => (
-      node.kind === 'route_endpoint'
-      && node.label.includes('compacted-flow-user')
-    ));
 
-    expect(body.success).toBe(true);
-    expect(supplyNode?.metrics).toMatchObject({
-      probability: 100,
-      successRate: 50,
-      avgLatencyMs: 160,
-      totalCalls: 2,
+    expect(body.flow.entryPricing?.theoretical).toMatchObject({
+      inputPerMillion: 10,
+      outputPerMillion: 14,
+      totalCost: 24,
+      sourceCount: 1,
     });
+    expect(body.flow.entryPricing?.theoretical?.executionAttempts[0]).toMatchObject({
+      inputPerMillion: 10,
+      outputPerMillion: 14,
+      totalCost: 24,
+      matchedScope: 'provider_catalog',
+    });
+    expect(body.flow.compiledRuntime?.executionAttempts[0]?.routingSignals).toMatchObject({
+      referencePricing: {
+        scenario: 'routing_reference',
+        source: 'wallet_acquisition',
+        rawCost: 12,
+        effectiveCost: 12,
+      },
+    });
+    expect(fetchUpstreamPricingCatalogMock).not.toHaveBeenCalled();
   });
 
-  it('renders published graph filters from the compiled runtime route path', async () => {
-    const site = await db.insert(schema.sites).values({
-      name: 'filtered-flow-site',
-      url: 'https://filtered-flow.example.com',
-      platform: 'new-api',
-      status: 'active',
-    }).returning().get();
-    const account = await db.insert(schema.accounts).values({
-      siteId: site.id,
-      username: 'filtered-flow-user',
-      apiToken: 'sk-filtered-flow',
-      accessToken: 'access-filtered-flow',
-      status: 'active',
-    }).returning().get();
-    const route = await db.insert(schema.tokenRoutes).values({
-      displayName: 'deepseek-v4-pro',
-      enabled: true,
-      routingStrategy: 'weighted',
-    }).returning().get();
-    const target = await db.insert(schema.routeEndpointTargets).values({
-      routeId: route.id,
-      accountId: account.id,
-      tokenId: null,
-      sourceModel: 'deepseek-v4-pro',
-      priority: 0,
-      weight: 10,
-      enabled: true,
-    }).returning().get();
-
-    const published = await publishRouteGraphSource!({
-      createdBy: 'test',
-      sourceGraph: {
-        version: 1,
-        nodes: [
-          {
-            id: 'entry.filtered-flow',
-            type: 'entry',
-            enabled: true,
-            visibility: 'public',
-            ownership: 'manual',
-            match: {
-              requestedModelPattern: 'deepseek-v4-pro-max',
-              displayName: 'deepseek-v4-pro-max',
-            },
-          },
-          {
-            id: 'filter.filtered-flow',
-            type: 'filter',
-            enabled: true,
-            visibility: 'internal',
-            ownership: 'manual',
-            operations: [
-              { type: 'rewrite_model', source: 'current_model', operation: 'strip_suffix', suffix: '-max' },
-              { type: 'set_payload', path: 'reasoning_effort', mode: 'override', value: 'high' },
-              { type: 'set_header', name: 'X-Route-Graph', mode: 'override', value: 'filtered' },
-              { type: 'set_endpoint_preference', endpoint: 'responses' },
-            ],
-          },
-          {
-            id: 'endpoint.filtered-flow',
-            type: 'route_endpoint',
-            enabled: true,
-            visibility: 'internal',
-            ownership: 'manual',
-            legacyRouteId: route.id,
-            config: {
-              targets: [{
-                targetId: String(target.id),
-                model: 'deepseek-v4-pro',
-                accountId: account.id,
-                siteId: site.id,
-              }],
-              targetSelection: { strategy: 'weighted' },
-            },
-          },
-        ],
-        edges: [
-          {
-            id: 'entry-filter-filtered-flow',
-            sourceNodeId: 'entry.filtered-flow',
-            sourcePortId: 'bidirect.out',
-            targetNodeId: 'filter.filtered-flow',
-            targetPortId: 'bidirect.in',
-            kind: 'bidirect_flow',
-            ownership: 'manual',
-          },
-          {
-            id: 'filter-endpoint-filtered-flow',
-            sourceNodeId: 'filter.filtered-flow',
-            sourcePortId: 'bidirect.out',
-            targetNodeId: 'endpoint.filtered-flow',
-            targetPortId: 'bidirect.in',
-            kind: 'bidirect_flow',
-            ownership: 'manual',
-          },
-        ],
-        macros: [],
-      },
-    });
-    expect(published.ok).toBe(true);
-
+  it('returns an unmatched compiled runtime response without route-table fallback nodes', async () => {
     const response = await app!.inject({
       method: 'GET',
-      url: '/api/models/route-flow?model=deepseek-v4-pro-max',
+      url: '/api/models/unknown-model/route-flow',
       headers: app!.adminHeaders(),
     });
 
     expect(response.statusCode).toBe(200);
-    const body = response.json() as {
-      success: boolean;
-      flow: {
-        matched: boolean;
-        actualModel: string;
-        selectedRouteId: number | null;
-        nodes: Array<{ id: string; kind: string; badges: string[]; status: string }>;
-        edges: Array<{ source: string; target: string; label?: string | null }>;
-        summary: string[];
-      };
-    };
-
-    expect(body.success).toBe(true);
+    const body = response.json() as RouteFlowResponse;
     expect(body.flow).toMatchObject({
-      matched: true,
-      actualModel: 'deepseek-v4-pro',
-      selectedRouteId: route.id,
+      matched: false,
+      compiledRuntime: null,
     });
-    expect(body.flow.nodes).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        id: 'graph:entry.filtered-flow',
-        kind: 'entry',
-        status: 'active',
-      }),
-      expect.objectContaining({
-        id: 'graph:filter.filtered-flow',
-        kind: 'filter',
-        badges: expect.arrayContaining(['graph', 'filter', 'rewrite_model:currentModel=strip_suffix']),
-      }),
-      expect.objectContaining({
-        id: 'graph:endpoint.filtered-flow',
-        kind: 'route_endpoint',
-        status: 'selected',
-      }),
-    ]));
-    expect(body.flow.edges).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        source: 'graph:entry.filtered-flow',
-        target: 'graph:filter.filtered-flow',
-      }),
-      expect.objectContaining({
-        source: 'graph:filter.filtered-flow',
-        target: 'graph:endpoint.filtered-flow',
-      }),
-    ]));
-    expect(body.flow.summary).toEqual(expect.arrayContaining([
-      'compiled graph selected route_endpoint',
-    ]));
-  });
-
-  it('returns a terminal unmatched node for unknown models', async () => {
-    const response = await app!.inject({
-      method: 'GET',
-      url: '/api/models/route-flow?model=unknown-model',
-      headers: app!.adminHeaders(),
-    });
-
-    expect(response.statusCode).toBe(200);
-    const body = response.json() as {
-      flow: {
-        matched: boolean;
-        nodes: Array<{ id: string; status: string }>;
-        diagnostics: Array<{ level: string; message: string }>;
-      };
-    };
-    expect(body.flow.matched).toBe(false);
-    expect(body.flow.nodes).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 'graph:unmatched', status: 'blocked' }),
-    ]));
+    expect(body.flow.nodes).toBeUndefined();
     expect(body.flow.diagnostics).toEqual(expect.arrayContaining([
       expect.objectContaining({ level: 'warn' }),
     ]));
   });
 
-  it('renders graph-native synthetic terminals with diagnostics instead of channel candidates', async () => {
+  it('returns lightweight diagnostics without the route-flow JSON payload', async () => {
+    const response = await app!.inject({
+      method: 'GET',
+      url: '/api/models/unknown-model/route-flow?view=diagnostics',
+      headers: app!.adminHeaders(),
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as {
+      success: boolean;
+      flow?: unknown;
+      diagnostics: {
+        requestedModel: string;
+        matched: boolean;
+        diagnostics: Array<{ level: string; message: string }>;
+        compiledRuntime?: unknown;
+        entryPricing?: unknown;
+      };
+    };
+    expect(body.success).toBe(true);
+    expect(body.flow).toBeUndefined();
+    expect(body.diagnostics).toMatchObject({
+      requestedModel: 'unknown-model',
+      matched: false,
+    });
+    expect(body.diagnostics.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ level: 'warn' }),
+    ]));
+    expect(body.diagnostics.compiledRuntime).toBeUndefined();
+    expect(body.diagnostics.entryPricing).toBeUndefined();
+  });
+
+  it('accepts encoded model path ids and does not expose routing-candidates compatibility API', async () => {
+    const encodedModel = encodeURIComponent('Qwen/Qwen3.5-122B-A10B');
+
+    const flowResponse = await app!.inject({
+      method: 'GET',
+      url: `/api/models/${encodedModel}/route-flow`,
+      headers: app!.adminHeaders(),
+    });
+    expect(flowResponse.statusCode).toBe(200);
+    expect(flowResponse.json()).toMatchObject({
+      success: true,
+      flow: { requestedModel: 'Qwen/Qwen3.5-122B-A10B' },
+    });
+
+    const candidatesResponse = await app!.inject({
+      method: 'GET',
+      url: `/api/models/${encodedModel}/routing-candidates`,
+      headers: app!.adminHeaders(),
+    });
+    expect(candidatesResponse.statusCode).toBe(404);
+  });
+
+  it('renders graph-native synthetic terminals as compiled runtime synthetic responses', async () => {
     const published = await publishRouteGraphSource!({
       createdBy: 'test',
       sourceGraph: {
-        version: 1,
         nodes: [
           {
             id: 'entry.synthetic',
@@ -751,36 +1570,26 @@ describe('/api/models/route-flow', () => {
 
     const response = await app!.inject({
       method: 'GET',
-      url: '/api/models/route-flow?model=synthetic-flow-model',
+      url: '/api/models/synthetic-flow-model/route-flow',
       headers: app!.adminHeaders(),
     });
 
     expect(response.statusCode).toBe(200);
-    const body = response.json() as {
-      flow: {
-        matched: boolean;
-        selectedRouteId: number | null;
-        summary: string[];
-        nodes: Array<{ id: string; label: string; status: string; badges: string[] }>;
-        edges: Array<{ source: string; target: string; label?: string | null }>;
-        diagnostics: Array<{ level: string; message: string }>;
-      };
-    };
+    const body = response.json() as RouteFlowResponse;
     expect(body.flow.matched).toBe(true);
-    expect(body.flow.selectedRouteId).toBeNull();
-    expect('selectedTargetId' in body.flow).toBe(false);
-    expect(body.flow.summary).toEqual(['route graph synthetic response 429']);
-    expect(body.flow.nodes).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 'graph:entry.synthetic', status: 'active' }),
+    expect(body.flow).not.toHaveProperty('entryId');
+    expect(body.flow).not.toHaveProperty('selectedEndpointId');
+    expect(body.flow.compiledRuntime?.match.entryNodeId).toBe('entry.synthetic');
+    expect(body.flow.compiledRuntime?.selected.endpointId).toBeNull();
+    expect(body.flow.compiledRuntime?.syntheticResponse).toEqual({
+      statusCode: 429,
+      message: 'quota guard',
+    });
+    expect(body.flow.compiledRuntime?.alternatives).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        id: 'graph:synthetic-response',
-        label: '429',
-        status: 'blocked',
-        badges: expect.arrayContaining(['terminal', 'synthetic_endpoint']),
+        kind: 'synthetic_response',
+        syntheticResponse: { statusCode: 429, message: 'quota guard' },
       }),
-    ]));
-    expect(body.flow.edges).toEqual(expect.arrayContaining([
-      expect.objectContaining({ source: 'graph:synthetic.429', target: 'graph:synthetic-response', label: 'terminal' }),
     ]));
     expect(body.flow.diagnostics).toEqual([
       { level: 'warn', message: 'quota guard' },

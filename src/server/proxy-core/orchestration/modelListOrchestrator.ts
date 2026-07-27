@@ -1,15 +1,22 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import { and, eq } from 'drizzle-orm';
 import { fetch } from 'undici';
-import { db, schema } from '../../db/index.js';
-import { isModelAllowedByPolicyOrAllowedRoutes } from '../../services/downstreamApiKeyService.js';
-import { listPublicRouteModelNames } from '../../services/routeTableProjectionService.js';
-import { tokenRouter } from '../../services/tokenRouter.js';
-import * as routeRefreshWorkflow from '../../services/routeRefreshWorkflow.js';
+import {
+  previewRouteRuntimeDecision,
+} from '../../services/routeRuntimeExecutionService.js';
 import { readRuntimeResponseText } from '../executors/types.js';
 import type { DownstreamProtocolAdapter } from '../formats/types.js';
 import { getDownstreamRoutingPolicy } from '../downstreamPolicy.js';
-import { getTesterForcedTargetId, canRetryTargetSelection, buildForcedTargetUnavailableMessage } from '../targetSelection.js';
+import {
+  buildForcedExecutionAttemptUnavailableMessage,
+  canRetryExecutionAttemptSelection,
+  getTesterForcedExecutionAttemptId,
+} from '../executionAttemptSelection.js';
+import { buildCompiledRouteRuntimeRequestSnapshot } from './compiledRouteRuntimeRequest.js';
+import {
+  listActiveCompiledRuntimeModelEntrypoints,
+} from '../../services/compiledRuntimeInventoryService.js';
+import type { DownstreamRoutingPolicy } from '../../services/downstreamPolicyTypes.js';
+import { matchesModelPattern } from '../../../shared/modelPatternMatcher.js';
 
 type ListedModel = { name: string; displayName: string };
 
@@ -22,10 +29,10 @@ function extractListedModelName(item: unknown): string {
   return rawName.startsWith('models/') ? rawName.slice('models/'.length) : rawName;
 }
 
-function hasDownstreamModelRestrictions(policy: { supportedModels?: unknown; allowedRouteIds?: unknown; denyAllWhenEmpty?: unknown }): boolean {
+function hasDownstreamModelRestrictions(policy: { supportedModels?: unknown; allowedPlanIds?: unknown; denyAllWhenEmpty?: unknown }): boolean {
   const supportedModels = Array.isArray(policy.supportedModels) ? policy.supportedModels : [];
-  const allowedRouteIds = Array.isArray(policy.allowedRouteIds) ? policy.allowedRouteIds : [];
-  return supportedModels.length > 0 || allowedRouteIds.length > 0 || policy.denyAllWhenEmpty === true;
+  const allowedPlanIds = Array.isArray(policy.allowedPlanIds) ? policy.allowedPlanIds : [];
+  return supportedModels.length > 0 || allowedPlanIds.length > 0 || policy.denyAllWhenEmpty === true;
 }
 
 async function filterListedModelsForPolicy(
@@ -36,7 +43,7 @@ async function filterListedModelsForPolicy(
     return payload;
   }
 
-  const policy = getDownstreamRoutingPolicy(request);
+  const policy = await getDownstreamRoutingPolicy(request);
   if (!hasDownstreamModelRestrictions(policy)) {
     return payload;
   }
@@ -45,9 +52,7 @@ async function filterListedModelsForPolicy(
   for (const item of (payload as { models: unknown[] }).models) {
     const modelName = extractListedModelName(item);
     if (!modelName) continue;
-    if (!await isModelAllowedByPolicyOrAllowedRoutes(modelName, policy)) continue;
-    const decision = await tokenRouter.explainSelection?.(modelName, [], policy);
-    if (decision && typeof decision.selectedTargetId !== 'number') continue;
+    if (!await isModelAllowedByRuntimePolicy(modelName, policy)) continue;
     filteredModels.push(item);
   }
 
@@ -57,33 +62,22 @@ async function filterListedModelsForPolicy(
   };
 }
 
-async function readRouteAwareModels(request: FastifyRequest): Promise<ListedModel[]> {
-  const policy = getDownstreamRoutingPolicy(request);
-  const rows = await db.select({ modelName: schema.modelAvailability.modelName })
-    .from(schema.modelAvailability)
-    .innerJoin(schema.accounts, eq(schema.modelAvailability.accountId, schema.accounts.id))
-    .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
-    .where(and(
-      eq(schema.modelAvailability.available, true),
-      eq(schema.accounts.status, 'active'),
-      eq(schema.sites.status, 'active'),
-    ))
-    .all();
-  const publicGraphModels = (await listPublicRouteModelNames()).map((item) => item.modelName);
-  const routableModels = typeof tokenRouter.getAvailableModels === 'function'
-    ? await tokenRouter.getAvailableModels()
+async function readRouteAwareModels(policy: DownstreamRoutingPolicy): Promise<ListedModel[]> {
+  const allowedPlanIds = Array.isArray(policy.allowedPlanIds)
+    ? policy.allowedPlanIds.map((value) => String(value || '').trim()).filter(Boolean)
     : [];
-  const deduped = Array.from(new Set([
-    ...rows.map((row) => String(row.modelName || '').trim()).filter(Boolean),
-    ...publicGraphModels,
-    ...routableModels,
-  ])).sort();
+  const entrypoints = await listActiveCompiledRuntimeModelEntrypoints();
+  const routeScopedPlanIds = new Set(allowedPlanIds);
+  const hasPatternRules = Array.isArray(policy.supportedModels) && policy.supportedModels.length > 0;
+  const unrestricted = !hasPatternRules && allowedPlanIds.length === 0 && policy.denyAllWhenEmpty !== true;
+  const deduped = entrypoints.sort((left, right) => left.modelName.localeCompare(right.modelName));
 
   const allowed: ListedModel[] = [];
-  for (const modelName of deduped) {
-    if (!await isModelAllowedByPolicyOrAllowedRoutes(modelName, policy)) continue;
-    const decision = await tokenRouter.explainSelection?.(modelName, [], policy);
-    if (decision && typeof decision.selectedTargetId !== 'number') continue;
+  for (const entrypoint of deduped) {
+    const modelName = entrypoint.modelName;
+    const routeAllowed = routeScopedPlanIds.has(entrypoint.planId);
+    const patternAllowed = hasPatternRules && policy.supportedModels.some((pattern) => matchesModelPattern(modelName, pattern));
+    if (!unrestricted && !routeAllowed && !patternAllowed) continue;
     allowed.push({
       name: `models/${modelName}`,
       displayName: modelName,
@@ -92,21 +86,57 @@ async function readRouteAwareModels(request: FastifyRequest): Promise<ListedMode
   return allowed;
 }
 
+async function isModelAllowedByRuntimePolicy(
+  modelName: string,
+  policy: DownstreamRoutingPolicy,
+): Promise<boolean> {
+  const supportedPatterns = Array.isArray(policy.supportedModels) ? policy.supportedModels : [];
+  const allowedPlanIds = Array.isArray(policy.allowedPlanIds)
+    ? policy.allowedPlanIds.map((value) => String(value || '').trim()).filter(Boolean)
+    : [];
+  const hasPatternRules = supportedPatterns.length > 0;
+  const hasPlanRules = allowedPlanIds.length > 0;
+  if (!hasPatternRules && !hasPlanRules) return policy.denyAllWhenEmpty === true ? false : true;
+  if (hasPatternRules && supportedPatterns.some((pattern) => matchesModelPattern(modelName, pattern))) {
+    return true;
+  }
+  if (!hasPlanRules) return false;
+  const normalizedModel = modelName.toLowerCase();
+  const allowedPlanIdSet = new Set(allowedPlanIds);
+  const entrypoints = await listActiveCompiledRuntimeModelEntrypoints();
+  return entrypoints.some((entrypoint) => (
+    entrypoint.modelName.toLowerCase() === normalizedModel
+    && allowedPlanIdSet.has(entrypoint.planId)
+  ));
+}
+
 async function selectModelListTarget(
   request: FastifyRequest,
   adapter: DownstreamProtocolAdapter,
-  forcedTargetId: number | null,
+  forcedExecutionAttemptId: string | null,
   excludeTargetIds: number[],
   retryCount: number,
 ) {
-  const policy = getDownstreamRoutingPolicy(request);
+  const policy = await getDownstreamRoutingPolicy(request);
+  const compiledRouteRequest = buildCompiledRouteRuntimeRequestSnapshot({
+    headers: request.headers as Record<string, unknown>,
+    method: request.method,
+    path: request.url || '/v1/models',
+    query: (request.query || {}) as Record<string, unknown>,
+  });
   for (const modelName of adapter.modelListModelProbes || []) {
-    const selected = forcedTargetId !== null
-      ? await tokenRouter.selectPreferredTarget(modelName, forcedTargetId, policy, excludeTargetIds)
-      : retryCount === 0
-        ? await tokenRouter.selectTarget(modelName, policy)
-        : await tokenRouter.selectNextTarget(modelName, excludeTargetIds, policy);
-    if (selected) return selected;
+    const decision = await previewRouteRuntimeDecision({
+      requestedModel: modelName,
+      request: {
+        ...compiledRouteRequest,
+        requestedModel: modelName,
+      },
+      downstreamPolicy: policy,
+      retryCount,
+      forcedExecutionAttemptId,
+      disabledExecutionTargetIds: excludeTargetIds,
+    });
+    if (decision?.kind === 'execution_attempt') return decision.attempt;
   }
   return null;
 }
@@ -116,21 +146,33 @@ export async function handleModelListSurfaceRequest(
   reply: FastifyReply,
   adapter: DownstreamProtocolAdapter,
 ) {
-  const forcedTargetId = getTesterForcedTargetId({
+  const forcedExecutionAttemptId = getTesterForcedExecutionAttemptId({
     headers: request.headers as Record<string, unknown>,
     clientIp: request.ip,
   });
+  const policy = await getDownstreamRoutingPolicy(request);
+  const allowedPlanIds = Array.isArray(policy.allowedPlanIds)
+    ? policy.allowedPlanIds.map((value) => String(value || '').trim()).filter(Boolean)
+    : [];
+  if (allowedPlanIds.length > 0) {
+    const models = await readRouteAwareModels(policy);
+    return reply.code(200).send(adapter.formatModelList ? adapter.formatModelList(models) : { models });
+  }
   const excludeTargetIds: number[] = [];
   let retryCount = 0;
   let lastStatus = 503;
-  let lastText = forcedTargetId
-    ? buildForcedTargetUnavailableMessage(forcedTargetId)
-    : 'No available targets for model list';
+  let lastText = forcedExecutionAttemptId
+    ? buildForcedExecutionAttemptUnavailableMessage(forcedExecutionAttemptId)
+    : 'No available execution attempt for model list';
   let lastContentType = 'application/json';
 
   while (retryCount <= 3) {
-    const selected = await selectModelListTarget(request, adapter, forcedTargetId, excludeTargetIds, retryCount);
+    const selected = await selectModelListTarget(request, adapter, forcedExecutionAttemptId, excludeTargetIds, retryCount);
     if (!selected) {
+      const models = await readRouteAwareModels(await getDownstreamRoutingPolicy(request));
+      if (models.length > 0) {
+        return reply.code(200).send(adapter.formatModelList ? adapter.formatModelList(models) : { models });
+      }
       return reply.code(lastStatus).type(lastContentType).send(lastText);
     }
     excludeTargetIds.push(selected.target.id);
@@ -145,11 +187,7 @@ export async function handleModelListSurfaceRequest(
       }
 
       if (adapter.shouldUseLocalModelList?.({ sitePlatform: selected.site.platform })) {
-        let models = await readRouteAwareModels(request);
-        if (models.length <= 0) {
-          await routeRefreshWorkflow.refreshModelsAndRebuildRoutes();
-          models = await readRouteAwareModels(request);
-        }
+        const models = await readRouteAwareModels(policy);
         return reply.code(200).send(adapter.formatModelList ? adapter.formatModelList(models) : { models });
       }
 
@@ -169,11 +207,7 @@ export async function handleModelListSurfaceRequest(
         lastStatus = upstream.status;
         lastText = text;
         lastContentType = upstream.headers.get('content-type') || 'application/json';
-        await tokenRouter.recordFailure?.(selected.target.id, {
-          status: upstream.status,
-          errorText: text,
-        });
-        if (canRetryTargetSelection(retryCount, forcedTargetId)) {
+        if (canRetryExecutionAttemptSelection(retryCount, forcedExecutionAttemptId)) {
           retryCount += 1;
           continue;
         }
@@ -185,9 +219,6 @@ export async function handleModelListSurfaceRequest(
         return reply.code(upstream.status).type(upstream.headers.get('content-type') || 'application/json').send(text);
       }
     } catch (error) {
-      await tokenRouter.recordFailure?.(selected.target.id, {
-        errorText: error instanceof Error ? error.message : 'Model list upstream request failed',
-      });
       lastStatus = 502;
       lastText = JSON.stringify({
         error: {
@@ -195,7 +226,7 @@ export async function handleModelListSurfaceRequest(
           type: 'upstream_error',
         },
       });
-      if (canRetryTargetSelection(retryCount, forcedTargetId)) {
+      if (canRetryExecutionAttemptSelection(retryCount, forcedExecutionAttemptId)) {
         retryCount += 1;
         continue;
       }

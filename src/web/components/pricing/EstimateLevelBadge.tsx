@@ -10,12 +10,12 @@ type PricingDiagnostic = {
   message: string;
 };
 
-type PricingCandidate = {
+type PricingExecutionAttempt = {
   probability?: number | null;
   weight?: number | null;
   inputPerMillion?: number | null;
   outputPerMillion?: number | null;
-  totalCostUsd?: number | null;
+  totalCost?: number | null;
 };
 
 type EstimateLevelBadgeProps = {
@@ -23,9 +23,9 @@ type EstimateLevelBadgeProps = {
   compact?: boolean;
   className?: string;
   diagnostics?: PricingDiagnostic[];
-  candidates?: PricingCandidate[];
+  executionAttempts?: PricingExecutionAttempt[];
   sourceCount?: number;
-  strategy?: string | null;
+  selectionMode?: string | null;
 };
 
 function formatEstimateLevel(level: EstimateLevel): string {
@@ -40,9 +40,9 @@ export default function EstimateLevelBadge({
   compact = false,
   className,
   diagnostics = [],
-  candidates = [],
+  executionAttempts = [],
   sourceCount,
-  strategy,
+  selectionMode,
 }: EstimateLevelBadgeProps) {
   const badge = (
     <ToneBadge
@@ -65,10 +65,10 @@ export default function EstimateLevelBadge({
       </HoverCard.Trigger>
       <HoverCard.Content className={compact ? 'w-72 p-3' : 'w-80 p-3'}>
         <HoverCardCopy
-          candidates={candidates}
+          executionAttempts={executionAttempts}
           diagnostics={diagnostics}
           sourceCount={sourceCount}
-          strategy={strategy}
+          selectionMode={selectionMode}
         />
       </HoverCard.Content>
     </HoverCard.Root>
@@ -76,22 +76,22 @@ export default function EstimateLevelBadge({
 }
 
 function HoverCardCopy({
-  candidates,
+  executionAttempts,
   diagnostics,
   sourceCount,
-  strategy,
+  selectionMode,
 }: {
-  candidates: PricingCandidate[];
+  executionAttempts: PricingExecutionAttempt[];
   diagnostics: PricingDiagnostic[];
   sourceCount?: number;
-  strategy?: string | null;
+  selectionMode?: string | null;
 }): ReactNode {
-  const totalCandidates = candidates.length;
-  const unknownProbability = candidates.filter((candidate) => candidate.probability == null).length;
-  const missingInput = candidates.filter((candidate) => candidate.inputPerMillion == null).length;
-  const missingOutput = candidates.filter((candidate) => candidate.outputPerMillion == null).length;
-  const missingTotal = candidates.filter((candidate) => candidate.totalCostUsd == null).length;
-  const hasWeights = candidates.some((candidate) => candidate.weight != null);
+  const totalAttempts = executionAttempts.length;
+  const unknownProbability = executionAttempts.filter((attempt) => attempt.probability == null).length;
+  const missingInput = executionAttempts.filter((attempt) => attempt.inputPerMillion == null).length;
+  const missingOutput = executionAttempts.filter((attempt) => attempt.outputPerMillion == null).length;
+  const missingTotal = executionAttempts.filter((attempt) => attempt.totalCost == null).length;
+  const hasWeights = executionAttempts.some((attempt) => attempt.weight != null);
   const visibleDiagnostics = diagnostics.slice(0, 3);
 
   return (
@@ -104,12 +104,12 @@ function HoverCardCopy({
       </div>
       <div className="grid gap-1">
         <div className="font-medium text-foreground">{tr('components.pricing.estimateLevelIncompleteMissingData')}</div>
-        {totalCandidates > 0 ? (
+        {totalAttempts > 0 ? (
           <ul className="grid gap-0.5 text-muted-foreground">
-            {unknownProbability > 0 ? <li>{tr('components.pricing.estimateLevelIncompleteMissingProbability').replace('{count}', String(unknownProbability)).replace('{total}', String(totalCandidates))}</li> : null}
-            {missingInput > 0 ? <li>{tr('components.pricing.estimateLevelIncompleteMissingInput').replace('{count}', String(missingInput)).replace('{total}', String(totalCandidates))}</li> : null}
-            {missingOutput > 0 ? <li>{tr('components.pricing.estimateLevelIncompleteMissingOutput').replace('{count}', String(missingOutput)).replace('{total}', String(totalCandidates))}</li> : null}
-            {missingTotal > 0 ? <li>{tr('components.pricing.estimateLevelIncompleteMissingTotal').replace('{count}', String(missingTotal)).replace('{total}', String(totalCandidates))}</li> : null}
+            {unknownProbability > 0 ? <li>{tr('components.pricing.estimateLevelIncompleteMissingProbability').replace('{count}', String(unknownProbability)).replace('{total}', String(totalAttempts))}</li> : null}
+            {missingInput > 0 ? <li>{tr('components.pricing.estimateLevelIncompleteMissingInput').replace('{count}', String(missingInput)).replace('{total}', String(totalAttempts))}</li> : null}
+            {missingOutput > 0 ? <li>{tr('components.pricing.estimateLevelIncompleteMissingOutput').replace('{count}', String(missingOutput)).replace('{total}', String(totalAttempts))}</li> : null}
+            {missingTotal > 0 ? <li>{tr('components.pricing.estimateLevelIncompleteMissingTotal').replace('{count}', String(missingTotal)).replace('{total}', String(totalAttempts))}</li> : null}
           </ul>
         ) : (
           <div className="text-muted-foreground">{tr('components.pricing.estimateLevelIncompleteMissingGeneric')}</div>
@@ -120,7 +120,7 @@ function HoverCardCopy({
         <div className="text-muted-foreground">
           {tr('components.pricing.estimateLevelIncompleteFormulaDescription')
             .replace('{sources}', String(sourceCount ?? 0))
-            .replace('{strategy}', strategy || tr('components.modelRouteFlow.none'))}
+            .replace('{strategy}', selectionMode || tr('components.modelRouteFlow.none'))}
         </div>
         {hasWeights ? (
           <div className="text-muted-foreground">

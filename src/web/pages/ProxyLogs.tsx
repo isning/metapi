@@ -14,8 +14,9 @@ import {
   type ProxyDebugTraceListItem,
   type ProxyLogBillingDetails,
   type ProxyLogClientOption,
-  type ProxyLogDetail,
-  type ProxyLogListItem,
+  type ProxyExecutionAttemptLog,
+  type ProxyRequestLog,
+  type ProxyRequestLogDetail,
   type ProxyLogsSummary,
   type ProxyLogStatusFilter,
   type ProxyLogUsageSource,
@@ -95,20 +96,72 @@ import {
   PaginationPrevious,
 } from '../components/ui/pagination/index.js';
 
-type ProxyLogRenderItem = ProxyLogListItem & {
+type ProxyLogRenderItem = ProxyRequestLog & {
+  createdAt: string;
+  modelRequested: string;
+  modelActual: string | null;
+  firstByteLatencyMs: number | null;
+  retryCount: number;
+  accountId: number | null;
+  siteId: number | null;
+  username: string | null;
+  siteName: string | null;
+  siteUrl: string | null;
+  downstreamKeyId: number | null;
+  downstreamKeyName: string | null;
+  downstreamKeyGroupName: string | null;
+  downstreamKeyTags: string[];
+  clientFamily: string | null;
+  clientAppId: string | null;
+  clientAppName: string | null;
+  clientConfidence?: string | null;
+  usageSource?: ProxyLogUsageSource;
+  executionAttemptId: string | null;
+  executionTargetId: number | null;
   billingDetails?: ProxyLogBillingDetails;
-  routeDecision?: ProxyLogDetail["routeDecision"];
-  username?: string | null;
-  siteName?: string | null;
-  siteUrl?: string | null;
-  errorMessage?: string | null;
+  decisionSnapshot?: ProxyRequestLogDetail["decisionSnapshot"];
+  runtimeUsage?: ProxyRequestLogDetail["runtimeUsage"];
 };
 
 type ProxyLogDetailState = {
   loading: boolean;
-  data?: ProxyLogDetail;
+  data?: ProxyRequestLogDetail;
   error?: string;
 };
+
+function presentProxyRequestLog(request: ProxyRequestLog | ProxyRequestLogDetail): ProxyLogRenderItem {
+  const finalAttempt = request.finalExecutionAttemptId
+    ? request.attempts.find((attempt) => attempt.executionAttemptId === request.finalExecutionAttemptId)
+    : undefined;
+  const detail = request as ProxyRequestLogDetail;
+  return {
+    ...request,
+    createdAt: request.startedAt,
+    modelRequested: request.requestedModel || '',
+    modelActual: finalAttempt?.modelActual || null,
+    firstByteLatencyMs: finalAttempt?.firstByteLatencyMs ?? null,
+    retryCount: request.attempts.filter((attempt) => attempt.status === 'retried').length,
+    accountId: finalAttempt?.accountId ?? null,
+    siteId: finalAttempt?.siteId ?? null,
+    username: finalAttempt?.username ?? null,
+    siteName: finalAttempt?.siteName ?? null,
+    siteUrl: finalAttempt?.siteUrl ?? null,
+    downstreamKeyId: finalAttempt?.downstreamKeyId ?? null,
+    downstreamKeyName: finalAttempt?.downstreamKeyName ?? null,
+    downstreamKeyGroupName: finalAttempt?.downstreamKeyGroupName ?? null,
+    downstreamKeyTags: finalAttempt?.downstreamKeyTags || [],
+    clientFamily: finalAttempt?.clientFamily ?? null,
+    clientAppId: finalAttempt?.clientAppId ?? null,
+    clientAppName: finalAttempt?.clientAppName ?? null,
+    clientConfidence: finalAttempt?.clientConfidence ?? null,
+    usageSource: finalAttempt?.usageSource,
+    executionAttemptId: finalAttempt?.executionAttemptId ?? null,
+    executionTargetId: finalAttempt?.executionTargetId ?? null,
+    billingDetails: detail.billingDetails,
+    decisionSnapshot: detail.decisionSnapshot,
+    runtimeUsage: detail.runtimeUsage,
+  };
+}
 
 type ProxyLogSiteFilterOption = {
   id: number;
@@ -121,9 +174,9 @@ type ProxyDebugSettingsState = {
   proxyDebugCaptureHeaders: boolean;
   proxyDebugCaptureBodies: boolean;
   proxyDebugCaptureStreamChunks: boolean;
-  proxyDebugTargetSessionId: string;
-  proxyDebugTargetClientKind: string;
-  proxyDebugTargetModel: string;
+  proxyDebugFilterSessionId: string;
+  proxyDebugFilterClientKind: string;
+  proxyDebugFilterModel: string;
   proxyDebugRetentionHours: number;
   proxyDebugMaxBodyBytes: number;
 };
@@ -160,7 +213,7 @@ const EMPTY_SUMMARY: ProxyLogsSummary = {
   totalCount: 0,
   successCount: 0,
   failedCount: 0,
-  totalCost: 0,
+  cost: { amounts: [], knownObservationCount: 0, unknownObservationCount: 0 },
   totalTokensAll: 0,
 };
 const DEFAULT_PROXY_DEBUG_SETTINGS: ProxyDebugSettingsState = {
@@ -168,9 +221,9 @@ const DEFAULT_PROXY_DEBUG_SETTINGS: ProxyDebugSettingsState = {
   proxyDebugCaptureHeaders: true,
   proxyDebugCaptureBodies: false,
   proxyDebugCaptureStreamChunks: false,
-  proxyDebugTargetSessionId: "",
-  proxyDebugTargetClientKind: "",
-  proxyDebugTargetModel: "",
+  proxyDebugFilterSessionId: "",
+  proxyDebugFilterClientKind: "",
+  proxyDebugFilterModel: "",
   proxyDebugRetentionHours: 24,
   proxyDebugMaxBodyBytes: 262144,
 };
@@ -221,37 +274,38 @@ function DetailField({ label, children }: { label: React.ReactNode; children: Re
   );
 }
 
+function LongRuntimeId({ value }: { value: React.ReactNode }) {
+  return <span className="min-w-0 break-all font-mono text-xs [overflow-wrap:anywhere]">{value || "-"}</span>;
+}
+
 function formatTraceEntityLabel(
   label: string | null | undefined,
-  id: number | null | undefined,
+  _id: number | null | undefined,
   fallbackLabel: string,
 ): string {
   const normalizedLabel = (label || '').trim() || fallbackLabel;
-  return id ? `${normalizedLabel} (#${id})` : normalizedLabel;
+  return normalizedLabel;
 }
 
-function formatTraceRouteLabel(trace: ProxyDebugTraceDetail["trace"]): string {
-  return formatTraceEntityLabel(
-    trace.selectedRouteDisplay?.label || trace.requestedModel,
-    trace.selectedRouteId,
-    tr('pages.proxyLogs.selectedRoute'),
-  );
+function formatTraceEntryRouteLabel(trace: ProxyDebugTraceDetail["trace"]): string {
+  if (trace.routeEntrypointId) return trace.routeEntrypointId;
+  return (trace.requestedModel || '').trim() || tr('components.modelRouteFlow.entry');
 }
 
-function formatTraceTargetLabel(trace: ProxyDebugTraceDetail["trace"]): string {
-  return formatTraceEntityLabel(
-    trace.selectedTargetDisplay?.label
-      || trace.selectedTargetDisplay?.sourceModel
-      || trace.selectedTargetDisplay?.routeEndpointId,
-    trace.selectedTargetId,
-    tr('pages.proxyLogs.selectedTarget'),
-  );
+function formatTraceRuntimeEndpointLabel(trace: ProxyDebugTraceDetail["trace"]): string | null {
+  if (trace.runtimeEndpointId) return trace.runtimeEndpointId;
+  return null;
+}
+
+function formatTraceExecutionAttemptLabel(trace: ProxyDebugTraceDetail["trace"]): string {
+  return trace.selectedExecutionAttemptId
+    || tr('pages.proxyLogs.selectedExecutionAttempt');
 }
 
 function formatTraceSiteLabel(trace: ProxyDebugTraceDetail["trace"]): string {
   const siteDisplay = trace.selectedSiteDisplay;
-  const platform = siteDisplay?.platform || trace.selectedSitePlatform || trace.selectedTargetDisplay?.sitePlatform;
-  const name = siteDisplay?.label || trace.selectedTargetDisplay?.siteName || platform || null;
+  const platform = siteDisplay?.platform || trace.selectedSitePlatform;
+  const name = siteDisplay?.label || platform || null;
   const label = [
     name,
     platform && platform !== name ? platform : null,
@@ -289,11 +343,24 @@ async function copyTextToClipboard(text: string) {
   document.body.removeChild(textarea);
 }
 
-function formatLatency(ms: number) {
+function formatLatency(ms: number | null | undefined) {
+  if (typeof ms !== 'number' || !Number.isFinite(ms)) return '--';
   if (ms >= 1000) {
     return `${(ms / 1000).toFixed(ms >= 10000 ? 0 : 1)}s`;
   }
   return `${ms}ms`;
+}
+
+function proxyRequestStatusTone(status: string) {
+  if (status === 'success') return 'success' as const;
+  if (status === 'failure') return 'error' as const;
+  return '-warning' as const;
+}
+
+function proxyRequestStatusLabel(status: string) {
+  if (status === 'success') return tr('pages.checkinLog.success');
+  if (status === 'failure') return tr('pages.checkinLog.failed');
+  return tr('pages.proxyLogs.inProgress');
 }
 
 function latencyTone(ms: number | null | undefined) {
@@ -310,6 +377,13 @@ function firstByteTone(ms: number | null | undefined) {
   return "-info";
 }
 
+function interactiveStreamLatencyTone(ms: number | null | undefined) {
+  if (!Number.isFinite(ms) || typeof ms !== "number") return "-muted";
+  if (ms >= 3000) return "-error";
+  if (ms >= 1000) return "-warning";
+  return "-success";
+}
+
 function formatStreamModeLabel(isStream: boolean | null | undefined) {
   if (isStream == null) return null;
   return isStream ? tr('pages.modelTester.streaming') : tr('pages.proxyLogs.nonStreaming');
@@ -317,7 +391,27 @@ function formatStreamModeLabel(isStream: boolean | null | undefined) {
 
 function formatFirstByteLabel(ms: number | null | undefined) {
   if (!Number.isFinite(ms) || typeof ms !== "number" || ms < 0) return null;
-  return `首字 ${formatLatency(ms)}`;
+  return `${tr('pages.proxyLogs.firstByteLatency')} ${formatLatency(ms)}`;
+}
+
+function resolveInteractiveStreamLatency(log: Pick<ProxyLogRenderItem, 'firstByteLatencyMs' | 'firstTokenLatencyMs'>) {
+  if (Number.isFinite(log.firstTokenLatencyMs) && typeof log.firstTokenLatencyMs === 'number' && log.firstTokenLatencyMs > 0) {
+    return {
+      label: tr('pages.proxyLogs.firstTokenLatency'),
+      value: formatLatency(log.firstTokenLatencyMs),
+      tone: interactiveStreamLatencyTone(log.firstTokenLatencyMs),
+      badge: `${tr('pages.proxyLogs.firstTokenLatency')} ${formatLatency(log.firstTokenLatencyMs)}`,
+    };
+  }
+  if (Number.isFinite(log.firstByteLatencyMs) && typeof log.firstByteLatencyMs === 'number' && log.firstByteLatencyMs >= 0) {
+    return {
+      label: tr('pages.proxyLogs.firstByteLatency'),
+      value: formatLatency(log.firstByteLatencyMs),
+      tone: firstByteTone(log.firstByteLatencyMs),
+      badge: formatFirstByteLabel(log.firstByteLatencyMs)!,
+    };
+  }
+  return null;
 }
 
 function formatCompactNumber(value: number, digits = 6) {
@@ -326,8 +420,12 @@ function formatCompactNumber(value: number, digits = 6) {
   return formatted || "0";
 }
 
-function formatPerMillionPrice(value: number) {
-  return `$${formatCompactNumber(value)} / 1M tokens`;
+function formatOptionalCompactNumber(value: number | null) {
+  return value == null ? "-" : formatCompactNumber(value);
+}
+
+function formatPerMillionPrice(value: number | null) {
+  return value == null ? "-" : `${formatCompactNumber(value)} / 1M tokens`;
 }
 
 function formatBillingDetailSummary(log: ProxyLogRenderItem) {
@@ -352,12 +450,6 @@ function formatProxyRouteStrategyLabel(strategy: string | null | undefined) {
   return strategy || tr('pages.accounts.unknown2');
 }
 
-function formatProxyDecisionBackendKind(kind: string | null | undefined) {
-  if (kind === "routes") return tr('pages.proxyLogs.routeGroup');
-  if (kind === "supply") return tr('pages.proxyLogs.supplyRoute');
-  return kind || tr('pages.accounts.unknown2');
-}
-
 function formatProxyDecisionMatchKind(kind: string | null | undefined) {
   if (kind === "model") return tr('components.modelAnalysisPanel.model');
   if (kind === "fallback") return tr('pages.proxyLogs.fallback');
@@ -367,7 +459,7 @@ function formatProxyDecisionMatchKind(kind: string | null | undefined) {
 function formatProxyFallbackScope(scope: string | null | undefined) {
   if (scope === "api_variant") return tr('pages.proxyLogs.apiVariantFallback');
   if (scope === "transport_replica") return tr('pages.proxyLogs.transportReplicaFallback');
-  if (scope === "route_candidate") return tr('pages.proxyLogs.routeCandidateFallback');
+  if (scope === "execution_attempt") return tr('pages.proxyLogs.executionAttemptFallback');
   if (scope === "terminal") return tr('pages.proxyLogs.terminalFallback');
   return scope || "-";
 }
@@ -401,6 +493,228 @@ function renderDownstreamKeySummary(log: ProxyLogRenderItem) {
   return parts.length > 0 ? parts.join("，") : null;
 }
 
+function formatProxyLogTemplate(key: string, replacements: Record<string, string | number>) {
+  let value = tr(key);
+  for (const [name, replacement] of Object.entries(replacements)) {
+    value = value.replace(`{${name}}`, String(replacement));
+  }
+  return value;
+}
+
+function buildCompiledRuntimeIdentityLines(log: ProxyLogRenderItem): string[] {
+  return [
+    log.runtimeEndpointId
+      ? formatProxyLogTemplate('pages.proxyLogs.runtimeIdentityEndpoint', {
+          id: log.runtimeEndpointId,
+        })
+      : null,
+    log.executionTargetId != null
+      ? formatProxyLogTemplate('pages.proxyLogs.runtimeIdentityTarget', {
+          id: formatNullableNumber(log.executionTargetId),
+        })
+      : null,
+    log.executionAttemptId
+      ? formatProxyLogTemplate('pages.proxyLogs.runtimeIdentityExecutionAttempt', {
+          id: log.executionAttemptId,
+        })
+      : null,
+  ].filter((line): line is string => Boolean(line));
+}
+
+function ProxyExecutionAttemptTimeline({
+  attempts,
+  finalExecutionAttemptId,
+}: {
+  attempts: ProxyExecutionAttemptLog[];
+  finalExecutionAttemptId: string | null;
+}) {
+  return (
+    <div className="proxy-log-detail-section">
+      <div className="flex items-center justify-between gap-3">
+        <div className="text-xs font-semibold text-primary">
+          {tr('pages.proxyLogs.executionAttempts')}
+        </div>
+        <ToneBadge tone="-muted">{attempts.length}</ToneBadge>
+      </div>
+      {attempts.length === 0 ? (
+        <div className="text-xs text-muted-foreground">
+          {tr('pages.proxyLogs.noAttemptRecords')}
+        </div>
+      ) : (
+        <div className="grid gap-2">
+          {attempts.map((attempt, index) => {
+            const isFinal = attempt.executionAttemptId === finalExecutionAttemptId;
+            const statusTone = attempt.status === 'success'
+              ? 'success'
+              : attempt.status === 'retried'
+                ? '-warning'
+                : 'error';
+            return (
+              <div key={attempt.id} className="grid gap-2 rounded-md border bg-muted/20 p-3">
+                <div className="flex min-w-0 items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-xs font-semibold">
+                      {tr('pages.proxyLogs.runtimeScopeExecutionAttempt')} {index + 1}
+                    </div>
+                    <LongRuntimeId value={attempt.executionAttemptId || '-'} />
+                  </div>
+                  <div className="flex flex-wrap justify-end gap-1.5">
+                    <ToneBadge tone={statusTone}>
+                      {attempt.status === 'success'
+                        ? tr('pages.checkinLog.success')
+                        : attempt.status === 'retried'
+                          ? tr('pages.proxyLogs.attemptContinued')
+                          : tr('pages.checkinLog.failed')}
+                    </ToneBadge>
+                    {isFinal ? (
+                      <ToneBadge tone="-muted">{tr('pages.proxyLogs.finalAttempt')}</ToneBadge>
+                    ) : null}
+                  </div>
+                </div>
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                  <DetailField label={tr('pages.proxyLogs.runtimeScopeEndpoint')}>
+                    <LongRuntimeId value={attempt.runtimeEndpointId || '-'} />
+                  </DetailField>
+                  <DetailField label={tr('pages.proxyLogs.model')}>
+                    {attempt.modelActual || '-'}
+                  </DetailField>
+                  <DetailField label={tr('components.searchModal.sites2')}>
+                    {attempt.siteName || tr('pages.proxyLogs.unknownSite')}
+                  </DetailField>
+                  <DetailField label={tr('pages.accounts.username')}>
+                    {attempt.username || tr('pages.proxyLogs.unknownAccount')}
+                  </DetailField>
+                  <DetailField label="HTTP">{attempt.httpStatus ?? '-'}</DetailField>
+                  <DetailField label={tr('pages.proxyLogs.duration')}>
+                    {formatLatency(attempt.latencyMs)}
+                  </DetailField>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+type ProxyLogRuntimeUsageSummary = NonNullable<ProxyRequestLogDetail["runtimeUsage"]>;
+type ProxyLogRuntimeUsageScope = NonNullable<ProxyLogRuntimeUsageSummary["entry"]>;
+
+function listRuntimeUsageScopes(
+  runtimeUsage: ProxyLogRuntimeUsageSummary,
+): ProxyLogRuntimeUsageScope[] {
+  return [
+    runtimeUsage.entry,
+    runtimeUsage.endpoint,
+    runtimeUsage.executionAttempt,
+    runtimeUsage.model,
+  ].filter((scope): scope is ProxyLogRuntimeUsageScope => !!scope);
+}
+
+function formatRuntimeUsageScopeLabel(
+  scope: ProxyLogRuntimeUsageScope["scope"],
+): string {
+  if (scope === "entry") return tr('pages.proxyLogs.runtimeScopeEntry');
+  if (scope === "endpoint") return tr('pages.proxyLogs.runtimeScopeEndpoint');
+  if (scope === "executionAttempt") return tr('pages.proxyLogs.runtimeScopeExecutionAttempt');
+  return tr('pages.proxyLogs.runtimeScopeModel');
+}
+
+function formatRuntimeUsageScopeIdentity(scope: ProxyLogRuntimeUsageScope): string {
+  if (scope.scope === "entry") {
+    return `#${scope.identity}`;
+  }
+  return scope.identity;
+}
+
+function formatRuntimeUsageSuccessRate(scope: ProxyLogRuntimeUsageScope): string {
+  return typeof scope.successRate === "number"
+    ? `${formatCompactNumber(scope.successRate, 2)}%`
+    : "-";
+}
+
+function formatRuntimeUsageCost(scope: ProxyLogRuntimeUsageScope): string {
+  if (scope.cost.amounts.length === 0) return "-";
+  return scope.cost.amounts.map((amount) => {
+    const unit = amount.unit === "currency"
+      ? amount.currency
+      : tr('pages.downstreamKeys.quota');
+    return `${unit ? `${unit} ` : ""}${formatCompactNumber(amount.amount)}`;
+  }).join(" / ");
+}
+
+function RuntimeUsageSummaryBlock({
+  runtimeUsage,
+}: {
+  runtimeUsage?: ProxyRequestLogDetail["runtimeUsage"] | null;
+}) {
+  if (!runtimeUsage) return null;
+  const scopes = listRuntimeUsageScopes(runtimeUsage);
+  if (scopes.length === 0) return null;
+
+  return (
+    <div className="proxy-log-detail-section">
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary">
+          <Activity className="size-3.5" />
+          {tr('pages.proxyLogs.runtimeUsage')}
+        </div>
+        <ToneBadge tone="-muted">
+          {formatProxyLogTemplate('pages.proxyLogs.runtimeUsageWindowDays', {
+            days: runtimeUsage.windowDays,
+          })}
+        </ToneBadge>
+        <ToneBadge tone="-muted">
+          {runtimeUsage.fromLocalDay} - {runtimeUsage.toLocalDay}
+        </ToneBadge>
+      </div>
+      <div className="proxy-log-runtime-usage-grid">
+        {scopes.map((scope) => (
+          <div
+            key={`${scope.scope}:${scope.identity}`}
+            className="proxy-log-runtime-usage-card"
+          >
+            <div className="min-w-0">
+              <div className="proxy-log-runtime-usage-label">
+                {formatRuntimeUsageScopeLabel(scope.scope)}
+              </div>
+              <code className="proxy-log-runtime-usage-identity">
+                {formatRuntimeUsageScopeIdentity(scope)}
+              </code>
+            </div>
+            <div className="proxy-log-runtime-usage-metrics">
+              <span>
+                {tr('pages.proxyLogs.runtimeMetricSuccessRate')} <strong>{formatRuntimeUsageSuccessRate(scope)}</strong>
+              </span>
+              <span>
+                {tr('pages.proxyLogs.runtimeMetricCalls')} <strong>{scope.successCalls.toLocaleString()} / {scope.totalCalls.toLocaleString()}</strong>
+              </span>
+              <span>
+                {tr('pages.proxyLogs.runtimeMetricFailed')} <strong>{scope.failedCalls.toLocaleString()}</strong>
+              </span>
+              <span>
+                {tr('pages.proxyLogs.runtimeMetricTokens')} <strong>{scope.totalTokens.toLocaleString()}</strong>
+              </span>
+              <span>
+                {tr('pages.proxyLogs.runtimeMetricCost')} <strong>{formatRuntimeUsageCost(scope)}</strong>
+              </span>
+              <span>
+                {tr('pages.proxyLogs.runtimeMetricAverageLatency')}{" "}
+                <strong>
+                  {typeof scope.averageLatencyMs === "number"
+                    ? formatLatency(scope.averageLatencyMs)
+                    : "-"}
+                </strong>
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function buildBillingProcessLines(log: ProxyLogRenderItem) {
   const detail = log.billingDetails;
   if (!detail) return [];
@@ -423,23 +737,23 @@ function buildBillingProcessLines(log: ProxyLogRenderItem) {
   }
 
   const parts = [
-    `提示 ${detail.usage.billablePromptTokens.toLocaleString()} tokens / 1M tokens * $${formatCompactNumber(detail.breakdown.inputPerMillion)}`,
+    `提示 ${detail.usage.billablePromptTokens.toLocaleString()} tokens / 1M tokens * ${formatOptionalCompactNumber(detail.breakdown.inputPerMillion)}`,
   ];
 
   if (detail.usage.cacheReadTokens > 0) {
     parts.push(
-      `缓存 ${detail.usage.cacheReadTokens.toLocaleString()} tokens / 1M tokens * $${formatCompactNumber(detail.breakdown.cacheReadPerMillion)}`,
+      `缓存 ${detail.usage.cacheReadTokens.toLocaleString()} tokens / 1M tokens * ${formatOptionalCompactNumber(detail.breakdown.cacheReadPerMillion)}`,
     );
   }
 
   if (detail.usage.cacheCreationTokens > 0) {
     parts.push(
-      `缓存创建 ${detail.usage.cacheCreationTokens.toLocaleString()} tokens / 1M tokens * $${formatCompactNumber(detail.breakdown.cacheCreationPerMillion)}`,
+      `缓存创建 ${detail.usage.cacheCreationTokens.toLocaleString()} tokens / 1M tokens * ${formatOptionalCompactNumber(detail.breakdown.cacheCreationPerMillion)}`,
     );
   }
 
   parts.push(
-    `补全 ${detail.usage.completionTokens.toLocaleString()} tokens / 1M tokens * $${formatCompactNumber(detail.breakdown.outputPerMillion)} = $${detail.breakdown.totalCost.toFixed(6)}`,
+    `补全 ${detail.usage.completionTokens.toLocaleString()} tokens / 1M tokens * ${formatOptionalCompactNumber(detail.breakdown.outputPerMillion)} = ${detail.breakdown.totalCost.toFixed(6)}`,
   );
   lines.push(parts.join(" + "));
 
@@ -615,9 +929,9 @@ function normalizeProxyDebugSettings(value: any): ProxyDebugSettingsState {
     proxyDebugCaptureHeaders: value?.proxyDebugCaptureHeaders !== false,
     proxyDebugCaptureBodies: !!value?.proxyDebugCaptureBodies,
     proxyDebugCaptureStreamChunks: !!value?.proxyDebugCaptureStreamChunks,
-    proxyDebugTargetSessionId: String(value?.proxyDebugTargetSessionId || ""),
-    proxyDebugTargetClientKind: String(value?.proxyDebugTargetClientKind || ""),
-    proxyDebugTargetModel: String(value?.proxyDebugTargetModel || ""),
+    proxyDebugFilterSessionId: String(value?.proxyDebugFilterSessionId || ""),
+    proxyDebugFilterClientKind: String(value?.proxyDebugFilterClientKind || ""),
+    proxyDebugFilterModel: String(value?.proxyDebugFilterModel || ""),
     proxyDebugRetentionHours: Number(value?.proxyDebugRetentionHours || 24),
     proxyDebugMaxBodyBytes: Number(value?.proxyDebugMaxBodyBytes || 262144),
   };
@@ -631,9 +945,9 @@ function buildProxyDebugSettingsPayload(
     proxyDebugCaptureHeaders: settings.proxyDebugCaptureHeaders,
     proxyDebugCaptureBodies: settings.proxyDebugCaptureBodies,
     proxyDebugCaptureStreamChunks: settings.proxyDebugCaptureStreamChunks,
-    proxyDebugTargetSessionId: settings.proxyDebugTargetSessionId.trim(),
-    proxyDebugTargetClientKind: settings.proxyDebugTargetClientKind.trim(),
-    proxyDebugTargetModel: settings.proxyDebugTargetModel.trim(),
+    proxyDebugFilterSessionId: settings.proxyDebugFilterSessionId.trim(),
+    proxyDebugFilterClientKind: settings.proxyDebugFilterClientKind.trim(),
+    proxyDebugFilterModel: settings.proxyDebugFilterModel.trim(),
     proxyDebugRetentionHours: Math.max(
       1,
       Math.trunc(Number(settings.proxyDebugRetentionHours || 24)),
@@ -655,14 +969,14 @@ function formatProxyDebugCaptureSummary(settings: ProxyDebugSettingsState) {
 
 function formatProxyDebugTargetSummary(settings: ProxyDebugSettingsState) {
   const parts = [
-    settings.proxyDebugTargetSessionId
-      ? `Session ${settings.proxyDebugTargetSessionId}`
+    settings.proxyDebugFilterSessionId
+      ? `Session ${settings.proxyDebugFilterSessionId}`
       : null,
-    settings.proxyDebugTargetClientKind
-      ? `客户端 ${settings.proxyDebugTargetClientKind}`
+    settings.proxyDebugFilterClientKind
+      ? `客户端 ${settings.proxyDebugFilterClientKind}`
       : null,
-    settings.proxyDebugTargetModel
-      ? `模型 ${settings.proxyDebugTargetModel}`
+    settings.proxyDebugFilterModel
+      ? `模型 ${settings.proxyDebugFilterModel}`
       : null,
   ].filter(Boolean);
   return parts.length > 0 ? parts.join("，") : tr('pages.proxyLogs.recordAllMatchingRequests');
@@ -749,6 +1063,34 @@ function asDebugRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
+}
+
+function asDebugArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function translateDebugDiagnostic(diagnostic: Record<string, unknown>): string {
+  const wireTranslationKey = diagnostic[`i18n${'Key'}`];
+  const key = typeof wireTranslationKey === 'string'
+    ? wireTranslationKey
+    : typeof diagnostic.message === 'string'
+      ? diagnostic.message
+      : typeof diagnostic.code === 'string'
+        ? diagnostic.code
+        : '';
+  let value = key ? tr(key) : tr('pages.proxyLogs.runtimeCapabilityDiagnostic');
+  const values = asDebugRecord(diagnostic.values);
+  for (const [name, replacement] of Object.entries(values || {})) {
+    value = value.replace(`{${name}}`, replacement == null ? '' : String(replacement));
+  }
+  return value;
+}
+
+function debugDiagnosticTone(diagnostic: Record<string, unknown>): string {
+  const level = diagnostic.level || diagnostic.severity;
+  if (level === 'error') return '-error';
+  if (level === 'warn' || level === 'warning') return '-warning';
+  return '-info';
 }
 
 function CompactSummaryMetric({
@@ -873,32 +1215,61 @@ function TraceTimelineItem({
   );
 }
 
-function RouteDecisionFlowNode({
+type RouteRuntimeFlowNodeDetail = {
+  label: string;
+  value: React.ReactNode;
+};
+
+function RouteRuntimeFlowNode({
   icon,
   label,
   title,
+  badges,
   meta,
+  details,
   tone = "neutral",
 }: {
   icon: React.ReactNode;
   label: string;
   title: React.ReactNode;
+  badges?: Array<{ label: React.ReactNode; tone?: string }>;
   meta?: React.ReactNode;
+  details?: RouteRuntimeFlowNodeDetail[];
   tone?: "neutral" | "request" | "route" | "target" | "token";
 }) {
+  const visibleDetails = (details || []).filter((detail) => detail.value != null && detail.value !== "");
   return (
     <div className={`proxy-log-decision-node proxy-log-decision-node-${tone}`}>
       <div className="proxy-log-decision-node-icon">{icon}</div>
       <div className="min-w-0">
         <div className="proxy-log-decision-node-label">{label}</div>
         <div className="proxy-log-decision-node-title">{title}</div>
+        {badges && badges.length > 0 ? (
+          <div className="proxy-log-decision-node-badges">
+            {badges.map((badge, index) => (
+              <ToneBadge key={index} tone={badge.tone || "-muted"}>
+                {badge.label}
+              </ToneBadge>
+            ))}
+          </div>
+        ) : null}
         {meta ? <div className="proxy-log-decision-node-meta">{meta}</div> : null}
+        {visibleDetails.length > 0 ? (
+          <div className="proxy-log-decision-node-details">
+            {visibleDetails.map((detail, index) => (
+              <div className="proxy-log-decision-node-detail" key={`${detail.label}-${index}`}>
+                <span>{detail.label}</span>
+                <strong>{detail.value}</strong>
+              </div>
+            ))}
+          </div>
+        ) : null}
       </div>
     </div>
   );
 }
 
-function RouteDecisionFlowConnector({ label }: { label?: React.ReactNode }) {
+function RouteRuntimeFlowConnector({ label }: { label?: React.ReactNode }) {
   return (
     <div className="proxy-log-decision-connector" aria-hidden="true">
       <span />
@@ -908,57 +1279,74 @@ function RouteDecisionFlowConnector({ label }: { label?: React.ReactNode }) {
   );
 }
 
-function RouteDecisionFlow({
-  decision,
-  fallbackRequestedModel,
+function RouteRuntimeSnapshotFlow({
+  snapshot,
 }: {
-  decision: NonNullable<ProxyLogDetail["routeDecision"]>;
-  fallbackRequestedModel: string;
+  snapshot: NonNullable<ProxyRequestLogDetail["decisionSnapshot"]>;
 }) {
-  const route = decision.route || null;
-  const target = decision.target || null;
-  const token = decision.token || null;
-  const snapshot = route?.snapshotSummary || null;
-  const requestedModel = decision.requestedModel || fallbackRequestedModel || "-";
-  const actualModel = decision.actualModel || null;
+  const match = snapshot.match;
+  const endpoint = snapshot.endpoint;
+  const executionAttempt = snapshot.executionAttempt;
+  const endpointState = snapshot.state.executionAttemptState || null;
+  const credential = executionAttempt?.credential || null;
+  const token = credential?.token || null;
+  const requestedModel = match.requestedModel || "-";
+  const actualModel = match.actualModel || null;
   const hasActualModel =
     !!actualModel && actualModel.trim() !== requestedModel.trim();
-  const sourceLabel =
-    decision.source === "snapshot"
-      ? tr('pages.proxyLogs.requestTimeSnapshot')
-      : tr('pages.proxyLogs.currentRouteState');
+  const entryTitle = match.publicModelName || match.planId || requestedModel;
+  const selectedEndpoint = endpoint?.endpointId || "-";
+  const selectedExecutionAttempt = executionAttempt?.executionAttemptId || "-";
+  const endpointPreference = snapshot.filters.endpointPreference || null;
+  const disabledAttemptCount = snapshot.state.failureOverlay.disabledExecutionAttemptIds.length;
+  const disabledExecutionTargetCount = snapshot.state.failureOverlay.disabledExecutionTargetIds.length;
+  const siteLabel = credential?.site?.name
+    || (executionAttempt?.siteId != null
+      ? formatProxyLogTemplate('components.modelRouteFlow.siteIdentity', {
+          id: executionAttempt.siteId,
+        })
+      : null);
+  const accountLabel = credential?.account?.username
+    || (executionAttempt?.accountId != null
+      ? formatProxyLogTemplate('components.modelRouteFlow.accountIdentity', {
+          id: executionAttempt.accountId,
+        })
+      : null);
+  const tokenLabel = token?.name || (executionAttempt?.tokenId != null ? `#${executionAttempt.tokenId}` : null);
 
   return (
     <div className="proxy-log-decision-flow-card">
       <div className="proxy-log-decision-flow-head">
         <div className="min-w-0">
           <div className="text-xs font-semibold text-primary">
-            {tr('pages.proxyLogs.routeDecision')}
+            {tr('pages.proxyLogs.decisionSnapshot')}
           </div>
           <div className="text-xs text-muted-foreground">
-            {decision.source === "snapshot"
-              ? tr('pages.proxyLogs.routeDecisionSnapshotDescription')
-              : tr('pages.proxyLogs.routeDecisionCurrentDescription')}
+            {tr('pages.proxyLogs.decisionSnapshotDescription')}
           </div>
         </div>
         <div className="flex flex-wrap justify-end gap-1.5">
-          <ToneBadge tone={decision.source === "snapshot" ? "-success" : "-warning"}>
-            {sourceLabel}
+          <ToneBadge tone="-success">
+            {tr('pages.proxyLogs.requestTimeSnapshot')}
           </ToneBadge>
-          {decision.capturedAt ? (
+          {snapshot.capturedAt ? (
             <ToneBadge tone="-muted">
-              {formatDateTimeLocal(decision.capturedAt)}
+              {formatDateTimeLocal(snapshot.capturedAt)}
             </ToneBadge>
           ) : null}
         </div>
       </div>
 
       <div className="proxy-log-decision-flow">
-        <RouteDecisionFlowNode
+        <RouteRuntimeFlowNode
           tone="request"
           icon={<Hash className="size-4" />}
           label={tr('pages.proxyLogs.requestedModel')}
           title={<span className="font-mono">{requestedModel}</span>}
+          badges={[
+            { label: snapshot.request.stream ? tr('pages.modelTester.streaming') : tr('pages.proxyLogs.nonStreaming'), tone: snapshot.request.stream ? "-info" : "-muted" },
+            ...(match.terminalKind ? [{ label: match.terminalKind === "synthetic_response" ? tr('pages.proxyLogs.syntheticResponse') : tr('pages.proxyLogs.runtimeScopeEndpoint'), tone: "-muted" }] : []),
+          ]}
           meta={
             hasActualModel ? (
               <span>{tr('pages.proxyLogs.actualModel')} {actualModel}</span>
@@ -966,164 +1354,239 @@ function RouteDecisionFlow({
               tr('pages.proxyLogs.noModelRewrite')
             )
           }
+          details={[
+            { label: tr('pages.proxyLogs.actualModel'), value: actualModel || "-" },
+            { label: tr('pages.proxyLogs.downstreamPath'), value: snapshot.request.downstreamPath || "-" },
+          ]}
         />
-        <RouteDecisionFlowConnector
-          label={
-            snapshot
-              ? formatProxyDecisionMatchKind(snapshot.matchKind)
-              : tr('pages.proxyLogs.matchRule')
-          }
+        <RouteRuntimeFlowConnector
+          label={match.planId || tr('pages.proxyLogs.matchRule')}
         />
-        <RouteDecisionFlowNode
+        <RouteRuntimeFlowNode
           tone="route"
           icon={<GitBranch className="size-4" />}
-          label={tr('pages.proxyLogs.matchedRoute')}
+          label={tr('pages.proxyLogs.runtimeScopeEntry')}
           title={
-            route ? (
-              route.displayName || `${tr('pages.proxyLogs.route')} #${route.id ?? "-"}`
-            ) : (
-              <span className="text-muted-foreground">-</span>
-            )
+            entryTitle || <span className="text-muted-foreground">-</span>
           }
-          meta={
-            route ? (
-              <span>
-                #{route.id ?? "-"} · {formatProxyRouteStrategyLabel(route.routingStrategy)}
-              </span>
-            ) : (
-              tr('pages.proxyLogs.notRecorded')
-            )
-          }
+          badges={[
+            ...(match.planId ? [{ label: match.planId, tone: "-muted" }] : []),
+          ]}
+          meta={match.planId || tr('pages.proxyLogs.notRecorded')}
+          details={[
+            { label: tr('pages.proxyLogs.publicModel'), value: match.publicModelName || "-" },
+            { label: tr('pages.proxyLogs.matchRule'), value: match.planId || "-" },
+          ]}
         />
-        <RouteDecisionFlowConnector
-          label={target ? `P${formatNullableNumber(target.priority)}` : undefined}
-        />
-        <RouteDecisionFlowNode
+        <RouteRuntimeFlowConnector />
+        <RouteRuntimeFlowNode
           tone="target"
           icon={<Target className="size-4" />}
-          label={tr('pages.proxyLogs.selectedTarget')}
+          label={tr('pages.proxyLogs.runtimeScopeEndpoint')}
           title={
-            target ? (
-              <span>#{target.id ?? "-"}</span>
-            ) : (
-              <span className="text-muted-foreground">-</span>
-            )
+            selectedEndpoint !== "-" ? selectedEndpoint : <span className="text-muted-foreground">-</span>
           }
+          badges={[
+            ...(endpoint?.executionTargetId != null
+              ? [{
+                  label: formatProxyLogTemplate('pages.proxyLogs.runtimeIdentityTarget', {
+                    id: endpoint.executionTargetId,
+                  }),
+                  tone: "-success",
+                }]
+              : []),
+            ...(endpointPreference ? [{ label: endpointPreference, tone: "-muted" }] : []),
+          ]}
           meta={
-            target ? (
-              <span>{target.routeEndpointId || tr('pages.proxyLogs.legacyTarget')}</span>
-            ) : (
-              tr('pages.proxyLogs.notRecorded')
-            )
-          }
-        />
-        <RouteDecisionFlowConnector
-          label={target ? `${tr('pages.proxyLogs.weight')} ${formatNullableNumber(target.weight)}` : undefined}
-        />
-        <RouteDecisionFlowNode
-          tone="token"
-          icon={<KeyRound className="size-4" />}
-          label={tr('pages.proxyLogs.targetToken')}
-          title={
-            token ? (
-              token.name || `#${token.id ?? "-"}`
-            ) : (
-              <span className="text-muted-foreground">-</span>
-            )
-          }
-          meta={
-            token ? (
+            endpoint?.executionTargetId || executionAttempt?.executionAttemptId ? (
               <span>
-                {token.tokenGroup || tr('pages.proxyLogs.noTokenGroup')} · {token.valueStatus || "-"}
+                {endpoint?.executionTargetId
+                  ? formatProxyLogTemplate('pages.proxyLogs.runtimeIdentityTarget', {
+                      id: endpoint.executionTargetId,
+                    })
+                  : ""}
               </span>
             ) : (
               tr('pages.proxyLogs.notRecorded')
             )
           }
+          details={[
+            {
+              label: tr('pages.proxyLogs.selectedExecutionAttempt'),
+              value: selectedExecutionAttempt,
+            },
+          ]}
         />
+        <RouteRuntimeFlowConnector
+          label={selectedExecutionAttempt !== "-" ? selectedExecutionAttempt : undefined}
+        />
+        <RouteRuntimeFlowNode
+          tone="token"
+          icon={<KeyRound className="size-4" />}
+          label={tr('pages.proxyLogs.runtimeScopeExecutionAttempt')}
+          title={
+            selectedExecutionAttempt !== "-" ? (
+              <span className="font-mono">{selectedExecutionAttempt}</span>
+            ) : (
+              <span className="text-muted-foreground">-</span>
+            )
+          }
+          badges={[
+            ...(token?.valueStatus ? [{ label: token.valueStatus, tone: token.valueStatus === "ready" ? "-success" : "-warning" }] : []),
+            ...(credential?.site?.platform ? [{ label: credential.site.platform, tone: "-muted" }] : []),
+          ]}
+          meta={
+            token ? (
+              <span>
+                {token.name || `#${token.id ?? "-"}`} · {accountLabel || siteLabel || "-"} · {token.tokenGroup || tr('pages.proxyLogs.noTokenGroup')} · {token.valueStatus || "-"}
+              </span>
+            ) : (
+              executionAttempt?.accountId
+                ? formatProxyLogTemplate('components.modelRouteFlow.accountIdentity', {
+                    id: executionAttempt.accountId,
+                  })
+                : tr('pages.proxyLogs.notRecorded')
+            )
+          }
+          details={[
+            { label: tr('components.searchModal.sites2'), value: siteLabel || "-" },
+            { label: tr('pages.accounts.endpointBindings.account'), value: accountLabel || "-" },
+            { label: tr('pages.proxyLogs.credentialToken'), value: tokenLabel || "-" },
+            { label: tr('pages.proxyLogs.actualModel'), value: executionAttempt?.model || "-" },
+          ]}
+        />
+      </div>
+      <div className="proxy-log-decision-stats">
+        <ToneBadge tone="-muted">
+          {formatProxyLogTemplate('pages.proxyLogs.runtimeArtifactIdentity', {
+            id: snapshot.compiledRuntime.runtimeArtifactId || '-',
+          })}
+        </ToneBadge>
+        {endpointState?.cooldownUntil ? (
+          <ToneBadge tone="-warning">
+            {tr('pages.proxyLogs.cooldown')} {formatDateTimeLocal(String(endpointState.cooldownUntil))}
+          </ToneBadge>
+        ) : null}
+        {endpointState ? (
+          <>
+            <ToneBadge tone="-success">
+              {tr('pages.checkinLog.success')} {formatNullableNumber(Number(endpointState.successCount))}
+            </ToneBadge>
+            <ToneBadge tone="-error">
+              {tr('pages.checkinLog.failed')} {formatNullableNumber(Number(endpointState.failCount))}
+            </ToneBadge>
+          </>
+        ) : null}
+        {disabledAttemptCount > 0 ? (
+          <ToneBadge tone="-warning">
+            {formatProxyLogTemplate('pages.proxyLogs.disabledExecutionAttempts', {
+              count: disabledAttemptCount,
+            })}
+          </ToneBadge>
+        ) : null}
+        {disabledExecutionTargetCount > 0 ? (
+          <ToneBadge tone="-warning">
+            {formatProxyLogTemplate('pages.proxyLogs.disabledExecutionTargets', {
+              count: disabledExecutionTargetCount,
+            })}
+          </ToneBadge>
+        ) : null}
       </div>
     </div>
   );
 }
 
-function DebugTraceRouteDecisionFlow({
+function DebugTraceRouteRuntimeSnapshotFlow({
   trace,
 }: {
   trace: ProxyDebugTraceDetail["trace"];
 }) {
-  const decisionSummary = asDebugRecord(parseStoredDebugJson(trace.decisionSummaryJson));
-  const endpointCandidates = parseStoredDebugJson(trace.endpointCandidatesJson);
-  const candidateCount = Array.isArray(endpointCandidates)
+  const runtimeTrace = asDebugRecord(parseStoredDebugJson(trace.runtimeTraceJson));
+  const routeRuntimeSummary = asDebugRecord(runtimeTrace?.context);
+  const protocol = asDebugRecord(runtimeTrace?.protocol);
+  const endpointCandidates = protocol?.endpointCandidates;
+  const endpointOptionCount = Array.isArray(endpointCandidates)
     ? endpointCandidates.length
     : 0;
-  const downstreamFormat = typeof decisionSummary?.downstreamFormat === "string"
-    ? decisionSummary.downstreamFormat
+  const downstreamFormat = typeof routeRuntimeSummary?.downstreamFormat === "string"
+    ? routeRuntimeSummary.downstreamFormat
     : null;
-  const stickyPreferredTargetId = Number(decisionSummary?.stickyPreferredTargetId || 0);
-  const apiAttemptPlan = asDebugRecord(decisionSummary?.apiAttemptPlan);
+  const stickyHitExecutionAttemptId = trace.stickyHitExecutionAttemptId || null;
+  const apiAttemptPlan = asDebugRecord(routeRuntimeSummary?.apiAttemptPlan);
   const apiAttemptCount = Array.isArray(apiAttemptPlan?.attempts)
     ? apiAttemptPlan.attempts.length
     : null;
-  const routeLabel = formatTraceRouteLabel(trace);
-  const targetLabel = formatTraceTargetLabel(trace);
+  const runtimeCapabilityRequirement = asDebugRecord(routeRuntimeSummary?.runtimeCapabilityRequirement);
+  const requiredFeatures = asDebugArray(runtimeCapabilityRequirement?.requiredFeatures)
+    .map((feature) => asDebugRecord(feature))
+    .filter((feature): feature is Record<string, unknown> => !!feature);
+  const capabilityDiagnostics = asDebugArray(apiAttemptPlan?.diagnostics)
+    .map((diagnostic) => asDebugRecord(diagnostic))
+    .filter((diagnostic): diagnostic is Record<string, unknown> => !!diagnostic)
+    .filter((diagnostic) => typeof diagnostic.code === 'string' && diagnostic.code.startsWith('runtime_capability.'));
+  const routeLabel = formatTraceEntryRouteLabel(trace);
+  const runtimeEndpointLabel = formatTraceRuntimeEndpointLabel(trace);
+  const executionAttemptLabel = formatTraceExecutionAttemptLabel(trace);
   const siteLabel = formatTraceSiteLabel(trace);
 
   return (
     <div className="proxy-trace-route-flow-card">
       <div className="proxy-trace-section-head">
         <div>
-          <div className="text-sm font-semibold">{tr('pages.proxyLogs.routeDecision')}</div>
+          <div className="text-sm font-semibold">{tr('pages.proxyLogs.decisionSnapshot')}</div>
           <div className="text-xs text-muted-foreground">
-            {tr('pages.proxyLogs.debugRouteDecisionDescription')}
+            {tr('pages.proxyLogs.debugRouteRuntimeDescription')}
           </div>
         </div>
         <div className="flex flex-wrap justify-end gap-1.5">
-          {candidateCount > 0 ? (
+          {endpointOptionCount > 0 ? (
             <ToneBadge tone="-muted">
-              {candidateCount} {tr('pages.proxyLogs.candidates')}
+              {endpointOptionCount} {tr('pages.proxyLogs.endpointOptions')}
             </ToneBadge>
           ) : null}
         </div>
       </div>
 
       <div className="proxy-trace-route-flow">
-        <RouteDecisionFlowNode
+        <RouteRuntimeFlowNode
           tone="request"
           icon={<Hash className="size-4" />}
           label={tr('pages.proxyLogs.requestedModel')}
           title={<span className="font-mono">{trace.requestedModel || "-"}</span>}
           meta={trace.downstreamPath || tr('pages.proxyLogs.downstreamPath')}
         />
-        <RouteDecisionFlowConnector label={downstreamFormat || tr('pages.proxyLogs.matchRule')} />
-        <RouteDecisionFlowNode
+        <RouteRuntimeFlowConnector label={downstreamFormat || tr('pages.proxyLogs.matchRule')} />
+        <RouteRuntimeFlowNode
           tone="route"
           icon={<GitBranch className="size-4" />}
-          label={tr('pages.proxyLogs.selectedRoute')}
-          title={trace.selectedRouteId ? routeLabel : <span className="text-muted-foreground">-</span>}
+          label={tr('components.modelRouteFlow.entry')}
+          title={trace.routeEntrypointId ? <LongRuntimeId value={routeLabel} /> : (routeLabel || <span className="text-muted-foreground">-</span>)}
           meta={
-            stickyPreferredTargetId > 0
-              ? `${tr('pages.proxyLogs.stickySession')} (#${stickyPreferredTargetId})`
-              : tr('pages.proxyLogs.requestTimeSnapshot')
+            stickyHitExecutionAttemptId
+              ? `${tr('pages.proxyLogs.stickySession')} (${stickyHitExecutionAttemptId})`
+              : (runtimeEndpointLabel
+                  ? <LongRuntimeId value={runtimeEndpointLabel} />
+                  : tr('pages.proxyLogs.requestTimeSnapshot'))
           }
         />
-        <RouteDecisionFlowConnector
-          label={candidateCount > 0 ? `${candidateCount} ${tr('pages.proxyLogs.candidates')}` : undefined}
+        <RouteRuntimeFlowConnector
+          label={endpointOptionCount > 0 ? `${endpointOptionCount} ${tr('pages.proxyLogs.endpointOptions')}` : undefined}
         />
-        <RouteDecisionFlowNode
+        <RouteRuntimeFlowNode
           tone="target"
           icon={<Target className="size-4" />}
-          label={tr('pages.proxyLogs.selectedTarget')}
-          title={trace.selectedTargetId ? targetLabel : <span className="text-muted-foreground">-</span>}
+          label={tr('pages.proxyLogs.selectedExecutionAttempt')}
+          title={trace.selectedExecutionAttemptId ? executionAttemptLabel : <span className="text-muted-foreground">-</span>}
           meta={
             trace.selectedSiteId
               ? siteLabel
               : tr('pages.proxyLogs.notRecorded')
           }
         />
-        <RouteDecisionFlowConnector
+        <RouteRuntimeFlowConnector
           label={apiAttemptCount != null ? `${apiAttemptCount} ${tr('pages.proxyLogs.apiAttempts')}` : undefined}
         />
-        <RouteDecisionFlowNode
+        <RouteRuntimeFlowNode
           tone="token"
           icon={<KeyRound className="size-4" />}
           label={tr('pages.proxyLogs.executionPlan')}
@@ -1131,6 +1594,75 @@ function DebugTraceRouteDecisionFlow({
           meta={trace.finalHttpStatus ? `HTTP ${trace.finalHttpStatus}` : tr('pages.proxyLogs.notRecorded')}
         />
       </div>
+
+      {runtimeCapabilityRequirement || capabilityDiagnostics.length > 0 ? (
+        <div className="mt-3 grid gap-2 rounded-md border bg-muted/20 p-3">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div className="min-w-0">
+              <div className="text-sm font-semibold">{tr('pages.proxyLogs.runtimeCapability')}</div>
+              <div className="mt-1 text-xs text-muted-foreground">
+                {tr('pages.proxyLogs.runtimeCapabilityDescription')}
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {typeof runtimeCapabilityRequirement?.sourceFormat === 'string' ? (
+                <ToneBadge tone="-muted">{runtimeCapabilityRequirement.sourceFormat}</ToneBadge>
+              ) : null}
+              {typeof runtimeCapabilityRequirement?.surface === 'string' ? (
+                <ToneBadge tone="-muted">{runtimeCapabilityRequirement.surface}</ToneBadge>
+              ) : null}
+            </div>
+          </div>
+          {runtimeCapabilityRequirement ? (
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+              <CompactSummaryMetric
+                label={tr('pages.proxyLogs.lossPolicy')}
+                value={typeof runtimeCapabilityRequirement.lossPolicy === 'string' ? runtimeCapabilityRequirement.lossPolicy : '-'}
+              />
+              <CompactSummaryMetric
+                label={tr('pages.proxyLogs.fallbackPolicy')}
+                value={typeof runtimeCapabilityRequirement.fallbackPolicy === 'string' ? runtimeCapabilityRequirement.fallbackPolicy : '-'}
+              />
+              <CompactSummaryMetric
+                label={tr('pages.proxyLogs.acceptableApiTypes')}
+                value={asDebugArray(runtimeCapabilityRequirement.acceptableApiTypes).length
+                  ? asDebugArray(runtimeCapabilityRequirement.acceptableApiTypes).join(' / ')
+                  : '-'}
+              />
+              <CompactSummaryMetric
+                label={tr('pages.proxyLogs.requiredFeatures')}
+                value={String(requiredFeatures.length)}
+              />
+            </div>
+          ) : null}
+          {requiredFeatures.length > 0 ? (
+            <div className="flex flex-wrap gap-1.5">
+              {requiredFeatures.slice(0, 8).map((feature, index) => (
+                <ToneBadge key={`${String(feature.feature || '')}-${index}`} tone="-muted">
+                  {String(feature.scope || '-')} · {String(feature.feature || '-')}
+                </ToneBadge>
+              ))}
+              {requiredFeatures.length > 8 ? (
+                <ToneBadge tone="-muted">+{requiredFeatures.length - 8}</ToneBadge>
+              ) : null}
+            </div>
+          ) : null}
+          {capabilityDiagnostics.length > 0 ? (
+            <div className="grid gap-1.5">
+              {capabilityDiagnostics.slice(0, 6).map((diagnostic, index) => (
+                <div key={`${String(diagnostic.code || '')}-${index}`} className="flex min-w-0 items-start gap-2 rounded-md border bg-background px-2 py-1.5 text-xs">
+                  <ToneBadge tone={debugDiagnosticTone(diagnostic)} className="shrink-0 px-1.5 py-0 text-[10px]">
+                    {String(diagnostic.severity || diagnostic.level || 'info')}
+                  </ToneBadge>
+                  <span className="min-w-0 break-words text-muted-foreground">
+                    {translateDebugDiagnostic(diagnostic)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1165,7 +1697,7 @@ export default function ProxyLogs() {
     () => readProxyLogsRouteState(location.search),
     [location.search],
   );
-  const [logs, setLogs] = useState<ProxyLogListItem[]>([]);
+  const [logs, setLogs] = useState<ProxyRequestLog[]>([]);
   const [summary, setSummary] = useState<ProxyLogsSummary>(EMPTY_SUMMARY);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -1180,11 +1712,11 @@ export default function ProxyLogs() {
   );
   const [fromInput, setFromInput] = useState(initialRouteState.from);
   const [toInput, setToInput] = useState(initialRouteState.to);
-  const [expanded, setExpanded] = useState<number | null>(null);
+  const [expanded, setExpanded] = useState<string | null>(null);
   const [page, setPage] = useState(initialRouteState.page);
   const [pageSize, setPageSize] = useState(initialRouteState.pageSize);
   const [detailById, setDetailById] = useState<
-    Record<number, ProxyLogDetailState>
+    Record<string, ProxyLogDetailState>
   >({});
   const [showFilters, setShowFilters] = useState(false);
   const [sites, setSites] = useState<
@@ -1543,7 +2075,7 @@ export default function ProxyLogs() {
   }, [debugDetailById]);
 
   const loadDetail = useCallback(
-    async (id: number) => {
+    async (id: string) => {
       const existing = detailById[id];
       if (existing?.loading || existing?.data) return;
 
@@ -1553,7 +2085,7 @@ export default function ProxyLogs() {
       }));
 
       try {
-        const data = await api.getProxyLogDetail(id);
+        const data = await api.getProxyRequestLogDetail(id);
         setDetailById((current) => ({
           ...current,
           [id]: { loading: false, data },
@@ -1788,7 +2320,7 @@ export default function ProxyLogs() {
   }, [debugSettings, persistDebugSettings]);
 
   const handleToggleExpand = useCallback(
-    (id: number) => {
+    (id: string) => {
       const shouldExpand = expanded !== id;
       setExpanded(shouldExpand ? id : null);
       if (shouldExpand) {
@@ -2038,12 +2570,12 @@ export default function ProxyLogs() {
           </div>
         ) : null}
 
-        <DebugTraceRouteDecisionFlow trace={traceDetail} />
+        <DebugTraceRouteRuntimeSnapshotFlow trace={traceDetail} />
 
         <div className="proxy-trace-artifact-grid">
           {renderStoredDebugDetails(
             tr('pages.proxyLogs.endpoint'),
-            traceDetail.endpointCandidatesJson,
+            traceDetail.runtimeTraceJson,
             {
               copyLabel: tr('pages.proxyLogs.endpoint'),
             },
@@ -2077,10 +2609,10 @@ export default function ProxyLogs() {
             },
           )}
           {renderStoredDebugDetails(
-            tr('pages.proxyLogs.routeDecision'),
-            traceDetail.decisionSummaryJson,
+            tr('pages.proxyLogs.decisionSnapshot'),
+            traceDetail.runtimeTraceJson,
             {
-              copyLabel: tr('pages.proxyLogs.routeDecision'),
+              copyLabel: tr('pages.proxyLogs.decisionSnapshot'),
             },
           )}
         </div>
@@ -2285,7 +2817,7 @@ export default function ProxyLogs() {
   const debugSettingsForm = (
     <div className="grid gap-3">
       <InfoNote>
-        {tr('pages.proxyLogs.debugTraceTargetFilterDescription')}
+        {tr('pages.proxyLogs.debugTraceFilterDescription')}
       </InfoNote>
 
       <Card>
@@ -2303,49 +2835,49 @@ export default function ProxyLogs() {
       <ResponsiveFormGrid columns={2}>
         <Card>
           <CardHeader>
-            <CardTitle>{tr('pages.proxyLogs.targetedFilter')}</CardTitle>
+            <CardTitle>{tr('pages.proxyLogs.focusedFilter')}</CardTitle>
           </CardHeader>
           <CardContent className="grid gap-3">
           <Label className="grid gap-2">
-            <span>{tr('pages.proxyLogs.targetSessionId')}</span>
+            <span>{tr('pages.proxyLogs.traceSessionId')}</span>
             <Input
               type="text"
-              value={debugDraftSettings.proxyDebugTargetSessionId}
+              value={debugDraftSettings.proxyDebugFilterSessionId}
               data-debug-setting="target-session-id"
               onChange={(e) =>
                 setDebugDraftSettings((current) => ({
                   ...current,
-                  proxyDebugTargetSessionId: e.target.value,
+                  proxyDebugFilterSessionId: e.target.value,
                 }))
               }
               placeholder={tr('pages.proxyLogs.leaveEmptyDisableFiltering')}
             />
           </Label>
           <Label className="grid gap-2">
-            <span>{tr('pages.proxyLogs.targetClient')}</span>
+            <span>{tr('pages.proxyLogs.traceClient')}</span>
             <Input
               type="text"
-              value={debugDraftSettings.proxyDebugTargetClientKind}
+              value={debugDraftSettings.proxyDebugFilterClientKind}
               data-debug-setting="target-client-kind"
               onChange={(e) =>
                 setDebugDraftSettings((current) => ({
                   ...current,
-                  proxyDebugTargetClientKind: e.target.value,
+                  proxyDebugFilterClientKind: e.target.value,
                 }))
               }
               placeholder={tr('pages.proxyLogs.codexClaudeCode')}
             />
           </Label>
           <Label className="grid gap-2">
-            <span>{tr('pages.proxyLogs.targetmodel')}</span>
+            <span>{tr('pages.proxyLogs.traceModel')}</span>
             <Input
               type="text"
-              value={debugDraftSettings.proxyDebugTargetModel}
+              value={debugDraftSettings.proxyDebugFilterModel}
               data-debug-setting="target-model"
               onChange={(e) =>
                 setDebugDraftSettings((current) => ({
                   ...current,
-                  proxyDebugTargetModel: e.target.value,
+                  proxyDebugFilterModel: e.target.value,
                 }))
               }
               placeholder={tr('pages.proxyLogs.gpt4o')}
@@ -2456,7 +2988,9 @@ export default function ProxyLogs() {
         />
         <OverviewMetric
           label={tr('pages.proxyLogs.cost')}
-          value={`$${summary.totalCost.toFixed(4)}`}
+          value={summary.cost.amounts.length > 0
+            ? summary.cost.amounts.map((amount) => `${amount.currency || tr('pages.downstreamKeys.quota')} ${formatCompactNumber(amount.amount, 4)}`).join(" / ")
+            : "-"}
         />
         <OverviewMetric
           label={tr('pages.proxyLogs.currentRange')}
@@ -2840,12 +3374,11 @@ export default function ProxyLogs() {
           </div>
         ) : isMobile ? (
           <div className="grid gap-3">
-            {logs.map((log) => {
+            {logs.map((requestLog) => {
+              const log = presentProxyRequestLog(requestLog);
               const detailState = detailById[log.id];
               const detail = detailState?.data;
-              const detailLog: ProxyLogRenderItem = detail
-                ? { ...log, ...detail }
-                : log;
+              const detailLog = detail ? presentProxyRequestLog(detail) : log;
               const pathMeta = parseProxyLogPathMeta(
                 detailLog.errorMessage ?? undefined,
               );
@@ -2857,12 +3390,12 @@ export default function ProxyLogs() {
                 : [];
               const downstreamKeySummary =
                 renderDownstreamKeySummary(detailLog);
+              const compiledRuntimeIdentityLines =
+                buildCompiledRuntimeIdentityLines(detailLog);
               const isExpanded = expanded === log.id;
               const clientDisplay = resolveProxyLogClientDisplay(detailLog);
               const streamModeLabel = formatStreamModeLabel(detailLog.isStream);
-              const firstByteLabel = formatFirstByteLabel(
-                detailLog.firstByteLatencyMs,
-              );
+              const streamLatency = resolveInteractiveStreamLatency(detailLog);
 
               return (
                 <MobileCard
@@ -2871,11 +3404,11 @@ export default function ProxyLogs() {
                   subtitle={formatDateTimeLocal(log.createdAt)}
                   compact
                   headerActions={
-                    <ToneBadge tone={log.status === "success" ? "success" : "error"}
+                    <ToneBadge tone={proxyRequestStatusTone(log.status)}
                      
                      
                     >
-                      {log.status === "success" ? tr('pages.checkinLog.success') : tr('pages.checkinLog.failed')}
+                      {proxyRequestStatusLabel(log.status)}
                     </ToneBadge>
                   }
                   footerActions={
@@ -2911,9 +3444,9 @@ export default function ProxyLogs() {
                         {streamModeLabel}
                       </ToneBadge>
                     ) : null}
-                    {firstByteLabel ? (
+                    {streamLatency ? (
                       <ToneBadge tone="">
-                        {firstByteLabel}
+                        {streamLatency.badge}
                       </ToneBadge>
                     ) : null}
                   </div>
@@ -2952,7 +3485,7 @@ export default function ProxyLogs() {
                       </div>
                       <div className="break-words text-sm font-semibold leading-snug">
                         {typeof log.estimatedCost === "number"
-                          ? `$${log.estimatedCost.toFixed(6)}`
+                          ? log.estimatedCost.toFixed(6)
                           : "-"}
                       </div>
                     </div>
@@ -2978,10 +3511,10 @@ export default function ProxyLogs() {
                       {streamModeLabel ? (
                         <MobileField label={tr('pages.modelTester.mode')} value={streamModeLabel} />
                       ) : null}
-                      {firstByteLabel ? (
+                      {streamLatency ? (
                         <MobileField
-                          label={tr('pages.proxyLogs.ttft2')}
-                          value={firstByteLabel.replace(/^首字\s*/, "")}
+                          label={streamLatency.label}
+                          value={streamLatency.value}
                         />
                       ) : null}
                       <MobileField
@@ -3022,6 +3555,20 @@ export default function ProxyLogs() {
                           {downstreamKeySummary}
                         </div>
                       )}
+                      {compiledRuntimeIdentityLines.length > 0 ? (
+                        <div className="flex flex-col gap-1 text-muted-foreground">
+                          {compiledRuntimeIdentityLines.map((line, index) => (
+                            <span key={`${log.id}-runtime-identity-mobile-${index}`}>
+                              {line}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+                      <RuntimeUsageSummaryBlock runtimeUsage={detailLog.runtimeUsage} />
+                      <ProxyExecutionAttemptTimeline
+                        attempts={detailLog.attempts}
+                        finalExecutionAttemptId={detailLog.finalExecutionAttemptId}
+                      />
                       {billingProcessLines.length > 0 && (
                         <div className="flex flex-col gap-1">
                           {billingProcessLines.map((line, index) => (
@@ -3049,19 +3596,18 @@ export default function ProxyLogs() {
                 <TableHead className="w-8" />
                 <TableHead className="min-w-36">{tr('pages.checkinLog.time')}</TableHead>
                 <TableHead className="min-w-60">{tr('components.modelAnalysisPanel.model')}</TableHead>
-                <TableHead className="min-w-56">{tr('pages.proxyLogs.target')}</TableHead>
+                <TableHead className="min-w-56">{tr('pages.proxyLogs.endpoint')}</TableHead>
                 <TableHead>{tr('components.notificationPanel.status')}</TableHead>
                 <TableHead className="text-right">{tr('pages.proxyLogs.performance')}</TableHead>
                 <TableHead className="text-right">{tr('pages.proxyLogs.usage')}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {logs.map((log) => {
+              {logs.map((requestLog) => {
+                const log = presentProxyRequestLog(requestLog);
                 const detailState = detailById[log.id];
                 const detail = detailState?.data;
-                const detailLog: ProxyLogRenderItem = detail
-                  ? { ...log, ...detail }
-                  : log;
+                const detailLog = detail ? presentProxyRequestLog(detail) : log;
                 const pathMeta = parseProxyLogPathMeta(
                   detailLog.errorMessage ?? undefined,
                 );
@@ -3073,22 +3619,14 @@ export default function ProxyLogs() {
                   : [];
                 const downstreamKeySummary =
                   renderDownstreamKeySummary(detailLog);
+                const compiledRuntimeIdentityLines =
+                  buildCompiledRuntimeIdentityLines(detailLog);
                 const streamModeLabel = formatStreamModeLabel(
                   detailLog.isStream,
                 );
-                const firstByteLabel = formatFirstByteLabel(
-                  detailLog.firstByteLatencyMs,
-                );
-                const routeDecision = detailLog.routeDecision;
-                const routeDecisionRoute = routeDecision?.route || null;
-                const routeDecisionTarget = routeDecision?.target || null;
-                const routeDecisionToken = routeDecision?.token || null;
-                const hasRouteDecisionContext = !!(
-                  routeDecisionRoute ||
-                  routeDecisionTarget ||
-                  routeDecisionToken
-                );
-                const routeSnapshot = routeDecisionRoute?.snapshotSummary || null;
+                const streamLatency = resolveInteractiveStreamLatency(detailLog);
+                const decisionSnapshot = detailLog.decisionSnapshot;
+                const hasDecisionSnapshot = !!decisionSnapshot;
 
                 return (
                   <React.Fragment key={log.id}>
@@ -3124,16 +3662,16 @@ export default function ProxyLogs() {
                               {downstreamKeySummary}
                             </div>
                           ) : null}
-                          {streamModeLabel || firstByteLabel ? (
+                          {streamModeLabel || streamLatency ? (
                             <div className="flex flex-wrap gap-1.5">
                               {streamModeLabel ? (
                                 <ToneBadge tone="-muted">
                                   {streamModeLabel}
                                 </ToneBadge>
                               ) : null}
-                              {firstByteLabel ? (
+                              {streamLatency ? (
                                 <ToneBadge tone="">
-                                  {firstByteLabel}
+                                  {streamLatency.badge}
                                 </ToneBadge>
                               ) : null}
                             </div>
@@ -3155,8 +3693,8 @@ export default function ProxyLogs() {
                       </TableCell>
                       <TableCell>
                         <div className="grid gap-1">
-                          <ToneBadge tone={log.status === "success" ? "success" : "error"}>
-                            {log.status === "success" ? tr('pages.checkinLog.success') : tr('pages.checkinLog.failed')}
+                          <ToneBadge tone={proxyRequestStatusTone(log.status)}>
+                            {proxyRequestStatusLabel(log.status)}
                           </ToneBadge>
                           {log.retryCount > 0 ? (
                             <ToneBadge tone="-warning">
@@ -3172,11 +3710,11 @@ export default function ProxyLogs() {
                             value={formatLatency(log.latencyMs)}
                             tone={latencyTone(log.latencyMs)}
                           />
-                          {firstByteLabel ? (
+                          {streamLatency ? (
                             <LogInlineMetric
-                              label={tr('pages.proxyLogs.ttft2')}
-                              value={formatLatency(detailLog.firstByteLatencyMs ?? 0)}
-                              tone={firstByteTone(detailLog.firstByteLatencyMs)}
+                              label={streamLatency.label}
+                              value={streamLatency.value}
+                              tone={streamLatency.tone}
                             />
                           ) : null}
                         </div>
@@ -3195,7 +3733,7 @@ export default function ProxyLogs() {
                             label={tr('pages.proxyLogs.cost')}
                             value={
                               typeof log.estimatedCost === "number"
-                                ? `$${log.estimatedCost.toFixed(6)}`
+                                ? log.estimatedCost.toFixed(6)
                                 : "-"
                             }
                           />
@@ -3220,10 +3758,8 @@ export default function ProxyLogs() {
                                           {tr('pages.proxyLogs.model')} {detailLog.modelActual}
                                         </ToneBadge>
                                       ) : null}
-                                      <ToneBadge tone={detailLog.status === "success" ? "success" : "error"}>
-                                        {detailLog.status === "success"
-                                          ? tr('pages.checkinLog.success')
-                                          : tr('pages.checkinLog.failed')}
+                                      <ToneBadge tone={proxyRequestStatusTone(detailLog.status)}>
+                                        {proxyRequestStatusLabel(detailLog.status)}
                                       </ToneBadge>
                                     </div>
                                   </div>
@@ -3231,9 +3767,9 @@ export default function ProxyLogs() {
                                     <ToneBadge tone={latencyTone(detailLog.latencyMs)}>
                                       {tr('pages.proxyLogs.duration')} {formatLatency(detailLog.latencyMs)}
                                     </ToneBadge>
-                                    {firstByteLabel ? (
-                                      <ToneBadge tone={firstByteTone(detailLog.firstByteLatencyMs)}>
-                                        {tr('pages.proxyLogs.ttft2')} {formatLatency(detailLog.firstByteLatencyMs ?? 0)}
+                                    {streamLatency ? (
+                                      <ToneBadge tone={streamLatency.tone}>
+                                        {streamLatency.badge}
                                       </ToneBadge>
                                     ) : null}
                                     {streamModeLabel ? (
@@ -3282,78 +3818,50 @@ export default function ProxyLogs() {
                                     {downstreamKeySummary}
                                   </div>
                                 ) : null}
+                                {compiledRuntimeIdentityLines.length > 0 ? (
+                                  <div className="grid gap-1 text-xs text-muted-foreground">
+                                    {compiledRuntimeIdentityLines.map((line, index) => (
+                                      <span key={`${log.id}-runtime-identity-${index}`}>
+                                        {line}
+                                      </span>
+                                    ))}
+                                  </div>
+                                ) : null}
+
+                                <RuntimeUsageSummaryBlock runtimeUsage={detailLog.runtimeUsage} />
+                                <ProxyExecutionAttemptTimeline
+                                  attempts={detailLog.attempts}
+                                  finalExecutionAttemptId={detailLog.finalExecutionAttemptId}
+                                />
 
                                 <div className="proxy-log-detail-section">
                                   <div className="flex flex-wrap items-center gap-2">
                                     <div className="text-xs font-semibold text-primary">
-                                      {tr('pages.proxyLogs.routeDecision')}
+                                      {tr('pages.proxyLogs.decisionSnapshot')}
                                     </div>
-                                    {!hasRouteDecisionContext ? (
+                                    {!hasDecisionSnapshot ? (
                                       <ToneBadge tone="-muted">
-                                        {tr('pages.proxyLogs.noRouteDecision')}
+                                        {tr('pages.proxyLogs.noRouteRuntimeSnapshot')}
                                       </ToneBadge>
                                     ) : null}
                                   </div>
-                                  {routeDecision && hasRouteDecisionContext ? (
-                                    <RouteDecisionFlow
-                                      decision={routeDecision}
-                                      fallbackRequestedModel={detailLog.modelRequested}
+                                  {decisionSnapshot && hasDecisionSnapshot ? (
+                                    <RouteRuntimeSnapshotFlow
+                                      snapshot={decisionSnapshot}
                                     />
                                   ) : null}
-                                  {routeDecisionTarget ? (
-                                    <div className="flex flex-wrap gap-1.5">
-                                      <ToneBadge tone={routeDecisionTarget.enabled === false ? "-error" : "-success"}>
-                                        {routeDecisionTarget.enabled === false ? tr('common.disabled') : tr('common.enabled')}
-                                      </ToneBadge>
-                                      {routeDecisionTarget.cooldownUntil ? (
-                                        <ToneBadge tone="-warning">
-                                          {tr('pages.proxyLogs.cooldown')} {formatDateTimeLocal(routeDecisionTarget.cooldownUntil)}
-                                        </ToneBadge>
-                                      ) : null}
-                                      {routeDecisionTarget.manualOverride ? (
-                                        <ToneBadge tone="-info">
-                                          {tr('pages.proxyLogs.manualOverride')}
-                                        </ToneBadge>
-                                      ) : null}
-                                    </div>
-                                  ) : null}
-                                  {routeDecisionTarget ? (
-                                    <div className="proxy-log-decision-stats">
-                                      <ToneBadge tone="-muted">
-                                        {tr('pages.proxyLogs.priority')} {formatNullableNumber(routeDecisionTarget.priority)}
-                                      </ToneBadge>
-                                      <ToneBadge tone="-muted">
-                                        {tr('pages.proxyLogs.weight')} {formatNullableNumber(routeDecisionTarget.weight)}
-                                      </ToneBadge>
-                                      <ToneBadge tone="-success">
-                                        {tr('pages.checkinLog.success')} {formatNullableNumber(routeDecisionTarget.successCount)}
-                                      </ToneBadge>
-                                      <ToneBadge tone="-error">
-                                        {tr('pages.checkinLog.failed')} {formatNullableNumber(routeDecisionTarget.failCount)}
-                                      </ToneBadge>
-                                      {routeDecisionTarget.consecutiveFailCount ? (
-                                        <ToneBadge tone="-warning">
-                                          {tr('pages.proxyLogs.consecutiveFailures')} {formatNullableNumber(routeDecisionTarget.consecutiveFailCount)}
-                                        </ToneBadge>
-                                      ) : null}
-                                      {routeDecisionTarget.lastSelectedAt ? (
-                                        <ToneBadge tone="-muted">
-                                          {tr('pages.proxyLogs.lastSelected')} {formatDateTimeLocal(routeDecisionTarget.lastSelectedAt)}
-                                        </ToneBadge>
-                                      ) : null}
-                                    </div>
-                                  ) : null}
-                                  {routeSnapshot ? (
+                                  {decisionSnapshot ? (
                                     <div className="proxy-log-decision-snapshot">
-                                      <DetailField label={tr('pages.proxyLogs.matchRule')}>
-                                        {formatProxyDecisionMatchKind(routeSnapshot.matchKind)}
-                                        {routeSnapshot.requestedModelPattern ? ` · ${routeSnapshot.requestedModelPattern}` : ""}
+                                      <DetailField label={tr('pages.proxyLogs.runtimeScopeEntry')}>
+                                        {decisionSnapshot.match.publicModelName
+                                          || decisionSnapshot.match.planId
+                                          || "-"}
                                       </DetailField>
-                                      <DetailField label={tr('pages.proxyLogs.backend')}>
-                                        {formatProxyDecisionBackendKind(routeSnapshot.backendKind)}
-                                        {routeSnapshot.sourceRouteIds.length > 0
-                                          ? ` · ${routeSnapshot.sourceRouteIds.map((routeId: number) => `#${routeId}`).join(" / ")}`
-                                          : ""}
+                                      <DetailField label={tr('pages.proxyLogs.runtimeScopeEndpoint')}>
+                                        <LongRuntimeId value={decisionSnapshot.endpoint?.endpointId || "-"} />
+                                      </DetailField>
+                                      <DetailField label={tr('pages.proxyLogs.selectedExecutionAttempt')}>
+                                        <LongRuntimeId value={decisionSnapshot.executionAttempt?.executionAttemptId || "-"} />
                                       </DetailField>
                                     </div>
                                   ) : null}
@@ -3385,7 +3893,7 @@ export default function ProxyLogs() {
                                       </ToneBadge>
                                       {typeof detailLog.estimatedCost === "number" ? (
                                         <ToneBadge tone="-success">
-                                          {tr('pages.proxyLogs.cost')} ${detailLog.estimatedCost.toFixed(6)}
+                                          {tr('pages.proxyLogs.cost')} {detailLog.estimatedCost.toFixed(6)}
                                         </ToneBadge>
                                       ) : null}
                                     </div>

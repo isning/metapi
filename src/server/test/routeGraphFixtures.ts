@@ -1,15 +1,15 @@
 type LegacyRouteFixtureInput = {
   modelPattern?: string | null;
   routeMode?: string | null;
-  sourceRouteIds?: number[] | null;
+  sourceEndpointIds?: string[] | null;
   displayName?: string | null;
   displayIcon?: string | null;
   modelMapping?: unknown;
-  routingStrategy?: string | null;
+  dispatcherPolicy?: Record<string, unknown> | null;
   enabled?: boolean | null;
 };
 
-export function tokenRouteFixture(input: LegacyRouteFixtureInput = {}) {
+export function routeGraphFixture(input: LegacyRouteFixtureInput = {}) {
   const routeMode = input.routeMode === 'explicit_group' ? 'explicit_group' : 'pattern';
   const displayName = input.displayName ?? input.modelPattern ?? null;
   return {
@@ -26,14 +26,15 @@ export function tokenRouteFixture(input: LegacyRouteFixtureInput = {}) {
       },
     backend: routeMode === 'explicit_group'
       ? {
-        kind: 'routes',
-        routeIds: input.sourceRouteIds ?? [],
+        kind: 'route_endpoints',
+        endpointIds: [],
       }
       : { kind: 'supply' },
+    sourceEndpointIds: input.sourceEndpointIds ?? [],
     displayName,
     displayIcon: input.displayIcon ?? null,
     modelMapping: input.modelMapping ?? null,
-    routingStrategy: input.routingStrategy ?? 'weighted',
+    dispatcherPolicy: input.dispatcherPolicy ?? null,
     enabled: input.enabled ?? true,
   };
 }

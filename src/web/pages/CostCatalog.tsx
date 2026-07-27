@@ -48,7 +48,7 @@ type ReferenceEntryForm = {
   cacheReadPerMillion: string;
   cacheWritePerMillion: string;
   reasoningPerMillion: string;
-  requestUsd: string;
+  requestCost: string;
   advancedPlanEnabled: boolean;
   planJson: string;
   sourceUrl: string;
@@ -67,7 +67,7 @@ const emptyEntryForm: ReferenceEntryForm = {
   cacheReadPerMillion: '',
   cacheWritePerMillion: '',
   reasoningPerMillion: '',
-  requestUsd: '',
+  requestCost: '',
   advancedPlanEnabled: false,
   planJson: '',
   sourceUrl: '',
@@ -201,7 +201,7 @@ function entryToForm(entry: PricingReferenceCatalogEntry | null): ReferenceEntry
     cacheReadPerMillion: readPlanComponent(entry.plan, 'cache_read_tokens'),
     cacheWritePerMillion: readPlanComponent(entry.plan, 'cache_write_tokens'),
     reasoningPerMillion: readPlanComponent(entry.plan, 'reasoning_tokens'),
-    requestUsd: readPlanComponent(entry.plan, 'request'),
+    requestCost: readPlanComponent(entry.plan, 'request'),
     advancedPlanEnabled: false,
     planJson: JSON.stringify(entry.plan, null, 2),
     sourceUrl: entry.sourceUrl ?? '',
@@ -248,7 +248,7 @@ function formToEntryInput(form: ReferenceEntryForm): PricingReferenceCatalogEntr
       cacheReadPerMillion: parseOptionalNumber(form.cacheReadPerMillion),
       cacheWritePerMillion: parseOptionalNumber(form.cacheWritePerMillion),
       reasoningPerMillion: parseOptionalNumber(form.reasoningPerMillion),
-      requestUsd: parseOptionalNumber(form.requestUsd),
+      requestCost: parseOptionalNumber(form.requestCost),
     };
   }
   return input;
@@ -949,7 +949,7 @@ function ReferenceEntryEditor({
           <PriceField label={tr('upstreamCostPricing.price.cacheRead')} value={form.cacheReadPerMillion} onChange={(value) => onChange({ cacheReadPerMillion: value })} />
           <PriceField label={tr('upstreamCostPricing.price.cacheWrite')} value={form.cacheWritePerMillion} onChange={(value) => onChange({ cacheWritePerMillion: value })} />
           <PriceField label={tr('upstreamCostPricing.price.reasoning')} value={form.reasoningPerMillion} onChange={(value) => onChange({ reasoningPerMillion: value })} />
-          <PriceField label={tr('upstreamCostPricing.price.requestFee')} value={form.requestUsd} onChange={(value) => onChange({ requestUsd: value })} />
+          <PriceField label={tr('upstreamCostPricing.price.requestFee')} value={form.requestCost} onChange={(value) => onChange({ requestCost: value })} />
         </div>
       </EditorSection>
 
@@ -1055,16 +1055,12 @@ function SectionHeader({ title, description }: { title: string; description: str
 function PriceField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
   return (
     <Field label={label}>
-      <div className="relative">
-        <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">$</span>
-        <Input
-          className="pl-7"
-          inputMode="decimal"
-          value={value}
-          onChange={(event) => onChange(event.target.value)}
-          placeholder="0"
-        />
-      </div>
+      <Input
+        inputMode="decimal"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder="0"
+      />
     </Field>
   );
 }

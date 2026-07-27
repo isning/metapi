@@ -132,7 +132,7 @@ Guidelines:
   it starts a local Fastify server, drives it with autocannon as an external
   load-generator process, sweeps connections, reports autocannon RPS and
   latency percentiles, and separately reports server-process CPU RPS. This
-  covers TCP/HTTP/Fastify/JSON/auth/token-router overhead, but intentionally
+  covers TCP/HTTP/Fastify/JSON/auth/compiled-runtime-selection overhead, but intentionally
   excludes upstream provider network I/O and streaming relay.
 - keep vCPU and worker-count scaling checks out of `test:all`; use
   `bench:performance:matrix` when validating capacity planning or runtime

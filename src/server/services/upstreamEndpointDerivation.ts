@@ -9,12 +9,16 @@ import {
   buildEndpointCapabilityProfile,
 } from './upstreamEndpointRuntimeMemory.js';
 import type { DownstreamFormat } from '../proxy-core/formats/protocolTypes.js';
+import type { RuntimeCapabilityRequirement } from '../proxy-core/capabilities/requestCapabilityRequirement.js';
 
 export type EndpointPreference = DownstreamFormat | 'responses' | string;
 export type EndpointDerivationHints = {
   oauthProvider?: string | null;
-  requestKind?: 'default' | 'responses-compact' | 'claude-count-tokens';
+  operationHint?: 'default' | 'responses-compact' | 'claude-count-tokens' | string;
   requiresNativeResponsesFileUrl?: boolean;
+  runtimeCapabilityRequirement?: RuntimeCapabilityRequirement | null;
+  /** Read models may use the same deterministic platform derivation without scheduling a catalog fetch. */
+  useCatalogOrdering?: boolean;
 };
 
 type ChannelContext = {
@@ -92,12 +96,16 @@ function preferredEndpointOrder(
   const platform = normalizePlatformName(sitePlatform);
   const oauthProvider = asTrimmedString(hints?.oauthProvider).toLowerCase();
 
-  if (hints?.requestKind === 'responses-compact') {
+  if (hints?.operationHint === 'responses-compact') {
     return ['responses'];
   }
 
   if (platform === 'codex') {
     return ['responses'];
+  }
+
+  if ((platform === 'gemini' || platform === 'gemini-cli') && downstreamFormat === 'gemini') {
+    return ['gemini'];
   }
 
   if (platform === 'gemini' || platform === 'gemini-cli') {
@@ -139,12 +147,56 @@ function preferredEndpointOrder(
   return base;
 }
 
+function endpointsFromRuntimeCapabilityRequirement(
+  requirement?: RuntimeCapabilityRequirement | null,
+): UpstreamEndpoint[] | null {
+  if (!requirement) return null;
+  const mapped: UpstreamEndpoint[] = [];
+  for (const apiType of requirement.acceptableApiTypes) {
+    if (apiType === 'openai_chat_completions' || apiType === 'newapi_chat_completions') {
+      mapped.push('chat');
+    } else if (apiType === 'openai_responses' || apiType === 'newapi_responses') {
+      mapped.push('responses');
+    } else if (apiType === 'anthropic_messages') {
+      mapped.push('messages');
+    } else if (apiType === 'gemini_generate_content' || apiType === 'vendor_native') {
+      mapped.push('gemini');
+    }
+  }
+  const unique = Array.from(new Set(mapped));
+  return unique.length > 0 ? unique : null;
+}
+
+function constrainToRuntimeCapability(
+  candidates: UpstreamEndpoint[],
+  requirement?: RuntimeCapabilityRequirement | null,
+  sitePlatform?: string,
+): UpstreamEndpoint[] {
+  const allowed = endpointsFromRuntimeCapabilityRequirement(requirement);
+  if (!allowed) return candidates;
+  const platform = normalizePlatformName(sitePlatform);
+  if (
+    requirement?.lossPolicy === 'native_required'
+    && allowed.every((endpoint) => endpoint === 'gemini')
+    && platform !== 'gemini'
+    && platform !== 'gemini-cli'
+    && platform !== 'antigravity'
+  ) {
+    return [];
+  }
+  const allowedSet = new Set(allowed);
+  const constrained = candidates.filter((endpoint) => allowedSet.has(endpoint));
+  return constrained.length > 0
+    ? constrained
+    : allowed;
+}
+
 export async function resolveUpstreamEndpointCandidates(
   context: ChannelContext,
   modelName: string,
   downstreamFormat: EndpointPreference,
   requestedModelHint?: string,
-  requestCapabilities?: {
+  surfaceCapabilityHints?: {
     hasNonImageFileInput?: boolean;
     conversationFileSummary?: ConversationFileInputSummary;
     wantsNativeResponsesReasoning?: boolean;
@@ -172,7 +224,7 @@ export async function resolveUpstreamEndpointCandidates(
   }
 
   const sitePlatform = normalizePlatformName(context.site.platform);
-  if (hints?.requestKind === 'responses-compact') {
+  if (hints?.operationHint === 'responses-compact') {
     return ['responses'];
   }
   if (
@@ -186,7 +238,7 @@ export async function resolveUpstreamEndpointCandidates(
   const capabilityProfile = buildEndpointCapabilityProfile({
     modelName,
     requestedModelHint,
-    requestCapabilities,
+    surfaceCapabilityHints,
   });
   const preferMessagesForClaudeModel = capabilityProfile.preferMessagesForClaudeModel;
   const hasNonImageFileInput = capabilityProfile.hasNonImageFileInput;
@@ -201,12 +253,17 @@ export async function resolveUpstreamEndpointCandidates(
   );
   const finalizeCandidates = (candidates: UpstreamEndpoint[]): UpstreamEndpoint[] => {
     const preferredCandidates = applyRuntimePreference(candidates);
-    if (hints?.requestKind === 'claude-count-tokens') {
-      return preferredCandidates.includes('messages') ? ['messages'] : ([] as UpstreamEndpoint[]);
+    const constrainedCandidates = constrainToRuntimeCapability(
+      preferredCandidates,
+      hints?.runtimeCapabilityRequirement,
+      context.site.platform,
+    );
+    if (hints?.operationHint === 'claude-count-tokens') {
+      return constrainedCandidates.includes('messages') ? ['messages'] : ([] as UpstreamEndpoint[]);
     }
-    return preferredCandidates;
+    return constrainedCandidates;
   };
-  const conversationFileSummary = requestCapabilities?.conversationFileSummary ?? {
+  const conversationFileSummary = surfaceCapabilityHints?.conversationFileSummary ?? {
     hasImage: false,
     hasAudio: false,
     hasDocument: hasNonImageFileInput,
@@ -268,6 +325,10 @@ export async function resolveUpstreamEndpointCandidates(
     && sitePlatform !== 'antigravity'
     && sitePlatform !== 'gemini-cli'
   );
+
+  if (hints?.useCatalogOrdering === false) {
+    return finalizeCandidates(prioritizedPreferredEndpoints);
+  }
 
   try {
     const catalog = await fetchModelPricingCatalog({

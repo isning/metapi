@@ -1,14 +1,19 @@
 import { type ReactNode } from 'react';
 import { BrandGlyph, InlineBrandIcon, type BrandInfo } from '../../components/BrandIcon.js';
 import { tr } from '../../i18n.js';
-import type { GroupFilter, GroupRouteItem } from './types.js';
-import { resolveEndpointTypeIconModel } from './utils.js';
 import { Button } from '../../components/ui/button/index.js';
 import ToneBadge from '../../components/ToneBadge.js';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../../components/ui/collapsible/index.js';
-import { CheckCircle2, ChevronDown, ChevronUp, CircleSlash2, Layers3, RotateCcw, Server, SlidersHorizontal, Tags, Workflow, X } from 'lucide-react';
+import { CheckCircle2, ChevronDown, ChevronUp, CircleSlash2, RotateCcw, Server, SlidersHorizontal, Tags, Workflow, X } from 'lucide-react';
 
 export type EnabledFilter = 'all' | 'enabled' | 'disabled';
+function resolveEndpointTypeIconModel(endpointType: string): string | null {
+  const normalized = endpointType.trim().toLowerCase();
+  if (normalized === 'openai') return 'chatgpt';
+  if (normalized === 'anthropic' || normalized === 'claude') return 'claude';
+  if (normalized === 'gemini') return 'gemini';
+  return null;
+}
 
 type RouteFilterBarProps = {
   totalRouteCount: number;
@@ -18,15 +23,12 @@ type RouteFilterBarProps = {
   setActiveSite: (site: string | null) => void;
   activeEndpointType: string | null;
   setActiveEndpointType: (endpointType: string | null) => void;
-  activeGroupFilter: GroupFilter;
-  setActiveGroupFilter: (filter: GroupFilter) => void;
   enabledFilter: EnabledFilter;
   setEnabledFilter: (filter: EnabledFilter) => void;
   enabledCounts: { enabled: number; disabled: number };
   brandList: { list: [string, { count: number; brand: BrandInfo }][]; otherCount: number };
   siteList: [string, { count: number; siteId: number }][];
   endpointTypeList: [string, number][];
-  groupRouteList: GroupRouteItem[];
   collapsed: boolean;
   onToggle: () => void;
 };
@@ -103,17 +105,14 @@ function FilterRow({
 function ActiveFilterSummary({
   activeBrand,
   activeSite,
-  activeGroupFilter,
   activeEndpointType,
   enabledFilter,
-}: Pick<RouteFilterBarProps, 'activeBrand' | 'activeSite' | 'activeGroupFilter' | 'activeEndpointType' | 'enabledFilter'>) {
+}: Pick<RouteFilterBarProps, 'activeBrand' | 'activeSite' | 'activeEndpointType' | 'enabledFilter'>) {
   const tags: string[] = [];
   if (enabledFilter === 'enabled') tags.push(tr('pages.tokenRoutes.routeFilterBar.statusEnabled'));
   else if (enabledFilter === 'disabled') tags.push(tr('pages.tokenRoutes.routeFilterBar.statusDisabled'));
   if (activeBrand) tags.push(tr('pages.tokenRoutes.routeFilterBar.brandFilter').replace('{brand}', activeBrand === '__other__' ? tr('pages.models.other') : activeBrand));
   if (activeSite) tags.push(tr('pages.tokenRoutes.routeFilterBar.siteFilter').replace('{site}', activeSite));
-  if (activeGroupFilter === '__all__') tags.push(tr('pages.tokenRoutes.routeFilterBar.groupsAll'));
-  else if (typeof activeGroupFilter === 'number') tags.push(tr('pages.tokenRoutes.routeFilterBar.groupFilter').replace('{group}', String(activeGroupFilter)));
   if (activeEndpointType) tags.push(tr('pages.tokenRoutes.routeFilterBar.capabilityFilter').replace('{capability}', activeEndpointType));
 
   if (tags.length === 0) return <span className="text-muted-foreground">{tr('components.notificationPanel.all')}</span>;
@@ -123,15 +122,13 @@ function ActiveFilterSummary({
 function getActiveFilterCount({
   activeBrand,
   activeSite,
-  activeGroupFilter,
   activeEndpointType,
   enabledFilter,
-}: Pick<RouteFilterBarProps, 'activeBrand' | 'activeSite' | 'activeGroupFilter' | 'activeEndpointType' | 'enabledFilter'>): number {
+}: Pick<RouteFilterBarProps, 'activeBrand' | 'activeSite' | 'activeEndpointType' | 'enabledFilter'>): number {
   return [
     enabledFilter !== 'all',
     !!activeBrand,
     !!activeSite,
-    activeGroupFilter !== null,
     !!activeEndpointType,
   ].filter(Boolean).length;
 }
@@ -141,8 +138,6 @@ function ActiveFilterPills({
   setActiveBrand,
   activeSite,
   setActiveSite,
-  activeGroupFilter,
-  setActiveGroupFilter,
   activeEndpointType,
   setActiveEndpointType,
   enabledFilter,
@@ -152,8 +147,6 @@ function ActiveFilterPills({
   | 'setActiveBrand'
   | 'activeSite'
   | 'setActiveSite'
-  | 'activeGroupFilter'
-  | 'setActiveGroupFilter'
   | 'activeEndpointType'
   | 'setActiveEndpointType'
   | 'enabledFilter'
@@ -187,19 +180,6 @@ function ActiveFilterPills({
       </SummaryChip>,
     );
   }
-  if (activeGroupFilter === '__all__') {
-    chips.push(
-      <SummaryChip key="group-all" onClear={() => setActiveGroupFilter(null)}>
-        {tr('pages.tokenRoutes.routeFilterBar.groupsAll')}
-      </SummaryChip>,
-    );
-  } else if (typeof activeGroupFilter === 'number') {
-    chips.push(
-      <SummaryChip key="group" onClear={() => setActiveGroupFilter(null)}>
-        {tr('pages.tokenRoutes.routeFilterBar.groupFilter').replace('{group}', String(activeGroupFilter))}
-      </SummaryChip>,
-    );
-  }
   if (activeEndpointType) {
     chips.push(
       <SummaryChip key="endpoint-type" onClear={() => setActiveEndpointType(null)}>
@@ -221,15 +201,12 @@ export default function RouteFilterBar(props: RouteFilterBarProps) {
     setActiveSite,
     activeEndpointType,
     setActiveEndpointType,
-    activeGroupFilter,
-    setActiveGroupFilter,
     enabledFilter,
     setEnabledFilter,
     enabledCounts,
     brandList,
     siteList,
     endpointTypeList,
-    groupRouteList,
     collapsed,
     onToggle,
   } = props;
@@ -237,7 +214,6 @@ export default function RouteFilterBar(props: RouteFilterBarProps) {
   const activeFilterCount = getActiveFilterCount({
     activeBrand,
     activeSite,
-    activeGroupFilter,
     activeEndpointType,
     enabledFilter,
   });
@@ -246,7 +222,6 @@ export default function RouteFilterBar(props: RouteFilterBarProps) {
     setEnabledFilter('all');
     setActiveBrand(null);
     setActiveSite(null);
-    setActiveGroupFilter(null);
     setActiveEndpointType(null);
   };
 
@@ -283,7 +258,6 @@ export default function RouteFilterBar(props: RouteFilterBarProps) {
                   <ActiveFilterSummary
                     activeBrand={activeBrand}
                     activeSite={activeSite}
-                    activeGroupFilter={activeGroupFilter}
                     activeEndpointType={activeEndpointType}
                     enabledFilter={enabledFilter}
                   />
@@ -295,8 +269,6 @@ export default function RouteFilterBar(props: RouteFilterBarProps) {
               setActiveBrand={setActiveBrand}
               activeSite={activeSite}
               setActiveSite={setActiveSite}
-              activeGroupFilter={activeGroupFilter}
-              setActiveGroupFilter={setActiveGroupFilter}
               activeEndpointType={activeEndpointType}
               setActiveEndpointType={setActiveEndpointType}
               enabledFilter={enabledFilter}
@@ -352,7 +324,7 @@ export default function RouteFilterBar(props: RouteFilterBarProps) {
                   />
                 </FilterRow>
 
-                <FilterRow compact label={tr('pages.tokenRoutes.manualRoutePanel.capabilities')}>
+                <FilterRow compact label={tr('pages.tokenRoutes.routeGroupFilters.capabilities')}>
                   <FilterChip
                     active={!activeEndpointType}
                     label={tr('components.notificationPanel.all')}
@@ -374,7 +346,7 @@ export default function RouteFilterBar(props: RouteFilterBarProps) {
                     );
                   })}
                   {endpointTypeList.length === 0 && (
-                    <span className="text-xs text-muted-foreground">{tr('pages.tokenRoutes.manualRoutePanel.noneendpointCapabilities')}</span>
+                    <span className="text-xs text-muted-foreground">{tr('pages.tokenRoutes.routeGroupFilters.noEndpointCapabilities')}</span>
                   )}
                 </FilterRow>
               </div>
@@ -429,36 +401,6 @@ export default function RouteFilterBar(props: RouteFilterBarProps) {
                   ))}
                 </FilterRow>
               )}
-
-              <FilterRow label={tr('pages.downstreamKeys.groups')}>
-                <FilterChip
-                  active={activeGroupFilter === '__all__'}
-                  label={tr('pages.tokenRoutes.routeFilterBar.allGroups')}
-                  count={groupRouteList.length}
-                  icon={<Layers3 className="size-3.5" />}
-                  onClick={() => setActiveGroupFilter(activeGroupFilter === '__all__' ? null : '__all__')}
-                />
-                {groupRouteList.map((groupRoute) => (
-                  <FilterChip
-                    key={groupRoute.id}
-                    active={activeGroupFilter === groupRoute.id}
-                    label={groupRoute.title}
-                    count={groupRoute.sourceRouteCount > 0 ? groupRoute.sourceRouteCount : groupRoute.targetCount}
-                    icon={
-                      groupRoute.icon.kind === 'brand' ? (
-                        <BrandGlyph icon={groupRoute.icon.value} alt={groupRoute.title} size={12} fallbackText={groupRoute.title} />
-                      ) : groupRoute.icon.kind === 'text' ? (
-                        <span className="text-xs leading-none">{groupRoute.icon.value}</span>
-                      ) : groupRoute.icon.kind === 'auto' && groupRoute.brand ? (
-                        <BrandGlyph brand={groupRoute.brand} alt={groupRoute.title} size={12} fallbackText={groupRoute.title} />
-                      ) : groupRoute.icon.kind === 'auto' ? (
-                        <InlineBrandIcon model={groupRoute.modelPattern} size={12} />
-                      ) : undefined
-                    }
-                    onClick={() => setActiveGroupFilter(activeGroupFilter === groupRoute.id ? null : groupRoute.id)}
-                  />
-                ))}
-              </FilterRow>
 
               <div className="flex justify-end pt-1">
                 <CollapsibleTrigger asChild>

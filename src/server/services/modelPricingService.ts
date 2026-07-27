@@ -4,6 +4,16 @@ import type { PricingEvaluation } from '../pricing-core/index.js';
 import { resolveEndpointPricing } from './endpointPricingService.js';
 import type { PricingResolution } from './pricingQuoteTypes.js';
 import type {
+  ProxyBillingBreakdown,
+  ProxyBillingDetails,
+} from '../../shared/proxyBilling.js';
+export type {
+  ProxyBillingBreakdown,
+  ProxyBillingDetails,
+  ProxyBillingQuote,
+} from '../../shared/proxyBilling.js';
+import type {
+  UpstreamDirectModelPrice,
   UpstreamPricingCatalog as PricingData,
   UpstreamPricingModel as PricingModel,
 } from './upstreamPricingCatalog.js';
@@ -69,12 +79,12 @@ export interface EstimateProxyCostInput {
 
 interface ModelGroupPricing {
   quotaType: number;
-  inputPerMillion?: number;
-  outputPerMillion?: number;
-  cacheReadPerMillion?: number;
-  cacheCreationPerMillion?: number;
-  perCallInput?: number;
-  perCallOutput?: number;
+  inputPerMillion?: number | null;
+  outputPerMillion?: number | null;
+  cacheReadPerMillion?: number | null;
+  cacheCreationPerMillion?: number | null;
+  perCallInput?: number | null;
+  perCallOutput?: number | null;
   perCallTotal?: number;
 }
 
@@ -92,43 +102,6 @@ interface ModelPricingCatalogEntry {
 interface ModelPricingCatalog {
   models: ModelPricingCatalogEntry[];
   groupRatio: Record<string, number>;
-}
-
-export interface ProxyBillingDetails {
-  source?: 'upstream_catalog' | 'billing_override' | 'upstream_cost_pricing';
-  upstreamCostPricingId?: number;
-  upstreamCostPricingScope?: string;
-  planFingerprint?: string;
-  estimateLevel?: string;
-  diagnostics?: unknown[];
-  quotaType: number;
-  usage: {
-    promptTokens: number;
-    completionTokens: number;
-    totalTokens: number;
-    cacheReadTokens: number;
-    cacheCreationTokens: number;
-    billablePromptTokens: number;
-    promptTokensIncludeCache: boolean | null;
-  };
-  pricing: {
-    modelRatio: number;
-    completionRatio: number;
-    cacheRatio: number;
-    cacheCreationRatio: number;
-    groupRatio: number;
-  };
-  breakdown: {
-    inputPerMillion: number | null;
-    outputPerMillion: number | null;
-    cacheReadPerMillion: number | null;
-    cacheCreationPerMillion: number | null;
-    inputCost: number;
-    outputCost: number;
-    cacheReadCost: number;
-    cacheCreationCost: number;
-    totalCost: number;
-  };
 }
 
 const pricingCache = new Map<string, PricingCacheEntry>();
@@ -277,7 +250,7 @@ function resolveGroupMultiplier(model: PricingModel, groupRatio: Record<string, 
 }
 
 function calculatePerCallCost(
-  modelPrice: number | { input?: number; output?: number } | null,
+  modelPrice: number | UpstreamDirectModelPrice | null,
   multiplier: number,
 ): number {
   if (typeof modelPrice === 'number') {
@@ -293,7 +266,7 @@ function calculatePerCallCost(
 }
 
 function calculatePerCallPricing(
-  modelPrice: number | { input?: number; output?: number } | null,
+  modelPrice: number | UpstreamDirectModelPrice | null,
   multiplier: number,
 ): { input?: number; output?: number; total: number } {
   if (typeof modelPrice === 'number') {
@@ -316,6 +289,43 @@ function calculatePerCallPricing(
   }
 
   return { total: 0 };
+}
+
+function sanitizeRate(value: unknown): number | null {
+  if (value == null) return null;
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric < 0) return null;
+  return roundCost(numeric);
+}
+
+function resolveTokenRateCard(model: PricingModel, multiplier: number) {
+  const directPrice = model.modelPrice && typeof model.modelPrice === 'object'
+    ? model.modelPrice
+    : null;
+  if (directPrice) {
+    return {
+      inputPerMillion: sanitizeRate(directPrice.input == null ? null : directPrice.input * multiplier),
+      outputPerMillion: sanitizeRate(directPrice.output == null ? null : directPrice.output * multiplier),
+      cacheReadPerMillion: sanitizeRate(directPrice.cacheRead == null ? null : directPrice.cacheRead * multiplier),
+      cacheCreationPerMillion: sanitizeRate(directPrice.cacheWrite == null ? null : directPrice.cacheWrite * multiplier),
+    };
+  }
+
+  return {
+    inputPerMillion: roundCost(model.modelRatio * 2 * multiplier),
+    outputPerMillion: roundCost(model.modelRatio * model.completionRatio * 2 * multiplier),
+    cacheReadPerMillion: model.cacheRatio == null
+      ? null
+      : roundCost(model.modelRatio * model.cacheRatio * 2 * multiplier),
+    cacheCreationPerMillion: model.cacheCreationRatio == null
+      ? null
+      : roundCost(model.modelRatio * model.cacheCreationRatio * 2 * multiplier),
+  };
+}
+
+function costFromRate(quantity: number, ratePerMillion: number | null): number {
+  if (ratePerMillion == null) return 0;
+  return roundCost((quantity / 1_000_000) * ratePerMillion);
 }
 
 function buildPricingOverrideModel(
@@ -381,23 +391,20 @@ export function calculateModelUsageBreakdown(
     promptTokensIncludeCache?: boolean | null;
   },
   groupRatio: Record<string, number>,
-): ProxyBillingDetails | null {
+): ProxyBillingBreakdown | null {
   if (model.quotaType === 1) {
     return null;
   }
 
   const multiplier = resolveGroupMultiplier(model, groupRatio);
   const normalizedUsage = normalizeUsageBreakdownInput(usage);
-  const cacheRatio = model.cacheRatio ?? 1;
-  const cacheCreationRatio = model.cacheCreationRatio ?? 1;
-  const inputPerMillion = roundCost(model.modelRatio * 2 * multiplier);
-  const outputPerMillion = roundCost(model.modelRatio * model.completionRatio * 2 * multiplier);
-  const cacheReadPerMillion = roundCost(model.modelRatio * cacheRatio * 2 * multiplier);
-  const cacheCreationPerMillion = roundCost(model.modelRatio * cacheCreationRatio * 2 * multiplier);
-  const inputCost = roundCost((normalizedUsage.billablePromptTokens / 1_000_000) * inputPerMillion);
-  const outputCost = roundCost((normalizedUsage.completionTokens / 1_000_000) * outputPerMillion);
-  const cacheReadCost = roundCost((normalizedUsage.cacheReadTokens / 1_000_000) * cacheReadPerMillion);
-  const cacheCreationCost = roundCost((normalizedUsage.cacheCreationTokens / 1_000_000) * cacheCreationPerMillion);
+  const cacheRatio = model.cacheRatio ?? 0;
+  const cacheCreationRatio = model.cacheCreationRatio ?? 0;
+  const rates = resolveTokenRateCard(model, multiplier);
+  const inputCost = costFromRate(normalizedUsage.billablePromptTokens, rates.inputPerMillion);
+  const outputCost = costFromRate(normalizedUsage.completionTokens, rates.outputPerMillion);
+  const cacheReadCost = costFromRate(normalizedUsage.cacheReadTokens, rates.cacheReadPerMillion);
+  const cacheCreationCost = costFromRate(normalizedUsage.cacheCreationTokens, rates.cacheCreationPerMillion);
   const totalCost = roundCost(inputCost + outputCost + cacheReadCost + cacheCreationCost);
 
   return {
@@ -411,10 +418,10 @@ export function calculateModelUsageBreakdown(
       groupRatio: multiplier,
     },
     breakdown: {
-      inputPerMillion,
-      outputPerMillion,
-      cacheReadPerMillion,
-      cacheCreationPerMillion,
+      inputPerMillion: rates.inputPerMillion,
+      outputPerMillion: rates.outputPerMillion,
+      cacheReadPerMillion: rates.cacheReadPerMillion,
+      cacheCreationPerMillion: rates.cacheCreationPerMillion,
       inputCost,
       outputCost,
       cacheReadCost,
@@ -456,6 +463,7 @@ async function evaluateEffectiveEndpointCost(
     promptTokensIncludeCache?: boolean | null;
   },
 ) {
+  const normalizedUsage = normalizeUsageBreakdownInput(usage);
   return await resolveEndpointPricing({
     supply: {
       siteId: input.site.id,
@@ -466,13 +474,14 @@ async function evaluateEffectiveEndpointCost(
       modelName: input.modelName,
     },
     usage: {
-      inputTokens: usage.promptTokens,
-      outputTokens: usage.completionTokens,
-      totalTokens: usage.totalTokens,
-      cacheReadTokens: usage.cacheReadTokens ?? 0,
-      cacheWriteTokens: usage.cacheCreationTokens ?? 0,
+      inputTokens: normalizedUsage.billablePromptTokens,
+      outputTokens: normalizedUsage.completionTokens,
+      totalTokens: normalizedUsage.totalTokens,
+      cacheReadTokens: normalizedUsage.cacheReadTokens,
+      cacheWriteTokens: normalizedUsage.cacheCreationTokens,
       requestCount: 1,
     },
+    providerCatalogMode: 'refresh',
   });
 }
 
@@ -491,19 +500,24 @@ function pricingEvaluationToProxyBillingDetails(
   const evaluation = resolved.evaluation as PricingEvaluation;
   const componentCost = (kind: string) => evaluation.components
     .filter((component) => component.kind === kind)
-    .reduce((sum, component) => sum + component.costUsd, 0);
+    .reduce((sum, component) => sum + component.cost, 0);
   const componentUnitPrice = (kind: string) => {
     const component = evaluation.components.find((item) => item.kind === kind);
     if (!component) return null;
-    return roundCost(component.unitPriceUsd);
+    return roundCost(component.unitPrice);
   };
 
   return {
-    source: resolved.source === 'provider_catalog' ? 'upstream_catalog' : 'upstream_cost_pricing',
-    upstreamCostPricingId: typeof resolved.sourceId === 'number' ? resolved.sourceId : undefined,
-    upstreamCostPricingScope: resolved.matchedScope ?? undefined,
-    planFingerprint: evaluation.planFingerprint,
-    estimateLevel: evaluation.estimateLevel,
+    quote: {
+      amount: roundCost(evaluation.totalCost),
+      unit: 'currency',
+      currency: evaluation.currency,
+      source: resolved.source === 'provider_catalog' ? 'provider_catalog' : 'upstream_cost_pricing',
+      sourceId: resolved.sourceId,
+      matchedScope: resolved.matchedScope,
+      estimateLevel: evaluation.estimateLevel,
+      planFingerprint: evaluation.planFingerprint,
+    },
     diagnostics: evaluation.diagnostics,
     quotaType: 0,
     usage: normalizedUsage,
@@ -523,7 +537,7 @@ function pricingEvaluationToProxyBillingDetails(
       outputCost: roundCost(componentCost('output_tokens')),
       cacheReadCost: roundCost(componentCost('cache_read_tokens')),
       cacheCreationCost: roundCost(componentCost('cache_write_tokens')),
-      totalCost: roundCost(evaluation.totalCostUsd),
+      totalCost: roundCost(evaluation.totalCost),
     },
   };
 }
@@ -551,12 +565,13 @@ function buildModelPricingCatalogFromData(pricingData: PricingData): ModelPricin
           return acc;
         }
 
+        const rates = resolveTokenRateCard(model, multiplier);
         acc[group] = {
           quotaType: 0,
-          inputPerMillion: roundCost(model.modelRatio * 2 * multiplier),
-          outputPerMillion: roundCost(model.modelRatio * model.completionRatio * 2 * multiplier),
-          cacheReadPerMillion: roundCost(model.modelRatio * (model.cacheRatio ?? 1) * 2 * multiplier),
-          cacheCreationPerMillion: roundCost(model.modelRatio * (model.cacheCreationRatio ?? 1) * 2 * multiplier),
+          inputPerMillion: rates.inputPerMillion,
+          outputPerMillion: rates.outputPerMillion,
+          cacheReadPerMillion: rates.cacheReadPerMillion,
+          cacheCreationPerMillion: rates.cacheCreationPerMillion,
         };
         return acc;
       }, {});
@@ -592,39 +607,13 @@ export async function refreshModelPricingCatalog(input: EstimateProxyCostInput):
   return buildModelPricingCatalogFromData(pricingData);
 }
 
-export function fallbackTokenCost(totalTokens: number, platform: string): number {
-  const divisor = platform === 'veloera' ? 1_000_000 : 500_000;
-  return roundCost(toPositiveInt(totalTokens) / divisor);
+export function clearModelPricingCaches(): void {
+  pricingCache.clear();
+  routingReferenceCostCache.clear();
 }
 
-export async function estimateProxyCost(input: EstimateProxyCostInput): Promise<number> {
-  const promptTokens = toPositiveInt(input.promptTokens);
-  const completionTokens = toPositiveInt(input.completionTokens);
-  const totalTokens = toPositiveInt(input.totalTokens || (promptTokens + completionTokens));
-  const usage = {
-    promptTokens,
-    completionTokens,
-    totalTokens,
-    cacheReadTokens: input.cacheReadTokens,
-    cacheCreationTokens: input.cacheCreationTokens,
-    promptTokensIncludeCache: input.promptTokensIncludeCache,
-  };
-
-  try {
-    if (input.billingPricingOverride) {
-      const pricingOverride = buildPricingOverrideModel(input.modelName, input.billingPricingOverride);
-      return calculateModelUsageCost(pricingOverride.model, usage, pricingOverride.groupRatio);
-    }
-
-    const endpoint = await evaluateEffectiveEndpointCost(input, usage);
-    if (endpoint?.summary.totalCostUsd != null) {
-      return roundCost(endpoint.summary.totalCostUsd);
-    }
-
-    return fallbackTokenCost(totalTokens, input.site.platform);
-  } catch {
-    return fallbackTokenCost(totalTokens, input.site.platform);
-  }
+export async function estimateProxyCost(input: EstimateProxyCostInput): Promise<number | null> {
+  return (await buildProxyBillingDetails(input))?.quote.amount ?? null;
 }
 
 export async function buildProxyBillingDetails(input: EstimateProxyCostInput): Promise<ProxyBillingDetails | null> {
@@ -644,7 +633,20 @@ export async function buildProxyBillingDetails(input: EstimateProxyCostInput): P
     if (input.billingPricingOverride) {
       const pricingOverride = buildPricingOverrideModel(input.modelName, input.billingPricingOverride);
       const details = calculateModelUsageBreakdown(pricingOverride.model, usage, pricingOverride.groupRatio);
-      return details ? { ...details, source: 'billing_override' } : null;
+      if (!details) return null;
+      return {
+        ...details,
+        quote: {
+          amount: details.breakdown.totalCost,
+          unit: 'quota',
+          currency: null,
+          source: 'billing_override',
+          sourceId: null,
+          matchedScope: null,
+          estimateLevel: 'exact',
+          planFingerprint: null,
+        },
+      };
     }
 
     const endpoint = await evaluateEffectiveEndpointCost(input, usage);

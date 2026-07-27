@@ -11,11 +11,16 @@ import {
   type PricingPlan,
 } from '../pricing-core/index.js';
 import { DEFAULT_PRICING_GROUP, type UpstreamPricingCatalog, type UpstreamPricingModel } from './upstreamPricingCatalog.js';
-import { fetchUpstreamPricingCatalog } from './upstreamPricingCatalogService.js';
+import {
+  getCachedProviderPricingCatalog,
+  getProviderPricingCatalogCacheRecord,
+  refreshProviderPricingCatalog,
+} from './providerPricingCatalogCacheService.js';
 import { loadPlatformPricingConfig } from './platformPricingConfigService.js';
 
 export type UpstreamCostPricingScope = 'site_model' | 'account_model' | 'token_model' | 'token_model_group';
 export type UpstreamCostMatchedScope = UpstreamCostPricingScope | 'provider_catalog' | 'system_default';
+export type ProviderCatalogResolveMode = 'disabled' | 'cache_only' | 'refresh';
 
 export interface UpstreamCostPricingPayload {
   scope: UpstreamCostPricingScope;
@@ -51,6 +56,8 @@ export interface UpstreamCostResolveInput {
   tokenId?: number | null;
   tokenGroup?: string | null;
   modelName: string;
+  allowProviderCatalog?: boolean;
+  providerCatalogMode?: ProviderCatalogResolveMode;
 }
 
 export interface UpstreamCostResolveResult {
@@ -110,7 +117,7 @@ export function createSimpleTokenPricingPlan(input: {
   cacheReadPerMillion?: number;
   cacheWritePerMillion?: number;
   reasoningPerMillion?: number;
-  requestUsd?: number;
+  requestCost?: number;
 }): PricingPlan {
   const components: PricingPlan['components'] = [];
   const pushTokenComponent = (
@@ -137,14 +144,14 @@ export function createSimpleTokenPricingPlan(input: {
   pushTokenComponent('cache_write_tokens', 'Cache write tokens', 'cache_write_tokens', 'usage.cacheWriteTokens', input.cacheWritePerMillion);
   pushTokenComponent('reasoning_tokens', 'Reasoning tokens', 'reasoning_tokens', 'usage.reasoningTokens', input.reasoningPerMillion);
 
-  if (input.requestUsd !== undefined && Number.isFinite(input.requestUsd) && input.requestUsd >= 0) {
+  if (input.requestCost !== undefined && Number.isFinite(input.requestCost) && input.requestCost >= 0) {
     components.push({
       id: 'request',
       label: 'Request',
       role: 'charge',
       kind: 'request',
       meter: { unit: 'request', quantityPath: 'usage.requestCount', scale: 1, missingQuantity: 'zero' },
-      price: { currency: 'USD', amount: input.requestUsd, unitLabel: 'request' },
+      price: { currency: 'USD', amount: input.requestCost, unitLabel: 'request' },
     });
   }
 
@@ -352,7 +359,10 @@ export async function resolveUpstreamCostPricing(input: UpstreamCostResolveInput
     };
   }
 
-  return await resolveProviderCatalogCostPricing(input) ?? await resolveDefaultUpstreamCostPricing(input);
+  const providerCatalogPricing = input.allowProviderCatalog === false || input.providerCatalogMode === 'disabled'
+    ? null
+    : await resolveProviderCatalogCostPricing(input);
+  return providerCatalogPricing ?? await resolveDefaultUpstreamCostPricing(input);
 }
 
 export async function evaluateUpstreamCostPricing(input: UpstreamCostEvaluationInput): Promise<UpstreamCostEvaluationResult | null> {
@@ -395,12 +405,32 @@ async function resolveProviderCatalogCostPricing(
 
   const context = await loadProviderCatalogContext(input);
   if (!context) return null;
+  const catalogScope = {
+    siteId: context.site.id,
+    accountId: context.account.id > 0 ? context.account.id : null,
+  };
 
-  const catalog = await fetchUpstreamPricingCatalog({
-    site: context.site,
-    account: context.account,
-  });
-  if (!catalog) return null;
+  let catalogRecord = await getCachedProviderPricingCatalog(catalogScope);
+
+  if (!catalogRecord?.catalog) {
+    const existing = await getProviderPricingCatalogCacheRecord(catalogScope);
+    const expiresAt = Date.parse(existing?.expiresAt || '');
+    const hasFreshFailure = existing?.lastStatus === 'error'
+      && Number.isFinite(expiresAt)
+      && expiresAt > Date.now();
+    if (hasFreshFailure) return null;
+    if (input.providerCatalogMode !== 'refresh') return null;
+
+    const refreshed = await refreshProviderPricingCatalog({
+      ...catalogScope,
+      reason: 'upstream-cost-resolution',
+    });
+    catalogRecord = refreshed.status === 'success' ? refreshed.record : null;
+  }
+
+  const catalog = catalogRecord?.catalog;
+  if (!catalog || !catalogRecord) return null;
+  const resolvedCatalogRecord = catalogRecord;
 
   const normalizedModelName = normalizeUpstreamModelName(input.modelName);
   const model = findCatalogModel(catalog, normalizedModelName);
@@ -443,6 +473,11 @@ async function resolveProviderCatalogCostPricing(
       group,
       ownerBy: model.ownerBy ?? null,
       quotaType: model.quotaType,
+      cacheId: resolvedCatalogRecord.id,
+      cacheFingerprint: resolvedCatalogRecord.catalogFingerprint,
+      cacheFetchedAt: resolvedCatalogRecord.fetchedAt,
+      cacheExpiresAt: resolvedCatalogRecord.expiresAt,
+      cacheCredentialKind: resolvedCatalogRecord.credentialKind,
     },
     notes: null,
     createdAt: null,
@@ -468,7 +503,7 @@ async function resolveDefaultUpstreamCostPricing(
     cacheReadPerMillion: config.upstreamDefaultPricing.cacheReadPerMillion ?? undefined,
     cacheWritePerMillion: config.upstreamDefaultPricing.cacheWritePerMillion ?? undefined,
     reasoningPerMillion: config.upstreamDefaultPricing.reasoningPerMillion ?? undefined,
-    requestUsd: config.upstreamDefaultPricing.requestUsd ?? undefined,
+    requestCost: config.upstreamDefaultPricing.requestCost ?? undefined,
   });
   const pricing: UpstreamCostPricingRecord = {
     id: 0,
@@ -596,9 +631,9 @@ function buildProviderCatalogPricingPlan(
   multiplier: number,
 ): PricingPlan | null {
   if (model.quotaType === 1) {
-    const requestUsd = providerCatalogPerCallPrice(model, multiplier);
-    if (requestUsd == null) return null;
-    return createSimpleTokenPricingPlan({ requestUsd });
+    const requestCost = providerCatalogPerCallPrice(model, multiplier);
+    if (requestCost == null) return null;
+    return createSimpleTokenPricingPlan({ requestCost });
   }
 
   const direct = providerCatalogDirectTokenPrices(model, multiplier);
@@ -620,11 +655,11 @@ function providerCatalogDirectTokenPrices(model: UpstreamPricingModel, multiplie
     ? (price.output == null ? undefined : Number(price.output) * multiplier)
     : model.modelRatio * model.completionRatio * 2 * multiplier;
   const cacheRead = hasDirectPrice
-    ? null
-    : model.modelRatio * (model.cacheRatio ?? 1) * 2 * multiplier;
+    ? (price.cacheRead == null ? undefined : Number(price.cacheRead) * multiplier)
+    : (model.cacheRatio == null ? undefined : model.modelRatio * model.cacheRatio * 2 * multiplier);
   const cacheWrite = hasDirectPrice
-    ? null
-    : model.modelRatio * (model.cacheCreationRatio ?? 1) * 2 * multiplier;
+    ? (price.cacheWrite == null ? undefined : Number(price.cacheWrite) * multiplier)
+    : (model.cacheCreationRatio == null ? undefined : model.modelRatio * model.cacheCreationRatio * 2 * multiplier);
 
   return {
     inputPerMillion: sanitizeNonNegative(input),

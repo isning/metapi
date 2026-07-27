@@ -1,9 +1,74 @@
 import { clearAuthSession, getAuthToken } from "./authSession.js";
 
-import { tr } from './i18n.js';
-import type { InboxActionRequest, InboxItem } from '../shared/inbox.js';
-import { normalizePagedResponse } from './pagedResponse.js';
-export type { PageInfo, PagedResponse } from './pagedResponse.js';
+import { tr } from "./i18n.js";
+import type { InboxActionRequest, InboxItem } from "../shared/inbox.js";
+import type { RouteRuntimeSnapshot } from "../shared/routeRuntimeSnapshot.js";
+import type { ModelsMarketplaceResponse } from "../shared/modelsMarketplace.js";
+import type { BillingCostSummary } from "../shared/billingCost.js";
+import type { ProxyBillingDetails } from "../shared/proxyBilling.js";
+import type {
+  ModelTesterProxyDeleteResult,
+  ModelTesterProxyEnvelope,
+  ModelTesterProxyJob,
+  ModelTesterProxyJobCreated,
+  ModelTesterProxyMethod,
+  ModelTesterProxyMultipartFile,
+} from "../shared/modelTesterProxy.js";
+import type {
+  RouteGroupCandidateCatalogPage,
+  RouteGroupCandidateCreateCommand,
+  RouteGroupCandidateUpdateCommand,
+  RouteGroupCreateCommand,
+  RouteGroupUpdateCommand,
+  RouteGroupManagementFallbackStage,
+  RouteGroupManagementListItem,
+  RouteGroupSourceCatalogPage,
+} from "../shared/routeGroupManagement.js";
+import type {
+  RouteGraphFocusedWorkspace,
+  RouteGraphWorkspaceIndexFilters,
+  RouteGraphWorkspaceIndexPage,
+  RouteGraphWorkspaceRepresentation,
+  RouteGraphFocusRef,
+  RouteGraphWorkspaceConnectionEndpointRef,
+  RouteGraphWorkspaceConnectionTargetFilters,
+  RouteGraphWorkspaceConnectionTargetPage,
+  RouteGraphWorkspaceRemovalImpact,
+  RouteGraphWorkspaceResume,
+} from "../shared/routeGraphWorkspace.js";
+import type {
+  RouteGraphAuthoringCommand,
+  RouteGraphDraftReadResponse,
+  RouteGraphDraftSaveResponse,
+  RouteGraphWorkspaceConnectionCreateCommand,
+  RouteGraphWorkspaceConnectionCreateResponse,
+  RouteGraphWorkspaceConnectionDraftCommand,
+  RouteGraphWorkspaceConnectionDraftResponse,
+  RouteGraphWorkspaceMacroCreateCommand,
+  RouteGraphWorkspaceMacroCreateResponse,
+  RouteGraphWorkspaceNodeCreateCommand,
+  RouteGraphWorkspaceNodeCreateResponse,
+  RouteGraphWorkspaceNodeReservationCommand,
+  RouteGraphWorkspaceNodeReservationResponse,
+  RouteGraphWorkspaceOperationBatch,
+  RouteGraphWorkspaceOperationBatchReplayCommand,
+  RouteGraphWorkspaceOperationsCommand,
+  RouteGraphWorkspaceMutationResponse,
+  RouteGraphWorkspaceRemovalImpactCommand,
+  RouteGraphWorkspaceRemovalImpactResponse,
+  RouteGraphWorkspaceValidationResponse,
+  RouteGraphValidationResponse,
+} from "../shared/routeGraphOperations.js";
+import type {
+  DispatchPolicyDefinition,
+  DispatchPolicyRegistry,
+  DispatchPolicySimulationCommand,
+  DispatchPolicySimulationOption,
+  DispatchPolicySimulationResult,
+  DispatchPolicySimulationScopeSummary,
+} from "../shared/dispatchPolicyApi.js";
+import { normalizePagedResponse } from "./pagedResponse.js";
+export type { PageInfo, PagedResponse } from "./pagedResponse.js";
 type BufferLike = {
   from(data: ArrayBuffer): { toString(encoding: "base64"): string };
 };
@@ -14,6 +79,20 @@ const nodeBuffer = (globalThis as typeof globalThis & { Buffer?: BufferLike })
 type RequestOptions = RequestInit & {
   timeoutMs?: number;
 };
+
+const ADMIN_AUTH_FAILURE_HEADER = "x-metapi-auth-failure";
+
+export class ApiRequestError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly code: string | null,
+    readonly params: Record<string, unknown>,
+  ) {
+    super(message);
+    this.name = "ApiRequestError";
+  }
+}
 
 function requireAuthToken(): string {
   const token = getAuthToken(localStorage);
@@ -57,6 +136,31 @@ async function extractResponseErrorMessage(res: Response): Promise<string> {
     }
   } catch {}
   return message;
+}
+
+async function buildApiRequestError(res: Response): Promise<ApiRequestError> {
+  let payload: Record<string, unknown> = {};
+  let message = `HTTP ${res.status}`;
+  try {
+    const text = await res.text();
+    if (text) {
+      const parsed = JSON.parse(text) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) payload = parsed as Record<string, unknown>;
+      const nestedError = payload.error && typeof payload.error === "object" && !Array.isArray(payload.error)
+        ? payload.error as Record<string, unknown>
+        : null;
+      if (typeof payload.message === "string") message = payload.message;
+      else if (typeof payload.error === "string") message = payload.error;
+      else if (typeof nestedError?.message === "string") message = nestedError.message;
+    }
+  } catch {
+    // Keep the HTTP status when the response is not structured JSON.
+  }
+  const code = typeof payload.code === "string" ? payload.code : null;
+  const params = payload.params && typeof payload.params === "object" && !Array.isArray(payload.params)
+    ? payload.params as Record<string, unknown>
+    : {};
+  return new ApiRequestError(message, res.status, code, params);
 }
 
 function parseContentDispositionFilename(
@@ -130,7 +234,10 @@ async function fetchAuthenticatedResponse(
       signal: controller.signal,
       headers,
     });
-    if (res.status === 401 || res.status === 403) {
+    if (
+      (res.status === 401 || res.status === 403) &&
+      res.headers.get(ADMIN_AUTH_FAILURE_HEADER) === "admin"
+    ) {
       const hadToken = !!getAuthToken(localStorage);
       clearAuthSession(localStorage);
       if (
@@ -166,7 +273,7 @@ async function request<T = any>(
 ): Promise<T> {
   const res = await fetchAuthenticatedResponse(url, options);
   if (!res.ok) {
-    throw new Error(await extractResponseErrorMessage(res));
+    throw await buildApiRequestError(res);
   }
   return res.json() as Promise<T>;
 }
@@ -192,7 +299,7 @@ async function streamSse(
     throw new Error(await extractResponseErrorMessage(response));
   }
   if (!response.body) {
-    throw new Error(tr('api.responseStreamingcontent'));
+    throw new Error(tr("api.responseStreamingcontent"));
   }
 
   const decoder = new TextDecoder();
@@ -258,21 +365,8 @@ function buildQueryString(
   return serialized ? `?${serialized}` : "";
 }
 
-type TestChatRequestPayload = {
-  model: string;
-  messages: Array<{ role: string; content: string }>;
-  targetFormat?: "openai" | "claude" | "responses" | "gemini";
-  stream?: boolean;
-  forcedTargetId?: number | null;
-  temperature?: number;
-  top_p?: number;
-  max_tokens?: number;
-  frequency_penalty?: number;
-  presence_penalty?: number;
-  seed?: number;
-};
-
-export type CredentialEndpointBindingSupport = "supported" | "unsupported" | "unknown" | "blocked";
+export type CredentialEndpointBindingSupport =
+  "supported" | "unsupported" | "unknown" | "blocked";
 
 export type CredentialEndpointMatrixProfile = {
   id: string;
@@ -285,6 +379,7 @@ export type CredentialEndpointMatrixProfile = {
   requestUrl?: string | null;
   defaultHeaders?: Record<string, string> | null;
   modelCatalogSourceId?: string | null;
+  capabilityDefaults?: Record<string, unknown> | null;
   authMode: string;
   enabled: boolean;
   priority?: number | null;
@@ -333,28 +428,38 @@ export type CredentialEndpointMatrix = {
   credentials: CredentialEndpointMatrixCredential[];
 };
 
-export type ProxyTestMethod = "POST" | "GET" | "DELETE";
-export type ProxyTestRequestKind = "json" | "multipart" | "empty";
+export type ProxyTestMethod = ModelTesterProxyMethod;
+export type ProxyTestMultipartFile = ModelTesterProxyMultipartFile;
+export type ProxyTestRequestEnvelope = ModelTesterProxyEnvelope;
 
-export type ProxyTestMultipartFile = {
-  field: string;
-  name: string;
-  mimeType: string;
-  dataUrl: string;
+export type ModelRouteFlowRuntimeRequest = import('../shared/compiledRuntimeRequest.js').CompiledRouteRuntimeRequest;
+
+export type ModelRouteFlowPricingUsage = {
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  reasoningTokens?: number | null;
+  cacheReadTokens?: number | null;
+  cacheWriteTokens?: number | null;
+  totalTokens?: number | null;
+  requestCount?: number | null;
+  imageInputUnits?: number | null;
+  imageOutputUnits?: number | null;
+  audioInputSeconds?: number | null;
+  audioOutputSeconds?: number | null;
+  videoInputSeconds?: number | null;
+  storageMegabyteMonths?: number | null;
+  custom?: Record<string, number | null | undefined>;
 };
 
-export type ProxyTestRequestEnvelope = {
-  method: ProxyTestMethod;
-  path: string;
-  requestKind: ProxyTestRequestKind;
-  stream?: boolean;
-  jobMode?: boolean;
-  rawMode?: boolean;
-  forcedTargetId?: number | null;
-  jsonBody?: unknown;
-  rawJsonText?: string;
-  multipartFields?: Record<string, string>;
-  multipartFiles?: ProxyTestMultipartFile[];
+export type ModelRouteFlowDiagnostics = {
+  requestedModel: string;
+  actualModel: string | null;
+  matched: boolean;
+  entryId?: string | null;
+  selectedEndpointId?: string | null;
+  selectedAccountId?: number | null;
+  diagnostics: Array<{ level: "info" | "warn" | "error"; message: string }>;
+  projectedAt: string;
 };
 
 const DEFAULT_PROXY_TEST_TIMEOUT_MS = 30_000;
@@ -379,6 +484,10 @@ function proxyTestRequest(data: ProxyTestRequestEnvelope) {
   });
 }
 
+function routeGroupResourcePath(routeGroupId: string): string {
+  return `/api/route-groups/${encodeURIComponent(routeGroupId)}`;
+}
+
 async function proxyTestStreamRequest(
   data: ProxyTestRequestEnvelope,
   signal?: AbortSignal,
@@ -391,15 +500,7 @@ async function proxyTestStreamRequest(
   });
 }
 
-export type ProxyTestJobResponse = {
-  jobId: string;
-  status: "pending" | "succeeded" | "failed" | "cancelled";
-  result?: unknown;
-  error?: unknown;
-  createdAt?: string;
-  updatedAt?: string;
-  expiresAt?: string;
-};
+export type ProxyTestJobResponse = ModelTesterProxyJob;
 
 export type SystemProxyTestRequest = {
   proxyUrl?: string;
@@ -416,13 +517,13 @@ export type SystemProxyTestResponse = {
   latencyMs: number;
 };
 
-export type RuntimeRoutingWeightsPayload = {
-  baseWeightFactor?: number;
-  valueScoreFactor?: number;
-  costWeight?: number;
-  balanceWeight?: number;
-  usageWeight?: number;
-};
+export type DispatchPolicyDefinitionPayload = DispatchPolicyDefinition;
+
+export type { RouteEndpointCatalogItem as RouteGraphEndpointCatalogItemPayload } from '../shared/routeEndpointCatalog.js';
+
+export type DispatchPolicySimulationOptionPayload = DispatchPolicySimulationOption;
+
+export type DispatchPolicyRegistryPayload = DispatchPolicyRegistry;
 
 export type RuntimeSettingsPayload = {
   proxyToken?: string;
@@ -437,9 +538,9 @@ export type RuntimeSettingsPayload = {
   proxyDebugCaptureHeaders?: boolean;
   proxyDebugCaptureBodies?: boolean;
   proxyDebugCaptureStreamChunks?: boolean;
-  proxyDebugTargetSessionId?: string;
-  proxyDebugTargetClientKind?: string;
-  proxyDebugTargetModel?: string;
+  proxyDebugFilterSessionId?: string;
+  proxyDebugFilterClientKind?: string;
+  proxyDebugFilterModel?: string;
   proxyDebugRetentionHours?: number;
   proxyDebugMaxBodyBytes?: number;
   checkinCron?: string;
@@ -473,8 +574,9 @@ export type RuntimeSettingsPayload = {
   notifyCooldownSec?: number;
   adminIpAllowlist?: string[] | string;
   proxyFirstByteTimeoutSec?: number;
-  tokenRouterFailureCooldownMaxSec?: number;
-  routingWeights?: RuntimeRoutingWeightsPayload;
+  routeFailureCooldownMaxSec?: number;
+  routeRuntimeCacheTtlMs?: number;
+  dispatchPolicyRegistry?: DispatchPolicyRegistryPayload;
   proxyErrorKeywords?: string[] | string;
   proxyEmptyContentFailEnabled?: boolean;
   globalBlockedBrands?: string[];
@@ -485,51 +587,12 @@ export type ProxyLogStatusFilter = "all" | "success" | "failed";
 export type ProxyLogClientConfidence = "exact" | "heuristic" | "unknown" | null;
 export type ProxyLogUsageSource = "upstream" | "self-log" | "unknown" | null;
 
-export type ProxyLogBillingDetails = {
-  source?: "upstream_catalog" | "billing_override" | "upstream_cost_pricing";
-  upstreamCostPricingId?: number;
-  upstreamCostPricingScope?: string;
-  planFingerprint?: string;
-  estimateLevel?: string;
-  diagnostics?: unknown[];
-  quotaType: number;
-  usage: {
-    promptTokens: number;
-    completionTokens: number;
-    totalTokens: number;
-    cacheReadTokens: number;
-    cacheCreationTokens: number;
-    billablePromptTokens: number;
-    promptTokensIncludeCache: boolean | null;
-  };
-  pricing: {
-    modelRatio: number;
-    completionRatio: number;
-    cacheRatio: number;
-    cacheCreationRatio: number;
-    groupRatio: number;
-  };
-  breakdown: {
-    inputPerMillion: number;
-    outputPerMillion: number;
-    cacheReadPerMillion: number;
-    cacheCreationPerMillion: number;
-    inputCost: number;
-    outputCost: number;
-    cacheReadCost: number;
-    cacheCreationCost: number;
-    totalCost: number;
-  };
-} | null;
+export type ProxyLogBillingDetails = ProxyBillingDetails | null;
 
 export type UpstreamCostPricingScope =
-  | "site_model"
-  | "account_model"
-  | "token_model"
-  | "token_model_group";
+  "site_model" | "account_model" | "token_model" | "token_model_group";
 export type UpstreamCostMatchedScope =
-  | UpstreamCostPricingScope
-  | "provider_catalog";
+  UpstreamCostPricingScope | "provider_catalog";
 
 export type UpstreamCostPricingRecord = {
   id: number;
@@ -567,7 +630,7 @@ export type UpstreamCostPricingPayload = {
     cacheReadPerMillion?: number;
     cacheWritePerMillion?: number;
     reasoningPerMillion?: number;
-    requestUsd?: number;
+    requestCost?: number;
   };
   sourceType?: "user" | "official" | "provider_catalog" | "system_default";
   metadata?: Record<string, unknown> | null;
@@ -601,25 +664,26 @@ export type PricingReferenceCatalogEntry = {
   notes: string | null;
 };
 
-export type PricingReferenceCatalogEntryInput = Partial<PricingReferenceCatalogEntry> & {
-  modelName: string;
-  model?: string;
-  modelKey?: string;
-  simpleTokenPricing?: {
+export type PricingReferenceCatalogEntryInput =
+  Partial<PricingReferenceCatalogEntry> & {
+    modelName: string;
+    model?: string;
+    modelKey?: string;
+    simpleTokenPricing?: {
+      inputPerMillion?: number;
+      outputPerMillion?: number;
+      cacheReadPerMillion?: number;
+      cacheWritePerMillion?: number;
+      reasoningPerMillion?: number;
+      requestCost?: number;
+    };
     inputPerMillion?: number;
     outputPerMillion?: number;
     cacheReadPerMillion?: number;
     cacheWritePerMillion?: number;
     reasoningPerMillion?: number;
-    requestUsd?: number;
+    requestCost?: number;
   };
-  inputPerMillion?: number;
-  outputPerMillion?: number;
-  cacheReadPerMillion?: number;
-  cacheWritePerMillion?: number;
-  reasoningPerMillion?: number;
-  requestUsd?: number;
-};
 
 export type PricingReferenceCatalog = {
   schemaVersion: 1;
@@ -627,8 +691,13 @@ export type PricingReferenceCatalog = {
   updatedAt: string | null;
 };
 
-export type PricingReferenceCatalogPayload = Omit<PricingReferenceCatalog, "entries"> & {
-  entries: Array<PricingReferenceCatalogEntry | PricingReferenceCatalogEntryInput>;
+export type PricingReferenceCatalogPayload = Omit<
+  PricingReferenceCatalog,
+  "entries"
+> & {
+  entries: Array<
+    PricingReferenceCatalogEntry | PricingReferenceCatalogEntryInput
+  >;
 };
 
 export type PricingReferenceCatalogImportResult = {
@@ -653,21 +722,138 @@ export type PlatformPricingConfig = {
     cacheReadPerMillion: number | null;
     cacheWritePerMillion: number | null;
     reasoningPerMillion: number | null;
-    requestUsd: number | null;
+    requestCost: number | null;
+  };
+  providerCatalogCache: {
+    ttlHours: number;
   };
   driftCheck: {
     enabled: boolean;
     windowHours: number;
     minSampleSize: number;
     relativeTolerance: number;
-    absoluteToleranceUsd: number;
+    absoluteToleranceCost: number;
     notifyOnWarning: boolean;
   };
 };
 
+export type RuntimeObservabilityHealth = {
+  status: "healthy" | "degraded" | "unavailable" | "unknown";
+  successRate: number | null;
+  totalCalls: number;
+  successCalls: number;
+  failedCalls: number;
+  avgLatencyMs: number | null;
+  latencySamples: number;
+  avgFirstTokenLatencyMs: number | null;
+  firstTokenLatencySamples: number;
+  avgOutputTokensPerSecond: number | null;
+  outputTokens: number;
+  outputTokenDurationMs: number;
+  outputTokenSamples: number;
+  source: string;
+  window: {
+    range: "5m" | "15m" | "1h" | "6h" | "24h" | "7d" | "30d";
+    windowDays: number;
+    fromLocalDay: string;
+    toLocalDay: string;
+  };
+};
+
+export type RuntimeObservabilityBucket = {
+  bucketStart: string;
+  bucketEnd: string;
+  entry: RuntimeObservabilityHealth;
+  endpoints: Array<{ endpointId: string; health: RuntimeObservabilityHealth }>;
+  executionAttempts: Array<{
+    executionAttemptId: string;
+    health: RuntimeObservabilityHealth;
+  }>;
+};
+
+export type ModelRuntimeObservability = {
+  requestedModel: string;
+  matched: boolean;
+  entry: {
+    entryId: string;
+    displayName: string;
+    requestedModel: string;
+    actualModel: string | null;
+  } | null;
+  health: RuntimeObservabilityHealth;
+  capabilitySummary: {
+    supportedEndpointTypes: string[];
+    inputModalities: string[];
+    outputModalities: string[];
+    capabilities: string[];
+    contextLength: number | null;
+    maxOutputTokens: number | null;
+    source: string;
+    partial: boolean;
+  };
+  executionAttempts: Array<{
+    executionAttemptId: string;
+    alternativeId: string | null;
+    endpointId: string | null;
+    selected: boolean;
+    enabled: boolean;
+    actualModel: string | null;
+    target: {
+      executionTargetId: number | null;
+      siteId: number | null;
+      siteName: string | null;
+      accountId: number | null;
+      accountLabel: string | null;
+      tokenId: number | null;
+      tokenLabel: string | null;
+    } | null;
+    health: RuntimeObservabilityHealth;
+    apiFallbackAttemptIds: string[];
+  }>;
+  endpoints: Array<{
+    endpointId: string;
+    label: string;
+    actualModel: string | null;
+    endpointType: string | null;
+    site: { id: number; name: string | null } | null;
+    account: { id: number; label: string | null } | null;
+    health: RuntimeObservabilityHealth;
+    capabilitySummary: {
+      supportedEndpointTypes: string[];
+      inputModalities: string[];
+      outputModalities: string[];
+      capabilities: string[];
+      contextLength: number | null;
+      maxOutputTokens: number | null;
+      source: string;
+      partial: boolean;
+    };
+  }>;
+  history: {
+    range: "5m" | "15m" | "1h" | "6h" | "24h" | "7d" | "30d";
+    buckets: RuntimeObservabilityBucket[];
+    granularity: "minute" | "hour" | "day";
+    emptyReason: "no_logs" | "projection_pending" | "unmatched" | null;
+  };
+  diagnostics: Array<{
+    level: "info" | "warn" | "error";
+    code: string;
+    messageKey: string;
+    params?: Record<string, unknown>;
+  }>;
+};
+
+export type ProviderPricingCatalogRefreshTask = {
+  success: true;
+  queued: boolean;
+  reused: boolean;
+  jobId: string;
+};
+
 export type WalletAcquisitionScope = "site" | "account" | "token";
 export type WalletAcquisitionInheritance = "inherit" | "override" | "disabled";
-export type DailyEarnedBalanceSource = "manual" | "observed_checkin" | "mixed" | "none";
+export type DailyEarnedBalanceSource =
+  "manual" | "observed_checkin" | "mixed" | "none";
 export type WalletAcquisitionConfidence = "exact" | "estimated" | "incomplete";
 
 export type WalletAcquisitionProfile = {
@@ -727,17 +913,19 @@ export type FxRateSnapshotPayload = {
   notes?: string | null;
 };
 
-export type ProxyLogListItem = {
+export type ProxyExecutionAttemptLog = {
   id: number;
   createdAt: string;
-  modelRequested: string;
-  modelActual: string;
+  modelRequested?: string | null;
+  modelActual?: string | null;
   status: string;
-  latencyMs: number;
+  httpStatus?: number | null;
+  latencyMs?: number | null;
   isStream?: boolean | null;
   firstByteLatencyMs?: number | null;
+  firstTokenLatencyMs?: number | null;
   totalTokens: number | null;
-  retryCount: number;
+  retryCount?: number | null;
   accountId?: number | null;
   siteId?: number | null;
   username?: string | null;
@@ -756,70 +944,72 @@ export type ProxyLogListItem = {
   promptTokens?: number | null;
   completionTokens?: number | null;
   estimatedCost?: number | null;
+  executionAttemptId?: string | null;
+  routeEntrypointId?: string | null;
+  runtimeEndpointId?: string | null;
+  runtimeArtifactId?: string | null;
+  executionTargetId?: number | null;
+  billingDetails?: ProxyLogBillingDetails;
 };
 
-export type ProxyLogDetail = ProxyLogListItem & {
-  routeId?: number | null;
-  targetId?: number | null;
-  httpStatus?: number | null;
+export type ProxyRequestLog = {
+  id: string;
+  downstreamPath: string;
+  requestedModel: string | null;
+  routeEntrypointId: string | null;
+  runtimeEndpointId: string | null;
+  finalExecutionAttemptId: string | null;
+  runtimeBundleHash: string | null;
+  status: string;
+  httpStatus: number | null;
+  isStream: boolean | null;
+  latencyMs: number | null;
+  firstTokenLatencyMs: number | null;
+  promptTokens: number | null;
+  completionTokens: number | null;
+  totalTokens: number | null;
+  estimatedCost: number | null;
+  errorMessage: string | null;
+  startedAt: string;
+  completedAt: string | null;
+  attempts: ProxyExecutionAttemptLog[];
+};
+
+export type ProxyLogRuntimeUsageScope = {
+  scope: "entry" | "endpoint" | "executionAttempt" | "model";
+  identity: string;
+  totalCalls: number;
+  successCalls: number;
+  failedCalls: number;
+  successRate: number | null;
+  totalTokens: number;
+  cost: BillingCostSummary;
+  averageLatencyMs: number | null;
+  latencyCount: number;
+};
+
+export type ProxyLogRuntimeUsageSummary = {
+  windowDays: number;
+  fromLocalDay: string;
+  toLocalDay: string;
+  entry: ProxyLogRuntimeUsageScope | null;
+  endpoint: ProxyLogRuntimeUsageScope | null;
+  executionAttempt: ProxyLogRuntimeUsageScope | null;
+  model: ProxyLogRuntimeUsageScope | null;
+  diagnostics: Record<string, never>;
+};
+
+export type ProxyRequestLogDetail = ProxyRequestLog & {
   billingDetails?: ProxyLogBillingDetails;
-  routeDecision?: {
-    source?: "snapshot" | "current";
-    capturedAt?: string | null;
-    requestedModel?: string | null;
-    actualModel?: string | null;
-    route: {
-      id: number | null;
-      displayName: string | null;
-      displayIcon: string | null;
-      routingStrategy: string | null;
-      enabled: boolean | null;
-      decisionRefreshedAt: string | null;
-      snapshotSummary: {
-        matchKind: string | null;
-        requestedModelPattern: string | null;
-        backendKind: string | null;
-        sourceRouteIds: number[];
-      } | null;
-    } | null;
-    target: {
-      id: number | null;
-      routeEndpointId: string | null;
-      accountId: number | null;
-      tokenId: number | null;
-      oauthRouteUnitId: number | null;
-      sourceModel: string | null;
-      priority: number | null;
-      weight: number | null;
-      enabled: boolean | null;
-      manualOverride: boolean | null;
-      successCount: number | null;
-      failCount: number | null;
-      totalLatencyMs: number | null;
-      totalCost: number | null;
-      lastUsedAt: string | null;
-      lastSelectedAt: string | null;
-      lastFailAt: string | null;
-      consecutiveFailCount: number | null;
-      cooldownLevel: number | null;
-      cooldownUntil: string | null;
-    } | null;
-    token: {
-      id: number | null;
-      name: string | null;
-      tokenGroup: string | null;
-      enabled: boolean | null;
-      valueStatus: string | null;
-      source: string | null;
-    } | null;
-  };
+  runtimeUsage?: ProxyLogRuntimeUsageSummary | null;
+  decisionSnapshot?: RouteRuntimeSnapshot;
 };
 
 export type ProxyLogsSummary = {
   totalCount: number;
   successCount: number;
   failedCount: number;
-  totalCost: number;
+  cost: BillingCostSummary;
   totalTokensAll: number;
 };
 
@@ -840,7 +1030,7 @@ export type ProxyLogClientOption = {
 };
 
 export type ProxyLogsResponse = {
-  items: ProxyLogListItem[];
+  items: ProxyRequestLog[];
   total: number;
   page: number;
   pageSize: number;
@@ -855,7 +1045,7 @@ export type ProxyDebugTraceListItem = {
   clientKind?: string | null;
   sessionId?: string | null;
   requestedModel?: string | null;
-  selectedTargetId?: number | null;
+  selectedExecutionAttemptId?: string | null;
   finalStatus?: string | null;
   finalHttpStatus?: number | null;
   finalUpstreamPath?: string | null;
@@ -872,37 +1062,20 @@ export type ProxyDebugTraceDetail = {
     traceHint?: string | null;
     requestedModel?: string | null;
     stickySessionKey?: string | null;
-    stickyHitTargetId?: number | null;
-    selectedTargetId?: number | null;
-    selectedRouteId?: number | null;
+    stickyHitExecutionAttemptId?: string | null;
+    selectedExecutionAttemptId?: string | null;
+    routeEntrypointId?: string | null;
+    runtimeEndpointId?: string | null;
     selectedAccountId?: number | null;
     selectedSiteId?: number | null;
     selectedSitePlatform?: string | null;
-    selectedRouteDisplay?: {
-      id: number;
-      label?: string | null;
-      routingStrategy?: string | null;
-    } | null;
-    selectedTargetDisplay?: {
-      id: number;
-      label?: string | null;
-      sourceModel?: string | null;
-      routeEndpointId?: string | null;
-      tokenGroup?: string | null;
-      priority?: number | null;
-      weight?: number | null;
-      siteName?: string | null;
-      sitePlatform?: string | null;
-    } | null;
     selectedSiteDisplay?: {
       id: number;
       label?: string | null;
       platform?: string | null;
       url?: string | null;
     } | null;
-    endpointCandidatesJson?: string | null;
-    endpointRuntimeStateJson?: string | null;
-    decisionSummaryJson?: string | null;
+    runtimeTraceJson?: string | null;
     requestHeadersJson?: string | null;
     requestBodyJson?: string | null;
     finalStatus?: string | null;
@@ -1095,7 +1268,7 @@ export type DownstreamApiKeyTrendBucket = {
   failedRequests: number;
   successRate: number | null;
   totalTokens: number;
-  totalCost: number;
+  cost: import('../shared/billingCost.js').BaseCostSummary;
 };
 
 export type DownstreamApiKeyTrendResponse = {
@@ -1111,6 +1284,21 @@ export type DownstreamApiKeyTrendResponse = {
 };
 
 export const api = {
+  validateDispatchPolicy: (policy: DispatchPolicyDefinitionPayload) =>
+    request("/api/dispatch-policies/validate", {
+      method: "POST",
+      body: JSON.stringify({ policy }),
+    }) as Promise<{ success: boolean; errors: string[] }>,
+  simulateDispatchPolicy: (input: DispatchPolicySimulationCommand) =>
+    request("/api/dispatch-policies/simulate", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }) as Promise<{
+      success: boolean;
+      scopes?: DispatchPolicySimulationScopeSummary[];
+      selectorId?: string;
+      simulation?: DispatchPolicySimulationResult;
+    }>,
   // Sites
   getSites: () => request("/api/sites"),
   addSite: (data: any) =>
@@ -1143,14 +1331,18 @@ export const api = {
       requestUrl?: string | null;
       defaultHeaders?: Record<string, string> | null;
       modelCatalogSourceId?: number | null;
+      capabilityDefaults?: Record<string, unknown> | null;
       enabled?: boolean;
       priority?: number;
     }>,
   ) =>
-    request<CredentialEndpointMatrix>(`/api/sites/${siteId}/endpoint-profiles`, {
-      method: "PUT",
-      body: JSON.stringify({ profiles }),
-    }),
+    request<CredentialEndpointMatrix>(
+      `/api/sites/${siteId}/endpoint-profiles`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ profiles }),
+      },
+    ),
   updateSiteEndpointBindings: (
     siteId: number,
     credentialKey: string,
@@ -1170,16 +1362,25 @@ export const api = {
     ),
   getSiteAvailableModels: (siteId: number) =>
     request(`/api/sites/${siteId}/available-models`),
-  probeSiteNow: (siteId: number, options?: { scope?: 'single' | 'all'; modelName?: string; latencyThresholdMs?: number }) =>
+  probeSiteNow: (
+    siteId: number,
+    options?: {
+      scope?: "single" | "all";
+      modelName?: string;
+      latencyThresholdMs?: number;
+    },
+  ) =>
     request(`/api/sites/${siteId}/probe-now`, {
-      method: 'POST',
+      method: "POST",
       body: JSON.stringify(options || {}),
-      timeoutMs: options?.scope === 'all' ? 120_000 : 30_000,
+      timeoutMs: options?.scope === "all" ? 120_000 : 30_000,
     }),
 
   // Accounts
   getAccounts: async (params?: { includeOauth?: boolean }) => {
-    const result = await request<any>(`/api/accounts${buildQueryString(params)}`);
+    const result = await request<any>(
+      `/api/accounts${buildQueryString(params)}`,
+    );
     return Array.isArray(result?.accounts) ? result.accounts : result;
   },
   getAccountsSnapshot: (options?: { refresh?: boolean }) =>
@@ -1302,20 +1503,139 @@ export const api = {
     }),
 
   // Routes
-  getRouteGraphActive: (options?: { include?: "summary" | "source" | "compiled" | "full" }) => {
-    const include = options?.include && options.include !== "summary"
-      ? `?include=${encodeURIComponent(options.include)}`
-      : "";
+  getRouteGraphActive: (options?: {
+    include?: "summary" | "source" | "compiled" | "full";
+  }) => {
+    const include =
+      options?.include && options.include !== "summary"
+        ? `?include=${encodeURIComponent(options.include)}`
+        : "";
     return request(`/api/route-graph/active${include}`);
   },
-  getRouteGraphDraft: () => request("/api/route-graph/draft"),
-  validateRouteGraph: (graph: any) =>
-    request("/api/route-graph/validate", {
+  getRouteGraphDraft: (transport: Pick<RequestOptions, "signal"> = {}) =>
+    request<RouteGraphDraftReadResponse>("/api/route-graph/draft", transport),
+  getRouteGraphWorkspaceIndex: (
+    options: RouteGraphWorkspaceIndexFilters = {},
+    transport: Pick<RequestOptions, "signal"> = {},
+  ) =>
+    request<RouteGraphWorkspaceIndexPage>(
+      `/api/route-graph/workspace-index${buildQueryString({
+        cursor: options.cursor,
+        limit: options.limit,
+        q: options.query,
+        elementKind: options.elementKind,
+        ownership: options.ownership,
+        diagnosticState: options.diagnosticState,
+      })}`,
+      transport,
+    ),
+  getRouteGraphWorkspaceResume: () => request<RouteGraphWorkspaceResume>('/api/route-graph/workspace/resume'),
+  getRouteGraphFocusedWorkspace: (
+    options: {
+      focus: RouteGraphFocusRef;
+      representation?: RouteGraphWorkspaceRepresentation;
+      windowToken?: string;
+    },
+    transport: Pick<RequestOptions, "signal"> = {},
+  ) =>
+    request<RouteGraphFocusedWorkspace>(
+      `/api/route-graph/workspace${buildQueryString({
+        focusKind: options.focus.kind,
+        focusId: options.focus.id,
+        representation: options.representation || "semantic",
+        windowToken: options.windowToken,
+      })}`,
+      transport,
+    ),
+  getRouteGraphWorkspaceConnectionTargets: (
+    options: RouteGraphWorkspaceConnectionTargetFilters,
+    transport: Pick<RequestOptions, "signal"> = {},
+  ) =>
+    request<RouteGraphWorkspaceConnectionTargetPage>(
+      `/api/route-graph/workspace/connection-targets${buildQueryString({
+        elementKind: options.source.element.kind,
+        elementId: options.source.element.id,
+        portId: options.source.portId,
+        cursor: options.cursor,
+        limit: options.limit,
+        q: options.query,
+        replacingEdgeId: options.replacingEdgeId,
+      })}`,
+      transport,
+    ),
+  queryRouteGraphWorkspaceConnectionTargets: (
+    options: RouteGraphWorkspaceConnectionTargetFilters & { revision: string; operations: RouteGraphWorkspaceOperationsCommand['operations'] },
+    transport: Pick<RequestOptions, "signal"> = {},
+  ) => request<RouteGraphWorkspaceConnectionTargetPage>(
+    `/api/route-graph/workspace/connection-targets/query${buildQueryString({ cursor: options.cursor, limit: options.limit, q: options.query })}`,
+    {
+      ...transport,
+      method: "POST",
+      body: JSON.stringify({ revision: options.revision, operations: options.operations, source: options.source, replacingEdgeId: options.replacingEdgeId }),
+    },
+  ),
+  createRouteGraphWorkspaceConnection: (payload: RouteGraphWorkspaceConnectionCreateCommand) =>
+    request<RouteGraphWorkspaceConnectionCreateResponse>("/api/route-graph/workspace/connections", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  draftRouteGraphWorkspaceConnection: (payload: RouteGraphWorkspaceConnectionDraftCommand) =>
+    request<RouteGraphWorkspaceConnectionDraftResponse>("/api/route-graph/workspace/connections/draft", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  getRouteGraphWorkspaceRemovalImpact: (payload: RouteGraphWorkspaceRemovalImpactCommand) =>
+    request<RouteGraphWorkspaceRemovalImpactResponse>(
+      "/api/route-graph/workspace/removal-impact",
+      {
+        method: "POST",
+        body: JSON.stringify(payload),
+      },
+    ),
+  applyRouteGraphWorkspaceOperations: (payload: RouteGraphWorkspaceOperationsCommand) =>
+    request<RouteGraphWorkspaceMutationResponse>("/api/route-graph/workspace/operations", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  getRouteGraphWorkspaceOperationBatches: (options: { limit?: number } = {}) =>
+    request<RouteGraphWorkspaceOperationBatch[]>(
+      `/api/route-graph/workspace/operation-batches${buildQueryString(options)}`,
+    ),
+  createRouteGraphWorkspaceNode: (payload: RouteGraphWorkspaceNodeCreateCommand) =>
+    request<RouteGraphWorkspaceNodeCreateResponse>("/api/route-graph/workspace/nodes", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  reserveRouteGraphWorkspaceNode: (payload: RouteGraphWorkspaceNodeReservationCommand) =>
+    request<RouteGraphWorkspaceNodeReservationResponse>("/api/route-graph/workspace/nodes/reserve", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  createRouteGraphWorkspaceMacro: (payload: RouteGraphWorkspaceMacroCreateCommand) =>
+    request<RouteGraphWorkspaceMacroCreateResponse>("/api/route-graph/workspace/macros", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  replayRouteGraphWorkspaceOperationBatch: (
+    id: number,
+    payload: RouteGraphWorkspaceOperationBatchReplayCommand,
+  ) =>
+    request<RouteGraphWorkspaceMutationResponse>(`/api/route-graph/workspace/operation-batches/${id}/replay`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  validateRouteGraphWorkspace: (payload: RouteGraphWorkspaceOperationsCommand) =>
+    request<RouteGraphWorkspaceValidationResponse>("/api/route-graph/workspace/validate", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  validateRouteGraph: (graph: RouteGraphAuthoringCommand) =>
+    request<RouteGraphValidationResponse>("/api/route-graph/validate", {
       method: "POST",
       body: JSON.stringify(graph),
     }),
-  saveRouteGraphDraft: (graph: any) =>
-    request("/api/route-graph/draft", {
+  saveRouteGraphDraft: (graph: RouteGraphAuthoringCommand) =>
+    request<RouteGraphDraftSaveResponse>("/api/route-graph/draft", {
       method: "PUT",
       body: JSON.stringify(graph),
     }),
@@ -1325,12 +1645,7 @@ export const api = {
     request("/api/route-graph/draft/rebase", { method: "POST" }),
   discardRouteGraphDraft: () =>
     request("/api/route-graph/draft", { method: "DELETE" }),
-  compileRouteGraph: (graph: any) =>
-    request("/api/route-graph/compile", {
-      method: "POST",
-      body: JSON.stringify(graph),
-    }),
-  getRouteSummaryPage: <T = any>(options: {
+  getRouteGroupPage: (options: {
     page: number;
     pageSize: number;
     q?: string;
@@ -1339,142 +1654,218 @@ export const api = {
     brand?: string | null;
     site?: string | null;
     endpointType?: string | null;
-    includeZeroTarget?: boolean;
     enabled?: "all" | "enabled" | "disabled";
-    sortBy?: "targetCount" | "name";
+    sortBy?: "candidateCount" | "name";
     sortDir?: "asc" | "desc";
   }) =>
-    request(`/api/routes/summary${buildQueryString({
-      paged: 1,
-      page: options.page,
-      pageSize: options.pageSize,
-      q: options.q,
-      tab: options.tab,
-      group: options.group,
-      brand: options.brand,
-      site: options.site,
-      endpointType: options.endpointType,
-      ...(options.includeZeroTarget ? { includeZeroTarget: 1 } : {}),
-      enabled: options.enabled,
-      sortBy: options.sortBy,
-      sortDir: options.sortDir,
-    })}`).then((response) => normalizePagedResponse<T>(response)),
-  getRouteTargets: (routeId: number) =>
-    request(`/api/routes/${routeId}/targets`),
-  batchAddTargets: (
-    routeId: number,
-    targets: Array<{
-      accountId: number;
-      tokenId?: number;
-      sourceModel?: string;
-    }>,
+    request(
+      `/api/route-groups${buildQueryString({
+        paged: 1,
+        page: options.page,
+        pageSize: options.pageSize,
+        q: options.q,
+        tab: options.tab,
+        group: options.group,
+        brand: options.brand,
+        site: options.site,
+        endpointType: options.endpointType,
+        enabled: options.enabled,
+        sortBy: options.sortBy,
+        sortDir: options.sortDir,
+      })}`,
+    ).then((response) => {
+      const page =
+        normalizePagedResponse<RouteGroupManagementListItem>(response);
+      const candidateCount = Number(
+        (response as { summary?: { candidateCount?: unknown } } | null)?.summary
+          ?.candidateCount,
+      );
+      if (!Number.isFinite(candidateCount)) {
+        throw new Error("Invalid Route Group response: summary.candidateCount must be a finite number");
+      }
+      return {
+        ...page,
+        summary: {
+          candidateCount,
+        },
+      };
+    }),
+  getRouteGroupOverview: () => request("/api/route-groups/overview"),
+  getRouteGroupSourceCatalog: (
+    options: { q?: string; excludeGroupKey?: string; cursor?: string; limit?: number } = {},
   ) =>
-    request(`/api/routes/${routeId}/targets/batch`, {
+    request<RouteGroupSourceCatalogPage>(
+      `/api/route-groups/sources${buildQueryString(options)}`,
+    ),
+  getRouteGroupCandidateCatalog: (
+    routeGroupId: string,
+    options: { q?: string; page?: number; pageSize?: number } = {},
+  ) =>
+    request<RouteGroupCandidateCatalogPage>(
+      `${routeGroupResourcePath(routeGroupId)}/candidate-catalog${buildQueryString(options)}`,
+    ),
+  getRouteGroupFallbackStages: (routeGroupId: string) =>
+    request<{ stages: RouteGroupManagementFallbackStage[] }>(
+      `${routeGroupResourcePath(routeGroupId)}/stages`,
+    ),
+  batchAddCandidates: (
+    routeGroupId: string,
+    sourceRefs: string[],
+    stageId?: string,
+  ) =>
+    request(`${routeGroupResourcePath(routeGroupId)}/candidates/batch`, {
       method: "POST",
-      body: JSON.stringify({ targets }),
+      body: JSON.stringify({ sourceRefs, ...(stageId ? { stageId } : {}) }),
     }),
-  addRoute: (data: any) =>
-    request("/api/routes", { method: "POST", body: JSON.stringify(data) }),
-  updateRoute: (id: number, data: any) =>
-    request(`/api/routes/${id}`, { method: "PUT", body: JSON.stringify(data) }),
-  deleteRoute: (id: number) =>
-    request(`/api/routes/${id}`, { method: "DELETE" }),
-  clearRouteCooldown: (id: number) =>
-    request(`/api/routes/${id}/cooldown/clear`, { method: "POST" }),
-  batchUpdateRoutes: (data: { ids: number[]; action: "enable" | "disable" | "set_internal" | "set_public" }) =>
-    request("/api/routes/batch", {
+  addRouteGroup: (data: RouteGroupCreateCommand) =>
+    request("/api/route-groups", {
       method: "POST",
       body: JSON.stringify(data),
     }),
-  addRouteTarget: (routeId: number, data: any) =>
-    request(`/api/routes/${routeId}/targets`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    }),
-  updateRouteTarget: (id: number, data: any) =>
-    request(`/api/targets/${id}`, {
+  updateRouteGroup: (id: string, data: RouteGroupUpdateCommand) =>
+    request(routeGroupResourcePath(id), {
       method: "PUT",
       body: JSON.stringify(data),
     }),
-  batchUpdateRouteTargets: (updates: Array<{ id: number; priority: number }>) =>
-    request("/api/targets/batch", {
-      method: "PUT",
-      body: JSON.stringify({ updates }),
+  deleteRouteGroup: (id: string) =>
+    request(routeGroupResourcePath(id), { method: "DELETE" }),
+  clearRouteGroupFailureState: (routeGroupId: string) =>
+    request(
+      `/api/route-groups/${encodeURIComponent(routeGroupId)}/failure-state`,
+      {
+        method: "DELETE",
+      },
+    ),
+  batchUpdateRouteGroups: (data: {
+    ids: string[];
+    action: "enable" | "disable" | "set_internal" | "set_public";
+  }) =>
+    request("/api/route-groups/batch", {
+      method: "POST",
+      body: JSON.stringify(data),
     }),
-  deleteRouteTarget: (id: number) =>
-    request(`/api/targets/${id}`, { method: "DELETE" }),
+  addRouteGroupCandidate: (
+    routeGroupId: string,
+    data: RouteGroupCandidateCreateCommand,
+  ) =>
+    request(`${routeGroupResourcePath(routeGroupId)}/candidates`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  updateRouteGroupMember: (
+    routeGroupId: string,
+    candidateId: string,
+    data: RouteGroupCandidateUpdateCommand,
+  ) =>
+    request(
+      `${routeGroupResourcePath(routeGroupId)}/candidates/${encodeURIComponent(candidateId)}`,
+      {
+        method: "PUT",
+        body: JSON.stringify(data),
+      },
+    ),
+  moveRouteGroupCandidatesToFallbackStages: (
+    routeGroupId: string,
+    updates: Array<{ id: string; stageId: string; sortOrder?: number }>,
+    manuallyAdjustedCandidateIds: string[],
+  ) =>
+    request<{
+      success: true;
+      candidates: RouteGroupManagementFallbackStage["candidates"];
+      stages: RouteGroupManagementFallbackStage[];
+    }>(`${routeGroupResourcePath(routeGroupId)}/candidates/stages`, {
+      method: "PUT",
+      body: JSON.stringify({ updates, manuallyAdjustedCandidateIds }),
+    }),
+  restoreAutomaticRouteGroupCandidate: (
+    routeGroupId: string,
+    candidateId: string,
+  ) =>
+    request<{
+      success: true;
+      restoredCount: number;
+      stages: RouteGroupManagementFallbackStage[];
+    }>(
+      `${routeGroupResourcePath(routeGroupId)}/candidates/${encodeURIComponent(candidateId)}/manual-adjustment`,
+      { method: "DELETE" },
+    ),
+  restoreAutomaticRouteGroupCandidates: (routeGroupId: string) =>
+    request<{
+      success: true;
+      restoredCount: number;
+      stages: RouteGroupManagementFallbackStage[];
+    }>(`${routeGroupResourcePath(routeGroupId)}/manual-adjustments`, {
+      method: "DELETE",
+    }),
+  createRouteGroupFallbackStage: (
+    routeGroupId: string,
+    data: {
+      label?: string | null;
+      enabled?: boolean;
+      dispatcherPolicy?: Record<string, unknown> | null;
+      placement?: { afterStageId: string; candidateId: string };
+    },
+  ) =>
+    request<{
+      success: true;
+      stage: RouteGroupManagementFallbackStage;
+      stages: RouteGroupManagementFallbackStage[];
+    }>(`${routeGroupResourcePath(routeGroupId)}/stages`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  updateRouteGroupFallbackStage: (
+    routeGroupId: string,
+    stageId: string,
+    data: unknown,
+  ) =>
+    request(
+      `${routeGroupResourcePath(routeGroupId)}/stages/${encodeURIComponent(stageId)}`,
+      {
+        method: "PUT",
+        body: JSON.stringify(data),
+      },
+    ),
+  reorderRouteGroupFallbackStages: (routeGroupId: string, stageIds: string[]) =>
+    request(`${routeGroupResourcePath(routeGroupId)}/stages/order`, {
+      method: "PUT",
+      body: JSON.stringify({ stageIds }),
+    }),
+  deleteRouteGroupFallbackStage: (routeGroupId: string, stageId: string) =>
+    request(
+      `${routeGroupResourcePath(routeGroupId)}/stages/${encodeURIComponent(stageId)}`,
+      { method: "DELETE" },
+    ),
+  deleteRouteGroupCandidate: (routeGroupId: string, candidateId: string) =>
+    request(
+      `${routeGroupResourcePath(routeGroupId)}/candidates/${encodeURIComponent(candidateId)}`,
+      { method: "DELETE" },
+    ),
   rebuildRoutes: (refreshModels = true, wait = false) =>
-    request("/api/routes/rebuild", {
+    request("/api/route-groups/rebuild", {
       method: "POST",
       body: JSON.stringify({ refreshModels, ...(wait ? { wait: true } : {}) }),
       timeoutMs: wait ? 150_000 : 30_000,
     }),
-  refreshRouteDecisionSnapshots: () =>
-    request("/api/routes/decision/refresh", {
-      method: "POST",
-      body: JSON.stringify({}),
-    }),
-  getRouteDecision: (model: string) =>
-    request(`/api/routes/decision?model=${encodeURIComponent(model)}`),
-  getRouteDecisionsBatch: (
-    models: string[],
-    options?: { refreshPricingCatalog?: boolean; persistSnapshots?: boolean },
-  ) =>
-    request("/api/routes/decision/batch", {
-      method: "POST",
-      body: JSON.stringify({
-        models,
-        ...(options?.refreshPricingCatalog
-          ? { refreshPricingCatalog: true }
-          : {}),
-        ...(options?.persistSnapshots ? { persistSnapshots: true } : {}),
-      }),
-    }),
-  getRouteDecisionsByRouteBatch: (
-    items: Array<{ routeId: number; model: string }>,
-    options?: { refreshPricingCatalog?: boolean; persistSnapshots?: boolean },
-  ) =>
-    request("/api/routes/decision/by-route/batch", {
-      method: "POST",
-      body: JSON.stringify({
-        items,
-        ...(options?.refreshPricingCatalog
-          ? { refreshPricingCatalog: true }
-          : {}),
-        ...(options?.persistSnapshots ? { persistSnapshots: true } : {}),
-      }),
-    }),
-  getRouteWideDecisionsBatch: (
-    routeIds: number[],
-    options?: { refreshPricingCatalog?: boolean; persistSnapshots?: boolean },
-  ) =>
-    request("/api/routes/decision/route-wide/batch", {
-      method: "POST",
-      body: JSON.stringify({
-        routeIds,
-        ...(options?.refreshPricingCatalog
-          ? { refreshPricingCatalog: true }
-          : {}),
-        ...(options?.persistSnapshots ? { persistSnapshots: true } : {}),
-      }),
-    }),
-  getRouteEndpointPage: <T = any>(options: {
+  getRouteGraphEndpointPage: (options: {
     page: number;
     pageSize: number;
-    endpointKind?: "all" | "supply" | "route_product";
-    routeId?: number;
+    endpointKind?: "all" | "supply";
     siteId?: number;
     q?: string;
+    revision: string;
   }) =>
-    request(`/api/route-endpoints${buildQueryString({
-      paged: 1,
-      page: options.page,
-      pageSize: options?.pageSize,
-      endpointKind: options?.endpointKind,
-      routeId: options?.routeId,
-      siteId: options?.siteId,
-      q: options?.q,
-    })}`).then((response) => normalizePagedResponse<T>(response)),
+    request(
+      `/api/route-graph/endpoints${buildQueryString({
+        paged: 1,
+        page: options.page,
+        pageSize: options?.pageSize,
+        endpointKind: options?.endpointKind,
+        siteId: options?.siteId,
+        q: options?.q,
+        revision: options.revision,
+      })}`,
+    ) as Promise<import('../shared/routeEndpointCatalog.js').RouteEndpointCatalogPage>,
 
   // Stats
   getDashboard: () => request("/api/stats/dashboard"),
@@ -1533,8 +1924,8 @@ export const api = {
       sites: Array<{ id: number; name: string; status?: string | null }>;
     }>;
   },
-  getProxyLogDetail: (id: number) =>
-    request(`/api/stats/proxy-logs/${id}`) as Promise<ProxyLogDetail>,
+  getProxyRequestLogDetail: (requestId: string) =>
+    request(`/api/stats/proxy-logs/${encodeURIComponent(requestId)}`) as Promise<ProxyRequestLogDetail>,
   getProxyDebugTraces: (params?: { limit?: number }) =>
     request(
       `/api/stats/proxy-debug/traces${buildQueryString(params)}`,
@@ -1663,18 +2054,26 @@ export const api = {
   getEvents: (params?: string) =>
     request(`/api/events${params ? "?" + params : ""}`) as Promise<InboxItem[]>,
   getEventCount: (params?: string) =>
-    request(`/api/events/count${params ? "?" + params : ""}`) as Promise<{ count: number }>,
+    request(`/api/events/count${params ? "?" + params : ""}`) as Promise<{
+      count: number;
+    }>,
   markEventRead: (id: number) =>
-    request(`/api/events/${id}/read`, { method: "POST" }) as Promise<{ success: true }>,
+    request(`/api/events/${id}/read`, { method: "POST" }) as Promise<{
+      success: true;
+    }>,
   applyEventAction: (id: number, data: InboxActionRequest) =>
     request(`/api/events/${id}/action`, {
       method: "POST",
       body: JSON.stringify(data),
     }) as Promise<{ success: true; item: InboxItem }>,
   markAllEventsRead: (params?: string) =>
-    request(`/api/events/read-all${params ? "?" + params : ""}`, { method: "POST" }) as Promise<{ success: true }>,
+    request(`/api/events/read-all${params ? "?" + params : ""}`, {
+      method: "POST",
+    }) as Promise<{ success: true }>,
   clearEvents: (params?: string) =>
-    request(`/api/events${params ? "?" + params : ""}`, { method: "DELETE" }) as Promise<{ success: true }>,
+    request(`/api/events${params ? "?" + params : ""}`, {
+      method: "DELETE",
+    }) as Promise<{ success: true }>,
   getSiteAnnouncements: (params?: string) =>
     request(`/api/site-announcements${params ? "?" + params : ""}`),
   markSiteAnnouncementRead: (id: number) =>
@@ -1702,6 +2101,13 @@ export const api = {
       body: JSON.stringify({ oldToken, newToken }),
     }),
   getRuntimeSettings: () => request("/api/settings/runtime"),
+  getRouteRuntimeCacheStatus: () => request("/api/route-runtime/cache") as Promise<{
+    ttlMs: number;
+    generation: number;
+    activeRuntime: { present: boolean; ageMs: number | null; artifactId: string | null; loadInFlight: boolean };
+    lastInvalidation: { reason: string; at: string } | null;
+  }>,
+  refreshRouteRuntimeCache: () => request("/api/route-runtime/cache/refresh", { method: "POST" }),
   getBrandList: () => request("/api/settings/brand-list"),
   updateRuntimeSettings: (data: RuntimeSettingsPayload) =>
     request("/api/settings/runtime", {
@@ -1782,6 +2188,11 @@ export const api = {
       timeoutMs: 120_000,
     }),
   getDownstreamApiKeys: () => request("/api/downstream-keys"),
+  getDownstreamCompiledPlans: () =>
+    request<{
+      success: boolean;
+      items: Array<{ id: string; modelName: string }>;
+    }>("/api/downstream-keys/compiled-plans"),
   createDownstreamApiKey: (data: any) =>
     request("/api/downstream-keys", {
       method: "POST",
@@ -1885,29 +2296,105 @@ export const api = {
     q?: string;
     brand?: string | null;
     site?: string | null;
-    sortBy?: "name" | "accountCount" | "credentialCount" | "avgLatency" | "successRate";
+    sortBy?:
+      | "name"
+      | "accountCount"
+      | "credentialCount"
+      | "avgLatency"
+      | "successRate";
     sortDir?: "asc" | "desc";
     refresh?: boolean;
     includePricing?: boolean;
   }) => {
-    return request(`/api/models/marketplace${buildQueryString({
-      page: options.page,
-      pageSize: options.pageSize,
-      q: options.q,
-      brand: options.brand,
-      site: options.site,
-      sortBy: options.sortBy,
-      sortDir: options.sortDir,
-      ...(options.refresh ? { refresh: 1 } : {}),
-      ...(options.includePricing ? { includePricing: 1 } : {}),
-    })}`, {
-      timeoutMs: options.refresh ? 45_000 : 15_000,
-    });
+    return request<ModelsMarketplaceResponse>(
+      `/api/models/marketplace${buildQueryString({
+        page: options.page,
+        pageSize: options.pageSize,
+        q: options.q,
+        brand: options.brand,
+        site: options.site,
+        sortBy: options.sortBy,
+        sortDir: options.sortDir,
+        ...(options.refresh ? { refresh: 1 } : {}),
+        ...(options.includePricing ? { includePricing: 1 } : {}),
+      })}`,
+      {
+        timeoutMs: options.refresh ? 45_000 : 15_000,
+      },
+    );
   },
-  getModelRouteFlow: (model: string) =>
-    request(`/api/models/route-flow?model=${encodeURIComponent(model)}`, {
-      timeoutMs: 45_000,
-    }),
+  getModelRouteFlow: (
+    model: string,
+    options: {
+      forcedExecutionAttemptId?: string | null;
+      request?: ModelRouteFlowRuntimeRequest | null;
+      pricingUsage?: ModelRouteFlowPricingUsage | null;
+    } = {},
+  ) => {
+    const query = new URLSearchParams();
+    if (options.forcedExecutionAttemptId) {
+      query.set("forcedExecutionAttemptId", options.forcedExecutionAttemptId);
+    }
+    const suffix = query.toString();
+    if (options.request || options.pricingUsage) {
+      return request(
+        `/api/models/${encodeURIComponent(model)}/route-flow${suffix ? `?${suffix}` : ""}`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            ...(options.request ? { request: options.request } : {}),
+            ...(options.pricingUsage
+              ? { pricingUsage: options.pricingUsage }
+              : {}),
+          }),
+          timeoutMs: 45_000,
+        },
+      );
+    }
+    return request(
+      `/api/models/${encodeURIComponent(model)}/route-flow${suffix ? `?${suffix}` : ""}`,
+      {
+        timeoutMs: 45_000,
+      },
+    );
+  },
+  getModelRouteFlowDiagnostics: (
+    model: string,
+    options: {
+      forcedExecutionAttemptId?: string | null;
+    } = {},
+  ) => {
+    const query = new URLSearchParams();
+    query.set("view", "diagnostics");
+    if (options.forcedExecutionAttemptId) {
+      query.set("forcedExecutionAttemptId", options.forcedExecutionAttemptId);
+    }
+    return request<{
+      success: boolean;
+      diagnostics: ModelRouteFlowDiagnostics;
+    }>(
+      `/api/models/${encodeURIComponent(model)}/route-flow?${query.toString()}`,
+      { timeoutMs: 20_000 },
+    );
+  },
+  getModelRuntimeObservability: (
+    model: string,
+    options: {
+      range?: "5m" | "15m" | "1h" | "6h" | "24h" | "7d" | "30d";
+      refresh?: boolean;
+    } = {},
+  ) =>
+    request<{ success: boolean; observability: ModelRuntimeObservability }>(
+      `/api/models/${encodeURIComponent(model)}/runtime-observability${buildQueryString(
+        {
+          range: options.range,
+          ...(options.refresh ? { refresh: 1 } : {}),
+        },
+      )}`,
+      {
+        timeoutMs: options.refresh ? 45_000 : 20_000,
+      },
+    ),
   getModelTokenCandidates: () => request("/api/models/token-candidates"),
   getPricingReferenceConfig: () =>
     request<PricingReferenceConfig>("/api/pricing/reference-config"),
@@ -1924,15 +2411,21 @@ export const api = {
       body: JSON.stringify(data),
     }),
   importPricingReferenceCatalog: (data: unknown, replace = false) =>
-    request<PricingReferenceCatalogImportResult>("/api/pricing/reference-catalog/import", {
-      method: "POST",
-      body: JSON.stringify({ data, replace }),
-    }),
+    request<PricingReferenceCatalogImportResult>(
+      "/api/pricing/reference-catalog/import",
+      {
+        method: "POST",
+        body: JSON.stringify({ data, replace }),
+      },
+    ),
   syncPricingReferenceCatalog: () =>
-    request<PricingReferenceCatalogImportResult | { skipped: true }>("/api/pricing/reference-catalog/sync", {
-      method: "POST",
-      body: JSON.stringify({}),
-    }),
+    request<PricingReferenceCatalogImportResult | { skipped: true }>(
+      "/api/pricing/reference-catalog/sync",
+      {
+        method: "POST",
+        body: JSON.stringify({}),
+      },
+    ),
   getPlatformPricingConfig: () =>
     request<PlatformPricingConfig>("/api/pricing/platform-config"),
   updatePlatformPricingConfig: (data: PlatformPricingConfig) =>
@@ -1940,6 +2433,14 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(data),
     }),
+  refreshProviderPricingCatalog: () =>
+    request<ProviderPricingCatalogRefreshTask>(
+      "/api/pricing/provider-catalog/refresh",
+      {
+        method: "POST",
+        body: JSON.stringify({}),
+      },
+    ),
   listWalletAcquisitionProfiles: (params?: {
     siteId?: number;
     accountId?: number;
@@ -1978,10 +2479,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify(data),
     }),
-  updateFxRateSnapshot: (
-    id: number,
-    data: Partial<FxRateSnapshotPayload>,
-  ) =>
+  updateFxRateSnapshot: (id: number, data: Partial<FxRateSnapshotPayload>) =>
     request<FxRateSnapshot>(`/api/pricing/fx-rates/${id}`, {
       method: "PATCH",
       body: JSON.stringify(data),
@@ -2048,28 +2546,16 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
-  // Simple chat test from admin panel
-  startTestChatJob: (data: TestChatRequestPayload) =>
-    request("/api/test/chat/jobs", {
-      method: "POST",
-      body: JSON.stringify(data),
-    }),
-  getTestChatJob: (jobId: string) =>
-    request(`/api/test/chat/jobs/${encodeURIComponent(jobId)}`),
-  deleteTestChatJob: (jobId: string) =>
-    request(`/api/test/chat/jobs/${encodeURIComponent(jobId)}`, {
-      method: "DELETE",
-    }),
   startProxyTestJob: (data: ProxyTestRequestEnvelope) =>
-    request("/api/test/proxy/jobs", {
+    request<ModelTesterProxyJobCreated>("/api/test/proxy/jobs", {
       method: "POST",
       body: JSON.stringify(data),
       timeoutMs: resolveProxyTestTimeoutMs(data),
     }),
   getProxyTestJob: (jobId: string) =>
-    request(`/api/test/proxy/jobs/${encodeURIComponent(jobId)}`),
+    request<ModelTesterProxyJob>(`/api/test/proxy/jobs/${encodeURIComponent(jobId)}`),
   deleteProxyTestJob: (jobId: string) =>
-    request(`/api/test/proxy/jobs/${encodeURIComponent(jobId)}`, {
+    request<ModelTesterProxyDeleteResult>(`/api/test/proxy/jobs/${encodeURIComponent(jobId)}`, {
       method: "DELETE",
     }),
   getProxyFileContentDataUrl: async (
@@ -2103,27 +2589,6 @@ export const api = {
   },
   testProxy: proxyTestRequest,
   proxyTest: proxyTestRequest,
-  testChat: (data: TestChatRequestPayload) =>
-    request("/api/test/chat", { method: "POST", body: JSON.stringify(data) }),
   testProxyStream: proxyTestStreamRequest,
   proxyTestStream: proxyTestStreamRequest,
-  testChatStream: async (
-    data: TestChatRequestPayload,
-    signal?: AbortSignal,
-  ) => {
-    const token = getAuthToken(localStorage);
-    if (!token) {
-      clearAuthSession(localStorage);
-      throw new Error("Session expired");
-    }
-    return fetch("/api/test/chat/stream", {
-      method: "POST",
-      signal,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(data),
-    });
-  },
 };

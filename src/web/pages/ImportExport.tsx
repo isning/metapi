@@ -29,7 +29,7 @@ type ParsedSummary = {
   profilesCount: number;
   tokensCount: number;
   routesCount: number;
-  targetsCount: number;
+  candidatesCount: number;
   siteDisabledModelsCount: number;
   manualModelsCount: number;
   downstreamApiKeysCount: number;
@@ -121,7 +121,7 @@ function parseImportSummary(raw: string): ParsedSummary | null {
     profilesCount: 0,
     tokensCount: 0,
     routesCount: 0,
-    targetsCount: 0,
+    candidatesCount: 0,
     siteDisabledModelsCount: 0,
     manualModelsCount: 0,
     downstreamApiKeysCount: 0,
@@ -146,12 +146,28 @@ function parseImportSummary(raw: string): ParsedSummary | null {
     const legacyPrefs = Boolean(data.data?.preferences);
     const profilesCount = Array.isArray(data.apiCredentialProfiles?.profiles) ? data.apiCredentialProfiles.profiles.length : 0;
     const bookmarksCount = Array.isArray(accountsSection?.bookmarks) ? accountsSection.bookmarks.length : 0;
+    const routeGraphVersions = Array.isArray(accountsSection?.routeGraph?.versions)
+      ? accountsSection.routeGraph.versions
+      : [];
+    const activeRouteGraphVersionId = Number(accountsSection?.routeGraph?.activeVersion?.versionId);
+    const activeRouteGraph = routeGraphVersions.find((version: any) => Number(version?.id) === activeRouteGraphVersionId)
+      || routeGraphVersions.at(-1)
+      || null;
+    const activeRouteGraphMacroCount = (() => {
+      if (typeof activeRouteGraph?.sourceGraphJson !== 'string') return 0;
+      try {
+        const source = JSON.parse(activeRouteGraph.sourceGraphJson);
+        return Array.isArray(source?.macros) ? source.macros.length : 0;
+      } catch {
+        return 0;
+      }
+    })();
     const isNativeMetapiBackup = Boolean(
       accountsSection
       && Array.isArray(accountsSection.sites)
       && Array.isArray(accountsSection.accountTokens)
-      && Array.isArray(accountsSection.tokenRoutes)
-      && Array.isArray(accountsSection.routeEndpointTargets)
+      && Array.isArray(accountsSection.runtimeExecutionTargets)
+      && routeGraphVersions.length > 0
     );
     const hasLegacyAccountRows = Array.isArray(accountsSection?.accounts)
       && accountsSection.accounts.some((row: any) => row && typeof row === 'object' && !Array.isArray(row) && (
@@ -212,8 +228,8 @@ function parseImportSummary(raw: string): ParsedSummary | null {
       bookmarksCount,
       profilesCount,
       tokensCount: toCount(accountsSection?.accountTokens),
-      routesCount: toCount(accountsSection?.tokenRoutes),
-      targetsCount: toCount(accountsSection?.routeEndpointTargets || accountsSection?.routeChannels),
+      routesCount: activeRouteGraphMacroCount,
+      candidatesCount: toCount(accountsSection?.runtimeExecutionTargets),
       siteDisabledModelsCount: toCount(accountsSection?.siteDisabledModels),
       manualModelsCount: toCount(accountsSection?.manualModels),
       downstreamApiKeysCount: toCount(accountsSection?.downstreamApiKeys),
@@ -599,13 +615,13 @@ export default function ImportExport() {
                         || summary.accountsCount
                         || summary.tokensCount
                         || summary.routesCount
-                        || summary.targetsCount
+                        || summary.candidatesCount
                         || summary.siteDisabledModelsCount
                         || summary.manualModelsCount
                         || summary.downstreamApiKeysCount
                         || summary.settingsCount) ? (
                         <div>
-                          {tr('pages.importExport.sites')} {summary.sitesCount} {tr('pages.importExport.accounts')} {summary.accountsCount} {tr('pages.importExport.token')} {summary.tokensCount} {tr('pages.importExport.routes')} {summary.routesCount} {tr('pages.importExport.targets')} {summary.targetsCount} {tr('pages.importExport.sitesdisabledmodel')} {summary.siteDisabledModelsCount} {tr('pages.importExport.model')} {summary.manualModelsCount} {tr('pages.importExport.key')} {summary.downstreamApiKeysCount} {tr('pages.importExport.settings')} {summary.settingsCount}
+                          {tr('pages.importExport.sites')} {summary.sitesCount} {tr('pages.importExport.accounts')} {summary.accountsCount} {tr('pages.importExport.token')} {summary.tokensCount} {tr('pages.importExport.routes')} {summary.routesCount} {tr('pages.importExport.targets')} {summary.candidatesCount} {tr('pages.importExport.sitesdisabledmodel')} {summary.siteDisabledModelsCount} {tr('pages.importExport.model')} {summary.manualModelsCount} {tr('pages.importExport.key')} {summary.downstreamApiKeysCount} {tr('pages.importExport.settings')} {summary.settingsCount}
                         </div>
                       ) : null}
                       {summary.hasLegacyData ? <div>{tr('pages.importExport.modeimport')}</div> : null}

@@ -6,15 +6,17 @@ import EntityHeader from '../../components/workspace/EntityHeader.js';
 import { Button } from '../../components/ui/button/index.js';
 import * as Tabs from '../../components/ui/tabs/index.js';
 import type { ModelDetailsTab, ModelDetailsView, ModelMetricsRange } from './modelDetailsView.js';
-import { formatLatencyValue, formatSuccessRate, getModelCredentialCount } from './modelDetailsView.js';
+import { formatLatencyValue, formatSuccessRate, getModelCredentialCount, resolveModelDisplayMetrics } from './modelDetailsView.js';
 import ModelOverviewTab from './ModelOverviewTab.js';
 import ModelRoutingTab from './ModelRoutingTab.js';
 import ModelPerformanceTab from './ModelPerformanceTab.js';
 import ModelApiTab from './ModelApiTab.js';
 import ModelDiagnosticsTab from './ModelDiagnosticsTab.js';
 import { tr } from '../../i18n.js';
+import { usePrefetchIntent } from '../../components/usePrefetchIntent.js';
+import { MODEL_DETAILS_PREFETCH_INTENT_MS } from './modelDetailsResourcePolicy.js';
 
-type RoutingViewMode = 'effective' | 'candidates' | 'compiled' | 'diagnostics';
+type RoutingViewMode = 'execution' | 'cost' | 'diagnostics';
 
 type ModelDetailsWorkspaceProps = {
   details: ModelDetailsView | null;
@@ -22,10 +24,9 @@ type ModelDetailsWorkspaceProps = {
   onTabChange: (tab: ModelDetailsTab) => void;
   range: ModelMetricsRange;
   onRangeChange: (range: ModelMetricsRange) => void;
+  onTabPrefetch?: (tab: ModelDetailsTab) => void;
   routingViewMode: RoutingViewMode;
   onRoutingViewModeChange: (mode: RoutingViewMode) => void;
-  siteIdByName: Map<string, number>;
-  metadataHydrating: boolean;
   onCopyModel: (model: string) => void;
   onRefresh: () => void;
   onCopyJson?: (text: string) => void;
@@ -50,14 +51,18 @@ export default function ModelDetailsWorkspace({
   onTabChange,
   range,
   onRangeChange,
+  onTabPrefetch,
   routingViewMode,
   onRoutingViewModeChange,
-  siteIdByName,
-  metadataHydrating,
   onCopyModel,
   onRefresh,
   onCopyJson,
 }: ModelDetailsWorkspaceProps) {
+  const tabPrefetchIntent = usePrefetchIntent<ModelDetailsTab>({
+    delayMs: MODEL_DETAILS_PREFETCH_INTENT_MS,
+    onIntent: (nextTab) => onTabPrefetch?.(nextTab),
+  });
+
   if (!details) {
     return (
       <div className="p-4">
@@ -70,6 +75,9 @@ export default function ModelDetailsWorkspace({
   }
 
   const { model } = details;
+  const displayMetrics = resolveModelDisplayMetrics({
+    observability: details.observability,
+  });
 
   const headerBadges = (
     <>
@@ -84,13 +92,21 @@ export default function ModelDetailsWorkspace({
 
   const headerMetrics = (
     <>
-      <span>{tr('pages.models.modelDetailsView.success')} <span className="font-mono text-foreground">{formatSuccessRate(model.successRate)}</span></span>
-      <span>{tr('pages.models.modelDetailsView.latency')} <span className="font-mono text-foreground">{formatLatencyValue(model.avgLatency)}</span></span>
+      <span>{tr('pages.models.modelDetailsView.success')} <span className="font-mono text-foreground">{formatSuccessRate(displayMetrics.successRate)}</span></span>
+      <span>{tr('pages.models.modelDetailsView.latency')} <span className="font-mono text-foreground">{formatLatencyValue(displayMetrics.avgLatency)}</span></span>
       <span>{tr('pages.models.modelDetailsView.accounts')} <span className="font-mono text-foreground">{model.accountCount}</span></span>
       <span>{tr('pages.models.credentials')} <span className="font-mono text-foreground">{getModelCredentialCount(model)}</span></span>
       <span>{details.freshnessLabel}</span>
     </>
   );
+
+  const activeTabContent = (() => {
+    if (tab === 'overview') return <ModelOverviewTab details={details} />;
+    if (tab === 'routing') return <ModelRoutingTab routing={details.routing} viewMode={routingViewMode} onViewModeChange={onRoutingViewModeChange} />;
+    if (tab === 'performance') return <ModelPerformanceTab performance={details.performance} range={range} onRangeChange={onRangeChange} />;
+    if (tab === 'api') return <ModelApiTab details={details} />;
+    return <ModelDiagnosticsTab diagnostics={details.diagnosticsView} onCopyJson={onCopyJson} />;
+  })();
 
   return (
     <div className="min-w-0">
@@ -116,7 +132,17 @@ export default function ModelDetailsWorkspace({
         <Tabs.Tabs value={tab} onValueChange={(value) => onTabChange(value as ModelDetailsTab)}>
           <Tabs.TabsList className="flex h-auto w-full flex-wrap justify-start">
             {tabItems.map((item) => (
-              <Tabs.TabsTrigger key={item.value} value={item.value} className="gap-1.5">
+              <Tabs.TabsTrigger
+                key={item.value}
+                value={item.value}
+                className="gap-1.5"
+                onPointerEnter={() => tabPrefetchIntent.schedule(item.value)}
+                onMouseEnter={() => tabPrefetchIntent.schedule(item.value)}
+                onFocus={() => tabPrefetchIntent.schedule(item.value)}
+                onPointerLeave={tabPrefetchIntent.cancel}
+                onMouseLeave={tabPrefetchIntent.cancel}
+                onBlur={tabPrefetchIntent.cancel}
+              >
                 {item.icon}
                 {item.label}
                 {item.value === 'diagnostics' && details.diagnostics.length > 0 ? (
@@ -125,20 +151,8 @@ export default function ModelDetailsWorkspace({
               </Tabs.TabsTrigger>
             ))}
           </Tabs.TabsList>
-          <Tabs.TabsContent value="overview" className="mt-4">
-            <ModelOverviewTab details={details} siteIdByName={siteIdByName} metadataHydrating={metadataHydrating} />
-          </Tabs.TabsContent>
-          <Tabs.TabsContent value="routing" className="mt-4">
-            <ModelRoutingTab details={details} viewMode={routingViewMode} onViewModeChange={onRoutingViewModeChange} />
-          </Tabs.TabsContent>
-          <Tabs.TabsContent value="performance" className="mt-4">
-            <ModelPerformanceTab details={details} range={range} onRangeChange={onRangeChange} />
-          </Tabs.TabsContent>
-          <Tabs.TabsContent value="api" className="mt-4">
-            <ModelApiTab details={details} />
-          </Tabs.TabsContent>
-          <Tabs.TabsContent value="diagnostics" className="mt-4">
-            <ModelDiagnosticsTab details={details} onCopyJson={onCopyJson} />
+          <Tabs.TabsContent value={tab} className="mt-4">
+            {activeTabContent}
           </Tabs.TabsContent>
         </Tabs.Tabs>
       </div>

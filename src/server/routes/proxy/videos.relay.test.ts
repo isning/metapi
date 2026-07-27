@@ -29,7 +29,7 @@ describe('/v1/videos relay with persisted public task ids', () => {
   });
 
   it('creates a video task, rewrites the public id, then maps get/delete back to the upstream id', async () => {
-    const { managedKey } = await harness.seedRoute({ model: 'video-relay-model' });
+    const { managedKey, candidate } = await harness.seedRoute({ model: 'video-relay-model' });
     harness.upstream
       .add({
         method: 'POST',
@@ -86,6 +86,14 @@ describe('/v1/videos relay with persisted public task ids', () => {
     expect(createCall?.json).toMatchObject({
       model: 'video-relay-model',
       prompt: 'route graph animation',
+    });
+    const createdMappings = await harness.db.select().from(harness.schema.proxyVideoTasks).all();
+    expect(createdMappings).toHaveLength(1);
+    expect(createdMappings[0]).toMatchObject({
+      publicId: createdBody.id,
+      upstreamVideoId: 'upstream_video_123',
+      executionTargetId: candidate.executionTargetId,
+      accountId: candidate.accountId,
     });
 
     const fetched = await harness.app.inject({
@@ -151,10 +159,10 @@ describe('/v1/videos relay with persisted public task ids', () => {
       },
     });
 
-    expect(response.statusCode, response.body).toBe(503);
+    expect(response.statusCode, response.body).toBe(500);
     expect(response.json()).toMatchObject({
       error: expect.objectContaining({
-        message: expect.stringContaining('No available targets'),
+        message: expect.stringContaining('video backend exploded'),
       }),
     });
     expect(await harness.db.select().from(harness.schema.proxyVideoTasks).all()).toEqual([]);

@@ -21,14 +21,14 @@ describe('pricingQuoteService', () => {
       summary: {
         inputPerMillion: 6,
         outputPerMillion: 10,
-        totalCostUsd: 16,
+        totalCost: 16,
       },
     });
     resolveReferencePricingMock.mockResolvedValue({
       summary: {
         inputPerMillion: 2,
         outputPerMillion: 5,
-        totalCostUsd: 8,
+        totalCost: 8,
       },
     });
 

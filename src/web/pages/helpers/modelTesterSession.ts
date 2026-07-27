@@ -1,3 +1,10 @@
+import type { CompiledRuntimeJsonValue } from '../../../shared/compiledRuntimeRequest.js';
+import type {
+  ModelTesterProxyEnvelope,
+  ModelTesterProxyMethod,
+  ModelTesterProxyMultipartFile,
+} from '../../../shared/modelTesterProxy.js';
+
 export const MESSAGE_STATUS = {
   LOADING: 'loading',
   INCOMPLETE: 'incomplete',
@@ -26,7 +33,7 @@ export type PlaygroundMode =
 export type PlaygroundProtocol = 'openai' | 'responses' | 'claude' | 'gemini';
 export type TestTargetFormat = PlaygroundProtocol;
 export type ProxyRequestKind = 'json' | 'multipart' | 'empty';
-export type ProxyRequestMethod = 'POST' | 'GET' | 'DELETE';
+export type ProxyRequestMethod = ModelTesterProxyMethod;
 export type VideoInspectAction = 'get' | 'delete';
 export type ChatRole = 'user' | 'assistant' | 'system' | 'developer' | 'tool';
 
@@ -62,12 +69,9 @@ type ApiChatMessage = {
   parts?: ConversationContentPart[] | null;
 };
 
-export type PlaygroundMultipartFile = {
-  field: string;
-  name: string;
-  mimeType: string;
-  dataUrl: string;
-};
+export type PlaygroundMultipartFile = ModelTesterProxyMultipartFile;
+
+export type JsonObject = Record<string, CompiledRuntimeJsonValue>;
 
 export type ConversationUploadedFile = {
   fileId?: string | null;
@@ -86,19 +90,26 @@ export type ConversationDraftFile = {
   errorMessage?: string | null;
 };
 
-export type TesterProxyEnvelope = {
-  method: ProxyRequestMethod;
-  path: string;
-  requestKind: ProxyRequestKind;
-  stream: boolean;
-  jobMode: boolean;
-  rawMode: boolean;
-  forcedTargetId?: number | null;
-  jsonBody?: unknown;
-  rawJsonText?: string;
-  multipartFields?: Record<string, string>;
-  multipartFiles?: PlaygroundMultipartFile[];
+export type TesterProxyEnvelope = ModelTesterProxyEnvelope;
+export type TesterStructuredJsonProxyEnvelope = Omit<
+  Extract<ModelTesterProxyEnvelope, { requestKind: 'json'; rawMode?: false }>,
+  'jsonBody' | 'rawMode'
+> & {
+  rawMode: false;
+  jsonBody: JsonObject;
 };
+export type TesterRawJsonProxyEnvelope = Extract<
+  ModelTesterProxyEnvelope,
+  { requestKind: 'json'; rawMode: true }
+>;
+export type TesterMultipartProxyEnvelope = Extract<
+  ModelTesterProxyEnvelope,
+  { requestKind: 'multipart' }
+>;
+export type TesterEmptyProxyEnvelope = Extract<
+  ModelTesterProxyEnvelope,
+  { requestKind: 'empty' }
+>;
 
 export type ModelTesterInputs = {
   mode: PlaygroundMode;
@@ -147,7 +158,7 @@ export type ModelTesterSessionState = {
   conversationFiles: ConversationDraftFile[];
   pendingPayload: TesterProxyEnvelope | null;
   pendingJobId?: string | null;
-  forcedTargetId?: number | null;
+  forcedExecutionAttemptId?: string | null;
   customRequestMode: boolean;
   customRequestBody: string;
   showDebugPanel: boolean;
@@ -223,6 +234,16 @@ let messageCounter = 0;
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null;
 
+const isJsonValue = (value: unknown): value is CompiledRuntimeJsonValue => {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return true;
+  if (typeof value === 'number') return Number.isFinite(value);
+  if (Array.isArray(value)) return value.every(isJsonValue);
+  return isRecord(value) && Object.values(value).every(isJsonValue);
+};
+
+const isJsonObject = (value: unknown): value is JsonObject =>
+  isRecord(value) && !Array.isArray(value) && Object.values(value).every(isJsonValue);
+
 const toFiniteNumber = (value: unknown, fallback: number): number =>
   typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 
@@ -242,15 +263,14 @@ const toPositiveInteger = (value: unknown): number | null => {
   return normalized > 0 ? normalized : null;
 };
 
+const toExecutionAttemptId = (value: unknown): string | null => {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim();
+  return /^ea_[0-9a-z]+$/i.test(normalized) ? normalized : null;
+};
+
 const sanitizeString = (value: unknown, fallback = ''): string =>
   typeof value === 'string' ? value : fallback;
-
-const isExactModelPattern = (modelPattern: string): boolean => {
-  const normalized = modelPattern.trim();
-  if (!normalized) return false;
-  if (normalized.toLowerCase().startsWith('re:')) return false;
-  return !/[\*\?]/.test(normalized);
-};
 
 const splitCommaSeparated = (value: string): string[] =>
   value
@@ -836,29 +856,62 @@ const parsePendingPayload = (
       ? value.requestKind as ProxyRequestKind
       : 'json';
 
-    const pending: TesterProxyEnvelope = {
+    const base = {
       method: value.method as ProxyRequestMethod,
       path: value.path,
-      requestKind,
       stream: toBoolean(value.stream, false),
       jobMode: toBoolean(value.jobMode, false),
-      rawMode: toBoolean(value.rawMode, false),
+    };
+    const forcedExecutionAttemptId = toExecutionAttemptId(value.forcedExecutionAttemptId);
+    const withForcedExecutionAttempt = <T extends TesterProxyEnvelope>(pending: T): T => {
+      if (forcedExecutionAttemptId === null) return pending;
+      return { ...pending, forcedExecutionAttemptId };
     };
 
-    if ('jsonBody' in value) pending.jsonBody = value.jsonBody;
-    if (typeof value.rawJsonText === 'string') pending.rawJsonText = value.rawJsonText;
-    const forcedTargetId = toPositiveInteger(value.forcedTargetId);
-    if (forcedTargetId !== null) pending.forcedTargetId = forcedTargetId;
-    if (isRecord(value.multipartFields)) {
-      pending.multipartFields = Object.fromEntries(
-        Object.entries(value.multipartFields)
-          .filter(([, item]) => typeof item === 'string')
-          .map(([key, item]) => [key, item as string]),
-      );
+    if (requestKind === 'json') {
+      const rawMode = toBoolean(value.rawMode, false);
+      if (rawMode) {
+        if (typeof value.rawJsonText !== 'string') return null;
+        return withForcedExecutionAttempt({
+          ...base,
+          requestKind: 'json',
+          rawMode: true,
+          rawJsonText: value.rawJsonText,
+        });
+      }
+
+      if (!isJsonObject(value.jsonBody)) return null;
+      return withForcedExecutionAttempt({
+        ...base,
+        requestKind: 'json',
+        rawMode: false,
+        jsonBody: value.jsonBody,
+      });
     }
-    const multipartFiles = parseMultipartFiles(value.multipartFiles);
-    if (multipartFiles.length > 0) pending.multipartFiles = multipartFiles;
-    return pending;
+
+    if (requestKind === 'multipart') {
+      const multipartFields = isRecord(value.multipartFields)
+        ? Object.fromEntries(
+          Object.entries(value.multipartFields)
+            .filter(([, item]) => typeof item === 'string')
+            .map(([key, item]) => [key, item as string]),
+        )
+        : undefined;
+      const multipartFiles = parseMultipartFiles(value.multipartFiles);
+      return withForcedExecutionAttempt({
+        ...base,
+        requestKind: 'multipart',
+        rawMode: false,
+        ...(multipartFields ? { multipartFields } : {}),
+        ...(multipartFiles.length > 0 ? { multipartFiles } : {}),
+      });
+    }
+
+    return withForcedExecutionAttempt({
+      ...base,
+      requestKind: 'empty',
+      rawMode: false,
+    });
   }
 
   if (typeof value.model === 'string') {
@@ -897,18 +950,6 @@ const parsePendingPayload = (
 
 export const collectModelTesterModelNames = (
   marketplace: { models?: Array<{ name?: unknown }>; } | null | undefined,
-  routes: Array<{
-    modelPattern?: unknown;
-    enabled?: unknown;
-    visibility?: unknown;
-    match?: {
-      requestedModelPattern?: unknown;
-      displayName?: unknown;
-    } | null;
-    presentation?: {
-      displayName?: unknown;
-    } | null;
-  }> | null | undefined,
 ): string[] => {
   const result: string[] = [];
   const seen = new Set<string>();
@@ -923,24 +964,6 @@ export const collectModelTesterModelNames = (
 
   for (const item of marketplace?.models || []) {
     appendModel(item?.name);
-  }
-
-  for (const route of routes || []) {
-    if (!route || route.enabled === false) continue;
-    if (route.visibility === 'internal') continue;
-
-    appendModel(route.presentation?.displayName);
-    appendModel(route.match?.displayName);
-
-    const graphPattern = typeof route.match?.requestedModelPattern === 'string'
-      ? route.match.requestedModelPattern.trim()
-      : '';
-    if (graphPattern && isExactModelPattern(graphPattern)) appendModel(graphPattern);
-
-    const legacyPattern = typeof route.modelPattern === 'string'
-      ? route.modelPattern.trim()
-      : '';
-    if (legacyPattern && isExactModelPattern(legacyPattern)) appendModel(legacyPattern);
   }
 
   return result;
@@ -1184,7 +1207,7 @@ export const parseModelTesterSession = (raw: string | null): ModelTesterSessionS
     pendingPayload: parsePendingPayload(parsed.pendingPayload, inputs, parameterEnabled),
     customRequestMode: toBoolean(parsed.customRequestMode, false),
     customRequestBody: typeof parsed.customRequestBody === 'string' ? parsed.customRequestBody : '',
-    forcedTargetId: toPositiveInteger(parsed.forcedTargetId),
+    forcedExecutionAttemptId: toExecutionAttemptId(parsed.forcedExecutionAttemptId),
     showDebugPanel: toBoolean(parsed.showDebugPanel, false),
     activeDebugTab: typeof parsed.activeDebugTab === 'string' && VALID_DEBUG_TABS.has(parsed.activeDebugTab)
       ? parsed.activeDebugTab as DebugTab
@@ -1217,25 +1240,41 @@ export const toApiMessages = (messages: ChatMessage[]): ApiChatMessage[] =>
       parts: message.parts,
     }));
 
+export const buildStructuredJsonProxyRequestEnvelope = (
+  method: ProxyRequestMethod,
+  path: string,
+  jsonBody: unknown,
+  options?: { stream?: boolean; jobMode?: boolean },
+): TesterStructuredJsonProxyEnvelope => {
+  if (!isJsonObject(jsonBody)) throw new TypeError('Structured tester request body must be a JSON object');
+  return {
+    method,
+    path,
+    requestKind: 'json',
+    stream: options?.stream ?? false,
+    jobMode: options?.jobMode ?? false,
+    rawMode: false,
+    jsonBody,
+  };
+};
+
 export const buildConversationRequestEnvelope = (
   messages: ChatMessage[],
   inputs: ModelTesterInputs,
   parameterEnabled: ParameterEnabled,
-): TesterProxyEnvelope => ({
-  method: 'POST',
-  path: getConversationPath(inputs.protocol, inputs.model),
-  requestKind: 'json',
-  stream: inputs.stream,
-  jobMode: !inputs.stream,
-  rawMode: false,
-  jsonBody: buildConversationJsonBody(messages, inputs, parameterEnabled),
-});
+): TesterStructuredJsonProxyEnvelope =>
+  buildStructuredJsonProxyRequestEnvelope(
+    'POST',
+    getConversationPath(inputs.protocol, inputs.model),
+    buildConversationJsonBody(messages, inputs, parameterEnabled),
+    { stream: inputs.stream, jobMode: !inputs.stream },
+  );
 
 export const buildGeminiNativeConversationProxyEnvelope = (
   messages: ChatMessage[],
   inputs: ModelTesterInputs,
   parameterEnabled: ParameterEnabled,
-): TesterProxyEnvelope => {
+): TesterStructuredJsonProxyEnvelope => {
   const envelope = buildConversationRequestEnvelope(messages, { ...inputs, protocol: 'gemini' }, parameterEnabled);
   return {
     ...envelope,
@@ -1247,24 +1286,17 @@ export const buildGeminiNativeConversationProxyEnvelope = (
 export const buildEmbeddingsRequestEnvelope = (
   inputText: string,
   inputs: ModelTesterInputs,
-): TesterProxyEnvelope => ({
-  method: 'POST',
-  path: '/v1/embeddings',
-  requestKind: 'json',
-  stream: false,
-  jobMode: false,
-  rawMode: false,
-  jsonBody: {
+): TesterStructuredJsonProxyEnvelope =>
+  buildStructuredJsonProxyRequestEnvelope('POST', '/v1/embeddings', {
     model: inputs.model,
     input: inputText,
-  },
-});
+  });
 
 export const buildSearchRequestEnvelope = (
   inputs: ModelTesterInputs,
   modeState: ModelTesterModeState,
-): TesterProxyEnvelope => {
-  const jsonBody: Record<string, unknown> = {
+): TesterStructuredJsonProxyEnvelope => {
+  const jsonBody: JsonObject = {
     model: inputs.model || '__search',
     query: modeState.searchQuery,
     max_results: inputs.searchMaxResults,
@@ -1273,32 +1305,17 @@ export const buildSearchRequestEnvelope = (
   const blockedDomains = splitCommaSeparated(modeState.searchBlockedDomains);
   if (allowedDomains.length > 0) jsonBody.allowed_domains = allowedDomains;
   if (blockedDomains.length > 0) jsonBody.blocked_domains = blockedDomains;
-  return {
-    method: 'POST',
-    path: '/v1/search',
-    requestKind: 'json',
-    stream: false,
-    jobMode: false,
-    rawMode: false,
-    jsonBody,
-  };
+  return buildStructuredJsonProxyRequestEnvelope('POST', '/v1/search', jsonBody);
 };
 
 export const buildImagesGenerationsRequestEnvelope = (
   inputs: ModelTesterInputs,
   modeState: ModelTesterModeState,
-): TesterProxyEnvelope => ({
-  method: 'POST',
-  path: '/v1/images/generations',
-  requestKind: 'json',
-  stream: false,
-  jobMode: false,
-  rawMode: false,
-  jsonBody: {
+): TesterStructuredJsonProxyEnvelope =>
+  buildStructuredJsonProxyRequestEnvelope('POST', '/v1/images/generations', {
     model: inputs.model,
     prompt: modeState.imagesPrompt,
-  },
-});
+  });
 
 export const buildFileUploadRequestEnvelope = (
   file: Omit<PlaygroundMultipartFile, 'field'> & { field?: string },
@@ -1343,17 +1360,25 @@ export const buildVideoCreateRequestEnvelope = (
   inputs: ModelTesterInputs,
   modeState: ModelTesterModeState,
   files: PlaygroundMultipartFile[],
-): TesterProxyEnvelope => ({
-  method: 'POST',
-  path: '/v1/videos',
-  requestKind: files.length > 0 ? 'multipart' : 'json',
-  stream: false,
-  jobMode: false,
-  rawMode: false,
-  jsonBody: files.length > 0 ? undefined : { model: inputs.model, prompt: modeState.videosPrompt },
-  multipartFields: files.length > 0 ? { model: inputs.model, prompt: modeState.videosPrompt } : undefined,
-  multipartFiles: files.length > 0 ? files : undefined,
-});
+): TesterStructuredJsonProxyEnvelope | TesterMultipartProxyEnvelope => {
+  if (files.length === 0) {
+    return buildStructuredJsonProxyRequestEnvelope('POST', '/v1/videos', {
+      model: inputs.model,
+      prompt: modeState.videosPrompt,
+    });
+  }
+
+  return {
+    method: 'POST',
+    path: '/v1/videos',
+    requestKind: 'multipart',
+    stream: false,
+    jobMode: false,
+    rawMode: false,
+    multipartFields: { model: inputs.model, prompt: modeState.videosPrompt },
+    multipartFiles: files,
+  };
+};
 
 export const buildVideoInspectRequestEnvelope = (
   inputs: ModelTesterInputs,
@@ -1371,23 +1396,23 @@ export const buildApiPayload = (
   messages: ChatMessage[],
   inputs: ModelTesterInputs,
   parameterEnabled: ParameterEnabled,
-): TesterProxyEnvelope =>
+): TesterStructuredJsonProxyEnvelope =>
   buildConversationRequestEnvelope(messages, inputs, parameterEnabled);
 
-export const attachForcedTargetToEnvelope = (
+export const attachForcedExecutionAttemptToEnvelope = (
   envelope: TesterProxyEnvelope,
-  forcedTargetId?: number | null,
+  forcedExecutionAttemptId?: string | null,
 ): TesterProxyEnvelope => {
-  const normalizedForcedTargetId = toPositiveInteger(forcedTargetId);
-  if (normalizedForcedTargetId === null) {
-    if (!('forcedTargetId' in envelope)) return envelope;
-    const { forcedTargetId: _forcedTargetId, ...rest } = envelope;
+  const normalizedForcedExecutionAttemptId = toExecutionAttemptId(forcedExecutionAttemptId);
+  if (normalizedForcedExecutionAttemptId === null) {
+    if (!('forcedExecutionAttemptId' in envelope)) return envelope;
+    const { forcedExecutionAttemptId: _forcedExecutionAttemptId, ...rest } = envelope;
     return rest;
   }
 
   return {
     ...envelope,
-    forcedTargetId: normalizedForcedTargetId,
+    forcedExecutionAttemptId: normalizedForcedExecutionAttemptId,
   };
 };
 
@@ -1395,9 +1420,19 @@ export const parseCustomRequestBody = (raw: string): Record<string, unknown> | n
   if (!raw.trim()) return null;
   try {
     const parsed = JSON.parse(raw);
-    return isRecord(parsed) ? parsed : null;
+    return isRecord(parsed) && !Array.isArray(parsed) ? parsed : null;
   } catch {
     return null;
+  }
+};
+
+export const isValidCustomRequestJson = (raw: string): boolean => {
+  if (!raw.trim()) return false;
+  try {
+    JSON.parse(raw);
+    return true;
+  } catch {
+    return false;
   }
 };
 
@@ -1518,13 +1553,12 @@ export const syncCustomRequestBodyToMessages = (raw: string): ChatMessage[] | nu
 export const buildRawProxyRequestEnvelope = (
   method: ProxyRequestMethod,
   path: string,
-  requestKind: ProxyRequestKind,
   rawJsonText: string,
-  options?: Partial<Pick<TesterProxyEnvelope, 'stream' | 'jobMode'>>,
-): TesterProxyEnvelope => ({
+  options?: { stream?: boolean; jobMode?: boolean },
+): TesterRawJsonProxyEnvelope => ({
   method,
   path,
-  requestKind,
+  requestKind: 'json',
   stream: options?.stream ?? false,
   jobMode: options?.jobMode ?? false,
   rawMode: true,

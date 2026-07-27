@@ -138,3 +138,4 @@ export const test = base.extend<E2EFixtures>({
 });
 
 export { expect };
+export type { Page };

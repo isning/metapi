@@ -1,10 +1,12 @@
 import { quoteEndpointPricing } from "./pricingQuoteService.js";
 
 export type AccountModelCostSummary = {
+  status: 'configured' | 'unconfigured' | 'error';
   configured: boolean;
   matchedScope: string | null;
   pricingId: number | null;
-  totalCostUsd: number | null;
+  totalCost: number | null;
+  diagnostics: Array<{ level: 'error'; message: string }>;
 };
 
 type AccountModelCostToken = {
@@ -38,23 +40,37 @@ export async function buildAccountModelCostSummary(input: {
     });
     if (!quote.endpoint) return emptyAccountModelCostSummary();
     return {
+      status: 'configured',
       configured: true,
       matchedScope: quote.endpoint.matchedScope,
       pricingId: typeof quote.endpoint.sourceId === 'number' ? quote.endpoint.sourceId : null,
-      totalCostUsd: Number.isFinite(quote.endpoint.summary.totalCostUsd)
-        ? quote.endpoint.summary.totalCostUsd
+      totalCost: Number.isFinite(quote.endpoint.summary.totalCost)
+        ? quote.endpoint.summary.totalCost
         : null,
+      diagnostics: [],
     };
-  } catch {
-    return emptyAccountModelCostSummary();
+  } catch (error) {
+    return {
+      status: 'error',
+      configured: false,
+      matchedScope: null,
+      pricingId: null,
+      totalCost: null,
+      diagnostics: [{
+        level: 'error',
+        message: error instanceof Error ? error.message : String(error || 'pricing quote failed'),
+      }],
+    };
   }
 }
 
 function emptyAccountModelCostSummary(): AccountModelCostSummary {
   return {
+    status: 'unconfigured',
     configured: false,
     matchedScope: null,
     pricingId: null,
-    totalCostUsd: null,
+    totalCost: null,
+    diagnostics: [],
   };
 }

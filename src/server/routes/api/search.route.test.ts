@@ -1,35 +1,56 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { eq } from 'drizzle-orm';
 import {
   bootIsolatedRuntimeDb,
   type IsolatedRuntimeDbHandle,
 } from '../../../testing/dbHarness.js';
 import { mergeAccountExtraConfig } from '../../services/accountExtraConfig.js';
+import {
+  clearRouteGroupMemberTestData,
+  insertRouteGroupMember,
+} from '../../../testing/routeGroupMemberTestUtils.js';
 
 type DbModule = typeof import('../../db/index.js');
+type RouteGroupGraphTestHarnessModule = typeof import('../../test/routeGroupGraphTestHarness.js');
+type RouteGroupManagementServiceModule = typeof import('../../services/routeGroupManagementService.js');
 
 describe('search routes', () => {
   let app: FastifyInstance;
   let runtimeDb: IsolatedRuntimeDbHandle;
   let db: DbModule['db'];
   let schema: DbModule['schema'];
+  let publishRouteGroupGraphForTest: RouteGroupGraphTestHarnessModule['publishRouteGroupGraphForTest'];
+  let createRouteGroupFromPayload: RouteGroupManagementServiceModule['createRouteGroupFromPayload'];
 
   beforeAll(async () => {
     runtimeDb = await bootIsolatedRuntimeDb('metapi-search-route-');
     const dbModule = runtimeDb.dbModule;
     const routesModule = await import('./search.js');
+    const routeGroupGraphTestHarness = await import('../../test/routeGroupGraphTestHarness.js');
+    const routeGroupManagementService = await import('../../services/routeGroupManagementService.js');
     db = dbModule.db;
     schema = dbModule.schema;
+    publishRouteGroupGraphForTest = routeGroupGraphTestHarness.publishRouteGroupGraphForTest;
+    createRouteGroupFromPayload = routeGroupManagementService.createRouteGroupFromPayload;
 
     app = Fastify();
     await app.register(routesModule.searchRoutes);
   });
 
   beforeEach(async () => {
+    await db.delete(schema.routeGraphActiveVersion).run();
+    await db.delete(schema.routeGraphDrafts).run();
+    await db.delete(schema.compiledRuntimeActiveArtifact).run();
+    await db.delete(schema.compiledRuntimeArtifacts).run();
+    await db.delete(schema.routeGraphVersions).run();
+    await db.delete(schema.routeGraphActiveVersion).run();
+    await db.delete(schema.compiledRuntimeActiveArtifact).run();
+    await db.delete(schema.compiledRuntimeArtifacts).run();
+    await db.delete(schema.routeGraphVersions).run();
     await db.delete(schema.accountTokens).run();
-    await db.delete(schema.routeEndpointTargets).run();
-    await db.delete(schema.tokenRoutes).run();
+    await clearRouteGroupMemberTestData();
+    await db.delete(schema.runtimeExecutionTargetState).run();
+    await db.delete(schema.runtimeExecutionTargets).run();
     await db.delete(schema.tokenModelAvailability).run();
     await db.delete(schema.modelAvailability).run();
     await db.delete(schema.checkinLogs).run();
@@ -164,7 +185,40 @@ describe('search routes', () => {
     });
   });
 
-  it('includes oauth direct-account model availability in model search results', async () => {
+  async function createPublicRuntimeRoute(input: {
+    modelName: string;
+    accountId: number;
+    tokenId?: number | null;
+  }) {
+    const summary = await createRouteGroupFromPayload({
+      model: {
+        publicName: input.modelName,
+        upstreamName: input.modelName,
+      },
+      presentation: {
+        displayName: input.modelName,
+      },
+      dispatcherPolicy: { kind: 'builtin', builtin: 'weighted' },
+      enabled: true,
+    });
+    await insertRouteGroupMember({
+      groupId: summary.id,
+      accountId: input.accountId,
+      tokenId: input.tokenId ?? null,
+      sourceModel: input.modelName,
+      fallbackStageOrder: 0,
+      weight: 10,
+      enabled: true,
+    });
+    return summary;
+  }
+
+  async function publishActiveCompiledRuntime(): Promise<void> {
+    const published = await publishRouteGroupGraphForTest('search-test');
+    expect(published.status).toBe('active');
+  }
+
+  it('returns model search results from active compiled runtime inventory only', async () => {
     const site = await db.insert(schema.sites).values({
       name: 'codex site',
       url: 'https://chatgpt.com/backend-api/codex',
@@ -195,7 +249,7 @@ describe('search routes', () => {
       available: true,
     }).run();
 
-    const response = await app.inject({
+    const discoveryOnlyResponse = await app.inject({
       method: 'POST',
       url: '/api/search',
       payload: {
@@ -204,8 +258,29 @@ describe('search routes', () => {
       },
     });
 
-    expect(response.statusCode).toBe(200);
-    expect(response.json()).toMatchObject({
+    expect(discoveryOnlyResponse.statusCode).toBe(200);
+    expect(discoveryOnlyResponse.json()).toMatchObject({
+      models: [],
+    });
+
+    await createPublicRuntimeRoute({
+      modelName: 'gpt-5.2-codex',
+      accountId: account.id,
+      tokenId: null,
+    });
+    await publishActiveCompiledRuntime();
+
+    const runtimeResponse = await app.inject({
+      method: 'POST',
+      url: '/api/search',
+      payload: {
+        query: 'gpt-5.2',
+        limit: 20,
+      },
+    });
+
+    expect(runtimeResponse.statusCode).toBe(200);
+    expect(runtimeResponse.json()).toMatchObject({
       models: [
         expect.objectContaining({
           name: 'gpt-5.2-codex',

@@ -171,6 +171,41 @@ describe('sites endpoint bindings API', () => {
             'x-provider': 'deepseek',
           },
           modelCatalogSourceId: catalogSource!.id,
+          capabilityDefaults: {
+            status: 'supported',
+            input: {
+              text: 'native',
+              image: 'emulated',
+              audio: 'unsupported',
+              tools: 'native',
+              toolChoice: 'emulated',
+              jsonSchema: 'native',
+              stream: 'native',
+            },
+            output: {
+              text: 'native',
+              reasoning: 'emulated',
+              toolCalls: 'native',
+              usage: 'native',
+              citations: 'unsupported',
+            },
+            limits: {
+              maxContextTokens: 131072,
+              maxOutputTokens: 8192,
+            },
+            operations: {
+              'operation.responses.create': 'native',
+              'operation.chat.completions.create': 'emulated',
+            },
+            nativeProtocols: {
+              'native.gemini.cachedContent': 'unsupported',
+              'native.gemini.thinkingConfig': 'emulated',
+            },
+            transport: {
+              streamSse: 'native',
+              jsonBody: 'native',
+            },
+          },
           enabled: true,
           priority: 3,
         }],
@@ -185,6 +220,15 @@ describe('sites endpoint bindings API', () => {
         requestUrl: string;
         defaultHeaders: Record<string, string>;
         modelCatalogSourceId: string;
+        capabilityDefaults: {
+          status: string;
+          input: Record<string, string>;
+          output: Record<string, string>;
+          limits: Record<string, number>;
+          operations: Record<string, string>;
+          nativeProtocols: Record<string, string>;
+          transport: Record<string, string>;
+        };
         priority: number;
       }>;
     };
@@ -196,6 +240,73 @@ describe('sites endpoint bindings API', () => {
       },
       modelCatalogSourceId: String(catalogSource!.id),
       priority: 3,
+    });
+    const savedProfile = body.profiles.find((profile) => profile.rowId === chat!.rowId)!;
+    expect(savedProfile.capabilityDefaults.status).toBe('supported');
+    expect(savedProfile.capabilityDefaults.input).toMatchObject({
+      text: 'native',
+      image: 'emulated',
+      audio: 'unsupported',
+      tools: 'native',
+      toolChoice: 'emulated',
+      jsonSchema: 'native',
+      stream: 'native',
+    });
+    expect(savedProfile.capabilityDefaults.output).toMatchObject({
+      text: 'native',
+      reasoning: 'emulated',
+      toolCalls: 'native',
+      usage: 'native',
+      citations: 'unsupported',
+    });
+    expect(savedProfile.capabilityDefaults.limits).toMatchObject({
+      maxContextTokens: 131072,
+      maxOutputTokens: 8192,
+    });
+    expect(savedProfile.capabilityDefaults.operations).toEqual({
+      'operation.responses.create': 'native',
+      'operation.chat.completions.create': 'emulated',
+    });
+    expect(savedProfile.capabilityDefaults.nativeProtocols).toEqual({
+      'native.gemini.cachedContent': 'unsupported',
+      'native.gemini.thinkingConfig': 'emulated',
+    });
+    expect(savedProfile.capabilityDefaults.transport).toEqual({
+      streamSse: 'native',
+      jsonBody: 'native',
+    });
+  });
+
+  it('rejects invalid endpoint profile capability defaults', async () => {
+    const { site } = await createSiteWithToken();
+    const matrixResponse = await app.inject({
+      method: 'GET',
+      url: `/api/sites/${site.id}/endpoint-bindings`,
+    });
+    const matrix = matrixResponse.json() as {
+      profiles: Array<{ apiType: string; rowId: number }>;
+    };
+    const chat = matrix.profiles.find((profile) => profile.apiType === 'openai_chat_completions');
+    expect(chat).toBeTruthy();
+
+    const response = await app.inject({
+      method: 'PUT',
+      url: `/api/sites/${site.id}/endpoint-profiles`,
+      payload: {
+        profiles: [{
+          id: chat!.rowId,
+          capabilityDefaults: {
+            operations: {
+              'operation.responses.create': 'maybe',
+            },
+          },
+        }],
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      error: expect.stringContaining('Invalid capability state'),
     });
   });
 

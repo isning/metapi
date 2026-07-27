@@ -1,8 +1,7 @@
-import type { DownstreamRoutingPolicy } from '../../services/downstreamPolicyTypes.js';
-import type { RouteGraphPostBuildFilters } from '../../services/routeGraphRuntimeService.js';
-import type { RouteExecutionScope } from '../../services/routeExecutionScopeTypes.js';
+import type { CompiledRuntimePostBuildFilters } from '../../services/compiledRuntimePostBuildFilters.js';
 import type { ResolvedUpstreamCompatibilityPolicy } from '../../contracts/upstreamCompatibilityPolicy.js';
 import type { UpstreamEndpoint } from '../orchestration/upstreamRequest.js';
+import type { RuntimeCapabilityRequirement } from '../capabilities/requestCapabilityRequirement.js';
 
 export interface HeaderPassthroughRule {
   allowlist?: Set<string>;
@@ -32,7 +31,10 @@ export interface TransformedDownstreamRequest {
   responsesOriginalBody?: Record<string, unknown>;
   claudeOriginalBody?: Record<string, unknown>;
   endpointCandidates?: UpstreamEndpoint[];
-  requestCapabilities?: {
+  upstreamRequestMode?: 'default' | 'protocol_adapter';
+  operationHint?: string;
+  runtimeCapabilityRequirement?: RuntimeCapabilityRequirement;
+  surfaceCapabilityHints?: {
     hasNonImageFileInput?: boolean;
     conversationFileSummary?: {
       hasImage: boolean;
@@ -44,7 +46,6 @@ export interface TransformedDownstreamRequest {
     wantsContinuationAwareResponses?: boolean;
     requiresNativeResponsesFileUrl?: boolean;
   };
-  requestKind?: string;
   disableCrossProtocolFallback?: boolean;
   extraContext?: Record<string, unknown>;
 }
@@ -73,7 +74,7 @@ export interface BuildUpstreamRequestInput {
   passthroughHeaders: Record<string, string>;
   platformHeaders: Record<string, string>;
   transformed: TransformedDownstreamRequest;
-  routeGraphFilters?: RouteGraphPostBuildFilters | null;
+  runtimePostBuildFilters?: CompiledRuntimePostBuildFilters | null;
   compatibilityPolicy?: ResolvedUpstreamCompatibilityPolicy;
 }
 
@@ -150,11 +151,4 @@ export interface DownstreamProtocolAdapter {
     upstreamBody: any;
     status: number;
   }): { ok: boolean; reason?: string } | null;
-  selectChannel?(options: {
-    requestedModel: string;
-    policy: any;
-    excludeTargetIds: number[];
-    forcedTargetId: number | null;
-    routeExecutionScope?: RouteExecutionScope | null;
-  }): Promise<any>;
 }

@@ -116,7 +116,7 @@ describe('Accounts edit panel', () => {
     });
     apiMock.previewUpstreamCostPricing.mockResolvedValue({
       pricing: null,
-      evaluation: { totalCostUsd: 10 },
+      evaluation: { totalCost: 10 },
     });
   });
 

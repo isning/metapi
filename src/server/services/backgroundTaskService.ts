@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { sendNotification } from './notifyService.js';
 import { emitInboxItem } from './inboxService.js';
+import type { InboxDetailBlock } from '../../shared/inbox.js';
 
 export type BackgroundTaskStatus = 'pending' | 'running' | 'succeeded' | 'failed';
 
@@ -14,6 +15,7 @@ export type BackgroundTask = {
   id: string;
   type: string;
   title: string;
+  titleKey: string | null;
   status: BackgroundTaskStatus;
   message: string;
   error: string | null;
@@ -28,10 +30,17 @@ export type BackgroundTask = {
 };
 
 type TaskMessageTemplate = string | ((task: BackgroundTask) => string);
+type TaskI18nPayload = {
+  key: string;
+  params?: Record<string, string | number | boolean | null | undefined>;
+  paramKeys?: Record<string, string>;
+};
+type TaskI18nTemplate = TaskI18nPayload | ((task: BackgroundTask) => TaskI18nPayload | null | undefined);
 
-type BackgroundTaskStartOptions = {
+export type BackgroundTaskStartOptions = {
   type: string;
   title: string;
+  titleKey?: string;
   dedupeKey?: string;
   keepMs?: number;
   notifyOnSuccess?: boolean;
@@ -40,6 +49,8 @@ type BackgroundTaskStartOptions = {
   failureTitle?: TaskMessageTemplate;
   successMessage?: TaskMessageTemplate;
   failureMessage?: TaskMessageTemplate;
+  successMessageI18n?: TaskI18nTemplate;
+  failureMessageI18n?: TaskI18nTemplate;
 };
 
 const TASK_TTL_MS = 6 * 60 * 60 * 1000;
@@ -79,6 +90,189 @@ function resolveTaskMessage(template: TaskMessageTemplate | undefined, task: Bac
   }
   if (typeof template === 'string' && template.trim()) return template.trim();
   return fallback;
+}
+
+function resolveTaskI18n(template: TaskI18nTemplate | undefined, task: BackgroundTask): TaskI18nPayload | null {
+  if (!template) return null;
+  if (typeof template === 'function') {
+    try {
+      return template(task) || null;
+    } catch {
+      return null;
+    }
+  }
+  return template;
+}
+
+function taskTitleI18nParams(task: BackgroundTask) {
+  return {
+    params: { title: task.title },
+    paramKeys: task.titleKey ? { title: task.titleKey } : undefined,
+  };
+}
+
+function lifecycleTaskI18n(
+  task: BackgroundTask,
+  input: {
+    titleKey: string;
+    messageKey: string;
+    message?: TaskI18nPayload | null;
+    extraParams?: Record<string, string | number | boolean | null | undefined>;
+  },
+): Extract<InboxDetailBlock, { type: 'i18n' }> {
+  const titleParams = taskTitleI18nParams(task);
+  const message = input.message;
+  return {
+    type: 'i18n',
+    titleKey: input.titleKey,
+    summaryKey: message?.key || input.messageKey,
+    messageKey: message?.key || input.messageKey,
+    params: {
+      ...titleParams.params,
+      ...(input.extraParams || {}),
+      ...(message?.params || {}),
+    },
+    paramKeys: {
+      ...(titleParams.paramKeys || {}),
+      ...(message?.paramKeys || {}),
+    },
+  };
+}
+
+function formatTaskTimestamp(value: string | null | undefined): string {
+  return value || '-';
+}
+
+function formatTaskDuration(task: BackgroundTask): string {
+  const startMs = Date.parse(task.startedAt || task.createdAt);
+  const endMs = Date.parse(task.finishedAt || task.updatedAt);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs) return '-';
+  const durationMs = endMs - startMs;
+  if (durationMs < 1000) return `${durationMs} ms`;
+  return `${(durationMs / 1000).toFixed(2).replace(/\.?0+$/, '')} s`;
+}
+
+function stringifyTaskDetailValue(value: unknown): string {
+  if (value == null) return '-';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function collectTaskMetricItems(value: unknown, prefix = ''): Array<{ label: string; value: string }> {
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return [{ label: prefix || 'value', value: String(value) }];
+  }
+  if (Array.isArray(value)) {
+    return prefix ? [{ label: `${prefix}.count`, value: String(value.length) }] : [];
+  }
+  if (!value || typeof value !== 'object') return [];
+
+  const items: Array<{ label: string; value: string }> = [];
+  for (const [key, entryValue] of Object.entries(value as Record<string, unknown>)) {
+    const label = prefix ? `${prefix}.${key}` : key;
+    if (typeof entryValue === 'number' || typeof entryValue === 'boolean') {
+      items.push({ label, value: String(entryValue) });
+      continue;
+    }
+    if (Array.isArray(entryValue)) {
+      items.push({ label: `${label}.count`, value: String(entryValue.length) });
+      continue;
+    }
+    if (entryValue && typeof entryValue === 'object') {
+      for (const [nestedKey, nestedValue] of Object.entries(entryValue as Record<string, unknown>)) {
+        if (typeof nestedValue === 'number' || typeof nestedValue === 'boolean') {
+          items.push({ label: `${label}.${nestedKey}`, value: String(nestedValue) });
+        } else if (Array.isArray(nestedValue)) {
+          items.push({ label: `${label}.${nestedKey}.count`, value: String(nestedValue.length) });
+        }
+      }
+    }
+  }
+  return items;
+}
+
+function buildTaskResultDetailBlocks(result: unknown): InboxDetailBlock[] {
+  if (result == null) return [];
+  const blocks: InboxDetailBlock[] = [];
+  if (typeof result === 'object' && !Array.isArray(result)) {
+    const entries = Object.entries(result as Record<string, unknown>);
+    const metricItems = collectTaskMetricItems(result);
+    if (metricItems.length > 0) {
+      blocks.push({ type: 'metrics', title: 'backgroundTask.details.resultMetrics', items: metricItems });
+    }
+
+    const rows = entries
+      .filter(([, value]) => value == null || typeof value === 'string')
+      .map(([label, value]) => ({ label, value: stringifyTaskDetailValue(value) }));
+    if (rows.length > 0) {
+      blocks.push({ type: 'kv', title: 'backgroundTask.details.result', rows });
+    }
+
+    const errors = (result as { errors?: unknown }).errors;
+    if (Array.isArray(errors) && errors.length > 0) {
+      blocks.push({
+        type: 'table',
+        title: 'backgroundTask.details.errorList',
+        columns: ['siteId', 'accountId', 'error'],
+        rows: errors.slice(0, 20).map((item) => {
+          const row = item && typeof item === 'object' ? item as Record<string, unknown> : {};
+          return [
+            stringifyTaskDetailValue(row.siteId),
+            stringifyTaskDetailValue(row.accountId),
+            stringifyTaskDetailValue(row.error ?? item),
+          ];
+        }),
+      });
+    }
+  }
+
+  try {
+    blocks.push({
+      type: 'code',
+      title: 'backgroundTask.details.resultJson',
+      language: 'json',
+      value: JSON.stringify(result, null, 2),
+    });
+  } catch {}
+
+  return blocks;
+}
+
+function buildTaskEventDetails(task: BackgroundTask): InboxDetailBlock[] {
+  const details: InboxDetailBlock[] = [
+    {
+      type: 'kv',
+      title: 'backgroundTask.details.taskInfo',
+      rows: [
+        { label: 'backgroundTask.details.taskId', value: task.id },
+        { label: 'backgroundTask.details.type', value: task.type },
+        { label: 'backgroundTask.details.status', value: task.status },
+        { label: 'backgroundTask.details.createdAt', value: formatTaskTimestamp(task.createdAt) },
+        { label: 'backgroundTask.details.startedAt', value: formatTaskTimestamp(task.startedAt) },
+        { label: 'backgroundTask.details.finishedAt', value: formatTaskTimestamp(task.finishedAt) },
+        { label: 'backgroundTask.details.duration', value: formatTaskDuration(task) },
+        ...(task.dedupeKey ? [{ label: 'backgroundTask.details.dedupeKey', value: task.dedupeKey }] : []),
+      ],
+    },
+  ];
+
+  if (task.error) {
+    details.push({ type: 'text', title: 'backgroundTask.details.error', text: task.error });
+  }
+  details.push(...buildTaskResultDetailBlocks(task.result));
+  if (task.logs.length > 0) {
+    details.push({
+      type: 'list',
+      title: 'backgroundTask.details.logs',
+      items: task.logs.slice(-20).map((entry) => `${entry.seq}. ${entry.message}`),
+    });
+  }
+  return details;
 }
 
 function setTaskStatus(task: BackgroundTask, patch: Partial<BackgroundTask>) {
@@ -158,9 +352,14 @@ async function appendTaskEvent(
   title: string,
   message: string,
   taskId: string,
-  options: { scope?: 'notification' | 'activity' } = {},
+  options: { scope?: 'notification' | 'activity'; i18n?: Extract<InboxDetailBlock, { type: 'i18n' }> } = {},
 ) {
   try {
+    const task = tasks.get(taskId);
+    const details = [
+      ...(options.i18n ? [options.i18n] : []),
+      ...(task ? buildTaskEventDetails(task) : []),
+    ];
     await emitInboxItem({
       scope: options.scope || 'notification',
       category: 'system',
@@ -170,6 +369,7 @@ async function appendTaskEvent(
       message,
       level,
       subject: { type: 'task', id: taskId, label: title },
+      details,
       relatedType: 'task',
       source: 'background_task',
     });
@@ -198,7 +398,13 @@ async function runTask(taskId: string, options: BackgroundTaskStartOptions, runn
     const eventTitle = resolveTaskMessage(options.successTitle, task, `${task.title} 已完成`);
     const eventMessage = resolveTaskMessage(options.successMessage, task, `${task.title} 已完成`);
     task = setTaskStatus(task, { message: eventMessage });
-    appendTaskEvent('info', eventTitle, eventMessage, task.id);
+    appendTaskEvent('info', eventTitle, eventMessage, task.id, {
+      i18n: lifecycleTaskI18n(task, {
+        titleKey: 'backgroundTask.lifecycle.completedTitle',
+        messageKey: 'backgroundTask.lifecycle.completedMessage',
+        message: resolveTaskI18n(options.successMessageI18n, task),
+      }),
+    });
 
     if (options.notifyOnSuccess) {
       await sendNotification(eventTitle, eventMessage, 'info');
@@ -215,7 +421,14 @@ async function runTask(taskId: string, options: BackgroundTaskStartOptions, runn
     const eventTitle = resolveTaskMessage(options.failureTitle, task, `${task.title} 失败`);
     const eventMessage = resolveTaskMessage(options.failureMessage, task, task.message);
     task = setTaskStatus(task, { message: eventMessage });
-    appendTaskEvent('error', eventTitle, eventMessage, task.id);
+    appendTaskEvent('error', eventTitle, eventMessage, task.id, {
+      i18n: lifecycleTaskI18n(task, {
+        titleKey: 'backgroundTask.lifecycle.failedTitle',
+        messageKey: 'backgroundTask.lifecycle.failedMessage',
+        message: resolveTaskI18n(options.failureMessageI18n, task),
+        extraParams: { error: task.error || 'unknown error' },
+      }),
+    });
 
     if (options.notifyOnFailure ?? true) {
       await sendNotification(eventTitle, eventMessage, 'error');
@@ -268,6 +481,7 @@ export function startBackgroundTask(
     id: randomUUID(),
     type: options.type,
     title: options.title,
+    titleKey: options.titleKey || null,
     status: 'pending',
     message: `${options.title} 已开始执行`,
     error: null,
@@ -285,7 +499,13 @@ export function startBackgroundTask(
   taskLogSeq.set(task.id, 0);
   if (dedupeKey) dedupeTaskIds.set(dedupeKey, task.id);
 
-  appendTaskEvent('info', `${task.title}已开始`, `${task.title} 已开始执行`, task.id, { scope: 'activity' });
+  appendTaskEvent('info', `${task.title} 已开始`, `${task.title} 已开始执行`, task.id, {
+    scope: 'activity',
+    i18n: lifecycleTaskI18n(task, {
+      titleKey: 'backgroundTask.lifecycle.startedTitle',
+      messageKey: 'backgroundTask.lifecycle.startedMessage',
+    }),
+  });
   void runTask(task.id, options, runner);
   return { task, reused: false };
 }

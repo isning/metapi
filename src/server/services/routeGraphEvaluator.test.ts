@@ -1,15 +1,37 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  compileRouteGraphSource,
+  compileRouteGraphSource as compileRouteGraphSourceBase,
   normalizeRouteGraphSource,
 } from '../../shared/routeGraph.js';
 import {
-  applyRouteGraphPostBuildFilters,
-  evaluateCompiledRouteGraph,
+  applyRouteRuntimePostBuildFilters,
+  evaluateCompiledRuntimeArtifact,
   evaluateCompiledRouterBundle,
   hydrateCompiledRouterBundle,
-} from './routeGraphRuntimeService.js';
+} from './routeRuntimeEvaluatorService.js';
 import { __selectorEngineTestUtils } from './selectorEngine.js';
+
+function compileRouteGraphSource(source: Parameters<typeof compileRouteGraphSourceBase>[0]) {
+  let nextExecutionTargetId = 1;
+  for (const node of source.nodes || []) {
+    if (node.type !== 'route_endpoint') continue;
+    node.routeEndpointId ||= node.id;
+    const config = node.config;
+    if (!config || typeof config !== 'object' || Array.isArray(config)) continue;
+    const targets = Array.isArray(config.targets) ? config.targets : [];
+    for (const target of targets) {
+      if (!target || typeof target !== 'object' || Array.isArray(target)) continue;
+      if (target.transportBinding?.kind !== 'execution_target') {
+        target.transportBinding = {
+          kind: 'execution_target',
+          executionTargetId: nextExecutionTargetId,
+        };
+      }
+      nextExecutionTargetId += 1;
+    }
+  }
+  return compileRouteGraphSourceBase(source);
+}
 
 describe('route graph runtime evaluator', () => {
   afterEach(() => {
@@ -18,13 +40,11 @@ describe('route graph runtime evaluator', () => {
 
   it('evaluates multi-hop model rewrite and payload filters without provider hardcoding', () => {
     const source = normalizeRouteGraphSource({
-      version: 1,
       nodes: [
         {
           id: 'entry.deepseek-max',
           type: 'entry',
           enabled: true,
-          visibility: 'public',
           ownership: 'manual',
           match: { requestedModelPattern: 'deepseek-v4-pro-max', displayName: null, routeId: 100 },
         },
@@ -32,7 +52,6 @@ describe('route graph runtime evaluator', () => {
           id: 'filter.strip-max',
           type: 'filter',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
           operations: [
             { type: 'rewrite_model', source: 'current_model', operation: 'strip_suffix', suffix: '-max' },
@@ -42,7 +61,6 @@ describe('route graph runtime evaluator', () => {
           id: 'filter.thinking',
           type: 'filter',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
           operations: [
             { type: 'set_payload', path: 'thinking', mode: 'override', value: { type: 'enabled' } },
@@ -53,20 +71,17 @@ describe('route graph runtime evaluator', () => {
           id: 'dispatcher.deepseek-pro',
           type: 'dispatcher',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
           mode: 'route',
           ordering: 'explicit',
-          policy: { strategy: 'weighted' },
+          policy: { kind: 'builtin', builtin: 'weighted' },
         },
         {
           id: 'endpoint.deepseek-pro',
           type: 'route_endpoint',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
-          legacyRouteId: 101,
-          config: { targets: [{ targetId: '101', model: 'deepseek-v4-pro', accountId: 1, tokenId: 1 }], targetSelection: { strategy: 'weighted' } },
+          config: { targets: [{ targetId: '101', model: 'deepseek-v4-pro', accountId: 1, tokenId: 1 }], targetSelection: { kind: 'builtin', builtin: 'weighted' } },
         },
       ],
       edges: [
@@ -112,29 +127,28 @@ describe('route graph runtime evaluator', () => {
     expect(compiled.ok).toBe(true);
     expect(compiled.compiled.compiledRouterBundle?.diagnostics.map((diagnostic) => diagnostic.code)).not.toContain('compiled_router.unsupported_filter_path');
     const compiledRouterPlan = compiled.compiled.compiledRouterBundle?.plans.find((plan) => plan.id === 'program:entry.deepseek-max');
-    expect(compiledRouterPlan?.selectorLevels[0]?.filterStageIndexes.map((index) => compiledRouterPlan.filterStages[index]?.nodeId)).toEqual([
+    expect(compiledRouterPlan?.executionAlternatives[0]?.filterStageIndexes.map((index) => compiledRouterPlan.filterStages[index]?.nodeId)).toEqual([
       'filter.strip-max',
       'filter.thinking',
     ]);
 
-    const selection = evaluateCompiledRouteGraph({
+    const selection = evaluateCompiledRuntimeArtifact({
       graph: compiled.compiled,
       requestedModel: 'deepseek-v4-pro-max',
     });
 
     expect(selection).toMatchObject({
       matchedEntryNodeId: 'entry.deepseek-max',
-      selectedRouteId: 101,
       currentModel: 'deepseek-v4-pro',
-      terminalKind: 'route_endpoint',
-      selectedEndpointTarget: {
+      terminalKind: 'endpoint',
+      selectedExecutionAttempt: {
         targetId: '101',
         model: 'deepseek-v4-pro',
       },
     });
     expect(selection?.postBuildFilters.payload.map((operation) => operation.type)).toEqual(['set_payload', 'set_payload']);
 
-    const filtered = applyRouteGraphPostBuildFilters({
+    const filtered = applyRouteRuntimePostBuildFilters({
       payload: { model: 'deepseek-v4-pro' },
       filters: selection?.postBuildFilters,
     });
@@ -148,13 +162,11 @@ describe('route graph runtime evaluator', () => {
 
   it('applies payload/header mutations with default, override, remove and endpoint preference semantics', () => {
     const source = normalizeRouteGraphSource({
-      version: 1,
       nodes: [
         {
           id: 'entry.rules',
           type: 'entry',
           enabled: true,
-          visibility: 'public',
           ownership: 'manual',
           match: { requestedModelPattern: 'rules-model' },
         },
@@ -162,7 +174,6 @@ describe('route graph runtime evaluator', () => {
           id: 'filter.rules',
           type: 'filter',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
           operations: [
             { type: 'set_payload', path: 'reasoning_effort', mode: 'default', value: 'medium' },
@@ -178,10 +189,8 @@ describe('route graph runtime evaluator', () => {
           id: 'endpoint.rules',
           type: 'route_endpoint',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
-          legacyRouteId: 41,
-          config: { targets: [{ targetId: '41', model: 'rules-model' }], targetSelection: { strategy: 'weighted' } },
+          config: { targets: [{ targetId: '41', model: 'rules-model' }], targetSelection: { kind: 'builtin', builtin: 'weighted' } },
         },
       ],
       edges: [
@@ -192,12 +201,12 @@ describe('route graph runtime evaluator', () => {
     const compiled = compileRouteGraphSource(source);
     expect(compiled.ok).toBe(true);
 
-    const selection = evaluateCompiledRouteGraph({
+    const selection = evaluateCompiledRuntimeArtifact({
       graph: compiled.compiled,
       requestedModel: 'rules-model',
     });
 
-    const filtered = applyRouteGraphPostBuildFilters({
+    const filtered = applyRouteRuntimePostBuildFilters({
       payload: {
         model: 'rules-model',
         reasoning_effort: 'low',
@@ -228,13 +237,11 @@ describe('route graph runtime evaluator', () => {
 
   it('returns configured dummy errors as terminal graph outcomes', () => {
     const compiled = compileRouteGraphSource({
-      version: 1,
       nodes: [
         {
           id: 'entry.blocked',
           type: 'entry',
           enabled: true,
-          visibility: 'public',
           ownership: 'manual',
           match: { requestedModelPattern: 'blocked-model' },
         },
@@ -242,7 +249,6 @@ describe('route graph runtime evaluator', () => {
           id: 'synthetic.503',
           type: 'synthetic_endpoint',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
           statusCode: 503,
           message: 'No backend for this model',
@@ -262,11 +268,11 @@ describe('route graph runtime evaluator', () => {
     });
 
     expect(compiled.ok).toBe(true);
-    expect(evaluateCompiledRouteGraph({
+    expect(evaluateCompiledRuntimeArtifact({
       graph: compiled.compiled,
       requestedModel: 'blocked-model',
     })).toMatchObject({
-      terminalKind: 'synthetic_endpoint',
+      terminalKind: 'synthetic_response',
       syntheticResponse: {
         statusCode: 503,
         message: 'No backend for this model',
@@ -276,13 +282,11 @@ describe('route graph runtime evaluator', () => {
 
   it('allows a supply route endpoint node to be reused by a dispatcher', () => {
     const compiled = compileRouteGraphSource({
-      version: 1,
       nodes: [
         {
           id: 'entry.public',
           type: 'entry',
           enabled: true,
-          visibility: 'public',
           ownership: 'manual',
           match: { requestedModelPattern: 'public-model' },
         },
@@ -290,21 +294,18 @@ describe('route graph runtime evaluator', () => {
           id: 'endpoint.reused',
           type: 'route_endpoint',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
           endpointKind: 'supply',
-          legacyRouteId: 77,
           routeEndpointId: 'entry.public',
-          config: { targets: [{ targetId: '77', model: 'public-model' }], targetSelection: { strategy: 'weighted' } },
+          config: { targets: [{ targetId: '77', model: 'public-model' }], targetSelection: { kind: 'builtin', builtin: 'weighted' } },
         },
         {
           id: 'dispatcher.reuse',
           type: 'dispatcher',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
           mode: 'route',
-          policy: { strategy: 'weighted' },
+          policy: { kind: 'builtin', builtin: 'weighted' },
         },
       ],
       edges: [
@@ -314,24 +315,22 @@ describe('route graph runtime evaluator', () => {
     });
 
     expect(compiled.ok).toBe(true);
-    expect(evaluateCompiledRouteGraph({
+    expect(evaluateCompiledRuntimeArtifact({
       graph: compiled.compiled,
       requestedModel: 'public-model',
     })).toMatchObject({
       matchedEntryNodeId: 'entry.public',
-      selectedRouteId: 77,
       terminalNodeId: 'endpoint.reused',
     });
   });
 
   it('enforces the configured max hop limit during traversal', () => {
     const source = normalizeRouteGraphSource({
-      version: 1,
       nodes: [
-        { id: 'entry.a', type: 'entry', enabled: true, visibility: 'public', ownership: 'manual', match: { requestedModelPattern: 'a' } },
-        { id: 'filter.1', type: 'filter', enabled: true, visibility: 'internal', ownership: 'manual', operations: [] },
-        { id: 'filter.2', type: 'filter', enabled: true, visibility: 'internal', ownership: 'manual', operations: [] },
-        { id: 'endpoint.a', type: 'route_endpoint', enabled: true, visibility: 'internal', ownership: 'manual', legacyRouteId: 1, routeEndpointId: 'entry.a', config: { targets: [{ targetId: '1', model: 'a' }], targetSelection: { strategy: 'weighted' } } },
+        { id: 'entry.a', type: 'entry', enabled: true, ownership: 'manual', match: { requestedModelPattern: 'a' } },
+        { id: 'filter.1', type: 'filter', enabled: true, ownership: 'manual', operations: [] },
+        { id: 'filter.2', type: 'filter', enabled: true, ownership: 'manual', operations: [] },
+        { id: 'endpoint.a', type: 'route_endpoint', enabled: true, ownership: 'manual', routeEndpointId: 'entry.a', config: { targets: [{ targetId: '1', model: 'a' }], targetSelection: { kind: 'builtin', builtin: 'weighted' } } },
       ],
       edges: [
         { id: 'e1', sourceNodeId: 'entry.a', sourcePortId: 'bidirect.out', targetNodeId: 'filter.1', targetPortId: 'bidirect.in', kind: 'bidirect_flow', ownership: 'manual' },
@@ -343,34 +342,32 @@ describe('route graph runtime evaluator', () => {
     expect(compiled.ok).toBe(true);
     const graphWithoutFlatBundle = compiled.compiled;
 
-    expect(evaluateCompiledRouteGraph({
+    expect(evaluateCompiledRuntimeArtifact({
       graph: graphWithoutFlatBundle,
       requestedModel: 'a',
       maxHops: 2,
     })).toBe(null);
-    expect(evaluateCompiledRouteGraph({
+    expect(evaluateCompiledRuntimeArtifact({
       graph: graphWithoutFlatBundle,
       requestedModel: 'a',
       maxHops: 4,
-    })?.terminalKind).toBe('route_endpoint');
+    })?.terminalKind).toBe('endpoint');
   });
 
   it('uses route dispatcher weighted strategy as weighted random selection', () => {
     const compiled = compileRouteGraphSource({
-      version: 1,
       nodes: [
-        { id: 'entry.a', type: 'entry', enabled: true, visibility: 'public', ownership: 'manual', match: { requestedModelPattern: 'a' } },
+        { id: 'entry.a', type: 'entry', enabled: true, ownership: 'manual', match: { requestedModelPattern: 'a' } },
         {
           id: 'dispatcher.a',
           type: 'dispatcher',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
           mode: 'route',
-          policy: { strategy: 'weighted' },
+          policy: { kind: 'builtin', builtin: 'weighted' },
         },
-        { id: 'endpoint.low', type: 'route_endpoint', enabled: true, visibility: 'internal', ownership: 'manual', legacyRouteId: 1, routeEndpointId: 'entry.a', metadata: { weight: 1 }, config: { targets: [{ targetId: '1', model: 'a-low' }], targetSelection: { strategy: 'weighted' } } },
-        { id: 'endpoint.high', type: 'route_endpoint', enabled: true, visibility: 'internal', ownership: 'manual', legacyRouteId: 2, routeEndpointId: 'entry.a', metadata: { weight: 10 }, config: { targets: [{ targetId: '2', model: 'a-high' }], targetSelection: { strategy: 'weighted' } } },
+        { id: 'endpoint.low', type: 'route_endpoint', enabled: true, ownership: 'manual', routeEndpointId: 'entry.a', metadata: { weight: 1 }, config: { targets: [{ targetId: '1', model: 'a-low' }], targetSelection: { kind: 'builtin', builtin: 'weighted' } } },
+        { id: 'endpoint.high', type: 'route_endpoint', enabled: true, ownership: 'manual', routeEndpointId: 'entry.a', metadata: { weight: 10 }, config: { targets: [{ targetId: '2', model: 'a-high' }], targetSelection: { kind: 'builtin', builtin: 'weighted' } } },
       ],
       edges: [
         { id: 'e1', sourceNodeId: 'entry.a', sourcePortId: 'bidirect.out', targetNodeId: 'dispatcher.a', targetPortId: 'bidirect.in', kind: 'bidirect_flow', ownership: 'manual' },
@@ -381,38 +378,42 @@ describe('route graph runtime evaluator', () => {
 
     expect(compiled.ok).toBe(true);
     const graphWithoutFlatBundle = compiled.compiled;
-    expect(evaluateCompiledRouteGraph({
+    expect(evaluateCompiledRuntimeArtifact({
       graph: graphWithoutFlatBundle,
       requestedModel: 'a',
       random: () => 0.01,
-    })?.selectedRouteId).toBe(1);
+    })?.selectedExecutionAttempt?.targetId).toBe('1');
 
-    expect(evaluateCompiledRouteGraph({
+    expect(evaluateCompiledRuntimeArtifact({
       graph: graphWithoutFlatBundle,
       requestedModel: 'a',
       random: () => 0.99,
-    })?.selectedRouteId).toBe(2);
+    })?.selectedExecutionAttempt?.targetId).toBe('2');
   });
 
   it('uses route dispatcher CEL score policy over candidate metadata', () => {
     const compiled = compileRouteGraphSource({
-      version: 1,
       nodes: [
-        { id: 'entry.a', type: 'entry', enabled: true, visibility: 'public', ownership: 'manual', match: { requestedModelPattern: 'a' } },
+        { id: 'entry.a', type: 'entry', enabled: true, ownership: 'manual', match: { requestedModelPattern: 'a' } },
         {
           id: 'dispatcher.a',
           type: 'dispatcher',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
           mode: 'route',
           policy: {
-            strategy: 'weighted',
-            score: 'candidate.metadata.qualityScore - candidate.metadata.costRank',
+            kind: 'inline',
+            policy: {
+              id: 'rank-by-quality-and-cost',
+              name: 'Rank by quality and cost',
+              kind: 'cel',
+              selectionMode: 'ordered',
+              orderExpression: '-(endpoint.metadata.qualityScore - endpoint.metadata.costRank)',
+            },
           },
         },
-        { id: 'endpoint.low', type: 'route_endpoint', enabled: true, visibility: 'internal', ownership: 'manual', legacyRouteId: 1, metadata: { qualityScore: 5, costRank: 1 }, config: { targets: [{ targetId: '1', model: 'a-low' }], targetSelection: { strategy: 'weighted' } } },
-        { id: 'endpoint.high', type: 'route_endpoint', enabled: true, visibility: 'internal', ownership: 'manual', legacyRouteId: 2, metadata: { qualityScore: 10, costRank: 2 }, config: { targets: [{ targetId: '2', model: 'a-high' }], targetSelection: { strategy: 'weighted' } } },
+        { id: 'endpoint.low', type: 'route_endpoint', enabled: true, ownership: 'manual', metadata: { qualityScore: 5, costRank: 1 }, config: { targets: [{ targetId: '1', model: 'a-low' }], targetSelection: { kind: 'builtin', builtin: 'weighted' } } },
+        { id: 'endpoint.high', type: 'route_endpoint', enabled: true, ownership: 'manual', metadata: { qualityScore: 10, costRank: 2 }, config: { targets: [{ targetId: '2', model: 'a-high' }], targetSelection: { kind: 'builtin', builtin: 'weighted' } } },
       ],
       edges: [
         { id: 'e1', sourceNodeId: 'entry.a', sourcePortId: 'bidirect.out', targetNodeId: 'dispatcher.a', targetPortId: 'bidirect.in', kind: 'bidirect_flow', ownership: 'manual' },
@@ -423,38 +424,40 @@ describe('route graph runtime evaluator', () => {
 
     expect(compiled.ok).toBe(true);
     vi.spyOn(Math, 'random').mockReturnValueOnce(0.99);
-    expect(evaluateCompiledRouteGraph({
+    expect(evaluateCompiledRuntimeArtifact({
       graph: compiled.compiled,
       requestedModel: 'a',
-    })?.selectedRouteId).toBe(2);
+    })?.selectedExecutionAttempt?.targetId).toBe('2');
   });
 
   it('hydrates compiled router selector CEL plans only for the matched plan', () => {
     const utils = __selectorEngineTestUtils();
     utils.clearCelPlanCache();
     const compiled = compileRouteGraphSource({
-      version: 1,
       nodes: [
-        { id: 'entry.prehydrated', type: 'entry', enabled: true, visibility: 'public', ownership: 'manual', match: { requestedModelPattern: 'prehydrated-model' } },
+        { id: 'entry.prehydrated', type: 'entry', enabled: true, ownership: 'manual', match: { requestedModelPattern: 'prehydrated-model' } },
         {
           id: 'dispatcher.prehydrated',
           type: 'dispatcher',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
           mode: 'route',
           policy: {
-            strategy: 'weighted',
-            score: 'candidate.metadata.quality - candidate.metadata.cost',
+            kind: 'inline',
+            policy: {
+              id: 'rank-prehydrated-endpoints',
+              name: 'Rank prehydrated endpoints',
+              kind: 'cel',
+              selectionMode: 'ordered',
+              orderExpression: '-(endpoint.metadata.quality - endpoint.metadata.cost)',
+            },
           },
         },
         {
           id: 'endpoint.prehydrated',
           type: 'route_endpoint',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
-          legacyRouteId: 31,
           metadata: { quality: 10, cost: 1 },
           config: {
             targets: [
@@ -462,39 +465,54 @@ describe('route graph runtime evaluator', () => {
               { targetId: 'b', model: 'target-b', metadata: { latency: 10 } },
             ],
             targetSelection: {
-              strategy: 'weighted',
-              score: '100.0 - candidate.metadata.latency',
+              kind: 'inline',
+              policy: {
+                id: 'rank-prehydrated-attempts',
+                name: 'Rank prehydrated attempts',
+                kind: 'cel',
+                selectionMode: 'ordered',
+                orderExpression: '-(100.0 - self.metadata.latency)',
+              },
             },
           },
         },
-        { id: 'entry.unused', type: 'entry', enabled: true, visibility: 'public', ownership: 'manual', match: { requestedModelPattern: 'unused-model' } },
+        { id: 'entry.unused', type: 'entry', enabled: true, ownership: 'manual', match: { requestedModelPattern: 'unused-model' } },
         {
           id: 'dispatcher.unused',
           type: 'dispatcher',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
           mode: 'route',
           policy: {
-            strategy: 'weighted',
-            score: 'candidate.metadata.quality * 10',
+            kind: 'inline',
+            policy: {
+              id: 'rank-unused-endpoints',
+              name: 'Rank unused endpoints',
+              kind: 'cel',
+              selectionMode: 'ordered',
+              orderExpression: '-(endpoint.metadata.quality * 10)',
+            },
           },
         },
         {
           id: 'endpoint.unused',
           type: 'route_endpoint',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
-          legacyRouteId: 32,
           metadata: { quality: 1 },
           config: {
             targets: [
               { targetId: 'unused', model: 'target-unused', metadata: { latency: 1 } },
             ],
             targetSelection: {
-              strategy: 'weighted',
-              score: 'candidate.metadata.latency * 2',
+              kind: 'inline',
+              policy: {
+                id: 'rank-unused-attempts',
+                name: 'Rank unused attempts',
+                kind: 'cel',
+                selectionMode: 'ordered',
+                orderExpression: '-(self.metadata.latency * 2)',
+              },
             },
           },
         },
@@ -512,12 +530,11 @@ describe('route graph runtime evaluator', () => {
     expect(hydrateCompiledRouterBundle(compiled.compiled.compiledRouterBundle!)).toBeTruthy();
     expect(utils.celPlanCacheSize()).toBe(0);
 
-    expect(evaluateCompiledRouteGraph({
+    expect(evaluateCompiledRuntimeArtifact({
       graph: compiled.compiled,
       requestedModel: 'prehydrated-model',
     })).toMatchObject({
-      selectedRouteId: 31,
-      selectedEndpointTarget: {
+      selectedExecutionAttempt: {
         targetId: 'b',
         model: 'target-b',
       },
@@ -527,40 +544,40 @@ describe('route graph runtime evaluator', () => {
 
   it('exposes merged endpoint and edge metadata to route dispatcher CEL scoring', () => {
     const compiled = compileRouteGraphSource({
-      version: 1,
       nodes: [
-        { id: 'entry.metadata', type: 'entry', enabled: true, visibility: 'public', ownership: 'manual', match: { requestedModelPattern: 'metadata-model' } },
+        { id: 'entry.metadata', type: 'entry', enabled: true, ownership: 'manual', match: { requestedModelPattern: 'metadata-model' } },
         {
           id: 'dispatcher.metadata',
           type: 'dispatcher',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
           mode: 'route',
           policy: {
-            strategy: 'weighted',
-            score: 'metadata.nodeScore + metadata.edgeBoost',
+            kind: 'inline',
+            policy: {
+              id: 'rank-by-node-and-edge',
+              name: 'Rank by node and edge metadata',
+              kind: 'cel',
+              selectionMode: 'ordered',
+              orderExpression: '-(endpoint.metadata.nodeScore + self.metadata.edgeBoost)',
+            },
           },
         },
         {
           id: 'endpoint.node-only',
           type: 'route_endpoint',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
-          legacyRouteId: 1,
           metadata: { nodeScore: 10, edgeBoost: 0 },
-          config: { targets: [{ targetId: '1', model: 'node-only' }], targetSelection: { strategy: 'weighted' } },
+          config: { targets: [{ targetId: '1', model: 'node-only' }], targetSelection: { kind: 'builtin', builtin: 'weighted' } },
         },
         {
           id: 'endpoint.edge-boosted',
           type: 'route_endpoint',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
-          legacyRouteId: 2,
           metadata: { nodeScore: 5 },
-          config: { targets: [{ targetId: '2', model: 'edge-boosted' }], targetSelection: { strategy: 'weighted' } },
+          config: { targets: [{ targetId: '2', model: 'edge-boosted' }], targetSelection: { kind: 'builtin', builtin: 'weighted' } },
         },
       ],
       edges: [
@@ -571,34 +588,40 @@ describe('route graph runtime evaluator', () => {
     });
 
     expect(compiled.ok).toBe(true);
-    expect(evaluateCompiledRouteGraph({
+    expect(evaluateCompiledRuntimeArtifact({
       graph: compiled.compiled,
       requestedModel: 'metadata-model',
     })).toMatchObject({
-      selectedRouteId: 2,
-      selectedEndpointTarget: {
+      selectedExecutionAttempt: {
         targetId: '2',
         model: 'edge-boosted',
       },
     });
   });
 
-  it('uses route dispatcher direct CEL select and falls back to first candidate when out of range', () => {
+  it('uses route dispatcher direct CEL select and rejects an out-of-range result', () => {
     const compiled = compileRouteGraphSource({
-      version: 1,
       nodes: [
-        { id: 'entry.direct', type: 'entry', enabled: true, visibility: 'public', ownership: 'manual', match: { requestedModelPattern: 'direct-model' } },
+        { id: 'entry.direct', type: 'entry', enabled: true, ownership: 'manual', match: { requestedModelPattern: 'direct-model' } },
         {
           id: 'dispatcher.direct',
           type: 'dispatcher',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
           mode: 'route',
-          policy: { strategy: 'direct', select: 'payload.currentModel == "direct-model" ? 1 : 99' },
+          policy: {
+            kind: 'inline',
+            policy: {
+              id: 'choose-direct-model',
+              name: 'Choose direct model',
+              kind: 'cel',
+              selectionMode: 'direct',
+              selectExpression: 'payload.currentModel == "direct-model" ? 1 : 99',
+            },
+          },
         },
-        { id: 'endpoint.first', type: 'route_endpoint', enabled: true, visibility: 'internal', ownership: 'manual', legacyRouteId: 1, config: { targets: [{ targetId: '1', model: 'first' }], targetSelection: { strategy: 'weighted' } } },
-        { id: 'endpoint.second', type: 'route_endpoint', enabled: true, visibility: 'internal', ownership: 'manual', legacyRouteId: 2, config: { targets: [{ targetId: '2', model: 'second' }], targetSelection: { strategy: 'weighted' } } },
+        { id: 'endpoint.first', type: 'route_endpoint', enabled: true, ownership: 'manual', config: { targets: [{ targetId: '1', model: 'first' }], targetSelection: { kind: 'builtin', builtin: 'weighted' } } },
+        { id: 'endpoint.second', type: 'route_endpoint', enabled: true, ownership: 'manual', config: { targets: [{ targetId: '2', model: 'second' }], targetSelection: { kind: 'builtin', builtin: 'weighted' } } },
       ],
       edges: [
         { id: 'entry-dispatcher', sourceNodeId: 'entry.direct', sourcePortId: 'bidirect.out', targetNodeId: 'dispatcher.direct', targetPortId: 'bidirect.in', kind: 'bidirect_flow', ownership: 'manual' },
@@ -608,81 +631,106 @@ describe('route graph runtime evaluator', () => {
     });
     expect(compiled.ok).toBe(true);
 
-    expect(evaluateCompiledRouteGraph({
+    expect(evaluateCompiledRuntimeArtifact({
       graph: compiled.compiled,
       requestedModel: 'direct-model',
-    })?.selectedRouteId).toBe(2);
+    })?.selectedExecutionAttempt?.targetId).toBe('2');
 
     const rewritten = compileRouteGraphSource({
       ...compiled.source,
       nodes: compiled.source.nodes.map((node) => (
         node.id === 'dispatcher.direct'
-          ? { ...node, policy: { strategy: 'direct', select: '99' } }
+          ? {
+            ...node,
+            policy: {
+              kind: 'inline',
+              policy: {
+                id: 'choose-direct-model',
+                name: 'Choose direct model',
+                kind: 'cel',
+                selectionMode: 'direct',
+                selectExpression: '99',
+              },
+            },
+          }
           : node
       )),
     });
     expect(rewritten.ok).toBe(true);
-    expect(evaluateCompiledRouteGraph({
+    expect(() => evaluateCompiledRuntimeArtifact({
       graph: rewritten.compiled,
       requestedModel: 'direct-model',
-    })?.selectedRouteId).toBe(1);
+    })).toThrow(/direct selection/i);
   });
 
   it('round-robins endpoint targets while ignoring disabled targets', () => {
     const compiled = compileRouteGraphSource({
-      version: 1,
       nodes: [
-        { id: 'entry.targets', type: 'entry', enabled: true, visibility: 'public', ownership: 'manual', match: { requestedModelPattern: 'target-model' } },
+        { id: 'entry.targets', type: 'entry', enabled: true, ownership: 'manual', match: { requestedModelPattern: 'target-model' } },
+        {
+          id: 'dispatcher.targets',
+          type: 'dispatcher',
+          enabled: true,
+          ownership: 'manual',
+          mode: 'route',
+          policy: { kind: 'builtin', builtin: 'weighted' },
+        },
         {
           id: 'endpoint.targets',
           type: 'route_endpoint',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
-          legacyRouteId: 70,
+          endpointKind: 'supply',
           config: {
             targets: [
               { targetId: 'disabled', model: 'disabled', enabled: false },
               { targetId: 'a', model: 'target-a' },
               { targetId: 'b', model: 'target-b' },
             ],
-            targetSelection: { strategy: 'round_robin' },
+            targetSelection: { kind: 'builtin', builtin: 'round_robin' },
           },
         },
       ],
       edges: [
-        { id: 'entry-endpoint', sourceNodeId: 'entry.targets', sourcePortId: 'bidirect.out', targetNodeId: 'endpoint.targets', targetPortId: 'bidirect.in', kind: 'bidirect_flow', ownership: 'manual' },
+        { id: 'entry-dispatcher', sourceNodeId: 'entry.targets', sourcePortId: 'bidirect.out', targetNodeId: 'dispatcher.targets', targetPortId: 'bidirect.in', kind: 'bidirect_flow', ownership: 'manual' },
+        {
+          id: 'endpoint-candidate',
+          sourceNodeId: 'endpoint.targets',
+          sourcePortId: 'route.out',
+          targetNodeId: 'dispatcher.targets',
+          targetPortId: 'route.in',
+          kind: 'route_flow',
+          ownership: 'manual',
+        },
       ],
     });
     expect(compiled.ok).toBe(true);
 
     const stateStore: Record<string, unknown> = {};
-    const first = evaluateCompiledRouteGraph({ graph: compiled.compiled, requestedModel: 'target-model', stateStore });
-    const second = evaluateCompiledRouteGraph({ graph: compiled.compiled, requestedModel: 'target-model', stateStore });
-    const third = evaluateCompiledRouteGraph({ graph: compiled.compiled, requestedModel: 'target-model', stateStore });
+    const first = evaluateCompiledRuntimeArtifact({ graph: compiled.compiled, requestedModel: 'target-model', stateStore });
+    const second = evaluateCompiledRuntimeArtifact({ graph: compiled.compiled, requestedModel: 'target-model', stateStore });
+    const third = evaluateCompiledRuntimeArtifact({ graph: compiled.compiled, requestedModel: 'target-model', stateStore });
 
-    expect(first?.selectedEndpointTarget?.targetId).toBe('a');
-    expect(second?.selectedEndpointTarget?.targetId).toBe('b');
-    expect(third?.selectedEndpointTarget?.targetId).toBe('a');
-    expect(stateStore['dispatcher:endpoint.targets:round_robin']).toBe(3);
+    expect(first?.selectedExecutionAttempt?.targetId).toBe('a');
+    expect(second?.selectedExecutionAttempt?.targetId).toBe('b');
+    expect(third?.selectedExecutionAttempt?.targetId).toBe('a');
+    expect(Object.values(stateStore)).toContain(3);
   });
 
   it('ignores disabled route candidates before applying dispatcher policy', () => {
     const compiled = compileRouteGraphSource({
-      version: 1,
       nodes: [
-        { id: 'entry.a', type: 'entry', enabled: true, visibility: 'public', ownership: 'manual', match: { requestedModelPattern: 'a' } },
+        { id: 'entry.a', type: 'entry', enabled: true, ownership: 'manual', match: { requestedModelPattern: 'a' } },
         {
           id: 'dispatcher.a',
           type: 'dispatcher',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
           mode: 'route',
-          policy: { strategy: 'weighted' },
+          policy: { kind: 'builtin', builtin: 'weighted' },
         },
-        { id: 'endpoint.disabled', type: 'route_endpoint', enabled: false, visibility: 'internal', ownership: 'manual', legacyRouteId: 1, metadata: { weight: 100 }, config: { targets: [{ targetId: '1', model: 'a-disabled' }], targetSelection: { strategy: 'weighted' } } },
-        { id: 'endpoint.enabled', type: 'route_endpoint', enabled: true, visibility: 'internal', ownership: 'manual', legacyRouteId: 2, metadata: { weight: 1 }, config: { targets: [{ targetId: '2', model: 'a-enabled' }], targetSelection: { strategy: 'weighted' } } },
+        { id: 'endpoint.disabled', type: 'route_endpoint', enabled: false, ownership: 'manual', metadata: { weight: 100 }, config: { targets: [{ targetId: '1', model: 'a-disabled' }], targetSelection: { kind: 'builtin', builtin: 'weighted' } } },
+        { id: 'endpoint.enabled', type: 'route_endpoint', enabled: true, ownership: 'manual', metadata: { weight: 1 }, config: { targets: [{ targetId: '2', model: 'a-enabled' }], targetSelection: { kind: 'builtin', builtin: 'weighted' } } },
       ],
       edges: [
         { id: 'e1', sourceNodeId: 'entry.a', sourcePortId: 'bidirect.out', targetNodeId: 'dispatcher.a', targetPortId: 'bidirect.in', kind: 'bidirect_flow', ownership: 'manual' },
@@ -693,79 +741,91 @@ describe('route graph runtime evaluator', () => {
 
     expect(compiled.ok).toBe(true);
     vi.spyOn(Math, 'random').mockReturnValueOnce(0.99);
-    expect(evaluateCompiledRouteGraph({
+    expect(evaluateCompiledRuntimeArtifact({
       graph: compiled.compiled,
       requestedModel: 'a',
-    })?.selectedRouteId).toBe(2);
+    })?.selectedExecutionAttempt?.targetId).toBe('2');
   });
 
-  it('uses route dispatcher priority buckets before weighted random selection', () => {
+  it('selects only the first available fallback stage before applying its stage policy', () => {
     const compiled = compileRouteGraphSource({
-      version: 1,
       nodes: [
-        { id: 'entry.a', type: 'entry', enabled: true, visibility: 'public', ownership: 'manual', match: { requestedModelPattern: 'a' } },
-        {
-          id: 'dispatcher.a',
-          type: 'dispatcher',
-          enabled: true,
-          visibility: 'internal',
-          ownership: 'manual',
-          mode: 'route',
-          policy: { strategy: 'priority_order' },
+        { id: 'endpoint.fallback', type: 'route_endpoint', enabled: true, ownership: 'manual', endpointKind: 'supply', config: { targets: [{ targetId: '1', model: 'a-fallback' }], targetSelection: { kind: 'builtin', builtin: 'weighted' } } },
+        { id: 'endpoint.primary-a', type: 'route_endpoint', enabled: true, ownership: 'manual', endpointKind: 'supply', config: { targets: [{ targetId: '2', model: 'a-primary-a' }], targetSelection: { kind: 'builtin', builtin: 'weighted' } } },
+        { id: 'endpoint.primary-b', type: 'route_endpoint', enabled: true, ownership: 'manual', endpointKind: 'supply', config: { targets: [{ targetId: '3', model: 'a-primary-b' }], targetSelection: { kind: 'builtin', builtin: 'weighted' } } },
+      ],
+      edges: [],
+      macros: [{
+        id: 'macro:fallback-stages',
+        kind: 'candidate_selector',
+        enabled: true,
+        ownership: 'manual',
+        config: {
+          surface: {
+            entry: { kind: 'external', match: { requestedModelPattern: 'a', displayName: 'a' } },
+            output: 'route',
+          },
+          policy: { kind: 'builtin', builtin: 'weighted' },
+          groups: [
+            {
+              id: 'primary',
+              enabled: true,
+              policy: { kind: 'builtin', builtin: 'weighted' },
+              input: { kind: 'route_endpoints', endpointIds: ['endpoint.primary-a', 'endpoint.primary-b'] },
+              members: [
+                { endpointId: 'endpoint.primary-a', weight: 1 },
+                { endpointId: 'endpoint.primary-b', weight: 9 },
+              ],
+            },
+            {
+              id: 'fallback',
+              enabled: true,
+              policy: { kind: 'builtin', builtin: 'weighted' },
+              input: { kind: 'route_endpoints', endpointIds: ['endpoint.fallback'] },
+              members: [{ endpointId: 'endpoint.fallback', weight: 100 }],
+            },
+          ],
         },
-        { id: 'endpoint.low-priority', type: 'route_endpoint', enabled: true, visibility: 'internal', ownership: 'manual', legacyRouteId: 1, metadata: { priority: 1, weight: 100 }, config: { targets: [{ targetId: '1', model: 'a-low-priority' }], targetSelection: { strategy: 'weighted' } } },
-        { id: 'endpoint.high-priority-a', type: 'route_endpoint', enabled: true, visibility: 'internal', ownership: 'manual', legacyRouteId: 2, metadata: { priority: 10, weight: 1 }, config: { targets: [{ targetId: '2', model: 'a-high-priority-a' }], targetSelection: { strategy: 'weighted' } } },
-        { id: 'endpoint.high-priority-b', type: 'route_endpoint', enabled: true, visibility: 'internal', ownership: 'manual', legacyRouteId: 3, metadata: { priority: 10, weight: 9 }, config: { targets: [{ targetId: '3', model: 'a-high-priority-b' }], targetSelection: { strategy: 'weighted' } } },
-      ],
-      edges: [
-        { id: 'e1', sourceNodeId: 'entry.a', sourcePortId: 'bidirect.out', targetNodeId: 'dispatcher.a', targetPortId: 'bidirect.in', kind: 'bidirect_flow', ownership: 'manual' },
-        { id: 'e2', sourceNodeId: 'endpoint.low-priority', sourcePortId: 'route.out', targetNodeId: 'dispatcher.a', targetPortId: 'route.in', kind: 'route_flow', ownership: 'manual' },
-        { id: 'e3', sourceNodeId: 'endpoint.high-priority-a', sourcePortId: 'route.out', targetNodeId: 'dispatcher.a', targetPortId: 'route.in', kind: 'route_flow', ownership: 'manual' },
-        { id: 'e4', sourceNodeId: 'endpoint.high-priority-b', sourcePortId: 'route.out', targetNodeId: 'dispatcher.a', targetPortId: 'route.in', kind: 'route_flow', ownership: 'manual' },
-      ],
+      }],
     });
 
     expect(compiled.ok).toBe(true);
     vi.spyOn(Math, 'random').mockReturnValueOnce(0.01);
-    expect(evaluateCompiledRouteGraph({
+    expect(evaluateCompiledRuntimeArtifact({
       graph: compiled.compiled,
       requestedModel: 'a',
-    })?.selectedRouteId).toBe(2);
+    })?.selectedExecutionAttempt?.targetId).toBe('2');
 
     vi.spyOn(Math, 'random').mockReturnValueOnce(0.99);
-    expect(evaluateCompiledRouteGraph({
+    expect(evaluateCompiledRuntimeArtifact({
       graph: compiled.compiled,
       requestedModel: 'a',
-    })?.selectedRouteId).toBe(3);
+    })?.selectedExecutionAttempt?.targetId).toBe('3');
   });
 
   it('uses route endpoint targetSelection to select the concrete endpoint target', () => {
     const compiled = compileRouteGraphSource({
-      version: 1,
       nodes: [
-        { id: 'entry.a', type: 'entry', enabled: true, visibility: 'public', ownership: 'manual', match: { requestedModelPattern: 'a' } },
+        { id: 'entry.a', type: 'entry', enabled: true, ownership: 'manual', match: { requestedModelPattern: 'a' } },
         {
           id: 'dispatcher.a',
           type: 'dispatcher',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
           mode: 'route',
-          policy: { strategy: 'weighted' },
+          policy: { kind: 'builtin', builtin: 'weighted' },
         },
         {
           id: 'endpoint.a',
           type: 'route_endpoint',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
-          legacyRouteId: 1,
           config: {
             targets: [
               { targetId: '10', model: 'a-low', weight: 1 },
               { targetId: '20', model: 'a-high', weight: 9 },
             ],
-            targetSelection: { strategy: 'weighted' },
+            targetSelection: { kind: 'builtin', builtin: 'weighted' },
           },
         },
       ],
@@ -777,53 +837,49 @@ describe('route graph runtime evaluator', () => {
 
     expect(compiled.ok).toBe(true);
     const graphWithoutFlatBundle = compiled.compiled;
-    expect(evaluateCompiledRouteGraph({
+    expect(evaluateCompiledRuntimeArtifact({
       graph: graphWithoutFlatBundle,
       requestedModel: 'a',
       random: () => 0.01,
     })).toMatchObject({
-      selectedEndpointTarget: {
+      selectedExecutionAttempt: {
         targetId: '10',
         model: 'a-low',
       },
-      currentModel: 'a-low',
+      currentModel: 'a',
       upstreamModel: 'a-low',
     });
-    expect(evaluateCompiledRouteGraph({
+    expect(evaluateCompiledRuntimeArtifact({
       graph: graphWithoutFlatBundle,
       requestedModel: 'a',
       random: () => 0.5,
     })).toMatchObject({
-      selectedEndpointTarget: {
+      selectedExecutionAttempt: {
         targetId: '20',
         model: 'a-high',
       },
-      currentModel: 'a-high',
+      currentModel: 'a',
       upstreamModel: 'a-high',
     });
   });
 
   it('exposes route endpoint compatibility defaults and selected target overrides separately', () => {
     const compiled = compileRouteGraphSource({
-      version: 1,
       nodes: [
-        { id: 'entry.compat', type: 'entry', enabled: true, visibility: 'public', ownership: 'manual', match: { requestedModelPattern: 'compat' } },
+        { id: 'entry.compat', type: 'entry', enabled: true, ownership: 'manual', match: { requestedModelPattern: 'compat' } },
         {
           id: 'dispatcher.compat',
           type: 'dispatcher',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
           mode: 'route',
-          policy: { strategy: 'weighted' },
+          policy: { kind: 'builtin', builtin: 'weighted' },
         },
         {
           id: 'endpoint.compat',
           type: 'route_endpoint',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
-          legacyRouteId: 1,
           compatibilityPolicy: {
             reasoningHistory: {
               transport: {
@@ -846,7 +902,7 @@ describe('route graph runtime evaluator', () => {
                 },
               },
             ],
-            targetSelection: { strategy: 'weighted' },
+            targetSelection: { kind: 'builtin', builtin: 'weighted' },
           },
         },
       ],
@@ -857,7 +913,7 @@ describe('route graph runtime evaluator', () => {
     });
 
     expect(compiled.ok).toBe(true);
-    expect(evaluateCompiledRouteGraph({
+    expect(evaluateCompiledRuntimeArtifact({
       graph: compiled.compiled,
       requestedModel: 'compat',
     })).toMatchObject({
@@ -868,7 +924,7 @@ describe('route graph runtime evaluator', () => {
           },
         },
       },
-      selectedEndpointTarget: {
+      selectedExecutionAttempt: {
         targetId: '10',
         model: 'compat-target',
         compatibilityPolicy: {
@@ -883,33 +939,29 @@ describe('route graph runtime evaluator', () => {
     });
   });
 
-  it('defers route endpoint target selection to the token router when configured', () => {
+  it('emits unresolved endpoint selection for compiled runtime execution when configured', () => {
     const compiled = compileRouteGraphSource({
-      version: 1,
       nodes: [
-        { id: 'entry.a', type: 'entry', enabled: true, visibility: 'public', ownership: 'manual', match: { requestedModelPattern: 'a' } },
+        { id: 'entry.a', type: 'entry', enabled: true, ownership: 'manual', match: { requestedModelPattern: 'a' } },
         {
           id: 'dispatcher.a',
           type: 'dispatcher',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
           mode: 'route',
-          policy: { strategy: 'weighted' },
+          policy: { kind: 'builtin', builtin: 'weighted' },
         },
         {
           id: 'endpoint.a',
           type: 'route_endpoint',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
-          legacyRouteId: 1,
           config: {
             targets: [
               { targetId: '10', model: 'a-low', weight: 1 },
               { targetId: '20', model: 'a-high', weight: 9 },
             ],
-            targetSelection: { strategy: 'defer_to_router' },
+            targetSelection: { kind: 'defer_to_router' },
           },
         },
       ],
@@ -920,98 +972,115 @@ describe('route graph runtime evaluator', () => {
     });
 
     expect(compiled.ok).toBe(true);
-    expect(evaluateCompiledRouteGraph({
+    expect(evaluateCompiledRuntimeArtifact({
       graph: compiled.compiled,
       requestedModel: 'a',
     })).toMatchObject({
-      selectedRouteId: 1,
-      selectedEndpointTarget: null,
+      selectedExecutionAttempt: null,
       currentModel: 'a',
     });
   });
 
-  it('reruns dispatcher selection with request-local failed endpoint overlay', () => {
+  it('advances to the next fallback stage when the current stage is exhausted', () => {
     const compiled = compileRouteGraphSource({
-      version: 1,
       nodes: [
-        { id: 'entry.a', type: 'entry', enabled: true, visibility: 'public', ownership: 'manual', match: { requestedModelPattern: 'a' } },
-        {
-          id: 'dispatcher.a',
-          type: 'dispatcher',
-          enabled: true,
-          visibility: 'internal',
-          ownership: 'manual',
-          mode: 'route',
-          policy: { strategy: 'priority_order' },
-        },
         {
           id: 'endpoint.primary',
           type: 'route_endpoint',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
-          legacyRouteId: 1,
-          metadata: { priority: 10 },
-          config: { targets: [{ targetId: '10', model: 'primary' }], targetSelection: { strategy: 'weighted' } },
+          endpointKind: 'supply',
+          config: {
+            targets: [{ targetId: '10', model: 'primary', transportBinding: { kind: 'execution_target', executionTargetId: 10 } }],
+            targetSelection: { kind: 'builtin', builtin: 'weighted' },
+          },
         },
         {
           id: 'endpoint.backup',
           type: 'route_endpoint',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
-          legacyRouteId: 2,
-          metadata: { priority: 1 },
-          config: { targets: [{ targetId: '20', model: 'backup' }], targetSelection: { strategy: 'weighted' } },
+          endpointKind: 'supply',
+          config: {
+            targets: [{ targetId: '20', model: 'backup', transportBinding: { kind: 'execution_target', executionTargetId: 20 } }],
+            targetSelection: { kind: 'builtin', builtin: 'weighted' },
+          },
         },
       ],
-      edges: [
-        { id: 'e-entry', sourceNodeId: 'entry.a', sourcePortId: 'bidirect.out', targetNodeId: 'dispatcher.a', targetPortId: 'bidirect.in', kind: 'bidirect_flow', ownership: 'manual' },
-        { id: 'e-primary', sourceNodeId: 'endpoint.primary', sourcePortId: 'route.out', targetNodeId: 'dispatcher.a', targetPortId: 'route.in', kind: 'route_flow', ownership: 'manual' },
-        { id: 'e-backup', sourceNodeId: 'endpoint.backup', sourcePortId: 'route.out', targetNodeId: 'dispatcher.a', targetPortId: 'route.in', kind: 'route_flow', ownership: 'manual' },
-      ],
+      edges: [],
+      macros: [{
+        id: 'macro:retry-fallback',
+        kind: 'candidate_selector',
+        enabled: true,
+        ownership: 'manual',
+        config: {
+          surface: {
+            entry: { kind: 'external', match: { requestedModelPattern: 'a', displayName: 'a' } },
+            output: 'route',
+          },
+          policy: { kind: 'builtin', builtin: 'weighted' },
+          groups: [
+            {
+              id: 'primary',
+              enabled: true,
+              input: { kind: 'route_endpoints', endpointIds: ['endpoint.primary'] },
+              members: [{ endpointId: 'endpoint.primary' }],
+            },
+            {
+              id: 'fallback',
+              enabled: true,
+              input: { kind: 'route_endpoints', endpointIds: ['endpoint.backup'] },
+              members: [{ endpointId: 'endpoint.backup' }],
+            },
+          ],
+        },
+      }],
     });
 
     expect(compiled.ok).toBe(true);
-    const first = evaluateCompiledRouteGraph({
+    const first = evaluateCompiledRuntimeArtifact({
       graph: compiled.compiled,
       requestedModel: 'a',
     });
-    expect(first?.selectedRouteId).toBe(1);
-    expect(first?.candidateSnapshots?.map((candidate) => candidate.routeId).sort()).toEqual([1, 2]);
+    expect(first?.selectedExecutionAttempt?.targetId).toBe('10');
+    expect(first?.fallbackStageSnapshots?.map((stage) => stage.stageId)).toEqual(['macro:macro:retry-fallback:dispatcher']);
 
-    const retry = evaluateCompiledRouteGraph({
+    const retry = evaluateCompiledRuntimeArtifact({
       graph: compiled.compiled,
       requestedModel: 'a',
       failureOverlay: {
-        disabledEndpointIds: ['endpoint.primary'],
-        disabledTargetIds: [10],
+        disabledExecutionTargetIds: [10],
       },
     });
-    expect(retry?.selectedRouteId).toBe(2);
-    expect(retry?.selectedEndpointTarget?.targetId).toBe('20');
-    expect(retry?.candidateSnapshots?.some((candidate) => candidate.endpointId === 'endpoint.backup')).toBe(true);
+    expect(retry?.selectedExecutionAttempt?.targetId).toBe('20');
+    expect(retry?.fallbackStageSnapshots?.map((stage) => stage.stageId)).toEqual([
+      'macro:macro:retry-fallback:fallback-stage:fallback:dispatcher',
+    ]);
   });
 
   it('uses direct flow dispatcher policy to choose a bidirect branch', () => {
     const compiled = compileRouteGraphSource({
-      version: 1,
       nodes: [
-        { id: 'entry.a', type: 'entry', enabled: true, visibility: 'public', ownership: 'manual', match: { requestedModelPattern: 'a' } },
+        { id: 'entry.a', type: 'entry', enabled: true, ownership: 'manual', match: { requestedModelPattern: 'a' } },
         {
           id: 'dispatcher.flow',
           type: 'dispatcher',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
           mode: 'flow',
           policy: {
-            strategy: 'direct',
-            select: 'payload.currentModel == "a" ? 1 : 0',
+            kind: 'inline',
+            policy: {
+              id: 'choose-flow-branch',
+              name: 'Choose flow branch',
+              kind: 'cel',
+              selectionMode: 'direct',
+              selectExpression: 'payload.currentModel == "a" ? 1 : 0',
+            },
           },
         },
-        { id: 'endpoint.first', type: 'route_endpoint', enabled: true, visibility: 'internal', ownership: 'manual', legacyRouteId: 1, config: { targets: [{ targetId: '1', model: 'a-first' }], targetSelection: { strategy: 'weighted' } } },
-        { id: 'endpoint.second', type: 'route_endpoint', enabled: true, visibility: 'internal', ownership: 'manual', legacyRouteId: 2, config: { targets: [{ targetId: '2', model: 'a-second' }], targetSelection: { strategy: 'weighted' } } },
+        { id: 'endpoint.first', type: 'route_endpoint', enabled: true, ownership: 'manual', config: { targets: [{ targetId: '1', model: 'a-first' }], targetSelection: { kind: 'builtin', builtin: 'weighted' } } },
+        { id: 'endpoint.second', type: 'route_endpoint', enabled: true, ownership: 'manual', config: { targets: [{ targetId: '2', model: 'a-second' }], targetSelection: { kind: 'builtin', builtin: 'weighted' } } },
       ],
       edges: [
         { id: 'e1', sourceNodeId: 'entry.a', sourcePortId: 'bidirect.out', targetNodeId: 'dispatcher.flow', targetPortId: 'bidirect.in', kind: 'bidirect_flow', ownership: 'manual' },
@@ -1021,42 +1090,35 @@ describe('route graph runtime evaluator', () => {
     });
 
     expect(compiled.ok).toBe(true);
-    expect(evaluateCompiledRouteGraph({
+    expect(evaluateCompiledRuntimeArtifact({
       graph: compiled.compiled,
       requestedModel: 'a',
-    })?.selectedRouteId).toBe(2);
+    })?.selectedExecutionAttempt?.targetId).toBe('2');
   });
 
   it('can select synthetic fallback branches from bidirect flow dispatchers', () => {
     const compiled = compileRouteGraphSource({
-      version: 1,
       nodes: [
-        { id: 'entry.flow-fallback', type: 'entry', enabled: true, visibility: 'public', ownership: 'manual', match: { requestedModelPattern: 'flow-fallback' } },
+        { id: 'entry.flow-fallback', type: 'entry', enabled: true, ownership: 'manual', match: { requestedModelPattern: 'flow-fallback' } },
         {
           id: 'dispatcher.flow-fallback',
           type: 'dispatcher',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
           mode: 'flow',
-          policy: {
-            strategy: 'priority_order',
-          },
+          policy: { kind: 'builtin', builtin: 'stable_first' },
         },
         {
           id: 'endpoint.unavailable',
           type: 'route_endpoint',
           enabled: false,
-          visibility: 'internal',
           ownership: 'manual',
-          legacyRouteId: 1,
-          config: { targets: [{ targetId: '1', model: 'disabled' }], targetSelection: { strategy: 'weighted' } },
+          config: { targets: [{ targetId: '1', model: 'disabled' }], targetSelection: { kind: 'builtin', builtin: 'weighted' } },
         },
         {
           id: 'synthetic.rate-limit',
           type: 'synthetic_endpoint',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
           statusCode: 429,
           message: 'Rate limited by route graph',
@@ -1064,17 +1126,17 @@ describe('route graph runtime evaluator', () => {
       ],
       edges: [
         { id: 'entry-dispatcher', sourceNodeId: 'entry.flow-fallback', sourcePortId: 'bidirect.out', targetNodeId: 'dispatcher.flow-fallback', targetPortId: 'bidirect.in', kind: 'bidirect_flow', ownership: 'manual' },
-        { id: 'disabled-primary', sourceNodeId: 'dispatcher.flow-fallback', sourcePortId: 'bidirect[1...].out', targetNodeId: 'endpoint.unavailable', targetPortId: 'bidirect.in', kind: 'bidirect_flow', ownership: 'manual', metadata: { priority: 100, enabled: false } },
-        { id: 'fallback', sourceNodeId: 'dispatcher.flow-fallback', sourcePortId: 'bidirect[1...].out', targetNodeId: 'synthetic.rate-limit', targetPortId: 'bidirect.in', kind: 'bidirect_flow', ownership: 'manual', metadata: { priority: 1 } },
+        { id: 'disabled-primary', sourceNodeId: 'dispatcher.flow-fallback', sourcePortId: 'bidirect[1...].out', targetNodeId: 'endpoint.unavailable', targetPortId: 'bidirect.in', kind: 'bidirect_flow', ownership: 'manual', metadata: { enabled: false } },
+        { id: 'fallback', sourceNodeId: 'dispatcher.flow-fallback', sourcePortId: 'bidirect[1...].out', targetNodeId: 'synthetic.rate-limit', targetPortId: 'bidirect.in', kind: 'bidirect_flow', ownership: 'manual' },
       ],
     });
 
     expect(compiled.ok).toBe(true);
-    expect(evaluateCompiledRouteGraph({
+    expect(evaluateCompiledRuntimeArtifact({
       graph: compiled.compiled,
       requestedModel: 'flow-fallback',
     })).toMatchObject({
-      terminalKind: 'synthetic_endpoint',
+      terminalKind: 'synthetic_response',
       syntheticResponse: {
         statusCode: 429,
         message: 'Rate limited by route graph',
@@ -1084,20 +1146,18 @@ describe('route graph runtime evaluator', () => {
 
   it('round-robins route dispatcher candidates through the supplied runtime state store', () => {
     const compiled = compileRouteGraphSource({
-      version: 1,
       nodes: [
-        { id: 'entry.rr', type: 'entry', enabled: true, visibility: 'public', ownership: 'manual', match: { requestedModelPattern: 'rr' } },
+        { id: 'entry.rr', type: 'entry', enabled: true, ownership: 'manual', match: { requestedModelPattern: 'rr' } },
         {
           id: 'dispatcher.rr',
           type: 'dispatcher',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
           mode: 'route',
-          policy: { strategy: 'round_robin' },
+          policy: { kind: 'builtin', builtin: 'round_robin' },
         },
-        { id: 'endpoint.first', type: 'route_endpoint', enabled: true, visibility: 'internal', ownership: 'manual', legacyRouteId: 1, config: { targets: [{ targetId: '1', model: 'rr-first' }], targetSelection: { strategy: 'weighted' } } },
-        { id: 'endpoint.second', type: 'route_endpoint', enabled: true, visibility: 'internal', ownership: 'manual', legacyRouteId: 2, config: { targets: [{ targetId: '2', model: 'rr-second' }], targetSelection: { strategy: 'weighted' } } },
+        { id: 'endpoint.first', type: 'route_endpoint', enabled: true, ownership: 'manual', config: { targets: [{ targetId: '1', model: 'rr-first' }], targetSelection: { kind: 'builtin', builtin: 'weighted' } } },
+        { id: 'endpoint.second', type: 'route_endpoint', enabled: true, ownership: 'manual', config: { targets: [{ targetId: '2', model: 'rr-second' }], targetSelection: { kind: 'builtin', builtin: 'weighted' } } },
       ],
       edges: [
         { id: 'entry-dispatcher', sourceNodeId: 'entry.rr', sourcePortId: 'bidirect.out', targetNodeId: 'dispatcher.rr', targetPortId: 'bidirect.in', kind: 'bidirect_flow', ownership: 'manual' },
@@ -1109,40 +1169,37 @@ describe('route graph runtime evaluator', () => {
 
     const stateStore: Record<string, unknown> = {};
 
-    expect(evaluateCompiledRouteGraph({ graph: compiled.compiled, requestedModel: 'rr', stateStore })?.selectedRouteId).toBe(1);
-    expect(evaluateCompiledRouteGraph({ graph: compiled.compiled, requestedModel: 'rr', stateStore })?.selectedRouteId).toBe(2);
-    expect(evaluateCompiledRouteGraph({ graph: compiled.compiled, requestedModel: 'rr', stateStore })?.selectedRouteId).toBe(1);
-    expect(stateStore).toMatchObject({ 'dispatcher:dispatcher.rr:round_robin': 3 });
+    expect(evaluateCompiledRuntimeArtifact({ graph: compiled.compiled, requestedModel: 'rr', stateStore })?.selectedExecutionAttempt?.targetId).toBe('1');
+    expect(evaluateCompiledRuntimeArtifact({ graph: compiled.compiled, requestedModel: 'rr', stateStore })?.selectedExecutionAttempt?.targetId).toBe('2');
+    expect(evaluateCompiledRuntimeArtifact({ graph: compiled.compiled, requestedModel: 'rr', stateStore })?.selectedExecutionAttempt?.targetId).toBe('1');
+    expect(stateStore).toMatchObject({ 'selector:program:entry.rr:op:dispatcher.rr:dispatch-route:round_robin': 3 });
+    expect(stateStore).not.toHaveProperty('dispatcher:dispatcher.rr:round_robin');
   });
 
   it('round-robins route endpoint targets and skips disabled targets', () => {
     const compiled = compileRouteGraphSource({
-      version: 1,
       nodes: [
-        { id: 'entry.targets', type: 'entry', enabled: true, visibility: 'public', ownership: 'manual', match: { requestedModelPattern: 'target-rr' } },
+        { id: 'entry.targets', type: 'entry', enabled: true, ownership: 'manual', match: { requestedModelPattern: 'target-rr' } },
         {
           id: 'dispatcher.targets',
           type: 'dispatcher',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
           mode: 'route',
-          policy: { strategy: 'weighted' },
+          policy: { kind: 'builtin', builtin: 'weighted' },
         },
         {
           id: 'endpoint.targets',
           type: 'route_endpoint',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
-          legacyRouteId: 10,
           config: {
             targets: [
               { targetId: 'disabled', model: 'target-disabled', enabled: false },
               { targetId: 'a', model: 'target-a' },
               { targetId: 'b', model: 'target-b' },
             ],
-            targetSelection: { strategy: 'round_robin' },
+            targetSelection: { kind: 'builtin', builtin: 'round_robin' },
           },
         },
       ],
@@ -1155,27 +1212,39 @@ describe('route graph runtime evaluator', () => {
 
     const stateStore: Record<string, unknown> = {};
 
-    expect(evaluateCompiledRouteGraph({ graph: compiled.compiled, requestedModel: 'target-rr', stateStore })?.selectedEndpointTarget?.targetId).toBe('a');
-    expect(evaluateCompiledRouteGraph({ graph: compiled.compiled, requestedModel: 'target-rr', stateStore })?.selectedEndpointTarget?.targetId).toBe('b');
-    expect(evaluateCompiledRouteGraph({ graph: compiled.compiled, requestedModel: 'target-rr', stateStore })?.selectedEndpointTarget?.targetId).toBe('a');
+    expect(evaluateCompiledRuntimeArtifact({ graph: compiled.compiled, requestedModel: 'target-rr', stateStore })?.selectedExecutionAttempt?.targetId).toBe('a');
+    expect(evaluateCompiledRuntimeArtifact({ graph: compiled.compiled, requestedModel: 'target-rr', stateStore })?.selectedExecutionAttempt?.targetId).toBe('b');
+    expect(evaluateCompiledRuntimeArtifact({ graph: compiled.compiled, requestedModel: 'target-rr', stateStore })?.selectedExecutionAttempt?.targetId).toBe('a');
+    expect(stateStore).toMatchObject({
+      'selector:endpoint.targets:execution_attempt:round_robin': 3,
+    });
+    expect(stateStore).not.toHaveProperty('dispatcher:endpoint.targets:round_robin');
+    expect(stateStore).not.toHaveProperty('dispatcher:endpoint.targets:execution_attempt:round_robin');
   });
 
-  it('falls back to the first enabled branch when direct CEL returns an out-of-range index', () => {
+  it('rejects an out-of-range direct CEL branch index', () => {
     const compiled = compileRouteGraphSource({
-      version: 1,
       nodes: [
-        { id: 'entry.direct', type: 'entry', enabled: true, visibility: 'public', ownership: 'manual', match: { requestedModelPattern: 'direct' } },
+        { id: 'entry.direct', type: 'entry', enabled: true, ownership: 'manual', match: { requestedModelPattern: 'direct' } },
         {
           id: 'dispatcher.direct',
           type: 'dispatcher',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
           mode: 'flow',
-          policy: { strategy: 'direct', select: '99' },
+          policy: {
+            kind: 'inline',
+            policy: {
+              id: 'out-of-range-direct',
+              name: 'Out of range direct',
+              kind: 'cel',
+              selectionMode: 'direct',
+              selectExpression: '99',
+            },
+          },
         },
-        { id: 'endpoint.first', type: 'route_endpoint', enabled: true, visibility: 'internal', ownership: 'manual', legacyRouteId: 1, config: { targets: [{ targetId: '1', model: 'direct-first' }], targetSelection: { strategy: 'weighted' } } },
-        { id: 'endpoint.second', type: 'route_endpoint', enabled: true, visibility: 'internal', ownership: 'manual', legacyRouteId: 2, config: { targets: [{ targetId: '2', model: 'direct-second' }], targetSelection: { strategy: 'weighted' } } },
+        { id: 'endpoint.first', type: 'route_endpoint', enabled: true, ownership: 'manual', config: { targets: [{ targetId: '1', model: 'direct-first' }], targetSelection: { kind: 'builtin', builtin: 'weighted' } } },
+        { id: 'endpoint.second', type: 'route_endpoint', enabled: true, ownership: 'manual', config: { targets: [{ targetId: '2', model: 'direct-second' }], targetSelection: { kind: 'builtin', builtin: 'weighted' } } },
       ],
       edges: [
         { id: 'entry-dispatcher', sourceNodeId: 'entry.direct', sourcePortId: 'bidirect.out', targetNodeId: 'dispatcher.direct', targetPortId: 'bidirect.in', kind: 'bidirect_flow', ownership: 'manual' },
@@ -1185,25 +1254,22 @@ describe('route graph runtime evaluator', () => {
     });
     expect(compiled.ok).toBe(true);
 
-    expect(evaluateCompiledRouteGraph({
+    expect(() => evaluateCompiledRuntimeArtifact({
       graph: compiled.compiled,
       requestedModel: 'direct',
-    })?.selectedRouteId).toBe(1);
+    })).toThrow(/direct selection/i);
   });
 
   it('hydrates compiled router bundles for direct evaluation and refuses unusable bundles at runtime', () => {
     const compiled = compileRouteGraphSource({
-      version: 1,
       nodes: [
-        { id: 'entry.program', type: 'entry', enabled: true, visibility: 'public', ownership: 'manual', match: { requestedModelPattern: 'program-model' } },
+        { id: 'entry.program', type: 'entry', enabled: true, ownership: 'manual', match: { requestedModelPattern: 'program-model' } },
         {
           id: 'endpoint.program',
           type: 'route_endpoint',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
-          legacyRouteId: 42,
-          config: { targets: [{ targetId: '42', model: 'program-model' }], targetSelection: { strategy: 'weighted' } },
+          config: { targets: [{ targetId: '42', model: 'program-model' }], targetSelection: { kind: 'builtin', builtin: 'weighted' } },
         },
       ],
       edges: [
@@ -1217,13 +1283,16 @@ describe('route graph runtime evaluator', () => {
     expect(firstCompiledRouter).toBe(secondCompiledRouter);
 
     const compiledRouterBundleWithoutRouteEndpointId = structuredClone(compiled.compiled.compiledRouterBundle!);
-    delete (compiledRouterBundleWithoutRouteEndpointId.plans[0].candidates[0].terminal as Record<string, unknown>).routeEndpointId;
+    delete (compiledRouterBundleWithoutRouteEndpointId.plans[0].executionAlternatives[0].terminal as Record<string, unknown>).routeEndpointId;
     expect(evaluateCompiledRouterBundle({
       bundle: compiledRouterBundleWithoutRouteEndpointId,
       requestedModel: 'program-model',
     })).toMatchObject({
-      selectedEntryNodeId: 'endpoint.program',
-      selectedRouteId: 42,
+      selectedEntryNodeId: 'entry.program',
+      selectedExecutionAttempt: {
+        targetId: '42',
+        model: 'program-model',
+      },
     });
 
     const graphWithoutUsableProgram = {
@@ -1233,17 +1302,16 @@ describe('route graph runtime evaluator', () => {
         plans: [],
       },
     };
-    expect(evaluateCompiledRouteGraph({
+    expect(evaluateCompiledRuntimeArtifact({
       graph: graphWithoutUsableProgram,
       requestedModel: 'program-model',
     })).toBe(null);
 
-    expect(evaluateCompiledRouteGraph({
+    expect(evaluateCompiledRuntimeArtifact({
       graph: compiled.compiled,
       requestedModel: 'program-model',
     })).toMatchObject({
       matchedEntryNodeId: 'entry.program',
-      selectedRouteId: 42,
     });
   });
 });

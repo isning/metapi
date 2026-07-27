@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { api } from '../api.js';
+import { api, type ModelRuntimeObservability } from '../api.js';
 import {
   Check,
   Filter,
@@ -12,8 +12,9 @@ import EmptyStateBlock from '../components/EmptyStateBlock.js';
 import { useToast } from '../components/Toast.js';
 import ResponsiveFilterPanel from '../components/ResponsiveFilterPanel.js';
 import { useIsMobile } from '../components/useIsMobile.js';
-import { mergeMarketplaceMetadata, shouldHydrateMarketplaceMetadata } from './helpers/modelsMarketplaceMetadata.js';
+import { usePrefetchIntent } from '../components/usePrefetchIntent.js';
 import { tr } from '../i18n.js';
+import { cn } from '../lib/utils.js';
 import { Button } from '../components/ui/button/index.js';
 import { Skeleton } from '../components/ui/skeleton/index.js';
 import ToneBadge from '../components/ToneBadge.js';
@@ -37,95 +38,56 @@ import EntityWorkspaceLayout from '../components/workspace/EntityWorkspaceLayout
 import ModelDetailsWorkspace from './models/ModelDetailsWorkspace.js';
 import {
   buildModelDetailsView,
-  getAccountCredentialCount,
+  formatLatencyValue,
   getModelCredentialCount,
+  resolveVisiblePerformanceObservability,
   type ModelDetailsTab,
   type ModelMetricsRange,
   type ModelRow,
 } from './models/modelDetailsView.js';
-import type { ModelRouteFlowData } from '../components/ModelRouteFlow.js';
-import type { PageInfo } from '../pagedResponse.js';
+import {
+  MODEL_DETAILS_PREFETCH_INTENT_MS,
+  MODEL_DETAILS_SUMMARY_RANGE,
+  modelDetailsResourcesFor,
+} from './models/modelDetailsResourcePolicy.js';
+import { useModelDetailsResourceCache } from './models/useModelDetailsResourceCache.js';
+import type { ModelsMarketplaceResponse } from '../../shared/modelsMarketplace.js';
 
-type SortColumn = 'name' | 'accountCount' | 'credentialCount' | 'avgLatency' | 'successRate';
+type SortColumn = 'name' | 'accountCount' | 'credentialCount' | 'successRate';
 
-interface ModelsMarketplaceResponse {
-  models: ModelRow[];
-  pageInfo?: PageInfo;
-  facets?: {
-    brands?: Array<{ name: string; icon?: string | null; color?: string | null; count: number }>;
-    otherBrandCount?: number;
-    sites?: Array<{ name: string; count: number }>;
-  };
-  meta?: {
-    refreshRequested?: boolean;
-    refreshQueued?: boolean;
-    refreshReused?: boolean;
-    refreshRunning?: boolean;
-    refreshJobId?: string | null;
-  };
-}
-
-function isKnownLatency(latency: number | null | undefined): latency is number {
-  return typeof latency === 'number' && Number.isFinite(latency);
-}
-
-function formatLatency(latency: number | null): string {
-  return isKnownLatency(latency) ? `${latency}ms` : '—';
-}
+type MarketplaceQueryState = {
+  page: number;
+  pageSize: number;
+  q: string;
+  brand: string | null;
+  site: string | null;
+  sortBy: SortColumn;
+  sortDir: 'asc' | 'desc';
+};
 
 const PAGE_SIZES = [10, 20, 50];
+const PERFORMANCE_OBSERVABILITY_REFRESH_MS = 15_000;
+const MARKETPLACE_SEARCH_DEBOUNCE_MS = 300;
 const SORT_OPTIONS: Array<{ key: SortColumn; label: string }> = [
   { key: 'accountCount', label: tr('pages.models.accounts') },
   { key: 'credentialCount', label: tr('pages.models.credentials') },
-  { key: 'avgLatency', label: tr('components.modelRouteFlow.latency') },
   { key: 'successRate', label: tr('components.modelAnalysisPanel.successRate') },
   { key: 'name', label: tr('pages.models.name') },
 ];
 
-function compareModels(a: ModelRow, b: ModelRow, sortBy: SortColumn, sortDir: 'asc' | 'desc'): number {
-  if (sortBy === 'name') {
-    const cmp = a.name.localeCompare(b.name);
-    return sortDir === 'asc' ? cmp : -cmp;
-  }
-
-  const resolveNumericSortValue = (model: ModelRow) => {
-    if (sortBy === 'successRate') return model.successRate ?? -1;
-    if (sortBy === 'avgLatency') {
-      if (!isKnownLatency(model.avgLatency)) {
-        return sortDir === 'asc' ? Number.POSITIVE_INFINITY : Number.NEGATIVE_INFINITY;
-      }
-      return model.avgLatency;
-    }
-    if (sortBy === 'credentialCount') return getModelCredentialCount(model);
-    return model[sortBy] ?? 0;
-  };
-
-  const va = resolveNumericSortValue(a);
-  const vb = resolveNumericSortValue(b);
-  if (va === vb) return a.name.localeCompare(b.name);
-  return sortDir === 'desc' ? vb - va : va - vb;
+function sameMarketplaceQuery(a: MarketplaceQueryState | null, b: MarketplaceQueryState): boolean {
+  return !!a
+    && a.page === b.page
+    && a.pageSize === b.pageSize
+    && a.q === b.q
+    && a.brand === b.brand
+    && a.site === b.site
+    && a.sortBy === b.sortBy
+    && a.sortDir === b.sortDir;
 }
 
-function scopeModelToSite(model: ModelRow, activeSite: string | null): ModelRow {
-  if (!activeSite) return model;
-  const accounts = model.accounts.filter((account) => account.site === activeSite);
-  const pricingSources = model.pricingSources.filter((source) => source.siteName === activeSite);
-  const latencyValues = accounts
-    .map((account) => account.latency)
-    .filter(isKnownLatency);
-  return {
-    ...model,
-    accounts,
-    pricingSources,
-    accountCount: accounts.length,
-    tokenCount: accounts.reduce((sum, account) => sum + account.tokens.length, 0),
-    managedTokenCount: accounts.reduce((sum, account) => sum + (account.managedTokenCount ?? account.tokens.length), 0),
-    credentialCount: accounts.reduce((sum, account) => sum + getAccountCredentialCount(account), 0),
-    endpointCount: accounts.reduce((sum, account) => sum + getAccountCredentialCount(account), 0),
-    avgLatency: latencyValues.length > 0
-      ? Math.round(latencyValues.reduce((sum, latency) => sum + latency, 0) / latencyValues.length)
-      : null,
-  };
+function hasRecordKey<T>(record: Record<string, T>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(record, key);
 }
 
 function SortIndicator({ active, direction }: { active: boolean; direction: 'asc' | 'desc' }) {
@@ -147,8 +109,33 @@ function ModelTags({
       {sites.map((site) => <ToneBadge key={site} tone="-muted">{site}</ToneBadge>)}
       {model.successRate != null && model.successRate >= 90 ? <ToneBadge tone="-success">{tr('pages.accounts.healthy')}</ToneBadge> : null}
       {model.successRate != null && model.successRate < 60 ? <ToneBadge tone="-warning">{tr('pages.models.risk')}</ToneBadge> : null}
-      {isKnownLatency(model.avgLatency) && model.avgLatency <= 500 ? <ToneBadge tone="-success">{tr('pages.models.lowLatency')}</ToneBadge> : null}
     </div>
+  );
+}
+
+function ModelIndexSkeletonRows({ count = 4 }: { count?: number }) {
+  return (
+    <>
+      {Array.from({ length: count }, (_item, index) => (
+        <div key={index} className="rounded-md border p-3">
+          <div className="flex items-start gap-2">
+            <Skeleton className="size-7 shrink-0 rounded-full" />
+            <div className="min-w-0 flex-1">
+              <Skeleton className="h-4 w-3/4" />
+              <div className="mt-2 flex items-center gap-1.5">
+                <Skeleton className="h-3 w-16" />
+                <Skeleton className="h-3 w-12" />
+                <Skeleton className="h-3 w-14" />
+              </div>
+              <div className="mt-3 flex gap-1.5">
+                <Skeleton className="h-5 w-16 rounded-full" />
+                <Skeleton className="h-5 w-20 rounded-full" />
+              </div>
+            </div>
+          </div>
+        </div>
+      ))}
+    </>
   );
 }
 
@@ -156,30 +143,79 @@ function ModelTags({
 export default function Models() {
   const toast = useToast();
   const navigate = useNavigate();
-  const [data, setData] = useState<ModelsMarketplaceResponse>({ models: [] });
+  const [data, setData] = useState<ModelsMarketplaceResponse>({
+    models: [],
+    pageInfo: { page: 1, pageSize: 20, totalCount: 0, hasMore: false },
+    facets: { brands: [], otherBrandCount: 0, sites: [] },
+    meta: {
+      refreshRequested: false,
+      refreshQueued: false,
+      refreshReused: false,
+      refreshRunning: false,
+      refreshJobId: null,
+      includePricing: false,
+    },
+  });
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
+  const [marketplaceError, setMarketplaceError] = useState('');
+  const [searchInput, setSearchInput] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [sortBy, setSortBy] = useState<SortColumn>('accountCount');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [activeSite, setActiveSite] = useState<string | null>(null);
   const [activeBrand, setActiveBrand] = useState<string | null>(null);
+  const [settledMarketplaceQuery, setSettledMarketplaceQuery] = useState<MarketplaceQueryState | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [showFilters, setShowFilters] = useState(false);
-  const [metadataHydrating, setMetadataHydrating] = useState(false);
-  const [routeFlowByModel, setRouteFlowByModel] = useState<Record<string, ModelRouteFlowData | null>>({});
-  const [routeFlowLoadingByModel, setRouteFlowLoadingByModel] = useState<Record<string, boolean>>({});
-  const [routeFlowErrorByModel, setRouteFlowErrorByModel] = useState<Record<string, string>>({});
+  const [settledPerformanceObservabilityByModel, setSettledPerformanceObservabilityByModel] = useState<Record<string, ModelRuntimeObservability>>({});
+  const {
+    ensure: ensureModelDetailsResources,
+    prefetch: prefetchModelDetailsResources,
+    refresh: refreshModelDetailsResources,
+    snapshot: modelDetailsSnapshot,
+  } = useModelDetailsResourceCache();
   const isMobile = useIsMobile();
   const latestPrimaryRequestRef = useRef(0);
-  const latestMetadataRequestRef = useRef(0);
-  const requestedRouteFlowModelsRef = useRef(new Set<string>());
   const location = useLocation();
   const routeParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
   const selectedModelName = routeParams.get('model') || '';
   const workspaceTab = (routeParams.get('tab') || 'overview') as ModelDetailsTab;
-  const workspaceRange = (routeParams.get('range') || '24h') as ModelMetricsRange;
-  const routingViewMode = (routeParams.get('routingView') || 'effective') as 'effective' | 'candidates' | 'compiled' | 'diagnostics';
+  const rawWorkspaceRange = routeParams.get('range') || '6h';
+  const workspaceRange = (rawWorkspaceRange === '5m' || rawWorkspaceRange === '15m' || rawWorkspaceRange === '1h' || rawWorkspaceRange === '6h' || rawWorkspaceRange === '24h' || rawWorkspaceRange === '7d' || rawWorkspaceRange === '30d'
+    ? rawWorkspaceRange
+    : '6h') as ModelMetricsRange;
+  const summaryObservabilityKey = selectedModelName ? `${selectedModelName}:${MODEL_DETAILS_SUMMARY_RANGE}` : '';
+  const performanceObservabilityKey = selectedModelName ? `${selectedModelName}:${workspaceRange}` : '';
+  const activeModelResources = useMemo(() => modelDetailsResourcesFor({
+    model: selectedModelName,
+    tab: workspaceTab,
+    range: workspaceRange,
+    phase: 'activate',
+  }), [selectedModelName, workspaceRange, workspaceTab]);
+  const refreshModelResources = useMemo(() => modelDetailsResourcesFor({
+    model: selectedModelName,
+    tab: workspaceTab,
+    range: workspaceRange,
+    phase: 'refresh',
+  }), [selectedModelName, workspaceRange, workspaceTab]);
+  const routingViewParam = routeParams.get('routingView') || '';
+  const routingViewMode = (
+    routingViewParam === 'cost' || routingViewParam === 'pricing'
+      ? 'cost'
+      : routingViewParam === 'diagnostics'
+        ? 'diagnostics'
+        : 'execution'
+  ) as 'execution' | 'cost' | 'diagnostics';
+  const currentMarketplaceQuery = useMemo<MarketplaceQueryState>(() => ({
+    page,
+    pageSize,
+    q: debouncedSearch,
+    brand: activeBrand,
+    site: activeSite,
+    sortBy,
+    sortDir,
+  }), [activeBrand, activeSite, debouncedSearch, page, pageSize, sortBy, sortDir]);
 
   const updateRouteParams = useCallback((updates: Record<string, string | null>) => {
     const params = new URLSearchParams(location.search);
@@ -189,29 +225,16 @@ export default function Models() {
     }
     navigate({ pathname: location.pathname, search: params.toString() ? `?${params.toString()}` : '' }, { replace: false });
   }, [location.pathname, location.search, navigate]);
-  const siteIdByName = useMemo(() => {
-    const index = new Map<string, number>();
-    for (const model of data.models) {
-      for (const source of model.pricingSources || []) {
-        const siteName = String(source.siteName || '').trim();
-        const siteId = Number(source.siteId);
-        if (!siteName || !Number.isFinite(siteId) || siteId <= 0 || index.has(siteName)) continue;
-        index.set(siteName, Math.trunc(siteId));
-      }
-    }
-    return index;
-  }, [data.models]);
 
   const loadBaseMarketplace = useCallback(async (refresh = false) => {
     const requestId = ++latestPrimaryRequestRef.current;
-    latestMetadataRequestRef.current += 1;
-    setMetadataHydrating(false);
     setLoading(true);
+    setMarketplaceError('');
     try {
       const res = await api.getModelsMarketplace({
         page,
         pageSize,
-        q: search,
+        q: debouncedSearch,
         brand: activeBrand,
         site: activeSite,
         sortBy,
@@ -222,6 +245,15 @@ export default function Models() {
       if (requestId !== latestPrimaryRequestRef.current) return null;
       const next = res as ModelsMarketplaceResponse;
       setData(next);
+      setSettledMarketplaceQuery({
+        page,
+        pageSize,
+        q: debouncedSearch,
+        brand: activeBrand,
+        site: activeSite,
+        sortBy,
+        sortDir,
+      });
       if (refresh && next.meta?.refreshRequested) {
         if (next.meta.refreshReused) {
           toast.info(tr('pages.models.marketplaceRefreshProgress'));
@@ -230,124 +262,85 @@ export default function Models() {
         }
       }
       return next;
-    } catch {
+    } catch (error) {
       if (requestId !== latestPrimaryRequestRef.current) return null;
-      setData({ models: [] });
+      setMarketplaceError(error instanceof Error ? error.message : tr('pages.models.failedLoadMarketplace'));
       return null;
     } finally {
       if (requestId === latestPrimaryRequestRef.current) {
         setLoading(false);
       }
     }
-  }, [activeBrand, activeSite, page, pageSize, search, sortBy, sortDir, toast]);
-
-  const hydrateMarketplaceMetadata = useCallback(async (baseModels: ModelRow[]) => {
-    if (!shouldHydrateMarketplaceMetadata(baseModels)) return;
-
-    const metadataRequestId = ++latestMetadataRequestRef.current;
-    const baseRequestId = latestPrimaryRequestRef.current;
-    setMetadataHydrating(true);
-    try {
-      const res = await api.getModelsMarketplace({
-        page,
-        pageSize,
-        q: search,
-        brand: activeBrand,
-        site: activeSite,
-        sortBy,
-        sortDir,
-        includePricing: true,
-      });
-      if (metadataRequestId !== latestMetadataRequestRef.current) return;
-      if (baseRequestId !== latestPrimaryRequestRef.current) return;
-
-      const detailed = res as ModelsMarketplaceResponse;
-      setData((current) => ({
-        ...current,
-        models: mergeMarketplaceMetadata(current.models, detailed.models),
-        meta: detailed.meta ?? current.meta,
-      }));
-    } catch {
-      // Keep the fast base list when metadata fetch fails.
-    } finally {
-      if (metadataRequestId === latestMetadataRequestRef.current) {
-        setMetadataHydrating(false);
-      }
-    }
-  }, [activeBrand, activeSite, page, pageSize, search, sortBy, sortDir]);
+  }, [activeBrand, activeSite, debouncedSearch, page, pageSize, sortBy, sortDir, toast]);
 
   useEffect(() => {
     let cancelled = false;
-    let metadataTimer: ReturnType<typeof setTimeout> | null = null;
     const bootstrap = async () => {
-      const initial = await loadBaseMarketplace(false);
-      if (!initial || cancelled) return;
-      metadataTimer = setTimeout(() => {
-        if (!cancelled) {
-          void hydrateMarketplaceMetadata(initial.models);
-        }
-      }, 1200);
+      await loadBaseMarketplace(false);
     };
     void bootstrap();
     return () => {
       cancelled = true;
-      if (metadataTimer) clearTimeout(metadataTimer);
-      latestMetadataRequestRef.current += 1;
     };
-  }, [hydrateMarketplaceMetadata, loadBaseMarketplace]);
+  }, [loadBaseMarketplace]);
 
   const handleRefresh = useCallback(() => {
-    void (async () => {
-      const refreshed = await loadBaseMarketplace(true);
-      if (!refreshed) return;
-      setTimeout(() => {
-        void hydrateMarketplaceMetadata(refreshed.models);
-      }, 600);
-    })();
-  }, [hydrateMarketplaceMetadata, loadBaseMarketplace]);
+    void loadBaseMarketplace(true);
+  }, [loadBaseMarketplace]);
+
+  const prefetchModelDetailsTab = useCallback((tab: ModelDetailsTab) => {
+    prefetchModelDetailsResources(modelDetailsResourcesFor({
+      model: selectedModelName,
+      tab,
+      range: workspaceRange,
+      phase: 'prefetch',
+    }));
+  }, [prefetchModelDetailsResources, selectedModelName, workspaceRange]);
+
+  const prefetchModelSelection = useCallback((modelName: string) => {
+    prefetchModelDetailsResources(modelDetailsResourcesFor({
+      model: modelName,
+      tab: workspaceTab || 'overview',
+      range: workspaceRange,
+      phase: 'prefetch',
+    }));
+  }, [prefetchModelDetailsResources, workspaceRange, workspaceTab]);
+
+  const modelSelectionPrefetchIntent = usePrefetchIntent<string>({
+    delayMs: MODEL_DETAILS_PREFETCH_INTENT_MS,
+    onIntent: prefetchModelSelection,
+  });
+
+  const handleDetailsRefresh = useCallback(() => {
+    handleRefresh();
+    refreshModelDetailsResources(refreshModelResources);
+  }, [handleRefresh, refreshModelDetailsResources, refreshModelResources]);
 
   useEffect(() => {
     const q = new URLSearchParams(location.search).get('q') || '';
-    setSearch(q);
+    setSearchInput(q);
+    setDebouncedSearch(q);
   }, [location.search]);
 
   useEffect(() => {
-    if (!selectedModelName) return;
-    if (requestedRouteFlowModelsRef.current.has(selectedModelName)) return;
+    const timer = setTimeout(() => {
+      setDebouncedSearch((current) => current === searchInput ? current : searchInput);
+      setPage(1);
+    }, MARKETPLACE_SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
 
-    let cancelled = false;
-    requestedRouteFlowModelsRef.current.add(selectedModelName);
-    setRouteFlowLoadingByModel((current) => ({ ...current, [selectedModelName]: true }));
-    setRouteFlowErrorByModel((current) => ({ ...current, [selectedModelName]: '' }));
-    void api.getModelRouteFlow(selectedModelName)
-      .then((result) => {
-        if (cancelled) return;
-        setRouteFlowByModel((current) => ({
-          ...current,
-          [selectedModelName]: (result as { flow?: ModelRouteFlowData }).flow || null,
-        }));
-      })
-      .catch((error) => {
-        if (cancelled) return;
-        setRouteFlowByModel((current) => ({ ...current, [selectedModelName]: null }));
-        requestedRouteFlowModelsRef.current.delete(selectedModelName);
-        setRouteFlowErrorByModel((current) => ({
-          ...current,
-          [selectedModelName]: error instanceof Error ? error.message : tr('pages.modelTester.routesFailed'),
-        }));
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setRouteFlowLoadingByModel((current) => ({ ...current, [selectedModelName]: false }));
-        }
-      });
+  useEffect(() => {
+    ensureModelDetailsResources(activeModelResources);
+  }, [activeModelResources, ensureModelDetailsResources]);
 
-    return () => {
-      cancelled = true;
-      requestedRouteFlowModelsRef.current.delete(selectedModelName);
-      setRouteFlowLoadingByModel((current) => ({ ...current, [selectedModelName]: false }));
-    };
-  }, [selectedModelName]);
+  useEffect(() => {
+    if (!selectedModelName || workspaceTab !== 'performance') return;
+    const timer = setInterval(() => {
+      refreshModelDetailsResources(refreshModelResources, { silent: true });
+    }, PERFORMANCE_OBSERVABILITY_REFRESH_MS);
+    return () => clearInterval(timer);
+  }, [refreshModelDetailsResources, refreshModelResources, selectedModelName, workspaceTab]);
 
   /* ---- derived: brand list ---- */
   const brandList = useMemo(() => {
@@ -407,18 +400,18 @@ export default function Models() {
 
   const displayedTotal = data.pageInfo?.totalCount ?? data.models.length;
 
-  const visibleModels = useMemo(() => (
-    data.models
-      .map((model) => scopeModelToSite(model, activeSite))
-      .filter((model) => !activeSite || model.accounts.length > 0)
-      .sort((a, b) => compareModels(a, b, sortBy, sortDir))
-  ), [activeSite, data.models, sortBy, sortDir]);
+  const hasLoadedMarketplace = Boolean(data.pageInfo) || data.models.length > 0;
+  const marketplaceQueryStale = hasLoadedMarketplace && !sameMarketplaceQuery(settledMarketplaceQuery, currentMarketplaceQuery);
+  const marketplaceRefreshing = hasLoadedMarketplace && (loading || marketplaceQueryStale);
+  const showMarketplaceRefreshSkeleton = marketplaceRefreshing && data.models.length === 0;
+
+  const visibleModels = data.models;
 
   /* ---- pagination ---- */
   const totalPages = Math.max(1, Math.ceil(displayedTotal / pageSize));
   const safePageVal = Math.min(page, totalPages);
 
-  useEffect(() => { setPage(1); }, [search, activeSite, activeBrand, pageSize]);
+  useEffect(() => { setPage(1); }, [debouncedSearch, activeSite, activeBrand, pageSize]);
 
   useEffect(() => {
     if (!data.pageInfo) return;
@@ -430,28 +423,73 @@ export default function Models() {
     selectedModelName ? visibleModels.find((model) => model.name === selectedModelName) ?? null : null
   ), [selectedModelName, visibleModels]);
 
+  const selectedPerformanceObservabilityLoaded = !!performanceObservabilityKey
+    && hasRecordKey(modelDetailsSnapshot.observabilityByKey, performanceObservabilityKey);
+  const selectedPerformanceObservability = performanceObservabilityKey
+    ? modelDetailsSnapshot.observabilityByKey[performanceObservabilityKey] ?? null
+    : null;
+  const selectedPerformanceObservabilityLoading = performanceObservabilityKey
+    ? !!modelDetailsSnapshot.observabilityLoadingByKey[performanceObservabilityKey]
+    : false;
+  const selectedPerformanceObservabilityError = performanceObservabilityKey
+    ? modelDetailsSnapshot.observabilityErrorByKey[performanceObservabilityKey] || ''
+    : '';
+
+  useEffect(() => {
+    if (!selectedModelName || !selectedPerformanceObservability) return;
+    setSettledPerformanceObservabilityByModel((current) => (
+      current[selectedModelName] === selectedPerformanceObservability
+        ? current
+        : { ...current, [selectedModelName]: selectedPerformanceObservability }
+    ));
+  }, [selectedModelName, selectedPerformanceObservability]);
+
+  const visiblePerformanceObservability = resolveVisiblePerformanceObservability({
+    modelName: selectedModelName,
+    current: selectedPerformanceObservability,
+    currentLoaded: selectedPerformanceObservabilityLoaded,
+    currentLoading: selectedPerformanceObservabilityLoading,
+    currentError: selectedPerformanceObservabilityError,
+    settledByModel: settledPerformanceObservabilityByModel,
+  });
+
   useEffect(() => {
     if (!selectedModelName) return;
     if (selectedModel) return;
+    if (loading || marketplaceQueryStale) return;
     const params = new URLSearchParams(location.search);
     params.delete('model');
     params.delete('node');
     navigate({ pathname: location.pathname, search: params.toString() ? `?${params.toString()}` : '' }, { replace: true });
-  }, [location.pathname, location.search, navigate, selectedModel, selectedModelName]);
+  }, [loading, location.pathname, location.search, marketplaceQueryStale, navigate, selectedModel, selectedModelName]);
 
   const selectedDetails = useMemo(() => {
     if (!selectedModel) return null;
     return buildModelDetailsView({
       model: selectedModel,
       brandName: getBrand(selectedModel.name)?.name ?? null,
-      routeFlow: routeFlowByModel[selectedModel.name] ?? null,
-      routeFlowLoading: !!routeFlowLoadingByModel[selectedModel.name],
-      routeFlowError: routeFlowErrorByModel[selectedModel.name] || '',
-      metadataHydrating,
+      routeFlow: modelDetailsSnapshot.routeFlowByModel[selectedModel.name] ?? null,
+      routeFlowDiagnostics: modelDetailsSnapshot.routeFlowDiagnosticsByModel[selectedModel.name] ?? null,
+      routeFlowDiagnosticsError: modelDetailsSnapshot.routeFlowDiagnosticsErrorByModel[selectedModel.name] || '',
+      routeFlowLoading: !!modelDetailsSnapshot.routeFlowLoadingByModel[selectedModel.name],
+      routeFlowError: modelDetailsSnapshot.routeFlowErrorByModel[selectedModel.name] || '',
+      observability: summaryObservabilityKey ? modelDetailsSnapshot.observabilityByKey[summaryObservabilityKey] ?? null : null,
+      observabilityLoading: summaryObservabilityKey ? !!modelDetailsSnapshot.observabilityLoadingByKey[summaryObservabilityKey] : false,
+      observabilityError: summaryObservabilityKey ? modelDetailsSnapshot.observabilityErrorByKey[summaryObservabilityKey] || '' : '',
+      performanceObservability: visiblePerformanceObservability,
+      performanceObservabilityLoading: selectedPerformanceObservabilityLoading,
+      performanceObservabilityError: selectedPerformanceObservabilityError,
     });
-  }, [metadataHydrating, routeFlowByModel, routeFlowErrorByModel, routeFlowLoadingByModel, selectedModel]);
+  }, [
+    modelDetailsSnapshot,
+    selectedModel,
+    selectedPerformanceObservabilityError,
+    selectedPerformanceObservabilityLoading,
+    summaryObservabilityKey,
+    visiblePerformanceObservability,
+  ]);
 
-  /* ---- stats ---- */
+  const initialMarketplaceLoading = loading && !hasLoadedMarketplace;
   const totalCoverageSlots = visibleModels.reduce((s, m) => s + m.accountCount, 0);
   const totalCredentialSlots = visibleModels.reduce((sum, model) => sum + getModelCredentialCount(model), 0);
   const uniqueAccountCount = (() => {
@@ -593,10 +631,9 @@ export default function Models() {
   const modelIndexContent = (
     <div className="grid gap-3 p-3">
       <SearchInput
-        value={search}
+        value={searchInput}
         onChange={(e) => {
-          setSearch(e.target.value);
-          setPage(1);
+          setSearchInput(e.target.value);
         }}
         placeholder={tr('pages.modelTester.searchModelSupportsNameFragments')}
       />
@@ -607,8 +644,20 @@ export default function Models() {
         <ToneBadge tone="-muted">{tr('pages.models.uniqueAccounts')} {uniqueAccountCount}</ToneBadge>
       </div>
       {filterControls}
-      <div className="grid gap-2">
-        {visibleModels.length === 0 ? (
+      <div
+        className={cn(
+          'grid gap-2 transition-opacity duration-150',
+          marketplaceRefreshing && visibleModels.length > 0 && 'opacity-70',
+        )}
+        aria-busy={marketplaceRefreshing}
+      >
+        {showMarketplaceRefreshSkeleton ? (
+          <ModelIndexSkeletonRows />
+        ) : marketplaceRefreshing && visibleModels.length === 0 ? (
+          <div className="min-h-48" aria-hidden="true" />
+        ) : marketplaceError ? (
+          <EmptyStateBlock title={tr('pages.models.failedLoadMarketplace')} description={marketplaceError} />
+        ) : visibleModels.length === 0 ? (
           <EmptyStateBlock title={tr('pages.models.noModelYet')} description={tr('pages.models.checkSiteAccountStatusFirstThenRefresh')} />
         ) : visibleModels.map((model) => {
           const selected = selectedModelName === model.name;
@@ -619,6 +668,12 @@ export default function Models() {
               type="button"
               variant={selected ? 'secondary' : 'outline'}
               className="h-auto min-w-0 justify-start p-3 text-left"
+              onPointerEnter={() => modelSelectionPrefetchIntent.schedule(model.name)}
+              onMouseEnter={() => modelSelectionPrefetchIntent.schedule(model.name)}
+              onFocus={() => modelSelectionPrefetchIntent.schedule(model.name)}
+              onPointerLeave={modelSelectionPrefetchIntent.cancel}
+              onMouseLeave={modelSelectionPrefetchIntent.cancel}
+              onBlur={modelSelectionPrefetchIntent.cancel}
               onClick={() => selectModel(model.name)}
             >
               <div className="flex min-w-0 items-start gap-2">
@@ -627,10 +682,8 @@ export default function Models() {
                   <div className="truncate font-mono text-sm font-semibold">{model.name}</div>
                   <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
                     <span>{getBrand(model.name)?.name || tr('pages.models.modelDetailsView.providerUnknown')}</span>
-                    <span>·</span>
-                    <span>{formatLatency(model.avgLatency)}</span>
-                    <span>·</span>
                     <span>{model.successRate == null ? tr('common.notAvailable') : `${model.successRate}%`}</span>
+                    <span>{tr('pages.models.modelDetailsView.latency')} {formatLatencyValue(model.avgLatency)}</span>
                   </div>
                   <div className="mt-2">
                     <ModelTags model={model} sites={sites.slice(0, 2)} />
@@ -696,7 +749,7 @@ export default function Models() {
   );
 
   /* ---- loading skeleton ---- */
-  if (loading) {
+  if (initialMarketplaceLoading) {
     return (
       <div className="flex min-h-[400px] gap-6">
         {!isMobile && (
@@ -729,7 +782,7 @@ export default function Models() {
             mobileContent={filterControls}
           />
           <div className="grid gap-3">
-            {[...Array(4)].map((_, i) => <Skeleton key={i} className="h-24 w-full" />)}
+            <ModelIndexSkeletonRows />
           </div>
         </div>
       </div>
@@ -763,9 +816,6 @@ export default function Models() {
             <Button type="button" variant="outline" size="icon" onClick={handleRefresh} aria-label={tr('pages.accounts.refresh')}>
               <RefreshCw className="size-4" />
             </Button>
-            {metadataHydrating && (
-              <ToneBadge tone="-muted">{tr('pages.models.loadingMetadata')}</ToneBadge>
-            )}
           </div>
         </div>
 
@@ -786,12 +836,11 @@ export default function Models() {
               onTabChange={(nextTab) => updateRouteParams({ tab: nextTab })}
               range={workspaceRange}
               onRangeChange={(nextRange) => updateRouteParams({ range: nextRange })}
+              onTabPrefetch={prefetchModelDetailsTab}
               routingViewMode={routingViewMode}
               onRoutingViewModeChange={(nextMode) => updateRouteParams({ routingView: nextMode })}
-              siteIdByName={siteIdByName}
-              metadataHydrating={metadataHydrating}
               onCopyModel={copyName}
-              onRefresh={handleRefresh}
+              onRefresh={handleDetailsRefresh}
               onCopyJson={(text) => {
                 navigator.clipboard.writeText(text).catch(() => {});
               }}

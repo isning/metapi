@@ -7,12 +7,19 @@ export interface UpstreamPricingModel {
   completionRatio: number;
   cacheRatio?: number;
   cacheCreationRatio?: number;
-  modelPrice: number | { input?: number; output?: number } | null;
+  modelPrice: number | UpstreamDirectModelPrice | null;
   enableGroups: string[];
   modelDescription?: string | null;
   tags?: string[];
   supportedEndpointTypes?: string[];
   ownerBy?: string | null;
+}
+
+export interface UpstreamDirectModelPrice {
+  input?: number;
+  output?: number;
+  cacheRead?: number;
+  cacheWrite?: number;
 }
 
 export interface UpstreamPricingCatalog {
@@ -36,17 +43,39 @@ function toPositiveInt(value: unknown): number {
   return Math.max(0, Math.round(toNumber(value, 0)));
 }
 
-function normalizeModelPrice(value: unknown): number | { input?: number; output?: number } | null {
+function normalizeModelPrice(value: unknown): number | UpstreamDirectModelPrice | null {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   if (!value || typeof value !== 'object') return null;
 
   const input = toNumber((value as any).input, Number.NaN);
   const output = toNumber((value as any).output, Number.NaN);
-  if (Number.isNaN(input) && Number.isNaN(output)) return null;
+  const cacheRead = toNumber(
+    (value as any).cacheRead
+      ?? (value as any).input_cache_read
+      ?? (value as any).inputCacheRead
+      ?? (value as any).cache_read,
+    Number.NaN,
+  );
+  const cacheWrite = toNumber(
+    (value as any).cacheWrite
+      ?? (value as any).input_cache_write
+      ?? (value as any).inputCacheWrite
+      ?? (value as any).cache_write
+      ?? (value as any).cacheCreation,
+    Number.NaN,
+  );
+  if (
+    Number.isNaN(input)
+    && Number.isNaN(output)
+    && Number.isNaN(cacheRead)
+    && Number.isNaN(cacheWrite)
+  ) return null;
 
   return {
     ...(Number.isNaN(input) ? {} : { input }),
     ...(Number.isNaN(output) ? {} : { output }),
+    ...(Number.isNaN(cacheRead) ? {} : { cacheRead }),
+    ...(Number.isNaN(cacheWrite) ? {} : { cacheWrite }),
   };
 }
 
@@ -65,10 +94,10 @@ function normalizeStringArray(raw: unknown): string[] {
   return [];
 }
 
-function normalizeRatio(value: unknown, fallback: number): number {
+function normalizeRatio(value: unknown): number | undefined {
   const ratio = toNumber(value, Number.NaN);
   if (Number.isFinite(ratio) && ratio >= 0) return ratio;
-  return fallback;
+  return undefined;
 }
 
 export function normalizePricingGroupRatio(raw: unknown): Record<string, number> {
@@ -101,16 +130,12 @@ export function normalizePricingModels(rawModels: unknown[]): Map<string, Upstre
     const quotaType = toPositiveInt((raw as any).quota_type);
     const modelRatio = toNumber((raw as any).model_ratio, 1);
     const completionRatio = toNumber((raw as any).completion_ratio, 1);
-    const cacheRatio = normalizeRatio(
-      (raw as any).cache_ratio ?? (raw as any).cacheRatio,
-      1,
-    );
+    const cacheRatio = normalizeRatio((raw as any).cache_ratio ?? (raw as any).cacheRatio);
     const cacheCreationRatio = normalizeRatio(
       (raw as any).cache_creation_ratio
         ?? (raw as any).cacheCreationRatio
         ?? (raw as any).create_cache_ratio
         ?? (raw as any).createCacheRatio,
-      1,
     );
     const enableGroupsRaw = (raw as any).enable_groups;
     const enableGroups = Array.isArray(enableGroupsRaw)
@@ -190,9 +215,12 @@ export function normalizeOneHubPricingPayload(
       quota_type: isTokenType ? 0 : 1,
       model_ratio: 1,
       completion_ratio: input > 0 && Number.isFinite(output) ? output / input : 1,
-      cache_ratio: input > 0 && Number.isFinite(cacheRead) && cacheRead >= 0 ? (cacheRead / input) : 1,
-      cache_creation_ratio: input > 0 && Number.isFinite(cacheWrite) && cacheWrite >= 0 ? (cacheWrite / input) : 1,
-      model_price: { input, output },
+      model_price: {
+        input,
+        output,
+        ...(Number.isFinite(cacheRead) && cacheRead >= 0 ? { cacheRead } : {}),
+        ...(Number.isFinite(cacheWrite) && cacheWrite >= 0 ? { cacheWrite } : {}),
+      },
       enable_groups: Array.isArray(item?.groups) && item.groups.length > 0 ? item.groups : [DEFAULT_PRICING_GROUP],
       supported_endpoint_types: Array.isArray(item?.supported_endpoint_types) ? item.supported_endpoint_types : [],
       tags: Array.isArray(item?.tags) ? item.tags : [],

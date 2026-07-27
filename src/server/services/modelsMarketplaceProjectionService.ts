@@ -1,4 +1,10 @@
 import { getBrand } from "../shared/modelBrand.js";
+import type {
+  ModelsMarketplaceAccount,
+  ModelsMarketplaceMeta,
+  ModelsMarketplaceModel,
+  ModelsMarketplaceResponse,
+} from "../../shared/modelsMarketplace.js";
 
 const MODELS_MARKETPLACE_DEFAULT_PAGE_SIZE = 50;
 const MODELS_MARKETPLACE_MAX_PAGE_SIZE = 500;
@@ -71,45 +77,26 @@ function normalizeModelsMarketplaceQuery(
   };
 }
 
-function readAccountCredentialCount(account: any): number {
-  const explicit = Number(account?.credentialCount);
-  if (Number.isFinite(explicit) && explicit >= 0) return explicit;
-  return Array.isArray(account?.tokens) ? account.tokens.length : 0;
-}
-
-function readModelCredentialCount(model: any): number {
-  const explicit = Number(model?.credentialCount);
-  if (Number.isFinite(explicit) && explicit >= 0) return explicit;
-  return Array.isArray(model?.accounts)
-    ? model.accounts.reduce(
-      (sum: number, account: any) => sum + readAccountCredentialCount(account),
-      0,
-    )
-    : 0;
-}
-
-function scopeModelToSite(model: any, site: string | null): any {
+function scopeModelToSite(
+  model: ModelsMarketplaceModel,
+  site: string | null,
+): ModelsMarketplaceModel {
   if (!site) return model;
-  const accounts = Array.isArray(model.accounts)
-    ? model.accounts.filter((account: any) => account?.site === site)
-    : [];
-  const pricingSources = Array.isArray(model.pricingSources)
-    ? model.pricingSources.filter((source: any) => source?.siteName === site)
-    : [];
+  const accounts = model.accounts.filter((account) => account.site === site);
+  const pricingSources = model.pricingSources.filter((source) => source.siteName === site);
+  const topology = model.siteCounts[site];
+  if (!topology) throw new Error(`Marketplace site aggregate is missing for ${site}`);
   const latencyValues = accounts
-    .map((account: any) => account?.latency)
+    .map((account) => account.latency)
     .filter((latency: unknown): latency is number => (
       typeof latency === "number" && Number.isFinite(latency)
     ));
   const managedTokenCount = accounts.reduce(
-    (sum: number, account: any) => sum + normalizePositiveInteger(
-      account?.managedTokenCount,
-      Array.isArray(account?.tokens) ? account.tokens.length : 0,
-    ),
+    (sum, account) => sum + account.managedTokenCount,
     0,
   );
   const credentialCount = accounts.reduce(
-    (sum: number, account: any) => sum + readAccountCredentialCount(account),
+    (sum, account) => sum + account.credentialCount,
     0,
   );
   return {
@@ -120,7 +107,9 @@ function scopeModelToSite(model: any, site: string | null): any {
     tokenCount: managedTokenCount,
     managedTokenCount,
     credentialCount,
-    endpointCount: credentialCount,
+    endpointCount: topology.endpointCount,
+    executionAttemptCount: topology.executionAttemptCount,
+    siteCounts: { [site]: topology },
     avgLatency: latencyValues.length > 0
       ? Math.round(latencyValues.reduce((sum: number, latency: number) => sum + latency, 0) / latencyValues.length)
       : null,
@@ -128,19 +117,19 @@ function scopeModelToSite(model: any, site: string | null): any {
 }
 
 function compareMarketplaceRows(
-  a: any,
-  b: any,
+  a: ModelsMarketplaceModel,
+  b: ModelsMarketplaceModel,
   query: NormalizedModelsMarketplaceQuery,
 ): number {
   if (query.sortBy === "name") {
-    const cmp = String(a?.name || "").localeCompare(String(b?.name || ""));
+    const cmp = a.name.localeCompare(b.name);
     return query.sortDir === "asc" ? cmp : -cmp;
   }
 
-  const readNumber = (model: any): number => {
-    if (query.sortBy === "credentialCount") return readModelCredentialCount(model);
+  const readNumber = (model: ModelsMarketplaceModel): number => {
+    if (query.sortBy === "credentialCount") return model.credentialCount;
     if (query.sortBy === "avgLatency") {
-      const latency = Number(model?.avgLatency);
+      const latency = Number(model.avgLatency);
       if (!Number.isFinite(latency)) {
         return query.sortDir === "asc"
           ? Number.POSITIVE_INFINITY
@@ -149,26 +138,26 @@ function compareMarketplaceRows(
       return latency;
     }
     if (query.sortBy === "successRate") {
-      const rate = Number(model?.successRate);
+      const rate = Number(model.successRate);
       return Number.isFinite(rate) ? rate : -1;
     }
-    const value = Number(model?.accountCount);
+    const value = Number(model.accountCount);
     return Number.isFinite(value) ? value : 0;
   };
 
   const va = readNumber(a);
   const vb = readNumber(b);
-  if (va === vb) return String(a?.name || "").localeCompare(String(b?.name || ""));
+  if (va === vb) return a.name.localeCompare(b.name);
   return query.sortDir === "desc" ? vb - va : va - vb;
 }
 
-function buildMarketplaceFacets(models: any[]) {
+function buildMarketplaceFacets(models: ModelsMarketplaceModel[]) {
   const brands = new Map<string, { name: string; icon?: string | null; count: number }>();
   const sites = new Map<string, number>();
   let otherBrandCount = 0;
 
   for (const model of models) {
-    const brand = getBrand(String(model?.name || ""));
+    const brand = getBrand(model.name);
     if (brand) {
       const existing = brands.get(brand.name);
       if (existing) existing.count += 1;
@@ -181,9 +170,8 @@ function buildMarketplaceFacets(models: any[]) {
       otherBrandCount += 1;
     }
 
-    if (!Array.isArray(model?.accounts)) continue;
     for (const account of model.accounts) {
-      const site = String(account?.site || "").trim();
+      const site = account.site.trim();
       if (!site) continue;
       sites.set(site, (sites.get(site) || 0) + 1);
     }
@@ -201,26 +189,25 @@ function buildMarketplaceFacets(models: any[]) {
 }
 
 export function buildModelsMarketplacePage(
-  models: any[],
+  models: ModelsMarketplaceModel[],
   query: ModelsMarketplaceQuery,
-  meta: Record<string, unknown>,
-) {
+  meta: ModelsMarketplaceMeta,
+): ModelsMarketplaceResponse {
   const normalized = normalizeModelsMarketplaceQuery(query);
   const searchFiltered = normalized.search
-    ? models.filter((model) => String(model?.name || "").toLowerCase().includes(normalized.search))
+    ? models.filter((model) => model.name.toLowerCase().includes(normalized.search))
     : models;
   const facets = buildMarketplaceFacets(searchFiltered);
   const filtered = searchFiltered
     .filter((model) => {
       if (!normalized.brand) return true;
-      const brand = getBrand(String(model?.name || ""));
+      const brand = getBrand(model.name);
       if (normalized.brand === "__other__") return !brand;
       return brand?.name === normalized.brand;
     })
     .filter((model) => {
       if (!normalized.site) return true;
-      return Array.isArray(model?.accounts)
-        && model.accounts.some((account: any) => account?.site === normalized.site);
+      return model.accounts.some((account) => account.site === normalized.site);
     })
     .map((model) => scopeModelToSite(model, normalized.site))
     .sort((a, b) => compareMarketplaceRows(a, b, normalized));

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { StrictMode } from 'react';
 import { act, create, type ReactTestInstance } from 'react-test-renderer';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import { ToastProvider } from '../components/Toast.js';
 import Models from './Models.js';
 
@@ -8,6 +9,8 @@ const { apiMock } = vi.hoisted(() => ({
   apiMock: {
     getModelsMarketplace: vi.fn(),
     getModelRouteFlow: vi.fn(),
+    getModelRouteFlowDiagnostics: vi.fn(),
+    getModelRuntimeObservability: vi.fn(),
   },
 }));
 
@@ -18,6 +21,8 @@ vi.mock('../api.js', () => ({
 vi.mock('../components/ModelRouteFlow.js', () => ({
   default: () => null,
 }));
+
+type WebTestRenderer = ReturnType<typeof create>;
 
 function collectText(node: ReactTestInstance): string {
   const children = node.children || [];
@@ -59,6 +64,30 @@ function findButtonByAriaLabel(root: ReactTestInstance, label: string): ReactTes
   return button;
 }
 
+function findTabTriggerByValue(root: ReactTestInstance, value: string): ReactTestInstance {
+  const trigger = root.findAll((node) => (
+    node.props.value === value
+    && typeof node.props.onPointerEnter === 'function'
+    && typeof node.props.onMouseEnter === 'function'
+    && typeof node.props.onFocus === 'function'
+  ))[0];
+  if (!trigger) {
+    throw new Error(`No tab trigger found for ${value}`);
+  }
+  return trigger;
+}
+
+function findTabsRootByValue(root: ReactTestInstance, value: string): ReactTestInstance {
+  const tabsRoot = root.findAll((node) => (
+    node.props.value === value
+    && typeof node.props.onValueChange === 'function'
+  ))[0];
+  if (!tabsRoot) {
+    throw new Error(`No tabs root found for ${value}`);
+  }
+  return tabsRoot;
+}
+
 function createMarketplaceModel(name: string, site = 'Demo Site') {
   return {
     name,
@@ -84,11 +113,78 @@ function createMarketplaceModel(name: string, site = 'Demo Site') {
   };
 }
 
+function createRuntimeObservability(range: '5m' | '15m' | '1h' | '6h' | '24h' | '7d' | '30d', successRate: number | null, avgLatencyMs: number | null) {
+  return {
+    requestedModel: 'gpt-4o',
+    matched: true,
+    entry: null,
+    health: {
+      status: successRate == null ? 'unknown' : successRate >= 90 ? 'healthy' : 'degraded',
+      successRate,
+      totalCalls: successRate == null ? 0 : 10,
+      successCalls: successRate == null ? 0 : Math.round(successRate / 10),
+      failedCalls: successRate == null ? 0 : 10 - Math.round(successRate / 10),
+      avgLatencyMs,
+      latencySamples: avgLatencyMs == null ? 0 : 10,
+      source: successRate == null ? 'none' : 'entry_projection',
+      window: {
+        range,
+        windowDays: 1,
+        fromLocalDay: '2026-07-07',
+        toLocalDay: '2026-07-07',
+      },
+    },
+    capabilitySummary: {
+      supportedEndpointTypes: [],
+      inputModalities: [],
+      outputModalities: [],
+      capabilities: [],
+      contextLength: null,
+      maxOutputTokens: null,
+      source: 'none',
+      partial: false,
+    },
+    executionAttempts: [],
+    endpoints: [],
+    history: {
+      range,
+      buckets: [],
+      granularity: range === '24h' || range === '7d' || range === '30d' ? 'day' : 'minute',
+      emptyReason: successRate == null ? 'no_logs' : null,
+    },
+    diagnostics: [],
+  };
+}
+
 async function flushMicrotasks() {
   await act(async () => {
     await Promise.resolve();
     await Promise.resolve();
   });
+}
+
+async function advancePrefetchIntent() {
+  await act(async () => {
+    vi.advanceTimersByTime(100);
+    await Promise.resolve();
+  });
+  await flushMicrotasks();
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+function LocationProbe({ onChange }: { onChange: (value: string) => void }) {
+  const location = useLocation();
+  onChange(`${location.pathname}${location.search}`);
+  return null;
 }
 
 describe('Models marketplace text', () => {
@@ -100,6 +196,62 @@ describe('Models marketplace text', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     apiMock.getModelRouteFlow.mockResolvedValue({ flow: null });
+    apiMock.getModelRouteFlowDiagnostics.mockResolvedValue({
+      success: true,
+      diagnostics: {
+        requestedModel: 'gpt-4o',
+        actualModel: 'gpt-4o',
+        matched: true,
+        entryId: 'entry:route-fixture:gpt-4o',
+        selectedEndpointId: null,
+        selectedAccountId: null,
+        diagnostics: [{ level: 'info', message: 'compiled route ready' }],
+        projectedAt: '2026-07-07T00:00:00.000Z',
+      },
+    });
+    apiMock.getModelRuntimeObservability.mockResolvedValue({
+      success: true,
+      observability: {
+        requestedModel: 'gpt-4o',
+        matched: false,
+        entry: null,
+        health: {
+          status: 'unknown',
+          successRate: null,
+          totalCalls: 0,
+          successCalls: 0,
+          failedCalls: 0,
+          avgLatencyMs: null,
+          latencySamples: 0,
+          source: 'none',
+          window: {
+            range: '24h',
+            windowDays: 1,
+            fromLocalDay: '2026-07-06',
+            toLocalDay: '2026-07-06',
+          },
+        },
+        capabilitySummary: {
+          supportedEndpointTypes: [],
+          inputModalities: [],
+          outputModalities: [],
+          capabilities: [],
+          contextLength: null,
+          maxOutputTokens: null,
+          source: 'none',
+          partial: false,
+        },
+        executionAttempts: [],
+        endpoints: [],
+        history: {
+          range: '24h',
+          buckets: [],
+          granularity: 'day',
+          emptyReason: 'unmatched',
+        },
+        diagnostics: [],
+      },
+    });
     globalThis.document = {
       documentElement: {
         getAttribute: () => 'light',
@@ -165,6 +317,7 @@ describe('Models marketplace text', () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.clearAllMocks();
     globalThis.document = originalDocument;
     globalThis.MutationObserver = originalMutationObserver;
@@ -201,16 +354,578 @@ describe('Models marketplace text', () => {
       await flushMicrotasks();
 
       const expandedText = collectText(root!.root);
-      expect(expandedText).toContain('上游未提供描述文本，但已同步标签、能力或价格信息。');
+      expect(expandedText).toContain('当前上游仅返回模型 ID，未返回描述字段。');
       expect(expandedText).toContain('基础信息');
       expect(expandedText).toContain('站点');
       expect(expandedText).toContain('余额');
       expect(expandedText).toContain('实测 entry 价格');
-      expect(expandedText).toContain('$5 / 1M');
+      expect(expandedText).toContain('5 / 1M');
       expect(expandedText).toContain('输入参考倍率 未配置参考价');
       expect(expandedText).toContain('理论入口价格');
-      expect(expandedText).toContain('$4 / 1M');
-      expect(expandedText).toContain('输出参考倍率 未配置参考价');
+      expect(expandedText).toContain('暂无可用的理论 entry 价格');
+      expect(expandedText).toContain('暂无价格明细');
+      expect(expandedText).not.toContain('$4 / 1M');
+      expect(expandedText).not.toContain('$12 / 1M');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('keeps a deep-linked selected model while the marketplace list is loading', async () => {
+    const marketplace = deferred<{
+      models: ReturnType<typeof createMarketplaceModel>[];
+      pageInfo: { page: number; pageSize: number; totalCount: number; hasMore: boolean };
+      facets: { brands: { name: string; icon: string; count: number }[]; otherBrandCount: number; sites: { name: string; count: number }[] };
+    }>();
+    apiMock.getModelsMarketplace.mockReturnValueOnce(marketplace.promise);
+    apiMock.getModelRouteFlow.mockResolvedValue({ flow: { requestedModel: 'gpt-4o', matched: true, diagnostics: [] } });
+    let currentLocation = '';
+    let root!: WebTestRenderer;
+
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/models?model=gpt-4o&tab=routing']}>
+            <LocationProbe onChange={(value) => { currentLocation = value; }} />
+            <ToastProvider>
+              <Models />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+
+      expect(currentLocation).toBe('/models?model=gpt-4o&tab=routing');
+
+      await act(async () => {
+        marketplace.resolve({
+          models: [createMarketplaceModel('gpt-4o')],
+          pageInfo: { page: 1, pageSize: 20, totalCount: 1, hasMore: false },
+          facets: {
+            brands: [{ name: 'OpenAI', icon: 'openai', count: 1 }],
+            otherBrandCount: 0,
+            sites: [{ name: 'Demo Site', count: 1 }],
+          },
+        });
+        await marketplace.promise;
+      });
+      await flushMicrotasks();
+
+      expect(currentLocation).toBe('/models?model=gpt-4o&tab=routing');
+      expect(apiMock.getModelRouteFlow).toHaveBeenCalledWith('gpt-4o');
+      expect(collectText(root!.root)).toContain('gpt-4o');
+      expect(collectText(root!.root)).not.toContain('Select a model');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it.each(['routing', 'api', 'diagnostics'] as const)('lazy-loads only route flow for the %s tab', async (tab) => {
+    let root!: WebTestRenderer;
+
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={[`/models?model=gpt-4o&tab=${tab}`]}>
+            <ToastProvider>
+              <Models />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.getModelRouteFlow).toHaveBeenCalledWith('gpt-4o');
+      expect(apiMock.getModelRuntimeObservability).not.toHaveBeenCalled();
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('lazy-loads route flow and summary observability for the overview tab', async () => {
+    let root!: WebTestRenderer;
+
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/models?model=gpt-4o&tab=overview']}>
+            <ToastProvider>
+              <Models />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.getModelRouteFlow).toHaveBeenCalledWith('gpt-4o');
+      expect(apiMock.getModelRuntimeObservability).toHaveBeenCalledWith('gpt-4o', { range: '6h' });
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('prefetches performance observability on tab hover without switching tabs', async () => {
+    let currentLocation = '';
+    let root!: WebTestRenderer;
+
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/models?model=gpt-4o&tab=routing']}>
+            <LocationProbe onChange={(value) => { currentLocation = value; }} />
+            <ToastProvider>
+              <Models />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+      expect(apiMock.getModelRouteFlow).toHaveBeenCalledWith('gpt-4o');
+      expect(apiMock.getModelRuntimeObservability).not.toHaveBeenCalled();
+      apiMock.getModelRouteFlow.mockClear();
+      vi.useFakeTimers();
+
+      const performanceTab = findTabTriggerByValue(root!.root, 'performance');
+      await act(async () => {
+        performanceTab.props.onPointerEnter();
+      });
+      await flushMicrotasks();
+      expect(apiMock.getModelRuntimeObservability).not.toHaveBeenCalled();
+      await advancePrefetchIntent();
+
+      expect(currentLocation).toBe('/models?model=gpt-4o&tab=routing');
+      expect(apiMock.getModelRouteFlow).not.toHaveBeenCalled();
+      expect(apiMock.getModelRuntimeObservability).toHaveBeenCalledTimes(1);
+      expect(apiMock.getModelRuntimeObservability).toHaveBeenCalledWith('gpt-4o', { range: '6h' });
+
+      await act(async () => {
+        performanceTab.props.onFocus();
+      });
+      await advancePrefetchIntent();
+
+      expect(apiMock.getModelRuntimeObservability).toHaveBeenCalledTimes(1);
+
+      const tabsRoot = findTabsRootByValue(root!.root, 'routing');
+      await act(async () => {
+        tabsRoot.props.onValueChange('performance');
+      });
+      await flushMicrotasks();
+
+      expect(currentLocation).toBe('/models?model=gpt-4o&tab=performance');
+      expect(apiMock.getModelRuntimeObservability).toHaveBeenCalledTimes(1);
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('prefetches route flow on route-backed tab focus without duplicating requests', async () => {
+    let root!: WebTestRenderer;
+
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/models?model=gpt-4o&tab=performance']}>
+            <ToastProvider>
+              <Models />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+      expect(apiMock.getModelRuntimeObservability).toHaveBeenCalledWith('gpt-4o', { range: '6h' });
+      expect(apiMock.getModelRouteFlow).not.toHaveBeenCalled();
+      apiMock.getModelRuntimeObservability.mockClear();
+      vi.useFakeTimers();
+
+      const apiTab = findTabTriggerByValue(root!.root, 'api');
+      await act(async () => {
+        apiTab.props.onFocus();
+      });
+      await flushMicrotasks();
+      expect(apiMock.getModelRouteFlow).not.toHaveBeenCalled();
+      await advancePrefetchIntent();
+
+      expect(apiMock.getModelRuntimeObservability).not.toHaveBeenCalled();
+      expect(apiMock.getModelRouteFlow).toHaveBeenCalledTimes(1);
+      expect(apiMock.getModelRouteFlow).toHaveBeenCalledWith('gpt-4o');
+
+      await act(async () => {
+        apiTab.props.onMouseEnter();
+      });
+      await advancePrefetchIntent();
+
+      expect(apiMock.getModelRouteFlow).toHaveBeenCalledTimes(1);
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('prefetches diagnostics entries without prefetching diagnostics JSON', async () => {
+    let currentLocation = '';
+    let root!: WebTestRenderer;
+
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/models?model=gpt-4o&tab=performance']}>
+            <LocationProbe onChange={(value) => { currentLocation = value; }} />
+            <ToastProvider>
+              <Models />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+      expect(apiMock.getModelRuntimeObservability).toHaveBeenCalledWith('gpt-4o', { range: '6h' });
+      expect(apiMock.getModelRouteFlow).not.toHaveBeenCalled();
+      apiMock.getModelRuntimeObservability.mockClear();
+      vi.useFakeTimers();
+
+      const diagnosticsTab = findTabTriggerByValue(root!.root, 'diagnostics');
+      await act(async () => {
+        diagnosticsTab.props.onPointerEnter();
+      });
+      await flushMicrotasks();
+      expect(apiMock.getModelRouteFlow).not.toHaveBeenCalled();
+      expect(apiMock.getModelRouteFlowDiagnostics).not.toHaveBeenCalled();
+      await advancePrefetchIntent();
+
+      expect(currentLocation).toBe('/models?model=gpt-4o&tab=performance');
+      expect(apiMock.getModelRouteFlow).not.toHaveBeenCalled();
+      expect(apiMock.getModelRouteFlowDiagnostics).toHaveBeenCalledTimes(1);
+      expect(apiMock.getModelRouteFlowDiagnostics).toHaveBeenCalledWith('gpt-4o');
+      expect(apiMock.getModelRuntimeObservability).not.toHaveBeenCalled();
+      expect(collectText(root!.root)).not.toContain('compiled route ready');
+
+      const tabsRoot = findTabsRootByValue(root!.root, 'performance');
+      await act(async () => {
+        tabsRoot.props.onValueChange('diagnostics');
+      });
+      await flushMicrotasks();
+
+      expect(currentLocation).toBe('/models?model=gpt-4o&tab=diagnostics');
+      expect(collectText(root!.root)).toContain('compiled route ready');
+      expect(apiMock.getModelRouteFlow).toHaveBeenCalledTimes(1);
+      expect(apiMock.getModelRouteFlow).toHaveBeenCalledWith('gpt-4o');
+      expect(apiMock.getModelRouteFlowDiagnostics).toHaveBeenCalledTimes(1);
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('prefetches the current tab data before switching models', async () => {
+    apiMock.getModelsMarketplace.mockResolvedValue({
+      models: [
+        createMarketplaceModel('gpt-4o'),
+        createMarketplaceModel('gpt-4o-mini'),
+      ],
+      pageInfo: { page: 1, pageSize: 20, totalCount: 2, hasMore: false },
+      facets: {
+        brands: [{ name: 'OpenAI', icon: 'openai', count: 2 }],
+        otherBrandCount: 0,
+        sites: [{ name: 'Demo Site', count: 2 }],
+      },
+    });
+    let currentLocation = '';
+    let root!: WebTestRenderer;
+
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/models?model=gpt-4o&tab=performance']}>
+            <LocationProbe onChange={(value) => { currentLocation = value; }} />
+            <ToastProvider>
+              <Models />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+      expect(apiMock.getModelRuntimeObservability).toHaveBeenCalledWith('gpt-4o', { range: '6h' });
+      expect(apiMock.getModelRouteFlow).not.toHaveBeenCalled();
+      apiMock.getModelRuntimeObservability.mockClear();
+      vi.useFakeTimers();
+
+      const nextModelButton = findButtonByText(root!.root, 'gpt-4o-mini');
+      await act(async () => {
+        nextModelButton.props.onPointerEnter();
+      });
+      await flushMicrotasks();
+      expect(apiMock.getModelRuntimeObservability).not.toHaveBeenCalled();
+
+      await act(async () => {
+        nextModelButton.props.onPointerLeave();
+      });
+      await advancePrefetchIntent();
+      expect(apiMock.getModelRuntimeObservability).not.toHaveBeenCalled();
+
+      await act(async () => {
+        nextModelButton.props.onPointerEnter();
+      });
+      await advancePrefetchIntent();
+
+      expect(currentLocation).toBe('/models?model=gpt-4o&tab=performance');
+      expect(apiMock.getModelRouteFlow).not.toHaveBeenCalled();
+      expect(apiMock.getModelRuntimeObservability).toHaveBeenCalledTimes(1);
+      expect(apiMock.getModelRuntimeObservability).toHaveBeenCalledWith('gpt-4o-mini', { range: '6h' });
+
+      await act(async () => {
+        nextModelButton.props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(currentLocation).toBe('/models?model=gpt-4o-mini&tab=performance');
+      expect(apiMock.getModelRuntimeObservability).toHaveBeenCalledTimes(1);
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('settles route-flow loading after StrictMode remounts effects', async () => {
+    apiMock.getModelsMarketplace.mockResolvedValue({
+      models: [createMarketplaceModel('gpt-4o')],
+      pageInfo: { page: 1, pageSize: 20, totalCount: 1, hasMore: false },
+      facets: {
+        brands: [{ name: 'OpenAI', icon: 'openai', count: 1 }],
+        otherBrandCount: 0,
+        sites: [{ name: 'Demo Site', count: 1 }],
+      },
+    });
+    const routeFlow = deferred<{ flow: { requestedModel: string; matched: boolean; diagnostics: unknown[] } }>();
+    apiMock.getModelRouteFlow.mockReturnValue(routeFlow.promise);
+    let root!: WebTestRenderer;
+
+    try {
+      await act(async () => {
+        root = create(
+          <StrictMode>
+            <MemoryRouter initialEntries={['/models?model=gpt-4o&tab=overview']}>
+              <ToastProvider>
+                <Models />
+              </ToastProvider>
+            </MemoryRouter>
+          </StrictMode>,
+        );
+      });
+      await flushMicrotasks();
+      expect(collectText(root!.root)).toContain('路由摘要');
+      expect(collectText(root!.root)).not.toContain('加载中');
+      expect(collectText(root!.root)).not.toContain('暂无路由流程');
+
+      await act(async () => {
+        routeFlow.resolve({ flow: { requestedModel: 'gpt-4o', matched: true, diagnostics: [] } });
+        await routeFlow.promise;
+      });
+      await flushMicrotasks();
+
+      expect(collectText(root!.root)).not.toContain('加载中');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('refreshes runtime observability while the performance tab is visible', async () => {
+    vi.useFakeTimers();
+    let root!: WebTestRenderer;
+
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/models?tab=performance']}>
+            <ToastProvider>
+              <Models />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+      await act(async () => {
+        findButtonByText(root!.root, 'gpt-4o').props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.getModelRuntimeObservability).toHaveBeenCalledWith('gpt-4o', { range: '6h' });
+      expect(apiMock.getModelRouteFlow).not.toHaveBeenCalled();
+      const initialCalls = apiMock.getModelRuntimeObservability.mock.calls.length;
+
+      await act(async () => {
+        vi.advanceTimersByTime(15_000);
+        await Promise.resolve();
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.getModelRuntimeObservability.mock.calls.length).toBeGreaterThan(initialCalls);
+      expect(apiMock.getModelRuntimeObservability).toHaveBeenLastCalledWith('gpt-4o', { range: '6h' });
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('keeps detail header metrics on the stable summary window when performance range changes', async () => {
+    apiMock.getModelsMarketplace.mockResolvedValue({
+      models: [{
+        ...createMarketplaceModel('gpt-4o'),
+        successRate: 12,
+        avgLatency: 9000,
+      }],
+      pageInfo: { page: 1, pageSize: 20, totalCount: 1, hasMore: false },
+      facets: {
+        brands: [{ name: 'OpenAI', icon: 'openai', count: 1 }],
+        otherBrandCount: 0,
+        sites: [{ name: 'Demo Site', count: 1 }],
+      },
+    });
+    apiMock.getModelRuntimeObservability.mockImplementation((_modelName: string, options: { range: '5m' | '15m' | '1h' | '6h' | '24h' | '7d' | '30d' }) => Promise.resolve({
+      success: true,
+      observability: options.range === '5m'
+        ? createRuntimeObservability('5m', null, null)
+        : createRuntimeObservability('6h', 97, 640),
+    }));
+    let root!: WebTestRenderer;
+
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/models?model=gpt-4o&tab=performance']}>
+            <ToastProvider>
+              <Models />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.getModelRuntimeObservability).toHaveBeenCalledWith('gpt-4o', { range: '6h' });
+      expect(collectText(root!.root)).toContain('成功率 97%');
+      expect(collectText(root!.root)).toContain('延迟 640ms');
+
+      await act(async () => {
+        findButtonByText(root!.root, '5m').props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.getModelRuntimeObservability).toHaveBeenCalledWith('gpt-4o', { range: '5m' });
+      const text = collectText(root!.root);
+      expect(text).toContain('成功率 97%');
+      expect(text).toContain('延迟 640ms');
+      expect(text).toContain('成功率不可用');
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('does not start another runtime observability refresh while the current one is pending', async () => {
+    vi.useFakeTimers();
+    const pending = deferred<Awaited<ReturnType<typeof apiMock.getModelRuntimeObservability>>>();
+    const fallback = {
+      success: true,
+      observability: {
+        requestedModel: 'gpt-4o',
+        matched: false,
+        entry: null,
+        health: {
+          status: 'unknown',
+          successRate: null,
+          totalCalls: 0,
+          successCalls: 0,
+          failedCalls: 0,
+          avgLatencyMs: null,
+          latencySamples: 0,
+          source: 'none',
+          window: {
+            range: '6h',
+            windowDays: 1,
+            fromLocalDay: '2026-07-06',
+            toLocalDay: '2026-07-06',
+          },
+        },
+        capabilitySummary: {
+          supportedEndpointTypes: [],
+          inputModalities: [],
+          outputModalities: [],
+          capabilities: [],
+          contextLength: null,
+          maxOutputTokens: null,
+          source: 'none',
+          partial: false,
+        },
+        executionAttempts: [],
+        endpoints: [],
+        history: {
+          range: '6h',
+          buckets: [],
+          granularity: 'minute',
+          emptyReason: 'unmatched',
+        },
+        diagnostics: [],
+      },
+    };
+    apiMock.getModelRuntimeObservability.mockReturnValueOnce(pending.promise);
+    let root!: WebTestRenderer;
+
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/models?tab=performance']}>
+            <ToastProvider>
+              <Models />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+      await act(async () => {
+        findButtonByText(root!.root, 'gpt-4o').props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.getModelRuntimeObservability).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        vi.advanceTimersByTime(15_000);
+        await Promise.resolve();
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.getModelRuntimeObservability).toHaveBeenCalledTimes(1);
+
+      await act(async () => {
+        pending.resolve(fallback);
+        await Promise.resolve();
+      });
+      await flushMicrotasks();
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('refreshes route flow and runtime observability from the model details refresh button', async () => {
+    let root!: WebTestRenderer;
+
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/models']}>
+            <ToastProvider>
+              <Models />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+      await act(async () => {
+        findButtonByText(root!.root, 'gpt-4o').props.onClick();
+      });
+      await flushMicrotasks();
+      apiMock.getModelRouteFlow.mockClear();
+      apiMock.getModelRuntimeObservability.mockClear();
+
+      await act(async () => {
+        findButtonByAriaLabel(root!.root, '刷新模型').props.onClick();
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.getModelRouteFlow).toHaveBeenCalledWith('gpt-4o');
+      expect(apiMock.getModelRuntimeObservability).toHaveBeenCalledWith('gpt-4o', { range: '6h' });
     } finally {
       root?.unmount();
     }
@@ -270,6 +985,71 @@ describe('Models marketplace text', () => {
     }
   });
 
+  it('keeps the settled marketplace list visible while the next query is pending', async () => {
+    const nextPage = deferred<{
+      models: ReturnType<typeof createMarketplaceModel>[];
+      pageInfo: { page: number; pageSize: number; totalCount: number; hasMore: boolean };
+      facets: { brands: { name: string; icon: string; count: number }[]; otherBrandCount: number; sites: { name: string; count: number }[] };
+    }>();
+    apiMock.getModelsMarketplace
+      .mockResolvedValueOnce({
+        models: [createMarketplaceModel('gpt-page-1')],
+        pageInfo: { page: 1, pageSize: 20, totalCount: 50_000, hasMore: true },
+        facets: {
+          brands: [{ name: 'OpenAI', icon: 'openai', count: 50_000 }],
+          otherBrandCount: 0,
+          sites: [{ name: 'Demo Site', count: 50_000 }],
+        },
+      })
+      .mockReturnValueOnce(nextPage.promise);
+
+    let root!: WebTestRenderer;
+
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/models']}>
+            <ToastProvider>
+              <Models />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+
+      expect(collectText(root!.root)).toContain('gpt-page-1');
+
+      await act(async () => {
+        findButtonByAriaLabel(root!.root, '下一页').props.onClick();
+      });
+      await vi.waitFor(() => {
+        expect(apiMock.getModelsMarketplace).toHaveBeenCalledWith(expect.objectContaining({ page: 2 }));
+      });
+
+      const pendingText = collectText(root!.root);
+      expect(pendingText).toContain('gpt-page-1');
+      expect(pendingText).not.toContain('gpt-page-2');
+
+      await act(async () => {
+        nextPage.resolve({
+          models: [createMarketplaceModel('gpt-page-2')],
+          pageInfo: { page: 2, pageSize: 20, totalCount: 50_000, hasMore: true },
+          facets: {
+            brands: [{ name: 'OpenAI', icon: 'openai', count: 50_000 }],
+            otherBrandCount: 0,
+            sites: [{ name: 'Demo Site', count: 50_000 }],
+          },
+        });
+        await nextPage.promise;
+      });
+      await flushMicrotasks();
+
+      expect(collectText(root!.root)).toContain('gpt-page-2');
+    } finally {
+      root?.unmount();
+    }
+  });
+
   it('sends marketplace search terms to the server and renders the returned result', async () => {
     apiMock.getModelsMarketplace.mockImplementation((options: { q?: string }) => Promise.resolve({
       models: [
@@ -321,6 +1101,87 @@ describe('Models marketplace text', () => {
         expect(text).toContain('共 1 个模型');
         expect(text).toContain('tail-marketplace-model');
       });
+    } finally {
+      root?.unmount();
+    }
+  });
+
+  it('debounces marketplace search and only requests the final typed value', async () => {
+    vi.useFakeTimers();
+    apiMock.getModelsMarketplace.mockImplementation((options: { q?: string }) => Promise.resolve({
+      models: [
+        createMarketplaceModel(options.q ? `${options.q}-result` : 'gpt-page-1'),
+      ],
+      pageInfo: {
+        page: 1,
+        pageSize: 20,
+        totalCount: options.q ? 1 : 50_000,
+        hasMore: !options.q,
+      },
+      facets: {
+        brands: [{ name: 'OpenAI', icon: 'openai', count: options.q ? 1 : 50_000 }],
+        otherBrandCount: 0,
+        sites: [{ name: 'Demo Site', count: options.q ? 1 : 50_000 }],
+      },
+    }));
+
+    let root!: WebTestRenderer;
+
+    try {
+      await act(async () => {
+        root = create(
+          <MemoryRouter initialEntries={['/models']}>
+            <ToastProvider>
+              <Models />
+            </ToastProvider>
+          </MemoryRouter>,
+        );
+      });
+      await flushMicrotasks();
+      apiMock.getModelsMarketplace.mockClear();
+
+      const findSearchInput = () => root!.root.find((node) => (
+        node.type === 'input'
+        && node.props.type === 'search'
+      ));
+
+      await act(async () => {
+        findSearchInput().props.onChange({ target: { value: 'deep' } });
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(120);
+      });
+      await act(async () => {
+        findSearchInput().props.onChange({ target: { value: 'deepseek' } });
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(120);
+      });
+      await act(async () => {
+        findSearchInput().props.onChange({ target: { value: 'deepseek-v4' } });
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(299);
+        await Promise.resolve();
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.getModelsMarketplace).not.toHaveBeenCalled();
+
+      await act(async () => {
+        vi.advanceTimersByTime(1);
+        await Promise.resolve();
+      });
+      await flushMicrotasks();
+
+      expect(apiMock.getModelsMarketplace).toHaveBeenCalledTimes(1);
+      expect(apiMock.getModelsMarketplace).toHaveBeenCalledWith(expect.objectContaining({
+        page: 1,
+        pageSize: 20,
+        q: 'deepseek-v4',
+        includePricing: false,
+      }));
+      expect(collectText(root!.root)).toContain('deepseek-v4-result');
     } finally {
       root?.unmount();
     }
@@ -765,10 +1626,57 @@ describe('Models marketplace text', () => {
 
       const siteFilterItem = findButtonByText(root!.root, '站点 A');
 
+      apiMock.getModelsMarketplace.mockResolvedValueOnce({
+        models: [{
+          name: 'gpt-4o',
+          accountCount: 1,
+          tokenCount: 2,
+          managedTokenCount: 2,
+          credentialCount: 1,
+          endpointCount: 1,
+          executionAttemptCount: 1,
+          avgLatency: 320,
+          successRate: 96,
+          description: 'demo model',
+          tags: ['chat'],
+          supportedEndpointTypes: ['openai'],
+          runtimeInventoryIssues: [],
+          pricingSources: [{
+            siteId: 1,
+            siteName: '站点 A',
+            accountId: 1,
+            username: 'user-a',
+            ownerBy: null,
+            enableGroups: [],
+            groupPricing: { default: { quotaType: 0, inputPerMillion: 1, outputPerMillion: 2 } },
+          }],
+          measuredEntryPricing: null,
+          accounts: [{
+            id: 1,
+            site: '站点 A',
+            username: 'user-a',
+            latency: 320,
+            unitCost: null,
+            balance: 12.5,
+            tokens: [
+              { id: 1, name: 'token-a-1', isDefault: true },
+              { id: 2, name: 'token-a-2', isDefault: false },
+            ],
+            managedTokenCount: 2,
+            credentialCount: 1,
+            endpointCount: 1,
+            executionAttemptCount: 1,
+          }],
+          siteCounts: { '站点 A': { endpointCount: 1, executionAttemptCount: 1, credentialCount: 1 } },
+        }],
+      });
+
       await act(async () => {
         siteFilterItem.props.onClick();
       });
       await flushMicrotasks();
+
+      expect(apiMock.getModelsMarketplace).toHaveBeenLastCalledWith(expect.objectContaining({ site: '站点 A' }));
 
       const cards = findButtonsByText(root!.root, 'gpt-4o');
       expect(cards.length).toBeGreaterThan(0);
@@ -885,6 +1793,49 @@ describe('Models marketplace text', () => {
 
       const siteFilterItem = findButtonByText(root!.root, '站点 A');
 
+      apiMock.getModelsMarketplace.mockResolvedValueOnce({
+        models: [
+          {
+            name: 'claude-3-5-sonnet',
+            accountCount: 2,
+            tokenCount: 2,
+            managedTokenCount: 2,
+            credentialCount: 2,
+            endpointCount: 2,
+            executionAttemptCount: 2,
+            avgLatency: 420,
+            successRate: 95,
+            description: null,
+            tags: [],
+            supportedEndpointTypes: [],
+            runtimeInventoryIssues: [],
+            pricingSources: [],
+            measuredEntryPricing: null,
+            accounts: [],
+            siteCounts: { '站点 A': { endpointCount: 2, executionAttemptCount: 2, credentialCount: 2 } },
+          },
+          {
+            name: 'gpt-4o',
+            accountCount: 1,
+            tokenCount: 1,
+            managedTokenCount: 1,
+            credentialCount: 1,
+            endpointCount: 1,
+            executionAttemptCount: 1,
+            avgLatency: 300,
+            successRate: 98,
+            description: null,
+            tags: [],
+            supportedEndpointTypes: [],
+            runtimeInventoryIssues: [],
+            pricingSources: [],
+            measuredEntryPricing: null,
+            accounts: [],
+            siteCounts: { '站点 A': { endpointCount: 1, executionAttemptCount: 1, credentialCount: 1 } },
+          },
+        ],
+      });
+
       await act(async () => {
         siteFilterItem.props.onClick();
       });
@@ -957,13 +1908,35 @@ describe('Models marketplace text', () => {
 
       const siteFilterItem = findButtonByText(root!.root, '站点 A');
 
+      apiMock.getModelsMarketplace.mockResolvedValueOnce({
+        models: [{
+          name: 'gpt-4o',
+          accountCount: 1,
+          tokenCount: 1,
+          managedTokenCount: 1,
+          credentialCount: 1,
+          endpointCount: 1,
+          executionAttemptCount: 1,
+          avgLatency: null,
+          successRate: 93,
+          description: null,
+          tags: [],
+          supportedEndpointTypes: [],
+          runtimeInventoryIssues: [],
+          pricingSources: [],
+          measuredEntryPricing: null,
+          accounts: [],
+          siteCounts: { '站点 A': { endpointCount: 1, executionAttemptCount: 1, credentialCount: 1 } },
+        }],
+      });
+
       await act(async () => {
         siteFilterItem.props.onClick();
       });
       await flushMicrotasks();
 
       const modelButton = findButtonByText(root!.root, 'gpt-4o');
-      expect(collectText(modelButton)).toContain('—');
+      expect(collectText(modelButton)).toContain('延迟 不可用');
       expect(collectText(root!.root)).not.toContain('680ms');
     } finally {
       root?.unmount();

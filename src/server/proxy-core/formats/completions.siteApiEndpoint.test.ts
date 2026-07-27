@@ -4,12 +4,14 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { asc, eq } from 'drizzle-orm';
+import { clearRouteGroupMemberTestData, insertRouteGroupMember } from '../../../testing/routeGroupMemberTestUtils.js';
+import {
+  createGraphNativeRouteFixture,
+  publishCurrentGraphNativeRouteFixtures,
+  resetGraphNativeRouteFixtures,
+} from '../../test/graphNativeRouteFixtures.js';
 
 const fetchMock = vi.fn();
-const selectTargetMock = vi.fn();
-const selectNextTargetMock = vi.fn();
-const recordSuccessMock = vi.fn();
-const recordFailureMock = vi.fn();
 const refreshModelsAndRebuildRoutesMock = vi.fn();
 const reportProxyAllFailedMock = vi.fn();
 const reportTokenExpiredMock = vi.fn();
@@ -24,16 +26,6 @@ vi.mock('undici', async () => {
     fetch: (...args: unknown[]) => fetchMock(...args),
   };
 });
-
-vi.mock('../../services/tokenRouter.js', () => ({
-  tokenRouter: {
-    selectTarget: (...args: unknown[]) => selectTargetMock(...args),
-    selectNextTarget: (...args: unknown[]) => selectNextTargetMock(...args),
-    recordSuccess: (...args: unknown[]) => recordSuccessMock(...args),
-    recordFailure: (...args: unknown[]) => recordFailureMock(...args),
-  },
-  invalidateTokenRouterCache: vi.fn(),
-}));
 
 vi.mock('../../services/routeRefreshWorkflow.js', async () => {
   const actual =
@@ -64,6 +56,12 @@ vi.mock('../../services/proxyBilling.js', () => ({
   resolveProxyLogBilling: (...args: unknown[]) => resolveProxyLogBillingMock(...args),
 }));
 
+vi.mock('../../services/proxyRetryPolicy.js', () => ({
+  shouldRetryProxyRequest: () => false,
+  shouldAbortSameSiteEndpointFallback: () => false,
+  RETRYABLE_TIMEOUT_PATTERNS: [/(request timed out|connection timed out|read timeout|\btimed out\b)/i],
+}));
+
 type DbModule = typeof import('../../db/index.js');
 
 describe('/v1/completions site api endpoint rotation', () => {
@@ -89,10 +87,6 @@ describe('/v1/completions site api endpoint rotation', () => {
 
   beforeEach(async () => {
     fetchMock.mockReset();
-    selectTargetMock.mockReset();
-    selectNextTargetMock.mockReset();
-    recordSuccessMock.mockReset();
-    recordFailureMock.mockReset();
     refreshModelsAndRebuildRoutesMock.mockReset();
     reportProxyAllFailedMock.mockReset();
     reportTokenExpiredMock.mockReset();
@@ -111,14 +105,25 @@ describe('/v1/completions site api endpoint rotation', () => {
     });
 
     await db.delete(schema.proxyLogs).run();
-    await db.delete(schema.routeEndpointTargets).run();
-    await db.delete(schema.tokenRoutes).run();
+    await clearRouteGroupMemberTestData();
+    await db.delete(schema.runtimeExecutionTargetState).run();
+    await db.delete(schema.runtimeExecutionTargets).run();
+    await db.delete(schema.routeGraphActiveVersion).run();
+    await db.delete(schema.routeGraphDrafts).run();
+    await db.delete(schema.compiledRuntimeActiveArtifact).run();
+    await db.delete(schema.compiledRuntimeArtifacts).run();
+    await db.delete(schema.routeGraphVersions).run();
+    await db.delete(schema.routeGraphActiveVersion).run();
+    await db.delete(schema.compiledRuntimeActiveArtifact).run();
+    await db.delete(schema.compiledRuntimeArtifacts).run();
+    await db.delete(schema.routeGraphVersions).run();
     await db.delete(schema.tokenModelAvailability).run();
     await db.delete(schema.modelAvailability).run();
     await db.delete(schema.accountTokens).run();
     await db.delete(schema.accounts).run();
     await db.delete(schema.siteApiEndpoints).run();
     await db.delete(schema.sites).run();
+    resetGraphNativeRouteFixtures();
   });
 
   afterAll(async () => {
@@ -159,19 +164,24 @@ describe('/v1/completions site api endpoint rotation', () => {
       },
     ]).run();
 
-    selectTargetMock.mockResolvedValue({
-      target: { id: 11, routeId: 22 },
-      site,
-      account,
-      tokenName: 'default',
-      tokenValue: 'sk-nihao',
-      actualModel: 'gpt-4o-mini',
+    const route = await createGraphNativeRouteFixture({
+      modelPattern: 'gpt-4o-mini',
+      enabled: true,
     });
-    selectNextTargetMock.mockResolvedValue(null);
+    await insertRouteGroupMember({
+      groupId: route.id,
+      accountId: account.id,
+      tokenId: null,
+      sourceModel: 'gpt-4o-mini',
+      priority: 0,
+      weight: 10,
+      enabled: true,
+    });
+    await publishCurrentGraphNativeRouteFixtures();
 
-    fetchMock
-      .mockResolvedValueOnce(new Response('bad gateway', { status: 502 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({
+    const upstreamResponses = [
+      new Response('bad gateway', { status: 502 }),
+      new Response(JSON.stringify({
         id: 'cmpl-ok',
         object: 'text_completion',
         choices: [{ text: 'ok' }],
@@ -183,7 +193,22 @@ describe('/v1/completions site api endpoint rotation', () => {
       }), {
         status: 200,
         headers: { 'content-type': 'application/json' },
-      }));
+      }),
+    ];
+    fetchMock.mockImplementation(async (url: unknown) => {
+      const rawUrl = String(url || '');
+      if (rawUrl.endsWith('/api/pricing')) {
+        return new Response(JSON.stringify({ data: [] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      const next = upstreamResponses.shift();
+      if (!next) {
+        throw new Error(`unexpected fetch ${rawUrl}`);
+      }
+      return next;
+    });
 
     const response = await app.inject({
       method: 'POST',
@@ -202,12 +227,13 @@ describe('/v1/completions site api endpoint rotation', () => {
       id: 'cmpl-ok',
       object: 'text_completion',
     });
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(String(fetchMock.mock.calls[0]?.[0] || '')).toBe('https://api-a.example.com/v1/completions');
-    expect(String(fetchMock.mock.calls[1]?.[0] || '')).toBe('https://api-b.example.com/v1/completions');
-    expect(selectNextTargetMock).not.toHaveBeenCalled();
-    expect(recordFailureMock).not.toHaveBeenCalled();
-    expect(recordSuccessMock).toHaveBeenCalledTimes(1);
+    const upstreamFetchUrls = fetchMock.mock.calls
+      .map((call) => String(call[0] || ''))
+      .filter((url) => !url.endsWith('/api/pricing'));
+    expect(upstreamFetchUrls).toEqual([
+      'https://api-a.example.com/v1/completions',
+      'https://api-b.example.com/v1/completions',
+    ]);
 
     const storedEndpoints = await db.select().from(schema.siteApiEndpoints)
       .where(eq(schema.siteApiEndpoints.siteId, site.id))

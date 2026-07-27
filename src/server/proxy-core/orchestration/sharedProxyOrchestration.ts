@@ -1,7 +1,6 @@
 import { formatUtcSqlDateTime } from '../../services/localTimeService.js';
 import { resolveChannelProxyUrl, withSiteRecordProxyRequestInit } from '../../services/siteProxy.js';
 import type { SiteProxyConfigLike } from '../../services/siteProxy.js';
-import { tokenRouter } from '../../services/tokenRouter.js';
 import { resolveProxyUsageWithSelfLogFallback } from '../../services/proxyUsageFallbackService.js';
 import type { DownstreamRoutingPolicy } from '../../services/downstreamPolicyTypes.js';
 import { reportProxyAllFailed, reportTokenExpired } from '../../services/alertService.js';
@@ -18,19 +17,46 @@ import { recordOauthQuotaHeadersSnapshot, recordOauthQuotaResetHint } from '../.
 import { refreshOauthAccessTokenSingleflight } from '../../services/oauth/refreshSingleflight.js';
 import { proxyTargetCoordinator } from '../../services/proxyTargetCoordinator.js';
 import { readRuntimeResponseText } from '../executors/types.js';
-import { selectProxyTargetForAttempt } from '../targetSelection.js';
 import type { RouteExecutionScope } from '../../services/routeExecutionScopeTypes.js';
-import { buildProxyLogRouteDecisionSnapshot } from '../../services/proxyLogRouteDecisionSnapshot.js';
+import type { CompiledRouteRuntimeRequest } from '../../services/compiledRuntimeRequestTypes.js';
+import type { RouteRuntimeSnapshotBody } from '../../../shared/routeRuntimeSnapshot.js';
+import {
+  completeCompiledRuntimeExecutionSession,
+  type CompiledRuntimeExecutionSession,
+} from '../../services/compiledRuntimeExecutionSessionService.js';
+import {
+  createRouteRuntimeDecisionSession,
+  commitRouteRuntimeDecisionProposal,
+  proposeRouteRuntimeDecisionInSession,
+  previewRouteRuntimeDecisionInSession,
+  recordRouteRuntimeExecutionAttemptFailure,
+  recordRouteRuntimeExecutionAttemptStarted,
+  recordRouteRuntimeExecutionAttemptSuccess,
+  previewRouteRuntimeDecision,
+  selectRouteRuntimeDecision,
+  selectRouteRuntimeDecisionInSession,
+  selectRouteRuntimeExecutionAttempt,
+  type RouteRuntimeDecisionSession,
+  type RouteRuntimeDecisionProposal,
+  type RouteRuntimeDecision,
+  type RouteRuntimeExecutionAttempt,
+} from '../../services/routeRuntimeExecutionService.js';
 
-type SelectedTarget = Awaited<ReturnType<typeof tokenRouter.selectTarget>>;
+type SelectedExecutionAttempt = RouteRuntimeExecutionAttempt | null;
 type SurfaceWarningScope = string;
 
-type SurfaceSelectedTarget = {
-  target: { routeId: number | null; id: number; tokenId?: number | null };
+type SurfaceSelectedExecutionAttempt = {
+  executionAttemptId: string;
+  target: { id: number; tokenId?: number | null };
   account: { id: number; username?: string | null };
-  site: { name?: string | null };
+  site: { id: number; name?: string | null };
   token?: { id?: number | null; tokenGroup?: string | null } | null;
   actualModel?: string | null;
+  routeEntrypointId: string;
+  runtimeEndpointId: string;
+  runtimeArtifactId: string;
+  executionTargetId: number;
+  routeRuntimeSnapshot: RouteRuntimeSnapshotBody;
 };
 
 type SurfaceFailureResponse = {
@@ -48,7 +74,7 @@ type SurfaceFailureOutcome =
   | { action: 'retry' }
   | SurfaceFailureResponse;
 
-type SurfaceOauthRefreshSelectedTarget = {
+type SurfaceOauthRefreshCredential = {
   account: {
     id: number;
     accessToken?: string | null;
@@ -63,7 +89,7 @@ type SurfaceOauthRefreshContext<TRequest extends BuiltEndpointRequest> = {
   rawErrText: string;
 };
 
-type SurfaceSuccessSelectedTarget = SurfaceSelectedTarget & {
+type SurfaceSuccessSelectedExecutionAttempt = SurfaceSelectedExecutionAttempt & {
   account: Record<string, unknown> & {
     id: number;
     username?: string | null;
@@ -104,16 +130,125 @@ type SurfaceResolvedUsageSummary = {
   usageSource: 'upstream' | 'self-log' | 'unknown';
 };
 
-export async function selectSurfaceTargetForAttempt(input: {
+export async function selectSurfaceExecutionAttempt(input: {
   requestedModel: string;
+  request?: CompiledRouteRuntimeRequest | null;
   downstreamPolicy: DownstreamRoutingPolicy;
   excludeTargetIds: number[];
   retryCount: number;
   stickySessionKey?: string | null;
-  forcedTargetId?: number | null;
+  forcedExecutionAttemptId?: string | null;
   routeExecutionScope?: RouteExecutionScope | null;
-}): Promise<SelectedTarget> {
-  return await selectProxyTargetForAttempt(input);
+}): Promise<SelectedExecutionAttempt> {
+  return await selectRouteRuntimeExecutionAttempt({
+    requestedModel: input.requestedModel,
+    ...(input.request ? { request: input.request } : {}),
+    downstreamPolicy: input.downstreamPolicy,
+    retryCount: input.retryCount,
+    stickyExecutionTargetId: input.retryCount === 0 && input.stickySessionKey
+      ? getSurfaceStickyPreferredTargetId(input.stickySessionKey)
+      : null,
+    forcedExecutionAttemptId: input.forcedExecutionAttemptId,
+    disabledExecutionTargetIds: input.excludeTargetIds,
+    disabledExecutionAttemptIds: input.routeExecutionScope?.failureOverlay.disabledExecutionAttemptIds,
+  });
+}
+
+export async function selectSurfaceRuntimeDecision(
+  input: Parameters<typeof selectSurfaceExecutionAttempt>[0],
+): Promise<RouteRuntimeDecision | null> {
+  return await selectRouteRuntimeDecision({
+    requestedModel: input.requestedModel,
+    ...(input.request ? { request: input.request } : {}),
+    downstreamPolicy: input.downstreamPolicy,
+    retryCount: input.retryCount,
+    stickyExecutionTargetId: input.retryCount === 0 && input.stickySessionKey
+      ? getSurfaceStickyPreferredTargetId(input.stickySessionKey)
+      : null,
+    forcedExecutionAttemptId: input.forcedExecutionAttemptId,
+    disabledExecutionTargetIds: input.excludeTargetIds,
+    disabledExecutionAttemptIds: input.routeExecutionScope?.failureOverlay.disabledExecutionAttemptIds,
+  });
+}
+
+export async function previewSurfaceRuntimeDecision(
+  input: Parameters<typeof selectSurfaceExecutionAttempt>[0],
+): Promise<RouteRuntimeDecision | null> {
+  return await previewRouteRuntimeDecision({
+    requestedModel: input.requestedModel,
+    ...(input.request ? { request: input.request } : {}),
+    downstreamPolicy: input.downstreamPolicy,
+    retryCount: input.retryCount,
+    stickyExecutionTargetId: input.retryCount === 0 && input.stickySessionKey
+      ? getSurfaceStickyPreferredTargetId(input.stickySessionKey)
+      : null,
+    forcedExecutionAttemptId: input.forcedExecutionAttemptId,
+    disabledExecutionTargetIds: input.excludeTargetIds,
+    disabledExecutionAttemptIds: input.routeExecutionScope?.failureOverlay.disabledExecutionAttemptIds,
+  });
+}
+
+export async function createSurfaceRuntimeDecisionSession(input: {
+  requestedModel: string;
+  request?: CompiledRouteRuntimeRequest | null;
+  downstreamPolicy: DownstreamRoutingPolicy;
+  stickyExecutionTargetId?: number | null;
+  forcedExecutionAttemptId?: string | null;
+}): Promise<RouteRuntimeDecisionSession> {
+  return await createRouteRuntimeDecisionSession(input);
+}
+
+export async function selectSurfaceRuntimeDecisionInSession(input: {
+  session: RouteRuntimeDecisionSession;
+  excludeTargetIds: number[];
+  retryCount: number;
+  routeExecutionScope?: RouteExecutionScope | null;
+}): Promise<RouteRuntimeDecision | null> {
+  return await selectRouteRuntimeDecisionInSession(input.session, {
+    retryCount: input.retryCount,
+    disabledExecutionTargetIds: input.excludeTargetIds,
+    disabledExecutionAttemptIds: input.routeExecutionScope?.failureOverlay.disabledExecutionAttemptIds,
+  });
+}
+
+export async function proposeSurfaceRuntimeDecisionInSession(input: {
+  session: RouteRuntimeDecisionSession;
+  excludeTargetIds: number[];
+  retryCount: number;
+  routeExecutionScope?: RouteExecutionScope | null;
+}): Promise<RouteRuntimeDecisionProposal | null> {
+  return await proposeRouteRuntimeDecisionInSession(input.session, {
+    retryCount: input.retryCount,
+    disabledExecutionTargetIds: input.excludeTargetIds,
+    disabledExecutionAttemptIds: input.routeExecutionScope?.failureOverlay.disabledExecutionAttemptIds,
+  });
+}
+
+export function commitSurfaceRuntimeDecisionProposal(
+  proposal: RouteRuntimeDecisionProposal,
+): boolean {
+  return commitRouteRuntimeDecisionProposal(proposal);
+}
+
+export async function previewSurfaceRuntimeDecisionInSession(input: {
+  session: RouteRuntimeDecisionSession;
+  excludeTargetIds: number[];
+  retryCount: number;
+  routeExecutionScope?: RouteExecutionScope | null;
+}): Promise<RouteRuntimeDecision | null> {
+  return await previewRouteRuntimeDecisionInSession(input.session, {
+    retryCount: input.retryCount,
+    disabledExecutionTargetIds: input.excludeTargetIds,
+    disabledExecutionAttemptIds: input.routeExecutionScope?.failureOverlay.disabledExecutionAttemptIds,
+  });
+}
+
+export async function markSurfaceExecutionAttemptStarted(input: {
+  selected: SurfaceSelectedExecutionAttempt;
+}): Promise<void> {
+  await recordRouteRuntimeExecutionAttemptStarted({
+    executionTargetId: input.selected.executionTargetId,
+  });
 }
 
 export function buildSurfaceStickySessionKey(input: {
@@ -186,17 +321,15 @@ export function buildSurfaceTargetBusyMessage(waitMs: number): string {
 }
 
 export async function writeSurfaceProxyLog(input: {
+  requestId?: string | null;
   warningScope: string;
-  selected: {
-    target: { routeId: number | null; id: number | null };
-    account: { id: number | null };
-    actualModel?: string | null;
-  };
+  selected: SurfaceSelectedExecutionAttempt;
   modelRequested: string;
   status: string;
   httpStatus: number;
   isStream?: boolean | null;
   firstByteLatencyMs?: number | null;
+  firstTokenLatencyMs?: number | null;
   latencyMs: number;
   errorMessage: string | null;
   retryCount: number;
@@ -204,7 +337,7 @@ export async function writeSurfaceProxyLog(input: {
   promptTokens?: number | null;
   completionTokens?: number | null;
   totalTokens?: number | null;
-  estimatedCost?: number;
+  estimatedCost?: number | null;
   billingDetails?: unknown;
   upstreamPath?: string | null;
   usageSource?: 'upstream' | 'self-log' | 'unknown' | null;
@@ -224,29 +357,28 @@ export async function writeSurfaceProxyLog(input: {
       usageSource: input.usageSource || null,
       errorMessage: input.errorMessage,
     });
-    const routeDecisionSnapshot = await buildProxyLogRouteDecisionSnapshot({
-      selected: input.selected,
-      modelRequested: input.modelRequested,
-      capturedAt: createdAt,
-    });
     await insertProxyLog({
-      routeId: input.selected.target.routeId,
-      targetId: input.selected.target.id,
+      requestId: input.requestId ?? null,
+      executionAttemptId: input.selected.executionAttemptId,
       accountId: input.selected.account.id,
       downstreamApiKeyId: input.downstreamApiKeyId ?? null,
       modelRequested: input.modelRequested,
       modelActual: input.selected.actualModel ?? null,
+      routeEntrypointId: input.selected.routeEntrypointId,
+      runtimeEndpointId: input.selected.runtimeEndpointId,
+      runtimeArtifactId: input.selected.runtimeArtifactId,
+      executionTargetId: input.selected.executionTargetId,
       status: input.status,
       httpStatus: input.httpStatus,
       isStream: input.isStream ?? null,
       firstByteLatencyMs: input.firstByteLatencyMs ?? null,
+      firstTokenLatencyMs: input.firstTokenLatencyMs ?? null,
       latencyMs: input.latencyMs,
       promptTokens: input.promptTokens ?? null,
       completionTokens: input.completionTokens ?? null,
       totalTokens: input.totalTokens ?? null,
-      estimatedCost: input.estimatedCost ?? 0,
+      estimatedCost: input.estimatedCost ?? null,
       billingDetails: input.billingDetails ?? null,
-      routeDecisionSnapshot,
       clientFamily: input.clientContext?.clientKind || null,
       clientAppId: input.clientContext?.clientAppId || null,
       clientAppName: input.clientContext?.clientAppName || null,
@@ -287,7 +419,7 @@ export function createSurfaceDispatchRequest(input: {
 
 export async function trySurfaceOauthRefreshRecovery<TRequest extends BuiltEndpointRequest>(input: {
   ctx: SurfaceOauthRefreshContext<TRequest>;
-  selected: SurfaceOauthRefreshSelectedTarget;
+  selected: SurfaceOauthRefreshCredential;
   siteUrl: string;
   buildRequest: (endpoint: TRequest['endpoint']) => TRequest;
   dispatchRequest: (
@@ -336,7 +468,7 @@ export async function trySurfaceOauthRefreshRecovery<TRequest extends BuiltEndpo
 }
 
 export async function recordSurfaceSuccess(input: {
-  selected: SurfaceSuccessSelectedTarget;
+  selected: SurfaceSuccessSelectedExecutionAttempt;
   requestedModel: string;
   modelName: string;
   parsedUsage: SurfaceUsageSummary;
@@ -345,16 +477,18 @@ export async function recordSurfaceSuccess(input: {
   requestStartedAtMs: number;
   isStream?: boolean | null;
   firstByteLatencyMs?: number | null;
+  firstTokenLatencyMs?: number | null;
   latencyMs: number;
   retryCount: number;
   upstreamPath?: string | null;
   logSuccess: (args: {
-    selected: SurfaceSelectedTarget;
+    selected: SurfaceSelectedExecutionAttempt;
     modelRequested: string;
     status: string;
     httpStatus: number;
     isStream?: boolean | null;
     firstByteLatencyMs?: number | null;
+    firstTokenLatencyMs?: number | null;
     latencyMs: number;
     errorMessage: string | null;
     retryCount: number;
@@ -362,18 +496,22 @@ export async function recordSurfaceSuccess(input: {
     completionTokens?: number | null;
     totalTokens?: number | null;
     usageSource?: 'upstream' | 'self-log' | 'unknown';
-    estimatedCost?: number;
+    estimatedCost?: number | null;
     billingDetails?: unknown;
     upstreamPath?: string | null;
   }) => Promise<void>;
-  recordDownstreamCost?: (estimatedCost: number) => void;
+  recordDownstreamBilling?: (input: {
+    billingDetails: unknown;
+    siteId: number | null;
+    accountId: number | null;
+  }) => Promise<void> | void;
   bestEffortMetrics?: {
     errorLabel: string;
   };
   suppressLogUsageSource?: boolean;
 }): Promise<{
   resolvedUsage: SurfaceResolvedUsageSummary;
-  estimatedCost: number;
+  estimatedCost: number | null;
   billingDetails: unknown;
 }> {
   const hasUpstreamUsage = input.upstreamUsagePresent ?? (
@@ -390,7 +528,7 @@ export async function recordSurfaceSuccess(input: {
     selfLogBillingMeta: null,
     usageSource: hasUpstreamUsage ? 'upstream' : 'unknown',
   };
-  let estimatedCost = 0;
+  let estimatedCost: number | null = null;
   let billingDetails: unknown = null;
 
   try {
@@ -428,13 +566,26 @@ export async function recordSurfaceSuccess(input: {
     console.error(input.bestEffortMetrics.errorLabel, error);
   }
 
-  tokenRouter.recordSuccess(
-    input.selected.target.id,
-    input.latencyMs,
-    estimatedCost,
-    input.modelName,
-  );
-  input.recordDownstreamCost?.(estimatedCost);
+  try {
+    await recordRouteRuntimeExecutionAttemptSuccess({
+      executionTargetId: input.selected.executionTargetId,
+      accountId: input.selected.account.id,
+      modelName: input.modelName,
+      latencyMs: input.latencyMs,
+    });
+  } catch (error) {
+    if (!input.bestEffortMetrics) {
+      throw error;
+    }
+    console.error(input.bestEffortMetrics.errorLabel, error);
+  }
+  if (billingDetails != null) {
+    await input.recordDownstreamBilling?.({
+      billingDetails,
+      siteId: input.selected.site.id,
+      accountId: input.selected.account.id,
+    });
+  }
   const logTokens = resolvedUsage.usageSource === 'unknown'
     ? {
       promptTokens: null,
@@ -453,6 +604,7 @@ export async function recordSurfaceSuccess(input: {
     httpStatus: 200,
     isStream: input.isStream ?? null,
     firstByteLatencyMs: input.firstByteLatencyMs ?? null,
+    firstTokenLatencyMs: input.firstTokenLatencyMs ?? null,
     latencyMs: input.latencyMs,
     errorMessage: null,
     retryCount: input.retryCount,
@@ -482,19 +634,21 @@ export async function recordSurfaceSuccess(input: {
 }
 
 export function createSurfaceFailureToolkit(input: {
+  requestId?: string | null;
+  executionSession?: CompiledRuntimeExecutionSession | null;
   warningScope: SurfaceWarningScope;
   downstreamPath: string;
-  maxRetries: number;
   clientContext?: DownstreamClientContext | null;
   downstreamApiKeyId?: number | null;
 }) {
   const log = async (args: {
-    selected: SurfaceSelectedTarget;
+    selected: SurfaceSelectedExecutionAttempt;
     modelRequested: string;
     status: string;
     httpStatus: number;
     isStream?: boolean | null;
     firstByteLatencyMs?: number | null;
+    firstTokenLatencyMs?: number | null;
     latencyMs: number;
     errorMessage: string | null;
     retryCount: number;
@@ -502,18 +656,40 @@ export function createSurfaceFailureToolkit(input: {
     completionTokens?: number | null;
     totalTokens?: number | null;
     usageSource?: 'upstream' | 'self-log' | 'unknown';
-    estimatedCost?: number;
+    estimatedCost?: number | null;
     billingDetails?: unknown;
     upstreamPath?: string | null;
   }) => {
+    if (input.executionSession && (args.status === 'success' || args.status === 'failed')) {
+      await completeCompiledRuntimeExecutionSession(input.executionSession, {
+        status: args.status === 'success' ? 'success' : 'failure',
+        httpStatus: args.httpStatus,
+        executionAttemptId: args.selected.executionAttemptId,
+        runtimeEndpointId: args.selected.runtimeEndpointId,
+        actualModel: args.selected.actualModel ?? null,
+        siteId: typeof args.selected.site.id === 'number' ? args.selected.site.id : null,
+        accountId: args.selected.account.id,
+        isStream: args.isStream ?? null,
+        latencyMs: args.latencyMs,
+        firstTokenLatencyMs: args.firstTokenLatencyMs ?? null,
+        promptTokens: args.promptTokens ?? null,
+        completionTokens: args.completionTokens ?? null,
+        totalTokens: args.totalTokens ?? null,
+        estimatedCost: args.estimatedCost ?? null,
+        billingDetails: args.billingDetails ?? null,
+        errorMessage: args.errorMessage,
+      });
+    }
     await writeSurfaceProxyLog({
       warningScope: input.warningScope,
+      requestId: input.requestId ?? null,
       selected: args.selected,
       modelRequested: args.modelRequested,
       status: args.status,
       httpStatus: args.httpStatus,
       isStream: args.isStream ?? null,
       firstByteLatencyMs: args.firstByteLatencyMs ?? null,
+      firstTokenLatencyMs: args.firstTokenLatencyMs ?? null,
       latencyMs: args.latencyMs,
       errorMessage: args.errorMessage,
       retryCount: args.retryCount,
@@ -530,10 +706,6 @@ export function createSurfaceFailureToolkit(input: {
     });
   };
 
-  const maybeRetry = (retryCount: number) => retryCount < input.maxRetries
-    ? { action: 'retry' as const }
-    : null;
-
   const runBestEffort = (label: string, fn: () => Promise<unknown>) => {
     void Promise.resolve()
       .then(fn)
@@ -544,8 +716,11 @@ export function createSurfaceFailureToolkit(input: {
 
   return {
     log,
+    isRetryable(status: number, errorText: string): boolean {
+      return shouldRetryProxyRequest(status, errorText);
+    },
     async handleUpstreamFailure(args: {
-      selected: SurfaceSelectedTarget;
+      selected: SurfaceSelectedExecutionAttempt;
       requestedModel: string;
       modelName: string;
       status: number;
@@ -553,22 +728,26 @@ export function createSurfaceFailureToolkit(input: {
       rawErrText?: string | null;
       isStream?: boolean | null;
       firstByteLatencyMs?: number | null;
+      firstTokenLatencyMs?: number | null;
       latencyMs: number;
       retryCount: number;
+      willContinue: boolean;
     }): Promise<SurfaceFailureOutcome> {
       const rawErrText = args.rawErrText || args.errText;
-      await tokenRouter.recordFailure(args.selected.target.id, {
+      await recordRouteRuntimeExecutionAttemptFailure({
+        executionTargetId: args.selected.executionTargetId,
         status: args.status,
         errorText: rawErrText,
-        modelName: args.modelName,
       });
+      const retry = args.willContinue && shouldRetryProxyRequest(args.status, args.errText);
       await log({
         selected: args.selected,
         modelRequested: args.requestedModel,
-        status: 'failed',
+        status: retry ? 'retried' : 'failed',
         httpStatus: args.status,
         isStream: args.isStream ?? null,
         firstByteLatencyMs: args.firstByteLatencyMs ?? null,
+        firstTokenLatencyMs: args.firstTokenLatencyMs ?? null,
         latencyMs: args.latencyMs,
         errorMessage: args.errText,
         retryCount: args.retryCount,
@@ -588,10 +767,7 @@ export function createSurfaceFailureToolkit(input: {
         }));
       }
 
-      if (shouldRetryProxyRequest(args.status, args.errText)) {
-        const retry = maybeRetry(args.retryCount);
-        if (retry) return retry;
-      }
+      if (retry) return { action: 'retry' as const };
 
       runBestEffort('report proxy all failed', () => reportProxyAllFailed({
         model: args.requestedModel,
@@ -611,31 +787,35 @@ export function createSurfaceFailureToolkit(input: {
     },
 
     async handleDetectedFailure(args: {
-      selected: SurfaceSelectedTarget;
+      selected: SurfaceSelectedExecutionAttempt;
       requestedModel: string;
       modelName: string;
       failure: { status: number; reason: string };
       isStream?: boolean | null;
       firstByteLatencyMs?: number | null;
+      firstTokenLatencyMs?: number | null;
       latencyMs: number;
       retryCount: number;
+      willContinue: boolean;
       promptTokens?: number | null;
       completionTokens?: number | null;
       totalTokens?: number | null;
       upstreamPath?: string | null;
     }): Promise<SurfaceFailureOutcome> {
-      await tokenRouter.recordFailure(args.selected.target.id, {
+      await recordRouteRuntimeExecutionAttemptFailure({
+        executionTargetId: args.selected.executionTargetId,
         status: args.failure.status,
         errorText: args.failure.reason,
-        modelName: args.modelName,
       });
+      const retry = args.willContinue && shouldRetryProxyRequest(args.failure.status, args.failure.reason);
       await log({
         selected: args.selected,
         modelRequested: args.requestedModel,
-        status: 'failed',
+        status: retry ? 'retried' : 'failed',
         httpStatus: args.failure.status,
         isStream: args.isStream ?? null,
         firstByteLatencyMs: args.firstByteLatencyMs ?? null,
+        firstTokenLatencyMs: args.firstTokenLatencyMs ?? null,
         latencyMs: args.latencyMs,
         errorMessage: args.failure.reason,
         retryCount: args.retryCount,
@@ -645,10 +825,7 @@ export function createSurfaceFailureToolkit(input: {
         upstreamPath: args.upstreamPath,
       });
 
-      if (shouldRetryProxyRequest(args.failure.status, args.failure.reason)) {
-        const retry = maybeRetry(args.retryCount);
-        if (retry) return retry;
-      }
+      if (retry) return { action: 'retry' as const };
 
       runBestEffort('report proxy all failed', () => reportProxyAllFailed({
         model: args.requestedModel,
@@ -667,59 +844,14 @@ export function createSurfaceFailureToolkit(input: {
       };
     },
 
-    async handleExecutionError(args: {
-      selected: SurfaceSelectedTarget;
-      requestedModel: string;
-      modelName: string;
-      errorMessage: string;
-      isStream?: boolean | null;
-      firstByteLatencyMs?: number | null;
-      latencyMs: number;
-      retryCount: number;
-    }): Promise<SurfaceFailureOutcome> {
-      await tokenRouter.recordFailure(args.selected.target.id, {
-        errorText: args.errorMessage,
-        modelName: args.modelName,
-      });
-      await log({
-        selected: args.selected,
-        modelRequested: args.requestedModel,
-        status: 'failed',
-        httpStatus: 0,
-        isStream: args.isStream ?? null,
-        firstByteLatencyMs: args.firstByteLatencyMs ?? null,
-        latencyMs: args.latencyMs,
-        errorMessage: args.errorMessage,
-        retryCount: args.retryCount,
-      });
-
-      const retry = maybeRetry(args.retryCount);
-      if (retry) return retry;
-
-      runBestEffort('report proxy all failed', () => reportProxyAllFailed({
-        model: args.requestedModel,
-        reason: args.errorMessage || 'network failure',
-      }));
-
-      return {
-        action: 'respond',
-        status: 502,
-        payload: {
-          error: {
-            message: `Upstream error: ${args.errorMessage || 'network failure'}`,
-            type: 'upstream_error',
-          },
-        },
-      };
-    },
-
     async recordStreamFailure(args: {
-      selected: SurfaceSelectedTarget;
+      selected: SurfaceSelectedExecutionAttempt;
       requestedModel: string;
       modelName: string;
       errorMessage: string | null;
       isStream?: boolean | null;
       firstByteLatencyMs?: number | null;
+      firstTokenLatencyMs?: number | null;
       latencyMs: number;
       retryCount: number;
       promptTokens?: number | null;
@@ -730,18 +862,11 @@ export function createSurfaceFailureToolkit(input: {
       runtimeFailureStatus?: number | null;
     }) {
       const errorMessage = args.errorMessage || 'stream processing failed';
-      if (typeof args.runtimeFailureStatus === 'number') {
-        await tokenRouter.recordFailure(args.selected.target.id, {
-          status: args.runtimeFailureStatus,
-          errorText: errorMessage,
-          modelName: args.modelName,
-        });
-      } else {
-        await tokenRouter.recordFailure(args.selected.target.id, {
-          errorText: errorMessage,
-          modelName: args.modelName,
-        });
-      }
+      await recordRouteRuntimeExecutionAttemptFailure({
+        executionTargetId: args.selected.executionTargetId,
+        status: args.runtimeFailureStatus ?? undefined,
+        errorText: errorMessage,
+      });
       await log({
         selected: args.selected,
         modelRequested: args.requestedModel,
@@ -749,6 +874,7 @@ export function createSurfaceFailureToolkit(input: {
         httpStatus: args.httpStatus ?? 200,
         isStream: args.isStream ?? null,
         firstByteLatencyMs: args.firstByteLatencyMs ?? null,
+        firstTokenLatencyMs: args.firstTokenLatencyMs ?? null,
         latencyMs: args.latencyMs,
         errorMessage,
         retryCount: args.retryCount,

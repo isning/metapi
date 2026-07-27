@@ -19,10 +19,12 @@ type AccountModelRow = {
   disabled: boolean;
   isManual?: boolean;
   costPricing?: {
+    status?: 'configured' | 'unconfigured' | 'error';
     configured: boolean;
     matchedScope: string | null;
     pricingId: number | null;
-    totalCostUsd: number | null;
+    totalCost: number | null;
+    diagnostics?: Array<{ level: string; message: string }>;
   } | null;
 };
 
@@ -78,7 +80,7 @@ export default function AccountModelsModal({
 
   const formatCostSummary = (value: number | null | undefined) => {
     if (typeof value !== 'number' || !Number.isFinite(value)) return null;
-    return `$${value.toFixed(6).replace(/\.?0+$/, '')}`;
+    return value.toFixed(6).replace(/\.?0+$/, '');
   };
 
   const scopeLabel = (scope: string | null | undefined) => {
@@ -223,12 +225,14 @@ export default function AccountModelsModal({
                         <ToneBadge tone="-error">{tr('pages.downstreamKeys.disabled')}</ToneBadge>
                       ) : null}
                       <div className="flex shrink-0 items-center gap-1">
-                        {model.costPricing?.configured ? (
+                        {model.costPricing?.status === 'error' ? (
+                          <ToneBadge tone="-error">{tr('pages.accounts.accountModelsModal.costPricingError')}</ToneBadge>
+                        ) : model.costPricing?.configured ? (
                           <>
                             <ToneBadge tone="-success">{scopeLabel(model.costPricing.matchedScope)}</ToneBadge>
-                            {formatCostSummary(model.costPricing.totalCostUsd) ? (
+                            {formatCostSummary(model.costPricing.totalCost) ? (
                               <span className="font-mono text-xs text-muted-foreground">
-                                {formatCostSummary(model.costPricing.totalCostUsd)}
+                                {formatCostSummary(model.costPricing.totalCost)}
                               </span>
                             ) : null}
                           </>

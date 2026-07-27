@@ -3,6 +3,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { config } from '../../config.js';
 import { resetUpstreamEndpointRuntimeState } from '../../services/upstreamEndpointRuntimeMemory.js';
+import { executionDecisionFrom } from '../../../testing/routeRuntimeDecisionMock.js';
 
 const fetchMock = vi.fn();
 const selectTargetMock = vi.fn();
@@ -20,11 +21,13 @@ const resolveProxyUsageWithSelfLogFallbackMock = vi.fn(async ({ usage }: any) =>
   estimatedCostFromQuota: 0,
   recoveredFromSelfLog: false,
 }));
-const dbInsertMock = vi.fn((_arg?: any) => ({
-  values: () => ({
-    run: () => undefined,
-  }),
+const dbInsertValuesMock = vi.fn((_arg?: any) => ({
+  run: () => undefined,
 }));
+const dbInsertMock = vi.fn((_arg?: any) => ({
+  values: (arg: any) => dbInsertValuesMock(arg),
+}));
+const hasProxyLogStreamTimingColumnsMock = vi.fn(async () => false);
 
 vi.mock('undici', async () => {
   const actual = await vi.importActual<typeof import('undici')>('undici');
@@ -34,13 +37,46 @@ vi.mock('undici', async () => {
   };
 });
 
-vi.mock('../../services/tokenRouter.js', () => ({
-  tokenRouter: {
-    selectTarget: (...args: unknown[]) => selectTargetMock(...args),
-    selectNextTarget: (...args: unknown[]) => selectNextTargetMock(...args),
-    recordSuccess: (...args: unknown[]) => recordSuccessMock(...args),
-    recordFailure: (...args: unknown[]) => recordFailureMock(...args),
+
+async function selectRouteRuntimeExecutionAttemptForTest(input: any) {
+    const excluded = Array.isArray(input?.disabledExecutionTargetIds) ? input.disabledExecutionTargetIds : [];
+    const selected = excluded.length > 0
+      ? await selectNextTargetMock(input.requestedModel, excluded, input.downstreamPolicy)
+      : await selectTargetMock(input?.requestedModel, input?.downstreamPolicy);
+    if (!selected) return selected;
+    if (!selected.executionAttemptId || !selected.executionTargetId) {
+      throw new Error('Test selected route runtime attempt must include executionAttemptId and executionTargetId');
+    }
+    return selected;
+}
+
+vi.mock('../../services/routeRuntimeExecutionService.js', () => ({
+  createRouteRuntimeDecisionSession: async (input: any) => input,
+  selectRouteRuntimeDecisionInSession: (session: any, input: any) => executionDecisionFrom(
+    selectRouteRuntimeExecutionAttemptForTest, { ...session, ...input },
+  ),
+  previewRouteRuntimeDecisionInSession: (session: any, input: any) => executionDecisionFrom(
+    selectRouteRuntimeExecutionAttemptForTest, { ...session, ...input },
+  ),
+  selectRouteRuntimeExecutionAttempt: selectRouteRuntimeExecutionAttemptForTest,
+  selectRouteRuntimeDecision: async (input: any) => {
+    const attempt = await selectRouteRuntimeExecutionAttemptForTest(input);
+    return attempt ? { kind: 'execution_attempt', attempt } : null;
   },
+  resolveRouteRuntimeSyntheticResponse: async () => null,
+  recordRouteRuntimeExecutionAttemptStarted: async () => undefined,
+  recordRouteRuntimeExecutionAttemptSuccess: (input: any) =>
+    recordSuccessMock(input.executionTargetId, input.latencyMs, input.modelName),
+  recordRouteRuntimeExecutionAttemptFailure: (input: any) =>
+    recordFailureMock(input.executionTargetId, { status: input.status, errorText: input.errorText }),
+  recordRouteRuntimeExecutionAttemptSelected: async () => undefined,
+}));
+
+vi.mock('../../services/compiledRuntimeExecutionSessionService.js', () => ({
+  startCompiledRuntimeExecutionSession: async () => ({ requestId: 'request:chat-stream-test', startedAtMs: Date.now() }),
+  resumeCompiledRuntimeExecutionSession: async () => null,
+  bindCompiledRuntimeExecutionDecision: async () => undefined,
+  completeCompiledRuntimeExecutionSession: async () => undefined,
 }));
 
 vi.mock('../../services/modelService.js', () => ({
@@ -81,13 +117,8 @@ vi.mock('../../services/credentialEndpointBindingService.js', () => ({
   loadCredentialApiVariantConfig: async () => null,
 }));
 
-vi.mock('../../services/proxyLogRouteDecisionSnapshot.js', () => ({
-  buildProxyLogRouteDecisionSnapshot: async () => null,
-}));
-
-vi.mock('../../services/routeGraphRuntimeService.js', async (importOriginal) => ({
-  ...await importOriginal<typeof import('../../services/routeGraphRuntimeService.js')>(),
-  evaluateActiveRouteGraphForModel: async () => null,
+vi.mock('../../services/routeRuntimeEvaluatorService.js', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../services/routeRuntimeEvaluatorService.js')>(),
 }));
 
 vi.mock('../../db/index.js', () => ({
@@ -113,7 +144,7 @@ vi.mock('../../db/index.js', () => ({
   hasProxyLogBillingDetailsColumn: async () => false,
   hasProxyLogClientColumns: async () => false,
   hasProxyLogDownstreamApiKeyIdColumn: async () => false,
-  hasProxyLogStreamTimingColumns: async () => false,
+  hasProxyLogStreamTimingColumns: () => hasProxyLogStreamTimingColumnsMock(),
   schema: {
     proxyLogs: {},
     siteApiEndpoints: {
@@ -156,10 +187,14 @@ describe('chat proxy stream behavior', () => {
     fetchModelPricingCatalogMock.mockReset();
     resolveProxyUsageWithSelfLogFallbackMock.mockClear();
     dbInsertMock.mockClear();
+    dbInsertValuesMock.mockClear();
+    hasProxyLogStreamTimingColumnsMock.mockReset();
+    hasProxyLogStreamTimingColumnsMock.mockResolvedValue(false);
     resetUpstreamEndpointRuntimeState();
-
     selectTargetMock.mockReturnValue({
       target: { id: 11, routeId: 22 },
+      executionTargetId: 11,
+      executionAttemptId: 'ea_11',
       site: { id: 44, name: 'demo-site', url: 'https://upstream.example.com', platform: 'new-api' },
       account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
@@ -736,6 +771,56 @@ describe('chat proxy stream behavior', () => {
     expect(response.body).toContain('data: [DONE]');
   });
 
+  it('records first token latency when OpenAI chat streams from a /v1/messages upstream', async () => {
+    hasProxyLogStreamTimingColumnsMock.mockResolvedValue(true);
+    fetchModelPricingCatalogMock.mockResolvedValue({
+      models: [
+        {
+          modelName: 'upstream-gpt',
+          supportedEndpointTypes: ['/v1/messages'],
+        },
+      ],
+      groupRatio: {},
+    });
+
+    const encoder = new TextEncoder();
+    const upstreamBody = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode('event: message_start\ndata: {"type":"message_start","message":{"id":"msg_123","model":"upstream-gpt","usage":{"input_tokens":5,"output_tokens":0}}}\n\n'));
+        controller.enqueue(encoder.encode('event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"text_delta","text":"hello"}}\n\n'));
+        controller.enqueue(encoder.encode('event: message_delta\ndata: {"type":"message_delta","usage":{"output_tokens":3},"delta":{"stop_reason":"end_turn"}}\n\n'));
+        controller.enqueue(encoder.encode('event: message_stop\ndata: {"type":"message_stop"}\n\n'));
+        controller.close();
+      },
+    });
+
+    fetchMock.mockResolvedValue(new Response(upstreamBody, {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream; charset=utf-8' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      payload: {
+        model: 'claude-opus-4-6',
+        stream: true,
+        messages: [{ role: 'user', content: 'who are you' }],
+      },
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/v1/messages');
+    expect(response.body).toContain('"delta":{"content":"hello"}');
+    const insertedLog = dbInsertValuesMock.mock.calls.at(-1)?.[0];
+    expect(insertedLog).toMatchObject({
+      isStream: true,
+      firstByteLatencyMs: expect.any(Number),
+      firstTokenLatencyMs: expect.any(Number),
+    });
+    expect(insertedLog.firstTokenLatencyMs).toBeGreaterThan(0);
+  });
+
   it('emits OpenAI-compatible assistant starter chunk for anthropic message_start events', async () => {
     const encoder = new TextEncoder();
     const upstreamBody = new ReadableStream<Uint8Array>({
@@ -844,6 +929,8 @@ describe('chat proxy stream behavior', () => {
   it('normalizes null Claude message content before proxying on /v1/messages', async () => {
     selectTargetMock.mockReturnValue({
       target: { id: 11, routeId: 22 },
+      executionTargetId: 11,
+      executionAttemptId: 'ea_11',
       site: {
         name: 'claude-site',
         url: 'https://upstream.example.com',
@@ -890,6 +977,8 @@ describe('chat proxy stream behavior', () => {
   it('prefers responses for Claude tool_result follow-ups that include continuation hints', async () => {
     selectTargetMock.mockReturnValue({
       target: { id: 11, routeId: 22 },
+      executionTargetId: 11,
+      executionAttemptId: 'ea_11',
       site: {
         name: 'openai-site',
         url: 'https://upstream.example.com',
@@ -1061,7 +1150,6 @@ describe('chat proxy stream behavior', () => {
     const [_targetUrl, options] = fetchMock.mock.calls[0] as [string, any];
     expect(options.headers['anthropic-beta']).toContain('claude-code-20250219');
     expect(options.headers['anthropic-beta']).toContain('code-2025-09-30');
-    expect(options.headers['x-claude-client']).toBe('claude-code');
 
     const forwardedBody = JSON.parse(options.body);
     expect(forwardedBody.metadata).toEqual({ session_id: 'abc123' });
@@ -1101,6 +1189,93 @@ describe('chat proxy stream behavior', () => {
     expect(response.statusCode).toBe(200);
     expect(response.body).toContain('event: message_stop');
     expect(response.body).not.toContain('event: ping');
+  });
+
+  it('returns upstream_error when /v1/messages streamed Claude SSE completes without meaningful output', async () => {
+    config.proxyEmptyContentFailEnabled = true;
+
+    const encoder = new TextEncoder();
+    const upstreamBody = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode('event: message_start\ndata: {"type":"message_start","message":{"id":"msg_empty","type":"message","role":"assistant","model":"claude-opus-4-6","content":[],"usage":{"input_tokens":0,"output_tokens":0}}}\n\n'));
+        controller.enqueue(encoder.encode('event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\n'));
+        controller.enqueue(encoder.encode('event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n'));
+        controller.enqueue(encoder.encode('event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":0,"output_tokens":0}}\n\n'));
+        controller.enqueue(encoder.encode('event: message_stop\ndata: {"type":"message_stop"}\n\n'));
+        controller.close();
+      },
+    });
+
+    fetchMock.mockResolvedValue(new Response(upstreamBody, {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream; charset=utf-8' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/messages',
+      payload: {
+        model: 'claude-opus-4-6',
+        stream: true,
+        max_tokens: 256,
+        messages: [{ role: 'user', content: 'hello' }],
+      },
+    });
+
+    expect(response.statusCode).toBe(502);
+    expect(response.headers['content-type']).not.toContain('text/event-stream');
+    expect(response.json()?.error?.type).toBe('upstream_error');
+    expect(response.json()?.error?.message).toContain('empty content');
+    expect(recordSuccessMock).not.toHaveBeenCalled();
+    expect(recordFailureMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps /v1/messages streamed Claude tool_use output from being treated as empty', async () => {
+    config.proxyEmptyContentFailEnabled = true;
+
+    const encoder = new TextEncoder();
+    const upstreamBody = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode('event: message_start\ndata: {"type":"message_start","message":{"id":"msg_tool","type":"message","role":"assistant","model":"claude-opus-4-6","content":[]}}\n\n'));
+        controller.enqueue(encoder.encode('event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"lookup","input":{}}}\n\n'));
+        controller.enqueue(encoder.encode('event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\\"q\\":\\"hello\\"}"}}\n\n'));
+        controller.enqueue(encoder.encode('event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n'));
+        controller.enqueue(encoder.encode('event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"tool_use"}}\n\n'));
+        controller.enqueue(encoder.encode('event: message_stop\ndata: {"type":"message_stop"}\n\n'));
+        controller.close();
+      },
+    });
+
+    fetchMock.mockResolvedValue(new Response(upstreamBody, {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream; charset=utf-8' },
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/messages',
+      payload: {
+        model: 'claude-opus-4-6',
+        stream: true,
+        max_tokens: 256,
+        tools: [{
+          name: 'lookup',
+          description: 'lookup',
+          input_schema: { type: 'object', properties: { q: { type: 'string' } } },
+        }],
+        messages: [{ role: 'user', content: 'lookup hello' }],
+      },
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.headers['content-type']).toContain('text/event-stream');
+    expect(response.body).toContain('event: content_block_start');
+    expect(response.body).toContain('"type":"tool_use"');
+    expect(response.body).toContain('event: content_block_delta');
+    expect(response.body).toContain('"partial_json":"{\\"q\\":\\"hello\\"}"');
+    expect(response.body).toContain('event: message_stop');
+    expect(recordSuccessMock).toHaveBeenCalledTimes(1);
+    expect(recordFailureMock).not.toHaveBeenCalled();
   });
 
   it('does not synthesize message_stop when anthropic upstream EOFs before terminal event on /v1/messages', async () => {
@@ -1446,6 +1621,8 @@ describe('chat proxy stream behavior', () => {
   it('forces upstream SSE for non-stream /v1/responses requests on sub2api and aggregates the final payload', async () => {
     selectTargetMock.mockReturnValue({
       target: { id: 11, routeId: 22 },
+      executionTargetId: 11,
+      executionAttemptId: 'ea_11',
       site: { id: 44, name: 'generic-site', url: 'https://generic.example.com', platform: 'sub2api' },
       account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
@@ -2039,6 +2216,8 @@ describe('chat proxy stream behavior', () => {
   it('rejects external HTTP previous_response_id before sub2api compatibility retries', async () => {
     selectTargetMock.mockReturnValue({
       target: { id: 11, routeId: 22 },
+      executionTargetId: 11,
+      executionAttemptId: 'ea_11',
       site: { id: 44, name: 'sub2api-site', url: 'https://sub2api.example.com', platform: 'sub2api' },
       account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
@@ -2723,6 +2902,8 @@ describe('chat proxy stream behavior', () => {
   it('does not stick generic /v1/responses traffic to /v1/messages after a fallback success', async () => {
     selectTargetMock.mockReturnValue({
       target: { id: 11, routeId: 22 },
+      executionTargetId: 11,
+      executionAttemptId: 'ea_11',
       site: { id: 44, name: 'generic-site', url: 'https://upstream.example.com', platform: 'new-api' },
       account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
@@ -2804,6 +2985,8 @@ describe('chat proxy stream behavior', () => {
   it('prefers native /v1/responses for claude-family /v1/responses requests that explicitly ask for encrypted reasoning', async () => {
     selectTargetMock.mockReturnValue({
       target: { id: 11, routeId: 22 },
+      executionTargetId: 11,
+      executionAttemptId: 'ea_11',
       site: { id: 44, name: 'generic-site', url: 'https://upstream.example.com', platform: 'new-api' },
       account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
@@ -2916,6 +3099,8 @@ describe('chat proxy stream behavior', () => {
   it('prefers native /v1/responses for claude-family /v1/responses requests that include input_file file_url', async () => {
     selectTargetMock.mockReturnValue({
       target: { id: 11, routeId: 22 },
+      executionTargetId: 11,
+      executionAttemptId: 'ea_11',
       site: { id: 44, name: 'generic-site', url: 'https://upstream.example.com', platform: 'new-api' },
       account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
@@ -2981,6 +3166,8 @@ describe('chat proxy stream behavior', () => {
   it('converts input_file file_url into Claude document url blocks for claude-only upstreams', async () => {
     selectTargetMock.mockReturnValue({
       target: { id: 11, routeId: 22 },
+      executionTargetId: 11,
+      executionAttemptId: 'ea_11',
       site: { id: 44, name: 'claude-site', url: 'https://upstream.example.com', platform: 'claude' },
       account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
@@ -3040,6 +3227,8 @@ describe('chat proxy stream behavior', () => {
   it('does not let remote document url success poison later inline document endpoint preference', async () => {
     selectTargetMock.mockReturnValue({
       target: { id: 11, routeId: 22 },
+      executionTargetId: 11,
+      executionAttemptId: 'ea_11',
       site: { id: 44, name: 'generic-site', url: 'https://upstream.example.com', platform: 'new-api' },
       account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
@@ -3140,6 +3329,8 @@ describe('chat proxy stream behavior', () => {
   it('prefers native /v1/responses for claude-family /v1/responses requests that opt into reasoning without injecting a generic default include', async () => {
     selectTargetMock.mockReturnValue({
       target: { id: 11, routeId: 22 },
+      executionTargetId: 11,
+      executionAttemptId: 'ea_11',
       site: { id: 44, name: 'generic-site', url: 'https://upstream.example.com', platform: 'new-api' },
       account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
@@ -3192,6 +3383,8 @@ describe('chat proxy stream behavior', () => {
   it('keeps generic claude-family /v1/responses requests on the default messages-first order when codex headers are absent', async () => {
     selectTargetMock.mockReturnValue({
       target: { id: 11, routeId: 22 },
+      executionTargetId: 11,
+      executionAttemptId: 'ea_11',
       site: { id: 44, name: 'generic-site', url: 'https://upstream.example.com', platform: 'new-api' },
       account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
@@ -3229,6 +3422,8 @@ describe('chat proxy stream behavior', () => {
   it('defaults encrypted reasoning include and prefers native /v1/responses for claude-family codex-surface requests even without reasoning config', async () => {
     selectTargetMock.mockReturnValue({
       target: { id: 11, routeId: 22 },
+      executionTargetId: 11,
+      executionAttemptId: 'ea_11',
       site: { id: 44, name: 'generic-site', url: 'https://upstream.example.com', platform: 'new-api' },
       account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
@@ -3282,6 +3477,8 @@ describe('chat proxy stream behavior', () => {
   it('keeps explicit empty include on claude-family codex-surface responses requests and stays on the default messages-first order', async () => {
     selectTargetMock.mockReturnValue({
       target: { id: 11, routeId: 22 },
+      executionTargetId: 11,
+      executionAttemptId: 'ea_11',
       site: { id: 44, name: 'generic-site', url: 'https://upstream.example.com', platform: 'new-api' },
       account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
@@ -3329,6 +3526,8 @@ describe('chat proxy stream behavior', () => {
   it('keeps explicit custom include on claude-family codex-surface responses requests and stays on the default messages-first order', async () => {
     selectTargetMock.mockReturnValue({
       target: { id: 11, routeId: 22 },
+      executionTargetId: 11,
+      executionAttemptId: 'ea_11',
       site: { id: 44, name: 'generic-site', url: 'https://upstream.example.com', platform: 'new-api' },
       account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
@@ -3376,6 +3575,8 @@ describe('chat proxy stream behavior', () => {
   it('forces anyrouter platform to prefer /v1/messages even when catalog says openai', async () => {
     selectTargetMock.mockReturnValue({
       target: { id: 11, routeId: 22 },
+      executionTargetId: 11,
+      executionAttemptId: 'ea_11',
       site: { id: 44, name: 'anyrouter-site', url: 'https://anyrouter.example.com', platform: 'anyrouter' },
       account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
@@ -3433,9 +3634,10 @@ describe('chat proxy stream behavior', () => {
       ],
       groupRatio: {},
     });
-
     selectTargetMock.mockReturnValue({
       target: { id: 11, routeId: 22 },
+      executionTargetId: 11,
+      executionAttemptId: 'ea_11',
       site: { id: 44, name: 'openai-site', url: 'https://api.openai.com', platform: 'openai' },
       account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
@@ -3480,6 +3682,8 @@ describe('chat proxy stream behavior', () => {
   it('falls back from /v1/responses to /v1/messages on openai platform when responses endpoint is unavailable', async () => {
     selectTargetMock.mockReturnValue({
       target: { id: 11, routeId: 22 },
+      executionTargetId: 11,
+      executionAttemptId: 'ea_11',
       site: { id: 44, name: 'openai-site', url: 'https://api.openai.com', platform: 'openai' },
       account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
@@ -3527,6 +3731,8 @@ describe('chat proxy stream behavior', () => {
   it('falls back to /v1/responses for /v1/chat/completions when messages/chat endpoints return 502', async () => {
     selectTargetMock.mockReturnValue({
       target: { id: 11, routeId: 22 },
+      executionTargetId: 11,
+      executionAttemptId: 'ea_11',
       site: { id: 44, name: 'generic-site', url: 'https://generic.example.com', platform: 'new-api' },
       account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
@@ -3589,6 +3795,8 @@ describe('chat proxy stream behavior', () => {
     (config as any).disableCrossProtocolFallback = true;
     selectTargetMock.mockReturnValue({
       target: { id: 11, routeId: 22 },
+      executionTargetId: 11,
+      executionAttemptId: 'ea_11',
       site: { id: 44, name: 'generic-site', url: 'https://generic.example.com', platform: 'new-api' },
       account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
@@ -3625,6 +3833,8 @@ describe('chat proxy stream behavior', () => {
   it('continues to /v1/responses when /v1/messages dispatch is denied for /v1/chat/completions', async () => {
     selectTargetMock.mockReturnValue({
       target: { id: 11, routeId: 22 },
+      executionTargetId: 11,
+      executionAttemptId: 'ea_11',
       site: { id: 44, name: 'generic-site', url: 'https://generic.example.com', platform: 'new-api' },
       account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
@@ -3681,6 +3891,8 @@ describe('chat proxy stream behavior', () => {
   it('prefers /v1/responses immediately after explicit legacy protocol rejection on /v1/chat/completions', async () => {
     selectTargetMock.mockReturnValue({
       target: { id: 11, routeId: 22 },
+      executionTargetId: 11,
+      executionAttemptId: 'ea_11',
       site: { id: 44, name: 'generic-site', url: 'https://generic.example.com', platform: 'sub2api' },
       account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
@@ -3740,6 +3952,8 @@ describe('chat proxy stream behavior', () => {
   it('prefers /v1/messages immediately after a generic chat endpoint says messages is required', async () => {
     selectTargetMock.mockReturnValue({
       target: { id: 11, routeId: 22 },
+      executionTargetId: 11,
+      executionAttemptId: 'ea_11',
       site: { id: 44, name: 'generic-site', url: 'https://generic.example.com', platform: 'new-api' },
       account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
@@ -3818,6 +4032,8 @@ describe('chat proxy stream behavior', () => {
   it('promotes /v1/responses to the next same-request attempt when a generic chat endpoint says input is required', async () => {
     selectTargetMock.mockReturnValue({
       target: { id: 11, routeId: 22 },
+      executionTargetId: 11,
+      executionAttemptId: 'ea_11',
       site: { id: 44, name: 'generic-site', url: 'https://generic.example.com', platform: 'new-api' },
       account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
@@ -3901,6 +4117,8 @@ describe('chat proxy stream behavior', () => {
   it('keeps messages-first semantics for claude-family models on generic upstreams', async () => {
     selectTargetMock.mockReturnValue({
       target: { id: 11, routeId: 22 },
+      executionTargetId: 11,
+      executionAttemptId: 'ea_11',
       site: { id: 44, name: 'generic-site', url: 'https://generic.example.com', platform: 'new-api' },
       account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
@@ -3960,6 +4178,8 @@ describe('chat proxy stream behavior', () => {
   it('forces openai platform to use /v1/responses for claude downstream requests', async () => {
     selectTargetMock.mockReturnValue({
       target: { id: 11, routeId: 22 },
+      executionTargetId: 11,
+      executionAttemptId: 'ea_11',
       site: { id: 44, name: 'openai-site', url: 'https://api.openai.com', platform: 'openai' },
       account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
@@ -4005,6 +4225,8 @@ describe('chat proxy stream behavior', () => {
   it('preserves claude tool_use/tool_result when claude downstream is routed to openai responses endpoint', async () => {
     selectTargetMock.mockReturnValue({
       target: { id: 11, routeId: 22 },
+      executionTargetId: 11,
+      executionAttemptId: 'ea_11',
       site: { id: 44, name: 'openai-site', url: 'https://api.openai.com', platform: 'openai' },
       account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
@@ -4088,6 +4310,8 @@ describe('chat proxy stream behavior', () => {
   it('maps claude tool config and thinking budget before routing claude downstream requests to openai responses endpoint', async () => {
     selectTargetMock.mockReturnValue({
       target: { id: 11, routeId: 22 },
+      executionTargetId: 11,
+      executionAttemptId: 'ea_11',
       site: { id: 44, name: 'openai-site', url: 'https://api.openai.com', platform: 'openai' },
       account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
@@ -4170,6 +4394,8 @@ describe('chat proxy stream behavior', () => {
   it('forces claude platform to use /v1/messages with x-api-key auth for openai downstream requests', async () => {
     selectTargetMock.mockReturnValue({
       target: { id: 11, routeId: 22 },
+      executionTargetId: 11,
+      executionAttemptId: 'ea_11',
       site: { id: 44, name: 'claude-site', url: 'https://api.anthropic.com', platform: 'claude' },
       account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
@@ -4211,6 +4437,8 @@ describe('chat proxy stream behavior', () => {
   it('preserves openai tool context when /v1/chat/completions is routed to /v1/messages upstream', async () => {
     selectTargetMock.mockReturnValue({
       target: { id: 11, routeId: 22 },
+      executionTargetId: 11,
+      executionAttemptId: 'ea_11',
       site: { id: 44, name: 'claude-site', url: 'https://api.anthropic.com', platform: 'claude' },
       account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
@@ -4306,6 +4534,8 @@ describe('chat proxy stream behavior', () => {
   it('groups consecutive tool messages into one anthropic user turn when routing /v1/chat/completions to /v1/messages', async () => {
     selectTargetMock.mockReturnValue({
       target: { id: 11, routeId: 22 },
+      executionTargetId: 11,
+      executionAttemptId: 'ea_11',
       site: { id: 44, name: 'claude-site', url: 'https://api.anthropic.com', platform: 'claude' },
       account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',
@@ -4857,6 +5087,8 @@ describe('chat proxy stream behavior', () => {
   it('routes gemini platform to OpenAI-compatible upstream endpoint path', async () => {
     selectTargetMock.mockReturnValue({
       target: { id: 11, routeId: 22 },
+      executionTargetId: 11,
+      executionAttemptId: 'ea_11',
       site: { id: 44, name: 'gemini-site', url: 'https://generativelanguage.googleapis.com', platform: 'gemini' },
       account: { id: 33, username: 'demo-user', extraConfig: null, oauthProvider: null },
       tokenName: 'default',

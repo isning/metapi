@@ -19,6 +19,7 @@ export default function ModelApiTab({ details }: ModelApiTabProps) {
   const endpoints = details.model.supportedEndpointTypes;
   const compatibility = details.routeFlow?.compatibilityPolicy;
   const reasoningTransport = compatibility?.resolved.reasoningHistory.transport ?? null;
+  const reasoningApplyTo = reasoningTransport?.applyTo ?? {};
   const policySections = [
     {
       title: tr('pages.models.modelApiTab.toolCallPolicy'),
@@ -71,12 +72,12 @@ export default function ModelApiTab({ details }: ModelApiTabProps) {
                     <PolicyValue label={tr('pages.models.modelApiTab.maxReasoning')} value={`${Math.round(reasoningTransport.maxReasoningBytes / 1024 / 1024)} MiB`} />
                     <PolicyValue label={tr('pages.models.modelApiTab.openTag')} value={reasoningTransport.thinkTag.openTag} />
                     <PolicyValue label={tr('pages.models.modelApiTab.closeTag')} value={reasoningTransport.thinkTag.closeTag} />
-                    <PolicyValue label={tr('pages.models.modelApiTab.toolCalls')} value={reasoningTransport.toolCallMessageBehavior} />
+                    <PolicyValue label={tr('pages.models.modelApiTab.toolCalls')} value={reasoningTransport.toolCallMessageBehavior || tr('common.notAvailable')} />
                   </div>
                   <div className="flex flex-wrap gap-1.5">
-                    <ToneBadge tone={reasoningTransport.applyTo.assistantHistory ? '-success' : '-muted'}>{tr('pages.models.modelApiTab.assistantHistory')}</ToneBadge>
-                    <ToneBadge tone={reasoningTransport.applyTo.assistantToolCalls ? '-success' : '-muted'}>{tr('pages.models.modelApiTab.assistantToolCalls')}</ToneBadge>
-                    <ToneBadge tone={reasoningTransport.applyTo.responseContinuation ? '-success' : '-muted'}>{tr('pages.models.modelApiTab.responseContinuation')}</ToneBadge>
+                    <ToneBadge tone={reasoningApplyTo.assistantHistory ? '-success' : '-muted'}>{tr('pages.models.modelApiTab.assistantHistory')}</ToneBadge>
+                    <ToneBadge tone={reasoningApplyTo.assistantToolCalls ? '-success' : '-muted'}>{tr('pages.models.modelApiTab.assistantToolCalls')}</ToneBadge>
+                    <ToneBadge tone={reasoningApplyTo.responseContinuation ? '-success' : '-muted'}>{tr('pages.models.modelApiTab.responseContinuation')}</ToneBadge>
                   </div>
                   <div className="flex flex-wrap gap-1.5">
                     {(compatibility?.layers || []).map((layer) => (
@@ -123,7 +124,7 @@ function formatCompatibilityLayerSource(source: string): string {
   if (source === 'account') return tr('common.account');
   if (source === 'token') return tr('components.notificationPanel.token');
   if (source === 'endpoint_policy') return tr('pages.models.modelApiTab.endpointPolicy');
-  if (source === 'target') return tr('pages.models.modelApiTab.targetPolicy');
+  if (source === 'execution_attempt') return tr('pages.models.modelApiTab.executionAttemptPolicy');
   return source;
 }
 

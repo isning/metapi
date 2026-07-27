@@ -7,13 +7,8 @@ function isSearchPseudoModel(modelName: string): boolean {
 type ModelsSurfaceInput = {
   downstreamPolicy: unknown;
   responseFormat: 'openai' | 'claude';
-  tokenRouter: {
-    getAvailableModels(): Promise<string[]>;
-    explainSelection(modelName: string, excludeTargetIds: number[], downstreamPolicy: unknown): Promise<{
-      selectedTargetId?: number | null;
-    }>;
-  };
-  refreshModelsAndRebuildRoutes(): Promise<unknown>;
+  listModelNames(): Promise<string[]>;
+  canSelectModel(modelName: string, downstreamPolicy: unknown): Promise<boolean>;
   isModelAllowed(modelName: string, downstreamPolicy: unknown): Promise<boolean>;
   now?: () => Date;
 };
@@ -23,7 +18,7 @@ type RetrieveModelSurfaceInput = ModelsSurfaceInput & {
 };
 
 async function readVisibleModels(input: ModelsSurfaceInput): Promise<string[]> {
-  const deduped = Array.from(new Set(await input.tokenRouter.getAvailableModels()))
+  const deduped = Array.from(new Set(await input.listModelNames()))
     .filter((modelName) => !isSearchPseudoModel(modelName))
     .sort();
   const allowed: string[] = [];
@@ -31,8 +26,8 @@ async function readVisibleModels(input: ModelsSurfaceInput): Promise<string[]> {
     if (!await input.isModelAllowed(modelName, input.downstreamPolicy)) {
       continue;
     }
-    const decision = await input.tokenRouter.explainSelection(modelName, [], input.downstreamPolicy);
-    if (typeof decision.selectedTargetId === 'number') {
+    const canSelect = await input.canSelectModel(modelName, input.downstreamPolicy);
+    if (canSelect) {
       allowed.push(modelName);
     }
   }
@@ -40,11 +35,7 @@ async function readVisibleModels(input: ModelsSurfaceInput): Promise<string[]> {
 }
 
 export async function listModelsSurface(input: ModelsSurfaceInput) {
-  let models = await readVisibleModels(input);
-  if (models.length === 0) {
-    await input.refreshModelsAndRebuildRoutes();
-    models = await readVisibleModels(input);
-  }
+  const models = await readVisibleModels(input);
 
   const now = input.now?.() ?? new Date();
   if (input.responseFormat === 'claude') {
@@ -122,13 +113,9 @@ export async function retrieveModelSurface(input: RetrieveModelSurfaceInput) {
     };
   }
 
-  let decision = await input.tokenRouter.explainSelection(modelId, [], input.downstreamPolicy);
-  if (typeof decision.selectedTargetId !== 'number') {
-    await input.refreshModelsAndRebuildRoutes();
-    decision = await input.tokenRouter.explainSelection(modelId, [], input.downstreamPolicy);
-  }
+  const canSelect = await input.canSelectModel(modelId, input.downstreamPolicy);
 
-  if (typeof decision.selectedTargetId !== 'number') {
+  if (!canSelect) {
     return {
       statusCode: 404,
       payload: modelNotFoundPayload(modelId),

@@ -9,6 +9,7 @@ import { formatDateTimeLocal } from './helpers/checkinLogTime.js';
 import { buildEventNavigationPath } from './helpers/navigationFocus.js';
 import ModernSelect from '../components/ModernSelect.js';
 import { tr } from '../i18n.js';
+import { getVisibleInboxDetails, translateDetailLabel, translateInboxItem } from '../inboxDisplay.js';
 import { Button } from '../components/ui/button/index.js';
 import { Check, Copy, ExternalLink, LoaderCircle, MoveUpRight } from 'lucide-react';
 import { Skeleton } from '../components/ui/skeleton/index.js';
@@ -41,6 +42,7 @@ const TYPE_OPTIONS = [
   { value: 'proxy', label: tr('components.notificationPanel.proxy') },
   { value: 'status', label: tr('components.notificationPanel.status') },
   { value: 'site_notice', label: tr('app.sites') },
+  { value: 'backup_import', label: tr('backupImport.type') },
 ];
 
 const SCOPE_OPTIONS = [
@@ -147,9 +149,10 @@ function scopeLabel(scope?: string | null) {
 }
 
 function renderDetailBlock(block: InboxDetailBlock, index: number) {
-  const title = block.title ? <div className="mb-2 font-medium">{block.title}</div> : null;
+  if (block.type === 'i18n') return null;
+  const title = block.title ? <div className="mb-2 font-medium">{translateDetailLabel(block.title, tr)}</div> : null;
   if (block.type === 'text') {
-    return <div key={index} className="rounded-md border p-3 text-sm">{title}<p className="whitespace-pre-wrap text-muted-foreground">{block.text}</p></div>;
+    return <div key={index} className="rounded-md border p-3 text-sm">{title}<p className="whitespace-pre-wrap text-muted-foreground">{translateDetailLabel(block.text, tr) || block.text}</p></div>;
   }
   if (block.type === 'kv') {
     return (
@@ -158,7 +161,7 @@ function renderDetailBlock(block: InboxDetailBlock, index: number) {
         <dl className="grid gap-2">
           {block.rows.map((row, rowIndex) => (
             <div key={`${row.label}-${rowIndex}`} className="grid grid-cols-[minmax(7rem,0.4fr)_1fr] gap-3">
-              <dt className="text-muted-foreground">{row.label}</dt>
+              <dt className="text-muted-foreground">{translateDetailLabel(row.label, tr)}</dt>
               <dd className="min-w-0 break-words font-medium">{row.value}</dd>
             </div>
           ))}
@@ -173,7 +176,7 @@ function renderDetailBlock(block: InboxDetailBlock, index: number) {
         <div className="grid gap-2 sm:grid-cols-2">
           {block.items.map((item, itemIndex) => (
             <div key={`${item.label}-${itemIndex}`} className="rounded-md bg-muted/40 px-3 py-2">
-              <div className="text-xs text-muted-foreground">{item.label}</div>
+              <div className="text-xs text-muted-foreground">{translateDetailLabel(item.label, tr)}</div>
               <div className="font-medium">{item.value}</div>
             </div>
           ))}
@@ -202,16 +205,16 @@ function renderDetailBlock(block: InboxDetailBlock, index: number) {
   if (block.type === 'table') {
     return (
       <div key={index} className="overflow-hidden rounded-md border text-sm">
-        {block.title ? <div className="border-b px-3 py-2 font-medium">{block.title}</div> : null}
+        {block.title ? <div className="border-b px-3 py-2 font-medium">{translateDetailLabel(block.title, tr)}</div> : null}
         <div className="overflow-x-auto">
           <Table>
             <TableHeader>
-              <TableRow>{block.columns.map((column) => <TableHead key={column}>{column}</TableHead>)}</TableRow>
+              <TableRow>{block.columns.map((column) => <TableHead key={column}>{translateDetailLabel(column, tr)}</TableHead>)}</TableRow>
             </TableHeader>
             <TableBody>
               {block.rows.map((row, rowIndex) => (
                 <TableRow key={rowIndex}>
-                  {row.map((cell, cellIndex) => <TableCell key={cellIndex}>{cell}</TableCell>)}
+                  {row.map((cell, cellIndex) => <TableCell key={cellIndex} className="whitespace-pre-line align-top">{translateDetailLabel(cell, tr) || cell}</TableCell>)}
                 </TableRow>
               ))}
             </TableBody>
@@ -551,11 +554,12 @@ export default function ProgramLogs() {
           <div className="grid gap-3">
             {visibleRows.length > 0 ? visibleRows.map((row) => {
               const level = levelLabel(row.level || 'info');
-              const eventStatus = eventStatusLabel(row);
+              const displayRow = translateInboxItem(row, tr);
+              const eventStatus = eventStatusLabel(displayRow);
               return (
                 <MobileCard
                   key={row.id}
-                  title={row.title || '-'}
+                  title={displayRow.title || '-'}
                   headerActions={(
                     <ToneBadge tone={eventStatus.cls}>
                       {eventStatus.label}
@@ -580,7 +584,7 @@ export default function ProgramLogs() {
                   <MobileField label={tr('pages.programLogs.type')} value={<ToneBadge tone="-muted">{row.type || '-'}</ToneBadge>} />
                   <MobileField label={tr('pages.programLogs.level')} value={<ToneBadge tone={level.cls}>{level.label}</ToneBadge>} />
                   <MobileField label={tr('components.notificationPanel.status')} value={<ToneBadge tone={eventStatus.cls}>{eventStatus.label}</ToneBadge>} />
-                  <MobileField label={tr('pages.programLogs.content')} value={row.summary || row.message || '-'} stacked />
+                  <MobileField label={tr('pages.programLogs.content')} value={displayRow.summary || displayRow.message || '-'} stacked />
                   <div className="flex flex-wrap justify-end gap-2 pt-2">
                     <Button type="button" variant="outline" size="sm" onClick={() => setSelectedEvent(row)}>
                       {tr('pages.programLogs.details')}
@@ -613,7 +617,8 @@ export default function ProgramLogs() {
             <TableBody>
               {visibleRows.map((row, idx) => {
                 const level = levelLabel(row.level || 'info');
-                const eventStatus = eventStatusLabel(row);
+                const displayRow = translateInboxItem(row, tr);
+                const eventStatus = eventStatusLabel(displayRow);
                 return (
                   <TableRow key={row.id} className={`animate-slide-up stagger-${Math.min(idx + 1, 5)}`}>
                     <TableCell className="text-xs text-muted-foreground">
@@ -630,10 +635,10 @@ export default function ProgramLogs() {
                       </ToneBadge>
                     </TableCell>
                     <TableCell className="font-medium">
-                      {row.title || '-'}
+                      {displayRow.title || '-'}
                     </TableCell>
                     <TableCell className="max-w-md truncate text-muted-foreground">
-                      {row.summary || row.message || '-'}
+                      {displayRow.summary || displayRow.message || '-'}
                     </TableCell>
                     <TableCell>
                       <ToneBadge tone={eventStatus.cls}>
@@ -686,14 +691,17 @@ export default function ProgramLogs() {
 
       <Sheet.Root open={!!selectedEvent} onOpenChange={(nextOpen) => { if (!nextOpen) setSelectedEvent(null); }}>
         <Sheet.Content side="right" className="flex h-full w-[min(92vw,680px)] max-w-none flex-col p-0" onClose={() => setSelectedEvent(null)}>
-          {selectedEvent && (
+          {selectedEvent && (() => {
+            const displayEvent = translateInboxItem(selectedEvent, tr);
+            const visibleDetails = getVisibleInboxDetails(selectedEvent);
+            return (
             <>
               <Sheet.Header className="border-b px-5 py-4">
                 <div className="flex flex-wrap items-start justify-between gap-3 pr-8">
                   <div className="min-w-0">
-                    <Sheet.Title className="truncate">{selectedEvent.title}</Sheet.Title>
+                    <Sheet.Title className="truncate">{displayEvent.title}</Sheet.Title>
                     <Sheet.Description className="mt-1">
-                      {selectedEvent.summary || selectedEvent.message || tr('pages.programLogs.noDetails')}
+                      {displayEvent.summary || displayEvent.message || tr('pages.programLogs.noDetails')}
                     </Sheet.Description>
                   </div>
                   <div className="flex flex-wrap gap-1">
@@ -728,17 +736,17 @@ export default function ProgramLogs() {
                     </div>
                   </div>
 
-                  {selectedEvent.description && selectedEvent.description !== selectedEvent.summary && (
+                  {displayEvent.description && displayEvent.description !== displayEvent.summary && (
                     <div className="rounded-md border p-3 text-sm">
                       <div className="mb-2 font-medium">{tr('pages.programLogs.description')}</div>
-                      <p className="whitespace-pre-wrap text-muted-foreground">{selectedEvent.description}</p>
+                      <p className="whitespace-pre-wrap text-muted-foreground">{displayEvent.description}</p>
                     </div>
                   )}
 
-                  {selectedEvent.details.length > 0 ? (
+                  {visibleDetails.length > 0 ? (
                     <div className="grid gap-3">
                       <div className="text-sm font-medium">{tr('pages.programLogs.details')}</div>
-                      {selectedEvent.details.map(renderDetailBlock)}
+                      {visibleDetails.map(renderDetailBlock)}
                     </div>
                   ) : (
                     <EmptyStateBlock
@@ -784,7 +792,8 @@ export default function ProgramLogs() {
                 </div>
               </Sheet.Footer>
             </>
-          )}
+            );
+          })()}
         </Sheet.Content>
       </Sheet.Root>
     </div>

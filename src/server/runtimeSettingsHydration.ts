@@ -1,6 +1,6 @@
 import {
   config,
-  normalizeTokenRouterFailureCooldownMaxSec,
+  normalizeRouteFailureCooldownMaxSec,
 } from './config.js';
 import {
   calculateRoutingFallbackUnitCostFromPlatformPricingConfig,
@@ -8,6 +8,7 @@ import {
   PLATFORM_PRICING_CONFIG_SETTING_KEY,
 } from './services/platformPricingConfigContract.js';
 import { normalizeLogCleanupRetentionDays } from './shared/logCleanupRetentionDays.js';
+import { normalizeDispatchPolicyRegistry } from './services/dispatchPolicyService.js';
 
 export function parseSettingFromMap<T>(settingsMap: Map<string, string>, key: string): T | undefined {
   const raw = settingsMap.get(key);
@@ -177,19 +178,19 @@ export function applyRuntimeSettings(settingsMap: Map<string, string>) {
     config.proxyDebugCaptureStreamChunks = proxyDebugCaptureStreamChunks;
   }
 
-  const proxyDebugTargetSessionId = parseSettingFromMap<string>(settingsMap, 'proxy_debug_target_session_id');
-  if (typeof proxyDebugTargetSessionId === 'string') {
-    config.proxyDebugTargetSessionId = proxyDebugTargetSessionId.trim();
+  const proxyDebugFilterSessionId = parseSettingFromMap<string>(settingsMap, 'proxy_debug_filter_session_id');
+  if (typeof proxyDebugFilterSessionId === 'string') {
+    config.proxyDebugFilterSessionId = proxyDebugFilterSessionId.trim();
   }
 
-  const proxyDebugTargetClientKind = parseSettingFromMap<string>(settingsMap, 'proxy_debug_target_client_kind');
-  if (typeof proxyDebugTargetClientKind === 'string') {
-    config.proxyDebugTargetClientKind = proxyDebugTargetClientKind.trim();
+  const proxyDebugFilterClientKind = parseSettingFromMap<string>(settingsMap, 'proxy_debug_filter_client_kind');
+  if (typeof proxyDebugFilterClientKind === 'string') {
+    config.proxyDebugFilterClientKind = proxyDebugFilterClientKind.trim();
   }
 
-  const proxyDebugTargetModel = parseSettingFromMap<string>(settingsMap, 'proxy_debug_target_model');
-  if (typeof proxyDebugTargetModel === 'string') {
-    config.proxyDebugTargetModel = proxyDebugTargetModel.trim();
+  const proxyDebugFilterModel = parseSettingFromMap<string>(settingsMap, 'proxy_debug_filter_model');
+  if (typeof proxyDebugFilterModel === 'string') {
+    config.proxyDebugFilterModel = proxyDebugFilterModel.trim();
   }
 
   const proxyDebugRetentionHours = parseSettingFromMap<number>(settingsMap, 'proxy_debug_retention_hours');
@@ -202,12 +203,9 @@ export function applyRuntimeSettings(settingsMap: Map<string, string>) {
     config.proxyDebugMaxBodyBytes = Math.trunc(proxyDebugMaxBodyBytes);
   }
 
-  const routingWeights = parseSettingFromMap<Partial<typeof config.routingWeights>>(settingsMap, 'routing_weights');
-  if (routingWeights && typeof routingWeights === 'object') {
-    config.routingWeights = {
-      ...config.routingWeights,
-      ...routingWeights,
-    };
+  const dispatchPolicyRegistry = parseSettingFromMap<unknown>(settingsMap, 'dispatch_policy_registry');
+  if (dispatchPolicyRegistry !== undefined) {
+    config.dispatchPolicyRegistry = normalizeDispatchPolicyRegistry(dispatchPolicyRegistry);
   }
 
   if (settingsMap.has(PLATFORM_PRICING_CONFIG_SETTING_KEY)) {
@@ -222,10 +220,15 @@ export function applyRuntimeSettings(settingsMap: Map<string, string>) {
     config.proxyFirstByteTimeoutSec = Math.max(0, Math.trunc(proxyFirstByteTimeoutSec));
   }
 
-  const tokenRouterFailureCooldownMaxSec = parseSettingFromMap<number>(settingsMap, 'token_router_failure_cooldown_max_sec');
-  const normalizedFailureCooldownMaxSec = normalizeTokenRouterFailureCooldownMaxSec(tokenRouterFailureCooldownMaxSec);
+  const routeFailureCooldownMaxSec = parseSettingFromMap<number>(settingsMap, 'route_failure_cooldown_max_sec');
+  const normalizedFailureCooldownMaxSec = normalizeRouteFailureCooldownMaxSec(routeFailureCooldownMaxSec);
   if (normalizedFailureCooldownMaxSec != null) {
-    config.tokenRouterFailureCooldownMaxSec = normalizedFailureCooldownMaxSec;
+    config.routeFailureCooldownMaxSec = normalizedFailureCooldownMaxSec;
+  }
+
+  const routeRuntimeCacheTtlMs = parseSettingFromMap<number>(settingsMap, 'route_runtime_cache_ttl_ms');
+  if (typeof routeRuntimeCacheTtlMs === 'number') {
+    config.routeRuntimeCacheTtlMs = Math.max(100, Math.min(60_000, Math.trunc(routeRuntimeCacheTtlMs)));
   }
 
   const webhookUrl = parseSettingFromMap<string>(settingsMap, 'webhook_url');

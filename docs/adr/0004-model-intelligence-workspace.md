@@ -321,7 +321,7 @@ type ModelDetailsView = {
 ```
 
 Initial implementation may assemble a partial view from existing model list data
-and `/api/models/route-flow?model=...`. The long-term endpoint is:
+and `/api/models/:id/route-flow`. The long-term endpoint is:
 
 ```text
 GET /api/models/:model/details?range=24h

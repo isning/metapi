@@ -35,9 +35,10 @@ const METRIC_OPTIONS: { key: Metric; label: string }[] = [
 /*  Component                                                          */
 /* ------------------------------------------------------------------ */
 
-export default function SiteTrendChart({ data, loading, baseCostUnit = 'USD' }: SiteTrendChartProps) {
+export default function SiteTrendChart({ data, loading, baseCostUnit = '' }: SiteTrendChartProps) {
   const [metric, setMetric] = useState<Metric>('spend');
   const chartPalette = useThemeChartPalette();
+  const costUnit = baseCostUnit.trim();
 
   /* ---------- data transform ---------- */
 
@@ -104,7 +105,7 @@ export default function SiteTrendChart({ data, loading, baseCostUnit = 'USD' }: 
             key: (datum: Record<string, unknown>) => datum?.site ?? '',
             value: (datum: Record<string, unknown>) => {
               const v = Number(datum?.value ?? 0);
-              return metric === 'spend' ? `${v.toFixed(4)} ${baseCostUnit}` : String(v);
+              return metric === 'spend' ? `${v.toFixed(4)}${costUnit ? ` ${costUnit}` : ''}` : String(v);
             },
           },
         ],
@@ -116,7 +117,7 @@ export default function SiteTrendChart({ data, loading, baseCostUnit = 'USD' }: 
             key: (datum: Record<string, unknown>) => datum?.site ?? '',
             value: (datum: Record<string, unknown>) => {
               const v = Number(datum?.value ?? 0);
-              return metric === 'spend' ? `${v.toFixed(4)} ${baseCostUnit}` : String(v);
+              return metric === 'spend' ? `${v.toFixed(4)}${costUnit ? ` ${costUnit}` : ''}` : String(v);
             },
           },
         ],

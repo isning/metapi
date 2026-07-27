@@ -16,6 +16,7 @@ import type {
   PricingUsageProfile,
   ReferencePricingSubject,
 } from './pricingQuoteTypes.js';
+import type { ProviderCatalogResolveMode } from './upstreamCostPricingService.js';
 
 export type {
   EndpointPricingSupply,
@@ -48,12 +49,16 @@ export async function quoteEndpointPricing(input: {
   usageProfile?: PricingUsageProfile;
   usage?: Partial<CanonicalUsage>;
   includeReference?: boolean;
+  allowProviderCatalog?: boolean;
+  providerCatalogMode?: ProviderCatalogResolveMode;
 }): Promise<PricingQuote> {
   const usageProfile = input.usageProfile || 'preview_1m_io';
   const usage = usageForPricingProfile(usageProfile, input.usage);
   const endpoint = await resolveEndpointPricing({
     supply: input.supply,
     usage,
+    allowProviderCatalog: input.allowProviderCatalog,
+    providerCatalogMode: input.providerCatalogMode,
   });
   const effectiveCost = await quoteEffectiveEndpointCost({
     supply: input.supply,

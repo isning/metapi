@@ -1,4 +1,5 @@
 import type { UpstreamCompatibilityPolicy } from '../../contracts/upstreamCompatibilityPolicy.js';
+import type { DownstreamRoutingPolicy } from '../../services/downstreamPolicyTypes.js';
 
 export type PlatformProfileId =
   | 'codex'
@@ -29,19 +30,9 @@ export type PreparedPlatformRequest = {
   runtime: PlatformRuntimeDescriptor;
 };
 
-export interface DownstreamRoutingPolicy {
-  supportedModels: string[];
-  allowedRouteIds: number[];
-  siteWeightMultipliers: Record<number, number>;
-  excludedSiteIds: number[];
-  excludedCredentialRefs: any[];
-  denyAllWhenEmpty?: boolean;
-}
-
 export interface RequestBuilderContext {
   channel?: {
     id: number;
-    routeId: number | null;
     priority?: number | null;
     weight?: number | null;
   };

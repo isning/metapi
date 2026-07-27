@@ -101,6 +101,9 @@ export function buildEventNavigationPath(event: {
   if (relatedType === 'update_center') {
     return '/settings';
   }
+  if (relatedType === 'settings_import_export') {
+    return '/settings/import-export';
+  }
   if (relatedType === 'route') {
     return '/routes';
   }

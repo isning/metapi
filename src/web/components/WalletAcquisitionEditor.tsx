@@ -163,7 +163,7 @@ function formatCompactNumber(value: number | null | undefined): string {
 
 function formatWalletAmount(value: number | null | undefined, currency: string | null | undefined): string {
   const amount = formatCompactNumber(value);
-  return amount === '-' ? '-' : `${amount} ${currency || 'USD'}`;
+  return amount === '-' ? '-' : `${amount}${currency ? ` ${currency}` : ''}`;
 }
 
 function describeProfile(profile: WalletAcquisitionProfile | null): string {

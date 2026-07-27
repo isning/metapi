@@ -448,7 +448,7 @@ function buildMarkdownReport(report: MatrixReport): string {
     '- Worker count means independent Node processes running the route-runtime gate.',
     '- CPU set is enforced with `taskset` when available.',
     '- Measured elapsed QPS uses the synchronized distinct-concurrent window; end-to-end QPS includes setup and seeding.',
-    '- CPU QPS is route-decision CPU throughput, not HTTP ingress throughput.',
+    '- CPU QPS is runtime-selection CPU throughput, not HTTP ingress throughput.',
     '- Gate status preserves each worker route-runtime gate result; failed benchmark budgets remain visible without aborting the matrix.',
     '',
   ].join('\n');

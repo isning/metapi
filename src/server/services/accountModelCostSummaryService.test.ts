@@ -16,7 +16,7 @@ describe("accountModelCostSummaryService", () => {
       endpoint: {
         matchedScope: "token_model",
         sourceId: 42,
-        summary: { totalCostUsd: 10 },
+        summary: { totalCost: 10 },
       },
     });
 
@@ -45,10 +45,12 @@ describe("accountModelCostSummaryService", () => {
       includeReference: false,
     });
     expect(summary).toEqual({
+      status: "configured",
       configured: true,
       matchedScope: "token_model",
       pricingId: 42,
-      totalCostUsd: 10,
+      totalCost: 10,
+      diagnostics: [],
     });
   });
 
@@ -66,10 +68,35 @@ describe("accountModelCostSummaryService", () => {
         tokenRows: [],
       }),
     ).resolves.toEqual({
+      status: "unconfigured",
       configured: false,
       matchedScope: null,
       pricingId: null,
-      totalCostUsd: null,
+      totalCost: null,
+      diagnostics: [],
+    });
+  });
+
+  it("returns an error summary when pricing quote evaluation fails", async () => {
+    quoteEndpointPricingMock.mockRejectedValue(new Error("catalog unavailable"));
+
+    const { buildAccountModelCostSummary } = await import(
+      "./accountModelCostSummaryService.js"
+    );
+    await expect(
+      buildAccountModelCostSummary({
+        siteId: 1,
+        accountId: 2,
+        modelName: "temporarily-unpriced-model",
+        tokenRows: [],
+      }),
+    ).resolves.toEqual({
+      status: "error",
+      configured: false,
+      matchedScope: null,
+      pricingId: null,
+      totalCost: null,
+      diagnostics: [{ level: "error", message: "catalog unavailable" }],
     });
   });
 });

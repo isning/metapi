@@ -52,13 +52,11 @@ describe('upstream compatibility policy resolver', () => {
           },
         },
       },
-      selectedEndpointTarget: {
-        compatibilityPolicy: {
-          reasoningHistory: {
-            transport: {
-              mode: 'native',
-              maxReasoningBytes: 2048,
-            },
+      executionAttemptCompatibilityPolicy: {
+        reasoningHistory: {
+          transport: {
+            mode: 'native',
+            maxReasoningBytes: 2048,
           },
         },
       },

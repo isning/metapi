@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Activity, Bell, Check, CheckCircle2, Copy, ExternalLink, KeyRound, Loader2, Megaphone, Server, Wallet } from 'lucide-react';
+import { Activity, ArchiveRestore, Bell, Check, CheckCircle2, Copy, ExternalLink, KeyRound, Loader2, Megaphone, Server, Wallet } from 'lucide-react';
 import { api } from '../api.js';
 import { formatDateTimeMinuteLocal } from '../pages/helpers/checkinLogTime.js';
 import { buildEventNavigationPath } from '../pages/helpers/navigationFocus.js';
 import { useI18n, tr } from '../i18n.js';
 import type { InboxAction, InboxItem } from '../../shared/inbox.js';
+import { translateInboxItem } from '../inboxDisplay.js';
 import { Badge } from './ui/badge/index.js';
 import { Button } from './ui/button/index.js';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card/index.js';
@@ -19,6 +20,7 @@ const typeLabels: Record<string, string> = {
   proxy: tr('components.notificationPanel.proxy'),
   status: tr('components.notificationPanel.status'),
   site_notice: tr('app.sites'),
+  backup_import: tr('backupImport.type'),
 };
 
 const typeIcons: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -28,6 +30,7 @@ const typeIcons: Record<string, React.ComponentType<{ className?: string }>> = {
   proxy: Server,
   status: Activity,
   site_notice: Megaphone,
+  backup_import: ArchiveRestore,
 };
 
 const scopeLabels: Record<string, string> = {
@@ -143,7 +146,7 @@ export default function NotificationPanel({
       <Tabs value={filter || 'all'} onValueChange={(nextValue) => setFilter(nextValue === 'all' ? '' : nextValue)}>
         <div className="border-b p-2">
           <TabsList className="flex h-auto w-full flex-wrap justify-start">
-            {['', 'checkin', 'balance', 'token', 'proxy', 'status', 'site_notice'].map((filterType) => (
+            {['', 'checkin', 'balance', 'token', 'proxy', 'status', 'site_notice', 'backup_import'].map((filterType) => (
               <TabsTrigger key={filterType || 'all'} value={filterType || 'all'} className="text-foreground">
                 {filterType ? (() => {
                   const Icon = typeIcons[filterType] || Bell;
@@ -169,6 +172,7 @@ export default function NotificationPanel({
           </div>
         )}
         {events.map((ev: any) => {
+          const displayEvent = translateInboxItem(ev, tr);
           const navigateAction = ev.actions?.find((action: InboxAction) => action.kind === 'navigate' && action.href);
           const targetPath = navigateAction?.href || buildEventNavigationPath(ev);
           const openTarget = () => {
@@ -194,7 +198,7 @@ export default function NotificationPanel({
                     </Badge>
                     <div className="min-w-0 flex-1">
                       <div className="mb-1 flex min-w-0 items-center gap-2">
-                        <span className="truncate text-sm font-medium">{ev.title}</span>
+                        <span className="truncate text-sm font-medium">{displayEvent.title}</span>
                         <Badge variant="outline" className="shrink-0">
                           {tr(scopeLabels[ev.scope] || ev.scope)}
                         </Badge>
@@ -202,7 +206,7 @@ export default function NotificationPanel({
                           {tr(typeLabels[ev.type || ''] || ev.category || ev.type || 'system')}
                         </Badge>
                       </div>
-                      <div className="whitespace-normal text-xs leading-relaxed text-muted-foreground">{ev.summary || ev.message}</div>
+                      <div className="whitespace-normal text-xs leading-relaxed text-muted-foreground">{displayEvent.summary || displayEvent.message}</div>
                       <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
                         <span>{formatDateTimeMinuteLocal(ev.lastSeenAt || ev.createdAt)}</span>
                         {ev.occurrenceCount > 1 && <span>×{ev.occurrenceCount}</span>}

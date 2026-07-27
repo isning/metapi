@@ -9,6 +9,7 @@ import {
   upstreamEndpointFromApiType,
   type CredentialEndpointBinding,
 } from './apiVariants.js';
+import type { RuntimeCapabilityRequirement } from './capabilities/requestCapabilityRequirement.js';
 
 describe('apiVariants', () => {
   it('maps existing upstream endpoints to api types', () => {
@@ -29,6 +30,19 @@ describe('apiVariants', () => {
       scopeKey: 'us-east',
       canonicalModel: 'GLM-5.1',
     })).toBe('supply-target:site-15:credential-key-a:us-east:glm-5.1');
+  });
+
+  it('rejects supply target identities without credential or model identity', () => {
+    expect(() => buildSupplyTargetId({
+      siteId: 15,
+      credentialId: null,
+      modelName: 'gpt-test',
+    })).toThrow('credentialId');
+    expect(() => buildSupplyTargetId({
+      siteId: 15,
+      credentialId: 'key-a',
+      modelName: null,
+    })).toThrow('modelName');
   });
 
   it('preserves current endpoint candidate order through default bindings', () => {
@@ -90,6 +104,7 @@ describe('apiVariants', () => {
     const plan = buildApiAttemptPlan({
       siteId: 10,
       credentialId: 'key-a',
+      modelName: 'test-model',
       endpointCandidates: ['chat', 'messages'],
       endpointProfiles: [chatProfile, messagesProfile],
       credentialEndpointBindings: bindings,
@@ -109,6 +124,7 @@ describe('apiVariants', () => {
     const plan = buildApiAttemptPlan({
       siteId: 10,
       credentialId: 'key-a',
+      modelName: 'test-model',
       siteUrl: 'https://api.deepseek.com',
       endpointCandidates: ['chat', 'messages'],
     });
@@ -166,6 +182,7 @@ describe('apiVariants', () => {
     const plan = buildApiAttemptPlan({
       siteId: 10,
       credentialId: 'key-a',
+      modelName: 'test-model',
       endpointProfiles: [chatProfile, responsesProfile, messagesProfile, otherSiteProfile],
       credentialEndpointBindings: bindings,
       endpointCandidates: ['responses', 'chat', 'messages'],
@@ -202,6 +219,7 @@ describe('apiVariants', () => {
     const defaultPlan = buildApiAttemptPlan({
       siteId: 1,
       credentialId: 'key-a',
+      modelName: 'test-model',
       endpointProfiles: [profile],
       credentialEndpointBindings: [binding],
       endpointCandidates: ['responses'],
@@ -215,6 +233,7 @@ describe('apiVariants', () => {
     const advancedPlan = buildApiAttemptPlan({
       siteId: 1,
       credentialId: 'key-a',
+      modelName: 'test-model',
       endpointProfiles: [profile],
       credentialEndpointBindings: [binding],
       endpointCandidates: ['responses'],
@@ -229,6 +248,7 @@ describe('apiVariants', () => {
     const plan = buildApiAttemptPlan({
       siteId: 1,
       credentialId: 2,
+      modelName: 'test-model',
       endpointCandidates: ['chat', 'responses', 'messages'],
       policy: {
         pinnedApiType: 'openai_responses',
@@ -313,6 +333,7 @@ describe('apiVariants', () => {
     const plan = buildApiAttemptPlan({
       siteId: 1,
       credentialId: 'key-a',
+      modelName: 'test-model',
       endpointProfiles: [profile],
       credentialEndpointBindings: [binding],
       endpointCandidates: ['responses'],
@@ -321,5 +342,141 @@ describe('apiVariants', () => {
     expect(plan.variants[0]?.capability.status).toBe('supported');
     expect(plan.variants[0]?.capability.output.reasoning).toBe('native');
     expect(plan.variants[0]?.capability.input.tools).toBe('emulated');
+  });
+
+  it('filters API attempts that do not satisfy runtime capability requirements', () => {
+    const requirement: RuntimeCapabilityRequirement = {
+      sourceFormat: 'gemini',
+      surface: 'generateContent',
+      acceptableApiTypes: ['gemini_generate_content', 'vendor_native'],
+      requiredFeatures: [
+        { feature: 'native.gemini.cachedContent', scope: 'native_protocol', requiredState: 'native' },
+      ],
+      lossPolicy: 'native_required',
+      fallbackPolicy: 'single_native_variant',
+    };
+
+    const plan = buildApiAttemptPlan({
+      siteId: 1,
+      credentialId: 'key-a',
+      modelName: 'test-model',
+      endpointCandidates: ['responses', 'chat'],
+      runtimeCapabilityRequirement: requirement,
+    });
+
+    expect(plan.attempts).toEqual([]);
+    expect(plan.diagnostics.map((diagnostic) => diagnostic.code)).toContain('runtime_capability.api_type_unacceptable');
+  });
+
+  it('routes simple Gemini text requirements to chat when responses is unsupported', () => {
+    const chatProfile = buildDefaultApiEndpointProfile({ siteId: 1, endpoint: 'chat' });
+    const responsesProfile = buildDefaultApiEndpointProfile({ siteId: 1, endpoint: 'responses' });
+    const requirement: RuntimeCapabilityRequirement = {
+      sourceFormat: 'gemini',
+      surface: 'generateContent',
+      acceptableApiTypes: ['openai_chat_completions', 'openai_responses', 'anthropic_messages', 'gemini_generate_content', 'vendor_native'],
+      requiredFeatures: [],
+      lossPolicy: 'lossy_allowed',
+      fallbackPolicy: 'compatible_variants_only',
+    };
+
+    const plan = buildApiAttemptPlan({
+      siteId: 1,
+      credentialId: 'key-a',
+      modelName: 'test-model',
+      endpointProfiles: [responsesProfile, chatProfile],
+      credentialEndpointBindings: [
+        {
+          id: 'credential-endpoint:key-a:responses',
+          siteId: 1,
+          credentialId: 'key-a',
+          apiEndpointProfileId: responsesProfile.id,
+          enabled: true,
+          support: 'unsupported',
+          source: 'manual',
+        },
+        {
+          id: 'credential-endpoint:key-a:chat',
+          siteId: 1,
+          credentialId: 'key-a',
+          apiEndpointProfileId: chatProfile.id,
+          enabled: true,
+          support: 'supported',
+          source: 'manual',
+        },
+      ],
+      endpointCandidates: ['responses', 'chat'],
+      runtimeCapabilityRequirement: requirement,
+    });
+
+    expect(endpointCandidatesFromApiAttemptPlan(plan)).toEqual(['chat']);
+    expect(plan.attempts[0]).toMatchObject({
+      apiType: 'openai_chat_completions',
+      upstreamEndpoint: 'chat',
+    });
+    expect(plan.diagnostics.map((diagnostic) => diagnostic.code)).toContain('credential_endpoint_binding.not_plannable');
+  });
+
+  it('excludes chat for rich Gemini requirements while allowing responses and messages', () => {
+    const chatProfile = buildDefaultApiEndpointProfile({ siteId: 1, endpoint: 'chat' });
+    const responsesProfile = buildDefaultApiEndpointProfile({ siteId: 1, endpoint: 'responses' });
+    const messagesProfile = buildDefaultApiEndpointProfile({ siteId: 1, endpoint: 'messages' });
+    const requirement: RuntimeCapabilityRequirement = {
+      sourceFormat: 'gemini',
+      surface: 'generateContent',
+      acceptableApiTypes: ['openai_responses', 'anthropic_messages', 'gemini_generate_content', 'vendor_native'],
+      requiredFeatures: [],
+      lossPolicy: 'lossless_required',
+      fallbackPolicy: 'compatible_variants_only',
+    };
+
+    const plan = buildApiAttemptPlan({
+      siteId: 1,
+      credentialId: 'key-a',
+      modelName: 'test-model',
+      endpointProfiles: [chatProfile, responsesProfile, messagesProfile],
+      credentialEndpointBindings: [chatProfile, responsesProfile, messagesProfile].map((profile) => ({
+        id: `credential-endpoint:key-a:${profile.id}`,
+        siteId: 1,
+        credentialId: 'key-a',
+        apiEndpointProfileId: profile.id,
+        enabled: true,
+        support: 'supported' as const,
+        source: 'manual' as const,
+      })),
+      endpointCandidates: ['chat', 'responses', 'messages'],
+      runtimeCapabilityRequirement: requirement,
+    });
+
+    expect(endpointCandidatesFromApiAttemptPlan(plan)).toEqual(['responses', 'messages']);
+    expect(plan.attempts.map((attempt) => attempt.apiType)).toEqual(['openai_responses', 'anthropic_messages']);
+    expect(plan.diagnostics.map((diagnostic) => diagnostic.code)).toContain('runtime_capability.api_type_unacceptable');
+  });
+
+  it('plans direct Gemini attempts for native Gemini requirements', () => {
+    const requirement: RuntimeCapabilityRequirement = {
+      sourceFormat: 'gemini',
+      surface: 'generateContent',
+      acceptableApiTypes: ['gemini_generate_content', 'vendor_native'],
+      requiredFeatures: [
+        { feature: 'native.gemini.cachedContent', scope: 'native_protocol', requiredState: 'native' },
+      ],
+      lossPolicy: 'native_required',
+      fallbackPolicy: 'single_native_variant',
+    };
+
+    const plan = buildApiAttemptPlan({
+      siteId: 1,
+      credentialId: 'key-a',
+      modelName: 'test-model',
+      endpointCandidates: ['gemini'],
+      runtimeCapabilityRequirement: requirement,
+    });
+
+    expect(endpointCandidatesFromApiAttemptPlan(plan)).toEqual(['gemini']);
+    expect(plan.attempts[0]).toMatchObject({
+      apiType: 'gemini_generate_content',
+      upstreamEndpoint: 'gemini',
+    });
   });
 });

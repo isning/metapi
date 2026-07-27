@@ -1,182 +1,149 @@
-# 路由组使用指南
+# Route Groups
 
-路由组是 Graph Routing 的日常编辑对象。你通常不需要手写 graph JSON；在路由组视图里调整策略、候选端点和过滤器即可。
+Route Groups are the operational editor for graph-native routing. They manage
+candidate materialization, ordered fallback stages, visibility, filters, and
+dispatcher policy references through a command/read facade over Source Graph.
+There are no Route Group side tables or parallel source of truth. Saving a
+Route Group publishes the updated Source Graph and its compiled runtime; the
+proxy executes only that compiled artifact.
 
-## 路由组是什么
+## Management Provenance
 
-一个路由组本质上是：
+Automatic groups are created from upstream model discovery. Manual groups are
+created by an operator. This distinction affects editing permissions and
+discovery lifecycle only.
 
-```text
-candidate_selector macro
-  + route_endpoint endpointKind=route_product
-  + candidate route_endpoint[]
-```
-
-自动路由组由上游模型发现生成。手动路由组由用户创建。两者最终都会映射为语义图对象。
-
-## 自动路由组
-
-自动发现模型后，系统会按 canonical upstream model 生成自动路由组。
-
-例如多个站点都提供 `gpt-5.5`：
+Both kinds are projections of the same graph shape:
 
 ```text
-site A / account 1 / gpt-5.5 -> supply endpoint A
-site B / account 2 / gpt-5.5 -> supply endpoint B
-site C / token X   / gpt-5.5 -> supply endpoint C
+route_product endpoint
+  + candidate_selector macro
+  + ordered fallback stages
+  + supply endpoints or route-product members
 ```
 
-系统生成：
+The compiled graph and proxy have no automatic/manual branch.
 
-```text
-auto-model:gpt-5.5
-  candidates:
-    supply endpoint A
-    supply endpoint B
-    supply endpoint C
-```
+## Source Selection
 
-自动组默认 public。你可以改成 internal，让它不直接暴露给下游，只供手动组引用。
+A manual Route Group has one source-selection mode. The management API uses a
+discriminated `sourceSelection` object; the two modes cannot be combined.
 
-## 手动路由组
+| Mode          | Graph representation                    | Use case                                                                             |
+| ------------- | --------------------------------------- | ------------------------------------------------------------------------------------ |
+| Explicit      | `route_endpoints` or `graph_references` | Select concrete execution endpoints or another Route Group                           |
+| Model pattern | `model_pattern`                         | Resolve the currently available supply endpoints by exact, glob, or `re:` regex rule |
 
-手动组适合表达运营意图：
-
-- 把多个不同模型名的 supply 聚合成一个下游模型；
-- 把多个 internal 自动组重新暴露成一个 public 模型；
-- 给候选设置主备优先级；
-- 加入 synthetic fallback；
-- 对某个路由组设置专用 filter；
-- 用 CEL 做请求相关选择。
-
-手动组可以选择三类候选：
-
-| 候选 | 说明 |
-|------|------|
-| `route_endpoint endpointKind=supply` | 具体上游模型端点 |
-| `route_endpoint endpointKind=route_product` | 另一个路由组产物 |
-| `synthetic_endpoint` 或 macro synthetic group | 合成 fallback |
-
-允许把 route product 和 supply 混合使用，但要注意重复路径：如果一个 route product 已经包含某个 supply，再直接加入同一个 supply，会形成两条候选路径。
-
-## Public 和 Internal
-
-| 状态 | 下游能否直接请求 | 是否可被手动组引用 |
-|------|------------------|--------------------|
-| Public | 可以 | 可以 |
-| Internal | 不可以 | 可以 |
-
-推荐做法：
-
-- 自动发现的常规模型保持 public；
-- 只作为中间层使用的自动组改为 internal；
-- 用户面向下游提供的组合模型用手动 public 组表达。
-
-## 优先级桶
-
-优先级桶用于主备或分层 fallback。
-
-示例：
-
-```text
-priority 100: 付费高质量端点
-priority 50:  普通端点
-priority 0:   synthetic 503 fallback
-```
-
-`priority_order` 会先使用最高优先级桶。只有高优先级桶不可用时，才进入下一层。
-
-`weighted` 会按候选权重选择。优先级仍会参与编译和解释，但核心行为是按权重。
-
-## 权重
-
-权重决定同一层候选的选择比例。
-
-例子：
-
-```text
-A weight 70
-B weight 30
-```
-
-静态情况下，A 约 70%，B 约 30%。如果启用了健康、成本、余额、使用率等动态因子，显示的概率可能是动态估算。
-
-## 启用、禁用、排除
-
-| 操作 | 语义 |
-|------|------|
-| 禁用路由组 | 整个 macro 不参与匹配 |
-| 禁用候选 | 候选保留但不参与选择 |
-| 排除候选 | 对自动生成候选写 override，把它从当前组中排除 |
-| 删除手动候选 | 从手动组配置里移除引用 |
-
-自动候选边是生成数据，不应该直接在画布上删除。要在候选表或 inspector 中修改。
-
-## 给路由组添加 Filter
-
-路由组 filter 用于当前组内的请求改写。常见场景：
-
-- 改写模型名；
-- 给 payload 添加默认字段；
-- 删除某个上游不支持的字段；
-- 设置 header；
-- 指定 endpoint preference。
-
-如果 filter 只属于一个路由组，放在路由组里。只有多个路由共享同一段改写逻辑时，才考虑在图编辑视图中创建独立 `filter` 节点。
-
-Filter 详细参数见 [Filter 参考](./route-graph-filters-reference.md)。
-
-## 常见配置
-
-### 主备
-
-```text
-policy: priority_order
-priority 100: primary supply
-priority 50: backup supply
-priority 0: synthetic 503
-```
-
-### 灰度分流
-
-```text
-policy: weighted
-priority 0:
-  supply A weight 90
-  supply B weight 10
-```
-
-### 内部自动组重映射
-
-```text
-internal auto group: claude-sonnet-4-6
-internal auto group: claude-opus-4-6
-
-manual public group: claude-premium
-  candidates:
-    claude-sonnet-4-6 route_product
-    claude-opus-4-6 route_product
-```
-
-### 为某个组强制 Responses
-
-添加 filter：
+Examples:
 
 ```json
-{
-  "type": "set_endpoint_preference",
-  "endpoint": "responses"
-}
+{ "kind": "explicit", "sources": [{ "kind": "execution_target", "sourceRef": "67d54dd0-45c8-4d98-b7b9-7ac550192ec7" }] }
 ```
 
-## 图编辑视图适用场景
+```json
+{ "kind": "model_pattern", "pattern": "re:^deepseek-v[34]-flash$" }
+```
 
-路由组视图适合维护公开状态、候选端点、权重、优先级桶和组内 filter。图编辑视图用于处理路由组之间的连接关系、共享节点和编译诊断。
+Pattern sources are compiled from the Source Graph. The browser preview is
+informational; it does not persist a client-computed endpoint list. A generated
+pattern stage cannot accept explicit candidate mutations. Switch the Route
+Group to explicit source mode, or add and edit primitive Graph stages when the
+route requires mixed resolver behavior.
 
-适合切换到图编辑视图的场景：
+## Fallback Stages
 
-- 检查 macro、supply endpoint、route product 和 filter 之间的实际连接；
-- 组合多个 macro 或 route product，形成跨路由组的复用流程；
-- 创建可被多个路由组共享的独立 `filter` 或 `synthetic_endpoint`；
-- 查看 generated primitives，确认 macro lower 后的 entry、dispatcher 和 candidate 边；
-- 调试编译诊断或 compiled graph。
+A group starts with one stage. Add stages when the route needs an explicit
+primary/backup chain.
+
+```text
+Primary
+  - Supply A
+  - Supply B
+
+Backup
+  - Supply C
+
+Unavailable
+  - Synthetic 503
+```
+
+Stage order is the fallback order. Dragging a candidate within a stage changes
+that stage's member order. Dragging it to another stage changes its fallback
+assignment. These operations write `stageId` and `sortOrder`; no priority value
+is inferred or stored.
+
+## Selection Within A Stage
+
+Each stage may inherit the group policy or override it with another native
+dispatcher policy.
+
+| Policy                | Behavior                                                          |
+| --------------------- | ----------------------------------------------------------------- |
+| Inherit default       | Use the platform default policy                                   |
+| Registry policy       | Reference a named policy from Settings                            |
+| Built-in weighted     | Choose by member weight                                           |
+| Built-in round robin  | Rotate eligible members                                           |
+| Built-in stable first | Prefer the earliest eligible member                               |
+| Inline CEL policy     | Evaluate the stage-local members against request/runtime metadata |
+
+Weights only apply inside the stage currently being evaluated. They do not
+define the fallback order.
+
+## Candidate Types
+
+| Candidate          | Meaning                                                         |
+| ------------------ | --------------------------------------------------------------- |
+| Supply endpoint    | A concrete upstream model, account, credential, and API surface |
+| Route product      | Another reusable graph route result                             |
+| Synthetic response | A configured terminal such as an unavailable response           |
+
+Avoid adding a supply endpoint directly and through a route product in the
+same stage unless the duplicate execution path is intentional.
+
+## Visibility And Overrides
+
+Automatic groups keep their discovered model identity. Operators can still
+override their enabled state, public/internal visibility, display icon,
+filters, and dispatcher policy. Manual groups additionally own their display
+name and graph composition.
+
+An override is management configuration. The generated graph contains generic
+endpoint, macro, and stage data, not an automatic/manual marker.
+
+## Filters
+
+Group filters are request transformations scoped to that group. Common uses:
+
+- rewrite an exposed model to the upstream model;
+- set a payload default or override;
+- remove unsupported payload fields;
+- set or remove a header;
+- prefer a compatible API surface.
+
+Use a separate graph `filter` node only when the transformation is intentionally
+shared across multiple graph paths.
+
+## Safe Operations
+
+| Operation                              | Result                                                                                                     |
+| -------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| Disable group                          | Its macro no longer contributes an executable public path                                                  |
+| Disable candidate                      | Keeps the candidate but removes it from eligibility                                                        |
+| Move candidate                         | Changes its stage and/or stage-local order                                                                 |
+| Restore candidate automatic management | Returns one generated candidate to the generated primary stage and resets its weight and enabled state     |
+| Restore all automatic management       | Resets every adjusted generated candidate and removes the custom fallback stages from that automatic group |
+| Delete candidate                       | Removes the management binding from the group                                                              |
+| Clear endpoint failure state           | Clears the runtime failure overlay for that endpoint                                                       |
+| Add stage                              | Adds a later fallback stage                                                                                |
+| Disable stage                          | Skips all candidates in that stage                                                                         |
+
+After a Route Group mutation, Metapi publishes a new Source Graph version and
+compiled runtime artifact in the same control-plane operation. Validation
+failures are returned as graph diagnostics rather than silently falling back
+to an older routing model.
+
+Automatic-management restore is available only for automatic groups. Manual
+groups are operator-owned by definition and do not display the adjusted badge.
+After restoration, later discovery rebuilds continue to manage the restored
+candidate from generated defaults; they preserve only candidates that remain
+explicitly marked as adjusted.

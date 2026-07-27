@@ -1,11 +1,35 @@
-import { and, eq, inArray } from 'drizzle-orm';
-import { db, schema } from '../db/index.js';
-import { getInsertedRowId } from '../db/insertHelpers.js';
+import { randomUUID } from "node:crypto";
+import { eq } from "drizzle-orm";
+import { createManagedRouteGraphElementId } from "../../shared/routingIdentity.js";
+import type {
+  RouteGraphMacro,
+  RouteGraphSource,
+} from "../../shared/routeGraph.js";
+import { normalizeRouteGraphMacro } from "../../shared/routeGraph.js";
+import { db, schema } from "../db/index.js";
 import {
-  DEFAULT_ROUTE_ROUTING_STRATEGY,
-  normalizeRouteRoutingStrategy,
-  type RouteRoutingStrategy,
-} from './routeRoutingStrategy.js';
+  createRouteGroupFacadeMacro,
+  mutateRouteGroupFacadeGraph,
+} from "./routeGroupGraphFacadeService.js";
+import {
+  isAutomaticRouteGroupFacadeMacro,
+  markRouteGroupFacadeGeneratedPrimaryStage,
+  pruneUnreferencedRouteGroupFacadeEndpoints,
+  replaceRouteGroupFacadeMacroInSource,
+  routeGroupFacadeModelName,
+  routeGroupFacadeGeneratedPrimaryStage,
+  routeGroupFacadeVisibility,
+} from "./routeGroupGraphFacadeAccessService.js";
+import {
+  ensureRouteGraphExecutionTargetsEndpoint,
+  executionTargetIdsForRouteGraphEndpoint,
+} from "./routeGraphExecutionTargetEndpointService.js";
+import {
+  runtimeExecutionTargetKey,
+  upsertRuntimeExecutionTarget,
+} from "./runtimeExecutionTargetService.js";
+import { assertNoRouteGroupPublicExposureConflicts } from "./routeGroupPublicExposureService.js";
+import { advanceRouteGroupManagementCatalogRevision } from "./routeGroupManagementCatalogRevisionService.js";
 
 export type AutomaticRouteGroupCandidate = {
   accountId: number;
@@ -13,562 +37,520 @@ export type AutomaticRouteGroupCandidate = {
   oauthRouteUnitId: number | null;
   siteId: number;
   modelName: string;
+  sharedEndpoint?: {
+    key: number;
+    targetSelection: { kind: "builtin"; builtin: "round_robin" | "stable_first" };
+  } | null;
 };
 
-export type AutomaticRouteGroupCandidateMap = Map<string, Map<string, AutomaticRouteGroupCandidate>>;
-
-export type AutomaticRouteGroupBridge = {
-  modelName: string;
-  routeGroupId: number;
-  routeId: number;
-  bucketId: number;
+type AutomaticRouteGroupExecutionEndpoint = {
+  targets: Array<typeof schema.runtimeExecutionTargets.$inferSelect>;
+  targetSelection: { kind: "builtin"; builtin: "round_robin" | "stable_first" };
 };
 
-export type AutomaticRouteGroupBridgeSyncResult = {
-  bridgesByModelName: Map<string, AutomaticRouteGroupBridge>;
+export type AutomaticRouteGroupCandidateMap = Map<
+  string,
+  Map<string, AutomaticRouteGroupCandidate>
+>;
+
+export type AutomaticRouteGroupSynchronizationResult = {
   createdRouteGroups: number;
-  createdLegacyRoutes: number;
-  createdBuckets: number;
   updatedRouteGroups: number;
-};
-
-export type AutomaticRouteGroupCandidateSyncResult = {
+  createdRouteGroupFallbackStages: number;
   createdSupplyEndpoints: number;
   updatedSupplyEndpoints: number;
-  createdCandidates: number;
-  updatedCandidates: number;
-  removedCandidates: number;
+  createdRouteGroupCandidates: number;
+  updatedRouteGroupCandidates: number;
+  removedRouteGroupCandidates: number;
   createdSupplyEndpointStates: number;
+  removedRoutes: number;
 };
 
-function nowIso(): string {
-  return new Date().toISOString();
+const AVAILABILITY_SYNC_OWNER = "availability-rebuild";
+
+function text(value: unknown): string {
+  return String(value || "").trim();
 }
 
-function normalizeModelName(modelName: string): string {
-  return modelName.trim().toLowerCase();
+function modelKey(value: unknown): string {
+  return text(value).toLowerCase();
 }
 
-function buildAutomaticGroupKey(modelName: string): string {
-  return `upstream:${normalizeModelName(modelName)}`;
-}
-
-function buildSupplyKey(modelName: string, candidateKey: string): string {
-  return `upstream:${normalizeModelName(modelName)}|${candidateKey}`;
-}
-
-function normalizePositiveId(input: unknown): number | null {
-  const value = Number(input);
-  if (!Number.isFinite(value)) return null;
-  const normalized = Math.trunc(value);
-  return normalized > 0 ? normalized : null;
-}
-
-function parseJsonObject(input: string | null | undefined): Record<string, unknown> {
-  if (!input) return {};
-  try {
-    const parsed = JSON.parse(input);
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? parsed as Record<string, unknown>
-      : {};
-  } catch {
-    return {};
+function automaticMacrosByModel(
+  source: RouteGraphSource,
+): Map<string, RouteGraphMacro[]> {
+  const result = new Map<string, RouteGraphMacro[]>();
+  for (const macro of source.macros || []) {
+    if (
+      macro.kind !== "candidate_selector" ||
+      !isAutomaticRouteGroupFacadeMacro(macro) ||
+      (
+        macro.metadata?.managementOwner !== AVAILABILITY_SYNC_OWNER &&
+        routeGroupFacadeVisibility(macro) !== "public"
+      )
+    )
+      continue;
+    const key = modelKey(
+      macro.metadata?.canonicalModel || routeGroupFacadeModelName(macro),
+    );
+    if (!key) continue;
+    const macros = result.get(key) || [];
+    macros.push(macro);
+    result.set(key, macros);
   }
+  return result;
 }
 
-function normalizeVisibility(input: unknown): 'public' | 'internal' {
-  return input === 'internal' ? 'internal' : 'public';
+function publicExposureRows(source: RouteGraphSource) {
+  return (source.macros || [])
+    .filter((macro) => macro.kind === "candidate_selector")
+    .map((macro) => ({
+      groupKey: macro.id,
+      kind: isAutomaticRouteGroupFacadeMacro(macro) ? "automatic" : "manual",
+      publicModelName: routeGroupFacadeModelName(macro),
+      normalizedModelName: modelKey(routeGroupFacadeModelName(macro)),
+      displayName: macro.name || null,
+      visibility: routeGroupFacadeVisibility(macro),
+      enabled: macro.enabled !== false,
+      syncStatus: "active",
+    }));
 }
 
-function resolveGroupVisibility(group: typeof schema.routeGroups.$inferSelect): 'public' | 'internal' {
-  const override = parseJsonObject(group.userOverrideJson);
-  return normalizeVisibility(override.visibility ?? group.visibility);
+function automaticVisibility(
+  source: RouteGraphSource,
+  macro: RouteGraphMacro | null,
+  canonicalModel: string,
+): "public" | "internal" {
+  const collidesWithManualPublicMacro = (source.macros || []).some(
+    (current) =>
+      current.kind === "candidate_selector" &&
+      !isAutomaticRouteGroupFacadeMacro(current) &&
+      current.enabled !== false &&
+      routeGroupFacadeVisibility(current) === "public" &&
+      modelKey(routeGroupFacadeModelName(current)) === canonicalModel,
+  );
+  if (collidesWithManualPublicMacro) return "internal";
+  return macro ? routeGroupFacadeVisibility(macro) : "public";
 }
 
-function resolveGroupEnabled(group: typeof schema.routeGroups.$inferSelect): boolean {
-  const override = parseJsonObject(group.userOverrideJson);
-  if (typeof override.enabled === 'boolean') return override.enabled;
-  return group.enabled !== false;
-}
+type ExistingAutomaticMember = {
+  stageId: string;
+  memberIndex: number;
+  member: NonNullable<
+    RouteGraphMacro["config"]["groups"][number]["members"]
+  >[number];
+};
 
-function resolveGroupRoutingStrategy(group: typeof schema.routeGroups.$inferSelect): RouteRoutingStrategy {
-  const override = parseJsonObject(group.userOverrideJson);
-  return normalizeRouteRoutingStrategy(override.routingStrategy ?? group.routingStrategy);
-}
-
-async function insertAndLoadRouteGroup(values: typeof schema.routeGroups.$inferInsert) {
-  const inserted = await db.insert(schema.routeGroups).values(values).run();
-  const insertedId = getInsertedRowId(inserted);
-  if (insertedId == null) {
-    throw new Error('Failed to create automatic route group');
-  }
-  const row = await db.select().from(schema.routeGroups).where(eq(schema.routeGroups.id, insertedId)).get();
-  if (!row) throw new Error('Failed to load automatic route group');
-  return row;
-}
-
-async function insertAndLoadTokenRoute(values: typeof schema.tokenRoutes.$inferInsert) {
-  const inserted = await db.insert(schema.tokenRoutes).values(values).run();
-  const insertedId = getInsertedRowId(inserted);
-  if (insertedId == null) {
-    throw new Error('Failed to create automatic route bridge');
-  }
-  const row = await db.select().from(schema.tokenRoutes).where(eq(schema.tokenRoutes.id, insertedId)).get();
-  if (!row) throw new Error('Failed to load automatic route bridge');
-  return row;
-}
-
-async function insertAndLoadBucket(values: typeof schema.routeGroupBuckets.$inferInsert) {
-  const inserted = await db.insert(schema.routeGroupBuckets).values(values).run();
-  const insertedId = getInsertedRowId(inserted);
-  if (insertedId == null) {
-    throw new Error('Failed to create automatic route group bucket');
-  }
-  const row = await db.select().from(schema.routeGroupBuckets).where(eq(schema.routeGroupBuckets.id, insertedId)).get();
-  if (!row) throw new Error('Failed to load automatic route group bucket');
-  return row;
-}
-
-async function ensureAutomaticRouteGroup(modelName: string): Promise<{
-  row: typeof schema.routeGroups.$inferSelect;
-  created: boolean;
-  updated: boolean;
-}> {
-  const canonicalModelName = normalizeModelName(modelName);
-  const groupKey = buildAutomaticGroupKey(canonicalModelName);
-  let existing = await db.select().from(schema.routeGroups)
-    .where(and(
-      eq(schema.routeGroups.kind, 'automatic'),
-      eq(schema.routeGroups.groupKey, groupKey),
-    ))
-    .get();
-
-  if (!existing) {
-    existing = await db.select().from(schema.routeGroups)
-      .where(and(
-        eq(schema.routeGroups.kind, 'automatic'),
-        eq(schema.routeGroups.normalizedModelName, canonicalModelName),
-      ))
-      .get();
-  }
-
-  if (!existing) {
-    return {
-      row: await insertAndLoadRouteGroup({
-        kind: 'automatic',
-        groupKey,
-        upstreamModelName: canonicalModelName,
-        normalizedModelName: canonicalModelName,
-        publicModelName: canonicalModelName,
-        displayName: canonicalModelName,
-        visibility: 'public',
-        enabled: true,
-        routingStrategy: DEFAULT_ROUTE_ROUTING_STRATEGY,
-        sourceMode: 'auto',
-        syncStatus: 'active',
-        configJson: JSON.stringify({ version: 1, groupKey }),
-      }),
-      created: true,
-      updated: false,
-    };
-  }
-
-  const updates: Partial<typeof schema.routeGroups.$inferInsert> = {
-    groupKey,
-    upstreamModelName: canonicalModelName,
-    normalizedModelName: canonicalModelName,
-    syncStatus: 'active',
-    updatedAt: nowIso(),
-  };
-  if (!existing.publicModelName) updates.publicModelName = canonicalModelName;
-  if (!existing.displayName) updates.displayName = canonicalModelName;
-  if (!existing.configJson) updates.configJson = JSON.stringify({ version: 1, groupKey });
-
-  await db.update(schema.routeGroups)
-    .set(updates)
-    .where(eq(schema.routeGroups.id, existing.id))
-    .run();
-
-  return {
-    row: {
-      ...existing,
-      ...updates,
-    } as typeof schema.routeGroups.$inferSelect,
-    created: false,
-    updated: true,
-  };
-}
-
-async function ensureAutomaticRouteBridge(group: typeof schema.routeGroups.$inferSelect, modelName: string): Promise<{
-  route: typeof schema.tokenRoutes.$inferSelect;
-  created: boolean;
-}> {
-  const routeId = normalizePositiveId(group.legacyRouteId);
-  const visibility = resolveGroupVisibility(group);
-  const enabled = resolveGroupEnabled(group);
-  const routingStrategy = resolveGroupRoutingStrategy(group);
-  const displayName = group.displayName || group.publicModelName || modelName;
-
-  if (routeId != null) {
-    const existing = await db.select().from(schema.tokenRoutes)
-      .where(eq(schema.tokenRoutes.id, routeId))
-      .get();
-    if (existing) {
-      await db.update(schema.tokenRoutes)
-        .set({
-          displayName: existing.displayName || displayName,
-          displayIcon: existing.displayIcon || group.displayIcon || null,
-          enabled,
-          routingStrategy,
-          updatedAt: nowIso(),
-        })
-        .where(eq(schema.tokenRoutes.id, existing.id))
-        .run();
-      return {
-        route: {
-          ...existing,
-          displayName: existing.displayName || displayName,
-          displayIcon: existing.displayIcon || group.displayIcon || null,
-          enabled,
-          routingStrategy,
-        } as typeof schema.tokenRoutes.$inferSelect,
-        created: false,
-      };
+/**
+ * Automatic rebuilds own the discovered endpoint set, but not the operator's
+ * fallback flow. Keep stage placement, member order and stage-local settings
+ * keyed by the stable runtime execution-target identity.
+ */
+function existingAutomaticMemberByExecutionTarget(
+  source: RouteGraphSource,
+  macro: RouteGraphMacro | null,
+): Map<number, ExistingAutomaticMember> {
+  const result = new Map<number, ExistingAutomaticMember>();
+  if (!macro) return result;
+  const nodesByEndpointId = new Map(
+    source.nodes.map((node) => [
+      node.type === "route_endpoint" ? node.routeEndpointId : node.id,
+      node,
+    ]),
+  );
+  for (const stage of macro.config.groups) {
+    for (const [memberIndex, member] of (stage.members || []).entries()) {
+      const targetIds = executionTargetIdsForRouteGraphEndpoint(
+        nodesByEndpointId.get(text(member.endpointId)),
+      );
+      for (const targetId of targetIds) {
+        if (member.memberId && !result.has(targetId))
+          result.set(targetId, { stageId: stage.id, memberIndex, member });
+      }
     }
   }
-
-  const route = await insertAndLoadTokenRoute({
-    displayName,
-    displayIcon: group.displayIcon || null,
-    enabled,
-    routingStrategy,
-  });
-  await db.update(schema.routeGroups)
-    .set({
-      legacyRouteId: route.id,
-      visibility,
-      enabled,
-      routingStrategy,
-      updatedAt: nowIso(),
-    })
-    .where(eq(schema.routeGroups.id, group.id))
-    .run();
-  return { route, created: true };
+  return result;
 }
 
-async function ensureDefaultBucket(group: typeof schema.routeGroups.$inferSelect): Promise<{
-  bucket: typeof schema.routeGroupBuckets.$inferSelect;
-  created: boolean;
-}> {
-  const existing = await db.select().from(schema.routeGroupBuckets)
-    .where(and(
-      eq(schema.routeGroupBuckets.groupId, group.id),
-      eq(schema.routeGroupBuckets.bucketKey, 'default'),
-    ))
-    .get();
-  if (existing) return { bucket: existing, created: false };
-
-  return {
-    bucket: await insertAndLoadBucket({
-      groupId: group.id,
-      bucketKey: 'default',
-      priority: 0,
-      label: 'Default',
-      strategy: resolveGroupRoutingStrategy(group),
-      enabled: true,
-    }),
-    created: true,
-  };
-}
-
-export async function ensureAutomaticRouteGroupBridges(
+async function upsertAutomaticExecutionTargets(
   modelCandidates: AutomaticRouteGroupCandidateMap,
-): Promise<AutomaticRouteGroupBridgeSyncResult> {
-  const bridgesByModelName = new Map<string, AutomaticRouteGroupBridge>();
-  const desiredGroupKeys = new Set(Array.from(modelCandidates.keys()).map(buildAutomaticGroupKey));
-  let createdRouteGroups = 0;
-  let createdLegacyRoutes = 0;
-  let createdBuckets = 0;
-  let updatedRouteGroups = 0;
-
-  for (const modelName of modelCandidates.keys()) {
-    const groupResult = await ensureAutomaticRouteGroup(modelName);
-    if (groupResult.created) createdRouteGroups += 1;
-    if (groupResult.updated) updatedRouteGroups += 1;
-
-    const bridgeResult = await ensureAutomaticRouteBridge(groupResult.row, modelName);
-    if (bridgeResult.created) createdLegacyRoutes += 1;
-
-    const bucketResult = await ensureDefaultBucket({
-      ...groupResult.row,
-      legacyRouteId: bridgeResult.route.id,
-    } as typeof schema.routeGroups.$inferSelect);
-    if (bucketResult.created) createdBuckets += 1;
-
-    bridgesByModelName.set(modelName, {
-      modelName,
-      routeGroupId: groupResult.row.id,
-      routeId: bridgeResult.route.id,
-      bucketId: bucketResult.bucket.id,
-    });
-  }
-
-  const automaticGroups = await db.select().from(schema.routeGroups)
-    .where(eq(schema.routeGroups.kind, 'automatic'))
-    .all();
-  for (const group of automaticGroups) {
-    if (desiredGroupKeys.has(group.groupKey)) continue;
-    if (group.syncStatus === 'unresolved') continue;
-    await db.update(schema.routeGroups)
-      .set({ syncStatus: 'unresolved', updatedAt: nowIso() })
-      .where(eq(schema.routeGroups.id, group.id))
-      .run();
-  }
-
-  return {
-    bridgesByModelName,
-    createdRouteGroups,
-    createdLegacyRoutes,
-    createdBuckets,
-    updatedRouteGroups,
-  };
-}
-
-function buildTargetKey(target: typeof schema.routeEndpointTargets.$inferSelect): string {
-  return target.oauthRouteUnitId
-    ? `route-unit:${target.oauthRouteUnitId}`
-    : `${target.accountId}:${target.tokenId ?? 'account'}`;
-}
-
-async function upsertSupplyEndpoint(input: {
-  modelName: string;
-  candidateKey: string;
-  candidate: AutomaticRouteGroupCandidate;
-  target: typeof schema.routeEndpointTargets.$inferSelect | null;
-}): Promise<{ row: typeof schema.routeSupplyEndpoints.$inferSelect; created: boolean; updated: boolean }> {
-  const supplyKey = buildSupplyKey(input.modelName, input.candidateKey);
-  const upstreamModelName = input.candidate.modelName.trim() || normalizeModelName(input.modelName);
-  const normalizedModelName = normalizeModelName(upstreamModelName);
-  const existing = await db.select().from(schema.routeSupplyEndpoints)
-    .where(eq(schema.routeSupplyEndpoints.supplyKey, supplyKey))
-    .get();
-  const metadataJson = JSON.stringify({
-    version: 1,
-    candidateKey: input.candidateKey,
-    source: 'availability_rebuild',
-    legacyTargetId: input.target?.id ?? null,
-    legacyRouteId: input.target?.routeId ?? null,
-  });
-
-  if (!existing) {
-    const inserted = await db.insert(schema.routeSupplyEndpoints).values({
-      supplyKey,
-      siteId: input.candidate.siteId,
-      accountId: input.candidate.accountId,
-      tokenId: input.candidate.tokenId,
-      oauthRouteUnitId: input.candidate.oauthRouteUnitId,
-      upstreamModelName,
-      normalizedModelName,
-      enabled: input.target ? input.target.enabled !== false : true,
-      discovered: true,
-      source: 'availability_rebuild',
-      legacyTargetId: input.target?.id ?? null,
-      metadataJson,
-    }).run();
-    const insertedId = getInsertedRowId(inserted);
-    if (insertedId == null) throw new Error('Failed to create route supply endpoint');
-    const row = await db.select().from(schema.routeSupplyEndpoints)
-      .where(eq(schema.routeSupplyEndpoints.id, insertedId))
-      .get();
-    if (!row) throw new Error('Failed to load route supply endpoint');
-    return { row, created: true, updated: false };
-  }
-
-  await db.update(schema.routeSupplyEndpoints)
-    .set({
-      siteId: input.candidate.siteId,
-      accountId: input.candidate.accountId,
-      tokenId: input.candidate.tokenId,
-      oauthRouteUnitId: input.candidate.oauthRouteUnitId,
-      upstreamModelName,
-      normalizedModelName,
-      enabled: input.target ? input.target.enabled !== false : existing.enabled,
-      discovered: true,
-      legacyTargetId: input.target?.id ?? existing.legacyTargetId ?? null,
-      metadataJson,
-      updatedAt: nowIso(),
-    })
-    .where(eq(schema.routeSupplyEndpoints.id, existing.id))
-    .run();
-
-  return {
-    row: {
-      ...existing,
-      siteId: input.candidate.siteId,
-      accountId: input.candidate.accountId,
-      tokenId: input.candidate.tokenId,
-      oauthRouteUnitId: input.candidate.oauthRouteUnitId,
-      upstreamModelName,
-      normalizedModelName,
-      enabled: input.target ? input.target.enabled !== false : existing.enabled,
-      discovered: true,
-      legacyTargetId: input.target?.id ?? existing.legacyTargetId ?? null,
-      metadataJson,
-    } as typeof schema.routeSupplyEndpoints.$inferSelect,
-    created: false,
-    updated: true,
-  };
-}
-
-async function ensureSupplyEndpointState(
-  supplyEndpoint: typeof schema.routeSupplyEndpoints.$inferSelect,
-  target: typeof schema.routeEndpointTargets.$inferSelect | null,
-): Promise<boolean> {
-  const existing = await db.select().from(schema.routeSupplyEndpointState)
-    .where(eq(schema.routeSupplyEndpointState.supplyEndpointId, supplyEndpoint.id))
-    .get();
-  if (existing) return false;
-
-  await db.insert(schema.routeSupplyEndpointState).values({
-    supplyEndpointId: supplyEndpoint.id,
-    successCount: target?.successCount ?? 0,
-    failCount: target?.failCount ?? 0,
-    totalLatencyMs: target?.totalLatencyMs ?? 0,
-    totalCost: target?.totalCost ?? 0,
-    lastUsedAt: target?.lastUsedAt ?? null,
-    lastSelectedAt: target?.lastSelectedAt ?? null,
-    lastFailAt: target?.lastFailAt ?? null,
-    consecutiveFailCount: target?.consecutiveFailCount ?? 0,
-    cooldownLevel: target?.cooldownLevel ?? 0,
-    cooldownUntil: target?.cooldownUntil ?? null,
-  }).run();
-  return true;
-}
-
-async function upsertRouteGroupCandidate(input: {
-  bridge: AutomaticRouteGroupBridge;
-  candidateKey: string;
-  supplyEndpoint: typeof schema.routeSupplyEndpoints.$inferSelect;
-  target: typeof schema.routeEndpointTargets.$inferSelect | null;
-  sortOrder: number;
-}): Promise<{ created: boolean; updated: boolean }> {
-  const existing = await db.select().from(schema.routeGroupCandidates)
-    .where(and(
-      eq(schema.routeGroupCandidates.groupId, input.bridge.routeGroupId),
-      eq(schema.routeGroupCandidates.bucketId, input.bridge.bucketId),
-      eq(schema.routeGroupCandidates.candidateKey, input.candidateKey),
-    ))
-    .get();
-  const weight = input.target?.weight ?? 10;
-  const enabled = input.target ? input.target.enabled !== false : true;
-
-  if (!existing) {
-    await db.insert(schema.routeGroupCandidates).values({
-      groupId: input.bridge.routeGroupId,
-      bucketId: input.bridge.bucketId,
-      candidateKey: input.candidateKey,
-      candidateKind: 'supply_endpoint',
-      supplyEndpointId: input.supplyEndpoint.id,
-      childGroupId: null,
-      weight,
-      sortOrder: input.sortOrder,
-      enabled,
-      source: 'availability_rebuild',
-      manualOverride: false,
-    }).run();
-    return { created: true, updated: false };
-  }
-
-  await db.update(schema.routeGroupCandidates)
-    .set({
-      candidateKind: 'supply_endpoint',
-      supplyEndpointId: input.supplyEndpoint.id,
-      childGroupId: null,
-      weight: existing.manualOverride ? existing.weight : weight,
-      sortOrder: existing.manualOverride ? existing.sortOrder : input.sortOrder,
-      enabled: existing.manualOverride ? existing.enabled : enabled,
-      source: existing.manualOverride ? existing.source : 'availability_rebuild',
-      updatedAt: nowIso(),
-    })
-    .where(eq(schema.routeGroupCandidates.id, existing.id))
-    .run();
-  return { created: false, updated: true };
-}
-
-export async function syncAutomaticRouteGroupCandidates(input: {
-  modelCandidates: AutomaticRouteGroupCandidateMap;
-  bridgesByModelName: Map<string, AutomaticRouteGroupBridge>;
-}): Promise<AutomaticRouteGroupCandidateSyncResult> {
-  const routeIds = Array.from(input.bridgesByModelName.values()).map((bridge) => bridge.routeId);
-  const allTargets: Array<typeof schema.routeEndpointTargets.$inferSelect> = [];
-  const routeIdBatchSize = 400;
-  for (let offset = 0; offset < routeIds.length; offset += routeIdBatchSize) {
-    const batch = routeIds.slice(offset, offset + routeIdBatchSize);
-    if (batch.length === 0) continue;
-    allTargets.push(...await db.select().from(schema.routeEndpointTargets)
-      .where(inArray(schema.routeEndpointTargets.routeId, batch))
-      .all());
-  }
-  const targetsByRouteAndCandidateKey = new Map<string, typeof schema.routeEndpointTargets.$inferSelect>();
-  for (const target of allTargets) {
-    targetsByRouteAndCandidateKey.set(`${target.routeId}:${buildTargetKey(target)}`, target);
-  }
-
+) {
+  const targetsByModel = new Map<
+    string,
+    AutomaticRouteGroupExecutionEndpoint[]
+  >();
   let createdSupplyEndpoints = 0;
   let updatedSupplyEndpoints = 0;
-  let createdCandidates = 0;
-  let updatedCandidates = 0;
-  let removedCandidates = 0;
   let createdSupplyEndpointStates = 0;
-
-  for (const [modelName, candidateMap] of input.modelCandidates.entries()) {
-    const bridge = input.bridgesByModelName.get(modelName);
-    if (!bridge) continue;
-
-    const desiredCandidateKeys = new Set<string>();
-    let sortOrder = 0;
-    for (const [candidateKey, candidate] of candidateMap.entries()) {
-      desiredCandidateKeys.add(candidateKey);
-      const target = targetsByRouteAndCandidateKey.get(`${bridge.routeId}:${candidateKey}`) ?? null;
-      const supply = await upsertSupplyEndpoint({ modelName, candidateKey, candidate, target });
-      if (supply.created) createdSupplyEndpoints += 1;
-      if (supply.updated) updatedSupplyEndpoints += 1;
-      if (await ensureSupplyEndpointState(supply.row, target)) {
-        createdSupplyEndpointStates += 1;
-      }
-
-      const candidateResult = await upsertRouteGroupCandidate({
-        bridge,
-        candidateKey,
-        supplyEndpoint: supply.row,
-        target,
-        sortOrder,
+  for (const [canonicalModel, candidates] of modelCandidates) {
+    const independentTargets: Array<typeof schema.runtimeExecutionTargets.$inferSelect> = [];
+    const sharedTargets = new Map<number, AutomaticRouteGroupExecutionEndpoint>();
+    for (const candidate of candidates.values()) {
+      const executionKey = runtimeExecutionTargetKey({
+        accountId: candidate.accountId,
+        tokenId: candidate.tokenId,
+        oauthRouteUnitId: candidate.oauthRouteUnitId,
+        sourceModel: candidate.modelName,
       });
-      if (candidateResult.created) createdCandidates += 1;
-      if (candidateResult.updated) updatedCandidates += 1;
-      sortOrder += 1;
+      const before = await db
+        .select({ id: schema.runtimeExecutionTargets.id })
+        .from(schema.runtimeExecutionTargets)
+        .where(eq(schema.runtimeExecutionTargets.executionKey, executionKey))
+        .get();
+      const stateBefore = before
+        ? await db
+            .select({ id: schema.runtimeExecutionTargetState.id })
+            .from(schema.runtimeExecutionTargetState)
+            .where(
+              eq(
+                schema.runtimeExecutionTargetState.executionTargetId,
+                before.id,
+              ),
+            )
+            .get()
+        : null;
+      const target = await upsertRuntimeExecutionTarget({
+        accountId: candidate.accountId,
+        tokenId: candidate.tokenId,
+        oauthRouteUnitId: candidate.oauthRouteUnitId,
+        sourceModel: candidate.modelName,
+        enabled: true,
+        discovered: true,
+        source: "availability_rebuild",
+        metadata: { source: "availability_rebuild" },
+        advanceManagementCatalogRevision: false,
+      });
+      if (before) updatedSupplyEndpoints += 1;
+      else createdSupplyEndpoints += 1;
+      if (!stateBefore) createdSupplyEndpointStates += 1;
+      if (candidate.sharedEndpoint) {
+        const endpoint = sharedTargets.get(candidate.sharedEndpoint.key) || {
+          targets: [],
+          targetSelection: candidate.sharedEndpoint.targetSelection,
+        };
+        endpoint.targets.push(target);
+        sharedTargets.set(candidate.sharedEndpoint.key, endpoint);
+      } else {
+        independentTargets.push(target);
+      }
     }
-
-    const existingCandidates = await db.select().from(schema.routeGroupCandidates)
-      .where(eq(schema.routeGroupCandidates.groupId, bridge.routeGroupId))
-      .all();
-    for (const candidate of existingCandidates) {
-      if (candidate.bucketId !== bridge.bucketId) continue;
-      if (desiredCandidateKeys.has(candidate.candidateKey)) continue;
-      if (candidate.manualOverride) continue;
-      const deleted = await db.delete(schema.routeGroupCandidates)
-        .where(eq(schema.routeGroupCandidates.id, candidate.id))
-        .run();
-      removedCandidates += Number(deleted?.changes || 0);
-    }
+    targetsByModel.set(canonicalModel, [
+      ...independentTargets.map((target) => ({
+        targets: [target],
+        targetSelection: { kind: "builtin" as const, builtin: "stable_first" as const },
+      })),
+      ...Array.from(sharedTargets.values()).map((endpoint) => ({
+        ...endpoint,
+        targets: [...endpoint.targets].sort((left, right) => left.id - right.id),
+      })),
+    ]);
   }
-
+  await advanceRouteGroupManagementCatalogRevision();
   return {
+    targetsByModel,
     createdSupplyEndpoints,
     updatedSupplyEndpoints,
-    createdCandidates,
-    updatedCandidates,
-    removedCandidates,
     createdSupplyEndpointStates,
+  };
+}
+
+function automaticMacroForModel(input: {
+  source: RouteGraphSource;
+  existing: RouteGraphMacro | null;
+  canonicalModel: string;
+  endpoints: AutomaticRouteGroupExecutionEndpoint[];
+}): {
+  source: RouteGraphSource;
+  macro: RouteGraphMacro;
+  created: boolean;
+  createdMembers: number;
+  updatedMembers: number;
+} {
+  let source = input.source;
+  const existingMembers = existingAutomaticMemberByExecutionTarget(
+    source,
+    input.existing,
+  );
+  const membersByStageId = new Map<
+    string,
+    Array<{
+      member: {
+        memberId: string;
+        endpointId: string;
+        enabled: boolean;
+        weight: number;
+        metadata: Record<string, unknown>;
+      };
+      manualIndex: number | null;
+    }>
+  >();
+  const primaryStage = input.existing
+    ? routeGroupFacadeGeneratedPrimaryStage(input.existing)
+    : null;
+  const primaryStageId =
+    primaryStage?.id || createManagedRouteGraphElementId("stage", randomUUID());
+  for (const executionEndpoint of [...input.endpoints].sort(
+    (left, right) => (left.targets[0]?.id || 0) - (right.targets[0]?.id || 0),
+  )) {
+    const existing = executionEndpoint.targets
+      .map((target) => existingMembers.get(target.id))
+      .find(Boolean);
+    const ensured = ensureRouteGraphExecutionTargetsEndpoint(
+      source,
+      executionEndpoint.targets.map((target) => ({
+        id: target.id,
+        upstreamModelName: target.upstreamModelName,
+        enabled: target.enabled !== false,
+      })),
+      {
+        ownership: "derived",
+        ownerKind: "macro",
+        provenance: { source: "generated", generatedBy: "route-group-facade" },
+        endpointId: existing?.member.endpointId,
+        targetSelection: executionEndpoint.targetSelection,
+      },
+    );
+    source = ensured.source;
+    const manuallyAdjusted = existing?.member.metadata?.manualOverride === true;
+    const stageId = manuallyAdjusted ? existing.stageId : primaryStageId;
+    const members = membersByStageId.get(stageId) || [];
+    members.push({
+      member: {
+        memberId:
+          existing?.member.memberId ||
+          createManagedRouteGraphElementId("member", randomUUID()),
+        endpointId: ensured.endpoint.routeEndpointId,
+        enabled: manuallyAdjusted
+          ? existing.member.enabled !== false
+          : executionEndpoint.targets.some((target) => target.enabled !== false),
+        weight: manuallyAdjusted ? (existing.member.weight ?? 10) : 10,
+        metadata: {
+          source: "availability_rebuild",
+          ...(existing?.member.metadata || {}),
+          manualOverride: manuallyAdjusted,
+        },
+      },
+      manualIndex: manuallyAdjusted ? existing.memberIndex : null,
+    });
+    membersByStageId.set(stageId, members);
+  }
+  const materializedMembers = (stageId: string) => {
+    const records = membersByStageId.get(stageId) || [];
+    const members = records
+      .filter((record) => record.manualIndex === null)
+      .map((record) => record.member);
+    for (const record of records
+      .filter((item) => item.manualIndex !== null)
+      .sort((left, right) => left.manualIndex! - right.manualIndex!)) {
+      members.splice(
+        Math.min(record.manualIndex!, members.length),
+        0,
+        record.member,
+      );
+    }
+    return members;
+  };
+  const memberCount = Array.from(membersByStageId.values()).reduce(
+    (count, members) => count + members.length,
+    0,
+  );
+  const visibility = automaticVisibility(
+    source,
+    input.existing,
+    input.canonicalModel,
+  );
+  if (!input.existing) {
+    const created = createRouteGroupFacadeMacro(source, {
+      kind: "automatic",
+      modelName: input.canonicalModel,
+      displayName: input.canonicalModel,
+      visibility,
+      enabled: true,
+      candidateSource: { kind: "model_pattern", pattern: input.canonicalModel },
+      stages: [
+        markRouteGroupFacadeGeneratedPrimaryStage({
+          id: primaryStageId,
+          enabled: true,
+          acceptUnassigned: true,
+          input: {
+            kind: "synthetic",
+            statusCode: 503,
+            message: "No route is available.",
+          },
+          members: materializedMembers(primaryStageId).map((member) => ({
+            kind: "endpoint" as const,
+            ...member,
+          })),
+        }),
+      ],
+      metadata: { managementOwner: AVAILABILITY_SYNC_OWNER },
+    });
+    return {
+      source: created.source,
+      macro: created.macro,
+      created: true,
+      createdMembers: memberCount,
+      updatedMembers: 0,
+    };
+  }
+  const previousMembers = input.existing.config.groups
+    .flatMap((stage) => stage.members || [])
+    .filter((member) => !!member.endpointId).length;
+  const stages = input.existing.config.groups.map((stage) =>
+    stage.id === primaryStageId
+      ? markRouteGroupFacadeGeneratedPrimaryStage({
+          ...stage,
+          acceptUnassigned: true,
+          members: materializedMembers(stage.id),
+        })
+      : { ...stage, acceptUnassigned: undefined, members: materializedMembers(stage.id) },
+  );
+  if (!stages.some((stage) => stage.id === primaryStageId)) {
+    stages.unshift(
+      markRouteGroupFacadeGeneratedPrimaryStage({
+        id: primaryStageId,
+        enabled: true,
+        acceptUnassigned: true,
+        input: {
+          kind: "synthetic",
+          statusCode: 503,
+          message: "No route is available.",
+        },
+        members: materializedMembers(primaryStageId),
+      }),
+    );
+  }
+  const next = normalizeRouteGraphMacro({
+    ...input.existing,
+    name: input.canonicalModel,
+    enabled: input.existing.enabled !== false,
+    config: {
+      ...input.existing.config,
+      candidateSource: { kind: "model_pattern", pattern: input.canonicalModel },
+      surface:
+        visibility === "public"
+          ? {
+              entry: {
+                kind: "external",
+                match: {
+                  kind: "model",
+                  requestedModelPattern: input.canonicalModel,
+                  displayName: input.canonicalModel,
+                },
+              },
+              output: "route",
+            }
+          : { entry: { kind: "none" }, output: "route" },
+      groups: stages,
+    },
+    metadata: {
+      ...input.existing.metadata,
+      canonicalModel: input.canonicalModel,
+      managementOwner: AVAILABILITY_SYNC_OWNER,
+    },
+  });
+  return {
+    source: replaceRouteGroupFacadeMacroInSource(source, next),
+    macro: next,
+    created: false,
+    createdMembers: Math.max(0, memberCount - previousMembers),
+    updatedMembers: Math.min(memberCount, previousMembers),
+  };
+}
+
+/**
+ * Rebuilds automatic Route Groups as source-Graph candidate-selector macros.
+ * Runtime targets are transport facts; no Route Group rows, stage rows or
+ * candidate rows are read or written by this workflow.
+ */
+export async function synchronizeAutomaticRouteGroups(
+  modelCandidates: AutomaticRouteGroupCandidateMap,
+): Promise<AutomaticRouteGroupSynchronizationResult> {
+  const targetSync = await upsertAutomaticExecutionTargets(modelCandidates);
+  const desiredModels = new Set(
+    Array.from(modelCandidates.keys()).map(modelKey),
+  );
+  const result = await mutateRouteGroupFacadeGraph({
+    createdBy: "availability-rebuild",
+    mutate: (initialSource) => {
+      let source = initialSource;
+      const automatic = automaticMacrosByModel(source);
+      let createdRouteGroups = 0;
+      let updatedRouteGroups = 0;
+      let createdRouteGroupFallbackStages = 0;
+      let createdRouteGroupCandidates = 0;
+      let updatedRouteGroupCandidates = 0;
+      let removedRouteGroupCandidates = 0;
+      for (const canonicalModel of desiredModels) {
+        const endpoints = targetSync.targetsByModel.get(canonicalModel) || [];
+        const existing = automatic.get(canonicalModel)?.[0] || null;
+        const existingCount =
+          existing?.config.groups.flatMap((stage) => stage.members || [])
+            .length || 0;
+        const synced = automaticMacroForModel({
+          source,
+          existing,
+          canonicalModel,
+          endpoints,
+        });
+        source = synced.source;
+        if (synced.created) {
+          createdRouteGroups += 1;
+          createdRouteGroupFallbackStages += 1;
+        } else {
+          updatedRouteGroups += 1;
+        }
+        createdRouteGroupCandidates += synced.createdMembers;
+        updatedRouteGroupCandidates += synced.updatedMembers;
+        removedRouteGroupCandidates += Math.max(
+          0,
+          existingCount - endpoints.length,
+        );
+      }
+      const staleMacroIds = new Set<string>();
+      for (const [canonicalModel, macros] of automatic) {
+        const [primary, ...duplicates] = macros;
+        for (const duplicate of duplicates) staleMacroIds.add(duplicate.id);
+        if (!desiredModels.has(canonicalModel) && primary)
+          staleMacroIds.add(primary.id);
+      }
+      const staleMacros = (source.macros || []).filter((macro) =>
+        staleMacroIds.has(macro.id),
+      );
+      removedRouteGroupCandidates += staleMacros.reduce(
+        (count, macro) =>
+          count +
+          macro.config.groups.reduce(
+            (stageCount, stage) => stageCount + (stage.members || []).length,
+            0,
+          ),
+        0,
+      );
+      const next = pruneUnreferencedRouteGroupFacadeEndpoints({
+        ...source,
+        macros: (source.macros || []).filter(
+          (macro) => !staleMacroIds.has(macro.id),
+        ),
+      });
+      assertNoRouteGroupPublicExposureConflicts(publicExposureRows(next));
+      return {
+        source: next,
+        result: {
+          createdRouteGroups,
+          updatedRouteGroups,
+          createdRouteGroupFallbackStages,
+          createdRouteGroupCandidates,
+          updatedRouteGroupCandidates,
+          removedRouteGroupCandidates,
+          removedRoutes: staleMacros.length,
+        },
+      };
+    },
+  });
+  return {
+    ...result.result,
+    createdSupplyEndpoints: targetSync.createdSupplyEndpoints,
+    updatedSupplyEndpoints: targetSync.updatedSupplyEndpoints,
+    createdSupplyEndpointStates: targetSync.createdSupplyEndpointStates,
   };
 }

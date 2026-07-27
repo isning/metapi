@@ -1,4 +1,5 @@
 import Fastify, { type FastifyInstance } from 'fastify';
+import { executionDecisionFromTargetMocks } from '../../../testing/routeRuntimeDecisionMock.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const fetchMock = vi.fn();
@@ -16,6 +17,11 @@ const getProxyVideoTaskByPublicIdMock = vi.fn();
 const deleteProxyVideoTaskByPublicIdMock = vi.fn();
 const refreshProxyVideoTaskSnapshotMock = vi.fn();
 const resolveProxyVideoTaskSiteMock = vi.fn();
+const dbInsertMock = vi.fn(() => ({
+  values: () => ({
+    run: async () => undefined,
+  }),
+}));
 let siteApiEndpointRows: Array<Record<string, unknown>> = [];
 
 vi.mock('undici', async () => {
@@ -26,13 +32,37 @@ vi.mock('undici', async () => {
   };
 });
 
-vi.mock('../../services/tokenRouter.js', () => ({
-  tokenRouter: {
-    selectTarget: (...args: unknown[]) => selectTargetMock(...args),
-    selectNextTarget: (...args: unknown[]) => selectNextTargetMock(...args),
-    recordSuccess: (...args: unknown[]) => recordSuccessMock(...args),
-    recordFailure: (...args: unknown[]) => recordFailureMock(...args),
+
+vi.mock('../../services/routeRuntimeExecutionService.js', () => ({
+  createRouteRuntimeDecisionSession: async (input: any) => input,
+  selectRouteRuntimeDecisionInSession: (session: any, input: any) => executionDecisionFromTargetMocks(
+    { ...session, ...input }, selectTargetMock, selectNextTargetMock,
+  ),
+  previewRouteRuntimeDecisionInSession: (session: any, input: any) => executionDecisionFromTargetMocks(
+    { ...session, ...input }, selectNextTargetMock,
+  ),
+  selectRouteRuntimeDecision: (input: any) => executionDecisionFromTargetMocks(input, selectTargetMock, selectNextTargetMock),
+  previewRouteRuntimeDecision: (input: any) => executionDecisionFromTargetMocks(input, selectNextTargetMock),
+  selectRouteRuntimeExecutionAttempt: (input: any) => {
+    const excluded = Array.isArray(input?.disabledExecutionTargetIds) ? input.disabledExecutionTargetIds : [];
+    if (excluded.length > 0) {
+      return selectNextTargetMock(input.requestedModel, excluded, input.downstreamPolicy);
+    }
+    return selectTargetMock(input?.requestedModel, input?.downstreamPolicy);
   },
+  resolveRouteRuntimeSyntheticResponse: async () => null,
+  recordRouteRuntimeExecutionAttemptStarted: async () => undefined,
+  recordRouteRuntimeExecutionAttemptSuccess: (input: any) =>
+    recordSuccessMock(input.executionTargetId, input.latencyMs),
+  recordRouteRuntimeExecutionAttemptFailure: (input: any) =>
+    recordFailureMock(input.executionTargetId, { status: input.status, rawErrorText: input.errorText }),
+  recordRouteRuntimeExecutionAttemptSelected: async () => undefined,
+}));
+
+vi.mock('../../services/compiledRuntimeExecutionSessionService.js', () => ({
+  startCompiledRuntimeExecutionSession: async () => ({ requestId: 'request:videos-test', startedAtMs: Date.now() }),
+  bindCompiledRuntimeExecutionDecision: async () => undefined,
+  completeCompiledRuntimeExecutionSession: async () => true,
 }));
 
 vi.mock('../../services/modelService.js', () => ({
@@ -50,6 +80,7 @@ vi.mock('../../services/alertRules.js', () => ({
 
 vi.mock('../../services/modelPricingService.js', () => ({
   estimateProxyCost: (arg: any) => estimateProxyCostMock(arg),
+  buildProxyBillingDetails: async () => null,
 }));
 
 vi.mock('../../services/proxyRetryPolicy.js', () => ({
@@ -70,12 +101,9 @@ vi.mock('../../services/credentialEndpointBindingService.js', () => ({
   loadCredentialApiVariantConfig: async () => null,
 }));
 
-vi.mock('../../services/proxyLogRouteDecisionSnapshot.js', () => ({
-  buildProxyLogRouteDecisionSnapshot: async () => null,
-}));
-
 vi.mock('../../db/index.js', () => ({
   db: {
+    insert: (arg: unknown) => dbInsertMock(arg),
     select: () => ({
       from: () => ({
         where: () => ({
@@ -95,6 +123,7 @@ vi.mock('../../db/index.js', () => ({
   },
   hasProxyLogStreamTimingColumns: async () => false,
   schema: {
+    proxyLogs: {},
     siteApiEndpoints: {
       id: {},
       siteId: {},
@@ -142,16 +171,25 @@ describe('/v1/videos routes', () => {
     deleteProxyVideoTaskByPublicIdMock.mockReset();
     refreshProxyVideoTaskSnapshotMock.mockReset();
     resolveProxyVideoTaskSiteMock.mockReset();
+    dbInsertMock.mockClear();
     siteApiEndpointRows = [];
     shouldRetryProxyRequestMock.mockReturnValue(false);
 
     selectTargetMock.mockReturnValue({
+      executionAttemptId: 'attempt:videos-test',
+      executionTargetId: 11,
       target: { id: 11, routeId: 22 },
       site: { id: 44, name: 'demo-site', url: 'https://upstream.example.com', platform: 'openai' },
       account: { id: 33, username: 'demo-user' },
       tokenName: 'default',
       tokenValue: 'sk-demo',
       actualModel: 'sora-2',
+      routeEntrypointId: 'entry:videos-test',
+      runtimeEndpointId: 'endpoint:videos-test',
+      runtimeArtifactId: 'runtime-artifact-1',
+      routeRuntimeSnapshot: {
+        compiledRuntime: { bundleHash: 'videos-test-bundle' },
+      },
     });
     selectNextTargetMock.mockReturnValue(null);
   });
@@ -249,12 +287,20 @@ describe('/v1/videos routes', () => {
       },
     ];
     selectTargetMock.mockReturnValue({
+      executionAttemptId: 'attempt:videos-split-test',
+      executionTargetId: 11,
       target: { id: 11, routeId: 22 },
       site: { id: 44, name: 'demo-site', url: 'https://panel.example.com', platform: 'openai' },
       account: { id: 33, username: 'demo-user' },
       tokenName: 'default',
       tokenValue: 'sk-demo',
       actualModel: 'sora-2',
+      routeEntrypointId: 'entry:videos-split-test',
+      runtimeEndpointId: 'endpoint:videos-split-test',
+      runtimeArtifactId: 'runtime-artifact-1',
+      routeRuntimeSnapshot: {
+        compiledRuntime: { bundleHash: 'videos-split-test-bundle' },
+      },
     });
     saveProxyVideoTaskMock.mockResolvedValue({
       publicId: 'vid_local_split',

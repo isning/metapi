@@ -1,4 +1,5 @@
 import Fastify, { type FastifyInstance } from 'fastify';
+import { executionDecisionFrom } from '../../../testing/routeRuntimeDecisionMock.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const fetchMock = vi.fn();
@@ -24,13 +25,26 @@ vi.mock('undici', async () => {
   };
 });
 
-vi.mock('../../services/tokenRouter.js', () => ({
-  tokenRouter: {
-    selectTarget: (...args: unknown[]) => selectTargetMock(...args),
-    selectNextTarget: (...args: unknown[]) => selectNextTargetMock(...args),
-    recordSuccess: (...args: unknown[]) => recordSuccessMock(...args),
-    recordFailure: (...args: unknown[]) => recordFailureMock(...args),
-  },
+vi.mock('../../services/routeRuntimeExecutionService.js', () => ({
+  createRouteRuntimeDecisionSession: async (input: any) => input,
+  selectRouteRuntimeDecisionInSession: (session: any, input: any) => executionDecisionFrom(
+    (value) => selectTargetMock(value), { ...session, ...input },
+  ),
+  previewRouteRuntimeDecisionInSession: (session: any, input: any) => executionDecisionFrom(
+    (value) => selectNextTargetMock(value), { ...session, ...input },
+  ),
+  selectRouteRuntimeDecision: (input: any) => executionDecisionFrom((value) => selectTargetMock(value), input),
+  previewRouteRuntimeDecision: (input: any) => executionDecisionFrom((value) => selectNextTargetMock(value), input),
+  selectRouteRuntimeExecutionAttempt: (...args: unknown[]) => selectTargetMock(...args),
+  recordRouteRuntimeExecutionAttemptStarted: async () => undefined,
+  recordRouteRuntimeExecutionAttemptSuccess: (...args: unknown[]) => recordSuccessMock(...args),
+  recordRouteRuntimeExecutionAttemptFailure: (...args: unknown[]) => recordFailureMock(...args),
+}));
+
+vi.mock('../../services/compiledRuntimeExecutionSessionService.js', () => ({
+  startCompiledRuntimeExecutionSession: async () => ({ requestId: 'request:search-test', startedAtMs: Date.now() }),
+  bindCompiledRuntimeExecutionDecision: async () => undefined,
+  completeCompiledRuntimeExecutionSession: async () => true,
 }));
 
 vi.mock('../../services/modelService.js', () => ({
@@ -58,10 +72,6 @@ vi.mock('../../services/proxyRetryPolicy.js', () => ({
 
 vi.mock('../../services/credentialEndpointBindingService.js', () => ({
   loadCredentialApiVariantConfig: async () => null,
-}));
-
-vi.mock('../../services/proxyLogRouteDecisionSnapshot.js', () => ({
-  buildProxyLogRouteDecisionSnapshot: async () => null,
 }));
 
 vi.mock('../../db/index.js', () => ({
@@ -120,12 +130,20 @@ describe('/v1/search route', () => {
     dbInsertMock.mockClear();
 
     selectTargetMock.mockReturnValue({
+      executionAttemptId: 'ea_b',
+      executionTargetId: 11,
       target: { id: 11, routeId: 22 },
       site: { id: 44, name: 'demo-site', url: 'https://upstream.example.com', platform: 'openai' },
       account: { id: 33, username: 'demo-user' },
       tokenName: 'default',
       tokenValue: 'sk-demo',
       actualModel: '__search',
+      routeEntrypointId: 'entry:search',
+      runtimeEndpointId: 'endpoint:search',
+      runtimeArtifactId: 'runtime-artifact-1',
+      routeRuntimeSnapshot: {
+        compiledRuntime: { bundleHash: 'search-test-bundle' },
+      },
     });
     selectNextTargetMock.mockReturnValue(null);
   });
@@ -157,7 +175,17 @@ describe('/v1/search route', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(selectTargetMock).toHaveBeenCalledWith('__search', expect.anything());
+    expect(selectTargetMock).toHaveBeenCalledWith(expect.objectContaining({
+      requestedModel: '__search',
+      request: expect.objectContaining({
+        requestedModel: '__search',
+        payload: expect.objectContaining({ query: 'axonhub' }),
+        normalizedPayload: expect.objectContaining({ query: 'axonhub' }),
+        headers: expect.objectContaining({ authorization: 'Bearer sk-demo' }),
+        method: 'POST',
+        path: '/v1/search',
+      }),
+    }));
     const [targetUrl, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(targetUrl).toBe('https://upstream.example.com/v1/search');
     expect(JSON.parse(String(requestInit.body))).toEqual({

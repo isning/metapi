@@ -1,18 +1,409 @@
 import { describe, expect, it } from 'vitest';
 import {
-  buildRouteGraphSourceFromLegacyRoutes,
+  buildCandidateSelectorMacro,
   compileRouteGraphSource,
   findRouteGraphEntryForModel,
   getRouteGraphMacroPorts,
   getRouteGraphMacroPort,
   getRouteGraphNodePorts,
+  canAttachManualRouteGraphEdge,
+  normalizeRouteGraphMacro,
+  normalizeRouteGraphNode,
   normalizeRouteGraphSource,
 } from './routeGraph.js';
+import {
+  compactCompiledRouterBundle,
+  getCompiledRouterExecutionTargetIds,
+  getCompiledRouterPlanById,
+} from './compiledRuntime.js';
+
+describe('route graph native exposure semantics', () => {
+  it('resolves connection editability only from the port contract', () => {
+    const generatedNode = normalizeRouteGraphNode({
+      id: 'endpoint:generated',
+      type: 'route_endpoint',
+      enabled: true,
+      ownership: 'derived',
+      routeEndpointId: 'route-endpoint:generated',
+      endpointKind: 'supply',
+      exposure: 'none',
+      resolutionStatus: 'resolved',
+      ownerKind: 'macro',
+      sourceKind: 'upstream_model',
+      backend: { kind: 'supply' },
+      dynamicPorts: [{
+        id: 'route.locked.out',
+        label: 'Locked route product',
+        direction: 'output',
+        kind: 'route',
+        manualEdgePolicy: 'deny',
+      }],
+    });
+    const macro = normalizeRouteGraphMacro({
+      id: 'macro:locked-surface',
+      kind: 'candidate_selector',
+      enabled: true,
+      ownership: 'system',
+      config: {
+        surface: {
+          entry: { kind: 'none' },
+          output: 'route',
+          ports: [{ id: 'route.out', label: 'Route output', direction: 'output', kind: 'route', manualEdgePolicy: 'deny' }],
+        },
+        groups: [],
+      },
+    });
+
+    expect(canAttachManualRouteGraphEdge(getRouteGraphNodePorts(generatedNode).find((port) => port.id === 'route.out'))).toBe(true);
+    expect(canAttachManualRouteGraphEdge(getRouteGraphNodePorts(generatedNode).find((port) => port.id === 'route.locked.out'))).toBe(false);
+    expect(canAttachManualRouteGraphEdge(getRouteGraphMacroPorts(macro)[0])).toBe(false);
+  });
+
+  it('does not retain generic visibility on nodes or macros', () => {
+    const entry = normalizeRouteGraphNode({
+      id: 'entry:native',
+      type: 'entry',
+      enabled: true,
+      visibility: 'internal',
+      ownership: 'manual',
+      match: { requestedModelPattern: 'native' },
+    });
+    const macro = normalizeRouteGraphMacro({
+      id: 'macro:native',
+      kind: 'candidate_selector',
+      enabled: true,
+      visibility: 'public',
+      ownership: 'manual',
+      config: { surface: { entry: { kind: 'none' }, output: 'route' }, groups: [] },
+    });
+
+    expect(entry).not.toHaveProperty('visibility');
+    expect(macro).not.toHaveProperty('visibility');
+    expect(macro.config.surface.entry).toEqual({ kind: 'none' });
+  });
+
+  it('builds internal route macros without a graph ingress', () => {
+    const macro = buildCandidateSelectorMacro({
+      stableId: 'macro:internal',
+      displayName: 'Internal route',
+      ingress: 'none',
+      endpointIds: ['endpoint:a'],
+    });
+
+    expect(macro.config.surface.entry).toEqual({ kind: 'none' });
+    expect(getRouteGraphMacroPorts(macro).map((port) => port.id)).not.toContain('bidirect.in');
+  });
+
+  it('preserves opaque dispatcher-member identities without changing compiled selection semantics', () => {
+    const macro = normalizeRouteGraphMacro({
+      id: 'macro:member-identity',
+      kind: 'candidate_selector',
+      enabled: true,
+      ownership: 'manual',
+      config: {
+        surface: { entry: { kind: 'none' }, output: 'route' },
+        groups: [{
+          id: 'stage:managed:1',
+          input: { kind: 'route_endpoints', endpointIds: ['endpoint:one'] },
+          members: [{ memberId: 'member:managed:1', endpointId: 'endpoint:one', weight: 3 }],
+        }],
+      },
+    });
+
+    expect(macro.config.groups[0]?.members).toEqual([
+      expect.objectContaining({ memberId: 'member:managed:1', endpointId: 'endpoint:one', weight: 3 }),
+    ]);
+  });
+
+});
+
+function fixtureRouteKey(route: any): string {
+  return String(route?.stableId ?? route?.id ?? route?.displayName ?? route?.match?.requestedModelPattern ?? 'route');
+}
+
+function fixtureExecutionTargetId(routeKey: string): string {
+  return `route-endpoint:supply:upstream-model-fixture:${routeKey}`;
+}
+
+function fixtureEntryId(routeKey: string): string {
+  return `entry:route-fixture:${routeKey}`;
+}
+
+function fixtureDispatcherId(routeKey: string): string {
+  return `dispatcher:route-fixture:${routeKey}`;
+}
+
+function compiledRuntimePublicModels(result: { compiled: { compiledRouterBundle?: { plans?: Array<{ entryNodeId: string; publicModelName: string }> } } }) {
+  return (result.compiled.compiledRouterBundle?.plans || [])
+    .map((plan) => ({ nodeId: plan.entryNodeId, model: plan.publicModelName }));
+}
+
+function compiledRuntimeOps(result: { compiled: { compiledRouterBundle?: { plans?: Array<{ ops?: any[] }> } } }): any[] {
+  return (result.compiled.compiledRouterBundle?.plans || []).flatMap((plan: any) => (
+    plan.executionAlternatives || []
+  ).flatMap((alternative: any) => [
+    alternative,
+    ...(Array.isArray(alternative.selectionTerms) ? alternative.selectionTerms : []),
+  ]));
+}
+
+function normalizeFixtureTargets(route: any): any[] {
+  if (Array.isArray(route?.targets)) return route.targets;
+  if (Array.isArray(route?.supplyEndpointSpecs)) {
+    return route.supplyEndpointSpecs.flatMap((spec: any) => Array.isArray(spec?.targets) ? spec.targets : []);
+  }
+  return [];
+}
+
+function fixtureModelName(route: any): string {
+  return String(
+    route?.match?.displayName
+    || route?.match?.requestedModelPattern
+    || route?.displayName
+    || normalizeFixtureTargets(route)[0]?.model
+    || '',
+  );
+}
+
+function createFixtureSupplyNode(route: any) {
+  const targets = normalizeFixtureTargets(route);
+  if (targets.length === 0) return null;
+  const routeKey = fixtureRouteKey(route);
+  const model = fixtureModelName(route);
+  const endpointId = fixtureExecutionTargetId(routeKey);
+  return {
+    id: endpointId,
+    type: 'route_endpoint',
+    name: model || routeKey,
+    enabled: route?.enabled !== false,
+    ownership: route?.ownership || 'manual',
+    endpointKind: 'supply',
+    exposure: 'none',
+    resolutionStatus: 'resolved',
+    routeEndpointId: endpointId,
+    backend: { kind: 'supply' },
+    match: {
+      kind: 'model',
+      requestedModelPattern: model,
+      displayName: model || null,
+    },
+    config: {
+      targets: targets.map((target: any, index: number) => ({
+        targetId: String(target?.targetId ?? `${routeKey}:${index}`),
+        model: String(target?.model ?? model),
+        modelSource: target?.modelSource || 'fixed',
+        accountId: target?.accountId ?? null,
+        tokenId: target?.tokenId ?? null,
+        siteId: target?.siteId ?? null,
+        weight: target?.weight ?? 10,
+      })),
+      targetSelection: { kind: 'builtin', builtin: route?.dispatcherBuiltin || 'weighted' },
+    },
+    metadata: {
+      fixture: true,
+      suppliedModels: model ? [model] : [],
+    },
+  };
+}
+
+function buildDirectFixtureRoute(route: any) {
+  const routeKey = fixtureRouteKey(route);
+  const model = fixtureModelName(route);
+  const entryId = fixtureEntryId(routeKey);
+  const dispatcherId = fixtureDispatcherId(routeKey);
+  const executionTargetId = fixtureExecutionTargetId(routeKey);
+  const supplyNode = createFixtureSupplyNode(route);
+  const nodes: any[] = [
+    {
+      id: entryId,
+      type: 'entry',
+      name: route?.displayName || model,
+      enabled: route?.enabled !== false,
+      ownership: route?.ownership || 'manual',
+      match: {
+        kind: 'model',
+        requestedModelPattern: route?.match?.requestedModelPattern || model,
+        displayName: route?.match?.displayName ?? route?.displayName ?? null,
+      },
+    },
+    {
+      id: dispatcherId,
+      type: 'dispatcher',
+      name: route?.displayName || model,
+      enabled: route?.enabled !== false,
+      ownership: route?.ownership || 'manual',
+      mode: 'route',
+      policy: { kind: 'builtin', builtin: route?.dispatcherBuiltin || 'weighted' },
+    },
+    ...(supplyNode ? [supplyNode] : []),
+  ];
+  const edges: any[] = [
+    {
+      id: `edge:${entryId}:bidirect.out:${dispatcherId}:bidirect.in`,
+      sourceNodeId: entryId,
+      sourcePortId: 'bidirect.out',
+      targetNodeId: dispatcherId,
+      targetPortId: 'bidirect.in',
+      kind: 'bidirect_flow',
+      ownership: route?.ownership || 'manual',
+    },
+  ];
+  if (supplyNode) {
+    edges.push({
+      id: `edge:${executionTargetId}:route.out:${dispatcherId}:route.in`,
+      sourceNodeId: executionTargetId,
+      sourcePortId: 'route.out',
+      targetNodeId: dispatcherId,
+      targetPortId: 'route.in',
+      kind: 'route_flow',
+      ownership: route?.ownership || 'manual',
+      metadata: {
+        candidate: {
+          id: `candidate:${routeKey}`,
+          routeEndpointId: executionTargetId,
+          endpointKind: 'supply',
+          weight: normalizeFixtureTargets(route)[0]?.weight ?? 10,
+        },
+      },
+    });
+  }
+  return { nodes, edges, macros: [] };
+}
+
+function buildRouteGroupFixtureRoute(route: any) {
+  const routeKey = fixtureRouteKey(route);
+  const model = fixtureModelName(route);
+  const sourceEndpointIds = Array.isArray(route?.backend?.endpointIds)
+    ? route.backend.endpointIds.map((endpointId: unknown) => String(endpointId || '').trim()).filter(Boolean)
+    : [];
+  const macro = buildCandidateSelectorMacro({
+    stableId: `route-group:${routeKey}`,
+    displayName: route?.displayName || model || routeKey,
+    ingress: route?.visibility === 'internal' ? 'none' : 'external',
+    enabled: route?.enabled !== false,
+    policy: { kind: 'builtin', builtin: route?.dispatcherBuiltin || 'weighted' },
+    endpointIds: sourceEndpointIds,
+    ownership: route?.ownership || 'manual',
+    match: {
+      kind: 'model',
+      requestedModelPattern: route?.match?.requestedModelPattern || '',
+      displayName: route?.match?.displayName ?? route?.displayName ?? null,
+    },
+    metadata: {},
+  });
+  return {
+    nodes: [],
+    edges: sourceEndpointIds.map((endpointId: string) => ({
+      id: `edge:${endpointId}:route.out:macro:route-group:${routeKey}:candidates.in`,
+      sourceNodeId: endpointId,
+      sourcePortId: 'route.out',
+      targetNodeId: `macro:route-group:${routeKey}`,
+      targetPortId: 'candidates.in',
+      kind: 'route_flow',
+      ownership: route?.ownership || 'manual',
+      metadata: {
+          candidate: {
+            routeEndpointId: endpointId,
+            endpointKind: 'supply',
+            weight: 10,
+        },
+      },
+    })),
+    macros: [macro],
+  };
+}
+
+function buildGroupedFixtureRoutes(fixtureGroup: string, routes: any[]) {
+  const canonical = fixtureGroup.toLowerCase();
+  const nodes: any[] = [];
+  const edges: any[] = [];
+  const macros: any[] = [];
+  const first = routes[0];
+  const displayName = fixtureModelName(first);
+  const endpointIds: string[] = [];
+  for (const route of routes) {
+    const supplyNode = createFixtureSupplyNode(route);
+    if (!supplyNode) continue;
+    nodes.push(supplyNode);
+    endpointIds.push(supplyNode.id);
+  }
+  macros.push(buildCandidateSelectorMacro({
+    stableId: `fixture-group:${canonical}`,
+    displayName,
+    enabled: first?.enabled !== false,
+    policy: { kind: 'builtin', builtin: first?.dispatcherBuiltin || 'weighted' },
+    endpointIds,
+    ownership: 'system',
+    match: { kind: 'model', requestedModelPattern: displayName, displayName },
+    fallbackStages: endpointIds.length > 0 ? [{
+      id: 'default',
+      label: 'Default',
+      enabled: true,
+      policy: { kind: 'builtin', builtin: first?.dispatcherBuiltin || 'weighted' },
+      members: endpointIds.map((endpointId) => ({ endpointId, weight: 10 })),
+    }] : [],
+  }));
+  for (const endpointId of endpointIds) {
+    edges.push({
+      id: `edge:${endpointId}:route.out:macro:fixture-group:${canonical}:candidates.in`,
+      sourceNodeId: endpointId,
+      sourcePortId: 'route.out',
+      targetNodeId: `macro:fixture-group:${canonical}`,
+      targetPortId: 'candidates.in',
+      kind: 'route_flow',
+      ownership: 'system',
+      metadata: {
+        candidate: {
+          routeEndpointId: endpointId,
+          endpointKind: 'supply',
+          weight: 10,
+        },
+      },
+    });
+  }
+  return { nodes, edges, macros };
+}
+
+function buildRouteGraphSourceFromFixtureRoutes(routes: any[]) {
+  const groupedRoutesByFixtureGroup = new Map<string, any[]>();
+  for (const route of routes) {
+    const fixtureGroup = String(route?.fixtureGroup || '').trim();
+    if (!fixtureGroup || route?.backend?.kind !== 'supply') continue;
+    const current = groupedRoutesByFixtureGroup.get(fixtureGroup) || [];
+    current.push(route);
+    groupedRoutesByFixtureGroup.set(fixtureGroup, current);
+  }
+  const groupedRouteIds = new Set(
+    Array.from(groupedRoutesByFixtureGroup.values()).flatMap((groupedRoutes) => groupedRoutes.map((route) => route.id)),
+  );
+  const pieces = [
+    ...Array.from(groupedRoutesByFixtureGroup.entries()).map(([fixtureGroup, groupedRoutes]) => (
+      buildGroupedFixtureRoutes(fixtureGroup, groupedRoutes)
+    )),
+    ...routes
+      .filter((route) => !groupedRouteIds.has(route.id))
+      .map((route) => route?.backend?.kind === 'route_endpoints'
+        ? buildRouteGroupFixtureRoute(route)
+        : buildDirectFixtureRoute(route)),
+  ];
+  const nodesById = new Map<string, any>();
+  const edgesById = new Map<string, any>();
+  const macrosById = new Map<string, any>();
+  for (const piece of pieces) {
+    for (const node of piece.nodes) nodesById.set(node.id, node);
+    for (const edge of piece.edges) edgesById.set(edge.id, edge);
+    for (const macro of piece.macros) macrosById.set(macro.id, macro);
+  }
+  return normalizeRouteGraphSource({
+    nodes: Array.from(nodesById.values()),
+    edges: Array.from(edgesById.values()),
+    macros: Array.from(macrosById.values()),
+  });
+}
 
 describe('routeGraph port-native source', () => {
   it('normalizes route graph sources with unique edge ids', () => {
     const source = normalizeRouteGraphSource({
-      version: 1,
       nodes: [],
       macros: [],
       edges: [
@@ -24,8 +415,8 @@ describe('routeGraph port-native source', () => {
     expect(source.edges).toHaveLength(1);
   });
 
-  it('builds direct legacy routes as entry-dispatcher graphs', () => {
-    const source = buildRouteGraphSourceFromLegacyRoutes([
+  it('builds direct graph-native routes as entry-dispatcher graphs', () => {
+    const source = buildRouteGraphSourceFromFixtureRoutes([
         {
           id: 11,
           enabled: true,
@@ -33,8 +424,7 @@ describe('routeGraph port-native source', () => {
           match: {
             kind: 'model',
             requestedModelPattern: 'gpt-4o',
-            displayName: null,
-            routeId: 11,
+            displayName: null
           },
           backend: { kind: 'supply' },
           targets: [{ targetId: '11', model: 'gpt-4o', accountId: 1, tokenId: 1, weight: 10 }],
@@ -42,72 +432,229 @@ describe('routeGraph port-native source', () => {
     ]);
 
     expect(source.nodes).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 'entry:legacy:11', type: 'entry' }),
-      expect.objectContaining({ id: 'dispatcher:legacy:11', type: 'dispatcher', mode: 'route' }),
-      expect.objectContaining({ id: 'route-endpoint:product:route:11', type: 'route_endpoint', endpointKind: 'route_product' }),
+      expect.objectContaining({ id: 'entry:route-fixture:11', type: 'entry' }),
+      expect.objectContaining({ id: 'dispatcher:route-fixture:11', type: 'dispatcher', mode: 'route' }),
     ]));
     expect(source.edges).toEqual(expect.arrayContaining([
-      expect.objectContaining({ sourceNodeId: 'entry:legacy:11', sourcePortId: 'bidirect.out', targetNodeId: 'dispatcher:legacy:11', targetPortId: 'bidirect.in', kind: 'bidirect_flow' }),
-      expect.objectContaining({ sourceNodeId: 'route-endpoint:supply:route:11', sourcePortId: 'route.out', targetNodeId: 'dispatcher:legacy:11', targetPortId: 'route.in', kind: 'route_flow' }),
+      expect.objectContaining({ sourceNodeId: 'entry:route-fixture:11', sourcePortId: 'bidirect.out', targetNodeId: 'dispatcher:route-fixture:11', targetPortId: 'bidirect.in', kind: 'bidirect_flow' }),
+      expect.objectContaining({ sourceNodeId: 'route-endpoint:supply:upstream-model-fixture:11', sourcePortId: 'route.out', targetNodeId: 'dispatcher:route-fixture:11', targetPortId: 'route.in', kind: 'route_flow' }),
     ]));
     expect(compileRouteGraphSource(source).ok).toBe(true);
     const compiled = compileRouteGraphSource(source);
     const router = compiled.compiled.compiledRouterBundle;
     expect(router).toMatchObject({
-      version: 2,
+      planIndex: {
+        'program:entry:route-fixture:11': 0,
+      },
       matcher: {
         exact: {
           'gpt-4o': expect.objectContaining({
-            programId: 'program:entry:legacy:11',
-            entryNodeId: 'entry:legacy:11',
+            programId: 'program:entry:route-fixture:11',
+            entryNodeId: 'entry:route-fixture:11',
             publicModelName: 'gpt-4o',
-            rootEndpointId: 'route-endpoint:product:route:11',
           }),
         },
         normalizedExact: {
           'gpt-4o': expect.objectContaining({
-            programId: 'program:entry:legacy:11',
+            programId: 'program:entry:route-fixture:11',
           }),
         },
       },
     });
     expect(router?.plans).toEqual([
       expect.objectContaining({
-        id: 'program:entry:legacy:11',
-        entryNodeId: 'entry:legacy:11',
+        id: 'program:entry:route-fixture:11',
+        entryNodeId: 'entry:route-fixture:11',
         publicModelName: 'gpt-4o',
-        rootEndpointId: 'route-endpoint:product:route:11',
-        selectorLevels: [expect.objectContaining({
-          nodeId: 'dispatcher:legacy:11',
-          mode: 'route',
-          groups: [expect.objectContaining({
-            endpointId: 'route-endpoint:supply:route:11',
-            terminalCandidateIndexes: [0],
-          })],
-        })],
-        candidates: [expect.objectContaining({
+        executionAlternatives: [expect.objectContaining({
+          kind: 'execution_attempt',
+          // A single static dispatcher branch and execution target are direct.
+          selectionTerms: [],
+          fallbackStages: [],
           terminal: expect.objectContaining({
             kind: 'supply',
-            endpointId: 'route-endpoint:supply:route:11',
-            routeId: 11,
-            targetIndexes: [0],
+            endpointId: 'route-endpoint:supply:upstream-model-fixture:11',
           }),
-        })],
-        targets: [expect.objectContaining({
-          targetId: 'route-endpoint:supply:route:11:target:0:11',
-          model: 'gpt-4o',
+          endpoint: expect.objectContaining({
+            endpointId: 'route-endpoint:supply:upstream-model-fixture:11',
+          }),
+          executionAttempt: expect.objectContaining({
+            targetId: '11',
+            model: 'gpt-4o',
+          }),
         })],
       }),
     ]);
   });
 
-  it('builds legacy route groups as Model Group macros without route_ref nodes', () => {
-    const source = buildRouteGraphSourceFromLegacyRoutes([
+  it('rejects executable route endpoint targets without stable target ids', () => {
+    const result = compileRouteGraphSource({
+      nodes: [
+        {
+          id: 'entry:missing-target-id',
+          type: 'entry',
+          enabled: true,
+          ownership: 'manual',
+          match: { requestedModelPattern: 'missing-target-id-model' },
+        },
+        {
+          id: 'dispatcher:missing-target-id',
+          type: 'dispatcher',
+          enabled: true,
+          ownership: 'manual',
+          mode: 'route',
+        },
+        {
+          id: 'endpoint:missing-target-id',
+          type: 'route_endpoint',
+          enabled: true,
+          ownership: 'manual',
+          endpointKind: 'supply',
+          config: {
+            targets: [{ model: 'missing-target-id-model' }],
+            targetSelection: { kind: 'builtin', builtin: 'weighted' },
+          },
+        },
+      ],
+      edges: [
+        { id: 'entry-to-dispatcher', sourceNodeId: 'entry:missing-target-id', sourcePortId: 'bidirect.out', targetNodeId: 'dispatcher:missing-target-id', targetPortId: 'bidirect.in', kind: 'bidirect_flow', ownership: 'manual' },
+        { id: 'endpoint-to-dispatcher', sourceNodeId: 'endpoint:missing-target-id', sourcePortId: 'route.out', targetNodeId: 'dispatcher:missing-target-id', targetPortId: 'route.in', kind: 'route_flow', ownership: 'manual' },
+      ],
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics.map((item) => item.code)).toContain('route_endpoint.target_id_required');
+    const plan = result.compiled.compiledRouterBundle?.plans?.[0];
+    expect(String(JSON.stringify(plan))).not.toContain('endpoint:missing-target-id:target:0');
+  });
+
+  it('keeps compiled execution alternative ids stable across target order changes', () => {
+    const buildSource = (targets: Array<{ targetId: string; model: string }>) => ({
+      nodes: [
+        {
+          id: 'entry:stable-target-order',
+          type: 'entry',
+          enabled: true,
+          ownership: 'manual',
+          match: { requestedModelPattern: 'stable-target-order-model' },
+        },
+        {
+          id: 'dispatcher:stable-target-order',
+          type: 'dispatcher',
+          enabled: true,
+          ownership: 'manual',
+          mode: 'route',
+        },
+        {
+          id: 'endpoint:stable-target-order',
+          type: 'route_endpoint',
+          routeEndpointId: 'endpoint:stable-target-order',
+          enabled: true,
+          ownership: 'manual',
+          endpointKind: 'supply',
+          config: {
+            targets,
+            targetSelection: { kind: 'builtin', builtin: 'weighted' },
+          },
+        },
+      ],
+      edges: [
+        { id: 'edge:stable-target-entry-dispatcher', sourceNodeId: 'entry:stable-target-order', sourcePortId: 'bidirect.out', targetNodeId: 'dispatcher:stable-target-order', targetPortId: 'bidirect.in', kind: 'bidirect_flow', ownership: 'manual' },
+        { id: 'edge:stable-target-endpoint-dispatcher', sourceNodeId: 'endpoint:stable-target-order', sourcePortId: 'route.out', targetNodeId: 'dispatcher:stable-target-order', targetPortId: 'route.in', kind: 'route_flow', ownership: 'manual' },
+      ],
+    });
+    const alternativesByTargetId = (source: ReturnType<typeof buildSource>) => Object.fromEntries(
+      (compileRouteGraphSource(source).compiled.compiledRouterBundle?.plans[0]?.executionAlternatives || [])
+        .map((alternative: any) => [alternative.executionAttempt?.targetId, alternative.alternativeId]),
+    );
+
+    const first = alternativesByTargetId(buildSource([
+      { targetId: 'target:a', model: 'stable-target-a' },
+      { targetId: 'target:b', model: 'stable-target-b' },
+    ]));
+    const reversed = alternativesByTargetId(buildSource([
+      { targetId: 'target:b', model: 'stable-target-b' },
+      { targetId: 'target:a', model: 'stable-target-a' },
+    ]));
+
+    expect(first).toEqual(reversed);
+    expect(Object.values(first)).toEqual(expect.arrayContaining([
+      expect.stringMatching(/^program:entry:stable-target-order:alt:[a-f0-9]{16}$/),
+    ]));
+    for (const alternativeId of Object.values(first)) {
+      expect(String(alternativeId)).not.toMatch(/:alt:\d+$/);
+    }
+  });
+
+  it('keeps dispatch candidate option ids stable across edge order changes', () => {
+    const buildSource = (candidateEdges: any[]) => ({
+      nodes: [
+        {
+          id: 'entry:stable-edge-order',
+          type: 'entry',
+          enabled: true,
+          ownership: 'manual',
+          match: { requestedModelPattern: 'stable-edge-order-model' },
+        },
+        {
+          id: 'dispatcher:stable-edge-order',
+          type: 'dispatcher',
+          enabled: true,
+          ownership: 'manual',
+          mode: 'route',
+        },
+        {
+          id: 'endpoint:stable-edge-a',
+          type: 'route_endpoint',
+          routeEndpointId: 'endpoint:stable-edge-a',
+          enabled: true,
+          ownership: 'manual',
+          endpointKind: 'supply',
+          config: { targets: [{ targetId: 'target:edge-a', model: 'edge-a' }], targetSelection: { kind: 'builtin', builtin: 'weighted' } },
+        },
+        {
+          id: 'endpoint:stable-edge-b',
+          type: 'route_endpoint',
+          routeEndpointId: 'endpoint:stable-edge-b',
+          enabled: true,
+          ownership: 'manual',
+          endpointKind: 'supply',
+          config: { targets: [{ targetId: 'target:edge-b', model: 'edge-b' }], targetSelection: { kind: 'builtin', builtin: 'weighted' } },
+        },
+      ],
+      edges: [
+        { id: 'edge:stable-edge-entry-dispatcher', sourceNodeId: 'entry:stable-edge-order', sourcePortId: 'bidirect.out', targetNodeId: 'dispatcher:stable-edge-order', targetPortId: 'bidirect.in', kind: 'bidirect_flow', ownership: 'manual' },
+        ...candidateEdges,
+      ],
+    });
+    const edgeA = { id: 'edge:stable-edge-a-dispatcher', sourceNodeId: 'endpoint:stable-edge-a', sourcePortId: 'route.out', targetNodeId: 'dispatcher:stable-edge-order', targetPortId: 'route.in', kind: 'route_flow', ownership: 'manual' };
+    const edgeB = { id: 'edge:stable-edge-b-dispatcher', sourceNodeId: 'endpoint:stable-edge-b', sourcePortId: 'route.out', targetNodeId: 'dispatcher:stable-edge-order', targetPortId: 'route.in', kind: 'route_flow', ownership: 'manual' };
+    const alternativesByTargetId = (source: ReturnType<typeof buildSource>) => Object.fromEntries(
+      (compileRouteGraphSource(source).compiled.compiledRouterBundle?.plans[0]?.executionAlternatives || [])
+        .map((alternative: any) => [
+          alternative.executionAttempt?.targetId,
+          {
+            alternativeId: alternative.alternativeId,
+            dispatchOptionId: alternative.selectionTerms.find((term: any) => term.mode === 'route')?.optionId,
+          },
+        ]),
+    );
+
+    const first = alternativesByTargetId(buildSource([edgeA, edgeB]));
+    const reversed = alternativesByTargetId(buildSource([edgeB, edgeA]));
+
+    expect(first).toEqual(reversed);
+    expect(first['target:edge-a'].dispatchOptionId).toContain('edge:stable-edge-a-dispatcher');
+    expect(JSON.stringify(first)).not.toContain(':candidate:0');
+  });
+
+  it('builds generic route endpoint selectors without route_ref nodes', () => {
+    const source = buildRouteGraphSourceFromFixtureRoutes([
         {
           id: 11,
           enabled: true,
           displayName: null,
-          match: { kind: 'model', requestedModelPattern: 'source-model', displayName: null, routeId: 11 },
+          match: { kind: 'model', requestedModelPattern: 'source-model', displayName: null},
           backend: { kind: 'supply' },
           targets: [{ targetId: '11', model: 'source-model', accountId: 1, tokenId: 1, weight: 10 }],
         },
@@ -115,20 +662,20 @@ describe('routeGraph port-native source', () => {
         id: 21,
         enabled: true,
         displayName: 'public-group',
-        match: { kind: 'model', requestedModelPattern: '', displayName: 'public-group', routeId: 21 },
-        backend: { kind: 'routes', routeIds: [11] },
+        match: { kind: 'model', requestedModelPattern: '', displayName: 'public-group'},
+        backend: { kind: 'route_endpoints', endpointIds: ['route-endpoint:supply:upstream-model-fixture:11'] },
       },
     ]);
 
     expect(source.nodes.some((node) => node.type === 'route_ref')).toBe(false);
     expect(source.macros).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        id: 'route:21:model-group',
+        id: 'route-group:21',
         kind: 'candidate_selector',
         config: expect.objectContaining({
           groups: [
             expect.objectContaining({
-              input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:supply:route:11'] },
+              input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:supply:upstream-model-fixture:11'] },
             }),
           ],
         }),
@@ -137,59 +684,62 @@ describe('routeGraph port-native source', () => {
     const result = compileRouteGraphSource(source);
     expect(result.ok).toBe(true);
     expect(result.primitiveSource.nodes).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 'macro:route:21:model-group:dispatcher', type: 'dispatcher', mode: 'route', ownership: 'derived' }),
-      expect.objectContaining({ id: 'route-endpoint:product:route:11', type: 'route_endpoint', endpointKind: 'route_product' }),
+      expect.objectContaining({ id: 'macro:route-group:21:dispatcher', type: 'dispatcher', mode: 'route', ownership: 'derived' }),
     ]));
     expect(result.primitiveSource.edges).toEqual(expect.arrayContaining([
-      expect.objectContaining({ sourceNodeId: 'route-endpoint:supply:route:11', sourcePortId: 'route.out', targetNodeId: 'macro:route:21:model-group:dispatcher', targetPortId: 'route.in', kind: 'route_flow' }),
+      expect.objectContaining({
+        sourceNodeId: 'route-endpoint:supply:upstream-model-fixture:11',
+        sourcePortId: 'route.out',
+        targetNodeId: 'macro:route-group:21:dispatcher',
+        targetPortId: 'route.in',
+        kind: 'route_flow',
+      }),
     ]));
   });
 
-  it('groups automatic exact-model supplies behind one public route product per canonical model', () => {
-    const source = buildRouteGraphSourceFromLegacyRoutes([
+  it('groups supply endpoints behind one public macro per canonical model', () => {
+    const source = buildRouteGraphSourceFromFixtureRoutes([
       {
         id: 11,
         enabled: true,
         displayName: 'GLM-5.1',
-        match: { kind: 'model', requestedModelPattern: 'GLM-5.1', displayName: 'GLM-5.1', routeId: 11 },
+        match: { kind: 'model', requestedModelPattern: 'GLM-5.1', displayName: 'GLM-5.1'},
         backend: { kind: 'supply' },
-        ownership: 'auto_generated',
+        ownership: 'system',
+        fixtureGroup: 'glm-5.1',
         targets: [{ targetId: '11', model: 'GLM-5.1', accountId: 1, tokenId: 1, weight: 10 }],
       },
       {
         id: 22,
         enabled: true,
         displayName: 'glm-5.1',
-        match: { kind: 'model', requestedModelPattern: 'glm-5.1', displayName: 'glm-5.1', routeId: 22 },
+        match: { kind: 'model', requestedModelPattern: 'glm-5.1', displayName: 'glm-5.1'},
         backend: { kind: 'supply' },
-        ownership: 'auto_generated',
+        ownership: 'system',
+        fixtureGroup: 'glm-5.1',
         targets: [{ targetId: '22', model: 'glm-5.1', accountId: 1, tokenId: 2, weight: 10 }],
       },
     ]);
 
     expect(source.nodes).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 'route-endpoint:supply:route:11', type: 'route_endpoint', endpointKind: 'supply', exposure: 'none' }),
-      expect.objectContaining({ id: 'route-endpoint:supply:route:22', type: 'route_endpoint', endpointKind: 'supply', exposure: 'none' }),
-      expect.objectContaining({
-        id: 'route-endpoint:product:auto-model:glm-5.1',
-        type: 'route_endpoint',
-        endpointKind: 'route_product',
-        exposure: 'public',
-        backend: { kind: 'routes', routeIds: [11, 22] },
-      }),
+      expect.objectContaining({ id: 'route-endpoint:supply:upstream-model-fixture:11', type: 'route_endpoint', endpointKind: 'supply', exposure: 'none' }),
+      expect.objectContaining({ id: 'route-endpoint:supply:upstream-model-fixture:22', type: 'route_endpoint', endpointKind: 'supply', exposure: 'none' }),
     ]));
     expect(source.macros).toEqual([
       expect.objectContaining({
-        id: 'auto-model:glm-5.1',
-        ownership: 'auto_generated',
+        id: 'fixture-group:glm-5.1',
+        ownership: 'system',
         config: expect.objectContaining({
           groups: [
             expect.objectContaining({
-              priority: 0,
               input: {
                 kind: 'route_endpoints',
-                endpointIds: ['route-endpoint:supply:route:11', 'route-endpoint:supply:route:22'],
+                endpointIds: ['route-endpoint:supply:upstream-model-fixture:11', 'route-endpoint:supply:upstream-model-fixture:22'],
               },
+              members: [
+                expect.objectContaining({ endpointId: 'route-endpoint:supply:upstream-model-fixture:11', weight: 10 }),
+                expect.objectContaining({ endpointId: 'route-endpoint:supply:upstream-model-fixture:22', weight: 10 }),
+              ],
             }),
           ],
         }),
@@ -197,28 +747,28 @@ describe('routeGraph port-native source', () => {
     ]);
     expect(source.edges).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        sourceNodeId: 'route-endpoint:supply:route:11',
-        targetNodeId: 'macro:auto-model:glm-5.1',
+        sourceNodeId: 'route-endpoint:supply:upstream-model-fixture:11',
+        targetNodeId: 'macro:fixture-group:glm-5.1',
         targetPortId: 'candidates.in',
-        metadata: expect.objectContaining({ candidate: expect.objectContaining({ priority: 0 }) }),
+        metadata: expect.objectContaining({ candidate: expect.objectContaining({ endpointKind: 'supply' }) }),
       }),
       expect.objectContaining({
-        sourceNodeId: 'route-endpoint:supply:route:22',
-        targetNodeId: 'macro:auto-model:glm-5.1',
+        sourceNodeId: 'route-endpoint:supply:upstream-model-fixture:22',
+        targetNodeId: 'macro:fixture-group:glm-5.1',
         targetPortId: 'candidates.in',
-        metadata: expect.objectContaining({ candidate: expect.objectContaining({ priority: 0 }) }),
+        metadata: expect.objectContaining({ candidate: expect.objectContaining({ endpointKind: 'supply' }) }),
       }),
       expect.objectContaining({
-        sourceNodeId: 'route-endpoint:supply:route:11',
+        sourceNodeId: 'route-endpoint:supply:upstream-model-fixture:11',
         sourcePortId: 'route.out',
-        targetNodeId: 'macro:auto-model:glm-5.1',
+        targetNodeId: 'macro:fixture-group:glm-5.1',
         targetPortId: 'candidates.in',
         kind: 'route_flow',
       }),
       expect.objectContaining({
-        sourceNodeId: 'route-endpoint:supply:route:22',
+        sourceNodeId: 'route-endpoint:supply:upstream-model-fixture:22',
         sourcePortId: 'route.out',
-        targetNodeId: 'macro:auto-model:glm-5.1',
+        targetNodeId: 'macro:fixture-group:glm-5.1',
         targetPortId: 'candidates.in',
         kind: 'route_flow',
       }),
@@ -226,97 +776,85 @@ describe('routeGraph port-native source', () => {
 
     const result = compileRouteGraphSource(source);
     expect(result.ok).toBe(true);
-    expect(result.compiled.publicModels).toEqual([
-      { nodeId: 'macro:auto-model:glm-5.1:entry', model: 'GLM-5.1' },
+    expect(compiledRuntimePublicModels(result)).toEqual([
+      { nodeId: 'macro:fixture-group:glm-5.1:entry', model: 'GLM-5.1' },
     ]);
-    expect(result.compiled.routeEndpoints.filter((endpoint) => endpoint.publicModelName.toLowerCase() === 'glm-5.1')).toHaveLength(1);
     const router = result.compiled.compiledRouterBundle;
     expect(router?.matcher.exact['GLM-5.1']).toEqual(expect.objectContaining({
-      programId: 'program:macro:auto-model:glm-5.1:entry',
-      rootEndpointId: 'route-endpoint:product:auto-model:glm-5.1',
+      programId: 'program:macro:fixture-group:glm-5.1:entry',
     }));
-    expect(result.primitiveSource.nodes.some((node) => node.id.startsWith('macro:auto-model:glm-5.1:candidate:') && node.type === 'route_endpoint')).toBe(false);
+    expect(result.primitiveSource.nodes.some((node) => node.id.startsWith('macro:fixture-group:glm-5.1:candidate:') && node.type === 'route_endpoint')).toBe(false);
     expect(result.primitiveSource.edges).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        sourceNodeId: 'route-endpoint:supply:route:11',
-        targetNodeId: 'macro:auto-model:glm-5.1:dispatcher',
+        sourceNodeId: 'route-endpoint:supply:upstream-model-fixture:11',
+        targetNodeId: 'macro:fixture-group:glm-5.1:dispatcher',
         targetPortId: 'route.in',
         metadata: expect.objectContaining({
           candidate: expect.objectContaining({ endpointKind: 'supply' }),
         }),
       }),
     ]));
-    const plan = router?.plans.find((item) => item.id === 'program:macro:auto-model:glm-5.1:entry');
-    expect(plan?.rootEndpointId).toBe('route-endpoint:product:auto-model:glm-5.1');
-    expect(plan?.selectorLevels[0]?.groups).toEqual(expect.arrayContaining([
+    const plan = router?.plans.find((item) => item.id === 'program:macro:fixture-group:glm-5.1:entry');
+    expect(plan?.executionAlternatives.map((alternative) => ({
+      nodeId: alternative.endpoint?.nodeId,
+      endpointId: alternative.endpoint?.endpointId,
+      fallbackStage: alternative.fallbackStages[0]?.stageId,
+    }))).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        nodeId: 'route-endpoint:supply:route:11',
-        endpointId: 'route-endpoint:supply:route:11',
-        priority: 0,
+        nodeId: 'route-endpoint:supply:upstream-model-fixture:11',
+        endpointId: 'route-endpoint:supply:upstream-model-fixture:11',
+        fallbackStage: undefined,
       }),
       expect.objectContaining({
-        nodeId: 'route-endpoint:supply:route:22',
-        endpointId: 'route-endpoint:supply:route:22',
-        priority: 0,
+        nodeId: 'route-endpoint:supply:upstream-model-fixture:22',
+        endpointId: 'route-endpoint:supply:upstream-model-fixture:22',
+        fallbackStage: undefined,
       }),
     ]));
-    expect(plan?.candidates).toEqual(expect.arrayContaining([
+    expect(plan?.executionAlternatives).toEqual(expect.arrayContaining([
       expect.objectContaining({
         terminal: expect.objectContaining({
           kind: 'supply',
-          endpointId: 'route-endpoint:supply:route:11',
-          nodeId: 'route-endpoint:supply:route:11',
-          routeId: 11,
-          targetIndexes: expect.any(Array),
+          endpointId: 'route-endpoint:supply:upstream-model-fixture:11',
         }),
       }),
     ]));
-    const firstSupplyCandidate = plan?.candidates.find((candidate) => candidate.terminal.kind === 'supply' && candidate.terminal.endpointId === 'route-endpoint:supply:route:11');
-    const firstSupplyTargetIndexes = firstSupplyCandidate?.terminal.kind === 'supply' ? firstSupplyCandidate.terminal.targetIndexes : [];
-    expect(firstSupplyCandidate?.terminal).toEqual(expect.objectContaining({
+    const firstSupplyAlternative = plan?.executionAlternatives.find((alternative) => alternative.terminal.kind === 'supply' && alternative.terminal.endpointId === 'route-endpoint:supply:upstream-model-fixture:11');
+    expect(firstSupplyAlternative?.terminal).toEqual(expect.objectContaining({
       kind: 'supply',
-      endpointId: 'route-endpoint:supply:route:11',
-      nodeId: 'route-endpoint:supply:route:11',
-      routeId: 11,
+      endpointId: 'route-endpoint:supply:upstream-model-fixture:11',
     }));
-    expect(firstSupplyTargetIndexes.map((index) => plan?.targets[index])).toEqual(expect.arrayContaining([
+    expect(plan?.executionAlternatives
+      .filter((alternative) => alternative.endpoint?.endpointId === 'route-endpoint:supply:upstream-model-fixture:11')
+      .map((alternative) => alternative.executionAttempt)).toEqual(expect.arrayContaining([
       expect.objectContaining({ model: 'GLM-5.1' }),
     ]));
-    expect(plan?.sourceRef.generatedNodeIds).toEqual(expect.arrayContaining([
-      'macro:auto-model:glm-5.1:entry',
-    ]));
-    expect(plan?.selectorLevels[0]?.sourceRef.generatedNodeIds).toEqual(expect.arrayContaining([
-      'macro:auto-model:glm-5.1:dispatcher',
-    ]));
+    expect(plan?.sourceRef).toBeUndefined();
+    expect(firstSupplyAlternative?.selectionTerms[0]?.nodeId).toBe('macro:fixture-group:glm-5.1:dispatcher');
   });
 
-  it('does not synthesize legacy supply endpoints for routes without executable targets', () => {
-    const source = buildRouteGraphSourceFromLegacyRoutes([
+  it('does not synthesize route-fixture supply endpoints for routes without executable targets', () => {
+    const source = buildRouteGraphSourceFromFixtureRoutes([
       {
         id: 321,
         enabled: true,
         displayName: 'minimax-m2.7',
-        match: { kind: 'model', requestedModelPattern: 'minimax-m2.7', displayName: 'minimax-m2.7', routeId: 321 },
+        match: { kind: 'model', requestedModelPattern: 'minimax-m2.7', displayName: 'minimax-m2.7'},
         backend: { kind: 'supply' },
-        ownership: 'auto_generated',
+        ownership: 'system',
+        fixtureGroup: 'minimax-m2.7',
       },
     ]);
 
-    expect(JSON.stringify(source)).not.toContain('route-endpoint:supply:route:321');
-    expect(source.nodes).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        id: 'route-endpoint:product:auto-model:minimax-m2.7',
-        endpointKind: 'route_product',
-        resolutionStatus: 'unresolved',
-      }),
-    ]));
+    expect(JSON.stringify(source)).not.toContain('route-endpoint:supply:upstream-model-fixture:321');
+    expect(source.nodes).toEqual([]);
     expect(source.macros).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        id: 'auto-model:minimax-m2.7',
+        id: 'fixture-group:minimax-m2.7',
         config: expect.objectContaining({
           groups: [
             expect.objectContaining({
-              id: 'unavailable',
+              id: 'fallback-stage:unavailable',
               input: { kind: 'synthetic', statusCode: 503, message: 'No route is available.' },
             }),
           ],
@@ -329,54 +867,56 @@ describe('routeGraph port-native source', () => {
     expect(result.ok).toBe(true);
     expect(result.primitiveSource.nodes).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        id: 'macro:auto-model:minimax-m2.7:candidate:unavailable:synthetic',
+        id: 'macro:fixture-group:minimax-m2.7:candidate:fallback-stage:unavailable:synthetic',
         type: 'synthetic_endpoint',
       }),
     ]));
   });
 
-  it('groups automatic exact-model supplies with colon model names without duplicate primitive ids', () => {
-    const source = buildRouteGraphSourceFromLegacyRoutes([
+  it('groups grouped supply supplies with colon model names without duplicate primitive ids', () => {
+    const source = buildRouteGraphSourceFromFixtureRoutes([
       {
         id: 3392,
         enabled: true,
         displayName: 'deepseek-v4-flash:free',
-        match: { kind: 'model', requestedModelPattern: 'deepseek-v4-flash:free', displayName: 'deepseek-v4-flash:free', routeId: 3392 },
+        match: { kind: 'model', requestedModelPattern: 'deepseek-v4-flash:free', displayName: 'deepseek-v4-flash:free'},
         backend: { kind: 'supply' },
-        ownership: 'auto_generated',
+        ownership: 'system',
+        fixtureGroup: 'deepseek-v4-flash:free',
         targets: [{ targetId: '3392', model: 'deepseek-v4-flash:free', accountId: 1, tokenId: 1, weight: 10 }],
       },
       {
         id: 3393,
         enabled: true,
         displayName: 'DeepSeek-V4-Flash:Free',
-        match: { kind: 'model', requestedModelPattern: 'DeepSeek-V4-Flash:Free', displayName: 'DeepSeek-V4-Flash:Free', routeId: 3393 },
+        match: { kind: 'model', requestedModelPattern: 'DeepSeek-V4-Flash:Free', displayName: 'DeepSeek-V4-Flash:Free'},
         backend: { kind: 'supply' },
-        ownership: 'auto_generated',
+        ownership: 'system',
+        fixtureGroup: 'deepseek-v4-flash:free',
         targets: [{ targetId: '3393', model: 'DeepSeek-V4-Flash:Free', accountId: 1, tokenId: 2, weight: 10 }],
       },
     ]);
 
-    expect(source.nodes.filter((node) => node.id === 'route-endpoint:product:auto-model:deepseek-v4-flash:free')).toHaveLength(1);
-    expect(source.macros.filter((macro) => macro.id === 'auto-model:deepseek-v4-flash:free')).toHaveLength(1);
+    expect(source.nodes.some((node) => node.id.startsWith('route-endpoint:product:'))).toBe(false);
+    expect(source.macros.filter((macro) => macro.id === 'fixture-group:deepseek-v4-flash:free')).toHaveLength(1);
 
     const result = compileRouteGraphSource(source);
     expect(result.diagnostics.filter((diagnostic) => diagnostic.code === 'node.duplicate_id')).toEqual([]);
     expect(result.ok).toBe(true);
-    expect(result.compiled.publicModels).toEqual([
-      { nodeId: 'macro:auto-model:deepseek-v4-flash:free:entry', model: 'deepseek-v4-flash:free' },
+    expect(compiledRuntimePublicModels(result)).toEqual([
+      { nodeId: 'macro:fixture-group:deepseek-v4-flash:free:entry', model: 'deepseek-v4-flash:free' },
     ]);
   });
 
   it('keeps compiled route program metadata compact', () => {
-    const source = buildRouteGraphSourceFromLegacyRoutes([
+    const source = buildRouteGraphSourceFromFixtureRoutes([
       ...Array.from({ length: 24 }, (_, index) => ({
         id: index + 1,
         enabled: true,
         displayName: `compact-model-${index}`,
-        match: { kind: 'model' as const, requestedModelPattern: `compact-model-${index}`, displayName: null, routeId: index + 1 },
+        match: { kind: 'model' as const, requestedModelPattern: `compact-model-${index}`, displayName: null},
         backend: { kind: 'supply' as const },
-        ownership: 'auto_generated' as const,
+        ownership: 'system' as const,
         targets: Array.from({ length: 12 }, (__, targetIndex) => ({
           targetId: `${index}-${targetIndex}`,
           model: `compact-model-${index}`,
@@ -398,23 +938,67 @@ describe('routeGraph port-native source', () => {
     expect(compiledGraphJson).not.toContain('"flatProgramBundle"');
     expect(JSON.stringify(compiled.compiled.compiledRouterBundle)).not.toContain('"next"');
     const firstCompiledRouterPlan = compiled.compiled.compiledRouterBundle?.plans[0];
-    expect(firstCompiledRouterPlan?.targets.length).toBeGreaterThan(0);
-    expect(firstCompiledRouterPlan?.targets[0]).not.toHaveProperty('endpointId');
-    expect(firstCompiledRouterPlan?.targets[0]).not.toHaveProperty('nodeId');
-    expect(firstCompiledRouterPlan?.targets[0]).not.toHaveProperty('sourceRef');
-    expect(firstCompiledRouterPlan?.candidates[0]?.terminal).toMatchObject({
+    expect(firstCompiledRouterPlan?.executionAlternatives.length).toBeGreaterThan(0);
+    expect(firstCompiledRouterPlan).not.toHaveProperty('targets');
+    expect(firstCompiledRouterPlan).not.toHaveProperty('selectorLevels');
+    expect(firstCompiledRouterPlan).not.toHaveProperty('candidates');
+    expect(firstCompiledRouterPlan?.executionAlternatives[0]?.terminal).toMatchObject({
       kind: 'supply',
-      targetIndexes: expect.any(Array),
     });
-    expect(firstCompiledRouterPlan?.candidates[0]?.terminal).not.toHaveProperty('targets');
-    expect(firstCompiledRouterPlan?.candidates[0]).toHaveProperty('filterStageIndexes');
-    expect(firstCompiledRouterPlan?.candidates[0]).not.toHaveProperty('filterStages');
+    expect(firstCompiledRouterPlan?.executionAlternatives[0]?.terminal).not.toHaveProperty('targets');
+    expect(firstCompiledRouterPlan?.executionAlternatives[0]?.terminal).not.toHaveProperty('targetIndexes');
+    expect(firstCompiledRouterPlan?.executionAlternatives[0]).toHaveProperty('filterStageIndexes');
+    expect(firstCompiledRouterPlan?.executionAlternatives[0]).not.toHaveProperty('filterStages');
     expect(Buffer.byteLength(JSON.stringify(compiled.compiled), 'utf8')).toBeLessThan(2 * 1024 * 1024);
+  });
+
+  it('stores compact execution tables and materializes the selected plan without changing its runtime meaning', () => {
+    const source = buildRouteGraphSourceFromFixtureRoutes([{
+      id: 1,
+      enabled: true,
+      displayName: 'packed-runtime-model',
+      match: { kind: 'model', requestedModelPattern: 'packed-runtime-model', displayName: 'packed-runtime-model' },
+      backend: { kind: 'supply' },
+      targets: [
+        { targetId: 'packed-a', model: 'packed-a', accountId: 1, tokenId: 1, weight: 10 },
+        { targetId: 'packed-b', model: 'packed-b', accountId: 2, tokenId: 2, weight: 5 },
+      ],
+    }]);
+    const compiled = compileRouteGraphSource(source);
+    const bundle = compiled.compiled.compiledRouterBundle!;
+    const expectedPlan = bundle.plans[0]!;
+    const storageCompiled = compileRouteGraphSource(source, { compactRuntimeBundle: true });
+    const storageBundle = storageCompiled.compiled.compiledRouterBundle!;
+    expect(compiled.ok).toBe(true);
+    expect(storageCompiled.ok).toBe(true);
+    expect(expectedPlan.executionAlternatives).toHaveLength(2);
+    expect(storageBundle.hash).toBe(bundle.hash);
+    expect(storageBundle.executionTable).toBeTruthy();
+    expect(getCompiledRouterPlanById(storageBundle, expectedPlan.id)).toEqual(expectedPlan);
+
+    expectedPlan.executionAlternatives.forEach((alternative, index) => {
+      alternative.executionAttempt!.transportBinding = {
+        kind: 'execution_target',
+        executionTargetId: [71, 72][index]!,
+      };
+    });
+    const persistedBundle = JSON.parse(JSON.stringify(compactCompiledRouterBundle(bundle))) as typeof bundle;
+
+    expect(persistedBundle.executionTable).toEqual(expect.objectContaining({
+      attempts: expect.any(Array),
+      terminals: expect.any(Array),
+    }));
+    expect(persistedBundle.plans[0]?.executionAlternatives[0]).toEqual(expect.objectContaining({
+      attempt: expect.any(Number),
+      terminal: expect.any(Number),
+    }));
+    expect(persistedBundle.plans[0]?.executionAlternatives[0]).not.toHaveProperty('executionAttempt');
+    expect(getCompiledRouterExecutionTargetIds(persistedBundle)).toEqual([71, 72]);
+    expect(getCompiledRouterPlanById(persistedBundle, expectedPlan.id)).toEqual(expectedPlan);
   });
 
   it('exposes clear default labels for candidate selector macro ports', () => {
     const macro = normalizeRouteGraphSource({
-      version: 1,
       macros: [
         {
           id: 'model-group:labels',
@@ -423,7 +1007,6 @@ describe('routeGraph port-native source', () => {
             surface: {
               entry: {
                 kind: 'external',
-                visibility: 'internal',
                 match: { displayName: 'label-check' },
               },
               output: 'route',
@@ -442,7 +1025,6 @@ describe('routeGraph port-native source', () => {
 
   it('normalizes empty candidate selector macros with enabled defaults and default surface ports', () => {
     const source = normalizeRouteGraphSource({
-      version: 1,
       macros: [
         {
           id: 'model-group:empty',
@@ -455,17 +1037,15 @@ describe('routeGraph port-native source', () => {
       id: 'model-group:empty',
       kind: 'candidate_selector',
       enabled: true,
-      visibility: 'internal',
       ownership: 'manual',
       config: {
         surface: {
           entry: {
             kind: 'external',
-            visibility: 'public',
           },
           output: 'route',
         },
-        policy: { strategy: 'priority_order' },
+        policy: { kind: 'inherit_default' },
         groups: [],
       },
     });
@@ -478,13 +1058,11 @@ describe('routeGraph port-native source', () => {
 
   it('preserves compatibility policy on route endpoints and targets', () => {
     const source = normalizeRouteGraphSource({
-      version: 1,
       nodes: [
         {
           id: 'endpoint.compat',
           type: 'route_endpoint',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
           compatibilityPolicy: {
             reasoningHistory: {
@@ -509,6 +1087,24 @@ describe('routeGraph port-native source', () => {
             ],
           },
         },
+        {
+          id: 'dispatcher.compat',
+          type: 'dispatcher',
+          enabled: true,
+          ownership: 'manual',
+          mode: 'route',
+        },
+      ],
+      edges: [
+        {
+          id: 'edge.compat',
+          sourceNodeId: 'endpoint.compat',
+          sourcePortId: 'route.out',
+          targetNodeId: 'dispatcher.compat',
+          targetPortId: 'route.in',
+          kind: 'route_flow',
+          ownership: 'manual',
+        },
       ],
     });
 
@@ -523,6 +1119,7 @@ describe('routeGraph port-native source', () => {
       config: {
         targets: [
           expect.objectContaining({
+            targetId: '1',
             compatibilityPolicy: {
               reasoningHistory: {
                 transport: {
@@ -534,6 +1131,7 @@ describe('routeGraph port-native source', () => {
         ],
       },
     });
+    expect(source.edges[0]).not.toHaveProperty('metadata.candidate.attempts');
   });
 
   it('exposes stable default ports for every primitive node type', () => {
@@ -571,13 +1169,15 @@ describe('routeGraph port-native source', () => {
         { id: 'bidirect.in', label: 'dispatch input', direction: 'input', kind: 'bidirect', enabled: true, collection: undefined, required: true, multiple: undefined },
         { id: 'bidirect[1...].out', label: 'dispatch path', direction: 'output', kind: 'bidirect', enabled: false, collection: { type: 'arr', min: 1 }, required: undefined, multiple: true },
         { id: 'route.in', label: 'endpoint candidates', direction: 'input', kind: 'route', enabled: true, collection: { type: 'set', min: 1 }, required: undefined, multiple: true },
+        { id: 'route.out', label: 'selected route', direction: 'output', kind: 'route', enabled: true, collection: undefined, required: undefined, multiple: true },
+        { id: 'fallback.out', label: 'fallback when exhausted', direction: 'output', kind: 'bidirect', enabled: true, collection: undefined, required: undefined, multiple: undefined },
       ],
       route_endpoint: [
         { id: 'route.out', label: 'route product', direction: 'output', kind: 'route', enabled: true, collection: undefined, required: undefined, multiple: undefined },
         { id: 'bidirect.in', label: 'invoke route', direction: 'input', kind: 'bidirect', enabled: true, collection: undefined, required: undefined, multiple: true },
       ],
       synthetic_endpoint: [
-        { id: 'route.out', label: 'synthetic target', direction: 'output', kind: 'route', enabled: true, collection: undefined, required: undefined, multiple: undefined },
+        { id: 'route.out', label: 'synthetic response', direction: 'output', kind: 'route', enabled: true, collection: undefined, required: undefined, multiple: undefined },
         { id: 'bidirect.in', label: 'return response', direction: 'input', kind: 'bidirect', enabled: true, collection: undefined, required: undefined, multiple: true },
       ],
     });
@@ -585,13 +1185,11 @@ describe('routeGraph port-native source', () => {
 
   it('normalizes single port collections without cardinality bounds', () => {
     const source = normalizeRouteGraphSource({
-      version: 1,
       nodes: [
         {
           id: 'filter:single-collection',
           type: 'filter',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
           dynamicPorts: [
             { id: 'request.in', label: 'single request', direction: 'input', kind: 'request', collection: { type: 'single', min: 1, max: 2 } },
@@ -606,13 +1204,11 @@ describe('routeGraph port-native source', () => {
 
   it('rejects node-level edges without ports', () => {
     const source = normalizeRouteGraphSource({
-      version: 1,
       nodes: [
         {
           id: 'entry:a',
           type: 'entry',
           enabled: true,
-          visibility: 'public',
           ownership: 'manual',
           match: { requestedModelPattern: 'a' },
         },
@@ -620,13 +1216,12 @@ describe('routeGraph port-native source', () => {
           id: 'pool:a',
           type: 'route_endpoint',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
-          config: { targets: [{ targetId: 'target:a', model: 'a' }], targetSelection: { strategy: 'weighted' } },
+          config: { targets: [{ targetId: 'target:a', model: 'a' }], targetSelection: { kind: 'builtin', builtin: 'weighted' } },
         },
       ],
       edges: [
-        { id: 'legacy-edge', sourceNodeId: 'entry:a', targetNodeId: 'pool:a' },
+        { id: 'node-level-edge', sourceNodeId: 'entry:a', targetNodeId: 'pool:a' },
       ],
     });
 
@@ -637,13 +1232,11 @@ describe('routeGraph port-native source', () => {
 
   it('rejects incompatible port connections', () => {
     const source = normalizeRouteGraphSource({
-      version: 1,
       nodes: [
         {
           id: 'entry:a',
           type: 'entry',
           enabled: true,
-          visibility: 'public',
           ownership: 'manual',
           match: { requestedModelPattern: 'a' },
         },
@@ -651,18 +1244,16 @@ describe('routeGraph port-native source', () => {
           id: 'dispatcher:a',
           type: 'dispatcher',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
           mode: 'route',
-          policy: { strategy: 'weighted' },
+          policy: { kind: 'builtin', builtin: 'weighted' },
         },
         {
           id: 'pool:a',
           type: 'route_endpoint',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
-          config: { targets: [{ targetId: 'target:a', model: 'a' }], targetSelection: { strategy: 'weighted' } },
+          config: { targets: [{ targetId: 'target:a', model: 'a' }], targetSelection: { kind: 'builtin', builtin: 'weighted' } },
         },
       ],
       edges: [
@@ -684,13 +1275,11 @@ describe('routeGraph port-native source', () => {
 
   it('rejects missing edge endpoints and missing ports with specific diagnostics', () => {
     const result = compileRouteGraphSource({
-      version: 1,
       nodes: [
         {
           id: 'entry:missing',
           type: 'entry',
           enabled: true,
-          visibility: 'public',
           ownership: 'manual',
           match: { requestedModelPattern: 'missing-model' },
         },
@@ -698,10 +1287,9 @@ describe('routeGraph port-native source', () => {
           id: 'dispatcher:missing',
           type: 'dispatcher',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
           mode: 'route',
-          policy: { strategy: 'weighted' },
+          policy: { kind: 'builtin', builtin: 'weighted' },
         },
       ],
       edges: [
@@ -745,13 +1333,11 @@ describe('routeGraph port-native source', () => {
 
   it('rejects duplicate connections to non-multiple input ports', () => {
     const result = compileRouteGraphSource({
-      version: 1,
       nodes: [
         {
           id: 'entry:a',
           type: 'entry',
           enabled: true,
-          visibility: 'public',
           ownership: 'manual',
           match: { requestedModelPattern: 'a' },
         },
@@ -759,7 +1345,6 @@ describe('routeGraph port-native source', () => {
           id: 'entry:b',
           type: 'entry',
           enabled: true,
-          visibility: 'public',
           ownership: 'manual',
           match: { requestedModelPattern: 'b' },
         },
@@ -767,10 +1352,9 @@ describe('routeGraph port-native source', () => {
           id: 'dispatcher:single',
           type: 'dispatcher',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
           mode: 'route',
-          policy: { strategy: 'weighted' },
+          policy: { kind: 'builtin', builtin: 'weighted' },
         },
       ],
       edges: [
@@ -787,13 +1371,11 @@ describe('routeGraph port-native source', () => {
 
   it('allows multiple connections to explicitly multiple input ports', () => {
     const result = compileRouteGraphSource({
-      version: 1,
       nodes: [
         {
           id: 'entry:multi',
           type: 'entry',
           enabled: true,
-          visibility: 'public',
           ownership: 'manual',
           match: { requestedModelPattern: 'multi-model' },
         },
@@ -801,26 +1383,25 @@ describe('routeGraph port-native source', () => {
           id: 'dispatcher:multi',
           type: 'dispatcher',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
           mode: 'route',
-          policy: { strategy: 'weighted' },
+          policy: { kind: 'builtin', builtin: 'weighted' },
         },
         {
           id: 'endpoint:a',
           type: 'route_endpoint',
+          routeEndpointId: 'endpoint:a',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
-          config: { targets: [{ targetId: 'a', model: 'multi-model-a' }], targetSelection: { strategy: 'weighted' } },
+          config: { targets: [{ targetId: 'a', model: 'multi-model-a' }], targetSelection: { kind: 'builtin', builtin: 'weighted' } },
         },
         {
           id: 'endpoint:b',
           type: 'route_endpoint',
+          routeEndpointId: 'endpoint:b',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
-          config: { targets: [{ targetId: 'b', model: 'multi-model-b' }], targetSelection: { strategy: 'weighted' } },
+          config: { targets: [{ targetId: 'b', model: 'multi-model-b' }], targetSelection: { kind: 'builtin', builtin: 'weighted' } },
         },
       ],
       edges: [
@@ -835,19 +1416,21 @@ describe('routeGraph port-native source', () => {
       'a-dispatcher',
       'b-dispatcher',
     ]);
-    expect(result.compiled.edgesByFromPort['endpoint:a:route.out'].map((edge) => edge.id)).toEqual(['a-dispatcher']);
-    expect(result.compiled.edgesByFromPort['endpoint:b:route.out'].map((edge) => edge.id)).toEqual(['b-dispatcher']);
+    expect(compiledRuntimeOps(result).flatMap((op) => (
+      typeof op.endpoint?.endpointId === 'string' ? [op.endpoint.endpointId] : []
+    ))).toEqual(expect.arrayContaining([
+      'endpoint:a',
+      'endpoint:b',
+    ]));
   });
 
   it('enforces collection bounds on set and arr input ports', () => {
     const belowMin = compileRouteGraphSource({
-      version: 1,
       nodes: [
         {
           id: 'filter:set-required',
           type: 'filter',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
           dynamicPorts: [
             { id: 'request.in', label: 'required request set', direction: 'input', kind: 'request', collection: { type: 'set', min: 1 } },
@@ -864,13 +1447,11 @@ describe('routeGraph port-native source', () => {
     ]));
 
     const aboveMax = compileRouteGraphSource({
-      version: 1,
       nodes: [
         {
           id: 'source:a',
           type: 'filter',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
           dynamicPorts: [
             { id: 'request.out', label: 'request out', direction: 'output', kind: 'request' },
@@ -880,7 +1461,6 @@ describe('routeGraph port-native source', () => {
           id: 'source:b',
           type: 'filter',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
           dynamicPorts: [
             { id: 'request.out', label: 'request out', direction: 'output', kind: 'request' },
@@ -890,7 +1470,6 @@ describe('routeGraph port-native source', () => {
           id: 'filter:arr-limited',
           type: 'filter',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
           dynamicPorts: [
             { id: 'request.in', label: 'limited request arr', direction: 'input', kind: 'request', collection: { type: 'arr', max: 1 } },
@@ -915,30 +1494,26 @@ describe('routeGraph port-native source', () => {
       id: `endpoint:${id}`,
       type: 'route_endpoint',
       enabled: true,
-      visibility: 'internal',
       ownership: 'manual',
       endpointKind: 'supply',
       resolutionStatus: 'resolved',
       config: {
         targets: [{ targetId: id, model: `model-${id}` }],
-        targetSelection: { strategy: 'weighted' },
+        targetSelection: { kind: 'builtin', builtin: 'weighted' },
       },
     });
     const result = compileRouteGraphSource({
-      version: 1,
       nodes: [endpoint('a'), endpoint('b')],
       macros: [
         {
           id: 'macro:limited-candidates',
           kind: 'candidate_selector',
           enabled: true,
-          visibility: 'public',
           ownership: 'manual',
           config: {
             surface: {
               entry: {
                 kind: 'external',
-                visibility: 'public',
                 match: { requestedModelPattern: 'limited-candidates', displayName: 'limited-candidates' },
               },
               output: 'route',
@@ -948,7 +1523,7 @@ describe('routeGraph port-native source', () => {
                 { id: 'route.out', label: 'route output', direction: 'output', kind: 'route' },
               ],
             },
-            policy: { strategy: 'weighted' },
+            policy: { kind: 'builtin', builtin: 'weighted' },
             groups: [],
           },
         },
@@ -967,13 +1542,11 @@ describe('routeGraph port-native source', () => {
 
   it('rejects duplicate public model names from active public entries', () => {
     const result = compileRouteGraphSource({
-      version: 1,
       nodes: [
         {
           id: 'entry:a',
           type: 'entry',
           enabled: true,
-          visibility: 'public',
           ownership: 'manual',
           match: { requestedModelPattern: 'duplicate-public' },
         },
@@ -981,7 +1554,6 @@ describe('routeGraph port-native source', () => {
           id: 'entry:b',
           type: 'entry',
           enabled: true,
-          visibility: 'public',
           ownership: 'manual',
           match: { requestedModelPattern: 'duplicate-public' },
         },
@@ -994,14 +1566,14 @@ describe('routeGraph port-native source', () => {
   });
 
   it('allows generated macro and primitive entries for the same public route', () => {
-    const source = buildRouteGraphSourceFromLegacyRoutes([
+    const source = buildRouteGraphSourceFromFixtureRoutes([
       {
         id: 1,
         enabled: true,
         displayName: 'same-route-public',
-        match: { kind: 'model', requestedModelPattern: 'same-route-public', displayName: 'same-route-public', routeId: 1 },
+        match: { kind: 'model', requestedModelPattern: 'same-route-public', displayName: 'same-route-public'},
         backend: { kind: 'supply' },
-        ownership: 'auto_generated',
+        ownership: 'system',
         targets: [{ targetId: '1', model: 'same-route-public', accountId: 1, tokenId: 1, weight: 10 }],
       },
     ]);
@@ -1014,13 +1586,11 @@ describe('routeGraph port-native source', () => {
 
   it('detects active graph cycles before runtime dispatch', () => {
     const result = compileRouteGraphSource({
-      version: 1,
       nodes: [
         {
           id: 'filter:a',
           type: 'filter',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
           operations: [],
         },
@@ -1028,7 +1598,6 @@ describe('routeGraph port-native source', () => {
           id: 'filter:b',
           type: 'filter',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
           operations: [],
         },
@@ -1045,13 +1614,11 @@ describe('routeGraph port-native source', () => {
 
   it('rejects invalid regex model patterns at compile time', () => {
     const result = compileRouteGraphSource({
-      version: 1,
       nodes: [
         {
           id: 'entry:bad-regex',
           type: 'entry',
           enabled: true,
-          visibility: 'public',
           ownership: 'manual',
           match: { requestedModelPattern: 're:[invalid' },
         },
@@ -1059,19 +1626,17 @@ describe('routeGraph port-native source', () => {
           id: 'dispatcher:bad-regex',
           type: 'dispatcher',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
           mode: 'route',
           ordering: 'explicit',
-          policy: { strategy: 'weighted' },
+          policy: { kind: 'builtin', builtin: 'weighted' },
         },
         {
           id: 'pool:bad-regex',
           type: 'route_endpoint',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
-          config: { targets: [{ targetId: 'target:bad-regex', model: 'bad-regex' }], targetSelection: { strategy: 'weighted' } },
+          config: { targets: [{ targetId: 'target:bad-regex', model: 'bad-regex' }], targetSelection: { kind: 'builtin', builtin: 'weighted' } },
         },
       ],
       edges: [
@@ -1093,13 +1658,11 @@ describe('routeGraph port-native source', () => {
 
   it('ignores inactive dispatcher mode ports during validation and compilation', () => {
     const routeMode = compileRouteGraphSource({
-      version: 1,
       nodes: [
         {
           id: 'entry:route',
           type: 'entry',
           enabled: true,
-          visibility: 'public',
           ownership: 'manual',
           match: { requestedModelPattern: 'route-model' },
         },
@@ -1107,26 +1670,23 @@ describe('routeGraph port-native source', () => {
           id: 'dispatcher:route',
           type: 'dispatcher',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
           mode: 'route',
-          policy: { strategy: 'weighted' },
+          policy: { kind: 'builtin', builtin: 'weighted' },
         },
         {
           id: 'endpoint:route',
           type: 'route_endpoint',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
-          config: { targets: [{ targetId: 'target:route', model: 'route-model' }], targetSelection: { strategy: 'weighted' } },
+          config: { targets: [{ targetId: 'target:route', model: 'route-model' }], targetSelection: { kind: 'builtin', builtin: 'weighted' } },
         },
         {
           id: 'endpoint:ignored-flow',
           type: 'route_endpoint',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
-          config: { targets: [{ targetId: 'target:ignored', model: 'ignored' }], targetSelection: { strategy: 'weighted' } },
+          config: { targets: [{ targetId: 'target:ignored', model: 'ignored' }], targetSelection: { kind: 'builtin', builtin: 'weighted' } },
         },
       ],
       edges: [
@@ -1137,16 +1697,14 @@ describe('routeGraph port-native source', () => {
     });
 
     expect(routeMode.ok).toBe(true);
-    expect(routeMode.compiled.edgesBySource['dispatcher:route'] || []).toEqual([]);
+    expect(compiledRuntimeOps(routeMode).map((op) => op.sourceRef?.edgeId).filter(Boolean)).not.toContain('ignored-flow');
 
     const flowMode = compileRouteGraphSource({
-      version: 1,
       nodes: [
         {
           id: 'entry:flow',
           type: 'entry',
           enabled: true,
-          visibility: 'public',
           ownership: 'manual',
           match: { requestedModelPattern: 'flow-model' },
         },
@@ -1154,26 +1712,23 @@ describe('routeGraph port-native source', () => {
           id: 'dispatcher:flow',
           type: 'dispatcher',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
           mode: 'flow',
-          policy: { strategy: 'stable_first' },
+          policy: { kind: 'builtin', builtin: 'stable_first' },
         },
         {
           id: 'endpoint:flow',
           type: 'route_endpoint',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
-          config: { targets: [{ targetId: 'target:flow', model: 'flow-model' }], targetSelection: { strategy: 'weighted' } },
+          config: { targets: [{ targetId: 'target:flow', model: 'flow-model' }], targetSelection: { kind: 'builtin', builtin: 'weighted' } },
         },
         {
           id: 'endpoint:ignored-route',
           type: 'route_endpoint',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
-          config: { targets: [{ targetId: 'target:ignored-route', model: 'ignored-route' }], targetSelection: { strategy: 'weighted' } },
+          config: { targets: [{ targetId: 'target:ignored-route', model: 'ignored-route' }], targetSelection: { kind: 'builtin', builtin: 'weighted' } },
         },
       ],
       edges: [
@@ -1184,7 +1739,7 @@ describe('routeGraph port-native source', () => {
     });
 
     expect(flowMode.ok).toBe(true);
-    expect(flowMode.compiled.edgesBySource['endpoint:ignored-route'] || []).toEqual([]);
+    expect(compiledRuntimeOps(flowMode).map((op) => op.sourceRef?.edgeId).filter(Boolean)).not.toContain('ignored-route');
   });
 
   it('exposes inactive dispatcher mode ports as disabled ports', () => {
@@ -1207,13 +1762,11 @@ describe('routeGraph port-native source', () => {
 
   it('rejects edges connected to disabled ports', () => {
     const result = compileRouteGraphSource({
-      version: 1,
       nodes: [
         {
           id: 'source:disabled-port',
           type: 'auto_node',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
           dynamicPorts: [
             { id: 'disabled.out', label: 'disabled output', direction: 'output', kind: 'request', enabled: false },
@@ -1223,7 +1776,6 @@ describe('routeGraph port-native source', () => {
           id: 'target:disabled-port',
           type: 'filter',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
         },
       ],
@@ -1246,13 +1798,11 @@ describe('routeGraph port-native source', () => {
 
   it('preserves port collections and edge metadata through normalization and compilation', () => {
     const source = normalizeRouteGraphSource({
-      version: 1,
       nodes: [
         {
           id: 'entry:metadata',
           type: 'entry',
           enabled: true,
-          visibility: 'public',
           ownership: 'manual',
           match: { requestedModelPattern: 'metadata-model' },
         },
@@ -1260,18 +1810,26 @@ describe('routeGraph port-native source', () => {
           id: 'dispatcher:metadata',
           type: 'dispatcher',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
           mode: 'flow',
-          policy: { strategy: 'weighted', score: 'candidate.metadata.weight' },
+          policy: {
+            kind: 'inline',
+            policy: {
+              id: 'rank-by-weight',
+              name: 'Rank by weight',
+              kind: 'cel',
+              selectionMode: 'ordered',
+              orderExpression: '-(self.metadata.weight)',
+            },
+          },
         },
         {
           id: 'endpoint:metadata',
           type: 'route_endpoint',
+          routeEndpointId: 'endpoint:metadata',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
-          config: { targets: [{ targetId: 'metadata', model: 'metadata-model' }], targetSelection: { strategy: 'weighted' } },
+          config: { targets: [{ targetId: 'metadata', model: 'metadata-model' }], targetSelection: { kind: 'builtin', builtin: 'weighted' } },
         },
       ],
       edges: [
@@ -1298,18 +1856,16 @@ describe('routeGraph port-native source', () => {
     expect(getRouteGraphNodePorts(dispatcher).find((port) => port.id === 'route.in')?.collection).toEqual({ type: 'set', min: 1 });
     expect(compiled.ok).toBe(true);
     expect(compiled.source.edges.find((edge) => edge.id === 'metadata-flow')?.metadata).toEqual({ weight: 7 });
-    expect(compiled.compiled.edgesByFromPort['dispatcher:metadata:bidirect[1...].out'][0].metadata).toEqual({ weight: 7 });
+    expect(compiledRuntimeOps(compiled).find((op) => op.mode === 'flow')?.metadata).toEqual(expect.objectContaining({ weight: 7 }));
   });
 
   it('allows a filter to be connected through the bidirect path without request.in', () => {
     const result = compileRouteGraphSource({
-      version: 1,
       nodes: [
         {
           id: 'entry:filter',
           type: 'entry',
           enabled: true,
-          visibility: 'public',
           ownership: 'manual',
           match: { requestedModelPattern: 'filter-model' },
         },
@@ -1317,7 +1873,6 @@ describe('routeGraph port-native source', () => {
           id: 'filter:bidirect',
           type: 'filter',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
           operations: [{ type: 'set_payload', path: 'reasoning_effort', value: 'high' }],
         },
@@ -1325,18 +1880,16 @@ describe('routeGraph port-native source', () => {
           id: 'dispatcher:filter',
           type: 'dispatcher',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
           mode: 'flow',
-          policy: { strategy: 'stable_first' },
+          policy: { kind: 'builtin', builtin: 'stable_first' },
         },
         {
           id: 'endpoint:filter',
           type: 'route_endpoint',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
-          config: { targets: [{ targetId: 'target:filter', model: 'filter-model' }], targetSelection: { strategy: 'weighted' } },
+          config: { targets: [{ targetId: 'target:filter', model: 'filter-model' }], targetSelection: { kind: 'builtin', builtin: 'weighted' } },
         },
       ],
       edges: [
@@ -1353,13 +1906,11 @@ describe('routeGraph port-native source', () => {
 
   it('requires filters to receive either request.in or bidirect.in', () => {
     const result = compileRouteGraphSource({
-      version: 1,
       nodes: [
         {
           id: 'filter:orphan',
           type: 'filter',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
           operations: [],
         },
@@ -1371,13 +1922,38 @@ describe('routeGraph port-native source', () => {
     expect(result.diagnostics.map((item) => item.code)).toContain('filter.input_required');
   });
 
-  it('lowers candidate_selector model groups backed by route id priority bands', () => {
-    const source = buildRouteGraphSourceFromLegacyRoutes([
+  it('rejects fallback fan-out instead of choosing a successor by edge order', () => {
+    const result = compileRouteGraphSource({
+      nodes: [
+        { id: 'entry:fallback-fanout', type: 'entry', enabled: true, ownership: 'manual', match: { requestedModelPattern: 'fallback-fanout' } },
+        { id: 'dispatcher:primary', type: 'dispatcher', mode: 'route', enabled: true, ownership: 'manual' },
+        { id: 'dispatcher:backup-a', type: 'dispatcher', mode: 'route', enabled: true, ownership: 'manual' },
+        { id: 'dispatcher:backup-b', type: 'dispatcher', mode: 'route', enabled: true, ownership: 'manual' },
+        { id: 'endpoint:primary', type: 'route_endpoint', endpointKind: 'supply', enabled: true, ownership: 'manual', config: { targets: [{ targetId: 'primary', model: 'primary' }] } },
+        { id: 'endpoint:backup-a', type: 'route_endpoint', endpointKind: 'supply', enabled: true, ownership: 'manual', config: { targets: [{ targetId: 'backup-a', model: 'backup-a' }] } },
+        { id: 'endpoint:backup-b', type: 'route_endpoint', endpointKind: 'supply', enabled: true, ownership: 'manual', config: { targets: [{ targetId: 'backup-b', model: 'backup-b' }] } },
+      ],
+      edges: [
+        { id: 'enter', sourceNodeId: 'entry:fallback-fanout', sourcePortId: 'bidirect.out', targetNodeId: 'dispatcher:primary', targetPortId: 'bidirect.in', kind: 'bidirect_flow', ownership: 'manual' },
+        { id: 'primary-candidate', sourceNodeId: 'endpoint:primary', sourcePortId: 'route.out', targetNodeId: 'dispatcher:primary', targetPortId: 'route.in', kind: 'route_flow', ownership: 'manual' },
+        { id: 'backup-a-candidate', sourceNodeId: 'endpoint:backup-a', sourcePortId: 'route.out', targetNodeId: 'dispatcher:backup-a', targetPortId: 'route.in', kind: 'route_flow', ownership: 'manual' },
+        { id: 'backup-b-candidate', sourceNodeId: 'endpoint:backup-b', sourcePortId: 'route.out', targetNodeId: 'dispatcher:backup-b', targetPortId: 'route.in', kind: 'route_flow', ownership: 'manual' },
+        { id: 'fallback-a', sourceNodeId: 'dispatcher:primary', sourcePortId: 'fallback.out', targetNodeId: 'dispatcher:backup-a', targetPortId: 'bidirect.in', kind: 'bidirect_flow', ownership: 'manual' },
+        { id: 'fallback-b', sourceNodeId: 'dispatcher:primary', sourcePortId: 'fallback.out', targetNodeId: 'dispatcher:backup-b', targetPortId: 'bidirect.in', kind: 'bidirect_flow', ownership: 'manual' },
+      ],
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics.map((item) => item.code)).toContain('edge.fallback_fanout');
+  });
+
+  it('lowers candidate_selector fallback stages backed by route endpoints', () => {
+    const source = buildRouteGraphSourceFromFixtureRoutes([
       {
         id: 11,
         enabled: true,
         displayName: null,
-        match: { kind: 'model', requestedModelPattern: 'source-model', displayName: null, routeId: 11 },
+        match: { kind: 'model', requestedModelPattern: 'source-model', displayName: null},
         backend: { kind: 'supply' },
         targets: [{ targetId: '11', model: 'source-model', accountId: 1, tokenId: 1, weight: 10 }],
       },
@@ -1390,18 +1966,16 @@ describe('routeGraph port-native source', () => {
           id: 'model-group:public',
           kind: 'candidate_selector',
           enabled: true,
-          visibility: 'public',
           ownership: 'manual',
           config: {
             surface: {
               entry: {
                 kind: 'external',
-                visibility: 'public',
                 match: { displayName: 'public-group' },
               },
               output: 'route',
             },
-            policy: { strategy: 'priority_order' },
+            policy: { kind: 'builtin', builtin: 'weighted' },
             filters: {
               operations: [
                 { type: 'rewrite_model', source: 'current_model', operation: 'strip_suffix', suffix: '-debug' },
@@ -1412,8 +1986,7 @@ describe('routeGraph port-native source', () => {
               {
                 id: 'p0',
                 enabled: true,
-                priority: 0,
-                input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:supply:route:11'] },
+                input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:supply:upstream-model-fixture:11'] },
                 defaults: { weight: 10 },
               },
             ],
@@ -1425,7 +1998,7 @@ describe('routeGraph port-native source', () => {
     expect(result.ok).toBe(true);
     expect(result.source.macros).toHaveLength(1);
     expect(result.primitiveSource.nodes).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 'macro:model-group:public:entry', type: 'entry', visibility: 'public', ownership: 'derived' }),
+      expect.objectContaining({ id: 'macro:model-group:public:entry', type: 'entry', ownership: 'derived' }),
       expect.objectContaining({
         id: 'macro:model-group:public:filter',
         type: 'filter',
@@ -1436,21 +2009,20 @@ describe('routeGraph port-native source', () => {
         ],
       }),
       expect.objectContaining({ id: 'macro:model-group:public:dispatcher', type: 'dispatcher', mode: 'route', ownership: 'derived' }),
-      expect.objectContaining({ id: 'route-endpoint:product:route:11', type: 'route_endpoint', endpointKind: 'route_product' }),
     ]));
     expect(result.primitiveSource.edges).toEqual(expect.arrayContaining([
       expect.objectContaining({ sourceNodeId: 'macro:model-group:public:entry', targetNodeId: 'macro:model-group:public:filter', kind: 'bidirect_flow' }),
       expect.objectContaining({ sourceNodeId: 'macro:model-group:public:filter', targetNodeId: 'macro:model-group:public:dispatcher', kind: 'bidirect_flow' }),
       expect.objectContaining({
-        sourceNodeId: 'route-endpoint:supply:route:11',
+        sourceNodeId: 'route-endpoint:supply:upstream-model-fixture:11',
         targetNodeId: 'macro:model-group:public:dispatcher',
         kind: 'route_flow',
         metadata: expect.objectContaining({
-          candidate: expect.objectContaining({ routeId: 11, priority: 0, weight: 10 }),
+          candidate: expect.objectContaining({ routeEndpointId: 'route-endpoint:supply:upstream-model-fixture:11', weight: 10 }),
         }),
       }),
     ]));
-    expect(result.compiled.publicModels).toEqual(expect.arrayContaining([
+    expect(compiledRuntimePublicModels(result)).toEqual(expect.arrayContaining([
       expect.objectContaining({ model: 'public-group' }),
     ]));
     const plan = result.compiled.compiledRouterBundle?.plans.find((item) => item.id === 'program:macro:model-group:public:entry');
@@ -1468,13 +2040,194 @@ describe('routeGraph port-native source', () => {
     ]);
   });
 
+  it('partitions a macro-wide candidate source across fallback stages without duplicates', () => {
+    const endpoint = (id: string) => ({
+      id,
+      type: 'route_endpoint',
+      routeEndpointId: id,
+      name: 'source-model',
+      enabled: true,
+      ownership: 'manual',
+      endpointKind: 'supply',
+      metadata: { upstreamModel: 'source-model' },
+      config: { targets: [{ targetId: 'target-' + id, model: 'source-model' }] },
+    });
+    const source = normalizeRouteGraphSource({
+      nodes: [endpoint('endpoint:a'), endpoint('endpoint:b'), endpoint('endpoint:c')],
+      edges: [],
+      macros: [{
+        id: 'macro:partitioned-source',
+        kind: 'candidate_selector',
+        enabled: true,
+        ownership: 'manual',
+        config: {
+          surface: {
+            entry: { kind: 'external', match: { requestedModelPattern: 'public-model' } },
+            output: 'route',
+          },
+          policy: { kind: 'builtin', builtin: 'weighted' },
+          candidateSource: { kind: 'model_pattern', pattern: 'source-model' },
+          groups: [
+            {
+              id: 'primary',
+              enabled: true,
+              acceptUnassigned: true,
+              input: { kind: 'synthetic', statusCode: 503, message: 'unavailable' },
+              members: [{ endpointId: 'endpoint:a', weight: 3 }],
+            },
+            {
+              id: 'fallback',
+              enabled: true,
+              input: { kind: 'synthetic', statusCode: 503, message: 'unavailable' },
+              members: [{ endpointId: 'endpoint:b', weight: 7 }],
+            },
+          ],
+        },
+      }],
+    });
+
+    const result = compileRouteGraphSource(source);
+
+    expect(result.ok).toBe(true);
+    const candidateEdges = result.primitiveSource.edges.filter((edge) =>
+      edge.metadata?.provenance?.role === 'candidate_edge',
+    );
+    expect(candidateEdges.map((edge) => ({
+      endpointId: edge.metadata?.candidate?.routeEndpointId,
+      stageId: edge.metadata?.provenance?.fallbackStage?.id,
+      weight: edge.metadata?.candidate?.weight,
+    }))).toEqual([
+      { endpointId: 'endpoint:a', stageId: 'primary', weight: 3 },
+      { endpointId: 'endpoint:c', stageId: 'primary', weight: 1 },
+      { endpointId: 'endpoint:b', stageId: 'fallback', weight: 7 },
+    ]);
+    expect(new Set(candidateEdges.map((edge) => edge.metadata?.candidate?.routeEndpointId)).size).toBe(3);
+  });
+
+  it('omits an empty unassigned stage when all source candidates are assigned to fallback', () => {
+    const source = normalizeRouteGraphSource({
+      nodes: [{
+        id: 'endpoint:fallback-only',
+        type: 'route_endpoint',
+        routeEndpointId: 'endpoint:fallback-only',
+        name: 'source-model',
+        enabled: true,
+        ownership: 'manual',
+        endpointKind: 'supply',
+        metadata: { upstreamModel: 'source-model' },
+        config: { targets: [{ targetId: 'target:fallback-only', model: 'source-model' }] },
+      }],
+      edges: [],
+      macros: [{
+        id: 'macro:fallback-only',
+        kind: 'candidate_selector',
+        enabled: true,
+        ownership: 'manual',
+        config: {
+          surface: {
+            entry: { kind: 'external', match: { requestedModelPattern: 'public-model' } },
+            output: 'route',
+          },
+          candidateSource: { kind: 'model_pattern', pattern: 'source-model' },
+          groups: [
+            {
+              id: 'primary',
+              enabled: true,
+              acceptUnassigned: true,
+              input: { kind: 'synthetic', statusCode: 503, message: 'unavailable' },
+              members: [],
+            },
+            {
+              id: 'fallback',
+              enabled: true,
+              input: { kind: 'synthetic', statusCode: 503, message: 'unavailable' },
+              members: [{ endpointId: 'endpoint:fallback-only' }],
+            },
+          ],
+        },
+      }],
+    });
+
+    const result = compileRouteGraphSource(source);
+
+    expect(result.ok).toBe(true);
+    expect(result.diagnostics.map((diagnostic) => diagnostic.code)).not.toContain('dispatcher.route_candidates_required');
+    expect(result.primitiveSource.nodes.some((node) =>
+      node.provenance?.fallbackStage?.id === 'primary',
+    )).toBe(false);
+    expect(result.primitiveSource.edges).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          candidate: expect.objectContaining({ routeEndpointId: 'endpoint:fallback-only' }),
+          provenance: expect.objectContaining({ fallbackStage: expect.objectContaining({ id: 'fallback' }) }),
+        }),
+      }),
+    ]));
+  });
+
+  it('lowers graph macro references into explicit dispatcher control flow', () => {
+    const source = normalizeRouteGraphSource({
+      nodes: [{
+        id: 'endpoint:child-target',
+        type: 'route_endpoint',
+        enabled: true,
+        ownership: 'manual',
+        endpointKind: 'supply',
+        routeEndpointId: 'endpoint:child-target',
+        config: {
+          targets: [{ targetId: 'attempt:child-target', model: 'child-model' }],
+        },
+      }],
+      macros: [
+        buildCandidateSelectorMacro({
+          stableId: 'macro:child',
+          displayName: 'Child',
+          ingress: 'none',
+          endpointIds: ['endpoint:child-target'],
+        }),
+        {
+          id: 'macro:parent',
+          kind: 'candidate_selector',
+          enabled: true,
+          ownership: 'manual',
+          name: 'Parent',
+          config: {
+            surface: {
+              entry: { kind: 'external', match: { kind: 'model', requestedModelPattern: 'parent-model', displayName: 'parent-model' } },
+              output: 'route',
+            },
+            policy: { kind: 'builtin', builtin: 'weighted' },
+            groups: [{
+              id: 'parent-stage',
+              enabled: true,
+              input: { kind: 'graph_references', endpointIds: [], macroIds: ['macro:child'] },
+              members: [{ macroId: 'macro:child', weight: 7 }],
+            }],
+          },
+        },
+      ],
+    });
+
+    const compiled = compileRouteGraphSource(source);
+    expect(compiled.ok).toBe(true);
+    const plan = compiled.compiled.compiledRouterBundle?.plans.find((item) => item.publicModelName === 'parent-model');
+    expect(plan?.executionAlternatives).toHaveLength(1);
+    expect(plan?.executionAlternatives[0]?.executionAttempt).toMatchObject({
+      targetId: 'attempt:child-target',
+    });
+    expect(plan?.executionAlternatives[0]?.terminal).toMatchObject({ endpointId: 'endpoint:child-target' });
+    expect(plan?.executionAlternatives[0]?.selectionTerms).toEqual(expect.arrayContaining([
+      expect.objectContaining({ nodeId: 'macro:macro:child:dispatcher', optionKind: 'route' }),
+    ]));
+  });
+
   it('lowers semantic macro-node edges into primitive candidate and dispatcher edges', () => {
-    const source = buildRouteGraphSourceFromLegacyRoutes([
+    const source = buildRouteGraphSourceFromFixtureRoutes([
       {
         id: 11,
         enabled: true,
         displayName: null,
-        match: { kind: 'model', requestedModelPattern: 'source-model', displayName: null, routeId: 11 },
+        match: { kind: 'model', requestedModelPattern: 'source-model', displayName: null},
         backend: { kind: 'supply' },
         targets: [{ targetId: '11', model: 'source-model', accountId: 1, tokenId: 1, weight: 10 }],
       },
@@ -1488,7 +2241,6 @@ describe('routeGraph port-native source', () => {
           id: 'entry:reuse',
           type: 'entry',
           enabled: true,
-          visibility: 'public',
           ownership: 'manual',
           match: { requestedModelPattern: 'reuse-model' },
         },
@@ -1510,7 +2262,6 @@ describe('routeGraph port-native source', () => {
           id: 'model-group:reuse',
           kind: 'candidate_selector',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
           config: {
             surface: {
@@ -1521,9 +2272,9 @@ describe('routeGraph port-native source', () => {
                 { id: 'candidates.out', label: 'candidate routes', direction: 'output', kind: 'route', multiple: true, collection: { type: 'set', min: 1 } },
               ],
             },
-            policy: { strategy: 'priority_order' },
+            policy: { kind: 'builtin', builtin: 'weighted' },
             groups: [
-              { id: 'p0', enabled: true, priority: 0, input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:supply:route:11'] } },
+              { id: 'p0', enabled: true, input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:supply:upstream-model-fixture:11'] } },
             ],
           },
         },
@@ -1551,12 +2302,12 @@ describe('routeGraph port-native source', () => {
   });
 
   it('lowers semantic macro-node source edges through macro-defined output ports', () => {
-    const source = buildRouteGraphSourceFromLegacyRoutes([
+    const source = buildRouteGraphSourceFromFixtureRoutes([
       {
         id: 11,
         enabled: true,
         displayName: null,
-        match: { kind: 'model', requestedModelPattern: 'source-model', displayName: null, routeId: 11 },
+        match: { kind: 'model', requestedModelPattern: 'source-model', displayName: null},
         backend: { kind: 'supply' },
         targets: [{ targetId: '11', model: 'source-model', accountId: 1, tokenId: 1, weight: 10 }],
       },
@@ -1570,7 +2321,6 @@ describe('routeGraph port-native source', () => {
           id: 'entry:reuse-output',
           type: 'entry',
           enabled: true,
-          visibility: 'public',
           ownership: 'manual',
           match: { requestedModelPattern: 'reuse-output-model' },
         },
@@ -1578,10 +2328,9 @@ describe('routeGraph port-native source', () => {
           id: 'dispatcher:reuse',
           type: 'dispatcher',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
           mode: 'route',
-          policy: { strategy: 'priority_order' },
+          policy: { kind: 'builtin', builtin: 'weighted' },
         },
       ],
       edges: [
@@ -1610,7 +2359,6 @@ describe('routeGraph port-native source', () => {
           id: 'model-group:reuse',
           kind: 'candidate_selector',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
           config: {
             surface: {
@@ -1621,9 +2369,9 @@ describe('routeGraph port-native source', () => {
                 { id: 'candidates.out', label: 'candidate routes', direction: 'output', kind: 'route', multiple: true, collection: { type: 'set', min: 1 } },
               ],
             },
-            policy: { strategy: 'priority_order' },
+            policy: { kind: 'builtin', builtin: 'weighted' },
             groups: [
-              { id: 'p0', enabled: true, priority: 0, input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:supply:route:11'] } },
+              { id: 'p0', enabled: true, input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:supply:upstream-model-fixture:11'] } },
             ],
           },
         },
@@ -1638,8 +2386,8 @@ describe('routeGraph port-native source', () => {
     }));
     expect(result.primitiveSource.edges).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        id: 'macro-semantic:macro-to-dispatcher:route-out:route-endpoint:supply:route:11',
-        sourceNodeId: 'route-endpoint:supply:route:11',
+        id: 'macro-semantic:macro-to-dispatcher:route-out:route-endpoint:supply:upstream-model-fixture:11',
+        sourceNodeId: 'route-endpoint:supply:upstream-model-fixture:11',
         sourcePortId: 'route.out',
         targetNodeId: 'dispatcher:reuse',
         targetPortId: 'route.in',
@@ -1649,30 +2397,41 @@ describe('routeGraph port-native source', () => {
   });
 
   it('lowers route endpoint edges into candidate selector macro candidate inputs', () => {
-    const source = buildRouteGraphSourceFromLegacyRoutes([
+    const source = buildRouteGraphSourceFromFixtureRoutes([
       {
         id: 11,
         enabled: true,
         displayName: 'source-model',
-        match: { kind: 'model', requestedModelPattern: 'source-model', displayName: 'source-model', routeId: 11 },
+        match: { kind: 'model', requestedModelPattern: 'source-model', displayName: 'source-model'},
         backend: { kind: 'supply' },
-        ownership: 'auto_generated',
+        ownership: 'system',
+        fixtureGroup: 'source-model',
         targets: [{ targetId: '11', model: 'source-model', accountId: 1, tokenId: 1, weight: 10 }],
       },
     ]);
 
     const result = compileRouteGraphSource({
       ...source,
+      macros: [{
+        ...source.macros[0],
+        config: {
+          ...source.macros[0]!.config,
+          groups: [{
+            id: 'semantic',
+            enabled: true,
+            input: { kind: 'route_endpoints', endpointIds: [] },
+          }],
+        },
+      }],
       edges: [
-        ...source.edges,
         {
           id: 'supply-to-macro-candidates',
-          sourceNodeId: 'route-endpoint:supply:route:11',
+          sourceNodeId: 'route-endpoint:supply:upstream-model-fixture:11',
           sourcePortId: 'route.out',
-          targetNodeId: 'macro:auto-model:source-model',
+          targetNodeId: 'macro:fixture-group:source-model',
           targetPortId: 'candidates.in',
           kind: 'route_flow',
-          ownership: 'auto_generated',
+          ownership: 'system',
           metadata: { reason: 'auto candidate binding' },
         },
       ],
@@ -1687,9 +2446,9 @@ describe('routeGraph port-native source', () => {
     expect(result.primitiveSource.edges).toEqual(expect.arrayContaining([
       expect.objectContaining({
         id: 'macro-semantic:supply-to-macro-candidates:candidate-in',
-        sourceNodeId: 'route-endpoint:supply:route:11',
+        sourceNodeId: 'route-endpoint:supply:upstream-model-fixture:11',
         sourcePortId: 'route.out',
-        targetNodeId: 'macro:auto-model:source-model:dispatcher',
+        targetNodeId: 'macro:fixture-group:source-model:dispatcher',
         targetPortId: 'route.in',
         kind: 'route_flow',
         ownership: 'derived',
@@ -1698,7 +2457,7 @@ describe('routeGraph port-native source', () => {
           provenance: expect.objectContaining({
             source: 'macro_semantic_edge',
             semanticEdgeId: 'supply-to-macro-candidates',
-            macroId: 'auto-model:source-model',
+            macroId: 'fixture-group:source-model',
             role: 'candidate_edge',
           }),
         }),
@@ -1707,29 +2466,41 @@ describe('routeGraph port-native source', () => {
   });
 
   it('lowers candidate input edges when the macro id already has a macro prefix', () => {
-    const source = buildRouteGraphSourceFromLegacyRoutes([
+    const source = buildRouteGraphSourceFromFixtureRoutes([
       {
         id: 11,
         enabled: true,
         displayName: 'model-example',
-        match: { kind: 'model', requestedModelPattern: 'model-example', displayName: 'model-example', routeId: 11 },
+        match: { kind: 'model', requestedModelPattern: 'model-example', displayName: 'model-example'},
         backend: { kind: 'supply' },
-        ownership: 'auto_generated',
+        ownership: 'system',
+        fixtureGroup: 'model-example',
         targets: [{ targetId: '11', model: 'model-example', accountId: 1, tokenId: 1, weight: 10 }],
       },
     ]);
 
     const result = compileRouteGraphSource({
       ...source,
-      macros: [{ ...source.macros[0], id: 'macro:auto-model:model-example' }],
+      macros: [{
+        ...source.macros[0],
+        id: 'macro:fixture-group:model-example',
+        config: {
+          ...source.macros[0]!.config,
+          groups: [{
+            id: 'semantic',
+            enabled: true,
+            input: { kind: 'route_endpoints', endpointIds: [] },
+          }],
+        },
+      }],
       edges: [{
         id: 'supply-to-prefixed-macro-candidates',
-        sourceNodeId: 'route-endpoint:supply:route:11',
+        sourceNodeId: 'route-endpoint:supply:upstream-model-fixture:11',
         sourcePortId: 'route.out',
-        targetNodeId: 'macro:auto-model:model-example',
+        targetNodeId: 'macro:fixture-group:model-example',
         targetPortId: 'candidates.in',
         kind: 'route_flow',
-        ownership: 'auto_generated',
+        ownership: 'system',
       }],
     });
 
@@ -1738,83 +2509,90 @@ describe('routeGraph port-native source', () => {
     expect(result.primitiveSource.edges).toEqual(expect.arrayContaining([
       expect.objectContaining({
         id: 'macro-semantic:supply-to-prefixed-macro-candidates:candidate-in',
-        sourceNodeId: 'route-endpoint:supply:route:11',
+        sourceNodeId: 'route-endpoint:supply:upstream-model-fixture:11',
         sourcePortId: 'route.out',
-        targetNodeId: 'macro:macro:auto-model:model-example:dispatcher',
+        targetNodeId: 'macro:macro:fixture-group:model-example:dispatcher',
         targetPortId: 'route.in',
         kind: 'route_flow',
       }),
     ]));
   });
 
-  it('applies candidate selector endpoint overrides without editing generated candidate edges', () => {
-    const source = buildRouteGraphSourceFromLegacyRoutes([
+  it('uses group members as the sole candidate-level selection authority', () => {
+    const source = buildRouteGraphSourceFromFixtureRoutes([
       {
         id: 11,
         enabled: true,
         displayName: 'GLM-5.1',
-        match: { kind: 'model', requestedModelPattern: 'GLM-5.1', displayName: 'GLM-5.1', routeId: 11 },
+        match: { kind: 'model', requestedModelPattern: 'GLM-5.1', displayName: 'GLM-5.1'},
         backend: { kind: 'supply' },
-        ownership: 'auto_generated',
+        ownership: 'system',
+        fixtureGroup: 'glm-5.1',
         targets: [{ targetId: '11', model: 'GLM-5.1', accountId: 1, tokenId: 1, weight: 10 }],
       },
       {
         id: 22,
         enabled: true,
         displayName: 'glm-5.1',
-        match: { kind: 'model', requestedModelPattern: 'glm-5.1', displayName: 'glm-5.1', routeId: 22 },
+        match: { kind: 'model', requestedModelPattern: 'glm-5.1', displayName: 'glm-5.1'},
         backend: { kind: 'supply' },
-        ownership: 'auto_generated',
+        ownership: 'system',
+        fixtureGroup: 'glm-5.1',
         targets: [{ targetId: '22', model: 'glm-5.1', accountId: 1, tokenId: 2, weight: 10 }],
       },
     ]);
     const macro = source.macros[0];
-    const result = compileRouteGraphSource({
+    const input = {
       ...source,
       macros: [
         {
           ...macro,
           config: {
             ...macro.config,
+            groups: macro.config.groups.map((group) => ({
+              ...group,
+              members: [
+                { endpointId: 'route-endpoint:supply:upstream-model-fixture:11', weight: 3, enabled: true },
+                { endpointId: 'route-endpoint:supply:upstream-model-fixture:22', enabled: false },
+              ],
+            })),
+            // Unreleased legacy input is deliberately discarded by normalization.
             candidateOverrides: {
-              bySupplyEndpointId: {
-                'route-endpoint:supply:route:11': { weight: 3, priority: 7, enabled: false },
-                'route-endpoint:supply:route:22': { excluded: true },
+              byExecutionTargetId: {
+                'route-endpoint:supply:upstream-model-fixture:11': { weight: 3, enabled: false },
+                'route-endpoint:supply:upstream-model-fixture:22': { excluded: true },
               },
             },
           },
         },
       ],
-    });
+    };
+    const normalized = normalizeRouteGraphSource(input);
+    const result = compileRouteGraphSource(normalized);
 
     expect(result.ok).toBe(true);
-    const plan = result.compiled.compiledRouterBundle?.plans[0];
-    expect(plan?.selectorLevels[0]?.groups).toEqual([
-      expect.objectContaining({
-        nodeId: 'route-endpoint:supply:route:11',
-        endpointId: 'route-endpoint:supply:route:11',
-        enabled: false,
-        weight: 3,
-        priority: 7,
-        metadata: expect.objectContaining({
-          candidate: expect.objectContaining({
-            override: { weight: 3, priority: 7, enabled: false },
-          }),
-        }),
-      }),
-    ]);
-    expect(result.primitiveSource.edges.some((edge) => edge.sourceNodeId === 'route-endpoint:supply:route:22' && edge.targetNodeId === 'macro:auto-model:glm-5.1:dispatcher')).toBe(false);
+    expect(normalized.macros[0]?.config).not.toHaveProperty('candidateOverrides');
+    const firstCandidateEdge = result.primitiveSource.edges.find((edge) => (
+      edge.sourceNodeId === 'route-endpoint:supply:upstream-model-fixture:11'
+      && edge.targetNodeId === 'macro:fixture-group:glm-5.1:dispatcher'
+    ));
+    expect(firstCandidateEdge?.metadata?.candidate).toMatchObject({ weight: 3, enabled: true });
+    const secondCandidateEdge = result.primitiveSource.edges.find((edge) => (
+      edge.sourceNodeId === 'route-endpoint:supply:upstream-model-fixture:22'
+      && edge.targetNodeId === 'macro:fixture-group:glm-5.1:dispatcher'
+    ));
+    expect(secondCandidateEdge?.metadata?.candidate).toMatchObject({ enabled: false });
   });
 
   it('ignores semantic candidate edges that target a disabled macro', () => {
-    const source = buildRouteGraphSourceFromLegacyRoutes([
+    const source = buildRouteGraphSourceFromFixtureRoutes([
       {
         id: 11,
         enabled: false,
         displayName: 'disabled-model',
-        match: { kind: 'model', requestedModelPattern: 'disabled-model', displayName: 'disabled-model', routeId: 11 },
+        match: { kind: 'model', requestedModelPattern: 'disabled-model', displayName: 'disabled-model'},
         backend: { kind: 'supply' },
-        ownership: 'auto_generated',
+        ownership: 'system',
         targets: [{ targetId: '11', model: 'disabled-model', accountId: 1, tokenId: 1, weight: 10 }],
       },
     ]);
@@ -1823,12 +2601,12 @@ describe('routeGraph port-native source', () => {
       ...source,
       edges: [{
         id: 'supply-to-disabled-macro-candidates',
-        sourceNodeId: 'route-endpoint:supply:route:11',
+        sourceNodeId: 'route-endpoint:supply:upstream-model-fixture:11',
         sourcePortId: 'route.out',
-        targetNodeId: 'macro:auto-model:disabled-model',
+        targetNodeId: 'macro:fixture-group:disabled-model',
         targetPortId: 'candidates.in',
         kind: 'route_flow',
-        ownership: 'auto_generated',
+        ownership: 'system',
       }],
     });
 
@@ -1836,12 +2614,12 @@ describe('routeGraph port-native source', () => {
   });
 
   it('lowers embedded internal candidate_selector surfaces without exposing public models', () => {
-    const source = buildRouteGraphSourceFromLegacyRoutes([
+    const source = buildRouteGraphSourceFromFixtureRoutes([
       {
         id: 11,
         enabled: true,
         displayName: null,
-        match: { kind: 'model', requestedModelPattern: 'source-model', displayName: null, routeId: 11 },
+        match: { kind: 'model', requestedModelPattern: 'source-model', displayName: null},
         backend: { kind: 'supply' },
         targets: [{ targetId: '11', model: 'source-model', accountId: 1, tokenId: 1, weight: 10 }],
       },
@@ -1854,16 +2632,15 @@ describe('routeGraph port-native source', () => {
           id: 'model-group:internal',
           kind: 'candidate_selector',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
           config: {
             surface: {
               entry: { kind: 'embedded', input: 'bidirect' },
               output: 'route',
             },
-            policy: { strategy: 'priority_order' },
+            policy: { kind: 'builtin', builtin: 'weighted' },
             groups: [
-              { id: 'p0', enabled: true, priority: 0, input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:supply:route:11'] } },
+              { id: 'p0', enabled: true, input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:supply:upstream-model-fixture:11'] } },
             ],
           },
         },
@@ -1872,16 +2649,16 @@ describe('routeGraph port-native source', () => {
 
     expect(result.ok).toBe(true);
     expect(result.primitiveSource.nodes.some((node) => node.id === 'macro:model-group:internal:entry')).toBe(false);
-    expect(result.compiled.publicModels.some((item) => item.model === 'internal-group')).toBe(false);
+    expect(compiledRuntimePublicModels(result).some((item) => item.model === 'internal-group')).toBe(false);
   });
 
   it('materializes candidate selector model_pattern groups from matching route endpoints', () => {
-    const source = buildRouteGraphSourceFromLegacyRoutes([
+    const source = buildRouteGraphSourceFromFixtureRoutes([
       {
         id: 11,
         enabled: true,
         displayName: null,
-        match: { kind: 'model', requestedModelPattern: 'claude-opus-4-6', displayName: null, routeId: 11 },
+        match: { kind: 'model', requestedModelPattern: 'claude-opus-4-6', displayName: null},
         backend: { kind: 'supply' },
         targets: [{ targetId: '11', model: 'claude-opus-4-6', accountId: 1, tokenId: 1, weight: 10 }],
       },
@@ -1889,7 +2666,7 @@ describe('routeGraph port-native source', () => {
         id: 12,
         enabled: true,
         displayName: null,
-        match: { kind: 'model', requestedModelPattern: 'claude-sonnet-4-6', displayName: null, routeId: 12 },
+        match: { kind: 'model', requestedModelPattern: 'claude-sonnet-4-6', displayName: null},
         backend: { kind: 'supply' },
         targets: [{ targetId: '12', model: 'claude-sonnet-4-6', accountId: 1, tokenId: 1, weight: 10 }],
       },
@@ -1897,7 +2674,7 @@ describe('routeGraph port-native source', () => {
         id: 13,
         enabled: true,
         displayName: null,
-        match: { kind: 'model', requestedModelPattern: 'gpt-4o-mini', displayName: null, routeId: 13 },
+        match: { kind: 'model', requestedModelPattern: 'gpt-4o-mini', displayName: null},
         backend: { kind: 'supply' },
         targets: [{ targetId: '13', model: 'gpt-4o-mini', accountId: 1, tokenId: 1, weight: 10 }],
       },
@@ -1910,26 +2687,23 @@ describe('routeGraph port-native source', () => {
           id: 'pattern-selector',
           kind: 'candidate_selector',
           enabled: true,
-          visibility: 'public',
           ownership: 'manual',
           config: {
             surface: {
               entry: {
                 kind: 'external',
-                visibility: 'public',
                 match: { displayName: 'claude-group' },
               },
               output: 'route',
             },
-            policy: { strategy: 'priority_order' },
+            policy: { kind: 'builtin', builtin: 'weighted' },
             groups: [
               {
                 id: 'claude',
                 enabled: true,
-                priority: 0,
                 input: { kind: 'model_pattern', pattern: 'claude-*' },
-                defaults: { weight: 8, priority: 2 },
-                materialization: { sort: 'model_name', dedupeBy: 'route_id' },
+                defaults: { weight: 8 },
+                materialization: { sort: 'model_name', dedupeBy: 'endpoint_id' },
               },
             ],
           },
@@ -1941,61 +2715,205 @@ describe('routeGraph port-native source', () => {
     expect(result.diagnostics.map((item) => item.code)).not.toContain('macro.resolver_unsupported');
     expect(result.primitiveSource.nodes).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        id: 'macro:pattern-selector:candidate:claude:route:11',
+        id: 'macro:pattern-selector:candidate:claude:endpoint:route-endpoint:supply:upstream-model-fixture:11',
         type: 'route_endpoint',
         ownership: 'derived',
-        metadata: expect.objectContaining({
-          macroCandidate: expect.objectContaining({
-            pattern: 'claude-*',
-            matchedModel: 'claude-opus-4-6',
-            routeId: 11,
-            weight: 8,
-            priority: 2,
-          }),
-        }),
+        provenance: expect.objectContaining({ source: 'macro', role: 'pattern_endpoint', macroId: 'pattern-selector' }),
       }),
       expect.objectContaining({
-        id: 'macro:pattern-selector:candidate:claude:route:12',
+        id: 'macro:pattern-selector:candidate:claude:endpoint:route-endpoint:supply:upstream-model-fixture:12',
         type: 'route_endpoint',
         ownership: 'derived',
-        metadata: expect.objectContaining({
-          macroCandidate: expect.objectContaining({
-            matchedModel: 'claude-sonnet-4-6',
-            routeId: 12,
-          }),
-        }),
+        provenance: expect.objectContaining({ source: 'macro', role: 'pattern_endpoint', macroId: 'pattern-selector' }),
       }),
     ]));
-    expect(result.primitiveSource.nodes.some((node) => node.id === 'macro:pattern-selector:candidate:claude:route:13')).toBe(false);
+    expect(result.primitiveSource.nodes.some((node) => node.id === 'macro:pattern-selector:candidate:claude:endpoint:route-endpoint:supply:upstream-model-fixture:13')).toBe(false);
     expect(result.primitiveSource.edges).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        sourceNodeId: 'macro:pattern-selector:candidate:claude:route:11',
+        sourceNodeId: 'macro:pattern-selector:candidate:claude:endpoint:route-endpoint:supply:upstream-model-fixture:11',
         targetNodeId: 'macro:pattern-selector:dispatcher',
         metadata: expect.objectContaining({
           candidate: expect.objectContaining({
             pattern: 'claude-*',
             matchedModel: 'claude-opus-4-6',
-            routeId: 11,
           }),
         }),
       }),
       expect.objectContaining({
-        sourceNodeId: 'macro:pattern-selector:candidate:claude:route:12',
+        sourceNodeId: 'macro:pattern-selector:candidate:claude:endpoint:route-endpoint:supply:upstream-model-fixture:12',
         targetNodeId: 'macro:pattern-selector:dispatcher',
       }),
     ]));
-    expect(result.compiled.publicModels).toEqual(expect.arrayContaining([
+    expect(compiledRuntimePublicModels(result)).toEqual(expect.arrayContaining([
       expect.objectContaining({ model: 'claude-group' }),
     ]));
   });
 
+  it('materializes model_pattern candidates with canonical route endpoint identity', () => {
+    const canonicalEndpointId = 'route-endpoint:supply:canonical:claude-opus';
+    const result = compileRouteGraphSource({
+      nodes: [
+        {
+          id: 'graph-node:supply:claude-opus',
+          type: 'route_endpoint',
+          name: 'Claude Opus',
+          enabled: true,
+          ownership: 'manual',
+          endpointKind: 'supply',
+          exposure: 'none',
+          resolutionStatus: 'resolved',
+          routeEndpointId: canonicalEndpointId,
+          backend: { kind: 'supply' },
+          match: { kind: 'model', requestedModelPattern: 'claude-opus-4-6', displayName: null },
+          config: {
+            targets: [{ targetId: 'target:claude-opus', model: 'claude-opus-4-6', weight: 10 }],
+            targetSelection: { kind: 'builtin', builtin: 'weighted' },
+          },
+        },
+      ],
+      edges: [],
+      macros: [
+        {
+          id: 'pattern-selector',
+          kind: 'candidate_selector',
+          enabled: true,
+          ownership: 'manual',
+          config: {
+            surface: {
+              entry: {
+                kind: 'external',
+                match: { displayName: 'claude-group' },
+              },
+              output: 'route',
+            },
+            policy: { kind: 'builtin', builtin: 'weighted' },
+            groups: [
+              {
+                id: 'claude',
+                enabled: true,
+                input: { kind: 'model_pattern', pattern: 'claude-*' },
+                materialization: { dedupeBy: 'endpoint_id' },
+              },
+            ],
+          },
+        },
+      ],
+    });
+
+    expect(result.ok).toBe(true);
+    const candidateNodeId = `macro:pattern-selector:candidate:claude:endpoint:${canonicalEndpointId}`;
+    expect(result.primitiveSource.nodes).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: candidateNodeId,
+        routeEndpointId: canonicalEndpointId,
+        provenance: expect.objectContaining({ source: 'macro', role: 'pattern_endpoint', macroId: 'pattern-selector' }),
+      }),
+    ]));
+    expect(result.primitiveSource.nodes
+      .filter((node) => node.ownership === 'derived')
+      .some((node) => String(node.id).includes('graph-node:supply:claude-opus'))).toBe(false);
+    expect(result.primitiveSource.edges).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        sourceNodeId: candidateNodeId,
+        metadata: expect.objectContaining({
+          candidate: expect.objectContaining({
+            routeEndpointId: canonicalEndpointId,
+          }),
+        }),
+      }),
+    ]));
+    expect(result.compiled.compiledRouterBundle?.plans[0]?.executionAlternatives[0]).toEqual(expect.objectContaining({
+      terminal: expect.objectContaining({
+        endpointId: canonicalEndpointId,
+      }),
+      endpoint: expect.objectContaining({
+        endpointId: canonicalEndpointId,
+      }),
+    }));
+  });
+
+  it('lowers route_endpoint macro candidates with separate graph node and canonical endpoint identities', () => {
+    const canonicalEndpointId = 'route-endpoint:supply:canonical:glm';
+    const graphNodeId = 'graph-node:supply:glm';
+    const result = compileRouteGraphSource({
+      nodes: [
+        {
+          id: graphNodeId,
+          type: 'route_endpoint',
+          name: 'GLM',
+          enabled: true,
+          ownership: 'manual',
+          endpointKind: 'supply',
+          exposure: 'none',
+          resolutionStatus: 'resolved',
+          routeEndpointId: canonicalEndpointId,
+          backend: { kind: 'supply' },
+          match: { kind: 'model', requestedModelPattern: 'glm-5.1', displayName: null },
+          config: {
+            targets: [{ targetId: 'target:glm', model: 'glm-5.1', weight: 10 }],
+            targetSelection: { kind: 'builtin', builtin: 'weighted' },
+          },
+        },
+      ],
+      edges: [],
+      macros: [
+        {
+          id: 'route-endpoint-selector',
+          kind: 'candidate_selector',
+          enabled: true,
+          ownership: 'manual',
+          config: {
+            surface: {
+              entry: {
+                kind: 'external',
+                match: { displayName: 'glm-group' },
+              },
+              output: 'route',
+            },
+            policy: { kind: 'builtin', builtin: 'weighted' },
+            groups: [
+              {
+                id: 'primary',
+                enabled: true,
+                input: { kind: 'route_endpoints', endpointIds: [canonicalEndpointId] },
+              },
+            ],
+          },
+        },
+      ],
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.primitiveSource.edges).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        sourceNodeId: graphNodeId,
+        targetNodeId: 'macro:route-endpoint-selector:dispatcher',
+        metadata: expect.objectContaining({
+          candidate: expect.objectContaining({
+            routeEndpointId: canonicalEndpointId,
+          }),
+        }),
+      }),
+    ]));
+    const alternative = result.compiled.compiledRouterBundle?.plans[0]?.executionAlternatives[0];
+    expect(alternative).toEqual(expect.objectContaining({
+      terminal: expect.objectContaining({
+        endpointId: canonicalEndpointId,
+      }),
+      endpoint: expect.objectContaining({
+        endpointId: canonicalEndpointId,
+        nodeId: graphNodeId,
+      }),
+    }));
+  });
+
   it('keeps model_pattern macro materialization deterministic with limit and model dedupe', () => {
-    const source = buildRouteGraphSourceFromLegacyRoutes([
+    const source = buildRouteGraphSourceFromFixtureRoutes([
       {
         id: 11,
         enabled: true,
         displayName: null,
-        match: { kind: 'model', requestedModelPattern: 'claude-opus-4-6', displayName: null, routeId: 11 },
+        match: { kind: 'model', requestedModelPattern: 'claude-opus-4-6', displayName: null},
         backend: { kind: 'supply' },
         targets: [{ targetId: '11', model: 'claude-opus-4-6', accountId: 1, tokenId: 1, weight: 10 }],
       },
@@ -2003,7 +2921,7 @@ describe('routeGraph port-native source', () => {
         id: 12,
         enabled: true,
         displayName: null,
-        match: { kind: 'model', requestedModelPattern: 'claude-opus-4-6-alt', displayName: null, routeId: 12 },
+        match: { kind: 'model', requestedModelPattern: 'claude-opus-4-6-alt', displayName: null},
         backend: { kind: 'supply' },
         targets: [{ targetId: '12', model: 'claude-opus-4-6', accountId: 1, tokenId: 1, weight: 10 }],
       },
@@ -2011,7 +2929,7 @@ describe('routeGraph port-native source', () => {
         id: 13,
         enabled: true,
         displayName: null,
-        match: { kind: 'model', requestedModelPattern: 'claude-sonnet-4-6', displayName: null, routeId: 13 },
+        match: { kind: 'model', requestedModelPattern: 'claude-sonnet-4-6', displayName: null},
         backend: { kind: 'supply' },
         targets: [{ targetId: '13', model: 'claude-sonnet-4-6', accountId: 1, tokenId: 1, weight: 10 }],
       },
@@ -2024,23 +2942,20 @@ describe('routeGraph port-native source', () => {
           id: 'pattern-limited',
           kind: 'candidate_selector',
           enabled: true,
-          visibility: 'public',
           ownership: 'manual',
           config: {
             surface: {
               entry: {
                 kind: 'external',
-                visibility: 'public',
                 match: { displayName: 'limited-claude-group' },
               },
               output: 'route',
             },
-            policy: { strategy: 'priority_order' },
+            policy: { kind: 'builtin', builtin: 'weighted' },
             groups: [
               {
                 id: 'claude',
                 enabled: true,
-                priority: 0,
                 input: { kind: 'model_pattern', pattern: 'claude-*' },
                 materialization: { sort: 'model_name', dedupeBy: 'model', limit: 1 },
               },
@@ -2054,12 +2969,11 @@ describe('routeGraph port-native source', () => {
     const candidateIds = result.primitiveSource.nodes
       .map((node) => node.id)
       .filter((id) => id.startsWith('macro:pattern-limited:candidate:claude:'));
-    expect(candidateIds).toEqual(['macro:pattern-limited:candidate:claude:route:11']);
+    expect(candidateIds).toEqual(['macro:pattern-limited:candidate:claude:endpoint:route-endpoint:supply:upstream-model-fixture:11']);
   });
 
   it('reports public macro entries with empty model_pattern groups as candidate-less dispatchers', () => {
     const result = compileRouteGraphSource({
-      version: 1,
       nodes: [],
       edges: [],
       macros: [
@@ -2067,20 +2981,18 @@ describe('routeGraph port-native source', () => {
           id: 'pattern-empty',
           kind: 'candidate_selector',
           enabled: true,
-          visibility: 'public',
           ownership: 'manual',
           config: {
             surface: {
               entry: {
                 kind: 'external',
-                visibility: 'public',
                 match: { displayName: 'empty-pattern-group' },
               },
               output: 'route',
             },
-            policy: { strategy: 'priority_order' },
+            policy: { kind: 'builtin', builtin: 'weighted' },
             groups: [
-              { id: 'none', enabled: true, priority: 0, input: { kind: 'model_pattern', pattern: 'no-match-*' } },
+              { id: 'none', enabled: true, input: { kind: 'model_pattern', pattern: 'no-match-*' } },
             ],
           },
         },
@@ -2094,7 +3006,6 @@ describe('routeGraph port-native source', () => {
 
   it('reports unsupported candidate selector query resolvers explicitly', () => {
     const result = compileRouteGraphSource({
-      version: 1,
       nodes: [],
       edges: [],
       macros: [
@@ -2102,20 +3013,18 @@ describe('routeGraph port-native source', () => {
           id: 'pattern-selector',
           kind: 'candidate_selector',
           enabled: true,
-          visibility: 'public',
           ownership: 'manual',
           config: {
             surface: {
               entry: {
                 kind: 'external',
-                visibility: 'public',
                 match: { displayName: 'pattern-group' },
               },
               output: 'route',
             },
-            policy: { strategy: 'priority_order' },
+            policy: { kind: 'builtin', builtin: 'weighted' },
             groups: [
-              { id: 'metadata', enabled: true, priority: 0, input: { kind: 'metadata_query', cel: 'metadata.tier == "gold"' } },
+              { id: 'metadata', enabled: true, input: { kind: 'metadata_query', cel: 'metadata.tier == "gold"' } },
             ],
           },
         },
@@ -2128,13 +3037,11 @@ describe('routeGraph port-native source', () => {
 
   it('rejects missing graph endpoints, missing ports, duplicate single inputs, required ports, duplicate public names, and cycles', () => {
     const missingReferences = compileRouteGraphSource({
-      version: 1,
       nodes: [
         {
           id: 'entry:missing',
           type: 'entry',
           enabled: true,
-          visibility: 'public',
           ownership: 'manual',
           match: { requestedModelPattern: 'missing-model' },
         },
@@ -2156,14 +3063,13 @@ describe('routeGraph port-native source', () => {
     ]));
 
     const structural = compileRouteGraphSource({
-      version: 1,
       nodes: [
-        { id: 'entry:a', type: 'entry', enabled: true, visibility: 'public', ownership: 'manual', match: { requestedModelPattern: 'dup-model' } },
-        { id: 'entry:b', type: 'entry', enabled: true, visibility: 'public', ownership: 'manual', match: { requestedModelPattern: 'dup-model' } },
-        { id: 'dispatcher:a', type: 'dispatcher', enabled: true, visibility: 'internal', ownership: 'manual', mode: 'route', policy: { strategy: 'weighted' } },
-        { id: 'filter:a', type: 'filter', enabled: true, visibility: 'internal', ownership: 'manual', operations: [] },
-        { id: 'endpoint:a', type: 'route_endpoint', enabled: true, visibility: 'internal', ownership: 'manual', config: { targets: [{ targetId: 'a', model: 'dup-model' }], targetSelection: { strategy: 'weighted' } } },
-        { id: 'endpoint:b', type: 'route_endpoint', enabled: true, visibility: 'internal', ownership: 'manual', config: { targets: [{ targetId: 'b', model: 'dup-model' }], targetSelection: { strategy: 'weighted' } } },
+        { id: 'entry:a', type: 'entry', enabled: true, ownership: 'manual', match: { requestedModelPattern: 'dup-model' } },
+        { id: 'entry:b', type: 'entry', enabled: true, ownership: 'manual', match: { requestedModelPattern: 'dup-model' } },
+        { id: 'dispatcher:a', type: 'dispatcher', enabled: true, ownership: 'manual', mode: 'route', policy: { kind: 'builtin', builtin: 'weighted' } },
+        { id: 'filter:a', type: 'filter', enabled: true, ownership: 'manual', operations: [] },
+        { id: 'endpoint:a', type: 'route_endpoint', enabled: true, ownership: 'manual', config: { targets: [{ targetId: 'a', model: 'dup-model' }], targetSelection: { kind: 'builtin', builtin: 'weighted' } } },
+        { id: 'endpoint:b', type: 'route_endpoint', enabled: true, ownership: 'manual', config: { targets: [{ targetId: 'b', model: 'dup-model' }], targetSelection: { kind: 'builtin', builtin: 'weighted' } } },
       ],
       edges: [
         { id: 'entry-a-dispatcher', sourceNodeId: 'entry:a', sourcePortId: 'bidirect.out', targetNodeId: 'dispatcher:a', targetPortId: 'bidirect.in', kind: 'bidirect_flow', ownership: 'manual' },
@@ -2184,11 +3090,10 @@ describe('routeGraph port-native source', () => {
     expect(structural.diagnostics.map((item) => item.code)).not.toContain('dispatcher.route_candidates_required');
 
     const missingRequiredPort = compileRouteGraphSource({
-      version: 1,
       nodes: [
-        { id: 'entry:required', type: 'entry', enabled: true, visibility: 'public', ownership: 'manual', match: { requestedModelPattern: 'required-model' } },
-        { id: 'dispatcher:required', type: 'dispatcher', enabled: true, visibility: 'internal', ownership: 'manual', mode: 'route', policy: { strategy: 'weighted' } },
-        { id: 'endpoint:required', type: 'route_endpoint', enabled: true, visibility: 'internal', ownership: 'manual', config: { targets: [{ targetId: 'required', model: 'required-model' }], targetSelection: { strategy: 'weighted' } } },
+        { id: 'entry:required', type: 'entry', enabled: true, ownership: 'manual', match: { requestedModelPattern: 'required-model' } },
+        { id: 'dispatcher:required', type: 'dispatcher', enabled: true, ownership: 'manual', mode: 'route', policy: { kind: 'builtin', builtin: 'weighted' } },
+        { id: 'endpoint:required', type: 'route_endpoint', enabled: true, ownership: 'manual', config: { targets: [{ targetId: 'required', model: 'required-model' }], targetSelection: { kind: 'builtin', builtin: 'weighted' } } },
       ],
       edges: [
         { id: 'route-only', sourceNodeId: 'endpoint:required', sourcePortId: 'route.out', targetNodeId: 'dispatcher:required', targetPortId: 'route.in', kind: 'route_flow', ownership: 'manual' },
@@ -2199,14 +3104,41 @@ describe('routeGraph port-native source', () => {
     expect(missingRequiredPort.diagnostics.map((item) => item.code)).toContain('port.required_missing');
   });
 
+  it('allows incomplete disabled primitives as authoring drafts', () => {
+    const result = compileRouteGraphSource({
+      nodes: [
+        { id: 'entry:draft', type: 'entry', enabled: false, ownership: 'manual', match: { requestedModelPattern: '' } },
+        { id: 'filter:draft', type: 'filter', enabled: false, ownership: 'manual', operations: [] },
+        { id: 'dispatcher:draft', type: 'dispatcher', enabled: false, ownership: 'manual', mode: 'route', policy: { kind: 'inherit_default' } },
+        { id: 'endpoint:draft', type: 'route_endpoint', enabled: false, ownership: 'manual', config: {} },
+        { id: 'synthetic:draft', type: 'synthetic_endpoint', enabled: false, ownership: 'manual', statusCode: 503, message: 'Draft' },
+      ],
+      edges: [],
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.diagnostics).toEqual([]);
+
+    const enabledEntry = compileRouteGraphSource({
+      nodes: [
+        { id: 'entry:enabled', type: 'entry', enabled: true, ownership: 'manual', match: { requestedModelPattern: 'enabled' } },
+      ],
+      edges: [],
+    });
+    expect(enabledEntry.ok).toBe(false);
+    expect(enabledEntry.diagnostics).toContainEqual(expect.objectContaining({
+      code: 'entry.no_terminal',
+      nodeId: 'entry:enabled',
+    }));
+  });
+
   it('rejects public entry model names that differ only by case', () => {
     const result = compileRouteGraphSource({
-      version: 1,
       nodes: [
-        { id: 'entry:upper', type: 'entry', enabled: true, visibility: 'public', ownership: 'manual', match: { requestedModelPattern: 'DeepSeek-v4-Flash' } },
-        { id: 'entry:lower', type: 'entry', enabled: true, visibility: 'public', ownership: 'manual', match: { requestedModelPattern: 'deepseek-v4-flash' } },
-        { id: 'endpoint:upper', type: 'route_endpoint', enabled: true, visibility: 'internal', ownership: 'manual', config: { targets: [{ targetId: 'upper', model: 'DeepSeek-v4-Flash' }], targetSelection: { strategy: 'weighted' } } },
-        { id: 'endpoint:lower', type: 'route_endpoint', enabled: true, visibility: 'internal', ownership: 'manual', config: { targets: [{ targetId: 'lower', model: 'deepseek-v4-flash' }], targetSelection: { strategy: 'weighted' } } },
+        { id: 'entry:upper', type: 'entry', enabled: true, ownership: 'manual', match: { requestedModelPattern: 'DeepSeek-v4-Flash' } },
+        { id: 'entry:lower', type: 'entry', enabled: true, ownership: 'manual', match: { requestedModelPattern: 'deepseek-v4-flash' } },
+        { id: 'endpoint:upper', type: 'route_endpoint', enabled: true, ownership: 'manual', config: { targets: [{ targetId: 'upper', model: 'DeepSeek-v4-Flash' }], targetSelection: { kind: 'builtin', builtin: 'weighted' } } },
+        { id: 'endpoint:lower', type: 'route_endpoint', enabled: true, ownership: 'manual', config: { targets: [{ targetId: 'lower', model: 'deepseek-v4-flash' }], targetSelection: { kind: 'builtin', builtin: 'weighted' } } },
       ],
       edges: [
         { id: 'upper-flow', sourceNodeId: 'entry:upper', sourcePortId: 'bidirect.out', targetNodeId: 'endpoint:upper', targetPortId: 'bidirect.in', kind: 'bidirect_flow', ownership: 'manual' },
@@ -2220,7 +3152,6 @@ describe('routeGraph port-native source', () => {
 
   it('lowers synthetic and inline candidate selector groups with defaults and provenance', () => {
     const result = compileRouteGraphSource({
-      version: 1,
       nodes: [],
       edges: [],
       macros: [
@@ -2228,23 +3159,20 @@ describe('routeGraph port-native source', () => {
           id: 'model-group:mixed',
           kind: 'candidate_selector',
           enabled: true,
-          visibility: 'public',
           ownership: 'manual',
           config: {
             surface: {
               entry: {
                 kind: 'external',
-                visibility: 'public',
                 match: { displayName: 'mixed-group' },
               },
               output: 'route',
             },
-            policy: { strategy: 'priority_order' },
+            policy: { kind: 'builtin', builtin: 'weighted' },
             groups: [
               {
                 id: 'disabled-inline',
                 enabled: false,
-                priority: 0,
                 input: {
                   kind: 'inline_endpoints',
                   endpoints: [{ targetId: 'disabled', model: 'disabled-model' }],
@@ -2253,7 +3181,6 @@ describe('routeGraph port-native source', () => {
               {
                 id: 'inline',
                 enabled: true,
-                priority: 1,
                 input: {
                   kind: 'inline_endpoints',
                   endpoints: [
@@ -2263,7 +3190,6 @@ describe('routeGraph port-native source', () => {
                 },
                 defaults: {
                   weight: 8,
-                  priority: 3,
                   metadata: { tier: 'premium' },
                 },
               },
@@ -2271,9 +3197,8 @@ describe('routeGraph port-native source', () => {
                 id: 'synthetic',
                 label: 'capacity guard',
                 enabled: true,
-                priority: 2,
                 input: { kind: 'synthetic', statusCode: 429, message: 'capacity exceeded' },
-                defaults: { weight: 1, priority: 9 },
+                defaults: { weight: 1 },
               },
             ],
           },
@@ -2287,22 +3212,15 @@ describe('routeGraph port-native source', () => {
         id: 'macro:model-group:mixed:candidate:inline:inline',
         type: 'route_endpoint',
         ownership: 'derived',
-        metadata: expect.objectContaining({
-          tier: 'premium',
-          macroCandidate: expect.objectContaining({
-            macroId: 'model-group:mixed',
-            groupId: 'inline',
-            weight: 8,
-            priority: 3,
-          }),
-        }),
-        config: expect.objectContaining({
+        metadata: expect.objectContaining({ tier: 'premium' }),
+        provenance: expect.objectContaining({ source: 'macro', macroId: 'model-group:mixed', role: 'inline_endpoint' }),
+        config: {
           targets: [
             expect.objectContaining({ targetId: 'inline-a', model: 'inline-model-a', metadata: { region: 'sg' } }),
             expect.objectContaining({ targetId: 'inline-b', model: 'inline-model-b' }),
           ],
-          targetSelection: { strategy: 'defer_to_router' },
-        }),
+          targetSelection: { kind: 'defer_to_router' },
+        },
       }),
       expect.objectContaining({
         id: 'macro:model-group:mixed:candidate:synthetic:synthetic',
@@ -2319,14 +3237,16 @@ describe('routeGraph port-native source', () => {
         targetNodeId: 'macro:model-group:mixed:dispatcher',
         metadata: expect.objectContaining({
           provenance: expect.objectContaining({ source: 'macro', macroId: 'model-group:mixed', role: 'candidate_edge' }),
-          candidate: expect.objectContaining({ weight: 8, priority: 3 }),
+          candidate: expect.objectContaining({
+            weight: 8,
+          }),
         }),
       }),
       expect.objectContaining({
         sourceNodeId: 'macro:model-group:mixed:candidate:synthetic:synthetic',
-        targetNodeId: 'macro:model-group:mixed:dispatcher',
+        targetNodeId: 'macro:model-group:mixed:fallback-stage:synthetic:dispatcher',
         metadata: expect.objectContaining({
-          candidate: expect.objectContaining({ synthetic: true, weight: 1, priority: 9 }),
+          candidate: expect.objectContaining({ synthetic: true, weight: 1 }),
         }),
       }),
     ]));
@@ -2334,7 +3254,6 @@ describe('routeGraph port-native source', () => {
 
   it('lowers candidate_selector bidirect outputs as flow dispatcher paths', () => {
     const result = compileRouteGraphSource({
-      version: 1,
       nodes: [],
       edges: [],
       macros: [
@@ -2342,13 +3261,11 @@ describe('routeGraph port-native source', () => {
           id: 'model-group:flow',
           kind: 'candidate_selector',
           enabled: true,
-          visibility: 'public',
           ownership: 'manual',
           config: {
             surface: {
               entry: {
                 kind: 'external',
-                visibility: 'public',
                 match: { displayName: 'flow-group' },
               },
               output: 'bidirect',
@@ -2357,12 +3274,11 @@ describe('routeGraph port-native source', () => {
                 { id: 'bidirect.out', label: 'selected flow', direction: 'output', kind: 'bidirect', multiple: true, collection: { type: 'arr', min: 1 } },
               ],
             },
-            policy: { strategy: 'round_robin' },
+            policy: { kind: 'builtin', builtin: 'round_robin' },
             groups: [
               {
                 id: 'primary',
                 enabled: true,
-                priority: 0,
                 input: {
                   kind: 'inline_endpoints',
                   endpoints: [{ targetId: 'flow-a', model: 'flow-model-a' }],
@@ -2371,7 +3287,6 @@ describe('routeGraph port-native source', () => {
               {
                 id: 'fallback',
                 enabled: true,
-                priority: 1,
                 input: { kind: 'synthetic', statusCode: 503, message: 'flow fallback' },
               },
             ],
@@ -2386,7 +3301,7 @@ describe('routeGraph port-native source', () => {
         id: 'macro:model-group:flow:dispatcher',
         type: 'dispatcher',
         mode: 'flow',
-        policy: { strategy: 'round_robin' },
+        policy: { kind: 'builtin', builtin: 'round_robin' },
       }),
       expect.objectContaining({
         id: 'macro:model-group:flow:candidate:primary:inline',
@@ -2407,33 +3322,44 @@ describe('routeGraph port-native source', () => {
       }),
       expect.objectContaining({
         sourceNodeId: 'macro:model-group:flow:dispatcher',
+        sourcePortId: 'fallback.out',
+        targetNodeId: 'macro:model-group:flow:fallback-stage:fallback:dispatcher',
+        targetPortId: 'bidirect.in',
+        kind: 'bidirect_flow',
+        metadata: expect.objectContaining({
+          provenance: expect.objectContaining({
+            role: 'fallback_stage_edge',
+            fallbackStage: { id: 'fallback', index: 1 },
+          }),
+        }),
+      }),
+      expect.objectContaining({
+        sourceNodeId: 'macro:model-group:flow:dispatcher',
         sourcePortId: 'bidirect[1...].out',
         targetNodeId: 'macro:model-group:flow:candidate:primary:inline',
         targetPortId: 'bidirect.in',
         kind: 'bidirect_flow',
       }),
       expect.objectContaining({
-        sourceNodeId: 'macro:model-group:flow:dispatcher',
+        sourceNodeId: 'macro:model-group:flow:fallback-stage:fallback:dispatcher',
         sourcePortId: 'bidirect[1...].out',
         targetNodeId: 'macro:model-group:flow:candidate:fallback:synthetic',
         targetPortId: 'bidirect.in',
         kind: 'bidirect_flow',
       }),
     ]));
-    expect(result.compiled.publicModels).toEqual(expect.arrayContaining([
+    expect(compiledRuntimePublicModels(result)).toEqual(expect.arrayContaining([
       expect.objectContaining({ model: 'flow-group' }),
     ]));
   });
 
   it('lowers semantic bidirect macro output ports through the macro-defined dispatcher output', () => {
     const result = compileRouteGraphSource({
-      version: 1,
       nodes: [
         {
           id: 'entry:outer',
           type: 'entry',
           enabled: true,
-          visibility: 'public',
           ownership: 'manual',
           match: { requestedModelPattern: 'outer-model' },
         },
@@ -2441,7 +3367,6 @@ describe('routeGraph port-native source', () => {
           id: 'filter:after-macro',
           type: 'filter',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
           operations: [{ type: 'set_payload', path: 'afterMacro', value: true }],
         },
@@ -2449,9 +3374,8 @@ describe('routeGraph port-native source', () => {
           id: 'endpoint:outer',
           type: 'route_endpoint',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
-          config: { targets: [{ targetId: 'outer', model: 'outer-model' }], targetSelection: { strategy: 'weighted' } },
+          config: { targets: [{ targetId: 'outer', model: 'outer-model' }], targetSelection: { kind: 'builtin', builtin: 'weighted' } },
         },
       ],
       edges: [
@@ -2488,7 +3412,6 @@ describe('routeGraph port-native source', () => {
           id: 'model-group:embedded-flow',
           kind: 'candidate_selector',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
           config: {
             surface: {
@@ -2499,7 +3422,7 @@ describe('routeGraph port-native source', () => {
                 { id: 'bidirect.out', label: 'selected flow', direction: 'output', kind: 'bidirect', multiple: true, collection: { type: 'arr', min: 1 } },
               ],
             },
-            policy: { strategy: 'stable_first' },
+            policy: { kind: 'builtin', builtin: 'stable_first' },
             groups: [
               {
                 id: 'inline',
@@ -2530,13 +3453,11 @@ describe('routeGraph port-native source', () => {
 
   it('lowers embedded candidate_selector surfaces without exposing an entry or public model', () => {
     const result = compileRouteGraphSource({
-      version: 1,
       nodes: [
         {
           id: 'entry:outer-embedded',
           type: 'entry',
           enabled: true,
-          visibility: 'public',
           ownership: 'manual',
           match: { requestedModelPattern: 'outer-embedded-model' },
         },
@@ -2544,10 +3465,8 @@ describe('routeGraph port-native source', () => {
           id: 'endpoint:outer-embedded',
           type: 'route_endpoint',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
-          legacyRouteId: 77,
-          config: { targets: [{ targetId: 'outer-embedded', model: 'outer-embedded-model' }], targetSelection: { strategy: 'weighted' } },
+          config: { targets: [{ targetId: 'outer-embedded', model: 'outer-embedded-model' }], targetSelection: { kind: 'builtin', builtin: 'weighted' } },
         },
       ],
       edges: [
@@ -2575,7 +3494,6 @@ describe('routeGraph port-native source', () => {
           id: 'model-group:embedded',
           kind: 'candidate_selector',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
           config: {
             surface: {
@@ -2586,11 +3504,10 @@ describe('routeGraph port-native source', () => {
                 { id: 'flow.out', label: 'selected flow', direction: 'output', kind: 'bidirect', collection: { type: 'arr', min: 1 } },
               ],
             },
-            policy: { strategy: 'stable_first' },
+            policy: { kind: 'builtin', builtin: 'stable_first' },
             groups: [
               {
                 id: 'guard',
-                priority: 0,
                 input: { kind: 'synthetic', statusCode: 503, message: 'embedded fallback' },
               },
             ],
@@ -2619,15 +3536,14 @@ describe('routeGraph port-native source', () => {
         targetNodeId: 'endpoint:outer-embedded',
       }),
     ]));
-    expect(result.compiled.publicModels).toEqual([
+    expect(compiledRuntimePublicModels(result)).toEqual([
       expect.objectContaining({ model: 'outer-embedded-model' }),
     ]);
-    expect(result.compiled.publicModels.some((item) => item.model === 'model-group:embedded')).toBe(false);
+    expect(compiledRuntimePublicModels(result).some((item) => item.model === 'model-group:embedded')).toBe(false);
   });
 
   it('normalizes request-input embedded macro ports but rejects them until request dispatch is defined', () => {
     const macroSource = normalizeRouteGraphSource({
-      version: 1,
       macros: [
         {
           id: 'request-embedded',
@@ -2654,7 +3570,6 @@ describe('routeGraph port-native source', () => {
           id: 'source:request',
           type: 'auto_node',
           enabled: true,
-          visibility: 'internal',
           ownership: 'system',
           dynamicPorts: [
             { id: 'request.out', label: 'request output', direction: 'output', kind: 'request' },
@@ -2680,13 +3595,11 @@ describe('routeGraph port-native source', () => {
 
   it('enforces edge direction while allowing declared multiple inputs', () => {
     const badDirection = compileRouteGraphSource({
-      version: 1,
       nodes: [
         {
           id: 'entry:direction',
           type: 'entry',
           enabled: true,
-          visibility: 'public',
           ownership: 'manual',
           match: { requestedModelPattern: 'direction-model' },
         },
@@ -2694,18 +3607,16 @@ describe('routeGraph port-native source', () => {
           id: 'dispatcher:direction',
           type: 'dispatcher',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
           mode: 'route',
-          policy: { strategy: 'weighted' },
+          policy: { kind: 'builtin', builtin: 'weighted' },
         },
         {
           id: 'endpoint:direction',
           type: 'route_endpoint',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
-          config: { targets: [{ targetId: 'direction', model: 'direction-model' }], targetSelection: { strategy: 'weighted' } },
+          config: { targets: [{ targetId: 'direction', model: 'direction-model' }], targetSelection: { kind: 'builtin', builtin: 'weighted' } },
         },
       ],
       edges: [
@@ -2734,17 +3645,15 @@ describe('routeGraph port-native source', () => {
     expect(badDirection.diagnostics.map((item) => item.code)).toContain('edge.invalid_source_port');
 
     const multipleInputs = compileRouteGraphSource({
-      version: 1,
       nodes: [
-        { id: 'entry:a', type: 'entry', enabled: true, visibility: 'public', ownership: 'manual', match: { requestedModelPattern: 'multi-a' } },
-        { id: 'entry:b', type: 'entry', enabled: true, visibility: 'public', ownership: 'manual', match: { requestedModelPattern: 'multi-b' } },
+        { id: 'entry:a', type: 'entry', enabled: true, ownership: 'manual', match: { requestedModelPattern: 'multi-a' } },
+        { id: 'entry:b', type: 'entry', enabled: true, ownership: 'manual', match: { requestedModelPattern: 'multi-b' } },
         {
           id: 'endpoint:shared',
           type: 'route_endpoint',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
-          config: { targets: [{ targetId: 'shared', model: 'multi-shared' }], targetSelection: { strategy: 'weighted' } },
+          config: { targets: [{ targetId: 'shared', model: 'multi-shared' }], targetSelection: { kind: 'builtin', builtin: 'weighted' } },
         },
       ],
       edges: [
@@ -2759,13 +3668,11 @@ describe('routeGraph port-native source', () => {
 
   it('rejects connected internal nodes that are not reachable from enabled public entries', () => {
     const result = compileRouteGraphSource({
-      version: 1,
       nodes: [
         {
           id: 'entry:reachable',
           type: 'entry',
           enabled: true,
-          visibility: 'public',
           ownership: 'manual',
           match: { requestedModelPattern: 'reachable-model' },
         },
@@ -2773,15 +3680,13 @@ describe('routeGraph port-native source', () => {
           id: 'endpoint:reachable',
           type: 'route_endpoint',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
-          config: { targets: [{ targetId: 'reachable', model: 'reachable-model' }], targetSelection: { strategy: 'weighted' } },
+          config: { targets: [{ targetId: 'reachable', model: 'reachable-model' }], targetSelection: { kind: 'builtin', builtin: 'weighted' } },
         },
         {
           id: 'filter:orphan-connected',
           type: 'filter',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
           operations: [],
         },
@@ -2789,9 +3694,8 @@ describe('routeGraph port-native source', () => {
           id: 'endpoint:orphan-connected',
           type: 'route_endpoint',
           enabled: true,
-          visibility: 'internal',
           ownership: 'manual',
-          config: { targets: [{ targetId: 'orphan', model: 'orphan-model' }], targetSelection: { strategy: 'weighted' } },
+          config: { targets: [{ targetId: 'orphan', model: 'orphan-model' }], targetSelection: { kind: 'builtin', builtin: 'weighted' } },
         },
       ],
       edges: [
@@ -2805,12 +3709,12 @@ describe('routeGraph port-native source', () => {
   });
 
   it('applies candidate selector materialization limits deterministically', () => {
-    const source = buildRouteGraphSourceFromLegacyRoutes([
+    const source = buildRouteGraphSourceFromFixtureRoutes([
       {
         id: 11,
         enabled: true,
         displayName: null,
-        match: { kind: 'model', requestedModelPattern: 'source-a', routeId: 11 },
+        match: { kind: 'model', requestedModelPattern: 'source-a'},
         backend: { kind: 'supply' },
         targets: [{ targetId: '11', model: 'source-a' }],
       },
@@ -2818,7 +3722,7 @@ describe('routeGraph port-native source', () => {
         id: 22,
         enabled: true,
         displayName: null,
-        match: { kind: 'model', requestedModelPattern: 'source-b', routeId: 22 },
+        match: { kind: 'model', requestedModelPattern: 'source-b'},
         backend: { kind: 'supply' },
         targets: [{ targetId: '22', model: 'source-b' }],
       },
@@ -2832,15 +3736,14 @@ describe('routeGraph port-native source', () => {
           kind: 'candidate_selector',
           config: {
             surface: {
-              entry: { kind: 'external', visibility: 'public', match: { displayName: 'limited-group' } },
+              entry: { kind: 'external', match: { displayName: 'limited-group' } },
               output: 'route',
             },
             groups: [
               {
                 id: 'limited',
-                priority: 0,
-                input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:supply:route:22', 'route-endpoint:supply:route:11'] },
-                materialization: { sort: 'route_id', limit: 1 },
+                input: { kind: 'route_endpoints', endpointIds: ['route-endpoint:supply:upstream-model-fixture:22', 'route-endpoint:supply:upstream-model-fixture:11'] },
+                materialization: { limit: 1 },
               },
             ],
           },
@@ -2851,24 +3754,24 @@ describe('routeGraph port-native source', () => {
     expect(result.ok).toBe(true);
     expect(result.primitiveSource.edges).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        sourceNodeId: 'route-endpoint:supply:route:11',
+        sourceNodeId: 'route-endpoint:supply:upstream-model-fixture:22',
         targetNodeId: 'macro:model-group:limited:dispatcher',
         kind: 'route_flow',
       }),
     ]));
     expect(result.primitiveSource.edges.some((edge) => (
-      edge.sourceNodeId === 'route-endpoint:supply:route:22'
+      edge.sourceNodeId === 'route-endpoint:supply:upstream-model-fixture:11'
       && edge.targetNodeId === 'macro:model-group:limited:dispatcher'
     ))).toBe(false);
   });
 
-  it('rejects candidate_selector route-backed aliases colliding with exact public routes', () => {
-    const source = buildRouteGraphSourceFromLegacyRoutes([
+  it('rejects candidate_selector route-endpoint aliases colliding with exact public routes', () => {
+    const source = buildRouteGraphSourceFromFixtureRoutes([
       {
         id: 1,
         enabled: true,
         displayName: 'source-model',
-        match: { kind: 'model', requestedModelPattern: 'source-model', displayName: null, routeId: 1 },
+        match: { kind: 'model', requestedModelPattern: 'source-model', displayName: null},
         backend: { kind: 'supply' },
         targets: [{ targetId: '1', model: 'source-model', accountId: 1, tokenId: 1, weight: 10 }],
       },
@@ -2876,14 +3779,14 @@ describe('routeGraph port-native source', () => {
         id: 2,
         enabled: true,
         displayName: 'colliding',
-        match: { kind: 'model', requestedModelPattern: '', displayName: 'colliding', routeId: 2 },
-        backend: { kind: 'routes', routeIds: [1] },
+        match: { kind: 'model', requestedModelPattern: '', displayName: 'colliding'},
+        backend: { kind: 'route_endpoints', endpointIds: ['route-endpoint:supply:upstream-model-fixture:1'] },
       },
       {
         id: 3,
         enabled: true,
         displayName: 'colliding',
-        match: { kind: 'model', requestedModelPattern: 'colliding', displayName: 'colliding', routeId: 3 },
+        match: { kind: 'model', requestedModelPattern: 'colliding', displayName: 'colliding'},
         backend: { kind: 'supply' },
         targets: [{ targetId: '3', model: 'colliding', accountId: 1, tokenId: 1, weight: 10 }],
       },
@@ -2894,13 +3797,13 @@ describe('routeGraph port-native source', () => {
     expect(compiled.diagnostics.map((item) => item.code)).toContain('public_model.duplicate');
   });
 
-  it('resolves route entries with macro aliases before plain route aliases and exact channel entries', () => {
-    const source = buildRouteGraphSourceFromLegacyRoutes([
+  it('resolves route entries with macro aliases before plain endpoint aliases and exact channel entries', () => {
+    const source = buildRouteGraphSourceFromFixtureRoutes([
       {
         id: 1,
         enabled: true,
         displayName: 'base-one',
-        match: { kind: 'model', requestedModelPattern: 'base-one', displayName: 'base-one', routeId: 1 },
+        match: { kind: 'model', requestedModelPattern: 'base-one', displayName: 'base-one'},
         backend: { kind: 'supply' },
         targets: [{ targetId: '1', model: 'base-one' }],
       },
@@ -2908,14 +3811,14 @@ describe('routeGraph port-native source', () => {
         id: 2,
         enabled: true,
         displayName: 'macro-hit',
-        match: { kind: 'model', requestedModelPattern: '', displayName: 'macro-hit', routeId: 2 },
-        backend: { kind: 'routes', routeIds: [1] },
+        match: { kind: 'model', requestedModelPattern: '', displayName: 'macro-hit'},
+        backend: { kind: 'route_endpoints', endpointIds: ['route-endpoint:supply:upstream-model-fixture:1'] },
       },
       {
         id: 3,
         enabled: true,
         displayName: 'exact-target',
-        match: { kind: 'model', requestedModelPattern: 'macro-hit', displayName: 'exact-target', routeId: 3 },
+        match: { kind: 'model', requestedModelPattern: 'macro-hit', displayName: 'exact-target'},
         backend: { kind: 'supply' },
         targets: [{ targetId: '3', model: 'macro-hit' }],
       },
@@ -2923,6 +3826,6 @@ describe('routeGraph port-native source', () => {
 
     const compiled = compileRouteGraphSource(source);
     expect(compiled.ok).toBe(true);
-    expect(findRouteGraphEntryForModel(compiled.compiled, 'macro-hit')?.nodeId).toBe('macro:route:2:model-group:entry');
+    expect(findRouteGraphEntryForModel(compiled.compiled, 'macro-hit')?.nodeId).toBe('macro:route-group:2:entry');
   });
 });

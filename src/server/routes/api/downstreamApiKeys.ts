@@ -1,6 +1,6 @@
 import { FastifyInstance } from 'fastify';
 import { and, eq, inArray, sql, type SQL } from 'drizzle-orm';
-import { db, hasProxyLogDownstreamApiKeyIdColumn, runtimeDbDialect, schema } from '../../db/index.js';
+import { db, runtimeDbDialect, schema } from '../../db/index.js';
 import { insertAndGetById } from '../../db/insertHelpers.js';
 import {
   getDownstreamApiKeyById,
@@ -22,6 +22,8 @@ import {
   parseDownstreamApiKeyBatchPayload,
   parseDownstreamApiKeyPayload,
 } from '../../contracts/downstreamApiKeyRoutePayloads.js';
+import { listActiveCompiledRuntimeModelEntrypoints } from '../../services/compiledRuntimeInventoryService.js';
+import { readDownstreamApiKeyUsage } from '../../services/downstreamApiKeyUsageReadService.js';
 
 function parseRouteId(raw: string): number | null {
   const id = Number.parseInt(raw, 10);
@@ -135,21 +137,18 @@ function resolveRangeSinceUtc(range: DownstreamKeyRange): string | null {
 }
 
 async function validatePolicyReferences(input: {
-  allowedRouteIds: number[];
+  allowedPlanIds: string[];
   siteWeightMultipliers: Record<number, number>;
   excludedSiteIds: number[];
   excludedCredentialRefs: DownstreamExcludedCredentialRef[];
 }): Promise<string | null> {
-  const routeIds = input.allowedRouteIds || [];
-  if (routeIds.length > 0) {
-    const rows = await db.select({ id: schema.tokenRoutes.id })
-      .from(schema.tokenRoutes)
-      .where(inArray(schema.tokenRoutes.id, routeIds))
-      .all();
-    const existingIds = new Set(rows.map((row) => Number(row.id)));
-    const missingIds = routeIds.filter((id) => !existingIds.has(id));
+  const planIds = input.allowedPlanIds || [];
+  if (planIds.length > 0) {
+    const activePlans = await listActiveCompiledRuntimeModelEntrypoints();
+    const existingIds = new Set(activePlans.map((plan) => plan.planId));
+    const missingIds = planIds.filter((id) => !existingIds.has(id));
     if (missingIds.length > 0) {
-      return `allowedRouteIds 包含不存在的路由: ${missingIds.join(', ')}`;
+      return `allowedPlanIds 包含当前已编译运行时中不存在的计划: ${missingIds.join(', ')}`;
     }
   }
 
@@ -294,47 +293,10 @@ export async function downstreamApiKeysRoutes(app: FastifyInstance) {
       return { success: true, range, status, search, group, tags, tagMatch, items: [] };
     }
 
-    const columnReady = await hasProxyLogDownstreamApiKeyIdColumn();
     const sinceUtc = resolveRangeSinceUtc(range);
     const ids = keys.map((k) => k.id);
 
-    const usageRows = columnReady
-      ? await db.select({
-        keyId: schema.proxyLogs.downstreamApiKeyId,
-        totalRequests: sql<number>`count(*)`,
-        successRequests: sql<number>`coalesce(sum(case when ${schema.proxyLogs.status} = 'success' then 1 else 0 end), 0)`,
-        failedRequests: sql<number>`coalesce(sum(case when ${schema.proxyLogs.status} = 'success' then 0 else 1 end), 0)`,
-        totalTokens: sql<number>`coalesce(sum(coalesce(${schema.proxyLogs.totalTokens}, 0)), 0)`,
-        totalCost: sql<number>`coalesce(sum(coalesce(${schema.proxyLogs.estimatedCost}, 0)), 0)`,
-      })
-        .from(schema.proxyLogs)
-        .where(and(
-          inArray(schema.proxyLogs.downstreamApiKeyId, ids),
-          ...(sinceUtc ? [sql`${schema.proxyLogs.createdAt} >= ${sinceUtc}`] : []),
-        ))
-        .groupBy(schema.proxyLogs.downstreamApiKeyId)
-        .all()
-      : [];
-
-    const usageByKey = new Map<number, {
-      totalRequests: number;
-      successRequests: number;
-      failedRequests: number;
-      totalTokens: number;
-      totalCost: number;
-    }>();
-
-    for (const row of usageRows) {
-      const keyId = Number((row as any).keyId ?? 0);
-      if (!Number.isFinite(keyId) || keyId <= 0) continue;
-      usageByKey.set(keyId, {
-        totalRequests: Number((row as any).totalRequests || 0),
-        successRequests: Number((row as any).successRequests || 0),
-        failedRequests: Number((row as any).failedRequests || 0),
-        totalTokens: Number((row as any).totalTokens || 0),
-        totalCost: Number((row as any).totalCost || 0),
-      });
-    }
+    const usageByKey = await readDownstreamApiKeyUsage({ keyIds: ids, sinceUtc });
 
     return {
       success: true,
@@ -345,25 +307,16 @@ export async function downstreamApiKeysRoutes(app: FastifyInstance) {
       tags,
       tagMatch,
       items: keys.map((key) => {
-        const usage = usageByKey.get(key.id) || {
-          totalRequests: 0,
-          successRequests: 0,
-          failedRequests: 0,
-          totalTokens: 0,
-          totalCost: 0,
-        };
-        const successRate = usage.totalRequests > 0
-          ? Math.round((usage.successRequests / usage.totalRequests) * 1000) / 10
-          : null;
+        const usage = usageByKey.get(key.id)!;
         return {
           ...key,
           rangeUsage: {
             totalRequests: usage.totalRequests,
             successRequests: usage.successRequests,
             failedRequests: usage.failedRequests,
-            successRate,
+            successRate: usage.successRate,
             totalTokens: usage.totalTokens,
-            totalCost: Math.round(usage.totalCost * 1_000_000) / 1_000_000,
+            cost: usage.cost,
           },
         };
       }),
@@ -381,39 +334,12 @@ export async function downstreamApiKeysRoutes(app: FastifyInstance) {
       return reply.code(404).send({ success: false, message: 'API key 不存在' });
     }
 
-    const columnReady = await hasProxyLogDownstreamApiKeyIdColumn();
-    if (!columnReady) {
-      return { success: true, item, usage: { last24h: null, last7d: null, all: null } };
-    }
-
-    const readAggregate = async (range: DownstreamKeyRange) => {
-      const sinceUtc = resolveRangeSinceUtc(range);
-      const row = await db.select({
-        totalRequests: sql<number>`count(*)`,
-        successRequests: sql<number>`coalesce(sum(case when ${schema.proxyLogs.status} = 'success' then 1 else 0 end), 0)`,
-        failedRequests: sql<number>`coalesce(sum(case when ${schema.proxyLogs.status} = 'success' then 0 else 1 end), 0)`,
-        totalTokens: sql<number>`coalesce(sum(coalesce(${schema.proxyLogs.totalTokens}, 0)), 0)`,
-        totalCost: sql<number>`coalesce(sum(coalesce(${schema.proxyLogs.estimatedCost}, 0)), 0)`,
+    const readAggregate = async (range: DownstreamKeyRange) => (
+      await readDownstreamApiKeyUsage({
+        keyIds: [id],
+        sinceUtc: resolveRangeSinceUtc(range),
       })
-        .from(schema.proxyLogs)
-        .where(and(
-          eq(schema.proxyLogs.downstreamApiKeyId, id),
-          ...(sinceUtc ? [sql`${schema.proxyLogs.createdAt} >= ${sinceUtc}`] : []),
-        ))
-        .get();
-
-      const totalRequests = Number((row as any)?.totalRequests || 0);
-      const successRequests = Number((row as any)?.successRequests || 0);
-      const totalCost = Number((row as any)?.totalCost || 0);
-      return {
-        totalRequests,
-        successRequests,
-        failedRequests: Number((row as any)?.failedRequests || 0),
-        successRate: totalRequests > 0 ? Math.round((successRequests / totalRequests) * 1000) / 10 : null,
-        totalTokens: Number((row as any)?.totalTokens || 0),
-        totalCost: Math.round(totalCost * 1_000_000) / 1_000_000,
-      };
-    };
+    ).get(id)!;
 
     const [last24h, last7d, all] = await Promise.all([
       readAggregate('24h'),
@@ -436,18 +362,6 @@ export async function downstreamApiKeysRoutes(app: FastifyInstance) {
       return reply.code(404).send({ success: false, message: 'API key 不存在' });
     }
 
-    const columnReady = await hasProxyLogDownstreamApiKeyIdColumn();
-    if (!columnReady) {
-      return {
-        success: true,
-        range,
-        item: { id: item.id, name: item.name },
-        bucketSeconds: resolveDownstreamTrendBucketSeconds(range),
-        timeZone: resolveDownstreamTrendTimeZone(request.query?.timeZone),
-        buckets: [],
-      };
-    }
-
     const trend = await readDownstreamApiKeyTrendBuckets({
       downstreamApiKeyId: id,
       range,
@@ -468,6 +382,17 @@ export async function downstreamApiKeysRoutes(app: FastifyInstance) {
     return {
       success: true,
       items: await listDownstreamApiKeys(),
+    };
+  });
+
+  app.get('/api/downstream-keys/compiled-plans', async () => {
+    const items = await listActiveCompiledRuntimeModelEntrypoints();
+    return {
+      success: true,
+      items: items.map((item) => ({
+        id: item.planId,
+        modelName: item.modelName,
+      })),
     };
   });
 
@@ -495,7 +420,7 @@ export async function downstreamApiKeysRoutes(app: FastifyInstance) {
       return reply.code(400).send({ success: false, message: 'key 必须以 sk- 开头且长度至少 6' });
     }
     const policyRefError = await validatePolicyReferences({
-      allowedRouteIds: normalized.allowedRouteIds,
+      allowedPlanIds: normalized.allowedPlanIds,
       siteWeightMultipliers: normalized.siteWeightMultipliers,
       excludedSiteIds: normalized.excludedSiteIds,
       excludedCredentialRefs: normalized.excludedCredentialRefs,
@@ -523,7 +448,7 @@ export async function downstreamApiKeysRoutes(app: FastifyInstance) {
           maxRequests: normalized.maxRequests,
           usedRequests: 0,
           supportedModels: toPersistenceJson(normalized.supportedModels),
-          allowedRouteIds: toPersistenceJson(normalized.allowedRouteIds),
+          allowedPlanIds: toPersistenceJson(normalized.allowedPlanIds),
           siteWeightMultipliers: toPersistenceJson(normalized.siteWeightMultipliers),
           excludedSiteIds: toPersistenceJson(normalized.excludedSiteIds),
           excludedCredentialRefs: toPersistenceJson(normalized.excludedCredentialRefs),
@@ -581,7 +506,7 @@ export async function downstreamApiKeysRoutes(app: FastifyInstance) {
         maxCost: hasOwn('maxCost') ? body.maxCost : existing.maxCost,
         maxRequests: hasOwn('maxRequests') ? body.maxRequests : existing.maxRequests,
         supportedModels: hasOwn('supportedModels') ? body.supportedModels : existingView.supportedModels,
-        allowedRouteIds: hasOwn('allowedRouteIds') ? body.allowedRouteIds : existingView.allowedRouteIds,
+        allowedPlanIds: hasOwn('allowedPlanIds') ? body.allowedPlanIds : existingView.allowedPlanIds,
         siteWeightMultipliers: hasOwn('siteWeightMultipliers') ? body.siteWeightMultipliers : existingView.siteWeightMultipliers,
         excludedSiteIds: hasOwn('excludedSiteIds') ? body.excludedSiteIds : existingView.excludedSiteIds,
         excludedCredentialRefs: hasOwn('excludedCredentialRefs') ? body.excludedCredentialRefs : existingView.excludedCredentialRefs,
@@ -600,7 +525,7 @@ export async function downstreamApiKeysRoutes(app: FastifyInstance) {
       return reply.code(400).send({ success: false, message: 'key 必须以 sk- 开头且长度至少 6' });
     }
     const policyRefError = await validatePolicyReferences({
-      allowedRouteIds: normalized.allowedRouteIds,
+      allowedPlanIds: normalized.allowedPlanIds,
       siteWeightMultipliers: normalized.siteWeightMultipliers,
       excludedSiteIds: normalized.excludedSiteIds,
       excludedCredentialRefs: normalized.excludedCredentialRefs,
@@ -622,7 +547,7 @@ export async function downstreamApiKeysRoutes(app: FastifyInstance) {
         maxCost: normalized.maxCost,
         maxRequests: normalized.maxRequests,
         supportedModels: toPersistenceJson(normalized.supportedModels),
-        allowedRouteIds: toPersistenceJson(normalized.allowedRouteIds),
+        allowedPlanIds: toPersistenceJson(normalized.allowedPlanIds),
         siteWeightMultipliers: toPersistenceJson(normalized.siteWeightMultipliers),
         excludedSiteIds: toPersistenceJson(normalized.excludedSiteIds),
         excludedCredentialRefs: toPersistenceJson(normalized.excludedCredentialRefs),

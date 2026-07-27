@@ -33,7 +33,7 @@ export interface DownstreamProtocolAdapterConfig {
 
 export interface DownstreamRoutingPolicy {
   supportedModels: string[];
-  allowedRouteIds: number[];
+  allowedPlanIds: string[];
   siteWeightMultipliers: Record<number, number>;
   excludedSiteIds: number[];
   excludedCredentialRefs: DownstreamExcludedCredentialRef[];
@@ -43,7 +43,7 @@ export interface DownstreamRoutingPolicy {
 
 export const EMPTY_DOWNSTREAM_ROUTING_POLICY: DownstreamRoutingPolicy = {
   supportedModels: [],
-  allowedRouteIds: [],
+  allowedPlanIds: [],
   siteWeightMultipliers: {},
   excludedSiteIds: [],
   excludedCredentialRefs: [],

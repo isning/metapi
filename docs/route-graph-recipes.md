@@ -1,10 +1,10 @@
 # Route Graph Recipes
 
-本页提供常见 Route Graph 配置片段。示例使用 `version: 1`。为便于复制，部分示例只展示 `nodes[]`、`edges[]` 或 `macros[]` 中的相关片段。
+本页提供当前 graph-native source JSON 片段。示例省略无关的 `nodes[]`、`edges[]` 或 `macros[]` 外层结构。所有 policy 都使用 native dispatcher policy reference，所有主备关系都使用有序 fallback stages。
 
-## 1. Public 模型直连 supply
+## 1. Public 模型直连 Supply
 
-适合最小测试。
+适合最小测试或只有一个上游 endpoint 的路径。
 
 ```json
 {
@@ -14,33 +14,28 @@
       "id": "entry:demo",
       "type": "entry",
       "enabled": true,
-      "visibility": "public",
       "ownership": "manual",
       "match": {
         "kind": "model",
         "requestedModelPattern": "demo",
         "displayName": "demo"
-      },
-      "selectionStrategy": "weighted"
+      }
     },
     {
       "id": "route-endpoint:supply:demo",
       "type": "route_endpoint",
       "enabled": true,
-      "visibility": "internal",
       "ownership": "manual",
       "routeEndpointId": "route-endpoint:supply:demo",
       "endpointKind": "supply",
       "exposure": "none",
       "resolutionStatus": "resolved",
-      "ownerKind": "manual_route",
+      "ownerKind": "manual",
       "sourceKind": "inline",
       "backend": { "kind": "supply" },
       "config": {
-        "targets": [
-          { "targetId": "demo-target", "model": "gpt-4o", "weight": 10 }
-        ],
-        "targetSelection": { "strategy": "weighted" }
+        "targets": [{ "targetId": "demo-target", "model": "gpt-4o", "weight": 10 }],
+        "targetSelection": { "kind": "builtin", "builtin": "weighted" }
       }
     }
   ],
@@ -55,26 +50,25 @@
       "ownership": "manual"
     }
   ],
-  "macros": [],
-  "metadata": {}
+  "macros": []
 }
 ```
 
-## 2. 手动路由组 70/30
+## 2. 单个 Fallback Stage 内 70/30
+
+同一个 stage 中的成员由该 stage 的 policy 选择。这里以权重 70/30 选择两个 endpoint。
 
 ```json
 {
-  "id": "macro:manual:balanced-chat",
+  "id": "macro:balanced-chat",
   "kind": "candidate_selector",
   "enabled": true,
-  "visibility": "public",
   "ownership": "manual",
   "name": "balanced-chat",
   "config": {
     "surface": {
       "entry": {
         "kind": "external",
-        "visibility": "public",
         "match": {
           "kind": "model",
           "requestedModelPattern": "balanced-chat",
@@ -83,96 +77,87 @@
       },
       "output": "route"
     },
-    "policy": { "strategy": "weighted" },
+    "policy": { "kind": "builtin", "builtin": "weighted" },
     "groups": [
       {
-        "id": "default",
-        "label": "Default",
+        "id": "primary",
+        "label": "Primary",
         "enabled": true,
-        "priority": 0,
         "input": {
           "kind": "route_endpoints",
           "endpointIds": [
-            "route-endpoint:supply:site-a:gpt-4o",
-            "route-endpoint:supply:site-b:gpt-4o"
+            "route-endpoint:supply:site-a-gpt-4o",
+            "route-endpoint:supply:site-b-gpt-4o"
           ]
         },
-        "defaults": { "enabled": true, "weight": 10, "priority": 0 }
+        "members": [
+          { "endpointId": "route-endpoint:supply:site-a-gpt-4o", "weight": 70 },
+          { "endpointId": "route-endpoint:supply:site-b-gpt-4o", "weight": 30 }
+        ]
       }
-    ],
-    "candidateOverrides": {
-      "bySupplyEndpointId": {
-        "route-endpoint:supply:site-a:gpt-4o": { "weight": 70 },
-        "route-endpoint:supply:site-b:gpt-4o": { "weight": 30 }
-      }
-    }
+    ]
   }
 }
 ```
 
-## 3. 主备切换
+## 3. 主备与 Synthetic Fallback
 
-`priority_order` 会先选择最高优先级组。只有高优先级候选不可用时，才进入下一层。
+stage 的数组位置就是 fallback order。当前 stage 中没有 eligible execution alternative 后，才评估下一 stage。
 
 ```json
 {
-  "policy": { "strategy": "priority_order" },
+  "policy": { "kind": "builtin", "builtin": "weighted" },
   "groups": [
     {
       "id": "primary",
       "label": "Primary",
       "enabled": true,
-      "priority": 100,
       "input": {
         "kind": "route_endpoints",
-        "endpointIds": ["route-endpoint:supply:primary:gpt-4o"]
-      },
-      "defaults": { "weight": 10, "priority": 100 }
+        "endpointIds": ["route-endpoint:supply:primary-gpt-4o"]
+      }
     },
     {
       "id": "backup",
       "label": "Backup",
       "enabled": true,
-      "priority": 50,
+      "policy": { "kind": "builtin", "builtin": "stable_first" },
       "input": {
         "kind": "route_endpoints",
-        "endpointIds": ["route-endpoint:supply:backup:gpt-4o"]
-      },
-      "defaults": { "weight": 10, "priority": 50 }
+        "endpointIds": ["route-endpoint:supply:backup-gpt-4o"]
+      }
     },
     {
-      "id": "fallback",
-      "label": "Capacity fallback",
+      "id": "unavailable",
+      "label": "Unavailable",
       "enabled": true,
-      "priority": 0,
       "input": {
         "kind": "synthetic",
         "statusCode": 503,
         "message": "No upstream endpoint is available."
-      },
-      "defaults": { "weight": 1, "priority": 0 }
+      }
     }
   ]
 }
 ```
 
-## 4. Internal 自动组重映射
+不要用 numeric priority 表达主备。`priority`、`priority_order`、`routingStrategy` 和旧 `{ "strategy": ... }` policy 都会被拒绝。
 
-把自动组改成 internal 后，再用手动 public 组重新暴露。
+## 4. 组合 Internal Route Product
+
+任意 route product 都可以成为一个 stage 的候选。该形态不区分自动或手动管理来源。
 
 ```json
 {
-  "id": "macro:manual:premium-claude",
+  "id": "macro:premium-claude",
   "kind": "candidate_selector",
   "enabled": true,
-  "visibility": "public",
   "ownership": "manual",
   "name": "premium-claude",
   "config": {
     "surface": {
       "entry": {
         "kind": "external",
-        "visibility": "public",
         "match": {
           "kind": "model",
           "requestedModelPattern": "premium-claude",
@@ -181,46 +166,32 @@
       },
       "output": "route"
     },
-    "policy": { "strategy": "weighted" },
+    "policy": { "kind": "registry", "policyId": "platform-default" },
     "groups": [
       {
-        "id": "internal-products",
+        "id": "products",
+        "label": "Products",
         "enabled": true,
-        "priority": 0,
         "input": {
           "kind": "route_endpoints",
           "endpointIds": [
-            "route-endpoint:product:auto-model:claude-sonnet",
-            "route-endpoint:product:auto-model:claude-opus"
+            "route-endpoint:product:claude-sonnet",
+            "route-endpoint:product:claude-opus"
           ]
         },
-        "defaults": { "weight": 10, "priority": 0 }
+        "members": [
+          { "endpointId": "route-endpoint:product:claude-sonnet", "weight": 8 },
+          { "endpointId": "route-endpoint:product:claude-opus", "weight": 2 }
+        ]
       }
     ]
   }
 }
 ```
 
-## 5. 添加 payload 默认值
+## 5. 请求改写和 Payload 默认值
 
-```json
-{
-  "filters": {
-    "operations": [
-      {
-        "type": "set_payload",
-        "path": "reasoning_effort",
-        "value": "medium",
-        "mode": "default"
-      }
-    ]
-  }
-}
-```
-
-## 6. DeepSeek `-max` 注入 reasoning effort
-
-这个模式用于把下游的 `deepseek-v4-pro-max` 暴露成一个高推理强度入口。路由时先把请求模型名改回上游实际模型 `deepseek-v4-pro`，再在构建上游请求前注入 reasoning 参数。
+在 macro 或 filter node 中添加 filter operations：
 
 ```json
 {
@@ -234,111 +205,10 @@
       },
       {
         "type": "set_payload",
-        "path": "thinking",
-        "value": { "type": "enabled" },
-        "mode": "override"
-      },
-      {
-        "type": "set_payload",
         "path": "reasoning_effort",
         "value": "high",
-        "mode": "override"
-      }
-    ]
-  }
-}
-```
-
-完整的 macro 片段：
-
-```json
-{
-  "id": "macro:manual:deepseek-v4-pro-max",
-  "kind": "candidate_selector",
-  "enabled": true,
-  "visibility": "public",
-  "ownership": "manual",
-  "name": "deepseek-v4-pro-max",
-  "config": {
-    "surface": {
-      "entry": {
-        "kind": "external",
-        "visibility": "public",
-        "match": {
-          "kind": "model",
-          "requestedModelPattern": "deepseek-v4-pro-max",
-          "displayName": "deepseek-v4-pro-max"
-        }
+        "mode": "default"
       },
-      "output": "route"
-    },
-    "filters": {
-      "operations": [
-        {
-          "type": "rewrite_model",
-          "source": "current_model",
-          "operation": "strip_suffix",
-          "suffix": "-max"
-        },
-        {
-          "type": "set_payload",
-          "path": "thinking",
-          "value": { "type": "enabled" },
-          "mode": "override"
-        },
-        {
-          "type": "set_payload",
-          "path": "reasoning_effort",
-          "value": "high",
-          "mode": "override"
-        }
-      ]
-    },
-    "policy": { "strategy": "weighted" },
-    "groups": [
-      {
-        "id": "deepseek-pro",
-        "label": "DeepSeek V4 Pro",
-        "enabled": true,
-        "priority": 0,
-        "input": {
-          "kind": "route_endpoints",
-          "endpointIds": ["route-endpoint:supply:deepseek:deepseek-v4-pro"]
-        },
-        "defaults": { "enabled": true, "weight": 10, "priority": 0 }
-      }
-    ]
-  }
-}
-```
-
-`override` 表示 `-max` 入口总是强制使用高推理强度。如果希望保留下游请求里已经传入的 `reasoning_effort`，把对应操作改成 `"mode": "default"`。
-
-## 7. 去掉模型后缀
-
-把 `gpt-4o-debug` 改成 `gpt-4o` 后再进入选路。
-
-```json
-{
-  "filters": {
-    "operations": [
-      {
-        "type": "rewrite_model",
-        "source": "current_model",
-        "operation": "strip_suffix",
-        "suffix": "-debug"
-      }
-    ]
-  }
-}
-```
-
-## 8. 强制 Responses endpoint
-
-```json
-{
-  "filters": {
-    "operations": [
       {
         "type": "set_endpoint_preference",
         "endpoint": "responses"
@@ -348,25 +218,47 @@
 }
 ```
 
-## 9. Synthetic 503 响应
+`default` 保留调用方已提供的值；`override` 强制替换它。
 
-作为 macro group：
+## 6. Inline Endpoint
+
+适合临时手写图。长期上游端点应由管理层创建并从 endpoint catalog 引用。
 
 ```json
 {
-  "id": "synthetic-fallback",
-  "label": "Synthetic fallback",
+  "id": "inline-site-a",
+  "label": "Inline Site A",
   "enabled": true,
-  "priority": 0,
+  "input": {
+    "kind": "inline_endpoints",
+    "endpoints": [
+      {
+        "targetId": "inline-site-a-gpt-4o",
+        "model": "gpt-4o",
+        "weight": 10,
+        "metadata": {
+          "provider": "openai",
+          "siteName": "site-a"
+        }
+      }
+    ]
+  }
+}
+```
+
+## 7. Synthetic Response
+
+作为 stage：
+
+```json
+{
+  "id": "unavailable",
+  "label": "Unavailable",
+  "enabled": true,
   "input": {
     "kind": "synthetic",
     "statusCode": 503,
     "message": "No route is available."
-  },
-  "defaults": {
-    "enabled": true,
-    "weight": 1,
-    "priority": 0
   }
 }
 ```
@@ -378,89 +270,63 @@
   "id": "synthetic:no-route",
   "type": "synthetic_endpoint",
   "enabled": true,
-  "visibility": "internal",
   "ownership": "manual",
   "statusCode": 503,
   "message": "No route is available."
 }
 ```
 
-## 10. 按 metadata 打分
+## 8. 按 Runtime Signal 加权
+
+成本、余额或使用量等动态输入应放在 dispatcher policy，而不是放入 stage 顺序。
 
 ```json
 {
+  "kind": "inline",
   "policy": {
-    "strategy": "cel_score",
-    "cel": "metadata.qualityScore * 100 - metadata.costRank"
+    "id": "cost-balanced",
+    "name": "Cost balanced",
+    "kind": "cel",
+    "selectionMode": "weighted",
+    "contributionExpression": "max(0.0, 0.70 * runtime.routingSignals.normalizedCostScore + 0.30 * runtime.routingSignals.normalizedBalanceScore)"
   }
 }
 ```
 
-候选 metadata：
+该 policy 的理论概率依赖 runtime signal，模型广场在没有对应请求或即时 runtime 数据时应标记为动态，而不是伪造固定比例。
+
+## 9. 请求相关 Direct 选择
+
+当选择取决于完整请求时，使用 `direct` policy。返回值是当前 eligible option 数组的 index。
 
 ```json
 {
-  "metadata": {
-    "qualityScore": 0.98,
-    "costRank": 2,
-    "region": "sg"
-  }
-}
-```
-
-## 11. Inline endpoint
-
-适合临时或导入型手动路由组。长期存在的上游端点更推荐建成独立 supply endpoint。
-
-```json
-{
-  "id": "inline-site-a",
-  "label": "Inline Site A",
-  "enabled": true,
-  "priority": 0,
-  "input": {
-    "kind": "inline_endpoints",
-    "endpoints": [
-      {
-        "targetId": "inline:site-a:gpt-4o",
-        "model": "gpt-4o",
-        "weight": 10,
-        "metadata": {
-          "provider": "openai",
-          "siteName": "site-a"
-        }
-      }
-    ]
-  },
-  "defaults": {
-    "weight": 10,
-    "priority": 0
-  }
-}
-```
-
-## 12. 请求相关选择
-
-根据请求 payload 选择候选。因为依赖请求上下文，静态概率通常会显示为动态或 `N/A`。
-
-```json
-{
+  "kind": "inline",
   "policy": {
-    "strategy": "cel_select",
-    "cel": "payload.user_tier == \"premium\" ? 1 : 0"
+    "id": "premium-region",
+    "name": "Premium region",
+    "kind": "cel",
+    "selectionMode": "direct",
+    "selectExpression": "request.payload.user_tier == \"premium\" ? 1 : 0"
   }
 }
 ```
 
-## 13. 只启用某地区候选
+没有请求上下文时，这类 policy 不应显示固定选择概率。
+
+## 10. 禁用或排除已物化候选
+
+对已存在 endpoint 的局部控制通过 `candidateOverrides` 表达：
 
 ```json
 {
-  "policy": {
-    "strategy": "weighted",
-    "rank": "{\"enabled\": metadata.region == \"sg\", \"weight\": metadata.qualityScore}"
+  "candidateOverrides": {
+    "byEndpointId": {
+      "route-endpoint:supply:site-a-gpt-4o": { "enabled": false },
+      "route-endpoint:supply:site-b-gpt-4o": { "excluded": true }
+    }
   }
 }
 ```
 
-如果地区来自请求，例如 `payload.region`，概率会变成动态估算。
+移动候选到另一个 fallback stage 应通过路由组的 stage API 或编辑器完成，而不是给 candidate 写 priority。

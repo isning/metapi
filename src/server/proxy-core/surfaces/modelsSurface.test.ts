@@ -7,13 +7,10 @@ describe('listModelsSurface', () => {
     const result = await listModelsSurface({
       downstreamPolicy: { type: 'all' },
       responseFormat: 'openai',
-      tokenRouter: {
-        getAvailableModels: vi.fn().mockResolvedValue(['routable-model', 'orphan-model']),
-        explainSelection: vi.fn()
-          .mockResolvedValueOnce({ selectedTargetId: null })
-          .mockResolvedValueOnce({ selectedTargetId: 11 }),
-      },
-      refreshModelsAndRebuildRoutes: vi.fn(),
+      listModelNames: vi.fn().mockResolvedValue(['routable-model', 'orphan-model']),
+      canSelectModel: vi.fn()
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(true),
       isModelAllowed: vi.fn().mockResolvedValue(true),
       now: () => new Date('2026-03-19T00:00:00.000Z'),
     });
@@ -35,11 +32,8 @@ describe('listModelsSurface', () => {
     const result = await listModelsSurface({
       downstreamPolicy: { type: 'all' },
       responseFormat: 'claude',
-      tokenRouter: {
-        getAvailableModels: vi.fn().mockResolvedValue(['claude-opus-4-6']),
-        explainSelection: vi.fn().mockResolvedValue({ selectedTargetId: 22 }),
-      },
-      refreshModelsAndRebuildRoutes: vi.fn(),
+      listModelNames: vi.fn().mockResolvedValue(['claude-opus-4-6']),
+      canSelectModel: vi.fn().mockResolvedValue(true),
       isModelAllowed: vi.fn().mockResolvedValue(true),
       now: () => new Date('2026-03-19T00:00:00.000Z'),
     });
@@ -59,39 +53,25 @@ describe('listModelsSurface', () => {
     });
   });
 
-  it('applies downstream policy filtering before selection checks and refreshes once when the first read is empty', async () => {
-    const getAvailableModels = vi.fn()
-      .mockResolvedValueOnce(['blocked-model'])
-      .mockResolvedValueOnce(['allowed-model']);
+  it('returns an empty read without refreshing when downstream policy filters every model', async () => {
+    const listModelNames = vi.fn().mockResolvedValue(['blocked-model']);
     const refreshModelsAndRebuildRoutes = vi.fn().mockResolvedValue(undefined);
-    const isModelAllowed = vi.fn()
-      .mockResolvedValueOnce(false)
-      .mockResolvedValueOnce(true);
-    const explainSelection = vi.fn().mockResolvedValue({ selectedTargetId: 33 });
+    const isModelAllowed = vi.fn().mockResolvedValue(false);
+    const canSelectModel = vi.fn().mockResolvedValue(true);
 
     const result = await listModelsSurface({
       downstreamPolicy: { type: 'whitelist' },
       responseFormat: 'openai',
-      tokenRouter: {
-        getAvailableModels,
-        explainSelection,
-      },
-      refreshModelsAndRebuildRoutes,
+      listModelNames,
+      canSelectModel,
       isModelAllowed,
       now: () => new Date('2026-03-19T00:00:00.000Z'),
     });
 
-    expect(refreshModelsAndRebuildRoutes).toHaveBeenCalledTimes(1);
+    expect(refreshModelsAndRebuildRoutes).not.toHaveBeenCalled();
     expect(result).toEqual({
       object: 'list',
-      data: [
-        {
-          id: 'allowed-model',
-          object: 'model',
-          created: 1773878400,
-          owned_by: 'metapi',
-        },
-      ],
+      data: [],
     });
   });
 });
@@ -102,11 +82,8 @@ describe('retrieveModelSurface', () => {
       modelId: 'gpt-4.1',
       downstreamPolicy: { type: 'all' },
       responseFormat: 'openai',
-      tokenRouter: {
-        getAvailableModels: vi.fn(),
-        explainSelection: vi.fn().mockResolvedValue({ selectedTargetId: 11 }),
-      },
-      refreshModelsAndRebuildRoutes: vi.fn(),
+      listModelNames: vi.fn(),
+      canSelectModel: vi.fn().mockResolvedValue(true),
       isModelAllowed: vi.fn().mockResolvedValue(true),
       now: () => new Date('2026-03-19T00:00:00.000Z'),
     });
@@ -122,25 +99,22 @@ describe('retrieveModelSurface', () => {
     });
   });
 
-  it('refreshes once before returning model_not_found for an unroutable model', async () => {
-    const explainSelection = vi.fn().mockResolvedValue({ selectedTargetId: null });
+  it('returns model_not_found without refreshing for an unroutable model', async () => {
+    const canSelectModel = vi.fn().mockResolvedValue(false);
     const refreshModelsAndRebuildRoutes = vi.fn().mockResolvedValue(undefined);
 
     const result = await retrieveModelSurface({
       modelId: 'missing-model',
       downstreamPolicy: { type: 'all' },
       responseFormat: 'openai',
-      tokenRouter: {
-        getAvailableModels: vi.fn(),
-        explainSelection,
-      },
-      refreshModelsAndRebuildRoutes,
+      listModelNames: vi.fn(),
+      canSelectModel,
       isModelAllowed: vi.fn().mockResolvedValue(true),
       now: () => new Date('2026-03-19T00:00:00.000Z'),
     });
 
-    expect(refreshModelsAndRebuildRoutes).toHaveBeenCalledTimes(1);
-    expect(explainSelection).toHaveBeenCalledTimes(2);
+    expect(refreshModelsAndRebuildRoutes).not.toHaveBeenCalled();
+    expect(canSelectModel).toHaveBeenCalledTimes(1);
     expect(result).toEqual({
       statusCode: 404,
       payload: {
@@ -158,11 +132,8 @@ describe('retrieveModelSurface', () => {
       modelId: '__search',
       downstreamPolicy: { type: 'all' },
       responseFormat: 'openai',
-      tokenRouter: {
-        getAvailableModels: vi.fn(),
-        explainSelection: vi.fn(),
-      },
-      refreshModelsAndRebuildRoutes: vi.fn(),
+      listModelNames: vi.fn(),
+      canSelectModel: vi.fn(),
       isModelAllowed: vi.fn().mockResolvedValue(true),
     });
 

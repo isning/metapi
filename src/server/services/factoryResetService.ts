@@ -26,7 +26,12 @@ type PreservedInfrastructureState = {
 async function clearAllBusinessData() {
   await db.transaction(async (tx) => {
     await tx.delete(schema.credentialEndpointBindings).run();
-    await tx.delete(schema.routeEndpointTargets).run();
+    await tx.delete(schema.routeGraphActiveVersion).run();
+    await tx.delete(schema.routeGraphWorkspaceOperationBatches).run();
+    await tx.delete(schema.routeGraphDrafts).run();
+    await tx.delete(schema.routeGraphVersions).run();
+    await tx.delete(schema.runtimeExecutionTargetState).run();
+    await tx.delete(schema.runtimeExecutionTargets).run();
     await tx.delete(schema.tokenModelAvailability).run();
     await tx.delete(schema.modelAvailability).run();
     await tx.delete(schema.proxyLogs).run();
@@ -36,7 +41,6 @@ async function clearAllBusinessData() {
     await tx.delete(schema.accountTokens).run();
     await tx.delete(schema.accounts).run();
     await tx.delete(schema.apiEndpointProfiles).run();
-    await tx.delete(schema.tokenRoutes).run();
     await tx.delete(schema.sites).run();
     await tx.delete(schema.downstreamApiKeys).run();
     await tx.delete(schema.events).run();
@@ -105,7 +109,7 @@ async function restoreInfrastructureSettings(preserved: PreservedInfrastructureS
 
 async function runDefaultSqliteMigrations() {
   const migrateModule = await import('../db/migrate.js');
-  migrateModule.runSqliteMigrations();
+  await migrateModule.runSqliteMigrations();
 }
 
 export async function performFactoryReset(deps: FactoryResetDependencies = {}): Promise<void> {

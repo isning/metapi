@@ -3,6 +3,68 @@ import { describe, expect, it } from 'vitest';
 import { createResponsesProxyStreamSession } from './proxyStream.js';
 
 describe('createResponsesProxyStreamSession', () => {
+  it('reports meaningful output when a response output delta is observed', async () => {
+    const lines: string[] = [];
+    let ended = false;
+    let meaningfulOutputCount = 0;
+    const usage = {
+      promptTokens: 5,
+      completionTokens: 3,
+      totalTokens: 8,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+      promptTokensIncludeCache: null,
+    };
+    const encoder = new TextEncoder();
+    let read = false;
+    const reader = {
+      async read() {
+        if (read) return { done: true as const };
+        read = true;
+        return {
+          done: false as const,
+          value: encoder.encode([
+            'event: response.created\n',
+            'data: {"type":"response.created","response":{"id":"resp_1","model":"gpt-5.2","status":"in_progress"}}\n\n',
+            'event: response.output_text.delta\n',
+            'data: {"type":"response.output_text.delta","delta":"hello","item_id":"msg_1","output_index":0,"content_index":0}\n\n',
+            'event: response.completed\n',
+            'data: {"type":"response.completed","response":{"id":"resp_1","model":"gpt-5.2","status":"completed","output":[]}}\n\n',
+            'data: [DONE]\n\n',
+          ].join('')),
+        };
+      },
+      async cancel() {
+        return undefined;
+      },
+      releaseLock() {},
+    };
+
+    const session = createResponsesProxyStreamSession({
+      modelName: 'gpt-5.2',
+      successfulUpstreamPath: '/v1/responses',
+      getUsage: () => usage,
+      onMeaningfulOutput: () => {
+        meaningfulOutputCount += 1;
+      },
+      writeLines: (nextLines) => {
+        lines.push(...nextLines);
+      },
+      writeRaw: () => {},
+    });
+
+    const result = await session.run(reader, {
+      end() {
+        ended = true;
+      },
+    });
+
+    expect(result).toEqual({ status: 'completed', errorMessage: null });
+    expect(ended).toBe(true);
+    expect(lines.join('')).toContain('hello');
+    expect(meaningfulOutputCount).toBe(1);
+  });
+
   it('serializes non-SSE fallback payloads into canonical responses SSE closeout events', () => {
     const lines: string[] = [];
     let ended = false;

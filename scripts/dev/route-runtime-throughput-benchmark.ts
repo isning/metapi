@@ -11,6 +11,8 @@ import {
   heapLimitMiB,
   memory,
   memoryDelta,
+  migrateRouteRuntimeDatabase,
+  publishSeededRouteRuntimeFixture,
   readPositiveInteger,
   resolveReportDir,
   round,
@@ -19,8 +21,10 @@ import {
   type MemorySnapshot,
 } from './routeRuntimePerformanceFixture.js';
 
-type TokenRouterModule = typeof import('../../src/server/services/tokenRouter.js');
-type TokenRouter = TokenRouterModule['tokenRouter'];
+type RouteRuntimeExecutionModule = typeof import('../../src/server/services/routeRuntimeExecutionService.js');
+type RouteRuntimeSelector = {
+  selectExecutionAttempt(model: string): ReturnType<RouteRuntimeExecutionModule['selectRouteRuntimeExecutionAttempt']>;
+};
 
 type LatencyStats = {
   minMs: number;
@@ -208,7 +212,7 @@ export function selectRecommendedConcurrency(summaries: ThroughputSummary[]): {
 }
 
 async function runForDuration(input: {
-  router: TokenRouter;
+  selector: RouteRuntimeSelector;
   concurrency: number;
   durationMs: number;
   modelCardinality: number;
@@ -226,7 +230,7 @@ async function runForDuration(input: {
       const model = `perf-group-${modelIndex % input.modelCardinality}`;
       modelIndex = (modelIndex + (input.concurrency * 8_191)) % input.modelCardinality;
       const started = performance.now();
-      const result = await input.router.selectTarget(model);
+      const result = await input.selector.selectExecutionAttempt(model);
       const elapsed = performance.now() - started;
       operations += 1;
       if (!result) failures += 1;
@@ -241,7 +245,7 @@ async function runForDuration(input: {
 }
 
 async function measureThroughput(input: {
-  router: TokenRouter;
+  selector: RouteRuntimeSelector;
   concurrency: number;
   repeat: number;
   warmupMs: number;
@@ -250,7 +254,7 @@ async function measureThroughput(input: {
   latencySampleLimit: number;
 }): Promise<ThroughputRun> {
   await runForDuration({
-    router: input.router,
+    selector: input.selector,
     concurrency: input.concurrency,
     durationMs: input.warmupMs,
     modelCardinality: input.modelCardinality,
@@ -265,7 +269,7 @@ async function measureThroughput(input: {
   const cpuBefore = process.cpuUsage();
   const started = performance.now();
   const result = await runForDuration({
-    router: input.router,
+    selector: input.selector,
     concurrency: input.concurrency,
     durationMs: input.durationMs,
     modelCardinality: input.modelCardinality,
@@ -383,7 +387,7 @@ function buildMarkdownReport(report: ThroughputReport): string {
     '',
     'Notes:',
     '',
-    '- This is closed-loop in-process route-decision throughput, not HTTP ingress RPS.',
+    '- This is closed-loop in-process runtime-selection throughput, not HTTP ingress RPS.',
     '- Use the peak/recommended concurrency from this report to choose fixed-width stress cases.',
     '- HTTP RPS should be measured separately against a running server with a load generator.',
     '',
@@ -430,20 +434,25 @@ async function main(): Promise<void> {
 
   let dbModule: DbModule | null = null;
   try {
-    await import('../../src/server/db/migrate.js');
+    await migrateRouteRuntimeDatabase();
     dbModule = await import('../../src/server/db/index.js');
-    await seedRouteRuntimeFixture({ dbModule, groupCount, insertChunkSize });
-    const projection = await import('../../src/server/services/routeTableProjectionService.js');
-    await projection.syncRouteBindingProjectionsFromRouteTable();
-    const routerModule: TokenRouterModule = await import('../../src/server/services/tokenRouter.js');
-    const router = routerModule.tokenRouter;
+    const seeded = await seedRouteRuntimeFixture({ dbModule, groupCount, insertChunkSize });
+    await publishSeededRouteRuntimeFixture(seeded, 'route-runtime-throughput-benchmark');
+    const { invalidateRouteRuntimeCaches } = await import('../../src/server/services/routeRuntimeCacheService.js');
+    const runtimeModule: RouteRuntimeExecutionModule = await import('../../src/server/services/routeRuntimeExecutionService.js');
+    const selector: RouteRuntimeSelector = {
+      selectExecutionAttempt: (model) => runtimeModule.selectRouteRuntimeExecutionAttempt({
+        requestedModel: model,
+        retryCount: 0,
+      }),
+    };
 
     const runs: ThroughputRun[] = [];
     for (const concurrency of concurrencySweep) {
       for (let repeat = 1; repeat <= repeats; repeat += 1) {
-        routerModule.invalidateTokenRouterCache();
+        invalidateRouteRuntimeCaches('manual');
         const run = await measureThroughput({
-          router,
+          selector,
           concurrency,
           repeat,
           warmupMs,

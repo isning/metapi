@@ -80,7 +80,7 @@ describe('pricing-core evaluator', () => {
           currency: 'USD',
           amount: 1,
           unitLabel: '1M tokens',
-          expression: { kind: 'formula', cel: 'unitPriceUsd *' },
+          expression: { kind: 'formula', cel: 'unitPrice *' },
         },
       }],
     }));
@@ -112,10 +112,10 @@ describe('pricing-core evaluator', () => {
       usage: { inputTokens: 1_000_000, outputTokens: 500_000 },
     });
 
-    expect(evaluation.totalCostUsd).toBe(12.5);
+    expect(evaluation.totalCost).toBe(12.5);
     expect(evaluation.components).toEqual([
-      expect.objectContaining({ componentId: 'input', costUsd: 5, quantityPricingMode: 'flat' }),
-      expect.objectContaining({ componentId: 'output', costUsd: 7.5, quantityPricingMode: 'flat' }),
+      expect.objectContaining({ componentId: 'input', cost: 5, quantityPricingMode: 'flat' }),
+      expect.objectContaining({ componentId: 'output', cost: 7.5, quantityPricingMode: 'flat' }),
     ]);
     expect(evaluation.estimateLevel).toBe('exact');
   });
@@ -163,8 +163,8 @@ describe('pricing-core evaluator', () => {
       usage: { inputTokens: 2_000_000 },
     });
 
-    expect(volume.totalCostUsd).toBe(12);
-    expect(graduated.totalCostUsd).toBe(16);
+    expect(volume.totalCost).toBe(12);
+    expect(graduated.totalCost).toBe(16);
   });
 
   it('applies request-scoped allowances before component pricing', () => {
@@ -189,7 +189,7 @@ describe('pricing-core evaluator', () => {
       usage: { inputTokens: 250_000 },
     });
 
-    expect(evaluation.totalCostUsd).toBe(1.5);
+    expect(evaluation.totalCost).toBe(1.5);
     expect(evaluation.components[0]).toMatchObject({
       quantity: 150_000,
       allowanceApplied: 100_000,
@@ -251,15 +251,15 @@ describe('pricing-core evaluator', () => {
       usage: { inputTokens: 1_000_000 },
     });
 
-    expect(evaluation.subtotalCostUsd).toBe(5);
-    expect(evaluation.adjustmentCostUsd).toBe(0.5);
-    expect(evaluation.totalCostUsd).toBe(5.5);
+    expect(evaluation.subtotalCost).toBe(5);
+    expect(evaluation.adjustmentCost).toBe(0.5);
+    expect(evaluation.totalCost).toBe(5.5);
     expect(evaluation.components[0]).toMatchObject({
       overlayIds: ['contract-half-price'],
-      unitPriceUsd: 5,
+      unitPrice: 5,
     });
     expect(evaluation.postProcessors).toEqual([
-      { id: 'tax', kind: 'tax', amountUsd: 0.5 },
+      { id: 'tax', kind: 'tax', currency: 'USD', amount: 0.5 },
     ]);
   });
 
@@ -290,12 +290,12 @@ describe('pricing-core evaluator', () => {
       usage: { inputTokens: 1_000_000 },
     });
 
-    expect(evaluation.subtotalCostUsd).toBe(10);
-    expect(evaluation.adjustmentCostUsd).toBe(3.2);
-    expect(evaluation.totalCostUsd).toBe(13.2);
+    expect(evaluation.subtotalCost).toBe(10);
+    expect(evaluation.adjustmentCost).toBe(3.2);
+    expect(evaluation.totalCost).toBe(13.2);
     expect(evaluation.postProcessors).toEqual([
-      { id: 'reseller-markup', kind: 'markup', amountUsd: 2 },
-      { id: 'tax', kind: 'tax', amountUsd: 1.2 },
+      { id: 'reseller-markup', kind: 'markup', currency: 'USD', amount: 2 },
+      { id: 'tax', kind: 'tax', currency: 'USD', amount: 1.2 },
     ]);
   });
 
@@ -327,9 +327,9 @@ describe('pricing-core evaluator', () => {
       context: { metadata: { billing_mode: 'batch' } },
     });
 
-    expect(evaluation.totalCostUsd).toBe(2);
+    expect(evaluation.totalCost).toBe(2);
     expect(evaluation.components).toEqual([
-      expect.objectContaining({ componentId: 'batch-input', unitPriceUsd: 2 }),
+      expect.objectContaining({ componentId: 'batch-input', unitPrice: 2 }),
     ]);
   });
 
@@ -346,7 +346,7 @@ describe('pricing-core evaluator', () => {
             currency: 'USD',
             amount: 10,
             unitLabel: '1M input tokens',
-            expression: { kind: 'formula', cel: 'unitPriceUsd * metadata.contract_multiplier' },
+            expression: { kind: 'formula', cel: 'unitPrice * metadata.contract_multiplier' },
           },
         }],
       }),
@@ -354,10 +354,10 @@ describe('pricing-core evaluator', () => {
       context: { metadata: { contract_multiplier: 0.25 } },
     });
 
-    expect(evaluation.totalCostUsd).toBe(5);
+    expect(evaluation.totalCost).toBe(5);
     expect(evaluation.components[0]).toMatchObject({
-      unitPriceUsd: 2.5,
-      costUsd: 5,
+      unitPrice: 2.5,
+      cost: 5,
     });
     expect(evaluation.estimateLevel).toBe('exact');
   });
@@ -382,7 +382,7 @@ describe('pricing-core evaluator', () => {
       usage: { inputTokens: 1_000_000 },
     });
 
-    expect(evaluation.totalCostUsd).toBe(0);
+    expect(evaluation.totalCost).toBe(0);
     expect(evaluation.estimateLevel).toBe('incomplete');
     expect(evaluation.diagnostics).toContainEqual(expect.objectContaining({
       code: 'pricing_cel_formula_invalid',
@@ -411,7 +411,7 @@ describe('pricing-core evaluator', () => {
       usage: { inputTokens: 1_000_000, cacheReadTokens: 250_000 },
     });
 
-    expect(evaluation.totalCostUsd).toBe(7.5);
+    expect(evaluation.totalCost).toBe(7.5);
     expect(evaluation.components[0]).toMatchObject({
       componentId: 'billable-input',
       quantity: 750_000,
@@ -438,17 +438,17 @@ describe('pricing-core evaluator', () => {
             currency: 'USD',
             amount: 10,
             unitLabel: '1M input tokens',
-            expression: { kind: 'formula', cel: 'unitPriceUsd * metadata.contract_multiplier' },
+            expression: { kind: 'formula', cel: 'unitPrice * metadata.contract_multiplier' },
           },
         }],
       }),
       usage: { inputTokens: 2_000_000 },
     });
 
-    expect(evaluation.totalCostUsd).toBe(10);
+    expect(evaluation.totalCost).toBe(10);
     expect(evaluation.components[0]).toMatchObject({
-      unitPriceUsd: 5,
-      costUsd: 10,
+      unitPrice: 5,
+      cost: 10,
     });
   });
 
@@ -465,7 +465,7 @@ describe('pricing-core evaluator', () => {
           currency: 'USD',
           amount: 10,
           unitLabel: '1M input tokens',
-          expression: { kind: 'formula', cel: 'unitPriceUsd * 0.5' },
+          expression: { kind: 'formula', cel: 'unitPrice * 0.5' },
         },
       }],
     });

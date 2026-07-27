@@ -93,14 +93,14 @@ function normalizeEndpointRuntimeModelKey(...values: Array<unknown>): string {
 export function buildEndpointCapabilityProfile(input?: {
   modelName?: string;
   requestedModelHint?: string;
-  requestCapabilities?: {
+  surfaceCapabilityHints?: {
     hasNonImageFileInput?: boolean;
     conversationFileSummary?: ConversationFileInputSummary;
     wantsNativeResponsesReasoning?: boolean;
     wantsContinuationAwareResponses?: boolean;
   };
 }): EndpointCapabilityProfile {
-  const conversationFileSummary = input?.requestCapabilities?.conversationFileSummary;
+  const conversationFileSummary = input?.surfaceCapabilityHints?.conversationFileSummary;
   return {
     modelKey: normalizeEndpointRuntimeModelKey(input?.modelName, input?.requestedModelHint),
     preferMessagesForClaudeModel: (
@@ -111,13 +111,13 @@ export function buildEndpointCapabilityProfile(input?: {
     hasAudioInput: conversationFileSummary?.hasAudio === true,
     hasNonImageFileInput: (
       conversationFileSummary?.hasDocument === true
-      || input?.requestCapabilities?.hasNonImageFileInput === true
+      || input?.surfaceCapabilityHints?.hasNonImageFileInput === true
     ),
     hasRemoteDocumentUrl: (
       conversationFileSummary?.hasRemoteDocumentUrl === true
     ),
-    wantsNativeResponsesReasoning: input?.requestCapabilities?.wantsNativeResponsesReasoning === true,
-    wantsContinuationAwareResponses: input?.requestCapabilities?.wantsContinuationAwareResponses === true,
+    wantsNativeResponsesReasoning: input?.surfaceCapabilityHints?.wantsNativeResponsesReasoning === true,
+    wantsContinuationAwareResponses: input?.surfaceCapabilityHints?.wantsContinuationAwareResponses === true,
   };
 }
 
@@ -247,7 +247,7 @@ export function getUpstreamEndpointRuntimeStateSnapshot(input: {
   downstreamFormat: UpstreamEndpointRuntimePreference;
   modelName?: string;
   requestedModelHint?: string;
-  requestCapabilities?: {
+  surfaceCapabilityHints?: {
     hasNonImageFileInput?: boolean;
     conversationFileSummary?: ConversationFileInputSummary;
     wantsNativeResponsesReasoning?: boolean;
@@ -257,7 +257,7 @@ export function getUpstreamEndpointRuntimeStateSnapshot(input: {
   const capabilityProfile = buildEndpointCapabilityProfile({
     modelName: input.modelName,
     requestedModelHint: input.requestedModelHint,
-    requestCapabilities: input.requestCapabilities,
+    surfaceCapabilityHints: input.surfaceCapabilityHints,
   });
   const enabled = shouldUseEndpointRuntimeMemory(capabilityProfile);
   const stateKey = buildEndpointRuntimeStateKey({
@@ -353,7 +353,7 @@ export function recordUpstreamEndpointSuccess(input: {
   downstreamFormat: UpstreamEndpointRuntimePreference;
   modelName?: string;
   requestedModelHint?: string;
-  requestCapabilities?: {
+  surfaceCapabilityHints?: {
     hasNonImageFileInput?: boolean;
     conversationFileSummary?: ConversationFileInputSummary;
     wantsNativeResponsesReasoning?: boolean;
@@ -364,7 +364,7 @@ export function recordUpstreamEndpointSuccess(input: {
   const capabilityProfile = buildEndpointCapabilityProfile({
     modelName: input.modelName,
     requestedModelHint: input.requestedModelHint,
-    requestCapabilities: input.requestCapabilities,
+    surfaceCapabilityHints: input.surfaceCapabilityHints,
   });
   if (!shouldUseEndpointRuntimeMemory(capabilityProfile)) return null;
   const runtimeInput = {
@@ -400,7 +400,7 @@ export function recordUpstreamEndpointFailure(input: {
   errorText?: string | null;
   modelName?: string;
   requestedModelHint?: string;
-  requestCapabilities?: {
+  surfaceCapabilityHints?: {
     hasNonImageFileInput?: boolean;
     conversationFileSummary?: ConversationFileInputSummary;
     wantsNativeResponsesReasoning?: boolean;
@@ -411,7 +411,7 @@ export function recordUpstreamEndpointFailure(input: {
   const capabilityProfile = buildEndpointCapabilityProfile({
     modelName: input.modelName,
     requestedModelHint: input.requestedModelHint,
-    requestCapabilities: input.requestCapabilities,
+    surfaceCapabilityHints: input.surfaceCapabilityHints,
   });
   if (!shouldUseEndpointRuntimeMemory(capabilityProfile)) return null;
   if (!shouldBlockEndpointByError(input.endpoint, input.status, input.errorText)) return null;

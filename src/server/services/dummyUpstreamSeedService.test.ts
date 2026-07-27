@@ -2,14 +2,17 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { clearRouteGroupMemberTestData, listAllRouteGroupMembers } from '../../testing/routeGroupMemberTestUtils.js';
 
 type DbModule = typeof import('../db/index.js');
 type SeedModule = typeof import('./dummyUpstreamSeedService.js');
+type RouteGroupManagementReadModelModule = typeof import('./routeGroupManagementReadModelService.js');
 
 describe('dummyUpstreamSeedService', () => {
   let db: DbModule['db'];
   let schema: DbModule['schema'];
   let seedDummyUpstreamRoutes: SeedModule['seedDummyUpstreamRoutes'];
+  let loadRouteGroupManagementReadModel: RouteGroupManagementReadModelModule['loadRouteGroupManagementReadModel'];
   let dataDir = '';
 
   beforeAll(async () => {
@@ -19,22 +22,30 @@ describe('dummyUpstreamSeedService', () => {
     await import('../db/migrate.js');
     const dbModule = await import('../db/index.js');
     const seedModule = await import('./dummyUpstreamSeedService.js');
+    const routeGroupManagementReadModelModule = await import('./routeGroupManagementReadModelService.js');
 
     db = dbModule.db;
     schema = dbModule.schema;
     seedDummyUpstreamRoutes = seedModule.seedDummyUpstreamRoutes;
+    loadRouteGroupManagementReadModel = routeGroupManagementReadModelModule.loadRouteGroupManagementReadModel;
   });
 
   beforeEach(async () => {
-    await db.delete(schema.routeEndpointTargets).run();
-    await db.delete(schema.routeBindingProjections).run();
-    await db.delete(schema.tokenRoutes).run();
+    await clearRouteGroupMemberTestData();
+    await db.delete(schema.routeGraphActiveVersion).run();
+    await db.delete(schema.compiledRuntimeActiveArtifact).run();
+    await db.delete(schema.compiledRuntimeArtifacts).run();
+    await db.delete(schema.routeGraphVersions).run();
+    await db.delete(schema.runtimeExecutionTargetState).run();
+    await db.delete(schema.runtimeExecutionTargets).run();
     await db.delete(schema.tokenModelAvailability).run();
     await db.delete(schema.accountTokens).run();
     await db.delete(schema.accounts).run();
     await db.delete(schema.sites).run();
     await db.delete(schema.routeGraphDrafts).run();
     await db.delete(schema.routeGraphActiveVersion).run();
+    await db.delete(schema.compiledRuntimeActiveArtifact).run();
+    await db.delete(schema.compiledRuntimeArtifacts).run();
     await db.delete(schema.routeGraphVersions).run();
   });
 
@@ -42,7 +53,7 @@ describe('dummyUpstreamSeedService', () => {
     delete process.env.DATA_DIR;
   });
 
-  it('creates deterministic dummy upstream routes and rebuilds route-table projections', async () => {
+  it('creates deterministic dummy upstream route groups and rebuilds compiled runtime inputs', async () => {
     const result = await seedDummyUpstreamRoutes();
 
     expect(result.routes).toBe(3);
@@ -53,11 +64,12 @@ describe('dummyUpstreamSeedService', () => {
       'dummy-gemini-generate-content',
     ]);
 
-    const routes = await db.select().from(schema.tokenRoutes).all();
-    const routeNames = routes.map((route) => route.displayName).filter((name): name is string => !!name);
+    const routes = await loadRouteGroupManagementReadModel();
+    const routeNames = routes.map((route) => route.presentation.displayName).filter((name): name is string => !!name);
     expect(routeNames).toEqual(expect.arrayContaining(result.modelNames));
 
-    const projections = await db.select().from(schema.routeBindingProjections).all();
-    expect(projections.map((projection) => projection.modelPattern)).toEqual(expect.arrayContaining(result.modelNames));
+    const supplyEndpoints = await db.select().from(schema.runtimeExecutionTargets).all();
+    expect(supplyEndpoints.map((endpoint) => endpoint.upstreamModelName)).toEqual(expect.arrayContaining(result.modelNames));
+    expect(await listAllRouteGroupMembers()).toHaveLength(result.channels);
   });
 });

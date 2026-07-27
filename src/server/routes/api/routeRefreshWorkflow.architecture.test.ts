@@ -7,7 +7,7 @@ function readSource(relativePath: string): string {
 
 function expectNoDirectModelServiceRouteRefresh(source: string): void {
   expect(source).not.toMatch(/import\s*\{[^}]*\brefreshModelsAndRebuildRoutes\b[^}]*\}\s*from\s*['"][^'"]*modelService\.js['"]/m);
-  expect(source).not.toMatch(/import\s*\{[^}]*\brebuildTokenRoutesFromAvailability\b[^}]*\}\s*from\s*['"][^'"]*modelService\.js['"]/m);
+  expect(source).not.toMatch(/import\s*\{[^}]*\brebuildManagedRouteGroupsFromAvailability\b[^}]*\}\s*from\s*['"][^'"]*modelService\.js['"]/m);
 }
 
 function expectImportsRouteRefreshWorkflow(source: string): void {
@@ -16,8 +16,10 @@ function expectImportsRouteRefreshWorkflow(source: string): void {
   );
 }
 
-function expectCallsSelectProxyTargetForAttempt(source: string): void {
-  expect(source).toMatch(/\bselect(?:Proxy|Surface)TargetForAttempt\s*\(/);
+function expectCallsCompiledRuntimeSelection(source: string): void {
+  expect(source).toMatch(
+    /\bselect(?:Proxy|Surface)ExecutionAttempt\s*\(|\bselectSurfaceRuntimeDecision(?:InSession)?\s*\(/,
+  );
 }
 
 function expectCallsRebuildRoutesOnly(source: string): void {
@@ -26,16 +28,19 @@ function expectCallsRebuildRoutesOnly(source: string): void {
 
 describe('route refresh workflow architecture boundaries', () => {
   it('keeps api controllers on the shared route refresh workflow instead of modelService', () => {
-    const tokensSource = readSource('./tokens.ts');
+    const routeGroupRoutesSource = readSource('./routeGroupRoutes.ts');
+    const compositionRootSource = readSource('./tokens.ts');
     const settingsSource = readSource('./settings.ts');
     const statsSource = readSource('./stats.ts');
 
-    for (const source of [tokensSource, settingsSource, statsSource]) {
+    for (const source of [routeGroupRoutesSource, settingsSource, statsSource]) {
       expectImportsRouteRefreshWorkflow(source);
       expectNoDirectModelServiceRouteRefresh(source);
     }
 
-    expectCallsRebuildRoutesOnly(tokensSource);
+    expectNoDirectModelServiceRouteRefresh(compositionRootSource);
+    expect(compositionRootSource).not.toContain('routeRefreshWorkflow');
+    expectCallsRebuildRoutesOnly(routeGroupRoutesSource);
     expectCallsRebuildRoutesOnly(statsSource);
   });
 
@@ -43,18 +48,21 @@ describe('route refresh workflow architecture boundaries', () => {
     const completionsSource = readSource('../../proxy-core/formats/completions.ts');
     const embeddingsSource = readSource('../../proxy-core/formats/embeddings.ts');
     const imagesSource = readSource('../proxy/images.ts');
+    const imagesSurfaceSource = readSource('../../proxy-core/surfaces/imagesEditProxySurface.ts');
     const modelsRouteSource = readSource('../proxy/models.ts');
     const searchSource = readSource('../proxy/search.ts');
+    const searchSurfaceSource = readSource('../../proxy-core/surfaces/searchProxySurface.ts');
     const videosSource = readSource('../proxy/videos.ts');
+    const videoSurfaceSource = readSource('../../proxy-core/surfaces/videoProxySurface.ts');
+    const compiledSurfaceRunnerSource = readSource('../../proxy-core/orchestration/compiledHttpSurfaceRunner.ts');
     const schedulerSource = readSource('../../services/checkinScheduler.ts');
     const oauthServiceSource = readSource('../../services/oauth/service.ts');
     const sharedOrchestrationSource = readSource('../../proxy-core/orchestration/sharedProxyOrchestration.ts');
     const genericOrchestratorSource = readSource('../../proxy-core/orchestration/genericProxyOrchestrator.ts');
     const modelListOrchestratorSource = readSource('../../proxy-core/orchestration/modelListOrchestrator.ts');
     const geminiAdapterSource = readSource('../../proxy-core/formats/gemini.ts');
-    const targetSelectionSource = readSource('../../proxy-core/targetSelection.ts');
 
-    for (const source of [schedulerSource, oauthServiceSource, targetSelectionSource]) {
+    for (const source of [schedulerSource, oauthServiceSource]) {
       expectImportsRouteRefreshWorkflow(source);
       expectNoDirectModelServiceRouteRefresh(source);
     }
@@ -72,21 +80,27 @@ describe('route refresh workflow architecture boundaries', () => {
       expectNoDirectModelServiceRouteRefresh(source);
     }
 
-    for (const source of [
-      imagesSource,
-      searchSource,
-      videosSource,
-      sharedOrchestrationSource,
-      genericOrchestratorSource,
-    ]) {
-      expectCallsSelectProxyTargetForAttempt(source);
+    for (const source of [sharedOrchestrationSource, genericOrchestratorSource, compiledSurfaceRunnerSource]) {
+      expectCallsCompiledRuntimeSelection(source);
+    }
+    expect(imagesSource).toContain('executeImagesEditProxySurface');
+    expect(searchSource).toContain('executeSearchProxySurface');
+    expect(videosSource).toContain('executeVideoCreateProxySurface');
+    for (const source of [imagesSurfaceSource, searchSurfaceSource, videoSurfaceSource]) {
+      expect(source).toContain('executeCompiledHttpSurface');
     }
 
-    expectImportsRouteRefreshWorkflow(modelListOrchestratorSource);
+    expect(modelListOrchestratorSource).not.toContain('routeRefreshWorkflow');
+    expect(modelListOrchestratorSource).not.toContain('refreshModelsAndRebuildRoutes');
+    expect(modelListOrchestratorSource).not.toContain('rebuildRoutesOnly');
+    expect(modelListOrchestratorSource).not.toContain('modelService.js');
     expect(modelListOrchestratorSource).toMatch(/\bselectModelListTarget\s*\(/);
+    expect(modelListOrchestratorSource).toContain('previewRouteRuntimeDecision');
+    expect(modelListOrchestratorSource).toContain('compiledRuntimeInventoryService.js');
+    expect(modelListOrchestratorSource).toContain('listActiveCompiledRuntimeModelEntrypoints');
     expect(modelListOrchestratorSource).not.toContain('routeGraphService.js');
     expect(modelListOrchestratorSource).not.toContain('ensureActiveRouteGraphVersion');
-    expect(modelListOrchestratorSource).toContain('routeTableProjectionService.js');
+    expect(modelListOrchestratorSource).not.toContain('routeTableProjectionService.js');
     expect(geminiAdapterSource).toContain('modelListModelProbes: GEMINI_MODEL_PROBES');
   });
 
@@ -95,7 +109,7 @@ describe('route refresh workflow architecture boundaries', () => {
 
     expect(serverEntrySource).not.toMatch(/\brouteRefreshWorkflow\.rebuildRoutesOnly\s*\(/);
     expect(serverEntrySource).not.toMatch(/\brouteRefreshWorkflow\.refreshModelsAndRebuildRoutes\s*\(/);
-    expect(serverEntrySource).toContain('syncRouteBindingProjectionsFromRouteTable');
+    expect(serverEntrySource).not.toContain('syncRouteBindingProjectionsFromRouteTable');
     expect(serverEntrySource).not.toContain('ensureActiveRouteGraphVersion');
     expect(serverEntrySource).not.toContain('syncRouteBindingProjectionsFromRouteGraphSource');
   });

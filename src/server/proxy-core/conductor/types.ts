@@ -1,5 +1,5 @@
-export type SelectedTargetLike = {
-  target: { id: number; routeId?: number };
+export type SelectedExecutionAttemptLike = {
+  target: { id: number };
   site: Record<string, unknown>;
   account: Record<string, unknown>;
   tokenName?: string;
@@ -32,25 +32,25 @@ export type AttemptFailure = {
 export type AttemptResult = AttemptSuccess | AttemptFailure;
 
 export type ExecuteAttemptContext = {
-  selected: SelectedTargetLike;
+  selected: SelectedExecutionAttemptLike;
   attemptIndex: number;
   excludeTargetIds: number[];
 };
 
 export type ProxyConductorDependencies = {
-  selectTarget: (requestedModel: string, downstreamPolicy?: unknown) => Promise<SelectedTargetLike | null>;
-  previewSelectedTarget?: (requestedModel: string, downstreamPolicy?: unknown) => Promise<SelectedTargetLike | null>;
-  selectNextTarget: (
+  selectExecutionAttempt: (requestedModel: string, downstreamPolicy?: unknown) => Promise<SelectedExecutionAttemptLike | null>;
+  previewExecutionAttempt?: (requestedModel: string, downstreamPolicy?: unknown) => Promise<SelectedExecutionAttemptLike | null>;
+  selectNextExecutionAttempt: (
     requestedModel: string,
     excludeTargetIds: number[],
     downstreamPolicy?: unknown,
-  ) => Promise<SelectedTargetLike | null>;
+  ) => Promise<SelectedExecutionAttemptLike | null>;
   recordSuccess?: (targetId: number, metrics: { latencyMs: number | null; cost: number | null }) => Promise<void> | void;
   recordFailure?: (targetId: number, failure: { status?: number; rawErrorText?: string }) => Promise<void> | void;
   refreshAuth?: (
-    selected: SelectedTargetLike,
+    selected: SelectedExecutionAttemptLike,
     failure: { status?: number; rawErrorText?: string },
-  ) => Promise<SelectedTargetLike | null>;
+  ) => Promise<SelectedExecutionAttemptLike | null>;
 };
 
 export type ExecuteInput = {
@@ -58,7 +58,7 @@ export type ExecuteInput = {
   downstreamPolicy?: unknown;
   attempt: (context: ExecuteAttemptContext) => Promise<AttemptResult>;
   onTerminalFailure?: (
-    selected: SelectedTargetLike,
+    selected: SelectedExecutionAttemptLike,
     failure: { status?: number; rawErrorText?: string },
   ) => Promise<void> | void;
 };
@@ -66,14 +66,14 @@ export type ExecuteInput = {
 export type ExecuteResult =
   | {
     ok: true;
-    selected: SelectedTargetLike;
+    selected: SelectedExecutionAttemptLike;
     response: Response;
     attempts: number;
   }
   | {
     ok: false;
     reason: 'no_target' | 'failed' | 'terminal';
-    selected?: SelectedTargetLike;
+    selected?: SelectedExecutionAttemptLike;
     status?: number;
     rawErrorText?: string;
     attempts: number;

@@ -1,11 +1,13 @@
 import Fastify, { type FastifyInstance } from 'fastify';
+import { executionDecisionFromTargetMocks } from '../../../testing/routeRuntimeDecisionMock.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { asc, eq } from 'drizzle-orm';
-import { config } from '../../config.js';
 import { resetUpstreamEndpointRuntimeState } from '../../services/upstreamEndpointRuntimeMemory.js';
+import { clearRouteGroupMemberTestData } from '../../../testing/routeGroupMemberTestUtils.js';
+import {
+  bootIsolatedRuntimeDb,
+  type IsolatedRuntimeDbHandle,
+} from '../../../testing/dbHarness.js';
 
 const fetchMock = vi.fn();
 const selectTargetMock = vi.fn();
@@ -33,13 +35,41 @@ vi.mock('undici', async () => {
   };
 });
 
-vi.mock('../../services/tokenRouter.js', () => ({
-  tokenRouter: {
-    selectTarget: (...args: unknown[]) => selectTargetMock(...args),
-    selectNextTarget: (...args: unknown[]) => selectNextTargetMock(...args),
-    recordSuccess: (...args: unknown[]) => recordSuccessMock(...args),
-    recordFailure: (...args: unknown[]) => recordFailureMock(...args),
+
+vi.mock('../../services/routeRuntimeExecutionService.js', () => ({
+  createRouteRuntimeDecisionSession: async (input: any) => input,
+  selectRouteRuntimeDecisionInSession: (session: any, input: any) => executionDecisionFromTargetMocks(
+    { ...session, ...input }, selectTargetMock, selectNextTargetMock,
+  ),
+  previewRouteRuntimeDecisionInSession: (session: any, input: any) => executionDecisionFromTargetMocks(
+    { ...session, ...input }, selectNextTargetMock,
+  ),
+  selectRouteRuntimeDecision: (input: any) => executionDecisionFromTargetMocks(input, selectTargetMock, selectNextTargetMock),
+  selectRouteRuntimeExecutionAttempt: async (input: any) => {
+    const excluded = Array.isArray(input?.disabledExecutionTargetIds) ? input.disabledExecutionTargetIds : [];
+    const selected = excluded.length > 0
+      ? await selectNextTargetMock(input.requestedModel, excluded, input.downstreamPolicy)
+      : await selectTargetMock(input?.requestedModel, input?.downstreamPolicy);
+    if (!selected) return selected;
+    if (!selected.executionAttemptId || !selected.executionTargetId) {
+      throw new Error('Test selected route runtime attempt must include executionAttemptId and executionTargetId');
+    }
+    return selected;
   },
+  resolveRouteRuntimeSyntheticResponse: async () => null,
+  recordRouteRuntimeExecutionAttemptStarted: async () => undefined,
+  recordRouteRuntimeExecutionAttemptSuccess: (input: any) =>
+    recordSuccessMock(input.executionTargetId, input.latencyMs, input.modelName),
+  recordRouteRuntimeExecutionAttemptFailure: (input: any) =>
+    recordFailureMock(input.executionTargetId, { status: input.status, errorText: input.errorText }),
+  recordRouteRuntimeExecutionAttemptSelected: async () => undefined,
+}));
+
+vi.mock('../../services/compiledRuntimeExecutionSessionService.js', () => ({
+  startCompiledRuntimeExecutionSession: async () => ({ requestId: 'request:chat-endpoint-test', startedAtMs: Date.now() }),
+  resumeCompiledRuntimeExecutionSession: async () => null,
+  bindCompiledRuntimeExecutionDecision: async () => undefined,
+  completeCompiledRuntimeExecutionSession: async () => undefined,
 }));
 
 vi.mock('../../services/modelService.js', () => ({
@@ -76,23 +106,24 @@ vi.mock('../../services/proxyLogStore.js', () => ({
 }));
 
 type DbModule = typeof import('../../db/index.js');
+type ConfigModule = typeof import('../../config.js');
 
 describe('chat proxy site api endpoint rotation', () => {
   let app: FastifyInstance;
   let db: DbModule['db'];
   let schema: DbModule['schema'];
-  let dataDir = '';
+  let config: ConfigModule['config'];
+  let runtimeDb: IsolatedRuntimeDbHandle;
 
   beforeAll(async () => {
-    dataDir = mkdtempSync(join(tmpdir(), 'metapi-chat-site-api-endpoint-'));
-    process.env.DATA_DIR = dataDir;
+    runtimeDb = await bootIsolatedRuntimeDb('metapi-chat-site-api-endpoint-');
 
-    await import('../../db/migrate.js');
+    const configModule = await import('../../config.js');
     const { registerDownstreamProtocolSurface } = await import('../surfaces/downstreamProtocolSurface.js');
-    const dbModule = await import('../../db/index.js');
     const { openaiChatProtocolAdapter } = await import('./openaiChat.js');
-    db = dbModule.db;
-    schema = dbModule.schema;
+    config = configModule.config;
+    db = runtimeDb.db;
+    schema = runtimeDb.schema;
 
     app = Fastify();
     await registerDownstreamProtocolSurface(app, openaiChatProtocolAdapter);
@@ -115,8 +146,9 @@ describe('chat proxy site api endpoint rotation', () => {
     resetUpstreamEndpointRuntimeState();
 
     await db.delete(schema.proxyLogs).run();
-    await db.delete(schema.routeEndpointTargets).run();
-    await db.delete(schema.tokenRoutes).run();
+    await clearRouteGroupMemberTestData();
+    await db.delete(schema.runtimeExecutionTargetState).run();
+    await db.delete(schema.runtimeExecutionTargets).run();
     await db.delete(schema.tokenModelAvailability).run();
     await db.delete(schema.modelAvailability).run();
     await db.delete(schema.accountTokens).run();
@@ -138,7 +170,7 @@ describe('chat proxy site api endpoint rotation', () => {
     if (app) {
       await app.close();
     }
-    delete process.env.DATA_DIR;
+    await runtimeDb?.cleanup();
   });
 
   it('rotates to the next configured ai endpoint for retryable /v1/chat/completions failures', async () => {
@@ -173,9 +205,10 @@ describe('chat proxy site api endpoint rotation', () => {
         sortOrder: 1,
       },
     ]).run();
-
     selectTargetMock.mockReturnValue({
       target: { id: 11, routeId: 22 },
+      executionTargetId: 11,
+      executionAttemptId: 'ea_11',
       site,
       account,
       tokenName: 'default',
@@ -213,7 +246,7 @@ describe('chat proxy site api endpoint rotation', () => {
       },
     });
 
-    expect(response.statusCode).toBe(200);
+    expect(response.statusCode, response.body).toBe(200);
     expect(response.json()?.choices?.[0]?.message?.content).toBe('ok via api-b');
     expect(fetchMock).toHaveBeenCalledTimes(4);
     expect(String(fetchMock.mock.calls[0]?.[0] || '')).toBe('https://api-a.example.com/v1/responses');

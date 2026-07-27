@@ -1,31 +1,28 @@
-import {
-  db,
-  schema,
-  hasProxyLogBillingDetailsColumn,
-  hasProxyLogClientColumns,
-  hasProxyLogDownstreamApiKeyIdColumn,
-  hasProxyLogRouteDecisionSnapshotColumn,
-  hasProxyLogStreamTimingColumns,
-} from '../db/index.js';
+import { db, schema } from '../db/index.js';
+import { invalidateCompiledRuntimeUsageForecast } from './compiledRuntimeUsageForecastService.js';
 
 export type ProxyLogInsertInput = {
-  routeId?: number | null;
-  targetId?: number | null;
+  requestId?: string | null;
+  executionAttemptId?: string | null;
   accountId?: number | null;
   downstreamApiKeyId?: number | null;
   modelRequested?: string | null;
   modelActual?: string | null;
+  routeEntrypointId?: string | null;
+  runtimeEndpointId?: string | null;
+  runtimeArtifactId?: string | null;
+  executionTargetId?: number | null;
   status?: string | null;
   httpStatus?: number | null;
   isStream?: boolean | null;
   firstByteLatencyMs?: number | null;
+  firstTokenLatencyMs?: number | null;
   latencyMs?: number | null;
   promptTokens?: number | null;
   completionTokens?: number | null;
   totalTokens?: number | null;
   estimatedCost?: number | null;
   billingDetails?: unknown;
-  routeDecisionSnapshot?: unknown;
   clientFamily?: string | null;
   clientAppId?: string | null;
   clientAppName?: string | null;
@@ -38,12 +35,15 @@ export type ProxyLogInsertInput = {
 function buildProxyLogCoreSelectFields() {
   return {
     id: schema.proxyLogs.id,
-    routeId: schema.proxyLogs.routeId,
-    targetId: schema.proxyLogs.targetId,
+    executionAttemptId: schema.proxyLogs.executionAttemptId,
     accountId: schema.proxyLogs.accountId,
     downstreamApiKeyId: schema.proxyLogs.downstreamApiKeyId,
     modelRequested: schema.proxyLogs.modelRequested,
     modelActual: schema.proxyLogs.modelActual,
+    routeEntrypointId: schema.proxyLogs.routeEntrypointId,
+    runtimeEndpointId: schema.proxyLogs.runtimeEndpointId,
+    runtimeArtifactId: schema.proxyLogs.runtimeArtifactId,
+    executionTargetId: schema.proxyLogs.executionTargetId,
     status: schema.proxyLogs.status,
     httpStatus: schema.proxyLogs.httpStatus,
     latencyMs: schema.proxyLogs.latencyMs,
@@ -70,13 +70,13 @@ function buildProxyLogStreamTimingSelectFields() {
   return {
     isStream: schema.proxyLogs.isStream,
     firstByteLatencyMs: schema.proxyLogs.firstByteLatencyMs,
+    firstTokenLatencyMs: schema.proxyLogs.firstTokenLatencyMs,
   };
 }
 
 function buildProxyLogSelectFields(options?: {
   includeBillingDetails?: boolean;
   includeClientFields?: boolean;
-  includeRouteDecisionSnapshot?: boolean;
   includeStreamTimingFields?: boolean;
 }) {
   return {
@@ -84,7 +84,6 @@ function buildProxyLogSelectFields(options?: {
     ...(options?.includeStreamTimingFields ? buildProxyLogStreamTimingSelectFields() : {}),
     ...(options?.includeClientFields ? buildProxyLogClientSelectFields() : {}),
     ...(options?.includeBillingDetails ? { billingDetails: schema.proxyLogs.billingDetails } : {}),
-    ...(options?.includeRouteDecisionSnapshot ? { routeDecisionSnapshot: schema.proxyLogs.routeDecisionSnapshot } : {}),
   };
 }
 
@@ -97,7 +96,6 @@ export type ProxyLogSelectFields = ReturnType<typeof buildProxyLogSelectFields>;
 export type ResolvedProxyLogSelectFields = {
   includeBillingDetails: boolean;
   includeClientFields: boolean;
-  includeRouteDecisionSnapshot: boolean;
   includeStreamTimingFields: boolean;
   fields: ProxyLogSelectFields;
 };
@@ -105,27 +103,19 @@ export type ResolvedProxyLogSelectFields = {
 export async function resolveProxyLogSelectFields(options?: {
   includeBillingDetails?: boolean;
   includeClientFields?: boolean;
-  includeRouteDecisionSnapshot?: boolean;
   includeStreamTimingFields?: boolean;
 }) {
-  const includeBillingDetails = options?.includeBillingDetails === true
-    && await hasProxyLogBillingDetailsColumn();
-  const includeClientFields = options?.includeClientFields !== false
-    && await hasProxyLogClientColumns();
-  const includeRouteDecisionSnapshot = options?.includeRouteDecisionSnapshot === true
-    && await hasProxyLogRouteDecisionSnapshotColumn();
-  const includeStreamTimingFields = options?.includeStreamTimingFields !== false
-    && await hasProxyLogStreamTimingColumns();
+  const includeBillingDetails = options?.includeBillingDetails === true;
+  const includeClientFields = options?.includeClientFields !== false;
+  const includeStreamTimingFields = options?.includeStreamTimingFields !== false;
 
   return {
     includeBillingDetails,
     includeClientFields,
-    includeRouteDecisionSnapshot,
     includeStreamTimingFields,
     fields: buildProxyLogSelectFields({
       includeBillingDetails,
       includeClientFields,
-      includeRouteDecisionSnapshot,
       includeStreamTimingFields,
     }),
   };
@@ -136,83 +126,10 @@ export async function withProxyLogSelectFields<T>(
   options?: {
     includeBillingDetails?: boolean;
     includeClientFields?: boolean;
-    includeRouteDecisionSnapshot?: boolean;
     includeStreamTimingFields?: boolean;
   },
 ): Promise<T> {
-  let selection = await resolveProxyLogSelectFields(options);
-
-  while (true) {
-    try {
-      return await runner(selection);
-    } catch (error) {
-      if (selection.includeBillingDetails && isMissingBillingDetailsColumnError(error)) {
-        selection = {
-          includeBillingDetails: false,
-          includeClientFields: selection.includeClientFields,
-          includeRouteDecisionSnapshot: selection.includeRouteDecisionSnapshot,
-          includeStreamTimingFields: selection.includeStreamTimingFields,
-          fields: buildProxyLogSelectFields({
-            includeBillingDetails: false,
-            includeClientFields: selection.includeClientFields,
-            includeRouteDecisionSnapshot: selection.includeRouteDecisionSnapshot,
-            includeStreamTimingFields: selection.includeStreamTimingFields,
-          }),
-        };
-        continue;
-      }
-
-      if (selection.includeClientFields && isMissingProxyLogClientColumnsError(error)) {
-        selection = {
-          includeBillingDetails: selection.includeBillingDetails,
-          includeClientFields: false,
-          includeRouteDecisionSnapshot: selection.includeRouteDecisionSnapshot,
-          includeStreamTimingFields: selection.includeStreamTimingFields,
-          fields: buildProxyLogSelectFields({
-            includeBillingDetails: selection.includeBillingDetails,
-            includeClientFields: false,
-            includeRouteDecisionSnapshot: selection.includeRouteDecisionSnapshot,
-            includeStreamTimingFields: selection.includeStreamTimingFields,
-          }),
-        };
-        continue;
-      }
-
-      if (selection.includeStreamTimingFields && isMissingProxyLogStreamTimingColumnsError(error)) {
-        selection = {
-          includeBillingDetails: selection.includeBillingDetails,
-          includeClientFields: selection.includeClientFields,
-          includeRouteDecisionSnapshot: selection.includeRouteDecisionSnapshot,
-          includeStreamTimingFields: false,
-          fields: buildProxyLogSelectFields({
-            includeBillingDetails: selection.includeBillingDetails,
-            includeClientFields: selection.includeClientFields,
-            includeRouteDecisionSnapshot: selection.includeRouteDecisionSnapshot,
-            includeStreamTimingFields: false,
-          }),
-        };
-        continue;
-      }
-
-      if (selection.includeRouteDecisionSnapshot && isMissingProxyLogRouteDecisionSnapshotColumnError(error)) {
-        selection = {
-          includeBillingDetails: selection.includeBillingDetails,
-          includeClientFields: selection.includeClientFields,
-          includeRouteDecisionSnapshot: false,
-          includeStreamTimingFields: selection.includeStreamTimingFields,
-          fields: buildProxyLogSelectFields({
-            includeBillingDetails: selection.includeBillingDetails,
-            includeClientFields: selection.includeClientFields,
-            includeRouteDecisionSnapshot: false,
-            includeStreamTimingFields: selection.includeStreamTimingFields,
-          }),
-        };
-        continue;
-      }
-
-      throw error;
-    }
-  }
+  return await runner(await resolveProxyLogSelectFields(options));
 }
 
 export function parseProxyLogBillingDetails(value: unknown): Record<string, unknown> | null {
@@ -230,94 +147,24 @@ export function parseProxyLogBillingDetails(value: unknown): Record<string, unkn
   }
 }
 
-function normalizeProxyLogStoreErrorMessage(error: unknown): string {
-  const message = typeof error === 'object' && error && 'message' in error
-    ? String((error as { message?: unknown }).message || '')
-    : String(error || '');
-  return message.toLowerCase();
-}
-
-export function isMissingBillingDetailsColumnError(error: unknown): boolean {
-  const lowered = normalizeProxyLogStoreErrorMessage(error);
-  return lowered.includes('billing_details')
-    && (
-      lowered.includes('does not exist')
-      || lowered.includes('unknown column')
-      || lowered.includes('no such column')
-      || lowered.includes('has no column named')
-    );
-}
-
-export function isMissingDownstreamApiKeyIdColumnError(error: unknown): boolean {
-  const lowered = normalizeProxyLogStoreErrorMessage(error);
-  return lowered.includes('downstream_api_key_id')
-    && (
-      lowered.includes('does not exist')
-      || lowered.includes('unknown column')
-      || lowered.includes('no such column')
-      || lowered.includes('has no column named')
-    );
-}
-
-export function isMissingProxyLogClientColumnsError(error: unknown): boolean {
-  const lowered = normalizeProxyLogStoreErrorMessage(error);
-  const hasClientColumnReference = [
-    'client_family',
-    'client_app_id',
-    'client_app_name',
-    'client_confidence',
-  ].some((columnName) => lowered.includes(columnName));
-
-  return hasClientColumnReference
-    && (
-      lowered.includes('does not exist')
-      || lowered.includes('unknown column')
-      || lowered.includes('no such column')
-      || lowered.includes('has no column named')
-    );
-}
-
-export function isMissingProxyLogStreamTimingColumnsError(error: unknown): boolean {
-  const lowered = normalizeProxyLogStoreErrorMessage(error);
-  const hasStreamTimingColumnReference = [
-    'is_stream',
-    'first_byte_latency_ms',
-  ].some((columnName) => lowered.includes(columnName));
-
-  return hasStreamTimingColumnReference
-    && (
-      lowered.includes('does not exist')
-      || lowered.includes('unknown column')
-      || lowered.includes('no such column')
-      || lowered.includes('has no column named')
-    );
-}
-
-export function isMissingProxyLogRouteDecisionSnapshotColumnError(error: unknown): boolean {
-  const lowered = normalizeProxyLogStoreErrorMessage(error);
-  return lowered.includes('route_decision_snapshot')
-    && (
-      lowered.includes('does not exist')
-      || lowered.includes('unknown column')
-      || lowered.includes('no such column')
-      || lowered.includes('has no column named')
-    );
-}
-
 export async function insertProxyLog(input: ProxyLogInsertInput): Promise<void> {
   const baseValues = {
-    routeId: input.routeId ?? null,
-    targetId: input.targetId ?? null,
+    requestId: input.requestId ?? null,
+    executionAttemptId: input.executionAttemptId ?? null,
     accountId: input.accountId ?? null,
     modelRequested: input.modelRequested ?? null,
     modelActual: input.modelActual ?? null,
+    routeEntrypointId: input.routeEntrypointId ?? null,
+    runtimeEndpointId: input.runtimeEndpointId ?? null,
+    runtimeArtifactId: input.runtimeArtifactId ?? null,
+    executionTargetId: input.executionTargetId ?? null,
     status: input.status ?? null,
     httpStatus: input.httpStatus ?? null,
     latencyMs: input.latencyMs ?? null,
     promptTokens: input.promptTokens ?? null,
     completionTokens: input.completionTokens ?? null,
     totalTokens: input.totalTokens ?? null,
-    estimatedCost: input.estimatedCost ?? 0,
+    estimatedCost: input.estimatedCost ?? null,
     errorMessage: input.errorMessage ?? null,
     retryCount: input.retryCount ?? 0,
     createdAt: input.createdAt ?? null,
@@ -325,85 +172,19 @@ export async function insertProxyLog(input: ProxyLogInsertInput): Promise<void> 
   const serializedBillingDetails = input.billingDetails == null
     ? null
     : JSON.stringify(input.billingDetails);
-  const serializedRouteDecisionSnapshot = input.routeDecisionSnapshot == null
-    ? null
-    : JSON.stringify(input.routeDecisionSnapshot);
-  const includeBillingDetails = serializedBillingDetails !== null
-    && await hasProxyLogBillingDetailsColumn();
-  const includeRouteDecisionSnapshot = serializedRouteDecisionSnapshot !== null
-    && await hasProxyLogRouteDecisionSnapshotColumn();
-  const includeDownstreamApiKeyId = input.downstreamApiKeyId != null
-    && await hasProxyLogDownstreamApiKeyIdColumn();
-  const requestedClientFields = [
-    input.clientFamily,
-    input.clientAppId,
-    input.clientAppName,
-    input.clientConfidence,
-  ].some((value) => value != null && String(value).trim().length > 0);
-  const includeClientFields = requestedClientFields
-    && await hasProxyLogClientColumns();
-  const requestedStreamTimingFields = input.isStream != null || input.firstByteLatencyMs != null;
-  const includeStreamTimingFields = requestedStreamTimingFields
-    && await hasProxyLogStreamTimingColumns();
-
-  let allowBillingDetails = includeBillingDetails;
-  let allowRouteDecisionSnapshot = includeRouteDecisionSnapshot;
-  let allowDownstreamApiKeyId = includeDownstreamApiKeyId;
-  let allowClientFields = includeClientFields;
-  let allowStreamTimingFields = includeStreamTimingFields;
-
-  while (true) {
-    const values = {
-      ...baseValues,
-      ...(allowStreamTimingFields
-        ? {
-          isStream: input.isStream ?? null,
-          firstByteLatencyMs: input.firstByteLatencyMs ?? null,
-        }
-        : {}),
-      ...(allowBillingDetails ? { billingDetails: serializedBillingDetails } : {}),
-      ...(allowRouteDecisionSnapshot ? { routeDecisionSnapshot: serializedRouteDecisionSnapshot } : {}),
-      ...(allowDownstreamApiKeyId ? { downstreamApiKeyId: input.downstreamApiKeyId } : {}),
-      ...(allowClientFields
-        ? {
-          clientFamily: input.clientFamily ?? null,
-          clientAppId: input.clientAppId ?? null,
-          clientAppName: input.clientAppName ?? null,
-          clientConfidence: input.clientConfidence ?? null,
-        }
-        : {}),
-    };
-
-    try {
-      await db.insert(schema.proxyLogs).values(values).run();
-      return;
-    } catch (error) {
-      if (allowBillingDetails && isMissingBillingDetailsColumnError(error)) {
-        allowBillingDetails = false;
-        continue;
-      }
-
-      if (allowDownstreamApiKeyId && isMissingDownstreamApiKeyIdColumnError(error)) {
-        allowDownstreamApiKeyId = false;
-        continue;
-      }
-
-      if (allowRouteDecisionSnapshot && isMissingProxyLogRouteDecisionSnapshotColumnError(error)) {
-        allowRouteDecisionSnapshot = false;
-        continue;
-      }
-
-      if (allowClientFields && isMissingProxyLogClientColumnsError(error)) {
-        allowClientFields = false;
-        continue;
-      }
-
-      if (allowStreamTimingFields && isMissingProxyLogStreamTimingColumnsError(error)) {
-        allowStreamTimingFields = false;
-        continue;
-      }
-
-      throw error;
-    }
+  await db.insert(schema.proxyLogs).values({
+    ...baseValues,
+    downstreamApiKeyId: input.downstreamApiKeyId ?? null,
+    isStream: input.isStream ?? null,
+    firstByteLatencyMs: input.firstByteLatencyMs ?? null,
+    firstTokenLatencyMs: input.firstTokenLatencyMs ?? null,
+    billingDetails: serializedBillingDetails,
+    clientFamily: input.clientFamily ?? null,
+    clientAppId: input.clientAppId ?? null,
+    clientAppName: input.clientAppName ?? null,
+    clientConfidence: input.clientConfidence ?? null,
+  }).run();
+  if (input.status === 'success') {
+    invalidateCompiledRuntimeUsageForecast(input.routeEntrypointId);
   }
 }

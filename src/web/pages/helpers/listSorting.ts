@@ -44,16 +44,16 @@ export function sortItemsForDisplay<T extends SortableBase>(
 
 export function buildCustomReorderUpdates<T extends SortableBase>(
   items: T[],
-  targetId: number,
+  itemId: number,
   direction: 'up' | 'down',
 ): Array<{ id: number; sortOrder: number }> {
   const sorted = sortItemsForDisplay(items, 'custom', () => 0);
-  const target = sorted.find((item) => item.id === targetId);
-  if (!target) return [];
+  const selected = sorted.find((item) => item.id === itemId);
+  if (!selected) return [];
 
-  const targetPinned = !!target.isPinned;
-  const group = sorted.filter((item) => !!item.isPinned === targetPinned);
-  const index = group.findIndex((item) => item.id === targetId);
+  const selectedPinned = !!selected.isPinned;
+  const group = sorted.filter((item) => !!item.isPinned === selectedPinned);
+  const index = group.findIndex((item) => item.id === itemId);
   if (index < 0) return [];
 
   const swapIndex = direction === 'up' ? index - 1 : index + 1;

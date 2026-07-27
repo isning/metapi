@@ -82,10 +82,9 @@ const pageInlineStyleAllowedFiles = new Set([
   'src/web/pages/ModelTester.tsx',
   // Runtime progress width and route graph/list visual geometry.
   'src/web/pages/token-routes/SortableChannelRow.tsx',
-  'src/web/pages/token-routes/RouteCard.tsx',
-  'src/web/pages/token-routes/ManualRoutePanel.tsx',
   'src/web/pages/token-routes/RouteGraphWorkbench.tsx',
-  'src/web/pages/token-routes/SortableRouteTargetRow.tsx',
+  // dnd-kit requires the current sortable transform as runtime geometry.
+  'src/web/pages/token-routes/RouteGroupDetail.tsx',
   // Table column sizing is computed from user-resizable account/site layouts.
   'src/web/pages/Accounts.tsx',
   'src/web/pages/Sites.tsx',

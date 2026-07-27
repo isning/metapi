@@ -100,9 +100,45 @@ describe('provider header utils', () => {
     expect(headers.Authorization).toBe('Bearer oauth-token');
     expect(headers.authorization).toBeUndefined();
     expect(headers['x-api-key']).toBeUndefined();
+    expect(headers['content-type']).toBeUndefined();
+    expect(headers['Content-Type']).toBeUndefined();
     expect(headers['user-agent']).toBeUndefined();
     expect(headers['User-Agent']).toBe('custom-agent');
     expect(headers.Accept).toBe('text/event-stream');
+  });
+
+  it('builds standard anthropic-compatible headers for claude api-key upstreams', async () => {
+    const { buildClaudeRuntimeHeaders } = await import('./headers.js');
+
+    const headers = buildClaudeRuntimeHeaders({
+      baseHeaders: {
+        'Content-Type': 'application/json',
+        authorization: 'Bearer stale-token',
+      },
+      claudeHeaders: {
+        'anthropic-beta': 'explicit-beta',
+        'x-api-key': 'stale-api-key',
+        'user-agent': 'provider-compatible-client',
+      },
+      anthropicVersion: '2023-06-01',
+      stream: true,
+      isClaudeOauthUpstream: false,
+      tokenValue: 'api-key-token',
+    });
+
+    expect(headers['x-api-key']).toBe('api-key-token');
+    expect(headers.Authorization).toBeUndefined();
+    expect(headers.authorization).toBeUndefined();
+    expect(headers['Content-Type']).toBe('application/json');
+    expect(headers['content-type']).toBeUndefined();
+    expect(headers['anthropic-version']).toBe('2023-06-01');
+    expect(headers['anthropic-beta']).toBe('explicit-beta');
+    expect(headers.Accept).toBe('text/event-stream');
+    expect(headers['User-Agent']).toBe('provider-compatible-client');
+    expect(headers['Anthropic-Dangerous-Direct-Browser-Access']).toBeUndefined();
+    expect(headers['X-App']).toBeUndefined();
+    expect(headers['X-Stainless-Retry-Count']).toBeUndefined();
+    expect(headers['Accept-Encoding']).toBeUndefined();
   });
 
   it('builds gemini cli runtime headers with preserved api client metadata', async () => {

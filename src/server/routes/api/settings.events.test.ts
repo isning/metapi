@@ -59,14 +59,14 @@ describe('settings and auth events', () => {
     (config as any).proxyDebugCaptureHeaders = true;
     (config as any).proxyDebugCaptureBodies = false;
     (config as any).proxyDebugCaptureStreamChunks = false;
-    (config as any).proxyDebugTargetSessionId = '';
-    (config as any).proxyDebugTargetClientKind = '';
-    (config as any).proxyDebugTargetModel = '';
+    (config as any).proxyDebugFilterSessionId = '';
+    (config as any).proxyDebugFilterClientKind = '';
+    (config as any).proxyDebugFilterModel = '';
     (config as any).proxyDebugRetentionHours = 24;
     (config as any).proxyDebugMaxBodyBytes = 262144;
     config.routingFallbackUnitCost = 1;
     (config as any).proxyFirstByteTimeoutSec = 0;
-    (config as any).tokenRouterFailureCooldownMaxSec = 30 * 24 * 60 * 60;
+    (config as any).routeFailureCooldownMaxSec = 30 * 24 * 60 * 60;
     (config as any).disableCrossProtocolFallback = false;
     (config as any).telegramEnabled = false;
     (config as any).telegramApiBaseUrl = 'https://api.telegram.org';
@@ -169,9 +169,9 @@ describe('settings and auth events', () => {
         proxyDebugCaptureHeaders: true,
         proxyDebugCaptureBodies: true,
         proxyDebugCaptureStreamChunks: true,
-        proxyDebugTargetSessionId: 'sess-debug-1',
-        proxyDebugTargetClientKind: 'codex',
-        proxyDebugTargetModel: 'gpt-4o',
+        proxyDebugFilterSessionId: 'sess-debug-1',
+        proxyDebugFilterClientKind: 'codex',
+        proxyDebugFilterModel: 'gpt-4o',
         proxyDebugRetentionHours: 12,
         proxyDebugMaxBodyBytes: 131072,
       },
@@ -183,9 +183,9 @@ describe('settings and auth events', () => {
       proxyDebugCaptureHeaders?: boolean;
       proxyDebugCaptureBodies?: boolean;
       proxyDebugCaptureStreamChunks?: boolean;
-      proxyDebugTargetSessionId?: string;
-      proxyDebugTargetClientKind?: string;
-      proxyDebugTargetModel?: string;
+      proxyDebugFilterSessionId?: string;
+      proxyDebugFilterClientKind?: string;
+      proxyDebugFilterModel?: string;
       proxyDebugRetentionHours?: number;
       proxyDebugMaxBodyBytes?: number;
     };
@@ -194,9 +194,9 @@ describe('settings and auth events', () => {
       proxyDebugCaptureHeaders: true,
       proxyDebugCaptureBodies: true,
       proxyDebugCaptureStreamChunks: true,
-      proxyDebugTargetSessionId: 'sess-debug-1',
-      proxyDebugTargetClientKind: 'codex',
-      proxyDebugTargetModel: 'gpt-4o',
+      proxyDebugFilterSessionId: 'sess-debug-1',
+      proxyDebugFilterClientKind: 'codex',
+      proxyDebugFilterModel: 'gpt-4o',
       proxyDebugRetentionHours: 12,
       proxyDebugMaxBodyBytes: 131072,
     });
@@ -205,9 +205,9 @@ describe('settings and auth events', () => {
     const savedHeaders = await db.select().from(schema.settings).where(eq(schema.settings.key, 'proxy_debug_capture_headers')).get();
     const savedBodies = await db.select().from(schema.settings).where(eq(schema.settings.key, 'proxy_debug_capture_bodies')).get();
     const savedStreamChunks = await db.select().from(schema.settings).where(eq(schema.settings.key, 'proxy_debug_capture_stream_chunks')).get();
-    const savedTargetSessionId = await db.select().from(schema.settings).where(eq(schema.settings.key, 'proxy_debug_target_session_id')).get();
-    const savedTargetClientKind = await db.select().from(schema.settings).where(eq(schema.settings.key, 'proxy_debug_target_client_kind')).get();
-    const savedTargetModel = await db.select().from(schema.settings).where(eq(schema.settings.key, 'proxy_debug_target_model')).get();
+    const savedTargetSessionId = await db.select().from(schema.settings).where(eq(schema.settings.key, 'proxy_debug_filter_session_id')).get();
+    const savedTargetClientKind = await db.select().from(schema.settings).where(eq(schema.settings.key, 'proxy_debug_filter_client_kind')).get();
+    const savedTargetModel = await db.select().from(schema.settings).where(eq(schema.settings.key, 'proxy_debug_filter_model')).get();
     const savedRetentionHours = await db.select().from(schema.settings).where(eq(schema.settings.key, 'proxy_debug_retention_hours')).get();
     const savedMaxBodyBytes = await db.select().from(schema.settings).where(eq(schema.settings.key, 'proxy_debug_max_body_bytes')).get();
     expect(savedEnabled?.value).toBe(JSON.stringify(true));
@@ -438,21 +438,21 @@ describe('settings and auth events', () => {
     expect((config as any).telegramUseSystemProxy).toBe(false);
   });
 
-  it('persists and returns token router failure cooldown cap from runtime settings', async () => {
+  it('persists and returns route failure cooldown cap from runtime settings', async () => {
     const updateResponse = await app.inject({
       method: 'PUT',
       url: '/api/settings/runtime',
       payload: {
-        tokenRouterFailureCooldownMaxSec: 2 * 24 * 60 * 60,
+        routeFailureCooldownMaxSec: 2 * 24 * 60 * 60,
       },
     });
 
     expect(updateResponse.statusCode).toBe(200);
-    const updated = updateResponse.json() as { tokenRouterFailureCooldownMaxSec?: number };
-    expect(updated.tokenRouterFailureCooldownMaxSec).toBe(2 * 24 * 60 * 60);
-    expect((config as any).tokenRouterFailureCooldownMaxSec).toBe(2 * 24 * 60 * 60);
+    const updated = updateResponse.json() as { routeFailureCooldownMaxSec?: number };
+    expect(updated.routeFailureCooldownMaxSec).toBe(2 * 24 * 60 * 60);
+    expect((config as any).routeFailureCooldownMaxSec).toBe(2 * 24 * 60 * 60);
 
-    const saved = await db.select().from(schema.settings).where(eq(schema.settings.key, 'token_router_failure_cooldown_max_sec')).get();
+    const saved = await db.select().from(schema.settings).where(eq(schema.settings.key, 'route_failure_cooldown_max_sec')).get();
     expect(saved?.value).toBe(JSON.stringify(2 * 24 * 60 * 60));
 
     const getResponse = await app.inject({
@@ -460,27 +460,27 @@ describe('settings and auth events', () => {
       url: '/api/settings/runtime',
     });
     expect(getResponse.statusCode).toBe(200);
-    const runtime = getResponse.json() as { tokenRouterFailureCooldownMaxSec?: number };
-    expect(runtime.tokenRouterFailureCooldownMaxSec).toBe(2 * 24 * 60 * 60);
+    const runtime = getResponse.json() as { routeFailureCooldownMaxSec?: number };
+    expect(runtime.routeFailureCooldownMaxSec).toBe(2 * 24 * 60 * 60);
   });
 
-  it('clamps token router failure cooldown cap to the supported ceiling', async () => {
+  it('clamps route failure cooldown cap to the supported ceiling', async () => {
     const ninetyDaysSec = 90 * 24 * 60 * 60;
     const thirtyDaysSec = 30 * 24 * 60 * 60;
     const updateResponse = await app.inject({
       method: 'PUT',
       url: '/api/settings/runtime',
       payload: {
-        tokenRouterFailureCooldownMaxSec: ninetyDaysSec,
+        routeFailureCooldownMaxSec: ninetyDaysSec,
       },
     });
 
     expect(updateResponse.statusCode).toBe(200);
-    const updated = updateResponse.json() as { tokenRouterFailureCooldownMaxSec?: number };
-    expect(updated.tokenRouterFailureCooldownMaxSec).toBe(thirtyDaysSec);
-    expect((config as any).tokenRouterFailureCooldownMaxSec).toBe(thirtyDaysSec);
+    const updated = updateResponse.json() as { routeFailureCooldownMaxSec?: number };
+    expect(updated.routeFailureCooldownMaxSec).toBe(thirtyDaysSec);
+    expect((config as any).routeFailureCooldownMaxSec).toBe(thirtyDaysSec);
 
-    const saved = await db.select().from(schema.settings).where(eq(schema.settings.key, 'token_router_failure_cooldown_max_sec')).get();
+    const saved = await db.select().from(schema.settings).where(eq(schema.settings.key, 'route_failure_cooldown_max_sec')).get();
     expect(saved?.value).toBe(JSON.stringify(thirtyDaysSec));
   });
 

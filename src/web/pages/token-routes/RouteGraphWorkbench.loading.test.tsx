@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { act, create, type ReactTestInstance } from 'react-test-renderer';
+import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { ToastProvider } from '../../components/Toast.js';
 
 const { apiMock } = vi.hoisted(() => ({
   apiMock: {
     getRouteGraphDraft: vi.fn(),
+    getRouteGraphWorkspaceIndex: vi.fn(),
     getRouteEndpointPage: vi.fn(),
   },
 }));
@@ -59,20 +61,23 @@ function collectText(node: ReactTestInstance): string {
   }).join('');
 }
 
+function workbenchRouter(mode: 'graph' | 'json') {
+  return createMemoryRouter([{
+    path: '*',
+    element: <ToastProvider><RouteGraphWorkbench mode={mode} /></ToastProvider>,
+  }], { initialEntries: ['/routes'] });
+}
+
 describe('RouteGraphWorkbench loading states', () => {
-  it('shows a graph canvas skeleton instead of a blank canvas while graph mode loads', async () => {
-    apiMock.getRouteGraphDraft.mockReturnValue(new Promise(() => {}));
+  it('shows an index skeleton instead of mounting a blank canvas while graph mode loads', async () => {
+    apiMock.getRouteGraphWorkspaceIndex.mockReturnValue(new Promise(() => {}));
 
     let root!: ReturnType<typeof create>;
     await act(async () => {
-      root = create(
-        <ToastProvider>
-          <RouteGraphWorkbench mode="graph" />
-        </ToastProvider>,
-      );
+      root = create(<RouterProvider router={workbenchRouter('graph')} />);
     });
 
-    expect(root.root.findByProps({ 'data-testid': 'route-graph-canvas-loading' })).toBeTruthy();
+    expect(root.root.findByProps({ 'data-testid': 'route-graph-index-loading' })).toBeTruthy();
     expect(root.root.findAllByProps({ 'data-testid': 'react-flow' })).toHaveLength(0);
   });
 
@@ -81,11 +86,7 @@ describe('RouteGraphWorkbench loading states', () => {
 
     let root!: ReturnType<typeof create>;
     await act(async () => {
-      root = create(
-        <ToastProvider>
-          <RouteGraphWorkbench mode="json" />
-        </ToastProvider>,
-      );
+      root = create(<RouterProvider router={workbenchRouter('json')} />);
     });
 
     expect(root.root.findByProps({ 'data-testid': 'route-graph-json-loading' })).toBeTruthy();

@@ -7,7 +7,7 @@ import {
   extractSafePassthroughHeaders,
   extractResponsesPassthroughHeaders,
 } from '../proxy-core/formats/headerPassthrough.js';
-import type { RouteGraphPostBuildFilters } from './routeGraphRuntimeService.js';
+import type { RouteRuntimePostBuildFilters } from './routeRuntimeEvaluatorService.js';
 import { resolveUpstreamCompatibilityPolicy } from '../contracts/upstreamCompatibilityPolicy.js';
 
 describe('upstreamRequestBuilder', () => {
@@ -191,7 +191,7 @@ describe('upstreamRequestBuilder', () => {
   });
 
   it('applies route graph payload and header filters exactly once after request preparation', () => {
-    const routeGraphFilters: RouteGraphPostBuildFilters = {
+    const runtimePostBuildFilters: RouteRuntimePostBuildFilters = {
       payload: [
         {
           type: 'set_payload',
@@ -230,7 +230,7 @@ describe('upstreamRequestBuilder', () => {
       downstreamFormat: 'openai',
       downstreamHeaders: {},
       passthroughHeaders: {},
-      routeGraphFilters,
+      runtimePostBuildFilters,
     });
 
     expect(request.body.reasoning_effort).toBe('high');

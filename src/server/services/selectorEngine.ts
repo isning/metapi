@@ -2,13 +2,21 @@ import { celEnv, isCelError, parse, plan } from '@bufbuild/cel';
 
 export type RuntimeSelectorStrategy =
   | 'weighted'
-  | 'priority_order'
   | 'round_robin'
   | 'stable_first'
   | 'direct'
-  | 'defer_to_router';
+  | 'defer_to_router'
+  | 'policy_weighted'
+  | 'policy_ordered'
+  | 'policy_round_robin';
 
-export type RuntimeSelectorPolicy = Record<string, unknown>;
+export type RuntimeSelectorPolicy = {
+  strategy: RuntimeSelectorStrategy | string;
+  eligibility?: string;
+  contribution?: string;
+  order?: string;
+  select?: string;
+};
 
 export type RuntimeSelectorState = {
   requestedModel?: string;
@@ -16,7 +24,16 @@ export type RuntimeSelectorState = {
   upstreamModel?: string;
   endpointPreference?: 'chat' | 'messages' | 'responses';
   stateStore?: Record<string, unknown>;
-  payload?: Record<string, unknown>;
+  selectorStateStore?: Record<string, unknown>;
+  payload?: unknown;
+  headers?: Record<string, unknown>;
+  request?: Record<string, unknown>;
+  requestKnown?: boolean;
+};
+
+export type RuntimeSelectorCelScope = Record<string, unknown> & {
+  metadata?: Record<string, unknown>;
+  runtime?: Record<string, unknown>;
 };
 
 export type RuntimeSelectorCandidate<TPayload = unknown> = {
@@ -26,9 +43,13 @@ export type RuntimeSelectorCandidate<TPayload = unknown> = {
   edgeId?: string;
   metadata: Record<string, unknown>;
   runtime: Record<string, unknown>;
+  selection?: RuntimeSelectorCelScope | null;
+  endpoint?: RuntimeSelectorCelScope | null;
+  executionAttempt?: RuntimeSelectorCelScope | null;
+  plan?: RuntimeSelectorCelScope | null;
+  graph?: RuntimeSelectorCelScope | null;
   enabled: boolean;
   weight: number;
-  priority: number;
   score: number;
   order: number;
   payload?: TPayload;
@@ -42,25 +63,17 @@ const selectorPlanCache = new WeakMap<RuntimeSelectorPolicy, RuntimeSelectorPlan
 const DEFAULT_SELECTOR_POLICY: RuntimeSelectorPolicy = Object.freeze({ strategy: 'weighted' });
 const STATIC_SELECTOR_STRATEGIES = new Set([
   'weighted',
-  'priority_order',
   'round_robin',
   'stable_first',
 ]);
-
-type RuntimeScoreTermPlan = {
-  source: string;
-  weight: number;
-  evaluator?: CelEvaluator | null;
-  path?: string;
-};
 
 export type RuntimeSelectorPlan = {
   policy: RuntimeSelectorPolicy;
   strategy: RuntimeSelectorStrategy | string;
   selectEvaluator?: CelEvaluator | null;
-  rankEvaluator?: CelEvaluator | null;
-  scoreEvaluator?: CelEvaluator | null;
-  scoreTerms: RuntimeScoreTermPlan[];
+  eligibilityEvaluator?: CelEvaluator | null;
+  contributionEvaluator?: CelEvaluator | null;
+  orderEvaluator?: CelEvaluator | null;
 };
 
 export type ContributionSelectorMode = 'weighted' | 'stable_first';
@@ -133,14 +146,9 @@ export function evaluateSelectorCelExpression(expression: unknown, context: Reco
   return evaluatePlannedCelExpression(compileCelExpression(expression), context);
 }
 
-function getPathValue(input: unknown, path: string): unknown {
-  const parts = path.split('.').map((part) => part.trim()).filter(Boolean);
-  let cursor = input;
-  for (const part of parts) {
-    if (!isRecord(cursor)) return undefined;
-    cursor = cursor[part];
-  }
-  return cursor;
+export function validateSelectorCelExpression(expression: unknown): string | null {
+  if (typeof expression !== 'string' || !expression.trim()) return 'Expression is required.';
+  return compileCelExpression(expression) ? null : 'Expression could not be compiled.';
 }
 
 function numberOrFallback(value: unknown, fallback: number): number {
@@ -148,35 +156,49 @@ function numberOrFallback(value: unknown, fallback: number): number {
   return Number.isFinite(normalized) ? normalized : fallback;
 }
 
-function positiveNumberOrFallback(value: unknown, fallback: number): number {
-  const normalized = numberOrFallback(value, fallback);
-  return normalized > 0 ? normalized : fallback;
+function candidateSelectionWeight(candidate: RuntimeSelectorCandidate): number {
+  const normalized = Number(candidate.weight);
+  return Number.isFinite(normalized) ? Math.max(0, normalized) : 0;
 }
 
-function booleanOrFallback(value: unknown, fallback: boolean): boolean {
-  return typeof value === 'boolean' ? value : fallback;
+export class RuntimeSelectorPolicyEvaluationError extends Error {
+  constructor(selectorId: string, field: string, detail: string) {
+    super(`Selector ${selectorId} ${field} evaluation failed: ${detail}`);
+    this.name = 'RuntimeSelectorPolicyEvaluationError';
+  }
 }
 
-function isExpressionSource(source: string): boolean {
-  return source.includes('(') || /[+\-*/?:<>=!]/.test(source);
+function expressionDependsOnRequestInput(expression: string): boolean {
+  return /\b(request|payload|headers)\b/.test(expression);
 }
 
-function expressionDependsOnRequestState(expression: string): boolean {
-  return /\b(payload|stateStore)\b/.test(expression);
+function expressionDependsOnStateStore(expression: string): boolean {
+  return /\bstateStore\b/.test(expression);
 }
 
-function selectorPlanDependsOnRequestState(plan: RuntimeSelectorPlan): boolean {
+function selectorPlanExpressions(plan: RuntimeSelectorPlan): string[] {
   const policy = plan.policy;
-  const expressions = [
+  return [
     typeof policy.select === 'string' ? policy.select : '',
-    typeof policy.rank === 'string' ? policy.rank : '',
-    typeof policy.evaluate === 'string' ? policy.evaluate : '',
-    typeof policy.expression === 'string' ? policy.expression : '',
-    typeof policy.score === 'string' ? policy.score : '',
-    typeof policy.scoreExpr === 'string' ? policy.scoreExpr : '',
-    ...plan.scoreTerms.map((term) => term.source),
+    typeof policy.eligibility === 'string' ? policy.eligibility : '',
+    typeof policy.contribution === 'string' ? policy.contribution : '',
+    typeof policy.order === 'string' ? policy.order : '',
   ].filter(Boolean);
-  return expressions.some(expressionDependsOnRequestState);
+}
+
+function selectorPlanHasUnavailableDynamicInputs(plan: RuntimeSelectorPlan, state: RuntimeSelectorState): boolean {
+  const expressions = selectorPlanExpressions(plan);
+  if (expressions.some(expressionDependsOnStateStore)) return true;
+  return expressions.some(expressionDependsOnRequestInput) && state.requestKnown !== true;
+}
+
+function scopeForCel(scope: RuntimeSelectorCelScope | null | undefined): Record<string, unknown> | null {
+  if (!isRecord(scope)) return null;
+  return {
+    ...scope,
+    metadata: isRecord(scope.metadata) ? scope.metadata : {},
+    runtime: isRecord(scope.runtime) ? scope.runtime : {},
+  };
 }
 
 export function hydrateRuntimeSelectorPlan(policyInput?: RuntimeSelectorPolicy | null): RuntimeSelectorPlan {
@@ -184,36 +206,13 @@ export function hydrateRuntimeSelectorPlan(policyInput?: RuntimeSelectorPolicy |
   const cached = selectorPlanCache.get(policy);
   if (cached) return cached;
   const strategy = asTrimmedString(policy.strategy) || 'weighted';
-  const rankExpression = typeof policy.rank === 'string'
-    ? policy.rank
-    : (typeof policy.evaluate === 'string'
-      ? policy.evaluate
-      : (typeof policy.expression === 'string' ? policy.expression : null));
-  const scoreExpression = typeof policy.score === 'string'
-    ? policy.score
-    : (typeof policy.scoreExpr === 'string' ? policy.scoreExpr : null);
-  const scoreTerms: RuntimeScoreTermPlan[] = Array.isArray(policy.score)
-    ? policy.score
-      .filter(isRecord)
-      .map((item) => {
-        const source = asTrimmedString(item.source);
-        return {
-          source,
-          weight: numberOrFallback(item.weight, 1),
-          ...(source && isExpressionSource(source)
-            ? { evaluator: compileCelExpression(source) }
-            : { path: source }),
-        };
-      })
-      .filter((item) => item.source)
-    : [];
   const planValue: RuntimeSelectorPlan = {
     policy,
     strategy,
     selectEvaluator: typeof policy.select === 'string' ? compileCelExpression(policy.select) : null,
-    rankEvaluator: rankExpression ? compileCelExpression(rankExpression) : null,
-    scoreEvaluator: scoreExpression ? compileCelExpression(scoreExpression) : null,
-    scoreTerms,
+    eligibilityEvaluator: typeof policy.eligibility === 'string' ? compileCelExpression(policy.eligibility) : null,
+    contributionEvaluator: typeof policy.contribution === 'string' ? compileCelExpression(policy.contribution) : null,
+    orderEvaluator: typeof policy.order === 'string' ? compileCelExpression(policy.order) : null,
   };
   selectorPlanCache.set(policy, planValue);
   return planValue;
@@ -226,10 +225,16 @@ function candidateForCel(candidate: RuntimeSelectorCandidate): Record<string, un
     nodeId: candidate.nodeId,
     edgeId: candidate.edgeId,
     metadata: candidate.metadata,
-    weight: candidate.weight,
-    priority: candidate.priority,
     enabled: candidate.enabled,
+    weight: candidate.weight,
+    score: candidate.score,
+    order: candidate.order,
     runtime: candidate.runtime,
+    selection: scopeForCel(candidate.selection),
+    endpoint: scopeForCel(candidate.endpoint),
+    executionAttempt: scopeForCel(candidate.executionAttempt),
+    plan: scopeForCel(candidate.plan),
+    graph: scopeForCel(candidate.graph),
   };
 }
 
@@ -238,23 +243,40 @@ function buildSelectorCelContext(input: {
   candidate: RuntimeSelectorCandidate;
   candidates: RuntimeSelectorCandidate[];
 }): Record<string, unknown> {
-  const payload = input.state.payload || {
+  const payload = input.state.payload !== undefined ? input.state.payload : {
     requestedModel: input.state.requestedModel ?? null,
     currentModel: input.state.currentModel ?? null,
     upstreamModel: input.state.upstreamModel ?? null,
     endpointPreference: input.state.endpointPreference ?? null,
   };
-  return {
+  const request = input.state.request || {
+    requestedModel: input.state.requestedModel ?? null,
+    currentModel: input.state.currentModel ?? null,
+    upstreamModel: input.state.upstreamModel ?? null,
+    endpointPreference: input.state.endpointPreference ?? null,
     payload,
-    metadata: input.candidate.metadata,
+    headers: input.state.headers || {},
+  };
+  const self = candidateForCel(input.candidate);
+  return {
+    request,
+    payload,
+    headers: input.state.headers || {},
     stateStore: input.state.stateStore || {},
     idx: input.candidate.idx,
-    candidate: candidateForCel(input.candidate),
+    self,
     candidates: input.candidates.map(candidateForCel),
+    runtime: input.candidate.runtime,
+    selection: scopeForCel(input.candidate.selection),
+    endpoint: scopeForCel(input.candidate.endpoint),
+    executionAttempt: scopeForCel(input.candidate.executionAttempt),
+    plan: scopeForCel(input.candidate.plan),
+    graph: scopeForCel(input.candidate.graph),
   };
 }
 
 function applyScorePolicy<TPayload>(input: {
+  selectorId: string;
   plan: RuntimeSelectorPlan;
   candidate: RuntimeSelectorCandidate<TPayload>;
   candidates: RuntimeSelectorCandidate<TPayload>[];
@@ -262,30 +284,52 @@ function applyScorePolicy<TPayload>(input: {
 }): RuntimeSelectorCandidate<TPayload> {
   const context = buildSelectorCelContext(input);
   const next = { ...input.candidate };
-  const rankResult = evaluatePlannedCelExpression(input.plan.rankEvaluator, context);
-  if (isRecord(rankResult)) {
-    next.enabled = booleanOrFallback(rankResult.enabled, next.enabled);
-    next.weight = numberOrFallback(rankResult.weight, next.weight);
-    next.priority = numberOrFallback(rankResult.priority, next.priority);
-    next.score = numberOrFallback(rankResult.score, next.score);
-  }
-
-  if (input.plan.scoreEvaluator) {
-    next.score = numberOrFallback(evaluatePlannedCelExpression(input.plan.scoreEvaluator, context), next.score);
-  } else if (input.plan.scoreTerms.length > 0) {
-    let score = 0;
-    for (const item of input.plan.scoreTerms) {
-      const rawValue = item.evaluator
-        ? evaluatePlannedCelExpression(item.evaluator, context)
-        : getPathValue(context, item.path || item.source);
-      const value = numberOrFallback(rawValue, 0);
-      score += value * item.weight;
+  if (input.plan.eligibilityEvaluator) {
+    const evaluated = evaluatePlannedCelExpression(input.plan.eligibilityEvaluator, context);
+    if (typeof evaluated !== 'boolean') {
+      throw new RuntimeSelectorPolicyEvaluationError(input.selectorId, 'eligibility', 'expected a boolean result');
     }
-    next.score = score;
+    next.enabled = evaluated;
+  }
+  if (input.plan.contributionEvaluator) {
+    const evaluated = Number(evaluatePlannedCelExpression(input.plan.contributionEvaluator, context));
+    if (!Number.isFinite(evaluated)) {
+      throw new RuntimeSelectorPolicyEvaluationError(input.selectorId, 'contribution', 'expected a finite number');
+    }
+    next.weight = Math.max(0, evaluated);
+  }
+  if (input.plan.orderEvaluator) {
+    const evaluated = Number(evaluatePlannedCelExpression(input.plan.orderEvaluator, context));
+    if (!Number.isFinite(evaluated)) {
+      throw new RuntimeSelectorPolicyEvaluationError(input.selectorId, 'order', 'expected a finite number');
+    }
+    next.order = evaluated;
   }
 
-  if (!Number.isFinite(next.score)) next.score = next.weight;
+  next.score = next.weight;
   return next;
+}
+
+/** Evaluates a selector policy once so selection, estimation, and audit traces
+ * all observe the same eligible candidates and CEL-derived values. */
+export function evaluateRuntimeSelectorCandidates<TPayload>(input: {
+  selectorId?: string;
+  plan?: RuntimeSelectorPlan | null;
+  policy?: RuntimeSelectorPolicy | null;
+  candidates: RuntimeSelectorCandidate<TPayload>[];
+  state?: RuntimeSelectorState;
+}): RuntimeSelectorCandidate<TPayload>[] {
+  const state = input.state || {};
+  const candidates = input.candidates.filter((candidate) => candidate.enabled !== false);
+  if (candidates.length === 0) return [];
+  const plan = input.plan || hydrateRuntimeSelectorPlan(input.policy);
+  return candidates.map((candidate) => applyScorePolicy({
+    selectorId: input.selectorId || 'selector',
+    plan,
+    candidate,
+    candidates,
+    state,
+  })).filter((candidate) => candidate.enabled !== false);
 }
 
 export function selectWeightedRuntimeCandidate<TPayload>(
@@ -296,10 +340,13 @@ export function selectWeightedRuntimeCandidate<TPayload>(
   if (candidates.length === 1) return candidates[0] || null;
   const weighted = candidates.map((candidate) => ({
     candidate,
-    weight: positiveNumberOrFallback(candidate.weight, 1),
+    weight: candidateSelectionWeight(candidate),
   }));
   const totalWeight = weighted.reduce((sum, item) => sum + item.weight, 0);
-  if (totalWeight <= 0) return weighted[0]?.candidate || null;
+  if (totalWeight <= 0) {
+    const index = Math.min(weighted.length - 1, Math.floor(random() * weighted.length));
+    return weighted[index]?.candidate || null;
+  }
   let cursor = random() * totalWeight;
   for (const item of weighted) {
     cursor -= item.weight;
@@ -317,48 +364,39 @@ export function selectRuntimeCandidate<TPayload>(input: {
   random?: () => number;
 }): RuntimeSelectorCandidate<TPayload> | null {
   const state = input.state || {};
-  const stateStore = state.stateStore || {};
+  const stateStore = state.selectorStateStore || state.stateStore || {};
   const candidates = input.candidates.filter((candidate) => candidate.enabled !== false);
   if (candidates.length === 0) return null;
   const plan = input.plan || hydrateRuntimeSelectorPlan(input.policy);
   const strategy = plan.strategy as RuntimeSelectorStrategy || 'weighted';
-
-  if (strategy === 'direct') {
-    const context = buildSelectorCelContext({ state, candidate: candidates[0], candidates });
-    const direct = evaluatePlannedCelExpression(plan.selectEvaluator, context);
-    const idx = isRecord(direct) ? numberOrFallback(direct.idx, Number.NaN) : numberOrFallback(direct, Number.NaN);
-    if (Number.isInteger(idx) && idx >= 0 && idx < candidates.length) return candidates[idx];
-    return candidates[0] || null;
-  }
-
-  if (strategy === 'round_robin') {
-    const key = `dispatcher:${input.selectorId}:round_robin`;
-    const current = numberOrFallback(stateStore[key], 0);
-    const normalizedIndex = candidates.length > 0 ? Math.abs(Math.trunc(current)) % candidates.length : 0;
-    stateStore[key] = Math.max(0, Math.trunc(current)) + 1;
-    return candidates[normalizedIndex] || null;
-  }
-
-  const ranked = candidates.map((candidate) => applyScorePolicy({
+  const ranked = evaluateRuntimeSelectorCandidates({
+    selectorId: input.selectorId,
     plan,
-    candidate,
     candidates,
     state: { ...state, stateStore },
-  }));
-  if (strategy === 'stable_first') {
+  });
+  if (ranked.length === 0) return null;
+
+  if (strategy === 'direct') {
+    const context = buildSelectorCelContext({ state, candidate: ranked[0], candidates: ranked });
+    const direct = evaluatePlannedCelExpression(plan.selectEvaluator, context);
+    const idx = isRecord(direct) ? numberOrFallback(direct.idx, Number.NaN) : numberOrFallback(direct, Number.NaN);
+    if (Number.isInteger(idx) && idx >= 0 && idx < ranked.length) return ranked[idx];
+    throw new RuntimeSelectorPolicyEvaluationError(input.selectorId, 'direct selection', 'expected an eligible option index');
+  }
+
+  if (strategy === 'round_robin' || strategy === 'policy_round_robin') {
+    const key = `selector:${input.selectorId}:round_robin`;
+    const current = numberOrFallback(stateStore[key], 0);
+    const ordered = strategy === 'policy_round_robin'
+      ? [...ranked].sort((left, right) => left.order - right.order)
+      : ranked;
+    const normalizedIndex = ordered.length > 0 ? Math.abs(Math.trunc(current)) % ordered.length : 0;
+    stateStore[key] = Math.max(0, Math.trunc(current)) + 1;
+    return ordered[normalizedIndex] || null;
+  }
+  if (strategy === 'stable_first' || strategy === 'policy_ordered') {
     return [...ranked].sort((left, right) => left.order - right.order)[0] || null;
-  }
-  if (strategy === 'priority_order') {
-    const maxPriority = Math.max(...ranked.map((candidate) => candidate.priority));
-    return selectWeightedRuntimeCandidate(ranked.filter((candidate) => candidate.priority === maxPriority), input.random);
-  }
-  if (plan.scoreEvaluator || plan.scoreTerms.length > 0) {
-    return [...ranked].sort((left, right) => {
-      if (right.score !== left.score) return right.score - left.score;
-      if (right.weight !== left.weight) return right.weight - left.weight;
-      if (right.priority !== left.priority) return right.priority - left.priority;
-      return left.order - right.order;
-    })[0] || null;
   }
   return selectWeightedRuntimeCandidate(ranked, input.random);
 }
@@ -380,7 +418,7 @@ export function estimateRuntimeSelectorProbabilities<TPayload>(input: {
   const plan = input.plan || hydrateRuntimeSelectorPlan(input.policy);
   const strategy = plan.strategy as RuntimeSelectorStrategy || 'weighted';
 
-  if (strategy === 'direct' || strategy === 'defer_to_router') {
+  if (strategy === 'defer_to_router') {
     return {
       estimateLevel: 'dynamic',
       strategy,
@@ -388,7 +426,39 @@ export function estimateRuntimeSelectorProbabilities<TPayload>(input: {
     };
   }
 
-  if (!STATIC_SELECTOR_STRATEGIES.has(strategy) && !(plan.scoreEvaluator || plan.scoreTerms.length > 0)) {
+  if (selectorPlanHasUnavailableDynamicInputs(plan, state)) {
+    return {
+      estimateLevel: 'dynamic',
+      strategy,
+      probabilities: input.candidates.map((candidate) => (candidate.enabled === false ? 0 : null)),
+    };
+  }
+
+  const ranked = evaluateRuntimeSelectorCandidates({ selectorId: input.selectorId, plan, candidates, state });
+  if (ranked.length === 0) {
+    return { estimateLevel: 'static', strategy, probabilities: resultByOriginalIndex };
+  }
+
+  if (strategy === 'direct') {
+    if (!plan.selectEvaluator) {
+      return {
+        estimateLevel: 'dynamic',
+        strategy,
+        probabilities: input.candidates.map((candidate) => (candidate.enabled === false ? 0 : null)),
+      };
+    }
+    const context = buildSelectorCelContext({ state, candidate: ranked[0]!, candidates: ranked });
+    const direct = evaluatePlannedCelExpression(plan.selectEvaluator, context);
+    const idx = isRecord(direct) ? numberOrFallback(direct.idx, Number.NaN) : numberOrFallback(direct, Number.NaN);
+    if (!Number.isInteger(idx) || idx < 0 || idx >= ranked.length) {
+      throw new RuntimeSelectorPolicyEvaluationError(input.selectorId, 'direct selection', 'expected an eligible option index');
+    }
+    const selected = ranked[idx];
+    for (const candidate of ranked) resultByOriginalIndex[candidate.idx] = selected?.idx === candidate.idx ? 1 : 0;
+    return { estimateLevel: 'static', strategy, probabilities: resultByOriginalIndex };
+  }
+
+  if (!STATIC_SELECTOR_STRATEGIES.has(strategy) && !strategy.startsWith('policy_')) {
     return {
       estimateLevel: 'unsupported',
       strategy,
@@ -396,61 +466,23 @@ export function estimateRuntimeSelectorProbabilities<TPayload>(input: {
     };
   }
 
-  if (selectorPlanDependsOnRequestState(plan)) {
-    return {
-      estimateLevel: 'dynamic',
-      strategy,
-      probabilities: input.candidates.map((candidate) => (candidate.enabled === false ? 0 : null)),
-    };
-  }
-
-  if (strategy === 'round_robin') {
-    const probability = candidates.length > 0 ? 1 / candidates.length : 0;
-    for (const candidate of candidates) resultByOriginalIndex[candidate.idx] = probability;
+  if (strategy === 'round_robin' || strategy === 'policy_round_robin') {
+    const probability = 1 / ranked.length;
+    for (const candidate of ranked) resultByOriginalIndex[candidate.idx] = probability;
     return { estimateLevel: 'static', strategy, probabilities: resultByOriginalIndex };
   }
 
-  const ranked = candidates.map((candidate) => applyScorePolicy({
-    plan,
-    candidate,
-    candidates,
-    state,
-  }));
-
-  if (strategy === 'stable_first') {
+  if (strategy === 'stable_first' || strategy === 'policy_ordered') {
     const selected = [...ranked].sort((left, right) => left.order - right.order)[0] || null;
     for (const candidate of ranked) resultByOriginalIndex[candidate.idx] = selected?.idx === candidate.idx ? 1 : 0;
     return { estimateLevel: 'static', strategy, probabilities: resultByOriginalIndex };
   }
 
-  if (strategy === 'priority_order') {
-    const maxPriority = Math.max(...ranked.map((candidate) => candidate.priority));
-    const top = ranked.filter((candidate) => candidate.priority === maxPriority);
-    const totalWeight = top.reduce((sum, candidate) => sum + positiveNumberOrFallback(candidate.weight, 1), 0);
-    for (const candidate of ranked) {
-      resultByOriginalIndex[candidate.idx] = top.includes(candidate) && totalWeight > 0
-        ? positiveNumberOrFallback(candidate.weight, 1) / totalWeight
-        : 0;
-    }
-    return { estimateLevel: 'static', strategy, probabilities: resultByOriginalIndex };
-  }
-
-  if (plan.scoreEvaluator || plan.scoreTerms.length > 0) {
-    const selected = [...ranked].sort((left, right) => {
-      if (right.score !== left.score) return right.score - left.score;
-      if (right.weight !== left.weight) return right.weight - left.weight;
-      if (right.priority !== left.priority) return right.priority - left.priority;
-      return left.order - right.order;
-    })[0] || null;
-    for (const candidate of ranked) resultByOriginalIndex[candidate.idx] = selected?.idx === candidate.idx ? 1 : 0;
-    return { estimateLevel: 'static', strategy, probabilities: resultByOriginalIndex };
-  }
-
-  const totalWeight = ranked.reduce((sum, candidate) => sum + positiveNumberOrFallback(candidate.weight, 1), 0);
+  const totalWeight = ranked.reduce((sum, candidate) => sum + candidateSelectionWeight(candidate), 0);
   for (const candidate of ranked) {
     resultByOriginalIndex[candidate.idx] = totalWeight > 0
-      ? positiveNumberOrFallback(candidate.weight, 1) / totalWeight
-      : 0;
+      ? candidateSelectionWeight(candidate) / totalWeight
+      : 1 / ranked.length;
   }
   return { estimateLevel: 'static', strategy, probabilities: resultByOriginalIndex };
 }
@@ -475,6 +507,12 @@ export function selectWeightedContributionIndex(input: {
 }): number | null {
   if (input.contributions.length === 0) return null;
   const totalContribution = input.contributions.reduce((sum, value) => sum + Math.max(0, value), 0);
+  if (totalContribution <= 0) {
+    return Math.min(
+      input.contributions.length - 1,
+      Math.floor((input.random || Math.random)() * input.contributions.length),
+    );
+  }
   let cursor = (input.random || Math.random)() * totalContribution;
   for (let index = 0; index < input.contributions.length; index += 1) {
     cursor -= Math.max(0, input.contributions[index] ?? 0);
@@ -523,7 +561,7 @@ export function selectContributionSnapshot(input: {
   });
   const totalContribution = input.contributions.reduce((sum, value) => sum + Math.max(0, value), 0);
   const probabilities = input.contributions.map((value) => (
-    totalContribution > 0 ? Math.max(0, value) / totalContribution : 0
+    totalContribution > 0 ? Math.max(0, value) / totalContribution : 1 / input.contributions.length
   ));
   const selectedIndex = input.mode === 'stable_first'
     ? selectStableFirstContributionIndex({

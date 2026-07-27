@@ -1,4 +1,15 @@
 import { afterEach, beforeEach, vi } from 'vitest';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+
+const vitestWorkerTag = process.env.VITEST_POOL_ID || process.env.VITEST_WORKER_ID || 'default';
+const vitestWorkerDataDir = join(
+  (process.env.DATA_DIR || '').trim() || tmpdir(),
+  `metapi-vitest-${process.pid}-${vitestWorkerTag}`,
+);
+if (!(process.env.DB_URL || '').trim()) {
+  process.env.DATA_DIR = vitestWorkerDataDir;
+}
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -166,6 +177,7 @@ function installBrowserTestSeams() {
       this.currentValue = String(nextValue);
     }
   };
+  const HTMLFormElementShim = class HTMLFormElementShim {};
   const EventShim = class EventShim {
     type: string;
     bubbles: boolean;
@@ -201,6 +213,9 @@ function installBrowserTestSeams() {
 
   if (typeof globalThis.HTMLSelectElement === 'undefined') {
     vi.stubGlobal('HTMLSelectElement', HTMLSelectElementShim);
+  }
+  if (typeof globalThis.HTMLFormElement === 'undefined') {
+    vi.stubGlobal('HTMLFormElement', HTMLFormElementShim);
   }
   if (typeof globalThis.HTMLElement === 'undefined') {
     vi.stubGlobal('HTMLElement', class HTMLElementShim {});
@@ -243,6 +258,7 @@ function installBrowserTestSeams() {
       getPropertyValue: vi.fn(() => ''),
     })),
     HTMLSelectElement: (globalThis as { HTMLSelectElement?: unknown }).HTMLSelectElement || HTMLSelectElementShim,
+    HTMLFormElement: (globalThis as { HTMLFormElement?: unknown }).HTMLFormElement || HTMLFormElementShim,
     HTMLElement: (globalThis as { HTMLElement?: unknown }).HTMLElement || class HTMLElementShim {},
     Event: (globalThis as { Event?: unknown }).Event || EventShim,
     } as unknown as Window & typeof globalThis);
@@ -274,6 +290,9 @@ function installBrowserTestSeams() {
       HTMLSelectElement: (window as unknown as { HTMLSelectElement?: unknown }).HTMLSelectElement
         || (globalThis as { HTMLSelectElement?: unknown }).HTMLSelectElement
         || HTMLSelectElementShim,
+      HTMLFormElement: (window as unknown as { HTMLFormElement?: unknown }).HTMLFormElement
+        || (globalThis as { HTMLFormElement?: unknown }).HTMLFormElement
+        || HTMLFormElementShim,
       HTMLElement: (window as unknown as { HTMLElement?: unknown }).HTMLElement
         || (globalThis as { HTMLElement?: unknown }).HTMLElement
         || class HTMLElementShim {},
@@ -305,8 +324,44 @@ function installBrowserTestSeams() {
   }
 }
 
+const migratedSqliteDbKeys = new Set<string>();
+
+async function ensureSqliteTestSchemaMigrated() {
+  if ((process.env.DB_TYPE || 'sqlite').trim().toLowerCase() !== 'sqlite') {
+    return;
+  }
+  const dbUrl = (process.env.DB_URL || '').trim();
+  let dataDir = (process.env.DATA_DIR || '').trim();
+  if (!dbUrl && !dataDir) {
+    process.env.DATA_DIR = vitestWorkerDataDir;
+    dataDir = vitestWorkerDataDir;
+  }
+  const workerTag = vitestWorkerTag;
+  const workerDataDir = dataDir || tmpdir();
+  const migrationKey = `${workerTag}|${dbUrl || 'default'}|${workerDataDir}`;
+  if (migratedSqliteDbKeys.has(migrationKey)) {
+    return;
+  }
+  const originalLog = console.log;
+  try {
+    const migrateModule = await import('../server/db/migrate.js');
+    console.log = (...args: unknown[]) => {
+      if (args.length === 1 && args[0] === 'Migration complete.') return;
+      originalLog(...args);
+    };
+    await migrateModule.runSqliteMigrations();
+  } finally {
+    console.log = originalLog;
+  }
+  migratedSqliteDbKeys.add(migrationKey);
+}
+
 beforeEach(() => {
   installBrowserTestSeams();
+});
+
+beforeEach(async () => {
+  await ensureSqliteTestSchemaMigrated();
 });
 
 afterEach(() => {

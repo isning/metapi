@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import type { FastifyServerOptions } from 'fastify';
+import { defaultDispatchPolicyRegistry } from './services/dispatchPolicyTypes.js';
 
 const DEFAULT_REQUEST_BODY_LIMIT = 20 * 1024 * 1024;
 const DEFAULT_PROXY_STREAM_MAX_SSE_BUFFER_BYTES = 16 * 1024 * 1024;
@@ -11,7 +12,8 @@ const DEFAULT_CODEX_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann';
 const DEFAULT_CLAUDE_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
 const DEFAULT_GEMINI_CLI_CLIENT_ID = '681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com';
 const DEFAULT_GEMINI_CLI_CLIENT_SECRET = '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';
-export const TOKEN_ROUTER_FAILURE_COOLDOWN_MAX_SEC_CEILING = 30 * 24 * 60 * 60;
+export const ROUTE_FAILURE_COOLDOWN_MAX_SEC_CEILING = 30 * 24 * 60 * 60;
+export const ROUTE_RUNTIME_CACHE_TTL_MS_DEFAULT = 1_500;
 
 function parseBoolean(value: string | undefined, fallback = false): boolean {
   if (value === undefined) return fallback;
@@ -60,13 +62,19 @@ function parseDbType(value: string | undefined): 'sqlite' | 'mysql' | 'postgres'
   return 'sqlite';
 }
 
-export function normalizeTokenRouterFailureCooldownMaxSec(value: unknown): number | null {
+export function normalizeRouteFailureCooldownMaxSec(value: unknown): number | null {
   const normalized = Number(value);
   if (!Number.isFinite(normalized) || normalized <= 0) return null;
   return Math.min(
-    TOKEN_ROUTER_FAILURE_COOLDOWN_MAX_SEC_CEILING,
+    ROUTE_FAILURE_COOLDOWN_MAX_SEC_CEILING,
     Math.max(1, Math.trunc(normalized)),
   );
+}
+
+export function normalizeRouteRuntimeCacheTtlMs(value: unknown): number {
+  const normalized = Number(value);
+  if (!Number.isFinite(normalized) || normalized <= 0) return ROUTE_RUNTIME_CACHE_TTL_MS_DEFAULT;
+  return Math.max(100, Math.min(60_000, Math.trunc(normalized)));
 }
 
 function parseListenHost(env: NodeJS.ProcessEnv): string {
@@ -129,10 +137,10 @@ export function buildConfig(env: NodeJS.ProcessEnv) {
     requestBodyLimit: DEFAULT_REQUEST_BODY_LIMIT,
     routingFallbackUnitCost: Math.max(1e-6, parseNumber(env.ROUTING_FALLBACK_UNIT_COST, 1)),
     proxyFirstByteTimeoutSec: Math.max(0, Math.trunc(parseNumber(env.PROXY_FIRST_BYTE_TIMEOUT_SEC, 0))),
-    tokenRouterFailureCooldownMaxSec: normalizeTokenRouterFailureCooldownMaxSec(
-      parseNumber(env.TOKEN_ROUTER_FAILURE_COOLDOWN_MAX_SEC, TOKEN_ROUTER_FAILURE_COOLDOWN_MAX_SEC_CEILING),
-    ) ?? TOKEN_ROUTER_FAILURE_COOLDOWN_MAX_SEC_CEILING,
-    tokenRouterCacheTtlMs: Math.max(100, Math.trunc(parseNumber(env.TOKEN_ROUTER_CACHE_TTL_MS, 1_500))),
+    routeFailureCooldownMaxSec: normalizeRouteFailureCooldownMaxSec(
+      parseNumber(env.ROUTE_FAILURE_COOLDOWN_MAX_SEC, ROUTE_FAILURE_COOLDOWN_MAX_SEC_CEILING),
+    ) ?? ROUTE_FAILURE_COOLDOWN_MAX_SEC_CEILING,
+    routeRuntimeCacheTtlMs: normalizeRouteRuntimeCacheTtlMs(env.ROUTE_RUNTIME_CACHE_TTL_MS),
     proxyMaxTargetAttempts: Math.max(1, Math.trunc(parseNumber(env.PROXY_MAX_TARGET_ATTEMPTS, 3))),
     proxyStickySessionEnabled: parseBoolean(env.PROXY_STICKY_SESSION_ENABLED, true),
     proxyStickySessionTtlMs: Math.max(30_000, Math.trunc(parseNumber(env.PROXY_STICKY_SESSION_TTL_MS, 30 * 60 * 1000))),
@@ -147,9 +155,9 @@ export function buildConfig(env: NodeJS.ProcessEnv) {
     proxyDebugCaptureHeaders: parseBoolean(env.PROXY_DEBUG_CAPTURE_HEADERS, true),
     proxyDebugCaptureBodies: parseBoolean(env.PROXY_DEBUG_CAPTURE_BODIES, false),
     proxyDebugCaptureStreamChunks: parseBoolean(env.PROXY_DEBUG_CAPTURE_STREAM_CHUNKS, false),
-    proxyDebugTargetSessionId: (env.PROXY_DEBUG_TARGET_SESSION_ID || '').trim(),
-    proxyDebugTargetClientKind: (env.PROXY_DEBUG_TARGET_CLIENT_KIND || '').trim(),
-    proxyDebugTargetModel: (env.PROXY_DEBUG_TARGET_MODEL || '').trim(),
+    proxyDebugFilterSessionId: (env.PROXY_DEBUG_FILTER_SESSION_ID || '').trim(),
+    proxyDebugFilterClientKind: (env.PROXY_DEBUG_FILTER_CLIENT_KIND || '').trim(),
+    proxyDebugFilterModel: (env.PROXY_DEBUG_FILTER_MODEL || '').trim(),
     proxyDebugRetentionHours: Math.max(1, Math.trunc(parseNumber(env.PROXY_DEBUG_RETENTION_HOURS, 24))),
     proxyDebugMaxBodyBytes: Math.max(1024, Math.trunc(parseNumber(env.PROXY_DEBUG_MAX_BODY_BYTES, 262_144))),
     proxyStreamMaxSseBufferBytes: parsePositiveInteger(env.PROXY_STREAM_MAX_SSE_BUFFER_BYTES, DEFAULT_PROXY_STREAM_MAX_SSE_BUFFER_BYTES),
@@ -175,13 +183,7 @@ export function buildConfig(env: NodeJS.ProcessEnv) {
       userAgent: parseOptionalSecret(env.CODEX_HEADER_DEFAULTS_USER_AGENT),
       betaFeatures: parseOptionalSecret(env.CODEX_HEADER_DEFAULTS_BETA_FEATURES),
     },
-    routingWeights: {
-      baseWeightFactor: parseNumber(env.BASE_WEIGHT_FACTOR, 0.5),
-      valueScoreFactor: parseNumber(env.VALUE_SCORE_FACTOR, 0.5),
-      costWeight: parseNumber(env.COST_WEIGHT, 0.4),
-      balanceWeight: parseNumber(env.BALANCE_WEIGHT, 0.3),
-      usageWeight: parseNumber(env.USAGE_WEIGHT, 0.3),
-    },
+    dispatchPolicyRegistry: defaultDispatchPolicyRegistry(),
   };
 }
 

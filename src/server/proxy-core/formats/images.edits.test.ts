@@ -1,4 +1,5 @@
 import Fastify, { type FastifyInstance } from 'fastify';
+import { executionDecisionFromTargetMocks } from '../../../testing/routeRuntimeDecisionMock.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const fetchMock = vi.fn();
@@ -16,6 +17,27 @@ const dbInsertMock = vi.fn((_arg?: any) => ({
   }),
 }));
 
+let hasPreviewedDecision = false;
+let previewedDecision: unknown = null;
+
+async function selectDecisionForTest(input: any) {
+  if (hasPreviewedDecision) {
+    hasPreviewedDecision = false;
+    const decision = previewedDecision;
+    previewedDecision = null;
+    return decision;
+  }
+  return await executionDecisionFromTargetMocks(input, selectTargetMock, selectNextTargetMock);
+}
+
+async function previewDecisionForTest(input: any) {
+  if (!hasPreviewedDecision) {
+    previewedDecision = await selectDecisionForTest(input);
+    hasPreviewedDecision = true;
+  }
+  return previewedDecision;
+}
+
 vi.mock('undici', async () => {
   const actual = await vi.importActual<typeof import('undici')>('undici');
   return {
@@ -24,13 +46,38 @@ vi.mock('undici', async () => {
   };
 });
 
-vi.mock('../../services/tokenRouter.js', () => ({
-  tokenRouter: {
-    selectTarget: (...args: unknown[]) => selectTargetMock(...args),
-    selectNextTarget: (...args: unknown[]) => selectNextTargetMock(...args),
-    recordSuccess: (...args: unknown[]) => recordSuccessMock(...args),
-    recordFailure: (...args: unknown[]) => recordFailureMock(...args),
+
+vi.mock('../../services/routeRuntimeExecutionService.js', () => ({
+  createRouteRuntimeDecisionSession: async (input: any) => input,
+  selectRouteRuntimeDecisionInSession: (session: any, input: any) => selectDecisionForTest({ ...session, ...input }),
+  previewRouteRuntimeDecisionInSession: (session: any, input: any) => previewDecisionForTest({ ...session, ...input }),
+  selectRouteRuntimeDecision: selectDecisionForTest,
+  previewRouteRuntimeDecision: previewDecisionForTest,
+  selectRouteRuntimeExecutionAttempt: async (input: any) => {
+    const excluded = Array.isArray(input?.disabledExecutionTargetIds) ? input.disabledExecutionTargetIds : [];
+    const selected = excluded.length > 0
+      ? await selectNextTargetMock(input.requestedModel, excluded, input.downstreamPolicy)
+      : await selectTargetMock(input?.requestedModel, input?.downstreamPolicy);
+    if (!selected) return selected;
+    if (!selected.executionAttemptId || !selected.executionTargetId) {
+      throw new Error('Test selected route runtime attempt must include executionAttemptId and executionTargetId');
+    }
+    return selected;
   },
+  resolveRouteRuntimeSyntheticResponse: async () => null,
+  recordRouteRuntimeExecutionAttemptStarted: async () => undefined,
+  recordRouteRuntimeExecutionAttemptSuccess: (input: any) =>
+    recordSuccessMock(input.executionTargetId, input.latencyMs, input.modelName),
+  recordRouteRuntimeExecutionAttemptFailure: (input: any) =>
+    recordFailureMock(input.executionTargetId, { status: input.status, errorText: input.errorText }),
+  recordRouteRuntimeExecutionAttemptSelected: async () => undefined,
+}));
+
+vi.mock('../../services/compiledRuntimeExecutionSessionService.js', () => ({
+  startCompiledRuntimeExecutionSession: async () => ({ requestId: 'request:images-test', startedAtMs: Date.now() }),
+  resumeCompiledRuntimeExecutionSession: async () => null,
+  bindCompiledRuntimeExecutionDecision: async () => undefined,
+  completeCompiledRuntimeExecutionSession: async () => true,
 }));
 
 vi.mock('../../services/modelService.js', () => ({
@@ -48,6 +95,11 @@ vi.mock('../../services/alertRules.js', () => ({
 
 vi.mock('../../services/modelPricingService.js', () => ({
   estimateProxyCost: (arg: any) => estimateProxyCostMock(arg),
+  buildProxyBillingDetails: async () => null,
+}));
+
+vi.mock('../../services/oauth/quota.js', () => ({
+  recordOauthQuotaHeadersSnapshot: async () => null,
 }));
 
 vi.mock('../../services/proxyRetryPolicy.js', () => ({
@@ -59,20 +111,15 @@ vi.mock('../../services/proxyRetryPolicy.js', () => ({
   RETRYABLE_TIMEOUT_PATTERNS: [/(request timed out|connection timed out|read timeout|\btimed out\b)/i],
 }));
 
-vi.mock('../../services/routeGraphRuntimeService.js', async () => {
-  const actual = await vi.importActual<typeof import('../../services/routeGraphRuntimeService.js')>('../../services/routeGraphRuntimeService.js');
+vi.mock('../../services/routeRuntimeEvaluatorService.js', async () => {
+  const actual = await vi.importActual<typeof import('../../services/routeRuntimeEvaluatorService.js')>('../../services/routeRuntimeEvaluatorService.js');
   return {
     ...actual,
-    evaluateActiveRouteGraphForModel: async () => null,
   };
 });
 
 vi.mock('../../services/credentialEndpointBindingService.js', () => ({
   loadCredentialApiVariantConfig: async () => null,
-}));
-
-vi.mock('../../services/proxyLogRouteDecisionSnapshot.js', () => ({
-  buildProxyLogRouteDecisionSnapshot: async () => null,
 }));
 
 vi.mock('../../db/index.js', () => ({
@@ -138,6 +185,8 @@ describe('/v1/images/edits route', () => {
   });
 
   beforeEach(() => {
+    hasPreviewedDecision = false;
+    previewedDecision = null;
     fetchMock.mockReset();
     selectTargetMock.mockReset();
     selectNextTargetMock.mockReset();
@@ -148,14 +197,19 @@ describe('/v1/images/edits route', () => {
     reportTokenExpiredMock.mockReset();
     estimateProxyCostMock.mockClear();
     dbInsertMock.mockClear();
-
     selectTargetMock.mockReturnValue({
       target: { id: 11, routeId: 22 },
+      executionTargetId: 11,
+      executionAttemptId: 'ea_11',
       site: { id: 44, name: 'demo-site', url: 'https://upstream.example.com', platform: 'openai' },
       account: { id: 33, username: 'demo-user' },
       tokenName: 'default',
       tokenValue: 'sk-demo',
       actualModel: 'upstream-gpt-image',
+      routeEntrypointId: 'entry:images',
+      runtimeEndpointId: 'endpoint:images',
+      runtimeArtifactId: 'runtime-artifact-1',
+      routeRuntimeSnapshot: { compiledRuntime: { bundleHash: 'images-test-bundle' } },
     });
     selectNextTargetMock.mockReturnValue(null);
   });
@@ -194,11 +248,17 @@ describe('/v1/images/edits route', () => {
   it('retries the next channel when image generation JSON is malformed', async () => {
     selectNextTargetMock.mockReturnValueOnce({
       target: { id: 12, routeId: 23 },
+      executionTargetId: 12,
+      executionAttemptId: 'ea_12',
       site: { id: 45, name: 'fallback-site', url: 'https://fallback.example.com', platform: 'openai' },
       account: { id: 34, username: 'fallback-user' },
       tokenName: 'fallback',
       tokenValue: 'sk-fallback',
       actualModel: 'fallback-gpt-image',
+      routeEntrypointId: 'entry:images',
+      runtimeEndpointId: 'endpoint:images-fallback',
+      runtimeArtifactId: 'runtime-artifact-1',
+      routeRuntimeSnapshot: { compiledRuntime: { bundleHash: 'images-test-bundle' } },
     });
     fetchMock
       .mockResolvedValueOnce(new Response('not-json', {

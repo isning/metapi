@@ -13,8 +13,6 @@ import {
 const { apiMock } = vi.hoisted(() => ({
   apiMock: {
     getModelsMarketplace: vi.fn(),
-    getRouteSummaryPage: vi.fn(),
-    getRouteDecision: vi.fn(),
     getModelRouteFlow: vi.fn(),
   },
 }));
@@ -78,24 +76,61 @@ describe('ModelTester fixed channel behavior', () => {
         { name: 'gpt-4o-mini' },
       ],
     });
-    apiMock.getRouteSummaryPage.mockResolvedValue({ items: [], pageInfo: { page: 1, pageSize: 500, totalCount: 0, hasMore: false } });
-    apiMock.getRouteDecision.mockResolvedValue({
-      decision: {
-        candidates: [
-          {
-            targetId: 77,
-            accountId: 12,
-            username: 'tester',
+    apiMock.getModelRouteFlow.mockResolvedValue({
+      flow: {
+        requestedModel: 'gpt-4o-mini',
+        matched: true,
+        diagnostics: [],
+        projectedAt: '2026-07-02T00:00:00.000Z',
+        compiledRuntime: {
+          runtimeRef: { artifactId: 'runtime-artifact-1', bundleHash: 'hash' },
+          match: { requestedModel: 'gpt-4o-mini', planId: 'plan', entryNodeId: 'entry', publicModelName: 'gpt-4o-mini' },
+          dispatchers: [],
+          terminalCandidates: [],
+          endpoints: [],
+          executionAttempts: [{
+            executionAttemptId: 'ea_25',
+            endpointId: 'endpoint:a',
+            nodeId: 'endpoint:a',
+            model: 'gpt-4o-mini',
+            modelSource: 'fixed',
+            enabled: true,
+            siteId: 1,
             siteName: 'site-a',
-            tokenName: 'default',
-            priority: 0,
-            eligible: true,
-            reason: 'ok',
+            siteUrl: null,
+            sitePlatform: 'openai',
+            accountId: 12,
+            accountLabel: 'tester',
+            tokenId: 34,
+            tokenLabel: 'default',
+            tokenGroup: null,
+            weight: 1,
+            probability: 1,
+            probabilityStatus: 'static',
+            health: {
+              successRate: null,
+              totalCalls: 0,
+              avgLatencyMs: null,
+              cooldownUntil: null,
+              consecutiveFailureCount: null,
+            },
+          }],
+          selected: {
+            dispatcherCandidateIds: [],
+            terminalCandidateId: null,
+            endpointId: 'endpoint:a',
+            executionAttemptId: 'ea_25',
+            accountId: 12,
+            tokenId: 34,
+            siteId: 1,
+            actualModel: 'gpt-4o-mini',
+            selectionSource: 'forced_execution_attempt',
           },
-        ],
+          filters: { preSelectionApplied: [], postBuild: [] },
+          syntheticResponse: null,
+        },
       },
     });
-    apiMock.getModelRouteFlow.mockResolvedValue({ flow: null });
 
     const session = serializeModelTesterSession({
       input: '',
@@ -108,7 +143,7 @@ describe('ModelTester fixed channel behavior', () => {
       conversationFiles: [],
       pendingPayload: null,
       pendingJobId: null,
-      forcedTargetId: 77,
+      forcedExecutionAttemptId: 'ea_25',
       customRequestMode: false,
       customRequestBody: '',
       showDebugPanel: false,
@@ -140,7 +175,7 @@ describe('ModelTester fixed channel behavior', () => {
     vi.clearAllMocks();
   });
 
-  it('keeps the restored fixed channel selected through initial model hydration', async () => {
+  it('keeps the restored fixed execution attempt selected through initial model hydration', async () => {
     let root!: ReactTestRenderer;
 
     try {
@@ -149,9 +184,16 @@ describe('ModelTester fixed channel behavior', () => {
       });
       await vi.waitFor(async () => {
         await flushMicrotasks();
-        expect(apiMock.getRouteDecision).toHaveBeenCalledTimes(1);
-        expect(apiMock.getRouteDecision).toHaveBeenCalledWith('gpt-4o-mini');
-        expect(collectText(root.root)).toContain('已固定到目标 #77，失败不会自动切换。');
+        expect(apiMock.getModelRouteFlow).toHaveBeenCalledWith('gpt-4o-mini', expect.objectContaining({
+          forcedExecutionAttemptId: 'ea_25',
+          request: expect.objectContaining({
+            requestedModel: 'gpt-4o-mini',
+            method: 'POST',
+            path: '/v1/chat/completions',
+            payload: expect.objectContaining({ model: 'gpt-4o-mini' }),
+          }),
+        }));
+        expect(collectText(root.root)).toContain('pages.modelTester.forcedExecutionAttemptHint');
       });
       expect(apiMock.getModelsMarketplace).toHaveBeenCalledWith(expect.objectContaining({
         page: 1,
@@ -163,31 +205,8 @@ describe('ModelTester fixed channel behavior', () => {
     }
   });
 
-  it('hydrates model choices from bounded route summary fallback when marketplace is unavailable', async () => {
+  it('does not fall back to route-group APIs when marketplace is unavailable', async () => {
     apiMock.getModelsMarketplace.mockRejectedValueOnce(new Error('market unavailable'));
-    apiMock.getRouteSummaryPage.mockResolvedValueOnce({
-      items: [
-        {
-          id: 50_000,
-          enabled: true,
-          visibility: 'public',
-          match: {
-            kind: 'model',
-            requestedModelPattern: 'summary-only-model',
-            displayName: null,
-          },
-          backend: { kind: 'supply' },
-          presentation: { displayName: null, displayIcon: null },
-          targetCount: 1,
-          enabledTargetCount: 1,
-          siteNames: ['site-a'],
-          decisionSnapshot: null,
-          decisionRefreshedAt: null,
-        },
-      ],
-      pageInfo: { page: 1, pageSize: 500, totalCount: 50_000, hasMore: true },
-    });
-    apiMock.getRouteDecision.mockResolvedValueOnce({ decision: { candidates: [] } });
     apiMock.getModelRouteFlow.mockResolvedValueOnce({ flow: null });
 
     let root!: ReactTestRenderer;
@@ -199,12 +218,15 @@ describe('ModelTester fixed channel behavior', () => {
       await vi.waitFor(async () => {
         await flushMicrotasks();
         const text = collectText(root.root);
-        expect(text).toContain('共 1 个模型');
-        expect(text).toContain('summary-only-model');
+        expect(text).toContain('pages.modelTester.failedLoadModelList');
       });
-      expect(apiMock.getRouteSummaryPage).toHaveBeenCalledWith(expect.objectContaining({
-        page: 1,
-        pageSize: 500,
+      expect(apiMock.getModelRouteFlow).toHaveBeenCalledWith('gpt-4o-mini', expect.objectContaining({
+        forcedExecutionAttemptId: 'ea_25',
+        request: expect.objectContaining({
+          requestedModel: 'gpt-4o-mini',
+          method: 'POST',
+          path: '/v1/chat/completions',
+        }),
       }));
     } finally {
       root?.unmount();

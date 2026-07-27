@@ -1,9 +1,9 @@
 import type { UpstreamEndpoint } from '../orchestration/upstreamRequest.js';
 import { resolvePlatformProfile } from '../platforms/registry.js';
 import {
-  applyRouteGraphPostBuildFilters,
-  type RouteGraphPostBuildFilters,
-} from '../../services/routeGraphRuntimeService.js';
+  applyCompiledRuntimePostBuildFilters,
+  type CompiledRuntimePostBuildFilters,
+} from '../../services/compiledRuntimePostBuildFilters.js';
 import type { DownstreamFormat } from './protocolTypes.js';
 import {
   convertOpenAiBodyToResponsesBody as convertOpenAiBodyToResponsesBodyViaTransformer,
@@ -271,7 +271,7 @@ export function buildUpstreamEndpointRequest(input: {
   platformHeaders?: Record<string, string>;
   codexSessionCacheKey?: string | null;
   codexExplicitSessionId?: string | null;
-  routeGraphFilters?: RouteGraphPostBuildFilters | null;
+  runtimePostBuildFilters?: CompiledRuntimePostBuildFilters | null;
   compatibilityPolicy?: ResolvedUpstreamCompatibilityPolicy;
 }): {
   path: string;
@@ -486,10 +486,10 @@ export function buildUpstreamEndpointRequest(input: {
         : undefined,
       siteUrl: input.siteUrl,
     });
-    const withRouteHeaders = applyRouteGraphPostBuildFilters({
+    const withRouteHeaders = applyCompiledRuntimePostBuildFilters({
       payload: prepared.body,
       headers: prepared.headers,
-      filters: input.routeGraphFilters,
+      filters: input.runtimePostBuildFilters,
     });
     return {
       ...prepared,
@@ -498,10 +498,10 @@ export function buildUpstreamEndpointRequest(input: {
     };
   }
 
-  const withRouteHeaders = applyRouteGraphPostBuildFilters({
+  const withRouteHeaders = applyCompiledRuntimePostBuildFilters({
     payload: resolvedBody,
     headers,
-    filters: input.routeGraphFilters,
+    filters: input.runtimePostBuildFilters,
   });
   return {
     path: targetPath,

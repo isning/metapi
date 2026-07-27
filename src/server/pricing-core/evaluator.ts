@@ -129,15 +129,16 @@ export function evaluatePricingPlan(input: EvaluatePricingPlanInput): PricingEva
       });
       continue;
     }
-    const signedCost = applyRole(component.role, priced.costUsd);
+    const signedCost = applyRole(component.role, priced.cost);
 
     evaluatedComponents.push({
       componentId: component.id,
       kind: component.kind,
       quantity: billableQuantity,
       scale,
-      unitPriceUsd: priced.unitPriceUsd,
-      costUsd: roundMoney(signedCost, plan.rounding.mode === 'component' ? plan.rounding.precision : 12),
+      currency: priced.currency,
+      unitPrice: priced.unitPrice,
+      cost: roundMoney(signedCost, plan.rounding.mode === 'component' ? plan.rounding.precision : 12),
       role: component.role,
       ...(component.tierRef ? { tierId: component.tierRef } : {}),
       quantityPricingMode: component.quantityPricing?.mode || 'flat',
@@ -146,42 +147,56 @@ export function evaluatePricingPlan(input: EvaluatePricingPlanInput): PricingEva
     });
   }
 
-  const componentSubtotal = evaluatedComponents.reduce((sum, component) => sum + component.costUsd, 0);
-  const minimumMaximumAdjusted = applyComponentMinimumMaximum(plan, evaluatedComponents, componentSubtotal);
-  let subtotalCostUsd = minimumMaximumAdjusted;
-  if (plan.aggregation.minimumChargeUsd !== undefined) {
-    subtotalCostUsd = Math.max(subtotalCostUsd, plan.aggregation.minimumChargeUsd);
-  }
-  if (plan.aggregation.maximumChargeUsd !== undefined) {
-    subtotalCostUsd = Math.min(subtotalCostUsd, plan.aggregation.maximumChargeUsd);
+  const evaluationCurrency = resolveEvaluationCurrency(plan, evaluatedComponents, diagnostics);
+  if (!evaluationCurrency.exact) {
+    estimateLevel = mergeEstimateLevel(estimateLevel, 'incomplete');
   }
 
-  const commitmentAdjusted = applyCommitments(plan, subtotalCostUsd, periodState, diagnostics, (level) => {
+  const componentSubtotal = evaluatedComponents.reduce((sum, component) => sum + component.cost, 0);
+  const minimumMaximumAdjusted = applyComponentMinimumMaximum(plan, evaluatedComponents, componentSubtotal);
+  let subtotalCost = minimumMaximumAdjusted;
+  if (plan.aggregation.minimumCharge !== undefined) {
+    subtotalCost = Math.max(subtotalCost, plan.aggregation.minimumCharge);
+  }
+  if (plan.aggregation.maximumCharge !== undefined) {
+    subtotalCost = Math.min(subtotalCost, plan.aggregation.maximumCharge);
+  }
+
+  const commitmentAdjusted = applyCommitments(plan, subtotalCost, periodState, diagnostics, (level) => {
     estimateLevel = mergeEstimateLevel(estimateLevel, level);
   });
-  subtotalCostUsd = commitmentAdjusted;
+  subtotalCost = commitmentAdjusted;
 
   const overlayProcessors = appliedOverlays.totalOverlays.map((overlay) => ({
     id: overlay.id,
     kind: 'markup' as const,
-    amountUsd: roundMoney(subtotalCostUsd * overlay.factor - subtotalCostUsd, 12),
+    currency: evaluationCurrency.currency,
+    amount: roundMoney(subtotalCost * overlay.factor - subtotalCost, 12),
   }));
   const postProcessors = [
     ...overlayProcessors,
-    ...applyPostProcessors(plan.postProcessors || [], subtotalCostUsd + overlayProcessors.reduce((sum, item) => sum + item.amountUsd, 0), usage, context, diagnostics),
+    ...applyPostProcessors(
+      plan.postProcessors || [],
+      subtotalCost + overlayProcessors.reduce((sum, item) => sum + item.amount, 0),
+      usage,
+      context,
+      diagnostics,
+      evaluationCurrency.currency,
+    ),
   ];
-  const adjustmentCostUsd = postProcessors.reduce((sum, item) => sum + item.amountUsd, 0);
-  const totalBeforeRounding = subtotalCostUsd + adjustmentCostUsd;
-  const totalCostUsd = roundMoney(Math.max(0, totalBeforeRounding), plan.rounding.mode === 'total' ? plan.rounding.precision : 12);
+  const adjustmentCost = postProcessors.reduce((sum, item) => sum + item.amount, 0);
+  const totalBeforeRounding = subtotalCost + adjustmentCost;
+  const totalCost = roundMoney(Math.max(0, totalBeforeRounding), plan.rounding.mode === 'total' ? plan.rounding.precision : 12);
 
   return {
     catalogEntryId: input.catalogEntryId ?? null,
     source: input.source || 'reference',
     usageHash,
     planFingerprint,
-    totalCostUsd,
-    subtotalCostUsd: roundMoney(Math.max(0, subtotalCostUsd), 12),
-    adjustmentCostUsd: roundMoney(adjustmentCostUsd, 12),
+    currency: evaluationCurrency.currency,
+    totalCost,
+    subtotalCost: roundMoney(Math.max(0, subtotalCost), 12),
+    adjustmentCost: roundMoney(adjustmentCost, 12),
     estimateLevel,
     components: evaluatedComponents,
     ...(postProcessors.length > 0 ? { postProcessors } : {}),
@@ -197,9 +212,10 @@ function invalidEvaluation(input: EvaluatePricingPlanInput, message: string): Pr
     source: input.source || 'reference',
     usageHash: hashCanonicalUsage(usage),
     planFingerprint: stableSha256(input.plan),
-    totalCostUsd: 0,
-    subtotalCostUsd: 0,
-    adjustmentCostUsd: 0,
+    currency: firstPlanCurrency(input.plan),
+    totalCost: 0,
+    subtotalCost: 0,
+    adjustmentCost: 0,
     estimateLevel: 'incomplete',
     components: [],
     equivalentMultipliers: {},
@@ -602,40 +618,44 @@ function evaluateComponentCost(
   scale: number,
   usage: CanonicalUsage,
   context: PricingEvaluationContext,
-): { costUsd: number; unitPriceUsd: number; diagnostic?: RuntimeFormulaDiagnostic } {
+): { cost: number; unitPrice: number; currency: string; diagnostic?: RuntimeFormulaDiagnostic } {
   const quantityPricing = component.quantityPricing || { mode: 'flat' as const };
   if (quantityPricing.mode === 'flat') {
     const price = evaluatePricingPrice(component.price, { component, quantity, scale, usage, context });
-    if (price.diagnostic) return { costUsd: 0, unitPriceUsd: 0, diagnostic: price.diagnostic };
+    if (price.diagnostic) return { cost: 0, unitPrice: 0, currency: component.price.currency, diagnostic: price.diagnostic };
     return {
-      costUsd: (quantity / scale) * price.amount,
-      unitPriceUsd: price.amount,
+      cost: (quantity / scale) * price.amount,
+      unitPrice: price.amount,
+      currency: price.currency,
     };
   }
   if (quantityPricing.mode === 'volume_tier') {
-    const tier = findQuantityTier(quantityPricing.tiers, quantity);
-    const price = evaluatePricingPrice(tier?.price || component.price, { component, quantity, scale, usage, context });
-    if (price.diagnostic) return { costUsd: 0, unitPriceUsd: 0, diagnostic: price.diagnostic };
+    const selectedPrice = findQuantityTier(quantityPricing.tiers, quantity)?.price || component.price;
+    const price = evaluatePricingPrice(selectedPrice, { component, quantity, scale, usage, context });
+    if (price.diagnostic) return { cost: 0, unitPrice: 0, currency: selectedPrice.currency, diagnostic: price.diagnostic };
     return {
-      costUsd: (quantity / scale) * price.amount,
-      unitPriceUsd: price.amount,
+      cost: (quantity / scale) * price.amount,
+      unitPrice: price.amount,
+      currency: price.currency,
     };
   }
   if (quantityPricing.mode === 'graduated_tier') {
     const graduated = evaluateGraduatedCost(quantityPricing.tiers, quantity, scale, component, usage, context);
-    if (graduated.diagnostic) return { costUsd: 0, unitPriceUsd: 0, diagnostic: graduated.diagnostic };
-    const costUsd = graduated.costUsd;
+    if (graduated.diagnostic) return { cost: 0, unitPrice: 0, currency: component.price.currency, diagnostic: graduated.diagnostic };
+    const cost = graduated.cost;
     return {
-      costUsd,
-      unitPriceUsd: quantity > 0 ? (costUsd / quantity) * scale : 0,
+      cost,
+      unitPrice: quantity > 0 ? (cost / quantity) * scale : 0,
+      currency: graduated.currency,
     };
   }
-  const step = findQuantityStep(quantityPricing.steps, quantity);
-  const flatPrice = evaluatePricingPrice(step?.flatPrice || component.price, { component, quantity, scale, usage, context });
-  if (flatPrice.diagnostic) return { costUsd: 0, unitPriceUsd: 0, diagnostic: flatPrice.diagnostic };
+  const selectedPrice = findQuantityStep(quantityPricing.steps, quantity)?.flatPrice || component.price;
+  const flatPrice = evaluatePricingPrice(selectedPrice, { component, quantity, scale, usage, context });
+  if (flatPrice.diagnostic) return { cost: 0, unitPrice: 0, currency: selectedPrice.currency, diagnostic: flatPrice.diagnostic };
   return {
-    costUsd: flatPrice.amount,
-    unitPriceUsd: quantity > 0 ? (flatPrice.amount / quantity) * scale : flatPrice.amount,
+    cost: flatPrice.amount,
+    unitPrice: quantity > 0 ? (flatPrice.amount / quantity) * scale : flatPrice.amount,
+    currency: flatPrice.currency,
   };
 }
 
@@ -648,17 +668,17 @@ function evaluatePricingPrice(
     usage: CanonicalUsage;
     context: PricingEvaluationContext;
   },
-): { amount: number; diagnostic?: RuntimeFormulaDiagnostic } {
+): { amount: number; currency: string; diagnostic?: RuntimeFormulaDiagnostic } {
   const expression = price.expression;
-  if (!expression || expression.kind === 'fixed') return { amount: price.amount };
-  if (expression.kind === 'linear') return { amount: price.amount * expression.multiplier };
+  if (!expression || expression.kind === 'fixed') return { amount: price.amount, currency: price.currency };
+  if (expression.kind === 'linear') return { amount: price.amount * expression.multiplier, currency: price.currency };
 
   const result = evaluatePricingCelExpression(expression.cel, buildPricingCelContext({
     usage: input.usage,
     context: input.context,
     quantity: input.quantity,
     scale: input.scale,
-    unitPriceUsd: price.amount,
+    unitPrice: price.amount,
     component: {
       id: input.component.id,
       kind: input.component.kind,
@@ -671,6 +691,7 @@ function evaluatePricingPrice(
   if (!Number.isFinite(amount) || amount < 0) {
     return {
       amount: 0,
+      currency: price.currency,
       diagnostic: {
         code: 'pricing_cel_formula_invalid',
         message: `Pricing CEL formula for component ${input.component.id} did not evaluate to a non-negative number.`,
@@ -678,7 +699,7 @@ function evaluatePricingPrice(
       },
     };
   }
-  return { amount };
+  return { amount, currency: price.currency };
 }
 
 function findQuantityTier(tiers: QuantityPriceTier[], quantity: number): QuantityPriceTier | null {
@@ -700,8 +721,9 @@ function evaluateGraduatedCost(
   component: PricingComponent,
   usage: CanonicalUsage,
   context: PricingEvaluationContext,
-): { costUsd: number; diagnostic?: RuntimeFormulaDiagnostic } {
+): { cost: number; currency: string; diagnostic?: RuntimeFormulaDiagnostic } {
   let total = 0;
+  const currencies = new Set<string>();
   for (const tier of [...tiers].sort((a, b) => a.from - b.from)) {
     if (quantity <= tier.from) continue;
     const upper = tier.to === undefined ? quantity : Math.min(quantity, tier.to);
@@ -713,10 +735,11 @@ function evaluateGraduatedCost(
       usage,
       context,
     });
-    if (price.diagnostic) return { costUsd: 0, diagnostic: price.diagnostic };
+    if (price.diagnostic) return { cost: 0, currency: tier.price.currency, diagnostic: price.diagnostic };
+    currencies.add(price.currency);
     total += (bandQuantity / scale) * price.amount;
   }
-  return { costUsd: total };
+  return { cost: total, currency: currencies.size === 1 ? [...currencies][0]! : component.price.currency };
 }
 
 function applyRole(role: PricingComponent['role'], cost: number): number {
@@ -732,9 +755,9 @@ function applyComponentMinimumMaximum(
   let total = subtotal;
   for (const component of components) {
     if (component.role === 'minimum') {
-      total = Math.max(total, Math.abs(component.costUsd));
+      total = Math.max(total, Math.abs(component.cost));
     } else if (component.role === 'maximum') {
-      total = Math.min(total, Math.abs(component.costUsd));
+      total = Math.min(total, Math.abs(component.cost));
     }
   }
   if (plan.aggregation.mode !== 'sum_components') return total;
@@ -759,8 +782,8 @@ function applyCommitments(
       updateEstimateLevel('period_estimate');
       continue;
     }
-    if (commitment.minimumSpendUsd !== undefined) {
-      total = Math.max(total, commitment.minimumSpendUsd - (periodState.committedSpendUsd || 0));
+    if (commitment.minimumSpend !== undefined) {
+      total = Math.max(total, commitment.minimumSpend - (periodState.committedSpend || 0));
     }
   }
   return total;
@@ -772,21 +795,23 @@ function applyPostProcessors(
   usage: CanonicalUsage,
   context: PricingEvaluationContext,
   diagnostics: PricingEvaluationDiagnostic[],
+  currency: string,
 ): NonNullable<PricingEvaluation['postProcessors']> {
   const result: NonNullable<PricingEvaluation['postProcessors']> = [];
   for (const processor of postProcessors) {
     if (processor.appliesWhen && !conditionMatches(processor.appliesWhen, usage, context, diagnostics)) continue;
-    let amountUsd = processor.amount || 0;
+    let amount = processor.amount || 0;
     if (processor.factor !== undefined) {
-      amountUsd += subtotal * processor.factor;
+      amount += subtotal * processor.factor;
     }
     if (processor.kind === 'discount') {
-      amountUsd = -Math.abs(amountUsd);
+      amount = -Math.abs(amount);
     }
     result.push({
       id: processor.id,
       kind: processor.kind,
-      amountUsd: roundMoney(amountUsd, 12),
+      currency,
+      amount: roundMoney(amount, 12),
     });
   }
   return result;
@@ -797,7 +822,7 @@ function buildPricingCelContext(input: {
   context: PricingEvaluationContext;
   quantity?: number;
   scale?: number;
-  unitPriceUsd?: number;
+  unitPrice?: number;
   component?: Record<string, unknown>;
 }): PricingCelContext {
   return {
@@ -806,7 +831,7 @@ function buildPricingCelContext(input: {
     usage: input.usage,
     quantity: input.quantity,
     scale: input.scale,
-    unitPriceUsd: input.unitPriceUsd,
+    unitPrice: input.unitPrice,
     component: input.component,
     request: input.context.request || {},
     response: input.context.response || {},
@@ -828,14 +853,34 @@ function roundMoney(value: number, precision: number): number {
   return Math.round(value * factor) / factor;
 }
 
+function firstPlanCurrency(plan: PricingPlan): string {
+  return plan.components[0]?.price.currency || 'USD';
+}
+
+function resolveEvaluationCurrency(
+  plan: PricingPlan,
+  components: PricingEvaluation['components'],
+  diagnostics: PricingEvaluationDiagnostic[],
+): { currency: string; exact: boolean } {
+  const currencies = new Set(components.map((component) => component.currency).filter(Boolean));
+  if (currencies.size === 0) return { currency: firstPlanCurrency(plan), exact: true };
+  if (currencies.size === 1) return { currency: [...currencies][0]!, exact: true };
+  diagnostics.push({
+    code: 'mixed_pricing_currency',
+    severity: 'error',
+    message: `Pricing plan produced mixed currencies: ${[...currencies].sort().join(', ')}.`,
+  });
+  return { currency: firstPlanCurrency(plan), exact: false };
+}
+
 function buildEquivalentMultipliers(
   components: PricingEvaluation['components'],
 ): PricingEvaluation['equivalentMultipliers'] {
   const byKind = new Map(components.map((component) => [component.kind, component]));
   return {
-    input: byKind.get('input_tokens')?.unitPriceUsd ?? null,
-    output: byKind.get('output_tokens')?.unitPriceUsd ?? null,
-    cacheRead: byKind.get('cache_read_tokens')?.unitPriceUsd ?? null,
-    cacheWrite: byKind.get('cache_write_tokens')?.unitPriceUsd ?? null,
+    input: byKind.get('input_tokens')?.unitPrice ?? null,
+    output: byKind.get('output_tokens')?.unitPrice ?? null,
+    cacheRead: byKind.get('cache_read_tokens')?.unitPrice ?? null,
+    cacheWrite: byKind.get('cache_write_tokens')?.unitPrice ?? null,
   };
 }

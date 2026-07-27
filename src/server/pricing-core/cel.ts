@@ -10,7 +10,7 @@ export interface PricingCelContext {
   usage: CanonicalUsage;
   quantity?: number;
   scale?: number;
-  unitPriceUsd?: number;
+  unitPrice?: number;
   component?: Record<string, unknown>;
   request?: Record<string, unknown>;
   response?: Record<string, unknown>;

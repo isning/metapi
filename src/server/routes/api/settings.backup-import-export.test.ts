@@ -1,88 +1,14 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
-import {
-  buildRouteGraphSourceFromLegacyRoutes,
-  compileRouteGraphSource,
-} from '../../../shared/routeGraph.js';
 
 import { createTestApp, type TestAppHandle } from '../../../testing/appHarness.js';
+import { clearRouteGroupMemberTestData, listAllRouteGroupMembers } from '../../../testing/routeGroupMemberTestUtils.js';
 import {
   bootIsolatedRuntimeDb,
   type IsolatedRuntimeDbHandle,
 } from '../../../testing/dbHarness.js';
 
 type DbModule = typeof import('../../db/index.js');
-
-function buildLegacyNativeRouteGraphWithRouteEndpointIds(): unknown {
-  const routes = [
-    {
-      id: 157,
-      ownership: 'auto_generated',
-      visibility: 'public',
-      enabled: true,
-      routingStrategy: 'weighted',
-      displayName: 'deepseek-v4-flash',
-      match: { kind: 'model', requestedModelPattern: 'deepseek-v4-flash', displayName: 'deepseek-v4-flash', routeId: 157 },
-      backend: { kind: 'supply' },
-      supplyEndpointSpecs: [
-        {
-          endpointIdentity: {
-            kind: 'upstream_model',
-            provider: 'new-api',
-            credentialFingerprint: 'account:1:token:1',
-            model: 'deepseek-v4-flash',
-          },
-          endpointLocalRefs: [{ localRouteId: 157, routeTargetId: 1, accountId: 1, tokenId: 1 }],
-          targets: [{ targetId: '1', accountId: 1, tokenId: 1, model: 'deepseek-v4-flash' }],
-        },
-      ],
-    },
-    {
-      id: 166,
-      ownership: 'auto_generated',
-      visibility: 'public',
-      enabled: true,
-      routingStrategy: 'weighted',
-      displayName: 'deepseek-v4-chat',
-      match: { kind: 'model', requestedModelPattern: 'deepseek-v4-chat', displayName: 'deepseek-v4-chat', routeId: 166 },
-      backend: { kind: 'supply' },
-      supplyEndpointSpecs: [
-        {
-          endpointIdentity: {
-            kind: 'upstream_model',
-            provider: 'new-api',
-            credentialFingerprint: 'account:1:token:1',
-            model: 'deepseek-v4-chat',
-          },
-          endpointLocalRefs: [{ localRouteId: 166, routeTargetId: 2, accountId: 1, tokenId: 1 }],
-          targets: [{ targetId: '2', accountId: 1, tokenId: 1, model: 'deepseek-v4-chat' }],
-        },
-      ],
-    },
-    {
-      id: 300,
-      ownership: 'manual',
-      visibility: 'public',
-      enabled: true,
-      routingStrategy: 'weighted',
-      displayName: 'deepseek-manual-group',
-      match: { kind: 'model', requestedModelPattern: '', displayName: 'deepseek-manual-group', routeId: 300 },
-      backend: { kind: 'routes', routeIds: [157, 166] },
-    },
-  ];
-  const currentGraph = buildRouteGraphSourceFromLegacyRoutes(routes);
-  const stableEndpointIdByRouteId = new Map<number, string>();
-  for (const node of currentGraph.nodes) {
-    if (node.type === 'route_endpoint' && node.endpointKind === 'supply' && node.routeId) {
-      stableEndpointIdByRouteId.set(node.routeId, node.id);
-    }
-  }
-  let raw = JSON.stringify(currentGraph);
-  for (const [routeId, stableEndpointId] of stableEndpointIdByRouteId) {
-    raw = raw.split(stableEndpointId).join(`route-endpoint:supply:route:${routeId}`);
-  }
-  return JSON.parse(raw) as unknown;
-}
 
 describe('settings backup import/export api', () => {
   let app: TestAppHandle;
@@ -111,11 +37,13 @@ describe('settings backup import/export api', () => {
     await db.delete(schema.settings).run();
     await db.delete(schema.events).run();
     await db.delete(schema.routeGraphDrafts).run();
+    await db.delete(schema.compiledRuntimeActiveArtifact).run();
+    await db.delete(schema.compiledRuntimeArtifacts).run();
     await db.delete(schema.routeGraphActiveVersion).run();
     await db.delete(schema.routeGraphVersions).run();
-    await db.delete(schema.routeGroupSources).run();
-    await db.delete(schema.routeEndpointTargets).run();
-    await db.delete(schema.tokenRoutes).run();
+    await clearRouteGroupMemberTestData();
+    await db.delete(schema.runtimeExecutionTargetState).run();
+    await db.delete(schema.runtimeExecutionTargets).run();
     await db.delete(schema.accountTokens).run();
     await db.delete(schema.accounts).run();
     await db.delete(schema.sites).run();
@@ -265,9 +193,7 @@ describe('settings backup import/export api', () => {
     expect(dbUrl).toBeUndefined();
   });
 
-  it('imports full backups and silently migrates legacy route graph endpoint references', async () => {
-    const legacyGraph = buildLegacyNativeRouteGraphWithRouteEndpointIds();
-    const legacyCompiledGraph = compileRouteGraphSource(legacyGraph).compiled;
+  it('imports full backups with current route runtime tables and rebuilds active graph when needed', async () => {
     const payload = {
       version: '2.4',
       timestamp: Date.now(),
@@ -312,82 +238,143 @@ describe('settings backup import/export api', () => {
             updatedAt: '2026-03-20T00:00:00.000Z',
           },
         ],
-        tokenRoutes: [
-          {
-            id: 157,
-            modelPattern: 'deepseek-v4-flash',
-            routingStrategy: 'weighted',
-            enabled: true,
-            createdAt: '2026-03-20T00:00:00.000Z',
-            updatedAt: '2026-03-20T00:00:00.000Z',
-          },
-          {
-            id: 166,
-            modelPattern: 'deepseek-v4-chat',
-            routingStrategy: 'weighted',
-            enabled: true,
-            createdAt: '2026-03-20T00:00:00.000Z',
-            updatedAt: '2026-03-20T00:00:00.000Z',
-          },
+        routeGroups: [
           {
             id: 300,
-            displayName: 'deepseek-manual-group',
+            kind: 'manual',
+            groupKey: 'manual:deepseek-rerouted',
+            upstreamModelName: 'deepseek-v4-flash',
+            normalizedModelName: 'deepseek-v4-flash-rerouted',
+            publicModelName: 'deepseek-v4-flash-rerouted',
+            displayName: 'deepseek-v4-flash-rerouted',
+            displayIcon: null,
+            visibility: 'public',
             routingStrategy: 'weighted',
+            sourceMode: 'manual',
+            configJson: null,
+            userOverrideJson: null,
+            syncStatus: 'active',
             enabled: true,
             createdAt: '2026-03-20T00:00:00.000Z',
             updatedAt: '2026-03-20T00:00:00.000Z',
           },
         ],
-        routeEndpointTargets: [
+        runtimeExecutionTargets: [
           {
-            id: 1,
-            routeId: 157,
-            routeEndpointId: 'route-endpoint:supply:route:157',
+            id: 401,
+            executionKey: 'upstream:deepseek-v4-flash|site:1|account:1|token:1',
+            siteId: 1,
             accountId: 1,
             tokenId: 1,
-            sourceModel: 'deepseek-v4-flash',
-            priority: 0,
-            weight: 10,
+            oauthRouteUnitId: null,
+            credentialBindingId: null,
+            endpointProfileId: null,
+            upstreamModelName: 'deepseek-v4-flash',
+            normalizedModelName: 'deepseek-v4-flash',
             enabled: true,
-            manualOverride: false,
-          },
-          {
-            id: 2,
-            routeId: 166,
-            routeEndpointId: 'route-endpoint:supply:route:166',
-            accountId: 1,
-            tokenId: 1,
-            sourceModel: 'deepseek-v4-chat',
-            priority: 1,
-            weight: 10,
-            enabled: true,
-            manualOverride: false,
-          },
-        ],
-        routeGroupSources: [
-          { id: 1, groupRouteId: 300, sourceRouteId: 157 },
-          { id: 2, groupRouteId: 300, sourceRouteId: 166 },
-        ],
-        routeGraph: {
-          versions: [
-            {
-              id: 9,
-              version: 9,
-              sourceGraphJson: JSON.stringify(legacyGraph),
-              compiledGraphJson: JSON.stringify(legacyCompiledGraph),
-              status: 'active',
-              createdBy: 'old-backup',
-              createdAt: '2026-03-20T00:00:00.000Z',
-              activatedAt: '2026-03-20T00:00:00.000Z',
-            },
-          ],
-          activeVersion: {
-            id: 1,
-            versionId: 9,
+            discovered: true,
+            source: 'manual',
+            metadataJson: JSON.stringify({ provider: 'new-api', label: 'flash' }),
+            createdAt: '2026-03-20T00:00:00.000Z',
             updatedAt: '2026-03-20T00:00:00.000Z',
           },
-          drafts: [],
-        },
+          {
+            id: 402,
+            executionKey: 'upstream:deepseek-v4-chat|site:1|account:1|token:1',
+            siteId: 1,
+            accountId: 1,
+            tokenId: 1,
+            oauthRouteUnitId: null,
+            credentialBindingId: null,
+            endpointProfileId: null,
+            upstreamModelName: 'deepseek-v4-chat',
+            normalizedModelName: 'deepseek-v4-chat',
+            enabled: true,
+            discovered: true,
+            source: 'manual',
+            metadataJson: JSON.stringify({ provider: 'new-api', label: 'chat' }),
+            createdAt: '2026-03-20T00:00:00.000Z',
+            updatedAt: '2026-03-20T00:00:00.000Z',
+          },
+        ],
+        routeGroupFallbackStages: [
+          {
+            id: 501,
+            groupId: 300,
+            stageKey: 'primary',
+            sortOrder: 0,
+            label: 'Primary',
+            enabled: true,
+            createdAt: '2026-03-20T00:00:00.000Z',
+            updatedAt: '2026-03-20T00:00:00.000Z',
+          },
+        ],
+        routeGroupCandidates: [
+          {
+            id: 601,
+            groupId: 300,
+            stageId: 501,
+            candidateKey: 'upstream:deepseek-v4-flash|account:1|token:1',
+            candidateKind: 'execution_target',
+            executionTargetId: 401,
+            childGroupId: null,
+            weight: 11,
+            sortOrder: 0,
+            enabled: true,
+            source: 'manual',
+            manualOverride: true,
+            createdAt: '2026-03-20T00:00:00.000Z',
+            updatedAt: '2026-03-20T00:00:00.000Z',
+          },
+          {
+            id: 602,
+            groupId: 300,
+            stageId: 501,
+            candidateKey: 'upstream:deepseek-v4-chat|account:1|token:1',
+            candidateKind: 'execution_target',
+            executionTargetId: 402,
+            childGroupId: null,
+            weight: 13,
+            sortOrder: 1,
+            enabled: true,
+            source: 'manual',
+            manualOverride: true,
+            createdAt: '2026-03-20T00:00:00.000Z',
+            updatedAt: '2026-03-20T00:00:00.000Z',
+          },
+        ],
+        runtimeExecutionTargetState: [
+          {
+            id: 701,
+            executionTargetId: 401,
+            successCount: 3,
+            failCount: 1,
+            totalLatencyMs: 120,
+            totalCost: 0.25,
+            lastUsedAt: '2026-03-20T00:30:00.000Z',
+            lastSelectedAt: '2026-03-20T00:30:00.000Z',
+            lastFailAt: null,
+            consecutiveFailCount: 0,
+            cooldownLevel: 0,
+            cooldownUntil: null,
+            updatedAt: '2026-03-20T00:30:00.000Z',
+          },
+          {
+            id: 702,
+            executionTargetId: 402,
+            successCount: 5,
+            failCount: 0,
+            totalLatencyMs: 160,
+            totalCost: 0.5,
+            lastUsedAt: '2026-03-20T00:31:00.000Z',
+            lastSelectedAt: '2026-03-20T00:31:00.000Z',
+            lastFailAt: null,
+            consecutiveFailCount: 0,
+            cooldownLevel: 0,
+            cooldownUntil: null,
+            updatedAt: '2026-03-20T00:31:00.000Z',
+          },
+        ],
       },
       preferences: {
         settings: [
@@ -413,19 +400,52 @@ describe('settings backup import/export api', () => {
         { key: 'metapi_config_version', value: '2.4' },
       ]),
     });
+    const importEvent = await db.select().from(schema.events)
+      .where(eq(schema.events.type, 'backup_import'))
+      .get();
+    expect(importEvent).toMatchObject({
+      scope: 'notification',
+      category: 'settings',
+      severity: 'success',
+      relatedType: 'settings_import_export',
+      source: 'settings.backup_import',
+    });
+    const importDetails = JSON.parse(importEvent?.detailsJson || '[]');
+    expect(importDetails).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'i18n',
+        titleKey: 'backupImport.notification.completedTitle',
+        messageKey: 'backupImport.notification.completedMessage',
+        paramKeys: { source: 'backupImport.source.manual' },
+      }),
+      expect.objectContaining({
+        type: 'metrics',
+        title: 'backupImport.details.importedCounts',
+        items: expect.arrayContaining([
+          { label: 'backupImport.details.sites', value: '1' },
+          { label: 'backupImport.details.accounts', value: '1' },
+          { label: 'backupImport.details.settings', value: '4' },
+        ]),
+      }),
+    ]));
 
     const activeGraph = await db.select().from(schema.routeGraphVersions)
       .where(eq(schema.routeGraphVersions.status, 'active'))
       .get();
-    expect(activeGraph?.sourceGraphJson).not.toContain('route-endpoint:supply:route:157');
-    expect(activeGraph?.sourceGraphJson).not.toContain('route-endpoint:supply:route:166');
-    expect(activeGraph?.compiledGraphJson).not.toContain('route-endpoint:supply:route:157');
-    expect(activeGraph?.compiledGraphJson).not.toContain('route-endpoint:supply:route:166');
-    expect(activeGraph?.sourceGraphJson).toContain('route-endpoint:supply:upstream-model:');
-    expect(activeGraph?.compiledGraphJson).toContain('route-endpoint:supply:upstream-model:');
+    expect(activeGraph?.sourceGraphJson).toContain('route-endpoint:managed:');
+    const activeRuntime = await db.select().from(schema.compiledRuntimeArtifacts)
+      .where(eq(schema.compiledRuntimeArtifacts.sourceGraphVersionId, activeGraph!.id))
+      .get();
+    expect(activeRuntime?.artifactJson).toContain('route-endpoint:managed:');
+    expect(activeGraph?.sourceGraphJson).toContain('route:managed:');
 
-    const targetRows = await db.select().from(schema.routeEndpointTargets).all();
-    expect(targetRows.map((row) => row.routeEndpointId).sort()).toEqual([null, null]);
+    const targetRows = await listAllRouteGroupMembers();
+    expect(targetRows).toHaveLength(2);
+    expect(targetRows.every((row) => row.accountId > 0)).toBe(true);
+    expect(targetRows.map((row) => row.sourceModel).sort()).toEqual([
+      'deepseek-v4-chat',
+      'deepseek-v4-flash',
+    ]);
   });
 
   it('rejects malformed import envelopes before touching backup state', async () => {
@@ -441,5 +461,285 @@ describe('settings backup import/export api', () => {
       success: false,
       message: '导入数据格式错误：需要 JSON 对象',
     });
+  });
+
+  it('records structured failure notifications when backup import fails after parsing', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/settings/backup/import',
+      headers: app.adminHeaders(),
+      payload: {
+        data: {
+          timestamp: Date.now(),
+          type: 'accounts',
+          accounts: {
+            sites: 'not an array',
+          },
+        },
+      },
+    });
+
+    expect(response.statusCode).toBe(400);
+    const importEvent = await db.select().from(schema.events)
+      .where(eq(schema.events.type, 'backup_import'))
+      .get();
+    expect(importEvent).toMatchObject({
+      scope: 'notification',
+      category: 'settings',
+      severity: 'critical',
+      relatedType: 'settings_import_export',
+      source: 'settings.backup_import',
+    });
+    const details = JSON.parse(importEvent?.detailsJson || '[]');
+    expect(details).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'i18n',
+        titleKey: 'backupImport.notification.failedTitle',
+        messageKey: 'backupImport.notification.failedMessage',
+        paramKeys: { source: 'backupImport.source.manual' },
+      }),
+      expect.objectContaining({
+        type: 'text',
+        title: 'backupImport.details.error',
+      }),
+    ]));
+  });
+
+  it('renders import normalization notices as structured notification tables', async () => {
+    const payload = {
+      version: '2.3',
+      timestamp: Date.now(),
+      type: 'accounts',
+      accounts: {
+        sites: [
+          {
+            id: 1,
+            name: 'previous-route-site',
+            url: 'https://previous-route.example.test',
+            platform: 'openai',
+            status: 'active',
+          },
+        ],
+        accounts: [
+          {
+            id: 1,
+            siteId: 1,
+            username: 'previous-route-user',
+            accessToken: 'previous-route-access',
+            apiToken: 'previous-route-api-key',
+            status: 'active',
+          },
+        ],
+        accountTokens: [
+          {
+            id: 1,
+            accountId: 1,
+            name: 'default-a',
+            token: 'sk-previous-route-a',
+            enabled: true,
+            isDefault: true,
+          },
+          {
+            id: 2,
+            accountId: 1,
+            name: 'default-b',
+            token: 'sk-previous-route-b',
+            enabled: true,
+            isDefault: false,
+          },
+        ],
+        tokenRoutes: [
+          {
+            id: 101,
+            modelPattern: 'DeepSeek-V4-Flash',
+            routingStrategy: 'weighted',
+            enabled: true,
+          },
+          {
+            id: 102,
+            modelPattern: 'deepseek-v4-flash',
+            routingStrategy: 'weighted',
+            enabled: true,
+          },
+        ],
+        routeEndpointTargets: [
+          {
+            id: 11,
+            routeId: 101,
+            accountId: 1,
+            tokenId: 1,
+            sourceModel: 'DeepSeek-V4-Flash',
+            priority: 0,
+            weight: 10,
+            enabled: true,
+            manualOverride: false,
+          },
+          {
+            id: 12,
+            routeId: 102,
+            accountId: 1,
+            tokenId: 2,
+            sourceModel: 'deepseek-v4-flash',
+            priority: 0,
+            weight: 20,
+            enabled: true,
+            manualOverride: false,
+          },
+        ],
+      },
+    };
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/settings/backup/import',
+      headers: app.adminHeaders(),
+      payload: { data: payload },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      warnings: expect.arrayContaining([
+        expect.stringContaining('归一化后同为 deepseek-v4-flash'),
+      ]),
+      notices: expect.arrayContaining([
+        expect.objectContaining({
+          code: 'automatic_model_normalized_coalesced',
+          normalizedModelName: 'deepseek-v4-flash',
+        }),
+      ]),
+    });
+    const importEvent = await db.select().from(schema.events)
+      .where(eq(schema.events.type, 'backup_import'))
+      .get();
+    expect(importEvent).toMatchObject({
+      severity: 'warning',
+    });
+    const details = JSON.parse(importEvent?.detailsJson || '[]');
+    expect(details).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'text',
+        title: 'backupImport.details.coalescedNormalizationNotices',
+        text: 'backupImport.noticeReason.automaticModelNameNormalizedSame',
+      }),
+      expect.objectContaining({
+        type: 'table',
+        title: 'backupImport.details.coalescedNormalizationNotices',
+        columns: [
+          'backupImport.details.normalizedModelName',
+          'backupImport.details.sourceNames',
+          'backupImport.details.resultTarget',
+          'backupImport.details.action',
+        ],
+        rows: expect.arrayContaining([
+          [
+            'deepseek-v4-flash',
+            'DeepSeek-V4-Flash\ndeepseek-v4-flash',
+            '-',
+            '合并为一个自动路由组 deepseek-v4-flash',
+          ],
+        ]),
+      }),
+    ]));
+  });
+
+  it('renders unresolved imported route members as an independent structured table', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/settings/backup/import',
+      headers: app.adminHeaders(),
+      payload: {
+        data: {
+          version: '2.3',
+          timestamp: Date.now(),
+          type: 'accounts',
+          accounts: {
+            sites: [{
+              id: 1,
+              name: 'valid-site',
+              url: 'https://valid.example.test',
+              platform: 'openai',
+              status: 'active',
+            }],
+            accounts: [{
+              id: 1,
+              siteId: 1,
+              username: 'valid-account',
+              accessToken: 'valid-access-token',
+              apiToken: 'valid-api-token',
+              status: 'active',
+            }],
+            accountTokens: [{
+              id: 1,
+              accountId: 1,
+              name: 'default',
+              token: 'sk-valid',
+              enabled: true,
+              isDefault: true,
+            }],
+            tokenRoutes: [{ id: 7, modelPattern: 'missing-account-model', enabled: true }],
+            routeEndpointTargets: [
+              {
+                id: 71,
+                routeId: 7,
+                accountId: 1,
+                tokenId: 1,
+                sourceModel: 'missing-account-model',
+                enabled: true,
+              },
+              {
+                id: 70,
+                routeId: 7,
+                accountId: 404,
+                sourceModel: 'missing-account-model',
+                enabled: true,
+              },
+            ],
+          },
+        },
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      notices: [expect.objectContaining({
+        code: 'route_member_unresolved',
+        groupKey: '7',
+        groupLabel: 'missing-account-model',
+        memberReferenceKind: 'route_endpoint',
+        memberReference: '70',
+        reason: 'account_missing',
+      })],
+    });
+    const importEvent = await db.select().from(schema.events)
+      .where(eq(schema.events.type, 'backup_import'))
+      .get();
+    const details = JSON.parse(importEvent?.detailsJson || '[]');
+    expect(details).toEqual(expect.arrayContaining([
+      {
+        type: 'text',
+        title: 'backupImport.details.unresolvedRouteMembers',
+        text: 'backupImport.noticeReason.routeMemberUnresolved',
+      },
+      {
+        type: 'table',
+        title: 'backupImport.details.unresolvedRouteMembers',
+        columns: [
+          'backupImport.details.routeGroup',
+          'backupImport.details.groupKey',
+          'backupImport.details.memberReferenceKind',
+          'backupImport.details.memberReference',
+          'backupImport.details.reason',
+          'backupImport.details.action',
+        ],
+        rows: [[
+          'missing-account-model',
+          '7',
+          'backupImport.memberReferenceKind.route_endpoint',
+          '70',
+          'backupImport.unresolvedReason.account_missing',
+          'backupImport.unresolvedAction.skipped',
+        ]],
+      },
+    ]));
   });
 });

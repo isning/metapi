@@ -4,12 +4,14 @@ import {
   expectModelsMarketplaceEmptyState,
   expectRouteEditorModes,
 } from './adminPages.js';
-import { expect, test } from '../e2eHarness.js';
+import { expect, test, type Page } from '../e2eHarness.js';
 
-async function seedManualModelRoute(adminApi: {
+type AdminApi = {
   getJson: <T = unknown>(url: string) => Promise<T>;
   postJson: <T = unknown>(url: string, options?: { data?: unknown }) => Promise<T>;
-}) {
+};
+
+async function seedManualModelRoute(adminApi: AdminApi) {
   const suffix = `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
   const modelName = `e2e-route-flow-${suffix}`;
   const site = await adminApi.postJson<{ id: number }>('/api/sites', {
@@ -36,17 +38,32 @@ async function seedManualModelRoute(adminApi: {
 
   await expect.poll(async () => {
     const routes = await adminApi.getJson<{
-      items?: Array<{ modelPattern?: string; match?: { requestedModelPattern?: string } }>;
-    }>(`/api/routes/summary?page=1&pageSize=50&q=${encodeURIComponent(modelName)}`);
+      items?: Array<{
+        routeGroup?: { normalizedModelName?: string | null };
+        presentation?: { displayName?: string | null };
+      }>;
+    }>(`/api/route-groups?paged=1&page=1&pageSize=50&q=${encodeURIComponent(modelName)}`);
     const items = Array.isArray(routes.items) ? routes.items : [];
     return items.some((route) => (
-      route.modelPattern === modelName
-      || route.match?.requestedModelPattern === modelName
+      route.routeGroup?.normalizedModelName === modelName
+      && route.presentation?.displayName === modelName
     ));
   }).toBe(true);
   await adminApi.getJson('/api/models/marketplace?refresh=1&includePricing=1');
 
   return { modelName };
+}
+
+async function openAdvancedJson(page: Page): Promise<string> {
+  const draftResponse = page.waitForResponse((response) => (
+    response.request().method() === 'GET'
+    && new URL(response.url()).pathname === '/api/route-graph/draft'
+  ));
+  await page.getByRole('tab', { name: /Advanced JSON|高级 JSON|JSON/i }).first().click();
+  const response = await draftResponse;
+  expect(response.ok()).toBe(true);
+  await expect(page.locator('.json-code-editor')).toBeVisible();
+  return JSON.stringify(await response.json());
 }
 
 test('navigates core admin pages after login without blank views', async ({ adminPage }) => {
@@ -61,23 +78,33 @@ test('opens route editor list, graph, and advanced json modes', async ({ adminPa
   await expectRouteEditorModes(adminPage);
 });
 
-test('creates a model group macro in the graph editor and persists it to advanced json', async ({ adminPage }) => {
+test('creates a route group and opens its generated macro workspace', async ({ adminPage }) => {
+  const modelName = `e2e-workspace-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
   await adminPage.gotoAdminPage('/routes');
 
+  await adminPage.getByRole('tab', { name: /Manual|手动/i }).click();
+  await adminPage.getByRole('button', { name: /New group|新建群组/i }).click();
+  const dialog = adminPage.getByRole('dialog', { name: /Create Group|创建群组/i });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole('button', { name: /^1?\s*Route mode|^1?\s*路由模式/i }).click();
+  await dialog.getByRole('button', { name: /Generate from model match rules|从模型匹配规则生成/i }).click();
+  await dialog.getByLabel(/Model match|模型匹配/i).fill(modelName);
+  await dialog.getByRole('button', { name: /^Create group$|^创建群组$/i }).click();
+  await expect(dialog).toBeHidden();
+
   await adminPage.getByRole('tab', { name: /Edit|图编辑/i }).click();
-  await expect(adminPage.getByText(/Route Graph/i).first()).toBeVisible();
+  await expect(adminPage.getByText(/Route graph overview|路由图概览/i)).toBeVisible();
+  await adminPage.getByPlaceholder(/Search names|搜索名称/i).fill(modelName);
+  const workspaceRow = adminPage.getByRole('button', { name: new RegExp(modelName, 'i') }).first();
+  await expect(workspaceRow).toBeVisible();
+  await workspaceRow.click();
+  await adminPage.getByRole('button', { name: /Open Focus|打开 Focus/i }).click();
+  await expect(adminPage.getByRole('button', { name: /Back to route graph overview|返回路由图概览/i })).toBeVisible();
+  await expect(adminPage.getByText(modelName).first()).toBeVisible();
 
-  await adminPage.getByRole('tab', { name: /Macros/i }).click();
-  await adminPage.getByRole('button', { name: /Add Model Group macro/i }).click();
-
-  await expect(adminPage.getByText(/Macro/i).first()).toBeVisible();
-  await adminPage.getByLabel(/Public model name/i).fill('e2e-model-group');
-  await adminPage.getByRole('button', { name: /Save Draft/i }).click();
-  await expect(adminPage.getByText(/草稿已保存|Draft/i).first()).toBeVisible();
-
-  await adminPage.getByRole('tab', { name: /Advanced JSON|高级 JSON|JSON/i }).first().click();
-  await expect(adminPage.getByText('e2e-model-group').first()).toBeVisible();
-  await expect(adminPage.getByText('candidate_selector').first()).toBeVisible();
+  const draftJson = await openAdvancedJson(adminPage);
+  expect(draftJson).toContain(modelName);
+  expect(draftJson).toContain('candidate_selector');
 });
 
 test('renders seeded route graph data in the route editor and advanced json', async ({ adminApi, adminPage }) => {
@@ -87,12 +114,17 @@ test('renders seeded route graph data in the route editor and advanced json', as
   await expect(adminPage.getByText(modelName).first()).toBeVisible();
 
   await adminPage.getByRole('tab', { name: /Edit|图编辑/i }).click();
-  await expect(adminPage.getByText(/Graph Tools|Primitive|Template|Diagnostics|Problems/i).first()).toBeVisible();
+  await adminPage.getByPlaceholder(/Search names|搜索名称/i).fill(modelName);
+  const workspaceRow = adminPage.getByRole('button', { name: new RegExp(modelName, 'i') }).first();
+  await expect(workspaceRow).toBeVisible();
+  await workspaceRow.dblclick();
   await expect(adminPage.getByText(modelName).first()).toBeVisible();
+  await adminPage.getByRole('tab', { name: /Primitives|基础节点/i }).click();
+  await expect(adminPage.getByText(/Resident|当前驻留/i).first()).toBeVisible();
 
-  await adminPage.getByRole('tab', { name: /Advanced JSON|高级 JSON|JSON/i }).first().click();
-  await expect(adminPage.getByText(modelName).first()).toBeVisible();
-  await expect(adminPage.getByText(/route_endpoint|candidate_selector/i).first()).toBeVisible();
+  const draftJson = await openAdvancedJson(adminPage);
+  expect(draftJson).toContain(modelName);
+  expect(draftJson).toMatch(/route_endpoint|candidate_selector/i);
 });
 
 test('renders seeded compiled route flow in model details', async ({ adminApi, adminPage }) => {
@@ -104,9 +136,21 @@ test('renders seeded compiled route flow in model details', async ({ adminApi, a
   await expect(modelButton).toBeVisible();
   await modelButton.click();
   await adminPage.getByRole('tab', { name: /Routing|路由/i }).click();
-  await expect(adminPage.getByText(/Compiled route preview|编译路由|candidate endpoints|候选端点/i).first()).toBeVisible();
-  await adminPage.getByRole('tab', { name: /Candidates|候选/i }).click();
-  await expect(adminPage.getByText(/candidate|候选|probability|概率/i).first()).toBeVisible();
+  const routingPanel = adminPage.getByRole('tabpanel', { name: /Routing|路由/i });
+  await expect(routingPanel.getByText(/Route plan|路由方案/i).first()).toBeVisible();
+  await expect(routingPanel.getByText(/Matched|已匹配/i).first()).toBeVisible();
+  await expect(routingPanel.getByText(/Terminal outcome|终端结果/i).first()).toBeVisible();
+  await expect(routingPanel.getByRole('tab', { name: /Execution paths|执行路径/i })).toBeVisible();
+  await expect(routingPanel.getByText(/Selection terms|选择项/i).first()).toBeVisible();
+  await expect(routingPanel.getByText(/Execution attempts|执行尝试/i).first()).toBeVisible();
+  await expect(routingPanel.getByText(/Upstream API fallback order|上游 API 回退顺序/i).first()).toBeVisible();
+  await routingPanel.getByRole('tab', { name: /^Cost$|^成本$/i }).click();
+  await expect(routingPanel.getByText(/Entry cost|入口成本/i).first()).toBeVisible();
+  await routingPanel.getByRole('tab', { name: /^Diagnostics$|^诊断$/i }).click();
+  await expect(routingPanel.getByText(/^info$/i).first()).toBeVisible();
+  await expect(routingPanel.getByText(
+    new RegExp(`No configured upstream cost for ${modelName} on execution attempt`),
+  ).first()).toBeVisible();
 });
 
 test('creates a reference pricing entry from the cost catalog page', async ({ adminApi, adminPage }) => {

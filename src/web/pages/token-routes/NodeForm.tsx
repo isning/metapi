@@ -1,586 +1,112 @@
-import type { ReactNode } from 'react';
+import { LoaderCircle, Plus, Search, Trash2 } from 'lucide-react';
+import type {
+  RouteEndpointConfig,
+  RouteFilter,
+  RouteGraphNode,
+} from '../../../shared/routeGraph.js';
+import type { DispatchPolicyRegistryPayload } from '../../api.js';
+import { Badge } from '../../components/ui/badge/index.js';
 import { Button } from '../../components/ui/button/index.js';
+import { Checkbox } from '../../components/ui/checkbox/index.js';
 import { Input } from '../../components/ui/input/index.js';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../components/ui/select/index.js';
 import { Switch } from '../../components/ui/switch/index.js';
-import { Badge } from '../../components/ui/badge/index.js';
-import * as DropdownMenu from '../../components/ui/dropdown-menu/index.js';
-import { Braces, ChevronDown, GitBranch, Heading, Plus, RotateCcw, Trash2, Wand2 } from 'lucide-react';
-import JsonCodeEditor from '../../components/JsonCodeEditor.js';
-import type { RouteFilter, RouteGraphNode, RouteGraphNodeType } from './routeGraphTypes.js';
-import { UpstreamCompatibilityPolicyEditor } from '../../components/UpstreamCompatibilityPolicyEditor.js';
-import {
-  policyFormFromStoredValue,
-  serializeCompatibilityPolicyForm,
-} from '../../lib/upstreamCompatibilityPolicyEditor.js';
 import { tr } from '../../i18n.js';
+import { DispatcherPolicySelect } from './DispatcherPolicySelect.js';
 
-function SelectField<TValue extends string>({
-  value,
-  disabled,
-  placeholder,
-  options,
-  onChange,
-}: {
-  value: TValue;
-  disabled?: boolean;
-  placeholder?: string;
-  options: Array<{ value: TValue; label: string }>;
-  onChange: (value: TValue) => void;
-}) {
-  return (
-    <Select disabled={disabled} value={value} onValueChange={(next) => onChange(next as TValue)}>
-      <SelectTrigger>
-        <SelectValue placeholder={placeholder} />
-      </SelectTrigger>
-      <SelectContent>
-        {options.map((option) => (
-          <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
-  );
+const FILTER_TYPES: Array<{ value: RouteFilter['type']; label: string }> = [
+  { value: 'rewrite_model', label: tr('pages.tokenRoutes.nodeForm.filterRewriteModel') },
+  { value: 'set_payload', label: tr('pages.tokenRoutes.nodeForm.filterSetPayload') },
+  { value: 'remove_payload', label: tr('pages.tokenRoutes.nodeForm.filterRemovePayload') },
+  { value: 'set_header', label: tr('pages.tokenRoutes.nodeForm.filterSetHeader') },
+  { value: 'remove_header', label: tr('pages.tokenRoutes.nodeForm.filterRemoveHeader') },
+  { value: 'set_endpoint_preference', label: tr('pages.tokenRoutes.nodeForm.filterEndpointPreference') },
+];
+
+function defaultFilter(type: RouteFilter['type']): RouteFilter {
+  switch (type) {
+    case 'rewrite_model': return { type, source: 'current_model', operation: 'set', value: '' };
+    case 'set_payload': return { type, path: '', value: '', mode: 'default' };
+    case 'remove_payload': return { type, path: '' };
+    case 'set_header': return { type, name: '', value: '', mode: 'override' };
+    case 'remove_header': return { type, name: '' };
+    case 'set_endpoint_preference': return { type, endpoint: 'responses' };
+  }
 }
 
-export function NodeForm({ node, readonly, onChange, onDelete }: {
+function parseFilterValue(value: string): unknown {
+  try { return JSON.parse(value); } catch { return value; }
+}
+
+function stringFilterValue(value: unknown): string {
+  return typeof value === 'string' ? value : JSON.stringify(value ?? '');
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return <label className="grid gap-1.5 text-xs font-medium text-muted-foreground"><span>{label}</span>{children}</label>;
+}
+
+export function FilterOperationsEditor({
+  value,
+  disabled = false,
+  onChange,
+}: {
+  value: RouteFilter[];
+  disabled?: boolean;
+  onChange: (operations: RouteFilter[]) => void;
+}) {
+  const update = (index: number, operation: RouteFilter) => onChange(value.map((item, itemIndex) => itemIndex === index ? operation : item));
+  return <div className="grid min-w-0 gap-3">
+    <div className="flex flex-wrap items-start justify-between gap-3"><div><div className="text-sm font-medium">{tr('pages.tokenRoutes.nodeForm.requestFilterRules')}</div><div className="mt-0.5 text-xs text-muted-foreground">{tr('pages.tokenRoutes.nodeForm.requestFilterRulesDescription')}</div></div><Button type="button" variant="outline" size="sm" disabled={disabled} onClick={() => onChange([...value, defaultFilter('rewrite_model')])}><Plus className="size-4" />{tr('pages.tokenRoutes.nodeForm.addFilter')}</Button></div>
+    {value.length === 0 ? <div className="rounded-md border border-dashed bg-muted/20 p-4 text-xs text-muted-foreground">{tr('pages.tokenRoutes.nodeForm.noFiltersConfigured')}</div> : null}
+    {value.map((operation, index) => <div key={`${operation.type}-${index}`} className="grid min-w-0 gap-3 rounded-md border bg-card p-3"><div className="flex min-w-0 items-start justify-between gap-3"><div className="min-w-0"><div className="flex flex-wrap items-center gap-1.5"><span className="truncate text-xs font-semibold text-foreground">{FILTER_TYPES.find((item) => item.value === operation.type)?.label || operation.type}</span><Badge variant="outline">{operation.type === 'rewrite_model' ? tr('pages.tokenRoutes.nodeForm.preSelectionStageShort') : tr('pages.tokenRoutes.nodeForm.postBuildStageShort')}</Badge></div></div><Button type="button" variant="ghost" size="icon" disabled={disabled} aria-label={tr('pages.tokenRoutes.nodeForm.removeOperation')} onClick={() => onChange(value.filter((_, itemIndex) => itemIndex !== index))}><Trash2 className="size-4" /></Button></div><div className="grid gap-3 sm:grid-cols-2"><Field label={tr('pages.tokenRoutes.nodeForm.type')}><Select disabled={disabled} value={operation.type} onValueChange={(next) => update(index, defaultFilter(next as RouteFilter['type']))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{FILTER_TYPES.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectContent></Select></Field>{operation.type === 'rewrite_model' && <><Field label={tr('pages.tokenRoutes.nodeForm.source')}><Select disabled={disabled} value={operation.source} onValueChange={(source) => update(index, { ...operation, source: source as 'current_model' | 'upstream_model' })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="current_model">{tr('pages.tokenRoutes.nodeForm.currentModel')}</SelectItem><SelectItem value="upstream_model">{tr('pages.tokenRoutes.nodeForm.upstreamModel')}</SelectItem></SelectContent></Select></Field><Field label={tr('pages.tokenRoutes.nodeForm.operation')}><Select disabled={disabled} value={operation.operation} onValueChange={(next) => update(index, { ...operation, operation: next as 'set' | 'strip_suffix' })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="set">{tr('pages.tokenRoutes.nodeForm.setModel')}</SelectItem><SelectItem value="strip_suffix">{tr('pages.tokenRoutes.nodeForm.stripSuffix')}</SelectItem></SelectContent></Select></Field><Field label={operation.operation === 'set' ? tr('pages.tokenRoutes.nodeForm.modelValue') : tr('pages.tokenRoutes.nodeForm.suffix')}><Input disabled={disabled} value={operation.operation === 'set' ? operation.value || '' : operation.suffix || ''} onChange={(event) => update(index, operation.operation === 'set' ? { ...operation, value: event.target.value } : { ...operation, suffix: event.target.value })} /></Field></>}{operation.type === 'set_payload' && <><Field label={tr('pages.tokenRoutes.nodeForm.payloadPath')}><Input disabled={disabled} value={operation.path} onChange={(event) => update(index, { ...operation, path: event.target.value })} /></Field><Field label={tr('pages.tokenRoutes.nodeForm.mode')}><Select disabled={disabled} value={operation.mode || 'default'} onValueChange={(mode) => update(index, { ...operation, mode: mode as 'default' | 'override' })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="default">{tr('pages.tokenRoutes.nodeForm.defaultMode')}</SelectItem><SelectItem value="override">{tr('pages.tokenRoutes.nodeForm.overrideMode')}</SelectItem></SelectContent></Select></Field><Field label={tr('pages.tokenRoutes.nodeForm.valueJson')}><Input disabled={disabled} value={stringFilterValue(operation.value)} onChange={(event) => update(index, { ...operation, value: parseFilterValue(event.target.value) })} /></Field></>}{operation.type === 'remove_payload' && <Field label={tr('pages.tokenRoutes.nodeForm.payloadPath')}><Input disabled={disabled} value={operation.path} onChange={(event) => update(index, { ...operation, path: event.target.value })} /></Field>}{operation.type === 'set_header' && <><Field label={tr('pages.tokenRoutes.nodeForm.headerName')}><Input disabled={disabled} value={operation.name} onChange={(event) => update(index, { ...operation, name: event.target.value })} /></Field><Field label={tr('pages.tokenRoutes.nodeForm.headerValue')}><Input disabled={disabled} value={operation.value} onChange={(event) => update(index, { ...operation, value: event.target.value })} /></Field></>}{operation.type === 'remove_header' && <Field label={tr('pages.tokenRoutes.nodeForm.headerName')}><Input disabled={disabled} value={operation.name} onChange={(event) => update(index, { ...operation, name: event.target.value })} /></Field>}{operation.type === 'set_endpoint_preference' && <Field label={tr('pages.tokenRoutes.nodeForm.endpoint')}><Select disabled={disabled} value={operation.endpoint} onValueChange={(endpoint) => update(index, { ...operation, endpoint: endpoint as 'chat' | 'messages' | 'responses' })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="responses">responses</SelectItem><SelectItem value="chat">chat</SelectItem><SelectItem value="messages">messages</SelectItem></SelectContent></Select></Field>}</div></div>)}
+  </div>;
+}
+
+export function NodeForm({
+  node,
+  readonly,
+  onChange,
+  onDelete,
+  policyRegistry,
+  referenceEndpoints = [],
+  referenceEndpointCatalog,
+}: {
   node: RouteGraphNode;
   readonly: boolean;
   onChange: (node: RouteGraphNode) => void;
   onDelete: () => void;
-}) {
-  const update = (patch: Partial<RouteGraphNode>) => onChange({ ...node, ...patch });
-  const TypeEditor = NODE_EDITOR_BY_TYPE[node.type] || null;
-  return (
-    <div className="grid gap-3">
-      <label>
-        {tr('pages.tokenRoutes.nodeForm.name')}
-        <Input disabled={readonly} value={String(node.name || '')} onChange={(event) => update({ name: event.target.value })} />
-      </label>
-      <label>
-        {tr('pages.tokenRoutes.nodeForm.visibility')}
-        <SelectField
-          disabled={readonly}
-          value={node.visibility}
-          options={[
-            { value: 'public', label: 'public' },
-            { value: 'internal', label: 'internal' },
-          ]}
-          onChange={(visibility) => update({ visibility })}
-        />
-      </label>
-      <div className="flex items-center justify-between gap-3">
-        <span>{tr('pages.tokenRoutes.nodeForm.enabled')}</span>
-        <Switch disabled={readonly} checked={node.enabled} onCheckedChange={(enabled) => update({ enabled })} aria-label={tr('pages.tokenRoutes.nodeForm.enabled')} />
-      </div>
-      {TypeEditor && <TypeEditor readonly={readonly} node={node} onChange={update} />}
-      <Button variant="destructive" size="sm" type="button" disabled={readonly} onClick={readonly ? undefined : onDelete}>{tr('pages.tokenRoutes.nodeForm.delete')}</Button>
-    </div>
-  );
-}
-
-type NodeEditorProps = {
-  readonly: boolean;
-  node: RouteGraphNode;
-  onChange: (patch: Partial<RouteGraphNode>) => void;
-};
-
-const NODE_EDITOR_BY_TYPE: Partial<Record<RouteGraphNodeType, (props: NodeEditorProps) => ReactNode>> = {
-  entry: EntryNodeEditor,
-  filter: FilterNodeEditor,
-  dispatcher: DispatcherEditor,
-  route_endpoint: RouteEndpointEditor,
-  auto_node: AutoNodeEditor,
-  synthetic_endpoint: SyntheticEndpointEditor,
-};
-
-function EntryNodeEditor({ readonly, node, onChange }: NodeEditorProps) {
-  const match = (node.match || {}) as any;
-  return (
-    <>
-      <label>
-        {tr('pages.tokenRoutes.nodeForm.requestedModelPattern')}
-        <Input disabled={readonly} value={String(match.requestedModelPattern || '')} onChange={(event) => onChange({ match: { ...match, kind: 'model', requestedModelPattern: event.target.value } })} />
-      </label>
-      <label>
-        {tr('pages.tokenRoutes.nodeForm.publicDisplayName')}
-        <Input disabled={readonly} value={String(match.displayName || '')} onChange={(event) => onChange({ match: { ...match, kind: 'model', displayName: event.target.value || null } })} />
-      </label>
-    </>
-  );
-}
-
-function FilterNodeEditor({ readonly, node, onChange }: NodeEditorProps) {
-  return (
-    <FilterOperationsEditor
-      readonly={readonly}
-      operations={(Array.isArray(node.operations) ? node.operations : []) as RouteFilter[]}
-      onChange={(operations) => onChange({ operations })}
-    />
-  );
-}
-
-function AutoNodeEditor({ readonly, node, onChange }: NodeEditorProps) {
-  return (
-    <>
-      <label>
-        {tr('pages.tokenRoutes.nodeForm.legacyRouteId')}
-        <Input disabled={readonly} value={String(node.legacyRouteId || '')} onChange={(event) => onChange({ legacyRouteId: Number(event.target.value) || null })} />
-      </label>
-      <label>
-        {tr('pages.tokenRoutes.nodeForm.routeNodeId')}
-        <Input disabled={readonly} value={String(node.routeNodeId || '')} onChange={(event) => onChange({ routeNodeId: event.target.value })} />
-      </label>
-    </>
-  );
-}
-
-function SyntheticEndpointEditor({ readonly, node, onChange }: NodeEditorProps) {
-  return (
-    <>
-      <label>
-        {tr('pages.tokenRoutes.nodeForm.status')}
-        <SelectField
-          disabled={readonly}
-          value={String(node.statusCode || 503)}
-          options={[
-            { value: '503', label: '503 Service Unavailable' },
-            { value: '429', label: '429 Rate Limited' },
-          ]}
-          onChange={(statusCode) => onChange({ statusCode: Number(statusCode) as 429 | 503 })}
-        />
-      </label>
-      <label>
-        {tr('pages.tokenRoutes.nodeForm.message')}
-        <Input disabled={readonly} value={String(node.message || '')} onChange={(event) => onChange({ message: event.target.value })} />
-      </label>
-    </>
-  );
-}
-
-function defaultOperation(type: RouteFilter['type']): RouteFilter {
-  if (type === 'rewrite_model') return { type, source: 'current_model', operation: 'strip_suffix', suffix: '-max' };
-  if (type === 'set_payload') return { type, path: 'reasoning_effort', value: 'high', mode: 'default' };
-  if (type === 'remove_payload') return { type, path: 'reasoning_effort' };
-  if (type === 'set_header') return { type, name: 'x-metapi-route', value: 'manual', mode: 'override' };
-  if (type === 'remove_header') return { type, name: 'x-metapi-route' };
-  return { type, endpoint: 'responses' };
-}
-
-function parseJsonField(value: string): unknown {
-  try {
-    return JSON.parse(value);
-  } catch {
-    return value;
-  }
-}
-
-function stringifyJsonInput(value: unknown): string {
-  if (value == null) return '';
-  if (typeof value === 'string') return value;
-  return JSON.stringify(value, null, 2);
-}
-
-type FilterOperationTemplate = {
-  type: RouteFilter['type'];
-  title: string;
-  description: string;
-  stage: 'pre_selection' | 'post_build';
-  icon: ReactNode;
-};
-
-const FILTER_OPERATION_TEMPLATES: FilterOperationTemplate[] = [
-  {
-    type: 'rewrite_model',
-    title: tr('pages.tokenRoutes.nodeForm.filterRewriteModel'),
-    description: tr('pages.tokenRoutes.nodeForm.filterRewriteModelDescription'),
-    stage: 'pre_selection',
-    icon: <GitBranch className="size-3.5" />,
-  },
-  {
-    type: 'set_payload',
-    title: tr('pages.tokenRoutes.nodeForm.filterSetPayload'),
-    description: tr('pages.tokenRoutes.nodeForm.filterSetPayloadDescription'),
-    stage: 'post_build',
-    icon: <Braces className="size-3.5" />,
-  },
-  {
-    type: 'remove_payload',
-    title: tr('pages.tokenRoutes.nodeForm.filterRemovePayload'),
-    description: tr('pages.tokenRoutes.nodeForm.filterRemovePayloadDescription'),
-    stage: 'post_build',
-    icon: <Trash2 className="size-3.5" />,
-  },
-  {
-    type: 'set_header',
-    title: tr('pages.tokenRoutes.nodeForm.filterSetHeader'),
-    description: tr('pages.tokenRoutes.nodeForm.filterSetHeaderDescription'),
-    stage: 'post_build',
-    icon: <Heading className="size-3.5" />,
-  },
-  {
-    type: 'remove_header',
-    title: tr('pages.tokenRoutes.nodeForm.filterRemoveHeader'),
-    description: tr('pages.tokenRoutes.nodeForm.filterRemoveHeaderDescription'),
-    stage: 'post_build',
-    icon: <Trash2 className="size-3.5" />,
-  },
-  {
-    type: 'set_endpoint_preference',
-    title: tr('pages.tokenRoutes.nodeForm.filterEndpointPreference'),
-    description: tr('pages.tokenRoutes.nodeForm.filterEndpointPreferenceDescription'),
-    stage: 'post_build',
-    icon: <Wand2 className="size-3.5" />,
-  },
-];
-
-function getFilterOperationTemplate(type: RouteFilter['type']): FilterOperationTemplate {
-  return FILTER_OPERATION_TEMPLATES.find((item) => item.type === type) || FILTER_OPERATION_TEMPLATES[1]!;
-}
-
-function getFilterOperationStage(operation: RouteFilter): 'pre_selection' | 'post_build' {
-  return operation.type === 'rewrite_model' ? 'pre_selection' : 'post_build';
-}
-
-function getFilterOperationSummary(operation: RouteFilter): string {
-  if (operation.type === 'rewrite_model') {
-    const source = operation.source === 'upstream_model'
-      ? tr('pages.tokenRoutes.nodeForm.upstreamModel')
-      : tr('pages.tokenRoutes.nodeForm.currentModel');
-    if (operation.operation === 'set') {
-      return tr('pages.tokenRoutes.nodeForm.filterSummarySetModel')
-        .replace('{source}', source)
-        .replace('{value}', String(operation.value || '-'));
-    }
-    return tr('pages.tokenRoutes.nodeForm.filterSummaryStripSuffix')
-      .replace('{source}', source)
-      .replace('{suffix}', String(operation.suffix || '-'));
-  }
-  if (operation.type === 'set_payload') {
-    return tr('pages.tokenRoutes.nodeForm.filterSummarySetPayload')
-      .replace('{path}', operation.path || '-')
-      .replace('{mode}', operation.mode || 'default');
-  }
-  if (operation.type === 'remove_payload') {
-    return tr('pages.tokenRoutes.nodeForm.filterSummaryRemovePayload')
-      .replace('{path}', operation.path || '-');
-  }
-  if (operation.type === 'set_header') {
-    return tr('pages.tokenRoutes.nodeForm.filterSummarySetHeader')
-      .replace('{name}', operation.name || '-')
-      .replace('{mode}', operation.mode || 'default');
-  }
-  if (operation.type === 'remove_header') {
-    return tr('pages.tokenRoutes.nodeForm.filterSummaryRemoveHeader')
-      .replace('{name}', operation.name || '-');
-  }
-  return tr('pages.tokenRoutes.nodeForm.filterSummaryEndpointPreference')
-    .replace('{endpoint}', operation.endpoint || '-');
-}
-
-function FilterField({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
-      <span>{label}</span>
-      {children}
-    </label>
-  );
-}
-
-function DispatcherEditor({ readonly, node, onChange }: NodeEditorProps) {
-  const mode = node.mode === 'flow' ? 'flow' : 'route';
-  const policy = (node.policy && typeof node.policy === 'object' ? node.policy : { strategy: 'weighted' }) as Record<string, unknown>;
-  return (
-    <div className="grid gap-3">
-      <div className="text-sm font-medium">{tr('pages.tokenRoutes.nodeForm.bidirectDispatch')}</div>
-      <label>
-        {tr('pages.tokenRoutes.nodeForm.mode')}
-        <SelectField
-          disabled={readonly}
-          value={mode}
-          options={[
-            { value: 'route', label: 'route' },
-            { value: 'flow', label: 'flow' },
-          ]}
-          onChange={(nextMode) => onChange({ mode: nextMode })}
-        />
-      </label>
-      <label>
-        {tr('pages.tokenRoutes.nodeForm.ordering')}
-        <SelectField
-          disabled={readonly}
-          value={String(node.ordering || 'explicit')}
-          options={[{ value: 'explicit', label: 'explicit' }]}
-          onChange={(ordering) => onChange({ ordering })}
-        />
-      </label>
-      <label>
-        {tr('pages.tokenRoutes.nodeForm.strategy')}
-        <SelectField
-          disabled={readonly}
-          value={String(policy.strategy || 'weighted')}
-          options={[
-            { value: 'priority_order', label: 'priority_order' },
-            { value: 'weighted', label: 'weighted' },
-            { value: 'round_robin', label: 'round_robin' },
-            { value: 'stable_first', label: 'stable_first' },
-            { value: 'direct', label: 'direct' },
-          ]}
-          onChange={(strategy) => onChange({ policy: { ...policy, strategy } })}
-        />
-      </label>
-      <label>
-        {tr('pages.tokenRoutes.nodeForm.policyJson')}
-        <JsonCodeEditor disabled={readonly} value={stringifyJsonInput(node.policy || {})} minHeight={180} onChange={(value) => {
-          try { onChange({ policy: JSON.parse(value) }); } catch { onChange({ policy: value }); }
-        }} />
-      </label>
-    </div>
-  );
-}
-
-function RouteEndpointEditor({ readonly, node, onChange }: NodeEditorProps) {
-  const config = (node.config && typeof node.config === 'object' ? node.config : { targets: [{ targetId: node.id, model: node.id }], targetSelection: { strategy: 'weighted' } }) as Record<string, unknown>;
-  const metadata = (node.metadata && typeof node.metadata === 'object' ? node.metadata : {}) as Record<string, unknown>;
-  const targetSelection = (config.targetSelection && typeof config.targetSelection === 'object' ? config.targetSelection : { strategy: 'weighted' }) as Record<string, unknown>;
-  const policyForm = policyFormFromStoredValue(config.compatibilityPolicy);
-  const updateCompatibilityPolicy = (nextForm: ReturnType<typeof policyFormFromStoredValue>) => {
-    const serialized = serializeCompatibilityPolicyForm(nextForm);
-    if (!serialized.ok) return;
-    onChange({ config: { ...config, compatibilityPolicy: serialized.policy } });
+  policyRegistry?: DispatchPolicyRegistryPayload | null;
+  referenceEndpoints?: Array<{ id: string; label: string }>;
+  referenceEndpointCatalog?: {
+    query: string;
+    loading: boolean;
+    hasMore: boolean;
+    onQueryChange: (query: string) => void;
+    onLoadMore: () => void;
   };
-  return (
-    <div className="grid gap-3">
-      <div className="text-sm font-medium">{tr('pages.tokenRoutes.nodeForm.routeEndpoint')}</div>
-      <label>
-        {tr('pages.tokenRoutes.nodeForm.targetSelection')}
-        <SelectField
-          disabled={readonly}
-          value={String(targetSelection.strategy || 'weighted')}
-          options={[
-            { value: 'defer_to_router', label: 'defer_to_router' },
-            { value: 'priority_order', label: 'priority_order' },
-            { value: 'weighted', label: 'weighted' },
-            { value: 'round_robin', label: 'round_robin' },
-            { value: 'stable_first', label: 'stable_first' },
-            { value: 'direct', label: 'direct' },
-          ]}
-          onChange={(strategy) => onChange({ config: { ...config, targetSelection: { ...targetSelection, strategy } } })}
-        />
-      </label>
-      <label>
-        {tr('pages.tokenRoutes.nodeForm.metadataJson')}
-        <JsonCodeEditor disabled={readonly} value={stringifyJsonInput(metadata)} minHeight={180} onChange={(value) => {
-          try { onChange({ metadata: JSON.parse(value) }); } catch { onChange({ metadata: value }); }
-        }} />
-      </label>
-      <UpstreamCompatibilityPolicyEditor
-        compact
-        disabled={readonly}
-        value={policyForm}
-        inheritFrom={tr('upstreamCompatibility.inheritSource.routeEndpointChain')}
-        onChange={updateCompatibilityPolicy}
-      />
-      <label>
-        {tr('pages.tokenRoutes.nodeForm.configJson')}
-        <JsonCodeEditor disabled={readonly} value={stringifyJsonInput(config)} minHeight={220} onChange={(value) => {
-          try { onChange({ config: JSON.parse(value) }); } catch { onChange({ config: value }); }
-        }} />
-      </label>
-    </div>
-  );
+}) {
+  const patch = (data: Partial<RouteGraphNode>) => onChange({ ...node, ...data } as RouteGraphNode);
+  return <div className="grid gap-4 text-sm"><label className="grid gap-1.5 text-muted-foreground">{tr('pages.tokenRoutes.nodeForm.name')}<Input disabled={readonly} value={node.name || ''} onChange={(event) => patch({ name: event.target.value })} /></label><label className="flex items-center justify-between gap-3 text-muted-foreground">{tr('pages.tokenRoutes.nodeForm.enabled')}<Switch disabled={readonly} checked={node.enabled} onCheckedChange={(enabled) => patch({ enabled })} /></label>{node.type === 'entry' && <EntryNodeForm node={node} readonly={readonly} onChange={patch} />}{node.type === 'filter' && <FilterOperationsEditor value={node.operations} disabled={readonly} onChange={(operations) => patch({ operations } as Partial<RouteGraphNode>)} />}{node.type === 'dispatcher' && <DispatcherNodeForm node={node} readonly={readonly} registry={policyRegistry} onChange={patch} />}{node.type === 'route_endpoint' && <RouteEndpointNodeForm node={node} readonly={readonly} registry={policyRegistry} referenceEndpoints={referenceEndpoints.filter((item) => item.id !== node.routeEndpointId)} referenceEndpointCatalog={referenceEndpointCatalog} onChange={patch} />}{node.type === 'synthetic_endpoint' && <SyntheticEndpointNodeForm node={node} readonly={readonly} onChange={patch} />}{!readonly && <Button type="button" variant="destructive" size="sm" onClick={onDelete}><Trash2 className="size-4" />{tr('pages.tokenRoutes.nodeForm.delete')}</Button>}</div>;
 }
 
-export function FilterOperationsEditor({
-  readonly,
-  operations,
-  onChange,
-}: {
-  readonly: boolean;
-  operations: RouteFilter[];
-  onChange: (operations: RouteFilter[]) => void;
-}) {
-  const updateOperation = (index: number, operation: RouteFilter) => {
-    onChange(operations.map((item, itemIndex) => (itemIndex === index ? operation : item)));
-  };
-  const addOperation = (type: RouteFilter['type']) => onChange([...operations, defaultOperation(type)]);
-  return (
-    <div className="grid gap-3 min-w-0">
-      <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="route-graph-config-title">{tr('pages.tokenRoutes.nodeForm.requestFilterRules')}</div>
-          <div className="route-graph-config-description mt-0.5">
-            {tr('pages.tokenRoutes.nodeForm.requestFilterRulesDescription')}
-          </div>
-        </div>
-        <DropdownMenu.Root>
-          <DropdownMenu.Trigger asChild>
-            <Button type="button" variant="outline" size="sm" disabled={readonly}>
-              <Plus className="size-4" />
-              {tr('pages.tokenRoutes.nodeForm.addFilter')}
-              <ChevronDown className="size-3.5 opacity-70" />
-            </Button>
-          </DropdownMenu.Trigger>
-          <DropdownMenu.Content align="end" className="w-80">
-            <DropdownMenu.Label>{tr('pages.tokenRoutes.nodeForm.preSelectionStage')}</DropdownMenu.Label>
-            {FILTER_OPERATION_TEMPLATES.filter((item) => item.stage === 'pre_selection').map((item) => (
-              <DropdownMenu.Item key={item.type} onSelect={() => addOperation(item.type)} className="items-start gap-2">
-                <span className="mt-0.5 text-muted-foreground">{item.icon}</span>
-                <span className="grid gap-0.5">
-                  <span className="font-medium">{item.title}</span>
-                  <span className="text-xs text-muted-foreground">{item.description}</span>
-                </span>
-              </DropdownMenu.Item>
-            ))}
-            <DropdownMenu.Separator />
-            <DropdownMenu.Label>{tr('pages.tokenRoutes.nodeForm.postBuildStage')}</DropdownMenu.Label>
-            {FILTER_OPERATION_TEMPLATES.filter((item) => item.stage === 'post_build').map((item) => (
-              <DropdownMenu.Item key={item.type} onSelect={() => addOperation(item.type)} className="items-start gap-2">
-                <span className="mt-0.5 text-muted-foreground">{item.icon}</span>
-                <span className="grid gap-0.5">
-                  <span className="font-medium">{item.title}</span>
-                  <span className="text-xs text-muted-foreground">{item.description}</span>
-                </span>
-              </DropdownMenu.Item>
-            ))}
-          </DropdownMenu.Content>
-        </DropdownMenu.Root>
-      </div>
+function EntryNodeForm({ node, readonly, onChange }: { node: Extract<RouteGraphNode, { type: 'entry' }>; readonly: boolean; onChange: (patch: Partial<RouteGraphNode>) => void }) {
+  return <div className="grid gap-3"><label className="grid gap-1.5 text-muted-foreground">{tr('pages.tokenRoutes.nodeForm.requestedModelPattern')}<Input disabled={readonly} value={node.match.requestedModelPattern || ''} onChange={(event) => onChange({ match: { ...node.match, requestedModelPattern: event.target.value } } as Partial<RouteGraphNode>)} /></label><label className="grid gap-1.5 text-muted-foreground">{tr('pages.tokenRoutes.nodeForm.upstreamModel')}<Input disabled={readonly} value={node.match.currentModelPattern || ''} onChange={(event) => onChange({ match: { ...node.match, currentModelPattern: event.target.value || undefined } } as Partial<RouteGraphNode>)} /></label><label className="grid gap-1.5 text-muted-foreground">{tr('pages.tokenRoutes.nodeForm.publicDisplayName')}<Input disabled={readonly} value={node.match.displayName || ''} onChange={(event) => onChange({ match: { ...node.match, displayName: event.target.value || null } } as Partial<RouteGraphNode>)} /></label></div>;
+}
 
-      {operations.length === 0 ? (
-        <div className="grid gap-2 rounded-md border border-dashed bg-muted/20 p-4 text-xs">
-          <div className="font-medium text-foreground">{tr('pages.tokenRoutes.nodeForm.noFiltersConfigured')}</div>
-          <div className="leading-relaxed text-muted-foreground">
-            {tr('pages.tokenRoutes.nodeForm.noFiltersConfiguredDescription')}
-          </div>
-        </div>
-      ) : null}
+function DispatcherNodeForm({ node, readonly, registry, onChange }: { node: Extract<RouteGraphNode, { type: 'dispatcher' }>; readonly: boolean; registry?: DispatchPolicyRegistryPayload | null; onChange: (patch: Partial<RouteGraphNode>) => void }) {
+  return <div className="grid gap-3"><label className="grid gap-1.5 text-muted-foreground">{tr('pages.tokenRoutes.nodeForm.mode')}<Select disabled={readonly} value={node.mode} onValueChange={(mode) => onChange({ mode: mode as 'route' | 'flow' } as Partial<RouteGraphNode>)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="route">route</SelectItem><SelectItem value="flow">flow</SelectItem></SelectContent></Select></label><label className="grid gap-1.5 text-muted-foreground">{tr('pages.tokenRoutes.dispatchPolicy')}<DispatcherPolicySelect disabled={readonly} value={node.policy} registry={registry} onChange={(policy) => policy && onChange({ policy } as Partial<RouteGraphNode>)} /></label></div>;
+}
 
-      {operations.map((operation, index) => {
-        const template = getFilterOperationTemplate(operation.type);
-        const stage = getFilterOperationStage(operation);
-        return (
-        <div key={`${operation.type}-${index}`} className="grid min-w-0 gap-3 rounded-md border bg-card p-3">
-          <div className="flex min-w-0 items-start justify-between gap-3">
-            <div className="flex min-w-0 gap-2">
-              <div className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md border bg-muted text-muted-foreground">
-                {template.icon}
-              </div>
-              <div className="min-w-0">
-                <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-                  <span className="truncate text-xs font-semibold text-foreground">{template.title}</span>
-                  <Badge variant="outline" className="shrink-0">
-                    {stage === 'pre_selection' ? tr('pages.tokenRoutes.nodeForm.preSelectionStageShort') : tr('pages.tokenRoutes.nodeForm.postBuildStageShort')}
-                  </Badge>
-                </div>
-                <div className="mt-1 break-words text-xs leading-relaxed text-muted-foreground">
-                  {getFilterOperationSummary(operation)}
-                </div>
-              </div>
-            </div>
-            <Button
-              variant="ghost"
-              size="icon"
-              type="button"
-              disabled={readonly}
-              aria-label={tr('pages.tokenRoutes.nodeForm.removeOperation')}
-              onClick={() => onChange(operations.filter((_, itemIndex) => itemIndex !== index))}
-            >
-              <Trash2 className="size-4" />
-            </Button>
-          </div>
+function RouteEndpointNodeForm({ node, readonly, registry, referenceEndpoints, referenceEndpointCatalog, onChange }: { node: Extract<RouteGraphNode, { type: 'route_endpoint' }>; readonly: boolean; registry?: DispatchPolicyRegistryPayload | null; referenceEndpoints: Array<{ id: string; label: string }>; referenceEndpointCatalog?: { query: string; loading: boolean; hasMore: boolean; onQueryChange: (query: string) => void; onLoadMore: () => void }; onChange: (patch: Partial<RouteGraphNode>) => void }) {
+  const config = (node.config && typeof node.config === 'object' && !Array.isArray(node.config) ? node.config : { targets: [] }) as RouteEndpointConfig;
+  const endpointIds = node.backend.kind === 'route_endpoints' ? node.backend.endpointIds : [];
+  const patchConfig = (next: RouteEndpointConfig) => onChange({ config: next } as Partial<RouteGraphNode>);
+  const patchBackend = (backend: Extract<RouteGraphNode, { type: 'route_endpoint' }>['backend']) => onChange({ backend } as Partial<RouteGraphNode>);
+  const targetPolicy = config.targetSelection?.kind === 'defer_to_router' ? null : config.targetSelection || { kind: 'inherit_default' as const };
+  return <div className="grid gap-3"><label className="grid gap-1.5 text-muted-foreground">{tr('pages.tokenRoutes.nodeForm.routeEndpoint')}<Input disabled value={node.routeEndpointId} /></label><label className="grid gap-1.5 text-muted-foreground">{tr('pages.tokenRoutes.nodeForm.backend')}<Select disabled={readonly} value={node.backend.kind} onValueChange={(kind) => patchBackend(kind === 'route_endpoints' ? { kind, endpointIds } : { kind: 'supply' })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="supply">supply</SelectItem><SelectItem value="route_endpoints">route_endpoints</SelectItem></SelectContent></Select></label>{node.backend.kind === 'route_endpoints' && <div className="grid gap-1.5 text-muted-foreground"><span>{tr('pages.tokenRoutes.nodeForm.endpointIds')}</span>{referenceEndpointCatalog && <div className="relative"><Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" /><Input className="h-8 pl-8" value={referenceEndpointCatalog.query} placeholder={tr('pages.tokenRoutes.nodeForm.searchEndpoints')} onChange={(event) => referenceEndpointCatalog.onQueryChange(event.target.value)} /></div>}<div className="grid max-h-44 gap-1 overflow-y-auto rounded-md border p-2">{referenceEndpoints.map((endpoint) => <label key={endpoint.id} className="flex min-w-0 items-center gap-2 rounded px-1 py-1 text-xs text-foreground"><Checkbox disabled={readonly} checked={endpointIds.includes(endpoint.id)} onCheckedChange={(checked) => patchBackend({ kind: 'route_endpoints', endpointIds: checked ? [...endpointIds, endpoint.id] : endpointIds.filter((id) => id !== endpoint.id) })} /><span className="min-w-0 truncate" title={endpoint.id}>{endpoint.label}</span></label>)}{referenceEndpoints.length === 0 && !referenceEndpointCatalog?.loading && <span className="px-1 py-2 text-xs text-muted-foreground">{tr('pages.tokenRoutes.nodeForm.noEndpoints')}</span>}{referenceEndpointCatalog?.loading && <span className="flex items-center gap-2 px-1 py-2 text-xs text-muted-foreground"><LoaderCircle className="size-3.5 animate-spin" />{tr('common.loading')}</span>}{referenceEndpointCatalog?.hasMore && !referenceEndpointCatalog.loading && <Button type="button" variant="ghost" size="sm" onClick={referenceEndpointCatalog.onLoadMore}>{tr('common.loadMore')}</Button>}</div></div>}<label className="grid gap-1.5 text-muted-foreground">{tr('pages.tokenRoutes.nodeForm.targetSelection')}<DispatcherPolicySelect disabled={readonly} value={targetPolicy} registry={registry} inheritMode="defer" onChange={(policy) => patchConfig({ ...config, targetSelection: policy || { kind: 'defer_to_router' } })} /></label></div>;
+}
 
-          <div className="grid gap-3 sm:grid-cols-2">
-            <FilterField label={tr('pages.tokenRoutes.nodeForm.type')}>
-              <SelectField
-                disabled={readonly}
-                value={operation.type}
-                options={FILTER_OPERATION_TEMPLATES.map((item) => ({ value: item.type, label: item.title }))}
-                onChange={(type) => updateOperation(index, defaultOperation(type))}
-              />
-            </FilterField>
-          {operation.type === 'rewrite_model' && (
-            <>
-              <FilterField label={tr('pages.tokenRoutes.nodeForm.source')}>
-                <SelectField
-                  disabled={readonly}
-                  value={operation.source}
-                  options={[
-                    { value: 'current_model', label: tr('pages.tokenRoutes.nodeForm.currentModel') },
-                    { value: 'upstream_model', label: tr('pages.tokenRoutes.nodeForm.upstreamModel') },
-                  ]}
-                  onChange={(source) => updateOperation(index, { ...operation, source })}
-                />
-              </FilterField>
-              <FilterField label={tr('pages.tokenRoutes.nodeForm.operation')}>
-                <SelectField
-                  disabled={readonly}
-                  value={operation.operation}
-                  options={[
-                    { value: 'strip_suffix', label: tr('pages.tokenRoutes.nodeForm.stripSuffix') },
-                    { value: 'set', label: tr('pages.tokenRoutes.nodeForm.setModel') },
-                  ]}
-                  onChange={(operationValue) => updateOperation(index, { ...operation, operation: operationValue })}
-                />
-              </FilterField>
-              <FilterField label={operation.operation === 'set' ? tr('pages.tokenRoutes.nodeForm.modelValue') : tr('pages.tokenRoutes.nodeForm.suffix')}>
-                <Input disabled={readonly} value={operation.operation === 'set' ? String(operation.value || '') : String(operation.suffix || '')} onChange={(event) => updateOperation(index, operation.operation === 'set' ? { ...operation, value: event.target.value } : { ...operation, suffix: event.target.value })} />
-              </FilterField>
-            </>
-          )}
-          {(operation.type === 'set_payload' || operation.type === 'remove_payload') && (
-            <>
-              <FilterField label={tr('pages.tokenRoutes.nodeForm.payloadPath')}>
-                <Input disabled={readonly} value={operation.path} onChange={(event) => updateOperation(index, { ...operation, path: event.target.value } as RouteFilter)} />
-              </FilterField>
-              {operation.type === 'set_payload' && (
-                <>
-                  <FilterField label={tr('pages.tokenRoutes.nodeForm.mode')}>
-                    <SelectField
-                      disabled={readonly}
-                      value={operation.mode || 'default'}
-                      options={[
-                        { value: 'default', label: tr('pages.tokenRoutes.nodeForm.defaultMode') },
-                        { value: 'override', label: tr('pages.tokenRoutes.nodeForm.overrideMode') },
-                      ]}
-                      onChange={(mode) => updateOperation(index, { ...operation, mode })}
-                    />
-                  </FilterField>
-                  <FilterField label={tr('pages.tokenRoutes.nodeForm.valueJson')}>
-                    <Input disabled={readonly} value={typeof operation.value === 'string' ? operation.value : JSON.stringify(operation.value)} onChange={(event) => updateOperation(index, { ...operation, value: parseJsonField(event.target.value) })} />
-                  </FilterField>
-                </>
-              )}
-            </>
-          )}
-          {(operation.type === 'set_header' || operation.type === 'remove_header') && (
-            <>
-              <FilterField label={tr('pages.tokenRoutes.nodeForm.headerName')}>
-                <Input disabled={readonly} value={operation.name} onChange={(event) => updateOperation(index, { ...operation, name: event.target.value } as RouteFilter)} />
-              </FilterField>
-              {operation.type === 'set_header' && (
-                <FilterField label={tr('pages.tokenRoutes.nodeForm.headerValue')}>
-                  <Input disabled={readonly} value={operation.value} onChange={(event) => updateOperation(index, { ...operation, value: event.target.value })} />
-                </FilterField>
-              )}
-            </>
-          )}
-          {operation.type === 'set_endpoint_preference' && (
-            <FilterField label={tr('pages.tokenRoutes.nodeForm.endpoint')}>
-              <SelectField
-                disabled={readonly}
-                value={operation.endpoint}
-                options={[
-                  { value: 'responses', label: 'responses' },
-                  { value: 'chat', label: 'chat' },
-                  { value: 'messages', label: 'messages' },
-                ]}
-                onChange={(endpoint) => updateOperation(index, { ...operation, endpoint })}
-              />
-            </FilterField>
-          )}
-          </div>
-        </div>
-      );})}
-    </div>
-  );
+function SyntheticEndpointNodeForm({ node, readonly, onChange }: { node: Extract<RouteGraphNode, { type: 'synthetic_endpoint' }>; readonly: boolean; onChange: (patch: Partial<RouteGraphNode>) => void }) {
+  return <div className="grid gap-3"><label className="grid gap-1.5 text-muted-foreground">HTTP<Select disabled={readonly} value={String(node.statusCode)} onValueChange={(statusCode) => onChange({ statusCode: Number(statusCode) as Extract<RouteGraphNode, { type: 'synthetic_endpoint' }>['statusCode'] } as Partial<RouteGraphNode>)}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{[400, 401, 403, 404, 409, 429, 500, 502, 503].map((statusCode) => <SelectItem key={statusCode} value={String(statusCode)}>{statusCode}</SelectItem>)}</SelectContent></Select></label><label className="grid gap-1.5 text-muted-foreground">{tr('pages.tokenRoutes.nodeForm.message')}<Input disabled={readonly} value={node.message} onChange={(event) => onChange({ message: event.target.value } as Partial<RouteGraphNode>)} /></label></div>;
 }

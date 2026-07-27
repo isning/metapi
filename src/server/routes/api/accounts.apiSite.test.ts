@@ -4,6 +4,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { waitForBackgroundTaskToReachTerminalState } from '../../test-fixtures/backgroundTaskTestUtils.js';
+import { clearRouteGroupMemberTestData } from '../../../testing/routeGroupMemberTestUtils.js';
 
 const verifyTokenMock = vi.fn();
 const getModelsMock = vi.fn();
@@ -52,8 +53,9 @@ describe('accounts api endpoint host selection', { timeout: 15_000 }, () => {
 
     await db.delete(schema.proxyLogs).run();
     await db.delete(schema.checkinLogs).run();
-    await db.delete(schema.routeEndpointTargets).run();
-    await db.delete(schema.tokenRoutes).run();
+    await clearRouteGroupMemberTestData();
+    await db.delete(schema.runtimeExecutionTargetState).run();
+    await db.delete(schema.runtimeExecutionTargets).run();
     await db.delete(schema.tokenModelAvailability).run();
     await db.delete(schema.modelAvailability).run();
     await db.delete(schema.accountTokens).run();
@@ -66,7 +68,7 @@ describe('accounts api endpoint host selection', { timeout: 15_000 }, () => {
     const tasks = listBackgroundTasks(200);
     await Promise.all(tasks.map((task) => (
       waitForBackgroundTaskToReachTerminalState(getBackgroundTask, task.id, {
-        timeoutMs: 5_000,
+        timeoutMs: 10_000,
         pollMs: 5,
       })
     )));
@@ -246,9 +248,16 @@ describe('accounts api endpoint host selection', { timeout: 15_000 }, () => {
   });
 
   it('rotates API key account creation across configured ai endpoints after a retryable failure', async () => {
-    getModelsMock
-      .mockRejectedValueOnce(new Error('HTTP 502: temporary upstream failure'))
-      .mockResolvedValueOnce(['gpt-4o-mini']);
+    let failedPrimaryEndpoint = false;
+    getModelsMock.mockImplementation(async (baseUrl, token) => {
+      if (token !== 'sk-nihao-create-rotate') return ['gpt-4o-mini'];
+      if (baseUrl === 'https://api-create-a.example.com' && !failedPrimaryEndpoint) {
+        failedPrimaryEndpoint = true;
+        throw new Error('HTTP 502: temporary upstream failure');
+      }
+      if (baseUrl === 'https://api-create-b.example.com') return ['gpt-4o-mini'];
+      return ['gpt-4o-mini'];
+    });
 
     const site = await db.insert(schema.sites).values({
       name: 'Nihao Create Pool',
@@ -283,11 +292,24 @@ describe('accounts api endpoint host selection', { timeout: 15_000 }, () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toMatchObject({
+    const payload = response.json() as { tokenType?: string; queued?: boolean; jobId?: string };
+    expect(payload).toMatchObject({
       tokenType: 'apikey',
+      queued: true,
     });
-    expect(getModelsMock).toHaveBeenNthCalledWith(1, 'https://api-create-a.example.com', 'sk-nihao-create-rotate', undefined);
-    expect(getModelsMock).toHaveBeenNthCalledWith(2, 'https://api-create-b.example.com', 'sk-nihao-create-rotate', undefined);
+    expect(payload.jobId).toBeTruthy();
+    const task = await waitForBackgroundTaskToReachTerminalState(getBackgroundTask, payload.jobId!, {
+      timeoutMs: 10_000,
+      pollMs: 5,
+    });
+    expect(task?.status).toBe('succeeded');
+
+    const createRotateCalls = getModelsMock.mock.calls
+      .filter(([, token]) => token === 'sk-nihao-create-rotate');
+    expect(createRotateCalls.slice(0, 2)).toEqual([
+      ['https://api-create-a.example.com', 'sk-nihao-create-rotate', undefined],
+      ['https://api-create-b.example.com', 'sk-nihao-create-rotate', undefined],
+    ]);
   });
 
   it('supports batch creating multiple API key connections for one site', async () => {

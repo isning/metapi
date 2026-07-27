@@ -1,8 +1,10 @@
 import Fastify, { type FastifyInstance } from 'fastify';
+import { executionDecisionFromTargetMocks } from '../../../testing/routeRuntimeDecisionMock.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { clearRouteGroupMemberTestData } from '../../../testing/routeGroupMemberTestUtils.js';
 
 const fetchMock = vi.fn();
 const selectTargetMock = vi.fn();
@@ -23,13 +25,32 @@ vi.mock('undici', async () => {
   };
 });
 
-vi.mock('../../services/tokenRouter.js', () => ({
-  tokenRouter: {
-    selectTarget: (...args: unknown[]) => selectTargetMock(...args),
-    recordSuccess: (...args: unknown[]) => recordSuccessMock(...args),
-    recordFailure: (...args: unknown[]) => recordFailureMock(...args),
-  },
-  invalidateTokenRouterCache: vi.fn(),
+
+vi.mock('../../services/routeRuntimeExecutionService.js', () => ({
+  createRouteRuntimeDecisionSession: async (input: any) => input,
+  selectRouteRuntimeDecisionInSession: (session: any, input: any) => executionDecisionFromTargetMocks(
+    { ...session, ...input }, selectTargetMock,
+  ),
+  previewRouteRuntimeDecisionInSession: (session: any, input: any) => executionDecisionFromTargetMocks(
+    { ...session, ...input }, selectTargetMock,
+  ),
+  selectRouteRuntimeDecision: (input: any) => executionDecisionFromTargetMocks(input, selectTargetMock),
+  selectRouteRuntimeExecutionAttempt: (input: any) =>
+    selectTargetMock(input?.requestedModel, input?.downstreamPolicy),
+  resolveRouteRuntimeSyntheticResponse: async () => null,
+  recordRouteRuntimeExecutionAttemptStarted: async () => undefined,
+  recordRouteRuntimeExecutionAttemptSuccess: (input: any) =>
+    recordSuccessMock(input.executionTargetId, input.latencyMs),
+  recordRouteRuntimeExecutionAttemptFailure: (input: any) =>
+    recordFailureMock(input.executionTargetId, { status: input.status, rawErrorText: input.errorText }),
+  recordRouteRuntimeExecutionAttemptSelected: async () => undefined,
+}));
+
+vi.mock('../../services/compiledRuntimeExecutionSessionService.js', () => ({
+  startCompiledRuntimeExecutionSession: async () => ({ requestId: 'request:completions-test', startedAtMs: Date.now() }),
+  resumeCompiledRuntimeExecutionSession: async () => null,
+  bindCompiledRuntimeExecutionDecision: async () => undefined,
+  completeCompiledRuntimeExecutionSession: async () => undefined,
 }));
 
 vi.mock('../../services/routeRefreshWorkflow.js', async () => {
@@ -108,8 +129,9 @@ describe('/v1/completions usage source logging', () => {
     });
 
     await db.delete(schema.proxyLogs).run();
-    await db.delete(schema.routeEndpointTargets).run();
-    await db.delete(schema.tokenRoutes).run();
+    await clearRouteGroupMemberTestData();
+    await db.delete(schema.runtimeExecutionTargetState).run();
+    await db.delete(schema.runtimeExecutionTargets).run();
     await db.delete(schema.tokenModelAvailability).run();
     await db.delete(schema.modelAvailability).run();
     await db.delete(schema.accountTokens).run();
@@ -150,6 +172,8 @@ describe('/v1/completions usage source logging', () => {
 
     selectTargetMock.mockResolvedValue({
       target: { id: 11, routeId: 22 },
+      executionTargetId: 11,
+      executionAttemptId: 'completions-usage-attempt',
       site,
       account,
       tokenName: 'default',

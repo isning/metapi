@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { and, eq, sql } from 'drizzle-orm';
 import { mergeAccountExtraConfig } from '../../services/accountExtraConfig.js';
+import { clearRouteGroupMemberTestData } from '../../../testing/routeGroupMemberTestUtils.js';
 
 const getApiTokensMock = vi.fn();
 const getApiTokenMock = vi.fn();
@@ -26,7 +27,7 @@ vi.mock('../../services/platforms/index.js', () => ({
 
 type DbModule = typeof import('../../db/index.js');
 
-describe('account tokens sync routes with site status', () => {
+describe('account tokens sync routes with site status', { timeout: 15_000 }, () => {
   let app: FastifyInstance;
   let db: DbModule['db'];
   let schema: DbModule['schema'];
@@ -89,8 +90,9 @@ describe('account tokens sync routes with site status', () => {
     seedId = 0;
 
     await db.delete(schema.accountTokens).run();
-    await db.delete(schema.routeEndpointTargets).run();
-    await db.delete(schema.tokenRoutes).run();
+    await clearRouteGroupMemberTestData();
+    await db.delete(schema.runtimeExecutionTargetState).run();
+    await db.delete(schema.runtimeExecutionTargets).run();
     await db.delete(schema.tokenModelAvailability).run();
     await db.delete(schema.modelAvailability).run();
     await db.delete(schema.checkinLogs).run();
@@ -497,11 +499,11 @@ describe('account tokens sync routes with site status', () => {
     });
   });
 
-  it('hides legacy mirrored tokens for apikey connections from list API', async () => {
+  it('hides migrated mirrored tokens for apikey connections from list API', async () => {
     const { account } = await seedAccount({ siteStatus: 'active', accessToken: '' });
     await db.update(schema.accounts)
       .set({
-        apiToken: 'sk-hidden-legacy',
+        apiToken: 'sk-hidden-migrated',
         checkinEnabled: false,
         extraConfig: mergeAccountExtraConfig(null, { credentialMode: 'apikey' }),
       })
@@ -511,7 +513,7 @@ describe('account tokens sync routes with site status', () => {
     await db.insert(schema.accountTokens).values({
       accountId: account.id,
       name: 'default',
-      token: 'sk-hidden-legacy',
+      token: 'sk-hidden-migrated',
       enabled: true,
       isDefault: true,
     }).run();

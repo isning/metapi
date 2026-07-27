@@ -4,6 +4,14 @@ const formatUtcSqlDateTimeMock = vi.fn();
 const composeProxyLogMessageMock = vi.fn();
 const insertProxyLogMock = vi.fn();
 
+const runtimeIdentity = {
+  executionAttemptId: 'ea_11',
+  routeEntrypointId: 'entry:gpt-5.2',
+  runtimeEndpointId: 'endpoint:gpt-5.2:upstream',
+  runtimeArtifactId: 'runtime-artifact-42',
+  executionTargetId: 11,
+};
+
 vi.mock('../../services/localTimeService.js', () => ({
   formatUtcSqlDateTime: (...args: unknown[]) => formatUtcSqlDateTimeMock(...args),
 }));
@@ -13,11 +21,16 @@ vi.mock('../../services/siteProxy.js', () => ({
   withSiteRecordProxyRequestInit: vi.fn(),
 }));
 
-vi.mock('../../services/tokenRouter.js', () => ({
-  tokenRouter: {
-    recordFailure: vi.fn(),
-    recordSuccess: vi.fn(),
-  },
+vi.mock('../../services/routeRuntimeExecutionService.js', () => ({
+  createRouteRuntimeDecisionSession: vi.fn(),
+  selectRouteRuntimeDecisionInSession: vi.fn(),
+  previewRouteRuntimeDecisionInSession: vi.fn(),
+  selectRouteRuntimeDecision: vi.fn(),
+  previewRouteRuntimeDecision: vi.fn(),
+  selectRouteRuntimeExecutionAttempt: vi.fn(),
+  recordRouteRuntimeExecutionAttemptStarted: vi.fn(),
+  recordRouteRuntimeExecutionAttemptFailure: vi.fn(),
+  recordRouteRuntimeExecutionAttemptSuccess: vi.fn(),
 }));
 
 vi.mock('../../services/proxyUsageFallbackService.js', () => ({
@@ -47,10 +60,6 @@ vi.mock('../../services/proxyBilling.js', () => ({
 
 vi.mock('../../services/proxyLogStore.js', () => ({
   insertProxyLog: (...args: unknown[]) => insertProxyLogMock(...args),
-}));
-
-vi.mock('../../services/proxyLogRouteDecisionSnapshot.js', () => ({
-  buildProxyLogRouteDecisionSnapshot: vi.fn(async () => null),
 }));
 
 vi.mock('../../services/runtimeDispatch.js', () => ({
@@ -84,10 +93,6 @@ vi.mock('../executors/types.js', () => ({
   readRuntimeResponseText: vi.fn(),
 }));
 
-vi.mock('../targetSelection.js', () => ({
-  selectProxyTargetForAttempt: vi.fn(),
-}));
-
 describe('shared surface usage source logging', () => {
   beforeEach(() => {
     formatUtcSqlDateTimeMock.mockReset();
@@ -104,7 +109,6 @@ describe('shared surface usage source logging', () => {
     const toolkit = createSurfaceFailureToolkit({
       warningScope: 'responses',
       downstreamPath: '/v1/responses',
-      maxRetries: 2,
       clientContext: {
         clientKind: 'codex',
         sessionId: 'turn-1',
@@ -119,6 +123,7 @@ describe('shared surface usage source logging', () => {
         account: { id: 33, username: 'oauth-user' },
         site: { name: 'Codex OAuth' },
         actualModel: 'upstream-model',
+        ...runtimeIdentity,
       },
       modelRequested: 'gpt-5.2',
       status: 'success',

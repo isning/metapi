@@ -11,13 +11,14 @@ export type PricingResolutionSource =
   | 'fallback';
 
 export type PricingResolutionSummary = {
+  currency: string | null;
   inputPerMillion: number | null;
   outputPerMillion: number | null;
   cacheReadPerMillion: number | null;
   cacheWritePerMillion: number | null;
   reasoningPerMillion: number | null;
-  requestUsd: number | null;
-  totalCostUsd: number | null;
+  requestCost: number | null;
+  totalCost: number | null;
 };
 
 export type PricingResolution = {

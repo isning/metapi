@@ -1,6 +1,7 @@
 import type { CanonicalUsage } from '../pricing-core/index.js';
 import {
   evaluateUpstreamCostPricing,
+  type ProviderCatalogResolveMode,
 } from './upstreamCostPricingService.js';
 import {
   pricingEvaluationSummary,
@@ -9,9 +10,6 @@ import type {
   EndpointPricingSupply,
   PricingResolution,
 } from './pricingQuoteTypes.js';
-
-const ENDPOINT_PRICING_CACHE_TTL_MS = 10 * 60 * 1000;
-const ENDPOINT_PRICING_FAILURE_TTL_MS = 60 * 1000;
 
 export const ENDPOINT_PREVIEW_USAGE: Partial<CanonicalUsage> = {
   inputTokens: 1_000_000,
@@ -26,36 +24,10 @@ export const ENDPOINT_ROUTING_REFERENCE_USAGE: Partial<CanonicalUsage> = {
   requestCount: 1,
 };
 
-type EndpointRoutingReferenceCacheEntry = {
-  fetchedAt: number;
-  ttlMs: number;
-  resolution: PricingResolution | null;
-};
-
-const endpointRoutingReferenceCache = new Map<string, EndpointRoutingReferenceCacheEntry>();
-
 function normalizeOptionalText(value: unknown): string | null {
   if (value == null) return null;
   const text = String(value).trim();
   return text || null;
-}
-
-function normalizeModelKey(modelName: string): string {
-  return String(modelName || '').trim().toLowerCase();
-}
-
-function normalizeId(value: unknown): number {
-  return Math.trunc(Number(value) || 0);
-}
-
-function endpointPricingCacheKey(input: EndpointPricingSupply): string {
-  return [
-    `site:${normalizeId(input.siteId)}`,
-    `account:${normalizeId(input.accountId)}`,
-    `token:${input.tokenId == null ? '-' : normalizeId(input.tokenId)}`,
-    `group:${normalizeOptionalText(input.tokenGroup) || '-'}`,
-    `model:${normalizeModelKey(input.modelName)}`,
-  ].join('|');
 }
 
 function sourceFromUpstreamCost(sourceType: string | null | undefined): PricingResolution['source'] {
@@ -67,6 +39,8 @@ function sourceFromUpstreamCost(sourceType: string | null | undefined): PricingR
 export async function resolveEndpointPricing(input: {
   supply: EndpointPricingSupply;
   usage: Partial<CanonicalUsage>;
+  allowProviderCatalog?: boolean;
+  providerCatalogMode?: ProviderCatalogResolveMode;
 }): Promise<PricingResolution | null> {
   const resolved = await evaluateUpstreamCostPricing({
     siteId: input.supply.siteId,
@@ -74,6 +48,8 @@ export async function resolveEndpointPricing(input: {
     tokenId: input.supply.tokenId ?? null,
     tokenGroup: normalizeOptionalText(input.supply.tokenGroup),
     modelName: input.supply.modelName,
+    allowProviderCatalog: input.allowProviderCatalog,
+    providerCatalogMode: input.providerCatalogMode,
     usage: input.usage,
     context: {
       provider: input.supply.provider || undefined,
@@ -110,45 +86,5 @@ export async function resolveEndpointPreviewPricing(input: {
   });
 }
 
-export function getCachedEndpointRoutingReferencePricing(input: EndpointPricingSupply): PricingResolution | null {
-  const cached = endpointRoutingReferenceCache.get(endpointPricingCacheKey(input));
-  if (!cached) return null;
-  if (Date.now() - cached.fetchedAt >= cached.ttlMs) return null;
-
-  const totalCostUsd = cached.resolution?.summary.totalCostUsd;
-  if (typeof totalCostUsd !== 'number' || !Number.isFinite(totalCostUsd) || totalCostUsd <= 0) {
-    return null;
-  }
-  return cached.resolution;
-}
-
-export async function refreshEndpointRoutingReferencePricing(input: {
-  supply: EndpointPricingSupply;
-  usage?: Partial<CanonicalUsage>;
-}): Promise<PricingResolution | null> {
-  const key = endpointPricingCacheKey(input.supply);
-  const now = Date.now();
-  try {
-    const resolution = await resolveEndpointPricing({
-      supply: input.supply,
-      usage: input.usage || ENDPOINT_ROUTING_REFERENCE_USAGE,
-    });
-    endpointRoutingReferenceCache.set(key, {
-      fetchedAt: now,
-      ttlMs: resolution ? ENDPOINT_PRICING_CACHE_TTL_MS : ENDPOINT_PRICING_FAILURE_TTL_MS,
-      resolution,
-    });
-    return resolution;
-  } catch {
-    endpointRoutingReferenceCache.set(key, {
-      fetchedAt: now,
-      ttlMs: ENDPOINT_PRICING_FAILURE_TTL_MS,
-      resolution: null,
-    });
-    return null;
-  }
-}
-
 export function clearEndpointPricingReferenceCache(): void {
-  endpointRoutingReferenceCache.clear();
 }

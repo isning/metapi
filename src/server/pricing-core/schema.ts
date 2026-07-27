@@ -18,7 +18,7 @@ const priceExpressionSchema = z.discriminatedUnion('kind', [
 ]);
 
 export const pricingPriceSchema = z.object({
-  currency: z.literal('USD'),
+  currency: z.string().trim().min(1).transform((value) => value.toUpperCase()),
   amount: nonNegativeNumberSchema,
   unitLabel: z.string().trim().min(1),
   expression: priceExpressionSchema.optional(),
@@ -174,7 +174,7 @@ const pricingCommitmentSchema = z.object({
   id: idSchema,
   label: z.string().trim().min(1),
   period: z.enum(['month', 'billing_cycle']),
-  minimumSpendUsd: nonNegativeNumberSchema.optional(),
+  minimumSpend: nonNegativeNumberSchema.optional(),
   includedComponents: z.array(idSchema).optional(),
   overagePolicy: z.enum(['charge_components', 'cap_at_minimum', 'diagnostic_only']).optional(),
 });
@@ -243,8 +243,8 @@ const pricingPlanBaseSchema = z.object({
   aggregation: z.object({
     mode: z.literal('sum_components'),
     period: z.enum(['request', 'day', 'month', 'billing_cycle']).optional(),
-    minimumChargeUsd: nonNegativeNumberSchema.optional(),
-    maximumChargeUsd: nonNegativeNumberSchema.optional(),
+    minimumCharge: nonNegativeNumberSchema.optional(),
+    maximumCharge: nonNegativeNumberSchema.optional(),
   }),
   rounding: z.object({
     mode: z.enum(['none', 'component', 'total']),

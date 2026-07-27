@@ -113,6 +113,64 @@ describe('settings backup webdav api', () => {
     }
   });
 
+  it('imports backup from webdav and records a structured notification', async () => {
+    const remotePayload = {
+      version: '2.4',
+      timestamp: Date.now(),
+      type: 'preferences',
+      preferences: {
+        settings: [
+          { key: 'ui_locale', value: 'zh' },
+        ],
+      },
+    };
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    fetchSpy.mockResolvedValue(new Response(JSON.stringify(remotePayload), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+    try {
+      await db.insert(schema.settings).values({
+        key: 'backup_webdav_config_v1',
+        value: JSON.stringify({
+          enabled: true,
+          fileUrl: 'https://dav.example.com/backups/metapi.json',
+          username: 'alice',
+          password: 'secret-pass',
+          exportType: 'all',
+          autoSyncEnabled: false,
+          autoSyncCron: '0 * * * *',
+        }),
+      }).run();
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/settings/backup/webdav/import',
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect((response.json() as { success?: boolean }).success).toBe(true);
+      const importEvent = await db.select().from(schema.events)
+        .where(eq(schema.events.type, 'backup_import'))
+        .get();
+      expect(importEvent).toMatchObject({
+        scope: 'notification',
+        category: 'settings',
+        severity: 'success',
+        source: 'settings.backup_import',
+      });
+      const details = JSON.parse(importEvent?.detailsJson || '[]');
+      expect(details).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          type: 'i18n',
+          paramKeys: { source: 'backupImport.source.webdav' },
+        }),
+      ]));
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
   it('rejects invalid exportType payload when saving webdav config', async () => {
     const response = await app.inject({
       method: 'PUT',

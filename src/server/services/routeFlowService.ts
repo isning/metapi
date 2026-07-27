@@ -1,589 +1,325 @@
-import { and, desc, eq, gte, inArray, or } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { db, schema } from '../db/index.js';
-import { getLocalRangeStartUtc } from './localTimeService.js';
-import { evaluateActiveRouteGraphForModel, type RouteGraphRuntimeTraceStep } from './routeGraphRuntimeService.js';
-import { getActiveRouteGraphRuntimeVersion } from './routeGraphService.js';
 import {
-  estimateRouteEntryPricing,
+  buildRouteRuntimeProjection,
+  type RouteRuntimeSelectionSnapshot,
+} from './routeRuntimeExecutionService.js';
+import type { CompiledRouteRuntimeRequest } from './compiledRuntimeRequestTypes.js';
+import {
+  estimateCompiledRuntimeEntryPricing,
+  type EntryPricingUsage,
   type EntryPricingEstimate,
 } from './routeEntryPricingService.js';
-import { tokenRouter, type RouteDecisionExplanation } from './tokenRouter.js';
+import {
+  type CompiledRuntimeProjection,
+  type RuntimeApiAttemptDiagnosticProjection,
+  type RuntimeApiAttemptProjection,
+  type RuntimeProbabilityStatus,
+} from './compiledRuntimeProjectionService.js';
+import {
+  buildRuntimeRoutingSignalMap,
+} from './compiledRuntimeRoutingSignalService.js';
+import {
+  buildCompiledRuntimeRoutingSignalContexts,
+  type RuntimeCredentialIdentity,
+} from './compiledRuntimeAttemptContextService.js';
+import {
+  collectCompiledRuntimeRoutingSignalSharedTermIds,
+  compiledRuntimeRoutingSignalScopeId,
+} from './compiledRuntimeRoutingSignalScope.js';
 import {
   resolveDispatchUpstreamCompatibilityPolicy,
 } from './upstreamCompatibilityPolicyResolver.js';
+import {
+  buildApiAttemptPlan,
+  type ApiAttemptDiagnostic,
+} from '../proxy-core/apiVariants.js';
+import { loadCredentialApiVariantConfig } from './credentialEndpointBindingService.js';
 import type { ResolvedUpstreamCompatibilityPolicy } from '../contracts/upstreamCompatibilityPolicy.js';
+import {
+  resolveUpstreamEndpointCandidates,
+  type EndpointPreference,
+} from './upstreamEndpointDerivation.js';
 
-export type RouteFlowNodeKind =
-  | 'request'
-  | 'entry'
-  | 'dispatcher'
-  | 'filter'
-  | 'route_endpoint'
-  | 'synthetic_endpoint';
-export type RouteFlowVisibility = 'public' | 'internal' | 'terminal';
 export type RouteFlowDiagnosticLevel = 'info' | 'warn' | 'error';
-
-export type RouteFlowNode = {
-  id: string;
-  kind: RouteFlowNodeKind;
-  visibility: RouteFlowVisibility;
-  label: string;
-  subtitle?: string | null;
-  status: 'active' | 'selected' | 'available' | 'blocked' | 'inactive';
-  badges: string[];
-  metrics: {
-    successRate?: number | null;
-    totalCalls?: number | null;
-    recentSuccessCount?: number | null;
-    recentFailureCount?: number | null;
-    avgLatencyMs?: number | null;
-    probability?: number | null;
-    priority?: number | null;
-    weight?: number | null;
-    failCount?: number | null;
-    consecutiveFailureCount?: number | null;
-    lastUsedAt?: string | null;
-    lastSelectedAt?: string | null;
-    lastFailureAt?: string | null;
-    cooldownUntil?: string | null;
-  };
-  history: Array<{
-    at: string;
-    status: 'success' | 'failed' | 'retried';
-    httpStatus?: number | null;
-    message?: string | null;
-  }>;
-};
-
-export type RouteFlowEdge = {
-  id: string;
-  source: string;
-  target: string;
-  label?: string | null;
-};
 
 export type RouteFlowDiagnostic = {
   level: RouteFlowDiagnosticLevel;
   message: string;
 };
 
+export type RuntimeEntryPricingEstimate = EntryPricingEstimate;
+
 export type CompiledRouteFlow = {
-  version: 1;
   requestedModel: string;
-  actualModel: string;
   matched: boolean;
-  selectedRouteId?: number | null;
-  selectedAccountId?: number | null;
-  routePattern?: string | null;
-  summary: string[];
-  nodes: RouteFlowNode[];
-  edges: RouteFlowEdge[];
   diagnostics: RouteFlowDiagnostic[];
+  compiledRuntime: CompiledRuntimeProjection | null;
   entryPricing?: {
-    theoretical: EntryPricingEstimate | null;
+    theoretical: RuntimeEntryPricingEstimate | null;
   };
   compatibilityPolicy?: {
     resolved: ResolvedUpstreamCompatibilityPolicy;
     layers: Array<{
-      source: 'site' | 'account' | 'token' | 'endpoint_policy' | 'target';
+      source: 'site' | 'account' | 'token' | 'endpoint_policy' | 'execution_attempt';
       configured: boolean;
     }>;
   };
-  compiledAt: string;
+  projectedAt: string;
 };
-
-type ChannelHealth = {
-  successCount: number;
-  failureCount: number;
-  totalCalls: number;
-  avgLatencyMs: number | null;
-  history: RouteFlowNode['history'];
-};
-
-type RuntimeStatsSourceRow = typeof schema.routeEndpointTargets.$inferSelect;
-type RuntimeCredentialIdentity = {
-  targetId: number;
-  routeId: number;
-  sourceModel: string | null;
-  siteId: number;
-  siteName: string;
-  siteUrl: string;
-  sitePlatform: string;
-  accountId: number;
-  accountUsername: string | null;
-  tokenId: number | null;
-  tokenName: string | null;
-  tokenGroup: string | null;
-};
-
-function roundRate(successCount: number, totalCalls: number): number | null {
-  if (totalCalls <= 0) return null;
-  return Math.round((successCount / totalCalls) * 1000) / 10;
-}
-
-function buildGraphCandidateBadges(candidate: NonNullable<EntryPricingEstimate>['candidates'][number]): string[] {
-  const badges = [
-    candidate.priority != null ? `P${candidate.priority}` : null,
-    candidate.weight != null ? `W${candidate.weight}` : null,
-    candidate.probability == null ? null : `${Math.round(candidate.probability * 1000) / 10}%`,
-    candidate.matchedScope || null,
-  ].filter((badge): badge is string => !!badge);
-  return badges.length > 0 ? badges : ['candidate'];
-}
-
-function graphCandidatePercent(candidate: NonNullable<EntryPricingEstimate>['candidates'][number]): string {
-  if (candidate.probability == null) return 'N/A';
-  return `${Math.round(candidate.probability * 1000) / 10}%`;
-}
 
 function trimDisplay(value: string | null | undefined): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-function endpointCredentialLabel(input: {
-  candidate: NonNullable<EntryPricingEstimate>['candidates'][number];
-  identity?: RuntimeCredentialIdentity;
-}): string {
-  const accountId = input.identity?.accountId ?? input.candidate.accountId;
-  const tokenId = input.identity?.tokenId ?? input.candidate.tokenId;
-  const accountLabel = trimDisplay(input.identity?.accountUsername)
-    || (accountId != null ? `account #${accountId}` : 'account');
-  const tokenLabel = trimDisplay(input.identity?.tokenName)
-    || trimDisplay(input.identity?.tokenGroup)
-    || (tokenId != null ? `token #${tokenId}` : '');
-  return tokenLabel ? `${accountLabel} / ${tokenLabel}` : accountLabel;
+function runtimeApiAttemptDiagnosticLevel(severity: ApiAttemptDiagnostic['severity']): RuntimeApiAttemptDiagnosticProjection['level'] {
+  if (severity === 'error') return 'error';
+  if (severity === 'warning') return 'warn';
+  return 'info';
 }
 
-function graphCandidateDisplay(input: {
-  candidate: NonNullable<EntryPricingEstimate>['candidates'][number];
-  identity?: RuntimeCredentialIdentity;
-  supplyEndpointId?: string | null;
-}): { label: string; subtitle: string } {
-  const siteId = input.identity?.siteId ?? input.candidate.siteId;
-  const siteLabel = trimDisplay(input.identity?.siteName)
-    || trimDisplay(input.identity?.siteUrl)
-    || (siteId != null ? `site #${siteId}` : 'upstream');
-  const modelName = input.candidate.modelName || trimDisplay(input.identity?.sourceModel) || 'upstream target';
-  const details = [
-    modelName,
-    input.supplyEndpointId ? `endpoint ${input.supplyEndpointId}` : null,
-    input.candidate.targetId ? `target ${input.candidate.targetId}` : null,
-    input.identity?.routeId != null ? `route #${input.identity.routeId}` : null,
-    trimDisplay(input.identity?.sitePlatform) || null,
-  ].filter((item): item is string => !!item);
+function routeFlowEndpointPreference(request?: CompiledRouteRuntimeRequest | null): EndpointPreference {
+  const path = trimDisplay(request?.path).toLowerCase();
+  if (path.includes('/messages')) return 'claude';
+  if (path.includes('/responses')) return 'responses';
+  if (path.includes('generatecontent') || path.includes('/gemini')) return 'gemini';
+  return 'openai';
+}
+
+function runtimeApiAttemptPreview(
+  attempt: ReturnType<typeof buildApiAttemptPlan>['attempts'][number],
+  order: number,
+): RuntimeApiAttemptProjection {
   return {
-    label: `${siteLabel} · ${endpointCredentialLabel(input)}`,
-    subtitle: details.join(' · '),
+    apiAttemptId: attempt.id,
+    order,
+    apiType: attempt.apiType,
+    upstreamEndpoint: attempt.upstreamEndpoint,
+    requestMethod: attempt.requestMethod,
+    requestUrl: attempt.requestUrl,
+    adapterId: attempt.adapterId,
+    credentialEndpointBindingId: attempt.credentialEndpointBindingId,
+    apiEndpointProfileId: attempt.apiEndpointProfileId,
+    downgradeAllowed: attempt.downgradeAllowed,
+    reason: [...attempt.reason],
   };
 }
 
-function targetIdentityValue(value: unknown): string {
-  return typeof value === 'string' || typeof value === 'number' ? String(value).trim() : '';
-}
-
-function candidateEndpointIdentity(candidate: NonNullable<EntryPricingEstimate>['candidates'][number]): string {
-  return targetIdentityValue(candidate.sourceRef?.endpointId) || targetIdentityValue(candidate.endpointId);
-}
-
-function candidateRuntimeTargetId(candidate: NonNullable<EntryPricingEstimate>['candidates'][number]): number | null {
-  const direct = Number(candidate.targetId);
-  if (Number.isFinite(direct) && direct > 0) return Math.trunc(direct);
-  const derivedTargetMatch = /:target:\d+:(\d+)$/.exec(candidate.targetId);
-  if (!derivedTargetMatch) return null;
-  const parsed = Number(derivedTargetMatch[1]);
-  return Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : null;
-}
-
-function pricingEstimateFromRouteDecision(
-  explanation: RouteDecisionExplanation,
-  requestedModel: string,
-): EntryPricingEstimate | null {
-  if (!explanation.matched || explanation.candidates.length === 0) return null;
+function runtimeApiAttemptDiagnosticPreview(
+  diagnostic: ApiAttemptDiagnostic,
+): RuntimeApiAttemptDiagnosticProjection {
   return {
-    inputPerMillion: null,
-    outputPerMillion: null,
-    totalCostUsd: null,
-    inputMultiplier: null,
-    outputMultiplier: null,
-    totalMultiplier: null,
-    effectiveCost: null,
-    reference: null,
-    sourceCount: explanation.candidates.length,
-    estimateLevel: 'incomplete',
-    strategy: null,
-    diagnostics: [{
-      level: 'info',
-      message: 'Route-table fallback estimate uses current router candidate probabilities.',
-    }],
-    candidates: explanation.candidates.map((candidate) => ({
-      targetId: String(candidate.targetId),
-      endpointId: `route-table-target:${candidate.targetId}`,
-      nodeId: `route-table-target:${candidate.targetId}`,
-      siteId: null,
-      accountId: candidate.accountId,
-      tokenId: null,
-      modelName: requestedModel,
-      probability: candidate.probability == null ? null : candidate.probability / 100,
-      weight: candidate.weight,
-      priority: candidate.priority,
-      inputPerMillion: null,
-      outputPerMillion: null,
-      totalCostUsd: null,
-      effectiveCost: null,
-      pricingId: null,
-      matchedScope: candidate.eligible ? 'route_table' : 'ineligible',
-      sourceRef: {
-        endpointId: `route-table-target:${candidate.targetId}`,
-        routeId: explanation.routeId ?? null,
-      },
-    })),
+    level: runtimeApiAttemptDiagnosticLevel(diagnostic.severity),
+    code: diagnostic.code,
+    message: diagnostic.message,
+    i18nKey: diagnostic.i18nKey,
+    values: diagnostic.values,
+    apiType: diagnostic.apiType,
+    upstreamEndpoint: diagnostic.upstreamEndpoint,
+    credentialEndpointBindingId: diagnostic.credentialEndpointBindingId,
+    apiEndpointProfileId: diagnostic.apiEndpointProfileId,
   };
 }
 
-function candidateMatchesSelectedEndpoint(input: {
-  candidate: NonNullable<EntryPricingEstimate>['candidates'][number];
-  target: NonNullable<Awaited<ReturnType<typeof evaluateActiveRouteGraphForModel>>>['selectedEndpointTarget'];
-}): boolean {
-  const targetEndpointId = targetIdentityValue(input.target?.sourceRef?.endpointId) || targetIdentityValue(input.target?.endpointId);
-  return !!targetEndpointId && candidateEndpointIdentity(input.candidate) === targetEndpointId;
-}
-
-async function appendRouteTableCandidateFlow(input: {
-  nodes: RouteFlowNode[];
-  edges: RouteFlowEdge[];
-  explanation: RouteDecisionExplanation;
-  pricing: EntryPricingEstimate | null;
-  requestedModel: string;
-}): Promise<void> {
-  const routeNodeId = input.explanation.routeId ? `route:${input.explanation.routeId}` : 'route:matched';
-  input.nodes.push({
-    id: routeNodeId,
-    kind: 'dispatcher',
-    visibility: 'internal',
-    label: input.explanation.modelPattern || `route #${input.explanation.routeId ?? '?'}`,
-    subtitle: 'route table projection',
-    status: 'active',
-    badges: ['route-table'],
-    metrics: {},
-    history: [],
-  });
-  input.edges.push({
-    id: `request-route-table-${routeNodeId}`,
-    source: 'request',
-    target: routeNodeId,
-    label: 'match',
-  });
-
-  const targetIds = input.explanation.candidates
-    .map((candidate) => candidate.targetId)
-    .filter((targetId) => Number.isFinite(targetId) && targetId > 0);
-  const [runtimeStatsSources, runtimeHealthBySourceId, runtimeCredentialIdentities] = await Promise.all([
-    loadRuntimeStatsSources(targetIds),
-    loadRuntimeEndpointHealth(input.requestedModel, targetIds),
-    loadRuntimeCredentialIdentities(targetIds),
-  ]);
-  const pricingByTargetId = new Map((input.pricing?.candidates || [])
-    .map((candidate) => [candidateRuntimeTargetId(candidate), candidate])
-    .filter((entry): entry is [number, NonNullable<EntryPricingEstimate>['candidates'][number]] => entry[0] != null));
-
-  for (const candidate of input.explanation.candidates) {
-    const targetId = candidate.targetId;
-    const pricingCandidate = pricingByTargetId.get(targetId);
-    const runtimeStatsSource = runtimeStatsSources.get(targetId);
-    const runtimeCredentialIdentity = runtimeCredentialIdentities.get(targetId);
-    const health = runtimeHealthBySourceId.get(targetId) || {
-      successCount: 0,
-      failureCount: 0,
-      totalCalls: 0,
-      avgLatencyMs: null,
-      history: [],
-    };
-    const nodeId = `route-table-target:${targetId}`;
-    const label = runtimeCredentialIdentity
-      ? `${runtimeCredentialIdentity.siteName || runtimeCredentialIdentity.siteUrl} · ${runtimeCredentialIdentity.accountUsername || `account #${runtimeCredentialIdentity.accountId}`}`
-      : `${candidate.siteName} · ${candidate.username}`;
-    const subtitle = [
-      runtimeCredentialIdentity?.sourceModel || input.requestedModel,
-      `target ${targetId}`,
-      runtimeCredentialIdentity?.sitePlatform || null,
-    ].filter((item): item is string => !!item).join(' · ');
-    input.nodes.push({
-      id: nodeId,
-      kind: 'route_endpoint',
-      visibility: 'internal',
-      label,
-      subtitle,
-      status: input.explanation.selectedTargetId === targetId
-        ? 'selected'
-        : (candidate.eligible ? 'available' : 'blocked'),
-      badges: Array.from(new Set([
-        'supply',
-        'route-table',
-        candidate.priority != null ? `P${candidate.priority}` : null,
-        candidate.weight != null ? `W${candidate.weight}` : null,
-        candidate.probability == null ? null : `${Math.round(candidate.probability * 10) / 10}%`,
-      ].filter((badge): badge is string => !!badge))),
-      metrics: {
-        successRate: roundRate(health.successCount, health.totalCalls),
-        totalCalls: health.totalCalls,
-        recentSuccessCount: health.successCount,
-        recentFailureCount: health.failureCount,
-        avgLatencyMs: health.avgLatencyMs,
-        probability: pricingCandidate?.probability == null ? candidate.probability : pricingCandidate.probability * 100,
-        priority: candidate.priority,
-        weight: candidate.weight,
-        failCount: runtimeStatsSource?.failCount ?? null,
-        consecutiveFailureCount: runtimeStatsSource?.consecutiveFailCount ?? null,
-        lastUsedAt: runtimeStatsSource?.lastUsedAt ?? null,
-        lastSelectedAt: runtimeStatsSource?.lastSelectedAt ?? null,
-        lastFailureAt: runtimeStatsSource?.lastFailAt ?? null,
-        cooldownUntil: runtimeStatsSource?.cooldownUntil ?? null,
+async function loadRuntimeApiAttemptPlans(
+  attempts: CompiledRuntimeProjection['executionAttempts'],
+  identities: Map<string, RuntimeCredentialIdentity>,
+  request?: CompiledRouteRuntimeRequest | null,
+): Promise<Map<string, {
+  apiAttempts: RuntimeApiAttemptProjection[];
+  apiAttemptDiagnostics: RuntimeApiAttemptDiagnosticProjection[];
+}>> {
+  const result = new Map<string, {
+    apiAttempts: RuntimeApiAttemptProjection[];
+    apiAttemptDiagnostics: RuntimeApiAttemptDiagnosticProjection[];
+  }>();
+  await Promise.all(attempts.map(async (attempt) => {
+    const identity = identities.get(attempt.executionAttemptId) || null;
+    const siteId = Math.trunc(Number(identity?.siteId));
+    const accountId = Math.trunc(Number(identity?.accountId));
+    if (!identity || !Number.isSafeInteger(siteId) || siteId <= 0 || !Number.isSafeInteger(accountId) || accountId <= 0) {
+      result.set(attempt.executionAttemptId, {
+        apiAttempts: [],
+        apiAttemptDiagnostics: [{
+          level: 'warn',
+          code: 'compiled_runtime.execution_attempt_identity_missing',
+          message: 'Compiled runtime execution attempt does not resolve to a current credential identity.',
+        }],
+      });
+      return;
+    }
+    const tokenId = identity.tokenId ?? null;
+    const modelName = attempt.model;
+    if (!modelName) {
+      result.set(attempt.executionAttemptId, {
+        apiAttempts: [],
+        apiAttemptDiagnostics: [{
+          level: 'warn',
+          code: 'compiled_runtime.execution_attempt_model_missing',
+          message: 'Compiled runtime execution attempt does not declare an upstream model.',
+        }],
+      });
+      return;
+    }
+    const config = await loadCredentialApiVariantConfig({
+      siteId,
+      accountId,
+      tokenId,
+      modelName,
+    });
+    const endpointCandidates = await resolveUpstreamEndpointCandidates(
+      {
+        site: {
+          id: identity.siteId,
+          url: identity.siteUrl,
+          platform: identity.sitePlatform,
+        },
+        account: {
+          id: identity.accountId,
+          username: identity.accountUsername,
+          extraConfig: identity.accountExtraConfig,
+        },
       },
-      history: health.history,
+      modelName,
+      routeFlowEndpointPreference(request),
+      request?.requestedModel || modelName,
+      undefined,
+      { oauthProvider: identity.accountOauthProvider, useCatalogOrdering: false },
+    );
+    const credentialId = config?.credentialKey.credentialKey ?? (
+      tokenId ? `account-token:${tokenId}` : `account:${accountId}`
+    );
+    const plan = buildApiAttemptPlan({
+      siteId,
+      credentialId,
+      modelName,
+      canonicalModel: modelName,
+      supplyTargetId: attempt.executionAttemptId,
+      endpointCandidates,
+      endpointProfiles: config?.endpointProfiles,
+      credentialEndpointBindings: config?.credentialEndpointBindings,
+      endpointModelObservations: config?.endpointModelObservations,
+      siteUrl: identity?.siteUrl || null,
+      disableCrossProtocolFallback: false,
     });
-    input.edges.push({
-      id: `route-table-candidate-${targetId}`,
-      source: nodeId,
-      target: routeNodeId,
-      label: candidate.probability == null ? 'N/A' : `${Math.round(candidate.probability * 10) / 10}%`,
+    result.set(attempt.executionAttemptId, {
+      apiAttempts: plan.attempts.map(runtimeApiAttemptPreview),
+      apiAttemptDiagnostics: plan.diagnostics.map(runtimeApiAttemptDiagnosticPreview),
     });
-  }
-}
-
-function routeFlowNodeStatusForCandidate(input: {
-  candidate: NonNullable<EntryPricingEstimate>['candidates'][number];
-  target: NonNullable<Awaited<ReturnType<typeof evaluateActiveRouteGraphForModel>>>['selectedEndpointTarget'];
-  health: ChannelHealth;
-  runtimeStatsSource?: RuntimeStatsSourceRow;
-}): RouteFlowNode['status'] {
-  if (candidateMatchesSelectedEndpoint({
-    candidate: input.candidate,
-    target: input.target,
-  })) return 'selected';
-  if ((input.runtimeStatsSource?.consecutiveFailCount ?? 0) > 0 || input.health.failureCount > input.health.successCount) return 'blocked';
-  return 'available';
-}
-
-function findGraphDispatcherNodeId(input: {
-  nodes: RouteFlowNode[];
-  trace: NonNullable<Awaited<ReturnType<typeof evaluateActiveRouteGraphForModel>>>['trace'];
-}): string | null {
-  const selectedDispatcher = [...input.trace.path].reverse().find((step) => step.nodeType === 'dispatcher');
-  if (selectedDispatcher) {
-    const graphNodeId = `graph:${selectedDispatcher.nodeId}`;
-    if (input.nodes.some((node) => node.id === graphNodeId)) return graphNodeId;
-  }
-  const dispatcherNode = input.nodes.find((node) => node.kind === 'dispatcher');
-  return dispatcherNode?.id || null;
-}
-
-function routeGraphTraceKind(step: RouteGraphRuntimeTraceStep): RouteFlowNodeKind {
-  if (step.nodeType === 'entry') return 'entry';
-  if (step.nodeType === 'dispatcher') return 'dispatcher';
-  if (step.nodeType === 'filter' || step.appliedFilters.length > 0) return 'filter';
-  if (step.nodeType === 'route_endpoint') return 'route_endpoint';
-  if (step.nodeType === 'synthetic_endpoint') return 'synthetic_endpoint';
-  return 'route_endpoint';
-}
-
-function routeGraphTraceVisibility(step: RouteGraphRuntimeTraceStep): RouteFlowVisibility {
-  if (step.decision === 'terminal' || step.decision === 'synthetic_response') return 'terminal';
-  return step.decision === 'matched_entry' ? 'public' : 'internal';
-}
-
-function routeGraphTraceStatus(step: RouteGraphRuntimeTraceStep): RouteFlowNode['status'] {
-  if (step.decision === 'synthetic_response') return 'blocked';
-  if (step.decision === 'terminal') return 'selected';
-  return 'active';
-}
-
-function routeGraphTraceLabel(step: RouteGraphRuntimeTraceStep): string {
-  return step.nodeName || step.nodeId;
-}
-
-function appendGraphTraceFlow(input: {
-  nodes: RouteFlowNode[];
-  edges: RouteFlowEdge[];
-  terminalLinkSource: { current: string };
-  trace: NonNullable<Awaited<ReturnType<typeof evaluateActiveRouteGraphForModel>>>['trace'];
-}): void {
-  const seenNodeIds = new Set(input.nodes.map((node) => node.id));
-  let previousStepNodeId = 'request';
-
-  for (const step of input.trace.path) {
-    const nodeId = `graph:${step.nodeId}`;
-    if (!seenNodeIds.has(nodeId)) {
-      input.nodes.push({
-        id: nodeId,
-        kind: routeGraphTraceKind(step),
-        visibility: routeGraphTraceVisibility(step),
-        label: routeGraphTraceLabel(step),
-        subtitle: `${step.nodeType}${step.exitedPortId ? ` / ${step.exitedPortId}` : ''}`,
-        status: routeGraphTraceStatus(step),
-        badges: [
-          'graph',
-          step.nodeType,
-          ...step.appliedFilters,
-        ].filter(Boolean),
-        metrics: {},
-        history: [],
-      });
-      seenNodeIds.add(nodeId);
-    }
-
-    if (!input.edges.some((edge) => edge.source === previousStepNodeId && edge.target === nodeId)) {
-      input.edges.push({
-        id: `graph-step:${previousStepNodeId}:${nodeId}`,
-        source: previousStepNodeId,
-        target: nodeId,
-        label: step.decision,
-      });
-    }
-    previousStepNodeId = nodeId;
-  }
-
-  for (const edge of input.trace.edges) {
-    const source = `graph:${edge.sourceNodeId}`;
-    const target = `graph:${edge.targetNodeId}`;
-    if (!seenNodeIds.has(source) || !seenNodeIds.has(target)) continue;
-    const edgeId = `graph-edge:${edge.edgeId}`;
-    if (input.edges.some((item) => item.id === edgeId)) continue;
-    input.edges.push({
-      id: edgeId,
-      source,
-      target,
-      label: edge.kind,
-    });
-  }
-
-  input.terminalLinkSource.current = previousStepNodeId;
-}
-
-async function loadRuntimeStatsSources(targetIds: number[]): Promise<Map<number, RuntimeStatsSourceRow>> {
-  const uniqueIds = Array.from(new Set(targetIds.filter((id) => Number.isFinite(id) && id > 0)));
-  if (uniqueIds.length === 0) return new Map<number, RuntimeStatsSourceRow>();
-
-  const rows = await db.select().from(schema.routeEndpointTargets)
-    .where(inArray(schema.routeEndpointTargets.id, uniqueIds))
-    .all();
-  return new Map(rows.map((row) => [row.id, row as RuntimeStatsSourceRow]));
-}
-
-async function loadRuntimeCredentialIdentities(targetIds: number[]): Promise<Map<number, RuntimeCredentialIdentity>> {
-  const uniqueIds = Array.from(new Set(targetIds.filter((id) => Number.isFinite(id) && id > 0)));
-  if (uniqueIds.length === 0) return new Map<number, RuntimeCredentialIdentity>();
-
-  const rows = await db.select({
-    targetId: schema.routeEndpointTargets.id,
-    routeId: schema.routeEndpointTargets.routeId,
-    sourceModel: schema.routeEndpointTargets.sourceModel,
-    siteId: schema.sites.id,
-    siteName: schema.sites.name,
-    siteUrl: schema.sites.url,
-    sitePlatform: schema.sites.platform,
-    accountId: schema.accounts.id,
-    accountUsername: schema.accounts.username,
-    tokenId: schema.accountTokens.id,
-    tokenName: schema.accountTokens.name,
-    tokenGroup: schema.accountTokens.tokenGroup,
-  })
-    .from(schema.routeEndpointTargets)
-    .innerJoin(schema.accounts, eq(schema.routeEndpointTargets.accountId, schema.accounts.id))
-    .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
-    .leftJoin(schema.accountTokens, eq(schema.routeEndpointTargets.tokenId, schema.accountTokens.id))
-    .where(inArray(schema.routeEndpointTargets.id, uniqueIds))
-    .all();
-
-  return new Map(rows.map((row) => [row.targetId, row]));
-}
-
-async function loadRuntimeEndpointHealth(model: string, targetIds: number[]): Promise<Map<number, ChannelHealth>> {
-  const uniqueIds = Array.from(new Set(targetIds.filter((id) => Number.isFinite(id) && id > 0)));
-  const result = new Map<number, ChannelHealth>();
-  for (const targetId of uniqueIds) {
-    result.set(targetId, {
-      successCount: 0,
-      failureCount: 0,
-      totalCalls: 0,
-      avgLatencyMs: null,
-      history: [],
-    });
-  }
-  if (uniqueIds.length === 0) return result;
-
-  const since = getLocalRangeStartUtc(7);
-  const recentLogs = await db.select({
-    targetId: schema.proxyLogs.targetId,
-    status: schema.proxyLogs.status,
-    httpStatus: schema.proxyLogs.httpStatus,
-    latencyMs: schema.proxyLogs.latencyMs,
-    errorMessage: schema.proxyLogs.errorMessage,
-    createdAt: schema.proxyLogs.createdAt,
-  }).from(schema.proxyLogs)
-    .where(and(
-      inArray(schema.proxyLogs.targetId, uniqueIds),
-      gte(schema.proxyLogs.createdAt, since),
-      or(
-        eq(schema.proxyLogs.modelRequested, model),
-        eq(schema.proxyLogs.modelActual, model),
-      ),
-    ))
-    .orderBy(desc(schema.proxyLogs.createdAt))
-    .all();
-
-  const latencyTotals = new Map<number, { total: number; samples: number }>();
-  for (const log of recentLogs) {
-    const targetId = log.targetId;
-    if (typeof targetId !== 'number') continue;
-    const target = result.get(targetId);
-    if (!target) continue;
-
-    target.totalCalls += 1;
-    if (log.status === 'success') {
-      target.successCount += 1;
-      if (typeof log.latencyMs === 'number' && log.latencyMs >= 0) {
-        const current = latencyTotals.get(targetId) || { total: 0, samples: 0 };
-        current.total += log.latencyMs;
-        current.samples += 1;
-        latencyTotals.set(targetId, current);
-      }
-    } else {
-      target.failureCount += 1;
-    }
-
-    if (target.history.length < 6) {
-      target.history.push({
-        at: log.createdAt || '',
-        status: log.status === 'success' || log.status === 'retried' ? log.status : 'failed',
-        httpStatus: log.httpStatus ?? null,
-        message: log.errorMessage || null,
-      });
-    }
-  }
-
-  for (const [targetId, latency] of latencyTotals.entries()) {
-    const target = result.get(targetId);
-    if (!target || latency.samples <= 0) continue;
-    target.avgLatencyMs = Math.round(latency.total / latency.samples);
-  }
-
+  }));
   return result;
 }
 
-async function resolveGraphCompatibilityPolicy(input: {
-  selection: NonNullable<Awaited<ReturnType<typeof evaluateActiveRouteGraphForModel>>>;
-  candidateIdentity?: {
-    siteId: number | null;
-    accountId: number | null;
-    tokenId: number | null;
-  } | null;
+async function enrichCompiledRuntimeProjection(
+  runtime: CompiledRuntimeProjection,
+  request?: CompiledRouteRuntimeRequest | null,
+): Promise<CompiledRuntimeProjection> {
+  if (runtime.executionAttempts.length === 0) return runtime;
+
+  const alternativeById = new Map(runtime.alternatives.map((alternative) => [alternative.alternativeId, alternative]));
+  const sharedTermIds = collectCompiledRuntimeRoutingSignalSharedTermIds(runtime.alternatives);
+  const selectionGroupIdByExecutionAttemptId = new Map<string, string>();
+  for (const attempt of runtime.executionAttempts) {
+    const alternative = alternativeById.get(attempt.alternativeId) || null;
+    const selectionGroupId = compiledRuntimeRoutingSignalScopeId({
+      planId: runtime.match.planId,
+      selectionTerms: alternative?.selectionTerms,
+      sharedTermIds,
+    });
+    if (selectionGroupId) {
+      selectionGroupIdByExecutionAttemptId.set(attempt.executionAttemptId, selectionGroupId);
+    }
+  }
+  const signalAttempts = runtime.executionAttempts
+    .filter((attempt): attempt is (typeof runtime.executionAttempts)[number] & { model: string } => (
+      typeof attempt.model === 'string' && attempt.model.trim().length > 0
+    ))
+    .map((attempt) => ({ ...attempt, entryId: runtime.match.entryNodeId }));
+  const contextLoad = await buildCompiledRuntimeRoutingSignalContexts({
+    attempts: signalAttempts,
+    selectionGroupIdByExecutionAttemptId,
+  });
+  const { identities, healthByAttemptId } = contextLoad;
+  const apiPlansByAttemptId = await loadRuntimeApiAttemptPlans(runtime.executionAttempts, identities, request);
+  const routingSignalsByAttemptId = await buildRuntimeRoutingSignalMap({
+    contexts: contextLoad.signalContexts,
+    request,
+  });
+
+  const enrichedAttempts = runtime.executionAttempts.map((attempt) => {
+    const identity = identities.get(attempt.executionAttemptId) || null;
+    const health = healthByAttemptId.get(attempt.executionAttemptId) || null;
+    const apiPlan = apiPlansByAttemptId.get(attempt.executionAttemptId) || null;
+    const routingSignals = routingSignalsByAttemptId.get(attempt.executionAttemptId);
+    return {
+      ...attempt,
+      siteId: identity?.siteId ?? null,
+      siteName: identity?.siteName ?? null,
+      siteUrl: identity?.siteUrl ?? null,
+      sitePlatform: identity?.sitePlatform ?? null,
+      accountId: identity?.accountId ?? null,
+      accountLabel: trimDisplay(identity?.accountUsername) || null,
+      tokenId: identity?.tokenId ?? null,
+      tokenLabel: trimDisplay(identity?.tokenName) || null,
+      tokenGroup: trimDisplay(identity?.tokenGroup) || null,
+      probability: attempt.probability,
+      probabilityStatus: attempt.probabilityStatus as RuntimeProbabilityStatus,
+      health: {
+        successRate: health?.successRate ?? null,
+        totalCalls: health?.totalCalls ?? 0,
+        avgLatencyMs: health?.avgLatencyMs ?? null,
+        cooldownUntil: identity?.cooldownUntil ?? null,
+        consecutiveFailureCount: identity?.consecutiveFailureCount ?? null,
+      },
+      apiAttempts: apiPlan?.apiAttempts || [],
+      apiAttemptDiagnostics: apiPlan?.apiAttemptDiagnostics || [],
+      routingSignals,
+    };
+  });
+  const attemptById = new Map(enrichedAttempts.map((attempt) => [attempt.executionAttemptId, attempt]));
+  const enrichedSelectedAttempt = runtime.selected.executionAttemptId
+    ? attemptById.get(runtime.selected.executionAttemptId) || null
+    : null;
+  const enrichedAlternatives = runtime.alternatives.map((alternative) => {
+    const attempts = alternative.executionAttemptIds
+      .map((executionAttemptId) => attemptById.get(executionAttemptId) || null)
+      .filter((attempt): attempt is (typeof enrichedAttempts)[number] => !!attempt);
+    if (attempts.length === 0) return alternative;
+    const probabilities = attempts
+      .map((attempt) => attempt.probability)
+      .filter((probability): probability is number => typeof probability === 'number' && Number.isFinite(probability));
+    if (probabilities.length !== attempts.length) {
+      return alternative;
+    }
+    return {
+      ...alternative,
+      probability: Math.min(1, probabilities.reduce((sum, probability) => sum + (probability || 0), 0)),
+      probabilityStatus: 'static' as RuntimeProbabilityStatus,
+    };
+  });
+
+  return {
+    ...runtime,
+    selected: {
+      ...runtime.selected,
+      accountId: enrichedSelectedAttempt?.accountId ?? null,
+      tokenId: enrichedSelectedAttempt?.tokenId ?? null,
+      siteId: enrichedSelectedAttempt?.siteId ?? null,
+      actualModel: enrichedSelectedAttempt?.model ?? runtime.selected.actualModel ?? null,
+    },
+    alternatives: enrichedAlternatives,
+    executionAttempts: enrichedAttempts,
+  };
+}
+
+async function resolveCompiledRuntimeCompatibilityPolicy(input: {
+  selection: RouteRuntimeSelectionSnapshot;
+  selectedAttempt?: CompiledRuntimeProjection['executionAttempts'][number] | null;
 }): Promise<CompiledRouteFlow['compatibilityPolicy']> {
-  const selection = input.selection;
-  const fallback = input.candidateIdentity || null;
-  const target = selection.selectedEndpointTarget;
-  let siteId = Number(target?.siteId ?? fallback?.siteId);
-  let accountId = Number(target?.accountId ?? fallback?.accountId);
-  let tokenId = Number(target?.tokenId ?? fallback?.tokenId);
+  const selectedAttempt = input.selectedAttempt || null;
+  const siteId = Number(selectedAttempt?.siteId);
+  const accountId = Number(selectedAttempt?.accountId);
+  const tokenId = Number(selectedAttempt?.tokenId);
   const [site, account, token] = await Promise.all([
     Number.isFinite(siteId) && siteId > 0
       ? db.select({ compatibilityPolicy: schema.sites.compatibilityPolicy })
@@ -610,351 +346,123 @@ async function resolveGraphCompatibilityPolicy(input: {
       site,
       account,
       token,
-      routeEndpointCompatibilityPolicy: selection.routeEndpointCompatibilityPolicy,
-      selectedEndpointTarget: target,
+      routeEndpointCompatibilityPolicy: input.selection.routeEndpointCompatibilityPolicy,
     }),
     layers: [
       { source: 'site', configured: !!site?.compatibilityPolicy },
       { source: 'account', configured: !!account?.extraConfig },
       { source: 'token', configured: !!token?.compatibilityPolicy },
-      { source: 'endpoint_policy', configured: !!selection.routeEndpointCompatibilityPolicy },
-      { source: 'target', configured: !!target?.compatibilityPolicy },
+      { source: 'endpoint_policy', configured: !!input.selection.routeEndpointCompatibilityPolicy },
+      { source: 'execution_attempt', configured: false },
     ],
   };
 }
 
-async function resolveRouteTableCompatibilityPolicy(
-  explanation: RouteDecisionExplanation,
-): Promise<CompiledRouteFlow['compatibilityPolicy']> {
-  const targetId = Number(explanation.selectedTargetId);
-  if (!Number.isFinite(targetId) || targetId <= 0) return undefined;
-
-  const row = await db.select({
-    siteCompatibilityPolicy: schema.sites.compatibilityPolicy,
-    accountExtraConfig: schema.accounts.extraConfig,
-    tokenCompatibilityPolicy: schema.accountTokens.compatibilityPolicy,
-  })
-    .from(schema.routeEndpointTargets)
-    .innerJoin(schema.accounts, eq(schema.routeEndpointTargets.accountId, schema.accounts.id))
-    .innerJoin(schema.sites, eq(schema.accounts.siteId, schema.sites.id))
-    .leftJoin(schema.accountTokens, eq(schema.routeEndpointTargets.tokenId, schema.accountTokens.id))
-    .where(eq(schema.routeEndpointTargets.id, Math.trunc(targetId)))
-    .get();
-
-  if (!row) return undefined;
-  const site = { compatibilityPolicy: row.siteCompatibilityPolicy };
-  const account = { extraConfig: row.accountExtraConfig };
-  const token = row.tokenCompatibilityPolicy == null ? null : { compatibilityPolicy: row.tokenCompatibilityPolicy };
-  return {
-    resolved: resolveDispatchUpstreamCompatibilityPolicy({
-      site,
-      account,
-      token,
-    }),
-    layers: [
-      { source: 'site', configured: !!row.siteCompatibilityPolicy },
-      { source: 'account', configured: !!row.accountExtraConfig },
-      { source: 'token', configured: !!row.tokenCompatibilityPolicy },
-      { source: 'endpoint_policy', configured: false },
-      { source: 'target', configured: false },
-    ],
-  };
-}
-
-export async function compileModelRouteFlow(model: string): Promise<CompiledRouteFlow> {
+export async function getCompiledRuntimeRouteFlow(
+  model: string,
+  options: {
+    forcedExecutionAttemptId?: string | null;
+    request?: CompiledRouteRuntimeRequest | null;
+    pricingUsage?: EntryPricingUsage | null;
+    includeEntryPricing?: boolean;
+    includeCompatibilityPolicy?: boolean;
+  } = {},
+): Promise<CompiledRouteFlow> {
   const requestedModel = model.trim();
-  const compiledAt = new Date().toISOString();
-  const activeGraph = await getActiveRouteGraphRuntimeVersion();
-  const routeBundle = activeGraph?.compiledGraph.compiledRouterBundle || null;
-  const [graphSelection, staticEntryPricing, routeTableExplanation] = await Promise.all([
-    evaluateActiveRouteGraphForModel(requestedModel),
-    routeBundle ? estimateRouteEntryPricing({ bundle: routeBundle, requestedModel }) : Promise.resolve(null),
-    tokenRouter.explainSelection(requestedModel),
-  ]);
-  const routeTablePricing = graphSelection ? null : pricingEstimateFromRouteDecision(routeTableExplanation, requestedModel);
-  const theoreticalEntryPricing = staticEntryPricing || routeTablePricing;
-
-  const nodes: RouteFlowNode[] = [{
-    id: 'request',
-    kind: 'request',
-    visibility: 'public',
-    label: requestedModel,
-    subtitle: 'client request model',
-    status: graphSelection || routeTableExplanation.matched ? 'active' : 'blocked',
-    badges: ['public'],
-    metrics: {},
-    history: [],
-  }];
-  const edges: RouteFlowEdge[] = [];
+  const projectedAt = new Date().toISOString();
   const diagnostics: RouteFlowDiagnostic[] = [];
-  const terminalLinkSource = { current: 'request' };
-
-  if (graphSelection) {
-    const target = graphSelection.selectedEndpointTarget;
-    const selectedEndpointId = targetIdentityValue(target?.sourceRef?.endpointId) || targetIdentityValue(target?.endpointId);
-    const selectedPricingCandidate = theoreticalEntryPricing?.candidates.find((candidate) => (
-      candidateEndpointIdentity(candidate) === selectedEndpointId
-    )) || theoreticalEntryPricing?.candidates[0] || null;
-    const compatibilityPolicy = await resolveGraphCompatibilityPolicy({
-      selection: graphSelection,
-      candidateIdentity: selectedPricingCandidate
-        ? {
-          siteId: selectedPricingCandidate.siteId,
-          accountId: selectedPricingCandidate.accountId,
-          tokenId: selectedPricingCandidate.tokenId,
-        }
-        : null,
-    });
-    appendGraphTraceFlow({
-      nodes,
-      edges,
-      terminalLinkSource,
-      trace: graphSelection.trace,
-    });
-
-    const pricingCandidates = theoreticalEntryPricing?.candidates || [];
-    const graphTargetIds = pricingCandidates
-      .map((candidate) => candidateRuntimeTargetId(candidate))
-      .filter((targetId): targetId is number => targetId != null);
-    const [runtimeStatsSources, runtimeHealthBySourceId, runtimeCredentialIdentities] = await Promise.all([
-      loadRuntimeStatsSources(graphTargetIds),
-      loadRuntimeEndpointHealth(requestedModel, graphTargetIds),
-      loadRuntimeCredentialIdentities(graphTargetIds),
-    ]);
-    const dispatcherNodeId = findGraphDispatcherNodeId({ nodes, trace: graphSelection.trace }) || terminalLinkSource.current;
-    const semanticCandidateTargets = new Set<string>();
-    const semanticSupplyEndpointNodes = new Set<string>();
-
-    for (const candidate of pricingCandidates.sort((left, right) => {
-      if (candidateEndpointIdentity(left) === selectedEndpointId) return -1;
-      if (candidateEndpointIdentity(right) === selectedEndpointId) return 1;
-      const rightProbability = right.probability ?? -1;
-      const leftProbability = left.probability ?? -1;
-      if (rightProbability !== leftProbability) return rightProbability - leftProbability;
-      return candidateEndpointIdentity(left).localeCompare(candidateEndpointIdentity(right));
-    })) {
-      const supplyEndpointId = candidateEndpointIdentity(candidate);
-      if (!supplyEndpointId) {
-        diagnostics.push({
-          level: 'warn',
-          message: `Skipping pricing candidate without route_endpoint id for ${candidate.modelName || requestedModel}.`,
-        });
-        continue;
-      }
-      const targetId = candidateRuntimeTargetId(candidate);
-      const hasRuntimeTargetStats = targetId != null;
-      const runtimeStatsSource = hasRuntimeTargetStats ? runtimeStatsSources.get(targetId) : undefined;
-      const runtimeCredentialIdentity = hasRuntimeTargetStats ? runtimeCredentialIdentities.get(targetId) : undefined;
-      const health = (hasRuntimeTargetStats ? runtimeHealthBySourceId.get(targetId) : undefined) || {
-        successCount: 0,
-        failureCount: 0,
-        totalCalls: 0,
-        avgLatencyMs: null,
-        history: [],
-      };
-      const semanticSupplyNodeId = `graph:${supplyEndpointId}`;
-      semanticSupplyEndpointNodes.add(semanticSupplyNodeId);
-      const supplyNodeId = semanticSupplyNodeId;
-      const selected = candidateMatchesSelectedEndpoint({ candidate, target });
-      const candidateStatus = selected
-        ? 'selected'
-        : routeFlowNodeStatusForCandidate({ candidate, target, health, runtimeStatsSource });
-      const candidateDisplay = graphCandidateDisplay({
-        candidate,
-        identity: runtimeCredentialIdentity,
-        supplyEndpointId,
-      });
-      if (!nodes.some((node) => node.id === supplyNodeId)) {
-        nodes.push({
-          id: supplyNodeId,
-          kind: 'route_endpoint',
-          visibility: 'internal',
-          label: candidateDisplay.label,
-          subtitle: candidateDisplay.subtitle,
-          status: candidateStatus,
-          badges: Array.from(new Set([
-            'supply',
-            'supply-target',
-            ...buildGraphCandidateBadges(candidate),
-          ])),
-          metrics: {
-            successRate: roundRate(health.successCount, health.totalCalls),
-            totalCalls: health.totalCalls,
-            recentSuccessCount: health.successCount,
-            recentFailureCount: health.failureCount,
-            avgLatencyMs: health.avgLatencyMs,
-            probability: candidate.probability == null ? null : candidate.probability * 100,
-            priority: candidate.priority,
-            weight: candidate.weight,
-            failCount: runtimeStatsSource?.failCount ?? null,
-            consecutiveFailureCount: runtimeStatsSource?.consecutiveFailCount ?? null,
-            lastUsedAt: runtimeStatsSource?.lastUsedAt ?? null,
-            lastSelectedAt: runtimeStatsSource?.lastSelectedAt ?? null,
-            lastFailureAt: runtimeStatsSource?.lastFailAt ?? null,
-            cooldownUntil: runtimeStatsSource?.cooldownUntil ?? null,
-          },
-          history: health.history,
-        });
-      } else {
-        const supplyNode = nodes.find((node) => node.id === supplyNodeId);
-        if (supplyNode) {
-          supplyNode.kind = 'route_endpoint';
-          supplyNode.visibility = 'internal';
-          supplyNode.label = candidateDisplay.label;
-          supplyNode.subtitle = candidateDisplay.subtitle;
-          supplyNode.status = selected ? 'selected' : supplyNode.status;
-          supplyNode.metrics = {
-            ...supplyNode.metrics,
-            successRate: roundRate(health.successCount, health.totalCalls),
-            totalCalls: health.totalCalls,
-            recentSuccessCount: health.successCount,
-            recentFailureCount: health.failureCount,
-            avgLatencyMs: health.avgLatencyMs,
-            probability: candidate.probability == null ? null : candidate.probability * 100,
-            priority: candidate.priority,
-            weight: candidate.weight,
-            failCount: runtimeStatsSource?.failCount ?? null,
-            consecutiveFailureCount: runtimeStatsSource?.consecutiveFailCount ?? null,
-            lastUsedAt: runtimeStatsSource?.lastUsedAt ?? null,
-            lastSelectedAt: runtimeStatsSource?.lastSelectedAt ?? null,
-            lastFailureAt: runtimeStatsSource?.lastFailAt ?? null,
-            cooldownUntil: runtimeStatsSource?.cooldownUntil ?? null,
-          };
-          supplyNode.history = health.history;
-          supplyNode.badges = Array.from(new Set([...supplyNode.badges, 'supply', 'supply-target', ...buildGraphCandidateBadges(candidate)]));
-        }
-      }
-      if (!edges.some((edge) => edge.source === supplyNodeId && edge.target === dispatcherNodeId)) {
-        edges.push({
-          id: `graph-candidate-supply-${supplyEndpointId}`,
-          source: supplyNodeId,
-          target: dispatcherNodeId,
-          label: graphCandidatePercent(candidate),
-        });
-      }
-      semanticCandidateTargets.add(supplyNodeId);
-    }
-    terminalLinkSource.current = dispatcherNodeId;
-    for (let index = edges.length - 1; index >= 0; index -= 1) {
-      const edge = edges[index];
-      if (
-        (
-          edge.id.startsWith('graph-step:')
-          && edge.source === dispatcherNodeId
-          && (semanticCandidateTargets.has(edge.target) || semanticSupplyEndpointNodes.has(edge.target))
-        )
-        || (
-          edge.id.startsWith('graph-edge:')
-          && edge.target === dispatcherNodeId
-          && semanticSupplyEndpointNodes.has(edge.source)
-        )
-      ) {
-        edges.splice(index, 1);
-      }
-    }
-
-    const syntheticStatus = graphSelection.syntheticResponse?.statusCode || 503;
-    if (graphSelection.terminalKind === 'synthetic_endpoint') {
-      nodes.push({
-        id: 'graph:synthetic-response',
-        kind: 'synthetic_endpoint',
-        visibility: 'terminal',
-        label: `${syntheticStatus}`,
-        subtitle: graphSelection.syntheticResponse?.message || 'configured route graph synthetic response',
-        status: 'blocked',
-        badges: ['terminal', 'synthetic_endpoint'],
-        metrics: {},
-        history: [],
-      });
-      edges.push({ id: 'graph-synthetic-response-terminal', source: terminalLinkSource.current, target: 'graph:synthetic-response', label: 'terminal' });
-      diagnostics.push({ level: 'warn', message: graphSelection.syntheticResponse?.message || '路由图返回了配置的 synthetic endpoint' });
-    }
-
-    return {
-      version: 1,
-      requestedModel,
-      actualModel: target?.modelSource === 'request'
-        ? graphSelection.currentModel
-        : (target?.model || graphSelection.currentModel),
-      matched: true,
-      selectedRouteId: graphSelection.selectedRouteId ?? graphSelection.matchedRouteId ?? null,
-      selectedAccountId: target?.accountId == null || typeof target.accountId !== 'number' ? null : target.accountId,
-      routePattern: null,
-      summary: graphSelection.terminalKind === 'synthetic_endpoint'
-        ? [`route graph synthetic response ${syntheticStatus}`]
-        : [
-          `compiled graph selected route_endpoint`,
-          graphSelection.selectedRouteId ? `route #${graphSelection.selectedRouteId}` : null,
-          selectedPricingCandidate?.sourceRef?.endpointId
-            ? `supply ${selectedPricingCandidate.sourceRef.endpointId}`
-            : null,
-        ].filter((line): line is string => !!line),
-      nodes,
-      edges,
-      diagnostics,
-      entryPricing: {
-        theoretical: theoreticalEntryPricing,
-      },
-      compatibilityPolicy,
-      compiledAt,
-    };
-  }
-
-  if (routeTableExplanation.matched) {
-    const compatibilityPolicy = await resolveRouteTableCompatibilityPolicy(routeTableExplanation);
-    await appendRouteTableCandidateFlow({
-      nodes,
-      edges,
-      explanation: routeTableExplanation,
-      pricing: routeTablePricing,
-      requestedModel,
-    });
-    return {
-      version: 1,
-      requestedModel,
-      actualModel: routeTableExplanation.actualModel,
-      matched: true,
-      selectedRouteId: routeTableExplanation.routeId ?? null,
-      selectedAccountId: routeTableExplanation.selectedAccountId ?? null,
-      routePattern: routeTableExplanation.modelPattern ?? null,
-      summary: routeTableExplanation.summary,
-      nodes,
-      edges,
-      diagnostics,
-      entryPricing: {
-        theoretical: routeTablePricing,
-      },
-      compatibilityPolicy,
-      compiledAt,
-    };
-  }
-
-  nodes.push({
-    id: 'graph:unmatched',
-    kind: 'synthetic_endpoint',
-    visibility: 'terminal',
-    label: 'No route matched',
-    subtitle: 'compiled route graph has no public entry for this model',
-    status: 'blocked',
-    badges: ['terminal', 'synthetic_endpoint'],
-    metrics: {},
-    history: [],
+  const runtimeProjection = await buildRouteRuntimeProjection({
+    requestedModel,
+    request: options.request ?? null,
+    forcedExecutionAttemptId: options.forcedExecutionAttemptId ?? null,
   });
-  edges.push({ id: 'request-unmatched', source: 'request', target: 'graph:unmatched', label: 'match' });
-  diagnostics.push({ level: 'warn', message: '当前模型没有命中启用路由图入口' });
+  const routeBundle = runtimeProjection.routeBundle;
+  const runtimeSelection = runtimeProjection.selection;
+
+  if (!runtimeSelection || !routeBundle) {
+    diagnostics.push({
+      level: 'warn',
+      message: routeBundle
+        ? '当前模型没有命中启用的 compiled runtime 入口。'
+        : '当前没有可用的 compiled runtime 路由包。',
+    });
+    return {
+      requestedModel,
+      matched: false,
+      diagnostics,
+      compiledRuntime: null,
+      projectedAt,
+    };
+  }
+
+  const rawRuntime = runtimeProjection.runtime;
+
+  if (!rawRuntime) {
+    diagnostics.push({
+      level: 'error',
+      message: 'Compiled runtime selection could not be projected for this model.',
+    });
+    return {
+      requestedModel,
+      matched: false,
+      diagnostics,
+      compiledRuntime: null,
+      projectedAt,
+    };
+  }
+
+  const compiledRuntime = await enrichCompiledRuntimeProjection(rawRuntime, options.request);
+  if (compiledRuntime.syntheticResponse) {
+    diagnostics.push({
+      level: 'warn',
+      message: compiledRuntime.syntheticResponse.message || '路由返回了配置的 synthetic response。',
+    });
+  }
+  if (compiledRuntime.executionAttempts.length === 0 && !compiledRuntime.syntheticResponse) {
+    diagnostics.push({
+      level: 'warn',
+      message: 'Compiled runtime did not expose any execution attempts for this model.',
+    });
+  }
+  const missingSignalScopeCount = compiledRuntime.executionAttempts.filter((attempt) => (
+    attempt.model
+    && attempt.siteId != null
+    && attempt.accountId != null
+    && !attempt.routingSignals
+  )).length;
+  if (missingSignalScopeCount > 0) {
+    diagnostics.push({
+      level: 'warn',
+      message: `${missingSignalScopeCount} execution attempt(s) are missing compiled selection scope metadata; routing signal estimates were not inferred for them.`,
+    });
+  }
+
+  const selectedAttempt = compiledRuntime.executionAttempts
+    .find((attempt) => attempt.executionAttemptId === compiledRuntime.selected.executionAttemptId) || null;
+  const includeEntryPricing = options.includeEntryPricing !== false;
+  const includeCompatibilityPolicy = options.includeCompatibilityPolicy !== false;
+  const [entryPricing, compatibilityPolicy] = await Promise.all([
+    includeEntryPricing
+      ? estimateCompiledRuntimeEntryPricing({
+          runtime: compiledRuntime,
+          usage: options.pricingUsage ?? undefined,
+        })
+      : Promise.resolve(null),
+    includeCompatibilityPolicy
+      ? resolveCompiledRuntimeCompatibilityPolicy({
+          selection: runtimeSelection,
+          selectedAttempt,
+        })
+      : Promise.resolve(undefined),
+  ]);
 
   return {
-    version: 1,
     requestedModel,
-    actualModel: requestedModel,
-    matched: false,
-    selectedRouteId: null,
-    selectedAccountId: null,
-    routePattern: null,
-    summary: ['no compiled route graph entry matched'],
-    nodes,
-    edges,
+    matched: true,
     diagnostics,
-    compiledAt,
+    compiledRuntime,
+    ...(includeEntryPricing ? { entryPricing: { theoretical: entryPricing } } : {}),
+    ...(includeCompatibilityPolicy ? { compatibilityPolicy } : {}),
+    projectedAt,
   };
 }

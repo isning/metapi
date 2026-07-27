@@ -586,7 +586,7 @@ export default function Sites() {
   const [probeCompleted, setProbeCompleted] = useState(false);
   const probeAbortRef = useRef<AbortController | null>(null);
   const probeLogEndRef = useRef<HTMLDivElement | null>(null);
-  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [discoveredModels, setDiscoveredModels] = useState<string[]>([]);
   const [disabledModelSearch, setDisabledModelSearch] = useState('');
   const initializationPresetOptions = useMemo(() => listSiteInitializationPresets(), []);
   const selectedInitializationPreset = useMemo(
@@ -635,7 +635,7 @@ export default function Sites() {
   const disabledModelSet = useMemo(() => new Set(disabledModels), [disabledModels]);
 
   const brandGroups = useMemo(() => {
-    const allModels = Array.from(new Set([...availableModels, ...disabledModels]));
+    const allModels = Array.from(new Set([...discoveredModels, ...disabledModels]));
     const groups = new Map<string, string[]>();
     for (const model of allModels) {
       const brand = getBrand(model);
@@ -648,7 +648,7 @@ export default function Sites() {
       if (b[0] === '其他') return -1;
       return a[0].localeCompare(b[0], undefined, { sensitivity: 'base' });
     });
-  }, [availableModels, disabledModels]);
+  }, [discoveredModels, disabledModels]);
 
   const filteredBrandGroups = useMemo(() => {
     const q = disabledModelSearch.trim().toLowerCase();
@@ -793,13 +793,13 @@ export default function Sites() {
     setSelectedInitializationPresetId(detectSiteInitializationPreset(site.url, site.platform)?.id || null);
     scrollToEditorTop();
     // Load disabled models and discovered models independently so a best-effort
-    // availability fetch cannot wipe the existing disabled-model state.
+    // discovery fetch cannot wipe the existing disabled-model state.
     const loadSiteId = site.id;
     loadingModelsSiteIdRef.current = loadSiteId;
     setDisabledModelsLoading(true);
     setDisabledModels([]);
     setDisabledModelInput('');
-    setAvailableModels([]);
+    setDiscoveredModels([]);
     setDisabledModelSearch('');
     setProbeEnabled(!!site.postRefreshProbeEnabled);
     setProbeModel(typeof site.postRefreshProbeModel === 'string' ? site.postRefreshProbeModel : '');
@@ -828,12 +828,12 @@ export default function Sites() {
       .finally(markLoadFinished);
 
     api.getSiteAvailableModels(site.id)
-      .then((availableRes: any) => {
+      .then((discoveredRes: any) => {
         if (loadingModelsSiteIdRef.current !== loadSiteId) return;
-        setAvailableModels(Array.isArray(availableRes?.models) ? availableRes.models : []);
+        setDiscoveredModels(Array.isArray(discoveredRes?.models) ? discoveredRes.models : []);
       })
       .catch((err: any) => {
-        console.warn('Failed to load site available models:', err?.message || err);
+        console.warn('Failed to load site discovered models:', err?.message || err);
       })
       .finally(markLoadFinished);
   };
@@ -972,7 +972,7 @@ export default function Sites() {
             // Refresh model lists to reflect probe results
             Promise.all([
               api.getSiteAvailableModels(siteId).then((res: any) => {
-                setAvailableModels(Array.isArray(res?.models) ? res.models : []);
+                setDiscoveredModels(Array.isArray(res?.models) ? res.models : []);
               }),
               api.getSiteDisabledModels(siteId).then((res: any) => {
                 setDisabledModels(Array.isArray(res?.models) ? res.models : []);
@@ -984,7 +984,7 @@ export default function Sites() {
             // Refresh model state even on error
             Promise.all([
               api.getSiteAvailableModels(siteId).then((res: any) => {
-                setAvailableModels(Array.isArray(res?.models) ? res.models : []);
+                setDiscoveredModels(Array.isArray(res?.models) ? res.models : []);
               }),
               api.getSiteDisabledModels(siteId).then((res: any) => {
                 setDisabledModels(Array.isArray(res?.models) ? res.models : []);
@@ -2085,7 +2085,7 @@ export default function Sites() {
                   <div className="mb-1.5 text-xs font-semibold text-muted-foreground">
                     {tr('pages.sites.modelstatus')}
                     <span className="ml-1.5 font-normal text-muted-foreground">
-                      {tr('pages.sites.available')} {availableModels.filter((m) => !disabledModelSet.has(m)).length} {tr('pages.sites.disabled2')} {disabledModels.length} {tr('pages.accounts.model')}
+                      {tr('pages.sites.available')} {discoveredModels.filter((m) => !disabledModelSet.has(m)).length} {tr('pages.sites.disabled2')} {disabledModels.length} {tr('pages.accounts.model')}
                     </span>
                   </div>
                   <div className="max-h-50 overflow-y-auto rounded-lg border py-1">

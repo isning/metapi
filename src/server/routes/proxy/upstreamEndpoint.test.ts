@@ -229,7 +229,7 @@ describe('resolveUpstreamEndpointCandidates', () => {
       undefined,
       undefined,
       {
-        requestKind: 'responses-compact',
+        operationHint: 'responses-compact',
       },
     );
 
@@ -297,7 +297,7 @@ describe('resolveUpstreamEndpointCandidates', () => {
       endpoint: 'responses',
       downstreamFormat: 'openai',
       modelName: 'gpt-5.3',
-      requestCapabilities: {
+      surfaceCapabilityHints: {
         conversationFileSummary: {
           hasImage: true,
           hasAudio: false,
@@ -334,7 +334,7 @@ describe('resolveUpstreamEndpointCandidates', () => {
       endpoint: 'responses',
       downstreamFormat: 'openai',
       modelName: 'gpt-5.3',
-      requestCapabilities: {
+      surfaceCapabilityHints: {
         conversationFileSummary: {
           hasImage: true,
           hasAudio: false,
@@ -348,7 +348,7 @@ describe('resolveUpstreamEndpointCandidates', () => {
       siteId: baseContext.site.id,
       downstreamFormat: 'openai',
       modelName: 'gpt-5.3',
-      requestCapabilities: {
+      surfaceCapabilityHints: {
         conversationFileSummary: {
           hasImage: true,
           hasAudio: false,
@@ -392,7 +392,7 @@ describe('resolveUpstreamEndpointCandidates', () => {
       endpoint: 'messages',
       downstreamFormat: 'openai',
       modelName: 'gpt-5.3',
-      requestCapabilities: {
+      surfaceCapabilityHints: {
         hasNonImageFileInput: true,
         conversationFileSummary: {
           hasImage: false,
@@ -495,7 +495,7 @@ describe('resolveUpstreamEndpointCandidates', () => {
       endpoint: 'chat',
       downstreamFormat: 'openai',
       modelName: 'gpt-5.3',
-      requestCapabilities: {
+      surfaceCapabilityHints: {
         hasNonImageFileInput: true,
         conversationFileSummary: {
           hasImage: false,
@@ -1196,7 +1196,7 @@ describe('buildUpstreamEndpointRequest', () => {
       downstreamFormat: 'openai',
       downstreamHeaders: {
         'x-metapi-responses-websocket-transport': '1',
-        'x-metapi-tester-forced-target-id': '77',
+        'x-metapi-tester-forced-execution-attempt-id': 'ea_25',
       },
       platformHeaders: {
         Originator: 'codex_cli_rs',
@@ -1205,7 +1205,7 @@ describe('buildUpstreamEndpointRequest', () => {
 
     expect(request.headers['x-codex-beta-features']).toBe('multi_agent');
     expect(request.headers['x-metapi-responses-websocket-transport']).toBeUndefined();
-    expect(request.headers['x-metapi-tester-forced-target-id']).toBeUndefined();
+    expect(request.headers['x-metapi-tester-forced-execution-attempt-id']).toBeUndefined();
   });
 
   it('builds gemini-cli native requests with project envelope and bearer headers', () => {
@@ -1366,6 +1366,58 @@ describe('buildUpstreamEndpointRequest', () => {
     expect(request.headers['anthropic-beta']).toContain('context-management-2025-06-27');
     expect(request.headers.Accept).toBe('application/json');
     expect(request.headers['Accept-Encoding']).toBe('gzip, deflate, br, zstd');
+  });
+
+  it('uses standard anthropic-compatible headers for claude api-key upstream requests', () => {
+    const request = buildUpstreamEndpointRequest({
+      endpoint: 'messages',
+      modelName: 'deepseek-ai/DeepSeek-V4-Flash',
+      stream: true,
+      tokenValue: 'ms-api-key',
+      oauthProvider: '',
+      sitePlatform: 'claude',
+      siteUrl: 'https://api-inference.modelscope.cn',
+      openaiBody: {
+        model: 'deepseek-ai/DeepSeek-V4-Flash',
+        stream: true,
+        messages: [{ role: 'user', content: 'hello' }],
+      },
+      downstreamFormat: 'openai',
+    });
+
+    expect(request.path).toBe('/v1/messages');
+    expect(request.headers['x-api-key']).toBe('ms-api-key');
+    expect(request.headers.Authorization).toBeUndefined();
+    expect(request.headers['Content-Type']).toBe('application/json');
+    expect(request.headers['content-type']).toBeUndefined();
+    expect(request.headers['anthropic-version']).toBe('2023-06-01');
+    expect(request.headers.Accept).toBe('text/event-stream');
+    expect(request.headers['anthropic-beta']).toContain('claude-code-20250219');
+    expect(request.headers['anthropic-beta']).toContain('context-management-2025-06-27');
+    expect(request.headers['anthropic-beta']).not.toContain('oauth-2025-04-20');
+    expect(request.headers['anthropic-beta']).not.toContain('token-counting-2024-11-01');
+    expect(request.headers['Anthropic-Dangerous-Direct-Browser-Access']).toBeUndefined();
+    expect(request.headers['X-App']).toBeUndefined();
+    expect(request.headers['X-Stainless-Retry-Count']).toBeUndefined();
+    expect(request.headers['User-Agent']).toBeUndefined();
+    expect(request.headers['Accept-Encoding']).toBeUndefined();
+    expect(request.body).toEqual({
+      model: 'deepseek-ai/DeepSeek-V4-Flash',
+      stream: true,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: 'hello',
+              cache_control: { type: 'ephemeral' },
+            },
+          ],
+        },
+      ],
+      max_tokens: 4096,
+    });
   });
 
   it('extracts system input into top-level instructions in native codex responses bodies', () => {

@@ -57,7 +57,6 @@ type RouteGraphNode =
 type EntryNode = BaseRouteGraphNode & {
   type: 'entry';
   match: RouteGraphMatchSpec;
-  selectionStrategy: RouteGraphSelectionStrategy;
 };
 ```
 
@@ -135,8 +134,8 @@ one or more route endpoints through generated selector/dispatcher logic.
 
 ## Macro Surface
 
-Candidate selector macros will stop modeling external exposure as
-`surface.entry.visibility`. The macro surface is split into ingress and output:
+Candidate selector macros do not model external exposure as a generic
+visibility field. The macro surface separates ingress from output:
 
 ```ts
 type CandidateSelectorMacroSurface = {
@@ -192,7 +191,7 @@ internals.
 The API exposes:
 
 ```http
-GET /api/route-endpoints
+GET /api/route-graph/endpoints
 ```
 
 Response items use a graph product vocabulary:

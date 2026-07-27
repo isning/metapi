@@ -94,15 +94,17 @@ export function SettingsQuickLink({
 export function SettingsField({
   label,
   hint,
+  controlId,
   children,
 }: {
   label: ReactNode;
   hint?: ReactNode;
+  controlId?: string;
   children: ReactNode;
 }) {
   return (
     <div className="grid gap-2">
-      <Label>{label}</Label>
+      <Label htmlFor={controlId}>{label}</Label>
       {children}
       {hint ? <div className="text-xs text-muted-foreground">{hint}</div> : null}
     </div>

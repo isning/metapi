@@ -218,7 +218,7 @@ describe('/v1beta/models/* Gemini relay with scenario upstreams', () => {
   });
 
   it('records a normalized failure log when the upstream Gemini generateContent endpoint fails', async () => {
-    const { managedKey, route, target, account } = await harness.seedRoute({
+    const { managedKey, route, candidate, account } = await harness.seedRoute({
       model: 'gemini-failure-model',
       platform: 'gemini',
       tokenValue: 'gemini-failure-key',
@@ -253,18 +253,18 @@ describe('/v1beta/models/* Gemini relay with scenario upstreams', () => {
       },
     });
 
-    expect(response.statusCode, response.body).toBe(503);
+    expect(response.statusCode, response.body).toBe(500);
     expect(response.json()).toMatchObject({
       error: expect.objectContaining({
-        message: expect.stringContaining('No available targets for this model'),
+        message: expect.stringContaining('gemini internal error'),
       }),
     });
 
     const logs = await harness.db.select().from(harness.schema.proxyLogs).all();
     expect(logs.some((log) => log.status === 'failed'
       && log.httpStatus === 500
-      && log.routeId === route.id
-      && log.targetId === target.id
+      && log.executionTargetId === candidate.executionTargetId
+      && log.executionAttemptId === candidate.executionAttemptId
       && log.accountId === account.id
       && log.downstreamApiKeyId === managedKey.id
       && log.modelRequested === 'gemini-failure-model'

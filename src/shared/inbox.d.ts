@@ -40,6 +40,14 @@ export const INBOX_STATES: readonly [
 export type InboxState = (typeof INBOX_STATES)[number];
 
 export type InboxDetailBlock =
+  | {
+      type: 'i18n';
+      titleKey?: string;
+      summaryKey?: string;
+      messageKey?: string;
+      params?: Record<string, string | number | boolean | null | undefined>;
+      paramKeys?: Record<string, string>;
+    }
   | { type: 'text'; title?: string; text: string }
   | { type: 'kv'; title?: string; rows: Array<{ label: string; value: string }> }
   | { type: 'metrics'; title?: string; items: Array<{ label: string; value: string; tone?: string }> }

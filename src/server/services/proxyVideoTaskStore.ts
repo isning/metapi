@@ -9,7 +9,7 @@ export type SaveProxyVideoTaskInput = {
   tokenValue: string;
   requestedModel: string;
   actualModel: string;
-  targetId: number | null;
+  executionTargetId: number | null;
   accountId: number | null;
   statusSnapshot?: unknown;
   upstreamResponseMeta?: unknown;
@@ -24,7 +24,7 @@ export type ProxyVideoTaskRecord = {
   tokenValue: string;
   requestedModel: string | null;
   actualModel: string | null;
-  targetId: number | null;
+  executionTargetId: number | null;
   accountId: number | null;
   statusSnapshot: unknown | null;
   upstreamResponseMeta: unknown | null;
@@ -52,7 +52,7 @@ export async function saveProxyVideoTask(input: SaveProxyVideoTaskInput): Promis
     tokenValue: input.tokenValue,
     requestedModel: input.requestedModel,
     actualModel: input.actualModel,
-    targetId: input.targetId,
+    executionTargetId: input.executionTargetId,
     accountId: input.accountId,
     statusSnapshot: input.statusSnapshot === undefined ? null : JSON.stringify(input.statusSnapshot),
     upstreamResponseMeta: input.upstreamResponseMeta === undefined ? null : JSON.stringify(input.upstreamResponseMeta),
@@ -80,7 +80,7 @@ export async function getProxyVideoTaskByPublicId(publicId: string): Promise<Pro
     tokenValue: row.tokenValue,
     requestedModel: row.requestedModel,
     actualModel: row.actualModel,
-    targetId: row.targetId,
+    executionTargetId: row.executionTargetId,
     accountId: row.accountId,
     statusSnapshot: parseJsonColumn(row.statusSnapshot),
     upstreamResponseMeta: parseJsonColumn(row.upstreamResponseMeta),

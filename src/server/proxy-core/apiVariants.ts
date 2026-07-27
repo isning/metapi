@@ -1,4 +1,6 @@
 import { buildUpstreamUrl, type UpstreamEndpoint } from './orchestration/upstreamRequest.js';
+import { matchApiVariantCapability } from './capabilities/apiVariantCapabilityMatcher.js';
+import type { RuntimeCapabilityRequirement } from './capabilities/requestCapabilityRequirement.js';
 
 export const API_TYPES = [
   'openai_chat_completions',
@@ -45,6 +47,9 @@ export interface ApiVariantCapability {
     maxContextTokens?: number;
     maxOutputTokens?: number;
   };
+  operations?: Record<string, ApiVariantCapabilityState>;
+  nativeProtocols?: Record<string, ApiVariantCapabilityState>;
+  transport?: Record<string, ApiVariantCapabilityState>;
 }
 
 export interface ApiVariantCapabilityOverride {
@@ -52,6 +57,9 @@ export interface ApiVariantCapabilityOverride {
   input?: Partial<ApiVariantCapability['input']>;
   output?: Partial<ApiVariantCapability['output']>;
   limits?: ApiVariantCapability['limits'];
+  operations?: Record<string, ApiVariantCapabilityState>;
+  nativeProtocols?: Record<string, ApiVariantCapabilityState>;
+  transport?: Record<string, ApiVariantCapabilityState>;
 }
 
 export interface ApiEndpointProfile {
@@ -102,7 +110,6 @@ export interface EndpointModelObservation {
 
 export interface SupplyTarget {
   id: string;
-  routeEndpointId?: string | null;
   siteId: number;
   credentialId?: string | null;
   upstreamModel: string;
@@ -174,6 +181,8 @@ export interface ApiAttemptDiagnostic {
   severity: 'info' | 'warning' | 'error';
   code: string;
   message: string;
+  i18nKey?: string;
+  values?: Record<string, string | number | boolean | null>;
   apiType?: ApiType;
   upstreamEndpoint?: UpstreamEndpoint;
   credentialEndpointBindingId?: string;
@@ -200,6 +209,7 @@ export interface BuildApiAttemptPlanInput {
   siteUrl?: string | null;
   policy?: ApiVariantPolicy | null;
   disableCrossProtocolFallback?: boolean;
+  runtimeCapabilityRequirement?: RuntimeCapabilityRequirement | null;
 }
 
 export const DEFAULT_API_VARIANT_CAPABILITY: ApiVariantCapability = Object.freeze({
@@ -220,12 +230,16 @@ export const DEFAULT_API_VARIANT_CAPABILITY: ApiVariantCapability = Object.freez
     usage: 'unknown',
     citations: 'unknown',
   }),
+  operations: Object.freeze({}),
+  nativeProtocols: Object.freeze({}),
+  transport: Object.freeze({}),
 });
 
 const UPSTREAM_ENDPOINT_TO_API_TYPE: Record<UpstreamEndpoint, ApiType> = {
   chat: 'openai_chat_completions',
   messages: 'anthropic_messages',
   responses: 'openai_responses',
+  gemini: 'gemini_generate_content',
   embeddings: 'openai_embeddings',
   completions: 'openai_completions',
   'images/generations': 'openai_images_generations',
@@ -243,6 +257,7 @@ const UPSTREAM_ENDPOINT_PATH: Record<UpstreamEndpoint, string> = {
   chat: '/v1/chat/completions',
   messages: '/v1/messages',
   responses: '/v1/responses',
+  gemini: '/v1beta/models/{model}:generateContent',
   embeddings: '/v1/embeddings',
   completions: '/v1/completions',
   'images/generations': '/v1/images/generations',
@@ -320,6 +335,18 @@ function mergeCapability(
       ...(override.output || {}),
     },
     limits: override.limits || base.limits,
+    operations: {
+      ...(base.operations || {}),
+      ...(override.operations || {}),
+    },
+    nativeProtocols: {
+      ...(base.nativeProtocols || {}),
+      ...(override.nativeProtocols || {}),
+    },
+    transport: {
+      ...(base.transport || {}),
+      ...(override.transport || {}),
+    },
   };
 }
 
@@ -337,6 +364,49 @@ export function upstreamEndpointFromApiType(apiType: ApiType): UpstreamEndpoint 
   return API_TYPE_TO_UPSTREAM_ENDPOINT.get(apiType) || null;
 }
 
+function defaultCapabilityForEndpoint(endpoint: UpstreamEndpoint): ApiVariantCapability {
+  if (endpoint === 'gemini') {
+    return {
+      ...DEFAULT_API_VARIANT_CAPABILITY,
+      status: 'supported',
+      input: {
+        ...DEFAULT_API_VARIANT_CAPABILITY.input,
+        text: 'native',
+        image: 'native',
+        audio: 'native',
+        tools: 'native',
+        toolChoice: 'native',
+        jsonSchema: 'native',
+        stream: 'native',
+      },
+      output: {
+        ...DEFAULT_API_VARIANT_CAPABILITY.output,
+        text: 'native',
+        reasoning: 'native',
+        toolCalls: 'native',
+        usage: 'native',
+        citations: 'native',
+      },
+      operations: {
+        'operation.generateContent': 'native',
+        'operation.streamGenerateContent': 'native',
+        'operation.countTokens': 'native',
+      },
+      nativeProtocols: {
+        'native.gemini.generateContent': 'native',
+        'native.gemini.cachedContent': 'native',
+        'native.gemini.thinkingConfig': 'native',
+        'native.gemini.thoughtSignature': 'native',
+        'native.gemini.safetySettings': 'native',
+      },
+      transport: {
+        'transport.sse': 'native',
+      },
+    };
+  }
+  return DEFAULT_API_VARIANT_CAPABILITY;
+}
+
 export function buildSupplyTargetId(input: {
   siteId: number | string;
   credentialId?: number | string | null;
@@ -344,12 +414,17 @@ export function buildSupplyTargetId(input: {
   canonicalModel?: string | null;
   modelName?: string | null;
 }): string {
+  const credentialId = String(input.credentialId ?? '').trim();
+  if (!credentialId) throw new Error('Supply target identity requires credentialId');
+  const modelName = String(input.canonicalModel || input.modelName || '').trim();
+  if (!modelName) throw new Error('Supply target identity requires modelName');
+  const scopeKey = String(input.scopeKey ?? '').trim();
   return [
     'supply-target',
     `site-${asStableSegment(input.siteId)}`,
-    `credential-${asStableSegment(input.credentialId ?? 'default')}`,
-    asStableSegment(input.scopeKey ?? 'default'),
-    asStableSegment(input.canonicalModel || input.modelName || 'model'),
+    `credential-${asStableSegment(credentialId)}`,
+    ...(scopeKey ? [asStableSegment(scopeKey)] : []),
+    asStableSegment(modelName),
   ].join(':');
 }
 
@@ -371,7 +446,7 @@ export function buildDefaultApiEndpointProfile(input: {
     }),
     authMode: 'bearer',
     enabled: true,
-    capabilityDefaults: DEFAULT_API_VARIANT_CAPABILITY,
+    capabilityDefaults: defaultCapabilityForEndpoint(input.endpoint),
     metadata: {
       upstreamEndpoint: input.endpoint,
       source: 'default',
@@ -383,7 +458,8 @@ export function buildDefaultCredentialEndpointBinding(input: {
   credentialId?: number | string | null;
   profile: ApiEndpointProfile;
 }): CredentialEndpointBinding {
-  const credentialId = String(input.credentialId ?? 'default');
+  const credentialId = String(input.credentialId ?? '').trim();
+  if (!credentialId) throw new Error('Credential endpoint binding requires credentialId');
   return {
     id: `credential-endpoint:${asStableSegment(credentialId)}:${input.profile.id}`,
     siteId: input.profile.siteId,
@@ -535,11 +611,14 @@ function reorderPinnedAttempts(attempts: ApiAttempt[], policy?: ApiVariantPolicy
 }
 
 export function buildApiAttemptPlan(input: BuildApiAttemptPlanInput): ApiAttemptPlan {
+  const modelName = String(input.canonicalModel || input.modelName || '').trim();
+  if (!modelName) throw new Error('API attempt plan requires modelName');
+  const credentialId = String(input.credentialId ?? '').trim();
+  if (!credentialId) throw new Error('API attempt plan requires credentialId');
   const supplyTargetId = input.supplyTargetId || buildSupplyTargetId({
     siteId: input.siteId,
-    credentialId: input.credentialId,
-    canonicalModel: input.canonicalModel,
-    modelName: input.modelName,
+    credentialId,
+    canonicalModel: modelName,
   });
   const allowUnknownBindings = input.policy?.allowUnknownBindings === true;
   const downgradeAllowed = input.policy?.allowFallback !== false && input.disableCrossProtocolFallback !== true;
@@ -624,13 +703,13 @@ export function buildApiAttemptPlan(input: BuildApiAttemptPlanInput): ApiAttempt
       const observation = observationForBinding({
         observations,
         binding,
-        modelName: input.modelName || input.canonicalModel,
+        modelName,
       });
       if (observation?.status === 'rejected') {
         diagnostics.push({
           severity: 'warning',
           code: 'endpoint_model_observation.rejected',
-          message: `Endpoint profile ${binding.apiEndpointProfileId} recently rejected model ${input.modelName || input.canonicalModel || ''}.`,
+          message: `Endpoint profile ${binding.apiEndpointProfileId} recently rejected model ${modelName}.`,
           apiType,
           upstreamEndpoint: endpoint,
           credentialEndpointBindingId: binding.id,
@@ -648,6 +727,38 @@ export function buildApiAttemptPlan(input: BuildApiAttemptPlanInput): ApiAttempt
         siteUrl: input.siteUrl,
       });
       variants.push(variant);
+      const capabilityMatch = matchApiVariantCapability({
+        requirement: input.runtimeCapabilityRequirement,
+        apiType: variant.apiType,
+        capability: variant.capability,
+        bindingSupport: binding.support,
+        allowUnknownBindingProbe: allowUnknownBindings,
+      });
+      if (!capabilityMatch.ok) {
+        diagnostics.push({
+          severity: capabilityMatch.diagnostics.some((diagnostic) => diagnostic.level === 'error') ? 'error' : 'warning',
+          code: capabilityMatch.filteredReasonCode || 'runtime_capability.filtered',
+          message: `API variant ${variant.apiType} does not satisfy the request capability requirement.`,
+          apiType,
+          upstreamEndpoint: endpoint,
+          credentialEndpointBindingId: binding.id,
+          apiEndpointProfileId: binding.apiEndpointProfileId,
+        });
+        for (const diagnostic of capabilityMatch.diagnostics) {
+          diagnostics.push({
+            severity: diagnostic.level === 'error' ? 'error' : diagnostic.level === 'warn' ? 'warning' : 'info',
+            code: diagnostic.code,
+            message: diagnostic.i18nKey,
+            i18nKey: diagnostic.i18nKey,
+            values: diagnostic.values,
+            apiType,
+            upstreamEndpoint: endpoint,
+            credentialEndpointBindingId: binding.id,
+            apiEndpointProfileId: binding.apiEndpointProfileId,
+          });
+        }
+        continue;
+      }
       attempts.push(attemptFromVariant({
         variant,
         reason: [

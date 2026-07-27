@@ -29,9 +29,9 @@ describe('proxy debug trace relay capture', () => {
     config.proxyDebugCaptureHeaders = true;
     config.proxyDebugCaptureBodies = false;
     config.proxyDebugCaptureStreamChunks = false;
-    config.proxyDebugTargetSessionId = '';
-    config.proxyDebugTargetClientKind = '';
-    config.proxyDebugTargetModel = '';
+    config.proxyDebugFilterSessionId = '';
+    config.proxyDebugFilterClientKind = '';
+    config.proxyDebugFilterModel = '';
     config.proxyDebugMaxBodyBytes = 262_144;
   });
 
@@ -40,20 +40,20 @@ describe('proxy debug trace relay capture', () => {
     config.proxyDebugCaptureHeaders = true;
     config.proxyDebugCaptureBodies = false;
     config.proxyDebugCaptureStreamChunks = false;
-    config.proxyDebugTargetSessionId = '';
-    config.proxyDebugTargetClientKind = '';
-    config.proxyDebugTargetModel = '';
+    config.proxyDebugFilterSessionId = '';
+    config.proxyDebugFilterClientKind = '';
+    config.proxyDebugFilterModel = '';
     await harness?.close();
   });
 
   it('captures scoped non-stream relay request, attempt, endpoint decision, and final response body', async () => {
-    const { managedKey, route, target, account, site } = await harness.seedRoute({ model: 'debug-trace-model' });
+    const { managedKey, candidate, account, site } = await harness.seedRoute({ model: 'debug-trace-model' });
     config.proxyDebugTraceEnabled = true;
     config.proxyDebugCaptureHeaders = true;
     config.proxyDebugCaptureBodies = true;
-    config.proxyDebugTargetSessionId = 'trace-session-1';
-    config.proxyDebugTargetClientKind = 'codex';
-    config.proxyDebugTargetModel = 'debug-trace-model';
+    config.proxyDebugFilterSessionId = 'trace-session-1';
+    config.proxyDebugFilterClientKind = 'codex';
+    config.proxyDebugFilterModel = 'debug-trace-model';
 
     harness.upstream.add({
       method: 'POST',
@@ -107,8 +107,9 @@ describe('proxy debug trace relay capture', () => {
       traceHint: 'trace-session-1',
       requestedModel: 'debug-trace-model',
       downstreamApiKeyId: managedKey.id,
-      selectedTargetId: target.id,
-      selectedRouteId: route.id,
+      selectedExecutionAttemptId: candidate.executionAttemptId,
+      routeEntrypointId: expect.any(String),
+      runtimeEndpointId: expect.any(String),
       selectedAccountId: account.id,
       selectedSiteId: site.id,
       selectedSitePlatform: 'openai',
@@ -134,18 +135,19 @@ describe('proxy debug trace relay capture', () => {
       ],
     });
 
-    const attemptState = JSON.parse(traces[0]!.endpointRuntimeStateJson || '{}');
+    const runtimeTrace = JSON.parse(traces[0]!.runtimeTraceJson || '{}');
+    const attemptState = runtimeTrace.runtimeState || {};
     expect(attemptState).toMatchObject({
       enabled: true,
       blockedEndpoints: [],
     });
     expect(String(attemptState.stateKey)).toContain('debug-trace-model');
-    const decisionSummary = JSON.parse(traces[0]!.decisionSummaryJson || '{}');
-    expect(decisionSummary).toMatchObject({
+    const routeRuntimeSummary = runtimeTrace.context || {};
+    expect(routeRuntimeSummary).toMatchObject({
       downstreamFormat: 'openai/chat',
       stickySessionKey: 'key:1|codex|/v1/chat/completions|debug-trace-model|trace-session-1',
     });
-    const candidates = JSON.parse(traces[0]!.endpointCandidatesJson || '[]');
+    const candidates = runtimeTrace.protocol?.endpointCandidates || [];
     expect(candidates).toEqual(expect.arrayContaining(['responses', 'chat']));
 
     const attempts = await harness.db.select().from(harness.schema.proxyDebugAttempts).all();
@@ -169,7 +171,7 @@ describe('proxy debug trace relay capture', () => {
         runtimeExecutor: 'default',
       }),
     ]));
-    const failedAttempt = attempts.find((entry) => entry.endpoint === 'responses');
+    const failedAttempt = attempts.find((entry: typeof attempts[number]) => entry.endpoint === 'responses');
     expect(JSON.parse(failedAttempt?.requestHeadersJson || '{}')).toMatchObject({
       'Content-Type': 'application/json',
     });
@@ -187,7 +189,7 @@ describe('proxy debug trace relay capture', () => {
       endpoint: 'responses',
       blockedEndpoint: 'responses',
     });
-    const successAttempt = attempts.find((entry) => entry.endpoint === 'chat');
+    const successAttempt = attempts.find((entry: typeof attempts[number]) => entry.endpoint === 'chat');
     expect(JSON.parse(successAttempt?.responseBodyJson || '{}')).toMatchObject({
       id: 'chatcmpl_debug_trace',
       choices: [
@@ -203,9 +205,9 @@ describe('proxy debug trace relay capture', () => {
     config.proxyDebugTraceEnabled = true;
     config.proxyDebugCaptureHeaders = true;
     config.proxyDebugCaptureBodies = true;
-    config.proxyDebugTargetSessionId = 'wanted-session';
-    config.proxyDebugTargetClientKind = 'codex';
-    config.proxyDebugTargetModel = 'debug-filtered-model';
+    config.proxyDebugFilterSessionId = 'wanted-session';
+    config.proxyDebugFilterClientKind = 'codex';
+    config.proxyDebugFilterModel = 'debug-filtered-model';
 
     harness.upstream.add({
       method: 'POST',

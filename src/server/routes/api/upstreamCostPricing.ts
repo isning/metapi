@@ -28,6 +28,14 @@ import {
   savePlatformPricingConfig,
 } from '../../services/platformPricingConfigService.js';
 import { clearEndpointPricingReferenceCache } from '../../services/endpointPricingService.js';
+import { clearModelsMarketplaceCache } from '../../services/modelsMarketplaceCacheService.js';
+import { clearModelPricingCaches } from '../../services/modelPricingService.js';
+import { startBackgroundTask } from '../../services/backgroundTaskService.js';
+import {
+  listProviderPricingCatalogRefreshSubjects,
+  refreshProviderPricingCatalog,
+} from '../../services/providerPricingCatalogCacheService.js';
+import { invalidateRouteRuntimeCaches } from '../../services/routeRuntimeCacheService.js';
 import {
   createWalletAcquisitionProfile,
   deleteWalletAcquisitionProfile,
@@ -61,7 +69,7 @@ type Body = Partial<UpstreamCostPricingPayload> & {
     cacheReadPerMillion?: unknown;
     cacheWritePerMillion?: unknown;
     reasoningPerMillion?: unknown;
-    requestUsd?: unknown;
+    requestCost?: unknown;
   };
 };
 
@@ -88,6 +96,74 @@ type FxQuery = {
 };
 
 type FxBody = Partial<FxRateSnapshotPayload>;
+
+type ProviderPricingCatalogRefreshSummary = {
+  refreshed: number;
+  succeeded: number;
+  failed: number;
+  errors: Array<{
+    siteId: number;
+    accountId: number | null;
+    error: string;
+  }>;
+};
+
+async function refreshProviderPricingCatalogCaches(): Promise<ProviderPricingCatalogRefreshSummary> {
+  const subjects = await listProviderPricingCatalogRefreshSubjects();
+  const results = await Promise.allSettled(
+    subjects.map(async (subject) => {
+      const result = await refreshProviderPricingCatalog({
+        ...subject,
+        reason: 'manual-refresh',
+      });
+      return { subject, result };
+    }),
+  );
+  const summary: ProviderPricingCatalogRefreshSummary = {
+    refreshed: results.length,
+    succeeded: 0,
+    failed: 0,
+    errors: [],
+  };
+  for (const settled of results) {
+    if (settled.status === 'rejected') {
+      summary.failed += 1;
+      summary.errors.push({
+        siteId: 0,
+        accountId: null,
+        error: errorMessage(settled.reason),
+      });
+      continue;
+    }
+    const { subject, result } = settled.value;
+    if (result.status === 'success') {
+      summary.succeeded += 1;
+    } else {
+      summary.failed += 1;
+      summary.errors.push({
+        siteId: subject.siteId,
+        accountId: subject.accountId,
+        error: result.error || 'Provider pricing catalog refresh failed.',
+      });
+    }
+  }
+  clearEndpointPricingReferenceCache();
+  clearModelsMarketplaceCache();
+  clearModelPricingCaches();
+  invalidateRouteRuntimeCaches('pricing-config-mutated');
+  return summary;
+}
+
+function formatProviderPricingCatalogRefreshMessage(result: unknown): string {
+  const summary = result as Partial<ProviderPricingCatalogRefreshSummary> | null | undefined;
+  const refreshed = Number(summary?.refreshed ?? 0);
+  const succeeded = Number(summary?.succeeded ?? 0);
+  const failed = Number(summary?.failed ?? 0);
+  if (!Number.isFinite(refreshed) || refreshed <= 0) {
+    return '供应商价格缓存刷新完成：没有可刷新对象';
+  }
+  return `供应商价格缓存刷新完成：刷新对象 ${refreshed}，成功 ${succeeded}，失败 ${failed}`;
+}
 
 export async function upstreamCostPricingRoutes(app: FastifyInstance) {
   app.get('/api/pricing/reference-config', async () => {
@@ -151,10 +227,52 @@ export async function upstreamCostPricingRoutes(app: FastifyInstance) {
       const saved = await savePlatformPricingConfig(request.body);
       config.routingFallbackUnitCost = calculateRoutingFallbackUnitCostFromPlatformPricingConfig(saved);
       clearEndpointPricingReferenceCache();
+      clearModelsMarketplaceCache();
+      clearModelPricingCaches();
       return saved;
     } catch (error) {
       return reply.code(400).send({ error: errorMessage(error) });
     }
+  });
+
+  app.post('/api/pricing/provider-catalog/refresh', async (_request, reply) => {
+    const { task, reused } = startBackgroundTask(
+      {
+        type: 'pricing',
+        title: '刷新供应商价格缓存',
+        titleKey: 'backgroundTask.task.refreshProviderPricingCatalog',
+        dedupeKey: 'refresh-provider-pricing-catalog',
+        notifyOnFailure: true,
+        successMessage: (currentTask) => formatProviderPricingCatalogRefreshMessage(currentTask.result),
+        successMessageI18n: (currentTask) => {
+          const summary = currentTask.result as Partial<ProviderPricingCatalogRefreshSummary> | null | undefined;
+          const refreshed = Number(summary?.refreshed ?? 0);
+          if (!Number.isFinite(refreshed) || refreshed <= 0) {
+            return { key: 'backgroundTask.message.providerPricingCatalog.noSubjects' };
+          }
+          return {
+            key: 'backgroundTask.message.providerPricingCatalog.completed',
+            params: {
+              refreshed,
+              succeeded: Number(summary?.succeeded ?? 0),
+              failed: Number(summary?.failed ?? 0),
+            },
+          };
+        },
+        failureMessage: (currentTask) => `供应商价格缓存刷新失败：${currentTask.error || 'unknown error'}`,
+        failureMessageI18n: (currentTask) => ({
+          key: 'backgroundTask.lifecycle.failedMessage',
+          params: { error: currentTask.error || 'unknown error' },
+        }),
+      },
+      refreshProviderPricingCatalogCaches,
+    );
+    return reply.code(202).send({
+      success: true,
+      queued: !reused,
+      reused,
+      jobId: task.id,
+    });
   });
 
   app.get<{ Querystring: Query }>('/api/pricing/upstream-cost', async (request) => {
@@ -435,7 +553,7 @@ function resolvePlan(body: Body): PricingPlan {
     cacheReadPerMillion: parseOptionalNumber(body.simpleTokenPricing.cacheReadPerMillion),
     cacheWritePerMillion: parseOptionalNumber(body.simpleTokenPricing.cacheWritePerMillion),
     reasoningPerMillion: parseOptionalNumber(body.simpleTokenPricing.reasoningPerMillion),
-    requestUsd: parseOptionalNumber(body.simpleTokenPricing.requestUsd),
+    requestCost: parseOptionalNumber(body.simpleTokenPricing.requestCost),
   });
 }
 

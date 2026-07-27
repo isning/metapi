@@ -6,7 +6,6 @@ const CODEX_DEFAULT_USER_AGENT = 'codex_cli_rs/0.101.0 (Mac OS 26.0.1; arm64) Ap
 const CLAUDE_DEFAULT_USER_AGENT = 'claude-cli/2.1.63 (external, cli)';
 export const CLAUDE_TOKEN_COUNTING_BETA = 'token-counting-2024-11-01';
 export const CLAUDE_DEFAULT_BETA_HEADER = 'claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14,context-management-2025-06-27,prompt-caching-scope-2026-01-05';
-export const CLAUDE_API_KEY_DEFAULT_BETA_HEADER = 'claude-code-20250219,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14,context-management-2025-06-27,prompt-caching-scope-2026-01-05';
 
 export function headerValueToString(value: unknown): string | null {
   if (typeof value === 'string') {
@@ -33,24 +32,6 @@ export function getInputHeader(
     return headerValueToString(candidateValue);
   }
   return null;
-}
-
-function normalizeLowerCaseHeaderMap(
-  sources: Array<Record<string, unknown> | Record<string, string> | undefined>,
-  shouldSkip: (key: string) => boolean,
-): Record<string, string> {
-  const normalized: Record<string, string> = {};
-  for (const source of sources) {
-    if (!source) continue;
-    for (const [key, value] of Object.entries(source)) {
-      const normalizedValue = headerValueToString(value);
-      if (!normalizedValue) continue;
-      const normalizedKey = key.toLowerCase();
-      if (shouldSkip(normalizedKey)) continue;
-      normalized[normalizedKey] = normalizedValue;
-    }
-  }
-  return normalized;
 }
 
 export function uuidFromSeed(seed: string): string {
@@ -195,33 +176,18 @@ export function buildClaudeRuntimeHeaders(input: {
   stream: boolean;
   isClaudeOauthUpstream: boolean;
   tokenValue: string;
+  headerProfile?: 'claude-code' | 'anthropic-compatible';
   extraBetas?: string[];
   defaultBetaHeader?: string;
   defaultUserAgent?: string;
 }): Record<string, string> {
+  const headerProfile = input.headerProfile || (input.isClaudeOauthUpstream ? 'claude-code' : 'anthropic-compatible');
   const anthropicBeta = mergeClaudeBetaHeader(
     getInputHeader(input.claudeHeaders, 'anthropic-beta'),
-    input.defaultBetaHeader || CLAUDE_DEFAULT_BETA_HEADER,
+    input.defaultBetaHeader ?? (headerProfile === 'claude-code' ? CLAUDE_DEFAULT_BETA_HEADER : ''),
     input.extraBetas,
   );
-  const passthroughHeaders = normalizeLowerCaseHeaderMap(
-    [input.baseHeaders, input.claudeHeaders],
-    (key) => (
-      key === 'accept'
-      || key === 'accept-encoding'
-      || key === 'anthropic-beta'
-      || key === 'anthropic-dangerous-direct-browser-access'
-      || key === 'anthropic-version'
-      || key === 'authorization'
-      || key === 'connection'
-      || key === 'user-agent'
-      || key === 'x-api-key'
-      || key === 'x-app'
-      || key.startsWith('x-stainless-')
-    ),
-  );
-  const headers: Record<string, string> = {
-    ...passthroughHeaders,
+  const headers: Record<string, string> = headerProfile === 'claude-code' ? {
     'anthropic-version': input.anthropicVersion,
     ...(anthropicBeta ? { 'anthropic-beta': anthropicBeta } : {}),
     'Anthropic-Dangerous-Direct-Browser-Access': 'true',
@@ -238,6 +204,14 @@ export function buildClaudeRuntimeHeaders(input: {
     Connection: 'keep-alive',
     Accept: input.stream ? 'text/event-stream' : 'application/json',
     'Accept-Encoding': 'gzip, deflate, br, zstd',
+  } : {
+    'Content-Type': 'application/json',
+    'anthropic-version': input.anthropicVersion,
+    ...(anthropicBeta ? { 'anthropic-beta': anthropicBeta } : {}),
+    Accept: input.stream ? 'text/event-stream' : 'application/json',
+    ...(getInputHeader(input.claudeHeaders, 'user-agent')
+      ? { 'User-Agent': getInputHeader(input.claudeHeaders, 'user-agent')! }
+      : {}),
   };
   if (input.isClaudeOauthUpstream) {
     headers.Authorization = `Bearer ${input.tokenValue}`;

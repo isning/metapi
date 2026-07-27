@@ -1117,10 +1117,9 @@ macro:<macroId>:edge:group:<groupId>
 macro:<macroId>:edge:candidate:<groupId>:<candidateId>
 ```
 
-The generated entry visibility follows `surface.entry.visibility`. External
-public entries appear in downstream model lists; external internal entries are
-editable and callable inside the graph but not exposed as public downstream
-models.
+An `external` macro ingress lowers to an entry and appears in downstream model
+lists. An internal reusable route uses `surface.entry.kind: 'none'`; embedded
+ingress is reserved for an explicit graph connection.
 
 Candidate adapter `route_endpoint` nodes use `targetSelection.strategy:
 'defer_to_router'` when they reference generated route table route endpoint targets. This
@@ -1264,7 +1263,6 @@ Automatic exact-model routes are represented as a read-only
 
 - `ownership: 'auto_generated'`;
 - `surface.entry.kind: 'external'`;
-- `surface.entry.visibility: 'public'`;
 - `surface.output: 'route'`;
 - one route-id backed group pointing at the generated executable route resource;
 - a stable id `route:<legacyRouteId>:model-group`.

@@ -61,6 +61,9 @@ function updatePlatformConfigState(
     walletDefaultValuation: patch.walletDefaultValuation
       ? { ...current.walletDefaultValuation, ...patch.walletDefaultValuation }
       : current.walletDefaultValuation,
+    providerCatalogCache: patch.providerCatalogCache
+      ? { ...current.providerCatalogCache, ...patch.providerCatalogCache }
+      : current.providerCatalogCache,
     driftCheck: patch.driftCheck ? { ...current.driftCheck, ...patch.driftCheck } : current.driftCheck,
   };
 }
@@ -182,6 +185,7 @@ export default function CostPolicySettingsSection() {
   const [fxForm, setFxForm] = useState<FxForm>(EMPTY_FX_FORM);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [refreshingProviderCatalog, setRefreshingProviderCatalog] = useState(false);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -248,12 +252,27 @@ export default function CostPolicySettingsSection() {
     }
   };
 
+  const handleRefreshProviderCatalog = async () => {
+    setRefreshingProviderCatalog(true);
+    try {
+      const result = await api.refreshProviderPricingCatalog();
+      if (result.reused) {
+        toast.info(tr('upstreamCostPricing.costCatalog.providerCacheRefreshReused'));
+      } else {
+        toast.info(tr('upstreamCostPricing.costCatalog.providerCacheRefreshStarted'));
+      }
+    } catch (error: any) {
+      toast.error(error?.message || tr('upstreamCostPricing.costCatalog.providerCacheRefreshFailed'));
+    } finally {
+      setRefreshingProviderCatalog(false);
+    }
+  };
+
   return (
     <SettingsCard
       dataSettingsCard="cost-policy"
       title={tr('upstreamCostPricing.settings.title')}
       description={tr('upstreamCostPricing.settings.description')}
-      actions={platformConfig ? <ToneBadge tone="-info">{platformConfig.baseCostUnit}</ToneBadge> : null}
       footer={platformConfig ? (
         <div className="flex w-full justify-end border-t pt-4">
           <Button type="button" onClick={() => void handleSavePlatformConfig()} disabled={saving}>
@@ -266,7 +285,9 @@ export default function CostPolicySettingsSection() {
       <PlatformPricingEditor
         config={platformConfig}
         loading={loading}
+        refreshingProviderCatalog={refreshingProviderCatalog}
         onChange={(patch) => setPlatformConfig((current) => updatePlatformConfigState(current, patch))}
+        onRefreshProviderCatalog={() => void handleRefreshProviderCatalog()}
       />
       <FxRateEditor
         records={fxRates}
@@ -286,11 +307,15 @@ export default function CostPolicySettingsSection() {
 function PlatformPricingEditor({
   config,
   loading,
+  refreshingProviderCatalog,
   onChange,
+  onRefreshProviderCatalog,
 }: {
   config: PlatformPricingConfig | null;
   loading: boolean;
+  refreshingProviderCatalog: boolean;
   onChange: (patch: Partial<PlatformPricingConfig>) => void;
+  onRefreshProviderCatalog: () => void;
 }) {
   if (loading && !config) {
     return (
@@ -316,9 +341,10 @@ function PlatformPricingEditor({
     rechargeDiscount: 1,
     confidence: 'estimated' as const,
   };
+  const providerCatalogCache = config.providerCatalogCache ?? { ttlHours: 6 };
   const derivedRoutingFallbackUnitCost = Math.max(
     0.000001,
-    pricing.inputPerMillion * 0.5 + pricing.outputPerMillion * 0.5 + (pricing.requestUsd ?? 0),
+    pricing.inputPerMillion * 0.5 + pricing.outputPerMillion * 0.5 + (pricing.requestCost ?? 0),
   );
 
   return (
@@ -363,8 +389,8 @@ function PlatformPricingEditor({
             />
             <NumberField
               label={tr('upstreamCostPricing.price.requestFee')}
-              value={pricing.requestUsd}
-              onChange={(value) => onChange({ upstreamDefaultPricing: { ...pricing, requestUsd: value } })}
+              value={pricing.requestCost}
+              onChange={(value) => onChange({ upstreamDefaultPricing: { ...pricing, requestCost: value } })}
             />
           </div>
 
@@ -456,6 +482,41 @@ function PlatformPricingEditor({
         </div>
       </section>
 
+      <section className="grid gap-3 rounded-md border p-3" aria-label={tr('upstreamCostPricing.costCatalog.providerCache')}>
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <div className="flex items-center gap-2 text-sm font-semibold">
+              <RefreshCw className="size-4 text-muted-foreground" />
+              {tr('upstreamCostPricing.costCatalog.providerCache')}
+            </div>
+            <div className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+              {tr('upstreamCostPricing.costCatalog.providerCacheDescription')}
+            </div>
+          </div>
+          <Button type="button" variant="outline" size="sm" onClick={onRefreshProviderCatalog} disabled={refreshingProviderCatalog}>
+            {refreshingProviderCatalog ? <LoaderCircle className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
+            {tr('upstreamCostPricing.costCatalog.providerCacheRefresh')}
+          </Button>
+        </div>
+        <div className="grid gap-2 md:grid-cols-[minmax(0,220px)_1fr]">
+          <NumberField
+            label={tr('upstreamCostPricing.costCatalog.providerCacheTtlHours')}
+            min={1}
+            step={1}
+            value={providerCatalogCache.ttlHours}
+            onChange={(value) => onChange({
+              providerCatalogCache: {
+                ...providerCatalogCache,
+                ttlHours: Math.max(1, Math.trunc(value ?? 1)),
+              },
+            })}
+          />
+          <div className="rounded-md border bg-muted/20 px-3 py-2 text-xs leading-relaxed text-muted-foreground">
+            {tr('upstreamCostPricing.costCatalog.providerCacheTtlHelp')}
+          </div>
+        </div>
+      </section>
+
       <section className="grid gap-3 rounded-md border p-3" aria-label={tr('upstreamCostPricing.costCatalog.driftCheck')}>
         <div className="grid gap-3">
           <div>
@@ -475,6 +536,13 @@ function PlatformPricingEditor({
             title={tr('upstreamCostPricing.costCatalog.driftCheckEnabled')}
             checked={config.driftCheck.enabled}
             onCheckedChange={(enabled) => onChange({ driftCheck: { ...config.driftCheck, enabled } })}
+            className="bg-background p-3"
+          />
+          <SettingsToggleRow
+            control="switch"
+            title={tr('upstreamCostPricing.costCatalog.driftNotifyOnWarning')}
+            checked={config.driftCheck.notifyOnWarning}
+            onCheckedChange={(notifyOnWarning) => onChange({ driftCheck: { ...config.driftCheck, notifyOnWarning } })}
             className="bg-background p-3"
           />
         </div>
@@ -505,8 +573,8 @@ function PlatformPricingEditor({
             />
             <NumberField
               label={tr('upstreamCostPricing.costCatalog.driftAbsoluteTolerance')}
-              value={config.driftCheck.absoluteToleranceUsd}
-              onChange={(value) => onChange({ driftCheck: { ...config.driftCheck, absoluteToleranceUsd: value ?? 0 } })}
+              value={config.driftCheck.absoluteToleranceCost}
+              onChange={(value) => onChange({ driftCheck: { ...config.driftCheck, absoluteToleranceCost: value ?? 0 } })}
             />
           </div>
         </div>

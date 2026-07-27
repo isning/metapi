@@ -4,9 +4,12 @@ import { extractSafePassthroughHeaders } from './headerPassthrough.js';
 import { buildUpstreamEndpointRequest } from './upstreamRequestBuilder.js';
 import { geminiGenerateContentTransformer, normalizeUpstreamFinalResponse } from './geminiProtocolFacade.js';
 import { parseProxyUsage } from '../../services/proxyUsageParser.js';
-import { applyRouteGraphPostBuildFilters } from '../../services/routeGraphRuntimeService.js';
+import { applyCompiledRuntimePostBuildFilters } from '../../services/compiledRuntimePostBuildFilters.js';
 import { resolveAntigravityPlatformAction } from '../platforms/antigravityRuntime.js';
 import type { PlatformAction } from '../platforms/types.js';
+import { analyzeGeminiRuntimeCapability } from './geminiCapabilityAnalysis.js';
+
+type GeminiAction = 'generateContent' | 'streamGenerateContent' | 'countTokens';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -30,7 +33,7 @@ function isInternalGeminiPlatform(platform: unknown): boolean {
   return normalized === 'gemini-cli' || normalized === 'antigravity';
 }
 
-function parseInternalAction(path: string): 'generateContent' | 'streamGenerateContent' | 'countTokens' {
+function parseInternalAction(path: string): GeminiAction {
   if (path.includes('countTokens')) return 'countTokens';
   if (path.includes('streamGenerateContent')) return 'streamGenerateContent';
   return 'generateContent';
@@ -72,7 +75,7 @@ function parseGeminiRequest(body: unknown, context?: TransformRequestContext) {
     rawUrl: context?.rawUrl || '',
     params: context?.params as { geminiApiVersion?: string } | undefined,
   });
-  const action = parsedPath.modelActionPath.endsWith(':countTokens')
+  const action: GeminiAction = parsedPath.modelActionPath.endsWith(':countTokens')
     ? 'countTokens'
     : (parsedPath.isStreamAction ? 'streamGenerateContent' : 'generateContent');
   const wantsSseEnvelope = parsedPath.isStreamAction
@@ -131,11 +134,11 @@ function buildInternalGeminiPath(action: 'generateContent' | 'streamGenerateCont
   return '/v1internal:generateContent';
 }
 
-function applyRouteGraphFiltersToBuiltGeminiRequest<T extends {
+function applyRuntimePostBuildFiltersToBuiltGeminiRequest<T extends {
   headers: Record<string, string>;
   body: Record<string, unknown>;
-}>(request: T, filters: BuildUpstreamRequestInput['routeGraphFilters']): T {
-  const filtered = applyRouteGraphPostBuildFilters({
+}>(request: T, filters: BuildUpstreamRequestInput['runtimePostBuildFilters']): T {
+  const filtered = applyCompiledRuntimePostBuildFilters({
     payload: request.body,
     headers: request.headers,
     filters,
@@ -231,18 +234,21 @@ export const geminiProtocolAdapter: DownstreamProtocolAdapter = {
         requestedModel: parsed.requestedModel,
         isStream: parsed.isStream,
         openaiBody: parsed.openaiBody,
-        endpointCandidates: ['responses'],
-        requestKind: 'gemini-generate-content',
-        disableCrossProtocolFallback: true,
-          extraContext: {
-            apiVersion: parsed.apiVersion,
-            modelActionPath: parsed.modelActionPath,
-            normalizedBody: parsed.normalizedBody,
-            action: parsed.action,
-            internalDownstream: (parsed as any).internalDownstream === true,
-            wantsSseEnvelope: (parsed as any).wantsSseEnvelope === true,
-            query: context?.query || {},
-          },
+        upstreamRequestMode: 'protocol_adapter',
+        operationHint: parsed.action,
+        runtimeCapabilityRequirement: analyzeGeminiRuntimeCapability({
+          normalizedBody: parsed.normalizedBody,
+          action: parsed.action,
+        }),
+        extraContext: {
+          apiVersion: parsed.apiVersion,
+          modelActionPath: parsed.modelActionPath,
+          normalizedBody: parsed.normalizedBody,
+          action: parsed.action,
+          internalDownstream: (parsed as any).internalDownstream === true,
+          wantsSseEnvelope: (parsed as any).wantsSseEnvelope === true,
+          query: context?.query || {},
+        },
       },
     };
   },
@@ -273,7 +279,7 @@ export const geminiProtocolAdapter: DownstreamProtocolAdapter = {
           };
           throw error;
         }
-        return applyRouteGraphFiltersToBuiltGeminiRequest({
+        return applyRuntimePostBuildFiltersToBuiltGeminiRequest({
           endpoint: input.endpoint,
           path: buildInternalGeminiPath(action),
           headers: {
@@ -296,10 +302,10 @@ export const geminiProtocolAdapter: DownstreamProtocolAdapter = {
             oauthProjectId: input.oauth?.projectId || null,
             action,
           },
-        }, input.routeGraphFilters);
+        }, input.runtimePostBuildFilters);
       }
 
-      return applyRouteGraphFiltersToBuiltGeminiRequest({
+      return applyRuntimePostBuildFiltersToBuiltGeminiRequest({
         endpoint: input.endpoint,
         path: buildGeminiNativePath({
           apiVersion: asTrimmedString(extra.apiVersion) || 'v1beta',
@@ -318,7 +324,7 @@ export const geminiProtocolAdapter: DownstreamProtocolAdapter = {
           stream: action === 'streamGenerateContent',
           action,
         },
-      }, input.routeGraphFilters);
+      }, input.runtimePostBuildFilters);
     }
 
     const upstreamRequest = buildUpstreamEndpointRequest({
@@ -335,7 +341,7 @@ export const geminiProtocolAdapter: DownstreamProtocolAdapter = {
       downstreamHeaders: input.downstreamHeaders,
       passthroughHeaders: input.passthroughHeaders,
       platformHeaders: input.platformHeaders,
-      routeGraphFilters: input.routeGraphFilters,
+      runtimePostBuildFilters: input.runtimePostBuildFilters,
       compatibilityPolicy: input.compatibilityPolicy,
     });
     return {
@@ -384,6 +390,7 @@ export const geminiProtocolAdapter: DownstreamProtocolAdapter = {
               );
               rest = consumed.rest;
               options.onParsedPayload?.(aggregateState);
+              if (consumed.lines.length > 0) options.onMeaningfulOutput?.();
               options.writeLines(consumed.lines);
           }
           const tail = decoder.decode();
@@ -393,6 +400,7 @@ export const geminiProtocolAdapter: DownstreamProtocolAdapter = {
               rest + tail,
             );
             options.onParsedPayload?.(aggregateState);
+            if (consumed.lines.length > 0) options.onMeaningfulOutput?.();
             options.writeLines(consumed.lines);
           }
           response.end();
@@ -415,6 +423,7 @@ export const geminiProtocolAdapter: DownstreamProtocolAdapter = {
           ? { response: serialized }
           : serialized;
         options.onParsedPayload?.(serialized);
+        options.onMeaningfulOutput?.();
         options.writeLines([`data: ${JSON.stringify(downstreamPayload)}\n\n`]);
         response.end();
         return { status: 'ok' as const };

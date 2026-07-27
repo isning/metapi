@@ -5,13 +5,16 @@ import { join } from 'node:path';
 import { mkdtempSync } from 'node:fs';
 import { sql } from 'drizzle-orm';
 import { formatLocalDate, formatUtcSqlDateTime } from '../../services/localTimeService.js';
+import { clearRouteGroupMemberTestData } from '../../../testing/routeGroupMemberTestUtils.js';
 
 type DbModule = typeof import('../../db/index.js');
+type BillingFixtureModule = typeof import('../../../testing/canonicalBillingRequestFixture.js');
 
 describe('stats dashboard filters disabled sites', () => {
   let app: FastifyInstance;
   let db: DbModule['db'];
   let schema: DbModule['schema'];
+  let insertCanonicalTerminalRequest: BillingFixtureModule['insertCanonicalTerminalRequest'];
   let dataDir = '';
 
   beforeAll(async () => {
@@ -21,18 +24,25 @@ describe('stats dashboard filters disabled sites', () => {
     await import('../../db/migrate.js');
     const dbModule = await import('../../db/index.js');
     const routesModule = await import('./stats.js');
+    const billingFixture = await import('../../../testing/canonicalBillingRequestFixture.js');
     db = dbModule.db;
     schema = dbModule.schema;
+    insertCanonicalTerminalRequest = billingFixture.insertCanonicalTerminalRequest;
 
     app = Fastify();
     await app.register(routesModule.statsRoutes);
   });
 
   beforeEach(async () => {
+    await db.delete(schema.analyticsProjectionCheckpoints).run();
+    await db.delete(schema.billingCostAggregates).run();
+    await db.delete(schema.siteHourUsage).run();
     await db.delete(schema.proxyLogs).run();
+    await db.delete(schema.proxyRequests).run();
     await db.delete(schema.checkinLogs).run();
-    await db.delete(schema.routeEndpointTargets).run();
-    await db.delete(schema.tokenRoutes).run();
+    await clearRouteGroupMemberTestData();
+    await db.delete(schema.runtimeExecutionTargetState).run();
+    await db.delete(schema.runtimeExecutionTargets).run();
     await db.delete(schema.tokenModelAvailability).run();
     await db.delete(schema.modelAvailability).run();
     await db.delete(schema.accountTokens).run();
@@ -282,26 +292,11 @@ describe('stats dashboard filters disabled sites', () => {
     const recentSuccess = formatUtcSqlDateTime(new Date(now - 5 * 60_000));
     const recentFailure = formatUtcSqlDateTime(new Date(now - 65 * 60_000));
 
-    await db.insert(schema.proxyLogs).values([
-      {
-        accountId: activeAccount.id,
-        status: 'success',
-        latencyMs: 120,
-        createdAt: recentSuccess,
-      },
-      {
-        accountId: activeAccount.id,
-        status: 'failed',
-        latencyMs: 280,
-        createdAt: recentFailure,
-      },
-      {
-        accountId: disabledAccount.id,
-        status: 'success',
-        latencyMs: 999,
-        createdAt: recentSuccess,
-      },
-    ]).run();
+    await Promise.all([
+      insertCanonicalTerminalRequest({ id: 'site-availability-success', siteId: activeSite.id, accountId: activeAccount.id, completedAt: recentSuccess, amount: 0, latencyMs: 120 }),
+      insertCanonicalTerminalRequest({ id: 'site-availability-failure', siteId: activeSite.id, accountId: activeAccount.id, completedAt: recentFailure, amount: 0, latencyMs: 280, status: 'failure' }),
+      insertCanonicalTerminalRequest({ id: 'site-availability-disabled', siteId: disabledSite.id, accountId: disabledAccount.id, completedAt: recentSuccess, amount: 0, latencyMs: 999 }),
+    ]);
 
     const response = await app.inject({
       method: 'GET',

@@ -25,9 +25,15 @@ describe('schema contract generation', () => {
       primaryKey: false,
     });
     expect(contract.tables.proxy_video_tasks).toBeDefined();
-    expect(contract.tables.route_endpoint_targets.columns.source_model).toBeDefined();
-    expect(contract.tables.route_endpoint_targets.columns.last_selected_at).toBeDefined();
-    expect(contract.tables.route_endpoint_targets.columns.consecutive_fail_count).toMatchObject({
+    expect(contract.tables.route_endpoint_targets).toBeUndefined();
+    expect(contract.tables.runtime_execution_targets.columns.upstream_model_name).toMatchObject({
+      logicalType: 'text',
+      notNull: true,
+    });
+    expect(contract.tables.route_groups).toBeUndefined();
+    expect(contract.tables.route_group_candidates).toBeUndefined();
+    expect(contract.tables.route_group_fallback_stages).toBeUndefined();
+    expect(contract.tables.runtime_execution_target_state.columns.consecutive_fail_count).toMatchObject({
       logicalType: 'integer',
       notNull: true,
       defaultValue: '0',
@@ -36,9 +42,14 @@ describe('schema contract generation', () => {
       logicalType: 'boolean',
       defaultValue: 'false',
     });
-    expect(contract.tables.token_routes.columns.routing_strategy).toMatchObject({
+    expect(contract.tables.route_graph_versions.columns.compiled_graph_json).toBeUndefined();
+    expect(contract.tables.compiled_runtime_artifacts.columns.artifact_json).toMatchObject({
+      logicalType: 'json',
+      notNull: true,
+    });
+    expect(contract.tables.compiled_runtime_active_artifact.columns.artifact_id).toMatchObject({
       logicalType: 'text',
-      defaultValue: "'weighted'",
+      notNull: true,
     });
     expect(contract.indexes).toContainEqual(
       expect.objectContaining({ name: 'sites_status_idx', table: 'sites', unique: false }),
@@ -65,11 +76,14 @@ describe('schema contract generation', () => {
         referencedColumns: ['id'],
       }),
     );
+    expect(contract.foreignKeys).not.toContainEqual(
+      expect.objectContaining({ table: 'route_endpoint_targets' }),
+    );
     expect(contract.foreignKeys).toContainEqual(
       expect.objectContaining({
-        table: 'route_endpoint_targets',
-        columns: ['token_id'],
-        referencedTable: 'account_tokens',
+        table: 'runtime_execution_target_state',
+        columns: ['execution_target_id'],
+        referencedTable: 'runtime_execution_targets',
         referencedColumns: ['id'],
       }),
     );

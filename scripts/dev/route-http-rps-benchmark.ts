@@ -18,6 +18,8 @@ import {
   heapLimitMiB,
   memory,
   memoryDelta,
+  migrateRouteRuntimeDatabase,
+  publishSeededRouteRuntimeFixture,
   readPositiveInteger,
   resolveReportDir,
   round,
@@ -31,7 +33,10 @@ import {
   percentile,
 } from './route-runtime-throughput-benchmark.js';
 
-type TokenRouterModule = typeof import('../../src/server/services/tokenRouter.js');
+type RouteRuntimeExecutionModule = typeof import('../../src/server/services/routeRuntimeExecutionService.js');
+type RouteRuntimeSelector = {
+  selectExecutionAttempt(model: string): ReturnType<RouteRuntimeExecutionModule['selectRouteRuntimeExecutionAttempt']>;
+};
 type AutocannonResult = Awaited<ReturnType<typeof autocannon>>;
 
 type HttpRun = {
@@ -248,14 +253,14 @@ async function runAutocannon(input: {
 }
 
 async function createBenchmarkServer(input: {
-  routerModule: TokenRouterModule;
+  selector: RouteRuntimeSelector;
   modelCardinality: number;
   authToken: string;
 }): Promise<{ app: FastifyInstance; url: string }> {
   const app = Fastify({ logger: false });
   let requestIndex = 0;
 
-  app.post('/__bench/route-decision', async (request, reply) => {
+  app.post('/__bench/runtime-selection', async (request, reply) => {
     const authorization = String(request.headers.authorization || '');
     if (authorization !== `Bearer ${input.authToken}`) {
       reply.code(401);
@@ -263,7 +268,7 @@ async function createBenchmarkServer(input: {
     }
     const modelIndex = requestIndex % input.modelCardinality;
     requestIndex = (requestIndex + 1) % Number.MAX_SAFE_INTEGER;
-    const selected = await input.routerModule.tokenRouter.selectTarget(`perf-group-${modelIndex}`);
+    const selected = await input.selector.selectExecutionAttempt(`perf-group-${modelIndex}`);
     if (!selected) {
       reply.code(404);
       return { ok: false };
@@ -279,7 +284,7 @@ async function createBenchmarkServer(input: {
   }
   return {
     app,
-    url: `http://127.0.0.1:${address.port}/__bench/route-decision`,
+    url: `http://127.0.0.1:${address.port}/__bench/runtime-selection`,
   };
 }
 
@@ -316,7 +321,7 @@ async function measureHttpRun(input: {
     pipelining: input.pipelining,
     workers: input.workers,
     authToken: input.authToken,
-    title: `http-route-decision-c${input.connections}-r${input.repeat}`,
+    title: `http-runtime-selection-c${input.connections}-r${input.repeat}`,
   });
   const elapsedMs = performance.now() - started;
   const serverCpuMs = cpuUsageMs(process.cpuUsage(cpuBefore));
@@ -430,7 +435,7 @@ function buildMarkdownReport(report: HttpReport): string {
     'Notes:',
     '',
     '- Uses autocannon as an external load generator process.',
-    '- Measures HTTP ingress, Fastify routing, JSON parsing/serialization, auth header check, and token router selection.',
+    '- Measures HTTP ingress, Fastify routing, JSON parsing/serialization, auth header check, and compiled runtime execution selection.',
     '- Does not include upstream provider network I/O or streaming response relay.',
     '',
   ].join('\n');
@@ -467,13 +472,19 @@ async function main(): Promise<void> {
   let dbModule: DbModule | null = null;
   let server: { app: FastifyInstance; url: string } | null = null;
   try {
-    await import('../../src/server/db/migrate.js');
+    await migrateRouteRuntimeDatabase();
     dbModule = await import('../../src/server/db/index.js');
-    await seedRouteRuntimeFixture({ dbModule, groupCount, insertChunkSize });
-    const projection = await import('../../src/server/services/routeTableProjectionService.js');
-    await projection.syncRouteBindingProjectionsFromRouteTable();
-    const routerModule: TokenRouterModule = await import('../../src/server/services/tokenRouter.js');
-    server = await createBenchmarkServer({ routerModule, modelCardinality, authToken });
+    const seeded = await seedRouteRuntimeFixture({ dbModule, groupCount, insertChunkSize });
+    await publishSeededRouteRuntimeFixture(seeded, 'route-http-rps-benchmark');
+    const { invalidateRouteRuntimeCaches } = await import('../../src/server/services/routeRuntimeCacheService.js');
+    const runtimeModule: RouteRuntimeExecutionModule = await import('../../src/server/services/routeRuntimeExecutionService.js');
+    const selector: RouteRuntimeSelector = {
+      selectExecutionAttempt: (model) => runtimeModule.selectRouteRuntimeExecutionAttempt({
+        requestedModel: model,
+        retryCount: 0,
+      }),
+    };
+    server = await createBenchmarkServer({ selector, modelCardinality, authToken });
 
     console.log(JSON.stringify({
       type: 'http-rps-config',
@@ -493,7 +504,7 @@ async function main(): Promise<void> {
     const runs: HttpRun[] = [];
     for (const connections of connectionSweep) {
       for (let repeat = 1; repeat <= repeats; repeat += 1) {
-        routerModule.invalidateTokenRouterCache();
+        invalidateRouteRuntimeCaches('manual');
         const run = await measureHttpRun({
           url: server.url,
           connections,

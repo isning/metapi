@@ -3,7 +3,6 @@ import CenteredModal from '../../components/CenteredModal.js';
 import InfoNote from '../../components/InfoNote.js';
 import SearchInput from '../../components/SearchInput.js';
 import { generateDownstreamSkKey } from '../helpers/generateDownstreamSkKey.js';
-import type { RouteSummaryRow } from '../token-routes/types.js';
 import { Button } from '../../components/ui/button/index.js';
 import { LoaderCircle } from 'lucide-react';
 import { Textarea } from '../../components/ui/textarea/index.js';
@@ -11,12 +10,6 @@ import JsonCodeEditor from '../../components/JsonCodeEditor.js';
 import { Input } from '../../components/ui/input/index.js';
 import { Checkbox } from '../../components/ui/checkbox/index.js';
 import { cn } from '../../lib/utils.js';
-import {
-  getRouteRequestedModelPattern,
-  isExactModelPattern,
-  isRouteBackendReferences,
-  resolveRouteTitle,
-} from '../token-routes/utils.js';
 
 import { tr } from '../../i18n.js';
 const PROXY_TOKEN_PREFIX = 'sk-';
@@ -45,7 +38,7 @@ export type DownstreamKeyEditorForm = {
   expiresAt: string;
   enabled: boolean;
   selectedModels: string[];
-  selectedGroupRouteIds: number[];
+  selectedPlanIds: string[];
   siteWeightMultipliersText: string;
   excludedSiteIds: number[];
   excludedCredentialRefs: DownstreamExcludedCredentialRef[];
@@ -66,7 +59,10 @@ export type DownstreamCredentialOption = {
   detail: string;
 };
 
-type RouteSelectorItem = Pick<RouteSummaryRow, 'id' | 'match' | 'backend' | 'presentation' | 'enabled'>;
+export type CompiledPlanOption = {
+  id: string;
+  modelName: string;
+};
 
 function parseTagText(value: string): string[] {
   return value
@@ -99,12 +95,8 @@ function uniqIds(values: number[]): number[] {
   return [...new Set(values.map((value) => Number(value)).filter((value) => Number.isFinite(value) && value > 0).map((value) => Math.trunc(value)))];
 }
 
-function isGroupRouteOption(route: RouteSelectorItem): boolean {
-  return isRouteBackendReferences(route.backend) || !isExactModelPattern(getRouteRequestedModelPattern(route));
-}
-
-function routeTitle(route: RouteSelectorItem): string {
-  return resolveRouteTitle(route);
+function uniqPlanIds(values: string[]): string[] {
+  return [...new Set(values.map((value) => String(value || '').trim()).filter(Boolean))];
 }
 
 function SelectableRow({
@@ -256,7 +248,7 @@ export default function DownstreamKeyEditorModal({
   onClose,
   onSave,
   saving,
-  routeOptions,
+  compiledPlanOptions,
   groupSuggestions,
   tagSuggestions,
   exclusionSourceLoading,
@@ -270,7 +262,7 @@ export default function DownstreamKeyEditorModal({
   onClose: () => void;
   onSave: () => void;
   saving: boolean;
-  routeOptions: RouteSelectorItem[];
+  compiledPlanOptions: CompiledPlanOption[];
   groupSuggestions: string[];
   tagSuggestions: string[];
   exclusionSourceLoading: boolean;
@@ -278,7 +270,7 @@ export default function DownstreamKeyEditorModal({
   credentialOptions: DownstreamCredentialOption[];
 }) {
   const [modelSearch, setModelSearch] = useState('');
-  const [groupSearch, setGroupSearch] = useState('');
+  const [planSearch, setPlanSearch] = useState('');
   const [siteSearch, setSiteSearch] = useState('');
   const [credentialSearch, setCredentialSearch] = useState('');
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -286,7 +278,7 @@ export default function DownstreamKeyEditorModal({
   useEffect(() => {
     if (!open) {
       setModelSearch('');
-      setGroupSearch('');
+      setPlanSearch('');
       setSiteSearch('');
       setCredentialSearch('');
       setAdvancedOpen(false);
@@ -294,23 +286,18 @@ export default function DownstreamKeyEditorModal({
   }, [open]);
 
   const exactModels = useMemo(
-    () => uniqStrings(routeOptions
-      .filter((item) => !isRouteBackendReferences(item.backend) && isExactModelPattern(getRouteRequestedModelPattern(item)))
-      .map((item) => getRouteRequestedModelPattern(item)))
+    () => uniqStrings(compiledPlanOptions
+      .map((item) => item.modelName))
       .sort((a, b) => a.localeCompare(b)),
-    [routeOptions],
+    [compiledPlanOptions],
   );
-  const groupRouteOptions = useMemo(
-    () => routeOptions.filter(isGroupRouteOption),
-    [routeOptions],
+  const validPlanIdSet = useMemo(
+    () => new Set(compiledPlanOptions.map((plan) => plan.id)),
+    [compiledPlanOptions],
   );
-  const validGroupRouteIdSet = useMemo(
-    () => new Set(groupRouteOptions.map((route) => route.id)),
-    [groupRouteOptions],
-  );
-  const normalizedSelectedGroupRouteIds = useMemo(
-    () => uniqIds(form.selectedGroupRouteIds.filter((id) => validGroupRouteIdSet.has(id))),
-    [form.selectedGroupRouteIds, validGroupRouteIdSet],
+  const normalizedSelectedPlanIds = useMemo(
+    () => uniqPlanIds(form.selectedPlanIds.filter((id) => validPlanIdSet.has(id))),
+    [form.selectedPlanIds, validPlanIdSet],
   );
 
   const filteredModels = useMemo(() => {
@@ -319,14 +306,13 @@ export default function DownstreamKeyEditorModal({
     return exactModels.filter((model) => model.toLowerCase().includes(keyword));
   }, [exactModels, modelSearch]);
 
-  const filteredGroups = useMemo(() => {
-    const keyword = groupSearch.trim().toLowerCase();
-    if (!keyword) return groupRouteOptions;
-    return groupRouteOptions.filter((route) => {
-      const title = routeTitle(route).toLowerCase();
-      return title.includes(keyword) || getRouteRequestedModelPattern(route).toLowerCase().includes(keyword);
+  const filteredPlans = useMemo(() => {
+    const keyword = planSearch.trim().toLowerCase();
+    if (!keyword) return compiledPlanOptions;
+    return compiledPlanOptions.filter((plan) => {
+      return plan.modelName.toLowerCase().includes(keyword);
     });
-  }, [groupRouteOptions, groupSearch]);
+  }, [compiledPlanOptions, planSearch]);
 
   const filteredSites = useMemo(() => {
     const keyword = siteSearch.trim().toLowerCase();
@@ -346,7 +332,7 @@ export default function DownstreamKeyEditorModal({
   }, [credentialOptions, credentialSearch]);
 
   const selectedModelCount = form.selectedModels.length;
-  const selectedGroupCount = normalizedSelectedGroupRouteIds.length;
+  const selectedPlanCount = normalizedSelectedPlanIds.length;
 
   return (
     <CenteredModal
@@ -502,43 +488,42 @@ export default function DownstreamKeyEditorModal({
                 </div>
               </div>
 
-              <div className="grid gap-3 rounded-md border p-3" data-testid="downstream-editor-group-panel">
+              <div className="grid gap-3 rounded-md border p-3" data-testid="downstream-editor-plan-panel">
                 <div className="flex items-center justify-between gap-2">
                   <div>
-                    <div className="text-sm font-semibold text-foreground">{tr('pages.downstreamKeys.downstreamKeyEditorModal.groups2')}</div>
-                    <div className="text-xs text-muted-foreground">{tr('pages.downstreamKeys.downstreamKeyEditorModal.accessGroupRoutesDefaultGroupsSelectAll')}</div>
+                    <div className="text-sm font-semibold text-foreground">{tr('pages.downstreamKeys.downstreamKeyEditorModal.compiledPlans')}</div>
+                    <div className="text-xs text-muted-foreground">{tr('pages.downstreamKeys.downstreamKeyEditorModal.compiledPlansDescription')}</div>
                   </div>
                   <div className="flex items-center gap-2">
-                    <Button variant="outline" type="button" onClick={() => onChange((prev) => ({ ...prev, selectedGroupRouteIds: groupRouteOptions.map((route) => route.id) }))}>{tr('pages.tokenRoutes.selectAll')}</Button>
-                    <Button variant="outline" type="button" onClick={() => onChange((prev) => ({ ...prev, selectedGroupRouteIds: [] }))}>{tr('components.notificationPanel.clear')}</Button>
+                    <Button variant="outline" type="button" onClick={() => onChange((prev) => ({ ...prev, selectedPlanIds: compiledPlanOptions.map((plan) => plan.id) }))}>{tr('pages.tokenRoutes.selectAll')}</Button>
+                    <Button variant="outline" type="button" onClick={() => onChange((prev) => ({ ...prev, selectedPlanIds: [] }))}>{tr('components.notificationPanel.clear')}</Button>
                   </div>
                 </div>
-                <div className="text-xs text-muted-foreground">{tr('pages.downstreamKeys.downstreamKeyEditorModal.selected')} {selectedGroupCount} {tr('pages.downstreamKeys.downstreamKeyEditorModal.groups')}</div>
-                <SearchInput value={groupSearch} onChange={(e) => setGroupSearch(e.target.value)} placeholder={tr('pages.downstreamKeys.downstreamKeyEditorModal.searchgroupsModelmode')} />
+                <div className="text-xs text-muted-foreground">{tr('pages.downstreamKeys.downstreamKeyEditorModal.selected')} {selectedPlanCount} {tr('pages.downstreamKeys.downstreamKeyEditorModal.compiledPlansUnit')}</div>
+                <SearchInput value={planSearch} onChange={(e) => setPlanSearch(e.target.value)} placeholder={tr('pages.downstreamKeys.downstreamKeyEditorModal.searchCompiledPlans')} />
                 <div className="flex max-h-70 flex-col gap-2 overflow-y-auto">
-                  {filteredGroups.length === 0 ? (
-                    <div className="text-xs text-muted-foreground">{tr('pages.downstreamKeys.downstreamKeyEditorModal.nonematchgroups')}</div>
-                  ) : filteredGroups.map((route) => {
-                    const checked = normalizedSelectedGroupRouteIds.includes(route.id);
+                  {filteredPlans.length === 0 ? (
+                    <div className="text-xs text-muted-foreground">{tr('pages.downstreamKeys.downstreamKeyEditorModal.noMatchingCompiledPlans')}</div>
+                  ) : filteredPlans.map((plan) => {
+                    const planId = plan.id;
+                    const checked = normalizedSelectedPlanIds.includes(planId);
                     return (
-                      <label key={route.id}>
+                      <label key={plan.id}>
                         <SelectableRow checked={checked}>
                         <Checkbox
                           checked={checked}
                           onChange={() => onChange((prev) => ({
                             ...prev,
-                            selectedGroupRouteIds: checked
-                              ? prev.selectedGroupRouteIds.filter((item) => item !== route.id)
-                              : uniqIds([...prev.selectedGroupRouteIds.filter((item) => validGroupRouteIdSet.has(item)), route.id]),
+                            selectedPlanIds: checked
+                              ? prev.selectedPlanIds.filter((item) => item !== planId)
+                              : uniqPlanIds([...prev.selectedPlanIds.filter((item) => validPlanIdSet.has(item)), planId]),
                           }))}
                           className="mt-0.5"
                         />
                         <div className="min-w-0">
                           <div className="text-sm font-semibold text-foreground">
-                            {routeTitle(route)}
-                            {!route.enabled ? <span className="ml-2 text-xs text-destructive">{tr('pages.accounts.disabled2')}</span> : null}
+                            {plan.modelName}
                           </div>
-                          <code className="mt-1 block text-xs text-muted-foreground">{getRouteRequestedModelPattern(route)}</code>
                         </div>
                         </SelectableRow>
                       </label>

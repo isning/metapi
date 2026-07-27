@@ -529,7 +529,16 @@ export default function Dashboard({
 
   const totalBalance = safeNumber(data?.totalBalance);
   const rawBalance = safeNumber(data?.rawBalance);
-  const baseCostUnit = String(data?.baseCostUnit || "USD");
+  const rawBalanceUnit = String(data?.rawBalanceUnit || "").trim();
+  const rawBalanceUnitMixed = Boolean(data?.rawBalanceUnitMixed);
+  const baseCostUnit = String(data?.baseCostUnit || "").trim();
+  const formatBaseCost = (value: number) => `${value.toFixed(2)}${baseCostUnit ? ` ${baseCostUnit}` : ''}`;
+  const formatRawBalance = (value: number) => {
+    const amount = value.toFixed(2);
+    if (rawBalanceUnit) return `${amount} ${rawBalanceUnit}`;
+    if (rawBalanceUnitMixed) return `${amount} ${tr('components.charts.siteDistributionChart.mixedUnits')}`;
+    return amount;
+  };
   const valuedAccountCount = safeNumber(data?.valuedAccountCount);
   const balanceValuationWarningCount = safeNumber(data?.balanceValuationWarningCount);
   const totalUsed = safeNumber(data?.totalUsed || 0);
@@ -617,13 +626,13 @@ export default function Dashboard({
         <StatCard title={tr('pages.dashboard.accountData')}>
           <StatRow
             label={tr('pages.dashboard.normalizedBalance')}
-            value={`${totalBalance.toFixed(2)} ${baseCostUnit}`}
-            note={`${tr('pages.dashboard.rawBalance')}: ${rawBalance.toFixed(2)} · ${tr('pages.dashboard.valuationCoverage')} ${Math.round(valuedAccountCount)}/${Math.round(totalAccounts)}${balanceValuationWarningCount > 0 ? ` · ${tr('pages.dashboard.incompleteValuation')}` : ''}`}
+            value={formatBaseCost(totalBalance)}
+            note={`${tr('pages.dashboard.rawBalance')}: ${formatRawBalance(rawBalance)} · ${tr('pages.dashboard.valuationCoverage')} ${Math.round(valuedAccountCount)}/${Math.round(totalAccounts)}${balanceValuationWarningCount > 0 ? ` · ${tr('pages.dashboard.incompleteValuation')}` : ''}`}
           />
           <StatRow
             label={tr('pages.dashboard.totalSpend')}
-            value={`${totalUsed.toFixed(2)} ${baseCostUnit}`}
-            note={`${tr('pages.dashboard.today')}: -${todaySpend.toFixed(2)} / +${todayReward.toFixed(2)} ${baseCostUnit}`}
+            value={formatBaseCost(totalUsed)}
+            note={`${tr('pages.dashboard.today')}: -${formatBaseCost(todaySpend)} / +${formatBaseCost(todayReward)}`}
           />
         </StatCard>
 

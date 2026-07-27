@@ -4,9 +4,9 @@ import pg from 'pg';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import {
-  ensureLegacySchemaCompatibility,
-  type LegacySchemaCompatInspector,
-} from './legacySchemaCompat.js';
+  ensureSchemaBootstrapCompatibility,
+  type SchemaBootstrapCompatibilityInspector,
+} from './schemaBootstrapCompatibility.js';
 import {
   generateBootstrapSql,
   generateUpgradeSql,
@@ -78,7 +78,7 @@ function validateIdentifier(identifier: string): string {
   return identifier;
 }
 
-function createLegacySchemaInspector(client: RuntimeSchemaClient): LegacySchemaCompatInspector {
+function createSchemaBootstrapInspector(client: RuntimeSchemaClient): SchemaBootstrapCompatibilityInspector {
   if (client.dialect === 'sqlite') {
     return {
       dialect: 'sqlite',
@@ -236,21 +236,6 @@ function buildCompatibleRuntimeBaseline(
     .filter((foreignKey) => currentForeignKeys.has(serializeForeignKey(foreignKey)));
 
   return baseline;
-}
-
-function isGraphNativeRouteGraphReplacement(
-  currentContract: SchemaContract,
-  liveContract: SchemaContract,
-): boolean {
-  const currentTokenRoutes = currentContract.tables.token_routes;
-  const liveTokenRoutes = liveContract.tables.token_routes;
-  return !!currentTokenRoutes
-    && !!liveTokenRoutes?.columns.model_pattern
-    && !currentTokenRoutes.columns.model_pattern
-    && !!currentContract.tables.route_graph_versions
-    && !!currentContract.tables.route_graph_drafts
-    && !!currentContract.tables.route_graph_active_version
-    && !!currentContract.tables.route_endpoint_targets?.columns.route_endpoint_id;
 }
 
 function collectIndexedColumns(contract: SchemaContract): Map<string, Set<string>> {
@@ -445,15 +430,13 @@ async function resolveLiveContract(client: RuntimeSchemaClient, liveContract?: S
   });
 }
 
-function buildExternalUpgradeStatements(
-  dialect: Exclude<RuntimeSchemaDialect, 'sqlite'>,
+function buildRuntimeUpgradeStatements(
+  dialect: RuntimeSchemaDialect,
   currentContract: SchemaContract,
   liveContract: SchemaContract,
   mysqlIndexPrefixRequirements?: MysqlIndexPrefixRequirementMap,
 ): string[] {
-  const previousContract = isGraphNativeRouteGraphReplacement(currentContract, liveContract)
-    ? liveContract
-    : buildCompatibleRuntimeBaseline(currentContract, liveContract);
+  const previousContract = buildCompatibleRuntimeBaseline(currentContract, liveContract);
 
   return splitSqlStatements(generateUpgradeSql(dialect, currentContract, previousContract, {
     mysqlIndexPrefixRequirements,
@@ -467,15 +450,19 @@ export async function ensureRuntimeDatabaseSchema(
   const currentContract = options.currentContract ?? readSchemaContract();
   let statements: string[];
 
+  const liveContract = await resolveLiveContract(client, options.liveContract);
   if (client.dialect === 'sqlite') {
-    statements = splitSqlStatements(generateBootstrapSql('sqlite', currentContract));
+    statements = buildRuntimeUpgradeStatements(
+      'sqlite',
+      currentContract,
+      liveContract,
+    );
   } else {
-    const liveContract = await resolveLiveContract(client, options.liveContract);
     const mysqlIndexPrefixRequirements = client.dialect === 'mysql'
       ? await resolveMySqlIndexPrefixRequirements(client, currentContract)
       : undefined;
 
-    statements = buildExternalUpgradeStatements(
+    statements = buildRuntimeUpgradeStatements(
       client.dialect,
       currentContract,
       liveContract,
@@ -487,7 +474,7 @@ export async function ensureRuntimeDatabaseSchema(
     await executeBootstrapStatement(client, sqlText);
   }
 
-  await ensureLegacySchemaCompatibility(createLegacySchemaInspector(client));
+  await ensureSchemaBootstrapCompatibility(createSchemaBootstrapInspector(client));
 }
 
 export async function bootstrapRuntimeDatabaseSchema(input: RuntimeSchemaConnectionInput): Promise<void> {
@@ -503,5 +490,5 @@ export const __runtimeSchemaBootstrapTestUtils = {
   buildCompatibleRuntimeBaseline,
   cloneContract,
   splitSqlStatements,
-  buildExternalUpgradeStatements,
+  buildRuntimeUpgradeStatements,
 };

@@ -8,11 +8,11 @@ import { buildCodexSessionResponseStoreKey } from '../runtime/codexSessionRespon
 import {
   authorizeDownstreamToken,
   consumeManagedKeyRequest,
-  isModelAllowedByPolicyOrAllowedRoutes,
+  isModelAllowedByPolicyOrAllowedPlans,
   type DownstreamTokenAuthSuccess,
 } from '../../services/downstreamApiKeyService.js';
+import type { DownstreamRoutingPolicy } from '../../services/downstreamPolicyTypes.js';
 import { runWithSiteApiEndpointPool, SiteApiEndpointRequestError } from '../../services/siteApiEndpointService.js';
-import { tokenRouter } from '../../services/tokenRouter.js';
 import { buildOauthProviderHeaders } from '../../services/oauth/service.js';
 import { resolveDispatchUpstreamCompatibilityPolicy } from '../../services/upstreamCompatibilityPolicyResolver.js';
 import { getOauthInfoFromAccount } from '../../services/oauth/oauthAccount.js';
@@ -22,19 +22,36 @@ import { defaultRequestUrlForUpstreamEndpoint } from '../apiVariants.js';
 import { config } from '../../config.js';
 import { applyOpenAiServiceTierPolicy } from '../serviceTierPolicy.js';
 import { resolvePlatformProfile } from '../platforms/registry.js';
-import { selectProxyTargetForAttempt } from '../targetSelection.js';
+import type { RouteRuntimeExecutionAttempt } from '../../services/routeRuntimeExecutionService.js';
 import {
   bindSurfaceStickyTarget,
   buildSurfaceStickySessionKey,
+  commitSurfaceRuntimeDecisionProposal,
+  createSurfaceRuntimeDecisionSession,
+  createSurfaceFailureToolkit,
+  getSurfaceStickyPreferredTargetId,
+  markSurfaceExecutionAttemptStarted,
+  proposeSurfaceRuntimeDecisionInSession,
+  recordSurfaceSuccess,
+  selectSurfaceRuntimeDecisionInSession,
 } from './sharedProxyOrchestration.js';
+import { buildCompiledRouteRuntimeRequestSnapshot } from './compiledRouteRuntimeRequest.js';
+import {
+  bindCompiledRuntimeExecutionDecision,
+  completeCompiledRuntimeExecutionSession,
+  startCompiledRuntimeExecutionSession,
+  type CompiledRuntimeExecutionSession,
+} from '../../services/compiledRuntimeExecutionSessionService.js';
+import { hasProxyUsagePayload, mergeProxyUsage, parseProxyUsage } from '../../services/proxyUsageParser.js';
 
 const installedApps = new WeakSet<FastifyInstance>();
 const WS_TURN_STATE_HEADER = 'x-codex-turn-state';
 const RESPONSES_WEBSOCKET_MODE_HEADER = 'x-metapi-responses-websocket-mode';
 const RESPONSES_WEBSOCKET_TRANSPORT_HEADER = 'x-metapi-responses-websocket-transport';
+const INTERNAL_RUNTIME_REQUEST_ID_HEADER = 'x-metapi-runtime-request-id';
 const codexWebsocketRuntime = createCodexWebsocketRuntime();
 
-type SelectedTarget = NonNullable<Awaited<ReturnType<typeof tokenRouter.selectTarget>>>;
+type SelectedExecutionAttempt = RouteRuntimeExecutionAttempt;
 type ResponsesWebsocketAuthContext = DownstreamTokenAuthSuccess;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -87,28 +104,28 @@ function readNestedRecord(value: unknown, key: string): Record<string, unknown> 
   const nested = value[key];
   return isRecord(nested) ? nested : null;
 }
-function selectedTargetModelMatches(
-  selectedTarget: SelectedTarget | null,
+function selectedExecutionAttemptModelMatches(
+  selectedExecutionAttempt: SelectedExecutionAttempt | null,
   requestModel: string,
 ): boolean {
-  if (!selectedTarget) return false;
-  const selectedModel = asTrimmedString(selectedTarget.actualModel).toLowerCase();
+  if (!selectedExecutionAttempt) return false;
+  const selectedModel = asTrimmedString(selectedExecutionAttempt.actualModel).toLowerCase();
   const normalizedRequestModel = asTrimmedString(requestModel).toLowerCase();
   if (!selectedModel || !normalizedRequestModel) return true;
   return selectedModel === normalizedRequestModel;
 }
 
-function selectedTargetSupportsCodexWebsocketTransport(
-  selectedTarget: SelectedTarget | null,
+function selectedExecutionAttemptSupportsCodexWebsocketTransport(
+  selectedExecutionAttempt: SelectedExecutionAttempt | null,
   requestModel: string,
 ): boolean {
-  if (!selectedTarget) return false;
-  const platform = asTrimmedString(selectedTarget.site?.platform).toLowerCase();
+  if (!selectedExecutionAttempt) return false;
+  const platform = asTrimmedString(selectedExecutionAttempt.site?.platform).toLowerCase();
   if (platform !== 'codex') return false;
-  if (!selectedTargetModelMatches(selectedTarget, requestModel)) return false;
+  if (!selectedExecutionAttemptModelMatches(selectedExecutionAttempt, requestModel)) return false;
   if (!config.codexUpstreamWebsocketEnabled) return false;
 
-  const extraConfig = parseExtraConfigRecord(selectedTarget.account.extraConfig);
+  const extraConfig = parseExtraConfigRecord(selectedExecutionAttempt.account.extraConfig);
   const oauth = readNestedRecord(extraConfig, 'oauth');
   const providerData = readNestedRecord(oauth, 'providerData');
   const candidateFlags = [
@@ -126,11 +143,11 @@ function selectedTargetSupportsCodexWebsocketTransport(
   return true;
 }
 
-function selectedTargetSupportsIncrementalInput(
-  selectedTarget: SelectedTarget | null,
+function selectedExecutionAttemptSupportsIncrementalInput(
+  selectedExecutionAttempt: SelectedExecutionAttempt | null,
   requestModel: string,
 ): boolean {
-  return selectedTargetSupportsCodexWebsocketTransport(selectedTarget, requestModel);
+  return selectedExecutionAttemptSupportsCodexWebsocketTransport(selectedExecutionAttempt, requestModel);
 }
 
 function unwrapCodexWebsocketRuntimeError(error: unknown): CodexWebsocketRuntimeError {
@@ -143,17 +160,6 @@ function unwrapCodexWebsocketRuntimeError(error: unknown): CodexWebsocketRuntime
       ? error.message
       : 'upstream websocket request failed',
   );
-}
-
-function shouldReuseSelectedTarget(
-  selectedTarget: SelectedTarget | null,
-  requestModel: string,
-): boolean {
-  if (!selectedTarget) return false;
-  const selectedModel = asTrimmedString(selectedTarget.actualModel).toLowerCase();
-  const normalizedRequestModel = asTrimmedString(requestModel).toLowerCase();
-  if (!selectedModel || !normalizedRequestModel) return true;
-  return selectedModel === normalizedRequestModel;
 }
 
 function deriveCodexExplicitSessionId(body: Record<string, unknown>, sessionId: string): string {
@@ -195,10 +201,12 @@ async function forwardResponsesRequestViaHttp(input: {
   payload: Record<string, unknown>;
   preserveIncrementalMode: boolean;
   authToken: string;
+  executionSession: CompiledRuntimeExecutionSession;
 }): Promise<unknown[] | null> {
   const injectHeaders: Record<string, string | string[]> = {
     ...buildInjectHeaders(input.request),
     [RESPONSES_WEBSOCKET_TRANSPORT_HEADER]: '1',
+    [INTERNAL_RUNTIME_REQUEST_ID_HEADER]: input.executionSession.requestId,
     ...(input.preserveIncrementalMode ? { [RESPONSES_WEBSOCKET_MODE_HEADER]: 'incremental' } : {}),
   };
   if (
@@ -317,22 +325,6 @@ function writeUpgradeHttpError(socket: Duplex, status: number, message: string):
   );
 }
 
-async function supportsResponsesWebsocketIncrementalInput(
-  parsed: Record<string, unknown>,
-  lastRequest: Record<string, unknown> | null,
-  authContext: ResponsesWebsocketAuthContext,
-): Promise<boolean> {
-  const requestModel = asTrimmedString(parsed.model) || asTrimmedString(lastRequest?.model);
-  if (!requestModel) return false;
-
-  try {
-    const selected = await tokenRouter.previewSelectedTarget(requestModel, authContext.policy);
-    return selectedTargetSupportsIncrementalInput(selected, requestModel);
-  } catch {
-    return false;
-  }
-}
-
 async function handleResponsesWebsocketConnection(
   app: FastifyInstance,
   socket: WebSocket,
@@ -347,8 +339,8 @@ async function handleResponsesWebsocketConnection(
   const runtimeSessionKeys = new Set<string>();
   let lastRequest: Record<string, unknown> | null = null;
   let lastResponseOutput: unknown[] = [];
-  let selectedTarget: SelectedTarget | null = null;
   let messageQueue = Promise.resolve();
+  const downstreamPolicy = authContext.policy;
 
   socket.once('close', () => {
     const sessionKeys = runtimeSessionKeys.size > 0
@@ -363,10 +355,11 @@ async function handleResponsesWebsocketConnection(
     }));
   });
 
-  socket.on('message', (raw) => {
+  socket.on('message', (raw: RawData) => {
     messageQueue = messageQueue
       .catch(() => undefined)
       .then(async () => {
+        let executionSession: CompiledRuntimeExecutionSession | null = null;
         try {
           const parsed = parseJsonObject(raw);
           if (!parsed) {
@@ -375,7 +368,7 @@ async function handleResponsesWebsocketConnection(
           }
 
           const requestModel = asTrimmedString(parsed.model) || asTrimmedString(lastRequest?.model);
-          if (requestModel && !await isModelAllowedByPolicyOrAllowedRoutes(requestModel, authContext.policy)) {
+          if (requestModel && !await isModelAllowedByPolicyOrAllowedPlans(requestModel, authContext.policy)) {
             writeResponsesWebsocketError(socket, 403, 'model is not allowed for this downstream key');
             return;
           }
@@ -397,19 +390,85 @@ async function handleResponsesWebsocketConnection(
           }
           parsed.service_tier = serviceTierPolicy.body.service_tier;
           if (serviceTierPolicy.body.service_tier === undefined) delete parsed.service_tier;
-          const supportsIncrementalInput = selectedTargetSupportsIncrementalInput(selectedTarget, requestModel)
-            || await supportsResponsesWebsocketIncrementalInput(parsed, lastRequest, authContext);
-          const shouldHandleLocalPrewarm = protocolAdapters.responses.websocket.shouldHandlePrewarmLocally({
-            parsed,
-            lastRequest,
-            supportsIncrementalInput,
-          });
-          const normalized = protocolAdapters.responses.websocket.normalizeRequest({
-            parsed,
-            lastRequest,
-            lastResponseOutput,
-            supportsIncrementalInput,
-          });
+          const stickySessionKey = requestModel
+            ? buildSurfaceStickySessionKey({
+              clientContext: {
+                clientKind: 'codex',
+                sessionId: websocketSessionId,
+                traceHint: websocketSessionId,
+              },
+              requestedModel: requestModel,
+              downstreamPath: '/v1/responses:websocket',
+              downstreamApiKeyId: authContext.key?.id ?? null,
+            })
+            : null;
+          const runtimeRequest = requestModel
+            ? buildCompiledRouteRuntimeRequestSnapshot({
+                requestedModel: requestModel,
+                payload: parsed,
+                normalizedPayload: parsed,
+                headers: request.headers as Record<string, unknown>,
+                method: 'WEBSOCKET',
+                path: '/v1/responses:websocket',
+                clientContext: {
+                  clientKind: 'codex',
+                  sessionId: websocketSessionId,
+                  traceHint: websocketSessionId,
+                },
+                downstreamApiKeyId: authContext.key?.id ?? null,
+              })
+            : null;
+          const runtimeDecisionSession = runtimeRequest
+            ? await createSurfaceRuntimeDecisionSession({
+              requestedModel: requestModel!,
+              request: runtimeRequest,
+              downstreamPolicy,
+              stickyExecutionTargetId: getSurfaceStickyPreferredTargetId(stickySessionKey),
+            })
+            : null;
+          let normalized: ReturnType<typeof protocolAdapters.responses.websocket.normalizeRequest>;
+          let shouldHandleLocalPrewarm = false;
+          let supportsIncrementalInput = false;
+          let selectedExecutionAttempt: SelectedExecutionAttempt | null = null;
+          if (runtimeDecisionSession) {
+            for (;;) {
+              const proposal = await proposeSurfaceRuntimeDecisionInSession({
+                session: runtimeDecisionSession,
+                excludeTargetIds: [],
+                retryCount: 0,
+              });
+              const proposedAttempt = proposal?.decision.kind === 'execution_attempt'
+                ? proposal.decision.attempt
+                : null;
+              supportsIncrementalInput = selectedExecutionAttemptSupportsIncrementalInput(
+                proposedAttempt,
+                requestModel!,
+              );
+              shouldHandleLocalPrewarm = protocolAdapters.responses.websocket.shouldHandlePrewarmLocally({
+                parsed,
+                lastRequest,
+                supportsIncrementalInput,
+              });
+              normalized = protocolAdapters.responses.websocket.normalizeRequest({
+                parsed,
+                lastRequest,
+                lastResponseOutput,
+                supportsIncrementalInput,
+              });
+              if (!normalized.ok || shouldHandleLocalPrewarm || !supportsIncrementalInput) break;
+              if (proposal && commitSurfaceRuntimeDecisionProposal(proposal)) {
+                selectedExecutionAttempt = proposedAttempt;
+                break;
+              }
+            }
+          } else {
+            normalized = protocolAdapters.responses.websocket.normalizeRequest({
+              parsed,
+              lastRequest,
+              lastResponseOutput,
+              supportsIncrementalInput: false,
+            });
+          }
           if (!normalized.ok) {
             writeResponsesWebsocketError(socket, normalized.status, normalized.message);
             return;
@@ -428,47 +487,44 @@ async function handleResponsesWebsocketConnection(
             return;
           }
 
-          if (!shouldReuseSelectedTarget(selectedTarget, requestModel)) {
-            const stickySessionKey = requestModel
-              ? buildSurfaceStickySessionKey({
-                clientContext: {
-                  clientKind: 'codex',
-                  sessionId: websocketSessionId,
-                  traceHint: websocketSessionId,
-                },
-                requestedModel: requestModel,
-                downstreamPath: '/v1/responses:websocket',
-                downstreamApiKeyId: authContext.key?.id ?? null,
-              })
-              : null;
-            selectedTarget = requestModel
-              ? await selectProxyTargetForAttempt({
-                requestedModel: requestModel,
-                downstreamPolicy: authContext.policy,
-                excludeTargetIds: [],
-                retryCount: 0,
-                stickySessionKey,
-              })
-              : null;
-            if (selectedTarget) {
-              bindSurfaceStickyTarget({
-                stickySessionKey,
-                selected: selectedTarget,
-              });
-            }
+          executionSession = await startCompiledRuntimeExecutionSession({
+            downstreamPath: '/v1/responses:websocket',
+            requestedModel: requestModel || null,
+            isStream: true,
+            downstreamApiKeyId: authContext.source === 'managed' ? authContext.key?.id ?? null : null,
+          });
+          if (selectedExecutionAttempt) {
+            await bindCompiledRuntimeExecutionDecision({
+              requestId: executionSession.requestId,
+              routeEntrypointId: selectedExecutionAttempt.routeEntrypointId,
+              runtimeEndpointId: selectedExecutionAttempt.runtimeEndpointId,
+              executionAttemptId: selectedExecutionAttempt.executionAttemptId,
+              runtimeBundleHash: selectedExecutionAttempt.routeRuntimeSnapshot.compiledRuntime.bundleHash,
+              decisionSnapshot: selectedExecutionAttempt.routeRuntimeSnapshot,
+            });
+            bindSurfaceStickyTarget({
+              stickySessionKey,
+              selected: selectedExecutionAttempt,
+            });
           }
 
           const selectedServiceTierPolicy = applyOpenAiServiceTierPolicy({
             body: normalized.request,
             context: {
               requestedModel: requestModel,
-              actualModel: asTrimmedString(selectedTarget?.actualModel),
-              sitePlatform: asTrimmedString(selectedTarget?.site?.platform),
-              accountType: getOauthInfoFromAccount(selectedTarget?.account)?.planType,
+              actualModel: asTrimmedString(selectedExecutionAttempt?.actualModel),
+              sitePlatform: asTrimmedString(selectedExecutionAttempt?.site?.platform),
+              accountType: getOauthInfoFromAccount(selectedExecutionAttempt?.account)?.planType,
             },
             rules: getServiceTierPolicyRules(),
           });
           if (!selectedServiceTierPolicy.ok) {
+            await completeCompiledRuntimeExecutionSession(executionSession, {
+              status: 'failure',
+              httpStatus: selectedServiceTierPolicy.statusCode,
+              isStream: true,
+              errorMessage: selectedServiceTierPolicy.payload.error.message,
+            });
             writeResponsesWebsocketError(
               socket,
               selectedServiceTierPolicy.statusCode,
@@ -487,11 +543,23 @@ async function handleResponsesWebsocketConnection(
           }
           lastRequest = normalized.nextRequestSnapshot;
 
-          const codexWebsocketTarget = selectedTargetSupportsCodexWebsocketTransport(selectedTarget, requestModel)
-            ? selectedTarget
+          const codexWebsocketTarget = selectedExecutionAttemptSupportsCodexWebsocketTransport(selectedExecutionAttempt, requestModel)
+            ? selectedExecutionAttempt
             : null;
 
           if (codexWebsocketTarget) {
+            const terminalToolkit = createSurfaceFailureToolkit({
+              requestId: executionSession.requestId,
+              executionSession,
+              warningScope: 'responses-websocket',
+              downstreamPath: '/v1/responses:websocket',
+              clientContext: {
+                clientKind: 'codex',
+                sessionId: websocketSessionId,
+                traceHint: websocketSessionId,
+              },
+              downstreamApiKeyId: authContext.key?.id ?? null,
+            });
             const downstreamHeaders: Record<string, unknown> = {
               ...(request.headers as Record<string, unknown>),
               [RESPONSES_WEBSOCKET_TRANSPORT_HEADER]: '1',
@@ -512,6 +580,7 @@ async function handleResponsesWebsocketConnection(
 
             try {
               const platformProfile = resolvePlatformProfile(codexWebsocketTarget.site.platform);
+              await markSurfaceExecutionAttemptStarted({ selected: codexWebsocketTarget });
               const runtimeResult = await runWithSiteApiEndpointPool(
                 codexWebsocketTarget.site as Parameters<typeof runWithSiteApiEndpointPool>[0],
                 async (target) => {
@@ -528,14 +597,14 @@ async function handleResponsesWebsocketConnection(
                     downstreamHeaders,
                     platformHeaders,
                     codexExplicitSessionId: deriveCodexExplicitSessionId(normalized.request, websocketSessionId),
-                    routeGraphFilters: codexWebsocketTarget.routeGraph?.postBuildFilters ?? null,
+                    runtimePostBuildFilters: codexWebsocketTarget.postBuildFilters ?? null,
                     compatibilityPolicy: resolveDispatchUpstreamCompatibilityPolicy({
                       defaultCompatibilityPolicy: platformProfile?.defaultCompatibilityPolicy,
                       site: codexWebsocketTarget.site,
                       account: codexWebsocketTarget.account,
                       token: codexWebsocketTarget.token,
-                      routeEndpointCompatibilityPolicy: codexWebsocketTarget.routeGraph?.routeEndpointCompatibilityPolicy,
-                      selectedEndpointTarget: codexWebsocketTarget.routeGraph?.selectedEndpointTarget,
+                      routeEndpointCompatibilityPolicy: codexWebsocketTarget.routeEndpointCompatibilityPolicy,
+                      executionAttemptCompatibilityPolicy: codexWebsocketTarget.executionAttemptCompatibilityPolicy,
                     }),
                   });
                   const requestUrl = defaultRequestUrlForUpstreamEndpoint({
@@ -562,6 +631,37 @@ async function handleResponsesWebsocketConnection(
                   }
                 },
               );
+              let parsedUsage = {
+                promptTokens: 0,
+                completionTokens: 0,
+                totalTokens: 0,
+                cacheReadTokens: 0,
+                cacheCreationTokens: 0,
+                promptTokensIncludeCache: null as boolean | null,
+              };
+              let upstreamUsagePresent = false;
+              for (const payload of runtimeResult.events) {
+                upstreamUsagePresent = upstreamUsagePresent || hasProxyUsagePayload(payload);
+                parsedUsage = mergeProxyUsage(parsedUsage, parseProxyUsage(payload));
+              }
+              await recordSurfaceSuccess({
+                selected: codexWebsocketTarget,
+                requestedModel: requestModel,
+                modelName: asTrimmedString(codexWebsocketTarget.actualModel) || requestModel,
+                parsedUsage,
+                upstreamUsagePresent,
+                requestStartedAtMs: executionSession.startedAtMs,
+                isStream: true,
+                firstByteLatencyMs: null,
+                firstTokenLatencyMs: null,
+                latencyMs: Math.max(0, Date.now() - executionSession.startedAtMs),
+                retryCount: 0,
+                upstreamPath: '/v1/responses:websocket',
+                logSuccess: terminalToolkit.log,
+                bestEffortMetrics: {
+                  errorLabel: '[proxy/responses-websocket] failed to record success metrics',
+                },
+              });
               lastResponseOutput = protocolAdapters.responses.websocket.collectOutput(runtimeResult.events);
               for (const payload of runtimeResult.events) {
                 socket.send(JSON.stringify(payload));
@@ -569,6 +669,30 @@ async function handleResponsesWebsocketConnection(
             } catch (error) {
               const runtimeError = unwrapCodexWebsocketRuntimeError(error);
               if (runtimeError.status && runtimeError.events.length === 0) {
+                const retryToolkit = createSurfaceFailureToolkit({
+                  requestId: executionSession.requestId,
+                  executionSession,
+                  warningScope: 'responses-websocket',
+                  downstreamPath: '/v1/responses:websocket',
+                  clientContext: {
+                    clientKind: 'codex',
+                    sessionId: websocketSessionId,
+                    traceHint: websocketSessionId,
+                  },
+                  downstreamApiKeyId: authContext.key?.id ?? null,
+                });
+                await retryToolkit.handleUpstreamFailure({
+                  selected: codexWebsocketTarget,
+                  requestedModel: requestModel,
+                  modelName: asTrimmedString(codexWebsocketTarget.actualModel) || requestModel,
+                  status: runtimeError.status,
+                  errText: runtimeError.message,
+                  rawErrText: runtimeError.message,
+                  isStream: true,
+                  latencyMs: Math.max(0, Date.now() - executionSession.startedAtMs),
+                  retryCount: 0,
+                  willContinue: true,
+                });
                 const forwarded = await forwardResponsesRequestViaHttp({
                   app,
                   socket,
@@ -576,6 +700,7 @@ async function handleResponsesWebsocketConnection(
                   payload: normalized.request,
                   preserveIncrementalMode: supportsIncrementalInput,
                   authToken: authContext.token,
+                  executionSession,
                 });
                 if (forwarded) {
                   lastResponseOutput = forwarded;
@@ -588,6 +713,18 @@ async function handleResponsesWebsocketConnection(
               }
               const emittedTerminalResponsesEvent = runtimeError.events.some((payload) =>
                 protocolAdapters.responses.websocket.isTerminalPayload(payload));
+              await terminalToolkit.handleUpstreamFailure({
+                selected: codexWebsocketTarget,
+                requestedModel: requestModel,
+                modelName: asTrimmedString(codexWebsocketTarget.actualModel) || requestModel,
+                status: runtimeError.status || 408,
+                errText: runtimeError.message,
+                rawErrText: runtimeError.message,
+                isStream: true,
+                latencyMs: Math.max(0, Date.now() - executionSession.startedAtMs),
+                retryCount: 0,
+                willContinue: false,
+              });
               if (!emittedTerminalResponsesEvent) {
                 writeResponsesWebsocketError(
                   socket,
@@ -607,11 +744,20 @@ async function handleResponsesWebsocketConnection(
             payload: normalized.request,
             preserveIncrementalMode: supportsIncrementalInput,
             authToken: authContext.token,
+            executionSession,
           });
           if (forwarded) {
             lastResponseOutput = forwarded;
           }
-        } catch {
+        } catch (error) {
+          if (executionSession) {
+            await completeCompiledRuntimeExecutionSession(executionSession, {
+              status: 'failure',
+              httpStatus: 500,
+              isStream: true,
+              errorMessage: error instanceof Error ? error.message : String(error),
+            });
+          }
           writeResponsesWebsocketError(socket, 500, 'internal websocket proxy error');
         }
       });
@@ -623,7 +769,7 @@ export function ensureResponsesWebsocketTransport(app: FastifyInstance) {
   installedApps.add(app);
 
   const websocketServer = new WebSocketServer({ noServer: true });
-  websocketServer.on('headers', (headers, request) => {
+  websocketServer.on('headers', (headers: string[], request: IncomingMessage) => {
     const turnState = headerValueToTrimmedString(request.headers[WS_TURN_STATE_HEADER]);
     if (!turnState) return;
     headers.push(`${WS_TURN_STATE_HEADER}: ${turnState}`);
@@ -643,7 +789,7 @@ export function ensureResponsesWebsocketTransport(app: FastifyInstance) {
         writeUpgradeHttpError(socket, authResult.statusCode, authResult.error);
         return;
       }
-      websocketServer.handleUpgrade(request, socket, head, (client) => {
+      websocketServer.handleUpgrade(request, socket, head, (client: WebSocket) => {
         void handleResponsesWebsocketConnection(app, client, request, authResult);
       });
     })().catch(() => {

@@ -66,13 +66,17 @@ describe('test harnesses', () => {
 
   it('builds graph fixtures through the shared compiler contract', () => {
     const result = compileRouteGraphOrThrow(createDirectModelRouteGraph('gpt-harness'));
+    const plans = result.compiled.compiledRouterBundle?.plans || [];
 
-    expect(result.compiled.publicModels).toEqual(expect.arrayContaining([
+    expect(plans.map((plan) => ({ nodeId: plan.entryNodeId, model: plan.publicModelName }))).toEqual(expect.arrayContaining([
       { nodeId: 'entry:test', model: 'gpt-harness' },
     ]));
-    expect(result.compiled.terminals).toEqual(expect.arrayContaining([
-      expect.objectContaining({ nodeId: 'endpoint:test', type: 'route_endpoint' }),
+    expect(plans.flatMap((plan) => plan.executionAlternatives.map((alternative) => alternative.terminal))).toEqual(expect.arrayContaining([
+      expect.objectContaining({ endpointId: 'endpoint:test', kind: 'supply' }),
     ]));
+    expect(plans.flatMap((plan) => plan.executionAlternatives.map((alternative) => alternative.endpoint?.nodeId))).toContain(
+      'endpoint:test',
+    );
   });
 
   it('installs browser DOM seams for web component tests', () => {

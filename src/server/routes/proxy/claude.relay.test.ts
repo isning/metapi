@@ -212,7 +212,7 @@ describe('/v1/messages relay with scenario upstreams', () => {
   });
 
   it('records a normalized failure log when the upstream Claude messages endpoint fails', async () => {
-    const { managedKey, route, target, account } = await harness.seedRoute({
+    const { managedKey, route, candidate, account } = await harness.seedRoute({
       model: 'claude-failure-model',
       platform: 'claude',
       tokenValue: 'sk-claude-failure-token',
@@ -249,18 +249,18 @@ describe('/v1/messages relay with scenario upstreams', () => {
       },
     });
 
-    expect(response.statusCode, response.body).toBe(503);
+    expect(response.statusCode, response.body).toBe(529);
     expect(response.json()).toMatchObject({
       error: expect.objectContaining({
-        message: expect.stringContaining('No available targets for this model'),
+        message: expect.stringContaining('anthropic overloaded'),
       }),
     });
 
     const logs = await harness.db.select().from(harness.schema.proxyLogs).all();
     expect(logs.some((log) => log.status === 'failed'
       && log.httpStatus === 529
-      && log.routeId === route.id
-      && log.targetId === target.id
+      && log.executionTargetId === candidate.executionTargetId
+      && log.executionAttemptId === candidate.executionAttemptId
       && log.accountId === account.id
       && log.downstreamApiKeyId === managedKey.id
       && log.modelRequested === 'claude-failure-model'

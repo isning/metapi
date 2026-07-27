@@ -3,6 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { clearRouteGroupMemberTestData } from '../../../testing/routeGroupMemberTestUtils.js';
 const fetchModelPricingCatalogMock = vi.fn();
 
 vi.mock('../../services/modelPricingService.js', async () => {
@@ -40,8 +41,9 @@ describe('/api/models/token-candidates', () => {
     fetchModelPricingCatalogMock.mockResolvedValue(null);
     await db.delete(schema.proxyLogs).run();
     await db.delete(schema.checkinLogs).run();
-    await db.delete(schema.routeEndpointTargets).run();
-    await db.delete(schema.tokenRoutes).run();
+    await clearRouteGroupMemberTestData();
+    await db.delete(schema.runtimeExecutionTargetState).run();
+    await db.delete(schema.runtimeExecutionTargets).run();
     await db.delete(schema.tokenModelAvailability).run();
     await db.delete(schema.modelAvailability).run();
     await db.delete(schema.accountTokens).run();

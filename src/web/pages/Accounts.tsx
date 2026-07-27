@@ -43,7 +43,7 @@ import {
   clearFocusParams,
   readFocusAccountIntent,
 } from "./helpers/navigationFocus.js";
-import { TokensPanel } from "./Tokens.js";
+import { TokensPanel } from "./tokens/TokensPanel.js";
 import { tr } from "../i18n.js";
 import {
   buildCustomReorderToTargetUpdates,
@@ -2830,7 +2830,7 @@ export default function Accounts() {
                           value={
                             <div>
                               <div className="font-semibold text-foreground">
-                                ${(a.balance || 0).toFixed(2)}
+                                {(a.balance || 0).toFixed(2)}
                               </div>
                               <div
                                 className={(a.todayReward || 0) > 0 ? "text-[11px] font-medium text-emerald-600" : "text-[11px] font-medium text-muted-foreground"}
@@ -2844,11 +2844,11 @@ export default function Accounts() {
                           label={tr('pages.accounts.used')}
                           value={
                             <div>
-                              <div>${(a.balanceUsed || 0).toFixed(2)}</div>
+                              <div>{(a.balanceUsed || 0).toFixed(2)}</div>
                               <div
                                 className={(a.todaySpend || 0) > 0 ? "text-[11px] font-medium text-destructive" : "text-[11px] font-medium text-muted-foreground"}
                               >
-                                -{(a.todaySpend || 0).toFixed(2)}
+                                -{(a.todaySpend || 0).toFixed(2)}{a.todaySpendUnit ? ` ${a.todaySpendUnit}` : ""}
                               </div>
                             </div>
                           }
@@ -3211,16 +3211,16 @@ export default function Accounts() {
                             </TableCell>
                             <TableCell className="text-right tabular-nums">
                               <div className="font-semibold text-foreground">
-                                ${(a.balance || 0).toFixed(2)}
+                                {(a.balance || 0).toFixed(2)}
                               </div>
                               <div className={(a.todayReward || 0) > 0 ? "text-[11px] font-medium text-success" : "text-[11px] font-medium text-muted-foreground"}>
                                 +{(a.todayReward || 0).toFixed(2)}
                               </div>
                             </TableCell>
                             <TableCell className="text-right tabular-nums">
-                              <div>${(a.balanceUsed || 0).toFixed(2)}</div>
+                              <div>{(a.balanceUsed || 0).toFixed(2)}</div>
                               <div className={(a.todaySpend || 0) > 0 ? "text-[11px] font-medium text-destructive" : "text-[11px] font-medium text-muted-foreground"}>
-                                -{(a.todaySpend || 0).toFixed(2)}
+                                -{(a.todaySpend || 0).toFixed(2)}{a.todaySpendUnit ? ` ${a.todaySpendUnit}` : ""}
                               </div>
                             </TableCell>
                             <TableCell>

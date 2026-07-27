@@ -101,7 +101,7 @@ function planFromInput(input: Record<string, unknown>): PricingPlan {
     cacheReadPerMillion: toOptionalNonNegativeNumber(simple.cacheReadPerMillion),
     cacheWritePerMillion: toOptionalNonNegativeNumber(simple.cacheWritePerMillion),
     reasoningPerMillion: toOptionalNonNegativeNumber(simple.reasoningPerMillion),
-    requestUsd: toOptionalNonNegativeNumber(simple.requestUsd),
+    requestCost: toOptionalNonNegativeNumber(simple.requestCost),
   });
 }
 

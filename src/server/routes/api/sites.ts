@@ -3,8 +3,8 @@ import { db, schema } from '../../db/index.js';
 import { getInsertedRowId } from '../../db/insertHelpers.js';
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import { detectSite } from '../../services/siteDetector.js';
-import { invalidateSiteProxyCache, parseSiteProxyUrlInput } from '../../services/siteProxy.js';
-import { invalidateTokenRouterCache } from '../../services/tokenRouter.js';
+import { parseSiteProxyUrlInput } from '../../services/siteProxy.js';
+import { recordSiteCatalogMutation } from '../../services/siteCatalogMutationService.js';
 import { parseSiteCustomHeadersInput } from '../../services/siteCustomHeaders.js';
 import { normalizeCompatibilityPolicyStorageInput } from '../../services/upstreamCompatibilityPolicyStorage.js';
 import { getSub2ApiSubscriptionFromExtraConfig } from '../../services/accountExtraConfig.js';
@@ -121,6 +121,12 @@ type SiteApiEndpointInputRow = {
   url: string;
   enabled: boolean;
   sortOrder: number;
+};
+
+type SiteRouteDbTransaction = {
+  insert: typeof db.insert;
+  update: typeof db.update;
+  delete: typeof db.delete;
 };
 
 function normalizeSiteApiEndpointBoolean(input: unknown): boolean | null {
@@ -385,6 +391,7 @@ function parseApiEndpointProfileUpdates(input: unknown): {
         ...(record.requestUrl !== undefined ? { requestUrl: record.requestUrl === null ? null : String(record.requestUrl || '').trim() } : {}),
         ...(record.defaultHeaders !== undefined ? { defaultHeaders: parseHeaderRecord(record.defaultHeaders, index) } : {}),
         ...(catalogSourceId !== undefined ? { modelCatalogSourceId: catalogSourceId } : {}),
+        ...(record.capabilityDefaults !== undefined ? { capabilityDefaults: record.capabilityDefaults as ApiEndpointProfileUpdate['capabilityDefaults'] } : {}),
         ...(enabled !== null ? { enabled } : {}),
         ...(priority !== undefined ? { priority } : {}),
       });
@@ -549,11 +556,6 @@ function aggregateSiteSubscription(
 }
 
 export async function sitesRoutes(app: FastifyInstance) {
-  function invalidateSiteCaches() {
-    invalidateSiteProxyCache();
-    invalidateTokenRouterCache();
-  }
-
   async function applySiteStatusSideEffects(
     siteId: number,
     existingSiteName: string,
@@ -627,6 +629,7 @@ export async function sitesRoutes(app: FastifyInstance) {
     const balanceBySiteId: Record<number, {
       totalBalance: number;
       rawBalance: number;
+      rawBalanceUnits: Set<string>;
       baseCostUnit: string;
       valuedAccountCount: number;
       accountCount: number;
@@ -634,7 +637,7 @@ export async function sitesRoutes(app: FastifyInstance) {
     }> = {};
     const subscriptionBySiteId: Record<number, SiteSubscriptionAggregate | undefined> = {};
 
-    const balanceValuations = await Promise.all(accountRows.map(async (row) => ({
+    const balanceValuations = await Promise.all(accountRows.map(async (row: typeof schema.accounts.$inferSelect) => ({
       row,
       valuation: await valueWalletBalanceInBaseUnit({
         siteId: row.siteId,
@@ -647,6 +650,7 @@ export async function sitesRoutes(app: FastifyInstance) {
       const current = balanceBySiteId[row.siteId] || {
         totalBalance: 0,
         rawBalance: 0,
+        rawBalanceUnits: new Set<string>(),
         baseCostUnit: valuation.baseCostUnit,
         valuedAccountCount: 0,
         accountCount: 0,
@@ -654,12 +658,13 @@ export async function sitesRoutes(app: FastifyInstance) {
       };
       current.accountCount += 1;
       current.rawBalance = roundMetric(current.rawBalance + valuation.balance);
+      if (valuation.walletUnit) current.rawBalanceUnits.add(valuation.walletUnit);
       current.baseCostUnit = valuation.baseCostUnit || current.baseCostUnit;
       if (valuation.normalizedValue != null) {
         current.totalBalance = roundMetric(current.totalBalance + valuation.normalizedValue);
         current.valuedAccountCount += 1;
       }
-      current.valuationWarningCount += valuation.diagnostics.filter((item) => item.level !== 'info').length;
+      current.valuationWarningCount += valuation.diagnostics.filter((item: { level?: string }) => item.level !== 'info').length;
       balanceBySiteId[row.siteId] = current;
       subscriptionBySiteId[row.siteId] = aggregateSiteSubscription(subscriptionBySiteId[row.siteId], row.extraConfig);
     }
@@ -668,6 +673,10 @@ export async function sitesRoutes(app: FastifyInstance) {
       ...site,
       totalBalance: Math.round((balanceBySiteId[site.id]?.totalBalance || 0) * 1_000_000) / 1_000_000,
       rawBalance: Math.round((balanceBySiteId[site.id]?.rawBalance || 0) * 1_000_000) / 1_000_000,
+      rawBalanceUnit: balanceBySiteId[site.id]?.rawBalanceUnits.size === 1
+        ? [...balanceBySiteId[site.id]!.rawBalanceUnits][0]
+        : null,
+      rawBalanceUnitMixed: (balanceBySiteId[site.id]?.rawBalanceUnits.size || 0) > 1,
       baseCostUnit: balanceBySiteId[site.id]?.baseCostUnit || 'USD',
       valuedAccountCount: balanceBySiteId[site.id]?.valuedAccountCount || 0,
       accountCount: balanceBySiteId[site.id]?.accountCount || 0,
@@ -747,7 +756,7 @@ export async function sitesRoutes(app: FastifyInstance) {
     }
 
     const existingSites = await db.select().from(schema.sites).all();
-    const maxSortOrder = existingSites.reduce((max, site) => Math.max(max, site.sortOrder || 0), -1);
+    const maxSortOrder = existingSites.reduce((max: number, site: typeof schema.sites.$inferSelect) => Math.max(max, site.sortOrder || 0), -1);
     const analyzedPrimarySiteUrl = analyzePrimarySiteUrl(url);
     const canonicalUrl = analyzedPrimarySiteUrl.persistedUrl;
     const detectionUrl = analyzedPrimarySiteUrl.canonicalUrl || canonicalUrl;
@@ -776,7 +785,7 @@ export async function sitesRoutes(app: FastifyInstance) {
 
     let inserted;
     try {
-      inserted = await db.transaction(async (tx) => {
+      inserted = await db.transaction(async (tx: SiteRouteDbTransaction) => {
         const siteInsert = await tx.insert(schema.sites).values({
           name,
           url: canonicalUrl,
@@ -818,7 +827,7 @@ export async function sitesRoutes(app: FastifyInstance) {
     if (!result) {
       return reply.code(500).send({ error: 'Create site failed' });
     }
-    invalidateSiteCaches();
+    await recordSiteCatalogMutation();
     return {
       ...result,
       ...(responseInitializationPresetId ? { initializationPresetId: responseInitializationPresetId } : {}),
@@ -928,7 +937,7 @@ export async function sitesRoutes(app: FastifyInstance) {
     }
     updates.updatedAt = new Date().toISOString();
     try {
-      await db.transaction(async (tx) => {
+      await db.transaction(async (tx: SiteRouteDbTransaction) => {
         await tx.update(schema.sites).set(updates).where(eq(schema.sites.id, id)).run();
         if (normalizedApiEndpoints.present) {
           await tx.delete(schema.siteApiEndpoints)
@@ -957,7 +966,7 @@ export async function sitesRoutes(app: FastifyInstance) {
       await applySiteStatusSideEffects(id, existingSite.name, normalizedStatus);
     }
 
-    invalidateSiteCaches();
+    await recordSiteCatalogMutation();
 
     return await loadSiteWithApiEndpoints(id);
   });
@@ -966,7 +975,7 @@ export async function sitesRoutes(app: FastifyInstance) {
   app.delete<{ Params: { id: string } }>('/api/sites/:id', async (request) => {
     const id = parseInt(request.params.id);
     await db.delete(schema.sites).where(eq(schema.sites.id, id)).run();
-    invalidateSiteCaches();
+    await recordSiteCatalogMutation();
     return { success: true };
   });
 
@@ -1004,11 +1013,18 @@ export async function sitesRoutes(app: FastifyInstance) {
           siteId: id,
           profiles: parsed.profiles,
         });
-        invalidateSiteCaches();
+        await recordSiteCatalogMutation();
         return result;
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Failed to update endpoint profiles.';
-        if (message.includes('does not belong to this site') || message.includes('URL') || message.includes('Header') || message.includes('label')) {
+        if (
+          message.includes('does not belong to this site')
+          || message.includes('URL')
+          || message.includes('Header')
+          || message.includes('label')
+          || message.includes('capabilityDefaults')
+          || message.includes('capability state')
+        ) {
           return reply.code(400).send({ error: message });
         }
         throw error;
@@ -1039,7 +1055,7 @@ export async function sitesRoutes(app: FastifyInstance) {
           credentialKey: request.params.credentialKey,
           bindings: parsed.bindings,
         });
-        invalidateSiteCaches();
+        await recordSiteCatalogMutation();
         return result;
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Failed to update endpoint bindings.';
@@ -1106,7 +1122,7 @@ export async function sitesRoutes(app: FastifyInstance) {
       }
     }
 
-    invalidateSiteCaches();
+    await recordSiteCatalogMutation();
     return {
       success: true,
       successIds,
@@ -1128,7 +1144,7 @@ export async function sitesRoutes(app: FastifyInstance) {
       .from(schema.siteDisabledModels)
       .where(eq(schema.siteDisabledModels.siteId, id))
       .all();
-    return { siteId: id, models: rows.map((r) => r.modelName) };
+    return { siteId: id, models: rows.map((r: { modelName: string }) => r.modelName) };
   });
 
   // Update disabled models for a site (full replace)
@@ -1166,7 +1182,7 @@ export async function sitesRoutes(app: FastifyInstance) {
       ).run();
     }
 
-    invalidateSiteCaches();
+    await recordSiteCatalogMutation();
     return { siteId: id, models: uniqueModels };
   });
 
@@ -1207,8 +1223,8 @@ export async function sitesRoutes(app: FastifyInstance) {
       .all();
 
     const models = Array.from(new Set([
-      ...accountModels.map((r) => r.modelName.trim()),
-      ...tokenModels.map((r) => r.modelName.trim()),
+      ...accountModels.map((r: { modelName: string }) => r.modelName.trim()),
+      ...tokenModels.map((r: { modelName: string }) => r.modelName.trim()),
     ])).filter((m) => m.length > 0).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
 
     return { siteId: id, models };

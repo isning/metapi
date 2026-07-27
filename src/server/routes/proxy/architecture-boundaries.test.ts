@@ -160,6 +160,66 @@ describe('proxy route architecture boundaries', () => {
     }
   });
 
+  it('keeps route-group management policy out of proxy runtime execution paths', () => {
+    const runtimeSelectionSource = readSource('../../services/routeRuntimeExecutionService.ts');
+    const proxyCoreSources = [
+      ...listSources('../../proxy-core/'),
+      ...listSources('./'),
+    ];
+
+    expect(runtimeSelectionSource).toContain('allowedPlanIds');
+    expect(runtimeSelectionSource).toContain('DownstreamRoutingPolicy');
+    expect(runtimeSelectionSource).not.toContain('routeGroups');
+
+    for (const { path, source } of proxyCoreSources) {
+      expect(source, path).not.toContain('routeGroups');
+      expect(source, path).not.toContain('createRouteBuilderMacroId');
+    }
+  });
+
+  it('requires every surface to select through the compiled runtime service', () => {
+    const adapterTypesSource = readSource('../../proxy-core/formats/types.ts');
+    const orchestratorSource = readSource('../../proxy-core/orchestration/genericProxyOrchestrator.ts');
+    const compiledHttpRunnerSource = readSource('../../proxy-core/orchestration/compiledHttpSurfaceRunner.ts');
+    const websocketFlowSource = readSource('../../proxy-core/orchestration/responsesWebsocketFlow.ts');
+    const sharedOrchestrationSource = readSource('../../proxy-core/orchestration/sharedProxyOrchestration.ts');
+
+    expect(adapterTypesSource).not.toContain('selectChannel?');
+    expect(sharedOrchestrationSource).toContain('selectSurfaceExecutionAttempt(');
+    expect(sharedOrchestrationSource).toContain('selectRouteRuntimeExecutionAttempt(');
+    expect(orchestratorSource).toContain('createSurfaceRuntimeDecisionSession(');
+    expect(orchestratorSource).toContain('selectSurfaceRuntimeDecisionInSession(');
+    expect(compiledHttpRunnerSource).toContain('createSurfaceRuntimeDecisionSession(');
+    expect(compiledHttpRunnerSource).toContain('selectSurfaceRuntimeDecisionInSession(');
+    expect(websocketFlowSource).toContain('createSurfaceRuntimeDecisionSession(');
+    expect(websocketFlowSource).toContain('proposeSurfaceRuntimeDecisionInSession(');
+    expect(websocketFlowSource).toContain('commitSurfaceRuntimeDecisionProposal(');
+    expect(websocketFlowSource).not.toContain('previewRouteRuntimeDecision(');
+    expect(orchestratorSource).not.toMatch(/\bselectSurfaceRuntimeDecision\s*\(/);
+    expect(compiledHttpRunnerSource).not.toMatch(/\bselectSurfaceRuntimeDecision\s*\(/);
+    expect(orchestratorSource).not.toContain('adapter.selectChannel');
+  });
+
+  it('keeps runtime services independent of source graph contracts', () => {
+    const runtimeSources = [
+      '../../services/compiledRuntimeControlFlow.ts',
+      '../../services/compiledRuntimeInventoryService.ts',
+      '../../services/compiledRuntimeProjectionService.ts',
+      '../../services/compiledRuntimeRoutingSignalOverlayService.ts',
+      '../../services/compiledRuntimeSelectorScopes.ts',
+      '../../services/compiledRuntimePostBuildFilters.ts',
+      '../../services/routeRuntimeArtifactService.ts',
+      '../../services/routeRuntimeEvaluatorService.ts',
+      '../../services/routeRuntimeExecutionService.ts',
+      '../../services/routeEntryPricingService.ts',
+    ];
+    for (const relativePath of runtimeSources) {
+      const source = readSource(relativePath);
+      expect(source, relativePath).not.toContain("shared/routeGraph.js");
+      expect(source, relativePath).toContain("shared/compiledRuntime.js");
+    }
+  });
+
   it('keeps proxy-core surfaces as HTTP registration and request parsing adapters', () => {
     const surfaceSources = listSources('../../proxy-core/surfaces/');
     for (const { path, source } of surfaceSources) {
@@ -218,6 +278,20 @@ describe('proxy route architecture boundaries', () => {
     const adapterSource = readSource('../../proxy-core/formats/gemini.ts');
     expect(adapterSource).toContain('geminiGenerateContentTransformer.stream.consumeUpstreamSseBuffer(');
     expect(adapterSource).toContain('geminiGenerateContentTransformer.outbound.serializeAggregateResponse(');
+  });
+
+  it('keeps Gemini capability analysis out of generic runtime planning modules', () => {
+    const genericSources = [
+      '../../proxy-core/apiVariants.ts',
+      '../../services/upstreamEndpointDerivation.ts',
+      '../../proxy-core/formats/upstreamRequestBuilder.ts',
+      '../../proxy-core/orchestration/genericProxyOrchestrator.ts',
+    ];
+    for (const relativePath of genericSources) {
+      const source = readSource(relativePath);
+      expect(source, relativePath).not.toContain('geminiCapabilityAnalysis');
+      expect(source, relativePath).not.toContain('GeminiBridgeClassification');
+    }
   });
 
   it('keeps proxy file persistence out of files route', () => {

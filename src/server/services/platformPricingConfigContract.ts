@@ -16,14 +16,17 @@ export type PlatformPricingConfig = {
     cacheReadPerMillion: number | null;
     cacheWritePerMillion: number | null;
     reasoningPerMillion: number | null;
-    requestUsd: number | null;
+    requestCost: number | null;
+  };
+  providerCatalogCache: {
+    ttlHours: number;
   };
   driftCheck: {
     enabled: boolean;
     windowHours: number;
     minSampleSize: number;
     relativeTolerance: number;
-    absoluteToleranceUsd: number;
+    absoluteToleranceCost: number;
     notifyOnWarning: boolean;
   };
 };
@@ -45,14 +48,17 @@ export function getDefaultPlatformPricingConfig(): PlatformPricingConfig {
       cacheReadPerMillion: null,
       cacheWritePerMillion: null,
       reasoningPerMillion: null,
-      requestUsd: null,
+      requestCost: null,
+    },
+    providerCatalogCache: {
+      ttlHours: 6,
     },
     driftCheck: {
       enabled: false,
       windowHours: 24,
       minSampleSize: 20,
       relativeTolerance: 0.1,
-      absoluteToleranceUsd: 0.000001,
+      absoluteToleranceCost: 0.000001,
       notifyOnWarning: true,
     },
   };
@@ -102,6 +108,7 @@ export function normalizePlatformPricingConfig(input: unknown): PlatformPricingC
   const source = isRecord(input) ? input : {};
   const walletDefaultValuation = isRecord(source.walletDefaultValuation) ? source.walletDefaultValuation : {};
   const upstreamDefaultPricing = isRecord(source.upstreamDefaultPricing) ? source.upstreamDefaultPricing : {};
+  const providerCatalogCache = isRecord(source.providerCatalogCache) ? source.providerCatalogCache : {};
   const driftCheck = isRecord(source.driftCheck) ? source.driftCheck : {};
   const baseCostUnit = normalizeUnit(source.baseCostUnit, defaults.baseCostUnit);
 
@@ -151,19 +158,25 @@ export function normalizePlatformPricingConfig(input: unknown): PlatformPricingC
         upstreamDefaultPricing.reasoningPerMillion,
         defaults.upstreamDefaultPricing.reasoningPerMillion,
       ),
-      requestUsd: normalizeOptionalNonNegativeNumber(
-        upstreamDefaultPricing.requestUsd,
-        defaults.upstreamDefaultPricing.requestUsd,
+      requestCost: normalizeOptionalNonNegativeNumber(
+        upstreamDefaultPricing.requestCost,
+        defaults.upstreamDefaultPricing.requestCost,
       ),
+    },
+    providerCatalogCache: {
+      ttlHours: Math.trunc(normalizePositiveNumber(
+        providerCatalogCache.ttlHours,
+        defaults.providerCatalogCache.ttlHours,
+      )),
     },
     driftCheck: {
       enabled: normalizeBoolean(driftCheck.enabled, defaults.driftCheck.enabled),
       windowHours: Math.trunc(normalizePositiveNumber(driftCheck.windowHours, defaults.driftCheck.windowHours)),
       minSampleSize: Math.trunc(normalizePositiveNumber(driftCheck.minSampleSize, defaults.driftCheck.minSampleSize)),
       relativeTolerance: normalizeNonNegativeNumber(driftCheck.relativeTolerance, defaults.driftCheck.relativeTolerance),
-      absoluteToleranceUsd: normalizeNonNegativeNumber(
-        driftCheck.absoluteToleranceUsd,
-        defaults.driftCheck.absoluteToleranceUsd,
+      absoluteToleranceCost: normalizeNonNegativeNumber(
+        driftCheck.absoluteToleranceCost,
+        defaults.driftCheck.absoluteToleranceCost,
       ),
       notifyOnWarning: normalizeBoolean(driftCheck.notifyOnWarning, defaults.driftCheck.notifyOnWarning),
     },
@@ -178,7 +191,7 @@ export function calculateRoutingFallbackUnitCostFromPlatformPricingConfig(
   const total = (
     pricing.inputPerMillion * 0.5
     + pricing.outputPerMillion * 0.5
-    + (pricing.requestUsd ?? 0)
+    + (pricing.requestCost ?? 0)
   );
   return Math.max(1e-6, Number.isFinite(total) && total > 0 ? total : 1);
 }

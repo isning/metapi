@@ -29,7 +29,7 @@ describe('schema introspection normalization', () => {
   it('filters mysql implicit foreign-key indexes from live schema comparisons', () => {
     const foreignKeys = [
       {
-        table: 'route_supply_endpoints',
+        table: 'runtime_execution_targets',
         columns: ['endpoint_profile_id'],
         referencedTable: 'api_endpoint_profiles',
         referencedColumns: ['id'],
@@ -46,7 +46,7 @@ describe('schema introspection normalization', () => {
 
     expect(isMySqlImplicitForeignKeyIndex({
       name: 'endpoint_profile_id',
-      table: 'route_supply_endpoints',
+      table: 'runtime_execution_targets',
       columns: ['endpoint_profile_id'],
       unique: false,
     }, foreignKeys)).toBe(true);
@@ -54,13 +54,13 @@ describe('schema introspection normalization', () => {
     expect(normalizeMySqlIndexes([
       {
         name: 'endpoint_profile_id',
-        table: 'route_supply_endpoints',
+        table: 'runtime_execution_targets',
         columns: ['endpoint_profile_id'],
         unique: false,
       },
       {
-        name: 'route_supply_endpoints_account_idx',
-        table: 'route_supply_endpoints',
+        name: 'runtime_execution_targets_account_idx',
+        table: 'runtime_execution_targets',
         columns: ['account_id', 'enabled'],
         unique: false,
       },
@@ -71,9 +71,9 @@ describe('schema introspection normalization', () => {
         unique: false,
       },
       {
-        name: 'route_supply_endpoints_supply_key_unique',
-        table: 'route_supply_endpoints',
-        columns: ['supply_key'],
+        name: 'runtime_execution_targets_execution_key_unique',
+        table: 'runtime_execution_targets',
+        columns: ['execution_key'],
         unique: true,
       },
     ], foreignKeys)).toEqual([
@@ -84,15 +84,15 @@ describe('schema introspection normalization', () => {
         unique: false,
       },
       {
-        name: 'route_supply_endpoints_account_idx',
-        table: 'route_supply_endpoints',
+        name: 'runtime_execution_targets_account_idx',
+        table: 'runtime_execution_targets',
         columns: ['account_id', 'enabled'],
         unique: false,
       },
       {
-        name: 'route_supply_endpoints_supply_key_unique',
-        table: 'route_supply_endpoints',
-        columns: ['supply_key'],
+        name: 'runtime_execution_targets_execution_key_unique',
+        table: 'runtime_execution_targets',
+        columns: ['execution_key'],
         unique: true,
       },
     ]);

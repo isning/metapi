@@ -247,8 +247,8 @@ older clients but must remain lightweight.
 ### Paged Catalogs
 
 ```text
-GET /api/routes/summary?page=&pageSize=&q=&kind=&enabled=&visibility=
-GET /api/route-endpoints?page=&pageSize=&q=&routeId=&siteId=&endpointKind=
+GET /api/route-groups?page=&pageSize=&q=&tab=&enabled=&visibility=
+GET /api/route-graph/endpoints?page=&pageSize=&q=&routeId=&siteId=&endpointKind=
 GET /api/models/marketplace?page=&pageSize=&q=&brand=&coverage=
 ```
 
@@ -316,12 +316,13 @@ Graph-editor tests should assert observable outcomes:
 
 ```text
 GET /api/route-graph/compiled-plans/:planId
-GET /api/routes/decision?model=
+GET /api/models/:id/route-flow
+GET /api/models/:id/route-targets
 ```
 
 Rules:
 
-- decision preview uses the same match index and plan lookup as runtime;
+- model route previews use the same match index and plan lookup as runtime;
 - route-flow loads the matched plan and the referenced endpoint summaries;
 - compiled plan debug output is bounded and may omit large target metadata by
   default.

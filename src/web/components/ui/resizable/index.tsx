@@ -48,4 +48,6 @@ const ResizableHandle = ({
   </ResizablePrimitive.Separator>
 );
 
-export { ResizablePanelGroup, ResizablePanel, ResizableHandle };
+const useDefaultLayout = ResizablePrimitive.useDefaultLayout;
+
+export { ResizablePanelGroup, ResizablePanel, ResizableHandle, useDefaultLayout };

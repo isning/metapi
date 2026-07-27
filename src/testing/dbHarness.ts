@@ -61,7 +61,8 @@ export async function bootIsolatedRuntimeDb(prefix = 'metapi-integration-'): Pro
 
   try {
     vi.resetModules();
-    await import('../server/db/migrate.js');
+    const migrateModule = await import('../server/db/migrate.js');
+    await migrateModule.runSqliteMigrations();
     const dbModule = await import('../server/db/index.js');
     return {
       ...dataDir,

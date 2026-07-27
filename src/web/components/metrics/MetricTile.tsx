@@ -5,7 +5,7 @@ type MetricTone = 'default' | 'success' | 'warning' | 'destructive' | 'muted';
 
 const toneClassName: Record<MetricTone, string> = {
   default: 'text-foreground',
-  success: 'text-foreground',
+  success: 'text-success',
   warning: 'text-warning',
   destructive: 'text-destructive',
   muted: 'text-muted-foreground',

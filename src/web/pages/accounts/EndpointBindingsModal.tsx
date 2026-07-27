@@ -37,6 +37,7 @@ type DraftProfile = {
   requestUrl: string;
   defaultHeadersText: string;
   modelCatalogSourceId: string;
+  capabilityDefaultsText: string;
   enabled: boolean;
   priority: number;
 };
@@ -126,6 +127,11 @@ function formatHeaders(headers: Record<string, string> | null | undefined) {
   return JSON.stringify(headers, null, 2);
 }
 
+function formatJsonObject(value: Record<string, unknown> | null | undefined) {
+  if (!value || Object.keys(value).length === 0) return '{}';
+  return JSON.stringify(value, null, 2);
+}
+
 function createDraftProfiles(profiles: CredentialEndpointMatrixProfile[]): DraftProfile[] {
   return profiles.map((profile, index) => ({
     id: profile.rowId,
@@ -134,6 +140,7 @@ function createDraftProfiles(profiles: CredentialEndpointMatrixProfile[]): Draft
     requestUrl: profile.requestUrl || '',
     defaultHeadersText: formatHeaders(profile.defaultHeaders),
     modelCatalogSourceId: profile.modelCatalogSourceId ? String(profile.modelCatalogSourceId) : 'none',
+    capabilityDefaultsText: formatJsonObject(profile.capabilityDefaults),
     enabled: profile.enabled !== false,
     priority: profile.priority ?? index,
   }));
@@ -151,6 +158,7 @@ function areDraftProfilesEqual(draft: DraftProfile[], profiles: CredentialEndpoi
       && profile.requestUrl === other.requestUrl
       && profile.defaultHeadersText === other.defaultHeadersText
       && profile.modelCatalogSourceId === other.modelCatalogSourceId
+      && profile.capabilityDefaultsText === other.capabilityDefaultsText
       && profile.enabled === other.enabled
       && profile.priority === other.priority;
   });
@@ -171,6 +179,16 @@ function parseHeadersDraft(value: string): Record<string, string> | null {
     headers[key] = headerValue;
   }
   return headers;
+}
+
+function parseJsonObjectDraft(value: string, errorKey: string): Record<string, unknown> | null {
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === '{}') return null;
+  const parsed = JSON.parse(trimmed) as unknown;
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(tr(errorKey));
+  }
+  return parsed as Record<string, unknown>;
 }
 
 function formatCredentialKind(credential: CredentialEndpointMatrixCredential) {
@@ -337,6 +355,10 @@ export default function EndpointBindingsModal({
           requestUrl: profile.requestUrl || null,
           defaultHeaders: parseHeadersDraft(profile.defaultHeadersText),
           modelCatalogSourceId: profile.modelCatalogSourceId === 'none' ? null : Number(profile.modelCatalogSourceId),
+          capabilityDefaults: parseJsonObjectDraft(
+            profile.capabilityDefaultsText,
+            'pages.accounts.endpointBindings.capabilityDefaultsObjectRequired',
+          ),
           enabled: profile.enabled,
           priority: profile.priority,
         })));
@@ -547,6 +569,23 @@ export default function EndpointBindingsModal({
                                 minHeight={96}
                                 maxHeight={180}
                                 ariaLabel={tr('pages.accounts.endpointBindings.defaultHeaders')}
+                              />
+                            </div>
+
+                            <div className="mt-3 space-y-1.5">
+                              <Label className="flex items-center gap-2">
+                                <Braces className="size-3.5" />
+                                {tr('pages.accounts.endpointBindings.capabilityDefaults')}
+                              </Label>
+                              <div className="text-xs text-muted-foreground">
+                                {tr('pages.accounts.endpointBindings.capabilityDefaultsDescription')}
+                              </div>
+                              <JsonCodeEditor
+                                value={draftProfile.capabilityDefaultsText}
+                                onChange={(capabilityDefaultsText) => updateDraftProfile(draftProfile.id, { capabilityDefaultsText })}
+                                minHeight={132}
+                                maxHeight={260}
+                                ariaLabel={tr('pages.accounts.endpointBindings.capabilityDefaults')}
                               />
                             </div>
                           </div>

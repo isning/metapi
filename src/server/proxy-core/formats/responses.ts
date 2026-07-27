@@ -156,7 +156,7 @@ export const responsesProtocolAdapter: DownstreamProtocolAdapter = {
         isStream: requestEnvelope.stream,
         openaiBody: openAiBody,
         responsesOriginalBody: requestEnvelope.parsed.normalizedBody,
-        requestCapabilities: (() => {
+        surfaceCapabilityHints: (() => {
           const responsesConversationFileSummary = summarizeConversationFileInputsInResponsesBody(
             requestEnvelope.parsed.normalizedBody,
           );

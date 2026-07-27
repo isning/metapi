@@ -1,11 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { EMPTY_DOWNSTREAM_ROUTING_POLICY } from '../../services/downstreamPolicyTypes.js';
 
-const selectTargetMock = vi.fn();
-const selectNextTargetMock = vi.fn();
-const selectPreferredTargetMock = vi.fn();
-const recordFailureMock = vi.fn();
-const refreshModelsAndRebuildRoutesMock = vi.fn();
+const selectRouteRuntimeExecutionAttemptMock = vi.fn();
+const recordRouteRuntimeExecutionAttemptStartedMock = vi.fn();
+const recordRouteRuntimeExecutionAttemptFailureMock = vi.fn();
+const recordRouteRuntimeExecutionAttemptSuccessMock = vi.fn();
 const composeProxyLogMessageMock = vi.fn();
 const formatUtcSqlDateTimeMock = vi.fn();
 const insertProxyLogMock = vi.fn();
@@ -18,7 +17,6 @@ const isTokenExpiredErrorMock = vi.fn();
 const shouldRetryProxyRequestMock = vi.fn();
 const recordOauthQuotaHeadersSnapshotMock = vi.fn();
 const recordOauthQuotaResetHintMock = vi.fn();
-const recordSuccessMock = vi.fn();
 const resolveProxyUsageWithSelfLogFallbackMock = vi.fn();
 const resolveProxyLogBillingMock = vi.fn();
 const refreshOauthAccessTokenSingleflightMock = vi.fn();
@@ -30,14 +28,24 @@ const buildStickySessionKeyMock = vi.fn();
 let consoleWarnMock: ReturnType<typeof vi.spyOn>;
 let consoleErrorMock: ReturnType<typeof vi.spyOn>;
 
-vi.mock('../../services/tokenRouter.js', () => ({
-  tokenRouter: {
-    selectTarget: (...args: unknown[]) => selectTargetMock(...args),
-    selectNextTarget: (...args: unknown[]) => selectNextTargetMock(...args),
-    selectPreferredTarget: (...args: unknown[]) => selectPreferredTargetMock(...args),
-    recordFailure: (...args: unknown[]) => recordFailureMock(...args),
-    recordSuccess: (...args: unknown[]) => recordSuccessMock(...args),
-  },
+const runtimeIdentity = {
+  executionAttemptId: 'ea_11',
+  routeEntrypointId: 'entry:gpt-5.2',
+  runtimeEndpointId: 'endpoint:gpt-5.2:upstream',
+  runtimeArtifactId: 'runtime-artifact-42',
+  executionTargetId: 11,
+};
+
+vi.mock('../../services/routeRuntimeExecutionService.js', () => ({
+  createRouteRuntimeDecisionSession: vi.fn(),
+  selectRouteRuntimeDecisionInSession: vi.fn(),
+  previewRouteRuntimeDecisionInSession: vi.fn(),
+  selectRouteRuntimeDecision: vi.fn(),
+  previewRouteRuntimeDecision: vi.fn(),
+  selectRouteRuntimeExecutionAttempt: (...args: unknown[]) => selectRouteRuntimeExecutionAttemptMock(...args),
+  recordRouteRuntimeExecutionAttemptStarted: (...args: unknown[]) => recordRouteRuntimeExecutionAttemptStartedMock(...args),
+  recordRouteRuntimeExecutionAttemptFailure: (...args: unknown[]) => recordRouteRuntimeExecutionAttemptFailureMock(...args),
+  recordRouteRuntimeExecutionAttemptSuccess: (...args: unknown[]) => recordRouteRuntimeExecutionAttemptSuccessMock(...args),
 }));
 
 vi.mock('../../services/proxyTargetCoordinator.js', () => ({
@@ -50,10 +58,6 @@ vi.mock('../../services/proxyTargetCoordinator.js', () => ({
   },
 }));
 
-vi.mock('../../services/routeRefreshWorkflow.js', () => ({
-  refreshModelsAndRebuildRoutes: (...args: unknown[]) => refreshModelsAndRebuildRoutesMock(...args),
-}));
-
 vi.mock('../../services/proxyLogMessage.js', () => ({
   composeProxyLogMessage: (...args: unknown[]) => composeProxyLogMessageMock(...args),
 }));
@@ -64,10 +68,6 @@ vi.mock('../../services/localTimeService.js', () => ({
 
 vi.mock('../../services/proxyLogStore.js', () => ({
   insertProxyLog: (...args: unknown[]) => insertProxyLogMock(...args),
-}));
-
-vi.mock('../../services/proxyLogRouteDecisionSnapshot.js', () => ({
-  buildProxyLogRouteDecisionSnapshot: async () => null,
 }));
 
 vi.mock('../../services/siteProxy.js', () => ({
@@ -110,13 +110,12 @@ vi.mock('../../services/oauth/refreshSingleflight.js', () => ({
   refreshOauthAccessTokenSingleflight: (...args: unknown[]) => refreshOauthAccessTokenSingleflightMock(...args),
 }));
 
-describe('selectSurfaceTargetForAttempt', () => {
+describe('selectSurfaceExecutionAttempt', () => {
   beforeEach(() => {
-    selectTargetMock.mockReset();
-    selectNextTargetMock.mockReset();
-    selectPreferredTargetMock.mockReset();
-    recordFailureMock.mockReset();
-    refreshModelsAndRebuildRoutesMock.mockReset();
+    selectRouteRuntimeExecutionAttemptMock.mockReset();
+    recordRouteRuntimeExecutionAttemptStartedMock.mockReset();
+    recordRouteRuntimeExecutionAttemptFailureMock.mockReset();
+    recordRouteRuntimeExecutionAttemptSuccessMock.mockReset();
     composeProxyLogMessageMock.mockReset();
     formatUtcSqlDateTimeMock.mockReset();
     insertProxyLogMock.mockReset();
@@ -129,7 +128,6 @@ describe('selectSurfaceTargetForAttempt', () => {
     shouldRetryProxyRequestMock.mockReset();
     recordOauthQuotaHeadersSnapshotMock.mockReset();
     recordOauthQuotaResetHintMock.mockReset();
-    recordSuccessMock.mockReset();
     resolveProxyUsageWithSelfLogFallbackMock.mockReset();
     resolveProxyLogBillingMock.mockReset();
     refreshOauthAccessTokenSingleflightMock.mockReset();
@@ -142,14 +140,12 @@ describe('selectSurfaceTargetForAttempt', () => {
     consoleErrorMock = vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
-  it('refreshes models and retries selectTarget on the first attempt when no target is available', async () => {
+  it('delegates first-attempt selection to the compiled runtime executor', async () => {
     const selected = { target: { id: 11 } };
-    selectTargetMock
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce(selected);
+    selectRouteRuntimeExecutionAttemptMock.mockResolvedValueOnce(selected);
 
-    const { selectSurfaceTargetForAttempt } = await import('./sharedProxyOrchestration.js');
-    const result = await selectSurfaceTargetForAttempt({
+    const { selectSurfaceExecutionAttempt } = await import('./sharedProxyOrchestration.js');
+    const result = await selectSurfaceExecutionAttempt({
       requestedModel: 'gpt-5.2',
       downstreamPolicy: EMPTY_DOWNSTREAM_ROUTING_POLICY,
       excludeTargetIds: [],
@@ -157,17 +153,23 @@ describe('selectSurfaceTargetForAttempt', () => {
     });
 
     expect(result).toBe(selected);
-    expect(selectTargetMock).toHaveBeenCalledTimes(2);
-    expect(selectNextTargetMock).not.toHaveBeenCalled();
-    expect(refreshModelsAndRebuildRoutesMock).toHaveBeenCalledTimes(1);
+    expect(selectRouteRuntimeExecutionAttemptMock).toHaveBeenCalledWith({
+      requestedModel: 'gpt-5.2',
+      downstreamPolicy: EMPTY_DOWNSTREAM_ROUTING_POLICY,
+      retryCount: 0,
+      stickyExecutionTargetId: null,
+      forcedExecutionAttemptId: undefined,
+      disabledExecutionTargetIds: [],
+      disabledExecutionAttemptIds: undefined,
+    });
   });
 
-  it('uses selectNextTarget on retry attempts without refreshing models', async () => {
+  it('passes failed execution targets to the compiled runtime executor on retries', async () => {
     const selected = { target: { id: 22 } };
-    selectNextTargetMock.mockResolvedValueOnce(selected);
+    selectRouteRuntimeExecutionAttemptMock.mockResolvedValueOnce(selected);
 
-    const { selectSurfaceTargetForAttempt } = await import('./sharedProxyOrchestration.js');
-    const result = await selectSurfaceTargetForAttempt({
+    const { selectSurfaceExecutionAttempt } = await import('./sharedProxyOrchestration.js');
+    const result = await selectSurfaceExecutionAttempt({
       requestedModel: 'gpt-5.2',
       downstreamPolicy: EMPTY_DOWNSTREAM_ROUTING_POLICY,
       excludeTargetIds: [11],
@@ -175,22 +177,20 @@ describe('selectSurfaceTargetForAttempt', () => {
     });
 
     expect(result).toBe(selected);
-    expect(selectTargetMock).not.toHaveBeenCalled();
-    expect(selectNextTargetMock).toHaveBeenCalledWith(
-      'gpt-5.2',
-      [11],
-      EMPTY_DOWNSTREAM_ROUTING_POLICY,
-    );
-    expect(refreshModelsAndRebuildRoutesMock).not.toHaveBeenCalled();
+    expect(selectRouteRuntimeExecutionAttemptMock).toHaveBeenCalledWith(expect.objectContaining({
+      requestedModel: 'gpt-5.2',
+      retryCount: 1,
+      disabledExecutionTargetIds: [11],
+    }));
   });
 
-  it('prefers the sticky session target on the first attempt when it is still eligible', async () => {
+  it('passes the sticky execution target to the compiled runtime executor on the first attempt', async () => {
     const selected = { target: { id: 55 } };
     getStickyTargetIdMock.mockReturnValueOnce(55);
-    selectPreferredTargetMock.mockResolvedValueOnce(selected);
+    selectRouteRuntimeExecutionAttemptMock.mockResolvedValueOnce(selected);
 
-    const { selectSurfaceTargetForAttempt } = await import('./sharedProxyOrchestration.js');
-    const result = await selectSurfaceTargetForAttempt({
+    const { selectSurfaceExecutionAttempt } = await import('./sharedProxyOrchestration.js');
+    const result = await selectSurfaceExecutionAttempt({
       requestedModel: 'gpt-5.2',
       downstreamPolicy: EMPTY_DOWNSTREAM_ROUTING_POLICY,
       excludeTargetIds: [],
@@ -199,135 +199,64 @@ describe('selectSurfaceTargetForAttempt', () => {
     });
 
     expect(result).toBe(selected);
-    expect(selectPreferredTargetMock).toHaveBeenCalledWith(
-      'gpt-5.2',
-      55,
-      EMPTY_DOWNSTREAM_ROUTING_POLICY,
-      [],
-    );
-    expect(selectTargetMock).not.toHaveBeenCalled();
-    expect(clearStickyTargetMock).not.toHaveBeenCalled();
+    expect(selectRouteRuntimeExecutionAttemptMock).toHaveBeenCalledWith(expect.objectContaining({
+      stickyExecutionTargetId: 55,
+      forcedExecutionAttemptId: undefined,
+    }));
   });
 
-  it('uses the forced tester target before sticky or automatic selection', async () => {
+  it('passes forced tester execution attempts to the compiled runtime executor', async () => {
     const selected = { target: { id: 88 } };
-    selectPreferredTargetMock.mockResolvedValueOnce(selected);
+    getStickyTargetIdMock.mockReturnValueOnce(55);
+    selectRouteRuntimeExecutionAttemptMock.mockResolvedValueOnce(selected);
 
-    const { selectSurfaceTargetForAttempt } = await import('./sharedProxyOrchestration.js');
-    const result = await selectSurfaceTargetForAttempt({
+    const { selectSurfaceExecutionAttempt } = await import('./sharedProxyOrchestration.js');
+    const result = await selectSurfaceExecutionAttempt({
       requestedModel: 'gpt-5.2',
       downstreamPolicy: EMPTY_DOWNSTREAM_ROUTING_POLICY,
       excludeTargetIds: [],
       retryCount: 0,
       stickySessionKey: 'sticky-session',
-      forcedTargetId: 88,
+      forcedExecutionAttemptId: 'ea_88',
     });
 
     expect(result).toBe(selected);
-    expect(selectPreferredTargetMock).toHaveBeenCalledWith(
-      'gpt-5.2',
-      88,
-      EMPTY_DOWNSTREAM_ROUTING_POLICY,
-      [],
-    );
-    expect(getStickyTargetIdMock).not.toHaveBeenCalled();
-    expect(selectTargetMock).not.toHaveBeenCalled();
-    expect(selectNextTargetMock).not.toHaveBeenCalled();
-    expect(refreshModelsAndRebuildRoutesMock).not.toHaveBeenCalled();
+    expect(selectRouteRuntimeExecutionAttemptMock).toHaveBeenCalledWith(expect.objectContaining({
+      stickyExecutionTargetId: 55,
+      forcedExecutionAttemptId: 'ea_88',
+    }));
   });
 
-  it('does not refresh or fall back when the forced tester target is unavailable', async () => {
-    selectPreferredTargetMock.mockResolvedValueOnce(null);
+  it('returns null when the compiled runtime executor cannot select an execution attempt', async () => {
+    selectRouteRuntimeExecutionAttemptMock.mockResolvedValueOnce(null);
 
-    const { selectSurfaceTargetForAttempt } = await import('./sharedProxyOrchestration.js');
-    const result = await selectSurfaceTargetForAttempt({
+    const { selectSurfaceExecutionAttempt } = await import('./sharedProxyOrchestration.js');
+    const result = await selectSurfaceExecutionAttempt({
       requestedModel: 'gpt-5.2',
       downstreamPolicy: EMPTY_DOWNSTREAM_ROUTING_POLICY,
       excludeTargetIds: [],
       retryCount: 0,
-      forcedTargetId: 91,
+      forcedExecutionAttemptId: 'ea_91',
     });
 
     expect(result).toBeNull();
-    expect(selectPreferredTargetMock).toHaveBeenCalledWith(
-      'gpt-5.2',
-      91,
-      EMPTY_DOWNSTREAM_ROUTING_POLICY,
-      [],
-    );
-    expect(selectTargetMock).not.toHaveBeenCalled();
-    expect(selectNextTargetMock).not.toHaveBeenCalled();
-    expect(refreshModelsAndRebuildRoutesMock).not.toHaveBeenCalled();
+    expect(selectRouteRuntimeExecutionAttemptMock).toHaveBeenCalledWith(expect.objectContaining({
+      forcedExecutionAttemptId: 'ea_91',
+    }));
   });
 
-  it('refreshes and retries the sticky preferred target before clearing a stale binding', async () => {
-    const selected = { target: { id: 22 } };
-    getStickyTargetIdMock.mockReturnValueOnce(55);
-    selectPreferredTargetMock
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce(null);
-    selectTargetMock.mockResolvedValueOnce(selected);
+  it('records the selected execution target immediately before upstream execution', async () => {
+    const { markSurfaceExecutionAttemptStarted } = await import('./sharedProxyOrchestration.js');
 
-    const { selectSurfaceTargetForAttempt } = await import('./sharedProxyOrchestration.js');
-    const result = await selectSurfaceTargetForAttempt({
-      requestedModel: 'gpt-5.2',
-      downstreamPolicy: EMPTY_DOWNSTREAM_ROUTING_POLICY,
-      excludeTargetIds: [],
-      retryCount: 0,
-      stickySessionKey: 'sticky-session',
+    await markSurfaceExecutionAttemptStarted({
+      selected: {
+        executionTargetId: 11,
+      } as any,
     });
 
-    expect(result).toBe(selected);
-    expect(refreshModelsAndRebuildRoutesMock).toHaveBeenCalledTimes(1);
-    expect(selectPreferredTargetMock).toHaveBeenCalledTimes(2);
-    expect(clearStickyTargetMock).toHaveBeenCalledWith('sticky-session', 55);
-    expect(selectTargetMock).toHaveBeenCalledWith('gpt-5.2', EMPTY_DOWNSTREAM_ROUTING_POLICY);
-  });
-
-  it('keeps the sticky binding when route refresh recovers the preferred target', async () => {
-    const selected = { target: { id: 55 } };
-    getStickyTargetIdMock.mockReturnValueOnce(55);
-    selectPreferredTargetMock
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce(selected);
-
-    const { selectSurfaceTargetForAttempt } = await import('./sharedProxyOrchestration.js');
-    const result = await selectSurfaceTargetForAttempt({
-      requestedModel: 'gpt-5.2',
-      downstreamPolicy: EMPTY_DOWNSTREAM_ROUTING_POLICY,
-      excludeTargetIds: [],
-      retryCount: 0,
-      stickySessionKey: 'sticky-session',
+    expect(recordRouteRuntimeExecutionAttemptStartedMock).toHaveBeenCalledWith({
+      executionTargetId: 11,
     });
-
-    expect(result).toBe(selected);
-    expect(refreshModelsAndRebuildRoutesMock).toHaveBeenCalledTimes(1);
-    expect(selectPreferredTargetMock).toHaveBeenCalledTimes(2);
-    expect(clearStickyTargetMock).not.toHaveBeenCalled();
-    expect(selectTargetMock).not.toHaveBeenCalled();
-  });
-
-  it('logs refresh failures and still retries selection once on the first attempt', async () => {
-    const selected = { target: { id: 33 } };
-    selectTargetMock
-      .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce(selected);
-    refreshModelsAndRebuildRoutesMock.mockRejectedValueOnce(new Error('refresh failed'));
-
-    const { selectSurfaceTargetForAttempt } = await import('./sharedProxyOrchestration.js');
-    const result = await selectSurfaceTargetForAttempt({
-      requestedModel: 'gpt-5.2',
-      downstreamPolicy: EMPTY_DOWNSTREAM_ROUTING_POLICY,
-      excludeTargetIds: [],
-      retryCount: 0,
-    });
-
-    expect(result).toBe(selected);
-    expect(selectTargetMock).toHaveBeenCalledTimes(2);
-    expect(consoleWarnMock).toHaveBeenCalledWith(
-      '[proxy/surface] failed to refresh routes after empty selection',
-      expect.any(Error),
-    );
   });
 
   it('writes proxy logs through the shared log formatter and store', async () => {
@@ -341,10 +270,12 @@ describe('selectSurfaceTargetForAttempt', () => {
       selected: {
         target: { id: 11, routeId: 22 },
         account: { id: 33 },
+        site: {},
         actualModel: 'upstream-model',
+        ...runtimeIdentity,
       },
       modelRequested: 'gpt-5.2',
-      status: 'failed',
+      status: 'retried',
       httpStatus: 502,
       latencyMs: 1200,
       errorMessage: 'upstream failed',
@@ -361,7 +292,7 @@ describe('selectSurfaceTargetForAttempt', () => {
         clientKind: 'codex',
         clientAppId: 'app-id',
         clientAppName: 'App',
-        clientConfidence: 'high',
+        clientConfidence: 'exact',
         sessionId: 'sess-1',
         traceHint: 'trace-1',
       },
@@ -378,41 +309,112 @@ describe('selectSurfaceTargetForAttempt', () => {
       errorMessage: 'upstream failed',
     });
     expect(insertProxyLogMock).toHaveBeenCalledWith({
-      routeId: 22,
-      targetId: 11,
+      requestId: null,
+      executionAttemptId: 'ea_11',
       accountId: 33,
       downstreamApiKeyId: 44,
       modelRequested: 'gpt-5.2',
       modelActual: 'upstream-model',
-      status: 'failed',
+      routeEntrypointId: runtimeIdentity.routeEntrypointId,
+      runtimeEndpointId: runtimeIdentity.runtimeEndpointId,
+      runtimeArtifactId: runtimeIdentity.runtimeArtifactId,
+      executionTargetId: runtimeIdentity.executionTargetId,
+      status: 'retried',
       httpStatus: 502,
       isStream: null,
       firstByteLatencyMs: null,
+      firstTokenLatencyMs: null,
       latencyMs: 1200,
       promptTokens: 10,
       completionTokens: 5,
       totalTokens: 15,
       estimatedCost: 0.42,
       billingDetails: { source: 'test' },
-      routeDecisionSnapshot: null,
       clientFamily: 'codex',
       clientAppId: 'app-id',
       clientAppName: 'App',
-      clientConfidence: 'high',
+      clientConfidence: 'exact',
       errorMessage: 'normalized error',
       retryCount: 1,
       createdAt: '2026-03-21 22:00:00',
     });
   });
 
+  it('keeps unavailable billing cost unknown when writing a proxy log', async () => {
+    composeProxyLogMessageMock.mockReturnValue(null);
+    formatUtcSqlDateTimeMock.mockReturnValue('2026-03-21 22:00:00');
+    insertProxyLogMock.mockResolvedValue(undefined);
+
+    const { writeSurfaceProxyLog } = await import('./sharedProxyOrchestration.js');
+    await writeSurfaceProxyLog({
+      warningScope: 'chat',
+      selected: {
+        target: { id: 11 },
+        account: { id: 33 },
+        site: {},
+        actualModel: 'upstream-model',
+        ...runtimeIdentity,
+      },
+      modelRequested: 'gpt-5.2',
+      status: 'success',
+      httpStatus: 200,
+      latencyMs: 1200,
+      errorMessage: null,
+      retryCount: 0,
+      downstreamPath: '/v1/chat/completions',
+    });
+
+    expect(insertProxyLogMock).toHaveBeenCalledWith(expect.objectContaining({
+      estimatedCost: null,
+    }));
+  });
+
+  it('persists runtime entry and endpoint identity on proxy logs', async () => {
+    composeProxyLogMessageMock.mockReturnValue(null);
+    formatUtcSqlDateTimeMock.mockReturnValue('2026-03-21 22:00:00');
+    insertProxyLogMock.mockResolvedValue(undefined);
+
+    const { writeSurfaceProxyLog } = await import('./sharedProxyOrchestration.js');
+    await writeSurfaceProxyLog({
+      warningScope: 'chat',
+      selected: {
+        target: { id: 11, routeId: 22 },
+        account: { id: 33 },
+        site: {},
+        actualModel: 'upstream-model',
+        ...runtimeIdentity,
+        routeEntrypointId: 'entry:selected',
+        runtimeEndpointId: 'endpoint:selected',
+        runtimeArtifactId: 'runtime-artifact-42',
+        executionTargetId: 7,
+      },
+      modelRequested: 'public-model',
+      status: 'success',
+      httpStatus: 200,
+      latencyMs: 88,
+      errorMessage: null,
+      retryCount: 0,
+      downstreamPath: '/v1/chat/completions',
+    });
+
+    expect(insertProxyLogMock).toHaveBeenCalledWith(expect.objectContaining({
+      modelRequested: 'public-model',
+      modelActual: 'upstream-model',
+      routeEntrypointId: 'entry:selected',
+      runtimeEndpointId: 'endpoint:selected',
+      runtimeArtifactId: 'runtime-artifact-42',
+      executionTargetId: 7,
+    }));
+  });
+
   it('builds runtime dispatch requests with site proxy initialization', async () => {
     const site = { url: 'https://upstream.example.com' };
     const request = {
-      endpoint: 'responses',
+      endpoint: 'responses' as const,
       path: '/v1/responses',
       headers: { authorization: 'Bearer test' },
       body: { model: 'gpt-5.2', input: 'hello' },
-      runtime: { executor: 'default' },
+      runtime: { executor: 'default' as const },
     };
     resolveTargetProxyUrlMock.mockReturnValue('http://proxy.example.com');
     withSiteRecordProxyRequestInitMock.mockImplementation(async (_site, init, proxyUrl) => ({
@@ -468,7 +470,6 @@ describe('selectSurfaceTargetForAttempt', () => {
     const toolkit = createSurfaceFailureToolkit({
       warningScope: 'chat',
       downstreamPath: '/v1/chat/completions',
-      maxRetries: 2,
       clientContext: null,
       downstreamApiKeyId: 44,
     });
@@ -479,6 +480,7 @@ describe('selectSurfaceTargetForAttempt', () => {
         account: { id: 33, username: 'oauth-user' },
         site: { name: 'Codex OAuth' },
         actualModel: 'upstream-model',
+        ...runtimeIdentity,
       },
       requestedModel: 'gpt-5.2',
       modelName: 'upstream-model',
@@ -487,13 +489,14 @@ describe('selectSurfaceTargetForAttempt', () => {
       rawErrText: '{"error":"quota exceeded"}',
       latencyMs: 1200,
       retryCount: 0,
+      willContinue: true,
     });
 
     expect(result).toEqual({ action: 'retry' });
-    expect(recordFailureMock).toHaveBeenCalledWith(11, {
+    expect(recordRouteRuntimeExecutionAttemptFailureMock).toHaveBeenCalledWith({
+      executionTargetId: 11,
       status: 429,
       errorText: '{"error":"quota exceeded"}',
-      modelName: 'upstream-model',
     });
     expect(recordOauthQuotaResetHintMock).toHaveBeenCalledWith({
       accountId: 33,
@@ -502,12 +505,12 @@ describe('selectSurfaceTargetForAttempt', () => {
     });
     expect(reportProxyAllFailedMock).not.toHaveBeenCalled();
     expect(insertProxyLogMock).toHaveBeenCalledWith(expect.objectContaining({
-      targetId: 11,
+      executionAttemptId: 'ea_11',
       accountId: 33,
       downstreamApiKeyId: 44,
       modelRequested: 'gpt-5.2',
       modelActual: 'upstream-model',
-      status: 'failed',
+      status: 'retried',
       httpStatus: 429,
       latencyMs: 1200,
       errorMessage: 'normalized error',
@@ -527,7 +530,6 @@ describe('selectSurfaceTargetForAttempt', () => {
     const toolkit = createSurfaceFailureToolkit({
       warningScope: 'chat',
       downstreamPath: '/v1/chat/completions',
-      maxRetries: 2,
       clientContext: null,
       downstreamApiKeyId: null,
     });
@@ -538,6 +540,7 @@ describe('selectSurfaceTargetForAttempt', () => {
         account: { id: 33, username: 'oauth-user' },
         site: { name: 'Codex OAuth' },
         actualModel: 'upstream-model',
+        ...runtimeIdentity,
       },
       requestedModel: 'gpt-5.2',
       modelName: 'upstream-model',
@@ -546,6 +549,7 @@ describe('selectSurfaceTargetForAttempt', () => {
       rawErrText: '{"error":"quota exceeded"}',
       latencyMs: 1200,
       retryCount: 0,
+      willContinue: true,
     })).resolves.toEqual({ action: 'retry' });
   });
 
@@ -561,7 +565,6 @@ describe('selectSurfaceTargetForAttempt', () => {
     const toolkit = createSurfaceFailureToolkit({
       warningScope: 'responses',
       downstreamPath: '/v1/responses',
-      maxRetries: 2,
       clientContext: null,
       downstreamApiKeyId: null,
     });
@@ -572,6 +575,7 @@ describe('selectSurfaceTargetForAttempt', () => {
         account: { id: 33, username: 'oauth-user' },
         site: { name: 'Codex OAuth' },
         actualModel: 'upstream-model',
+        ...runtimeIdentity,
       },
       requestedModel: 'gpt-5.2',
       modelName: 'upstream-model',
@@ -580,6 +584,7 @@ describe('selectSurfaceTargetForAttempt', () => {
       rawErrText: 'expired token',
       latencyMs: 900,
       retryCount: 2,
+      willContinue: false,
     });
 
     expect(result).toEqual({
@@ -617,7 +622,6 @@ describe('selectSurfaceTargetForAttempt', () => {
     const toolkit = createSurfaceFailureToolkit({
       warningScope: 'responses',
       downstreamPath: '/v1/responses',
-      maxRetries: 2,
       clientContext: null,
       downstreamApiKeyId: null,
     });
@@ -628,6 +632,7 @@ describe('selectSurfaceTargetForAttempt', () => {
         account: { id: 33, username: 'oauth-user' },
         site: { name: 'Codex OAuth' },
         actualModel: 'upstream-model',
+        ...runtimeIdentity,
       },
       requestedModel: 'gpt-5.2',
       modelName: 'upstream-model',
@@ -636,6 +641,7 @@ describe('selectSurfaceTargetForAttempt', () => {
       rawErrText: 'expired token',
       latencyMs: 900,
       retryCount: 2,
+      willContinue: false,
     })).resolves.toEqual({
       action: 'respond',
       status: 401,
@@ -658,7 +664,6 @@ describe('selectSurfaceTargetForAttempt', () => {
     const toolkit = createSurfaceFailureToolkit({
       warningScope: 'chat',
       downstreamPath: '/v1/chat/completions',
-      maxRetries: 2,
       clientContext: null,
       downstreamApiKeyId: null,
     });
@@ -669,6 +674,7 @@ describe('selectSurfaceTargetForAttempt', () => {
         account: { id: 33, username: 'oauth-user' },
         site: { name: 'Codex OAuth' },
         actualModel: 'upstream-model',
+        ...runtimeIdentity,
       },
       requestedModel: 'gpt-5.2',
       modelName: 'upstream-model',
@@ -678,6 +684,7 @@ describe('selectSurfaceTargetForAttempt', () => {
       },
       latencyMs: 700,
       retryCount: 2,
+      willContinue: false,
       promptTokens: 12,
       completionTokens: 4,
       totalTokens: 16,
@@ -694,64 +701,16 @@ describe('selectSurfaceTargetForAttempt', () => {
         },
       },
     });
-    expect(recordFailureMock).toHaveBeenCalledWith(11, {
+    expect(recordRouteRuntimeExecutionAttemptFailureMock).toHaveBeenCalledWith({
+      executionTargetId: 11,
       status: 500,
       errorText: 'upstream failure',
-      modelName: 'upstream-model',
     });
     expect(reportProxyAllFailedMock).toHaveBeenCalledWith({
       model: 'gpt-5.2',
       reason: 'upstream failure',
     });
     expect(recordOauthQuotaResetHintMock).not.toHaveBeenCalled();
-  });
-
-  it('returns a terminal 502 for exhausted network failures through the shared failure toolkit', async () => {
-    composeProxyLogMessageMock.mockReturnValue('normalized error');
-    formatUtcSqlDateTimeMock.mockReturnValue('2026-03-21 22:00:00');
-    insertProxyLogMock.mockResolvedValue(undefined);
-
-    const { createSurfaceFailureToolkit } = await import('./sharedProxyOrchestration.js');
-    const toolkit = createSurfaceFailureToolkit({
-      warningScope: 'responses',
-      downstreamPath: '/v1/responses',
-      maxRetries: 2,
-      clientContext: null,
-      downstreamApiKeyId: null,
-    });
-
-    const result = await toolkit.handleExecutionError({
-      selected: {
-        target: { id: 11, routeId: 22 },
-        account: { id: 33, username: 'oauth-user' },
-        site: { name: 'Codex OAuth' },
-        actualModel: 'upstream-model',
-      },
-      requestedModel: 'gpt-5.2',
-      modelName: 'upstream-model',
-      errorMessage: 'socket hang up',
-      latencyMs: 650,
-      retryCount: 2,
-    });
-
-    expect(result).toEqual({
-      action: 'respond',
-      status: 502,
-      payload: {
-        error: {
-          message: 'Upstream error: socket hang up',
-          type: 'upstream_error',
-        },
-      },
-    });
-    expect(recordFailureMock).toHaveBeenCalledWith(11, {
-      errorText: 'socket hang up',
-      modelName: 'upstream-model',
-    });
-    expect(reportProxyAllFailedMock).toHaveBeenCalledWith({
-      model: 'gpt-5.2',
-      reason: 'socket hang up',
-    });
   });
 
   it('records stream failures with error text even without a runtime status code', async () => {
@@ -763,7 +722,6 @@ describe('selectSurfaceTargetForAttempt', () => {
     const toolkit = createSurfaceFailureToolkit({
       warningScope: 'responses',
       downstreamPath: '/v1/responses',
-      maxRetries: 2,
       clientContext: null,
       downstreamApiKeyId: null,
     });
@@ -774,6 +732,7 @@ describe('selectSurfaceTargetForAttempt', () => {
         account: { id: 33, username: 'oauth-user' },
         site: { name: 'Codex OAuth' },
         actualModel: 'upstream-model',
+        ...runtimeIdentity,
       },
       requestedModel: 'gpt-5.2',
       modelName: 'upstream-model',
@@ -782,9 +741,9 @@ describe('selectSurfaceTargetForAttempt', () => {
       retryCount: 1,
     });
 
-    expect(recordFailureMock).toHaveBeenCalledWith(11, {
+    expect(recordRouteRuntimeExecutionAttemptFailureMock).toHaveBeenCalledWith({
+      executionTargetId: 11,
       errorText: 'stream exploded',
-      modelName: 'upstream-model',
     });
   });
 
@@ -824,7 +783,7 @@ describe('selectSurfaceTargetForAttempt', () => {
 
     const { trySurfaceOauthRefreshRecovery } = await import('./sharedProxyOrchestration.js');
     const result = await trySurfaceOauthRefreshRecovery({
-      ctx,
+      ctx: ctx as any,
       selected,
       siteUrl: 'https://upstream.example.com',
       buildRequest: () => ({
@@ -891,7 +850,7 @@ describe('selectSurfaceTargetForAttempt', () => {
 
     const { trySurfaceOauthRefreshRecovery } = await import('./sharedProxyOrchestration.js');
     const result = await trySurfaceOauthRefreshRecovery({
-      ctx,
+      ctx: ctx as any,
       selected,
       siteUrl: 'https://upstream.example.com',
       buildRequest: () => ({
@@ -924,17 +883,18 @@ describe('selectSurfaceTargetForAttempt', () => {
       billingDetails: { source: 'pricing-test' },
     });
     const logSuccess = vi.fn().mockResolvedValue(undefined);
-    const recordDownstreamCost = vi.fn();
+    const recordDownstreamBilling = vi.fn();
 
     const { recordSurfaceSuccess } = await import('./sharedProxyOrchestration.js');
     const result = await recordSurfaceSuccess({
       selected: {
         target: { id: 11, routeId: 22 },
         account: { id: 33, username: 'oauth-user' },
-        site: { id: 44, url: 'https://upstream.example.com', name: 'Codex OAuth' },
+        site: { id: 44, url: 'https://upstream.example.com', platform: 'codex', name: 'Codex OAuth' },
         tokenValue: 'live-token',
         tokenName: 'default',
         actualModel: 'upstream-model',
+        ...runtimeIdentity,
       },
       requestedModel: 'gpt-5.2',
       modelName: 'upstream-model',
@@ -942,17 +902,23 @@ describe('selectSurfaceTargetForAttempt', () => {
         promptTokens: 10,
         completionTokens: 5,
         totalTokens: 15,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+        promptTokensIncludeCache: null,
       },
       requestStartedAtMs: 1000,
+      isStream: true,
+      firstByteLatencyMs: 42,
+      firstTokenLatencyMs: 123,
       latencyMs: 250,
       retryCount: 1,
       upstreamPath: '/v1/responses',
       logSuccess,
-      recordDownstreamCost,
+      recordDownstreamBilling,
     });
 
     expect(resolveProxyUsageWithSelfLogFallbackMock).toHaveBeenCalledWith({
-      site: { id: 44, url: 'https://upstream.example.com', name: 'Codex OAuth' },
+      site: { id: 44, url: 'https://upstream.example.com', platform: 'codex', name: 'Codex OAuth' },
       account: { id: 33, username: 'oauth-user' },
       tokenValue: 'live-token',
       tokenName: 'default',
@@ -968,7 +934,7 @@ describe('selectSurfaceTargetForAttempt', () => {
       },
     });
     expect(resolveProxyLogBillingMock).toHaveBeenCalledWith({
-      site: { id: 44, url: 'https://upstream.example.com', name: 'Codex OAuth' },
+      site: { id: 44, url: 'https://upstream.example.com', platform: 'codex', name: 'Codex OAuth' },
       account: { id: 33, username: 'oauth-user' },
       tokenId: null,
       upstreamGroup: null,
@@ -977,6 +943,9 @@ describe('selectSurfaceTargetForAttempt', () => {
         promptTokens: 10,
         completionTokens: 5,
         totalTokens: 15,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+        promptTokensIncludeCache: null,
       },
       resolvedUsage: {
         promptTokens: 20,
@@ -988,22 +957,33 @@ describe('selectSurfaceTargetForAttempt', () => {
         usageSource: 'self-log',
       },
     });
-    expect(recordSuccessMock).toHaveBeenCalledWith(11, 250, 0.42, 'upstream-model');
-    expect(recordDownstreamCost).toHaveBeenCalledWith(0.42);
+    expect(recordRouteRuntimeExecutionAttemptSuccessMock).toHaveBeenCalledWith({
+      executionTargetId: 11,
+      accountId: 33,
+      modelName: 'upstream-model',
+      latencyMs: 250,
+    });
+    expect(recordDownstreamBilling).toHaveBeenCalledWith({
+      billingDetails: { source: 'pricing-test' },
+      siteId: 44,
+      accountId: 33,
+    });
     expect(logSuccess).toHaveBeenCalledWith({
       selected: {
         target: { id: 11, routeId: 22 },
         account: { id: 33, username: 'oauth-user' },
-        site: { id: 44, url: 'https://upstream.example.com', name: 'Codex OAuth' },
+        site: { id: 44, url: 'https://upstream.example.com', platform: 'codex', name: 'Codex OAuth' },
         tokenValue: 'live-token',
         tokenName: 'default',
         actualModel: 'upstream-model',
+        ...runtimeIdentity,
       },
       modelRequested: 'gpt-5.2',
       status: 'success',
       httpStatus: 200,
-      isStream: null,
-      firstByteLatencyMs: null,
+      isStream: true,
+      firstByteLatencyMs: 42,
+      firstTokenLatencyMs: 123,
       latencyMs: 250,
       errorMessage: null,
       retryCount: 1,
@@ -1055,6 +1035,7 @@ describe('selectSurfaceTargetForAttempt', () => {
         tokenValue: 'live-token',
         tokenName: 'default',
         actualModel: 'upstream-model',
+        ...runtimeIdentity,
       },
       requestedModel: 'gpt-5.2',
       modelName: 'upstream-model',
@@ -1062,6 +1043,9 @@ describe('selectSurfaceTargetForAttempt', () => {
         promptTokens: 0,
         completionTokens: 0,
         totalTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+        promptTokensIncludeCache: null,
       },
       requestStartedAtMs: 1000,
       latencyMs: 250,
@@ -1103,10 +1087,11 @@ describe('selectSurfaceTargetForAttempt', () => {
       selected: {
         target: { id: 11, routeId: 22 },
         account: { id: 33, username: 'oauth-user' },
-        site: { id: 44, url: 'https://upstream.example.com', name: 'Codex OAuth' },
+        site: { id: 44, url: 'https://upstream.example.com', platform: 'codex', name: 'Codex OAuth' },
         tokenValue: 'live-token',
         tokenName: 'default',
         actualModel: 'upstream-model',
+        ...runtimeIdentity,
       },
       requestedModel: 'gpt-5.2',
       modelName: 'upstream-model',
@@ -1114,6 +1099,9 @@ describe('selectSurfaceTargetForAttempt', () => {
         promptTokens: 10,
         completionTokens: 5,
         totalTokens: 15,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+        promptTokensIncludeCache: null,
       },
       requestStartedAtMs: 1000,
       latencyMs: 250,
@@ -1137,17 +1125,18 @@ describe('selectSurfaceTargetForAttempt', () => {
   it('treats success metrics as best-effort when requested', async () => {
     resolveProxyUsageWithSelfLogFallbackMock.mockRejectedValueOnce(new Error('billing failed'));
     const logSuccess = vi.fn().mockResolvedValue(undefined);
-    const recordDownstreamCost = vi.fn();
+    const recordDownstreamBilling = vi.fn();
 
     const { recordSurfaceSuccess } = await import('./sharedProxyOrchestration.js');
     const result = await recordSurfaceSuccess({
       selected: {
         target: { id: 11, routeId: 22 },
         account: { id: 33, username: 'oauth-user' },
-        site: { id: 44, url: 'https://upstream.example.com', name: 'Codex OAuth' },
+        site: { id: 44, url: 'https://upstream.example.com', platform: 'codex', name: 'Codex OAuth' },
         tokenValue: 'live-token',
         tokenName: 'default',
         actualModel: 'upstream-model',
+        ...runtimeIdentity,
       },
       requestedModel: 'gpt-5.2',
       modelName: 'upstream-model',
@@ -1155,13 +1144,16 @@ describe('selectSurfaceTargetForAttempt', () => {
         promptTokens: 10,
         completionTokens: 5,
         totalTokens: 15,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+        promptTokensIncludeCache: null,
       },
       requestStartedAtMs: 1000,
       latencyMs: 250,
       retryCount: 1,
       upstreamPath: '/v1/responses',
       logSuccess,
-      recordDownstreamCost,
+      recordDownstreamBilling,
       bestEffortMetrics: {
         errorLabel: '[proxy/chat] failed to record success metrics',
       },
@@ -1171,13 +1163,18 @@ describe('selectSurfaceTargetForAttempt', () => {
       '[proxy/chat] failed to record success metrics',
       expect.any(Error),
     );
-    expect(recordSuccessMock).toHaveBeenCalledWith(11, 250, 0, 'upstream-model');
-    expect(recordDownstreamCost).toHaveBeenCalledWith(0);
+    expect(recordRouteRuntimeExecutionAttemptSuccessMock).toHaveBeenCalledWith({
+      executionTargetId: 11,
+      accountId: 33,
+      modelName: 'upstream-model',
+      latencyMs: 250,
+    });
+    expect(recordDownstreamBilling).not.toHaveBeenCalled();
     expect(logSuccess).toHaveBeenCalledWith(expect.objectContaining({
       promptTokens: 10,
       completionTokens: 5,
       totalTokens: 15,
-      estimatedCost: 0,
+      estimatedCost: null,
       billingDetails: null,
     }));
     expect(result).toEqual({
@@ -1190,7 +1187,7 @@ describe('selectSurfaceTargetForAttempt', () => {
         selfLogBillingMeta: null,
         usageSource: 'upstream',
       },
-      estimatedCost: 0,
+      estimatedCost: null,
       billingDetails: null,
     });
   });

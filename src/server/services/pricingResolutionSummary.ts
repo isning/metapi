@@ -17,21 +17,22 @@ export function pricingComponentUnitPrice(
   if (components.length === 0) return null;
 
   const totalUnitPrice = components.reduce((sum, component) => {
-    if (!Number.isFinite(component.unitPriceUsd)) return sum;
-    const sign = component.costUsd < 0 ? -1 : 1;
-    return sum + component.unitPriceUsd * sign;
+    if (!Number.isFinite(component.unitPrice)) return sum;
+    const sign = component.cost < 0 ? -1 : 1;
+    return sum + component.unitPrice * sign;
   }, 0);
   return roundPricingNumber(totalUnitPrice);
 }
 
 export function pricingEvaluationSummary(evaluation: PricingEvaluation): PricingResolutionSummary {
   return {
+    currency: evaluation.currency,
     inputPerMillion: pricingComponentUnitPrice(evaluation, 'input_tokens'),
     outputPerMillion: pricingComponentUnitPrice(evaluation, 'output_tokens'),
     cacheReadPerMillion: pricingComponentUnitPrice(evaluation, 'cache_read_tokens'),
     cacheWritePerMillion: pricingComponentUnitPrice(evaluation, 'cache_write_tokens'),
     reasoningPerMillion: pricingComponentUnitPrice(evaluation, 'reasoning_tokens'),
-    requestUsd: pricingComponentUnitPrice(evaluation, 'request'),
-    totalCostUsd: roundPricingNumber(evaluation.totalCostUsd),
+    requestCost: pricingComponentUnitPrice(evaluation, 'request'),
+    totalCost: roundPricingNumber(evaluation.totalCost),
   };
 }

@@ -43,10 +43,9 @@ describe('/api/test proxy tester routes', () => {
 
     expect(response.statusCode).toBe(400);
     expect(response.json()).toMatchObject({
-      error: {
-        message: 'path is not allowed: /admin/secret',
-        type: 'validation_error',
-      },
+      success: false,
+      code: 'model_tester_path_not_allowed',
+      params: { path: '/admin/secret' },
     });
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -101,10 +100,9 @@ describe('/api/test proxy tester routes', () => {
 
     expect(response.statusCode).toBe(400);
     expect(response.json()).toMatchObject({
-      error: {
-        message: 'multipart requests require multipartFields or multipartFiles',
-        type: 'validation_error',
-      },
+      success: false,
+      code: 'model_tester_multipart_body_required',
+      params: {},
     });
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -149,57 +147,14 @@ describe('/api/test proxy tester routes', () => {
     expect(requestInit.body?.constructor?.name).toBe('FormData');
   });
 
-  it('keeps legacy /api/test/chat wrapper working for responses payloads', async () => {
-    fetchMock.mockResolvedValue(new Response(JSON.stringify({
-      object: 'response',
-      output_text: 'hello',
-    }), {
-      status: 200,
-      headers: { 'content-type': 'application/json' },
-    }));
-
+  it('does not register the retired chat compatibility API', async () => {
     const response = await app.inject({
       method: 'POST',
       url: '/api/test/chat',
-      payload: {
-        model: 'gpt-5.2',
-        targetFormat: 'responses',
-        messages: [
-          { role: 'system', content: 'be concise' },
-          { role: 'user', content: 'hello' },
-        ],
-      },
+      payload: {},
     });
 
-    expect(response.statusCode).toBe(200);
-    const [targetUrl, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(targetUrl).toBe(`http://127.0.0.1:${config.port}/v1/responses`);
-    expect(JSON.parse(String(requestInit.body))).toEqual({
-      model: 'gpt-5.2',
-      stream: false,
-      input: [{ role: 'user', content: 'hello' }],
-      instructions: 'be concise',
-      max_output_tokens: 4096,
-    });
-  });
-
-  it('rejects gemini on legacy /api/test/chat wrapper until a native mapping exists', async () => {
-    const response = await app.inject({
-      method: 'POST',
-      url: '/api/test/chat',
-      payload: {
-        model: 'gemini-2.5-flash',
-        targetFormat: 'gemini',
-        messages: [
-          { role: 'user', content: 'hello' },
-        ],
-      },
-    });
-
-    expect(response.statusCode).toBe(400);
-    expect(response.json()).toEqual({
-      error: 'targetFormat=gemini is not supported on legacy /api/test/chat routes; use the proxy tester Gemini path instead',
-    });
+    expect(response.statusCode).toBe(404);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

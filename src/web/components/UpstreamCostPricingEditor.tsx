@@ -49,7 +49,7 @@ type SimplePricingForm = {
   cacheReadPerMillion: string;
   cacheWritePerMillion: string;
   reasoningPerMillion: string;
-  requestUsd: string;
+  requestCost: string;
   enabled: boolean;
   notes: string;
 };
@@ -63,7 +63,7 @@ const EMPTY_FORM: SimplePricingForm = {
   cacheReadPerMillion: '',
   cacheWritePerMillion: '',
   reasoningPerMillion: '',
-  requestUsd: '',
+  requestCost: '',
   enabled: true,
   notes: '',
 };
@@ -77,10 +77,12 @@ const PREVIEW_USAGE = {
   requestCount: 1,
 };
 
-function formatMoney(value: unknown) {
+function formatMoney(value: unknown, currency?: unknown) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return tr('upstreamCostPricing.previewUnavailable');
-  return `$${numeric.toFixed(6).replace(/\.?0+$/, '')}`;
+  const amount = numeric.toFixed(6).replace(/\.?0+$/, '');
+  const unit = typeof currency === 'string' && currency.trim() ? currency.trim().toUpperCase() : '';
+  return unit ? `${unit} ${amount}` : amount;
 }
 
 function scopeLabel(scope: UpstreamCostMatchedScope) {
@@ -149,7 +151,11 @@ function normalizePreviewResult(result: {
 }
 
 function previewTotal(preview: Record<string, unknown> | null): unknown {
-  return preview?.totalCostUsd;
+  return preview?.totalCost;
+}
+
+function previewCurrency(preview: Record<string, unknown> | null): unknown {
+  return preview?.currency;
 }
 
 function recordToForm(record: UpstreamCostPricingRecord | null, fallback: Partial<SimplePricingForm> = {}): SimplePricingForm {
@@ -163,7 +169,7 @@ function recordToForm(record: UpstreamCostPricingRecord | null, fallback: Partia
     cacheReadPerMillion: readComponentUnit(record.plan, 'cache_read_tokens'),
     cacheWritePerMillion: readComponentUnit(record.plan, 'cache_write_tokens'),
     reasoningPerMillion: readComponentUnit(record.plan, 'reasoning_tokens'),
-    requestUsd: readComponentUnit(record.plan, 'request'),
+    requestCost: readComponentUnit(record.plan, 'request'),
     enabled: record.enabled,
     notes: record.notes || '',
   };
@@ -199,7 +205,7 @@ function buildPayload(input: {
       cacheReadPerMillion: parseOptionalNumber(input.form.cacheReadPerMillion),
       cacheWritePerMillion: parseOptionalNumber(input.form.cacheWritePerMillion),
       reasoningPerMillion: parseOptionalNumber(input.form.reasoningPerMillion),
-      requestUsd: parseOptionalNumber(input.form.requestUsd),
+      requestCost: parseOptionalNumber(input.form.requestCost),
     },
     notes: input.form.notes.trim() || null,
     metadata: {
@@ -355,9 +361,9 @@ export function UpstreamCostPricingEditor({
         const localTotal =
           (parseOptionalNumber(form.inputPerMillion) || 0)
           + (parseOptionalNumber(form.outputPerMillion) || 0)
-          + (parseOptionalNumber(form.requestUsd) || 0);
+          + (parseOptionalNumber(form.requestCost) || 0);
         setPreview({
-          totalCostUsd: localTotal,
+          totalCost: localTotal,
           source: 'local_form',
           estimateLevel: 'request_estimate',
         });
@@ -565,7 +571,7 @@ export function UpstreamCostPricingEditor({
               <PriceInput label={tr('upstreamCostPricing.price.cacheRead')} value={form.cacheReadPerMillion} onChange={(cacheReadPerMillion) => updateForm({ cacheReadPerMillion })} />
               <PriceInput label={tr('upstreamCostPricing.price.cacheWrite')} value={form.cacheWritePerMillion} onChange={(cacheWritePerMillion) => updateForm({ cacheWritePerMillion })} />
               <PriceInput label={tr('upstreamCostPricing.price.reasoning')} value={form.reasoningPerMillion} onChange={(reasoningPerMillion) => updateForm({ reasoningPerMillion })} />
-              <PriceInput label={tr('upstreamCostPricing.price.requestFee')} value={form.requestUsd} onChange={(requestUsd) => updateForm({ requestUsd })} />
+              <PriceInput label={tr('upstreamCostPricing.price.requestFee')} value={form.requestCost} onChange={(requestCost) => updateForm({ requestCost })} />
             </div>
 
             <Label className="grid gap-1.5 text-xs text-muted-foreground">
@@ -580,7 +586,7 @@ export function UpstreamCostPricingEditor({
                 <ToneBadge tone="-muted">{tr('upstreamCostPricing.previewSummary')}</ToneBadge>
                 {preview?.matchedScope ? <ToneBadge tone={preview.matchedScope === 'provider_catalog' ? '-info' : '-muted'}>{scopeLabel(preview.matchedScope as UpstreamCostMatchedScope)}</ToneBadge> : <ToneBadge tone="-muted">{scopeLabel(form.scope)}</ToneBadge>}
                 {preview?.pricingSourceType ? <ToneBadge tone={preview.pricingSourceType === 'provider_catalog' ? '-info' : '-muted'}>{sourceTypeLabel(String(preview.pricingSourceType))}</ToneBadge> : null}
-                {preview ? <ToneBadge tone="-info">{formatMoney(previewTotal(preview))}</ToneBadge> : null}
+                {preview ? <ToneBadge tone="-info">{formatMoney(previewTotal(preview), previewCurrency(preview))}</ToneBadge> : null}
               </div>
               <ButtonGroup>
                 <Button type="button" variant="outline" size="sm" onClick={() => void handlePreview()} disabled={previewLoading || saving}>

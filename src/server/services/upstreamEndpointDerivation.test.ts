@@ -38,7 +38,7 @@ describe('upstreamEndpointDerivation', () => {
       undefined,
       undefined,
       {
-        requestKind: 'responses-compact',
+        operationHint: 'responses-compact',
       },
     );
 
@@ -133,7 +133,7 @@ describe('upstreamEndpointDerivation', () => {
       undefined,
       undefined,
       {
-        requestKind: 'claude-count-tokens',
+        operationHint: 'claude-count-tokens',
       },
     );
 
@@ -155,7 +155,7 @@ describe('upstreamEndpointDerivation', () => {
       undefined,
       undefined,
       {
-        requestKind: 'claude-count-tokens',
+        operationHint: 'claude-count-tokens',
       },
     );
 

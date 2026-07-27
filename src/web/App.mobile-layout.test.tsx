@@ -160,12 +160,12 @@ describe('App mobile layout', () => {
   });
 
   it.each([
-    { width: 767, expectedLayout: 'mobile', hasHamburger: true },
-    { width: 768, expectedLayout: 'mobile', hasHamburger: true },
-    { width: 769, expectedLayout: 'desktop', hasHamburger: false },
+    { width: 767, expectedLayout: 'mobile', hasHamburger: true, hasDesktopTopNav: false },
+    { width: 768, expectedLayout: 'mobile', hasHamburger: true, hasDesktopTopNav: false },
+    { width: 769, expectedLayout: 'desktop', hasHamburger: false, hasDesktopTopNav: true },
   ])(
     'uses the shared breakpoint at width $width',
-    async ({ width, expectedLayout, hasHamburger }) => {
+    async ({ width, expectedLayout, hasHamburger, hasDesktopTopNav }) => {
       setupRuntime(width);
       let root!: WebTestRenderer;
 
@@ -183,9 +183,14 @@ describe('App mobile layout', () => {
           node.type === 'button'
           && node.props['aria-label'] === '打开导航'
         ));
+        const desktopTopNavigation = root.root.findAll((node) => (
+          node.type === 'nav'
+          && node.props['aria-label'] === 'app.mainNavigation'
+        ));
 
         expect(document.documentElement.getAttribute('data-layout')).toBe(expectedLayout);
         expect(hamburgerButtons.length > 0).toBe(hasHamburger);
+        expect(desktopTopNavigation.length > 0).toBe(hasDesktopTopNav);
       } finally {
         if (root) {
           await act(async () => {

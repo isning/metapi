@@ -426,6 +426,9 @@ jobs:
       - name: Run mysql runtime schema bootstrap
         run: npm run test:schema:runtime
 
+      - name: Run mysql route publication atomicity
+        run: npm run test:routing:publication-live
+
   schema-postgres:
     name: Schema Check (Postgres)
     runs-on: ubuntu-latest
@@ -469,6 +472,9 @@ jobs:
 
       - name: Run postgres runtime schema bootstrap
         run: npm run test:schema:runtime
+
+      - name: Run postgres route publication atomicity
+        run: npm run test:routing:publication-live
 
   docs-build:
     name: Build Docs

@@ -18,6 +18,8 @@ import { searchRoutes } from './routes/api/search.js';
 import { eventsRoutes } from './routes/api/events.js';
 import { taskRoutes } from './routes/api/tasks.js';
 import { testRoutes } from './routes/api/test.js';
+import { dispatchPolicyRoutes } from './routes/api/dispatchPolicyRoutes.js';
+import { routeRuntimeRoutes } from './routes/api/routeRuntimeRoutes.js';
 import { monitorRoutes } from './routes/api/monitor.js';
 import { downstreamApiKeysRoutes } from './routes/api/downstreamApiKeys.js';
 import { oauthRoutes } from './routes/api/oauth.js';
@@ -42,9 +44,9 @@ import {
   stopModelAvailabilityProbeScheduler,
 } from './services/modelAvailabilityProbeService.js';
 import {
-  startTargetRecoveryProbeScheduler,
-  stopTargetRecoveryProbeScheduler,
-} from './services/targetRecoveryProbeService.js';
+  startExecutionTargetRecoveryProbeScheduler,
+  stopExecutionTargetRecoveryProbeScheduler,
+} from './services/executionTargetRecoveryProbeService.js';
 import {
   startSub2ApiManagedRefreshScheduler,
   stopSub2ApiManagedRefreshScheduler,
@@ -54,6 +56,7 @@ import {
   startAdminSnapshotWarmScheduler,
   stopAdminSnapshotWarmScheduler,
 } from './services/adminSnapshotWarmService.js';
+import { startPostMigrationRuntimeFactWarm } from './services/runtimeFactWarmService.js';
 import {
   startUsageAggregationProjectorScheduler,
   stopUsageAggregationProjectorScheduler,
@@ -64,7 +67,6 @@ import {
   stopPricingReferenceCatalogScheduler,
 } from './services/pricingReferenceCatalogService.js';
 import { ensureRuntimeDatabaseReady } from './runtimeDatabaseBootstrap.js';
-import { syncRouteBindingProjectionsFromRouteTable } from './services/routeTableProjectionService.js';
 import { isPublicApiRoute, registerDesktopRoutes } from './desktop.js';
 import { existsSync } from 'fs';
 import { fileURLToPath } from 'url';
@@ -77,11 +79,6 @@ import { normalizeLogCleanupRetentionDays } from './shared/logCleanupRetentionDa
 import {
   db,
   ensureProxyFileCompatibilityColumns,
-  ensureProxyLogClientColumns,
-  ensureProxyLogDownstreamApiKeyIdColumn,
-  ensureProxyLogBillingDetailsColumn,
-  ensureProxyLogStreamTimingColumns,
-  ensureRouteGroupingCompatibilityColumns,
   ensureSiteCompatibilityColumns,
   runtimeDbDialect,
   schema,
@@ -177,11 +174,7 @@ try {
   }
 
   await ensureSiteCompatibilityColumns();
-  await ensureRouteGroupingCompatibilityColumns();
   await ensureProxyFileCompatibilityColumns();
-  await ensureProxyLogStreamTimingColumns();
-  await ensureProxyLogClientColumns();
-  await ensureProxyLogDownstreamApiKeyIdColumn();
   const finalRows = await db.select().from(schema.settings).all();
   const finalMap = toSettingsMap(finalRows);
   applyRuntimeSettings(finalMap);
@@ -191,13 +184,11 @@ try {
     config.logCleanupProgramLogsEnabled = false;
     config.logCleanupRetentionDays = normalizeLogCleanupRetentionDays(config.proxyLogRetentionDays);
   }
-  await ensureProxyLogBillingDetailsColumn();
   await repairStoredCreatedAtValues();
   await ensureCurrentConfigVersion();
   await migrateSiteApiKeysToAccounts();
   await ensureDefaultSitesSeeded();
   await ensureOauthIdentityBackfill();
-  await syncRouteBindingProjectionsFromRouteTable();
 
   console.log('Loaded runtime settings overrides');
 } catch (error) {
@@ -233,6 +224,8 @@ await app.register(siteAnnouncementsRoutes);
 await app.register(updateCenterRoutes);
 await app.register(taskRoutes);
 await app.register(testRoutes);
+await app.register(dispatchPolicyRoutes);
+await app.register(routeRuntimeRoutes);
 await app.register(monitorRoutes);
 await app.register(downstreamApiKeysRoutes);
 await app.register(oauthRoutes);
@@ -274,11 +267,12 @@ await reloadBackupWebdavScheduler();
 await reloadPricingReferenceCatalogScheduler();
 startSiteAnnouncementPolling();
 startModelAvailabilityProbeScheduler();
-startTargetRecoveryProbeScheduler();
+startExecutionTargetRecoveryProbeScheduler();
 startSub2ApiManagedRefreshScheduler();
 startUpdateCenterPolling();
 startUsageAggregationProjectorScheduler();
 startAdminSnapshotWarmScheduler();
+startPostMigrationRuntimeFactWarm();
 try {
   await startOAuthLoopbackCallbackServers();
 } catch (error) {
@@ -293,7 +287,7 @@ app.addHook('onClose', async () => {
   stopPricingReferenceCatalogScheduler();
   stopProxyLogRetentionService();
   stopModelAvailabilityProbeScheduler();
-  stopTargetRecoveryProbeScheduler();
+  stopExecutionTargetRecoveryProbeScheduler();
   await stopUsageAggregationProjectorScheduler();
   await stopAdminSnapshotWarmScheduler();
   await stopSub2ApiManagedRefreshScheduler();

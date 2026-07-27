@@ -42,6 +42,7 @@ import { buildQuotaSnapshotFromOauthInfo, refreshOauthQuotaSnapshot } from './qu
 import {
   listOauthRouteUnitsByAccountIds,
 } from './routeUnitService.js';
+import { retireAccountFromRouting } from '../accountRetirementService.js';
 
 type OAuthProviderMetadata = ReturnType<typeof listOauthProviders>[number];
 const MANUAL_CALLBACK_DELAY_MS = 15_000;
@@ -893,17 +894,17 @@ export async function listOauthConnections(options: {
   ));
 
   const routeChannelRows = await db.select({
-    accountId: schema.routeEndpointTargets.accountId,
-    oauthRouteUnitId: schema.routeEndpointTargets.oauthRouteUnitId,
+    accountId: schema.runtimeExecutionTargets.accountId,
+    oauthRouteUnitId: schema.runtimeExecutionTargets.oauthRouteUnitId,
     count: sql<number>`COUNT(*)`,
-  }).from(schema.routeEndpointTargets)
+  }).from(schema.runtimeExecutionTargets)
     .where(routeUnitIds.length > 0
       ? or(
-        inArray(schema.routeEndpointTargets.accountId, accountIds),
-        inArray(schema.routeEndpointTargets.oauthRouteUnitId, routeUnitIds),
+        inArray(schema.runtimeExecutionTargets.accountId, accountIds),
+        inArray(schema.runtimeExecutionTargets.oauthRouteUnitId, routeUnitIds),
       )
-      : inArray(schema.routeEndpointTargets.accountId, accountIds))
-    .groupBy(schema.routeEndpointTargets.accountId, schema.routeEndpointTargets.oauthRouteUnitId)
+      : inArray(schema.runtimeExecutionTargets.accountId, accountIds))
+    .groupBy(schema.runtimeExecutionTargets.accountId, schema.runtimeExecutionTargets.oauthRouteUnitId)
     .all();
   const routeChannelCountByAccount = new Map<number, number>();
   const routeChannelCountByRouteUnit = new Map<number, number>();
@@ -981,8 +982,7 @@ export async function deleteOauthConnection(accountId: number) {
   if (!normalizedOauth) {
     throw new Error('account is not managed by oauth');
   }
-  await db.delete(schema.accounts).where(eq(schema.accounts.id, accountId)).run();
-  await routeRefreshWorkflow.rebuildRoutesOnly();
+  await retireAccountFromRouting(accountId, 'oauth-connection-retirement');
   return { success: true };
 }
 

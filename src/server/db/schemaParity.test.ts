@@ -10,7 +10,6 @@ const generatedDir = resolve(dbDir, 'generated');
 const supportPaths = [
   resolve(dbDir, 'runtimeSchemaBootstrap.ts'),
   resolve(dbDir, 'siteSchemaCompatibility.ts'),
-  resolve(dbDir, 'routeGroupingSchemaCompatibility.ts'),
   resolve(dbDir, 'proxyFileSchemaCompatibility.ts'),
   resolve(dbDir, 'accountTokenSchemaCompatibility.ts'),
   resolve(dbDir, 'sharedIndexSchemaCompatibility.ts'),

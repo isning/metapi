@@ -13,6 +13,7 @@ import {
   type ApiType,
   type ApiVariantCapability,
   type ApiVariantCapabilityOverride,
+  type ApiVariantCapabilityState,
   type CredentialEndpointBinding,
   type EndpointModelObservation,
 } from '../proxy-core/apiVariants.js';
@@ -85,6 +86,7 @@ export type ApiEndpointProfileUpdate = {
   requestUrl?: string | null;
   defaultHeaders?: Record<string, string> | null;
   modelCatalogSourceId?: number | null;
+  capabilityDefaults?: ApiVariantCapability | null;
   enabled?: boolean;
   priority?: number;
 };
@@ -142,7 +144,90 @@ function parseCapabilityDefaults(value: unknown): ApiVariantCapability {
       ...(isRecord(parsed.output) ? parsed.output : {}),
     },
     limits: isRecord(parsed.limits) ? parsed.limits : DEFAULT_API_VARIANT_CAPABILITY.limits,
+    operations: isRecord(parsed.operations) ? parsed.operations as Record<string, any> : DEFAULT_API_VARIANT_CAPABILITY.operations,
+    nativeProtocols: isRecord(parsed.nativeProtocols) ? parsed.nativeProtocols as Record<string, any> : DEFAULT_API_VARIANT_CAPABILITY.nativeProtocols,
+    transport: isRecord(parsed.transport) ? parsed.transport as Record<string, any> : DEFAULT_API_VARIANT_CAPABILITY.transport,
   } as ApiVariantCapability;
+}
+
+function normalizeCapabilityState(
+  value: unknown,
+  path: string,
+): ApiVariantCapability['status'] | ApiVariantCapabilityState {
+  if (value === 'supported' || value === 'unsupported' || value === 'emulated' || value === 'unknown' || value === 'native') {
+    return value;
+  }
+  throw new Error(`Invalid capability state at ${path}.`);
+}
+
+function normalizeCapabilityStateRecord(
+  value: unknown,
+  path: string,
+): Record<string, ApiVariantCapabilityState> | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) throw new Error(`${path} must be a JSON object.`);
+  const result: Record<string, ApiVariantCapabilityState> = {};
+  for (const [key, rawState] of Object.entries(value)) {
+    const state = normalizeCapabilityState(rawState, `${path}.${key}`);
+    if (state === 'supported') {
+      result[key] = 'emulated';
+    } else {
+      result[key] = state;
+    }
+  }
+  return result;
+}
+
+function normalizeCoreCapabilityMap<T extends Record<string, ApiVariantCapabilityState>>(
+  defaults: T,
+  value: unknown,
+  path: string,
+): T {
+  if (value === undefined) return { ...defaults };
+  if (!isRecord(value)) throw new Error(`${path} must be a JSON object.`);
+  const result = { ...defaults };
+  for (const key of Object.keys(defaults) as Array<keyof T>) {
+    if (value[String(key)] === undefined) continue;
+    const state = normalizeCapabilityState(value[String(key)], `${path}.${String(key)}`);
+    result[key] = (state === 'supported' ? 'emulated' : state) as T[keyof T];
+  }
+  return result;
+}
+
+function normalizeCapabilityDefaultsForStorage(value: unknown): string {
+  if (value === null || value === undefined) {
+    return JSON.stringify(DEFAULT_API_VARIANT_CAPABILITY);
+  }
+  if (!isRecord(value)) throw new Error('capabilityDefaults must be a JSON object.');
+  const limits = value.limits === undefined
+    ? DEFAULT_API_VARIANT_CAPABILITY.limits
+    : (() => {
+        if (!isRecord(value.limits)) throw new Error('capabilityDefaults.limits must be a JSON object.');
+        const normalized: ApiVariantCapability['limits'] = {};
+        if (value.limits.maxContextTokens !== undefined) {
+          const parsed = Number(value.limits.maxContextTokens);
+          if (!Number.isFinite(parsed) || parsed < 0) throw new Error('capabilityDefaults.limits.maxContextTokens must be a non-negative number.');
+          normalized.maxContextTokens = Math.trunc(parsed);
+        }
+        if (value.limits.maxOutputTokens !== undefined) {
+          const parsed = Number(value.limits.maxOutputTokens);
+          if (!Number.isFinite(parsed) || parsed < 0) throw new Error('capabilityDefaults.limits.maxOutputTokens must be a non-negative number.');
+          normalized.maxOutputTokens = Math.trunc(parsed);
+        }
+        return normalized;
+      })();
+  const status = normalizeCapabilityState(value.status ?? DEFAULT_API_VARIANT_CAPABILITY.status, 'capabilityDefaults.status');
+  if (status === 'native') throw new Error('capabilityDefaults.status cannot be native.');
+  const normalized: ApiVariantCapability = {
+    status: status as ApiVariantCapability['status'],
+    input: normalizeCoreCapabilityMap(DEFAULT_API_VARIANT_CAPABILITY.input, value.input, 'capabilityDefaults.input'),
+    output: normalizeCoreCapabilityMap(DEFAULT_API_VARIANT_CAPABILITY.output, value.output, 'capabilityDefaults.output'),
+    limits,
+    operations: normalizeCapabilityStateRecord(value.operations, 'capabilityDefaults.operations') ?? DEFAULT_API_VARIANT_CAPABILITY.operations,
+    nativeProtocols: normalizeCapabilityStateRecord(value.nativeProtocols, 'capabilityDefaults.nativeProtocols') ?? DEFAULT_API_VARIANT_CAPABILITY.nativeProtocols,
+    transport: normalizeCapabilityStateRecord(value.transport, 'capabilityDefaults.transport') ?? DEFAULT_API_VARIANT_CAPABILITY.transport,
+  };
+  return JSON.stringify(normalized);
 }
 
 function parseCapabilityOverride(value: unknown): ApiVariantCapabilityOverride | undefined {
@@ -153,6 +238,9 @@ function parseCapabilityOverride(value: unknown): ApiVariantCapabilityOverride |
     ...(isRecord(parsed.input) ? { input: parsed.input as ApiVariantCapabilityOverride['input'] } : {}),
     ...(isRecord(parsed.output) ? { output: parsed.output as ApiVariantCapabilityOverride['output'] } : {}),
     ...(isRecord(parsed.limits) ? { limits: parsed.limits as ApiVariantCapabilityOverride['limits'] } : {}),
+    ...(isRecord(parsed.operations) ? { operations: parsed.operations as ApiVariantCapabilityOverride['operations'] } : {}),
+    ...(isRecord(parsed.nativeProtocols) ? { nativeProtocols: parsed.nativeProtocols as ApiVariantCapabilityOverride['nativeProtocols'] } : {}),
+    ...(isRecord(parsed.transport) ? { transport: parsed.transport as ApiVariantCapabilityOverride['transport'] } : {}),
   };
 }
 
@@ -573,6 +661,9 @@ export async function updateApiEndpointProfiles(input: {
         patch.modelCatalogSourceId = profile.modelCatalogSourceId == null
           ? null
           : Math.trunc(Number(profile.modelCatalogSourceId));
+      }
+      if (profile.capabilityDefaults !== undefined) {
+        patch.capabilityDefaultsJson = normalizeCapabilityDefaultsForStorage(profile.capabilityDefaults);
       }
       if (profile.enabled !== undefined) {
         patch.enabled = profile.enabled !== false;

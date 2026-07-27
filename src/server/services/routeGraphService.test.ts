@@ -1,1710 +1,609 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { eq } from 'drizzle-orm';
-import { compileRouteGraphSource, type CompiledRouteGraph } from '../../shared/routeGraph.js';
+import { eq, sql } from 'drizzle-orm';
+import {
+  getExecutionTargetIdForMember,
+  insertRouteGroupMember,
+} from '../../testing/routeGroupMemberTestUtils.js';
 
 type DbModule = typeof import('../db/index.js');
+type RouteGroupManagementModule = typeof import('./routeGroupManagementService.js');
+type RouteGroupGraphTestHarnessModule = typeof import('../test/routeGroupGraphTestHarness.js');
 type RouteGraphServiceModule = typeof import('./routeGraphService.js');
-type RouteTableProjectionModule = typeof import('./routeTableProjectionService.js');
+type RouteRuntimeArtifactModule = typeof import('./routeRuntimeArtifactService.js');
+type AccountRetirementModule = typeof import('./accountRetirementService.js');
+type RouteGroupManagementCatalogRevisionModule = typeof import('./routeGroupManagementCatalogRevisionService.js');
 
-describe('routeGraphService ownership guards', () => {
+describe('routeGraphService graph-native route runtime', () => {
+  const execFileAsync = promisify(execFile);
   let db: DbModule['db'];
   let schema: DbModule['schema'];
+  let createRouteGroupFromPayload: RouteGroupManagementModule['createRouteGroupFromPayload'];
+  let updateRouteGroupFromPayload: RouteGroupManagementModule['updateRouteGroupFromPayload'];
+  let buildRouteGraphSourceFromRouteGroups: () => Promise<NonNullable<Awaited<ReturnType<RouteGroupGraphTestHarnessModule['publishRouteGroupGraphForTest']>>['sourceGraph']>>;
   let publishRouteGraphSource: RouteGraphServiceModule['publishRouteGraphSource'];
+  let getActiveRouteGraphVersion: RouteGraphServiceModule['getActiveRouteGraphVersion'];
+  let getRouteGraphDraft: RouteGraphServiceModule['getRouteGraphDraft'];
   let saveRouteGraphDraft: RouteGraphServiceModule['saveRouteGraphDraft'];
   let publishRouteGraphDraft: RouteGraphServiceModule['publishRouteGraphDraft'];
-  let rebaseRouteGraphDraft: RouteGraphServiceModule['rebaseRouteGraphDraft'];
-  let ensureActiveRouteGraphVersion: RouteGraphServiceModule['ensureActiveRouteGraphVersion'];
-  let getActiveRouteGraphVersion: RouteGraphServiceModule['getActiveRouteGraphVersion'];
-  let getActiveRouteGraphRuntimeVersion: RouteGraphServiceModule['getActiveRouteGraphRuntimeVersion'];
-  let getCachedActiveRouteGraphRuntimeVersion: RouteGraphServiceModule['getCachedActiveRouteGraphRuntimeVersion'];
-  let getRouteGraphDraft: RouteGraphServiceModule['getRouteGraphDraft'];
-  let buildRouteGraphSourceFromRouteTable: RouteGraphServiceModule['buildRouteGraphSourceFromRouteTable'];
-  let reconcileActiveGraphWithRouteTable: RouteGraphServiceModule['reconcileActiveGraphWithRouteTable'];
-  let loadActiveRouteGraphRouteBindings: RouteGraphServiceModule['loadActiveRouteGraphRouteBindings'];
-  let listRouteEndpointCatalogPage: RouteGraphServiceModule['listRouteEndpointCatalogPage'];
-  let syncRouteBindingProjectionsFromRouteGraphSource: RouteGraphServiceModule['syncRouteBindingProjectionsFromRouteGraphSource'];
-  let invalidateRouteGraphReadCaches: RouteGraphServiceModule['invalidateRouteGraphReadCaches'];
-  let buildRouteGraphRuntimeStorageArtifact: RouteGraphServiceModule['buildRouteGraphRuntimeStorageArtifact'];
-  let loadRouteBindingProjectionMap: RouteTableProjectionModule['loadRouteBindingProjectionMap'];
+  let validateRouteGraphDraft: RouteGraphServiceModule['validateRouteGraphDraft'];
+  let hashRouteGraphSource: RouteGraphServiceModule['hashRouteGraphSource'];
+  let getActiveRouteRuntimeArtifact: RouteRuntimeArtifactModule['getActiveRouteRuntimeArtifact'];
+  let invalidateRouteRuntimeArtifactReadCaches: RouteRuntimeArtifactModule['invalidateRouteRuntimeArtifactReadCaches'];
+  let retireAccountFromRouting: AccountRetirementModule['retireAccountFromRouting'];
+  let loadRouteGroupManagementCatalogRevision: RouteGroupManagementCatalogRevisionModule['loadRouteGroupManagementCatalogRevision'];
   let dataDir = '';
-
-  async function seedAccountToken(prefix: string): Promise<{ accountId: number; tokenId: number }> {
-    const siteInsert = await db.insert(schema.sites).values({
-      name: `${prefix}-site`,
-      url: `https://${prefix}.example`,
-      platform: 'openai',
-      status: 'active',
-    });
-    const siteId = Number(siteInsert.lastInsertRowid || siteInsert.insertId);
-    const accountInsert = await db.insert(schema.accounts).values({
-      siteId,
-      username: `${prefix}-account`,
-      accessToken: `${prefix}-access`,
-      status: 'active',
-    });
-    const accountId = Number(accountInsert.lastInsertRowid || accountInsert.insertId);
-    const tokenInsert = await db.insert(schema.accountTokens).values({
-      accountId,
-      name: `${prefix}-token`,
-      token: `sk-${prefix}`,
-      enabled: true,
-      isDefault: true,
-    });
-    const tokenId = Number(tokenInsert.lastInsertRowid || tokenInsert.insertId);
-    return { accountId, tokenId };
-  }
 
   beforeAll(async () => {
     dataDir = mkdtempSync(join(tmpdir(), 'metapi-route-graph-service-'));
     process.env.DATA_DIR = dataDir;
 
-    await import('../db/migrate.js');
+    const migrate = await import('../db/migrate.js');
+    await migrate.runSqliteMigrations();
     const dbModule = await import('../db/index.js');
-    const serviceModule = await import('./routeGraphService.js');
-    const projectionModule = await import('./routeTableProjectionService.js');
+    const routeGroupManagement = await import('./routeGroupManagementService.js');
+    const routeGroupGraphTestHarness = await import('../test/routeGroupGraphTestHarness.js');
+    const routeGraphService = await import('./routeGraphService.js');
+    const routeRuntimeArtifact = await import('./routeRuntimeArtifactService.js');
+    const accountRetirement = await import('./accountRetirementService.js');
+    const routeGroupManagementCatalogRevision = await import('./routeGroupManagementCatalogRevisionService.js');
+
     db = dbModule.db;
     schema = dbModule.schema;
-    publishRouteGraphSource = serviceModule.publishRouteGraphSource;
-    saveRouteGraphDraft = serviceModule.saveRouteGraphDraft;
-    publishRouteGraphDraft = serviceModule.publishRouteGraphDraft;
-    rebaseRouteGraphDraft = serviceModule.rebaseRouteGraphDraft;
-    ensureActiveRouteGraphVersion = serviceModule.ensureActiveRouteGraphVersion;
-    getActiveRouteGraphVersion = serviceModule.getActiveRouteGraphVersion;
-    getActiveRouteGraphRuntimeVersion = serviceModule.getActiveRouteGraphRuntimeVersion;
-    getCachedActiveRouteGraphRuntimeVersion = serviceModule.getCachedActiveRouteGraphRuntimeVersion;
-    getRouteGraphDraft = serviceModule.getRouteGraphDraft;
-    buildRouteGraphSourceFromRouteTable = serviceModule.buildRouteGraphSourceFromRouteTable;
-    reconcileActiveGraphWithRouteTable = serviceModule.reconcileActiveGraphWithRouteTable;
-    loadActiveRouteGraphRouteBindings = serviceModule.loadActiveRouteGraphRouteBindings;
-    listRouteEndpointCatalogPage = serviceModule.listRouteEndpointCatalogPage;
-    syncRouteBindingProjectionsFromRouteGraphSource = serviceModule.syncRouteBindingProjectionsFromRouteGraphSource;
-    invalidateRouteGraphReadCaches = serviceModule.invalidateRouteGraphReadCaches;
-    buildRouteGraphRuntimeStorageArtifact = serviceModule.buildRouteGraphRuntimeStorageArtifact;
-    loadRouteBindingProjectionMap = projectionModule.loadRouteBindingProjectionMap;
-  });
+    createRouteGroupFromPayload = routeGroupManagement.createRouteGroupFromPayload;
+    updateRouteGroupFromPayload = routeGroupManagement.updateRouteGroupFromPayload;
+    buildRouteGraphSourceFromRouteGroups = async () => (
+      await routeGroupGraphTestHarness.publishRouteGroupGraphForTest('route-graph-service-test')
+    ).sourceGraph;
+    publishRouteGraphSource = routeGraphService.publishRouteGraphSource;
+    getActiveRouteGraphVersion = routeGraphService.getActiveRouteGraphVersion;
+    getRouteGraphDraft = routeGraphService.getRouteGraphDraft;
+    saveRouteGraphDraft = routeGraphService.saveRouteGraphDraft;
+    publishRouteGraphDraft = routeGraphService.publishRouteGraphDraft;
+    validateRouteGraphDraft = routeGraphService.validateRouteGraphDraft;
+    hashRouteGraphSource = routeGraphService.hashRouteGraphSource;
+    getActiveRouteRuntimeArtifact = routeRuntimeArtifact.getActiveRouteRuntimeArtifact;
+    invalidateRouteRuntimeArtifactReadCaches = routeRuntimeArtifact.invalidateRouteRuntimeArtifactReadCaches;
+    retireAccountFromRouting = accountRetirement.retireAccountFromRouting;
+    loadRouteGroupManagementCatalogRevision = routeGroupManagementCatalogRevision.loadRouteGroupManagementCatalogRevision;
+  }, 60_000);
 
   beforeEach(async () => {
     await db.delete(schema.routeGraphDrafts).run();
+    await db.delete(schema.compiledRuntimeActiveArtifact).run();
+    await db.delete(schema.compiledRuntimeArtifacts).run();
     await db.delete(schema.routeGraphActiveVersion).run();
     await db.delete(schema.routeGraphVersions).run();
-    await db.delete(schema.routeGroupCandidates).run();
-    await db.delete(schema.routeGroupBuckets).run();
-    await db.delete(schema.routeSupplyEndpointState).run();
-    await db.delete(schema.routeSupplyEndpoints).run();
-    await db.delete(schema.routeGroups).run();
-    await db.delete(schema.routeGroupSources).run();
-    await db.delete(schema.routeEndpointTargets).run();
+    await db.delete(schema.runtimeExecutionTargetState).run();
+    await db.delete(schema.runtimeExecutionTargets).run();
+    await db.delete(schema.tokenModelAvailability).run();
+    await db.delete(schema.modelAvailability).run();
     await db.delete(schema.accountTokens).run();
     await db.delete(schema.accounts).run();
     await db.delete(schema.sites).run();
-    await db.delete(schema.tokenRoutes).run();
-    invalidateRouteGraphReadCaches();
+  });
+
+  it('hashes canonical source content instead of encoding storage version identity', () => {
+    const first = hashRouteGraphSource({
+      nodes: [],
+      edges: [],
+      macros: [],
+      metadata: { beta: 2, alpha: 1 },
+    });
+    const reordered = hashRouteGraphSource({
+      nodes: [],
+      edges: [],
+      macros: [],
+      metadata: { alpha: 1, beta: 2 },
+    });
+    const changed = hashRouteGraphSource({
+      nodes: [],
+      edges: [],
+      macros: [],
+      metadata: { alpha: 1, beta: 3 },
+    });
+    expect(first).toMatch(/^sha256:[a-f0-9]{64}$/);
+    expect(reordered).toBe(first);
+    expect(changed).not.toBe(first);
   });
 
   afterAll(() => {
     delete process.env.DATA_DIR;
   });
 
-  it('rejects draft edits that mutate or delete non-manual graph-owned nodes and edges', async () => {
+  async function seedAccountToken(modelName: string) {
+    const site = await db.insert(schema.sites).values({
+      name: `site-${modelName}`,
+      url: `https://${modelName}.example.test`,
+      platform: 'openai',
+      status: 'active',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      accessToken: `access-${modelName}`,
+      status: 'active',
+    }).returning().get();
+    const token = await db.insert(schema.accountTokens).values({
+      accountId: account.id,
+      name: `token-${modelName}`,
+      token: `sk-${modelName}`,
+      enabled: true,
+      isDefault: true,
+    }).returning().get();
+    return { account, token };
+  }
+
+  async function createGroup(modelName: string) {
+    return await createRouteGroupFromPayload({
+      model: {
+        publicName: modelName,
+        upstreamName: modelName,
+      },
+      presentation: {
+        displayName: null,
+        displayIcon: null,
+      },
+      dispatcherPolicy: { kind: 'builtin', builtin: 'weighted' },
+      enabled: true,
+    });
+  }
+
+  it('reads an unpublished draft without creating or activating a graph version', async () => {
+    const draft = await getRouteGraphDraft();
+
+    expect(draft).toMatchObject({
+      id: 0,
+      baseVersion: null,
+      revision: 0,
+      status: 'unpublished',
+      workingGraph: { nodes: [], edges: [], macros: [] },
+    });
+    expect(await getActiveRouteGraphVersion()).toBeNull();
+    expect(await db.select().from(schema.routeGraphVersions).all()).toEqual([]);
+  });
+
+  it('projects route groups into route graph source without route-table identifiers', async () => {
+    const { account, token } = await seedAccountToken('gpt-clean');
+    const group = await createGroup('gpt-clean');
+
+    await insertRouteGroupMember({
+      groupId: group.id,
+      accountId: account.id,
+      tokenId: token.id,
+      sourceModel: 'gpt-clean',
+      enabled: true,
+    });
+
+    const graph = await buildRouteGraphSourceFromRouteGroups();
+    const graphJson = JSON.stringify(graph);
+    expect(graphJson).not.toContain('entry:legacy');
+    expect(graphJson).not.toContain('sourceRouteIds');
+    expect(graphJson).not.toContain('legacyRouteId');
+    expect(graphJson).not.toContain('route_group_projection');
+    expect(graphJson).not.toContain('access-gpt-clean');
+    expect(graphJson).not.toContain('sk-gpt-clean');
+    expect(graph.macros).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: group.id,
+        kind: 'candidate_selector',
+      }),
+    ]));
+    expect(graph.nodes.some((node) => String(node.id).startsWith('route-endpoint:product:'))).toBe(false);
+    const executionTarget = graph.nodes.find((node) => (
+      node.type === 'route_endpoint' && node.endpointKind === 'supply'
+    )) as any;
+    expect(executionTarget?.metadata).toEqual({
+      upstreamModel: 'gpt-clean',
+      normalizedModel: 'gpt-clean',
+    });
+    expect(executionTarget?.config?.targets).toEqual([
+      expect.objectContaining({
+        transportBinding: {
+          kind: 'execution_target',
+          executionTargetId: expect.any(Number),
+        },
+      }),
+    ]);
+  });
+
+  it('applies management configuration directly to its source Graph macro', async () => {
+    const { account, token } = await seedAccountToken('deepseek-auto');
+    const group = await createGroup('deepseek-auto');
+    await insertRouteGroupMember({
+      groupId: group.id,
+      accountId: account.id,
+      tokenId: token.id,
+      sourceModel: 'deepseek-auto',
+      enabled: true,
+    });
+
+    await updateRouteGroupFromPayload(group.id, {
+      presentation: { displayName: 'malicious-name', displayIcon: 'brand:deepseek' },
+      visibility: 'internal',
+      enabled: false,
+      dispatcherPolicy: { kind: 'builtin', builtin: 'round_robin' },
+      filters: {
+        operations: [
+          { type: 'set_header', name: 'x-route-override', value: '1', mode: 'override' },
+        ],
+      },
+    });
+
+    const graph = await buildRouteGraphSourceFromRouteGroups();
+    const macro = graph.macros.find((item) => item.id === group.id);
+    expect(macro?.name).toBe('malicious-name');
+    expect(macro?.config.filters).toEqual({
+      operations: [
+        { type: 'set_header', name: 'x-route-override', value: '1', mode: 'override' },
+      ],
+    });
+    expect(macro?.config.policy).toEqual({ kind: 'builtin', builtin: 'round_robin' });
+    expect(macro).not.toHaveProperty('visibility');
+    expect(macro?.config.surface.entry).toEqual({ kind: 'none' });
+
+    await updateRouteGroupFromPayload(group.id, { visibility: 'public' });
+    const repatched = await buildRouteGraphSourceFromRouteGroups();
+    expect(repatched.macros.find((item) => item.id === group.id)?.config.surface.entry)
+      .toMatchObject({ kind: 'external' });
+  });
+
+  it('rejects removed policy and priority shapes before graph normalization', async () => {
     const sourceGraph = {
-      version: 1,
       nodes: [
         {
-          id: 'entry.public',
-          type: 'entry',
-          enabled: true,
-          visibility: 'public',
-          ownership: 'manual',
-          match: { requestedModelPattern: 'gpt-owned', displayName: null },
-        },
-        {
-          id: 'filter.auto',
-          type: 'filter',
-          enabled: true,
-          visibility: 'internal',
-          ownership: 'auto_generated',
-          operations: [{ type: 'set_payload', path: 'reasoning_effort', value: 'medium' }],
-        },
-        {
-          id: 'pool.auto',
-          type: 'route_endpoint',
-          enabled: true,
-          visibility: 'internal',
-          ownership: 'auto_generated',
-          legacyRouteId: 1,
-          routeEndpointId: 'entry.public',
-          metadata: {},
-          config: { targets: [{ targetId: '1', model: 'gpt-owned', accountId: 1, tokenId: 1 }], targetSelection: { strategy: 'weighted' } },
-        },
-      ],
-      edges: [
-        {
-          id: 'edge.entry.filter',
-          sourceNodeId: 'entry.public',
-          sourcePortId: 'bidirect.out',
-          targetNodeId: 'filter.auto',
-          targetPortId: 'bidirect.in',
-          kind: 'bidirect_flow',
-          ownership: 'manual',
-        },
-        {
-          id: 'edge.filter.pool',
-          sourceNodeId: 'filter.auto',
-          sourcePortId: 'bidirect.out',
-          targetNodeId: 'pool.auto',
-          targetPortId: 'bidirect.in',
-          kind: 'bidirect_flow',
-          ownership: 'auto_generated',
-        },
-      ],
-    } as const;
-
-    const published = await publishRouteGraphSource({ sourceGraph, createdBy: 'test' });
-    expect(published.ok).toBe(true);
-
-    const draft = await saveRouteGraphDraft({
-      ...sourceGraph,
-      nodes: [
-        sourceGraph.nodes[0],
-        {
-          ...sourceGraph.nodes[1],
-          operations: [{ type: 'set_payload', path: 'reasoning_effort', value: 'high' }],
-        },
-      ],
-      edges: [sourceGraph.edges[0]],
-    });
-
-    expect(draft.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(expect.arrayContaining([
-      'ownership.non_manual_mutation',
-      'ownership.non_manual_delete',
-      'ownership.non_manual_edge_delete',
-    ]));
-
-    const publishDraft = await publishRouteGraphDraft();
-    expect(publishDraft.ok).toBe(false);
-    expect(publishDraft.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(expect.arrayContaining([
-      'ownership.non_manual_mutation',
-      'ownership.non_manual_delete',
-      'ownership.non_manual_edge_delete',
-    ]));
-  });
-
-  it('caches a missing active runtime graph as a synchronous null fast path', async () => {
-    expect(getCachedActiveRouteGraphRuntimeVersion()).toBeUndefined();
-
-    await expect(getActiveRouteGraphRuntimeVersion()).resolves.toBeNull();
-
-    expect(getCachedActiveRouteGraphRuntimeVersion()).toBeNull();
-  });
-
-  it('rejects draft-created non-manual nodes, edges, and macros so derived primitives stay read-only', async () => {
-    const activeSource = {
-      version: 1,
-      nodes: [
-        {
-          id: 'entry.manual',
-          type: 'entry',
-          enabled: true,
-          visibility: 'public',
-          ownership: 'manual',
-          match: { requestedModelPattern: 'manual-owned-model', displayName: null },
-        },
-        {
-          id: 'endpoint.manual',
-          type: 'route_endpoint',
-          enabled: true,
-          visibility: 'internal',
-          ownership: 'manual',
-          legacyRouteId: 1,
-          routeEndpointId: 'entry.manual',
-          config: {
-            targets: [{ targetId: 'manual', model: 'manual-owned-model' }],
-            targetSelection: { strategy: 'weighted' },
-          },
-        },
-      ],
-      edges: [
-        {
-          id: 'entry-endpoint',
-          sourceNodeId: 'entry.manual',
-          sourcePortId: 'bidirect.out',
-          targetNodeId: 'endpoint.manual',
-          targetPortId: 'bidirect.in',
-          kind: 'bidirect_flow',
-          ownership: 'manual',
-        },
-      ],
-      macros: [],
-    } as const;
-    const active = await publishRouteGraphSource({ sourceGraph: activeSource, createdBy: 'test' });
-    expect(active.ok).toBe(true);
-
-    const draft = await saveRouteGraphDraft({
-      version: 1,
-      nodes: [
-        ...activeSource.nodes,
-        {
-          id: 'endpoint.derived',
-          type: 'route_endpoint',
-          enabled: true,
-          visibility: 'internal',
-          ownership: 'derived',
-          legacyRouteId: 2,
-          config: {
-            targets: [{ targetId: 'derived', model: 'manual-owned-model' }],
-            targetSelection: { strategy: 'weighted' },
-          },
-        },
-      ],
-      edges: [
-        ...activeSource.edges,
-        {
-          id: 'derived-edge',
-          sourceNodeId: 'entry.manual',
-          sourcePortId: 'bidirect.out',
-          targetNodeId: 'endpoint.derived',
-          targetPortId: 'bidirect.in',
-          kind: 'bidirect_flow',
-          ownership: 'derived',
-        },
-      ],
-      macros: [
-        {
-          id: 'macro.auto-created',
-          kind: 'candidate_selector',
-          enabled: true,
-          visibility: 'internal',
-          ownership: 'auto_generated',
-          config: {
-            surface: {
-              entry: { kind: 'embedded', input: 'bidirect' },
-              output: 'route',
-            },
-            policy: { strategy: 'priority_order' },
-            groups: [],
-          },
-        },
-      ],
-    });
-
-    expect(draft.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(expect.arrayContaining([
-      'ownership.non_manual_create',
-      'ownership.non_manual_edge_create',
-      'ownership.non_manual_macro_create',
-    ]));
-
-    const publishDraft = await publishRouteGraphDraft();
-    expect(publishDraft.ok).toBe(false);
-    expect(publishDraft.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(expect.arrayContaining([
-      'ownership.non_manual_create',
-      'ownership.non_manual_edge_create',
-      'ownership.non_manual_macro_create',
-    ]));
-  });
-
-  it('saves drafts against the active graph and rejects invalid publishes without replacing active version', async () => {
-    const activeSource = {
-      version: 1,
-      nodes: [
-        {
-          id: 'entry.public',
-          type: 'entry',
-          enabled: true,
-          visibility: 'public',
-          ownership: 'manual',
-          match: { kind: 'model', requestedModelPattern: 'gpt-active', displayName: 'gpt-active' },
-        },
-        {
-          id: 'dispatcher.public',
+          id: 'dispatcher:legacy-policy',
           type: 'dispatcher',
-          enabled: true,
-          visibility: 'internal',
-          ownership: 'manual',
-          mode: 'route',
           policy: { strategy: 'weighted' },
         },
         {
-          id: 'endpoint.public',
+          id: 'route-endpoint:legacy-policy',
           type: 'route_endpoint',
-          enabled: true,
-          visibility: 'internal',
-          ownership: 'manual',
           config: {
-            targets: [{ targetId: 'target-active', model: 'gpt-active' }],
-            targetSelection: { strategy: 'weighted' },
+            targets: [],
+            targetSelection: { strategy: 'defer_to_router' },
           },
-        },
-      ],
-      edges: [
-        {
-          id: 'entry-dispatcher',
-          sourceNodeId: 'entry.public',
-          sourcePortId: 'bidirect.out',
-          targetNodeId: 'dispatcher.public',
-          targetPortId: 'bidirect.in',
-          kind: 'bidirect_flow',
-          ownership: 'manual',
-        },
-        {
-          id: 'endpoint-dispatcher',
-          sourceNodeId: 'endpoint.public',
-          sourcePortId: 'route.out',
-          targetNodeId: 'dispatcher.public',
-          targetPortId: 'route.in',
-          kind: 'route_flow',
-          ownership: 'manual',
-        },
-      ],
-    } as const;
-
-    const active = await publishRouteGraphSource({ sourceGraph: activeSource, createdBy: 'test' });
-    expect(active.ok).toBe(true);
-    if (!active.ok) return;
-
-    const invalidDraft = await saveRouteGraphDraft({
-      ...activeSource,
-      edges: [
-        activeSource.edges[0],
-        {
-          id: 'bad-route-edge',
-          sourceNodeId: 'entry.public',
-          sourcePortId: 'bidirect.out',
-          targetNodeId: 'dispatcher.public',
-          targetPortId: 'route.in',
-          kind: 'request_flow',
-          ownership: 'manual',
-        },
-      ],
-    });
-
-    expect(invalidDraft.baseVersion).toBe(active.version.id);
-    expect(invalidDraft.stale).toBe(false);
-    expect(invalidDraft.diagnostics.map((diagnostic) => diagnostic.code)).toContain('edge.incompatible_ports');
-
-    const publishDraft = await publishRouteGraphDraft();
-    expect(publishDraft.ok).toBe(false);
-    expect(publishDraft.diagnostics.map((diagnostic) => diagnostic.code)).toContain('edge.incompatible_ports');
-
-    const stillActive = await ensureActiveRouteGraphVersion();
-    expect(stillActive.id).toBe(active.version.id);
-    expect(stillActive.sourceGraph.nodes.map((node) => node.id)).toEqual(active.version.sourceGraph.nodes.map((node) => node.id));
-  });
-
-  it('projects legacy route channels into supply route endpoint targets', async () => {
-    const routeInsert = await db.insert(schema.tokenRoutes).values({
-      displayName: 'gpt-4o',
-      routingStrategy: 'weighted',
-      enabled: true,
-    });
-    const routeId = Number(routeInsert.lastInsertRowid || routeInsert.insertId);
-    const siteInsert = await db.insert(schema.sites).values({
-      name: 'openai',
-      url: 'https://api.openai.example',
-      platform: 'openai',
-      status: 'active',
-    });
-    const siteId = Number(siteInsert.lastInsertRowid || siteInsert.insertId);
-    const accountInsert = await db.insert(schema.accounts).values({
-      siteId,
-      username: 'account-a',
-      accessToken: 'access-token',
-      status: 'active',
-    });
-    const accountId = Number(accountInsert.lastInsertRowid || accountInsert.insertId);
-    const tokenInsert = await db.insert(schema.accountTokens).values({
-      accountId,
-      name: 'token-a',
-      token: 'api-token',
-      enabled: true,
-    });
-    const tokenId = Number(tokenInsert.lastInsertRowid || tokenInsert.insertId);
-    await db.insert(schema.routeEndpointTargets).values({
-      routeId,
-      accountId,
-      tokenId,
-      sourceModel: 'gpt-4o-upstream',
-      priority: 3,
-      weight: 7,
-      enabled: true,
-    });
-
-    const graph = await buildRouteGraphSourceFromRouteTable();
-    const endpoint = graph.nodes.find((node) => (
-      node.type === 'route_endpoint'
-      && node.endpointKind === 'supply'
-      && node.routeId === routeId
-    ));
-
-    expect(endpoint).toMatchObject({
-      type: 'route_endpoint',
-      ownership: 'auto_generated',
-      config: {
-        targets: [
-          expect.objectContaining({
-            model: 'gpt-4o-upstream',
-            accountId,
-            tokenId,
-            weight: 7,
-            priority: 3,
-          }),
-        ],
-      },
-    });
-  });
-
-  it('bootstraps an active graph from current route table bindings when no graph version exists', async () => {
-    const routeInsert = await db.insert(schema.tokenRoutes).values({
-      displayName: 'recovered-model',
-      routingStrategy: 'weighted',
-      enabled: true,
-    });
-    const routeId = Number(routeInsert.lastInsertRowid || routeInsert.insertId);
-    const siteInsert = await db.insert(schema.sites).values({
-      name: 'recover-site',
-      url: 'https://recover.example',
-      platform: 'openai',
-      status: 'active',
-    });
-    const siteId = Number(siteInsert.lastInsertRowid || siteInsert.insertId);
-    const accountInsert = await db.insert(schema.accounts).values({
-      siteId,
-      username: 'recover-account',
-      accessToken: 'recover-access',
-      status: 'active',
-    });
-    const accountId = Number(accountInsert.lastInsertRowid || accountInsert.insertId);
-    const tokenInsert = await db.insert(schema.accountTokens).values({
-      accountId,
-      name: 'recover-token',
-      token: 'sk-recover',
-      enabled: true,
-      isDefault: true,
-    });
-    const tokenId = Number(tokenInsert.lastInsertRowid || tokenInsert.insertId);
-    await db.insert(schema.routeEndpointTargets).values({
-      routeId,
-      accountId,
-      tokenId,
-      sourceModel: 'recovered-model',
-      priority: 0,
-      weight: 10,
-      enabled: true,
-    });
-
-    const active = await ensureActiveRouteGraphVersion();
-    const supplyEndpoint = active.sourceGraph.nodes.find((node) => (
-      node.type === 'route_endpoint'
-      && node.endpointKind === 'supply'
-      && node.routeId === routeId
-    ));
-
-    expect(active.status).toBe('active');
-    expect(active.sourceGraph.nodes).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: expect.stringMatching(/^route-endpoint:supply:upstream-model:/), type: 'route_endpoint', endpointKind: 'supply', ownership: 'auto_generated' }),
-      expect.objectContaining({ id: 'route-endpoint:product:auto-model:recovered-model', type: 'route_endpoint', endpointKind: 'route_product', ownership: 'auto_generated' }),
-    ]));
-    expect(supplyEndpoint).toMatchObject({
-      metadata: expect.objectContaining({
-        localRouteId: routeId,
-        endpointIdentity: expect.objectContaining({
-          provider: 'openai',
-          siteUrl: 'https://recover.example',
-          model: 'recovered-model',
-        }),
-      }),
-    });
-    expect(active.compiledGraph.entries).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        nodeId: 'macro:auto-model:recovered-model:entry',
-        backend: expect.objectContaining({ kind: 'routes', routeIds: [routeId] }),
-      }),
-    ]));
-    expect(active.compiledGraph.terminals).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        nodeId: 'route-endpoint:product:auto-model:recovered-model',
-        type: 'route_endpoint',
-        legacyRouteId: routeId,
-      }),
-    ]));
-
-    const draft = await getRouteGraphDraft();
-    expect(draft.stale).toBe(false);
-    expect(draft.workingGraph.nodes).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 'route-endpoint:product:auto-model:recovered-model' }),
-      expect.objectContaining({ id: expect.stringMatching(/^route-endpoint:supply:upstream-model:/), routeId, endpointKind: 'supply' }),
-    ]));
-    expect(compileRouteGraphSource(draft.workingGraph).ok).toBe(true);
-  });
-
-  it('stores and reads active graph JSON as a compact compiled router artifact', async () => {
-    const sourceGraph = {
-      version: 1,
-      nodes: [
-        {
-          id: 'entry.cached',
-          type: 'entry',
-          enabled: true,
-          visibility: 'public',
-          ownership: 'manual',
-          match: { requestedModelPattern: 'cached-model' },
-        },
-        {
-          id: 'endpoint.cached',
-          type: 'route_endpoint',
-          enabled: true,
-          visibility: 'internal',
-          ownership: 'manual',
-          legacyRouteId: 700,
-          config: { targets: [{ targetId: '700', model: 'cached-model' }], targetSelection: { strategy: 'weighted' } },
-        },
-      ],
-      edges: [
-        { id: 'entry-endpoint', sourceNodeId: 'entry.cached', sourcePortId: 'bidirect.out', targetNodeId: 'endpoint.cached', targetPortId: 'bidirect.in', kind: 'bidirect_flow', ownership: 'manual' },
-      ],
-    };
-    const published = await publishRouteGraphSource({ sourceGraph, createdBy: 'test' });
-    expect(published.ok).toBe(true);
-    if (!published.ok) return;
-
-    const initiallyStored = await db.select().from(schema.routeGraphVersions)
-      .where(eq(schema.routeGraphVersions.id, published.version.id))
-      .get();
-    expect(JSON.parse(initiallyStored?.compiledGraphJson || '{}').compiledRouterBundle).toMatchObject({ version: 2 });
-    expect(JSON.parse(initiallyStored?.compiledGraphJson || '{}').programBundle).toBeUndefined();
-    expect(JSON.parse(initiallyStored?.compiledGraphJson || '{}').flatProgramBundle).toBeUndefined();
-
-    const runtime = await getActiveRouteGraphRuntimeVersion();
-    expect(runtime?.compiledGraph.compiledRouterBundle).toMatchObject({
-      version: 2,
-      matcher: {
-        exact: {
-          'cached-model': expect.objectContaining({ programId: 'program:entry.cached' }),
-        },
-      },
-    });
-
-    const runtimeStored = await db.select().from(schema.routeGraphVersions)
-      .where(eq(schema.routeGraphVersions.id, published.version.id))
-      .get();
-    expect(JSON.parse(runtimeStored?.compiledGraphJson || '{}').compiledRouterBundle).toMatchObject({ version: 2 });
-    expect(JSON.parse(runtimeStored?.compiledGraphJson || '{}').programBundle).toBeUndefined();
-    expect(JSON.parse(runtimeStored?.compiledGraphJson || '{}').flatProgramBundle).toBeUndefined();
-    invalidateRouteGraphReadCaches();
-
-    const active = await getActiveRouteGraphVersion();
-    expect(active?.compiledGraph.compiledRouterBundle).toMatchObject({
-      version: 2,
-      matcher: {
-        exact: {
-          'cached-model': expect.objectContaining({ programId: 'program:entry.cached' }),
-        },
-      },
-    });
-    const stored = await db.select().from(schema.routeGraphVersions)
-      .where(eq(schema.routeGraphVersions.id, published.version.id))
-      .get();
-    expect(JSON.parse(stored?.compiledGraphJson || '{}').compiledRouterBundle).toMatchObject({ version: 2 });
-    expect(JSON.parse(stored?.compiledGraphJson || '{}').programBundle).toBeUndefined();
-    expect(JSON.parse(stored?.compiledGraphJson || '{}').flatProgramBundle).toBeUndefined();
-
-    const legacyCompiledWithRouter = compileRouteGraphSource(sourceGraph).compiled;
-    await db.update(schema.routeGraphVersions).set({
-      compiledGraphJson: JSON.stringify(legacyCompiledWithRouter),
-    }).where(eq(schema.routeGraphVersions.id, published.version.id)).run();
-    invalidateRouteGraphReadCaches();
-
-    const compacted = await getActiveRouteGraphVersion();
-    expect(compacted?.compiledGraph.compiledRouterBundle).toMatchObject({ version: 2 });
-    const compactedStored = await db.select().from(schema.routeGraphVersions)
-      .where(eq(schema.routeGraphVersions.id, published.version.id))
-      .get();
-    expect(JSON.parse(compactedStored?.compiledGraphJson || '{}').programBundle).toBeUndefined();
-    expect(JSON.parse(compactedStored?.compiledGraphJson || '{}').flatProgramBundle).toBeUndefined();
-  });
-
-  it('bounds persisted runtime artifacts before writing oversized compiled router bundles', () => {
-    const artifact = buildRouteGraphRuntimeStorageArtifact({
-      hash: 'oversized-runtime-artifact',
-      compiledRouterBundle: {
-        version: 2,
-        matcher: { exact: {}, normalizedExact: {}, patterns: [] },
-        plans: [],
-        diagnostics: [],
-        padding: 'x'.repeat(17 * 1024 * 1024),
-      },
-    } as unknown as CompiledRouteGraph);
-
-    expect(artifact).toEqual({ version: 1 });
-    expect(Buffer.byteLength(JSON.stringify(artifact), 'utf8')).toBeLessThan(1024);
-  });
-
-  it('does not compile source graph on the runtime path when persisted compiled cache is too large', async () => {
-    const sourceGraph = {
-      version: 1,
-      nodes: [
-        {
-          id: 'entry.large-runtime-cache',
-          type: 'entry',
-          enabled: true,
-          visibility: 'public',
-          ownership: 'manual',
-          match: { requestedModelPattern: 'large-runtime-cache-model' },
-        },
-        {
-          id: 'endpoint.large-runtime-cache',
-          type: 'route_endpoint',
-          enabled: true,
-          visibility: 'internal',
-          ownership: 'manual',
-          legacyRouteId: 701,
-          config: { targets: [{ targetId: '701', model: 'large-runtime-cache-model' }] },
-        },
-      ],
-      edges: [
-        { id: 'entry-large-runtime-cache-endpoint', sourceNodeId: 'entry.large-runtime-cache', sourcePortId: 'bidirect.out', targetNodeId: 'endpoint.large-runtime-cache', targetPortId: 'bidirect.in', kind: 'bidirect_flow', ownership: 'manual' },
-      ],
-      macros: [],
-    };
-    const published = await publishRouteGraphSource({ sourceGraph, createdBy: 'test' });
-    expect(published.ok).toBe(true);
-    if (!published.ok) return;
-
-    const oversizedCompiledCache = JSON.stringify({
-      version: 1,
-      legacyCompiledCacheMarker: 'oversized-runtime-cache',
-      padding: 'x'.repeat(17 * 1024 * 1024),
-    });
-    await db.update(schema.routeGraphVersions).set({
-      compiledGraphJson: oversizedCompiledCache,
-    }).where(eq(schema.routeGraphVersions.id, published.version.id)).run();
-    invalidateRouteGraphReadCaches();
-
-    const runtime = await getActiveRouteGraphRuntimeVersion();
-    expect(runtime).toMatchObject({
-      id: published.version.id,
-      version: published.version.version,
-      compiledGraph: { version: 1 },
-    });
-    expect(runtime?.compiledGraph.compiledRouterBundle).toBeUndefined();
-
-    const stored = await db.select({
-      compiledGraphJson: schema.routeGraphVersions.compiledGraphJson,
-    }).from(schema.routeGraphVersions)
-      .where(eq(schema.routeGraphVersions.id, published.version.id))
-      .get();
-    expect(stored?.compiledGraphJson).toBe(oversizedCompiledCache);
-  });
-
-  it('preserves manual edges that reuse generated endpoints and semantic macros during active graph reconciliation', async () => {
-    const sourceInsert = await db.insert(schema.tokenRoutes).values({
-      displayName: 'route-table-source-model',
-      routingStrategy: 'weighted',
-      enabled: true,
-    });
-    const sourceRouteId = Number(sourceInsert.lastInsertRowid || sourceInsert.insertId);
-    const { accountId, tokenId } = await seedAccountToken('route-table-edge-source');
-    await db.insert(schema.routeEndpointTargets).values({
-      routeId: sourceRouteId,
-      accountId,
-      tokenId,
-      sourceModel: 'route-table-source-model',
-      priority: 0,
-      weight: 10,
-      enabled: true,
-    });
-
-    const routeTableGraph = await buildRouteGraphSourceFromRouteTable();
-    const sourceRouteProductEndpoint = routeTableGraph.nodes.find((node) => (
-      node.type === 'route_endpoint'
-      && node.endpointKind === 'route_product'
-      && node.routeId === sourceRouteId
-    ));
-    expect(sourceRouteProductEndpoint?.id).toBeTruthy();
-    const sourceGraph = {
-      ...routeTableGraph,
-      nodes: [
-        ...routeTableGraph.nodes,
-        {
-          id: 'entry.manual-route-table-reuse',
-          type: 'entry',
-          enabled: true,
-          visibility: 'public',
-          ownership: 'manual',
-          match: { requestedModelPattern: 'manual-route-table-reuse' },
-        },
-      ],
-      macros: [
-        ...(routeTableGraph.macros || []),
-        {
-          id: 'manual:route-table-gate',
-          kind: 'candidate_selector',
-          enabled: true,
-          visibility: 'internal',
-          ownership: 'manual',
-          config: {
-            surface: {
-              entry: { kind: 'embedded', input: 'bidirect' },
-              output: 'bidirect',
-              ports: [
-                { id: 'flow.in', label: 'incoming flow', direction: 'input', kind: 'bidirect' },
-                { id: 'flow.out', label: 'selected flow', direction: 'output', kind: 'bidirect', collection: { type: 'arr', min: 1 } },
-              ],
-            },
-            policy: { strategy: 'stable_first' },
-            groups: [
-              {
-                id: 'fallback',
-                enabled: true,
-                priority: 0,
-                input: { kind: 'synthetic', statusCode: 503, message: 'route table fallback' },
-              },
-            ],
-          },
-        },
-      ],
-      edges: [
-        ...routeTableGraph.edges,
-        {
-          id: 'manual-entry-to-semantic-macro',
-          sourceNodeId: 'entry.manual-route-table-reuse',
-          sourcePortId: 'bidirect.out',
-          targetNodeId: 'macro:manual:route-table-gate',
-          targetPortId: 'flow.in',
-          kind: 'bidirect_flow',
-          ownership: 'manual',
-        },
-        {
-          id: 'manual-semantic-macro-to-generated-endpoint',
-          sourceNodeId: 'macro:manual:route-table-gate',
-          sourcePortId: 'flow.out',
-          targetNodeId: sourceRouteProductEndpoint?.id || '',
-          targetPortId: 'bidirect.in',
-          kind: 'bidirect_flow',
-          ownership: 'manual',
-        },
-      ],
-    };
-    const published = await publishRouteGraphSource({ sourceGraph, createdBy: 'test' });
-    expect(published.ok).toBe(true);
-    if (!published.ok) return;
-
-    const reconciled = await reconcileActiveGraphWithRouteTable(published.version, new Map(), { allowDiagnostics: true });
-    expect(reconciled.sourceGraph.edges).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 'manual-entry-to-semantic-macro' }),
-      expect.objectContaining({ id: 'manual-semantic-macro-to-generated-endpoint' }),
-    ]));
-    expect(reconciled.compiledGraph.compiledRouterBundle?.matcher.exact['manual-route-table-reuse']).toMatchObject({
-      programId: 'program:entry.manual-route-table-reuse',
-    });
-    const plan = reconciled.compiledGraph.compiledRouterBundle?.plans.find((item) => item.id === 'program:entry.manual-route-table-reuse');
-    expect(plan?.candidates).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        terminal: expect.objectContaining({
-          kind: 'supply',
-          routeId: sourceRouteId,
-        }),
-      }),
-    ]));
-  });
-
-  it('projects model groups as candidate_selector macros and reads bindings from lowered primitives', async () => {
-    const sourceInsert = await db.insert(schema.tokenRoutes).values({
-      displayName: 'source-model',
-      routingStrategy: 'weighted',
-      enabled: true,
-    });
-    const sourceRouteId = Number(sourceInsert.lastInsertRowid || sourceInsert.insertId);
-    const { accountId, tokenId } = await seedAccountToken('group-source');
-    const groupInsert = await db.insert(schema.tokenRoutes).values({
-      displayName: 'public-group',
-      routingStrategy: 'round_robin',
-      enabled: true,
-    });
-    const groupRouteId = Number(groupInsert.lastInsertRowid || groupInsert.insertId);
-    await db.insert(schema.routeGroupSources).values({
-      groupRouteId,
-      sourceRouteId,
-    });
-    await db.insert(schema.routeEndpointTargets).values({
-      routeId: sourceRouteId,
-      accountId,
-      tokenId,
-      sourceModel: 'source-model',
-      priority: 0,
-      weight: 10,
-      enabled: true,
-    });
-
-    const graph = await buildRouteGraphSourceFromRouteTable();
-    expect(graph.macros).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        id: `route:${groupRouteId}:model-group`,
-        kind: 'candidate_selector',
-        ownership: 'auto_generated',
-      }),
-    ]));
-    expect(graph.nodes.some((node) => node.id === `dispatcher:legacy:${groupRouteId}`)).toBe(false);
-
-    const published = await publishRouteGraphSource({ sourceGraph: graph, createdBy: 'test' });
-    expect(published.ok).toBe(true);
-    const bindings = await loadActiveRouteGraphRouteBindings();
-    expect(bindings.get(groupRouteId)).toMatchObject({
-      routeId: groupRouteId,
-      routeMode: 'explicit_group',
-      visibility: 'public',
-      sourceRouteIds: [sourceRouteId],
-      exposedModelName: 'public-group',
-    });
-
-    if (!published.ok) return;
-    const internalGraph = {
-      ...graph,
-      macros: (graph.macros || []).map((macro) => (
-        macro.id === `route:${groupRouteId}:model-group`
-          ? {
-            ...macro,
-            visibility: 'internal',
-            config: {
-              ...macro.config,
-              surface: {
-                ...macro.config.surface,
-                entry: {
-                  ...macro.config.surface.entry,
-                  visibility: 'internal',
-                },
-              },
-            },
-          }
-          : macro
-      )),
-    };
-    const reconciled = await reconcileActiveGraphWithRouteTable({
-      ...published.version,
-      sourceGraph: internalGraph,
-      compiledGraph: compileRouteGraphSource(internalGraph).compiled,
-    });
-    const reconciledMacro = (reconciled.sourceGraph.macros || [])
-      .find((macro) => macro.id === `route:${groupRouteId}:model-group`);
-    expect(reconciledMacro?.visibility).toBe('internal');
-  });
-
-  it('projects automatic exact routes as read-only candidate_selector macros over generated primitives', async () => {
-    const routeInsert = await db.insert(schema.tokenRoutes).values({
-      displayName: 'gpt-auto-native',
-      routingStrategy: 'weighted',
-      enabled: true,
-    });
-    const routeId = Number(routeInsert.lastInsertRowid || routeInsert.insertId);
-    const first = await seedAccountToken('auto-native');
-    const second = await seedAccountToken('auto-native-alt');
-    await db.insert(schema.routeEndpointTargets).values([
-      {
-        routeId,
-        accountId: first.accountId,
-        tokenId: first.tokenId,
-        sourceModel: 'gpt-auto-native',
-        priority: 0,
-        weight: 10,
-        enabled: true,
-      },
-      {
-        routeId,
-        accountId: second.accountId,
-        tokenId: second.tokenId,
-        sourceModel: 'gpt-auto-native',
-        priority: 0,
-        weight: 10,
-        enabled: true,
-      },
-    ]);
-
-    const graph = await buildRouteGraphSourceFromRouteTable();
-    const supplyEndpoints = graph.nodes.filter((node) => (
-      node.type === 'route_endpoint'
-      && node.endpointKind === 'supply'
-      && node.routeId === routeId
-    ));
-    expect(supplyEndpoints).toHaveLength(2);
-    const supplyEndpointIds = supplyEndpoints.map((node) => node.id).sort();
-    expect(supplyEndpointIds[0]).toEqual(expect.stringMatching(/^route-endpoint:supply:upstream-model:/));
-    expect(graph.macros).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        id: 'auto-model:gpt-auto-native',
-        kind: 'candidate_selector',
-        ownership: 'auto_generated',
-        config: expect.objectContaining({
-          surface: expect.objectContaining({
-            entry: expect.objectContaining({
-              kind: 'external',
-              visibility: 'public',
-              match: expect.objectContaining({
-                requestedModelPattern: 'gpt-auto-native',
-                displayName: 'gpt-auto-native',
-                routeId,
-              }),
-            }),
-            output: 'route',
-          }),
-          groups: [
-            expect.objectContaining({
-              priority: 0,
-              input: { kind: 'route_endpoints', endpointIds: expect.arrayContaining(supplyEndpointIds) },
-            }),
-          ],
-        }),
-      }),
-    ]));
-    const autoMacro = graph.macros?.find((macro) => macro.id === 'auto-model:gpt-auto-native');
-    expect(autoMacro?.config.groups).toHaveLength(1);
-    expect(graph.nodes).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        id: `route-endpoint:product:auto-model:gpt-auto-native`,
-        type: 'route_endpoint',
-        ownership: 'auto_generated',
-        endpointKind: 'route_product',
-      }),
-      expect.objectContaining({
-        id: supplyEndpointIds[0],
-        type: 'route_endpoint',
-        ownership: 'auto_generated',
-        endpointKind: 'supply',
-        metadata: expect.objectContaining({ generatedByMacroId: 'auto-model:gpt-auto-native' }),
-      }),
-    ]));
-
-    const compiled = compileRouteGraphSource(graph);
-    expect(compiled.ok).toBe(true);
-    expect(compiled.compiled.publicModels).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        nodeId: 'macro:auto-model:gpt-auto-native:entry',
-        model: 'gpt-auto-native',
-      }),
-    ]));
-
-    const published = await publishRouteGraphSource({ sourceGraph: graph, createdBy: 'test' });
-    expect(published.ok).toBe(true);
-    const bindings = await loadActiveRouteGraphRouteBindings();
-    expect(bindings.get(routeId)).toMatchObject({
-      routeId,
-      routeMode: 'pattern',
-      sourceRouteIds: [],
-      exposedModelName: 'gpt-auto-native',
-      exactModelName: 'gpt-auto-native',
-    });
-  });
-
-  it('uses stable semantic supply endpoint ids independent of local route and target ids', async () => {
-    const firstRoute = await db.insert(schema.tokenRoutes).values({
-      displayName: 'gpt-stable-supply',
-      routingStrategy: 'weighted',
-      enabled: true,
-    });
-    const firstRouteId = Number(firstRoute.lastInsertRowid || firstRoute.insertId);
-    const secondRoute = await db.insert(schema.tokenRoutes).values({
-      displayName: 'GPT-Stable-Supply',
-      routingStrategy: 'weighted',
-      enabled: true,
-    });
-    const secondRouteId = Number(secondRoute.lastInsertRowid || secondRoute.insertId);
-    const { accountId, tokenId } = await seedAccountToken('stable-supply');
-    await db.insert(schema.routeEndpointTargets).values({
-      routeId: firstRouteId,
-      accountId,
-      tokenId,
-      sourceModel: 'gpt-stable-supply',
-      priority: 0,
-      weight: 10,
-      enabled: true,
-    });
-    await db.insert(schema.routeEndpointTargets).values({
-      routeId: secondRouteId,
-      accountId,
-      tokenId,
-      sourceModel: 'gpt-stable-supply',
-      priority: 1,
-      weight: 10,
-      enabled: true,
-    });
-
-    const graph = await buildRouteGraphSourceFromRouteTable();
-    const stableSupplyEndpoints = graph.nodes.filter((node) => (
-      node.type === 'route_endpoint'
-      && node.endpointKind === 'supply'
-      && node.id.includes(':gpt-stable-supply:')
-    ));
-
-    expect(stableSupplyEndpoints).toHaveLength(1);
-    expect(stableSupplyEndpoints[0]?.id).toEqual(expect.stringMatching(/^route-endpoint:supply:upstream-model:openai:[a-f0-9]{8}:gpt-stable-supply:[a-f0-9]{8}$/));
-    expect(stableSupplyEndpoints[0]?.id).not.toContain(`route:${firstRouteId}`);
-    expect(stableSupplyEndpoints[0]?.id).not.toContain(`route:${secondRouteId}`);
-    expect(stableSupplyEndpoints[0]?.metadata).toMatchObject({
-      localRouteIds: expect.arrayContaining([firstRouteId, secondRouteId]),
-      endpointLocalRefs: expect.arrayContaining([
-        expect.objectContaining({ localRouteId: firstRouteId }),
-        expect.objectContaining({ localRouteId: secondRouteId }),
-      ]),
-      endpointIdentity: expect.not.objectContaining({
-        routeId: expect.anything(),
-        routeTargetId: expect.anything(),
-      }),
-    });
-
-    const macro = (graph.macros || []).find((item) => item.id === 'auto-model:gpt-stable-supply');
-    const endpointIds = macro?.config.groups.flatMap((group) => (
-      group.input.kind === 'route_endpoints' ? group.input.endpointIds : []
-    ));
-    expect(endpointIds).toEqual([stableSupplyEndpoints[0]?.id]);
-
-    const compiled = compileRouteGraphSource(graph);
-    expect(compiled.diagnostics.filter((diagnostic) => diagnostic.code === 'node.duplicate_id')).toEqual([]);
-    expect(compiled.ok).toBe(true);
-  });
-
-  it('does not expose persisted legacy entry ids as route endpoint catalog ids', async () => {
-    const route = await db.insert(schema.tokenRoutes).values({
-      displayName: 'gpt-legacy-entry-target',
-      routingStrategy: 'weighted',
-      enabled: true,
-    });
-    const routeId = Number(route.lastInsertRowid || route.insertId);
-    const { accountId, tokenId } = await seedAccountToken('legacy-entry-target');
-    await db.insert(schema.routeEndpointTargets).values({
-      routeId,
-      routeEndpointId: `entry:legacy:${routeId}`,
-      accountId,
-      tokenId,
-      sourceModel: 'gpt-legacy-entry-target',
-      priority: 0,
-      weight: 10,
-      enabled: true,
-    });
-
-    const graph = await buildRouteGraphSourceFromRouteTable();
-    const supplyEndpoint = graph.nodes.find((node) => (
-      node.type === 'route_endpoint'
-      && node.endpointKind === 'supply'
-      && node.routeId === routeId
-    ));
-    expect(supplyEndpoint?.id).toEqual(expect.stringMatching(/^route-endpoint:supply:upstream-model:/));
-    expect(supplyEndpoint?.id).not.toBe(`entry:legacy:${routeId}`);
-
-    const catalog = await listRouteEndpointCatalogPage({
-      routeId,
-      endpointKind: 'supply',
-      page: 1,
-      pageSize: 10,
-    });
-    expect(catalog.items).toEqual([
-      expect.objectContaining({
-        endpointId: supplyEndpoint?.id,
-        nodeId: supplyEndpoint?.id,
-        routeId,
-        endpointKind: 'supply',
-      }),
-    ]);
-    expect(catalog.items.map((item) => item.endpointId)).not.toContain(`entry:legacy:${routeId}`);
-  });
-
-  it('repairs active graphs that persisted compacted endpoint identities without target details', async () => {
-    const route = await db.insert(schema.tokenRoutes).values({
-      displayName: 'gpt-repair-compacted-identity',
-      routingStrategy: 'weighted',
-      enabled: true,
-    });
-    const routeId = Number(route.lastInsertRowid || route.insertId);
-    const { accountId, tokenId } = await seedAccountToken('repair-compacted');
-    await db.insert(schema.routeEndpointTargets).values({
-      routeId,
-      accountId,
-      tokenId,
-      sourceModel: 'gpt-repair-compacted-identity',
-      priority: 0,
-      weight: 10,
-      enabled: true,
-    });
-
-    const active = await ensureActiveRouteGraphVersion();
-    const badSourceGraph = {
-      ...active.sourceGraph,
-      nodes: active.sourceGraph.nodes.map((node) => {
-        if (
-          node.type !== 'route_endpoint'
-          || node.endpointKind !== 'supply'
-          || node.routeId !== routeId
-          || !node.metadata
-          || typeof node.metadata !== 'object'
-          || Array.isArray(node.metadata)
-        ) {
-          return node;
-        }
-        const metadata = node.metadata as Record<string, unknown>;
-        const endpointIdentity = metadata.endpointIdentity && typeof metadata.endpointIdentity === 'object' && !Array.isArray(metadata.endpointIdentity)
-          ? metadata.endpointIdentity as Record<string, unknown>
-          : {};
-        const identityWithoutTargets = { ...endpointIdentity };
-        delete identityWithoutTargets.targets;
-        return {
-          ...node,
-          metadata: {
-            ...metadata,
-            endpointIdentity: {
-              ...identityWithoutTargets,
-              targetCount: 1,
-              targetSetFingerprint: 'bad-persisted-fingerprint',
-            },
-          },
-        };
-      }),
-    };
-    const badCompiled = compileRouteGraphSource(badSourceGraph);
-    await db.update(schema.routeGraphVersions).set({
-      sourceGraphJson: JSON.stringify(badSourceGraph),
-      compiledGraphJson: JSON.stringify(badCompiled.compiled),
-    }).where(eq(schema.routeGraphVersions.id, active.id)).run();
-
-    const repaired = await ensureActiveRouteGraphVersion();
-    const repairedSupply = repaired.sourceGraph.nodes.find((node) => (
-      node.type === 'route_endpoint'
-      && node.endpointKind === 'supply'
-      && node.routeId === routeId
-    ));
-
-    expect(repairedSupply?.metadata).toMatchObject({
-      endpointIdentity: expect.not.objectContaining({
-        targetSetFingerprint: expect.anything(),
-      }),
-    });
-  });
-
-  it('reconciles legacy fallback supply endpoint nodes for routes without targets into synthetic unavailable branches', async () => {
-    const route = await db.insert(schema.tokenRoutes).values({
-      displayName: 'minimax-m2.7',
-      routingStrategy: 'weighted',
-      enabled: true,
-    });
-    const routeId = Number(route.lastInsertRowid || route.insertId);
-    const oldSupplyEndpointId = `route-endpoint:supply:route:${routeId}`;
-    const sourceGraph = {
-      version: 1,
-      nodes: [
-        {
-          id: oldSupplyEndpointId,
-          type: 'route_endpoint',
-          enabled: true,
-          visibility: 'internal',
-          ownership: 'auto_generated',
-          endpointKind: 'supply',
-          exposure: 'none',
-          resolutionStatus: 'resolved',
-          routeEndpointId: oldSupplyEndpointId,
-          endpointId: oldSupplyEndpointId,
-          routeId,
-          legacyRouteId: routeId,
-          sourceKind: 'upstream_model',
-          backend: { kind: 'supply' },
-          match: { kind: 'model', requestedModelPattern: 'minimax-m2.7', displayName: 'minimax-m2.7', routeId },
-          config: { targets: [], targetSelection: { strategy: 'defer_to_router' } },
-          metadata: { sourceRouteId: routeId, localRouteId: routeId, sourceRouteIds: [routeId], localRouteIds: [routeId] },
         },
       ],
       edges: [],
       macros: [
         {
-          id: 'auto-model:minimax-m2.7',
+          id: 'macro:legacy-policy',
           kind: 'candidate_selector',
-          enabled: true,
-          visibility: 'public',
-          ownership: 'auto_generated',
-          name: 'minimax-m2.7',
           config: {
-            surface: {
-              entry: {
-                kind: 'external',
-                visibility: 'public',
-                match: { kind: 'model', requestedModelPattern: 'minimax-m2.7', displayName: 'minimax-m2.7', routeId },
-              },
-              output: 'route',
-            },
             policy: { strategy: 'weighted' },
-            groups: [
-              {
-                id: 'priority:0',
-                enabled: true,
-                priority: 0,
-                input: { kind: 'route_endpoints', endpointIds: [oldSupplyEndpointId] },
-                defaults: { weight: 10, priority: 0 },
-              },
-            ],
+            groups: [{
+              id: 'stage:legacy-priority',
+              priority: 0,
+              input: { kind: 'route_endpoints', endpointIds: [] },
+            }],
           },
         },
       ],
-      metadata: {},
-    };
-    const published = await publishRouteGraphSource({ sourceGraph, createdBy: 'test', allowDiagnostics: true });
-    expect(published.ok).toBe(true);
-
-    const reconciled = await ensureActiveRouteGraphVersion();
-    const raw = JSON.stringify(reconciled.sourceGraph);
-    const compiled = compileRouteGraphSource(reconciled.sourceGraph);
-
-    expect(raw).not.toContain(oldSupplyEndpointId);
-    expect(compiled.ok).toBe(true);
-    expect(reconciled.sourceGraph.macros).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        id: 'auto-model:minimax-m2.7',
-        config: expect.objectContaining({
-          groups: [
-            expect.objectContaining({
-              input: { kind: 'synthetic', statusCode: 503, message: 'No route is available.' },
-            }),
-          ],
-        }),
-      }),
-    ]));
-  });
-
-  it('keeps inferred automatic route supply endpoints model-specific when sourceModel is missing', async () => {
-    const haikuRoute = await db.insert(schema.tokenRoutes).values({
-      displayName: 'claude-haiku-4-5-20251001',
-      routingStrategy: 'weighted',
-      enabled: true,
-    });
-    const haikuRouteId = Number(haikuRoute.lastInsertRowid || haikuRoute.insertId);
-    const opusRoute = await db.insert(schema.tokenRoutes).values({
-      displayName: 'claude-opus-4-6',
-      routingStrategy: 'weighted',
-      enabled: true,
-    });
-    const opusRouteId = Number(opusRoute.lastInsertRowid || opusRoute.insertId);
-    const { accountId, tokenId } = await seedAccountToken('anyrouter');
-
-    await db.insert(schema.routeEndpointTargets).values([
-      {
-        routeId: haikuRouteId,
-        accountId,
-        tokenId,
-        sourceModel: null,
-        priority: 0,
-        weight: 10,
-        enabled: true,
-      },
-      {
-        routeId: opusRouteId,
-        accountId,
-        tokenId,
-        sourceModel: null,
-        priority: 0,
-        weight: 10,
-        enabled: true,
-      },
-    ]).run();
-
-    const graph = await buildRouteGraphSourceFromRouteTable();
-    const haikuMacroId = 'macro:auto-model:claude-haiku-4-5-20251001';
-    const opusMacroId = 'macro:auto-model:claude-opus-4-6';
-    const haikuCandidateEdges = graph.edges.filter((edge) => edge.targetNodeId === haikuMacroId && edge.targetPortId === 'candidates.in');
-    const opusCandidateEdges = graph.edges.filter((edge) => edge.targetNodeId === opusMacroId && edge.targetPortId === 'candidates.in');
-
-    expect(haikuCandidateEdges).toHaveLength(1);
-    expect(opusCandidateEdges).toHaveLength(1);
-    expect(haikuCandidateEdges[0]?.sourceNodeId).toContain(':claude-haiku-4-5-20251001:');
-    expect(opusCandidateEdges[0]?.sourceNodeId).toContain(':claude-opus-4-6:');
-    expect(haikuCandidateEdges[0]?.sourceNodeId).not.toBe(opusCandidateEdges[0]?.sourceNodeId);
-    expect(haikuCandidateEdges[0]?.sourceNodeId).not.toContain(':request-model:');
-    expect(opusCandidateEdges[0]?.sourceNodeId).not.toContain(':request-model:');
-
-    const haikuSupply = graph.nodes.find((node) => node.id === haikuCandidateEdges[0]?.sourceNodeId);
-    const opusSupply = graph.nodes.find((node) => node.id === opusCandidateEdges[0]?.sourceNodeId);
-    expect(haikuSupply?.metadata).toMatchObject({
-      canonicalModel: 'claude-haiku-4-5-20251001',
-      upstreamModel: 'claude-haiku-4-5-20251001',
-      endpointIdentity: expect.objectContaining({ model: 'claude-haiku-4-5-20251001' }),
-    });
-    expect(opusSupply?.metadata).toMatchObject({
-      canonicalModel: 'claude-opus-4-6',
-      upstreamModel: 'claude-opus-4-6',
-      endpointIdentity: expect.objectContaining({ model: 'claude-opus-4-6' }),
-    });
-  });
-
-  it('uses previous exact route matches to infer model-specific supply endpoints when route labels are empty', async () => {
-    const haikuRoute = await db.insert(schema.tokenRoutes).values({
-      displayName: null,
-      routingStrategy: 'weighted',
-      enabled: true,
-    });
-    const haikuRouteId = Number(haikuRoute.lastInsertRowid || haikuRoute.insertId);
-    const opusRoute = await db.insert(schema.tokenRoutes).values({
-      displayName: null,
-      routingStrategy: 'weighted',
-      enabled: true,
-    });
-    const opusRouteId = Number(opusRoute.lastInsertRowid || opusRoute.insertId);
-    const { accountId, tokenId } = await seedAccountToken('anyrouter-empty-label');
-
-    await db.insert(schema.routeEndpointTargets).values([
-      {
-        routeId: haikuRouteId,
-        accountId,
-        tokenId,
-        sourceModel: null,
-        priority: 0,
-        weight: 10,
-        enabled: true,
-      },
-      {
-        routeId: opusRouteId,
-        accountId,
-        tokenId,
-        sourceModel: null,
-        priority: 0,
-        weight: 10,
-        enabled: true,
-      },
-    ]).run();
-
-    const baseSource = {
-      version: 1,
-      nodes: [
-        {
-          id: `route-endpoint:product:route:${haikuRouteId}`,
-          type: 'route_endpoint',
-          endpointKind: 'route_product',
-          exposure: 'public',
-          ownership: 'auto_generated',
-          enabled: true,
-          visibility: 'internal',
-          routeId: haikuRouteId,
-          match: { requestedModelPattern: 'claude-haiku-4-5-20251001', displayName: null, routeId: haikuRouteId },
-          backend: { kind: 'routes', routeIds: [haikuRouteId] },
-        },
-        {
-          id: `route-endpoint:product:route:${opusRouteId}`,
-          type: 'route_endpoint',
-          endpointKind: 'route_product',
-          exposure: 'public',
-          ownership: 'auto_generated',
-          enabled: true,
-          visibility: 'internal',
-          routeId: opusRouteId,
-          match: { requestedModelPattern: 'claude-opus-4-6', displayName: null, routeId: opusRouteId },
-          backend: { kind: 'routes', routeIds: [opusRouteId] },
-        },
-      ],
-      edges: [],
-      macros: [],
     };
 
-    const graph = await buildRouteGraphSourceFromRouteTable(baseSource);
-    const haikuCandidateEdges = graph.edges.filter((edge) => edge.targetNodeId === 'macro:auto-model:claude-haiku-4-5-20251001');
-    const opusCandidateEdges = graph.edges.filter((edge) => edge.targetNodeId === 'macro:auto-model:claude-opus-4-6');
+    const validation = await validateRouteGraphDraft(sourceGraph);
+    expect(validation.ok).toBe(false);
+    expect(validation.diagnostics.filter((diagnostic) => diagnostic.code === 'route_graph.native_policy'))
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({ message: 'Invalid dispatcher policy. Legacy strategy policies are not supported.' }),
+        expect.objectContaining({ message: 'Invalid target selection policy. Legacy strategy policies are not supported.' }),
+        expect.objectContaining({ message: 'Invalid macro dispatcher policy. Legacy strategy policies are not supported.' }),
+        expect.objectContaining({ message: 'Invalid fallback stage. Use array order instead of priority.' }),
+      ]));
 
-    expect(haikuCandidateEdges).toHaveLength(1);
-    expect(opusCandidateEdges).toHaveLength(1);
-    expect(haikuCandidateEdges[0]?.sourceNodeId).toContain(':claude-haiku-4-5-20251001:');
-    expect(opusCandidateEdges[0]?.sourceNodeId).toContain(':claude-opus-4-6:');
-    expect(haikuCandidateEdges[0]?.sourceNodeId).not.toBe(opusCandidateEdges[0]?.sourceNodeId);
-    expect(graph.nodes.filter((node) => node.id.includes(':request-model:'))).toHaveLength(0);
-  });
-
-  it('reconciles colon-named automatic exact route bindings without retaining stale generated nodes', async () => {
-    const firstRoute = await db.insert(schema.tokenRoutes).values({
-      displayName: 'deepseek-v4-flash:free',
-      routingStrategy: 'weighted',
-      enabled: true,
-    });
-    const firstRouteId = Number(firstRoute.lastInsertRowid || firstRoute.insertId);
-    const secondRoute = await db.insert(schema.tokenRoutes).values({
-      displayName: 'DeepSeek-V4-Flash:Free',
-      routingStrategy: 'weighted',
-      enabled: true,
-    });
-    const secondRouteId = Number(secondRoute.lastInsertRowid || secondRoute.insertId);
-    const { accountId, tokenId } = await seedAccountToken('colon-auto-native');
-    await db.insert(schema.routeEndpointTargets).values([
-      {
-        routeId: firstRouteId,
-        accountId,
-        tokenId,
-        sourceModel: 'deepseek-v4-flash:free',
-        priority: 0,
-        weight: 10,
-        enabled: true,
-      },
-      {
-        routeId: secondRouteId,
-        accountId,
-        tokenId,
-        sourceModel: 'DeepSeek-V4-Flash:Free',
-        priority: 1,
-        weight: 10,
-        enabled: true,
-      },
-    ]);
-
-    const graph = await buildRouteGraphSourceFromRouteTable();
-    const published = await publishRouteGraphSource({ sourceGraph: graph, createdBy: 'test' });
-    expect(published.ok).toBe(true);
-
-    const pollutedActive = {
-      ...published.version,
-      sourceGraph: {
-        ...published.version.sourceGraph,
-        nodes: [
-          ...published.version.sourceGraph.nodes,
-          ...compileRouteGraphSource(published.version.sourceGraph).primitiveSource.nodes
-            .filter((node) => node.id.startsWith('macro:auto-model:deepseek-v4-flash:free')),
-        ],
-      },
-    };
-
-    const reconciled = await reconcileActiveGraphWithRouteTable(pollutedActive, new Map(), { allowDiagnostics: false });
-    const compiled = compileRouteGraphSource(reconciled.sourceGraph);
-    expect(compiled.diagnostics.filter((diagnostic) => diagnostic.code === 'node.duplicate_id')).toEqual([]);
-    expect(compiled.ok).toBe(true);
-    expect(reconciled.sourceGraph.nodes.filter((node) => node.id === 'route-endpoint:product:auto-model:deepseek-v4-flash:free')).toHaveLength(1);
-    expect((reconciled.sourceGraph.macros || []).filter((macro) => macro.id === 'auto-model:deepseek-v4-flash:free')).toHaveLength(1);
-  });
-
-  it('publishes manual pattern-sourced candidate selector macros over generated route endpoints', async () => {
-    const sourceRouteA = await db.insert(schema.tokenRoutes).values({
-      displayName: 'claude-opus-pattern-source',
-      routingStrategy: 'weighted',
-      enabled: true,
-    });
-    const routeAId = Number(sourceRouteA.lastInsertRowid || sourceRouteA.insertId);
-    const sourceRouteB = await db.insert(schema.tokenRoutes).values({
-      displayName: 'gpt-pattern-source',
-      routingStrategy: 'weighted',
-      enabled: true,
-    });
-    const routeBId = Number(sourceRouteB.lastInsertRowid || sourceRouteB.insertId);
-    const { accountId, tokenId } = await seedAccountToken('pattern-source');
-    await db.insert(schema.routeEndpointTargets).values([
-      {
-        routeId: routeAId,
-        accountId,
-        tokenId,
-        sourceModel: 'claude-opus-pattern-source',
-        priority: 0,
-        weight: 10,
-        enabled: true,
-      },
-      {
-        routeId: routeBId,
-        accountId,
-        tokenId,
-        sourceModel: 'gpt-pattern-source',
-        priority: 0,
-        weight: 10,
-        enabled: true,
-      },
-    ]).run();
-
-    const routeTableGraph = await buildRouteGraphSourceFromRouteTable();
     const published = await publishRouteGraphSource({
-      sourceGraph: {
-        ...routeTableGraph,
-        macros: [
-          ...(routeTableGraph.macros || []),
-          {
-            id: 'manual-pattern-group',
-            kind: 'candidate_selector',
-            enabled: true,
-            visibility: 'public',
-            ownership: 'manual',
-            config: {
-              surface: {
-                entry: {
-                  kind: 'external',
-                  visibility: 'public',
-                  match: { displayName: 'manual-claude-pattern-group' },
-                },
-                output: 'route',
-              },
-              policy: { strategy: 'priority_order' },
-              groups: [
-                {
-                  id: 'claude',
-                  enabled: true,
-                  priority: 0,
-                  input: { kind: 'model_pattern', pattern: 'claude-*' },
-                  materialization: { sort: 'model_name', dedupeBy: 'route_id' },
-                },
-              ],
-            },
-          },
-        ],
-      },
+      sourceGraph,
       createdBy: 'test',
+      allowDiagnostics: true,
     });
-
-    expect(published.ok).toBe(true);
-    if (!published.ok) return;
-    expect(published.version.compiledGraph.publicModels).toEqual(expect.arrayContaining([
-      expect.objectContaining({ model: 'manual-claude-pattern-group' }),
-    ]));
-    expect(published.version.compiledGraph.terminals).toEqual(expect.arrayContaining([
-      expect.objectContaining({ legacyRouteId: routeAId }),
-    ]));
-    expect(published.version.compiledGraph.terminals.some((terminal) => terminal.legacyRouteId === routeBId)).toBe(true);
-
-    const primitive = compileRouteGraphSource(published.version.sourceGraph).primitiveSource;
-    expect(primitive.nodes).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        id: `macro:manual-pattern-group:candidate:claude:route:${routeAId}`,
-        ownership: 'derived',
-      }),
-    ]));
-    expect(primitive.nodes.some((node) => node.id === `macro:manual-pattern-group:candidate:claude:route:${routeBId}`)).toBe(false);
+    expect(published).toMatchObject({ ok: false });
+    expect(await db.select().from(schema.routeGraphVersions).all()).toEqual([]);
   });
 
-  it('publishes automatic exact-model groups as pattern projections instead of manual groups', async () => {
-    const modelName = 'Qwen/Qwen3.5-122B-A10B';
-    const firstRouteInsert = await db.insert(schema.tokenRoutes).values({
-      routingStrategy: 'weighted',
+  it('publishes a compiled runtime artifact from graph-native route groups', async () => {
+    const { account, token } = await seedAccountToken('claude-clean');
+    const group = await createGroup('claude-clean');
+
+    await insertRouteGroupMember({
+      groupId: group.id,
+      accountId: account.id,
+      tokenId: token.id,
+      sourceModel: 'claude-clean',
       enabled: true,
     });
-    const firstRouteId = Number(firstRouteInsert.lastInsertRowid || firstRouteInsert.insertId);
-    const secondRouteInsert = await db.insert(schema.tokenRoutes).values({
-      routingStrategy: 'weighted',
-      enabled: true,
+
+    const graph = await buildRouteGraphSourceFromRouteGroups();
+    const published = await publishRouteGraphSource({
+      sourceGraph: graph,
+      createdBy: 'test',
+      allowDiagnostics: true,
     });
-    const secondRouteId = Number(secondRouteInsert.lastInsertRowid || secondRouteInsert.insertId);
-    const { accountId, tokenId } = await seedAccountToken('qwen-auto-group');
-    await db.insert(schema.routeEndpointTargets).values([
-      {
-        routeId: firstRouteId,
-        accountId,
-        tokenId,
-        sourceModel: modelName,
-        priority: 0,
-        weight: 10,
-        enabled: true,
-      },
-      {
-        routeId: secondRouteId,
-        accountId,
-        tokenId,
-        sourceModel: modelName,
-        priority: 0,
-        weight: 10,
-        enabled: true,
-      },
-    ]).run();
-
-    const graph = await buildRouteGraphSourceFromRouteTable();
-    const automaticProductNode = graph.nodes.find((node) => (
-      node.type === 'route_endpoint'
-      && node.endpointKind === 'route_product'
-      && node.sourceKind === 'automatic_model_group'
-      && node.match.requestedModelPattern === modelName
-    ));
-    expect(automaticProductNode?.backend).toEqual({ kind: 'routes', routeIds: [firstRouteId, secondRouteId] });
-
-    const published = await publishRouteGraphSource({ sourceGraph: graph, createdBy: 'backup-import' });
     expect(published.ok).toBe(true);
 
-    const projections = await loadRouteBindingProjectionMap();
-    expect(projections.get(firstRouteId)).toMatchObject({
-      routeMode: 'pattern',
-      backend: { kind: 'supply' },
-      sourceRouteIds: [],
-      modelPattern: modelName,
-    });
-
-    const bindings = await loadActiveRouteGraphRouteBindings();
-    expect(bindings.get(firstRouteId)).toMatchObject({
-      routeMode: 'pattern',
-      backend: { kind: 'supply' },
-      sourceRouteIds: [],
-      exactModelName: modelName,
-    });
-
-    await expect(syncRouteBindingProjectionsFromRouteGraphSource(graph, { repairOnly: true }))
-      .resolves.toMatchObject({ checked: 1, upserted: 0 });
+    const runtime = await getActiveRouteRuntimeArtifact();
+    expect(runtime?.compiledGraph.compiledRouterBundle?.plans.length).toBeGreaterThan(0);
+    const runtimeJson = JSON.stringify(runtime?.compiledGraph);
+    expect(runtimeJson).not.toContain('entry:legacy');
+    expect(runtimeJson).not.toContain('sourceRouteIds');
+    expect(runtimeJson).not.toContain('legacyRouteId');
+    expect(runtimeJson).not.toContain('sourceRef');
   });
 
-  it('rebases stale drafts with newly generated route table macros', async () => {
+  it('rejects publication when a compiled transport binding no longer exists', async () => {
+    const { account, token } = await seedAccountToken('missing-runtime-binding');
+    const group = await createGroup('missing-runtime-binding');
+    const member = await insertRouteGroupMember({
+      groupId: group.id,
+      accountId: account.id,
+      tokenId: token.id,
+      sourceModel: 'missing-runtime-binding',
+      enabled: true,
+    });
+    const sourceGraph = await buildRouteGraphSourceFromRouteGroups();
+    const executionTargetId = await getExecutionTargetIdForMember(member.id);
+    expect(executionTargetId).toBeTruthy();
+    const pointerBefore = await db.select().from(schema.compiledRuntimeActiveArtifact).get();
+    await db.delete(schema.runtimeExecutionTargets)
+      .where(eq(schema.runtimeExecutionTargets.id, executionTargetId!))
+      .run();
+
+    await expect(publishRouteGraphSource({ sourceGraph, createdBy: 'test' }))
+      .rejects.toThrow(/execution_target_not_found/);
+    expect(await db.select().from(schema.compiledRuntimeActiveArtifact).get()).toEqual(pointerBefore);
+  });
+
+  it('rejects publication when compiled and persisted credential bindings disagree', async () => {
+    const { account, token } = await seedAccountToken('mismatched-runtime-binding');
+    const group = await createGroup('mismatched-runtime-binding');
+    const member = await insertRouteGroupMember({
+      groupId: group.id,
+      accountId: account.id,
+      tokenId: token.id,
+      sourceModel: 'mismatched-runtime-binding',
+      enabled: true,
+    });
+    const sourceGraph = await buildRouteGraphSourceFromRouteGroups();
+    const executionTargetId = await getExecutionTargetIdForMember(member.id);
+    expect(executionTargetId).toBeTruthy();
+    const otherAccount = await db.insert(schema.accounts).values({
+      siteId: account.siteId,
+      username: 'binding-mismatch-account',
+      accessToken: 'binding-mismatch-access',
+      status: 'active',
+    }).returning().get();
+    await db.update(schema.runtimeExecutionTargets)
+      .set({ accountId: otherAccount.id })
+      .where(eq(schema.runtimeExecutionTargets.id, executionTargetId!))
+      .run();
+
+    await expect(publishRouteGraphSource({ sourceGraph, createdBy: 'test' }))
+      .rejects.toThrow(/token_account_binding_mismatch/);
+  });
+
+  it('publishes a draft and advances its exact revision in one write boundary', async () => {
     const initial = await publishRouteGraphSource({
-      sourceGraph: {
-        version: 1,
-        nodes: [
-          {
-            id: 'entry.manual',
-            type: 'entry',
-            enabled: true,
-            visibility: 'public',
-            ownership: 'manual',
-            match: { requestedModelPattern: 'manual-model', displayName: null },
-          },
-        ],
-        edges: [],
-        macros: [],
-      },
+      sourceGraph: { nodes: [], edges: [], macros: [] },
       createdBy: 'test',
       allowDiagnostics: true,
     });
     expect(initial.ok).toBe(true);
+    const saved = await saveRouteGraphDraft({ nodes: [], edges: [], macros: [] });
 
-    const draft = await saveRouteGraphDraft({
-      version: 1,
-      nodes: [
-        {
-          id: 'entry.manual',
-          type: 'entry',
-          enabled: true,
-          visibility: 'public',
-          ownership: 'manual',
-          match: { requestedModelPattern: 'manual-model', displayName: null },
-        },
-      ],
-      edges: [],
-      macros: [],
+    const published = await publishRouteGraphDraft();
+
+    expect(published.ok).toBe(true);
+    const draft = await db.select().from(schema.routeGraphDrafts)
+      .where(eq(schema.routeGraphDrafts.id, saved.id)).get();
+    expect(draft).toMatchObject({
+      status: 'published',
+      revision: saved.revision + 1,
     });
-    expect(draft.workingGraph.macros).toHaveLength(0);
+    const pointer = await db.select().from(schema.routeGraphActiveVersion)
+      .where(eq(schema.routeGraphActiveVersion.id, 1)).get();
+    expect(pointer?.versionId).toBe(published.ok ? published.version.id : null);
+  });
 
-    const sourceInsert = await db.insert(schema.tokenRoutes).values({
-      displayName: 'source-model',
-      routingStrategy: 'weighted',
+  it('rolls back source version, runtime artifact and both active pointers when pointer swap fails', async () => {
+    const initial = await publishRouteGraphSource({
+      sourceGraph: { nodes: [], edges: [], macros: [], metadata: { publication: 'initial' } },
+      createdBy: 'atomic-publication-test',
+      allowDiagnostics: true,
+    });
+    expect(initial.ok).toBe(true);
+
+    const before = {
+      versions: await db.select().from(schema.routeGraphVersions).all(),
+      artifacts: await db.select().from(schema.compiledRuntimeArtifacts).all(),
+      graphPointer: await db.select().from(schema.routeGraphActiveVersion).get(),
+      runtimePointer: await db.select().from(schema.compiledRuntimeActiveArtifact).get(),
+    };
+
+    await db.run(sql.raw(`
+      CREATE TRIGGER fail_route_graph_pointer_swap
+      BEFORE UPDATE ON route_graph_active_version
+      BEGIN
+        SELECT RAISE(ABORT, 'injected active pointer failure');
+      END
+    `));
+    try {
+      await expect(publishRouteGraphSource({
+        sourceGraph: { nodes: [], edges: [], macros: [], metadata: { publication: 'must-rollback' } },
+        createdBy: 'atomic-publication-test',
+        allowDiagnostics: true,
+      })).rejects.toThrow(/route_graph_active_version/);
+    } finally {
+      await db.run(sql.raw('DROP TRIGGER IF EXISTS fail_route_graph_pointer_swap'));
+    }
+
+    expect(await db.select().from(schema.routeGraphVersions).all()).toEqual(before.versions);
+    expect(await db.select().from(schema.compiledRuntimeArtifacts).all()).toEqual(before.artifacts);
+    expect(await db.select().from(schema.routeGraphActiveVersion).get()).toEqual(before.graphPointer);
+    expect(await db.select().from(schema.compiledRuntimeActiveArtifact).get()).toEqual(before.runtimePointer);
+    expect((await db.select().from(schema.routeGraphVersions).all()).filter((row: { status: string }) => row.status === 'active')).toHaveLength(1);
+  });
+
+  it('rolls back account retirement and Graph target pruning when publication fails', async () => {
+    const { account, token } = await seedAccountToken('retirement-rollback');
+    const group = await createGroup('retirement-rollback');
+    const member = await insertRouteGroupMember({
+      groupId: group.id,
+      accountId: account.id,
+      tokenId: token.id,
+      sourceModel: 'retirement-rollback',
       enabled: true,
     });
-    const sourceRouteId = Number(sourceInsert.lastInsertRowid || sourceInsert.insertId);
-    const { accountId, tokenId } = await seedAccountToken('rebase-source');
-    const groupInsert = await db.insert(schema.tokenRoutes).values({
-      displayName: 'public-group',
-      routingStrategy: 'round_robin',
+    const executionTargetId = await getExecutionTargetIdForMember(member.id);
+    expect(executionTargetId).toBeTruthy();
+
+    const before = {
+      account: await db.select().from(schema.accounts).where(eq(schema.accounts.id, account.id)).get(),
+      token: await db.select().from(schema.accountTokens).where(eq(schema.accountTokens.id, token.id)).get(),
+      target: await db.select().from(schema.runtimeExecutionTargets)
+        .where(eq(schema.runtimeExecutionTargets.id, executionTargetId!)).get(),
+      revision: await loadRouteGroupManagementCatalogRevision(),
+      versions: await db.select().from(schema.routeGraphVersions).all(),
+      artifacts: await db.select().from(schema.compiledRuntimeArtifacts).all(),
+      graphPointer: await db.select().from(schema.routeGraphActiveVersion).get(),
+      runtimePointer: await db.select().from(schema.compiledRuntimeActiveArtifact).get(),
+    };
+
+    await db.run(sql.raw(`
+      CREATE TRIGGER fail_account_retirement_pointer_swap
+      BEFORE UPDATE ON route_graph_active_version
+      BEGIN
+        SELECT RAISE(ABORT, 'injected account retirement publication failure');
+      END
+    `));
+    try {
+      await expect(retireAccountFromRouting(account.id, 'account-retirement-rollback-test'))
+        .rejects.toThrow(/route_graph_active_version/);
+    } finally {
+      await db.run(sql.raw('DROP TRIGGER IF EXISTS fail_account_retirement_pointer_swap'));
+    }
+
+    expect(await db.select().from(schema.accounts).where(eq(schema.accounts.id, account.id)).get())
+      .toEqual(before.account);
+    expect(await db.select().from(schema.accountTokens).where(eq(schema.accountTokens.id, token.id)).get())
+      .toEqual(before.token);
+    expect(await db.select().from(schema.runtimeExecutionTargets)
+      .where(eq(schema.runtimeExecutionTargets.id, executionTargetId!)).get())
+      .toEqual(before.target);
+    expect(await loadRouteGroupManagementCatalogRevision()).toBe(before.revision);
+    expect(await db.select().from(schema.routeGraphVersions).all()).toEqual(before.versions);
+    expect(await db.select().from(schema.compiledRuntimeArtifacts).all()).toEqual(before.artifacts);
+    expect(await db.select().from(schema.routeGraphActiveVersion).get()).toEqual(before.graphPointer);
+    expect(await db.select().from(schema.compiledRuntimeActiveArtifact).get()).toEqual(before.runtimePointer);
+  });
+
+  it('keeps Graph and compiled-runtime pointers consistent across independent publisher processes', async () => {
+    const initial = await publishRouteGraphSource({
+      sourceGraph: { nodes: [], edges: [], macros: [], metadata: { publication: 'multi-process-base' } },
+      createdBy: 'multi-process-test',
+      allowDiagnostics: true,
+    });
+    expect(initial.ok).toBe(true);
+
+    const barrierPath = join(dataDir, 'route-publication.barrier');
+    const workerPath = new URL('../../testing/routeGraphPublicationWorker.ts', import.meta.url);
+    const environment = {
+      ...process.env,
+      DATA_DIR: dataDir,
+      DB_TYPE: 'sqlite',
+      DB_URL: '',
+    };
+    const first = execFileAsync(process.execPath, [
+      '--import', 'tsx', workerPath.pathname, 'publisher-a', barrierPath,
+    ], { cwd: process.cwd(), env: environment, timeout: 20_000 });
+    const second = execFileAsync(process.execPath, [
+      '--import', 'tsx', workerPath.pathname, 'publisher-b', barrierPath,
+    ], { cwd: process.cwd(), env: environment, timeout: 20_000 });
+    writeFileSync(barrierPath, 'go');
+
+    const outcomes = await Promise.all([first, second]);
+    const results = outcomes.map(({ stdout }) => JSON.parse(stdout) as { ok: boolean; label: string });
+    expect(results.some((result) => result.ok)).toBe(true);
+
+    const graphPointer = await db.select().from(schema.routeGraphActiveVersion).get();
+    const runtimePointer = await db.select().from(schema.compiledRuntimeActiveArtifact).get();
+    expect(graphPointer).toBeTruthy();
+    expect(runtimePointer).toBeTruthy();
+    const activeArtifact = await db.select().from(schema.compiledRuntimeArtifacts)
+      .where(eq(schema.compiledRuntimeArtifacts.id, runtimePointer!.artifactId)).get();
+    expect(activeArtifact?.sourceGraphVersionId).toBe(graphPointer!.versionId);
+
+    const versions = await db.select().from(schema.routeGraphVersions).all();
+    expect(versions.filter((row: { status: string }) => row.status === 'active')).toEqual([
+      expect.objectContaining({ id: graphPointer!.versionId }),
+    ]);
+    const artifacts = await db.select().from(schema.compiledRuntimeArtifacts).all();
+    expect(artifacts.every((artifact: { sourceGraphVersionId: number | null }) => (
+      artifact.sourceGraphVersionId == null
+      || versions.some((version: { id: number }) => version.id === artifact.sourceGraphVersionId)
+    ))).toBe(true);
+  }, 30_000);
+
+  it('reads the published artifact without recompiling the stored source graph', async () => {
+    const { account, token } = await seedAccountToken('artifact-only-read');
+    const group = await createGroup('artifact-only-read');
+    await insertRouteGroupMember({
+      groupId: group.id,
+      accountId: account.id,
+      tokenId: token.id,
+      sourceModel: 'artifact-only-read',
       enabled: true,
     });
-    const groupRouteId = Number(groupInsert.lastInsertRowid || groupInsert.insertId);
-    await db.insert(schema.routeGroupSources).values({ groupRouteId, sourceRouteId });
-    await db.insert(schema.routeEndpointTargets).values({
-      routeId: sourceRouteId,
-      accountId,
-      tokenId,
-      sourceModel: 'source-model',
-      priority: 0,
-      weight: 10,
+    const published = await publishRouteGraphSource({
+      sourceGraph: await buildRouteGraphSourceFromRouteGroups(),
+      createdBy: 'test',
+      allowDiagnostics: true,
+    });
+    expect(published.ok).toBe(true);
+
+    await db.update(schema.routeGraphVersions).set({
+      sourceGraphJson: JSON.stringify({ nodes: [], edges: [] }),
+    }).where(eq(schema.routeGraphVersions.id, published.version.id)).run();
+    invalidateRouteRuntimeArtifactReadCaches();
+
+    await expect(getActiveRouteGraphVersion()).resolves.toMatchObject({
+      id: published.version.id,
+      compiledGraph: {
+        compiledRouterBundle: expect.any(Object),
+      },
+    });
+  });
+
+  it('does not turn corrupted active runtime storage into an empty runtime artifact', async () => {
+    const { account, token } = await seedAccountToken('corrupt-runtime');
+    const group = await createGroup('corrupt-runtime');
+
+    await insertRouteGroupMember({
+      groupId: group.id,
+      accountId: account.id,
+      tokenId: token.id,
+      sourceModel: 'corrupt-runtime',
       enabled: true,
     });
 
-    const activeGraph = await buildRouteGraphSourceFromRouteTable(initial.version.sourceGraph);
-    const active = await publishRouteGraphSource({ sourceGraph: activeGraph, createdBy: 'test' });
-    expect(active.ok).toBe(true);
+    const graph = await buildRouteGraphSourceFromRouteGroups();
+    const published = await publishRouteGraphSource({
+      sourceGraph: graph,
+      createdBy: 'test',
+      allowDiagnostics: true,
+    });
+    expect(published.ok).toBe(true);
 
-    const rebased = await rebaseRouteGraphDraft();
-    expect(rebased.workingGraph.macros).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        id: `route:${groupRouteId}:model-group`,
-        kind: 'candidate_selector',
-        ownership: 'auto_generated',
-      }),
-    ]));
-    expect(rebased.workingGraph.nodes).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 'entry.manual', ownership: 'manual' }),
-    ]));
+    await db.update(schema.routeGraphVersions).set({
+      sourceGraphJson: '{bad-source-json',
+    }).where(eq(schema.routeGraphVersions.id, published.version.id)).run();
+    await db.update(schema.compiledRuntimeArtifacts).set({
+      artifactJson: '{bad-runtime-json',
+    }).where(eq(schema.compiledRuntimeArtifacts.sourceGraphVersionId, published.version.id)).run();
+    invalidateRouteRuntimeArtifactReadCaches();
+
+    await expect(getActiveRouteRuntimeArtifact()).rejects.toThrow(/Route runtime artifact .* is invalid/);
   });
 });

@@ -4,6 +4,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { eq } from 'drizzle-orm';
+import { clearRouteGroupMemberTestData, insertRouteGroupMember, insertRouteGroupMembers, listAllRouteGroupMembers } from '../../../testing/routeGroupMemberTestUtils.js';
 
 const getModelsMock = vi.fn();
 
@@ -14,22 +15,27 @@ vi.mock('../../services/platforms/index.js', () => ({
 }));
 
 type DbModule = typeof import('../../db/index.js');
+type RouteGroupManagementModule = typeof import('../../services/routeGroupManagementService.js');
 
 describe('accounts api key recovery', { timeout: 15_000 }, () => {
   let app: FastifyInstance;
   let db: DbModule['db'];
   let schema: DbModule['schema'];
+  let createRouteGroupFromPayload: RouteGroupManagementModule['createRouteGroupFromPayload'];
   let dataDir = '';
 
   beforeAll(async () => {
     dataDir = mkdtempSync(join(tmpdir(), 'metapi-accounts-apikey-recovery-'));
     process.env.DATA_DIR = dataDir;
 
-    await import('../../db/migrate.js');
+    const migrate = await import('../../db/migrate.js');
+    await migrate.runSqliteMigrations();
     const dbModule = await import('../../db/index.js');
+    const routeGroupManagementModule = await import('../../services/routeGroupManagementService.js');
     const routesModule = await import('./accounts.js');
     db = dbModule.db;
     schema = dbModule.schema;
+    createRouteGroupFromPayload = routeGroupManagementModule.createRouteGroupFromPayload;
 
     app = Fastify();
     await app.register(routesModule.accountsRoutes);
@@ -40,8 +46,9 @@ describe('accounts api key recovery', { timeout: 15_000 }, () => {
 
     await db.delete(schema.proxyLogs).run();
     await db.delete(schema.checkinLogs).run();
-    await db.delete(schema.routeEndpointTargets).run();
-    await db.delete(schema.tokenRoutes).run();
+    await clearRouteGroupMemberTestData();
+    await db.delete(schema.runtimeExecutionTargetState).run();
+    await db.delete(schema.runtimeExecutionTargets).run();
     await db.delete(schema.tokenModelAvailability).run();
     await db.delete(schema.modelAvailability).run();
     await db.delete(schema.accountTokens).run();
@@ -106,8 +113,8 @@ describe('accounts api key recovery', { timeout: 15_000 }, () => {
       .all();
     expect(availabilityRows.map((row) => row.modelName)).toContain('gpt-4.1');
 
-    const routeEndpointTargets = await db.select().from(schema.routeEndpointTargets).all();
-    expect(routeEndpointTargets.some((channel) => channel.accountId === account.id)).toBe(true);
+    const routeGroupCandidates = await listAllRouteGroupMembers();
+    expect(routeGroupCandidates.some((channel) => channel.accountId === account.id)).toBe(true);
   });
 
   it('keeps an expired API key connection pinned when only status is edited', async () => {
@@ -175,20 +182,23 @@ describe('accounts api key recovery', { timeout: 15_000 }, () => {
       checkedAt: '2026-04-01T10:00:00.000Z',
     }).run();
 
-    const route = await db.insert(schema.tokenRoutes).values({
-      modelPattern: 'gpt-4.1',
+    const routeGroup = await createRouteGroupFromPayload({
+      model: { publicName: 'gpt-4.1' },
+      presentation: { displayName: 'gpt-4.1' },
       enabled: true,
-    }).returning().get();
+      dispatcherPolicy: { kind: 'builtin', builtin: 'weighted' },
+    });
 
-    const seededChannel = await db.insert(schema.routeEndpointTargets).values({
-      routeId: route.id,
+    const seededChannel = await insertRouteGroupMember({
+      groupId: routeGroup.id,
       accountId: account.id,
       tokenId: null,
-      priority: 0,
+      sourceModel: 'gpt-4.1',
+      fallbackStageOrder: 0,
       weight: 10,
       enabled: true,
       manualOverride: false,
-    }).returning().get();
+    });
 
     const response = await app.inject({
       method: 'PUT',
@@ -225,10 +235,11 @@ describe('accounts api key recovery', { timeout: 15_000 }, () => {
       modelName: 'gpt-4.1',
     });
 
-    const routeEndpointTargets = await db.select().from(schema.routeEndpointTargets).all();
-    expect(routeEndpointTargets).toContainEqual(expect.objectContaining({
+    const routeGroupCandidates = await listAllRouteGroupMembers();
+    expect(routeGroupCandidates).toContainEqual(expect.objectContaining({
       id: seededChannel.id,
-      routeId: route.id,
+      routeGroupId: routeGroup.id,
+      routeGroupKey: routeGroup.id,
       accountId: account.id,
       tokenId: null,
     }));

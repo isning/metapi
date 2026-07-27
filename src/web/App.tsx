@@ -635,7 +635,7 @@ function AppShell() {
 
   return (
     <>
-      <header className="sticky top-0 z-50 flex h-14 items-center border-b bg-background/85 px-5 backdrop-blur">
+      <header className={`sticky top-0 z-50 flex h-14 items-center border-b bg-background/85 backdrop-blur ${isMobile ? 'px-2' : 'px-5'}`}>
         {isMobile && (
           <Button
             variant="ghost"
@@ -649,23 +649,25 @@ function AppShell() {
             </svg>
           </Button>
         )}
-        <div className="mr-8 flex items-center gap-2.5">
+        <div className={`flex items-center gap-2.5 ${isMobile ? 'mr-2' : 'mr-8'}`}>
           <img src="/logo.png" alt="Metapi" className="size-7 rounded-md" />
           <span className="text-[15px] font-bold text-foreground">Metapi</span>
         </div>
-        <nav className="flex items-center gap-1" aria-label={t('app.mainNavigation')}>
-          {topNavItems.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              end
-              className={({ isActive }) => `rounded-md px-3.5 py-1.5 text-sm font-medium transition-colors ${isActive ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'}`}
-            >
-              {t(item.label)}
-            </NavLink>
-          ))}
-        </nav>
-        <div className="ml-auto flex items-center gap-2">
+        {!isMobile && (
+          <nav className="flex items-center gap-1" aria-label={t('app.mainNavigation')}>
+            {topNavItems.map((item) => (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                end
+                className={({ isActive }) => `rounded-md px-3.5 py-1.5 text-sm font-medium transition-colors ${isActive ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'}`}
+              >
+                {t(item.label)}
+              </NavLink>
+            ))}
+          </nav>
+        )}
+        <div className={`ml-auto flex items-center ${isMobile ? 'gap-1' : 'gap-2'}`}>
           <Button
             variant="ghost"
             size="icon"
@@ -678,13 +680,18 @@ function AppShell() {
           <Button
             type="button"
             variant="outline"
-            className="min-w-[170px] justify-start gap-2.5 px-3"
+            size={isMobile ? 'icon' : 'default'}
+            className={isMobile ? 'shrink-0' : 'min-w-[170px] justify-start gap-2.5 px-3'}
             aria-label={t('app.searchCtrlK')}
             onClick={() => setShowSearch(true)}
           >
             <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
-            <span className="text-sm font-semibold">{t('app.search')}</span>
-            <kbd className="ml-auto rounded-md border bg-muted px-2 py-1 text-[11px] font-bold leading-none text-muted-foreground">Ctrl K</kbd>
+            {!isMobile && (
+              <>
+                <span className="text-sm font-semibold">{t('app.search')}</span>
+                <kbd className="ml-auto rounded-md border bg-muted px-2 py-1 text-[11px] font-bold leading-none text-muted-foreground">Ctrl K</kbd>
+              </>
+            )}
           </Button>
           <div className="relative">
             <Button ref={notifBtnRef} type="button" variant="ghost" size="icon" aria-label={t('app.notifications')} onClick={() => setShowNotifications(!showNotifications)}>

@@ -1,10 +1,10 @@
 # Route Graph JSON 结构
 
-这篇说明如何手写、导入和验证 Route Graph JSON。日常配置优先使用 [路由组使用指南](./route-groups-guide.md) 里的界面；只有需要批量导入、生成配置、审查 diff 或实现高级结构时，才建议直接编辑 JSON。
+这篇说明如何审查、导入和验证 Route Graph source JSON。日常配置优先使用[路由组使用指南](./route-groups-guide.md)中的管理界面；只有批量导入、生成配置、审查 diff 或实现高级结构时，才直接编辑 JSON。
 
 ## 顶层结构
 
-Route graph source 当前使用 `version: 1`。
+Route Graph source 当前使用 `version: 1`。
 
 ```json
 {
@@ -18,17 +18,17 @@ Route graph source 当前使用 `version: 1`。
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `version` | `1` | Route graph source 版本 |
-| `nodes` | `RouteGraphNode[]` | 语义节点和少量手动 primitive 节点 |
-| `edges` | `RouteGraphEdge[]` | 节点或 macro port 之间的语义连接 |
-| `macros` | `RouteGraphMacro[]` | 路由组等高级语义对象 |
-| `metadata` | object | 图级扩展信息，不参与核心路由语义 |
+| `version` | `1` | Route Graph source 版本 |
+| `nodes` | `RouteGraphNode[]` | 语义节点和少量手动 primitive |
+| `edges` | `RouteGraphEdge[]` | 节点或 macro port 间的语义连接 |
+| `macros` | `RouteGraphMacro[]` | 可 lower 的高级语义对象 |
+| `metadata` | object | 图级扩展数据，不改变基础拓扑 |
 
-`nodes` 和 `macros` 是同一张图的两类对象。macro 不是第二套模型；它会在编译时 lower 成 entry、filter、dispatcher、candidate endpoint 等 primitive。
+`nodes` 和 `macros` 属于同一张 source graph。macro 会 lower 为 entry、filter、dispatcher、endpoint 和连接边；运行时只执行由它们编译出的 `compiledRouterBundle`。
 
 ## 最小可运行图
 
-这个示例把下游模型 `public-model` 直接路由到一个手动 supply endpoint。
+下面的图将下游模型 `public-model` 直接接到一个 supply endpoint。
 
 ```json
 {
@@ -38,46 +38,43 @@ Route graph source 当前使用 `version: 1`。
       "id": "entry:public-model",
       "type": "entry",
       "enabled": true,
-      "visibility": "public",
       "ownership": "manual",
       "match": {
         "kind": "model",
         "requestedModelPattern": "public-model",
         "displayName": "public-model"
-      },
-      "selectionStrategy": "weighted"
+      }
     },
     {
-      "id": "route-endpoint:supply:manual:openai:gpt-4o",
+      "id": "route-endpoint:supply:example-gpt-4o",
       "type": "route_endpoint",
       "enabled": true,
-      "visibility": "internal",
       "ownership": "manual",
-      "routeEndpointId": "route-endpoint:supply:manual:openai:gpt-4o",
+      "routeEndpointId": "route-endpoint:supply:example-gpt-4o",
       "endpointKind": "supply",
       "exposure": "none",
       "resolutionStatus": "resolved",
-      "ownerKind": "manual_route",
+      "ownerKind": "manual",
       "sourceKind": "inline",
       "backend": { "kind": "supply" },
       "config": {
         "targets": [
           {
-            "targetId": "openai:gpt-4o",
+            "targetId": "example-gpt-4o",
             "model": "gpt-4o",
             "weight": 10
           }
         ],
-        "targetSelection": { "strategy": "weighted" }
+        "targetSelection": { "kind": "builtin", "builtin": "weighted" }
       }
     }
   ],
   "edges": [
     {
-      "id": "edge:public-model:to:gpt-4o",
+      "id": "edge:public-model-to-gpt-4o",
       "sourceNodeId": "entry:public-model",
       "sourcePortId": "bidirect.out",
-      "targetNodeId": "route-endpoint:supply:manual:openai:gpt-4o",
+      "targetNodeId": "route-endpoint:supply:example-gpt-4o",
       "targetPortId": "bidirect.in",
       "kind": "bidirect_flow",
       "ownership": "manual"
@@ -88,25 +85,23 @@ Route graph source 当前使用 `version: 1`。
 }
 ```
 
-这种写法适合最小测试。生产配置更推荐用 `candidate_selector` macro 表达路由组。
+生产配置通常使用 `candidate_selector` macro 表达多个 endpoint 和明确的 fallback。
 
-## Macro 写法
+## Candidate Selector Macro
 
-这个示例定义一个手动 public 路由组，把两个已经存在的 supply endpoint 作为候选，并按 70/30 加权。
+`config.groups` 是**有序 fallback stages**，不是优先级桶。第一个 stage 在其成员都不再 eligible 前持续被评估；只有它耗尽后才进入下一 stage。每个 stage 可继承 macro policy，或通过 `policy` 覆盖自己的 stage-local dispatcher policy。
 
 ```json
 {
-  "id": "macro:manual:premium-chat",
+  "id": "macro:premium-chat",
   "kind": "candidate_selector",
   "enabled": true,
-  "visibility": "public",
   "ownership": "manual",
   "name": "premium-chat",
   "config": {
     "surface": {
       "entry": {
         "kind": "external",
-        "visibility": "public",
         "match": {
           "kind": "model",
           "requestedModelPattern": "premium-chat",
@@ -115,59 +110,63 @@ Route graph source 当前使用 `version: 1`。
       },
       "output": "route"
     },
-    "policy": { "strategy": "weighted" },
+    "policy": { "kind": "builtin", "builtin": "weighted" },
     "groups": [
       {
-        "id": "default",
-        "label": "Default",
+        "id": "primary",
+        "label": "Primary",
         "enabled": true,
-        "priority": 0,
         "input": {
           "kind": "route_endpoints",
           "endpointIds": [
-            "route-endpoint:supply:site-a:gpt-4o",
-            "route-endpoint:supply:site-b:gpt-4o"
+            "route-endpoint:supply:site-a-gpt-4o",
+            "route-endpoint:supply:site-b-gpt-4o"
           ]
         },
-        "defaults": {
-          "enabled": true,
-          "weight": 10,
-          "priority": 0
+        "members": [
+          { "endpointId": "route-endpoint:supply:site-a-gpt-4o", "weight": 70 },
+          { "endpointId": "route-endpoint:supply:site-b-gpt-4o", "weight": 30 }
+        ]
+      },
+      {
+        "id": "backup",
+        "label": "Backup",
+        "enabled": true,
+        "policy": { "kind": "builtin", "builtin": "stable_first" },
+        "input": {
+          "kind": "synthetic",
+          "statusCode": 503,
+          "message": "No upstream endpoint is available."
         }
       }
-    ],
-    "candidateOverrides": {
-      "bySupplyEndpointId": {
-        "route-endpoint:supply:site-a:gpt-4o": { "weight": 70 },
-        "route-endpoint:supply:site-b:gpt-4o": { "weight": 30 }
-      }
-    }
+    ]
   }
 }
 ```
 
-语义图里通常还会保存候选连接边：
+`weight` 只影响当前 stage 内的选择。不要写 `priority`、`priority_order`、`routingStrategy` 或 `{ "strategy": ... }`：source graph 和 API 会拒绝这些旧形态。
+
+候选连接边是图编辑器和 inspector 的连线表达。例如：
 
 ```json
 {
-  "sourceNodeId": "route-endpoint:supply:site-a:gpt-4o",
+  "id": "edge:site-a-to-premium-chat",
+  "sourceNodeId": "route-endpoint:supply:site-a-gpt-4o",
   "sourcePortId": "route.out",
-  "targetNodeId": "macro:manual:premium-chat",
+  "targetNodeId": "macro:premium-chat",
   "targetPortId": "candidates.in",
   "kind": "route_flow",
   "ownership": "manual"
 }
 ```
 
-`config.groups` 是路由行为的来源；candidate edge 是图编辑器和 inspector 的连接表达。自动生成的 candidate edge 不应直接删除，应通过路由组候选表写 override。
+由路由组投影产生的对象通过路由组和 fallback-stage API 修改；不要直接伪造其 ID 或在图中修改其 generated primitive。
 
 ## 验证和发布 API
 
-图编辑器使用这些 API：
-
 | API | 作用 |
 |-----|------|
-| `GET /api/route-graph/active` | 获取当前生效图 |
+| `GET /api/route-graph/active` | 获取当前生效 source graph 与编译信息 |
 | `GET /api/route-graph/draft` | 获取或创建草稿 |
 | `POST /api/route-graph/validate` | 验证 source graph 并返回 diagnostics |
 | `POST /api/route-graph/compile` | 编译任意 source graph，用于调试 |
@@ -194,57 +193,23 @@ GET draft
 |------|------|
 | `source` | 规范化后的 source graph |
 | `primitiveSource` | macro lower 后的调试图 |
-| `compiled` | 编译结果 |
-| `diagnostics` | 诊断列表 |
+| `compiled` | 含 `compiledRouterBundle` 的执行产物 |
+| `diagnostics` | 验证与编译诊断 |
 | `ok` | 是否没有 error 级诊断 |
 
-运行时执行的是 `compiled.flatProgramBundle`。`primitiveSource` 用于 inspector、生成视图和调试，不是请求路径的执行格式。
+`primitiveSource` 仅用于 inspector、生成视图和调试。请求路径执行 `compiled.compiledRouterBundle`，不会读取 route-group 管理表或编辑器布局。
 
 ## ID 规则
 
-手写 JSON 时，ID 应该稳定、可读、可 diff。
+手写对象需要稳定 ID，但调用方不应从显示文本、模型名或数字 ID 拼接系统对象 ID。对已有 supply endpoint、route product 或 macro，请从 endpoint catalog、source graph 或管理 API 获取其实际 ID；让路由组投影和图编辑器生成其所拥有的 ID。
 
-推荐：
-
-```text
-entry:manual:premium-chat
-macro:manual:premium-chat
-route-endpoint:supply:manual:site-a:gpt-4o
-route-endpoint:product:manual:premium-chat
-edge:site-a-gpt-4o:to:premium-chat
-```
-
-避免：
+手写的全新 semantic node 可以使用稳定、可读的自有 ID，例如：
 
 ```text
-node1
-tmp-1690000000
-gpt
+entry:premium-chat
+macro:premium-chat
+filter:rewrite-model
+synthetic:no-route
 ```
 
-规则：
-
-- 不要依赖 `name` 或显示文本作为引用；
-- 手动对象的 `id` 应长期稳定；
-- 自动 supply endpoint 的 ID 由系统生成；
-- route product 用 `route_endpoint endpointKind=route_product` 表达；
-- supply endpoint 用 `route_endpoint endpointKind=supply` 表达；
-- `channel`、`pool`、`target_pool` 不属于 route graph source JSON。
-
-## Ownership
-
-| ownership | 是否用户直接编辑 | 说明 |
-|-----------|------------------|------|
-| `manual` | 可以 | 用户创建或导入的对象 |
-| `auto_generated` | 不直接编辑 | 自动发现和自动路由组生成 |
-| `system` | 不直接编辑 | 系统保留对象 |
-| `derived` | 不直接编辑 | macro lowering 或编译生成 |
-
-自动数据需要通过上层语义配置修改，例如候选 override、public/internal、启用状态、权重和优先级。
-
-## 下一步
-
-- 节点字段和 port：看 [节点参考](./route-graph-nodes-reference.md)。
-- 请求改写：看 [Filter 参考](./route-graph-filters-reference.md)。
-- CEL 和 metadata：看 [Metadata 与 CEL](./route-graph-metadata-cel-reference.md)。
-- 直接复制例子：看 [Recipes](./route-graph-recipes.md)。
+避免临时 ID、显示名引用和猜测系统生成的 endpoint ID。

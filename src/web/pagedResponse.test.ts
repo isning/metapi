@@ -11,8 +11,6 @@ describe('normalizePagedResponse', () => {
         totalCount: 0,
         hasMore: false,
       },
-    }, {
-      totalCount: 50_000,
     });
 
     expect(result.pageInfo).toEqual({
@@ -21,5 +19,15 @@ describe('normalizePagedResponse', () => {
       totalCount: 0,
       hasMore: false,
     });
+  });
+
+  it.each([
+    null,
+    [],
+    {},
+    { items: [], pageInfo: {} },
+    { items: [], pageInfo: { page: 1, pageSize: 20, totalCount: 0, hasMore: 0 } },
+  ])('rejects malformed current-contract responses instead of synthesizing an empty page', (response) => {
+    expect(() => normalizePagedResponse(response)).toThrow('Invalid paged response');
   });
 });

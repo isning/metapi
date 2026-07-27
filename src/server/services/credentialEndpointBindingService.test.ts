@@ -121,6 +121,7 @@ describe('credentialEndpointBindingService', () => {
     const plan = buildApiAttemptPlan({
       siteId: site.id,
       credentialId: config?.credentialKey.credentialKey,
+      modelName: 'test-model',
       endpointProfiles: config?.endpointProfiles,
       credentialEndpointBindings: config?.credentialEndpointBindings,
       endpointCandidates: ['responses', 'chat'],

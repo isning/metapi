@@ -17,7 +17,7 @@ describe('downstream API key route payload contracts', () => {
       maxCost: '12.5',
       maxRequests: 1000,
       supportedModels: 'gpt-*',
-      allowedRouteIds: ['1', 2],
+      allowedPlanIds: ['program:entry:1', 'program:entry:2'],
       siteWeightMultipliers: { '1': '2' },
       excludedSiteIds: '3,4',
       excludedCredentialRefs: [
@@ -38,7 +38,7 @@ describe('downstream API key route payload contracts', () => {
         maxCost: '12.5',
         maxRequests: 1000,
         supportedModels: 'gpt-*',
-        allowedRouteIds: ['1', 2],
+        allowedPlanIds: ['program:entry:1', 'program:entry:2'],
         siteWeightMultipliers: { '1': '2' },
         excludedSiteIds: '3,4',
         excludedCredentialRefs: [
@@ -67,7 +67,7 @@ describe('downstream API key route payload contracts', () => {
       ['maxCost', () => parseDownstreamApiKeyPayload({ maxCost: {} }), 'Invalid maxCost. Expected number, string, or null.'],
       ['maxRequests', () => parseDownstreamApiKeyPayload({ maxRequests: {} }), 'Invalid maxRequests. Expected number, string, or null.'],
       ['supportedModels', () => parseDownstreamApiKeyPayload({ supportedModels: [1] }), 'Invalid supportedModels. Expected string or string[].'],
-      ['allowedRouteIds', () => parseDownstreamApiKeyPayload({ allowedRouteIds: {} }), 'Invalid allowedRouteIds. Expected string or array.'],
+      ['allowedPlanIds', () => parseDownstreamApiKeyPayload({ allowedPlanIds: {} }), 'Invalid allowedPlanIds. Expected string or array.'],
       ['siteWeightMultipliers', () => parseDownstreamApiKeyPayload({ siteWeightMultipliers: [] }), 'Invalid siteWeightMultipliers. Expected JSON object or string.'],
       ['excludedSiteIds', () => parseDownstreamApiKeyPayload({ excludedSiteIds: {} }), 'Invalid excludedSiteIds. Expected string or array.'],
       ['excludedCredentialRefs', () => parseDownstreamApiKeyPayload({ excludedCredentialRefs: [{ kind: 'unknown' }] }), 'Invalid excludedCredentialRefs. Expected JSON string or array.'],

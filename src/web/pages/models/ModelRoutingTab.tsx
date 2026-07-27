@@ -4,23 +4,23 @@ import type { ModelDetailsView } from './modelDetailsView.js';
 import { tr } from '../../i18n.js';
 
 type ModelRoutingTabProps = {
-  details: ModelDetailsView;
+  routing: ModelDetailsView['routing'];
   viewMode: ModelRouteFlowViewMode;
   onViewModeChange: (mode: ModelRouteFlowViewMode) => void;
 };
 
 export default function ModelRoutingTab({
-  details,
+  routing,
   viewMode,
   onViewModeChange,
 }: ModelRoutingTabProps) {
   return (
     <div className="grid gap-3">
-      {details.routeFlow || details.routeFlowLoading || details.routeFlowError ? (
+      {routing.hasContent || routing.loading || routing.error ? (
         <ModelRouteFlow
-          flow={details.routeFlow}
-          loading={details.routeFlowLoading}
-          error={details.routeFlowError}
+          flow={routing.flow}
+          loading={routing.loading}
+          error={routing.error}
           viewMode={viewMode}
           onViewModeChange={onViewModeChange}
         />

@@ -22,6 +22,17 @@ export type UpstreamPricingCatalogRequest = {
   };
 };
 
+export type UpstreamPricingCatalogFetchResult = {
+  catalog: UpstreamPricingCatalog;
+  credentialKind: UpstreamPricingCredential['tokenKind'];
+  platformUserId?: number;
+};
+
+type PricingCatalogCredentialFailure = {
+  credentialKind: UpstreamPricingCredential['tokenKind'];
+  message: string;
+};
+
 function normalizeUrl(baseUrl: string): string {
   return baseUrl.replace(/\/+$/, '');
 }
@@ -57,16 +68,40 @@ function buildCredentialCandidates(input: UpstreamPricingCatalogRequest): Upstre
 export async function fetchUpstreamPricingCatalog(
   input: UpstreamPricingCatalogRequest,
 ): Promise<UpstreamPricingCatalog | null> {
+  const result = await fetchUpstreamPricingCatalogWithMetadata(input);
+  return result?.catalog ?? null;
+}
+
+export async function fetchUpstreamPricingCatalogWithMetadata(
+  input: UpstreamPricingCatalogRequest,
+): Promise<UpstreamPricingCatalogFetchResult | null> {
   const adapter = getAdapter(normalizePlatformAlias(input.site.platform));
   if (!adapter?.getPricingCatalog) return null;
 
   const baseUrl = normalizeUrl(input.site.url);
+  const failures: PricingCatalogCredentialFailure[] = [];
   for (const credential of buildCredentialCandidates(input)) {
     try {
       const catalog = await adapter.getPricingCatalog(baseUrl, credential);
-      if (catalog && catalog.models.size > 0) return catalog;
-    } catch {}
+      if (catalog && catalog.models.size > 0) {
+        return {
+          catalog,
+          credentialKind: credential.tokenKind,
+          platformUserId: credential.platformUserId,
+        };
+      }
+    } catch (error) {
+      failures.push({
+        credentialKind: credential.tokenKind,
+        message: error instanceof Error ? error.message : String(error || 'unknown error'),
+      });
+    }
   }
 
+  if (failures.length > 0) {
+    throw new Error(`Provider pricing catalog fetch failed: ${failures
+      .map((failure) => `${failure.credentialKind}: ${failure.message}`)
+      .join('; ')}`);
+  }
   return null;
 }

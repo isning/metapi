@@ -15,7 +15,7 @@ interface FixtureScriptOptions {
 
 function parseArgs(argv: string[]): FixtureScriptOptions {
   const options: FixtureScriptOptions = {
-    outputPath: 'src/server/db/generated/fixtures/2026-03-14-baseline.schemaContract.json',
+    outputPath: '',
     dropTables: [],
     dropColumns: [],
   };
@@ -41,6 +41,10 @@ function parseArgs(argv: string[]): FixtureScriptOptions {
       options.dropColumns.push(argv[index + 1]);
       index += 1;
     }
+  }
+
+  if (!options.outputPath) {
+    throw new Error('--output is required');
   }
 
   return options;

@@ -184,7 +184,13 @@ export default function DownstreamKeyDrawer({
                   <InfoCell label="Tokens" value={formatCompactTokens(currentRangeUsage?.totalTokens || 0)} strong />
                   <InfoCell label={tr('components.charts.downstreamKeyTrendChart.requests')} value={(currentRangeUsage?.totalRequests || 0).toLocaleString()} strong />
                   <InfoCell label={tr('components.modelAnalysisPanel.successRate')} value={currentRangeUsage?.successRate == null ? '--' : `${currentRangeUsage.successRate}%`} strong />
-                  <InfoCell label={tr('components.charts.downstreamKeyTrendChart.cost')} value={formatMoney(Number(currentRangeUsage?.totalCost || 0))} strong />
+                  <InfoCell
+                    label={tr('components.charts.downstreamKeyTrendChart.cost')}
+                    value={currentRangeUsage
+                      ? `${formatMoney(currentRangeUsage.cost.amount)} ${currentRangeUsage.cost.unit}`
+                      : '--'}
+                    strong
+                  />
                 </div>
               </CardContent>
             </Card>

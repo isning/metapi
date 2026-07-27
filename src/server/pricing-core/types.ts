@@ -1,5 +1,5 @@
 export type PricingPlanKind = 'rate_card' | 'contract_overlay' | 'composed';
-export type PricingCurrency = 'USD';
+export type PricingCurrency = string;
 export type PricingPeriod = 'request' | 'day' | 'month' | 'billing_cycle';
 
 export type PricingComponentRole = 'charge' | 'discount' | 'credit' | 'minimum' | 'maximum';
@@ -86,8 +86,8 @@ export interface PricingComponent {
 export interface PricingAggregation {
   mode: 'sum_components';
   period?: PricingPeriod;
-  minimumChargeUsd?: number;
-  maximumChargeUsd?: number;
+  minimumCharge?: number;
+  maximumCharge?: number;
 }
 
 export interface PricingRounding {
@@ -156,7 +156,7 @@ export interface PricingCommitment {
   id: string;
   label: string;
   period: 'month' | 'billing_cycle';
-  minimumSpendUsd?: number;
+  minimumSpend?: number;
   includedComponents?: string[];
   overagePolicy?: 'charge_components' | 'cap_at_minimum' | 'diagnostic_only';
 }
@@ -249,9 +249,9 @@ export interface PricingPeriodState {
   periodStart: string;
   periodEnd: string;
   usage: CanonicalUsage;
-  committedSpendUsd?: number;
+  committedSpend?: number;
   consumedAllowances?: Record<string, number>;
-  observedCostUsd?: number;
+  observedCost?: number;
 }
 
 export interface PricingEvaluationDiagnostic {
@@ -272,17 +272,19 @@ export interface PricingEvaluation {
     fingerprint: string;
     role: 'base_rate_card' | 'overlay' | 'post_processor';
   }>;
-  totalCostUsd: number;
-  subtotalCostUsd: number;
-  adjustmentCostUsd: number;
+  currency: PricingCurrency;
+  totalCost: number;
+  subtotalCost: number;
+  adjustmentCost: number;
   estimateLevel: 'exact' | 'request_estimate' | 'period_estimate' | 'incomplete';
   components: Array<{
     componentId: string;
     kind: PricingComponentKind;
     quantity: number;
     scale: number;
-    unitPriceUsd: number;
-    costUsd: number;
+    currency: PricingCurrency;
+    unitPrice: number;
+    cost: number;
     role: PricingComponentRole;
     tierId?: string;
     quantityPricingMode?: QuantityPricing['mode'];
@@ -292,7 +294,8 @@ export interface PricingEvaluation {
   postProcessors?: Array<{
     id: string;
     kind: PricingPostProcessor['kind'];
-    amountUsd: number;
+    currency: PricingCurrency;
+    amount: number;
   }>;
   equivalentMultipliers: {
     input?: number | null;
@@ -327,4 +330,3 @@ export interface PricingObservation {
   raw?: Record<string, unknown>;
   diagnostics: PricingObservationDiagnostic[];
 }
-

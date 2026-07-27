@@ -23,6 +23,7 @@ describe('admin and proxy auth boundary', () => {
 
       const missing = await app.inject({ method: 'GET', url: '/api/protected-boundary' });
       expect(missing.statusCode).toBe(401);
+      expect(missing.headers['x-metapi-auth-failure']).toBe('admin');
       expect(missing.json()).toEqual({ error: 'Missing Authorization header' });
 
       const invalid = await app.inject({
@@ -31,6 +32,7 @@ describe('admin and proxy auth boundary', () => {
         headers: { authorization: 'Bearer wrong-token' },
       });
       expect(invalid.statusCode).toBe(403);
+      expect(invalid.headers['x-metapi-auth-failure']).toBe('admin');
       expect(invalid.json()).toEqual({ error: 'Invalid token' });
 
       const accepted = await app.inject({
@@ -65,6 +67,7 @@ describe('admin and proxy auth boundary', () => {
     try {
       const missing = await app.inject({ method: 'POST', url: '/v1/proxy-boundary' });
       expect(missing.statusCode).toBe(401);
+      expect(missing.headers['x-metapi-auth-failure']).toBeUndefined();
       expect(missing.json()).toEqual({
         error: 'Missing Authorization, x-api-key, x-goog-api-key, or key query parameter',
       });
@@ -75,6 +78,7 @@ describe('admin and proxy auth boundary', () => {
         headers: { authorization: 'Bearer wrong-token' },
       });
       expect(invalid.statusCode).toBe(403);
+      expect(invalid.headers['x-metapi-auth-failure']).toBeUndefined();
       expect(invalid.json()).toEqual({ error: 'Invalid API key' });
 
       for (const credentials of [
