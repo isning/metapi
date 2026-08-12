@@ -82,6 +82,12 @@ type RequestOptions = RequestInit & {
 
 const ADMIN_AUTH_FAILURE_HEADER = "x-metapi-auth-failure";
 
+function isJsonRequestBody(body: BodyInit | null | undefined): body is string {
+  if (typeof body !== "string") return false;
+  const trimmed = body.trim();
+  return trimmed.startsWith("{") || trimmed.startsWith("[");
+}
+
 export class ApiRequestError extends Error {
   constructor(
     message: string,
@@ -224,7 +230,10 @@ async function fetchAuthenticatedResponse(
   const token = requireAuthToken();
   const headers = new Headers(fetchOptions.headers ?? {});
   headers.set("Authorization", `Bearer ${token}`);
-  if (fetchOptions.body && !headers.has("Content-Type")) {
+  const method = String(fetchOptions.method || "GET").toUpperCase();
+  const isJsonWrite = isJsonRequestBody(fetchOptions.body);
+  if ((isJsonWrite || ["POST", "PUT", "PATCH"].includes(method))
+    && (!headers.has("Content-Type") || isJsonWrite)) {
     headers.set("Content-Type", "application/json");
   }
 
@@ -1491,9 +1500,15 @@ export const api = {
     }),
 
   // Check-in
-  triggerCheckinAll: () => request("/api/checkin/trigger", { method: "POST" }),
+  triggerCheckinAll: () => request("/api/checkin/trigger", {
+    method: "POST",
+    body: JSON.stringify({}),
+  }),
   triggerCheckin: (id: number) =>
-    request(`/api/checkin/trigger/${id}`, { method: "POST" }),
+    request(`/api/checkin/trigger/${id}`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
   getCheckinLogs: (params?: string) =>
     request(`/api/checkin/logs${params ? "?" + params : ""}`),
   updateCheckinSchedule: (cron: string) =>

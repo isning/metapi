@@ -1,5 +1,6 @@
 import type { CanonicalUsage } from '../pricing-core/index.js';
 import { quoteEndpointPricing } from './pricingQuoteService.js';
+import { ENDPOINT_ROUTING_REFERENCE_USAGE } from './endpointPricingService.js';
 import {
   compiledRuntimeRequestUsageConstraints,
   loadCompiledRuntimeUsageForecast,
@@ -283,11 +284,54 @@ async function resolveRequestCostSignal(
   context: RuntimeRoutingSignalContext,
   forecast: CompiledRuntimeUsageForecast,
 ): Promise<RuntimeCostSignal> {
-  if (forecast.status !== 'available') return emptyCostSignal(forecast);
   const siteId = Math.trunc(Number(context.siteId));
   const accountId = Math.trunc(Number(context.accountId));
   if (!Number.isSafeInteger(siteId) || siteId <= 0 || !Number.isSafeInteger(accountId) || accountId <= 0) {
     return emptyCostSignal(forecast, 'pricing_unavailable');
+  }
+
+  // A first request has no request-shape history yet. Keep cost in the
+  // decision instead of dropping it entirely: use the stable routing
+  // reference profile until observed P50/P90 usage is available.
+  if (forecast.status !== 'available') {
+    const quote = await quoteEndpointPricing({
+      supply: {
+        siteId,
+        accountId,
+        tokenId: context.tokenId ?? null,
+        tokenGroup: context.tokenGroup || undefined,
+        provider: context.provider || undefined,
+        modelName: context.modelName,
+      },
+      usageProfile: 'routing_reference',
+      usage: ENDPOINT_ROUTING_REFERENCE_USAGE,
+      includeReference: false,
+      allowProviderCatalog: true,
+      providerCatalogMode: 'cache_only',
+    });
+    const effectiveCost = quote.effectiveCost?.walletCostBaseCurrency ?? null;
+    if (typeof effectiveCost !== 'number' || !Number.isFinite(effectiveCost)) {
+      return emptyCostSignal(forecast, 'pricing_unavailable');
+    }
+    const referenceForecast: Extract<CompiledRuntimeUsageForecast, { status: 'available' }> = {
+      status: 'available',
+      sampleCount: 0,
+      confidence: 0,
+      estimatedInputTokens: Number(ENDPOINT_ROUTING_REFERENCE_USAGE.inputTokens) || 0,
+      expectedOutputTokens: Number(ENDPOINT_ROUTING_REFERENCE_USAGE.outputTokens) || 0,
+      p90OutputTokens: Number(ENDPOINT_ROUTING_REFERENCE_USAGE.outputTokens) || 0,
+      maxOutputTokens: null,
+    };
+    return {
+      status: 'available',
+      currency: quote.effectiveCost?.baseCostUnit ?? quote.endpoint?.summary.currency ?? null,
+      forecast: referenceForecast,
+      floor: { rawCost: quote.endpoint?.summary.totalCost ?? null, effectiveCost },
+      expected: { rawCost: quote.endpoint?.summary.totalCost ?? null, effectiveCost },
+      p90: { rawCost: quote.endpoint?.summary.totalCost ?? null, effectiveCost },
+      ceiling: null,
+      routingCost: effectiveCost,
+    };
   }
 
   const quote = async (outputTokens: number) => await quoteEndpointPricing({

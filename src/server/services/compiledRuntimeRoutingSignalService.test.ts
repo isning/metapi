@@ -143,8 +143,10 @@ describe('buildRuntimeRoutingSignalMap', () => {
       ],
     });
 
-    expect(quoteEndpointPricingMock).toHaveBeenCalledTimes(2);
+    expect(quoteEndpointPricingMock).toHaveBeenCalledTimes(4);
     expect(quoteEndpointPricingMock.mock.calls.map((call) => call[0].supply.provider)).toEqual([
+      'codex',
+      'openai',
       'codex',
       'openai',
     ]);
@@ -168,9 +170,14 @@ describe('buildRuntimeRoutingSignalMap', () => {
         effectiveCost: 0.2,
       },
     });
-    expect(signals.get('ea_codex')?.cost.status).toBe('insufficient_data');
-    expect(signals.get('ea_openai')?.normalizedCostScore).toBeNull();
-    expect(signals.get('ea_codex')?.normalizedCostScore).toBeNull();
+    expect(signals.get('ea_codex')?.cost).toMatchObject({
+      status: 'available',
+      forecast: { sampleCount: 0, confidence: 0, expectedOutputTokens: 500_000 },
+      routingCost: 0.8,
+    });
+    expect(signals.get('ea_openai')?.cost.routingCost).toBe(0.2);
+    expect(signals.get('ea_openai')?.normalizedCostScore).toBe(1);
+    expect(signals.get('ea_codex')?.normalizedCostScore).toBe(0);
   });
 
   it('uses request-scoped historical usage with actual pricing evaluation for the routing cost component', async () => {

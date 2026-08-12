@@ -19,6 +19,7 @@ import {
   routeGroupFacadeModelName,
   routeGroupFacadeGeneratedPrimaryStage,
   routeGroupFacadeVisibility,
+  synchronizeRouteGroupFacadeStageInput,
 } from "./routeGroupGraphFacadeAccessService.js";
 import {
   ensureRouteGraphExecutionTargetsEndpoint,
@@ -526,11 +527,31 @@ export async function synchronizeAutomaticRouteGroups(
           ),
         0,
       );
+      // Removing a managed macro must also remove graph-reference members
+      // pointing at it. Otherwise the next publication sees dangling child
+      // macro IDs and rejects the entire route graph.
       const next = pruneUnreferencedRouteGroupFacadeEndpoints({
         ...source,
-        macros: (source.macros || []).filter(
-          (macro) => !staleMacroIds.has(macro.id),
-        ),
+        macros: (source.macros || [])
+          .filter((macro) => !staleMacroIds.has(macro.id))
+          .map((macro) => ({
+            ...macro,
+            config: {
+              ...macro.config,
+              groups: macro.config.groups.map((stage) => {
+                const members = (stage.members || []).filter(
+                  (member) => !member.macroId || !staleMacroIds.has(member.macroId),
+                );
+                const input = stage.input.kind === "graph_references"
+                  ? {
+                      ...stage.input,
+                      macroIds: stage.input.macroIds.filter((macroId) => !staleMacroIds.has(macroId)),
+                    }
+                  : stage.input;
+                return synchronizeRouteGroupFacadeStageInput({ ...stage, members, input }, !!macro.config.candidateSource);
+              }),
+            },
+          })),
       });
       assertNoRouteGroupPublicExposureConflicts(publicExposureRows(next));
       return {

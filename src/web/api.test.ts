@@ -46,6 +46,59 @@ describe("api proxy test timeout handling", () => {
     persistAuthSession(globalThis.localStorage as Storage, "token-1");
   });
 
+  it("sends a JSON body when triggering all check-ins", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ success: true, queued: true }), {
+        status: 202,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.triggerCheckinAll();
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(init).toMatchObject({ method: "POST", body: "{}" });
+    expect(new Headers(init.headers).get("content-type")).toBe("application/json");
+  });
+
+  it("uses JSON content type for POST commands without a body", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.refreshBalance(42);
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(init).toMatchObject({ method: "POST" });
+    expect(init.body).toBeUndefined();
+    expect(new Headers(init.headers).get("content-type")).toBe("application/json");
+  });
+
+  it("normalizes an invalid explicit content type for JSON request bodies", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.proxyTest({
+      method: "POST",
+      path: "/v1/chat/completions",
+      requestKind: "json",
+      jsonBody: { model: "test" },
+    });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(new Headers(init.headers).get("content-type")).toBe("application/json");
+  });
+
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
