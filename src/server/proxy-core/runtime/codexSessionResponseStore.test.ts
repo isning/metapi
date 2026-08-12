@@ -27,6 +27,23 @@ describe('codexSessionResponseStore', () => {
     resetCodexSessionResponseStore();
   });
 
+  it('reclaims expired sessions before evicting an active session at capacity', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-04-09T00:00:00Z'));
+    resetCodexSessionResponseStore();
+
+    for (let index = 0; index < 10_000; index += 1) {
+      setCodexSessionResponseId(`expired-${index}`, `resp-${index}`);
+    }
+    vi.advanceTimersByTime(Math.max(5 * 60 * 1000, Math.trunc(config.proxyStickySessionTtlMs || 0)) + 1);
+
+    setCodexSessionResponseId('active-session', 'resp-active');
+
+    expect(getCodexSessionResponseId('expired-0')).toBeNull();
+    expect(getCodexSessionResponseId('active-session')).toBe('resp-active');
+    resetCodexSessionResponseStore();
+  });
+
   it('namespaces identical downstream session ids by target scope', () => {
     resetCodexSessionResponseStore();
 

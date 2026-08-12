@@ -149,10 +149,15 @@ export function getCodexSessionResponseId(sessionId: string): string | null {
 
 export function setCodexSessionResponseId(sessionId: string, responseId: string): void {
   const nowMs = Date.now();
-  sweepExpiredSessionResponseIds(nowMs);
   const normalizedSessionId = normalizeSessionId(sessionId);
   const normalizedResponseId = responseId.trim();
   if (!normalizedSessionId || !normalizedResponseId) return;
+
+  // A full expiry sweep per write makes a full store insert quadratic.
+  // Entries are still swept on every read and before capacity eviction.
+  if (codexSessionResponseIds.size >= MAX_CODEX_SESSION_RESPONSE_IDS) {
+    sweepExpiredSessionResponseIds(nowMs);
+  }
 
   const keysToWrite = new Set<string>(getSessionStoreKeys(normalizedSessionId));
 
