@@ -1,8 +1,8 @@
 import {
   StandardApiProviderAdapterBase,
   normalizePlatformBaseUrl,
-  resolveVersionedModelsUrl,
 } from './standardApiProvider.js';
+import type { ModelDiscoveryOptions } from './base.js';
 
 export class CliProxyApiAdapter extends StandardApiProviderAdapterBase {
   readonly platformName = 'cliproxyapi';
@@ -50,11 +50,11 @@ export class CliProxyApiAdapter extends StandardApiProviderAdapterBase {
     }
   }
 
-  async getModels(baseUrl: string, apiToken: string): Promise<string[]> {
+  async getModels(baseUrl: string, apiToken: string, _platformUserId?: number, options?: ModelDiscoveryOptions): Promise<string[]> {
     return this.fetchModelsFromStandardEndpoint({
       baseUrl,
+      basePathMode: options?.basePathMode,
       headers: { Authorization: `Bearer ${apiToken}` },
-      resolveUrl: resolveVersionedModelsUrl,
     });
   }
 }

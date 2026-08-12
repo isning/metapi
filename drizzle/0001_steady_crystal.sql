@@ -1,0 +1,1 @@
+ALTER TABLE `site_api_endpoints` ADD `base_path_mode` text DEFAULT 'protocol_default' NOT NULL;

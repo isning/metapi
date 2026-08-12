@@ -8,6 +8,7 @@ export type SiteApiEndpointField = {
   draftId?: string;
   url: string;
   enabled: boolean;
+  basePathMode?: 'protocol_default' | 'complete_api_prefix';
   cooldownUntil?: string | null;
   lastFailureReason?: string | null;
 };
@@ -40,6 +41,7 @@ export type SiteSavePayload = {
   apiEndpoints: Array<{
     url: string;
     enabled: boolean;
+    basePathMode: 'protocol_default' | 'complete_api_prefix';
     sortOrder: number;
   }>;
   customHeaders: string;
@@ -63,6 +65,7 @@ export function emptySiteApiEndpoint(): SiteApiEndpointField {
   return {
     url: '',
     enabled: true,
+    basePathMode: 'protocol_default',
     cooldownUntil: null,
     lastFailureReason: null,
   };
@@ -128,6 +131,7 @@ function parseApiEndpointsForEditor(raw: unknown): SiteApiEndpointField[] {
     rows.push({
       url: typeof row.url === 'string' ? row.url : '',
       enabled: row.enabled !== false,
+      basePathMode: row.basePathMode === 'complete_api_prefix' ? 'complete_api_prefix' : 'protocol_default',
       cooldownUntil: typeof row.cooldownUntil === 'string' ? row.cooldownUntil : null,
       lastFailureReason: typeof row.lastFailureReason === 'string' ? row.lastFailureReason : null,
     });
@@ -142,6 +146,7 @@ export function siteFormFromSite(site: Partial<Omit<SiteForm, 'apiEndpoints' | '
   apiEndpoints?: Array<{
     url?: string | null;
     enabled?: boolean | null;
+    basePathMode?: 'protocol_default' | 'complete_api_prefix' | null;
     cooldownUntil?: string | null;
     lastFailureReason?: string | null;
   }> | null;
@@ -215,6 +220,7 @@ export function serializeSiteApiEndpoints(fields: SiteApiEndpointField[]): {
   apiEndpoints: Array<{
     url: string;
     enabled: boolean;
+    basePathMode: 'protocol_default' | 'complete_api_prefix';
     sortOrder: number;
   }>;
   error?: string;
@@ -222,6 +228,7 @@ export function serializeSiteApiEndpoints(fields: SiteApiEndpointField[]): {
   const apiEndpoints: Array<{
     url: string;
     enabled: boolean;
+    basePathMode: 'protocol_default' | 'complete_api_prefix';
     sortOrder: number;
   }> = [];
   const seen = new Set<string>();
@@ -242,6 +249,9 @@ export function serializeSiteApiEndpoints(fields: SiteApiEndpointField[]): {
     apiEndpoints.push({
       url: normalizedUrl || rawUrl,
       enabled: field.enabled !== false,
+      basePathMode: field.basePathMode === 'complete_api_prefix'
+        ? 'complete_api_prefix'
+        : 'protocol_default',
       sortOrder: apiEndpoints.length,
     });
   }

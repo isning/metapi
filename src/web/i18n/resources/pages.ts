@@ -2317,6 +2317,9 @@ export const pagesResources = {
     "pages.sites.apiRequest": "API 请求地址格式不正确",
     "pages.sites.apiRequest2": "API 请求地址池",
     "pages.sites.apiRequest3": "API 请求地址",
+    "pages.sites.apiPathMode": "路径策略",
+    "pages.sites.apiPathModeProtocolDefault": "按协议追加版本路径",
+    "pages.sites.apiPathModeCompleteApiPrefix": "完整 API 前缀",
     "pages.sites.apiRequestHttpsApiNihCc":
       "API 请求地址（如 https://api.nih.cc）",
     "pages.sites.autoDetect": "自动检测",
@@ -2447,7 +2450,7 @@ export const pagesResources = {
     "pages.sites.urlSitesUrlApiRequestApiRequest":
       "当前 URL 含额外路径，将原样保留。请确认这就是准确的主站点 URL；如果这是 API 请求地址，请填到下方的 API 请求地址池。",
     "pages.sites.v1ModelApiKeyVerifyDefaultSites":
-      "这里只用于 `/v1/*`、模型发现和 API Key 验证。不填时默认跟随主站点 URL；多条地址会按列表顺序参与轮询，禁用的地址不会参与调度。",
+      "填写上游 API 基础地址，用于代理请求、模型发现和 API Key 验证。默认按对应协议追加版本路径，例如 `/openai` 会请求 `/openai/v1/*`。若地址本身已是完整 API 前缀，例如 Ark 的 `/api/coding/v3`，请选择“完整 API 前缀”。不填时默认跟随主站点 URL；多条地址会按列表顺序参与轮询，禁用的地址不会参与调度。",
     "pages.sites.veloeraProxyRelayDescription":
       "Veloera 兼容站点，常见于聚合代理场景",
     "pages.sites.visibleCount": "当前显示 {count} 个站点",
@@ -6316,6 +6319,9 @@ export const pagesResources = {
     "pages.sites.apiRequest": "Invalid API request URL",
     "pages.sites.apiRequest2": "API request URL pool",
     "pages.sites.apiRequest3": "API request URL",
+    "pages.sites.apiPathMode": "Path strategy",
+    "pages.sites.apiPathModeProtocolDefault": "Append protocol version path",
+    "pages.sites.apiPathModeCompleteApiPrefix": "Complete API prefix",
     "pages.sites.apiRequestHttpsApiNihCc":
       "API request URL (e.g. https://api.nih.cc)",
     "pages.sites.autoDetect": "Auto detect",
@@ -6448,7 +6454,7 @@ export const pagesResources = {
     "pages.sites.urlSitesUrlApiRequestApiRequest":
       "This URL contains an extra path and will be kept as entered. Confirm that it is the accurate main site URL. If it is an API request URL, add it to the API request URL pool below.",
     "pages.sites.v1ModelApiKeyVerifyDefaultSites":
-      "Used only for `/v1/*`, model discovery, and API Key verification. When empty, it follows the main site URL. Multiple URLs join round-robin scheduling in list order; disabled URLs are skipped.",
+      "Set the upstream API base URL for proxy requests, model discovery, and API key verification. By default, the protocol version path is appended, so `/openai` requests `/openai/v1/*`. If the URL is already a complete API prefix, such as Ark `/api/coding/v3`, choose “Complete API prefix”. When empty, it follows the main site URL. Multiple URLs join round-robin scheduling in list order; disabled URLs are skipped.",
     "pages.sites.veloeraProxyRelayDescription":
       "Veloera-compatible site, common in aggregation proxy scenarios",
     "pages.sites.visibleCount": "{count} sites visible",

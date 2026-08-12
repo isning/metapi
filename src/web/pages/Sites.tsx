@@ -130,6 +130,7 @@ type SiteRow = {
     id?: number;
     url: string;
     enabled?: boolean;
+    basePathMode?: 'protocol_default' | 'complete_api_prefix';
     sortOrder?: number;
     cooldownUntil?: string | null;
     lastFailureReason?: string | null;
@@ -1783,6 +1784,21 @@ export default function Sites() {
                       onCheckedChange={(checked) => updateApiEndpointRow(index, { enabled: checked === true })}        />
                     {tr('pages.downstreamKeys.enabled')}
                   </label>
+                </div>
+                <div className={isMobile ? 'flex flex-col gap-1.5' : 'flex items-center gap-2'}>
+                  <span className="text-xs text-muted-foreground">{tr('pages.sites.apiPathMode')}</span>
+                  <ModernSelect
+                    value={endpoint.basePathMode || 'protocol_default'}
+                    onChange={(basePathMode) => updateApiEndpointRow(index, {
+                      basePathMode: basePathMode === 'complete_api_prefix' ? 'complete_api_prefix' : 'protocol_default',
+                    })}
+                    options={[
+                      { value: 'protocol_default', label: tr('pages.sites.apiPathModeProtocolDefault') },
+                      { value: 'complete_api_prefix', label: tr('pages.sites.apiPathModeCompleteApiPrefix') },
+                    ]}
+                    className={isMobile ? 'w-full' : 'w-[220px]'}
+                    size="sm"
+                  />
                 </div>
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">

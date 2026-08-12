@@ -8,6 +8,13 @@
       "when": 1785130968994,
       "tag": "0000_current_route_runtime_baseline",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1786526201900,
+      "tag": "0001_steady_crystal",
+      "breakpoints": true
     }
   ]
 }

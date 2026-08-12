@@ -32,6 +32,7 @@ export const siteApiEndpoints = sqliteTable('site_api_endpoints', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   siteId: integer('site_id').notNull().references(() => sites.id, { onDelete: 'cascade' }),
   url: text('url').notNull(),
+  basePathMode: text('base_path_mode').notNull().default('protocol_default'),
   enabled: integer('enabled', { mode: 'boolean' }).default(true),
   sortOrder: integer('sort_order').default(0),
   cooldownUntil: text('cooldown_until'),

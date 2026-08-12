@@ -4,10 +4,13 @@ import {
   type CheckinResult,
   type UserInfo,
 } from './base.js';
+import type { SiteApiEndpointBasePathMode } from '../../contracts/siteApiEndpointUrlMode.js';
+import { resolveOpenAiModelsUrl } from '../../contracts/siteApiEndpointUrlResolver.js';
 
 type FetchModelsOptions = {
   baseUrl: string;
   headers?: Record<string, string>;
+  basePathMode?: SiteApiEndpointBasePathMode | null;
   resolveUrl?: (normalizedBaseUrl: string) => string;
   mapResponse?: (payload: any) => unknown[];
 };
@@ -20,12 +23,11 @@ export function normalizePlatformBaseUrl(baseUrl: string): string {
   return normalized;
 }
 
-export function resolveVersionedModelsUrl(baseUrl: string): string {
-  const normalized = normalizePlatformBaseUrl(baseUrl);
-  if (/\/v\d+(?:\.\d+)?(?:beta)?$/i.test(normalized)) {
-    return `${normalized}/models`;
-  }
-  return `${normalized}/v1/models`;
+export function resolveVersionedModelsUrl(
+  baseUrl: string,
+  basePathMode?: SiteApiEndpointBasePathMode | null,
+): string {
+  return resolveOpenAiModelsUrl({ baseUrl, basePathMode });
 }
 
 export abstract class StandardApiProviderAdapterBase extends BasePlatformAdapter {
@@ -58,7 +60,7 @@ export abstract class StandardApiProviderAdapterBase extends BasePlatformAdapter
     const normalizedBaseUrl = normalizePlatformBaseUrl(options.baseUrl);
     const url = options.resolveUrl
       ? options.resolveUrl(normalizedBaseUrl)
-      : resolveVersionedModelsUrl(normalizedBaseUrl);
+      : resolveVersionedModelsUrl(normalizedBaseUrl, options.basePathMode);
 
     let payload: any;
     try {

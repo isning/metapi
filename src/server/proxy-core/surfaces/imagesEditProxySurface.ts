@@ -56,7 +56,9 @@ export async function executeImagesEditProxySurface(input: {
     executeAttempt: async (selected) => {
       const { upstream, text, firstByteLatencyMs } = await runWithSiteApiEndpointPool(selected.site, async (target) => {
         const startedAtMs = Date.now();
-        const targetUrl = buildUpstreamUrl(target.baseUrl, downstreamPath);
+        const targetUrl = buildUpstreamUrl(target.baseUrl, downstreamPath, {
+          basePathMode: target.endpoint?.basePathMode as 'protocol_default' | 'complete_api_prefix' | undefined,
+        });
         const requestInit = input.multipartForm
           ? withSiteRecordProxyRequestInit(selected.site, {
             method: 'POST',

@@ -140,6 +140,7 @@ describe('buildSiteSaveAction', () => {
       {
         url: 'https://api.example.com',
         enabled: false,
+        basePathMode: 'protocol_default',
         cooldownUntil: '2026-04-01T00:05:00.000Z',
         lastFailureReason: 'HTTP 502',
       },
@@ -186,8 +187,8 @@ describe('buildSiteSaveAction', () => {
     ])).toEqual({
       valid: true,
       apiEndpoints: [
-        { url: 'https://api-a.example.com', enabled: true, sortOrder: 0 },
-        { url: 'https://api-b.example.com', enabled: false, sortOrder: 1 },
+        { url: 'https://api-a.example.com', enabled: true, basePathMode: 'protocol_default', sortOrder: 0 },
+        { url: 'https://api-b.example.com', enabled: false, basePathMode: 'protocol_default', sortOrder: 1 },
       ],
     });
   });

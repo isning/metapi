@@ -32,6 +32,10 @@ describe('standardApiProvider helpers', () => {
     expect(resolveVersionedModelsUrl('https://api.example.com')).toBe('https://api.example.com/v1/models');
     expect(resolveVersionedModelsUrl('https://api.example.com/v1')).toBe('https://api.example.com/v1/models');
     expect(resolveVersionedModelsUrl('https://api.example.com/v1beta')).toBe('https://api.example.com/v1beta/models');
+    expect(resolveVersionedModelsUrl('https://ark.cn-beijing.volces.com/api/coding/v3')).toBe('https://ark.cn-beijing.volces.com/api/coding/v3/models');
+    expect(resolveVersionedModelsUrl('https://gateway.example.com/custom-prefix')).toBe('https://gateway.example.com/custom-prefix/v1/models');
+    expect(resolveVersionedModelsUrl('https://gateway.example.com/openai-compatible', 'complete_api_prefix'))
+      .toBe('https://gateway.example.com/openai-compatible/models');
   });
 
   it('provides shared unsupported login/checkin and zero-balance defaults', async () => {
@@ -71,6 +75,21 @@ describe('standardApiProvider helpers', () => {
     await expect(adapter.fetchModelsForTest({
       baseUrl: 'https://api.example.com',
     })).resolves.toEqual([]);
+  });
+
+  it('uses the complete API prefix for adapter fallback model discovery', async () => {
+    const adapter = new TestStandardApiProviderAdapter();
+    let requestedUrl = '';
+    adapter.fetchJsonImpl = async (url: string) => {
+      requestedUrl = url;
+      return { data: [{ id: 'custom-model' }] };
+    };
+
+    await expect(adapter.fetchModelsForTest({
+      baseUrl: 'https://gateway.example.com/custom-api-prefix',
+      basePathMode: 'complete_api_prefix',
+    })).resolves.toEqual(['custom-model']);
+    expect(requestedUrl).toBe('https://gateway.example.com/custom-api-prefix/models');
   });
 
   it('rejects invalid payload shapes instead of silently treating them as no models', async () => {

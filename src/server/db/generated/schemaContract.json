@@ -3219,6 +3219,12 @@
           "notNull": false,
           "defaultValue": "datetime('now')",
           "primaryKey": false
+        },
+        "base_path_mode": {
+          "logicalType": "text",
+          "notNull": true,
+          "defaultValue": "'protocol_default'",
+          "primaryKey": false
         }
       }
     },

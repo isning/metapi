@@ -71,7 +71,9 @@ export async function executeVideoCreateProxySurface(input: {
     clientContext: input.clientContext,
     executeAttempt: async (selected) => {
       const { upstream, text, baseUrl } = await runWithSiteApiEndpointPool(selected.site, async (target) => {
-        const targetUrl = buildUpstreamUrl(target.baseUrl, downstreamPath);
+        const targetUrl = buildUpstreamUrl(target.baseUrl, downstreamPath, {
+          basePathMode: target.endpoint?.basePathMode as 'protocol_default' | 'complete_api_prefix' | undefined,
+        });
         const accountProxy = getProxyUrlFromExtraConfig(selected.account.extraConfig);
         const requestInit = input.multipartForm
           ? withSiteRecordProxyRequestInit(selected.site, {
@@ -207,8 +209,13 @@ async function requestMappedVideoTaskUpstream(
   mapping: NonNullable<Awaited<ReturnType<typeof getProxyVideoTaskByPublicId>>>,
   method: 'GET' | 'DELETE',
 ) {
-  const buildRequest = async (baseUrl: string) => {
-    const targetUrl = buildUpstreamUrl(baseUrl, `/v1/videos/${encodeURIComponent(mapping.upstreamVideoId)}`);
+  const buildRequest = async (
+    baseUrl: string,
+    basePathMode?: 'protocol_default' | 'complete_api_prefix',
+  ) => {
+    const targetUrl = buildUpstreamUrl(baseUrl, `/v1/videos/${encodeURIComponent(mapping.upstreamVideoId)}`, {
+      basePathMode,
+    });
     const upstream = await fetch(targetUrl, await withSiteProxyRequestInit(targetUrl, {
       method,
       headers: { Authorization: `Bearer ${mapping.tokenValue}` },
@@ -226,7 +233,10 @@ async function requestMappedVideoTaskUpstream(
   };
   const site = await resolveProxyVideoTaskSite(mapping.accountId);
   return site
-    ? runWithSiteApiEndpointPool(site, (target) => buildRequest(target.baseUrl))
+    ? runWithSiteApiEndpointPool(site, (target) => buildRequest(
+        target.baseUrl,
+        target.endpoint?.basePathMode as 'protocol_default' | 'complete_api_prefix' | undefined,
+      ))
     : buildRequest(mapping.siteUrl);
 }
 

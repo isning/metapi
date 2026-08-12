@@ -210,7 +210,9 @@ describe('refreshModelsForAccount credential discovery', () => {
       modelCount: 1,
       modelsPreview: ['gpt-4.1'],
     });
-    expect(getModelsMock).toHaveBeenCalledWith('https://api.example.com', 'session-token', undefined);
+    expect(getModelsMock).toHaveBeenCalledWith('https://api.example.com', 'session-token', undefined, {
+      basePathMode: 'protocol_default',
+    });
   });
 
   it('discovers models from the configured model catalog source before adapter probing', async () => {
@@ -279,6 +281,45 @@ describe('refreshModelsForAccount credential discovery', () => {
     expect(source?.lastModelCount).toBe(2);
     expect(source?.lastRefreshAt).toBeTruthy();
     expect(source?.lastError).toBeNull();
+  });
+
+  it('uses an explicit endpoint API prefix for the default model catalog URL', async () => {
+    getApiTokenMock.mockResolvedValue(null);
+    getModelsMock.mockResolvedValue(['adapter-model']);
+    undiciFetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: [{ id: 'ark-code-latest' }] }),
+    });
+
+    const site = await db.insert(schema.sites).values({
+      name: 'ark-site',
+      url: 'https://panel.ark.example.com',
+      platform: 'openai',
+      status: 'active',
+    }).returning().get();
+    await db.insert(schema.siteApiEndpoints).values({
+      siteId: site.id,
+      url: 'https://ark.example.com/custom-api-prefix',
+      basePathMode: 'complete_api_prefix',
+      enabled: true,
+      sortOrder: 0,
+    }).run();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'ark-user',
+      accessToken: 'ark-token',
+      apiToken: null,
+      status: 'active',
+    }).returning().get();
+
+    const result = await refreshModelsForAccount(account.id);
+
+    expect(result.modelCount).toBe(1);
+    expect(undiciFetchMock).toHaveBeenCalledWith(
+      'https://ark.example.com/custom-api-prefix/models',
+      expect.objectContaining({ method: 'GET' }),
+    );
+    expect(getModelsMock).not.toHaveBeenCalled();
   });
 
   it('deduplicates discovered model names before writing availability rows', async () => {

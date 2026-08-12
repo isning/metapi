@@ -1,4 +1,6 @@
 import { StandardApiProviderAdapterBase, normalizePlatformBaseUrl } from './standardApiProvider.js';
+import type { ModelDiscoveryOptions } from './base.js';
+import { resolveGeminiNativeModelsUrl } from '../../contracts/siteApiEndpointUrlResolver.js';
 
 function stripModelPrefix(name: string): string {
   const trimmed = name.trim();
@@ -25,18 +27,6 @@ function resolveGeminiOpenAiModelsUrl(baseUrl: string): string {
   return `${normalized}/models`;
 }
 
-function resolveGeminiNativeModelsUrl(baseUrl: string, apiToken: string): string {
-  const normalized = normalizePlatformBaseUrl(baseUrl);
-  const withVersion = /\/v\d+(?:beta)?(?:\/|$)/i.test(normalized)
-    ? normalized
-    : `${normalized}/v1beta`;
-  const listBase = /\/models$/i.test(withVersion)
-    ? withVersion
-    : `${withVersion}/models`;
-  const separator = listBase.includes('?') ? '&' : '?';
-  return `${listBase}${separator}key=${encodeURIComponent(apiToken)}`;
-}
-
 export class GeminiAdapter extends StandardApiProviderAdapterBase {
   readonly platformName: string = 'gemini';
 
@@ -49,7 +39,7 @@ export class GeminiAdapter extends StandardApiProviderAdapterBase {
     );
   }
 
-  async getModels(baseUrl: string, apiToken: string): Promise<string[]> {
+  async getModels(baseUrl: string, apiToken: string, _platformUserId?: number, options?: ModelDiscoveryOptions): Promise<string[]> {
     const normalizedBase = normalizePlatformBaseUrl(baseUrl);
 
     if (isOpenAiCompatGeminiBase(normalizedBase)) {
@@ -62,7 +52,10 @@ export class GeminiAdapter extends StandardApiProviderAdapterBase {
     }
 
     try {
-      const res = await this.fetchJson<any>(resolveGeminiNativeModelsUrl(normalizedBase, apiToken));
+      const res = await this.fetchJson<any>(resolveGeminiNativeModelsUrl({
+        baseUrl: normalizedBase,
+        basePathMode: options?.basePathMode,
+      }, apiToken));
       const nativeModels = (res?.models || [])
         .map((m: any) => String(m?.name || '').trim())
         .filter(Boolean);

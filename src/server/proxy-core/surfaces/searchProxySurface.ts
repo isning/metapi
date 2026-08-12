@@ -54,7 +54,9 @@ export async function executeSearchProxySurface(input: {
       };
       const { upstream, text, firstByteLatencyMs } = await runWithSiteApiEndpointPool(selected.site, async (target) => {
         const startedAtMs = Date.now();
-        const targetUrl = buildUpstreamUrl(target.baseUrl, '/v1/search');
+        const targetUrl = buildUpstreamUrl(target.baseUrl, '/v1/search', {
+          basePathMode: target.endpoint?.basePathMode as 'protocol_default' | 'complete_api_prefix' | undefined,
+        });
         const response = await fetchWithObservedFirstByte(
           async (signal) => fetch(targetUrl, withSiteRecordProxyRequestInit(selected.site, {
             method: 'POST',

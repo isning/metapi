@@ -2,6 +2,9 @@ import { asc, eq } from 'drizzle-orm';
 import type { RequestInit as UndiciRequestInit } from 'undici';
 import { db, schema } from '../db/index.js';
 import { withSiteProxyRequestInit } from './siteProxy.js';
+import { selectSiteApiEndpointTarget } from './siteApiEndpointService.js';
+import type { SiteApiEndpointBasePathMode } from '../contracts/siteApiEndpointUrlMode.js';
+import { resolveOpenAiModelsUrl } from '../contracts/siteApiEndpointUrlResolver.js';
 
 export type ModelCatalogSourceRow = typeof schema.modelCatalogSources.$inferSelect;
 export type ModelCatalogParser =
@@ -22,7 +25,10 @@ function normalizeSiteUrl(value: unknown): string {
   return String(value || '').trim().replace(/\/+$/, '');
 }
 
-function defaultCatalogUrlForSite(site: Pick<typeof schema.sites.$inferSelect, 'url'>): string | null {
+function defaultCatalogUrlForSite(
+  site: Pick<typeof schema.sites.$inferSelect, 'url'>,
+  basePathMode?: SiteApiEndpointBasePathMode | null,
+): string | null {
   const siteUrl = normalizeSiteUrl(site.url);
   if (!siteUrl) return null;
   try {
@@ -33,10 +39,7 @@ function defaultCatalogUrlForSite(site: Pick<typeof schema.sites.$inferSelect, '
   } catch {
     return null;
   }
-  if (/\/v\d+(?:\.\d+)?(?:beta)?$/i.test(siteUrl)) {
-    return `${siteUrl}/models`;
-  }
-  return `${siteUrl}/v1/models`;
+  return resolveOpenAiModelsUrl({ baseUrl: siteUrl, basePathMode });
 }
 
 export async function ensureDefaultModelCatalogSourcesForSite(siteId: number): Promise<ModelCatalogSourceRow[]> {
@@ -44,12 +47,32 @@ export async function ensureDefaultModelCatalogSourcesForSite(siteId: number): P
     .where(eq(schema.modelCatalogSources.siteId, siteId))
     .orderBy(asc(schema.modelCatalogSources.id))
     .all();
-  if (existing.length > 0) return existing;
-
   const site = await db.select().from(schema.sites).where(eq(schema.sites.id, siteId)).get();
-  if (!site) return [];
-  const discoveryUrl = defaultCatalogUrlForSite(site);
+  if (!site || existing.length > 0 && !existing.some((source) => source.sourceKey === 'default-model-catalog')) {
+    return existing;
+  }
+  // API endpoint pool is the explicit operator-owned request base. Fall back
+  // to the site URL only when no API endpoint has been configured.
+  const apiTarget = await selectSiteApiEndpointTarget(site);
+  const discoveryUrl = defaultCatalogUrlForSite(
+    { url: apiTarget?.baseUrl || site.url },
+    apiTarget?.endpoint?.basePathMode as SiteApiEndpointBasePathMode | undefined,
+  );
   if (!discoveryUrl) return [];
+
+  const defaultSource = existing.find((source) => source.sourceKey === 'default-model-catalog');
+  if (defaultSource) {
+    if (defaultSource.discoveryUrl !== discoveryUrl) {
+      await db.update(schema.modelCatalogSources).set({
+        discoveryUrl,
+        updatedAt: new Date().toISOString(),
+      }).where(eq(schema.modelCatalogSources.id, defaultSource.id)).run();
+      defaultSource.discoveryUrl = discoveryUrl;
+    }
+    return existing;
+  }
+
+  if (existing.length > 0) return existing;
 
   await db.insert(schema.modelCatalogSources).values({
     siteId,

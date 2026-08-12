@@ -40,6 +40,17 @@ describe('official llm upstream adapters', () => {
         return;
       }
 
+      if (req.url === '/ark/api/coding/v3/models') {
+        if (req.headers.authorization !== 'Bearer sk-ark') {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: { message: 'unauthorized' } }));
+          return;
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ data: [{ id: 'ark-code-latest' }] }));
+        return;
+      }
+
       if (req.url === '/claude/v1/models') {
         if (req.headers['x-api-key'] !== 'sk-claude' || req.headers['anthropic-version'] !== '2023-06-01') {
           res.writeHead(401, { 'Content-Type': 'application/json' });
@@ -119,6 +130,12 @@ describe('official llm upstream adapters', () => {
     const adapter = new OpenAiAdapter();
     const models = await adapter.getModels(`${baseUrl}/openai`, 'sk-openai');
     expect(models).toEqual(['gpt-4.1', 'gpt-4o-mini']);
+  });
+
+  it('does not append /v1 when an OpenAI-compatible adapter URL ends in a custom version', async () => {
+    const adapter = new OpenAiAdapter();
+    const models = await adapter.getModels(`${baseUrl}/ark/api/coding/v3`, 'sk-ark');
+    expect(models).toEqual(['ark-code-latest']);
   });
 
   it('fetches models from claude upstream with anthropic headers', async () => {

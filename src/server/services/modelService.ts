@@ -24,7 +24,7 @@ import { isCodexPlatform } from './oauth/codexAccount.js';
 import { buildStoredOauthStateFromAccount, getOauthInfoFromAccount } from './oauth/oauthAccount.js';
 import { refreshOauthAccessTokenSingleflight } from './oauth/refreshSingleflight.js';
 import { listEnabledOauthRouteUnitsWithMembers } from './oauth/routeUnitService.js';
-import { requireSiteApiBaseUrl } from './siteApiEndpointService.js';
+import { selectSiteApiEndpointTarget } from './siteApiEndpointService.js';
 import {
   synchronizeAutomaticRouteGroups,
   type AutomaticRouteGroupCandidate,
@@ -1191,11 +1191,9 @@ export async function refreshModelsForAccount(
     : [];
   enabledTokens = enabledTokens.filter(isUsableAccountToken);
 
-  let aiBaseUrl: string;
-  try {
-    aiBaseUrl = await requireSiteApiBaseUrl(site);
-  } catch (err) {
-    const rawMessage = (err as { message?: string })?.message || '模型获取失败';
+  const apiEndpointTarget = await selectSiteApiEndpointTarget(site);
+  if (!apiEndpointTarget?.baseUrl) {
+    const rawMessage = '当前站点的 API 请求地址均不可用';
     const errorCode = classifyModelDiscoveryError(rawMessage);
     const errorMessage = rawMessage;
     await setAccountRuntimeHealth(account.id, {
@@ -1214,6 +1212,12 @@ export async function refreshModelsForAccount(
       discoveredApiToken: !!discoveredApiToken,
     });
   }
+  const aiBaseUrl = apiEndpointTarget.baseUrl;
+  const adapterModelDiscoveryOptions = {
+    basePathMode: apiEndpointTarget.endpoint?.basePathMode === 'complete_api_prefix'
+      ? 'complete_api_prefix' as const
+      : 'protocol_default' as const,
+  };
 
   const accountModels = new Map<string, string>();   // lowercase key → original name (first-wins)
   const modelLatency = new Map<string, number | null>();
@@ -1254,7 +1258,7 @@ export async function refreshModelsForAccount(
           site,
           credential,
           catalogSources,
-          adapterGetModels: () => adapter.getModels(aiBaseUrl, credential, platformUserId),
+          adapterGetModels: () => adapter.getModels(aiBaseUrl, credential, platformUserId, adapterModelDiscoveryOptions),
           recordFailure,
         })),
       MODEL_DISCOVERY_TIMEOUT_MS,
@@ -1281,7 +1285,7 @@ export async function refreshModelsForAccount(
           site,
           credential: token.token,
           catalogSources,
-          adapterGetModels: () => adapter.getModels(aiBaseUrl, token.token, platformUserId),
+          adapterGetModels: () => adapter.getModels(aiBaseUrl, token.token, platformUserId, adapterModelDiscoveryOptions),
           recordFailure,
         })),
       MODEL_DISCOVERY_TIMEOUT_MS,

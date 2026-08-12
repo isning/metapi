@@ -57,6 +57,7 @@ describe('sites api endpoints', () => {
           {
             url: 'https://api-a.example.com/',
             enabled: true,
+            basePathMode: 'complete_api_prefix',
             sortOrder: 0,
             lastSelectedAt: '2099-01-01T00:00:00.000Z',
           },
@@ -73,6 +74,7 @@ describe('sites api endpoints', () => {
       expect.objectContaining({
         url: 'https://api-a.example.com',
         enabled: true,
+        basePathMode: 'complete_api_prefix',
         sortOrder: 0,
         cooldownUntil: null,
         lastSelectedAt: null,
@@ -82,6 +84,7 @@ describe('sites api endpoints', () => {
       expect.objectContaining({
         url: 'https://api-b.example.com',
         enabled: false,
+        basePathMode: 'protocol_default',
         sortOrder: 1,
         cooldownUntil: null,
         lastSelectedAt: null,
@@ -97,6 +100,10 @@ describe('sites api endpoints', () => {
     expect(stored.map((row) => row.url)).toEqual([
       'https://api-a.example.com',
       'https://api-b.example.com',
+    ]);
+    expect(stored.map((row) => row.basePathMode)).toEqual([
+      'complete_api_prefix',
+      'protocol_default',
     ]);
   });
 
@@ -122,7 +129,7 @@ describe('sites api endpoints', () => {
       payload: {
         apiEndpoints: [
           { url: 'https://api-b.example.com', enabled: true, sortOrder: 1 },
-          { url: 'https://api-a.example.com', enabled: false, sortOrder: 0 },
+          { url: 'https://api-a.example.com', enabled: false, basePathMode: 'complete_api_prefix', sortOrder: 0 },
         ],
       },
     });
@@ -133,11 +140,13 @@ describe('sites api endpoints', () => {
       expect.objectContaining({
         url: 'https://api-a.example.com',
         enabled: false,
+        basePathMode: 'complete_api_prefix',
         sortOrder: 0,
       }),
       expect.objectContaining({
         url: 'https://api-b.example.com',
         enabled: true,
+        basePathMode: 'protocol_default',
         sortOrder: 1,
       }),
     ]);

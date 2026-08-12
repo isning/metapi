@@ -71,21 +71,21 @@ export function analyzePrimarySiteUrl(url) {
     };
   }
 
-  if (SEMANTIC_PRIMARY_SITE_PATHS.has(matchedPath)) {
-    return {
-      canonicalUrl,
-      persistedUrl: canonicalUrl,
-      matchedPath,
-      action: 'preserve_semantic_path',
-    };
-  }
-
   if (AUTO_STRIP_PRIMARY_SITE_PATHS.has(matchedPath)) {
     return {
       canonicalUrl,
       persistedUrl: parsed.origin,
       matchedPath,
       action: 'auto_strip_known_api_suffix',
+    };
+  }
+
+  if (SEMANTIC_PRIMARY_SITE_PATHS.has(matchedPath)) {
+    return {
+      canonicalUrl,
+      persistedUrl: canonicalUrl,
+      matchedPath,
+      action: 'preserve_semantic_path',
     };
   }
 

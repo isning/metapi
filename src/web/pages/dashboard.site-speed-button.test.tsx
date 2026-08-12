@@ -103,6 +103,10 @@ describe('Dashboard site speed buttons', () => {
       await flushMicrotasks();
 
       expect(globalThis.document.getElementById).not.toHaveBeenCalled();
+      expect(globalThis.fetch).toHaveBeenCalledWith('https://example.com', {
+        method: 'GET',
+        mode: 'no-cors',
+      });
     } finally {
       root?.unmount();
     }
@@ -135,6 +139,10 @@ describe('Dashboard site speed buttons', () => {
       await flushMicrotasks();
 
       expect(globalThis.document.getElementById).not.toHaveBeenCalled();
+      expect(globalThis.fetch).toHaveBeenCalledWith('https://example.com', {
+        method: 'GET',
+        mode: 'no-cors',
+      });
     } finally {
       root?.unmount();
     }

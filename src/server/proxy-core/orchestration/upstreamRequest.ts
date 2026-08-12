@@ -1,5 +1,12 @@
 export type UpstreamEndpoint = 'chat' | 'messages' | 'responses' | 'gemini' | 'embeddings' | 'completions' | 'images/generations' | 'images/edits' | 'videos/generations' | 'videos';
 
+import type { SiteApiEndpointBasePathMode } from '../../contracts/siteApiEndpointUrlMode.js';
+import { resolveSiteApiEndpointRequestUrl } from '../../contracts/siteApiEndpointUrlResolver.js';
+
+export type UpstreamUrlBuildOptions = {
+  basePathMode?: SiteApiEndpointBasePathMode | null;
+};
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object';
 }
@@ -61,25 +68,6 @@ function extractHtmlSummary(rawText: string, status: number): string {
   return collapseWhitespace(heading);
 }
 
-function formatUrlOrigin(url: URL): string {
-  const username = url.username ? encodeURIComponent(url.username) : '';
-  const password = url.password ? encodeURIComponent(url.password) : '';
-  const auth = username
-    ? `${username}${password ? `:${password}` : ''}@`
-    : '';
-
-  return `${url.protocol}//${auth}${url.host}`;
-}
-
-function joinPath(basePath: string, requestPath: string): string {
-  const base = basePath.replace(/\/+$/, '');
-  const path = requestPath.startsWith('/') ? requestPath : `/${requestPath}`;
-
-  if (!base || base === '/') return path || '/';
-  if (!path || path === '/') return base;
-  return `${base}${path}`;
-}
-
 export function summarizeUpstreamError(status: number, rawErrorText: string): string {
   const statusPrefix = status > 0
     ? `Upstream returned HTTP ${status}`
@@ -100,39 +88,13 @@ export function summarizeUpstreamError(status: number, rawErrorText: string): st
   return `${statusPrefix}: ${compact.slice(0, 400)}...(truncated)`;
 }
 
-export function buildUpstreamUrl(siteUrl: string, requestPath: string): string {
-  const baseRaw = typeof siteUrl === 'string' ? siteUrl.trim() : '';
-  const pathRaw = typeof requestPath === 'string' ? requestPath.trim() : '';
-  const fallbackBase = baseRaw.replace(/\/+$/, '');
-  let path = pathRaw.startsWith('/') ? pathRaw : `/${pathRaw}`;
-
-  if (!fallbackBase) return path || '/';
-  if (!path || path === '/') return fallbackBase;
-
-  try {
-    const parsed = new URL(baseRaw);
-    const basePath = parsed.pathname.replace(/\/+$/, '');
-    const baseHasVersionSuffix = /\/(?:api\/)?v1$/i.test(basePath);
-    if (baseHasVersionSuffix) {
-      if (path === '/v1') {
-        path = '/';
-      } else if (path.startsWith('/v1/')) {
-        path = path.slice('/v1'.length) || '/';
-      }
-    }
-
-    const joinedPath = joinPath(basePath, path);
-    return `${formatUrlOrigin(parsed)}${joinedPath}${parsed.search}${parsed.hash}`;
-  } catch {
-    const baseHasVersionSuffix = /\/(?:api\/)?v1$/i.test(fallbackBase);
-    if (baseHasVersionSuffix) {
-      if (path === '/v1') {
-        path = '/';
-      } else if (path.startsWith('/v1/')) {
-        path = path.slice('/v1'.length) || '/';
-      }
-    }
-
-    return `${fallbackBase}${path}`;
-  }
+export function buildUpstreamUrl(
+  siteUrl: string,
+  requestPath: string,
+  options: UpstreamUrlBuildOptions = {},
+): string {
+  return resolveSiteApiEndpointRequestUrl({
+    baseUrl: siteUrl,
+    basePathMode: options.basePathMode,
+  }, requestPath);
 }

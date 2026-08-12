@@ -917,7 +917,7 @@ export default function Dashboard({
                       setSiteSpeedState(siteKey, { status: "loading" });
                       try {
                         const start = performance.now();
-                        await fetch(`${s.url}/v1/models`, {
+                        await fetch(s.url, {
                           method: "GET",
                           mode: "no-cors",
                         });
@@ -954,7 +954,7 @@ export default function Dashboard({
                         setSiteSpeedState(siteKey, { status: "loading" });
                         try {
                           const start = performance.now();
-                          await fetch(`${site.url}/v1/models`, {
+                          await fetch(site.url, {
                             method: "GET",
                             mode: "no-cors",
                           });

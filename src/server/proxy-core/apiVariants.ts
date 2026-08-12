@@ -1,4 +1,5 @@
 import { buildUpstreamUrl, type UpstreamEndpoint } from './orchestration/upstreamRequest.js';
+import type { SiteApiEndpointBasePathMode } from '../contracts/siteApiEndpointUrlMode.js';
 import { matchApiVariantCapability } from './capabilities/apiVariantCapabilityMatcher.js';
 import type { RuntimeCapabilityRequirement } from './capabilities/requestCapabilityRequirement.js';
 
@@ -207,6 +208,7 @@ export interface BuildApiAttemptPlanInput {
   credentialEndpointBindings?: CredentialEndpointBinding[];
   endpointModelObservations?: EndpointModelObservation[];
   siteUrl?: string | null;
+  basePathMode?: SiteApiEndpointBasePathMode | null;
   policy?: ApiVariantPolicy | null;
   disableCrossProtocolFallback?: boolean;
   runtimeCapabilityRequirement?: RuntimeCapabilityRequirement | null;
@@ -290,6 +292,7 @@ export function defaultRequestPathForUpstreamEndpoint(endpoint: UpstreamEndpoint
 
 export function defaultRequestUrlForUpstreamEndpoint(input: {
   siteUrl?: string | null;
+  basePathMode?: SiteApiEndpointBasePathMode | null;
   endpoint: UpstreamEndpoint;
 }): string | null {
   const baseUrl = String(input.siteUrl || '').trim();
@@ -315,7 +318,9 @@ export function defaultRequestUrlForUpstreamEndpoint(input: {
   } catch {
     // Fall back to generic URL joining below.
   }
-  return buildUpstreamUrl(baseUrl, defaultRequestPathForUpstreamEndpoint(input.endpoint));
+  return buildUpstreamUrl(baseUrl, defaultRequestPathForUpstreamEndpoint(input.endpoint), {
+    basePathMode: input.basePathMode,
+  });
 }
 
 function mergeCapability(
@@ -432,6 +437,7 @@ export function buildDefaultApiEndpointProfile(input: {
   siteId: number;
   endpoint: UpstreamEndpoint;
   siteUrl?: string | null;
+  basePathMode?: SiteApiEndpointBasePathMode | null;
 }): ApiEndpointProfile {
   const apiType = apiTypeFromUpstreamEndpoint(input.endpoint);
   return {
@@ -442,6 +448,7 @@ export function buildDefaultApiEndpointProfile(input: {
     requestMethod: 'POST',
     requestUrl: defaultRequestUrlForUpstreamEndpoint({
       siteUrl: input.siteUrl,
+      basePathMode: input.basePathMode,
       endpoint: input.endpoint,
     }),
     authMode: 'bearer',
@@ -477,11 +484,13 @@ function defaultBindingForEndpoint(input: {
   credentialId?: number | string | null;
   endpoint: UpstreamEndpoint;
   siteUrl?: string | null;
+  basePathMode?: SiteApiEndpointBasePathMode | null;
 }): { profile: ApiEndpointProfile; binding: CredentialEndpointBinding } {
   const profile = buildDefaultApiEndpointProfile({
     siteId: input.siteId,
     endpoint: input.endpoint,
     siteUrl: input.siteUrl,
+    basePathMode: input.basePathMode,
   });
   return {
     profile,
@@ -528,10 +537,15 @@ function buildVariant(input: {
   binding: CredentialEndpointBinding;
   downgradeAllowed: boolean;
   siteUrl?: string | null;
+  basePathMode?: SiteApiEndpointBasePathMode | null;
 }): ApiVariant {
   const capability = mergeCapability(input.profile.capabilityDefaults, input.binding.capabilityOverride);
   const requestUrl = input.profile.requestUrl
-    || defaultRequestUrlForUpstreamEndpoint({ siteUrl: input.siteUrl, endpoint: input.endpoint })
+    || defaultRequestUrlForUpstreamEndpoint({
+      siteUrl: input.siteUrl,
+      basePathMode: input.basePathMode,
+      endpoint: input.endpoint,
+    })
     || defaultRequestPathForUpstreamEndpoint(input.endpoint);
   return {
     id: `api-variant:${input.supplyTargetId}:${input.binding.id}`,
@@ -657,7 +671,13 @@ export function buildApiAttemptPlan(input: BuildApiAttemptPlanInput): ApiAttempt
                 })];
           })
           .sort(sortBindings)
-      : [defaultBindingForEndpoint({ siteId: input.siteId, credentialId: input.credentialId, endpoint, siteUrl: input.siteUrl }).binding];
+      : [defaultBindingForEndpoint({
+          siteId: input.siteId,
+          credentialId: input.credentialId,
+          endpoint,
+          siteUrl: input.siteUrl,
+          basePathMode: input.basePathMode,
+        }).binding];
 
     if (hasExplicitBindings && candidateProfiles.length === 0) {
       diagnostics.push({
@@ -687,6 +707,7 @@ export function buildApiAttemptPlan(input: BuildApiAttemptPlanInput): ApiAttempt
         credentialId: input.credentialId,
         endpoint,
         siteUrl: input.siteUrl,
+        basePathMode: input.basePathMode,
       }).profile;
       if (!bindingCanPlan(binding, { allowUnknownBindings })) {
         diagnostics.push({
@@ -725,6 +746,7 @@ export function buildApiAttemptPlan(input: BuildApiAttemptPlanInput): ApiAttempt
         binding,
         downgradeAllowed,
         siteUrl: input.siteUrl,
+        basePathMode: input.basePathMode,
       });
       variants.push(variant);
       const capabilityMatch = matchApiVariantCapability({

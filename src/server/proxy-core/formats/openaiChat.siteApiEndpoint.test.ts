@@ -268,4 +268,72 @@ describe('chat proxy site api endpoint rotation', () => {
     expect(storedEndpoints[0]?.cooldownUntil).toBeTruthy();
     expect(storedEndpoints[1]?.lastSelectedAt).toBeTruthy();
   });
+
+  it('uses an explicit non-versioned API prefix for actual downstream chat requests', async () => {
+    const site = await db.insert(schema.sites).values({
+      name: 'custom-prefix-site',
+      url: 'https://console.example.com',
+      platform: 'openai',
+      status: 'active',
+    }).returning().get();
+    const account = await db.insert(schema.accounts).values({
+      siteId: site.id,
+      username: 'custom-prefix-user',
+      accessToken: '',
+      apiToken: 'sk-custom-prefix',
+      status: 'active',
+      checkinEnabled: false,
+      extraConfig: JSON.stringify({ credentialMode: 'apikey' }),
+    }).returning().get();
+    await db.insert(schema.siteApiEndpoints).values({
+      siteId: site.id,
+      url: 'https://gateway.example.com/custom-api-prefix',
+      basePathMode: 'complete_api_prefix',
+      enabled: true,
+      sortOrder: 0,
+    }).run();
+    selectTargetMock.mockReturnValue({
+      target: { id: 12, routeId: 23 },
+      executionTargetId: 12,
+      executionAttemptId: 'ea_12',
+      site,
+      account,
+      tokenName: 'default',
+      tokenValue: 'sk-custom-prefix',
+      actualModel: 'gpt-4o-mini',
+    });
+    selectNextTargetMock.mockReturnValue(null);
+    fetchMock
+      .mockResolvedValueOnce(new Response('responses unavailable', { status: 404 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        id: 'chatcmpl-custom-prefix',
+        object: 'chat.completion',
+        created: 1_706_000_000,
+        model: 'gpt-4o-mini',
+        choices: [{
+          index: 0,
+          message: { role: 'assistant', content: 'custom prefix ok' },
+          finish_reason: 'stop',
+        }],
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/chat/completions',
+      payload: {
+        model: 'gpt-4o-mini',
+        messages: [{ role: 'user', content: 'hi' }],
+      },
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json()?.choices?.[0]?.message?.content).toBe('custom prefix ok');
+    expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([
+      'https://gateway.example.com/custom-api-prefix/responses',
+      'https://gateway.example.com/custom-api-prefix/chat/completions',
+    ]);
+  });
 });

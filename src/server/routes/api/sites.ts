@@ -17,6 +17,10 @@ import {
 } from '../../contracts/siteRoutePayloads.js';
 import { getSiteInitializationPreset } from '../../../shared/siteInitializationPresets.js';
 import { normalizeSiteApiEndpointBaseUrl } from '../../services/siteApiEndpointService.js';
+import {
+  DEFAULT_SITE_API_ENDPOINT_BASE_PATH_MODE,
+  normalizeSiteApiEndpointBasePathMode,
+} from '../../contracts/siteApiEndpointUrlMode.js';
 import { analyzePrimarySiteUrl } from '../../../shared/sitePrimaryUrl.js';
 import { probeSiteModels } from '../../services/modelService.js';
 import {
@@ -119,6 +123,7 @@ function normalizeSitePlatform(value: string | undefined): string | null {
 
 type SiteApiEndpointInputRow = {
   url: string;
+  basePathMode: 'protocol_default' | 'complete_api_prefix';
   enabled: boolean;
   sortOrder: number;
 };
@@ -221,6 +226,19 @@ function normalizeSiteApiEndpointsInput(input: unknown): {
       };
     }
 
+    const rawBasePathMode = (row as { basePathMode?: unknown }).basePathMode;
+    const basePathMode = rawBasePathMode === undefined
+      ? DEFAULT_SITE_API_ENDPOINT_BASE_PATH_MODE
+      : normalizeSiteApiEndpointBasePathMode(rawBasePathMode);
+    if (!basePathMode) {
+      return {
+        valid: false,
+        present: true,
+        apiEndpoints: [],
+        error: 'Invalid apiEndpoints basePathMode. Expected protocol_default or complete_api_prefix.',
+      };
+    }
+
     const normalizedSortOrder = normalizeSortOrder((row as { sortOrder?: unknown }).sortOrder);
     if ((row as { sortOrder?: unknown }).sortOrder !== undefined && normalizedSortOrder === null) {
       return {
@@ -233,6 +251,7 @@ function normalizeSiteApiEndpointsInput(input: unknown): {
 
     apiEndpoints.push({
       url: normalizedUrl,
+      basePathMode,
       enabled: normalizedEnabled ?? true,
       sortOrder: normalizedSortOrder ?? index,
     });
@@ -806,6 +825,7 @@ export async function sitesRoutes(app: FastifyInstance) {
             normalizedApiEndpoints.apiEndpoints.map((row) => ({
               siteId,
               url: row.url,
+              basePathMode: row.basePathMode,
               enabled: row.enabled,
               sortOrder: row.sortOrder,
             })),
@@ -948,6 +968,7 @@ export async function sitesRoutes(app: FastifyInstance) {
               normalizedApiEndpoints.apiEndpoints.map((row) => ({
                 siteId: id,
                 url: row.url,
+                basePathMode: row.basePathMode,
                 enabled: row.enabled,
                 sortOrder: row.sortOrder,
               })),

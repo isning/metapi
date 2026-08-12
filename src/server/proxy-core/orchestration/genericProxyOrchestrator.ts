@@ -516,7 +516,10 @@ export async function handleGenericSurfaceRequest(
         isCompactRequest,
       });
 
-      const executeEndpointResultForSiteApiBaseUrl = async (siteApiBaseUrl: string) => {
+      const executeEndpointResultForSiteApiBaseUrl = async (
+        siteApiBaseUrl: string,
+        basePathMode?: 'protocol_default' | 'complete_api_prefix',
+      ) => {
         const appendRequestUrlSuffix = (requestUrl: string | undefined, suffix: string): string | undefined => {
           const trimmed = String(requestUrl || '').trim();
           if (!trimmed) return undefined;
@@ -534,7 +537,7 @@ export async function handleGenericSurfaceRequest(
           if (requestPath.startsWith(`${defaultPath}/`) || requestPath.startsWith(`${defaultPath}?`)) {
             return `${trimmed.replace(/\/+$/, '')}${requestPath.slice(defaultPath.length)}`;
           }
-          return buildUpstreamUrl(siteApiBaseUrl, requestPath);
+          return buildUpstreamUrl(siteApiBaseUrl, requestPath, { basePathMode });
         };
         const buildEndpointRequest = (endpoint: UpstreamEndpoint, apiAttempt?: ApiAttempt) => {
           const upstreamStream = isStream || (forceResponsesUpstreamStream && endpoint === 'responses');
@@ -782,6 +785,7 @@ export async function handleGenericSurfaceRequest(
           credentialEndpointBindings: apiVariantConfig?.credentialEndpointBindings,
           endpointModelObservations: apiVariantConfig?.endpointModelObservations,
           siteUrl: siteApiBaseUrl,
+          basePathMode,
           disableCrossProtocolFallback: endpointFallbackDisabled,
           runtimeCapabilityRequirement: transformed.runtimeCapabilityRequirement,
         });
@@ -1042,10 +1046,12 @@ export async function handleGenericSurfaceRequest(
 
       let endpointResult: Awaited<ReturnType<typeof executeEndpointFlow>> | null = null;
       try {
-        const usesAdapterBuiltRequest = usesProtocolAdapterRequest;
-        endpointResult = !usesAdapterBuiltRequest && typeof selected.site.id === 'number'
+        endpointResult = typeof selected.site.id === 'number'
           ? await runWithSiteApiEndpointPool(selected.site, async (target) => {
-            const result = await executeEndpointResultForSiteApiBaseUrl(target.baseUrl);
+            const result = await executeEndpointResultForSiteApiBaseUrl(
+              target.baseUrl,
+              target.endpoint?.basePathMode as 'protocol_default' | 'complete_api_prefix' | undefined,
+            );
             if (!result.ok) {
               const upstreamFailure = new SiteApiEndpointRequestError(result.errText || 'unknown error', {
                 status: result.status || 502,

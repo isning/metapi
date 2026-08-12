@@ -68,6 +68,22 @@ describe('apiVariants', () => {
     expect(plan.diagnostics).toEqual([]);
   });
 
+  it('uses an explicit endpoint API prefix for default OpenAI and Claude variants', () => {
+    const plan = buildApiAttemptPlan({
+      siteId: 1,
+      credentialId: 2,
+      modelName: 'gpt-test',
+      siteUrl: 'https://gateway.example.com/custom-api',
+      basePathMode: 'complete_api_prefix',
+      endpointCandidates: ['chat', 'messages'],
+    });
+
+    expect(plan.attempts.map((attempt) => attempt.requestUrl)).toEqual([
+      'https://gateway.example.com/custom-api/chat/completions',
+      'https://gateway.example.com/custom-api/messages',
+    ]);
+  });
+
   it('plans executable request urls from endpoint profiles', () => {
     const chatProfile = {
       ...buildDefaultApiEndpointProfile({ siteId: 10, endpoint: 'chat' }),
@@ -132,6 +148,21 @@ describe('apiVariants', () => {
     expect(plan.attempts.map((attempt) => attempt.requestUrl)).toEqual([
       'https://api.deepseek.com/chat/completions',
       'https://api.deepseek.com/anthropic/v1/messages',
+    ]);
+  });
+
+  it('uses an explicitly configured custom OpenAI API prefix as the request base', () => {
+    const plan = buildApiAttemptPlan({
+      siteId: 10,
+      credentialId: 'key-a',
+      modelName: 'ark-code-latest',
+      siteUrl: 'https://ark.cn-beijing.volces.com/api/coding/v3',
+      endpointCandidates: ['chat', 'responses'],
+    });
+
+    expect(plan.attempts.map((attempt) => attempt.requestUrl)).toEqual([
+      'https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions',
+      'https://ark.cn-beijing.volces.com/api/coding/v3/responses',
     ]);
   });
 
