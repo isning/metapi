@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { EMPTY_DOWNSTREAM_ROUTING_POLICY } from '../../services/downstreamPolicyTypes.js';
+import {
+  getCacheAffinityObservation,
+  resetCacheAffinityObservationsForTest,
+} from '../../services/cacheAffinityObservationService.js';
 
 const selectRouteRuntimeExecutionAttemptMock = vi.fn();
 const recordRouteRuntimeExecutionAttemptStartedMock = vi.fn();
@@ -112,6 +116,7 @@ vi.mock('../../services/oauth/refreshSingleflight.js', () => ({
 
 describe('selectSurfaceExecutionAttempt', () => {
   beforeEach(() => {
+    resetCacheAffinityObservationsForTest();
     selectRouteRuntimeExecutionAttemptMock.mockReset();
     recordRouteRuntimeExecutionAttemptStartedMock.mockReset();
     recordRouteRuntimeExecutionAttemptFailureMock.mockReset();
@@ -1008,6 +1013,109 @@ describe('selectSurfaceExecutionAttempt', () => {
       estimatedCost: 0.42,
       billingDetails: { source: 'pricing-test' },
     });
+  });
+
+  it('records explicit upstream cache evidence under the actual endpoint identity', async () => {
+    resolveProxyUsageWithSelfLogFallbackMock.mockResolvedValue({
+      promptTokens: 100,
+      completionTokens: 10,
+      totalTokens: 110,
+      recoveredFromSelfLog: false,
+      estimatedCostFromQuota: 0,
+      selfLogBillingMeta: null,
+      usageSource: 'upstream',
+    });
+    resolveProxyLogBillingMock.mockResolvedValue({ estimatedCost: 0.1, billingDetails: null });
+
+    const { recordSurfaceSuccess } = await import('./sharedProxyOrchestration.js');
+    await recordSurfaceSuccess({
+      selected: {
+        target: { id: 11 },
+        account: { id: 33 },
+        site: { id: 44, url: 'https://upstream.example.com', platform: 'openai' },
+        tokenValue: 'live-token',
+        actualModel: 'upstream-model',
+        ...runtimeIdentity,
+      },
+      requestedModel: 'gpt-5.2',
+      modelName: 'upstream-model',
+      parsedUsage: {
+        promptTokens: 100,
+        completionTokens: 10,
+        totalTokens: 110,
+        cacheReadTokens: 80,
+        cacheCreationTokens: 5,
+        promptTokensIncludeCache: true,
+      },
+      upstreamUsagePresent: true,
+      upstreamCacheUsagePresent: true,
+      contentAffinityKey: 'content:abc',
+      endpointType: 'openai.chat_completions',
+      requestEndpointType: 'openai.responses',
+      requestStartedAtMs: 1000,
+      latencyMs: 250,
+      retryCount: 0,
+      logSuccess: vi.fn().mockResolvedValue(undefined),
+    });
+
+    expect(getCacheAffinityObservation({
+      executionTargetId: 11,
+      endpointType: 'openai.responses',
+      contentAffinityKey: 'content:abc',
+    })).toMatchObject({
+      hitProbability: 0.5,
+      cachedReadFraction: 0.8,
+      hitCacheWriteFraction: 0.05,
+    });
+  });
+
+  it('does not infer a cache miss from ordinary upstream token usage', async () => {
+    resolveProxyUsageWithSelfLogFallbackMock.mockResolvedValue({
+      promptTokens: 100,
+      completionTokens: 10,
+      totalTokens: 110,
+      recoveredFromSelfLog: false,
+      estimatedCostFromQuota: 0,
+      selfLogBillingMeta: null,
+      usageSource: 'upstream',
+    });
+    resolveProxyLogBillingMock.mockResolvedValue({ estimatedCost: 0.1, billingDetails: null });
+
+    const { recordSurfaceSuccess } = await import('./sharedProxyOrchestration.js');
+    await recordSurfaceSuccess({
+      selected: {
+        target: { id: 11 },
+        account: { id: 33 },
+        site: { id: 44, url: 'https://upstream.example.com', platform: 'openai' },
+        tokenValue: 'live-token',
+        actualModel: 'upstream-model',
+        ...runtimeIdentity,
+      },
+      requestedModel: 'gpt-5.2',
+      modelName: 'upstream-model',
+      parsedUsage: {
+        promptTokens: 100,
+        completionTokens: 10,
+        totalTokens: 110,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+        promptTokensIncludeCache: true,
+      },
+      upstreamUsagePresent: true,
+      upstreamCacheUsagePresent: false,
+      contentAffinityKey: 'content:abc',
+      endpointType: 'openai.responses',
+      requestStartedAtMs: 1000,
+      latencyMs: 250,
+      retryCount: 0,
+      logSuccess: vi.fn().mockResolvedValue(undefined),
+    });
+
+    expect(getCacheAffinityObservation({
+      executionTargetId: 11,
+      endpointType: 'openai.responses',
+      contentAffinityKey: 'content:abc',
+    })).toBeNull();
   });
 
   it('logs unknown usage as null tokens while preserving success bookkeeping', async () => {

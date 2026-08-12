@@ -42,7 +42,12 @@ import {
   startCompiledRuntimeExecutionSession,
   type CompiledRuntimeExecutionSession,
 } from '../../services/compiledRuntimeExecutionSessionService.js';
-import { hasProxyUsagePayload, mergeProxyUsage, parseProxyUsage } from '../../services/proxyUsageParser.js';
+import {
+  hasProxyCacheUsagePayload,
+  hasProxyUsagePayload,
+  mergeProxyUsage,
+  parseProxyUsage,
+} from '../../services/proxyUsageParser.js';
 
 const installedApps = new WeakSet<FastifyInstance>();
 const WS_TURN_STATE_HEADER = 'x-codex-turn-state';
@@ -399,6 +404,7 @@ async function handleResponsesWebsocketConnection(
               },
               requestedModel: requestModel,
               downstreamPath: '/v1/responses:websocket',
+              endpointType: 'openai.responses.websocket',
               downstreamApiKeyId: authContext.key?.id ?? null,
             })
             : null;
@@ -644,8 +650,10 @@ async function handleResponsesWebsocketConnection(
                 promptTokensIncludeCache: null as boolean | null,
               };
               let upstreamUsagePresent = false;
+              let upstreamCacheUsagePresent = false;
               for (const payload of runtimeResult.events) {
                 upstreamUsagePresent = upstreamUsagePresent || hasProxyUsagePayload(payload);
+                upstreamCacheUsagePresent = upstreamCacheUsagePresent || hasProxyCacheUsagePayload(payload);
                 parsedUsage = mergeProxyUsage(parsedUsage, parseProxyUsage(payload));
               }
               await recordSurfaceSuccess({
@@ -654,6 +662,7 @@ async function handleResponsesWebsocketConnection(
                 modelName: asTrimmedString(codexWebsocketTarget.actualModel) || requestModel,
                 parsedUsage,
                 upstreamUsagePresent,
+                upstreamCacheUsagePresent,
                 requestStartedAtMs: executionSession.startedAtMs,
                 isStream: true,
                 firstByteLatencyMs: null,
@@ -661,6 +670,8 @@ async function handleResponsesWebsocketConnection(
                 latencyMs: Math.max(0, Date.now() - executionSession.startedAtMs),
                 retryCount: 0,
                 upstreamPath: '/v1/responses:websocket',
+                endpointType: 'openai.responses.websocket',
+                requestEndpointType: 'openai.responses.websocket',
                 logSuccess: terminalToolkit.log,
                 bestEffortMetrics: {
                   errorLabel: '[proxy/responses-websocket] failed to record success metrics',

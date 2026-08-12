@@ -15,12 +15,17 @@ vi.mock('undici', async () => {
 
 describe('/v1beta/models/* Gemini relay with scenario upstreams', () => {
   let harness: ProxyRelayHarness;
+  let cacheAffinity: typeof import('../../services/cacheAffinityObservationService.js');
+  let downstreamContext: typeof import('../../proxy-core/downstreamClientContext.js');
 
   beforeAll(async () => {
     harness = await createProxyRelayHarness('metapi-gemini-relay-');
+    cacheAffinity = await import('../../services/cacheAffinityObservationService.js');
+    downstreamContext = await import('../../proxy-core/downstreamClientContext.js');
   });
 
   beforeEach(async () => {
+    cacheAffinity.resetCacheAffinityObservationsForTest();
     await harness.resetData();
   });
 
@@ -122,6 +127,56 @@ describe('/v1beta/models/* Gemini relay with scenario upstreams', () => {
           thinkingBudget: 256,
         },
       },
+    });
+  });
+
+  it('records Gemini cachedContentTokenCount under the Gemini endpoint identity', async () => {
+    const model = 'gemini-cache-model';
+    const { managedKey, candidate } = await harness.seedRoute({
+      model,
+      platform: 'gemini',
+      tokenValue: 'gemini-cache-key',
+    });
+    const payload = {
+      contents: [{ role: 'user', parts: [{ text: 'Reuse this Gemini prefix.' }] }],
+    };
+    const clientContext = downstreamContext.detectDownstreamClientContext({
+      downstreamPath: `/v1beta/models/${model}:generateContent`,
+      body: payload,
+    });
+    harness.upstream.add({
+      method: 'POST',
+      path: `/v1beta/models/${model}:generateContent?key=gemini-cache-key`,
+      respond: {
+        json: {
+          responseId: 'gemini-cache-response',
+          modelVersion: model,
+          candidates: [{ content: { parts: [{ text: 'cached' }], role: 'model' }, finishReason: 'STOP' }],
+          usageMetadata: {
+            promptTokenCount: 100,
+            candidatesTokenCount: 10,
+            totalTokenCount: 110,
+            cachedContentTokenCount: 75,
+          },
+        },
+      },
+    });
+
+    const response = await harness.app.inject({
+      method: 'POST',
+      url: `/v1beta/models/${model}:generateContent`,
+      headers: { 'x-goog-api-key': managedKey.key },
+      payload,
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(cacheAffinity.getCacheAffinityObservation({
+      executionTargetId: candidate.executionTargetId,
+      endpointType: 'gemini.generate_content',
+      contentAffinityKey: clientContext.contentAffinityKey!,
+    })).toMatchObject({
+      hitProbability: 0.5,
+      cachedReadFraction: 0.75,
     });
   });
 

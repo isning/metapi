@@ -13,6 +13,7 @@ export type CompiledRouteRuntimeRequest = {
   headers?: Record<string, unknown> | null;
   method?: string | null;
   path?: string | null;
+  endpointType?: string | null;
   query?: Record<string, unknown> | null;
   clientContext?: Record<string, unknown> | null;
 };

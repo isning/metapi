@@ -55,6 +55,7 @@ export async function executeVideoCreateProxySurface(input: {
     headers: input.headers,
     method: input.method,
     path: downstreamPath,
+    endpointType: 'openai.videos',
     query: input.query,
     clientContext: input.clientContext,
     downstreamApiKeyId: input.downstreamApiKeyId,
@@ -63,6 +64,7 @@ export async function executeVideoCreateProxySurface(input: {
   return executeCompiledHttpSurface({
     warningScope: 'videos',
     downstreamPath,
+    endpointType: 'openai.videos',
     requestedModel: input.requestedModel,
     request,
     downstreamPolicy: input.downstreamPolicy,

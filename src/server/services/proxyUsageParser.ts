@@ -49,6 +49,8 @@ const USAGE_DIRECT_KEYS = [
   'cacheN',
   'cache_read_tokens',
   'cacheReadTokens',
+  'cached_content_token_count',
+  'cachedContentTokenCount',
   'cache_creation_input_tokens',
   'cacheCreationInputTokens',
   'cache_creation_tokens',
@@ -71,6 +73,38 @@ const USAGE_DETAIL_KEYS = [
   'cache_creation',
   'cacheCreation',
   'timings',
+] as const;
+
+const CACHE_USAGE_DIRECT_KEYS = [
+  'cache_read_input_tokens',
+  'cacheReadInputTokens',
+  'prompt_cache_hit_tokens',
+  'promptCacheHitTokens',
+  'cached_tokens',
+  'cachedTokens',
+  'cache_n',
+  'cacheN',
+  'cache_read_tokens',
+  'cacheReadTokens',
+  'cached_content_token_count',
+  'cachedContentTokenCount',
+  'cache_creation_input_tokens',
+  'cacheCreationInputTokens',
+  'cache_creation_tokens',
+  'cacheCreationTokens',
+  'claude_cache_creation_5_m_tokens',
+  'claudeCacheCreation5mTokens',
+  'claude_cache_creation_1_h_tokens',
+  'claudeCacheCreation1hTokens',
+] as const;
+
+const CACHE_USAGE_DETAIL_KEYS = [
+  'prompt_tokens_details',
+  'promptTokensDetails',
+  'input_tokens_details',
+  'inputTokensDetails',
+  'cache_creation',
+  'cacheCreation',
 ] as const;
 
 function toPositiveInt(value: unknown): number {
@@ -179,6 +213,8 @@ function detectPromptTokensIncludeCache(record: Record<string, unknown>): boolea
     'inputTokensDetails',
     'prompt_cache_hit_tokens',
     'promptCacheHitTokens',
+    'cached_content_token_count',
+    'cachedContentTokenCount',
   ].some((key) => key in record);
   if (hasDetailCacheFields) return true;
 
@@ -197,6 +233,8 @@ function getCacheReadTokens(record: Record<string, unknown>): number {
     'cacheN',
     'cache_read_tokens',
     'cacheReadTokens',
+    'cached_content_token_count',
+    'cachedContentTokenCount',
   ]);
   if (direct > 0) return direct;
 
@@ -335,6 +373,23 @@ export function hasProxyUsagePayload(payload: unknown): boolean {
   return candidates.some((candidate) => (
     USAGE_DIRECT_KEYS.some((key) => hasOwn(candidate, key) && hasExplicitUsageValue(candidate[key]))
     || USAGE_DETAIL_KEYS.some((key) => hasOwn(candidate, key) && hasExplicitUsageValue(candidate[key]))
+  ));
+}
+
+export function hasProxyCacheUsagePayload(payload: unknown): boolean {
+  if (!payload || typeof payload !== 'object') return false;
+  const candidates = collectUsageCandidates(payload);
+  return candidates.some((candidate) => (
+    CACHE_USAGE_DIRECT_KEYS.some((key) => (
+      hasOwn(candidate, key) && hasExplicitUsageValue(candidate[key])
+    ))
+    || CACHE_USAGE_DETAIL_KEYS.some((key) => {
+      const details = candidate[key];
+      if (!isRecord(details)) return false;
+      return Object.entries(details).some(([detailKey, value]) => (
+        /cache|cached/iu.test(detailKey) && hasExplicitUsageValue(value)
+      ));
+    })
   ));
 }
 

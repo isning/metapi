@@ -141,21 +141,23 @@ class ProxyTargetCoordinator {
   buildStickySessionKey(input: {
     clientKind?: string | null;
     sessionId?: string | null;
+    contentAffinityKey?: string | null;
+    endpointType?: string | null;
     requestedModel: string;
     downstreamPath: string;
     downstreamApiKeyId?: number | null;
   }): string | null {
-    if (!config.proxyStickySessionEnabled) return null;
+    if (!config.proxyStickySessionEnabled || input.contentAffinityKey) return null;
     const sessionId = String(input.sessionId || '').trim();
     if (!sessionId) return null;
     const requestedModel = String(input.requestedModel || '').trim().toLowerCase();
     if (!requestedModel) return null;
-    const downstreamPath = String(input.downstreamPath || '').trim().toLowerCase() || 'unknown';
     const clientKind = String(input.clientKind || 'generic').trim().toLowerCase() || 'generic';
+    const endpointType = String(input.endpointType || input.downstreamPath || 'custom.http').trim().toLowerCase() || 'custom.http';
     const owner = typeof input.downstreamApiKeyId === 'number' && Number.isFinite(input.downstreamApiKeyId)
       ? `key:${Math.trunc(input.downstreamApiKeyId)}`
       : 'key:anonymous';
-    return [owner, clientKind, downstreamPath, requestedModel, sessionId].join('|');
+    return [owner, clientKind, endpointType, requestedModel, sessionId].join('|');
   }
 
   getStickyTargetId(stickySessionKey?: string | null, nowMs = Date.now()): number | null {

@@ -8,6 +8,7 @@ type RuntimeRequestSnapshotInput = {
   headers?: Record<string, unknown> | null;
   method?: string | null;
   path?: string | null;
+  endpointType?: string | null;
   query?: unknown;
   clientContext?: DownstreamClientContext | null;
   downstreamApiKeyId?: number | null;
@@ -50,6 +51,7 @@ export function buildCompiledRouteRuntimeRequestSnapshot(
     ? {
         clientKind: input.clientContext.clientKind,
         sessionId: input.clientContext.sessionId || null,
+        contentAffinityKey: input.clientContext.contentAffinityKey || null,
         traceHint: input.clientContext.traceHint || null,
         downstreamApiKeyId: input.downstreamApiKeyId ?? null,
       }
@@ -62,6 +64,7 @@ export function buildCompiledRouteRuntimeRequestSnapshot(
     headers: asRecord(input.headers) || {},
     ...(asText(input.method) ? { method: asText(input.method) } : {}),
     ...(asText(input.path) ? { path: asText(input.path) } : {}),
+    ...(asText(input.endpointType) ? { endpointType: asText(input.endpointType) } : {}),
     ...(query ? { query } : {}),
     ...(clientContext ? { clientContext } : {}),
   };

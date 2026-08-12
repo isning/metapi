@@ -1,3 +1,4 @@
+import { createHmac, randomBytes } from 'node:crypto';
 import { detectCliProfile } from './cliProfiles/registry.js';
 import type {
   CliProfileClientConfidence,
@@ -10,6 +11,7 @@ export type DownstreamClientConfidence = CliProfileClientConfidence;
 export type DownstreamClientContext = {
   clientKind: DownstreamClientKind;
   sessionId?: string;
+  contentAffinityKey?: string;
   traceHint?: string;
   clientAppId?: string;
   clientAppName?: string;
@@ -42,6 +44,10 @@ type DownstreamResolvedClientApp = {
   clientAppName: string;
   clientConfidence: DownstreamClientConfidence;
 };
+
+const CONTENT_AFFINITY_SECRET = randomBytes(32);
+const CONTENT_AFFINITY_PART_LIMIT = 4_096;
+const CONTENT_AFFINITY_TOTAL_LIMIT = 16_384;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -313,6 +319,91 @@ function detectGenericSessionAffinityId(input: {
   ]);
 }
 
+function normalizeAffinityText(value: string): string {
+  return value.replace(/\s+/gu, ' ').trim().slice(0, CONTENT_AFFINITY_PART_LIMIT);
+}
+
+function collectContentText(value: unknown): string {
+  if (typeof value === 'string') return normalizeAffinityText(value);
+  if (!Array.isArray(value)) return '';
+
+  return value.map((part) => {
+    if (typeof part === 'string') return normalizeAffinityText(part);
+    if (!isRecord(part)) return '';
+    const type = typeof part.type === 'string' ? part.type.trim().toLowerCase() : '';
+    if (type && type !== 'text' && type !== 'input_text') return '';
+    if (typeof part.text === 'string') return normalizeAffinityText(part.text);
+    if (!type && typeof part.content === 'string') return normalizeAffinityText(part.content);
+    return '';
+  }).filter(Boolean).join('\n').slice(0, CONTENT_AFFINITY_PART_LIMIT);
+}
+
+function messageRole(entry: Record<string, unknown>): string {
+  return typeof entry.role === 'string' ? entry.role.trim().toLowerCase() : '';
+}
+
+function messageContent(entry: Record<string, unknown>): string {
+  return collectContentText(entry.content ?? entry.parts);
+}
+
+function contentAffinityParts(body: unknown): string[] {
+  if (!isRecord(body)) return [];
+  const stableParts: string[] = [];
+  let remaining = CONTENT_AFFINITY_TOTAL_LIMIT;
+  const pushPart = (kind: string, content: string) => {
+    if (!content || remaining <= 0) return;
+    const part = `${kind}:${content}`.slice(0, remaining);
+    stableParts.push(part);
+    remaining -= part.length;
+  };
+  const system = collectContentText(body.system);
+  pushPart('system', system);
+  const systemInstruction = isRecord(body.systemInstruction)
+    ? collectContentText(body.systemInstruction.parts)
+    : '';
+  pushPart('system', systemInstruction);
+  const instructions = collectContentText(body.instructions);
+  pushPart('developer', instructions);
+
+  if (typeof body.input === 'string') {
+    const input = collectContentText(body.input);
+    pushPart('user', input);
+    return stableParts;
+  }
+
+  const candidates = Array.isArray(body.messages)
+    ? body.messages
+    : Array.isArray(body.input)
+      ? body.input
+      : Array.isArray(body.contents)
+        ? body.contents
+        : [];
+  for (const candidate of candidates) {
+    if (!isRecord(candidate)) continue;
+    const role = messageRole(candidate);
+    const content = messageContent(candidate);
+    if (!content) continue;
+    if (role === 'system' || role === 'developer') {
+      pushPart(role, content);
+      continue;
+    }
+    if (role === 'user') {
+      pushPart('user', content);
+      break;
+    }
+  }
+  return stableParts;
+}
+
+function detectContentPrefixAffinityId(body: unknown): string | null {
+  const parts = contentAffinityParts(body);
+  if (parts.length === 0 || !parts.some((part) => part.startsWith('user:'))) return null;
+  const digest = createHmac('sha256', CONTENT_AFFINITY_SECRET)
+    .update(parts.join('\n'))
+    .digest('base64url');
+  return `content:${digest}`;
+}
+
 export function detectDownstreamClientContext(input: {
   downstreamPath: string;
   headers?: Record<string, unknown>;
@@ -320,10 +411,12 @@ export function detectDownstreamClientContext(input: {
 }): DownstreamClientContext {
   const detected = detectCliProfile(input);
   const normalizedHeaders = normalizeHeaders(input.headers);
-  const sessionId = detected.sessionId || detectGenericSessionAffinityId({
+  const explicitSessionId = detected.sessionId || detectGenericSessionAffinityId({
     headers: normalizedHeaders,
     body: input.body,
-  }) || undefined;
+  });
+  const contentAffinityKey = explicitSessionId ? null : detectContentPrefixAffinityId(input.body);
+  const sessionId = explicitSessionId || undefined;
   const traceHint = detected.traceHint || sessionId;
   const explicitSelfReport = detectExplicitClientSelfReport(normalizedHeaders);
   const fingerprint = detectDownstreamClientFingerprint(input);
@@ -341,6 +434,7 @@ export function detectDownstreamClientContext(input: {
   return {
     clientKind: detected.id,
     ...(sessionId ? { sessionId } : {}),
+    ...(contentAffinityKey ? { contentAffinityKey } : {}),
     ...(traceHint ? { traceHint } : {}),
     ...(explicitSelfReport || fingerprint || profileClientApp || {}),
   };

@@ -16,6 +16,7 @@ import type {
   RuntimeRoutingSignals,
 } from './compiledRuntimeProjectionService.js';
 import type { DownstreamRoutingPolicy } from './downstreamPolicyTypes.js';
+import { getCacheAffinityObservation } from './cacheAffinityObservationService.js';
 
 const MIN_EFFECTIVE_UNIT_COST = 1e-6;
 const SITE_RUNTIME_MIN_MULTIPLIER = 0.08;
@@ -237,15 +238,55 @@ async function resolveReferencePricing(context: RuntimeRoutingSignalContext): Pr
   };
 }
 
-function usageForCostSignal(inputTokens: number, outputTokens: number): Partial<CanonicalUsage> {
+function usageForCostSignal(
+  inputTokens: number,
+  outputTokens: number,
+  cache?: { readFraction: number; writeFraction: number },
+): Partial<CanonicalUsage> {
   const input = Math.max(0, Math.trunc(inputTokens));
   const output = Math.max(0, Math.trunc(outputTokens));
+  const cacheReadTokens = cache ? Math.min(input, Math.round(input * cache.readFraction)) : 0;
+  const cacheWriteTokens = cache ? Math.min(
+    input - cacheReadTokens,
+    Math.round(input * cache.writeFraction),
+  ) : 0;
+  const uncachedInputTokens = Math.max(0, input - cacheReadTokens - cacheWriteTokens);
   return {
-    inputTokens: input,
+    inputTokens: uncachedInputTokens,
     outputTokens: output,
+    cacheReadTokens,
+    cacheWriteTokens,
     totalTokens: input + output,
     requestCount: 1,
   };
+}
+
+function requestCacheObservation(
+  context: RuntimeRoutingSignalContext,
+  request?: CompiledRouteRuntimeRequest | null,
+) {
+  const targetId = Math.trunc(Number(context.executionTargetId));
+  const endpointType = String(request?.endpointType || '').trim().toLowerCase();
+  const clientContext = request?.clientContext && typeof request.clientContext === 'object'
+    ? request.clientContext as Record<string, unknown>
+    : null;
+  const contentAffinityKey = String(clientContext?.contentAffinityKey || '').trim();
+  if (!Number.isSafeInteger(targetId) || targetId <= 0 || !endpointType || !contentAffinityKey) return null;
+  return getCacheAffinityObservation({
+    executionTargetId: targetId,
+    endpointType,
+    contentAffinityKey,
+  });
+}
+
+function blendCost(
+  cold: number | null | undefined,
+  warm: number | null | undefined,
+  hitProbability: number,
+): number | null {
+  if (typeof cold !== 'number' || !Number.isFinite(cold)) return null;
+  if (typeof warm !== 'number' || !Number.isFinite(warm)) return cold;
+  return cold * (1 - hitProbability) + warm * hitProbability;
 }
 
 function emptyCostSignal(
@@ -283,6 +324,7 @@ function emptyCostSignal(
 async function resolveRequestCostSignal(
   context: RuntimeRoutingSignalContext,
   forecast: CompiledRuntimeUsageForecast,
+  request?: CompiledRouteRuntimeRequest | null,
 ): Promise<RuntimeCostSignal> {
   const siteId = Math.trunc(Number(context.siteId));
   const accountId = Math.trunc(Number(context.accountId));
@@ -294,7 +336,7 @@ async function resolveRequestCostSignal(
   // decision instead of dropping it entirely: use the stable routing
   // reference profile until observed P50/P90 usage is available.
   if (forecast.status !== 'available') {
-    const quote = await quoteEndpointPricing({
+    const coldQuote = await quoteEndpointPricing({
       supply: {
         siteId,
         accountId,
@@ -309,7 +351,7 @@ async function resolveRequestCostSignal(
       allowProviderCatalog: true,
       providerCatalogMode: 'cache_only',
     });
-    const effectiveCost = quote.effectiveCost?.walletCostBaseCurrency ?? null;
+    const effectiveCost = coldQuote.effectiveCost?.walletCostBaseCurrency ?? null;
     if (typeof effectiveCost !== 'number' || !Number.isFinite(effectiveCost)) {
       return emptyCostSignal(forecast, 'pricing_unavailable');
     }
@@ -322,19 +364,88 @@ async function resolveRequestCostSignal(
       p90OutputTokens: Number(ENDPOINT_ROUTING_REFERENCE_USAGE.outputTokens) || 0,
       maxOutputTokens: null,
     };
+    const observation = requestCacheObservation(context, request);
+    const warmQuote = observation && observation.cachedReadFraction > 0
+      ? await quoteEndpointPricing({
+          supply: {
+            siteId,
+            accountId,
+            tokenId: context.tokenId ?? null,
+            tokenGroup: context.tokenGroup || undefined,
+            provider: context.provider || undefined,
+            modelName: context.modelName,
+          },
+          usageProfile: 'actual',
+          usage: usageForCostSignal(
+            referenceForecast.estimatedInputTokens,
+            referenceForecast.expectedOutputTokens,
+            {
+              readFraction: observation.cachedReadFraction,
+              writeFraction: observation.hitCacheWriteFraction,
+            },
+          ),
+          includeReference: false,
+          allowProviderCatalog: true,
+          providerCatalogMode: 'cache_only',
+        })
+      : null;
+    const missQuote = observation && observation.missCacheWriteFraction > 0
+      ? await quoteEndpointPricing({
+          supply: {
+            siteId,
+            accountId,
+            tokenId: context.tokenId ?? null,
+            tokenGroup: context.tokenGroup || undefined,
+            provider: context.provider || undefined,
+            modelName: context.modelName,
+          },
+          usageProfile: 'actual',
+          usage: usageForCostSignal(
+            referenceForecast.estimatedInputTokens,
+            referenceForecast.expectedOutputTokens,
+            { readFraction: 0, writeFraction: observation.missCacheWriteFraction },
+          ),
+          includeReference: false,
+          allowProviderCatalog: true,
+          providerCatalogMode: 'cache_only',
+        })
+      : null;
+    const warmPricingAvailable = (
+      typeof warmQuote?.endpoint?.summary.cacheReadPerMillion === 'number'
+      && (
+        observation?.hitCacheWriteFraction === 0
+        || typeof warmQuote?.endpoint?.summary.cacheWritePerMillion === 'number'
+      )
+    );
+    const missPricingAvailable = typeof missQuote?.endpoint?.summary.cacheWritePerMillion === 'number';
+    const missEffectiveCost = missPricingAvailable
+      ? missQuote?.effectiveCost?.walletCostBaseCurrency
+      : effectiveCost;
+    const missRawCost = missPricingAvailable
+      ? missQuote?.endpoint?.summary.totalCost
+      : coldQuote.endpoint?.summary.totalCost;
+    const expectedEffectiveCost = warmPricingAvailable && observation
+      ? blendCost(missEffectiveCost, warmQuote?.effectiveCost?.walletCostBaseCurrency, observation.hitProbability)
+      : missEffectiveCost ?? null;
+    const expectedRawCost = warmPricingAvailable && observation
+      ? blendCost(missRawCost, warmQuote?.endpoint?.summary.totalCost, observation.hitProbability)
+      : missRawCost ?? null;
     return {
       status: 'available',
-      currency: quote.effectiveCost?.baseCostUnit ?? quote.endpoint?.summary.currency ?? null,
+      currency: coldQuote.effectiveCost?.baseCostUnit ?? coldQuote.endpoint?.summary.currency ?? null,
       forecast: referenceForecast,
-      floor: { rawCost: quote.endpoint?.summary.totalCost ?? null, effectiveCost },
-      expected: { rawCost: quote.endpoint?.summary.totalCost ?? null, effectiveCost },
-      p90: { rawCost: quote.endpoint?.summary.totalCost ?? null, effectiveCost },
+      floor: { rawCost: expectedRawCost, effectiveCost: expectedEffectiveCost },
+      expected: { rawCost: expectedRawCost, effectiveCost: expectedEffectiveCost },
+      p90: { rawCost: expectedRawCost, effectiveCost: expectedEffectiveCost },
       ceiling: null,
-      routingCost: effectiveCost,
+      routingCost: expectedEffectiveCost,
     };
   }
 
-  const quote = async (outputTokens: number) => await quoteEndpointPricing({
+  const quote = async (
+    outputTokens: number,
+    cache?: { readFraction: number; writeFraction: number },
+  ) => await quoteEndpointPricing({
     supply: {
       siteId,
       accountId,
@@ -344,7 +455,7 @@ async function resolveRequestCostSignal(
       modelName: context.modelName,
     },
     usageProfile: 'actual',
-    usage: usageForCostSignal(forecast.estimatedInputTokens, outputTokens),
+    usage: usageForCostSignal(forecast.estimatedInputTokens, outputTokens, cache),
     includeReference: false,
     allowProviderCatalog: true,
     providerCatalogMode: 'cache_only',
@@ -356,16 +467,67 @@ async function resolveRequestCostSignal(
     quote(forecast.p90OutputTokens),
     ceilingOutput == null ? Promise.resolve(null) : quote(ceilingOutput),
   ]);
+  const observation = requestCacheObservation(context, request);
+  const warmPricingAvailable = (
+    typeof expectedQuote.endpoint?.summary.cacheReadPerMillion === 'number'
+    && (
+      observation?.hitCacheWriteFraction === 0
+      || typeof expectedQuote.endpoint?.summary.cacheWritePerMillion === 'number'
+    )
+  );
+  const warmCache = observation && observation.cachedReadFraction > 0 && warmPricingAvailable
+    ? {
+        readFraction: observation.cachedReadFraction,
+        writeFraction: observation.hitCacheWriteFraction,
+      }
+    : null;
+  const warmQuotes = warmCache
+    ? await Promise.all([
+        quote(0, warmCache),
+        quote(forecast.expectedOutputTokens, warmCache),
+        quote(forecast.p90OutputTokens, warmCache),
+        ceilingOutput == null ? Promise.resolve(null) : quote(ceilingOutput, warmCache),
+      ])
+    : null;
+  const missCache = observation && observation.missCacheWriteFraction > 0
+    ? { readFraction: 0, writeFraction: observation.missCacheWriteFraction }
+    : null;
+  const missQuotes = missCache
+    ? await Promise.all([
+        quote(0, missCache),
+        quote(forecast.expectedOutputTokens, missCache),
+        quote(forecast.p90OutputTokens, missCache),
+        ceilingOutput == null ? Promise.resolve(null) : quote(ceilingOutput, missCache),
+      ])
+    : null;
+  const missPricingAvailable = typeof missQuotes?.[1]?.endpoint?.summary.cacheWritePerMillion === 'number';
   const point = (value: Awaited<ReturnType<typeof quoteEndpointPricing>> | null) => value == null
     ? null
     : {
         rawCost: value.endpoint?.summary.totalCost ?? null,
         effectiveCost: value.effectiveCost?.walletCostBaseCurrency ?? null,
       };
-  const floor = point(floorQuote);
-  const expected = point(expectedQuote);
-  const p90 = point(p90Quote);
-  const ceiling = point(ceilingQuote);
+  const blendPoint = (
+    cold: Awaited<ReturnType<typeof quoteEndpointPricing>> | null,
+    warm: Awaited<ReturnType<typeof quoteEndpointPricing>> | null | undefined,
+    miss: Awaited<ReturnType<typeof quoteEndpointPricing>> | null | undefined,
+  ) => {
+    const coldPoint = point(cold);
+    const missPoint = missPricingAvailable && miss ? point(miss) : coldPoint;
+    if (!observation || !warm) return missPoint;
+    return {
+      rawCost: blendCost(missPoint?.rawCost, warm.endpoint?.summary.totalCost, observation.hitProbability),
+      effectiveCost: blendCost(
+        missPoint?.effectiveCost,
+        warm.effectiveCost?.walletCostBaseCurrency,
+        observation.hitProbability,
+      ),
+    };
+  };
+  const floor = blendPoint(floorQuote, warmQuotes?.[0], missQuotes?.[0]);
+  const expected = blendPoint(expectedQuote, warmQuotes?.[1], missQuotes?.[1]);
+  const p90 = blendPoint(p90Quote, warmQuotes?.[2], missQuotes?.[2]);
+  const ceiling = blendPoint(ceilingQuote, warmQuotes?.[3], missQuotes?.[3]);
   const expectedEffective = expected?.effectiveCost;
   const p90Effective = p90?.effectiveCost;
   if (
@@ -517,7 +679,7 @@ export async function buildRuntimeRoutingSignalMap(input: {
   const costSignals = await Promise.all(contexts.map((context) => {
     const forecast = forecastByEntryId.get(String(context.entryId || '').trim())
       || insufficientUsageForecast(requestConstraints);
-    return resolveRequestCostSignal(context, forecast);
+    return resolveRequestCostSignal(context, forecast, input.request);
   }));
 
   const drafts = contexts.map((context, index) => {

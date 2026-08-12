@@ -16,12 +16,17 @@ vi.mock('undici', async () => {
 
 describe('/v1/responses relay with scenario upstreams', () => {
   let harness: ProxyRelayHarness;
+  let cacheAffinity: typeof import('../../services/cacheAffinityObservationService.js');
+  let downstreamContext: typeof import('../../proxy-core/downstreamClientContext.js');
 
   beforeAll(async () => {
     harness = await createProxyRelayHarness('metapi-responses-relay-');
+    cacheAffinity = await import('../../services/cacheAffinityObservationService.js');
+    downstreamContext = await import('../../proxy-core/downstreamClientContext.js');
   });
 
   beforeEach(async () => {
+    cacheAffinity.resetCacheAffinityObservationsForTest();
     await harness.resetData();
   });
 
@@ -117,6 +122,66 @@ describe('/v1/responses relay with scenario upstreams', () => {
         totalTokens: 17,
       }),
     ]);
+  });
+
+  it('records real upstream cache usage for the successful target and endpoint type', async () => {
+    const model = 'responses-cache-observation-model';
+    const { managedKey, candidate } = await harness.seedRoute({ model });
+    const payload = {
+      model,
+      input: 'Inspect the cache-aware route.',
+      instructions: 'Be concise.',
+    };
+    const clientContext = downstreamContext.detectDownstreamClientContext({
+      downstreamPath: '/v1/responses',
+      body: payload,
+    });
+    harness.upstream.add({
+      method: 'POST',
+      path: '/v1/responses',
+      respond: {
+        json: {
+          id: 'resp_cache_observation',
+          object: 'response',
+          model,
+          status: 'completed',
+          output: [],
+          usage: {
+            input_tokens: 100,
+            output_tokens: 10,
+            total_tokens: 110,
+            input_tokens_details: {
+              cached_tokens: 80,
+            },
+          },
+        },
+      },
+    });
+
+    const response = await harness.app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      headers: { 'x-api-key': managedKey.key },
+      payload,
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(clientContext.contentAffinityKey).toMatch(/^content:/);
+    const [successLog] = await harness.db.select().from(harness.schema.proxyLogs).all();
+    expect(successLog).toMatchObject({
+      executionTargetId: candidate.executionTargetId,
+      promptTokens: 100,
+      completionTokens: 10,
+    });
+    expect(cacheAffinity.getCacheAffinityObservation({
+      executionTargetId: successLog.executionTargetId!,
+      endpointType: 'openai.responses',
+      contentAffinityKey: clientContext.contentAffinityKey!,
+    })).toMatchObject({
+      sampleCount: 1,
+      hitProbability: 0.5,
+      cachedReadFraction: 0.8,
+    });
   });
 
   it('aggregates non-stream responses when the upstream returns responses SSE', async () => {
@@ -302,6 +367,61 @@ describe('/v1/responses relay with scenario upstreams', () => {
       model: 'responses-stream-model',
       stream: true,
     });
+  });
+
+  it('records cache evidence from the terminal event of a streamed response', async () => {
+    const model = 'responses-stream-cache-model';
+    const { managedKey, candidate } = await harness.seedRoute({ model });
+    const payload = { model, input: 'Stream a cache-aware answer.', stream: true };
+    const clientContext = downstreamContext.detectDownstreamClientContext({
+      downstreamPath: '/v1/responses',
+      body: payload,
+    });
+    harness.upstream.add({
+      method: 'POST',
+      path: '/v1/responses',
+      respond: {
+        sse: [
+          {
+            event: 'response.output_text.delta',
+            data: { type: 'response.output_text.delta', delta: 'cached stream' },
+          },
+          {
+            event: 'response.completed',
+            data: {
+              type: 'response.completed',
+              response: {
+                id: 'resp_stream_cache',
+                model,
+                status: 'completed',
+                output: [],
+                usage: {
+                  input_tokens: 50,
+                  output_tokens: 5,
+                  total_tokens: 55,
+                  input_tokens_details: { cached_tokens: 30 },
+                },
+              },
+            },
+          },
+          doneSseChunk(),
+        ],
+      },
+    });
+
+    const response = await harness.app.inject({
+      method: 'POST',
+      url: '/v1/responses',
+      headers: { 'x-api-key': managedKey.key },
+      payload,
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(cacheAffinity.getCacheAffinityObservation({
+      executionTargetId: candidate.executionTargetId,
+      endpointType: 'openai.responses',
+      contentAffinityKey: clientContext.contentAffinityKey!,
+    })).toMatchObject({ cachedReadFraction: 0.6 });
   });
 
   it('supports /v1/responses/compact as a distinct upstream alias', async () => {

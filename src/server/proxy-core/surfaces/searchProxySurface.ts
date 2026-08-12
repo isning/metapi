@@ -31,6 +31,7 @@ export async function executeSearchProxySurface(input: {
     headers: input.headers,
     method: input.method,
     path: downstreamPath,
+    endpointType: 'openai.search',
     query: input.query,
     clientContext: input.clientContext,
     downstreamApiKeyId: input.downstreamApiKeyId,
@@ -40,6 +41,7 @@ export async function executeSearchProxySurface(input: {
   return executeCompiledHttpSurface({
     warningScope: 'search',
     downstreamPath,
+    endpointType: 'openai.search',
     requestedModel: input.requestedModel,
     request,
     downstreamPolicy: input.downstreamPolicy,

@@ -145,7 +145,7 @@ describe('proxy debug trace relay capture', () => {
     const routeRuntimeSummary = runtimeTrace.context || {};
     expect(routeRuntimeSummary).toMatchObject({
       downstreamFormat: 'openai/chat',
-      stickySessionKey: 'key:1|codex|/v1/chat/completions|debug-trace-model|trace-session-1',
+      stickySessionKey: 'key:1|codex|openai.chat_completions|debug-trace-model|trace-session-1',
     });
     const candidates = runtimeTrace.protocol?.endpointCandidates || [];
     expect(candidates).toEqual(expect.arrayContaining(['responses', 'chat']));

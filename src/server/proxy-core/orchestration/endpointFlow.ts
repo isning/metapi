@@ -57,6 +57,8 @@ export type EndpointFlowResult =
     ok: true;
     upstream: Awaited<ReturnType<typeof fetch>>;
     upstreamPath: string;
+    request: BuiltEndpointRequest;
+    apiType?: string;
   }
   | {
     ok: false;
@@ -185,6 +187,8 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
         ok: true,
         upstream: response,
         upstreamPath: request.path,
+        request,
+        ...(apiAttempt?.apiType ? { apiType: apiAttempt.apiType } : {}),
       };
     }
 
@@ -243,6 +247,8 @@ export async function executeEndpointFlow(input: ExecuteEndpointFlowInput): Prom
           ok: true,
           upstream: recovered.upstream,
           upstreamPath: recovered.upstreamPath,
+          request: recoveredRequest,
+          ...(apiAttempt?.apiType ? { apiType: apiAttempt.apiType } : {}),
         };
       }
     }

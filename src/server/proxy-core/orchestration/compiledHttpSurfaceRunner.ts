@@ -71,6 +71,7 @@ export async function executeCompiledHttpSurface(input: {
   warningScope: string;
   downstreamPath: string;
   requestedModel: string;
+  endpointType?: string | null;
   request: CompiledRouteRuntimeRequest;
   downstreamPolicy: DownstreamRoutingPolicy;
   forcedExecutionAttemptId: string | null;
@@ -82,6 +83,7 @@ export async function executeCompiledHttpSurface(input: {
     clientContext: input.clientContext,
     requestedModel: input.requestedModel,
     downstreamPath: input.downstreamPath,
+    endpointType: input.endpointType,
     downstreamApiKeyId: input.downstreamApiKeyId,
   });
   const excludeTargetIds: number[] = [];

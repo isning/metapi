@@ -51,6 +51,64 @@ describe('proxyTargetCoordinator', () => {
     expect(proxyTargetCoordinator.getStickyTargetId(key)).toBeNull();
   });
 
+  it('isolates strict sticky bindings by endpoint type', () => {
+    const responsesKey = proxyTargetCoordinator.buildStickySessionKey({
+      clientKind: 'generic',
+      sessionId: 'session-1',
+      endpointType: 'openai.responses',
+      requestedModel: 'gpt-5.2',
+      downstreamPath: '/v1/responses',
+      downstreamApiKeyId: 9,
+    });
+    const chatKey = proxyTargetCoordinator.buildStickySessionKey({
+      clientKind: 'generic',
+      sessionId: 'session-1',
+      endpointType: 'openai.chat_completions',
+      requestedModel: 'gpt-5.2',
+      downstreamPath: '/v1/chat/completions',
+      downstreamApiKeyId: 9,
+    });
+
+    expect(responsesKey).not.toBe(chatKey);
+    proxyTargetCoordinator.bindStickyTarget(responsesKey, 42);
+    expect(proxyTargetCoordinator.getStickyTargetId(responsesKey)).toBe(42);
+    expect(proxyTargetCoordinator.getStickyTargetId(chatKey)).toBeNull();
+  });
+
+  it('treats equivalent downstream paths as one strict endpoint type', () => {
+    const versioned = proxyTargetCoordinator.buildStickySessionKey({
+      clientKind: 'generic',
+      sessionId: 'session-1',
+      endpointType: 'openai.responses',
+      requestedModel: 'gpt-5.2',
+      downstreamPath: '/v1/responses',
+      downstreamApiKeyId: 9,
+    });
+    const unversioned = proxyTargetCoordinator.buildStickySessionKey({
+      clientKind: 'generic',
+      sessionId: 'session-1',
+      endpointType: 'openai.responses',
+      requestedModel: 'gpt-5.2',
+      downstreamPath: '/responses',
+      downstreamApiKeyId: 9,
+    });
+
+    expect(unversioned).toBe(versioned);
+  });
+
+  it('does not create strict sticky bindings for content hints', () => {
+    const key = proxyTargetCoordinator.buildStickySessionKey({
+      clientKind: 'generic',
+      sessionId: 'content:prefix',
+      contentAffinityKey: 'content:prefix',
+      endpointType: 'openai.responses',
+      requestedModel: 'gpt-5.2',
+      downstreamPath: '/v1/responses',
+      downstreamApiKeyId: 9,
+    });
+    expect(key).toBeNull();
+  });
+
   it('stores sticky bindings for apikey channels without making them session-scoped leases', async () => {
     const key = proxyTargetCoordinator.buildStickySessionKey({
       clientKind: 'codex',

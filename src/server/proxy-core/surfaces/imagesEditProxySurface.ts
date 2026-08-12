@@ -38,6 +38,7 @@ export async function executeImagesEditProxySurface(input: {
     headers: input.headers,
     method: input.method,
     path: downstreamPath,
+    endpointType: 'openai.images.edits',
     query: input.query,
     clientContext: input.clientContext,
     downstreamApiKeyId: input.downstreamApiKeyId,
@@ -47,6 +48,7 @@ export async function executeImagesEditProxySurface(input: {
   return executeCompiledHttpSurface({
     warningScope: 'images',
     downstreamPath,
+    endpointType: 'openai.images.edits',
     requestedModel: input.requestedModel,
     request,
     downstreamPolicy: input.downstreamPolicy,

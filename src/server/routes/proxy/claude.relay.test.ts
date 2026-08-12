@@ -15,12 +15,17 @@ vi.mock('undici', async () => {
 
 describe('/v1/messages relay with scenario upstreams', () => {
   let harness: ProxyRelayHarness;
+  let cacheAffinity: typeof import('../../services/cacheAffinityObservationService.js');
+  let downstreamContext: typeof import('../../proxy-core/downstreamClientContext.js');
 
   beforeAll(async () => {
     harness = await createProxyRelayHarness('metapi-claude-relay-');
+    cacheAffinity = await import('../../services/cacheAffinityObservationService.js');
+    downstreamContext = await import('../../proxy-core/downstreamClientContext.js');
   });
 
   beforeEach(async () => {
+    cacheAffinity.resetCacheAffinityObservationsForTest();
     await harness.resetData();
   });
 
@@ -152,6 +157,62 @@ describe('/v1/messages relay with scenario upstreams', () => {
           },
         },
       ],
+    });
+  });
+
+  it('records Anthropic cache read and creation evidence using total input tokens', async () => {
+    const model = 'claude-cache-model';
+    const { managedKey, candidate } = await harness.seedRoute({
+      model,
+      platform: 'claude',
+      tokenValue: 'sk-claude-cache-token',
+    });
+    const payload = {
+      model,
+      max_tokens: 64,
+      system: [{ type: 'text', text: 'Use the cached policy.' }],
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'Apply it now.' }] }],
+    };
+    const clientContext = downstreamContext.detectDownstreamClientContext({
+      downstreamPath: '/v1/messages',
+      body: payload,
+    });
+    harness.upstream.add({
+      method: 'POST',
+      path: '/v1/messages',
+      respond: {
+        json: {
+          id: 'msg_claude_cache',
+          type: 'message',
+          role: 'assistant',
+          model,
+          content: [{ type: 'text', text: 'done' }],
+          stop_reason: 'end_turn',
+          usage: {
+            input_tokens: 20,
+            output_tokens: 5,
+            cache_read_input_tokens: 70,
+            cache_creation_input_tokens: 10,
+          },
+        },
+      },
+    });
+
+    const response = await harness.app.inject({
+      method: 'POST',
+      url: '/v1/messages',
+      headers: { 'x-api-key': managedKey.key },
+      payload,
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(cacheAffinity.getCacheAffinityObservation({
+      executionTargetId: candidate.executionTargetId,
+      endpointType: 'anthropic.messages',
+      contentAffinityKey: clientContext.contentAffinityKey!,
+    })).toMatchObject({
+      cachedReadFraction: 0.7,
+      hitCacheWriteFraction: 0.1,
     });
   });
 

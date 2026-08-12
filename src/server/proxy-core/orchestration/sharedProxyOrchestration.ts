@@ -20,6 +20,8 @@ import { readRuntimeResponseText } from '../executors/types.js';
 import type { RouteExecutionScope } from '../../services/routeExecutionScopeTypes.js';
 import type { CompiledRouteRuntimeRequest } from '../../services/compiledRuntimeRequestTypes.js';
 import type { RouteRuntimeSnapshotBody } from '../../../shared/routeRuntimeSnapshot.js';
+import { endpointTypeFromRequest } from '../../contracts/upstreamEndpointType.js';
+import { recordCacheAffinityObservation } from '../../services/cacheAffinityObservationService.js';
 import {
   completeCompiledRuntimeExecutionSession,
   type CompiledRuntimeExecutionSession,
@@ -255,11 +257,17 @@ export function buildSurfaceStickySessionKey(input: {
   clientContext?: DownstreamClientContext | null;
   requestedModel: string;
   downstreamPath: string;
+  endpointType?: string | null;
   downstreamApiKeyId?: number | null;
 }): string | null {
   return proxyTargetCoordinator.buildStickySessionKey({
     clientKind: input.clientContext?.clientKind || null,
     sessionId: input.clientContext?.sessionId || null,
+    contentAffinityKey: input.clientContext?.contentAffinityKey || null,
+    endpointType: endpointTypeFromRequest({
+      path: input.downstreamPath,
+      downstreamFormat: input.endpointType,
+    }),
     requestedModel: input.requestedModel,
     downstreamPath: input.downstreamPath,
     downstreamApiKeyId: input.downstreamApiKeyId,
@@ -473,6 +481,7 @@ export async function recordSurfaceSuccess(input: {
   modelName: string;
   parsedUsage: SurfaceUsageSummary;
   upstreamUsagePresent?: boolean;
+  upstreamCacheUsagePresent?: boolean;
   upstreamHeaders?: { get(name: string): string | null } | null;
   requestStartedAtMs: number;
   isStream?: boolean | null;
@@ -481,6 +490,9 @@ export async function recordSurfaceSuccess(input: {
   latencyMs: number;
   retryCount: number;
   upstreamPath?: string | null;
+  contentAffinityKey?: string | null;
+  endpointType?: string | null;
+  requestEndpointType?: string | null;
   logSuccess: (args: {
     selected: SurfaceSelectedExecutionAttempt;
     modelRequested: string;
@@ -564,6 +576,23 @@ export async function recordSurfaceSuccess(input: {
       throw error;
     }
     console.error(input.bestEffortMetrics.errorLabel, error);
+  }
+
+  if (
+    input.upstreamCacheUsagePresent === true
+    && input.contentAffinityKey
+    && input.endpointType
+  ) {
+    recordCacheAffinityObservation({
+      executionTargetId: input.selected.executionTargetId,
+      endpointType: input.endpointType,
+      requestEndpointType: input.requestEndpointType,
+      contentAffinityKey: input.contentAffinityKey,
+      promptTokens: input.parsedUsage.promptTokens,
+      cacheReadTokens: input.parsedUsage.cacheReadTokens,
+      cacheWriteTokens: input.parsedUsage.cacheCreationTokens,
+      promptTokensIncludeCache: input.parsedUsage.promptTokensIncludeCache,
+    });
   }
 
   try {

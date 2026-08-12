@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  hasProxyCacheUsagePayload,
   hasProxyUsagePayload,
   mergeProxyUsage,
   parseProxyUsage,
@@ -7,6 +8,12 @@ import {
 } from './proxyUsageParser.js';
 
 describe('proxyUsageParser', () => {
+  it('distinguishes explicit cache usage fields from ordinary token usage', () => {
+    expect(hasProxyCacheUsagePayload({ usage: { prompt_tokens: 10, cached_tokens: 0 } })).toBe(true);
+    expect(hasProxyCacheUsagePayload({ usage: { input_tokens_details: { cached_tokens: 0 } } })).toBe(true);
+    expect(hasProxyCacheUsagePayload({ usage: { prompt_tokens: 10, completion_tokens: 2 } })).toBe(false);
+  });
+
   it('parses standard OpenAI usage fields', () => {
     const usage = parseProxyUsage({
       usage: {
@@ -60,6 +67,27 @@ describe('proxyUsageParser', () => {
       cacheReadTokens: 0,
       cacheCreationTokens: 0,
       promptTokensIncludeCache: null,
+    });
+  });
+
+  it('recognizes Gemini cached content usage as explicit cache-read evidence', () => {
+    const payload = {
+      usageMetadata: {
+        promptTokenCount: 120,
+        candidatesTokenCount: 30,
+        totalTokenCount: 150,
+        cachedContentTokenCount: 90,
+      },
+    };
+
+    expect(hasProxyCacheUsagePayload(payload)).toBe(true);
+    expect(parseProxyUsage(payload)).toEqual({
+      promptTokens: 120,
+      completionTokens: 30,
+      totalTokens: 150,
+      cacheReadTokens: 90,
+      cacheCreationTokens: 0,
+      promptTokensIncludeCache: true,
     });
   });
 
@@ -193,6 +221,15 @@ describe('proxyUsageParser', () => {
       usage: {
         total_tokens: null,
         cache_creation: {},
+      },
+    })).toBe(false);
+  });
+
+  it('does not treat null cache placeholders as explicit cache misses', () => {
+    expect(hasProxyCacheUsagePayload({
+      usage: {
+        cached_tokens: null,
+        input_tokens_details: { cached_tokens: null },
       },
     })).toBe(false);
   });

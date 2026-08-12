@@ -4,7 +4,12 @@ import type { FastifyRequest, FastifyReply } from 'fastify';
 import { config } from '../../config.js';
 import type { RouteExecutionScope } from '../../services/routeExecutionScopeTypes.js';
 import { reportProxyAllFailed } from '../../services/alertService.js';
-import { hasProxyUsagePayload, mergeProxyUsage, parseProxyUsage } from '../../services/proxyUsageParser.js';
+import {
+  hasProxyCacheUsagePayload,
+  hasProxyUsagePayload,
+  mergeProxyUsage,
+  parseProxyUsage,
+} from '../../services/proxyUsageParser.js';
 import { resolveUpstreamEndpointCandidates } from '../../services/upstreamEndpointDerivation.js';
 import { loadCredentialApiVariantConfig } from '../../services/credentialEndpointBindingService.js';
 import { buildUpstreamEndpointRequest } from '../formats/upstreamRequestBuilder.js';
@@ -96,6 +101,11 @@ import {
 import { resolvePlatformProfile } from '../platforms/registry.js';
 import type { DownstreamProtocolAdapter, TransformedDownstreamRequest } from '../formats/types.js';
 import { createConfiguredProtocolAdapter } from '../formats/configuredProtocolAdapter.js';
+import {
+  endpointTypeFromApiType,
+  endpointTypeFromRequest,
+  endpointTypeFromUpstreamEndpoint,
+} from '../../contracts/upstreamEndpointType.js';
 import { getOauthInfoFromAccount } from '../../services/oauth/oauthAccount.js';
 import {
   buildCodexSessionResponseStoreKey,
@@ -184,6 +194,10 @@ export async function handleGenericSurfaceRequest(
       adapterConfig.passthroughHeaders,
       adapterConfig.bodyConstraints,
     );
+    const downstreamEndpointType = endpointTypeFromRequest({
+      path: downstreamPath,
+      downstreamFormat: adapter.format,
+    });
 
     const transformContext = {
       downstreamPath,
@@ -238,6 +252,7 @@ export async function handleGenericSurfaceRequest(
       clientContext,
       requestedModel,
       downstreamPath,
+      endpointType: downstreamEndpointType,
       downstreamApiKeyId,
     });
 
@@ -259,6 +274,7 @@ export async function handleGenericSurfaceRequest(
       headers: request.headers as Record<string, unknown>,
       method: request.method,
       path: downstreamPath,
+      endpointType: downstreamEndpointType,
       query: (request.query || {}) as Record<string, unknown>,
       clientContext,
       downstreamApiKeyId,
@@ -1201,6 +1217,11 @@ export async function handleGenericSurfaceRequest(
       }
       const upstream = endpointResult!.upstream;
       const successfulUpstreamPath = endpointResult!.upstreamPath;
+      const successfulEndpointType = endpointTypeFromRequest({
+        path: successfulUpstreamPath,
+        downstreamFormat: endpointTypeFromApiType(endpointResult!.apiType)
+          || endpointTypeFromUpstreamEndpoint(endpointResult!.request.endpoint),
+      });
       const firstByteLatencyMs = getObservedResponseMeta(upstream)?.firstByteLatencyMs ?? null;
 
       if (isStream) {
@@ -1231,6 +1252,7 @@ export async function handleGenericSurfaceRequest(
         promptTokensIncludeCache: null as boolean | null,
       };
       let upstreamUsagePresent = false;
+      let upstreamCacheUsagePresent = false;
       const recordStreamSuccess = async (latencyMs: number) => {
         await recordSurfaceSuccess({
           selected,
@@ -1238,6 +1260,7 @@ export async function handleGenericSurfaceRequest(
           modelName,
           parsedUsage,
           upstreamUsagePresent,
+          upstreamCacheUsagePresent,
           upstreamHeaders: upstream.headers,
           requestStartedAtMs: startTime,
           isStream: true,
@@ -1246,6 +1269,9 @@ export async function handleGenericSurfaceRequest(
           latencyMs,
           retryCount,
           upstreamPath: formatLoggedUpstreamPath(adapter, successfulUpstreamPath),
+          contentAffinityKey: clientContext.contentAffinityKey,
+          endpointType: successfulEndpointType,
+          requestEndpointType: downstreamEndpointType,
           logSuccess: failureToolkit.log,
           recordDownstreamBilling: (billing) => recordDownstreamBillingUsage(request, billing),
           bestEffortMetrics: {
@@ -1281,6 +1307,7 @@ export async function handleGenericSurfaceRequest(
         onParsedPayload: (payload: unknown) => {
           if (payload && typeof payload === 'object') {
             upstreamUsagePresent = upstreamUsagePresent || hasProxyUsagePayload(payload);
+            upstreamCacheUsagePresent = upstreamCacheUsagePresent || hasProxyCacheUsagePayload(payload);
             parsedUsage = mergeProxyUsage(parsedUsage, parseProxyUsage(payload));
           }
         },
@@ -1369,6 +1396,7 @@ export async function handleGenericSurfaceRequest(
           fallbackData = protocolAdapters.geminiCli.unwrapPayload(fallbackData);
         }
         upstreamUsagePresent = upstreamUsagePresent || hasProxyUsagePayload(fallbackData);
+        upstreamCacheUsagePresent = upstreamCacheUsagePresent || hasProxyCacheUsagePayload(fallbackData);
         parsedUsage = mergeProxyUsage(parsedUsage, parseProxyUsage(fallbackData));
         const latency = Date.now() - startTime;
         const failure = detectProxyFailure({ rawText, usage: parsedUsage });
@@ -1578,6 +1606,7 @@ export async function handleGenericSurfaceRequest(
         rawData = protocolAdapters.geminiCli.unwrapPayload(rawData);
       }
       let upstreamUsagePresent = hasProxyUsagePayload(rawData);
+      const upstreamCacheUsagePresent = hasProxyCacheUsagePayload(rawData);
       let parsedUsage = mergeProxyUsage(
         {
           promptTokens: 0,
@@ -1640,6 +1669,7 @@ export async function handleGenericSurfaceRequest(
         modelName,
         parsedUsage,
         upstreamUsagePresent,
+        upstreamCacheUsagePresent,
         upstreamHeaders: upstream.headers,
         requestStartedAtMs: startTime,
         isStream: false,
@@ -1648,6 +1678,9 @@ export async function handleGenericSurfaceRequest(
         latencyMs: latency,
         retryCount,
         upstreamPath: formatLoggedUpstreamPath(adapter, successfulUpstreamPath),
+        contentAffinityKey: clientContext.contentAffinityKey,
+        endpointType: successfulEndpointType,
+        requestEndpointType: downstreamEndpointType,
         logSuccess: failureToolkit.log,
         recordDownstreamBilling: (billing) => recordDownstreamBillingUsage(request, billing),
         bestEffortMetrics: {

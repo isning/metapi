@@ -57,6 +57,7 @@ describe('executeEndpointFlow', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.upstreamPath).toBe('/v1/responses');
+      expect(result.request.endpoint).toBe('responses');
     }
     expect(fetchMock.mock.calls[0]?.[0]).toBe('https://example.com/v1/responses');
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -359,6 +360,7 @@ describe('executeEndpointFlow', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.upstreamPath).toBe('/v1/responses');
+      expect(result.request.endpoint).toBe('responses');
     }
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
