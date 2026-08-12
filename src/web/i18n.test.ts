@@ -44,12 +44,35 @@ function createSourceFile(file: string) {
   );
 }
 
-function collectRuntimeTranslationKeys() {
-  const values = new Map<string, Set<string>>();
+type RuntimeSourceAudit = {
+  translationKeys: Map<string, Set<string>>;
+  chineseTranslationCalls: string[];
+  chineseLiterals: string[];
+  forbiddenI18nApis: string[];
+};
+
+function collectRuntimeSourceAudit(): RuntimeSourceAudit {
+  const audit: RuntimeSourceAudit = {
+    translationKeys: new Map(),
+    chineseTranslationCalls: [],
+    chineseLiterals: [],
+    forbiddenI18nApis: [],
+  };
 
   for (const file of runtimeSourceFiles()) {
+    const source = readFileSync(file, 'utf8');
+    for (const pattern of FORBIDDEN_I18N_PATTERNS) {
+      if (source.includes(pattern)) audit.forbiddenI18nApis.push(`${file}: ${pattern}`);
+    }
+
     const sf = createSourceFile(file);
     const visit = (node: ts.Node) => {
+      if (ts.isStringLiteralLike(node) && HAS_HAN_RE.test(node.text)) {
+        const allowedKey = `${file}:${node.text}`;
+        if (!ALLOWED_RUNTIME_CHINESE_LITERALS.has(allowedKey)) {
+          audit.chineseLiterals.push(`${file}:${sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1} ${node.text}`);
+        }
+      }
       if (
         ts.isCallExpression(node)
         && ts.isIdentifier(node.expression)
@@ -59,8 +82,11 @@ function collectRuntimeTranslationKeys() {
       ) {
         const value = node.arguments[0].text;
         if (I18N_KEY_RE.test(value)) {
-          if (!values.has(value)) values.set(value, new Set());
-          values.get(value)!.add(file);
+          if (!audit.translationKeys.has(value)) audit.translationKeys.set(value, new Set());
+          audit.translationKeys.get(value)!.add(file);
+        }
+        if (HAS_HAN_RE.test(value)) {
+          audit.chineseTranslationCalls.push(`${value} (${file})`);
         }
       }
       ts.forEachChild(node, visit);
@@ -68,8 +94,10 @@ function collectRuntimeTranslationKeys() {
     visit(sf);
   }
 
-  return values;
+  return audit;
 }
+
+const runtimeSourceAudit = collectRuntimeSourceAudit();
 
 describe('translateText', () => {
   it('translates migrated domain keys', () => {
@@ -89,7 +117,7 @@ describe('translateText', () => {
   it('resolves every runtime i18next key in zh and en', () => {
     const missing: string[] = [];
 
-    for (const [key, files] of collectRuntimeTranslationKeys()) {
+    for (const [key, files] of runtimeSourceAudit.translationKeys) {
       const zh = translateText(key, 'zh');
       const en = translateText(key, 'en');
       if (zh !== key && en !== key && !HAS_HAN_RE.test(en)) continue;
@@ -100,59 +128,14 @@ describe('translateText', () => {
   });
 
   it('keeps explicit translation calls on named keys instead of Chinese source literals', () => {
-    const violations: string[] = [];
-
-    for (const file of runtimeSourceFiles()) {
-      const sf = createSourceFile(file);
-      const visit = (node: ts.Node) => {
-        if (
-          ts.isCallExpression(node)
-          && ts.isIdentifier(node.expression)
-          && RUNTIME_TRANSLATION_CALLS.has(node.expression.text)
-          && node.arguments[0]
-          && ts.isStringLiteralLike(node.arguments[0])
-          && HAS_HAN_RE.test(node.arguments[0].text)
-        ) {
-          violations.push(`${node.arguments[0].text} (${file})`);
-        }
-        ts.forEachChild(node, visit);
-      };
-      visit(sf);
-    }
-
-    expect(violations).toEqual([]);
+    expect(runtimeSourceAudit.chineseTranslationCalls).toEqual([]);
   });
 
   it('keeps remaining runtime Chinese literals limited to explicit data constants', () => {
-    const violations: string[] = [];
-
-    for (const file of runtimeSourceFiles()) {
-      const sf = createSourceFile(file);
-      const visit = (node: ts.Node) => {
-        if (ts.isStringLiteralLike(node) && HAS_HAN_RE.test(node.text)) {
-          const allowedKey = `${file}:${node.text}`;
-          if (!ALLOWED_RUNTIME_CHINESE_LITERALS.has(allowedKey)) {
-            violations.push(`${file}:${sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1} ${node.text}`);
-          }
-        }
-        ts.forEachChild(node, visit);
-      };
-      visit(sf);
-    }
-
-    expect(violations).toEqual([]);
+    expect(runtimeSourceAudit.chineseLiterals).toEqual([]);
   });
 
   it('keeps production code off legacy i18n compatibility APIs', () => {
-    const violations: string[] = [];
-
-    for (const file of runtimeSourceFiles()) {
-      const source = readFileSync(file, 'utf8');
-      for (const pattern of FORBIDDEN_I18N_PATTERNS) {
-        if (source.includes(pattern)) violations.push(`${file}: ${pattern}`);
-      }
-    }
-
-    expect(violations).toEqual([]);
+    expect(runtimeSourceAudit.forbiddenI18nApis).toEqual([]);
   });
 });

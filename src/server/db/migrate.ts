@@ -41,14 +41,15 @@ function recordPublishedMainMigrationStage(sqlite: Database.Database, stage: 'sc
     ON CONFLICT(id) DO UPDATE SET stage = excluded.stage`).run(stage);
 }
 
-function hasCurrentDrizzleBaseline(sqlite: Database.Database, migrationsFolder: string): boolean {
-  const baseline = readMigrationFiles({ migrationsFolder }).at(-1);
-  if (!baseline) throw new Error('Current Drizzle baseline migration is missing');
-  return !!sqlite.prepare(`
-    SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '__drizzle_migrations' LIMIT 1
-  `).get() && !!sqlite.prepare(
+function hasRecognizedDrizzleMigration(sqlite: Database.Database, migrationsFolder: string): boolean {
+  if (!hasTable(sqlite, '__drizzle_migrations')) return false;
+
+  const migrations = readMigrationFiles({ migrationsFolder });
+  if (migrations.length === 0) throw new Error('Current Drizzle migrations are missing');
+  const hasMigration = sqlite.prepare(
     'SELECT 1 FROM __drizzle_migrations WHERE hash = ? AND created_at = ? LIMIT 1',
-  ).get(baseline.hash, baseline.folderMillis);
+  );
+  return migrations.some((migration) => !!hasMigration.get(migration.hash, migration.folderMillis));
 }
 
 function adoptCurrentDrizzleBaseline(sqlite: Database.Database, migrationsFolder: string): void {
@@ -70,7 +71,7 @@ export async function runSqliteMigrations(): Promise<void> {
   const sqlite = new Database(dbPath);
   try {
     const requiresPublishedMainMigration = hasExistingApplicationSchema(sqlite)
-      && !hasCurrentDrizzleBaseline(sqlite, migrationsFolder);
+      && !hasRecognizedDrizzleMigration(sqlite, migrationsFolder);
     if (requiresPublishedMainMigration) {
       if (!isPublishedMainSchema(sqlite)) {
         throw new Error('Cannot migrate SQLite database: expected the published cita-777/metapi main schema.');

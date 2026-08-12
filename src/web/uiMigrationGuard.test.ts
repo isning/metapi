@@ -132,21 +132,37 @@ function isAllowedNativeControlException(relativePath: string, source: string): 
   return false;
 }
 
+type SourceEntry = {
+  filePath: string;
+  relativePath: string;
+  source: string;
+  isPage: boolean;
+  isComponent: boolean;
+  isShadcnPrimitive: boolean;
+};
+
+const productionSourceEntries: SourceEntry[] = scanRoots
+  .flatMap((root) => walk(root))
+  .map((filePath) => ({
+    filePath,
+    relativePath: path.relative(repoRoot, filePath),
+    source: readFileSync(filePath, 'utf8'),
+    isPage: filePath.startsWith(pageScanRoot),
+    isComponent: filePath.startsWith(path.join(repoRoot, 'src/web/components')),
+    isShadcnPrimitive: isShadcnPrimitivePath(filePath),
+  }));
+
 describe('web UI migration guard', () => {
   it('keeps removed legacy UI contracts out of production web code', () => {
     const violations: string[] = [];
 
-    for (const root of scanRoots) {
-      for (const filePath of walk(root)) {
-        if (isShadcnPrimitivePath(filePath)) continue;
-        const relativePath = path.relative(repoRoot, filePath);
-        const source = readFileSync(filePath, 'utf8');
+    for (const { relativePath, source, isShadcnPrimitive } of productionSourceEntries) {
+        if (isShadcnPrimitive) continue;
         for (const pattern of bannedLegacyPatterns) {
           if (pattern.test(source)) {
             violations.push(`${relativePath}: ${pattern}`);
           }
         }
-      }
     }
 
     expect(violations).toEqual([]);
@@ -155,9 +171,8 @@ describe('web UI migration guard', () => {
   it('keeps production pages on shadcn control primitives', () => {
     const violations: string[] = [];
 
-    for (const filePath of walk(pageScanRoot).filter((candidate) => candidate.endsWith('.tsx'))) {
-        const relativePath = path.relative(repoRoot, filePath);
-        const source = readFileSync(filePath, 'utf8');
+    for (const { relativePath, source, isPage, filePath } of productionSourceEntries) {
+        if (!isPage || !filePath.endsWith('.tsx')) continue;
         if (isAllowedNativeControlException(relativePath, source)) continue;
         for (const pattern of bannedPageControlPatterns) {
         if (pattern.test(source)) {
@@ -172,18 +187,14 @@ describe('web UI migration guard', () => {
   it('keeps shared components on shadcn control primitives', () => {
     const violations: string[] = [];
 
-    for (const root of scanRoots) {
-      for (const filePath of walk(root).filter((candidate) => candidate.endsWith('.tsx'))) {
-        if (isShadcnPrimitivePath(filePath)) continue;
-        const relativePath = path.relative(repoRoot, filePath);
-        const source = readFileSync(filePath, 'utf8');
+    for (const { relativePath, source, filePath, isShadcnPrimitive } of productionSourceEntries) {
+        if (!filePath.endsWith('.tsx') || isShadcnPrimitive) continue;
         if (isAllowedNativeControlException(relativePath, source)) continue;
         for (const pattern of bannedSharedControlPatterns) {
           if (pattern.test(source)) {
             violations.push(`${relativePath}: ${pattern}`);
           }
         }
-      }
     }
 
     expect(violations).toEqual([]);
@@ -192,9 +203,8 @@ describe('web UI migration guard', () => {
   it('keeps production pages on theme classes instead of visual inline styles', () => {
     const violations: string[] = [];
 
-    for (const filePath of walk(pageScanRoot).filter((candidate) => candidate.endsWith('.tsx'))) {
-      const relativePath = path.relative(repoRoot, filePath);
-      const source = readFileSync(filePath, 'utf8');
+    for (const { relativePath, source, isPage, filePath } of productionSourceEntries) {
+      if (!isPage || !filePath.endsWith('.tsx')) continue;
       for (const pattern of bannedPageVisualInlineStylePatterns) {
         if (pattern.test(source)) {
           violations.push(`${relativePath}: ${pattern}`);
@@ -208,9 +218,8 @@ describe('web UI migration guard', () => {
   it('keeps page inline styles limited to named runtime exceptions', () => {
     const violations: string[] = [];
 
-    for (const filePath of walk(pageScanRoot).filter((candidate) => candidate.endsWith('.tsx'))) {
-      const relativePath = path.relative(repoRoot, filePath);
-      const source = readFileSync(filePath, 'utf8');
+    for (const { relativePath, source, isPage, filePath } of productionSourceEntries) {
+      if (!isPage || !filePath.endsWith('.tsx')) continue;
       if (source.includes('style={{') && !pageInlineStyleAllowedFiles.has(relativePath)) {
         violations.push(relativePath);
       }
@@ -221,12 +230,8 @@ describe('web UI migration guard', () => {
 
   it('keeps component inline styles limited to named runtime exceptions', () => {
     const violations: string[] = [];
-    const componentRoot = path.join(repoRoot, 'src/web/components');
-
-    for (const filePath of walk(componentRoot).filter((candidate) => candidate.endsWith('.tsx'))) {
-      if (isShadcnPrimitivePath(filePath)) continue;
-      const relativePath = path.relative(repoRoot, filePath);
-      const source = readFileSync(filePath, 'utf8');
+    for (const { relativePath, source, isComponent, filePath, isShadcnPrimitive } of productionSourceEntries) {
+      if (!isComponent || !filePath.endsWith('.tsx') || isShadcnPrimitive) continue;
       if (source.includes('style={{') && !componentInlineStyleAllowedFiles.has(relativePath)) {
         violations.push(relativePath);
       }

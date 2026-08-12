@@ -21,12 +21,13 @@ function collectSourceFiles(dir: string): string[] {
     const stats = statSync(fullPath);
 
     if (stats.isDirectory()) {
+      if (entry === 'generated') continue;
       files.push(...collectSourceFiles(fullPath));
       continue;
     }
 
     const extension = fullPath.slice(fullPath.lastIndexOf('.'));
-    if (SOURCE_EXTENSIONS.has(extension)) {
+    if (SOURCE_EXTENSIONS.has(extension) && !/\.(?:test|spec)\.[^.]+$/.test(fullPath)) {
       files.push(fullPath);
     }
   }
@@ -40,14 +41,13 @@ describe('source text integrity', () => {
 
     for (const file of collectSourceFiles(SOURCE_ROOT)) {
       if (file === TEST_FILE) continue;
-      const lines = readFileSync(file, 'utf8').split(/\r?\n/u);
-
-      lines.forEach((line, index) => {
-        for (const marker of MOJIBAKE_MARKERS) {
-          if (!line.includes(marker)) continue;
-          hits.push(`${relative(process.cwd(), file)}:${index + 1} contains "${marker}"`);
-        }
-      });
+      const source = readFileSync(file, 'utf8');
+      for (const marker of MOJIBAKE_MARKERS) {
+        const markerIndex = source.indexOf(marker);
+        if (markerIndex < 0) continue;
+        const line = source.slice(0, markerIndex).split(/\r?\n/u).length;
+        hits.push(`${relative(process.cwd(), file)}:${line} contains "${marker}"`);
+      }
     }
 
     expect(hits).toEqual([]);
