@@ -327,7 +327,7 @@ describe('/api/models/route-flow', () => {
           },
           balance: 42,
           rawBalance: 42,
-          normalizedCostScore: null,
+          normalizedCostScore: 0.5,
           normalizedBalanceScore: 0.5,
           normalizedBalance: 0.5,
         runtimeHealth: {
@@ -1054,7 +1054,7 @@ describe('/api/models/route-flow', () => {
         scenario: 'routing_reference',
         source: 'unavailable',
       },
-      normalizedCostScore: null,
+      normalizedCostScore: 0.5,
       normalizedBalanceScore: 1,
       rawBalance: 100,
       normalizedBalance: 1,

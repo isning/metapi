@@ -41,7 +41,9 @@ export type SiteSavePayload = {
   apiEndpoints: Array<{
     url: string;
     enabled: boolean;
-    basePathMode: 'protocol_default' | 'complete_api_prefix';
+    // Older callers may omit this input; serialization supplies the safe
+    // protocol-default mode before the payload is sent to the API.
+    basePathMode?: 'protocol_default' | 'complete_api_prefix';
     sortOrder: number;
   }>;
   customHeaders: string;
